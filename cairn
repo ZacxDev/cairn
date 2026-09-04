@@ -1,0 +1,1683 @@
+#!/usr/bin/env python3
+"""`cairn` — the read-through client for the hosted subsystem store (phase 2).
+
+WHAT THIS IS FOR. The pod serves a read-only API; for a long time every request
+it logged came from the session that built it, because **no client was ever
+written**. This is that client.
+
+🔴 THE READER KEEPS ITS NO-NETWORK PROPERTY; THIS WRAPPER OWNS THE NETWORK.
+`subsystem_recall.py` documents itself "READ-ONLY. No clock, no network, no git,
+no prompt" and runs on the `/resume` hot path. Proposal §2d is explicit that a
+recall must not become a live HTTP call: a DNS blip, a suspended laptop or a
+cluster reconcile would turn "orient me" into an error, or — worse — into an
+empty screen that reads like "nothing recorded". So `cairn` syncs the store into
+a local cache and runs the **unmodified** reader against it. Nothing in
+`scripts/lib/` is imported-and-patched, monkeypatched or forked here.
+
+🔴 WHY A STATE LINE IS PRINTED BEFORE EVERY REPORT, AND WHY IT IS NOT OPTIONAL.
+The server prepends a provenance banner to every response for a measured reason
+(`server.py::snapshot_freshness`): on 2026-08-20 the public endpoint answered
+`ALL 5 entries in devrc/, none omitted` while the source held 9, and one served
+entry was a 40-day-old copy of a file edited that morning. Nothing was wrong;
+nothing was current either. Running the reader locally against a cache would
+DROP that banner and reintroduce exactly that confusion, because the reader's
+"none omitted" is a truthful claim about whatever bytes it was pointed at. So
+this client states, in the output itself, which of four states produced it:
+
+    live                          fetched just now                        exit 0
+    cached (stale <age>)          pod unreachable, served from cache      exit 0
+    scope-empty                   reached the store, genuinely nothing    exit 0
+    store-unreachable, no cache   nothing was read at all                 exit 3
+
+🔴 The fourth is the one that must never be collapsed into the third. `scope-empty`
+and `store-unreachable` both "print no entries", and one of them is a lie. That is
+the silent-zero class `obs-read` and `drift-check.sh` exist to defend against.
+
+Two codes sit outside that table because they are not READ outcomes:
+`sync` returns 4 when it could not refresh though a cache survived (a refresh
+that exits 0 on an outage is how a timer reports success forever), and any
+command returns 5 when the server's archive is REFUSED — a link, a traversal
+member, a duplicate, or a count disagreeing with the server's own header. 5 is
+never absorbed into "served from cache"; an outage is benign and that is not.
+Beyond those, a report exits with the READER's own code, so a scope whose
+entries are all malformed still exits non-zero as it always did.
+
+🔴 AND THE WRITE VERBS ARE THE MIRROR IMAGE — `append`, `put` and `create` DO
+NOT DEGRADE. The table above exists because a read must never report an outage as
+an empty store. A write has the opposite obligation: there is no cache to answer
+from and no such thing as a stale write, so an unreachable store is a REFUSED
+write at exit 7, never a queued one and never a local one. Codes 6/7/8/9
+(refused / unreachable / precondition-failed / already-exists) are disjoint from
+every read code precisely so a caller cannot read "nothing was displayed" as "the
+bullet landed". The pod is the authority; this cache has none. See the WRITE PATH
+block below the readers.
+
+🔴 `create` IS THE VERB THAT MAKES A NEW ENTRY, AND IT DID NOT EXIST UNTIL
+2026-09-03. `append` and `put` both resolve an EXISTING ref, so the store had no
+create primitive at all and the write protocol told sessions to write a
+brand-new entry into the local `~/.claude/analyze-service-index/` tree. That was
+correct while that tree WAS the store; after the read path moved to the pod
+cache it meant the entry was dark to every reader. Measured 2026-09-02: five
+whole entries existed only on one host. `create` sends `If-None-Match: *`, so it
+creates only if absent and REFUSES (exit 9) rather than overwriting.
+
+CONFIG: `~/.config/subsystem-store/env` (mode 0600) — `SUBSYSTEM_STORE_URL`,
+`SUBSYSTEM_STORE_TOKEN`. Environment variables of the same name win, so a test
+can point this at a throwaway server without touching the file. See SECRETS.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import io
+import json
+import os
+import shutil
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import zlib
+from pathlib import Path
+from typing import Sequence
+from urllib.parse import quote
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import subsystem_recall as rc  # noqa: E402
+import entry_shape  # noqa: E402
+from entry_shape import scope_for_repo  # noqa: E402
+
+# 🔴 THE CACHE PATH AND THE STAMP NAME ARE IMPORTED, NOT DECLARED. They used to
+# live here, which made this file the only thing that knew where a host reads the
+# store from — and the readers (`subsystem_recall.py`'s CLI, `service_recon.py`)
+# went on pointing at the FROZEN pre-cutover mirror for a day because nothing
+# they imported could tell them otherwise. One definition, in
+# `subsystem_read_store`; the writer and every reader now move together.
+# 🔴 THE MODULE, NOT `from … import DEFAULT_CACHE_ROOT`. That spelling is the one
+# `read_store_root`'s own docstring names as defeating a test's repointing: it
+# binds the value at IMPORT, so a later `monkeypatch.setattr(rs,
+# "DEFAULT_CACHE_ROOT", …)` moves the reader and leaves this WRITER pointed at
+# the operator's real cache. Nothing depended on that yet — which is exactly when
+# it is cheap to fix. `build_parser` calls the accessor instead.
+import subsystem_read_store as _read_store  # noqa: E402
+from subsystem_read_store import SYNC_STAMP  # noqa: E402
+
+DEFAULT_CONFIG = Path.home() / ".config" / "subsystem-store" / "env"
+DEFAULT_TIMEOUT = 20
+# Ceiling on what a snapshot may unpack to. The whole store measured ~63 KB of
+# markdown across 305 entries in 2026-08; 256 MB is ~4000x that, so it bounds a
+# decompression bomb without being reachable by real growth for years.
+MAX_UNPACKED_BYTES = 256 * 1024 * 1024
+# Companion ceiling on MEMBER COUNT. The live store held 305 entries in 2026-08;
+# 50,000 is ~160x that and bounds an inode bomb, which the byte ceiling alone
+# cannot see because empty members declare size 0.
+MAX_MEMBERS = 50_000
+
+# Exit codes. 0/3 are the contract §3 pins; the reader's own non-zero codes pass
+# through unchanged so a malformed entry still reports what it always did.
+EXIT_OK = 0
+EXIT_UNREACHABLE_NO_CACHE = 3
+EXIT_USAGE = 2
+# `sync` only: the store was not reached, but a usable cache survived. Distinct
+# from 3 so a caller can tell "stale but serviceable" from "nothing at all".
+EXIT_REFRESH_FAILED = 4
+# The server answered with something we refuse to install. Distinct from every
+# other code so it can never be read as an outage or as a clean run.
+EXIT_CORRUPT = 5
+
+# --- WRITE codes. Deliberately distinct from every READ code above. ----------
+#
+# 🔴 A WRITE HAS NO CACHE TO FALL BACK ON, AND THAT ASYMMETRY IS THE CONTRACT.
+# `recall`'s job is to answer, so an outage degrades to a stale answer that says
+# it is stale, at exit 0. A write's job is to make a durable record; there is no
+# such thing as a stale write, and a queued one is a write the caller believes
+# landed. So `append`/`put`/`create` FAIL LOUDLY when the store cannot be reached — the
+# accepted cost of decision 8 in `claudedocs/plan-cairn-integration.md`, stated
+# there and stated again here so a future reader cannot mistake it for an
+# oversight and "fix" it by adding a spool.
+#
+# 6 = the STORE refused the request and the caller must change it (4xx that is
+#     not a precondition failure): a malformed bullet, an unknown ref, a scope
+#     this credential may not see. Retrying byte-for-byte cannot help.
+EXIT_WRITE_REFUSED = 6
+# 7 = the write did NOT happen and the reason is not the caller's request — the
+#     host was unreachable, or the server could not read its own store (503).
+#     Distinct from 6 because a retry is exactly the right response to this one
+#     and exactly the wrong response to that one.
+EXIT_WRITE_UNREACHABLE = 7
+# 8 = the precondition failed (412): the entry moved under the revision this
+#     write was based on. Its own code because the remedy is unique — re-sync,
+#     re-derive the revision, re-apply the edit — and because collapsing it into
+#     6 would invite a blind retry that either 412s forever or, with `If-Match`
+#     dropped, silently overwrites somebody else's change.
+EXIT_WRITE_PRECONDITION = 8
+# 9 = `create` only: the entry ALREADY EXISTS, so nothing was created and
+#     nothing was overwritten. 🔴 ITS OWN CODE EVEN THOUGH THE SERVER ANSWERS
+#     THE SAME 412 AS 8, because the two remedies are opposites: 8 means "the
+#     entry moved under you — re-sync, re-derive, re-apply, put again", and a
+#     retry is right; 9 means "you asked to create something that is there —
+#     use `append` or `put`", and the identical retry loops forever. They are
+#     told apart by `X-Store-Status` (`precondition-failed` vs `already-exists`),
+#     which is the only place on the wire the difference exists.
+EXIT_WRITE_EXISTS = 9
+
+STATE_LIVE = "live"
+STATE_CACHED = "cached"
+STATE_EMPTY = "scope-empty"
+STATE_NO_CACHE = "store-unreachable, no cache"
+
+
+class StoreUnreachable(Exception):
+    """The pod could not be read. Carries the reason, never a bare failure.
+
+    🔴 The reason is mandatory: criterion 5 of the card this implements is that
+    an unreachable host is reported as UNMEASURED **with a reason**, never as a
+    silent success or a zero.
+
+    🔴 `http_status` IS THE STRUCTURAL DISCRIMINATOR, AND IT EXISTS BECAUSE THE
+    MESSAGE IS NOT ONE. "the host never answered" and "the host answered 401"
+    are both raised here — deliberately, since a read degrades to the cache
+    either way — but they are NOT the same fact to a human: one is an outage and
+    the other is a credential that has to be replaced. The only thing that told
+    them apart was the phrasing of `str(exc)`, and a caller that greps a message
+    for `HTTP 401` has pinned an f-string. `None` means there was no answer at
+    all; an int is the status the server sent. `resolve_state` reads neither, so
+    nothing about the read path changes.
+    """
+
+    def __init__(self, *args: object, http_status: int | None = None) -> None:
+        super().__init__(*args)
+        self.http_status = http_status
+
+
+class StoreCorrupt(Exception):
+    """The server answered, and what it sent is not a store we will accept.
+
+    🔴 DELIBERATELY NOT A SUBCLASS OF `StoreUnreachable`. An outage is absorbed
+    into "serving from cache" at exit 0, which is right for an outage and wrong
+    for this: a server shipping a traversal member, a link, a duplicate, or a
+    count that disagrees with its own header is the one case that has to be
+    LOUD. Collapsing the two would let a hostile or broken archive render as a
+    reassuring `⚠ SERVED FROM CACHE`.
+    """
+
+
+def load_config(path: Path | None = None) -> tuple[str, str]:
+    """`(url, token)` from the env file, with real environment taking priority.
+
+    A missing file is not fatal on its own — the caller may have exported both
+    values — but a missing VALUE is, and it says which one. "No token" must not
+    degrade into an unauthenticated request that comes back 401 and gets read as
+    "the store is down".
+    """
+    path = path or Path(os.environ.get("SUBSYSTEM_STORE_CONFIG", DEFAULT_CONFIG))
+    from_file: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            from_file[key.strip()] = value.strip()
+    except OSError:
+        pass
+
+    url = os.environ.get("SUBSYSTEM_STORE_URL") or from_file.get("SUBSYSTEM_STORE_URL")
+    token = os.environ.get("SUBSYSTEM_STORE_TOKEN") or from_file.get(
+        "SUBSYSTEM_STORE_TOKEN"
+    )
+    missing = [
+        n
+        for n, v in (("SUBSYSTEM_STORE_URL", url), ("SUBSYSTEM_STORE_TOKEN", token))
+        if not v
+    ]
+    if missing:
+        raise StoreUnreachable(
+            f"config incomplete: {', '.join(missing)} not set "
+            f"(looked in {path} and the environment)"
+        )
+    return url.rstrip("/"), token  # type: ignore[union-attr,return-value]
+
+
+def _apply_standard_headers(req: "urllib.request.Request", token: str) -> None:
+    """The two headers EVERY request to this host must carry, in ONE place.
+
+    🔴 A User-Agent IS REQUIRED, and urllib's default is actively refused.
+    MEASURED 2026-08-25 against the live host, same token, same path, three
+    requests differing ONLY in this header:
+        curl's default UA    -> 200
+        `Python-urllib/3.12` -> 403      <-- urllib's default
+        empty UA             -> 200
+    The 403 comes from the edge, not the app, so it is NOT a token rejection and
+    NOT the store being down — but it arrives looking like both.
+
+    🔴 THIS EXISTS AS A FUNCTION BECAUSE THE WRITE PATH WOULD OTHERWISE HAVE TO
+    RE-LEARN IT. When `fetch_snapshot` was the only caller the header was a line
+    inside it; adding `append`/`put` made that line a rule with two more sites,
+    and a rule at three sites is the shape `claude/RULES.md` says regenerates
+    the same bug at N-1 of them.
+
+    🔴 THE GUARD IS `test_cairn_write.py::TestTheRequestItself::
+    test_no_request_builder_ANYWHERE_bypasses_this_helper` — an AST scan over
+    this file AND `cairn-cutover.py`, asserting every function that constructs a
+    `urllib.request.Request` also calls this helper. An earlier version of this
+    sentence named a test that **did not exist**, which is worse than naming
+    none: it reads as coverage and stops anyone looking. It was written while
+    the only real check was a behavioural one on the append path, so a new read
+    verb building its own request was unguarded by the very line claiming to
+    guard it.
+    """
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("User-Agent", "subsystem-store-client/1")
+
+
+def fetch_snapshot(
+    url: str, token: str, *, scope: str | None, timeout: int
+) -> tuple[bytes, dict[str, str]]:
+    """GET the tar. Every failure becomes a StoreUnreachable NAMING the host."""
+    # 🔴 `timeout=None` REACHES `urlopen` AS *NO* TIMEOUT, NOT AS A DEFAULT, so
+    # this refuses it rather than trusting the annotation above — `timeout: int`
+    # is a type hint, and a hint is not a code path. The sibling `who` side of
+    # this CLI has refused it since `cairn_who._run`; the store side did not,
+    # and mutating either `fetch_snapshot`'s or `urlopen`'s argument to `None`
+    # survived the whole suite. The asymmetry was the defect: one half of one
+    # program failing closed.
+    bad = _cairn_who().unbounded_timeout_reason(timeout)
+    if bad:
+        raise StoreUnreachable(f"refusing to fetch {url}: {bad}")
+    target = f"{url}/api/v1/snapshot" + (f"?scope={scope}" if scope else "")
+    req = urllib.request.Request(target, method="GET")
+    # Auth + the mandatory User-Agent. See `_apply_standard_headers` for the
+    # measurement that makes the UA load-bearing; without it every Python client
+    # of this host is blocked, which is exactly the shape of bug that gets
+    # diagnosed as "the store is broken".
+    _apply_standard_headers(req, token)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # 🔴 RETURN THE MESSAGE, NEVER A DICT BUILT FROM IT.
+            # `resp.headers` is an `email.message.Message` and its `.get()` is
+            # already case-insensitive; `dict(resp.headers)` throws that away.
+            # HTTP/2 lowercases every header name and this host is behind
+            # Cloudflare, so in PRODUCTION the keys arrive lowercased while the
+            # code asked for the mixed-case spelling. MEASURED against the live
+            # pod on the first real call after deploying 0.4.0:
+            #     dict(resp.headers).get("X-Store-Entries") -> None
+            #     dict(resp.headers).get("x-store-entries") -> 75
+            # Silent consequences: `snapshot=UNSTAMPED`, `revision=unknown`, and
+            # — worst — the count cross-check against `X-Store-Entries` NEVER
+            # FIRED, so the guard against a truncated transfer was inert in the
+            # only environment that matters. 358 tests and seven audit rounds
+            # missed it: the test shim reproduced production's TOPOLOGY but not
+            # its NORMALISATION.
+            #
+            # ⚠ A `{k.lower(): v}` comprehension fixes the case and introduces a
+            # SECOND bug: on a duplicated header a dict keeps the LAST value
+            # where `Message.get` returns the FIRST (measured: 1 vs 99). This
+            # repo has `sole_header` (server.py:422) precisely because "a bare
+            # .get() silently takes the FIRST value" was a real smuggling bug,
+            # and its rule is REFUSE a duplicate, not quietly pick the other
+            # end. Handing back the Message keeps ONE semantics rather than
+            # inventing a second — caught in review, not shipped.
+            return resp.read(), resp.headers
+    except urllib.error.HTTPError as exc:
+        # 🔴 CARRY THE BODY. The server's 503 names WHICH scope it could not
+        # read; reporting only "answered HTTP 503" throws that away and leaves
+        # the operator with a code and no cause — the opposite of "UNMEASURED
+        # with a reason". Truncated because this is a one-line reason, not a page.
+        try:
+            detail = exc.read().decode("utf-8", "replace").strip().replace("\n", "; ")
+        except Exception:
+            detail = ""
+        detail = f" — {detail[:300]}" if detail else ""
+        raise StoreUnreachable(
+            f"{url} answered HTTP {exc.code}{detail}", http_status=exc.code
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise StoreUnreachable(f"{url} unreachable: {exc.reason}") from exc
+    except OSError as exc:  # socket timeouts and friends
+        raise StoreUnreachable(f"{url} unreachable: {exc}") from exc
+
+
+def _safe_member_name(name: str) -> bool:
+    """True when `name` stays inside the extraction root.
+
+    🔴 NOT `".." in name`. That was the first version and it is over-broad: a
+    legitimate entry called `widget-cfg/a..b.md` contains `..` as a SUBSTRING
+    and aborted the entire sync, which then rendered as an outage. The server
+    puts no constraint on entry filenames, so this is reachable with an ordinary
+    file. Decide on path COMPONENTS, which is the actual property.
+    """
+    if not name or name.startswith("/") or os.path.isabs(name):
+        return False
+    parts = Path(name).parts
+    return bool(parts) and not any(p in ("..", "") for p in parts)
+
+
+ORPHAN_GRACE_SECONDS = 3600
+
+
+def _reap_orphans(cache: Path) -> int:
+    """Remove stale `<cache>.new-*` / `<cache>.old-*` trees. Returns how many.
+
+    🔴 THE PER-RUN STAGING NAME TRADED ONE BUG FOR A LEAK. The pre-fix version
+    used a FIXED staging name and `rmtree`d it at the top of every run, which
+    raced (that was the truncation bug) but was self-healing. Unique names fixed
+    the race and removed the healing: an audit SIGKILLed three syncs mid-run and
+    the orphaned trees were still there afterwards, with a later clean sync
+    leaving them alone. `finally` covers exceptions; it does not cover SIGKILL,
+    a power cut, or an OOM — and with the planned sync timer these accumulate in
+    `~/.cache` without bound.
+
+    The grace period is why this is safe to run at the START of a sync: a
+    directory younger than an hour may belong to a CONCURRENT sync, and deleting
+    it would reintroduce the very race the unique names removed. Anything older
+    than that cannot be live — the whole operation takes well under a second.
+    """
+    cutoff = time.time() - ORPHAN_GRACE_SECONDS
+    reaped = 0
+    for prefix in (f"{cache.name}.new-", f"{cache.name}.old-"):
+        for path in cache.parent.glob(f"{prefix}*"):
+            try:
+                # `lstat`, not `stat`: a SYMLINK named like a staging dir
+                # dereferences under `is_dir()`/`stat()`, and `rmtree` on a
+                # symlink is a silent no-op — so it would be counted as reaped
+                # while never being removed, and the miscount is invisible
+                # because the count is the only evidence.
+                if path.lstat().st_mtime >= cutoff:
+                    continue
+                if path.is_symlink():
+                    path.unlink()
+                elif path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    continue
+                reaped += 1
+            except OSError:
+                continue  # someone else's, or vanished under us; not our problem
+    return reaped
+
+
+def install_snapshot(body: bytes, cache: Path, headers: dict[str, str]) -> int:
+    """Replace the cache with the tar's contents.
+
+    🔴 CONCURRENT SYNCS USED TO SILENTLY TRUNCATE THIS CACHE, and the previous
+    docstring claimed the opposite. The staging directory had a FIXED name and
+    was `rmtree`d at the top of every run, so two syncs shared it: measured over
+    10 trials on a 305-entry store, 3 left a SHORT cache (183, 256, 292 entries)
+    with no error, and further runs died with `FileExistsError` /
+    `Directory not empty`. The reader then rendered that partial tree under its
+    own "none omitted" header — the completeness lie, arriving by the one route
+    this function exists to close. This repo's CLAUDE.md says concurrent
+    sessions are normal, and a timer is planned, so it was not a corner case.
+
+    Two changes make it safe: a PER-RUN staging directory (so runs cannot share
+    one), and an exclusive LOCK around the swap (so the rename pair cannot
+    interleave). The lock is advisory and held only for the swap, so a slow
+    download never blocks another reader.
+    """
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    _reap_orphans(cache)
+    staging = Path(tempfile.mkdtemp(dir=cache.parent, prefix=f"{cache.name}.new-"))
+
+    try:
+        count = 0
+        seen: set[str] = set()
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r") as tar:
+            members = tar.getmembers()
+            # 🔴 A DECOMPRESSED-SIZE CAP. Gzip removed the natural bound: before
+            # it, the response body limited what could be extracted. An audit
+            # MEASURED a 203,934-byte body expanding to 209,715,200 bytes on
+            # disk — 1028x — and the client reported `live … 1 entries`, exit 0.
+            # Every other hostile-archive guard here (links, traversal,
+            # duplicates, count mismatch) exists for a server we do not fully
+            # trust; a size bomb is the same threat model and was the one hole.
+            # 🔴 TWO CEILINGS, BECAUSE BYTES ALONE BOUND NOTHING. `m.size` is 0
+            # for an empty member, so a byte ceiling never fires on an INODE
+            # bomb: measured against the previous commit, a 282,282-byte body
+            # carrying 60,000 zero-length `*.md` members wrote 60,000 files into
+            # the cache in 3.7 s and reported `live … 60000 entries`, exit 0.
+            # Same threat model as the byte bomb closed last round, one axis
+            # over — and `X-Store-Entries` cannot help, since the same hostile
+            # server sets it.
+            #
+            # `sum`, not `max`: a `max`-based ceiling passes a 1000 x 250 MB
+            # archive, and the single-member bomb fixture cannot tell the two
+            # apart (that mutant survived the previous round's suite).
+            declared_bytes = sum(m.size for m in members)
+            if declared_bytes > MAX_UNPACKED_BYTES:
+                raise StoreCorrupt(
+                    f"archive unpacks to {declared_bytes} bytes, over the "
+                    f"{MAX_UNPACKED_BYTES}-byte ceiling "
+                    f"({len(body)} bytes on the wire)"
+                )
+            if len(members) > MAX_MEMBERS:
+                raise StoreCorrupt(
+                    f"archive holds {len(members)} members, over the "
+                    f"{MAX_MEMBERS}-member ceiling "
+                    f"({len(body)} bytes on the wire)"
+                )
+            for member in members:
+                name = member.name
+                # 🔴 A HOSTILE OR CORRUPT ARCHIVE IS NOT AN OUTAGE. This raises
+                # StoreCorrupt, not StoreUnreachable, so it can never be quietly
+                # absorbed into "serving from cache" — a server shipping a
+                # traversal member is the one case that must be loud.
+                if member.issym() or member.islnk():
+                    raise StoreCorrupt(f"tar member is a link: {name!r}")
+                if not member.isfile():
+                    raise StoreCorrupt(f"tar member is not a regular file: {name!r}")
+                if not _safe_member_name(name):
+                    raise StoreCorrupt(f"tar member escapes the root: {name!r}")
+                if name in seen:
+                    raise StoreCorrupt(f"duplicate tar member: {name!r}")
+                seen.add(name)
+                # `filter="data"` is 3.12+'s safe extractor AND silences the
+                # DeprecationWarning that 3.14 prints on every extract — which
+                # would otherwise land on stderr on the /resume hot path.
+                tar.extract(member, staging, filter="data")
+                if name.endswith(".md"):
+                    count += 1
+
+        # 🔴 The server's own count, checked. The header comment on the server
+        # side claims a truncated transfer is "visible as a disagreement"; it is
+        # only visible if somebody compares, so this is that comparison.
+        declared = headers.get("x-store-entries")
+        if declared is not None and declared.isdigit() and int(declared) != count:
+            raise StoreCorrupt(
+                f"server declared {declared} entries, archive held {count}"
+            )
+
+        (staging / SYNC_STAMP).write_text(
+            "\n".join(
+                [
+                    f"synced={int(time.time())}",
+                    f"revision={headers.get('x-store-revision', 'unknown')}",
+                    f"snapshot={headers.get('x-store-snapshot', 'UNSTAMPED')}",
+                    f"entries={count}",
+                    # Recorded so a filtered cache can never be mistaken for a
+                    # complete one. Today the CLI only ever writes ALL.
+                    "coverage=ALL",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        lock_path = cache.parent / f"{cache.name}.lock"
+        with open(lock_path, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            retired = None
+            try:
+                if cache.exists():
+                    retired = Path(
+                        tempfile.mkdtemp(dir=cache.parent, prefix=f"{cache.name}.old-")
+                    )
+                    retired.rmdir()  # mkdtemp reserved the name; rename needs it free
+                    cache.rename(retired)
+                staging.rename(cache)
+                staging = None  # type: ignore[assignment]  # ownership transferred
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+            if retired is not None:
+                shutil.rmtree(retired, ignore_errors=True)
+        return count
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def cache_age(cache: Path) -> tuple[int | None, dict[str, str]]:
+    """`(age_seconds, stamp_fields)`; age is None when the stamp is unreadable.
+
+    An unreadable stamp is NOT reported as age 0. "Fresh" is the one answer a
+    broken clock must never produce here.
+    """
+    fields: dict[str, str] = {}
+    try:
+        for line in (cache / SYNC_STAMP).read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            fields[key.strip()] = value.strip()
+        age = int(time.time()) - int(fields["synced"])
+        # 🔴 A FUTURE-DATED STAMP IS UNKNOWN, NOT FRESH. The previous `max(0, …)`
+        # clamped it to `0s`, i.e. "just synced" — which is precisely the answer
+        # this function's docstring says a broken clock must never produce, and
+        # a suspending laptop (the case §2d is written for) is where clock jumps
+        # actually happen.
+        return (age if age >= 0 else None), fields
+    except (OSError, KeyError, ValueError):
+        return None, fields
+
+
+def _age_phrase(seconds: int | None) -> str:
+    """"cache 3h old" / "cache age UNKNOWN" — never "cache age UNKNOWN old"."""
+    return "cache age UNKNOWN" if seconds is None else f"cache {human_age(seconds)} old"
+
+
+def human_age(seconds: int | None) -> str:
+    if seconds is None:
+        return "age UNKNOWN"  # callers phrase this as "cache <x> old"
+    if seconds < 90:
+        return f"{seconds}s"
+    if seconds < 5400:
+        return f"{seconds // 60}m"
+    if seconds < 172800:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def resolve_state(
+    cache: Path, *, no_sync: bool, scope: str | None, timeout: int
+) -> tuple[str, str, int | None]:
+    """`(state, detail, exit_hint)` — the four-state decision, in ONE place.
+
+    Every caller reads its state from here so the four cannot drift apart per
+    subcommand, which is how three of them end up rendering alike.
+    """
+    if no_sync:
+        age, fields = cache_age(cache)
+        if not (cache / SYNC_STAMP).exists():
+            return STATE_NO_CACHE, "--no-sync given and no cache exists", (
+                EXIT_UNREACHABLE_NO_CACHE
+            )
+        return (
+            STATE_CACHED,
+            f"--no-sync given; cache {_age_phrase(age)}, "
+            f"revision {fields.get('revision', 'unknown')}",
+            None,
+        )
+
+    try:
+        url, token = load_config()
+        body, headers = fetch_snapshot(url, token, scope=scope, timeout=timeout)
+        try:
+            count = install_snapshot(body, cache, headers)
+        except (EOFError, zlib.error) as exc:
+            # 🔴 THE GZIP SWITCH REOPENED THIS IN A NEW SHAPE. Before gzip a
+            # short body raised `tarfile.ReadError`, handled below. Compressed,
+            # a truncated body raises `EOFError: Compressed file ended before
+            # the end-of-stream marker was reached` — which was NOT caught, so
+            # it escaped as a traceback at exit 1 with a healthy cache unused:
+            # exactly the defect the ReadError arm was added to fix, one
+            # exception type over. Measured by an audit against this client.
+            raise StoreUnreachable(f"{url} sent a truncated archive: {exc}") from exc
+        except tarfile.ReadError as exc:
+            # 🔴 A 200 THAT IS NOT A TAR. Realistic in production precisely
+            # because this host's edge answers 200 with HTML for some clients
+            # (see `fetch_snapshot`'s User-Agent note). Previously this escaped
+            # every handler as an unhandled traceback at exit 1 — with a healthy
+            # cache sitting right there, unused. It is "we did not receive a
+            # store", i.e. the unreachable family, so the cache is served.
+            raise StoreUnreachable(f"{url} did not return an archive: {exc}") from exc
+        except OSError as exc:
+            # Disk full / permission denied while extracting. Same family: we
+            # have no new store, and the old one is still good.
+            raise StoreUnreachable(f"could not write the cache: {exc}") from exc
+        return (
+            STATE_LIVE,
+            f"fetched from {url} just now — {count} entries, "
+            f"snapshot {headers.get('x-store-snapshot', 'UNSTAMPED')}",
+            None,
+        )
+    except StoreUnreachable as exc:
+        age, fields = cache_age(cache)
+        if not (cache / SYNC_STAMP).exists():
+            # 🔴 NOTHING WAS READ. Not an empty digest, not "nothing recorded".
+            return STATE_NO_CACHE, str(exc), EXIT_UNREACHABLE_NO_CACHE
+        return (
+            STATE_CACHED,
+            f"{exc} — SERVED FROM CACHE, {_age_phrase(age)}, "
+            f"revision {fields.get('revision', 'unknown')}",
+            None,
+        )
+
+
+def banner(state: str, detail: str) -> str:
+    marker = "🔴" if state == STATE_NO_CACHE else ("⚠" if state == STATE_CACHED else "")
+    return f"{marker} cairn: {state} — {detail}".strip()
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """🔴 `sync` FAILS when it could not refresh, even though a cache survives.
+
+    This is deliberately different from `recall`, and the difference is the
+    whole contract. `recall`'s job is to answer, so a stale answer is a success
+    that says it is stale (exit 0). `sync`'s job is to REFRESH, so "I did not
+    reach the store" is a failed operation no matter how good the cache is —
+    exit non-zero, naming the host. A `sync` that exited 0 on an outage is how a
+    timer reports success forever while the cache silently ages out.
+    """
+    # 🔴 `scope=None`, ALWAYS. `--scope` used to be threaded through here, which
+    # REPLACED THE SHARED CACHE with a one-scope copy: measured, `validate
+    # --scope widget-cfg` took the cache from 305 entries to 2, after which an
+    # offline recall of any other scope printed "the store has no
+    # 'other-scope/' directory" at exit 0 — a claim about the STORE derived from
+    # a filtered cache. `_report` carried a comment warning about exactly this
+    # and the fix had been applied at ONE of three call sites. One rule, one
+    # place: the CLI's shared cache is now always the whole store, and
+    # `.sync-stamp` records `coverage=ALL` so a future filtered mode cannot
+    # silently inherit the completeness claim. The server keeps `?scope=` — it
+    # is a legitimate API capability with its own tests; it is just not
+    # something that may narrow this cache.
+    state, detail, hint = resolve_state(
+        args.cache, no_sync=False, scope=None, timeout=_store_timeout(args)
+    )
+    if state == STATE_LIVE:
+        print(banner(state, detail))
+        return EXIT_OK
+    print(banner(state, detail), file=sys.stderr)
+    return hint if hint is not None else EXIT_REFRESH_FAILED
+
+
+def cmd_ls_entries(args: argparse.Namespace) -> int:
+    state, detail, hint = resolve_state(
+        args.cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args)
+    )
+    if hint is not None:
+        print(banner(state, detail), file=sys.stderr)
+        return hint
+    print(banner(state, detail), file=sys.stderr)
+    for path in sorted(args.cache.glob("*/*.md")):
+        print(f"{path.parent.name}/{path.name}")
+    return EXIT_OK
+
+
+def _report(args: argparse.Namespace, *, search: str | None) -> int:
+    # 🔴 SYNC THE WHOLE STORE, NEVER `scope=args.scope`. A scope-filtered cache
+    # makes the reader answer `scope-absent` for every scope that was simply not
+    # fetched — indistinguishable, in the output, from a scope the store has
+    # never held. That is the silent-zero this file exists to prevent, and the
+    # first draft of this function had it.
+    state, detail, hint = resolve_state(
+        args.cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args)
+    )
+    if hint is not None:
+        print(banner(state, detail), file=sys.stderr)
+        return hint
+
+    # `scope_for_repo` raises GitError outside a git repo — previously uncaught,
+    # so `cairn recall` in a plain directory exited 1 with a traceback and the
+    # EXIT_USAGE path below was unreachable for the commonest way to hit it.
+    try:
+        scope = args.scope or scope_for_repo(args.repo)
+    except Exception as exc:  # GitError and anything else the resolver raises
+        print(
+            f"cairn: could not derive a scope from {args.repo!r}: {exc}\n"
+            f"       pass --scope explicitly.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    if not scope:
+        print("cairn: --scope is required (no scope could be derived)", file=sys.stderr)
+        return EXIT_USAGE
+
+    if search is not None:
+        report = rc.search(
+            str(args.cache),
+            scope,
+            search,
+            context=rc.CONTEXT_BULLET,
+            threshold=rc.DEFAULT_SEARCH_THRESHOLD,
+            max_hits=rc.DEFAULT_MAX_HITS,
+            all_scopes=args.all_scopes,
+        )
+        text = rc.render_search(report)
+    else:
+        report = rc.recall(str(args.cache), scope, mode=args.mode)
+        text = rc.render_text(report)
+
+    # An empty scope reached through a LIVE fetch is `scope-empty`; the same
+    # emptiness behind a cache stays `cached`, because we did not reach the
+    # store and cannot claim the emptiness is the store's.
+    if state == STATE_LIVE and getattr(report, "status", "") in (
+        "scope-empty",
+        "scope-absent",
+    ):
+        # 🔴 KEEP `detail`, DO NOT REPLACE IT. The previous version overwrote it
+        # wholesale, which threw away the server's freshness stamp exactly when
+        # it mattered most: if the pod could not read a scope, that stamp is
+        # where `newest=UNREADABLE` appears, and discarding it turned an
+        # unreadable scope into a confident "nothing recorded". The server now
+        # 503s on an unreadable scope so this should be unreachable for THAT
+        # cause — but the evidence stays attached regardless, because "should be
+        # unreachable" is not a property to bet the silent-zero on.
+        state = STATE_EMPTY
+        detail = f"reached the store; nothing recorded for this scope — {detail}"
+
+    print(banner(state, detail))
+    print()
+    print(text)
+    # 🔴 THE READER'S OWN EXIT CODE, PASSED THROUGH. The module docstring
+    # promised this ("the reader's own non-zero codes pass through unchanged so
+    # a malformed entry still reports what it always did") while the code
+    # hardcoded 0. Measured on an all-malformed scope: `subsystem_recall.py`
+    # exited 3, `cairn recall` exited 0. The stdout text was loud either way, so
+    # a human was not deceived — but `/resume` step 4 branches on the CODE, and
+    # a machine consumer was. `_exit_for` is the reader's own decision, reused
+    # rather than re-derived, exactly as the server does in `_serve_report`.
+    # `label` is DERIVED, not an attribute — `RecallReport` has no `.label`, and
+    # assuming it did was an AttributeError that took every recall to exit 1.
+    # Derived exactly as the server does in `_recall`, so the two agree.
+    # 🔴 SEARCH USES ITS OWN LABEL. `SearchReport.label` is a property naming the
+    # scopes SEARCHED; passing the query instead made the reader's failure
+    # sentence say "`lease` holds 1 entry file" — naming the search term as if it
+    # were a scope path. The server passes `report.label` for search and derives
+    # `f"{scope}/"` only for recall; this now matches both.
+    label = report.label if search is not None else f"{report.scope}/"
+    return rc._exit_for(report.status, label, report.malformed)
+
+
+def cmd_recall(args: argparse.Namespace) -> int:
+    return _report(args, search=None)
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    return _report(args, search=args.query)
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Validate the CACHE with the writer's own parser.
+
+    🔴 THIS COMMAND NEVER WORKED. It shelled `subsystem_recall.main` with
+    `--validate`, which is a **the writer half** flag — the reader has no such
+    option, so every invocation exited 2 with `unrecognized arguments:
+    --validate`. Worse, the test written to close the "no validate coverage"
+    gap asserted only that the cache directory was unchanged, so it passed
+    green over a command that failed on every input. A test that cannot
+    distinguish "worked" from "exited 2" is not coverage.
+
+    The docstring also claimed "`subsystem_recall.py --validate` already answers
+    that one", which was the same false belief stated as justification.
+    """
+    # `scope=None` — see the note in `cmd_sync`. `--scope` still narrows what is
+    # VALIDATED (below); it must never narrow what is CACHED.
+    state, detail, hint = resolve_state(
+        args.cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args)
+    )
+    if hint is not None:
+        print(banner(state, detail), file=sys.stderr)
+        return hint
+    print(banner(state, detail), file=sys.stderr)
+    # 🔴 THE CACHE IS A MULTI-SCOPE STORE; `--validate` IS SCOPE-BOUND. With no
+    # `--scope` the writer derives one from the REPO, so `cairn validate` in any
+    # checkout validated a scope the cache does not hold and printed "NOTHING
+    # WAS CHECKED — a zero here is NOT a clean bill of health" while exiting 0.
+    # That is the silent zero this command exists to detect, committed by the
+    # command itself. With no --scope we validate EVERY scope in the cache.
+    held = sorted(p.name for p in args.cache.iterdir() if p.is_dir())
+    if args.scope:
+        # 🔴 THE SILENT ZERO THIS FUNCTION WAS REWRITTEN TO CLOSE, STILL OPEN ON
+        # THIS BRANCH. The no-scope path was fixed to enumerate the cache; the
+        # explicit `--scope` path passed the value straight through, so
+        # `cairn validate --scope no-such-scope` printed the writer's own
+        # "NOTHING WAS CHECKED — a zero here is NOT a clean bill of health" and
+        # exited 0. The docstring above names that failure mode verbatim while
+        # the branch that commits it went unguarded — the fix covered the case
+        # it was looking at, not the predicate.
+        if args.scope not in held:
+            print(
+                f"cairn: cache holds no scope {args.scope!r} — "
+                f"nothing was validated. Held: {', '.join(held) or '(none)'}",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        scopes = [args.scope]
+    else:
+        scopes = held
+    if not scopes:
+        print(
+            f"cairn: nothing to validate — {args.cache} holds no scopes",
+            file=sys.stderr,
+        )
+        return EXIT_UNREACHABLE_NO_CACHE
+    worst = EXIT_OK
+    for scope in scopes:
+        code = entry_shape.main(
+            ["--store", str(args.cache), "--validate", "--scope", scope]
+        )
+        worst = max(worst, code)
+    return worst
+
+
+# =============================================================================
+# THE WRITE PATH (criterion 9). Everything above this line reads.
+# =============================================================================
+#
+# 🔴 WRITE-THROUGH, NO SPOOL, NO CACHE FALLBACK. The pod is the authority; the
+# local cache is a read-through copy with no authority of its own. A write that
+# cannot reach the pod is REFUSED, loudly, at a non-zero exit — it is never
+# queued, never written to the cache, and never reported as done. `/resume` and
+# every other READ keeps working offline off the cache; only writes stop. That
+# asymmetry is decision 8 in `claudedocs/plan-cairn-integration.md` and the
+# reason it is acceptable is that a refused write costs one retry while a
+# silently-local write costs the bullet the next `seed.sh` overwrites.
+#
+# 🔴 THE ACTOR IS NOT SENT AND CANNOT BE. `server._append_bullet` derives it
+# from the token that authenticated and DISCARDS any `actor` key in the body.
+# This client therefore does not have an `--actor` flag: offering one would
+# imply a control the caller does not have.
+
+
+class WriteRefused(Exception):
+    """The store answered, and the answer is a refusal. Carries its own code.
+
+    🔴 SEPARATE FROM `StoreUnreachable` FOR THE SAME REASON `StoreCorrupt` IS.
+    "I could not ask" and "I asked and was told no" have different remedies —
+    retry vs change the request — and a client that collapses them turns a
+    permanently-malformed bullet into an infinite retry, or a transient outage
+    into "the store rejected this, give up".
+    """
+
+    def __init__(self, exit_code: int, status: str, detail: str) -> None:
+        super().__init__(detail)
+        self.exit_code = exit_code
+        self.status = status
+        self.detail = detail
+
+
+# HTTP status -> (our exit code, whether the caller should retry unchanged).
+# 🔴 A TABLE, NOT AN `if` LADDER, so `test_every_documented_server_status_maps`
+# can walk it against the statuses `server.py` actually emits on a write route.
+# An unmapped code is NOT silently treated as success: `_classify` falls through
+# to EXIT_WRITE_REFUSED and says the code was unrecognised, which is loud and
+# wrong-in-the-safe-direction (the caller is told the write did not land).
+_WRITE_STATUS_EXITS: dict[int, int] = {
+    400: EXIT_WRITE_REFUSED,        # malformed body / ambiguous ref
+    401: EXIT_WRITE_REFUSED,        # no or bad credential
+    403: EXIT_WRITE_REFUSED,        # edge refusal (see the User-Agent note)
+    404: EXIT_WRITE_REFUSED,        # scope-unknown or ref-unknown
+    405: EXIT_WRITE_REFUSED,        # read-only image: the write path is NOT deployed
+    412: EXIT_WRITE_PRECONDITION,   # If-Match named a revision the entry no longer has
+    422: EXIT_WRITE_REFUSED,        # entry-shape: no `## Nuance / work-history`
+    428: EXIT_WRITE_REFUSED,        # precondition required (a PUT with no If-Match)
+    429: EXIT_WRITE_UNREACHABLE,    # rate limited — a retry IS the right response
+    # 🔴 500 IS A RETRY, NOT A "FIX YOUR REQUEST". `server._backstop` turns any
+    # unhandled handler exception into a 500, so it IS reachable on a write
+    # route. It was absent here and fell through to `_classify`'s "unrecognised"
+    # arm, which is EXIT_WRITE_REFUSED — telling the caller to change a
+    # byte-identical request that would very likely succeed on a retry. The
+    # fallthrough was labelled "wrong-in-the-safe-direction", and that is true
+    # for landed/not-landed and FALSE for retry/don't-retry, which is the exact
+    # distinction 6 and 7 exist to carry.
+    500: EXIT_WRITE_UNREACHABLE,
+    502: EXIT_WRITE_UNREACHABLE,    # a bad gateway is the edge, not the request
+    503: EXIT_WRITE_UNREACHABLE,    # the server could not read its own store
+    504: EXIT_WRITE_UNREACHABLE,
+}
+
+
+# 🔴 A SECOND TABLE, KEYED ON THE SERVER'S `X-Store-Status` TOKEN, CONSULTED
+# FIRST. It exists because one HTTP status can carry two outcomes with opposite
+# remedies: `412` is `precondition-failed` (the entry moved — retry after a
+# re-sync) on a `put`, and `already-exists` (it is there — do not retry) on a
+# `create`. The code table above cannot express that, and collapsing the two
+# would give a `create` caller an exit that says "re-derive and try again" for a
+# condition no retry can change.
+#
+# 🔴 A TOKEN NOT IN THIS TABLE FALLS THROUGH TO THE CODE TABLE, never to a pass.
+# The token is advisory routing, not the verdict.
+_WRITE_STATUS_TOKEN_EXITS: dict[str, int] = {
+    "already-exists": EXIT_WRITE_EXISTS,
+}
+
+
+def _classify(code: int, status: str, detail: str) -> WriteRefused:
+    by_token = _WRITE_STATUS_TOKEN_EXITS.get(status)
+    if by_token is not None:
+        return WriteRefused(by_token, status, detail)
+    exit_code = _WRITE_STATUS_EXITS.get(code)
+    if exit_code is None:
+        return WriteRefused(
+            EXIT_WRITE_REFUSED,
+            status or f"http-{code}",
+            f"unrecognised HTTP {code} on a write route — treating the write as "
+            f"NOT LANDED: {detail}",
+        )
+    return WriteRefused(exit_code, status or f"http-{code}", detail)
+
+
+def send_write(
+    url: str,
+    token: str,
+    *,
+    method: str,
+    path: str,
+    body: bytes,
+    timeout: int,
+    extra_headers: dict[str, str] | None = None,
+) -> tuple[dict[str, str], bytes]:
+    """One request against a write route. Returns `(headers, body)` on 200.
+
+    Raises `WriteRefused` on any non-200 the server produced, and
+    `StoreUnreachable` when there was no answer at all. Nothing else escapes.
+    """
+    bad = _cairn_who().unbounded_timeout_reason(timeout)
+    if bad:
+        # 🔴 THE SAME REFUSAL THE READ PATH MAKES, FOR THE SAME REASON. A
+        # `timeout=None` reaches `urlopen` as NO timeout, and an unbounded WRITE
+        # is strictly worse than an unbounded read: the request may already have
+        # been applied, so a caller that eventually gives up cannot tell whether
+        # it landed.
+        raise StoreUnreachable(f"refusing to write to {url}: {bad}")
+    target = f"{url}{path}"
+    req = urllib.request.Request(target, data=body, method=method)
+    _apply_standard_headers(req, token)
+    req.add_header("Content-Type", "application/json")
+    for name, value in (extra_headers or {}).items():
+        req.add_header(name, value)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # `resp.headers` returned as the Message, never `dict(...)` — see
+            # `fetch_snapshot` for the measured case-folding incident.
+            return resp.headers, resp.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", "replace").strip().replace("\n", "; ")
+        except Exception:
+            detail = ""
+        status = exc.headers.get("X-Store-Status", "") if exc.headers else ""
+        raise _classify(exc.code, status, detail[:400] or f"HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise StoreUnreachable(f"{url} unreachable: {exc.reason}") from exc
+    except OSError as exc:
+        raise StoreUnreachable(f"{url} unreachable: {exc}") from exc
+
+
+def _write_scope(args: argparse.Namespace) -> str | None:
+    """The scope a write targets, or None having already printed why."""
+    try:
+        scope = args.scope or scope_for_repo(args.repo)
+    except Exception as exc:
+        print(
+            f"cairn: could not derive a scope from {args.repo!r}: {exc}\n"
+            f"       pass --scope explicitly.",
+            file=sys.stderr,
+        )
+        return None
+    if not scope:
+        print("cairn: --scope is required (no scope could be derived)", file=sys.stderr)
+        return None
+    return scope
+
+
+def cmd_append(args: argparse.Namespace) -> int:
+    """`POST /api/v1/entry/<scope>/<ref>/bullets` — append ONE dated bullet.
+
+    🔴 THIS IS THE VERB CRITERION 9 ROUTES `subsystem-index` THROUGH. Before it
+    existed the skill's append was an `Edit` against `~/.claude/analyze-service-
+    index/<scope>/<entry>.md`, which is local-only: the bullet lived on one host
+    and the next `seed.sh` from any host replaced the served copy with a file
+    that never had it. This makes the append land where the authority is.
+
+    🔴 DO NOT DATE-PREFIX `--text`. The server prepends `- <date>: ` itself; the
+    first production append through this route reads `- 2026-08-29: 2026-08-29:
+    …` because a caller did.
+    """
+    scope = _write_scope(args)
+    if scope is None:
+        return EXIT_USAGE
+    url, token = load_config()
+    payload = json.dumps({"text": args.text, "session": args.session}).encode("utf-8")
+    quoted = f"/api/v1/entry/{quote(scope, safe='')}/{quote(args.ref, safe='')}/bullets"
+    headers, body = send_write(
+        url, token, method="POST", path=quoted, body=payload,
+        timeout=_store_timeout(args),
+    )
+    status = headers.get("X-Store-Status", "unknown")
+    revision = (headers.get("ETag") or "").strip('"')
+    # 🔴 `duplicate` IS PRINTED, NOT SWALLOWED, and it exits 0. The server
+    # recognises a bullet by CONTENT HASH, so a re-POST after a timeout is
+    # idempotent — which is the property that makes a retry safe. But a caller
+    # told nothing would read "appended" into a run that wrote nothing, and the
+    # store's own idempotency note says a genuinely new bullet whose text is
+    # byte-identical to an existing one is silently NOT appended. Saying which
+    # of the two happened is the whole difference.
+    print(
+        f"cairn: {status} scope={scope} ref={args.ref} revision={revision or 'unknown'}"
+    )
+    sys.stdout.write(body.decode("utf-8", "replace"))
+    return EXIT_OK
+
+
+def cmd_put(args: argparse.Namespace) -> int:
+    """`PUT /api/v1/entry/<scope>/<ref>` — whole-file replace behind `If-Match`.
+
+    🔴 WHY A WHOLE-FILE VERB EXISTS AT ALL, given that `append` is the safe one:
+    the `subsystem-index` protocol also mandates rewriting an existing bullet's
+    `OPEN:` marker to `RESOLVED <sha>:` **in the same edit**, and updating
+    `## Pointers`. Neither is an append. Without this verb, freezing the local
+    store read-only would make those two operations impossible rather than
+    merely relocated — the cutover would REGRESS a documented protocol step.
+
+    🔴 THE REVISION IS DERIVED FROM A **LIVE** SYNC, NEVER FROM `--no-sync`.
+    `server.entry_revision` is `sha256(file bytes)[:16]`, so the cache can
+    compute it offline — which is exactly what makes a stale cache dangerous
+    here in a way it is not for a read: an edit based on bytes that moved is a
+    lost update, and the `If-Match` is what turns that into a 412 instead of a
+    silent overwrite. Deriving it from a cache we did not just refresh would
+    still be *correct* (the server compares against its own copy) but it wastes
+    the operator's edit on a guaranteed 412. `--if-match` is accepted for the
+    case where the caller already holds the value.
+    """
+    scope = _write_scope(args)
+    if scope is None:
+        return EXIT_USAGE
+    # 🔴 READ THE FILE BEFORE THE NETWORK — AND "BEFORE THE NETWORK" MEANS ABOVE
+    # `resolve_state`, NOT ABOVE `load_config`. The first attempt at this fix
+    # moved the read up only as far as the config load, which is a local file
+    # read, so the full snapshot download still ran first: a missing `--file`
+    # went on reporting the STORE AS UNREACHABLE (rc 7) instead of "cannot read
+    # --file" (rc 2). The comment claimed the ordering, and the test that
+    # asserted it did so in its NAME while its body checked only the exit code
+    # and the sentence — both of which held with the read left where it was. A
+    # guard's description claiming coverage its body does not provide is the
+    # shape that stops anyone looking.
+    try:
+        payload = args.file.read_bytes()
+    except OSError as exc:
+        print(f"cairn: cannot read --file {args.file}: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    revision = args.if_match
+    if not revision:
+        state, detail, hint = resolve_state(
+            args.cache, no_sync=False, scope=None, timeout=_store_timeout(args)
+        )
+        if state != STATE_LIVE:
+            # 🔴 NOT "served from cache". A read may degrade; deriving a
+            # precondition from bytes we could not confirm is the one case where
+            # the cache is worse than nothing.
+            #
+            # 🔴 AND NOT `hint`. This returned `hint if hint is not None else
+            # EXIT_WRITE_UNREACHABLE`, and `resolve_state` sets `hint` to
+            # EXIT_UNREACHABLE_NO_CACHE (3) exactly when there is NO cache —
+            # which is the FIRST run on a fresh host, i.e. the commonest way to
+            # get here. So the one code this whole file insists a write must
+            # never return was returned by a write, on its likeliest path, while
+            # four separate comments and the design doc said it could not
+            # happen. `hint` is a READ verdict — "this is what a reader should
+            # exit with" — and it has no meaning for a write. Measured before
+            # the fix: put with no cache -> 3, put with a cache -> 7, append
+            # with no cache -> 7.
+            print(
+                f"🔴 cairn: refusing to PUT — could not refresh the cache, so the "
+                f"revision would be derived from bytes that may have moved "
+                f"({detail}). Nothing was queued and nothing was written locally. "
+                f"Pass --if-match explicitly if you already hold it.",
+                file=sys.stderr,
+            )
+            return EXIT_WRITE_UNREACHABLE
+        matches = sorted(args.cache.glob(f"{scope}/{args.ref}.md")) or sorted(
+            args.cache.glob(f"{scope}/{args.ref}.*.md")
+        )
+        if len(matches) != 1:
+            print(
+                f"cairn: cannot derive a revision — {len(matches)} cached file(s) "
+                f"match {scope}/{args.ref}. Pass --if-match, or use the entry's "
+                f"exact filename stem as --ref.",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        revision = hashlib.sha256(matches[0].read_bytes()).hexdigest()[:16]
+        print(f"cairn: derived If-Match {revision} from the live snapshot", file=sys.stderr)
+    url, token = load_config()
+    quoted = f"/api/v1/entry/{quote(scope, safe='')}/{quote(args.ref, safe='')}"
+    headers, body = send_write(
+        url, token, method="PUT", path=quoted, body=payload,
+        timeout=_store_timeout(args),
+        extra_headers={"If-Match": f'"{revision}"'},
+    )
+    new_rev = (headers.get("ETag") or "").strip('"')
+    print(
+        f"cairn: {headers.get('X-Store-Status', 'unknown')} scope={scope} "
+        f"ref={args.ref} revision={new_rev or 'unknown'}"
+    )
+    sys.stdout.write(body.decode("utf-8", "replace"))
+    return EXIT_OK
+
+
+def cmd_create(args: argparse.Namespace) -> int:
+    """`PUT /api/v1/entry/<scope>/<ref>` with `If-None-Match: *` — a NEW entry.
+
+    🔴 WHY THIS VERB EXISTS, since `append` and `put` already write. Neither can
+    make an entry that is not there: both resolve an EXISTING ref and 404 when it
+    is absent. So the protocol told a session to write a brand-new entry into
+    `~/.claude/analyze-service-index/` directly — which was true and safe while
+    that tree WAS the store, and became content loss the moment reads moved to
+    the pod cache: measured 2026-09-02, five whole entries existed only on one
+    host and were dark to every reader. This is the verb that closes it.
+
+    🔴 NO `--if-match`, AND NO SYNC. `put` derives a precondition from a LIVE
+    snapshot because it is editing bytes that may have moved; a create has no
+    prior bytes, and its precondition is the constant `*`. The server decides
+    absence under its own lock, so there is nothing a local cache read could add
+    except a stale answer and a wasted round trip.
+
+    🔴 EXIT 9 IS NOT A FAILURE TO RETRY. It means the entry already exists and
+    NOTHING was written — the remedy is `cairn append` (a bullet) or `cairn put`
+    (a rewrite), never the same `create` again.
+    """
+    scope = _write_scope(args)
+    if scope is None:
+        return EXIT_USAGE
+    # 🔴 READ THE FILE BEFORE THE NETWORK, for the reason `cmd_put`'s comment
+    # gives at length: an unreadable `--file` must report itself (rc 2) and not
+    # be reported as the store being unreachable.
+    try:
+        payload = args.file.read_bytes()
+    except OSError as exc:
+        print(f"cairn: cannot read --file {args.file}: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    url, token = load_config()
+    quoted = f"/api/v1/entry/{quote(scope, safe='')}/{quote(args.ref, safe='')}"
+    headers, body = send_write(
+        url, token, method="PUT", path=quoted, body=payload,
+        timeout=_store_timeout(args),
+        extra_headers={"If-None-Match": "*"},
+    )
+    revision = (headers.get("ETag") or "").strip('"')
+    print(
+        f"cairn: {headers.get('X-Store-Status', 'unknown')} scope={scope} "
+        f"ref={args.ref} revision={revision or 'unknown'}"
+    )
+    sys.stdout.write(body.decode("utf-8", "replace"))
+    return EXIT_OK
+# =============================================================================
+# DOCTOR. Reads everything, installs nothing.
+# =============================================================================
+
+
+def _cairn_doctor():
+    """The `doctor` module, imported inside a function — see `_doctor_epilog`.
+
+    ⚠ NOT "lazily", in effect. `build_parser` calls `_doctor_epilog()` to build
+    the help text, so this runs on EVERY invocation of every subcommand. Saying
+    otherwise is a cost model a maintainer would reason from and be wrong.
+    """
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import cairn_doctor  # noqa: PLC0415
+
+    return cairn_doctor
+
+
+#: How an operator reads the identity and the DECLARED allowlist behind a token.
+#: Spelled once, printed by `doctor`, and pinned by
+#: `test_cairn_doctor.py::test_the_identity_remedy_names_the_pods_own_token_file`
+#: against `server.DEFAULT_TOKEN_FILE`, so it cannot drift from the path the pod
+#: actually mounts. 🔴 It is a REMEDY, not a step this command takes: `doctor`
+#: never reads a secret and never shells `kubectl`.
+IDENTITY_REMEDY = (
+    "`kubectl -n subsystem-store exec deploy/subsystem-store-api -- "
+    "cut -d' ' -f2,3 /run/secrets/subsystem-store/token` "
+    "(fields 2 and 3 are the identity and the allowlist; field 1 is the secret)"
+)
+
+
+def probe_store(url: str, token: str, *, timeout: int):
+    """ONE snapshot fetch, read for facts and THROWN AWAY. Never installed.
+
+    🔴 IT REUSES `fetch_snapshot` RATHER THAN BUILDING A SECOND REQUEST. That
+    keeps `_apply_standard_headers` — and the measured User-Agent requirement
+    behind it — on this path without a second site to forget it at, and it is
+    what `test_cairn_write.py::test_no_request_builder_ANYWHERE_bypasses_this_
+    helper` would otherwise have to grow a case for.
+
+    🔴 IT NEVER CALLS `install_snapshot`. A diagnostic that repaired the cache
+    would destroy the staleness it was run to measure.
+    """
+    doctor = _cairn_doctor()
+    try:
+        body, headers = fetch_snapshot(url, token, scope=None, timeout=timeout)
+    except StoreUnreachable as exc:
+        return doctor.PodFacts(
+            reached=False, reason=str(exc), http_status=exc.http_status
+        )
+
+    visible = headers.get("x-store-entries")
+    snapshot = headers.get("x-store-snapshot", "")
+    scopes: set[str] = set()
+    try:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r") as tar:
+            for member in tar.getmembers():
+                if not member.isfile():
+                    continue
+                parts = Path(member.name).parts
+                if len(parts) == 2 and parts[1].endswith(".md"):
+                    scopes.add(parts[0])
+    except (tarfile.ReadError, EOFError, zlib.error) as exc:
+        return doctor.PodFacts(
+            reached=False,
+            reason=f"{url} answered, but the archive could not be read: {exc}",
+        )
+
+    # 🔴 `entry-files=` OUT OF THE STORE-WIDE HEADER, and the store-wide-ness is
+    # the point. `server.snapshot_freshness` counts the WHOLE served store, not
+    # the caller's slice — a documented, deliberate residual count leak — so the
+    # gap between it and `X-Store-Entries` is the only client-side evidence that
+    # entries exist which this credential cannot reach.
+    store_wide = None
+    for field in snapshot.split():
+        key, _, value = field.partition("=")
+        if key == "entry-files" and value.isdigit():
+            store_wide = int(value)
+
+    # 🔴 NO FALLBACK TO THE ARCHIVE'S OWN COUNT. Without `X-Store-Entries` the
+    # only number available is how many members ARRIVED, which is exactly the
+    # side of the comparison a truncated transfer moves — substituting it would
+    # make the cache-vs-pod check agree with itself and report OK over a short
+    # answer. `install_snapshot` cross-checks against this header for the same
+    # reason. Absent header => the count is UNMEASURED, with that as the stated
+    # reason.
+    return doctor.PodFacts(
+        reached=True,
+        visible_entries=int(visible) if visible and visible.isdigit() else None,
+        store_wide_entries=store_wide,
+        visible_scopes=tuple(sorted(scopes)),
+        snapshot_header=snapshot,
+    )
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """One call for every fact a reader otherwise assembles by hand."""
+    doctor = _cairn_doctor()
+    resolved = _read_store.resolve_read_store(None)
+
+    # 🔴 THE CONFIG LOAD HAPPENS EVEN UNDER `--no-sync`, AND THAT IS A FIX. It is
+    # a local file read, so "is a credential configured on this host" is
+    # answerable with the network switched off — and the first version skipped it,
+    # which made `doctor --no-sync` report `token PROBLEM: no token is configured`
+    # on a host whose token was sitting in `~/.config/subsystem-store/env`
+    # unread. A check that says PROBLEM about something it never looked at is the
+    # same defect as one that says OK about it.
+    token: str | None = None
+    token_reason = ""
+    try:
+        url, token = load_config()
+    except StoreUnreachable as exc:
+        token_reason = str(exc)
+        config_error: str | None = str(exc)
+    else:
+        config_error = None
+
+    if args.no_sync:
+        pod = doctor.PodFacts(
+            reached=False,
+            reason="--no-sync was given, so the store was never contacted",
+        )
+    elif config_error is not None:
+        pod = doctor.PodFacts(reached=False, reason=config_error)
+    else:
+        pod = probe_store(url, token, timeout=_store_timeout(args))
+
+    checks = doctor.collect(
+        resolved_root=resolved.root,
+        stamp_lines=resolved.stamp,
+        stamp_reason=resolved.reason,
+        cache_root=args.cache,
+        mirror_root=entry_shape.DEFAULT_STORE_ROOT,
+        pod=pod,
+        token=token,
+        token_reason=token_reason,
+        identity_remedy=IDENTITY_REMEDY,
+    )
+    if args.json:
+        print(json.dumps(doctor.to_dict(checks), indent=2))
+    else:
+        print(doctor.render(checks))
+    return doctor.exit_code(checks)
+
+
+def _cairn_who():
+    """The `who` module, imported lazily — it owns the timeout predicate.
+
+    🔴 SHARED SO THE TWO COPIES CANNOT DRIFT APART AGAIN. They already had:
+    only one excluded `bool`, while a comment here claimed they mirrored each
+    other. Importing the predicate rather than restating it means the next fix
+    lands in both halves of this CLI at once.
+
+    ⚠ THE IMPORT IS FUNCTION-SCOPED, BUT IT BUYS THE STORE PATH NOTHING, AND AN
+    EARLIER VERSION OF THIS SENTENCE CLAIMED IT DID. `build_parser` evaluates
+    `_who_default_timeout()` inside the `--timeout` help string, so `cairn_who`
+    is already in `sys.modules` before ANY subcommand dispatches — measured, on
+    every invocation. The first call here costs ~1 ms cold and ~0.1 us warm, and
+    in the real CLI it is always warm. It is function-scoped to keep the
+    module-scope import list honest about what this file needs to START, not as
+    an optimisation. Saying otherwise is the same false-comment class this whole
+    change exists to remove, and is how a maintainer reasons from a wrong cost
+    model — e.g. deleting the eager call above as an "obvious" cleanup.
+    """
+    # The sibling importers below guard this the same way. Module scope already
+    # inserts `lib/`, so no failing path exists today; relying on that silently
+    # is what lets three importers disagree, which is the defect one commit ago.
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import cairn_who  # noqa: PLC0415
+
+    return cairn_who
+
+
+def _store_timeout(args: argparse.Namespace) -> int:
+    """The store commands' bound, resolved in ONE place.
+
+    🔴 THE SENTINEL CREATED FOUR CHANCES TO FORGET. Making the top-level
+    `--timeout` default to `None` (so `who` can tell "not given" from an
+    explicit value) meant every store call site had to resolve it, and mutating
+    all four to pass the raw `None` through kept the whole suite green — a
+    `None` reaches `urllib` as NO timeout, the same unbounded wait `_run`
+    already refuses on the other side of this file. One resolver, four callers,
+    and `test_no_call_site_passes_the_RAW_sentinel_attribute` pins that no
+    fifth caller open-codes it, while
+    `test_every_STORE_subcommand_reaches_the_network_with_a_POSITIVE_bound`
+    covers the spellings an AST scan cannot see. `fetch_snapshot` refuses a
+    non-positive bound outright, so a future caller that bypasses both
+    fails closed rather than waiting forever.
+    """
+    return int(args.timeout) if getattr(args, "timeout", None) is not None else DEFAULT_TIMEOUT
+
+
+def _who_timeout(args: argparse.Namespace, own_default: int) -> int:
+    """Precedence: `who --timeout` > a top-level `--timeout` > who's own default.
+
+    🔴 THIS REPLACES A WARNING ABOUT A DISCARDED FLAG, AND HONOURING IT IS THE
+    BETTER FIX. argparse copies the subparser's namespace over the parent's, so
+    a top-level `cairn --timeout N who …` used to vanish — and before `who` had
+    its own flag that was the ONLY spelling that worked. The first fix printed a
+    notice instead, driven by hand-parsing `sys.argv`; that scanner returned the
+    WRONG answer for two reachable spellings — `--cache <val> --timeout 5 who 42`
+    (it stopped at `--cache`'s value) and `--time 5 who 42` (argparse accepts
+    long-option abbreviations; a literal `== "--timeout"` does not). Both
+    silently discarded, which is what the notice existed to prevent.
+    Re-implementing argparse's own parsing to describe argparse's behaviour was
+    the mistake. The flags now use DISTINCT dests, so nothing is clobbered and
+    there is nothing to announce.
+    """
+    if getattr(args, "who_timeout", None) is not None:
+        return int(args.who_timeout)
+    if getattr(args, "timeout", None) is not None:
+        return int(args.timeout)
+    return int(own_default)
+
+
+def _who_default_timeout() -> int:
+    """Read `who`'s own default rather than restating it in help text."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import cairn_who  # noqa: PLC0415
+
+    return int(cairn_who.DEFAULT_TIMEOUT)
+
+
+def cmd_who(args: argparse.Namespace) -> int:
+    """Task -> sessions -> windows + transcripts. See `lib/cairn_who.py`."""
+    lib = str(Path(__file__).resolve().parent / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import cairn_who  # noqa: PLC0415
+
+    report = cairn_who.resolve(
+        args.task, timeout=_who_timeout(args, cairn_who.DEFAULT_TIMEOUT),
+        host=args.host, skip_windows=args.no_windows,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(cairn_who.render(report))
+    return report.exit_code
+
+
+def _doctor_epilog() -> str:
+    """`doctor --help`'s exit-code legend, read from the module that owns it.
+
+    🔴 READ, NEVER RESTATED. A second copy of the legend in this file — or in a
+    SKILL.md — is a second thing to keep true, and the numbers are the part a
+    caller branches on. `cairn_doctor.EXIT_LEGEND` is the one definition; both
+    `--help` and every run's own output render it from there.
+
+    ⚠ CALLED EAGERLY FROM `build_parser`, AND THE COMMENT THAT SAID OTHERWISE WAS
+    FALSE IN EFFECT. `argparse` wants `epilog` as a string, so `cairn_doctor` is
+    imported on EVERY invocation — the same trap `_cairn_who`'s own docstring
+    records for `_who_default_timeout`. The import stays function-scoped for
+    honesty about what this file needs to START, not as an optimisation.
+
+    🔴 AND IT FAILS SOFT. With `cairn_doctor.py` missing, an eager unguarded
+    import took `cairn ls-entries` — a subcommand that has nothing to do with
+    doctor — down with `ModuleNotFoundError` at exit 1, traceback and all.
+    `cmd_doctor` still fails LOUDLY, because that is the caller who asked for it;
+    an unrelated verb must not inherit the blast radius of a help string.
+    """
+    try:
+        doctor = _cairn_doctor()
+    except ImportError as exc:
+        return (
+            f"exit codes: UNAVAILABLE — `cairn_doctor` could not be imported "
+            f"({exc}). `cairn doctor` itself will fail with this; every other "
+            f"subcommand is unaffected."
+        )
+    lines = ["exit codes:"]
+    lines += [f"  {code}  {why}" for code, why in doctor.EXIT_LEGEND]
+    lines.append("")
+    lines.append(
+        "check states: "
+        + ", ".join(doctor.STATES)
+        + " — UNMEASURED means the check could not look and says why; "
+        "NOT-OBSERVABLE means no client can answer it at all and names who can."
+    )
+    return "\n".join(lines)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="cairn",
+        description=(
+            "Read-through client for the hosted subsystem store. Syncs a local "
+            "cache and runs the UNMODIFIED local reader against it, so a recall "
+            "never depends on the network and never reports an unreachable "
+            "store as an empty one."
+        ),
+    )
+    # Resolved at parser-BUILD time through the accessor, so the module global
+    # stays the single point of truth and a test can repoint reader and writer
+    # together with one assignment.
+    p.add_argument("--cache", type=Path, default=_read_store.read_store_root())
+    # `None` = not given. The store commands resolve it to DEFAULT_TIMEOUT;
+    # `who` resolves it to its own, longer default. See `_who_timeout`.
+    p.add_argument("--timeout", type=int, default=None)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def common(sp):
+        sp.add_argument("--scope", default=None)
+        sp.add_argument("--repo", default=".")
+        sp.add_argument(
+            "--no-sync",
+            action="store_true",
+            help="skip the network entirely and read the cache as it stands",
+        )
+        return sp
+
+    s = sub.add_parser("sync", help="refresh the local cache from the pod")
+    s.add_argument("--scope", default=None)
+    s.set_defaults(func=cmd_sync)
+
+    r = common(sub.add_parser("recall", help="the scope's digest"))
+    r.add_argument("--mode", default=rc.DEFAULT_MODE)
+    r.set_defaults(func=cmd_recall)
+
+    q = common(sub.add_parser("search", help="search the scope for hunks"))
+    q.add_argument("query")
+    q.add_argument("--all-scopes", action="store_true")
+    q.set_defaults(func=cmd_search)
+
+    v = common(sub.add_parser("validate", help="parse-check the cached entries"))
+    v.set_defaults(func=cmd_validate)
+
+    e = common(sub.add_parser("ls-entries", help="one `<scope>/<entry>.md` per line"))
+    e.set_defaults(func=cmd_ls_entries)
+
+    # 🔴 `doctor` TAKES NO `--scope`/`--repo` AND IS NOT `common()`. It asks about
+    # THIS HOST and THIS CREDENTIAL, not about a scope, and a `--scope` here would
+    # invite the filtered-cache mistake `cmd_sync` documents. `--no-sync` it does
+    # take: "diagnose without touching the network" is a real mode, and it turns
+    # every pod-dependent check UNMEASURED with that as the stated reason rather
+    # than reporting a zero.
+    #
+    # 🔴 ITS EXIT CODES ARE DOCUMENTED BY THE COMMAND. `cairn_doctor.EXIT_LEGEND`
+    # is printed at the foot of every human-readable run and carried in `--json`,
+    # so no skill has to restate them and none can restate them wrongly.
+    d = sub.add_parser(
+        "doctor",
+        help="one call: pod reachability, credential, cache stamp, counts, "
+             "scope visibility, and which store this host's reader resolves",
+        epilog=_doctor_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    d.add_argument("--json", action="store_true")
+    d.add_argument(
+        "--no-sync",
+        action="store_true",
+        help="do not contact the store; pod-dependent checks report UNMEASURED",
+    )
+    d.set_defaults(func=cmd_doctor)
+
+    # --- the write verbs -----------------------------------------------------
+    # 🔴 `writes=True` IS NOT DECORATION. `main` maps a `StoreUnreachable` to
+    # exit 3 ("store-unreachable, no cache"), which is a READ verdict and reads
+    # as "nothing was shown". For a write the honest code is 7 — the record was
+    # NOT made — and the two must not share a number, because the whole point of
+    # write-through is that a caller can tell a failed write from a stale read.
+    # 🔴 NEITHER TAKES `--no-sync`. It would be meaningless on `append` and
+    # actively harmful on `put` (see that function on deriving a precondition
+    # from bytes we did not confirm), so it is absent rather than refused.
+    ap = sub.add_parser(
+        "append",
+        help="append ONE dated, attributed bullet to an entry (writes to the pod)",
+    )
+    ap.add_argument("--scope", default=None)
+    ap.add_argument("--repo", default=".")
+    ap.add_argument("--ref", required=True, help="the entry: a filename stem or an alias")
+    ap.add_argument(
+        "--text", required=True,
+        help="the bullet, ONE line, with NO leading `- ` and NO leading date — "
+             "the server adds both",
+    )
+    # 🔴 REQUIRED, WITH NO DEFAULT AND NO ENV FALLBACK. The server refuses a
+    # request without it (400), and criterion 4 is that every appended bullet
+    # records the actor AND the session. A default would be a value nobody
+    # chose, attached to a durable record; an env fallback would silently
+    # attribute one agent's bullet to whatever the shell last exported.
+    ap.add_argument("--session", required=True, help="the writing session's id")
+    ap.set_defaults(func=cmd_append, writes=True)
+
+    pu = sub.add_parser(
+        "put", help="replace a whole entry behind an If-Match precondition"
+    )
+    pu.add_argument("--scope", default=None)
+    pu.add_argument("--repo", default=".")
+    pu.add_argument("--ref", required=True)
+    pu.add_argument("--file", type=Path, required=True, help="the new entry bytes")
+    pu.add_argument(
+        "--if-match", default=None, dest="if_match",
+        help="the entry revision this edit is based on; derived from a LIVE "
+             "sync when omitted",
+    )
+    pu.set_defaults(func=cmd_put, writes=True)
+
+    # 🔴 `create` IS THE THIRD WRITE VERB AND THE ONLY ONE THAT CAN MAKE AN
+    # ENTRY. `append` and `put` both resolve an existing ref; before this the
+    # protocol's only route to a new entry was a local write into the frozen
+    # mirror, which no reader sees. It takes no `--if-match` (there are no prior
+    # bytes) and no `--no-sync` (it reads no cache at all).
+    cr = sub.add_parser(
+        "create",
+        help="create a NEW entry that does not exist yet (refuses to overwrite)",
+    )
+    cr.add_argument("--scope", default=None)
+    cr.add_argument("--repo", default=".")
+    cr.add_argument(
+        "--ref", required=True,
+        help="the new entry's filename stem — it becomes `<ref>.md` in the scope",
+    )
+    cr.add_argument("--file", type=Path, required=True, help="the new entry bytes")
+    cr.set_defaults(func=cmd_create, writes=True)
+
+    # 🔴 `who` TOUCHES NO STORE AND NO CACHE. It is the first cairn subcommand
+    # about a different noun — a TASK, not a subsystem entry — so it takes none
+    # of the `common()` flags and never syncs. It is here rather than in its own
+    # binary because `cairn` is the name for the whole three-noun layer, and a
+    # second CLI would be the second place to look.
+    w = sub.add_parser("who", help="which sessions/windows/transcripts worked a task")
+    w.add_argument("task")
+    w.add_argument("--json", action="store_true")
+    w.add_argument("--host", default=None, choices=["workbench", "laptop"])
+    w.add_argument("--no-windows", action="store_true",
+                   help="skip the tmux scan; report only the durable transcripts")
+    # 🔴 ITS OWN `--timeout`, AND ITS OWN DEFAULT. cairn's top-level `--timeout`
+    # is 20s, chosen for an HTTP snapshot fetch; `who` shells into tmux on two
+    # hosts, and `cairn_who.DEFAULT_TIMEOUT` carries a docstring reasoning
+    # specifically about a sleeping laptop. Inheriting the store's bound meant
+    # the documented rationale was not what shipped, and `cairn who --timeout N`
+    # was rejected outright because the flag only existed BEFORE the subcommand.
+    # 🔴 A DISTINCT `dest` IS WHAT MAKES THE PRECEDENCE POSSIBLE. Sharing
+    # `timeout` let the subparser default clobber an explicit parent value.
+    # `metavar` because the internal dest would otherwise surface in --help
+    # as `--timeout WHO_TIMEOUT` — an implementation detail on a user surface.
+    w.add_argument("--timeout", type=int, default=None, dest="who_timeout",
+                   metavar="SECONDS",
+                   help=f"seconds per external tool (default {_who_default_timeout()}; "
+                        "a top-level --timeout is honoured too)")
+    w.set_defaults(func=cmd_who)
+    return p
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if not hasattr(args, "no_sync"):
+        args.no_sync = False
+    try:
+        return args.func(args)
+    except WriteRefused as exc:
+        # 🔴 THE STORE ANSWERED, AND THE ANSWER IS NO. Printed with the server's
+        # own `X-Store-Status`, because that token is what distinguishes the four
+        # 404s from each other (`scope-unknown` vs `ref-unknown`) and a 405
+        # (`read-only`) — which is the one that means "the write path is not
+        # deployed on the running image", i.e. an operator problem and not a
+        # caller problem, and which reads exactly like a wrong URL.
+        print(
+            f"🔴 cairn: the store REFUSED the write [{exc.status}] — {exc.detail}",
+            file=sys.stderr,
+        )
+        return exc.exit_code
+    except StoreCorrupt as exc:
+        # 🔴 LOUD, and never absorbed into "served from cache". A server that
+        # ships a link, a traversal member, a duplicate, or a count disagreeing
+        # with its own header is not an outage — it is the case that must stop
+        # the run, cache or no cache.
+        print(f"🔴 cairn: REFUSED the archive — {exc}", file=sys.stderr)
+        return EXIT_CORRUPT
+    except StoreUnreachable as exc:
+        # 🔴 A WRITE AND A READ DO NOT SHARE A CODE HERE. Exit 3 is
+        # "store-unreachable, no cache" — a statement about what was DISPLAYED.
+        # On a write nothing was displayed and, more importantly, nothing was
+        # RECORDED; a caller that reads 3 as "the read came back empty" would
+        # carry on believing the bullet landed. `writes` is set by the write
+        # subparsers only, so this cannot drift with a new read verb.
+        if getattr(args, "writes", False):
+            print(
+                f"🔴 cairn: the write did NOT happen — {exc}\n"
+                f"          Nothing was queued and nothing was written locally. "
+                f"Re-run when the store is reachable.",
+                file=sys.stderr,
+            )
+            return EXIT_WRITE_UNREACHABLE
+        # Reached only by a config failure outside `resolve_state`; still named.
+        print(f"🔴 cairn: {STATE_NO_CACHE} — {exc}", file=sys.stderr)
+        return EXIT_UNREACHABLE_NO_CACHE
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

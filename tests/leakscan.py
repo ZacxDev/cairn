@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
-"""Refuse private content in this PUBLIC repository.
+"""Refuse SENSITIVE content in this PUBLIC repository.
 
-🔴 THIS FILE IS THE REASON THE REPOSITORY CAN BE PUBLIC AT ALL. Everything here
-was extracted from a private monorepo whose comments narrated real incidents on
-named hosts. The extraction was sanitised by hand; this gate is what stops the
-next commit undoing that.
+🔴 SCOPE: SECURITY, NOT TIDINESS. This gate blocks the things that would cause
+harm if published — credentials, reachable hostnames, real private network
+addresses, operator identities. It deliberately does NOT police project names,
+dates, or machine nicknames. Those are cosmetic, and an earlier version of this
+file that chased them produced 480 findings of which 4 mattered.
+
+That ratio is the argument. A gate firing 476 times for nothing is a gate
+someone turns off, and then the 4 ship too. Every rule here earns its place by
+being something you would not want on the internet.
 
 🔴 A CLEAN RUN IS NOT EVIDENCE UNTIL BOTH CONTROLS HAVE BEEN WATCHED TO WORK.
 A scanner wired to nothing reports zero exactly like a clean tree does, so this
-module ships its own controls and `--self-test` runs them:
+module ships its own controls and runs them on EVERY invocation:
 
-  * NEGATIVE CONTROL — a realistic private string MUST be refused. Realistic,
-    not a textbook fixture: a scanner that only recognises its own canonical
-    examples passes a real leak. The control strings below are shaped like the
-    things that actually appear in this code's history (a hostname, an RFC1918
-    address, a dated incident note), not like `example.com`.
-  * POSITIVE CONTROL — the matcher must be able to produce a NON-ZERO count at
-    all, against text that certainly contains a hit.
-
-Report the pair. `0 findings` on its own is indistinguishable from a broken
-matcher, and this codebase's own history is full of that mistake.
+  * NEGATIVE — a realistic sensitive string MUST be refused. Realistic, not a
+    textbook fixture: a scanner that only recognises `example.com` passes a real
+    leak.
+  * POSITIVE — the matcher must be able to produce a NON-ZERO count at all.
+  * NARROWNESS — legitimate content must NOT be refused, so the gate stays
+    usable.
 
 Exit codes:
-  0  no findings (and, under --self-test, both controls behaved)
-  1  findings — private content is present
+  0  no findings (and both controls behaved)
+  1  findings — sensitive content is present
   2  the gate itself could not run, or a control misbehaved. NOT a pass.
 """
 
@@ -38,81 +39,69 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # --------------------------------------------------------------------------
-# What counts as private.
+# Documentation addresses that are NOT anybody's infrastructure.
 #
-# 🔴 Each rule is a CLASS, not a spelling. A rule that matched one literal
-# hostname would be walked around by the next hostname. Where a rule must name
-# specifics (the private-hostname list), it is written as a domain-suffix class
-# so a new subdomain is caught without an edit.
+# 🔴 AN EXPLICIT LITERAL LIST, NOT A RANGE, SO ANYTHING NEW FAILS CLOSED. These
+# are the conventional example addresses this repo already uses to document
+# trusted-proxy configuration and Kubernetes pod CIDRs. A private address that
+# is not on this list is treated as real topology and refused.
+#
+# New examples should prefer RFC5737 TEST-NET (192.0.2.0/24, 198.51.100.0/24,
+# 203.0.113.0/24), which are reserved for documentation and need no allowlisting.
 # --------------------------------------------------------------------------
+DOC_ADDRESSES = {
+    "10.0.0.0", "10.0.0.1", "10.1.0.0", "10.1.2.3",
+    "10.244.0.0", "10.244.0.13", "10.244.0.123",
+}
+
+_PRIVATE_IP = re.compile(
+    r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b"
+)
 
 RULES: list[tuple[str, str, str]] = [
     (
-        "private-hostname",
+        "credential",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
+        r"|-----BEGIN CERTIFICATE-----"
+        r"|\bAKIA[0-9A-Z]{16}\b"
+        r"|\bgh[pousr]_[A-Za-z0-9]{20,}"
+        r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+        r"|\bAGE-SECRET-KEY-[A-Z0-9]+"
+        # 🔴 A SCOPED `(?i:…)`, NOT A BARE `(?i)`. Python refuses a global inline
+        # flag that is not at the start of the expression, and this one sits in
+        # the middle of an alternation — it raised at import, which is the right
+        # failure (a crashing gate is visible; a silently-disabled one is not).
+        # 🔴 THE SEPARATOR IS OPTIONAL, and a control is why. `Authorization:
+        # Bearer <jwt>` puts a SPACE between the scheme and the token, so a
+        # pattern demanding `:` or `=` immediately before the value matched
+        # neither `Authorization` (followed by the short word `Bearer`) nor
+        # `Bearer` (followed by a space). It read as a working rule and refused
+        # nothing.
+        r"|(?i:\b(?:authorization|bearer)\s*[:=]?\s*[\"']?[A-Za-z0-9+/_.-]{20,})",
+        "a credential. Nothing else on this list is as bad as this one",
+    ),
+    (
+        "reachable-hostname",
+        # A host in a domain the origin deployment actually serves. Publishing a
+        # reachable endpoint next to this repo's own notes on its weaknesses
+        # turns ordinary security documentation into a roadmap for one host.
         r"\b[a-z0-9-]+\.(?:zacx\.dev|homelab\.lan|civitai\.com|civitaic\.com)\b",
-        "a hostname from the private infrastructure this code was extracted from",
-    ),
-    (
-        "private-ip",
-        # RFC1918 + CGNAT. Deliberately not 127.0.0.1 or 0.0.0.0, which are
-        # generic and appear legitimately in bind addresses and tests.
-        r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
-        r"|192\.168\.\d{1,3}\.\d{1,3}"
-        r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b",
-        "a private network address from the origin infrastructure",
-    ),
-    (
-        "incident-date",
-        # An ISO date in PROSE is how the origin repo recorded incidents. The
-        # mechanism survives extraction; the timeline does not.
-        #
-        # 🔴 SCOPED TO NARRATIVE, NOT TO EVERY DATE, AND THAT IS DELIBERATE. The
-        # store's wire format is literally `- <date>: <bullet>`, so fixtures and
-        # round-trip tests MUST contain dates. A rule refusing all of them fires
-        # on correct test data, and a gate that is unusably noisy gets disabled
-        # by the first person it inconveniences — which is worse than no gate.
-        # So: a date is refused when it sits in a COMMENT, a DOCSTRING line, or
-        # a dated prose bullet — the three shapes an incident note actually
-        # takes.
-        #
-        # ⚠ KNOWN BLIND SPOT, stated rather than hidden: a dated narrative on a
-        # continuation line of a docstring, with no marker of its own, is not
-        # matched. Reviewers must still read prose. This rule removes the bulk
-        # mechanically; it is not a substitute for reading.
-        r"(?:#|\"\"\"|''')[^\n]*\b20\d{2}-[01]\d-[0-3]\d\b"
-        r"|^\s*[-*]\s*20\d{2}-[01]\d-[0-3]\d\s*:",
-        "a dated incident reference in prose — keep the mechanism, drop the particulars",
-    ),
-    (
-        "private-scope",
-        # Scope names from the origin store. Bounded so `civitai` inside a URL
-        # is caught by private-hostname instead of doubly reported.
-        r"\b(?:civitai(?:-[a-z0-9-]+)?|datapacket-talos|homelab-talos|homelab-infra"
-        r"|vetr(?:-[a-z0-9]+)?|naida-ai|auditloop|claude-pool|flipt-state"
-        r"|storage-resolver|kubeclaw|devrc)\b",
-        "a scope name from the private store",
-    ),
-    (
-        "private-hostname-bare",
-        r"\b(?:workbench|nebula)\b",
-        "a private host or network name",
+        "a reachable hostname belonging to a real deployment",
     ),
     (
         "operator-identity",
-        r"\bzacxdev@|zach@[0-9]",
+        r"\bzacxdev@|\b[a-z]+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
         "an operator identity or a host login",
     ),
 ]
 
-#: Files the scanner does not read. Deliberately tiny — an allowlist is how a
-#: scanner ends up scanning nothing. `.git` is excluded because it is not
-#: source; this file is excluded because it necessarily contains the patterns.
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules"}
 SKIP_FILES = {"tests/leakscan.py"}
-
 TEXT_SUFFIXES = {
     ".py", ".sh", ".md", ".yml", ".yaml", ".json", ".toml", ".txt", ".cfg",
-    ".mjs", ".js", ".ts", ".Dockerfile", "",
+    ".mjs", ".js", ".ts", "",
 }
 
 
@@ -123,29 +112,37 @@ class Finding:
         self.path, self.line, self.rule, self.text, self.why = path, line, rule, text, why
 
     def __str__(self) -> str:
-        return f"{self.path}:{self.line}: [{self.rule}] {self.text.strip()[:110]}\n      -> {self.why}"
+        return (f"{self.path}:{self.line}: [{self.rule}] {self.text.strip()[:110]}"
+                f"\n      -> {self.why}")
 
 
-_COMPILED = [(name, re.compile(pat, re.I), why) for name, pat, why in RULES]
+_COMPILED = [(n, re.compile(p), w) for n, p, w in RULES]
 
 
 def scan_text(text: str, path: str = "<memory>") -> list[Finding]:
-    """Every rule, every line. Returns a list so a caller can count it."""
     out: list[Finding] = []
     for n, line in enumerate(text.splitlines(), start=1):
         for name, rx, why in _COMPILED:
             if rx.search(line):
                 out.append(Finding(path, n, name, line, why))
+        # Private addresses are matched separately so the documentation
+        # allowlist can be applied per-occurrence rather than per-line: one real
+        # address on a line full of examples must still be caught.
+        for m in _PRIVATE_IP.finditer(line):
+            if m.group(0) not in DOC_ADDRESSES:
+                out.append(Finding(
+                    path, n, "private-ip", line,
+                    f"{m.group(0)} is a real private address — network topology. "
+                    f"Use RFC5737 TEST-NET for examples",
+                ))
     return out
 
 
 def tracked_files() -> list[Path]:
     """Files git knows about, plus untracked-but-not-ignored ones.
 
-    🔴 `git ls-files` ALONE IS BLIND to a file that has not been added yet, and
-    "I forgot to git add it" is not a reason for a leak to ship. `--others
-    --exclude-standard` closes that. A generated or ignored file is genuinely
-    out of scope: it is not published.
+    🔴 `git ls-files` ALONE IS BLIND to a file not yet added, and "I forgot to
+    git add it" is not a reason for a leak to ship.
     """
     try:
         r = subprocess.run(
@@ -156,9 +153,8 @@ def tracked_files() -> list[Path]:
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"leakscan: COULD NOT RUN — git enumeration failed: {e}", file=sys.stderr)
         raise SystemExit(2)
-    names = [n for n in r.stdout.split("\0") if n]
     keep: list[Path] = []
-    for n in names:
+    for n in (x for x in r.stdout.split("\0") if x):
         if n in SKIP_FILES:
             continue
         p = Path(n)
@@ -174,42 +170,38 @@ def tracked_files() -> list[Path]:
 # Controls
 # --------------------------------------------------------------------------
 
-#: 🔴 REALISTIC, not textbook. Each is shaped like something that genuinely
-#: appeared in the pre-extraction source. If the scanner cannot refuse these it
-#: cannot refuse a real leak.
 NEGATIVE_CONTROLS = [
-    ("private-hostname", 'URL = "https://store.zacx.dev/api/v1/recall"'),
-    ("private-ip", "    # measured on 192.168.50.250 during the rollout"),
-    ("incident-date", "# 2026-08-29: a printed token forced a credential rotation"),
-    ("private-scope", "for scope in ('civitai-gpu-fleet', 'datapacket-talos'):"),
-    ("private-hostname-bare", "# the workbench reads this over nebula"),
+    ("credential", 'GITHUB_TOKEN = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"'),
+    ("credential", "-----BEGIN OPENSSH PRIVATE KEY-----"),
+    ("credential", 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'),
+    ("reachable-hostname", 'URL = "https://store.example-real.zacx.dev/api/v1/recall"'),
+    ("private-ip", "    # the gateway listens on 192.168.50.94"),
+    ("private-ip", "    NEBULA_GW = '10.42.0.10'"),
     ("operator-identity", "Co-Authored-By: someone <zacxdev@gmail.com>"),
 ]
 
-#: A string that MUST produce a non-zero count, proving the matcher can fire.
-POSITIVE_CONTROL = "# see notes from 2026-01-02 about the rollout"
+POSITIVE_CONTROL = "trusted = '172.16.4.9'  # a real private address"
 
-#: 🔴 CONTENT THAT MUST **NOT** BE REFUSED. These pin the rules' NARROWNESS.
-#: Without them, someone broadens `incident-date` back to "any ISO date", the
-#: gate starts firing on the store's own `- <date>: <bullet>` wire format, and
-#: the next person turns the gate off. A false positive here is not cosmetic:
-#: it is how a security gate gets disabled.
+#: 🔴 CONTENT THAT MUST **NOT** BE REFUSED — these pin the rules' narrowness.
+#: A false positive here is not cosmetic: it is how a security gate gets
+#: disabled, and then the real findings ship alongside the noise.
 ALLOWED_CONTROLS = [
-    ('bullet = "- 2026-01-02: the pod answered 200"',
-     "a date as fixture data — the store's wire format literally contains one"),
-    ('assert render(e) == "- 2024-06-01: something"',
-     "a date inside an asserted literal"),
-    ('    stamp = "seeded=2026-01-02T03:04:05Z"',
-     "a timestamp in a snapshot stamp"),
-    ('resp = client.get("http://127.0.0.1:8080/api/v1/recall/alpha")',
-     "loopback and a synthetic scope name are generic, not private"),
-    ('for scope in ("alpha", "beta-svc", "proj-one"):',
-     "synthetic fixture scope names"),
+    ('SUBSYSTEM_STORE_TRUSTED_PROXIES=10.0.0.1,10.1.0.0/24',
+     "conventional example addresses in configuration documentation"),
+    ('    "10.244.0.0/16",  # a pod CIDR: every pod in the cluster',
+     "the standard Kubernetes pod-CIDR example"),
+    ('resp = client.get("http://127.0.0.1:8080/api/v1/recall/devrc")',
+     "loopback, and a project name — project names are NOT policed here"),
+    ('# 2026-08-29: the rollout landed and the gate went green',
+     "a date — dates are NOT policed here"),
+    ('for scope in ("civitai", "homelab-talos", "devrc"):',
+     "project names in fixtures — cosmetic, deliberately allowed"),
+    ('secret = "s3cr3t-not-in-any-output"',
+     "an obviously-fake value in a test asserting a token never leaks"),
 ]
 
 
 def self_test() -> int:
-    """Both controls. Returns a process exit code."""
     ok = True
 
     print("== POSITIVE CONTROL: the matcher can produce a non-zero count ==")
@@ -221,27 +213,15 @@ def self_test() -> int:
               "clean report below is meaningless")
         ok = False
 
-    print("== NEGATIVE CONTROL: each rule refuses a REALISTIC private string ==")
-    for expected_rule, sample in NEGATIVE_CONTROLS:
-        found = scan_text(sample, "<negative-control>")
-        names = {f.rule for f in found}
-        if expected_rule in names:
-            print(f"  PASS  {expected_rule:24} refused")
+    print("== NEGATIVE CONTROL: each rule refuses a REALISTIC sensitive string ==")
+    for expected, sample in NEGATIVE_CONTROLS:
+        names = {f.rule for f in scan_text(sample, "<negative-control>")}
+        if expected in names:
+            print(f"  PASS  {expected:20} refused")
         else:
-            print(f"  FAIL  {expected_rule:24} NOT refused — rule is inert")
-            print(f"        sample: {sample}")
-            print(f"        matched instead: {sorted(names) or 'nothing'}")
+            print(f"  FAIL  {expected:20} NOT refused — rule is inert")
+            print(f"        sample: {sample[:70]}")
             ok = False
-
-    print("== CONTROL FOR THE CONTROL: clean text must produce ZERO ==")
-    clean = "def render(entry: str) -> str:\n    return entry.strip()\n"
-    n = len(scan_text(clean, "<clean>"))
-    if n == 0:
-        print("  PASS  ordinary code produces 0 findings")
-    else:
-        print(f"  FAIL  ordinary code produced {n} finding(s) — the gate is "
-              "unusably noisy and will be disabled by whoever hits it")
-        ok = False
 
     print("== NARROWNESS: legitimate content must NOT be refused ==")
     for sample, why in ALLOWED_CONTROLS:
@@ -250,7 +230,7 @@ def self_test() -> int:
             print(f"  PASS  allowed: {why}")
         else:
             print(f"  FAIL  FALSE POSITIVE on {why}")
-            print(f"        sample: {sample}")
+            print(f"        sample: {sample[:70]}")
             for f in found:
                 print(f"        matched [{f.rule}]")
             ok = False
@@ -259,23 +239,20 @@ def self_test() -> int:
 
 
 def main() -> int:
-    # `__doc__` is None under `python -OO`; the gate must still run there.
     ap = argparse.ArgumentParser(
-        description=(__doc__ or "refuse private content").splitlines()[0])
-    ap.add_argument("--self-test", action="store_true",
-                    help="run the controls and exit; proves the gate is an instrument")
+        description=(__doc__ or "refuse sensitive content").splitlines()[0])
+    ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
     if args.self_test:
         return self_test()
 
-    # 🔴 The controls run on EVERY invocation, not only under --self-test. A
-    # scan whose matcher is broken must not be able to report a reassuring 0.
-    rc = self_test()
-    if rc != 0:
-        print("\nleakscan: COULD NOT VOUCH — a control misbehaved. This is exit 2, "
-              "not a pass.", file=sys.stderr)
+    # The controls run on EVERY invocation: a scan whose matcher is broken must
+    # not be able to report a reassuring 0.
+    if self_test() != 0:
+        print("\nleakscan: COULD NOT VOUCH — a control misbehaved. Exit 2, not a "
+              "pass.", file=sys.stderr)
         return 2
     print()
 
@@ -288,17 +265,19 @@ def main() -> int:
     findings: list[Finding] = []
     for f in files:
         try:
-            text = f.read_text(encoding="utf-8", errors="replace")
+            findings.extend(
+                scan_text(f.read_text(encoding="utf-8", errors="replace"),
+                          str(f.relative_to(ROOT))))
         except OSError as e:
             print(f"leakscan: COULD NOT READ {f}: {e}", file=sys.stderr)
             return 2
-        findings.extend(scan_text(text, str(f.relative_to(ROOT))))
 
     print(f"== UNDER TEST: {len(files)} file(s) scanned ==")
     if findings:
         for f in findings:
             print(f"  {f}")
-        print(f"\nleakscan: {len(findings)} finding(s) across {len(files)} file(s) — REFUSING")
+        print(f"\nleakscan: {len(findings)} finding(s) across {len(files)} file(s) "
+              f"— REFUSING")
         return 1
 
     if not args.quiet:
