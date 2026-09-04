@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  # 🔴 A SEPARATE JOB, AND DELIBERATELY FIRST. This repository is public and was
+  # extracted from a private one; the leak gate is the reason it can be public at
+  # all. Keeping it out of the test job means a test failure can never mask it,
+  # and its verdict is readable on its own in the checks list.
+  leakscan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The controls run inside the scan too, but running them as their own step
+      # means a broken gate is distinguishable from a dirty tree at a glance.
+      - name: prove the gate is an instrument (both controls)
+        run: python3 tests/leakscan.py --self-test
+
+      - name: scan the tree
+        run: python3 tests/leakscan.py
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: python3 -m pip install --upgrade pip pytest
+
+      # 🔴 READ THE COLLECTED COUNT, NOT JUST THE EXIT CODE. pytest can collect
+      # ZERO tests and exit 0 — an empty suite is indistinguishable from a green
+      # one if you only look at the status. The floor makes that impossible.
+      - name: run the suite with a collected-test floor
+        run: |
+          set -o pipefail
+          python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          FLOOR = 200          # raise as the suite grows; never lower without saying why
+          t = ET.parse("/tmp/r.xml").getroot()
+          suites = [t] if t.tag == "testsuite" else list(t)
+          ran = sum(int(s.get("tests", 0)) for s in suites)
+          fail = sum(int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in suites)
+          print(f"collected={ran} failed={fail} floor={FLOOR}")
+          if ran < FLOOR:
+              print(f"REFUSING: collected {ran} < floor {FLOOR} — the suite silently narrowed")
+              sys.exit(1)
+          sys.exit(1 if fail else 0)
+          PY
