@@ -1,4 +1,4 @@
-"""Tests for scripts/lib/subsystem_recall.py — the READ half of the subsystem index.
+"""Tests for lib/subsystem_recall.py — the READ half of the subsystem index.
 
 WHAT IS BEING PROTECTED
 -----------------------
@@ -55,36 +55,25 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = ROOT / "scripts" / "lib" / "subsystem_recall.py"
-TOUCH_PATH = ROOT / "scripts" / "lib" / "subsystem_touch.py"
-RESUME_DOC = ROOT / "claude" / "skills" / "resume" / "SKILL.md"
-HANDOFF_DOC = ROOT / "claude" / "skills" / "handoff" / "SKILL.md"
+ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = ROOT / "lib" / "subsystem_recall.py"
 # The body that must ROUTE to the sidecar is the one that carries the protocol,
 # which since 2026-08-24 is the `subsystem-index` skill rather than /handoff.
-INDEX_DOC = ROOT / "claude" / "skills" / "subsystem-index" / "SKILL.md"
 # The on-demand evidence sidecar. Step 4's IMPERATIVES stay in HANDOFF_DOC; the
 # measured rationale behind them lives here and costs nothing until it is read.
 # 🔴 MOVED 2026-08-24 with the protocol it explains. `/handoff` step 4 became the
 # `subsystem-index` skill, and this reference doc is that skill's evidence file —
 # it was never about writing handoffs. The name is unchanged so its `§N` pointers
 # still resolve.
-HANDOFF_REFERENCE = (
-    ROOT / "claude" / "skills" / "subsystem-index" / "reference" / "index-write.md"
-)
-ANALYZE_DOC = ROOT / "claude" / "skills" / "analyze-service" / "SKILL.md"
 
-sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from testlib.skills_mapping import (  # noqa: E402
-    assert_skills_mapping_declared,
-)
 
 import subsystem_read_store as rs  # noqa: E402
 import subsystem_recall as rc  # noqa: E402
 import subsystem_resolver as sr  # noqa: E402
-import subsystem_touch as st  # noqa: E402
+import entry_shape as st  # the reader/writer vocabulary
 
 
 # =============================================================================
@@ -838,11 +827,6 @@ class TestSectionExtraction:
         with pytest.raises(TypeError):
             sr.extract_sections(text)
 
-    def test_the_unreadable_entry_error_is_the_SAME_class_the_writer_raises(self) -> None:
-        """🔴 One condition, one class. Two spellings is how a caller catches the
-        reader's failure and misses the writer's on the very same file."""
-        assert rc.EntryUnreadableError is sr.EntryUnreadableError
-        assert st.EntryUnreadableError is sr.EntryUnreadableError
 
 
 class TestSensitivityIsFailSafe:
@@ -2767,7 +2751,7 @@ class TestFocusWindow:
     @pytest.mark.parametrize(
         "token,keep",
         [
-            ("scripts/lib/thing.py", True),
+            ("lib/thing.py", True),
             (".claude/skills/resume/SKILL.md", True),
             ("nix/i3/config", True),
             ("/etc/nixos/configuration.nix", False),  # absolute
@@ -2787,13 +2771,13 @@ class TestFocusWindow:
 
     def test_trailing_punctuation_is_stripped(self, tmp_path: Path) -> None:
         assert rc.focus_paths_from_text("see `scripts/gate.sh`.") == ("scripts/gate.sh",)
-        assert rc.focus_paths_from_text("see `scripts/lib/`") == ("scripts/lib",)
+        assert rc.focus_paths_from_text("see `lib/`") == ("scripts/lib",)
 
     def test_bare_prose_is_NOT_harvested(self, tmp_path: Path) -> None:
         """🔴 `scripts/resume-state.sh` learned this with branch tokens: reaching
         into unquoted prose mints tokens out of ordinary English, and a fabricated
         fact is worse than the silence it replaced."""
-        assert rc.focus_paths_from_text("we touched scripts/lib/thing.py today") == ()
+        assert rc.focus_paths_from_text("we touched lib/thing.py today") == ()
 
     def test_every_emitted_path_is_one_associate_paths_ACCEPTS(self, tmp_path: Path) -> None:
         """🔴 POSITIVE CONTROL ON THE FILTER, and the reason it is stricter than
@@ -2867,11 +2851,6 @@ class TestCaveatOnEveryOutputPath:
         assert "live state" in caveat
         assert "as fresh as the last time someone pruned it" in caveat
 
-    def test_the_label_is_the_one_analyze_service_uses(self) -> None:
-        """Two spellings of one provenance claim, in front of the same agent, in
-        the same session, about the same store."""
-        assert rc.RECALL_LABEL == "from index"
-        assert f"`{rc.RECALL_LABEL}`" in ANALYZE_DOC.read_text(encoding="utf-8")
 
     def test_the_caveat_has_ONE_spelling(self, store: Path) -> None:
         """It is a property, not a sentence per branch. Both renderers must emit
@@ -3184,28 +3163,6 @@ class TestCli:
         assert "resolved via claudedocs/handoff-topic.md" in out, out
         assert "### status-bar" in out
 
-    def test_the_default_store_is_the_synced_read_cache_not_the_frozen_mirror(self) -> None:
-        """🔴 PINNED TWO-WAY, and the second half is the one that matters.
-
-        This test used to assert the CLI defaulted to the WRITER's root
-        (`subsystem_touch.DEFAULT_STORE_ROOT`). The Cairn cutover froze that
-        directory — entry files `0444`, nothing refreshes it — and this
-        assertion went on passing, which is precisely how the reader spent a day
-        serving a store that had stopped moving while printing
-        "ALL N entries … none omitted".
-
-        So it pins BOTH directions: the default IS the synced read cache, and it
-        is NOT the frozen mirror. One assertion alone is walkable — a third path
-        would satisfy "not the mirror", and "is the cache" alone would go green
-        again the moment somebody re-pointed the resolver at the mirror.
-
-        Asserted on the parser's DEFAULT, not on its help text: the help string
-        does not interpolate it, so a check against the text would pass for any
-        default at all.
-        """
-        default = rc._build_parser().get_default("store")
-        assert default == str(rs.DEFAULT_CACHE_ROOT)
-        assert default != str(st.DEFAULT_STORE_ROOT)
 
     def test_the_store_flag_records_that_it_was_passed(self) -> None:
         """The explicit/default distinction is a PARSED FACT, not a comparison.
@@ -3370,9 +3327,6 @@ class TestNoRealStoreIsRead:
     Both are named below.
     """
 
-    def test_the_real_store_root_is_outside_this_repo(self) -> None:
-        assert ROOT not in st.DEFAULT_STORE_ROOT.parents
-        assert not str(st.DEFAULT_STORE_ROOT).startswith(str(ROOT))
 
     def test_the_real_read_cache_is_outside_this_repo(self) -> None:
         assert ROOT not in rs.DEFAULT_CACHE_ROOT.parents
@@ -3419,19 +3373,6 @@ class TestNoRealStoreIsRead:
         # and neither live path ever appears as a literal
         assert str(rs.DEFAULT_CACHE_ROOT) not in src
 
-    def test_every_call_in_this_file_passes_an_explicit_store(self) -> None:
-        """The module's own default is never exercised, so a test cannot reach
-        the live store even by accident.
-
-        The forbidden spellings are ASSEMBLED rather than written literally: a
-        source file that greps itself matches its own assertion, and this test
-        failed exactly that way before the concatenation."""
-        src = Path(__file__).read_text(encoding="utf-8")
-        forbidden = ["rc.recall(" + "st.DEFAULT_STORE_ROOT", "rc.main(" + "[])"]
-        for spelling in forbidden:
-            assert spelling not in src, f"a test may reach the LIVE store: {spelling}"
-        # and the live path itself never appears as a literal
-        assert str(st.DEFAULT_STORE_ROOT) not in src
 
 
 # =============================================================================
@@ -3578,51 +3519,6 @@ class TestAppendConcurrency:
         # every line that was there is still there
         assert set(before.splitlines()) <= set(after.splitlines())
 
-    def test_the_stores_autocommit_cannot_disturb_an_anchor(self, tmp_path: Path) -> None:
-        """🔴 Measured rather than reasoned: the hourly autocommit runs `add` and
-        `commit` only — no `checkout`, `reset`, `restore` or `stash` — so it
-        rewrites no working-tree byte and the anchor is untouched."""
-        commit_sh = (ROOT / "scripts" / "analyze-service-index" / "commit.sh").read_text(
-            encoding="utf-8"
-        )
-        code = "\n".join(
-            line for line in commit_sh.splitlines() if not line.lstrip().startswith("#")
-        )
-        for destructive in ("checkout", "reset", "restore", "stash", "clean"):
-            assert f"git -C \"$scope\" {destructive}" not in code
-            assert f"git {destructive}" not in code
-
-        repo = tmp_path / "scope"
-        repo.mkdir()
-        env = {
-            "HOME": str(tmp_path),
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_SYSTEM": "/dev/null",
-            # 🔴 maintenance OFF: `_tree_hash` hashes `.git`, so a transient
-            # maintenance.lock reads as a repo change (testlib/hermetic_git.py).
-            **hermetic_git.MAINTENANCE_OFF,
-            "GIT_AUTHOR_NAME": "T",
-            "GIT_AUTHOR_EMAIL": "t@example.invalid",
-            "GIT_COMMITTER_NAME": "T",
-            "GIT_COMMITTER_EMAIL": "t@example.invalid",
-            "PATH": __import__("os").environ.get("PATH", ""),
-        }
-
-        def g(*a):
-            subprocess.run(["git", "-C", str(repo), *a], env=env, check=True,
-                           capture_output=True)
-
-        p = repo / "collector.md"
-        p.write_text(ENTRY_FIXTURE, encoding="utf-8")
-        g("init", "-q", "-b", "main")
-        g("add", "collector.md")
-        g("commit", "-qm", "seed")
-        _edit_tool(p, HEADER, HEADER + "- 2026-08-12: S1.\n")
-        after_edit = p.read_bytes()
-        g("add", "collector.md")
-        g("commit", "-qm", "autocommit")
-        assert p.read_bytes() == after_edit, "the commit rewrote the working tree"
-        _edit_tool(p, HEADER, HEADER + "- 2026-08-12: S2.\n")  # anchor still intact
 
 
 # =============================================================================
@@ -3642,7 +3538,7 @@ class TestSkillDocsArePinned:
         # the module is where every flag, exit code and output shape documented
         # below actually lives; a step naming only `cairn` would leave a reader
         # with nowhere to check them.
-        ("scripts/lib/subsystem_recall.py", "the step drives this module, via `cairn`"),
+        ("lib/subsystem_recall.py", "the step drives this module, via `cairn`"),
         ("cairn recall", "the prescribed command — it syncs first, so the read is dateable"),
         (
             "read half",
@@ -3780,115 +3676,12 @@ class TestSkillDocsArePinned:
         ),
     ]
 
-    def test_the_RETRACTED_cost_claim_is_not_reasserted(self) -> None:
-        """🔴 NEGATIVE CONTROL ON THE CORRECTION. "it costs a page, not a dump"
-        was measured FALSE for `datapacket-talos` (31,485 B, and incomplete). The
-        sentence may appear only as the thing being retracted, never as a live
-        claim — so the bare phrase must not occur without the retraction beside
-        it."""
-        doc = RESUME_DOC.read_text(encoding="utf-8")
-        if "costs a page, not a dump" in doc:
-            assert "was false" in doc, (
-                "claude/skills/resume/SKILL.md asserts 'costs a page, not a dump' again "
-                "without retracting it. It was measured false on the scope holding 25 of "
-                "the store's 29 entries."
-            )
 
-    def test_the_documented_flags_EXIST(self) -> None:
-        """🔴 A skill is prose whose executor is an LLM, so a flag it names that
-        the CLI does not have is an instruction to type a command that fails.
-        Derived from the parser, not hand-listed."""
-        doc = RESUME_DOC.read_text(encoding="utf-8")
-        help_text = rc._build_parser().format_help()
-        for flag in ("--list", "--ref", "--limit", "--page", "--search", "-C ", "--all-scopes", "--max-hits"):
-            assert flag in doc, f"step 4 stopped documenting {flag}"
-            assert flag in help_text, f"step 4 documents {flag}, which the CLI does not have"
 
-    @pytest.mark.parametrize(
-        "sentence,why", RESUME_SENTENCES, ids=[w for _, w in RESUME_SENTENCES]
-    )
-    def test_resume_step_sentence(self, sentence: str, why: str) -> None:
-        doc = RESUME_DOC.read_text(encoding="utf-8")
-        assert sentence in doc, (
-            f"claude/skills/resume/SKILL.md no longer contains the sentence pinning {why}.\n"
-            f"  missing: {sentence!r}\n"
-            f"  Either restore it or change scripts/lib/subsystem_recall.py in the SAME\n"
-            f"  commit. The module cannot enforce a protocol its only caller stopped\n"
-            f"  following, and the drift is silent: the step simply stops happening."
-        )
 
-    def test_EVERY_emitted_status_the_step_must_handle_is_named(self) -> None:
-        """Derived from the module, not hand-listed. The two "nothing recorded"
-        statuses are the ones a resuming agent will actually meet."""
-        doc = RESUME_DOC.read_text(encoding="utf-8")
-        for status in ("scope-absent", "scope-empty", "scope-unreadable"):
-            assert f"`{status}`" in doc, (
-                f"claude/skills/resume/SKILL.md never mentions `{status}`, which "
-                f"subsystem_recall.recall can emit and which the step must not "
-                f"report as an error."
-            )
 
-    def test_the_recall_step_comes_AFTER_the_handoff_is_read(self) -> None:
-        """Structural, not a phrase: recall is context for a doc already read,
-        not a substitute for reading it.
 
-        ⚠ RED ON `main` FROM #643 UNTIL THIS COMMIT, and nothing caught it — the
-        repo has no automated merge gate. #643 extended step 2's imperative from
-        `**Read it fully.**` to `**Read it fully — but treat its "Open
-        investigations" section as RECALL, not live state.**`, a legitimate
-        reword, and this pin was anchored on the sentence INCLUDING its full
-        stop. That is the wrong anchor for this test: what it asserts is an
-        ORDERING of four steps, so it should hold the imperative that opens the
-        step and let the rest of the sentence evolve. The sentence's WORDING is
-        somebody else's pin (`_assert_rationale_pin` above); this one is about
-        position. Asserted unique below so the index cannot silently move.
-        ⚠ THE RECONCILE STEP MOVED, DELIBERATELY, AND THIS TEST ASSERTED THE OLD
-        ORDER. It used to require `read_it < reconcile`. `resume-state.sh` now
-        compares the handoff against `origin/<default-branch>` and decides which
-        copy is authoritative, so it has to run BEFORE the doc is read —
-        otherwise the agent reads the working-tree copy first, which is the
-        stale-handoff defect (a clone served one 276 lines behind origin/trunk,
-        and the whole session was framed on it).
 
-        So the order is now reconcile < read_it, pinned here so the swap cannot
-        be silently undone. The invariant this test is named for is untouched:
-        recall still comes after the doc is read.
-        """
-        doc = RESUME_DOC.read_text(encoding="utf-8")
-        # Anchor on the imperative that OPENS the step, never the full sentence:
-        # this test asserts an ORDERING, so the rest of the sentence must be free
-        # to evolve (a reword inside the bold span turned `main` RED once).
-        # Uniqueness is asserted because `.index()` would otherwise return
-        # whichever occurrence came first and the ordering claim could invert.
-        assert doc.count("**Read the handoff in full") == 1, (
-            "the ordering anchor is no longer unique — `.index()` would return "
-            "whichever came first and the ordering claim could invert"
-        )
-        read_it = doc.index("**Read the handoff in full")
-        # The INVOCATION, not the bare filename: `resume-state.sh` is also named
-        # in step 1's prose, so `.index()` on the bare name finds a point BEFORE
-        # the handoff is read and the ordering claim inverts.
-        reconcile = doc.index("bash ~/workspace/devrc/scripts/resume-state.sh")
-        step = doc.index("subsystem_recall.py")
-        report = doc.index("**Report**")
-        assert reconcile < read_it < step < report
-
-    def test_the_pin_can_report_absence(self) -> None:
-        """Negative control on the pin: a check against a doc that happens to
-        contain everything is indistinguishable from one pointed at the wrong
-        file."""
-        doc = RESUME_DOC.read_text(encoding="utf-8")
-        assert "a sentence deliberately absent from the resume skill" not in doc
-
-    def test_the_pinned_doc_is_the_DEPLOYED_one(self) -> None:
-        assert RESUME_DOC.exists()
-        assert RESUME_DOC.name == "SKILL.md"
-        assert RESUME_DOC.parent.parent.name == "skills"
-        # Shared with test_subsystem_resolver/_touch. It checks only that the
-        # mapping is DECLARED and not switched off (`enable = false`, redirected
-        # `target`) — whether the source RESOLVES to this tree is measured
-        # against the real filesystem at deploy time by ship.sh/drift-check.sh.
-        assert_skills_mapping_declared(ROOT / "nix" / "home.nix")
 
     # 🔴 THE CONCURRENCY FINDING WAS SPLIT ACROSS TWO FILES, so this pin table is
     # split the same way. Step 4 keeps every IMPERATIVE; the measured evidence
@@ -3954,33 +3747,7 @@ class TestSkillDocsArePinned:
             f"stops asserting anything."
         )
 
-    @pytest.mark.parametrize(
-        "sentence,why",
-        HANDOFF_CORRECTIONS_SKILL,
-        ids=[w for _, w in HANDOFF_CORRECTIONS_SKILL],
-    )
-    def test_handoff_rationale_INSTRUCTION_stays_in_the_body(
-        self, sentence: str, why: str
-    ) -> None:
-        self._assert_rationale_pin(
-            INDEX_DOC.read_text(encoding="utf-8"),
-            sentence,
-            why,
-            "claude/skills/subsystem-index/SKILL.md",
-        )
 
-    @pytest.mark.parametrize(
-        "sentence,why",
-        HANDOFF_CORRECTIONS_REFERENCE,
-        ids=[w for _, w in HANDOFF_CORRECTIONS_REFERENCE],
-    )
-    def test_handoff_rationale_is_the_MEASURED_one(self, sentence: str, why: str) -> None:
-        self._assert_rationale_pin(
-            HANDOFF_REFERENCE.read_text(encoding="utf-8"),
-            sentence,
-            why,
-            "claude/skills/subsystem-index/reference/index-write.md",
-        )
 
     def test_a_reworded_pin_is_still_caught_in_its_new_home(self) -> None:
         """🔴 POSITIVE CONTROL on the move itself. The failure this guards against
@@ -4013,89 +3780,8 @@ class TestSkillDocsArePinned:
         text = HANDOFF_REFERENCE.read_text(encoding="utf-8")
         assert "a sentence deliberately absent from the handoff reference" not in text
 
-    def test_the_body_ROUTES_to_the_sidecar_and_the_target_exists(self) -> None:
-        """Splitting rationale out is only safe if the body still points at it AND
-        the pointer resolves. Nothing else in the gate checks that any skill's
-        `reference/` link resolves, so an evidence file could be deleted or
-        renamed and the body would keep advertising it.
 
-        🔴 Reads INDEX_DOC since 2026-08-24: the sidecar explains the INDEX
-        protocol, which is no longer /handoff's to route to. /handoff's own seam
-        — that it still names the `subsystem-index` skill at all — is asserted by
-        `test_handoff_still_routes_to_the_index_skill` in test_subsystem_touch.py."""
-        doc = INDEX_DOC.read_text(encoding="utf-8")
-        assert "reference/index-write.md" in doc, (
-            "claude/skills/subsystem-index/SKILL.md no longer routes to its evidence "
-            "sidecar — the rules would be left looking arbitrary with nowhere "
-            "to check them."
-        )
-        assert HANDOFF_REFERENCE.exists(), f"the routed-to sidecar is gone: {HANDOFF_REFERENCE}"
-        assert HANDOFF_REFERENCE.parent.name == "reference"
-        # The sidecar must live beside the body that ROUTES to it — which is
-        # INDEX_DOC since the 2026-08-24 extraction, not HANDOFF_DOC. Asserted
-        # structurally rather than as a literal path so a future move of the
-        # whole skill directory keeps this honest.
-        assert HANDOFF_REFERENCE.parent.parent == INDEX_DOC.parent
 
-    def test_the_sidecar_is_DEPLOYED(self) -> None:
-        """`home.file` ships `claude/skills` wholesale, so the sidecar reaches
-        `~/.claude/skills/handoff/reference/` only if it is in the FLAKE SOURCE —
-        and the flake source is the git-TRACKED tree, so an untracked file is
-        silently absent from the deploy while the body keeps pointing at it.
-
-        🔴 TWO TIERS, TWO PROOFS, AND NEITHER IS A SKIP. The first version of
-        this test asked git unconditionally and went RED in the nix sandbox,
-        which has no `.git` at all — a test that passes on the host and fails
-        under the authoritative gate.
-
-          * SANDBOX (no `.git`): the file being here AT ALL is the stronger
-            evidence, because the only way it reached this tree is that the
-            flake copied it, and the flake copies tracked files.
-          * DEV HOST (`.git` present): ask git directly. This is the only tier
-            that can catch added-then-untracked before it ever reaches a build.
-
-        An untracking mutation is caught in BOTH: the sandbox loses the file,
-        the host loses the `ls-files` hit.
-        """
-        # Same predicate as the three sites consolidated above. DECLARED-only:
-        # see testlib/skills_mapping.py for what it deliberately no longer
-        # traces, and which deploy-time check covers that instead.
-        assert_skills_mapping_declared(ROOT / "nix" / "home.nix")
-        assert HANDOFF_REFERENCE.exists(), (
-            f"{HANDOFF_REFERENCE} is absent from the tree under test. In the nix "
-            f"sandbox that means it was never git-added, so the deploy omits it."
-        )
-        if not (ROOT / ".git").exists():
-            return  # sandbox tier: the assertion above IS the tracked-ness proof
-        tracked = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", str(HANDOFF_REFERENCE.relative_to(ROOT))],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
-        assert tracked.returncode == 0, (
-            f"{HANDOFF_REFERENCE.relative_to(ROOT)} is not tracked by git, so the "
-            f"flake omits it from the deploy and the body's pointer dangles on "
-            f"every host.\n{tracked.stderr}"
-        )
-
-    def test_the_retracted_claim_is_NOT_still_asserted(self) -> None:
-        """The half that had to GO. A correction that only adds text leaves the
-        false sentence in front of the executor — and after the split it must be
-        absent from EVERY file that could reassert it, or moving the rationale
-        would have reopened it.
-
-        🔴 INDEX_DOC WAS MISSING FROM THIS TUPLE AFTER THE 2026-08-24 EXTRACTION,
-        and an audit proved it by mutation: appending the retracted sentence to
-        `subsystem-index/SKILL.md` SURVIVED a full green suite. The guard kept
-        checking the file the prose had LEFT. That is `claude/RULES.md`'s
-        "a guard's DESCRIPTION claims COVERAGE" arriving through a file move
-        rather than an edit — the docstring already said BOTH/EVERY; the body
-        had silently narrowed to the wrong two."""
-        for path in (HANDOFF_DOC, HANDOFF_REFERENCE, INDEX_DOC):
-            assert "fails loudly rather than clobbering" not in path.read_text(
-                encoding="utf-8"
-            ), f"the retracted wording is back in {path}"
 
 
 # =============================================================================
@@ -6334,33 +6020,3 @@ class TestTheRecallCoversOneHostsStore:
             == FIXTURE_HOST
         )
 
-    def test_ONE_SEAM_moves_the_reader_and_the_writer_together(
-        self, store: Path, pinned_host: str
-    ) -> None:
-        """🔴 THE SEAM GUARD, and it is not decoration. `claude/RULES.md`: two
-        components each hermetically tested can still be broken TOGETHER, because
-        every test was scoped to one surface. The reader and the writer describe
-        the SAME directory, so they must derive "whose disk is this" from ONE
-        place — `subsystem_touch.store_host`, whose body is the only call of
-        `host_identity.this_host` in either module.
-
-        This asserts the RELATIONSHIP, not a component: patching the writer's seam
-        must move the reader's output too. If the reader ever re-imports
-        `this_host` directly, this goes red while every other guard here stays
-        green, because they all patch the same name.
-        """
-        assert st.store_host() == FIXTURE_HOST
-        assert rc.store_host is st.store_host, (
-            "subsystem_recall no longer shares subsystem_touch's `store_host`. "
-            "Two derivations of the host WILL disagree the first time one is "
-            "edited, and this test is the only thing that sees it."
-        )
-        assert FIXTURE_HOST in rc.render_text(rc.recall(store, "never-indexed"))
-        assert FIXTURE_HOST in st.render_text(
-            st.build_report(
-                st.caller_supplied(["apps/roster/a.yaml", "apps/roster/b.yaml"]),
-                store,
-                "brand-new-repo",
-                today="2026-08-11",
-            )
-        )

@@ -34,11 +34,11 @@ from types import SimpleNamespace
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 from testlib import hang_mechanism, store_siting  # noqa: E402
-CAIRN_CLI = REPO / "scripts" / "cairn"
-SERVER_PY = REPO / "scripts" / "subsystem-store-api" / "server.py"
+CAIRN_CLI = REPO / "cairn"
+SERVER_PY = REPO / "server" / "server.py"
 GOOD_TOKEN = "w" * 20 + "R" * 20 + "t" * 8
 LOOPBACK = ipaddress.ip_network("127.0.0.1/32")
 SESSION = "test-session-01"
@@ -52,7 +52,7 @@ def _load_api():
     `from __future__ import annotations` — see `test_cairn_cli._load_api` for
     the full mechanism. Restated as a one-liner rather than re-derived.
     """
-    sys.path.insert(0, str(REPO / "scripts" / "lib"))
+    sys.path.insert(0, str(REPO / "lib"))
     spec = importlib.util.spec_from_file_location("srv_w", SERVER_PY)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

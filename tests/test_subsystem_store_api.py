@@ -1,4 +1,4 @@
-"""Tests for scripts/subsystem-store-api/ — the phase-1 HTTP layer, seed and verifier.
+"""Tests for server/ — the phase-1 HTTP layer, seed and verifier.
 
 WHAT IS BEING PROTECTED
 -----------------------
@@ -86,7 +86,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 # 🔴 ONE bound for every "this should already have happened" wait in this module
 # — the localhost HTTP round-trips, `wait_closed`, `await_audit`. These are
@@ -199,11 +199,11 @@ assert 0 < HANG_TIMEOUT < float("inf"), (
     f"HANG_TIMEOUT={HANG_TIMEOUT!r} must be finite and positive; 0 or a "
     f"non-finite value makes these waits unbounded rather than merely slow")
 
-API_DIR = ROOT / "scripts" / "subsystem-store-api"
+API_DIR = ROOT / "server"
 SERVER_PATH = API_DIR / "server.py"
 SEED_PATH = API_DIR / "seed.sh"
 VERIFY_PATH = API_DIR / "verify-byte-identity.sh"
-RECALL_PATH = ROOT / "scripts" / "lib" / "subsystem_recall.py"
+RECALL_PATH = ROOT / "lib" / "subsystem_recall.py"
 
 
 def _load_server():
@@ -237,7 +237,7 @@ assert resolver.classify_path is api.classify_path, (
 # IN-PROCESS server renders while the local CLI, which `run_verify` starts as a
 # SUBPROCESS, keeps this machine's real identity. That asymmetry is precisely
 # the workbench-vs-pod shape, and nothing else in this harness produces it.
-touch = sys.modules["subsystem_touch"]
+touch = sys.modules["entry_shape"]
 assert hasattr(touch, "store_host"), (
     "subsystem_touch no longer exposes `store_host` — the byte-identity "
     "verifier's `host:` canonicalisation is tested through this seam, and a "
@@ -4055,53 +4055,6 @@ def _ambiguous_refs(root: Path) -> None:
 _EVIDENCE_BLOCK_START = "# 🔴 AND IT CANNOT COMPARE THE WHOLE-SCOPE DIGEST AT ALL"
 _EVIDENCE_BLOCK_END = "# 🔴 SO THE CLAIM IS RESTATED AT THE LEVEL IT CAN HOLD."
 
-_EXPECTED_EVIDENCE_BLOCK = """
-    🔴 AND IT CANNOT COMPARE THE WHOLE-SCOPE DIGEST AT ALL — THAT IS THE SECOND
-    THING THAT MADE THIS SCRIPT PERMANENTLY RED, AFTER `host:`.
-    `subsystem_recall` orders its INDEX **newest-first by entry-file mtime**, and
-    picks the digest's one featured BODY the same way (`select_featured`'s
-    most-recent fallback). The transport does not preserve mtime — `seed.sh`
-    `rsync`s into a stage and `tar`s that into the pod — so two stores holding
-    byte-identical entries render their index in a DIFFERENT ORDER and feature a
-    DIFFERENT entry. MEASURED 2026-09-01 against the live pod, store
-    `~/.claude/analyze-service-index`, over a `kubectl port-forward`:
-
-    FAIL scope=devrc            raw-diff-lines=45   accounted-for=6
-    FAIL scope=cli              raw-diff-lines=8    accounted-for=6
-    PASS scope=storage-resolver (1 entry)
-    FAIL scope=homelab-infra    raw-diff-lines=108  accounted-for=6
-    FAIL scope=datapacket-talos raw-diff-lines=336  accounted-for=6
-
-    The `cli` scope is the clean isolation — its index ROWS were identical and the
-    only unaccounted difference was one row's POSITION. `claude/RULES.md`: a
-    permanently-red gate is worse than no gate.
-
-    🔴 TWO READINGS OF THAT RUN WERE WRONG, AND THIS IS THE CORRECTION.
-    The `storage-resolver` line above said `(2 entries)` and the paragraph
-    concluded "every passing scope had 2 entries; every failing one had more".
-    RE-MEASURED 2026-09-01 on this host, same store, counting entries as
-    `subsystem_recall` INDEXES them rather than as files on disk:
-
-    cli=5  devrc=26  datapacket-talos=49  homelab-infra=0  storage-resolver=1
-
-    `storage-resolver/` holds `backblaze.md` plus a `README.md`, and a README in a
-    scope is correctly NOT indexed — so it is a ONE-entry scope. NO TWO-ENTRY
-    SCOPE APPEARS IN THAT RUN AT ALL, so the data could never support a two-entry
-    boundary, in either direction.
-
-    The boundary that does hold is ARITHMETIC, not measured: a ONE-entry index has
-    exactly one possible order and cannot diverge; TWO OR MORE is where the order
-    can differ. That is the same argument the ordering fixture in
-    `scripts/tests/test_subsystem_store_api.py` makes for itself when it chooses
-    FOUR refs — two entries admit only two orders, so a two-entry fixture is one
-    coin-flip away from asserting nothing.
-
-    And `homelab-infra` was NOT an ordering failure. It holds ZERO indexed entries
-    on this host (one `README.md`), so its local render is `status=scope-empty`
-    with no INDEX block at all — 102 unaccounted lines that ordering structurally
-    cannot produce. That FAIL was a SET difference, the lagging read-through cache
-    case described below. THREE of the four FAILs were ordering, not four.
-"""
 
 
 def _normalise_prose(text: str) -> str:
@@ -4186,7 +4139,7 @@ def _normalise_for_scan(text: str) -> str:
 # tracked text file in the repo IS scanned — see
 # `test_NO_TRACKED_FILE_ASSERTS_the_RETRACTED_two_entry_boundary` for why this
 # is derived rather than a hand-written list of sites.
-_SCAN_EXEMPT = ("scripts/tests/test_subsystem_store_api.py",)
+_SCAN_EXEMPT = ("tests/test_subsystem_store_api.py",)
 # ⚠ THE SUFFIX LIST IS NARROWER THAN "EVERY TRACKED TEXT FILE", SO SAY SO.
 # Measured 2026-09-02: 952 of 1261 tracked files match these suffixes; 309 do
 # not, including 29 `.nix`. Zero of the unscanned files match a needle today
@@ -5054,14 +5007,14 @@ class TestByteIdentityVerifier:
             f"not reaching the repo, so its zero means nothing"
         )
         for must in (
-            "scripts/subsystem-store-api/verify-byte-identity.sh",
-            "scripts/subsystem-store-api/README.md",
+            "server/verify-byte-identity.sh",
+            "server/README.md",
             "scripts/cairn-cutover.py",
             # 🔴 THE SITE THE HAND-WRITTEN LEDGER MISSED.
             "claudedocs/handoff-cairn-phase3.md",
         ):
             assert must in files, f"the scan does not reach {must}"
-        assert "scripts/tests/test_subsystem_store_api.py" not in files, (
+        assert "tests/test_subsystem_store_api.py" not in files, (
             "this file is in the scan set; its needles will match themselves"
         )
 
@@ -5994,7 +5947,7 @@ class TestPhaseOneScope:
         import fails here — in CI, on the commit that adds it — rather than at
         the next deploy, which may be months later and someone else's problem.
         """
-        lib = ROOT / "scripts" / "lib"
+        lib = ROOT / "lib"
         dockerfile = (API_DIR / "Dockerfile").read_text()
 
         def local_imports(path: Path) -> set[str]:
@@ -6022,11 +5975,11 @@ class TestPhaseOneScope:
         # `Dockerfile.dockerignore` is an ALLOWLIST (`**` then explicit `!`
         # unignores) and an un-listed file never reaches the build context at
         # all. Measured: with the COPY added but the ignore-file untouched,
-        # `docker build` fails with `"/scripts/lib/git_mainline.py": not found`.
+        # `docker build` fails with `"/lib/git_mainline.py": not found`.
         # Both lists must cover the closure, so both are asserted.
         ignorefile = (API_DIR / "Dockerfile.dockerignore").read_text()
-        copied = set(re.findall(r"COPY scripts/lib/(\w+)\.py", dockerfile))
-        unignored = set(re.findall(r"!scripts/lib/(\w+)\.py", ignorefile))
+        copied = set(re.findall(r"COPY lib/(\w+)\.py", dockerfile))
+        unignored = set(re.findall(r"!lib/(\w+)\.py", ignorefile))
 
         assert not (needed - copied), (
             f"Dockerfile does not COPY {sorted(needed - copied)} — the image "

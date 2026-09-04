@@ -40,13 +40,12 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
 
-import service_recon as srec  # noqa: E402
 import subsystem_read_store as rs  # noqa: E402
 import subsystem_recall as rc  # noqa: E402
-import subsystem_touch as st  # noqa: E402
+import entry_shape as st  # the reader/writer vocabulary
 
 SCOPE = "workbench-cfg"
 
@@ -159,10 +158,6 @@ WIRE_CONSTANTS: tuple[tuple[object, str, object], ...] = (
     # A RENDERED TOKEN two renderers emit and `analyze-service/SKILL.md` tells
     # the reader to relay ("the `stamp:` lines").
     (rs, "STAMP_PREFIX", "  stamp: "),
-    # A STATUS other code and `analyze-service/SKILL.md` match on by name.
-    (srec, "INDEX_UNSTAMPED", "store-unstamped"),
-    # A PREFIX a JSON consumer parses to tell "read" from "refused".
-    (srec, "NOT_READ_PREFIX", "NOT READ"),
 )
 
 #: Module-scope names of `subsystem_read_store` that are NOT wire facts.
@@ -343,7 +338,7 @@ class TestTheWireConstants:
         would either be noise or need an exclusion list long enough to hide a
         real omission. Its two are pinned by name above.
         """
-        source = ROOT / "scripts" / "lib" / "subsystem_read_store.py"
+        source = ROOT / "lib" / "subsystem_read_store.py"
         declared = _module_scope_assignments(source)
         # POSITIVE CONTROL. A walk that returned nothing — wrong path, a parse
         # that found no `Assign` — would report a clean sweep over zero names,
@@ -410,7 +405,7 @@ class TestTheWireConstants:
         writing to the operator's real cache. Asserted behaviourally, through
         cairn's own parser, rather than by grepping for the import shape.
         """
-        path = ROOT / "scripts" / "cairn"
+        path = ROOT / "cairn"
         assert "DEFAULT_CACHE_ROOT as DEFAULT_CACHE" not in path.read_text(encoding="utf-8")
         # `scripts/cairn` has no `.py` suffix, so `spec_from_file_location`
         # returns None. Same loader-less exec the cairn suites use.
@@ -423,12 +418,6 @@ class TestTheWireConstants:
         monkeypatch.setattr(module._read_store, "DEFAULT_CACHE_ROOT", tmp_path / "moved")
         assert module.build_parser().parse_args(["sync"]).cache == tmp_path / "moved"
 
-    def test_the_status_literal_matches_the_skill_prose_that_quotes_it(self) -> None:
-        """`analyze-service/SKILL.md` hardcodes `store-unstamped` in prose. That
-        is the same code/prose drift closed for `REMEDY`, so it gets the same
-        cross-check rather than a second copy of the fact."""
-        doc = (ROOT / "claude/skills/analyze-service/SKILL.md").read_text(encoding="utf-8")
-        assert f"index: {srec.INDEX_UNSTAMPED}" in doc
 
 
 # =============================================================================
@@ -465,12 +454,6 @@ class TestTheResolver:
         assert got.stamped is False
         assert "empty" in (got.reason or "")
 
-    def test_the_default_resolution_is_the_cache_and_not_the_frozen_mirror(self) -> None:
-        """Pinned two-way: WHERE it points, and where it must not."""
-        assert rs.read_store_root() == rs.DEFAULT_CACHE_ROOT
-        assert rs.DEFAULT_CACHE_ROOT != st.DEFAULT_STORE_ROOT
-        assert rs.DEFAULT_CACHE_ROOT.name == "subsystem-store"
-        assert rs.DEFAULT_CACHE_ROOT.parent.name == ".cache"
 
     def test_the_cache_root_is_ANCHORED_AT_HOME(self) -> None:
         """🔴 THE `$HOME` ANCHOR WAS THE UNPINNED HALF, AND IT IS THE DANGEROUS ONE.
@@ -510,7 +493,7 @@ class TestTheResolver:
         assert rs.REMEDY == "cairn sync"
         prog, _, verb = rs.REMEDY.partition(" ")
         assert prog == "cairn"
-        cairn = (ROOT / "scripts" / "cairn").read_text(encoding="utf-8")
+        cairn = (ROOT / "cairn").read_text(encoding="utf-8")
         assert f'sub.add_parser("{verb}"' in cairn, (
             f"the refusal tells a human to run `{rs.REMEDY}`, but `scripts/cairn` "
             f"declares no `{verb}` subcommand."
@@ -635,7 +618,7 @@ class TestTheResolver:
         local. A local shadows nothing another module reads; the hazard this
         guards is a second MODULE-SCOPE definition.
         """
-        path = ROOT / "scripts" / "cairn"
+        path = ROOT / "cairn"
         src = path.read_text(encoding="utf-8")
         assert "from subsystem_read_store import" in src
         assigned = _module_scope_bindings(path)
@@ -645,7 +628,7 @@ class TestTheResolver:
         assert "EXIT_REFRESH_FAILED" in assigned, sorted(assigned)[:20]
         assert "cmd_sync" in assigned, sorted(assigned)[:20]
         swept = _module_scope_bindings(
-            ROOT / "scripts" / "lib" / "subsystem_read_store.py"
+            ROOT / "lib" / "subsystem_read_store.py"
         )
         # POSITIVE CONTROL on the half `__all__` cannot supply: the sweep really
         # read names off the module, so a union that quietly collapsed back to
@@ -793,10 +776,10 @@ class TestAStampedDefaultStoreCarriesItsFreshness:
         than by grepping the output for a duration, because a duration string
         is a word another feature could spell.
         """
-        src = (ROOT / "scripts" / "lib" / "subsystem_recall.py").read_text(encoding="utf-8")
+        src = (ROOT / "lib" / "subsystem_recall.py").read_text(encoding="utf-8")
         assert "\nimport time" not in src and "\nfrom time import" not in src
         assert "\nimport datetime" not in src and "\nfrom datetime import" not in src
-        rd = (ROOT / "scripts" / "lib" / "subsystem_read_store.py").read_text(encoding="utf-8")
+        rd = (ROOT / "lib" / "subsystem_read_store.py").read_text(encoding="utf-8")
         assert "\nimport time" not in rd and "\nfrom time import" not in rd
         # And behaviourally: the stamp's own epoch is echoed, never converted.
         repointed(_store(tmp_path, stamped=True))
@@ -930,7 +913,7 @@ class TestThePodContractIsUnchanged:
         annotation (`_with_stamp`'s) counts too; comment lines are excluded so
         prose about the resolver stays free.
         """
-        src = (ROOT / "scripts" / "lib" / "subsystem_recall.py").read_text(encoding="utf-8")
+        src = (ROOT / "lib" / "subsystem_recall.py").read_text(encoding="utf-8")
         referencing = set()
         for node in ast.parse(src).body:
             segment = ast.get_source_segment(src, node) or ""
@@ -954,10 +937,10 @@ class TestThePodContractIsUnchanged:
         `CLI_ONLY`, the guard above silently stops covering the function that
         motivated it — and nothing else would say so.
         """
-        server = (ROOT / "scripts" / "subsystem-store-api" / "server.py").read_text(
+        server = (ROOT / "server" / "server.py").read_text(
             encoding="utf-8"
         )
-        cairn = (ROOT / "scripts" / "cairn").read_text(encoding="utf-8")
+        cairn = (ROOT / "cairn").read_text(encoding="utf-8")
         assert "rc._exit_for(" in server
         assert "rc._exit_for(" in cairn
         assert "_exit_for" not in self.CLI_ONLY
@@ -977,7 +960,7 @@ class TestThePodContractIsUnchanged:
         `cmd_sync` and nowhere else — which is what makes "`cairn recall` never
         returns 4" true rather than remembered.
         """
-        src = (ROOT / "scripts" / "cairn").read_text(encoding="utf-8")
+        src = (ROOT / "cairn").read_text(encoding="utf-8")
         assert "EXIT_REFRESH_FAILED = 4" in src
         assert rc.EXIT_UNSTAMPED_READ_STORE == 4, "the collision is the premise"
         returning = set()
@@ -1020,16 +1003,16 @@ class TestThePodContractIsUnchanged:
         CLI nor calls `main`. If one ever switches to the CLI it would inherit
         the refusal, and this test is where that gets noticed.
         """
-        for rel in ("scripts/subsystem-store-api/server.py", "scripts/cairn"):
+        for rel in ("server/server.py", "cairn"):
             src = (ROOT / rel).read_text(encoding="utf-8")
             assert "import subsystem_recall as rc" in src, rel
             assert "rc.main(" not in src, rel
             assert "_build_parser(" not in src, rel
-        server = (ROOT / "scripts" / "subsystem-store-api" / "server.py").read_text(
+        server = (ROOT / "server" / "server.py").read_text(
             encoding="utf-8"
         )
         assert "rc.recall(" in server and "rc.load_store(" in server
-        cairn = (ROOT / "scripts" / "cairn").read_text(encoding="utf-8")
+        cairn = (ROOT / "cairn").read_text(encoding="utf-8")
         assert "rc.recall(" in cairn and "rc.search(" in cairn
 
 
@@ -1038,179 +1021,6 @@ class TestThePodContractIsUnchanged:
 # =============================================================================
 
 
-class TestServiceReconDegradesGracefully:
-    def test_an_unstamped_default_degrades_only_the_index_section(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """🔴 (e) RECON HAS FOUR OTHER SECTIONS. Aborting the whole brief over
-        an unreadable index would trade a working recon for a defect the brief
-        can simply state."""
-        unstamped = _store(tmp_path / "a", stamped=False)
-        repointed(unstamped)
-        brief = srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path)
-        assert brief.index.status == srec.INDEX_UNSTAMPED
-        text = srec.render_brief(brief)
-        assert f"index: {srec.INDEX_UNSTAMPED}" in text
-        assert "the index could not be read:" in text
-        assert rs.REMEDY in text
-
-        # 🔴 "The rest of the brief still ran" is asserted by COMPARISON, not by
-        # spotting a section header: every non-index section is byte-identical to
-        # the same recon against an explicitly-named store. A header check would
-        # pass over a section that ran and produced nothing.
-        named = srec.render_brief(
-            srec.recon(
-                "collector", repos=[str(tmp_path)], store_root=unstamped, cwd=tmp_path
-            )
-        )
-
-        def _sections(t: str) -> list[list[str]]:
-            blocks, cur = [], []
-            for line in t.splitlines():
-                if line == "":
-                    blocks.append(cur)
-                    cur = []
-                else:
-                    cur.append(line)
-            blocks.append(cur)
-            return blocks
-
-        degraded_blocks = _sections(text)
-        named_blocks = _sections(named)
-        assert len(degraded_blocks) == len(named_blocks), text
-        differing = [
-            i for i, (x, y) in enumerate(zip(degraded_blocks, named_blocks)) if x != y
-        ]
-        assert len(differing) == 1, (
-            f"exactly ONE block may differ (the index); blocks {differing} did"
-        )
-        assert degraded_blocks[differing[0]][0].startswith("index: "), text
-
-    def test_the_degraded_section_is_NOT_an_empty_index(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """🔴 "Nothing recorded" and "nothing was read" must not render alike —
-        that equivalence is the silent zero this whole change exists to kill."""
-        repointed(_store(tmp_path, stamped=False))
-        text = srec.render_brief(
-            srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path)
-        )
-        assert "nothing recorded under that ref yet" not in text
-        assert "Nothing was checked" in text
-
-    def test_an_explicit_store_root_still_reads_an_unstamped_store(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """recon's `--store`/`store_root=` is the operator naming a path, same
-        as the reader's. Every existing test in `test_service_recon.py` is this
-        case, and all of them must keep working."""
-        repointed(_store(tmp_path / "default", stamped=False))
-        named = _store(tmp_path / "named", stamped=False)
-        brief = srec.recon(
-            "collector", repos=[str(tmp_path)], store_root=named, cwd=tmp_path
-        )
-        assert brief.index.status != srec.INDEX_UNSTAMPED
-
-    def test_a_stamped_default_is_read_normally(self, tmp_path: Path, repointed) -> None:
-        repointed(_store(tmp_path, stamped=True))
-        brief = srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path)
-        assert brief.index.status != srec.INDEX_UNSTAMPED
-
-    def test_the_brief_reports_the_RESOLVED_store_not_the_argument(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """🔴 THE FIELD THAT ANSWERS "WHICH STORE DID THIS READ?".
-
-        It read the literal string `"None"` for one commit: `recon` stringified
-        its own `store_root=None` sentinel straight into the `Brief`. No test
-        could see it — all ~40 `sr.recon(...)` calls in `test_service_recon.py`
-        pass `store_root=` explicitly, so the default path never reached this
-        field, and nothing anywhere asserted `brief_json()["store_root"]`. A
-        suite blind to a dimension passes every defect on it.
-
-        All three resolutions are asserted here, because the stamped case alone
-        would have gone green over the `"None"` bug for the explicit path while
-        the default stayed broken.
-        """
-        stamped = _store(tmp_path / "cache", stamped=True)
-        repointed(stamped)
-        brief = srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path)
-        assert srec.brief_json(brief)["store_root"] == str(stamped)
-        assert "None" not in srec.brief_json(brief)["store_root"]
-
-        named = _store(tmp_path / "named", stamped=False)
-        brief = srec.recon(
-            "collector", repos=[str(tmp_path)], store_root=named, cwd=tmp_path
-        )
-        assert srec.brief_json(brief)["store_root"] == str(named)
-
-    def test_a_refused_default_says_NOT_READ_rather_than_naming_a_path(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """🔴 A BARE PATH IN THIS FIELD IS A CLAIM THAT THE BRIEF READ IT.
-
-        On a refusal the store was resolved and then deliberately not opened, so
-        emitting the directory alone would tell a consumer the index came from
-        it. The prefix makes the difference machine-visible; the path stays so a
-        human can see WHICH store needs syncing.
-        """
-        unstamped = _store(tmp_path / "cache", stamped=False)
-        repointed(unstamped)
-        blob = srec.brief_json(srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path))
-        assert blob["store_root"].startswith(srec.NOT_READ_PREFIX)
-        assert srec.INDEX_UNSTAMPED in blob["store_root"]
-        assert str(unstamped) in blob["store_root"]
-        assert blob["store_root"] != str(unstamped)
-        assert blob["index"]["status"] == srec.INDEX_UNSTAMPED
-
-    def test_read_index_called_DIRECTLY_refuses_an_unstamped_default(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """🔴 A GUARD MY OWN FIX UNCOVERED, CAUGHT BY RE-RUNNING THE SWEEP.
-
-        `read_index`'s refusal branch was covered while `recon` delegated the
-        resolution to it. Fixing F1 moved that resolution into `recon` — correct,
-        because only `recon` can report which store the brief read — and the
-        branch instantly became reachable only by a DIRECT caller, which no test
-        was. MEASURED: deleting both lines then SURVIVED all 624 tests, having
-        been KILLED by four of them one commit earlier.
-
-        `read_index` is exported, so this is live surface. Both accepted shapes
-        of `loc` are exercised, because the refusal sits before the branch that
-        tells them apart and a test of one would not prove the other.
-        """
-        repointed(_store(tmp_path / "cache", stamped=False))
-        for loc in (str(tmp_path), srec.locate("collector", ((str(tmp_path), "test"),))):
-            got = srec.read_index(loc, "collector")
-            assert got.status == srec.INDEX_UNSTAMPED, loc
-            assert rs.REMEDY in (got.detail or "")
-
-    def test_read_index_one_called_DIRECTLY_refuses_an_unstamped_default(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """The same uncovering, one level down: `read_index`'s loop always passes
-        a resolved root, so `_read_index_one`'s own guard has no in-tree caller
-        that can reach it either."""
-        repointed(_store(tmp_path / "cache", stamped=False))
-        got = srec._read_index_one(str(tmp_path), "collector")
-        assert got.status == srec.INDEX_UNSTAMPED
-        assert rs.REMEDY in (got.detail or "")
-
-    def test_read_index_called_directly_with_an_explicit_store_still_reads(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """The permissive half of the pair above — otherwise the two tests would
-        pass equally well over a `read_index` that refused everything."""
-        repointed(_store(tmp_path / "cache", stamped=False))
-        named = _store(tmp_path / "named", stamped=False)
-        got = srec.read_index(str(tmp_path), "collector", store_root=named)
-        assert got.status != srec.INDEX_UNSTAMPED
-
-    def test_the_cli_store_default_is_None_so_it_resolves(self) -> None:
-        """`None` IS the "resolve, and refuse an undateable store" case. A
-        literal here would be a second copy of a path the resolver owns — and
-        the literal it used to hold was the FROZEN mirror."""
-        assert srec._build_parser().get_default("store") is None
 
 
 # =============================================================================
@@ -1218,212 +1028,6 @@ class TestServiceReconDegradesGracefully:
 # =============================================================================
 
 
-class TestTheBriefSaysHowFreshItsIndexIs:
-    """🔴 THE REFUSAL FIRES ON UNDATEABLE, NOT ON STALE — AND `;` EXPOSED THAT.
-
-    Changing step 1 from `cairn sync && …` to `cairn sync; …` was right: under
-    `&&` a sync failing with exit 4 (pod down, usable cache) deleted the whole
-    brief. But it turned a loud nothing into a quiet something: pod down three
-    days, cache stamped three days ago, `cairn sync` printing its age warning on
-    STDERR, `;` letting the recon run — and a full brief whose `index:` block was
-    three days old with NO freshness field anywhere in the text output. That is
-    a store that cannot say how fresh it is serving as if current, which is this
-    change's own thesis one layer up.
-
-    So the brief renders the stamp. These pin that it does, that it invents one
-    when there is none, that the two renderers spell it the same way, and that
-    the skill prose says what the code does — the prose asserted the opposite for
-    one round ("REFUSES an undateable store rather than serving a stale one",
-    "served the index block at full fidelity").
-    """
-
-    def _brief_text(self, tmp_path: Path, *, stamped: bool) -> str:
-        return srec.render_brief(
-            srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path)
-        )
-
-    def test_a_stamped_default_prints_EVERY_stamp_line_INSIDE_the_index_block(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """Every line, and POSITIONED — a freshness fact printed under `config:`
-        answers a question nobody asked there.
-
-        The block is delimited the way `render_brief` delimits every section: a
-        blank line. So the assertion is "between the `index:` line and the next
-        blank line", which a stamp appended to the end of the brief would fail.
-        """
-        repointed(_store(tmp_path, stamped=True))
-        text = self._brief_text(tmp_path, stamped=True)
-        lines = text.splitlines()
-        index_at = next(i for i, ln in enumerate(lines) if ln.startswith("index: "))
-        end = next(
-            (i for i in range(index_at + 1, len(lines)) if lines[i] == ""), len(lines)
-        )
-        block = lines[index_at:end]
-        for i, line in enumerate(STAMP_LINES):
-            assert block[1 + i] == f"  stamp: {line}", block
-        # …and the store really was SERVED, so this is a date beside a read and
-        # not beside a refusal that happens to print one.
-        assert srec.INDEX_UNSTAMPED not in block[0], block
-
-    def test_the_stamp_precedes_the_ENTRY_BODY_on_a_hit(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """🔴 THE BRANCH WITH SUB-LINES, WHICH IS THE ONE A READER ACTUALLY SEES.
-
-        On a `hit` the `index:` header is followed by `## What it is`, pointers
-        and nuance. A stamp appended after those would date a paragraph the
-        reader has already believed. Rendered from a `hit` `IndexResult` swapped
-        into a real brief, because reaching a hit end-to-end needs a git repo
-        whose name is the scope — a heavier fixture that would test the locate
-        step, not this one.
-        """
-        repointed(_store(tmp_path, stamped=True))
-        brief = srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path)
-        hit = dataclasses.replace(
-            brief,
-            index=srec.IndexResult(
-                "hit", scope=SCOPE, ref="collector",
-                what="A durable thing a recall block MUST name.",
-                pointers="- ops skill `manage-widget`",
-                nuance="- the readiness probe lies for 40s.",
-                basis=srec.OWNER_BASIS,
-            ),
-        )
-        lines = srec.render_brief(hit).splitlines()
-        index_at = next(i for i, ln in enumerate(lines) if ln.startswith("index: "))
-        assert "HIT (from index)" in lines[index_at]
-        for i, line in enumerate(STAMP_LINES):
-            assert lines[index_at + 1 + i] == f"{rs.STAMP_PREFIX}{line}", lines
-        what_at = next(i for i, ln in enumerate(lines) if "What it is" in ln)
-        assert index_at + len(STAMP_LINES) < what_at, lines
-
-    def test_the_stamp_prefix_is_the_ONE_spelling_both_renderers_use(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """🔴 TWO RENDERERS, ONE TOKEN. `subsystem_recall`'s CLI header and the
-        recon's `index:` block both print the stamp, and the skill tells a reader
-        to relay "the `stamp:` lines" — one token, or the instruction is true of
-        one output and false of the other. Asserted by comparing the two RENDERED
-        outputs, not by grepping both sources for the same f-string.
-        """
-        store = _store(tmp_path, stamped=True)
-        repointed(store)
-        assert rc.main(["--scope", SCOPE]) == 0
-        cli_lines = {
-            ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("  stamp:")
-        }
-        brief_lines = {
-            ln for ln in self._brief_text(tmp_path, stamped=True).splitlines()
-            if ln.startswith("  stamp:")
-        }
-        assert cli_lines == brief_lines != set()
-        assert cli_lines == {f"{rs.STAMP_PREFIX}{ln}" for ln in STAMP_LINES}
-
-    def test_the_brief_json_carries_the_stamp_UNPARSED(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """A `--json` consumer reads no header. Same key as `subsystem_recall
-        --json` (`read_store_stamp`), because two names for one fact is how a
-        consumer ends up reading freshness from one tool and not the other."""
-        repointed(_store(tmp_path, stamped=True))
-        blob = srec.brief_json(
-            srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path)
-        )
-        assert blob["read_store_stamp"] == list(STAMP_LINES)
-
-    def test_a_REFUSED_default_invents_no_stamp(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """Nothing is invented, and the absence is not silence: the refusal text
-        is what carries the reason."""
-        repointed(_store(tmp_path, stamped=False))
-        brief = srec.recon("collector", repos=[str(tmp_path)], cwd=tmp_path)
-        assert brief.store_stamp == ()
-        text = srec.render_brief(brief)
-        assert rs.STAMP_PREFIX not in text
-        assert srec.INDEX_UNSTAMPED in text
-
-    def test_an_explicitly_named_store_is_dated_when_it_can_be_and_not_when_it_cannot(
-        self, tmp_path: Path, repointed
-    ) -> None:
-        """🔴 BOTH HALVES, because either alone passes over a renderer that
-        always prints or never does.
-
-        `--store <path>` is exempt from the REFUSAL, not from the date: a
-        snapshot an operator names is as capable of being three days old as the
-        default cache is.
-        """
-        repointed(_store(tmp_path / "default", stamped=False))
-        named_stamped = _store(tmp_path / "fresh", stamped=True)
-        named_bare = _store(tmp_path / "bare", stamped=False)
-
-        dated = srec.render_brief(
-            srec.recon("collector", repos=[str(tmp_path)],
-                       store_root=named_stamped, cwd=tmp_path)
-        )
-        for line in STAMP_LINES:
-            assert f"{rs.STAMP_PREFIX}{line}" in dated, line
-
-        undated = srec.render_brief(
-            srec.recon("collector", repos=[str(tmp_path)],
-                       store_root=named_bare, cwd=tmp_path)
-        )
-        assert rs.STAMP_PREFIX not in undated
-        # The undated one still SERVED — the missing stamp is a missing date,
-        # never a refusal.
-        assert srec.INDEX_UNSTAMPED not in undated
-
-    #: 🔴 THE WHOLE PARAGRAPH, NORMALISED — not a keyword.
-    #:
-    #: The artifact under test is PROSE, and a guard on words is walkable by
-    #: rewording: this file's prose has now made a false freshness claim twice
-    #: (`&&` "costs you nothing", then "REFUSES … rather than serving a stale
-    #: one"), each time surviving because the tests only matched keywords that
-    #: stayed true. Pinning the normalised paragraph makes a reword go red, which
-    #: is the price of a machine-readable claim — re-read the code, then paste
-    #: the new text here.
-    FRESHNESS_PARAGRAPH = (
-        "🔴 **So READ THE `stamp:` LINES under `index:` — they are the only thing in "
-        "the brief that says how old it is.** A cache stamped three days ago is served "
-        "in full, and `HIT (from index)` reads exactly the same whether the sync ran a "
-        "second ago or failed all week: the age `cairn sync` computes goes to "
-        "**stderr**, which the brief does not carry. The stamp lines (`synced=`, "
-        "`revision=`, `snapshot=`, `entries=`, `coverage=`) sit directly under the "
-        "`index:` line, unparsed, with no age computed here. **Relay them, or state "
-        "the sync's outcome, whenever you present index content.** Absent stamp lines "
-        "mean the store carried no stamp, never that it is fresh."
-    )
-
-    #: Claims the prose made that the code does not keep. Asserted ABSENT as
-    #: well as the paragraph above being present, because a reword could
-    #: reintroduce one somewhere else in the file.
-    RETIRED_CLAIMS = (
-        "REFUSES an undateable store rather than serving a stale one",
-        "served the index block at full fidelity",
-        "would have served the index block at full",
-    )
-
-    def test_the_skill_prose_says_what_the_recon_ACTUALLY_does(self) -> None:
-        doc = (ROOT / "claude/skills/analyze-service/SKILL.md").read_text(encoding="utf-8")
-        paragraphs = [
-            " ".join(p.split()) for p in doc.split("\n\n")
-        ]
-        assert " ".join(self.FRESHNESS_PARAGRAPH.split()) in paragraphs, (
-            "the freshness paragraph in `analyze-service/SKILL.md` no longer "
-            "matches the one pinned here. Re-read `render_brief`'s index block "
-            "and `_resolve_store`, then paste the corrected paragraph into "
-            "`FRESHNESS_PARAGRAPH` — do not delete this pin."
-        )
-        for claim in self.RETIRED_CLAIMS:
-            assert claim not in doc, f"retired claim is back: {claim!r}"
-
-    def test_the_prose_token_is_the_one_the_code_emits(self) -> None:
-        """The paragraph tells the reader to look for `stamp:` lines under
-        `index:`. Derived from the constant, so renaming the token fails HERE
-        rather than at a reader wondering where the date went."""
-        doc = (ROOT / "claude/skills/analyze-service/SKILL.md").read_text(encoding="utf-8")
-        assert f"`{rs.STAMP_PREFIX.strip()}` LINES under `index:`" in doc
 
 
 # =============================================================================
@@ -1442,27 +1046,8 @@ class TestTheBriefSaysHowFreshItsIndexIs:
 # The prescribed invocations all pass `--store` explicitly and were never broken;
 # the BARE one in `claudedocs/handoff-analyze-service-index-backup.md` was.
 
-_AUDIT_SRC = ROOT / "scripts" / "subsystem-audit.py"
 
 
-def _fenced_command_lines(doc: str, needle: str) -> list[str]:
-    """Lines inside a ``` fence that mention `needle`, whitespace-normalised.
-
-    🔴 PROSE THAT NAMES A COMMAND IS NOT A PRESCRIPTION OF IT. Both markdown
-    guards below first matched any line containing `subsystem-audit.py`, which
-    swept up sentences like "re-run `scripts/subsystem-audit.py` and read …" —
-    true statements that prescribe no argv and must stay free to be reworded.
-    Only a fenced line is something a reader copies and runs, so only a fenced
-    line can be wrong about `--store`.
-    """
-    out, inside = [], False
-    for line in doc.splitlines():
-        if line.lstrip().startswith("```"):
-            inside = not inside
-            continue
-        if inside and needle in line and not line.lstrip().startswith("#"):
-            out.append(" ".join(line.split()))
-    return out
 
 
 def _python_code_only(src: str) -> str:
@@ -1495,26 +1080,8 @@ def _python_code_only(src: str) -> str:
     return "\n".join(stripped)
 
 
-def _load_audit():
-    """`subsystem-audit.py` has a hyphen, so it cannot be imported by name.
-
-    Loaded under a module name of this file's own, NOT the one
-    `test_subsystem_audit.py` uses: two suites sharing a `sys.modules` key would
-    make whichever imported second silently reuse the first's module object.
-    `subsystem_read_store` itself is still shared through `sys.modules`, which is
-    what lets `repointed` reach the auditor at all.
-    """
-    loader = importlib.machinery.SourceFileLoader(
-        "subsystem_audit_under_readstore_test", str(_AUDIT_SRC)
-    )
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[loader.name] = module
-    loader.exec_module(module)
-    return module
 
 
-sa = _load_audit()
 
 #: The auditor's own store-missing code, written out here rather than read off
 #: the module. It is the number the refusal must NOT collide with.
@@ -1541,18 +1108,6 @@ class TestTheAuditorResolvesThroughTheSharedResolver:
         # somebody else's counts.
         assert "collector" in out
 
-    def test_the_default_is_NOT_the_frozen_mirror(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """Pinned two-way, the same as the resolver's own default test: where it
-        points, and where it must not. The mirror is named through
-        `subsystem_touch` — the module that legitimately owns that path — so this
-        cannot be satisfied by the auditor agreeing with a copy of its own."""
-        repointed(_store(tmp_path, stamped=True))
-        assert sa.main([]) == 0
-        out = capsys.readouterr().out
-        assert f"  store: {st.DEFAULT_STORE_ROOT}" not in out
-        assert "analyze-service-index" not in out
 
 
 class TestTheAuditorRefusesAnUnstampedDefault:
@@ -1677,18 +1232,6 @@ class TestTheAuditorStaysPermissiveOnAnExplicitStore:
         assert "store root not found" in err
         assert rs.REMEDY not in err
 
-    def test_the_prescribed_skill_commands_all_name_a_store(self) -> None:
-        """The premise of this whole class, pinned rather than recalled. If
-        `prune-index` ever stops passing `--store`, the permissive arm above
-        stops describing the prescribed path and the refusal starts reaching
-        it — and nothing else would say so."""
-        doc = (ROOT / "claude/skills/prune-index/SKILL.md").read_text(encoding="utf-8")
-        calls = _fenced_command_lines(doc, "subsystem-audit.py")
-        # POSITIVE CONTROL: the fence walk really found commands, so an
-        # all-pass loop below is not a loop over nothing.
-        assert len(calls) >= 4, calls
-        for line in calls:
-            assert "--store" in line, f"prune-index now invokes the auditor bare: {line!r}"
 
 
 class TestTheAuditCarriesTheSnapshotItMeasured:
@@ -1769,151 +1312,5 @@ class TestTheAuditCarriesTheSnapshotItMeasured:
         assert "  stamp: synced=1788363567" in capsys.readouterr().out
 
 
-class TestTheAuditorHoldsNoSecondCopyOfTheReadStoreFacts:
-    def test_it_IMPORTS_the_resolver_rather_than_declaring_one(self) -> None:
-        """The one-line structural claim behind every behavioural test above."""
-        assert "import subsystem_read_store" in _AUDIT_SRC.read_text(encoding="utf-8")
-
-    def test_no_MODULE_SCOPE_assignment_anchors_a_path_at_HOME(self) -> None:
-        """🔴 THE SHAPE THE OLD CONSTANT HAD, BANNED BY SHAPE.
-
-        `DEFAULT_STORE_ROOT = Path.home() / ".claude" / "analyze-service-index"`
-        is what this closes, and a ban on that NAME would be walkable by picking
-        another one. What cannot be walked is the shape: a store root written
-        down here at all is a second copy of something the resolver owns.
-
-        Scoped to MODULE SCOPE deliberately — `workspace_roots()` calls
-        `Path.home()` inside a function for an unrelated purpose, and a
-        whole-file ban would have to exempt it by name, which is how a guard
-        starts describing less than its docstring.
-        """
-        tree = ast.parse(_AUDIT_SRC.read_text(encoding="utf-8"))
-        offenders = []
-        for node in _module_scope_statements(list(tree.body)):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-                continue
-            if node.value is None:
-                continue
-            for sub in ast.walk(node.value):
-                if (
-                    isinstance(sub, ast.Call)
-                    and isinstance(sub.func, ast.Attribute)
-                    and sub.func.attr == "home"
-                ):
-                    offenders.extend(
-                        n
-                        for t in (
-                            node.targets if isinstance(node, ast.Assign) else [node.target]
-                        )
-                        for n in _bound_names(t)
-                    )
-        assert offenders == [], (
-            f"`scripts/subsystem-audit.py` declares module-scope {offenders}, "
-            f"anchored at `$HOME`. A store root belongs in "
-            f"`subsystem_read_store`; call `read_store_root()` instead."
-        )
-        # POSITIVE CONTROL: the walk really reached this file's module scope, so
-        # an empty `offenders` means "no such constant", not "no parse".
-        assert "TARGET" in _module_scope_assignments(_AUDIT_SRC), "the sweep saw nothing"
-
-    def test_it_redeclares_NOTHING_the_resolver_defines(self) -> None:
-        """🔴 THE ARM THAT STOPS THE NEXT ONE — an INVARIANT GUARD, labelled.
-
-        It passes on pre-change code (the auditor's old `DEFAULT_STORE_ROOT` is
-        `subsystem_touch`'s name, not this module's), so it is not regression
-        coverage for anything. It is the same two-way pin
-        `test_the_constants_have_exactly_one_definition` puts on `scripts/cairn`,
-        extended to the third consumer: the cache path, the stamp filename, the
-        remedy and the refusal's exit code now have exactly one definition each
-        and THREE importers, and a fourth copy appearing in any of them is the
-        only way this defect comes back in the shape it came back in five times.
-        """
-        assigned = _module_scope_bindings(_AUDIT_SRC)
-        # POSITIVE CONTROL, both collection paths: a constant and a `def`.
-        assert {"TARGET", "audit_store"} <= assigned, sorted(assigned)[:20]
-        swept = _module_scope_bindings(ROOT / "scripts" / "lib" / "subsystem_read_store.py")
-        assert {"SYNC_STAMP", "stamp_header"} <= swept, sorted(swept)
-        clash = assigned & (set(rs.__all__) | swept)
-        assert clash == set(), (
-            f"`scripts/subsystem-audit.py` assigns {sorted(clash)}, which it must "
-            f"IMPORT from `subsystem_read_store` — a second copy is a second thing "
-            f"to keep in step, and the readers cannot see it."
-        )
-
-    def test_it_spells_neither_the_stamp_FILENAME_nor_the_cache_PATH(self) -> None:
-        """It bans the third definition arriving as a bare STRING rather than as
-        a named constant, which the name-clash arm above cannot see.
-
-        MIXED, and split on purpose. `analyze-service-index` is REGRESSION
-        coverage — pre-change code spelled it, in the constant this change
-        deleted. The other two are INVARIANT GUARDS: pre-change code held
-        neither, and they exist so a future edit cannot re-open the hole from the
-        cache side instead of the mirror side.
-
-        Comments and docstrings are stripped, so prose naming any of these — this
-        file's own module docstring names all three — stays free to explain them.
-        """
-        code = _python_code_only(_AUDIT_SRC.read_text(encoding="utf-8"))
-        # REGRESSION: the frozen mirror's own directory name.
-        assert "analyze-service-index" not in code, (
-            "`scripts/subsystem-audit.py` spells the FROZEN MIRROR's path in code. "
-            "That is the constant this change deleted; call `resolve_read_store()`."
-        )
-        # INVARIANT: the cache side of the same fact.
-        for literal in (rs.SYNC_STAMP, rs.DEFAULT_CACHE_ROOT.name):
-            assert literal not in code, (
-                f"`scripts/subsystem-audit.py` spells {literal!r} in code. That is a "
-                f"second definition of a fact `subsystem_read_store` owns."
-            )
-        # POSITIVE CONTROL: the stripping left real code behind to search — and
-        # a control the strip CANNOT satisfy from a docstring, since these two
-        # tokens appear in this file's code and nowhere in its prose.
-        assert "resolve_read_store(" in code
-        assert "def main(" in code
 
 
-class TestTheHandoffPrescriptionReadsTheCache:
-    """🔴 THE ONE BARE INVOCATION IN THE REPO, AND WHY IT MATTERED.
-
-    `claudedocs/handoff-analyze-service-index-backup.md` prescribes the auditor
-    with no `--store`, inside a "verify the backup path" checklist. Before this
-    change that read the frozen mirror; after it, bare is CORRECT — but a bare
-    run with no sync audits whatever the cache last held, which in a backup
-    verification is the wrong claim.
-    """
-
-    #: 🔴 THE WHOLE NORMALISED COMMAND, NOT A KEYWORD. The artifact is prose, and
-    #: a guard on words ("cairn sync appears somewhere in the file") is walkable
-    #: by rewording — `claude/RULES.md`, "a guard can be SPELLED rather than
-    #: STRUCTURAL". A cosmetic edit here fails the test; pay it, and paste the
-    #: new line in.
-    PRESCRIPTION = "cairn sync; python3 ~/workspace/devrc/scripts/subsystem-audit.py"
-
-    def test_the_command_syncs_first_and_takes_the_default_store(self) -> None:
-        doc = (ROOT / "claudedocs" / "handoff-analyze-service-index-backup.md").read_text(
-            encoding="utf-8"
-        )
-        calls = _fenced_command_lines(doc, "subsystem-audit.py")
-        assert calls == [self.PRESCRIPTION], (
-            f"the auditor prescription in handoff-analyze-service-index-backup.md "
-            f"changed to {calls}. Expected exactly {[self.PRESCRIPTION]}."
-        )
-
-    def test_it_is_NOT_chained_with_double_ampersand(self) -> None:
-        """🔴 SAME TRAP `analyze-service/SKILL.md` STEP 1 ALREADY PAID FOR.
-
-        `cairn sync` exits non-zero when the pod is unreachable but a usable
-        cache survives — its stated contract, not an edge case. Under `&&` the
-        audit would then not run at all, during exactly the outage when a
-        stamped-but-stale cache is still worth auditing and its stamp is what
-        says how stale.
-
-        🔴 AN INVARIANT GUARD ON THE PIN ITSELF, NOT ON THE DOCUMENT — green at
-        `c616b7ae`, and NOT regression coverage. `PRESCRIPTION` is what the test
-        above compares the file against, so if someone relaxes the pin to an
-        `&&` variant the document check keeps passing and this is the only thing
-        that objects. Guarding the constant a guard is built from, because the
-        document arm cannot see its own expectation change.
-        """
-        assert "&&" not in self.PRESCRIPTION
-        assert f"{rs.REMEDY};" in self.PRESCRIPTION

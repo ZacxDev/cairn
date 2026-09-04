@@ -12,7 +12,7 @@ recall must not become a live HTTP call: a DNS blip, a suspended laptop or a
 cluster reconcile would turn "orient me" into an error, or — worse — into an
 empty screen that reads like "nothing recorded". So `cairn` syncs the store into
 a local cache and runs the **unmodified** reader against it. Nothing in
-`scripts/lib/` is imported-and-patched, monkeypatched or forked here.
+`lib/` is imported-and-patched, monkeypatched or forked here.
 
 🔴 WHY A STATE LINE IS PRINTED BEFORE EVERY REPORT, AND WHY IT IS NOT OPTIONAL.
 The server prepends a provenance banner to every response for a measured reason
@@ -87,6 +87,8 @@ from typing import Sequence
 from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+
+from timeouts import unbounded_timeout_reason  # noqa: E402
 import subsystem_recall as rc  # noqa: E402
 import entry_shape  # noqa: E402
 from entry_shape import scope_for_repo  # noqa: E402
@@ -282,11 +284,11 @@ def fetch_snapshot(
     # 🔴 `timeout=None` REACHES `urlopen` AS *NO* TIMEOUT, NOT AS A DEFAULT, so
     # this refuses it rather than trusting the annotation above — `timeout: int`
     # is a type hint, and a hint is not a code path. The sibling `who` side of
-    # this CLI has refused it since `cairn_who._run`; the store side did not,
+    # this CLI has refused it for a long time; the store side did not,
     # and mutating either `fetch_snapshot`'s or `urlopen`'s argument to `None`
     # survived the whole suite. The asymmetry was the defect: one half of one
     # program failing closed.
-    bad = _cairn_who().unbounded_timeout_reason(timeout)
+    bad = unbounded_timeout_reason(timeout)
     if bad:
         raise StoreUnreachable(f"refusing to fetch {url}: {bad}")
     target = f"{url}/api/v1/snapshot" + (f"?scope={scope}" if scope else "")
@@ -954,7 +956,7 @@ def send_write(
     Raises `WriteRefused` on any non-200 the server produced, and
     `StoreUnreachable` when there was no answer at all. Nothing else escapes.
     """
-    bad = _cairn_who().unbounded_timeout_reason(timeout)
+    bad = unbounded_timeout_reason(timeout)
     if bad:
         # 🔴 THE SAME REFUSAL THE READ PATH MAKES, FOR THE SAME REASON. A
         # `timeout=None` reaches `urlopen` as NO timeout, and an unbounded WRITE
@@ -1331,34 +1333,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return doctor.exit_code(checks)
 
 
-def _cairn_who():
-    """The `who` module, imported lazily — it owns the timeout predicate.
-
-    🔴 SHARED SO THE TWO COPIES CANNOT DRIFT APART AGAIN. They already had:
-    only one excluded `bool`, while a comment here claimed they mirrored each
-    other. Importing the predicate rather than restating it means the next fix
-    lands in both halves of this CLI at once.
-
-    ⚠ THE IMPORT IS FUNCTION-SCOPED, BUT IT BUYS THE STORE PATH NOTHING, AND AN
-    EARLIER VERSION OF THIS SENTENCE CLAIMED IT DID. `build_parser` evaluates
-    `_who_default_timeout()` inside the `--timeout` help string, so `cairn_who`
-    is already in `sys.modules` before ANY subcommand dispatches — measured, on
-    every invocation. The first call here costs ~1 ms cold and ~0.1 us warm, and
-    in the real CLI it is always warm. It is function-scoped to keep the
-    module-scope import list honest about what this file needs to START, not as
-    an optimisation. Saying otherwise is the same false-comment class this whole
-    change exists to remove, and is how a maintainer reasons from a wrong cost
-    model — e.g. deleting the eager call above as an "obvious" cleanup.
-    """
-    # The sibling importers below guard this the same way. Module scope already
-    # inserts `lib/`, so no failing path exists today; relying on that silently
-    # is what lets three importers disagree, which is the defect one commit ago.
-    lib = str(Path(__file__).resolve().parent / "lib")
-    if lib not in sys.path:
-        sys.path.insert(0, lib)
-    import cairn_who  # noqa: PLC0415
-
-    return cairn_who
 
 
 def _store_timeout(args: argparse.Namespace) -> int:
@@ -1380,55 +1354,10 @@ def _store_timeout(args: argparse.Namespace) -> int:
     return int(args.timeout) if getattr(args, "timeout", None) is not None else DEFAULT_TIMEOUT
 
 
-def _who_timeout(args: argparse.Namespace, own_default: int) -> int:
-    """Precedence: `who --timeout` > a top-level `--timeout` > who's own default.
-
-    🔴 THIS REPLACES A WARNING ABOUT A DISCARDED FLAG, AND HONOURING IT IS THE
-    BETTER FIX. argparse copies the subparser's namespace over the parent's, so
-    a top-level `cairn --timeout N who …` used to vanish — and before `who` had
-    its own flag that was the ONLY spelling that worked. The first fix printed a
-    notice instead, driven by hand-parsing `sys.argv`; that scanner returned the
-    WRONG answer for two reachable spellings — `--cache <val> --timeout 5 who 42`
-    (it stopped at `--cache`'s value) and `--time 5 who 42` (argparse accepts
-    long-option abbreviations; a literal `== "--timeout"` does not). Both
-    silently discarded, which is what the notice existed to prevent.
-    Re-implementing argparse's own parsing to describe argparse's behaviour was
-    the mistake. The flags now use DISTINCT dests, so nothing is clobbered and
-    there is nothing to announce.
-    """
-    if getattr(args, "who_timeout", None) is not None:
-        return int(args.who_timeout)
-    if getattr(args, "timeout", None) is not None:
-        return int(args.timeout)
-    return int(own_default)
 
 
-def _who_default_timeout() -> int:
-    """Read `who`'s own default rather than restating it in help text."""
-    lib = str(Path(__file__).resolve().parent / "lib")
-    if lib not in sys.path:
-        sys.path.insert(0, lib)
-    import cairn_who  # noqa: PLC0415
-
-    return int(cairn_who.DEFAULT_TIMEOUT)
 
 
-def cmd_who(args: argparse.Namespace) -> int:
-    """Task -> sessions -> windows + transcripts. See `lib/cairn_who.py`."""
-    lib = str(Path(__file__).resolve().parent / "lib")
-    if lib not in sys.path:
-        sys.path.insert(0, lib)
-    import cairn_who  # noqa: PLC0415
-
-    report = cairn_who.resolve(
-        args.task, timeout=_who_timeout(args, cairn_who.DEFAULT_TIMEOUT),
-        host=args.host, skip_windows=args.no_windows,
-    )
-    if args.json:
-        print(json.dumps(report.to_dict(), indent=2))
-    else:
-        print(cairn_who.render(report))
-    return report.exit_code
 
 
 def _doctor_epilog() -> str:
@@ -1441,7 +1370,7 @@ def _doctor_epilog() -> str:
 
     ⚠ CALLED EAGERLY FROM `build_parser`, AND THE COMMENT THAT SAID OTHERWISE WAS
     FALSE IN EFFECT. `argparse` wants `epilog` as a string, so `cairn_doctor` is
-    imported on EVERY invocation — the same trap `_cairn_who`'s own docstring
+    imported on EVERY invocation — the same trap the lazy-import docstring
     records for `_who_default_timeout`. The import stays function-scoped for
     honesty about what this file needs to START, not as an optimisation.
 
@@ -1605,32 +1534,6 @@ def build_parser() -> argparse.ArgumentParser:
     cr.add_argument("--file", type=Path, required=True, help="the new entry bytes")
     cr.set_defaults(func=cmd_create, writes=True)
 
-    # 🔴 `who` TOUCHES NO STORE AND NO CACHE. It is the first cairn subcommand
-    # about a different noun — a TASK, not a subsystem entry — so it takes none
-    # of the `common()` flags and never syncs. It is here rather than in its own
-    # binary because `cairn` is the name for the whole three-noun layer, and a
-    # second CLI would be the second place to look.
-    w = sub.add_parser("who", help="which sessions/windows/transcripts worked a task")
-    w.add_argument("task")
-    w.add_argument("--json", action="store_true")
-    w.add_argument("--host", default=None, choices=["workbench", "laptop"])
-    w.add_argument("--no-windows", action="store_true",
-                   help="skip the tmux scan; report only the durable transcripts")
-    # 🔴 ITS OWN `--timeout`, AND ITS OWN DEFAULT. cairn's top-level `--timeout`
-    # is 20s, chosen for an HTTP snapshot fetch; `who` shells into tmux on two
-    # hosts, and `cairn_who.DEFAULT_TIMEOUT` carries a docstring reasoning
-    # specifically about a sleeping laptop. Inheriting the store's bound meant
-    # the documented rationale was not what shipped, and `cairn who --timeout N`
-    # was rejected outright because the flag only existed BEFORE the subcommand.
-    # 🔴 A DISTINCT `dest` IS WHAT MAKES THE PRECEDENCE POSSIBLE. Sharing
-    # `timeout` let the subparser default clobber an explicit parent value.
-    # `metavar` because the internal dest would otherwise surface in --help
-    # as `--timeout WHO_TIMEOUT` — an implementation detail on a user surface.
-    w.add_argument("--timeout", type=int, default=None, dest="who_timeout",
-                   metavar="SECONDS",
-                   help=f"seconds per external tool (default {_who_default_timeout()}; "
-                        "a top-level --timeout is honoured too)")
-    w.set_defaults(func=cmd_who)
     return p
 
 

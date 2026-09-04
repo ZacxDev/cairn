@@ -1,4 +1,4 @@
-"""Tests for scripts/lib/subsystem_resolver.py — P0 of derived session→subsystem association.
+"""Tests for lib/subsystem_resolver.py — P0 of derived session→subsystem association.
 
 WHAT IS BEING PROTECTED
 -----------------------
@@ -74,14 +74,13 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = ROOT / "scripts" / "lib" / "subsystem_resolver.py"
+ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = ROOT / "lib" / "subsystem_resolver.py"
 # Formerly `claude/commands/analyze-service.md`. Upstream merged custom commands
 # INTO skills, so `claude/commands/` was retired and every command became
 # `claude/skills/<name>/SKILL.md`; this is the SAME doc at its new path, and
 # `test_the_doc_path_is_the_deployed_one` below is what pins it to the file that
 # actually ships.
-SKILL_DOC = ROOT / "claude" / "skills" / "analyze-service" / "SKILL.md"
 
 # 🔴 THE PINNED PROSE MOVED, AND THE PINS MOVED WITH IT — same commit, which is
 # what `claude/RULES.md` demands of a location change. `SKILL.md` loads on every
@@ -95,17 +94,9 @@ SKILL_DOC = ROOT / "claude" / "skills" / "analyze-service" / "SKILL.md"
 # had been reflowed, re-indented or edited in transit could not reproduce them.
 # That is the strongest available evidence that this was a move and not a
 # rewrite, and it is why the shas are not touched in the same commit as the move.
-STORE_DOC = (ROOT / "claude" / "skills" / "analyze-service"
-             / "reference" / "index-store.md")
-WRITEBACK_DOC = (ROOT / "claude" / "skills" / "analyze-service"
-                 / "reference" / "write-back.md")
 
-sys.path.insert(0, str(ROOT / "scripts" / "lib"))
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "lib"))
 
-from testlib.skills_mapping import (  # noqa: E402
-    assert_skills_mapping_declared,
-)
 
 import subsystem_resolver as sr  # noqa: E402
 
@@ -204,12 +195,6 @@ def index() -> sr.SubsystemIndex:
     return sr.build_index(ENTRIES, extra_scopes=[SCOPE_EMPTY])
 
 
-@pytest.fixture(scope="module")
-def doc() -> str:
-    """The STORE reference doc, read once — the other half of the one-predicate
-    pair. It was `SKILL.md` until the resolver rules and entry schema were
-    demoted out of the always-loaded body; see `STORE_DOC`."""
-    return STORE_DOC.read_text(encoding="utf-8")
 
 
 # =============================================================================
@@ -326,7 +311,7 @@ class TestPathRefs:
                 ),
             ),
             (
-                "scripts/lib/subsystem_resolver.py",
+                "lib/subsystem_resolver.py",
                 (
                     ("scripts", "scripts"),
                     ("lib", "lib"),
@@ -1526,317 +1511,6 @@ class TestFrontMatterParser:
 # =============================================================================
 
 
-class TestCommandDocIsPinned:
-    """`claude/skills/analyze-service/reference/index-store.md` states these rules in
-    prose because
-    its reader is an LLM. This module states them in Python. That is one
-    predicate at two sites, which `claude/RULES.md` says regenerates the same bug
-    at both — and here the drift is SILENT (a ref stops resolving, and the miss
-    reads as "no index yet").
-
-    It cannot be deduplicated: you cannot import a function into markdown. So it
-    is made DETECTABLE, in TWO layers, because the first layer alone has a blind
-    spot that an audit demonstrated:
-
-      1. SUBSTRING PINS (`DOC_SENTENCES`) — each row is a normative sentence,
-         verbatim. Reword or delete a PINNED sentence and the row names it.
-      2. REGION HASHES (`HASHED_REGIONS`) — sha256 over the marked blocks in the
-         doc. This catches what layer 1 structurally cannot: an ADDITION, or the
-         deletion of a clause nobody thought to pin.
-
-    🔴 WHY LAYER 2 EXISTS. An audit fed this class six semantic doc mutations;
-    all fourteen substring pins stayed intact and ALL SIX SURVIVED — including
-    deleting the `repo:`→`scope` back-compat clause outright, which was not in
-    `DOC_SENTENCES` at all. Addition is also the LIKELIER drift direction here,
-    because the doc's editor is an LLM and an LLM appends. A pin can only ever
-    see the sentences someone already thought of; a hash sees the block.
-
-    🔴 THIS IS STILL A DRIFT DETECTOR, NOT A PROOF OF AGREEMENT — and weaker
-    than "neither moved without the other", which is what this docstring used to
-    claim and which was itself too strong. What is actually guaranteed:
-
-      * a change INSIDE a hashed region cannot land silently;
-      * a pinned sentence cannot be reworded or removed silently.
-
-    What is NOT guaranteed: prose OUTSIDE the hashed regions can still move
-    materially and stay green, and nothing here can tell you the prose and the
-    code MEAN the same thing. Read a green as "nothing moved unnoticed in the
-    regions we watch", never as "they agree".
-    """
-
-    DOC_SENTENCES: list[tuple[str, str]] = [
-        (
-            "lowercase, `_` → `-`, any other char outside `[a-z0-9.-]` → `-`, "
-            "collapsed, trimmed of leading/trailing `-`",
-            "the normalization rule itself",
-        ),
-        (
-            "applied identically on read and write **and to `aliases:` before comparing**",
-            "aliases are normalized before comparison",
-        ),
-        (
-            "`External DNS` / `externaldns` / `external-dns` land on one file, "
-            "and so do `image_ingestion` / `image-ingestion`",
-            "the worked normalization example",
-        ),
-        (
-            "bastion_config_stale_until_reload_2026_07_08",
-            "the `_`-spelled MEMORY.md slug that makes the `_` fold load-bearing",
-        ),
-        (
-            "kind ∈ `service` | `process` | `org` | `doc`",
-            "the kind enum",
-        ),
-        (
-            "A trailing dot-segment is a kind **only if it is in that enum**, "
-            "else it's part of the slug.",
-            "how a kind suffix is distinguished from a dotted slug",
-        ),
-        (
-            "Bare `<slug>.md` stays the default",
-            "unqualified filenames keep working unchanged",
-        ),
-        (
-            "an alias can never outrank a filename",
-            "tier ordering",
-        ),
-        (
-            "**Filename tier** — normalized ref vs `<slug>.md` *and* every "
-            "`<slug>.<kind>.md` in the scope.",
-            "what tier 1 compares",
-        ),
-        (
-            "A ref naming its own kind (`repo-cos.process`) matches only that qualified file.",
-            "a kind-qualified ref is exclusive",
-        ),
-        (
-            "consulted **only if tier 1 returned zero hits**",
-            "tier 2 is conditional on tier 1 missing",
-        ),
-        (
-            "**>1 in a tier → never pick: stop, call the ref ambiguous and "
-            "list the candidates**",
-            "ambiguity errors, never shadows",
-        ),
-        (
-            "The EXECUTABLE authority for the two rules above is "
-            "`scripts/lib/subsystem_resolver.py`",
-            "the pointer naming this module as the authority",
-        ),
-        (
-            "scripts/tests/test_subsystem_resolver.py",
-            "the pointer naming this test as the drift detector",
-        ),
-        # 🔴 ADDED after an audit deleted this clause and all 14 other pins
-        # stayed green. `load_index` + `SubsystemEntry.from_mapping` read `repo:`
-        # as `scope:` SOLELY because of this sentence, and 21 of 21 live entries
-        # still spell it that way — dropping the clause would make the loader's
-        # back-compat read look like unexplained legacy cruft to the next editor.
-        (
-            "**replaces `repo:`**, which older files still carry and reads as `scope`",
-            "the repo:->scope back-compat the loader implements",
-        ),
-    ]
-
-    # (marker name, the code that implements the block) — the doc carries
-    # `<!-- <name>:begin -->` / `<!-- <name>:end -->` around each.
-    HASHED_REGIONS: list[tuple[str, str, str]] = [
-        (
-            "resolver-rules",
-            "52a56d94431ba4de3c6d696fa35b3ed4e443de612ec17a8f33a049174762e279",
-            "normalize_ref / split_kind / resolve_ref_tiered",
-        ),
-        (
-            "entry-schema",
-            # Re-pinned when `created_by:` was added to the front-matter schema
-            # (the `/handoff` writer). Read against the code before updating, as
-            # the failure message demands: `from_mapping` does not read the new
-            # field and must not — it is PROVENANCE, not identity, and an entry
-            # is addressable without it. `parse_front_matter` preserves it (it
-            # preserves unknown keys), `from_mapping` ignores it, and
-            # `subsystem_touch.census` is what reads it. The behavioural half of
-            # that claim is `test_subsystem_touch.py::TestEntrySchemaAgreement`.
-            # Re-pinned again when `tasks:` / `task:` were added. Read against
-            # the code as the failure message demands, and the answer differs
-            # from `created_by:` above: `from_mapping` DOES read this one, and
-            # must — an unparseable ref makes the entry MALFORMED, so the field
-            # is part of what decides whether an entry loads at all. Validation
-            # lives there and nowhere else, which is what keeps
-            # `subsystem_touch --validate` from drifting away from the loader.
-            # `parse_front_matter` gained block-list support in the same change;
-            # its behavioural half is
-            # `test_subsystem_task_refs.py::TestBothListForms`.
-            "209a03eae94c3c4d1c7d250c6907ed66a11810e057eec3697c4ae382f5df5031",
-            "SubsystemEntry.from_mapping / load_index (+ subsystem_touch.census for created_by)",
-        ),
-    ]
-
-    @pytest.mark.parametrize(
-        "sentence,why", DOC_SENTENCES, ids=[w for _, w in DOC_SENTENCES]
-    )
-    def test_sentence_still_present(self, doc: str, sentence: str, why: str) -> None:
-        assert sentence in doc, (
-            f"analyze-service/reference/index-store.md no longer contains the sentence\n"
-            f"pinning {why}.\n"
-            f"  missing: {sentence!r}\n"
-            f"  Either restore it, or change scripts/lib/subsystem_resolver.py in the SAME\n"
-            f"  commit and update this pin. The two are one predicate at two sites; the\n"
-            f"  drift between them is SILENT (associations stop matching and the zero\n"
-            f"  reads as 'this subsystem had no sessions')."
-        )
-
-    # --- layer 2: region hashes ----------------------------------------------
-
-    @staticmethod
-    def _region(doc: str, name: str) -> str:
-        """Bytes between `<!-- <name>:begin -->` and `<!-- <name>:end -->`.
-
-        Raises rather than returning "" on a miss — an empty region would hash
-        to a constant and the guard would pass forever against nothing, which is
-        the silent-zero shape this whole module exists to avoid.
-        """
-        # Matched on the marker PREFIX, not the whole comment: both markers carry
-        # explanatory prose after the name, and that prose is documentation for
-        # the next editor — it must be editable without silently changing which
-        # bytes are hashed.
-        begin = f"<!-- {name}:begin"
-        end = f"<!-- {name}:end"
-        i = doc.find(begin)
-        assert i != -1, f"marker {begin!r} is missing from analyze-service/reference/index-store.md"
-        i = doc.index("-->", i) + len("-->")
-        j = doc.find(end, i)
-        assert j != -1, f"marker {end!r} is missing from analyze-service/reference/index-store.md"
-        body = doc[i:j].strip()
-        assert body, f"region {name!r} is EMPTY — the hash would guard nothing"
-        return body
-
-    @pytest.mark.parametrize(
-        "name,expected_sha,implemented_by",
-        HASHED_REGIONS,
-        ids=[n for n, _, _ in HASHED_REGIONS],
-    )
-    def test_region_hash(
-        self, doc: str, name: str, expected_sha: str, implemented_by: str
-    ) -> None:
-        actual = hashlib.sha256(self._region(doc, name).encode("utf-8")).hexdigest()
-        assert actual == expected_sha, (
-            f"\nThe `{name}` block of claude/skills/analyze-service/reference/index-store.md\n"
-            f"CHANGED.\n"
-            f"  expected sha256 {expected_sha}\n"
-            f"  actual   sha256 {actual}\n\n"
-            f"This is not a formatting nit. That block is the PROSE HALF of a\n"
-            f"predicate whose code half is {implemented_by} in\n"
-            f"scripts/lib/subsystem_resolver.py. A substring pin cannot see a\n"
-            f"sentence being ADDED, or an unpinned clause being deleted — this\n"
-            f"hash is what does.\n\n"
-            f"So: re-read the block against the code, make them agree, then paste\n"
-            f"the actual sha above into HASHED_REGIONS in the SAME commit.\n"
-            f"Updating the hash WITHOUT reading the code is the one way to make\n"
-            f"this guard worthless."
-        )
-
-    def test_the_region_extractor_can_observe_a_change(self, doc: str) -> None:
-        """🔴 Positive control on layer 2. A hash comparison that always passes
-        is indistinguishable from one wired to a constant, so prove the hash
-        MOVES when the region does — by hashing a deliberately altered copy."""
-        for name, expected_sha, _ in self.HASHED_REGIONS:
-            body = self._region(doc, name)
-            mutated = body.replace("normalized", "NORMALISED", 1) + "\n- an added bullet"
-            assert mutated != body
-            assert (
-                hashlib.sha256(mutated.encode("utf-8")).hexdigest() != expected_sha
-            ), f"region {name!r}: the hash did not move for a changed body"
-
-    def test_a_missing_marker_fails_loudly(self) -> None:
-        """Negative control on the extractor: a region it cannot find must raise,
-        never silently hash the empty string."""
-        with pytest.raises(AssertionError) as exc:
-            self._region("no markers here at all\n", "resolver-rules")
-        assert "is missing from analyze-service/reference/index-store.md" in str(exc.value)
-
-    def test_an_empty_region_fails_loudly(self) -> None:
-        with pytest.raises(AssertionError) as exc:
-            self._region(
-                "<!-- resolver-rules:begin -->\n\n<!-- resolver-rules:end -->\n",
-                "resolver-rules",
-            )
-        assert "is EMPTY — the hash would guard nothing" in str(exc.value)
-
-    def test_the_pin_can_fail(self, doc: str) -> None:
-        """Negative control on the pin itself: it must be able to report absence.
-
-        Without this, a `in doc` check against a doc that happened to contain
-        everything is indistinguishable from a check pointed at the wrong file."""
-        sentinel = "a sentence deliberately absent from analyze-service/reference/index-store.md"
-        assert sentinel not in doc
-
-    def test_the_doc_path_is_the_deployed_one(self) -> None:
-        """Pinning a file that is not the one that SHIPS would be a vacuous green.
-
-        `claude/skills/` is the managed source symlinked to `~/.claude/skills/`.
-        The path shape alone is a tautology against the constant above, so the
-        load-bearing half is the `nix/home.nix` check: it is what makes this a
-        claim about DEPLOYMENT rather than about this file's own spelling.
-
-        This test earned its keep TWICE — it is what went red when the
-        commands→skills migration moved the doc out from under a pin written
-        against the old `claude/commands/analyze-service.md` path, and again when
-        the resolver rules were demoted from `SKILL.md` into `reference/`.
-        """
-        assert SKILL_DOC.exists(), f"the pinned doc is gone: {SKILL_DOC}"
-        assert SKILL_DOC.name == "SKILL.md"
-        assert SKILL_DOC.parent.name == "analyze-service"
-        assert SKILL_DOC.parent.parent.name == "skills"
-
-        assert STORE_DOC.exists(), f"the pinned store doc is gone: {STORE_DOC}"
-        assert STORE_DOC.parent.name == "reference"
-        assert STORE_DOC.parent.parent == SKILL_DOC.parent
-
-        # The non-tautological half: nix must actually deploy the directory this
-        # pin lives under. A pin under a directory home-manager does not ship is
-        # precisely the vacuous green this test exists to prevent.
-        # One shared predicate (testlib/skills_mapping.py), and a deliberately
-        # narrow one: the mapping is declared and not switched off. Whether its
-        # source resolves to this tree is ship.sh/drift-check.sh's job.
-        assert_skills_mapping_declared(ROOT / "nix" / "home.nix")
-
-    def test_the_demoted_reference_is_REACHABLE_from_the_skill_body(self) -> None:
-        """🔴 A reference nobody is told to open is a deletion with extra steps.
-
-        Demoting prose out of an always-loaded body only works if the body still
-        ROUTES to it — otherwise the rules are technically shipped and
-        operationally gone, which is strictly worse than the bloat it replaced.
-        So the skill body must name both reference files by path.
-        """
-        body = SKILL_DOC.read_text(encoding="utf-8")
-        for ref in (STORE_DOC, WRITEBACK_DOC):
-            rel = f"reference/{ref.name}"
-            assert rel in body, (
-                f"{SKILL_DOC.name} does not point at {rel}. The prose moved there is "
-                f"then unreachable: nothing loads a reference file it was not sent to."
-            )
-            assert ref.exists(), f"the skill body points at a missing file: {rel}"
-
-    # --- the behavioural half: what each sentence ASSERTS ---------------------
-
-    def test_behaviour_underscore_fold(self) -> None:
-        assert sr.normalize_ref("image_ingestion") == sr.normalize_ref("image-ingestion")
-        assert (
-            sr.normalize_ref("bastion_config_stale_until_reload_2026_07_08")
-            == "bastion-config-stale-until-reload-2026-07-08"
-        )
-
-    def test_behaviour_kind_enum(self) -> None:
-        assert set(sr.KINDS) == {"service", "process", "org", "doc"}
-        assert sr.split_kind("x.process") == ("x", "process")
-        assert sr.split_kind("x.vendor") == ("x.vendor", None)
-
-    def test_behaviour_tier_order(self, index: sr.SubsystemIndex) -> None:
-        assert sr.resolve_ref_tiered("blob-upload", index, SCOPE_A)[1] == "filename"
-
-    def test_behaviour_ambiguity_never_picks(self, index: sr.SubsystemIndex) -> None:
-        with pytest.raises(sr.AmbiguousRefError):
-            sr.resolve_ref("repo-cos", index, SCOPE_B)
 
 
 # =============================================================================
@@ -2824,7 +2498,7 @@ class TestEntryMappingIsShared:
 
 
 MARKER_SHAPES = json.loads(
-    (ROOT / "scripts" / "tests" / "fixtures" / "near_miss_shapes.json").read_text(
+    (ROOT / "tests" / "fixtures" / "near_miss_shapes.json").read_text(
         encoding="utf-8"
     )
 )

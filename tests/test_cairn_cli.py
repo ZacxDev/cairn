@@ -36,11 +36,11 @@ from types import SimpleNamespace
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 from testlib import store_siting  # noqa: E402
-CAIRN_CLI = REPO / "scripts" / "cairn"
-SERVER_PY = REPO / "scripts" / "subsystem-store-api" / "server.py"
+CAIRN_CLI = REPO / "cairn"
+SERVER_PY = REPO / "server" / "server.py"
 GOOD_TOKEN = "a" * 20 + "B" * 20 + "c" * 8
 LOOPBACK = ipaddress.ip_network("127.0.0.1/32")
 
@@ -63,7 +63,7 @@ def _load_api():
     registered; this loader is the second copy of that predicate and was the
     one that was wrong, which is the shape a duplicated predicate always takes.
     """
-    sys.path.insert(0, str(REPO / "scripts" / "lib"))
+    sys.path.insert(0, str(REPO / "lib"))
     spec = importlib.util.spec_from_file_location("srv", SERVER_PY)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -967,7 +967,7 @@ class TestNotAScopeIsSkippedNotRefused:
         ⚠ NAMED FOR THE PATH IT ACTUALLY COVERS. `/api/v1/recall/<scope>` is
         STILL affected: `load_index` uses `scope_dir.glob("*.md")`, and pathlib
         glob DOES match a leading dot, so a lock file still 503s that route. The
-        fix lives in `scripts/lib/subsystem_resolver.py`, which this card's
+        fix lives in `lib/subsystem_resolver.py`, which this card's
         non-goals forbid touching ("the local store is alive and heavily used;
         this task moves files between hosts"). Calling this
         `..._does_not_deny_the_whole_store` would be the exact
@@ -1270,7 +1270,7 @@ class TestTheHarnessItself:
 #
 # `scripts/cairn` reaches its siblings through `Path(__file__).resolve().parent
 # / "lib"`. Deployed as a home-manager STORE COPY, `__file__` resolves into
-# /nix/store — where `scripts/lib/` is deliberately NOT deployed — and every
+# /nix/store — where `lib/` is deliberately NOT deployed — and every
 # `import subsystem_recall` dies at startup. Deployed as an
 # `mkOutOfStoreSymlink`, `.resolve()` follows the link back into the checkout
 # and `lib/` is found.
@@ -1291,7 +1291,7 @@ NIX_HOME = REPO / "nix" / "home.nix"
 def test_cairn_still_resolves_its_lib_relative_to_its_own_file():
     """The REASON half of the seam. If this fails, the guard below is pinning a
     constraint that no longer applies — delete both, don't loosen one."""
-    src = (REPO / "scripts" / "cairn").read_text()
+    src = (REPO / "cairn").read_text()
     assert 'Path(__file__).resolve().parent / "lib"' in src, (
         "scripts/cairn no longer derives its lib/ path from __file__. The "
         "out-of-store requirement below may be obsolete — re-derive it rather "
@@ -1301,7 +1301,7 @@ def test_cairn_still_resolves_its_lib_relative_to_its_own_file():
     assert "import subsystem_recall" in src, (
         "scripts/cairn no longer imports from its sibling lib/"
     )
-    assert (REPO / "scripts" / "lib" / "subsystem_recall.py").exists()
+    assert (REPO / "lib" / "subsystem_recall.py").exists()
 
 
 def test_cairn_is_deployed_out_of_store_not_as_a_store_copy():
@@ -1315,7 +1315,7 @@ def test_cairn_is_deployed_out_of_store_not_as_a_store_copy():
     assignment = head.split(";", 1)[0]
     assert "mkOutOfStoreSymlink" in assignment, (
         "`cairn` is deployed as a STORE COPY. Its `Path(__file__).resolve()` "
-        "lib lookup will resolve into /nix/store, where scripts/lib/ is not "
+        "lib lookup will resolve into /nix/store, where lib/ is not "
         "deployed, and the command will fail on import. Use "
         "mkOutOfStoreSymlink, as claim-work/dl-route/opencode-dispatch do.\n"
         f"got: {assignment.strip()!r}"
