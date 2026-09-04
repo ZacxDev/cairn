@@ -14,7 +14,9 @@ removed.**
 - a hostname, host name, cluster name, or network name from any private deployment;
 - a private IP (RFC1918 or CGNAT), or a real public IP belonging to someone's infrastructure;
 - a real project, client, customer, repository or scope name — **fixtures must be synthetic**;
-- a dated incident reference (`2026-08-29: …`). Keep the mechanism, drop the particulars;
+- a dated incident reference (`<a real date>: …`). Keep the mechanism, drop the particulars.
+  Fixtures that genuinely need a date use an obviously-synthetic **year 2000** one, which is
+  what `leakscan.py` allows and what makes its remedy unambiguous;
 - captured text of any kind — anyone's messages, prompts, transcripts, or a model's summaries
   of them — however it arrives. A test needs the SHAPE; regenerate it synthetic.
 
