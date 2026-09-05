@@ -283,6 +283,7 @@ import json
 import math
 import os
 import re
+import signal
 import sys
 import tarfile
 import tempfile
@@ -615,6 +616,28 @@ DEFAULT_PORT = 8102
 LISTEN_BACKLOG = 128
 
 EXIT_CONFIG = 78  # sysexits.h EX_CONFIG — a misconfiguration, not a crash.
+
+# 🔴 THE TWO RELOAD VERDICTS, AS CONSTANTS, BECAUSE THE OPERATOR'S ONLY SIGNAL
+# THAT A `kill -HUP` DID ANYTHING IS THIS LINE.
+#
+# A reload is fire-and-forget: the signal returns immediately whether the file
+# parsed or not, so "did my edit take effect" is not answerable from the sending
+# side at all. If the two outcomes are not distinguishable in the log, a REFUSED
+# reload is indistinguishable from a successful one, and the operator walks away
+# believing a credential was revoked when it is still live. That is strictly
+# worse than the pre-reload status quo, where a bad file at least announced
+# itself as a CrashLoopBackOff.
+#
+# They are constants rather than inline strings so a test can pin the verdict
+# without pinning the sentence around it — the sentence is a diagnostic and
+# should stay free to improve.
+# The shared stem is a constant too, so "is this line a reload verdict at all"
+# is one question with one answer. A reader that filtered on the two outcomes
+# separately would silently stop seeing a THIRD outcome the day one is added,
+# which is the shape that turns a new failure mode into an invisible one.
+RELOAD_PREFIX = "token reload: "
+RELOAD_LOADED = RELOAD_PREFIX + "LOADED"
+RELOAD_REFUSED = RELOAD_PREFIX + "REFUSED"
 
 
 class _Rejected(Exception):
@@ -4697,6 +4720,172 @@ def build_server(
     return _Server((host, port), _Handler)
 
 
+def _reload_log(line: str) -> None:
+    """Where a reload verdict goes when nobody injects a sink.
+
+    🔴 STDOUT, NOT STDERR, AND THAT IS AN ARGUMENT RATHER THAN A COIN FLIP. The
+    startup banner — the `token-ids=<fp>:<identity>,…` list an operator greps to
+    decide which line of the secret is safe to delete — is printed to stdout. A
+    reload REPLACES that list. Putting its successor on the other stream leaves
+    a reader of stdout holding a token-id list that is silently stale, which is
+    the exact fact the banner exists to make checkable.
+
+    ⚠ IT IS NOT WHERE THE LEGACY BANNER GOES, AND THAT WAS TRIED THE OTHER WAY.
+    Routing `load_tokens`' `warn=` callback through here — so one reload reads
+    as one contiguous record — MEASURED as a double prefix
+    (`subsystem-store-api: subsystem-store-api: 🔴 UNRESTRICTED…`), because that
+    banner already carries the program name in the string it emits. The reload
+    path therefore leaves `warn=` at its default, which means the
+    unrestricted-scope banner reads IDENTICALLY and lands on the same stream
+    whether it came from a load or a reload — a better property than adjacency,
+    since it is the line an operator greps for across the whole pod log.
+    """
+    print(f"subsystem-store-api: {line}", flush=True)
+
+
+def reload_tokens(
+    handler_cls: type,
+    token_file: str | None,
+    env: dict[str, str],
+    *,
+    log: Callable[[str], None] | None = None,
+) -> bool:
+    """Re-read the token source and SWAP IT IN — but only if it parses.
+
+    Returns whether the table was replaced. Never raises, and never exits.
+
+    🔴 A PARSE FAILURE HERE MUST NOT TAKE THE SERVER DOWN, AND THAT IS THE WHOLE
+    FEATURE. At STARTUP a malformed file is `EXIT_CONFIG`, because there is
+    nothing to fall back to and a store that came up serving nothing looks
+    healthy while being useless. On RELOAD there IS something to fall back to —
+    the table that has been authorising every request until this instant — so
+    exiting would turn a typo in a secret into a read outage. The deployment
+    this serves runs `replicas: 1` with a `Recreate` strategy, so that outage is
+    total and lasts until a human notices. Refusing the new table and saying so
+    is strictly better than both alternatives (exiting, or loading a table
+    nobody validated).
+
+    🔴 SO THE `except` IS DELIBERATELY `Exception`, NOT `ValueError`. `ValueError`
+    is what `load_tokens` raises for every guard it owns, and catching only that
+    would be the tidier spelling — but this function is called from a SIGNAL
+    HANDLER running on the main thread, which is blocked in `serve_forever()`.
+    An exception that escapes there propagates out of `serve_forever` and ends
+    the process, which is precisely the outcome the paragraph above rules out.
+    An `OSError` from a path that is not readable in a way `load_tokens` did not
+    anticipate is enough to do it. The exception TYPE is named in the log line
+    so a genuine bug in the loader is still legible as one, rather than being
+    laundered into "your file was malformed".
+
+    🔴 THE VALIDATION IS `load_tokens`, NOT A SECOND COPY OF IT. Every guard in
+    that ladder — a token too short, a row that does not parse, a reserved or
+    duplicated identity, one credential carrying two authorities — has to hold
+    on a reloaded file exactly as it does on a loaded one, and the only way to
+    keep two implementations of that predicate in step is to have one. A reload
+    path with its own parser is the shape where the migration guards silently
+    stop applying to the only file anybody edits after day one.
+
+    🔴 THE SWAP IS ONE REBIND OF ONE REFERENCE, AND `expected_tokens` IS AN
+    IMMUTABLE TUPLE. The server is threaded and each request reads the table
+    once, so a reader either resolves the attribute before the assignment and
+    sees the whole old table, or after it and sees the whole new one. Mutating
+    the existing sequence in place — clear-then-refill, or append-then-prune —
+    would expose a window in which `authorize` iterates a table that is neither:
+    an emptied one rejects a credential that is valid in BOTH files, which reads
+    to the client as a spurious 401 during every reload.
+
+    🔴 AND IT IS SET ON THE CLASS THE SERVER ACTUALLY USES. `build_server`
+    creates a per-server `_Handler` subclass and sets `expected_tokens` on IT;
+    an assignment to `StoreRequestHandler` would be shadowed by that subclass
+    attribute and change nothing, silently, while every log line claimed a
+    successful reload. `install_sighup_reload` takes the class off the running
+    server for that reason rather than importing one.
+
+    ⚠ AN EMPTY TABLE IS NOT GUARDED HERE, AND THAT IS A REACHABILITY CLAIM.
+    `load_tokens` guard 3 ("token is empty") refuses a source that resolves to
+    whitespace only, and guards 1-2 refuse an absent or unreadable one, so a
+    successful return cannot be an empty list. A guard here would be dead code
+    that no test could reach, which is worse than the sentence you are reading.
+
+    ⚠ `env` IS A SNAPSHOT, AND THE ENV FALLBACK CANNOT ACTUALLY CHANGE. A
+    process's own environment does not change under it, so reloading a server
+    configured from `$SUBSYSTEM_STORE_TOKEN` re-reads the same value and reports
+    a successful no-op. That is honest rather than useful; the file is the thing
+    a `kill -HUP` exists to re-read.
+    """
+    emit = log if log is not None else _reload_log
+    # Read BEFORE the attempt: on refusal this is the table that keeps serving,
+    # and the operator needs to be told what that is — "refused" without "and
+    # these are still live" leaves them guessing whether a revocation landed.
+    previous: "tuple[TokenRecord, ...]" = tuple(
+        getattr(handler_cls, "expected_tokens", ())
+    )
+    try:
+        # `warn=` is deliberately NOT redirected to `emit` — see `_reload_log`.
+        # The unrestricted-scope banner keeps the one spelling and the one
+        # stream it has at startup.
+        records = load_tokens(token_file, env)
+        table = tuple(as_token_record(record) for record in records)
+    except Exception as exc:  # noqa: BLE001 — see the docstring; this is the point
+        emit(
+            f"{RELOAD_REFUSED} — the token source did not parse "
+            f"({type(exc).__name__}: {exc}). NOTHING CHANGED: still serving the "
+            f"{len(previous)} previously loaded identities "
+            f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in previous)}]. "
+            f"Fix the file and send SIGHUP again"
+        )
+        return False
+    # THE SWAP. One statement, one name, one immutable value — see the docstring.
+    handler_cls.expected_tokens = table
+    emit(
+        f"{RELOAD_LOADED} {len(table)} identities "
+        f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in table)}] "
+        f"(was {len(previous)} "
+        f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in previous)}])"
+    )
+    return True
+
+
+def install_sighup_reload(
+    httpd: ThreadingHTTPServer,
+    token_file: str | None,
+    env: dict[str, str],
+    *,
+    log: Callable[[str], None] | None = None,
+) -> "Callable[[int, Any], None]":
+    """Make `kill -HUP <pid>` re-read the token file. Returns the handler.
+
+    🔴 SIGHUP'S DEFAULT DISPOSITION IS *TERMINATE*, so "the handler is defined"
+    and "the handler is installed" are not the same claim by a wide margin: with
+    the `signal.signal` call missing, a `kill -HUP` does not fail to reload, it
+    KILLS THE POD. A test that calls `reload_tokens` directly proves nothing
+    about either outcome — only sending the real signal to a real process does.
+
+    🔴 IT MUST RUN ON THE MAIN THREAD. `signal.signal` raises `ValueError`
+    anywhere else, and the reload work then happens on the main thread too,
+    interleaved with `serve_forever`'s `select()` rather than concurrently with
+    it. That is the simple correct arrangement here: the main thread does no
+    request work, so a reload that takes a millisecond of file I/O blocks
+    nothing, and the alternative — handing the work to a worker — buys
+    concurrency this does not need at the price of a second ordering problem.
+
+    The handler is RETURNED rather than only installed so a caller can identify
+    it: `signal.getsignal(SIGHUP) is <the returned object>` is what makes
+    "installed" checkable without sending a signal.
+
+    ⚠ `signal.SIGHUP` DOES NOT EXIST ON WINDOWS. Nothing here has ever run
+    there — the deployable is a Linux container — and an `AttributeError` at
+    startup on a platform this was never built for is a louder, more honest
+    failure than a silently inert reload, so it is not defended against.
+    """
+    handler_cls = httpd.RequestHandlerClass
+
+    def _on_sighup(signum: int, frame: Any) -> None:
+        reload_tokens(handler_cls, token_file, env, log=log)
+
+    signal.signal(signal.SIGHUP, _on_sighup)
+    return _on_sighup
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="subsystem-store-api",
@@ -4754,6 +4943,22 @@ def main(argv: list[str] | None = None) -> int:
         trusted_proxies=trusted_proxies,
         limiter=limiter,
     )
+    # 🔴 INSTALLED BEFORE `serve_forever`, AND `token_file` IS THE RESOLVED ONE.
+    #
+    # Before, because the window between the first accepted connection and the
+    # handler being installed is a window in which `kill -HUP` KILLS THE POD
+    # (SIGHUP terminates by default). It is short and it is real, and there is
+    # nothing between `build_server` and here that needs to happen first.
+    #
+    # The RESOLVED path — the local rebound above, not `args.token_file` — so a
+    # process that fell back to `$SUBSYSTEM_STORE_TOKEN` because the mount was
+    # absent keeps re-reading the source it is actually serving from, rather
+    # than silently starting to read a file it deliberately ignored at startup.
+    #
+    # ⚠ `dict(os.environ)` is snapshotted here rather than read per reload, for
+    # the same reason `main` snapshots it three times above: a process's own
+    # environment does not change under it. See `reload_tokens`.
+    install_sighup_reload(httpd, token_file, dict(os.environ))
     # 🔴 The startup line prints every FINGERPRINT, in the order the file lists
     # them, and never a token. It is what makes an overlap rotation checkable:
     # the operator reads these ids, then greps the audit log for the one that
@@ -4771,7 +4976,12 @@ def main(argv: list[str] | None = None) -> int:
         # 🔴 PRINTED, so "which peers may set CF-Connecting-IP" is a fact in the
         # pod log rather than a value nobody can read back out of a running
         # container. It is configuration, not a credential.
-        f"trusted-proxies={','.join(str(n) for n in trusted_proxies)}",
+        f"trusted-proxies={','.join(str(n) for n in trusted_proxies)} "
+        # 🔴 ADVERTISED, because a reload mechanism nobody knows about is a
+        # mechanism nobody uses: the operator's instinct on a credential change
+        # is to replace the pod, and the whole point of this line is to give
+        # them a cheaper move that is visible from the log they are already in.
+        f"reload=SIGHUP",
         flush=True,
     )
     try:

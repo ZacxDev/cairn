@@ -67,6 +67,7 @@ import io
 import os
 import re
 import shutil
+import signal
 import socket
 import socketserver
 import stat
@@ -372,6 +373,54 @@ LOOPBACK_PROXY = "127.0.0.1/32"
 NOT_LOOPBACK_PROXY = "192.0.2.0/24"
 
 
+@pytest.fixture(autouse=True)
+def _sighup_disposition_restored():
+    """Put SIGHUP back the way this process found it, around EVERY test.
+
+    🔴 AUTOUSE, AND IT IS NOT TIDINESS. `install_sighup_reload` — and therefore
+    `api.main()`, and every test that drives either — installs a handler in the
+    PYTEST process, on a disposition that is process-global and outlives the
+    test that set it. A handler left behind holds a reference to one test's
+    handler class and its `tmp_path` token file, so the next test to receive a
+    SIGHUP would reload a table belonging to a test that finished. Restoring
+    per-test in each site is the open-coded predicate that ends up missing at
+    the one site that matters; there is exactly one copy, and it is here.
+
+    ⚠ It restores whatever was there BEFORE, not `SIG_DFL`. Asserting the
+    default would be a claim about pytest's own signal setup rather than about
+    this file, and it is not this fixture's claim to make.
+    """
+    previous = signal.getsignal(signal.SIGHUP)
+    try:
+        yield previous
+    finally:
+        signal.signal(signal.SIGHUP, previous)
+
+
+@contextmanager
+def serving(httpd):
+    """Run an ALREADY-BUILT server on a daemon thread; yield its base URL.
+
+    🔴 ONE COPY OF THE THREAD-AND-TEARDOWN DANCE. `running()` below is the shape
+    almost every test wants — build and serve in one step — but the reload tests
+    need the `httpd` object itself, because `install_sighup_reload` and
+    `reload_tokens` both operate on `httpd.RequestHandlerClass` and a test that
+    cannot name that class cannot assert the swap reached it. Splitting the
+    serve loop out is what lets those tests hold the server without a second,
+    drifting copy of the `shutdown()`/`server_close()`/`join()` sequence — the
+    open-coded predicate `claude/RULES.md` warns about, in its teardown form,
+    where the failure mode is a leaked thread that makes a LATER test flake.
+    """
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=10)
+
+
 @contextmanager
 def running(
     store_root,
@@ -414,14 +463,8 @@ def running(
         limiter=limiter,
         audit=sink,
     )
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{httpd.server_address[1]}", audit
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=10)
+    with serving(httpd) as base:
+        yield base, audit
 
 
 # 🔴 WHICH SIDE WAS BLOCKED, AND ON WHAT. Ordered innermost-first: the first
@@ -6317,6 +6360,16 @@ class TestTokenSetAndOverlapRotation:
         started: dict = {}
 
         class _Fake:
+            # 🔴 THE FAKE HAS TO CARRY WHAT `main` READS OFF A REAL SERVER, and
+            # `RequestHandlerClass` is now one of those things:
+            # `install_sighup_reload` takes the reload target off the running
+            # server rather than importing a class, so a fake without it turns
+            # this banner test into an `AttributeError` about the fake. Pointing
+            # it at a THROWAWAY subclass rather than at `StoreRequestHandler`
+            # keeps a stray reload in this test from writing onto the shared
+            # base class every other test inherits from.
+            RequestHandlerClass = type("_FakeHandler", (api.StoreRequestHandler,), {})
+
             def serve_forever(self_inner):
                 raise KeyboardInterrupt
 
@@ -8945,11 +8998,21 @@ def test_every_audit_reading_test_goes_through_the_shared_helper():
     survives and permits two of the three sites to regress. The companion test
     below removes exactly ONE site and requires this to go red.
     """
-    assert _drain_output_call_sites() == 3, (
-        f"expected exactly 3 `drain_output(...)` call sites, found "
-        f"{_drain_output_call_sites()}. A reader was added or deleted; if that is "
-        "intended, update this count AND check the guard above still has teeth."
+    assert _drain_output_call_sites() == _EXPECTED_DRAIN_SITES, (
+        f"expected exactly {_EXPECTED_DRAIN_SITES} `drain_output(...)` call "
+        f"sites, found {_drain_output_call_sites()}. A reader was added or "
+        "deleted; if that is intended, update _EXPECTED_DRAIN_SITES AND check "
+        "the guard above still has teeth."
     )
+
+
+# 🔴 ONE NUMBER, READ BY BOTH GUARDS BELOW AND ABOVE. It used to be the literal
+# `3`, spelled three times across two tests — and the SIGHUP-reload section moved
+# it to 11 in one change, which is exactly the shape where a two-of-three update
+# leaves the companion test asserting "fixture drift" against a tree that has
+# not drifted. The count is a ledger of how many tests read the subprocess's
+# stream; it grows when coverage grows, and it must FAIL when coverage shrinks.
+_EXPECTED_DRAIN_SITES = 11
 
 
 def _drain_output_call_sites(source: "str | None" = None) -> int:
@@ -8971,13 +9034,16 @@ def test_the_call_site_THRESHOLD_is_load_bearing_not_decorative():
     `>= 1`, and the reason the assertion above is `== 3` rather than a floor.
     """
     src = Path(__file__).read_text()
-    assert _drain_output_call_sites(src) == 3, "fixture drift: the real count moved"
+    assert _drain_output_call_sites(src) == _EXPECTED_DRAIN_SITES, (
+        "fixture drift: the real count moved"
+    )
 
     one_removed = src.replace("out = drain_output(proc)", "out = None  # mutant", 1)
     assert one_removed != src, "the mutation did not apply — this test is vacuous"
-    assert _drain_output_call_sites(one_removed) == 2, (
-        "removing one call site did not move the count, so the threshold cannot "
-        "distinguish three readers from two"
+    assert _drain_output_call_sites(one_removed) == _EXPECTED_DRAIN_SITES - 1, (
+        f"removing one call site did not move the count, so the threshold "
+        f"cannot distinguish {_EXPECTED_DRAIN_SITES} readers from "
+        f"{_EXPECTED_DRAIN_SITES - 1}"
     )
 
 
@@ -18489,4 +18555,906 @@ class TestTheSitingRULESThemselvesArePinned:
             f"_MIN_FREE_BYTES ({store_siting._MIN_FREE_BYTES:,}) exceeds a container's "
             "default 64Mi /dev/shm, so every store would fall back to disk and this "
             "module would be inert with the suite green"
+        )
+
+
+# =============================================================================
+# 21. SIGHUP TOKEN HOT-RELOAD — a credential change without a pod replace.
+#
+# 🔴 THE DEFECT THIS SECTION CLOSES, STATED AS THE OPERATOR EXPERIENCES IT.
+# `load_tokens` ran exactly once, at startup, and there was no signal handler in
+# the file at all. So:
+#
+#   * a token-file edit was inert until the process was replaced;
+#   * the deployment runs `replicas: 1` with a `Recreate` strategy, so replacing
+#     it is a hard READ OUTAGE, not a rolling one;
+#   * a malformed row meant `EXIT_CONFIG` and the store stayed DOWN — the
+#     process did not fall back to the table that had been working a second ago.
+#
+# For one operator that is a sharp edge. For a team it means every credential
+# change is a pod replace whose failure mode is a total outage, with more people
+# able to edit the secret.
+#
+# 🔴 AND THE ASYMMETRY IS THE WHOLE DESIGN, NOT A CONCESSION. At STARTUP a
+# malformed file must still exit 78: there is nothing to fall back to, and a
+# server that comes up serving no valid token looks healthy while being useless.
+# On RELOAD there IS something to fall back to, so exiting would be strictly
+# worse than the status quo it replaces. Both halves are pinned below, and the
+# startup half is labelled for what it is — an INVARIANT GUARD, pinning
+# behaviour the change was required not to touch. It is not regression coverage
+# and is not counted as any.
+# =============================================================================
+
+
+def reload_verdicts(out: "Drained") -> "list[str]":
+    """The reload lines of a stream. Filtered on the SHARED stem, not on the two
+    outcomes, so a third verdict cannot become invisible to every reader here.
+    """
+    return [line for line in out.all if api.RELOAD_PREFIX in line]
+
+
+def await_reload(out: "Drained", n: int, timeout: float = HANG_TIMEOUT) -> "list[str]":
+    """Wait for at least `n` reload verdicts, then return them. RAISES if not.
+
+    🔴 THIS IS THE BARRIER, AND WITHOUT ONE EVERY TEST BELOW IS A POLL AGAINST
+    THE ANSWER IT IS TRYING TO MEASURE. `os.kill(pid, SIGHUP)` returns as soon
+    as the signal is QUEUED; the reload happens on the other process's main
+    thread whenever CPython next reaches a bytecode boundary there. A test that
+    instead retried its request until it got the expected code could not tell
+    "the reload landed" from "the reload never happened and my patience ran
+    out", which are the two outcomes this whole section exists to separate — and
+    it could not test the REFUSED path at all, because a refused reload changes
+    no observable to poll on.
+
+    It raises rather than returning short for the same reason `await_audit`
+    does: `[-1]` on the result must be safe, and an `IndexError` names neither
+    the expectation nor the actual.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        lines = reload_verdicts(out)
+        if len(lines) >= n:
+            return lines
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"waited {timeout:g}s for {n} reload verdict(s) and saw "
+                f"{len(lines)}: {lines}\nfull stream:\n{out.text}"
+            )
+        time.sleep(0.02)
+
+
+def hup(proc) -> None:
+    """Send the real signal to the real process."""
+    os.kill(proc.pid, signal.SIGHUP)
+
+
+# Token rows used below. Spelled as helpers rather than literals so a row's
+# SHAPE is stated once — the format is `<token> <identity> <scope>,<scope>` and
+# a test that got the field order wrong would fail as "malformed row", which
+# reads like a finding about the server rather than about the fixture.
+def _mapped_row(token: str, identity: str, *scopes: str) -> str:
+    return f"{token} {identity} {','.join(scopes)}"
+
+
+class TestSighupReloadsTheTokenTable:
+    """🔴 RED AT THE BASE REF BEHAVIOURALLY, AND IN THE LOUDEST POSSIBLE WAY.
+
+    SIGHUP's default disposition is TERMINATE. With no handler installed, every
+    test in this class does not merely fail to observe a reload — it kills the
+    server, and the assertion that follows fails against a dead process. That is
+    the honest shape of the defect: the operator's obvious move ("tell it to
+    re-read the secret") took the store down.
+    """
+
+    def _spawn(self, store: Path, token_file: Path):
+        return running_subprocess(store, token_file)
+
+    def test_SIGHUP_does_NOT_kill_the_server(self, store: Path, tmp_path: Path):
+        """🔴 THE ONE TEST IN THIS FILE THAT NAMES NO NEW API, SO ITS RED AT THE
+        BASE REF IS PURELY BEHAVIOURAL.
+
+        Every other test here reaches for `api.RELOAD_PREFIX` or
+        `api.reload_tokens` and would fail at base with an `AttributeError` —
+        true, but a statement about a missing symbol rather than about the
+        defect. This one sends the real signal and asks the two questions an
+        operator would: is the process still there, and is it still serving.
+        At base the answer to both is no, because SIGHUP's default disposition
+        is TERMINATE, and the exit code says so (`-1`, i.e. killed by signal 1).
+
+        The barrier is a full authorized ROUND TRIP, not a sleep: it cannot
+        complete unless the process is alive and answering, and if it is not,
+        the connection error is captured and reported rather than raised, so
+        the failure reads as a verdict instead of a traceback.
+        """
+        path = tmp_path / "token"
+        path.write_text(GOOD_TOKEN + "\n")
+        with self._spawn(store, path) as (base, proc):
+            hup(proc)
+            try:
+                answer: object = fetch(
+                    f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
+                )[0]
+            except Exception as exc:  # noqa: BLE001 — reported, see the docstring
+                answer = f"unreachable: {exc!r}"
+            alive = proc.poll()
+        assert alive is None, (
+            f"the server EXITED on SIGHUP (rc={proc.returncode}; a negative code "
+            f"is death BY that signal). With no handler installed, the operator's "
+            f"obvious move — tell it to re-read the secret — takes the store down"
+        )
+        assert answer == 200, f"the server stopped serving after SIGHUP: {answer}"
+
+    def test_POSITIVE_CONTROL_a_SIGHUP_produces_a_verdict_and_the_process_lives(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 THE INSTRUMENT, BEFORE ANY VERDICT BELOW IS BELIEVED.
+
+        Two claims, and they are separate: the barrier `await_reload` CAN see a
+        non-zero number of verdict lines (a helper wired to nothing would report
+        an unfalsifiable zero forever), and a SIGHUP against an UNCHANGED file
+        leaves the process alive and still serving. The second is the difference
+        between "the handler is installed" and "SIGHUP kills the pod".
+        """
+        path = tmp_path / "token"
+        path.write_text(GOOD_TOKEN + "\n")
+        with self._spawn(store, path) as (base, proc):
+            out = drain_output(proc)
+            hup(proc)
+            lines = await_reload(out, 1)
+            assert proc.poll() is None, (
+                f"the process died on SIGHUP (rc={proc.returncode}) — the "
+                f"handler is not installed, so the signal terminated it"
+            )
+            assert fetch(f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN)[0] == 200
+        assert api.RELOAD_LOADED in lines[-1], lines
+        # The count moved from 0 to 1 under one signal: the pair, not a bare
+        # number. Without this the zeros asserted in the REFUSED tests below
+        # would be indistinguishable from a filter that matches nothing.
+        assert len(lines) == 1, lines
+
+    def test_an_ADDED_row_is_accepted_after_SIGHUP(
+        self, store: Path, tmp_path: Path
+    ):
+        """A token that was 401 becomes 200 — without replacing the process."""
+        path = tmp_path / "token"
+        path.write_text(GOOD_TOKEN + "\n")
+        with self._spawn(store, path) as (base, proc):
+            out = drain_output(proc)
+            before = fetch(f"{base}/api/v1/recall/{SCOPE}", token=SECOND_TOKEN)[0]
+            path.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+            hup(proc)
+            lines = await_reload(out, 1)
+            after = fetch(f"{base}/api/v1/recall/{SCOPE}", token=SECOND_TOKEN)[0]
+            # 🔴 THE INCUMBENT IS RE-CHECKED, because "the new token works" is
+            # satisfied by a reload that threw the old table away and by one
+            # that extended it, and only one of those is a rotation.
+            incumbent = fetch(f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN)[0]
+        assert before == 401, "the added token was already accepted — no change to see"
+        assert after == 200, f"the added row was not picked up (got {after})"
+        assert incumbent == 200, "the reload dropped the token that was already valid"
+        assert api.RELOAD_LOADED in lines[-1], lines
+
+    def test_a_REMOVED_row_is_REVOKED_after_SIGHUP(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 REVOCATION, WHICH IS THE HALF THAT MATTERS. A reload that only
+        ever ADDS is a security hole wearing a feature's clothes: the operator
+        deletes a compromised line, sees `LOADED`, and the deleted credential
+        keeps reading the store until somebody replaces the pod.
+        """
+        path = tmp_path / "token"
+        path.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+        with self._spawn(store, path) as (base, proc):
+            out = drain_output(proc)
+            before = fetch(f"{base}/api/v1/recall/{SCOPE}", token=SECOND_TOKEN)[0]
+            path.write_text(f"{GOOD_TOKEN}\n")
+            hup(proc)
+            lines = await_reload(out, 1)
+            after = fetch(f"{base}/api/v1/recall/{SCOPE}", token=SECOND_TOKEN)[0]
+            survivor = fetch(f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN)[0]
+        assert before == 200, "the token to be revoked was never accepted"
+        assert after == 401, (
+            f"the removed row is STILL ACCEPTED after the reload (got {after}) — "
+            f"a revocation that did not revoke"
+        )
+        assert survivor == 200, "the reload revoked the row that was kept"
+        assert api.RELOAD_LOADED in lines[-1], lines
+
+    def test_a_CHANGED_row_NARROWS_and_then_WIDENS_the_scope_allowlist(
+        self, store: Path, tmp_path: Path
+    ):
+        """The third edit shape, and it is measured at BOTH ends rather than
+        one: narrowing must take a scope away, widening must give it back. A
+        reload that only ever grew the allowlist would satisfy a widen-only
+        test, and a reload that rebuilt from scratch every time would satisfy a
+        narrow-only one; neither passes both.
+        """
+        path = tmp_path / "token"
+        path.write_text(_mapped_row(GOOD_TOKEN, "alpha", SCOPE, OTHER_SCOPE) + "\n")
+        url = f"{{}}/api/v1/recall/{OTHER_SCOPE}"
+        with self._spawn(store, path) as (base, proc):
+            out = drain_output(proc)
+            wide = fetch(url.format(base), token=GOOD_TOKEN)[1]["X-Store-Status"]
+            path.write_text(_mapped_row(GOOD_TOKEN, "alpha", SCOPE) + "\n")
+            hup(proc)
+            await_reload(out, 1)
+            narrow = fetch(url.format(base), token=GOOD_TOKEN)[1]["X-Store-Status"]
+            path.write_text(
+                _mapped_row(GOOD_TOKEN, "alpha", SCOPE, OTHER_SCOPE) + "\n"
+            )
+            hup(proc)
+            lines = await_reload(out, 2)
+            again = fetch(url.format(base), token=GOOD_TOKEN)[1]["X-Store-Status"]
+            # The scope that was in the allowlist throughout never moved.
+            kept = fetch(
+                f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
+            )[1]["X-Store-Status"]
+        assert wide == "recalled", f"the wide allowlist did not read {OTHER_SCOPE}"
+        assert narrow == "scope-absent", (
+            f"narrowing the allowlist did not take {OTHER_SCOPE} away (got {narrow})"
+        )
+        assert again == "recalled", "widening it again did not give the scope back"
+        assert kept == "recalled"
+        assert [api.RELOAD_LOADED in line for line in lines] == [True, True], lines
+
+    def test_a_MALFORMED_file_on_reload_KEEPS_SERVING_and_STAYS_ALIVE(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 THE ENTIRE POINT OF THE FEATURE. Three independent claims, and all
+        three have to hold together: the process is still alive, the PREVIOUS
+        table is still authorising requests, and the log says REFUSED with a
+        reason rather than reporting a successful reload of nothing.
+        """
+        path = tmp_path / "token"
+        path.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+        with self._spawn(store, path) as (base, proc):
+            out = drain_output(proc)
+            # Guard 5: a token below `MIN_TOKEN_CHARS`. An ordinary editor
+            # truncation, which is the case that guard was written for.
+            path.write_text("short\n")
+            hup(proc)
+            lines = await_reload(out, 1)
+            alive = proc.poll()
+            old = fetch(f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN)[0]
+            other = fetch(f"{base}/api/v1/recall/{SCOPE}", token=SECOND_TOKEN)[0]
+        assert alive is None, (
+            f"the server EXITED on a malformed RELOAD (rc={proc.returncode}) — "
+            f"which is the read outage this feature exists to prevent"
+        )
+        assert old == 200, "the previously-loaded table stopped serving"
+        assert other == 200, "only part of the previous table survived the refusal"
+        assert api.RELOAD_REFUSED in lines[-1], lines
+        assert api.RELOAD_LOADED not in lines[-1], (
+            f"a refused reload reported itself as loaded: {lines[-1]}"
+        )
+
+    def test_the_REFUSED_line_NAMES_the_guard_that_refused_it(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 THE RELOAD GOES THROUGH `load_tokens`, NOT A SECOND PARSER.
+
+        The file below violates guard 12 — two rows claiming ONE mapped identity
+        — which is a CROSS-ROW rule. A reload path that re-implemented the
+        format for itself would almost certainly parse each row happily and
+        accept this; only the shared ladder refuses it, and only the shared
+        ladder can produce that guard's own sentence. So the assertion is on the
+        wording `load_tokens` owns, which is the closest thing to a structural
+        claim available across a process boundary.
+
+        It also pins the observability requirement: an operator has to be able
+        to tell WHY a reload was refused from the log line alone, without
+        re-deriving it by hand.
+        """
+        path = tmp_path / "token"
+        path.write_text(f"{GOOD_TOKEN}\n")
+        with self._spawn(store, path) as (base, proc):
+            out = drain_output(proc)
+            path.write_text(
+                _mapped_row(GOOD_TOKEN, "alpha", SCOPE) + "\n"
+                + _mapped_row(SECOND_TOKEN, "alpha", OTHER_SCOPE) + "\n"
+            )
+            hup(proc)
+            lines = await_reload(out, 1)
+            still = fetch(f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN)[0]
+        assert still == 200
+        verdict = lines[-1]
+        assert api.RELOAD_REFUSED in verdict, verdict
+        # Guard 12's own wording, and the identity it names.
+        assert "duplicate identity" in verdict, verdict
+        assert "'alpha'" in verdict, verdict
+        # And the refusal says what is STILL LIVE, because "refused" alone
+        # leaves the operator guessing whether their revocation landed.
+        assert api.token_id(GOOD_TOKEN) in verdict, verdict
+        # 🔴 NEVER A CREDENTIAL, on the reload path either. The whole file is
+        # asserted, not just the verdict line — a token leaked on any other line
+        # must still fail this.
+        assert out.wait_closed(HANG_TIMEOUT), (
+            f"the stream never reached EOF within {HANG_TIMEOUT:g}s, so the "
+            f"leak check below is racing lines still in flight:\n{out.text}"
+        )
+        assert GOOD_TOKEN not in out.text and SECOND_TOKEN not in out.text
+
+    def test_a_reload_that_makes_the_file_UNREADABLE_is_also_survived(
+        self, store: Path, tmp_path: Path
+    ):
+        """The second point on the failure dimension, because "malformed" and
+        "gone" reach `reload_tokens` through different guards (6-12 versus 2)
+        and a handler that caught only the parse errors would die on this one.
+
+        This is the shape a botched secret remount actually takes: the file is
+        not badly written, it is not there.
+        """
+        path = tmp_path / "token"
+        path.write_text(f"{GOOD_TOKEN}\n")
+        with self._spawn(store, path) as (base, proc):
+            out = drain_output(proc)
+            path.unlink()
+            hup(proc)
+            lines = await_reload(out, 1)
+            alive = proc.poll()
+            old = fetch(f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN)[0]
+        assert alive is None, f"the server EXITED (rc={proc.returncode})"
+        assert old == 200, "the previously-loaded table stopped serving"
+        assert api.RELOAD_REFUSED in lines[-1], lines
+        assert "token file unreadable" in lines[-1], lines
+
+
+class TestStartupStillRefusesAMalformedFile:
+    """🔴 AN INVARIANT GUARD, LABELLED AS ONE. This pins behaviour the reload
+    change was required NOT to touch; no bug ever violated it, and it is not
+    regression coverage for anything.
+
+    It exists because the tolerant reload path is a standing invitation to
+    "improve" the startup path to match, and that would be a strictly worse
+    server: one that comes up with no valid token, answers 401 to everything,
+    and passes its own health check while doing it. The asymmetry is deliberate
+    — on reload there is a previous table to keep, at startup there is not.
+    """
+
+    def _run_to_completion(self, store: Path, token_file: Path):
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                str(SERVER_PATH),
+                "--store", str(store),
+                "--host", "127.0.0.1",
+                "--port", str(_free_port()),
+                "--token-file", str(token_file),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_child_env(LOOPBACK_PROXY),
+        )
+        try:
+            return proc.communicate(timeout=HANG_TIMEOUT), proc.returncode
+        except subprocess.TimeoutExpired:  # pragma: no cover
+            proc.kill()
+            proc.communicate()
+            raise AssertionError(
+                "the server did not exit on a malformed token file — it is "
+                "serving, which is the failure this guard pins against"
+            )
+
+    def test_a_SHORT_token_at_startup_still_exits_78(
+        self, store: Path, tmp_path: Path
+    ):
+        path = tmp_path / "token"
+        path.write_text("short\n")
+        (_out, err), rc = self._run_to_completion(store, path)
+        # 🔴 THE CODE *AND* THE REASON. `EXIT_CONFIG` alone would also be
+        # satisfied by a startup that refused for some unrelated reason, and a
+        # tolerant startup — the "improvement" this class exists to forbid —
+        # returns 0 and serves, so it fails on the code.
+        assert rc == api.EXIT_CONFIG, f"exited {rc}, expected {api.EXIT_CONFIG}"
+        assert "is too short" in err, err
+
+    def test_a_DUPLICATE_IDENTITY_at_startup_still_exits_78(
+        self, store: Path, tmp_path: Path
+    ):
+        """A second point on the same dimension: a cross-row guard, not just the
+        per-row one above. One measurement of "startup still refuses" would be a
+        claim about guard 5 and nothing else.
+        """
+        path = tmp_path / "token"
+        path.write_text(
+            _mapped_row(GOOD_TOKEN, "alpha", SCOPE) + "\n"
+            + _mapped_row(SECOND_TOKEN, "alpha", OTHER_SCOPE) + "\n"
+        )
+        (_out, err), rc = self._run_to_completion(store, path)
+        assert rc == api.EXIT_CONFIG, f"exited {rc}, expected {api.EXIT_CONFIG}"
+        assert "duplicate identity" in err, err
+
+    def test_POSITIVE_CONTROL_the_same_runner_reaches_a_NON_78_exit(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 BEFORE EITHER 78 ABOVE IS BELIEVED. `_run_to_completion` spawns a
+        process and reads its code; a runner that could only ever produce 78 —
+        a bad argv, a missing env var, an unimportable module — would satisfy
+        both tests above while measuring nothing about the token file.
+
+        A VALID file makes this process serve rather than exit, so the runner
+        must time out and raise. That is the non-78 outcome, and it is the one
+        that separates "78 because of the token file" from "78 no matter what".
+        """
+        path = tmp_path / "token"
+        path.write_text(GOOD_TOKEN + "\n")
+        with pytest.raises(AssertionError, match="did not exit"):
+            self._run_to_completion(store, path)
+
+
+class TestTheHandlerIsInstalledNotMerelyDefined:
+    """🔴 A FUNCTION THAT RELOADS IS NOT A SERVER THAT RELOADS. `reload_tokens`
+    can be perfect and `kill -HUP` can still kill the pod, because SIGHUP's
+    default disposition is terminate and nothing about defining a handler
+    changes that. These tests are about the WIRING.
+    """
+
+    def test_install_sighup_reload_REGISTERS_the_handler_it_returns(
+        self, store: Path
+    ):
+        httpd = api.build_server(
+            host="127.0.0.1", port=0, store_root=str(store),
+            tokens=(GOOD_TOKEN,), trusted_proxies=(LOOPBACK_PROXY,),
+        )
+        try:
+            before = signal.getsignal(signal.SIGHUP)
+            handler = api.install_sighup_reload(httpd, None, {})
+            after = signal.getsignal(signal.SIGHUP)
+        finally:
+            httpd.server_close()
+        assert after is handler, (
+            "the returned handler is not what SIGHUP is bound to — the function "
+            "defines a reloader and installs something else, or nothing"
+        )
+        assert before is not handler, (
+            "SIGHUP was ALREADY bound to this object before the call, so the "
+            "assertion above cannot tell an install from a no-op"
+        )
+
+    def test_main_INSTALLS_the_handler_BEFORE_it_starts_serving(
+        self, store: Path, tmp_path: Path, monkeypatch
+    ):
+        """🔴 ORDER, NOT PRESENCE. Between the first accepted connection and the
+        handler being installed there is a window in which `kill -HUP` kills the
+        pod. It is short, it is real, and nothing has to happen in it — so the
+        install belongs before `serve_forever`, and "it is installed eventually"
+        is not the claim.
+        """
+        path = tmp_path / "token"
+        path.write_text(GOOD_TOKEN + "\n")
+        events: list[str] = []
+
+        class _Fake:
+            RequestHandlerClass = type(
+                "_FakeHandler", (api.StoreRequestHandler,), {}
+            )
+
+            def serve_forever(self_inner):
+                events.append("serve_forever")
+                raise KeyboardInterrupt
+
+            def server_close(self_inner):
+                pass
+
+        real_install = api.install_sighup_reload
+
+        def spy_install(httpd, token_file, env, **kwargs):
+            events.append("install")
+            return real_install(httpd, token_file, env, **kwargs)
+
+        monkeypatch.setattr(api, "build_server", lambda **kw: _Fake())
+        monkeypatch.setattr(api, "install_sighup_reload", spy_install)
+        monkeypatch.setenv("SUBSYSTEM_STORE_TRUSTED_PROXIES", LOOPBACK_PROXY)
+        rc = api.main(
+            ["--store", str(store), "--port", "0", "--token-file", str(path)]
+        )
+        assert rc == 0
+        assert events == ["install", "serve_forever"], events
+
+    def test_main_hands_the_reloader_the_RESOLVED_token_file(
+        self, store: Path, tmp_path: Path, monkeypatch
+    ):
+        """🔴 THE RESOLVED PATH, NOT `args.token_file`. `main` sets `token_file`
+        to `None` when the configured path is absent and `$SUBSYSTEM_STORE_TOKEN
+        ` is set, and prints that it did. A reloader handed the raw argument
+        would then start re-reading a file the process deliberately ignored at
+        startup — so a secret appearing at that path later would be adopted by a
+        SIGHUP nobody meant as a config change.
+        """
+        captured: dict = {}
+
+        class _Fake:
+            RequestHandlerClass = type(
+                "_FakeHandler", (api.StoreRequestHandler,), {}
+            )
+
+            def serve_forever(self_inner):
+                raise KeyboardInterrupt
+
+            def server_close(self_inner):
+                pass
+
+        def spy_install(httpd, token_file, env, **kwargs):
+            captured["token_file"] = token_file
+            return None
+
+        monkeypatch.setattr(api, "build_server", lambda **kw: _Fake())
+        monkeypatch.setattr(api, "install_sighup_reload", spy_install)
+        monkeypatch.setenv("SUBSYSTEM_STORE_TRUSTED_PROXIES", LOOPBACK_PROXY)
+        monkeypatch.setenv("SUBSYSTEM_STORE_TOKEN", GOOD_TOKEN)
+        absent = tmp_path / "not-mounted"
+        rc = api.main(
+            ["--store", str(store), "--port", "0", "--token-file", str(absent)]
+        )
+        assert rc == 0
+        assert captured["token_file"] is None, (
+            f"the reloader was handed {captured['token_file']!r}, the path the "
+            f"startup path deliberately ignored"
+        )
+
+    def test_the_startup_banner_ADVERTISES_the_reload(
+        self, store: Path, tmp_path: Path
+    ):
+        """A mechanism nobody knows about is a mechanism nobody uses: the
+        operator's instinct on a credential change is to replace the pod. The
+        banner is the log line they are already reading.
+        """
+        path = tmp_path / "token"
+        path.write_text(GOOD_TOKEN + "\n")
+        with running_subprocess(store, path) as (_base, proc):
+            out = drain_output(proc)
+            deadline = time.monotonic() + HANG_TIMEOUT
+            while "listening on" not in out.text and time.monotonic() < deadline:
+                time.sleep(0.02)
+        assert "reload=SIGHUP" in out.text, out.text
+
+
+class TestReloadTokensSwapsRatherThanMutates:
+    """The in-process half: the same reload, driven directly, where the TABLE
+    OBJECT itself can be inspected rather than only its effects.
+    """
+
+    def _server(self, store: Path, *tokens: str):
+        return api.build_server(
+            host="127.0.0.1", port=0, store_root=str(store),
+            tokens=tokens, trusted_proxies=(LOOPBACK_PROXY,),
+        )
+
+    def test_a_successful_reload_REBINDS_and_leaves_the_old_tuple_INTACT(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 THE ATOMICITY GUARD, STATED STRUCTURALLY. A reader resolves
+        `expected_tokens` once per request; if the swap REBINDS an immutable
+        tuple, that read is a snapshot and there is no window. If it mutated the
+        existing sequence — clear-then-refill, append-then-prune — a reader
+        could iterate a table that is neither the old one nor the new one.
+
+        So two claims: the attribute names a DIFFERENT object afterwards, and
+        the object it named BEFORE still holds exactly what it held. The second
+        is what an in-place mutant fails, and it fails it even when the mutant
+        is fast enough that no concurrent reader happens to catch it.
+
+        🔴 IT RELOADS TWICE, AND THAT IS A FIX RATHER THAN THOROUGHNESS.
+        MEASURED against a clear-then-refill mutant: the FIRST reload of a
+        freshly built server cannot be done in place at all — the attribute
+        holds a TUPLE, so the mutant has to allocate a list, and both the
+        "rebound" and the "previous table intact" assertions passed. Only the
+        `isinstance(..., tuple)` assertion caught it, and a mutant that refilled
+        a list without changing the declared type would have SURVIVED both
+        rounds of that reasoning. From the second reload onward the mutant
+        writes in place for real, which is where the rebind assertion becomes
+        able to see anything — and the second reload is also what production
+        does every time after the first.
+        """
+        path = tmp_path / "token"
+        path.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+        other = tmp_path / "other"
+        other.write_text(f"{GOOD_TOKEN}\n{THIRD_TOKEN}\n")
+        httpd = self._server(store, GOOD_TOKEN)
+        observed = []
+        try:
+            handler = httpd.RequestHandlerClass
+            for source in (path, other):
+                before = handler.expected_tokens
+                assert api.reload_tokens(handler, str(source), {}) is True
+                observed.append((before, list(before), handler.expected_tokens))
+        finally:
+            httpd.server_close()
+        # 🔴 ONE LOOP PER CLAIM, NOT ONE LOOP OVER THE ROUNDS, AND THE ORDER IS
+        # LOAD-BEARING. Interleaved, round 1's `isinstance` fires before round
+        # 2's rebind check ever executes — so the rebind assertion would be
+        # UNREACHABLE under the very mutant it exists for, and "a test failed"
+        # would be reporting a different guard's finding. Checked this way each
+        # claim is exercised at BOTH points before the next claim is asked.
+        for round_index, (before, _snapshot, after) in enumerate(observed, 1):
+            assert after is not before, (
+                f"reload {round_index} did not rebind — it wrote in place, so a "
+                f"request that had already resolved the attribute is iterating "
+                f"the table as it changes"
+            )
+        for round_index, (before, before_snapshot, _after) in enumerate(observed, 1):
+            assert list(before) == before_snapshot, (
+                f"reload {round_index} MUTATED the previous table: a request "
+                f"holding it would see a half-applied mix"
+            )
+        for round_index, (_before, _snapshot, after) in enumerate(observed, 1):
+            assert isinstance(after, tuple), (
+                f"after reload {round_index} the table is not immutable, so 'a "
+                f"reader holds a snapshot' is not a property of this design"
+            )
+        assert [r.token for r in observed[0][2]] == [GOOD_TOKEN, SECOND_TOKEN]
+        assert [r.token for r in observed[1][2]] == [GOOD_TOKEN, THIRD_TOKEN]
+
+    def test_a_REFUSED_reload_leaves_the_very_same_object_in_place(
+        self, store: Path, tmp_path: Path
+    ):
+        """`is`, not `==`. A refusal that rebuilt an equal table would pass an
+        equality check while having gone through a window in which the
+        attribute held something else.
+        """
+        path = tmp_path / "token"
+        path.write_text("short\n")
+        httpd = self._server(store, GOOD_TOKEN)
+        try:
+            handler = httpd.RequestHandlerClass
+            before = handler.expected_tokens
+            assert api.reload_tokens(handler, str(path), {}) is False
+            after = handler.expected_tokens
+        finally:
+            httpd.server_close()
+        assert after is before, "a refused reload replaced the table anyway"
+
+    def test_the_swap_lands_on_the_SERVERS_class_not_the_shared_BASE(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 `build_server` gives each server its own `_Handler` subclass and
+        sets `expected_tokens` on IT. An assignment to `StoreRequestHandler`
+        would be SHADOWED by that subclass attribute: the reload would report
+        success, change nothing for this server, and quietly rewrite the default
+        every OTHER server in the process inherits.
+        """
+        path = tmp_path / "token"
+        path.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+        base_before = api.StoreRequestHandler.expected_tokens
+        httpd = self._server(store, GOOD_TOKEN)
+        try:
+            handler = httpd.RequestHandlerClass
+            assert handler is not api.StoreRequestHandler
+            assert api.reload_tokens(handler, str(path), {}) is True
+            own = handler.__dict__["expected_tokens"]
+        finally:
+            httpd.server_close()
+        assert [r.token for r in own] == [GOOD_TOKEN, SECOND_TOKEN], (
+            "the new table is not on the server's OWN class — it was written "
+            "somewhere an inherited lookup happens to find, or not at all"
+        )
+        assert api.StoreRequestHandler.expected_tokens is base_before, (
+            "the reload wrote onto the shared base class, which every other "
+            "server in this process inherits from"
+        )
+
+    def test_the_verdict_line_COUNTS_the_identities_it_loaded(
+        self, store: Path, tmp_path: Path
+    ):
+        """Observability, asserted on the injected sink rather than a stream: an
+        operator must be able to tell a successful reload from a refused one,
+        and how many identities are live now, without guessing.
+
+        🔴 THE SINK GETS THE VERDICT AND NOTHING ELSE, WHICH IS A MEASUREMENT
+        RATHER THAN A PREFERENCE. Routing `load_tokens`' `warn=` callback here
+        too was tried, and the unrestricted-scope banner arrived carrying its
+        own `subsystem-store-api:` prefix — which `_reload_log` then prefixed
+        again. The two-row file below is all-legacy precisely so that banner
+        WOULD fire: `len(log) == 1` is what pins the redirect as not
+        reintroduced, and it would read as an arbitrary count on a file that
+        could not produce a second line at all.
+        """
+        path = tmp_path / "token"
+        path.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+        log: list[str] = []
+        httpd = self._server(store, GOOD_TOKEN)
+        try:
+            handler = httpd.RequestHandlerClass
+            assert api.reload_tokens(handler, str(path), {}, log=log.append) is True
+        finally:
+            httpd.server_close()
+        assert len(log) == 1, log
+        assert log[0].startswith(f"{api.RELOAD_LOADED} 2 identities"), log[0]
+        assert api.token_id(GOOD_TOKEN) in log[0]
+        assert api.token_id(SECOND_TOKEN) in log[0]
+        # It also says what it REPLACED, so a reload that halved the table is
+        # visible as one rather than only as an absolute count.
+        assert "was 1" in log[0], log[0]
+        assert GOOD_TOKEN not in log[0] and SECOND_TOKEN not in log[0]
+
+    def test_reload_tokens_NEVER_raises_whatever_the_source_does(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 IT IS CALLED FROM A SIGNAL HANDLER ON THE THREAD BLOCKED IN
+        `serve_forever`. An exception that escapes there ends the process, so
+        "returns False" and "does not raise" are one requirement, measured
+        across the failure shapes the loader can produce.
+
+        FOUR points on the dimension, not one: a per-row guard, a cross-row
+        guard, an absent file, and a source that is present but empty. A handler
+        that caught `ValueError` from the parse but not the file access would
+        pass the first two and take the pod down on the third.
+        """
+        httpd = self._server(store, GOOD_TOKEN)
+        good = tmp_path / "good"
+        good.write_text(GOOD_TOKEN + "\n")
+        sources = {
+            "short row": "short\n",
+            "unparseable row": f"{GOOD_TOKEN} alpha {SCOPE} extra\n",
+            "reserved identity": _mapped_row(GOOD_TOKEN, "legacy", SCOPE) + "\n",
+            "whitespace only": "   \n\n",
+        }
+        results = {}
+        try:
+            handler = httpd.RequestHandlerClass
+            baseline = handler.expected_tokens
+            for name, body in sources.items():
+                path = tmp_path / name.replace(" ", "-")
+                path.write_text(body)
+                results[name] = api.reload_tokens(handler, str(path), {})
+            results["absent file"] = api.reload_tokens(
+                handler, str(tmp_path / "never-existed"), {}
+            )
+            # A directory, not a file: `Path.is_file()` is False, so this lands
+            # on guard 2 by a different route than "the path does not exist".
+            results["a directory"] = api.reload_tokens(handler, str(tmp_path), {})
+            unchanged = handler.expected_tokens is baseline
+            # 🔴 POSITIVE CONTROL, in the same process and on the same handler:
+            # if EVERY source refused, `False` would be indistinguishable from a
+            # reloader that is inert. One of them must be able to say True.
+            results["a VALID file"] = api.reload_tokens(handler, str(good), {})
+        finally:
+            httpd.server_close()
+        assert results == {
+            "short row": False,
+            "unparseable row": False,
+            "reserved identity": False,
+            "whitespace only": False,
+            "absent file": False,
+            "a directory": False,
+            "a VALID file": True,
+        }, results
+        assert unchanged, "a refused reload replaced the table"
+
+
+class TestAReloadIsAtomicUnderLoad:
+    """🔴 THE SEAM, NOT THE COMPONENT. Every claim above is about one thread.
+    This one is about the property that only exists when the reload and the
+    request path run TOGETHER: a request in flight must see either the whole old
+    table or the whole new one, never a mix.
+
+    Both halves are driven from ONE fixture on purpose — the behavioural half
+    (no spurious 401) is what an operator would notice, and the structural half
+    (no observer ever sees a third state) is what says WHY, and a structural
+    check alone would pass against a table nobody was reading.
+    """
+
+    # Deliberately permissive: a lockout would turn one spurious 401 into a
+    # cascade of them and the failure message would blame the limiter.
+    def _limiter(self):
+        return api.RateLimiter(max_failures=10**6, window_s=60.0, lockout_s=1.0)
+
+    def test_a_token_present_in_BOTH_tables_is_never_401_during_reloads(
+        self, store: Path, tmp_path: Path
+    ):
+        """The behavioural half. `GOOD_TOKEN` is in every version of the file,
+        so no correct reload can ever reject it. An in-place mutation exposes a
+        window in which the table is empty or partial, and `authorize` iterating
+        it then rejects a credential that was valid the whole time — which the
+        client sees as an unexplained 401 whenever an operator edits the secret.
+        """
+        a = tmp_path / "a"
+        a.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+        b = tmp_path / "b"
+        b.write_text(f"{GOOD_TOKEN}\n{THIRD_TOKEN}\n")
+        httpd = api.build_server(
+            host="127.0.0.1", port=0, store_root=str(store),
+            tokens=(GOOD_TOKEN, SECOND_TOKEN),
+            trusted_proxies=(LOOPBACK_PROXY,), limiter=self._limiter(),
+            audit=lambda line: None,
+        )
+        handler = httpd.RequestHandlerClass
+        codes: list[int] = []
+        stop = threading.Event()
+
+        def reader(url):
+            while not stop.is_set():
+                codes.append(fetch(url, token=GOOD_TOKEN)[0])
+
+        with serving(httpd) as base:
+            url = f"{base}/api/v1/recall/{SCOPE}"
+            threads = [
+                threading.Thread(target=reader, args=(url,), daemon=True)
+                for _ in range(4)
+            ]
+            for t in threads:
+                t.start()
+            try:
+                for i in range(60):
+                    api.reload_tokens(
+                        handler, str(a if i % 2 else b), {}, log=lambda line: None
+                    )
+            finally:
+                stop.set()
+                for t in threads:
+                    t.join(timeout=HANG_TIMEOUT)
+        assert codes, "no request was made — the concurrency harness ran nothing"
+        assert set(codes) == {200}, (
+            f"{len([c for c in codes if c != 200])} of {len(codes)} concurrent "
+            f"requests were refused while the token they used was in EVERY "
+            f"version of the file: {sorted(set(codes))}"
+        )
+
+    def test_no_observer_EVER_sees_a_table_that_is_neither(
+        self, store: Path, tmp_path: Path
+    ):
+        """The structural half, and it is the one that names the mechanism.
+
+        Two files, two tables. A sampler that resolves `expected_tokens` and
+        reads it must land on exactly one of them; anything else — an empty
+        tuple, a one-row mix, a list caught mid-refill — is a half-applied
+        state, and it is what an in-place swap produces.
+
+        🔴 THE SAMPLER MATERIALISES THE ROWS rather than only holding the
+        reference, because holding an immutable tuple is trivially safe and
+        would make this test vacuous. Iterating it is what a request does.
+        """
+        a = tmp_path / "a"
+        a.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+        b = tmp_path / "b"
+        b.write_text(f"{GOOD_TOKEN}\n{THIRD_TOKEN}\n")
+        state_a = (GOOD_TOKEN, SECOND_TOKEN)
+        state_b = (GOOD_TOKEN, THIRD_TOKEN)
+        httpd = api.build_server(
+            host="127.0.0.1", port=0, store_root=str(store),
+            tokens=(GOOD_TOKEN, SECOND_TOKEN),
+            trusted_proxies=(LOOPBACK_PROXY,),
+        )
+        handler = httpd.RequestHandlerClass
+        seen: list[tuple] = []
+        stop = threading.Event()
+
+        def sampler():
+            while not stop.is_set():
+                seen.append(tuple(r.token for r in handler.expected_tokens))
+
+        try:
+            threads = [
+                threading.Thread(target=sampler, daemon=True) for _ in range(4)
+            ]
+            for t in threads:
+                t.start()
+            try:
+                for i in range(400):
+                    api.reload_tokens(
+                        handler, str(a if i % 2 else b), {}, log=lambda line: None
+                    )
+            finally:
+                stop.set()
+                for t in threads:
+                    t.join(timeout=HANG_TIMEOUT)
+        finally:
+            httpd.server_close()
+        assert len(seen) > 1000, (
+            f"only {len(seen)} samples were taken, which is too few to claim "
+            f"anything about a window — the sampler is not racing the swap"
+        )
+        # 🔴 POSITIVE CONTROL FOR THE SAMPLER: it must have observed BOTH
+        # states. If it only ever saw one, its "no third state" verdict would be
+        # a fact about a sampler that never raced anything.
+        assert state_a in set(seen) and state_b in set(seen), (
+            f"the sampler never observed both tables (saw {set(seen)}), so it "
+            f"was not running concurrently with the swap and its verdict is "
+            f"about nothing"
+        )
+        bad = sorted(set(seen) - {state_a, state_b})
+        assert not bad, (
+            f"observers saw {len(bad)} table state(s) that are neither the old "
+            f"table nor the new one — the swap is not atomic: {bad}"
         )

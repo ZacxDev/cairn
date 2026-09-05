@@ -644,19 +644,68 @@ store-api audit ts=… ip=203.0.113.7 peer=trusted method=GET path=/api/v1/recal
 
 1. `sops clusters/homelab/apps/subsystem-store/secrets.enc.yaml` — put the NEW
    token on the first line, keep the old one below it. Commit; Flux applies.
-2. Restart the pod. Its startup line prints every fingerprint in file order,
-   each with its identity: `token-ids=<new>:legacy,<old>:legacy`.
+2. `kubectl -n subsystem-store exec deploy/subsystem-store-api -- sh -c 'kill -HUP 1'`.
+   The reload line prints every fingerprint in file order, each with its
+   identity, and says what it replaced:
+   `token reload: LOADED 2 identities [<new>:legacy,<old>:legacy] (was 1 [<old>:legacy])`
+   (A pod restart still works and prints the same fingerprints as `token-ids=`
+   on its startup line — it is just no longer the only way.)
 3. Roll clients onto the new token. Watch the audit stream until the OLD
    fingerprint stops appearing:
    `kubectl -n subsystem-store logs deploy/subsystem-store-api | grep 'token=<old>'`
-4. Only then delete the old line, commit, restart. A request presenting it is
-   now an ordinary 401.
+4. Only then delete the old line, commit, and SIGHUP again. A request presenting
+   it is now an ordinary 401.
 
 Step 3 is the step that does not exist without step 2's fingerprint, and step 4
 is the one people skip — a rotation that leaves the old credential live is not a
 rotation. The whole sequence is exercised in-band by
 `TestTokenSetAndOverlapRotation::test_a_ROTATION_end_to_end_old_still_works_then_stops`
 and against the real process by `TestTheDeployedEntrypoint`.
+
+### Reloading the token file — `SIGHUP`, and what it will refuse
+
+The startup banner advertises it (`reload=SIGHUP`). `kill -HUP <pid>` re-reads
+the token file **through the same `load_tokens` ladder** that ran at startup —
+not a second parser — and swaps the result in only if every guard passes.
+
+⚠ **The `sh -c` wrapper in step 2 is derived from the Dockerfile, not measured
+against a running pod.** `CMD` is exec-form, so the server is PID 1; the image
+installs no packages, so there is no `/usr/bin/kill` from `procps` and the shell
+builtin is what actually sends the signal. The reload itself is exercised
+against a real process by `TestSighupReloadsTheTokenTable`, which spawns
+`server.py` and sends the real signal — the `kubectl` spelling above is the only
+part of this that has not been run.
+
+🔴 **A parse failure on RELOAD does not take the server down.** The previously
+loaded table keeps serving and the log says why:
+
+```
+token reload: REFUSED — the token source did not parse (ValueError: duplicate
+identity 'alpha': …). NOTHING CHANGED: still serving the 2 previously loaded
+identities [dbb22a50030d:legacy,07c358b5e95b:legacy]. Fix the file and send
+SIGHUP again
+```
+
+🔴 **At STARTUP the same file still exits 78, and the asymmetry is the design.**
+On reload there is a working table to fall back to; at startup there is not, and
+a process that came up serving no valid token would look healthy while answering
+401 to everything. Do not "improve" the startup path to match this one.
+
+What a reload is and is not:
+
+| | |
+|---|---|
+| revocation | **yes** — a row removed from the file stops being accepted |
+| addition, and scope changes | yes, in both directions |
+| atomicity | the table is an immutable tuple, rebound in one assignment; a request in flight sees the whole old table or the whole new one |
+| the env fallback (`$SUBSYSTEM_STORE_TOKEN`) | reloads to the same value — a process's own environment does not change under it. The file is the thing SIGHUP exists to re-read |
+| `--store`, the proxy allowlist, the rate-limit knobs | **not** reloaded. Only the token table |
+
+Why it matters here specifically: the deployment is single-replica (see the
+`other`-row note above), so "restart the pod to change a credential" is a hard
+read outage rather than a rolling one — and before this existed, a typo in the
+secret turned that outage into an indefinite one, because the replacement
+exited 78 and stayed down.
 
 ## Rate limit, lockout and the client address
 
