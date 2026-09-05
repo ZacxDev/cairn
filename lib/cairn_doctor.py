@@ -275,7 +275,7 @@ def collect(
     stamp_lines: Iterable[str] | None,
     stamp_reason: str | None,
     cache_root: Path,
-    mirror_root: Path,
+    mirror_root: Path | None,
     pod: PodFacts,
     token: str | None,
     token_reason: str = "",
@@ -318,9 +318,22 @@ def collect(
 
     # 3. THE FROZEN MIRROR. Absent is fine — a fresh host never had one. Present
     #    and fully read-only is fine. Present with a WRITABLE entry is not.
-    mirror = _describe(mirror_root, writable_entry_files)
-    loose = mirror.value
-    if not mirror.ok:
+    #
+    # 🔴 OPTIONAL, AND `None` IS NOT THE SAME AS ABSENT. A migrating deployment
+    # freezes its old local store and points this at it; a deployment that never
+    # had one has nothing to name. Saying "does not exist" about a path the
+    # operator never configured would be a claim about their disk that this code
+    # cannot support — so an unconfigured mirror is NOT-OBSERVABLE, not OK.
+    mirror = None if mirror_root is None else _describe(mirror_root, writable_entry_files)
+    loose = None if mirror is None else mirror.value
+    if mirror is None:
+        checks.append(Check(
+            "frozen-mirror", NOT_OBSERVABLE,
+            "no mirror is configured, so there is nothing to check. Set "
+            "CAIRN_MIRROR_ROOT if you migrated from a local store and want its "
+            "entry files confirmed read-only.",
+        ))
+    elif not mirror.ok:
         if mirror.absent:
             checks.append(Check(
                 "frozen-mirror", OK,

@@ -2,7 +2,7 @@
 """Surface what the `/analyze-service` index already records about a scope.
 
 THE READ HALF. The store had two writers — `/analyze-service` (infra recon) and
-`/handoff` (`scripts/lib/a writer`) — and no general reader. `/resume`
+`/handoff` (`lib/a writer`) — and no general reader. `/resume`
 never opened it: a fresh session read the handoff doc, reconciled live state via
 `resume-state.sh`, and the store's stated purpose — "the terse pointer sheet that
 outlives this handoff doc" — outlived the doc with nobody looking at it.

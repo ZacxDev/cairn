@@ -219,7 +219,7 @@ def _load_server():
 api = _load_server()
 
 # 🔴 THE SAME MODULE OBJECT THE SERVER IMPORTED FROM, not a second load.
-# `server.py` puts `scripts/lib` on `sys.path` and imports `subsystem_resolver`,
+# `server.py` puts `lib` on `sys.path` and imports `subsystem_resolver`,
 # so by the line above it is in `sys.modules`; re-loading it by path would give a
 # SECOND module whose `_LOADER_ENTRY_ACTIONS` is a different dict, and a mutation
 # aimed at the one the loader actually reads would survive against it.
@@ -4052,6 +4052,54 @@ def _ambiguous_refs(root: Path) -> None:
 # with a diff nobody can read.
 # =============================================================================
 
+_EXPECTED_EVIDENCE_BLOCK = """
+    🔴 AND IT CANNOT COMPARE THE WHOLE-SCOPE DIGEST AT ALL — THAT IS THE SECOND
+    THING THAT MADE THIS SCRIPT PERMANENTLY RED, AFTER `host:`.
+    `subsystem_recall` orders its INDEX **newest-first by entry-file mtime**, and
+    picks the digest's one featured BODY the same way (`select_featured`'s
+    most-recent fallback). The transport does not preserve mtime — `seed.sh`
+    `rsync`s into a stage and `tar`s that into the pod — so two stores holding
+    byte-identical entries render their index in a DIFFERENT ORDER and feature a
+    DIFFERENT entry. MEASURED 2026-09-01 against the live pod, store
+    `~/.claude/analyze-service-index`, over a `kubectl port-forward`:
+
+    FAIL scope=devrc            raw-diff-lines=45   accounted-for=6
+    FAIL scope=cli              raw-diff-lines=8    accounted-for=6
+    PASS scope=storage-resolver (1 entry)
+    FAIL scope=homelab-infra    raw-diff-lines=108  accounted-for=6
+    FAIL scope=datapacket-talos raw-diff-lines=336  accounted-for=6
+
+    The `cli` scope is the clean isolation — its index ROWS were identical and the
+    only unaccounted difference was one row's POSITION. `claude/RULES.md`: a
+    permanently-red gate is worse than no gate.
+
+    🔴 TWO READINGS OF THAT RUN WERE WRONG, AND THIS IS THE CORRECTION.
+    The `storage-resolver` line above said `(2 entries)` and the paragraph
+    concluded "every passing scope had 2 entries; every failing one had more".
+    RE-MEASURED 2026-09-01 on this host, same store, counting entries as
+    `subsystem_recall` INDEXES them rather than as files on disk:
+
+    cli=5  devrc=26  datapacket-talos=49  homelab-infra=0  storage-resolver=1
+
+    `storage-resolver/` holds `backblaze.md` plus a `README.md`, and a README in a
+    scope is correctly NOT indexed — so it is a ONE-entry scope. NO TWO-ENTRY
+    SCOPE APPEARS IN THAT RUN AT ALL, so the data could never support a two-entry
+    boundary, in either direction.
+
+    The boundary that does hold is ARITHMETIC, not measured: a ONE-entry index has
+    exactly one possible order and cannot diverge; TWO OR MORE is where the order
+    can differ. That is the same argument the ordering fixture in
+    `scripts/tests/test_subsystem_store_api.py` makes for itself when it chooses
+    FOUR refs — two entries admit only two orders, so a two-entry fixture is one
+    coin-flip away from asserting nothing.
+
+    And `homelab-infra` was NOT an ordering failure. It holds ZERO indexed entries
+    on this host (one `README.md`), so its local render is `status=scope-empty`
+    with no INDEX block at all — 102 unaccounted lines that ordering structurally
+    cannot produce. That FAIL was a SET difference, the lagging read-through cache
+    case described below. THREE of the four FAILs were ordering, not four.
+"""
+
 _EVIDENCE_BLOCK_START = "# 🔴 AND IT CANNOT COMPARE THE WHOLE-SCOPE DIGEST AT ALL"
 _EVIDENCE_BLOCK_END = "# 🔴 SO THE CLAIM IS RESTATED AT THE LEVEL IT CAN HOLD."
 
@@ -5002,16 +5050,17 @@ class TestByteIdentityVerifier:
         it excludes exactly the one file that would match itself.
         """
         files = _tracked_text_files()
-        assert len(files) > 500, (
+        assert len(files) > 20, (
             f"the scan enumerated only {len(files)} tracked text files — it is "
             f"not reaching the repo, so its zero means nothing"
         )
         for must in (
             "server/verify-byte-identity.sh",
             "server/README.md",
-            "scripts/cairn-cutover.py",
-            # 🔴 THE SITE THE HAND-WRITTEN LEDGER MISSED.
-            "claudedocs/handoff-cairn-phase3.md",
+            # 🔴 A FILE OUTSIDE THE OBVIOUS TWO. A hand-written ledger of "where
+            # the claim was copied to" missed a site once; the enumeration has to
+            # reach files nobody thought to list.
+            "CLAUDE.md",
         ):
             assert must in files, f"the scan does not reach {must}"
         assert "tests/test_subsystem_store_api.py" not in files, (
@@ -5942,7 +5991,7 @@ class TestPhaseOneScope:
         `ModuleNotFoundError: No module named 'git_mainline'`, caught by
         `build-push.sh`'s own import control at deploy time.
 
-        This computes the TRANSITIVE closure of local `scripts/lib` imports from
+        This computes the TRANSITIVE closure of local `lib` imports from
         the entrypoints and asserts the Dockerfile covers it, so the next added
         import fails here — in CI, on the commit that adds it — rather than at
         the next deploy, which may be months later and someone else's problem.

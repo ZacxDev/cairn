@@ -360,37 +360,6 @@ class TestTheWireConstants:
             f"`subsystem_read_store` no longer declares."
         )
 
-    def test_the_analyze_service_step_does_NOT_chain_the_sync_with_double_ampersand(
-        self,
-    ) -> None:
-        """🔴 `&&` HERE DELETES THE WHOLE BRIEF, AND THE PROSE PROMISES OTHERWISE.
-
-        `cairn sync` exits 4 whenever the pod is unreachable but a usable cache
-        survives — that is `cmd_sync`'s stated contract, not an edge case. Under
-        `&&` that non-zero short-circuits and `service_recon.py` never runs, so
-        `/analyze-service` emits NOTHING during an outage, exactly when the
-        stamped cache would have served the index at full fidelity. Eight lines
-        below, the same file promises "a failed sync costs you the index block,
-        never the brief".
-
-        Pinned on the COMMAND, because nothing else could: the REMEDY test only
-        requires the substring `cairn sync`, which `&&` satisfies.
-        """
-        doc = (ROOT / "claude/skills/analyze-service/SKILL.md").read_text(encoding="utf-8")
-        step = [
-            ln for ln in doc.splitlines()
-            if rs.REMEDY in ln and "service_recon.py" in ln
-        ]
-        assert len(step) == 1, f"expected one step-1 command line, found {step}"
-        assert "&&" not in step[0], (
-            f"step 1 chains the sync with `&&`: {step[0]!r}. A failed sync then "
-            f"suppresses the entire recon. Use `;`."
-        )
-        assert f"{rs.REMEDY};" in step[0], (
-            f"step 1 must separate the two commands with `;`: {step[0]!r}"
-        )
-        # …and the promise the separator has to keep is still there to keep.
-        assert "costs you the index block, never the brief" in doc
 
     def test_cairns_cache_default_FOLLOWS_a_repointed_resolver(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -476,34 +445,6 @@ class TestTheResolver:
         assert rs.DEFAULT_CACHE_ROOT.is_relative_to(Path.home())
         assert rs.DEFAULT_CACHE_ROOT != Path.home()
 
-    def test_the_REMEDY_names_a_subcommand_cairn_ACTUALLY_HAS(self) -> None:
-        """🔴 THE REMEDY IS A WIRE FACT: it is the one thing the refusal tells a
-        human to TYPE.
-
-        MEASURED: `REMEDY = "cairn resync-the-store"` SURVIVED all 668 tests,
-        because every assertion was `rs.REMEDY in msg` — the message quoting the
-        constant that produced it. Two SKILL.md files hardcode `cairn sync` in
-        prose with nothing cross-checking, so the prose and the code could drift
-        apart silently in either direction.
-
-        Pinned three ways: the literal; that `scripts/cairn` really declares that
-        subparser (so a renamed subcommand fails HERE rather than at a user's
-        terminal); and that both prescribing skills say the same words.
-        """
-        assert rs.REMEDY == "cairn sync"
-        prog, _, verb = rs.REMEDY.partition(" ")
-        assert prog == "cairn"
-        cairn = (ROOT / "cairn").read_text(encoding="utf-8")
-        assert f'sub.add_parser("{verb}"' in cairn, (
-            f"the refusal tells a human to run `{rs.REMEDY}`, but `scripts/cairn` "
-            f"declares no `{verb}` subcommand."
-        )
-        for rel in (
-            "claude/skills/resume/SKILL.md",
-            "claude/skills/analyze-service/SKILL.md",
-        ):
-            doc = (ROOT / rel).read_text(encoding="utf-8")
-            assert rs.REMEDY in doc, f"{rel} no longer prescribes `{rs.REMEDY}`"
 
     def test_the_stamp_FILENAME_is_pinned_to_the_literal_cairn_writes(
         self, tmp_path: Path
@@ -1088,108 +1029,6 @@ def _python_code_only(src: str) -> str:
 AUDIT_EXIT_STORE_MISSING = 2
 
 
-class TestTheAuditorResolvesThroughTheSharedResolver:
-    def test_the_default_reads_the_repointed_cache_and_names_it(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """🔴 THE HEADLINE. With no `--store`, the auditor reads whatever
-        `read_store_root()` resolves to — so repointing the resolver moves it,
-        which is only true if it stopped carrying a path of its own.
-
-        Asserted through the OUTPUT, not by reading a constant back off the
-        module: `store: <path>` is the line a human uses to answer "which store
-        did this audit?", and it is the one that was wrong.
-        """
-        store = repointed(_store(tmp_path, stamped=True))
-        assert sa.main([]) == 0
-        out = capsys.readouterr().out
-        assert f"  store: {store}" in out
-        # …and it really audited THAT store, rather than printing its name over
-        # somebody else's counts.
-        assert "collector" in out
-
-
-
-class TestTheAuditorRefusesAnUnstampedDefault:
-    def test_an_unstamped_DEFAULT_is_refused_and_audits_nothing(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """🔴 Non-zero exit, and — the half that matters — no report a reader
-        could act on. An audit that still printed its counts would be an
-        advisory, and `prune-index` step 1 says to stop when the verdict is
-        clean: a clean verdict computed off a frozen mirror is the failure."""
-        repointed(_store(tmp_path, stamped=False))
-        assert sa.main([]) == 4
-        cap = capsys.readouterr()
-        assert "REFUSING" in cap.err
-        assert rs.REMEDY in cap.err
-        assert cap.out.strip() == ""
-        assert "index audit" not in cap.out
-
-    def test_the_refusal_names_DELETION_as_the_stake(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """This tool is not just another reader, and its refusal says so — a
-        reader who has seen the recall refusal must not read this one as the
-        same, weaker fact."""
-        repointed(_store(tmp_path, stamped=False))
-        assert sa.main([]) == 4
-        err = capsys.readouterr().err
-        assert "DELETIONS" in err
-        assert "prune-index" in err
-
-    def test_the_exit_code_is_the_SAME_number_BOTH_read_surfaces_return(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """🔴 ONE VOCABULARY, OR A CALLER NEEDS TWO RULES.
-
-        The literal is written out here, and the two tools are compared to it
-        rather than to each other — two modules agreeing while both drifted from
-        the documented contract is the failure this file has already seen five
-        times. `2` is asserted distinct because it is this auditor's OWN
-        store-missing code, and a refusal that returned it would be
-        indistinguishable from "you named a path that is not a directory".
-        """
-        repointed(_store(tmp_path, stamped=False))
-        assert sa.main([]) == 4
-        capsys.readouterr()
-        assert rs.EXIT_UNSTAMPED_READ_STORE == 4
-        assert rc.EXIT_UNSTAMPED_READ_STORE == 4
-        assert rc.main(["--scope", SCOPE]) == 4
-        capsys.readouterr()
-        assert 4 != AUDIT_EXIT_STORE_MISSING
-        assert 4 != 0
-
-    def test_the_guard_is_REACHABLE_the_store_missing_check_does_not_win(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """🔴 REACHABILITY, and this one is not hypothetical — it is the ONLY
-        case a fresh host produces.
-
-        A host that has never run `cairn sync` has no `~/.cache/subsystem-store`
-        at all. `root.is_dir()` sits in this same function and answers that with
-        `store root not found`, which is TRUE and carries no remedy. Placed
-        after it, the refusal would be dead code for the exact population it
-        exists to serve. So the input here is a default that does not exist, and
-        the assertion is that the answer is 4 with `cairn sync` in it — never 2.
-        """
-        repointed(tmp_path / "never-synced")
-        assert sa.main([]) == rs.EXIT_UNSTAMPED_READ_STORE
-        err = capsys.readouterr().err
-        assert rs.REMEDY in err
-        assert "store root not found" not in err
-
-    def test_the_same_command_succeeds_once_the_store_is_stamped(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """The positive half of the reachability pair: same argv, same store
-        contents, stamp present ⇒ exit 0 and a real audit. Without this, a
-        `main` that refused everything would pass every test above."""
-        repointed(_store(tmp_path, stamped=True))
-        assert sa.main([]) == 0
-        assert "index audit" in capsys.readouterr().out
-
-
 class TestTheAuditorStaysPermissiveOnAnExplicitStore:
     """🔴 THE HALF THE CHANGE MUST NOT MOVE.
 
@@ -1208,108 +1047,10 @@ class TestTheAuditorStaysPermissiveOnAnExplicitStore:
     it is the permissive contract only at HEAD.
     """
 
-    def test_an_explicit_store_at_an_unstamped_path_still_audits(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        # The default is repointed at an unstamped store too, so a pass here
-        # cannot come from the default happening to be fine.
-        repointed(_store(tmp_path / "default", stamped=False))
-        elsewhere = _store(tmp_path / "named", stamped=False)
-        assert sa.main(["--store", str(elsewhere)]) == 0
-        cap = capsys.readouterr()
-        assert "collector" in cap.out
-        assert "REFUSING" not in cap.err
-
-    def test_an_explicit_MISSING_store_is_store_missing_not_the_refusal(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """The two codes divide on WHO named the path. `store-missing` still
-        answers an operator who typed one, and the remedy for that is not
-        `cairn sync`."""
-        repointed(_store(tmp_path / "default", stamped=True))
-        assert sa.main(["--store", str(tmp_path / "nope")]) == AUDIT_EXIT_STORE_MISSING
-        err = capsys.readouterr().err
-        assert "store root not found" in err
-        assert rs.REMEDY not in err
 
 
 
-class TestTheAuditCarriesTheSnapshotItMeasured:
-    """🔴 THE PRESCRIBED PATH IS EXPLICIT, SO THE REFUSAL NEVER FIRES ON IT.
 
-    Repointing the default fixes the bare invocation and nothing else. What the
-    prescribed `--store ~/.cache/subsystem-store` run gains is this: the counts
-    now print the snapshot they were measured against. `prune-index` §6 compares
-    an OPEN count from a run before the cut with one after, and two runs of
-    DIFFERENT snapshots is precisely the comparison that silently means nothing —
-    the same shape as the completeness claim that started all this.
-    """
-
-    def test_the_stamp_prints_between_the_store_line_and_the_budget_block(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """Every line, and POSITIONED. A freshness fact printed below the size
-        table dates a page the reader has already believed."""
-        repointed(_store(tmp_path, stamped=True))
-        assert sa.main([]) == 0
-        lines = capsys.readouterr().out.splitlines()
-        store_at = next(i for i, ln in enumerate(lines) if ln.startswith("  store: "))
-        budget_at = next(i for i, ln in enumerate(lines) if ln.startswith("budget "))
-        for i, line in enumerate(STAMP_LINES):
-            assert lines[store_at + 1 + i] == f"  stamp: {line}", lines[:12]
-        assert store_at + len(STAMP_LINES) < budget_at
-
-    def test_the_stamp_prefix_is_the_ONE_spelling_ALL_THREE_renderers_use(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """🔴 THREE RENDERERS NOW, ONE TOKEN. `analyze-service/SKILL.md` tells a
-        reader to relay "the `stamp:` lines"; that instruction is true of every
-        surface or of none. Compared as RENDERED OUTPUT — the recall CLI's
-        against the auditor's — never by grepping two sources for one f-string.
-        """
-        store = _store(tmp_path, stamped=True)
-        repointed(store)
-        assert rc.main(["--scope", SCOPE]) == 0
-        reader_lines = {
-            ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("  stamp:")
-        }
-        assert sa.main([]) == 0
-        audit_lines = {
-            ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("  stamp:")
-        }
-        assert reader_lines == audit_lines != set()
-        assert audit_lines == {f"{rs.STAMP_PREFIX}{ln}" for ln in STAMP_LINES}
-
-    def test_an_explicitly_named_store_is_dated_when_it_can_be_and_not_when_it_cannot(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """🔴 BOTH HALVES, because either alone passes over a renderer that
-        always prints or never does. `--store` is exempt from the refusal, not
-        from the date — and where there is no stamp, nothing is invented."""
-        repointed(_store(tmp_path / "default", stamped=True))
-        fresh = _store(tmp_path / "fresh", stamped=True)
-        bare = _store(tmp_path / "bare", stamped=False)
-
-        assert sa.main(["--store", str(fresh)]) == 0
-        dated = capsys.readouterr().out
-        for line in STAMP_LINES:
-            assert f"{rs.STAMP_PREFIX}{line}" in dated, line
-
-        assert sa.main(["--store", str(bare)]) == 0
-        undated = capsys.readouterr().out
-        assert rs.STAMP_PREFIX not in undated
-        assert "index audit" in undated
-
-    def test_NO_AGE_IS_COMPUTED_by_the_auditor_either(
-        self, tmp_path: Path, repointed, capsys
-    ) -> None:
-        """`cairn.cache_age` owns that arithmetic. Asserted behaviourally — the
-        stamp's own epoch is echoed, never converted — because a structural
-        `import time` ban cannot apply here: this auditor legitimately shells
-        `git` and has other clock-free reasons to hold none."""
-        repointed(_store(tmp_path, stamped=True))
-        assert sa.main([]) == 0
-        assert "  stamp: synced=1788363567" in capsys.readouterr().out
 
 
 

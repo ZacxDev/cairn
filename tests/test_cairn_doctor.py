@@ -664,7 +664,6 @@ class TestTheCliWiring:
         cli = _load_cairn_cli()
         monkeypatch.setenv("SUBSYSTEM_STORE_URL", "https://example.invalid")
         monkeypatch.setenv("SUBSYSTEM_STORE_TOKEN", "a-token-from-the-env")
-        monkeypatch.setattr(cli.subsystem_touch, "DEFAULT_STORE_ROOT", tmp_path / "mirror")
         monkeypatch.setattr(cli._read_store, "DEFAULT_CACHE_ROOT", tmp_path / "cache")
         args = cli.build_parser().parse_args(["doctor", "--no-sync", "--json"])
         args.cache = tmp_path / "cache"

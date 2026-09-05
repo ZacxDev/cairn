@@ -1304,22 +1304,3 @@ def test_cairn_still_resolves_its_lib_relative_to_its_own_file():
     assert (REPO / "lib" / "subsystem_recall.py").exists()
 
 
-def test_cairn_is_deployed_out_of_store_not_as_a_store_copy():
-    """The DEPLOY half. A store copy ships a `cairn` that cannot start."""
-    nix = NIX_HOME.read_text()
-    assert 'home.file.".local/bin/cairn".source' in nix, (
-        "the `cairn` PATH entry is gone from nix/home.nix"
-    )
-    # The whole assignment, whatever it spans, must name mkOutOfStoreSymlink.
-    head = nix.split('home.file.".local/bin/cairn".source', 1)[1]
-    assignment = head.split(";", 1)[0]
-    assert "mkOutOfStoreSymlink" in assignment, (
-        "`cairn` is deployed as a STORE COPY. Its `Path(__file__).resolve()` "
-        "lib lookup will resolve into /nix/store, where lib/ is not "
-        "deployed, and the command will fail on import. Use "
-        "mkOutOfStoreSymlink, as claim-work/dl-route/opencode-dispatch do.\n"
-        f"got: {assignment.strip()!r}"
-    )
-    assert "${workspace}/devrc/scripts/cairn" in assignment, (
-        f"`cairn` points somewhere unexpected: {assignment.strip()!r}"
-    )

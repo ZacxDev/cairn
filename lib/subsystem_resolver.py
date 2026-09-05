@@ -17,7 +17,7 @@ predicate regenerates the same bug at both. It cannot be literally deduplicated
 instead:
 
   * this module is named in that skill as the authority;
-  * `scripts/tests/test_subsystem_resolver.py` → `TestCommandDocIsPinned` holds
+  * `tests/test_subsystem_resolver.py` → `TestCommandDocIsPinned` holds
     the skill's normative sentences as literal substrings AND the behaviour
     each one asserts. Reword the prose without touching the code (or vice versa)
     and that test goes red naming the sentence that moved.
@@ -1441,7 +1441,7 @@ _NEAR_MISS_MARKER = re.compile(
     r")",
 )
 # 🔴 TWO BRANCHES, BECAUSE THREE ROUNDS PROVED NEITHER ALONE IS ENOUGH — and the
-# matrix that says so is COMMITTED at `scripts/tests/fixtures/near_miss_shapes.json`
+# matrix that says so is COMMITTED at `tests/fixtures/near_miss_shapes.json`
 # rather than living in whoever's scratchpad wrote the last version. Each previous
 # pattern was justified by a private matrix, and round 4 built a different one and
 # reached the opposite verdict; a matrix nobody can re-run is an opinion.

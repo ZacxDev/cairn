@@ -313,7 +313,6 @@ class TestPathRefs:
             (
                 "lib/subsystem_resolver.py",
                 (
-                    ("scripts", "scripts"),
                     ("lib", "lib"),
                     ("subsystem_resolver.py", "subsystem-resolver.py"),
                     ("subsystem_resolver", "subsystem-resolver"),

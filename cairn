@@ -89,6 +89,20 @@ from urllib.parse import quote
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 
 from timeouts import unbounded_timeout_reason  # noqa: E402
+
+
+def _mirror_root() -> "Path | None":
+    """The frozen pre-cutover store, if this deployment has one.
+
+    🔴 UNSET IS THE DEFAULT, and `doctor` reports NOT-OBSERVABLE rather than OK
+    for it. A deployment that migrated from a local store points this at the old
+    root so `doctor` can confirm its entry files are read-only; one that never
+    had a local store has nothing to name, and claiming "it does not exist"
+    about a path nobody configured would be a statement about the operator's
+    disk that this code cannot support.
+    """
+    raw = os.environ.get("CAIRN_MIRROR_ROOT", "").strip()
+    return Path(raw).expanduser() if raw else None
 import subsystem_recall as rc  # noqa: E402
 import entry_shape  # noqa: E402
 from entry_shape import scope_for_repo  # noqa: E402
@@ -106,6 +120,7 @@ from entry_shape import scope_for_repo  # noqa: E402
 # the operator's real cache. Nothing depended on that yet — which is exactly when
 # it is cheap to fix. `build_parser` calls the accessor instead.
 import subsystem_read_store as _read_store  # noqa: E402
+import subsystem_resolver  # noqa: E402
 from subsystem_read_store import SYNC_STAMP  # noqa: E402
 
 DEFAULT_CONFIG = Path.home() / ".config" / "subsystem-store" / "env"
@@ -837,10 +852,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return EXIT_UNREACHABLE_NO_CACHE
     worst = EXIT_OK
     for scope in scopes:
-        code = entry_shape.main(
-            ["--store", str(args.cache), "--validate", "--scope", scope]
-        )
-        worst = max(worst, code)
+        # 🔴 THE RESOLVER IS THE PARSER, so `validate` and `recall` cannot
+        # disagree about what "malformed" means. This used to shell into a
+        # separate authoring tool's `--validate`, which was a second
+        # implementation of the same predicate — exactly the shape that lets a
+        # file validate clean and then fail to render.
+        malformed = subsystem_resolver.load_index(
+            args.cache,
+            on_malformed=subsystem_resolver.ON_MALFORMED_COLLECT,
+            visible_scopes=[scope],
+        ).malformed
+        for entry in malformed:
+            print(f"cairn: {scope}: malformed: {entry}", file=sys.stderr)
+        worst = max(worst, EXIT_CORRUPT if malformed else EXIT_OK)
     return worst
 
 
@@ -1320,7 +1344,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         stamp_lines=resolved.stamp,
         stamp_reason=resolved.reason,
         cache_root=args.cache,
-        mirror_root=entry_shape.DEFAULT_STORE_ROOT,
+        mirror_root=_mirror_root(),
         pod=pod,
         token=token,
         token_reason=token_reason,
