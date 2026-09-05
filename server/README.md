@@ -660,14 +660,45 @@ store-api audit ts=… ip=203.0.113.7 peer=trusted method=GET path=/api/v1/recal
 
 0. **Preflight, ONCE, before the first deploy of the version that added
    `MAX_SCOPE_CHARS`** — confirm no scope in the current token file is 43
-   characters or longer:
+   characters or longer.
+
+   🔴 **RUN IT AGAINST THE DECRYPTED TOKEN FILE THE POD ACTUALLY LOADS — the
+   live `subsystem-store-token` Secret — NOT against
+   `clusters/homelab/apps/subsystem-store/secrets.enc.yaml`, which step 1 below
+   names and which is sops CIPHERTEXT, not a token file.** Pointed at the
+   encrypted file the command reads it happily and its verdict is meaningless
+   in *both* directions: it can print nothing, which the "Expect no output"
+   below then reads as a PASS over a file it never inspected — and it can
+   FIRE. Measured against a representative sops-encrypted Secret: `- recipient:
+   age1…` is three whitespace-separated fields whose third is 66 characters, so
+   the command reported `line 11: scope 1 is 66 chars` for a file containing no
+   scopes at all. Both answers are about the ciphertext's line shapes. The
+   pipeline is written out in full here rather than cross-referenced (the
+   plaintext recipe otherwise appears only in *Operating it*, ~290 lines up, in
+   an unrelated context), and it never puts the plaintext on disk:
 
    ```bash
+   kubectl -n subsystem-store get secret subsystem-store-token \
+     -o jsonpath='{.data.token}' | base64 -d |
    awk 'NF>=3 {n=split($3,s,","); for (i=1;i<=n;i++) if (length(s[i])>=43) \
-     print "line "NR": scope "i" is "length(s[i])" chars"}' <token-file>
+     print "line "NR": scope "i" is "length(s[i])" chars"}'
    ```
 
-   Expect no output. 🔴 **The failure mode is a STARTUP REFUSAL, not a reload
+   ⚠ **The `awk` prints line numbers and lengths only, never a field**, so its
+   output is safe on a shared terminal even though its input is credentials.
+   ⚠ **POSITIVE CONTROL, because the expected result is silence** — pipe a row
+   you know is too long through the same `awk` and watch it print, before
+   trusting the empty answer:
+
+   ```bash
+   printf 'tok zach %s\n' "$(python3 -c 'print("x"*43)')" |
+   awk 'NF>=3 {n=split($3,s,","); for (i=1;i<=n;i++) if (length(s[i])>=43) \
+     print "line "NR": scope "i" is "length(s[i])" chars"}'   # must print
+   ```
+
+   Expect no output from the FIRST pipeline (the control above must print, or
+   you have not established that this `awk` can say anything at all).
+   🔴 **The failure mode is a STARTUP REFUSAL, not a reload
    refusal**, and the two are not interchangeable: a file that loaded before now
    lands on guard 10 (`invalid scope in token row on line L of T`), `main`
    prints it to stderr and returns `EXIT_CONFIG` **78**. On this deployment —

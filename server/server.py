@@ -1294,15 +1294,37 @@ def load_tokens(
         # place that knows a row was bare, and a caller obliged to re-derive it
         # is a caller that can forget to. Printed to stderr so it lands in the
         # pod log beside the startup banner.
-        emit = warn if warn is not None else (lambda line: print(line, file=sys.stderr))
-        emit(
+        #
+        # 🔴 AND IT GOES THROUGH `reload_safe` LIKE EVERY OTHER EMITTER ON THIS
+        # STREAM — BOTH HERE AND IN THE DEFAULT SINK. It used to be the one
+        # ENUMERATED EXEMPTION in the emitter ledger, justified by a survey of
+        # which values interpolate: two ints, a module constant, and hex
+        # fingerprints, none of them caller-supplied. That reason was true and
+        # UNPINNED — the exemption's key carried the first 64 literal characters
+        # and the argument's node type, so it saw neither the interpolations nor
+        # anything past the banner's opening clause. Measured: appending
+        # `f" (source: {token_file})"` here — an operator-supplied path, exactly
+        # the "`OSError` naming a path" text `reload_safe` exists for — left the
+        # ledger at `checked=8 bare=[] hits=={each: 1}` and the whole suite
+        # green. A guard whose reason can stop holding without the guard
+        # noticing is a guard-shaped hole, so the reason is now enforced instead
+        # of asserted: sanitise unconditionally and the ledger's name ("EVERY
+        # emitter") is true with no exemption table at all. `reload_safe` is
+        # idempotent (a character class substitution), so the double application
+        # on the default sink is free.
+        emit = (
+            warn
+            if warn is not None
+            else (lambda line: print(reload_safe(line), file=sys.stderr))
+        )
+        emit(reload_safe(
             f"subsystem-store-api: 🔴 UNRESTRICTED-SCOPE LEGACY MODE — "
             f"{len(legacy)} of {len(records)} token rows are bare tokens with no "
             f"identity and NO scope allowlist (identity={LEGACY_IDENTITY!r}); "
             f"they can read EVERY scope in the store. Fingerprints: "
             f"{','.join(r.fingerprint for r in legacy)}. Give each holder its own "
             f"`<token> <identity> <scopes>` row and delete these lines"
-        )
+        ))
     return records
 
 

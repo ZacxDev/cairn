@@ -16045,6 +16045,86 @@ class TestTheWriteRoutesDoNotCarryTheREADHeaders:
             "DOES NOT EXTEND TO IT.**"
         ) in text
 
+    def test_the_README_does_not_justify_QUOTING_a_field_by_PRIOR_PUBLICATION(
+        self,
+    ):
+        """🔴 THE SAME SHAPE AGAIN, FOR THE CORRECTION THAT ARRIVED UNPINNED.
+
+        The round that added `MAX_SCOPE_CHARS` deleted an over-wide sentence —
+        identities "are capped below the token floor **and appear in every audit
+        line**, so they are not secrets" — because the justification it offers
+        does not survive being extended to the scope allowlist, which appears in
+        NO audit line. The correction landed with no test, in a file whose two
+        tests above exist precisely because README drift stayed green.
+
+        Whole normalised sentence, not a keyword, for the reason stated above:
+        a guard grepping for `audit line` is walked by any reword.
+        """
+        text = " ".join((API_DIR / "README.md").read_text().split())
+        assert (
+            "Identities that have already passed validation *are* quoted — they "
+            "are capped below the token floor and appear in every audit line, so "
+            "they are not secrets."
+        ) not in text, (
+            "the README again justifies quoting a validated field by PRIOR "
+            "PUBLICATION in the audit log — the justification is the CAP"
+        )
+        assert (
+            "Values that have **already passed** those caps *are* quoted — the "
+            "identity and the scope list both appear in the duplicate-token "
+            "refusal. What makes that safe is the CAP alone: both are bounded "
+            "below the token floor, so neither can be a credential this server "
+            "would accept."
+        ) in text
+        assert (
+            '🔴 **Do not extend "and it appears in every audit line" to the '
+            "scope list — that is true of identities only.** An audit line "
+            "carries `identity=`, and it carries the *requested* scope inside "
+            "`path=`; a token's scope ALLOWLIST appears in no audit line, and a "
+            "scope the token was refused for appears nowhere at all."
+        ) in text
+
+    def test_the_README_PREFLIGHT_names_a_PLAINTEXT_operand_not_the_sops_file(
+        self,
+    ):
+        """🔴 THE OTHER CORRECTION FROM THAT ROUND, AND ITS OPERAND.
+
+        The rotation preflight is the whole mitigation for a `replicas: 1`
+        crashloop, and it shipped reading `<token-file>` — undefined — eight
+        lines above a step naming `secrets.enc.yaml`, which is sops CIPHERTEXT.
+        Measured against a representative sops Secret, the `awk` does not fail
+        and does not stay silent: `- recipient: age1…` is three whitespace
+        fields whose third is 66 characters, so it printed `line 11: scope 1 is
+        66 chars` for a file with no scopes in it. A procedure whose printed
+        expectation is "Expect no output" cannot be run against an operand that
+        answers either way about something else.
+
+        Pinned as whole normalised strings, same as the two tests above: the
+        undefined operand must be GONE and the decrypt pipeline PRESENT.
+        """
+        raw = (API_DIR / "README.md").read_text()
+        text = " ".join(raw.split())
+        assert "chars\"}' <token-file>" not in text, (
+            "the rotation preflight again names an undefined `<token-file>` "
+            "operand — say which plaintext, inline"
+        )
+        assert (
+            "kubectl -n subsystem-store get secret subsystem-store-token \\ "
+            "-o jsonpath='{.data.token}' | base64 -d | awk 'NF>=3"
+        ) in text, "the preflight no longer decrypts the live Secret it must read"
+        assert (
+            "NOT against `clusters/homelab/apps/subsystem-store/secrets.enc.yaml`, "
+            "which step 1 below names and which is sops CIPHERTEXT, not a token "
+            "file.**"
+        ) in text, "the README no longer warns off the encrypted operand"
+        # The positive control the procedure prescribes must still be there: an
+        # "expect no output" step with no way to prove the command can speak is
+        # the silent-zero this whole correction is about.
+        assert "# must print" in text, (
+            "the preflight lost its positive control, so an empty result is "
+            "again indistinguishable from a command that ran on nothing"
+        )
+
 
 # =============================================================================
 # The backstop must not become the desync it was added on top of.
@@ -19802,6 +19882,21 @@ class TestReloadTokensSwapsRatherThanMutates:
         The same shape in `main`: two startup emitters printed a caller-supplied
         path and an unsanitised guard message raw.
 
+        🔴 AND THERE IS NO LONGER AN EXEMPTION TABLE FOR IT TO BE TRUE *MODULO*.
+        The one exemption this ledger carried — the unrestricted-scope banner in
+        `load_tokens` and its default `print` sink — was keyed on
+        `(function, first-64-literal-chars, arg node type)` while its stated
+        reason was a survey of which VALUES interpolate. Measured: appending
+        `f" (source: {token_file})"` to that banner put an operator-supplied
+        path on the stream and this test stayed green at `checked=8 bare=[]`.
+        Both call sites are wrapped in `reload_safe` at the source now and the
+        table is deleted, so `bare == []` below is an unconditional claim.
+        `test_the_LEGACY_BANNER_and_its_default_SINK_both_route_through_reload_safe`
+        is the runtime half of the same pin, and
+        `test_the_EMITTER_LEDGER_goes_RED_when_the_LEGACY_BANNER_is_UNWRAPPED`
+        is the mutant showing this assertion can now see that emitter at all —
+        for as long as the exemption existed, it could not.
+
         🔴 "EVERY EMITTER ON THE STREAM" IS THE NAME, AND THE WALK NOW MATCHES
         IT. It used to scan two HARDCODED function bodies for ONE call shape —
         `print`/`emit` by bare name — which made two emitters measurably
@@ -19811,30 +19906,196 @@ class TestReloadTokensSwapsRatherThanMutates:
         (`_load_tokens_raise_sites`) already walked transitively, so two ledgers
         with inconsistent reach shipped together. See `_reload_stream_emitters`.
         """
-        bare, checked, hits = _bare_reload_emitters(
+        bare, checked = _bare_reload_emitters(
             SERVER_PATH.read_text(encoding="utf-8")
         )
         # POSITIVE CONTROL: the walk found emitters at all. A renamed function
         # would report a clean zero from a scan of nothing.
-        assert checked >= 6, (
+        assert checked >= 8, (
             f"the walk found only {checked} emitter call(s) reachable from "
             f"`reload_tokens` and `main` — it is scanning the wrong functions"
         )
-        # …AND THE EXEMPTIONS ARE A SECOND POSITIVE CONTROL, plus the thing that
-        # stops one going stale. Each must be hit EXACTLY once: zero means the
-        # walk no longer reaches `load_tokens` (or the emitter changed and the
-        # reason no longer applies), two means a SECOND emitter of that shape
-        # was added there and is silently inheriting somebody else's argument.
-        assert hits == {k: 1 for k in _RELOAD_STREAM_EXEMPT}, (
-            f"the enumerated exemptions were hit {hits}, expected exactly once "
-            f"each. An exemption that matches nothing is stale; one that matches "
-            f"twice is covering an emitter nobody reasoned about. Keys: "
-            f"{sorted(_RELOAD_STREAM_EXEMPT)}"
+        # …AND THE `load_tokens` BANNER IS SPECIFICALLY IN REACH. It was the one
+        # emitter this ledger EXEMPTED rather than checked, so a walk that
+        # silently stopped reaching it would now report a clean zero from
+        # exactly the site the exemption used to hide. Naming the function is
+        # the residual positive control the exemption hit-counts used to be.
+        reached = {f for f, _node in _reload_stream_emitters(
+            SERVER_PATH.read_text(encoding="utf-8")
+        )}
+        assert "load_tokens" in reached, (
+            f"the walk no longer reaches `load_tokens`, so `bare == []` below "
+            f"says nothing about the unrestricted-scope banner: {sorted(reached)}"
         )
         assert not bare, (
             f"{len(bare)} emitter(s) on the reload/startup stream bypass "
             f"`reload_safe`, so a newline in the text they interpolate forges a "
             f"log record: {bare}"
+        )
+
+    # The two statements the deleted exemption used to cover, written once so
+    # the three mutants below and the ledger all name the same bytes.
+    _BANNER_WRAP = (
+        "        emit(reload_safe(\n"
+        '            f"subsystem-store-api: 🔴 UNRESTRICTED-SCOPE LEGACY MODE — "\n'
+    )
+    _BANNER_UNWRAPPED = (
+        "        emit((\n"
+        '            f"subsystem-store-api: 🔴 UNRESTRICTED-SCOPE LEGACY MODE — "\n'
+    )
+    _SINK_WRAP = (
+        "            else (lambda line: print(reload_safe(line), file=sys.stderr))\n"
+    )
+    _SINK_UNWRAPPED = "            else (lambda line: print(line, file=sys.stderr))\n"
+
+    def test_the_EMITTER_LEDGER_goes_RED_when_the_LEGACY_BANNER_is_UNWRAPPED(self):
+        """🔴 THE MUTANT THE OLD LEDGER COULD NOT RUN AT ALL.
+
+        While the unrestricted-scope banner was an ENUMERATED EXEMPTION, this
+        assertion was unreachable by construction: unwrapping it changed nothing
+        the ledger looked at, because the ledger never looked. That is the
+        precise shape of an unreachable guard — a green suite proving the
+        exemption arm still matched, not that the banner was safe.
+
+        With the exemption deleted and the call site wrapped, the banner is an
+        ordinary emitter and this is an ordinary mutant.
+        """
+        src = SERVER_PATH.read_text(encoding="utf-8")
+        assert src.count(self._BANNER_WRAP) == 1, (
+            f"the banner anchor appears {src.count(self._BANNER_WRAP)} times"
+        )
+        mutant = src.replace(self._BANNER_WRAP, self._BANNER_UNWRAPPED, 1)
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+
+        before_bare, before_checked = _bare_reload_emitters(src)
+        after_bare, after_checked = _bare_reload_emitters(mutant)
+        assert before_bare == [], (
+            "the UNMUTATED tree already reports a bare emitter, so the "
+            "assertion below cannot distinguish the mutant from the baseline"
+        )
+        # ISOLATION: the mutation removes a WRAP, not an emitter. A mutant that
+        # also changed the call count would make the line below ambiguous.
+        assert after_checked == before_checked, (
+            f"unwrapping the banner changed the emitter count "
+            f"({before_checked} -> {after_checked}) — the mutation is not isolated"
+        )
+        assert [b.split(":")[0] for b in after_bare] == ["load_tokens"], (
+            f"the unrestricted-scope banner bypassing `reload_safe` was not "
+            f"reported — the ledger cannot see the site the deleted exemption "
+            f"used to hold: {after_bare}"
+        )
+
+    def test_the_EMITTER_LEDGER_goes_RED_when_the_DEFAULT_SINK_is_UNWRAPPED(self):
+        """The banner's other half — the `lambda line: print(...)` `load_tokens`
+        falls back to when no `warn=` is supplied. It was the SECOND exemption
+        entry, and its stated reason was that the entry above already accounted
+        for the text; that reason was inherited rather than checked, which is the
+        same defect one level down.
+        """
+        src = SERVER_PATH.read_text(encoding="utf-8")
+        assert src.count(self._SINK_WRAP) == 1, (
+            f"the sink anchor appears {src.count(self._SINK_WRAP)} times"
+        )
+        mutant = src.replace(self._SINK_WRAP, self._SINK_UNWRAPPED, 1)
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+
+        before_bare, before_checked = _bare_reload_emitters(src)
+        after_bare, after_checked = _bare_reload_emitters(mutant)
+        assert before_bare == []
+        assert after_checked == before_checked, (
+            f"unwrapping the sink changed the emitter count "
+            f"({before_checked} -> {after_checked}) — the mutation is not isolated"
+        )
+        assert [b.split(":")[0] for b in after_bare] == ["load_tokens"], (
+            f"the default sink bypassing `reload_safe` was not reported: "
+            f"{after_bare}"
+        )
+
+    def test_the_LEGACY_BANNER_cannot_forge_a_LINE_from_a_value_it_INTERPOLATES(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """🔴 THE HAZARD F1 NAMED, RUN RATHER THAN REASONED ABOUT.
+
+        The deleted exemption's whole justification was a survey of which values
+        the banner interpolates — two ints, a module constant under `!r`, and hex
+        fingerprints — and the conclusion that none of them can carry a line
+        separator. The survey was correct and it was also UNENFORCED: the
+        exemption key carried the first 64 literal characters and the argument's
+        node type, so it could not see the interpolations at all. Measured on a
+        copy: appending `f" (source: {token_file})"` — an operator-supplied path,
+        the exact "`OSError` naming a path" text `reload_safe`'s docstring is
+        written about — left the AST ledger at `checked=8 bare=[]` and the whole
+        suite green.
+
+        So this test stops surveying and drives one: `token_id` is the function
+        the interpolated fingerprints come from, and it is made to return a
+        separator-bearing string. The banner must still be ONE line. It is a
+        pin on the PROPERTY (a value cannot forge a record) rather than on the
+        current set of interpolations, so it survives someone adding a new one.
+        """
+        forged = "store-api audit ts=2000-01-01T00:00:00Z result=200"
+        # A RAW U+2028 HERE WOULD BE INVISIBLE IN A DIFF, so it is written
+        # as an escape. It is the separator that survived `reload_safe`'s
+        # first, narrower C0/C1-only class, and `str.splitlines()` — the
+        # idiom this module and its readers split the stream on — breaks on
+        # it. "\n" would work too; this one is the harder case.
+        monkeypatch.setattr(
+            api, "token_id", lambda _tok: "dead\u2028" + forged
+        )
+        path = tmp_path / "tokens"
+        path.write_text(f"{GOOD_TOKEN}\n", encoding="utf-8")
+
+        lines: "list[str]" = []
+        api.load_tokens(str(path), {}, warn=lines.append)
+
+        assert len(lines) == 1, lines
+        banner = lines[0]
+        # POSITIVE CONTROL, AND IT IS DELIBERATELY INDEPENDENT OF THE FIX: the
+        # forged text must be IN the banner either way, so this assertion holds
+        # both with and without the wrap. A control that only passes once the
+        # fix is in would make the pre-change run go red HERE, for the wrong
+        # reason, and prove nothing about the assertion after it.
+        assert forged in banner, (
+            f"the poisoned fingerprint never reached the banner, so this test "
+            f"is asserting nothing: {banner!r}"
+        )
+        assert len(banner.splitlines()) == 1, (
+            f"U+2028 in an interpolated value forged a second line on the "
+            f"startup stream: {banner!r}"
+        )
+        # …and it was NEUTRALISED rather than dropped: `reload_safe` substitutes,
+        # so the separator's position is still visible as `?`.
+        assert "dead?" in banner, banner
+
+    def test_the_DEFAULT_SINK_sanitises_the_banner_INDEPENDENTLY(
+        self, tmp_path: Path, monkeypatch, capsys
+    ):
+        """The sink's wrap is defence in depth — it only ever receives text the
+        call site already sanitised — so no input can distinguish it from an
+        unwrapped one. Marking `reload_safe` is what makes the two applications
+        countable: ONE through the caller alone, TWO through caller and sink.
+
+        Without this the sink could be silently unwrapped and every behavioural
+        test above would still pass; only the AST ledger would object, and a
+        ledger is the instrument this round is trying not to depend on alone.
+        """
+        real = api.reload_safe
+        monkeypatch.setattr(api, "reload_safe", lambda line: "«rs»" + real(line))
+        path = tmp_path / "tokens"
+        path.write_text(f"{GOOD_TOKEN}\n", encoding="utf-8")
+
+        captured: "list[str]" = []
+        api.load_tokens(str(path), {}, warn=captured.append)
+        assert len(captured) == 1 and captured[0].count("«rs»") == 1, (
+            f"the banner's own `reload_safe` wrap is missing or doubled: "
+            f"{captured!r}"
+        )
+
+        api.load_tokens(str(path), {})  # no `warn=` → the default sink
+        err = capsys.readouterr().err
+        assert err.count("«rs»") == 2, (
+            f"the default `print` sink did not apply `reload_safe`; expected the "
+            f"caller's mark and the sink's, got {err.count('«rs»')}: {err!r}"
         )
 
     def test_the_EMITTER_LEDGER_goes_RED_on_a_NEW_bare_emitter(self):
@@ -19902,8 +20163,8 @@ class TestReloadTokensSwapsRatherThanMutates:
         )
         assert mutant != src, "the mutation did not apply — this test is vacuous"
 
-        before_bare, before_checked, _ = _bare_reload_emitters(src)
-        after_bare, after_checked, _ = _bare_reload_emitters(mutant)
+        before_bare, before_checked = _bare_reload_emitters(src)
+        after_bare, after_checked = _bare_reload_emitters(mutant)
         assert before_bare == [], (
             "the UNMUTATED tree already reports a bare emitter, so the "
             "assertion below cannot distinguish the mutant from the baseline"
@@ -19945,8 +20206,8 @@ class TestReloadTokensSwapsRatherThanMutates:
         )
         assert mutant != src, "the mutation did not apply — this test is vacuous"
 
-        before_bare, before_checked, _ = _bare_reload_emitters(src)
-        after_bare, after_checked, _ = _bare_reload_emitters(mutant)
+        before_bare, before_checked = _bare_reload_emitters(src)
+        after_bare, after_checked = _bare_reload_emitters(mutant)
         assert before_bare == [], (
             "the UNMUTATED tree already reports a bare emitter, so the "
             "assertion below cannot distinguish the mutant from the baseline"
@@ -20253,6 +20514,19 @@ def _unclaimed_raise_sites(
     ValueError(_msg)` cannot be matched by any phrase, so the honest answer is
     "unclaimed", not "not a site". The alternative — the one this replaced —
     silently made the whole ledger blind to the message-in-a-variable shape.
+
+    ⚠ OPEN, AND STATED HERE SO THE NEXT READER DOES NOT READ THE SENTENCE ABOVE
+    AS WIDER THAN IT IS. "Fails closed" is true of every site the COLLECTOR
+    hands over, and the collector is narrower than "every raise":
+    `_load_tokens_raise_sites` keeps a site only `if isinstance(exc, ast.Call)
+    and exc.args`, so `raise TokenError`, `raise ValueError()` and a bare
+    re-raise are dropped before they ever reach this predicate — silently, and
+    counted nowhere. That is NOT a hole in the property this ledger guards (a
+    message-less raise carries no text, so it cannot echo an unvalidated field),
+    which is why it is recorded rather than fixed. It IS a hole in the sentence:
+    a reader checking "does this ledger see every raise?" would answer yes.
+    Closing it means counting the dropped shapes and asserting the count, not
+    widening the phrase match.
     """
     return [
         f"{func}:{lineno}: {text!r}"
@@ -20268,37 +20542,45 @@ _RELOAD_EMIT_ANCHOR = "    emit = log if log is not None else _reload_log\n"
 # What counts as an emitter. `print`/`emit` by bare name was the whole set, and
 # it missed `sys.stdout.write(f"…\n")` in the function the scan already covered.
 _EMITTER_NAMES = ("print", "emit")
+# ⚠ OPEN, DELIBERATELY NOT NARROWED (recorded so the next reader knows it is a
+# known gap rather than an oversight): this matches `.write`/`.writelines` on
+# ANY receiver, not just a named stream sink. Nothing in reach today is anything
+# but a text sink, but `server.py`'s two BINARY `fh.write(data)` calls sit one
+# module-level caller away from this walk — a future startup helper that writes
+# a file would make this ledger demand `reload_safe` on bytes, which is not what
+# it means. The fix, when it is needed, is to bind the receiver to an enumerated
+# set of sinks (`sys.stdout`/`sys.stderr`/the log stream) rather than to drop
+# the attribute shape, which is what closed a measured hole.
 _EMITTER_ATTRS = ("write", "writelines")
 
-# How much of a message's literal text an exemption key carries. Long enough
-# that no two emitters in this module share a prefix; short enough to read.
-_EXEMPT_PREFIX_CHARS = 64
-
-# 🔴 THE EMITTERS ON THE RELOAD/STARTUP STREAM THAT DELIBERATELY DO NOT ROUTE
-# THROUGH `reload_safe`, ENUMERATED WITH THEIR REASON — never a pattern, and not
-# overridable. An emitter not listed here is a finding by default, which is what
-# makes the ledger's name ("EVERY emitter") true rather than aspirational. Each
-# key must be hit EXACTLY once; the test asserts that, so a stale exemption and a
-# second emitter quietly inheriting one are both red.
-_RELOAD_STREAM_EXEMPT = {
-    (
-        "load_tokens",
-        "subsystem-store-api: 🔴 UNRESTRICTED-SCOPE LEGACY MODE —  of  tok",
-        "JoinedStr",
-    ): (
-        "the unrestricted-scope banner. `reload_tokens` documents `warn=` as "
-        "DELIBERATELY not redirected through `emit` — it keeps the one spelling "
-        "and the one stream it has at startup — and the message interpolates "
-        "only two ints, the module constant LEGACY_IDENTITY, and hex "
-        "fingerprints from `token_id`. No caller-supplied text reaches it, so "
-        "there is nothing a line separator could arrive in."
-    ),
-    ("load_tokens", "", "Name"): (
-        "the `lambda line: print(line, file=sys.stderr)` default sink for that "
-        "same banner. It re-emits the string built one line above, which the "
-        "entry above already accounts for."
-    ),
-}
+# 🔴 THERE IS NO EXEMPTION TABLE ANY MORE, AND ITS ABSENCE IS THE FIX.
+#
+# There used to be one: an enumerated dict of `(function, first-64-literal-
+# characters, arg node type) -> reason`, holding the unrestricted-scope banner
+# in `load_tokens` and the `print` inside its default sink. Both reasons were a
+# survey of WHICH VALUES INTERPOLATE ("only two ints, a module constant and hex
+# fingerprints — no caller-supplied text reaches it"), and the KEY COULD SEE
+# NEITHER: not the interpolated expressions, and not one character past the
+# banner's opening clause.
+#
+# MEASURED: appending `f" (source: {token_file})"` to that banner — an
+# operator-supplied path, i.e. precisely the untrusted text `reload_safe`'s own
+# docstring names ("an `OSError` naming a path") — left the ledger reporting
+# `checked=8 bare=[] hits=={each: 1}` and the full suite green. The two failure
+# modes the table DID cover (the banner reworded; a second emitter of the same
+# shape) were both red, so the hole was exactly "the same emitter modified until
+# its reason stops holding" — the one mutation an enumerated exemption cannot
+# see, because the enumeration keys on identity and the reason rests on content.
+#
+# So the banner is wrapped in `reload_safe(...)` at the source instead (both it
+# and its default sink; `reload_safe` is a character-class substitution and
+# therefore idempotent). That is one token per call site, no behavioural change
+# on any value that reaches it today, and it makes this ledger's name — EVERY
+# emitter on the reload/startup stream goes through `reload_safe` —
+# unconditionally true rather than true-modulo-a-table-of-reasons.
+#
+# 🔴 IF YOU ADD AN EMITTER THAT GENUINELY CANNOT BE WRAPPED, WRAP IT ANYWAY OR
+# ARGUE HERE. Do not reintroduce a key that cannot see what it is exempting.
 
 
 def _reload_stream_emitters(source: str) -> "list[tuple[str, ast.Call]]":
@@ -20333,18 +20615,16 @@ def _reload_stream_emitters(source: str) -> "list[tuple[str, ast.Call]]":
     return out
 
 
-def _bare_reload_emitters(
-    source: str,
-) -> "tuple[list[str], int, dict[tuple[str, str, str], int]]":
-    """`(bare, checked, exemption_hits)` for the reload/startup stream.
+def _bare_reload_emitters(source: str) -> "tuple[list[str], int]":
+    """`(bare, checked)` for the reload/startup stream.
 
-    `bare` is every emitter whose first argument is not `reload_safe(...)` and
-    which no entry in `_RELOAD_STREAM_EXEMPT` claims. `checked` and the hit
-    counts are the positive controls — a zero from either is a scan that found
-    nothing, not a clean result.
+    `bare` is every emitter whose first argument is not `reload_safe(...)`. There
+    is no exemption arm — see the block above `_reload_stream_emitters` for why
+    the one that existed was removed rather than repaired. `checked` is the
+    positive control: a zero there is a scan that found nothing, not a clean
+    result.
     """
     bare: "list[str]" = []
-    hits: "dict[tuple[str, str, str], int]" = {}
     checked = 0
     for fname, node in _reload_stream_emitters(source):
         checked += 1
@@ -20355,16 +20635,8 @@ def _bare_reload_emitters(
             and arg.func.id == "reload_safe"
         ):
             continue
-        key = (
-            fname,
-            _literal_text(arg)[:_EXEMPT_PREFIX_CHARS],
-            type(arg).__name__,
-        )
-        if key in _RELOAD_STREAM_EXEMPT:
-            hits[key] = hits.get(key, 0) + 1
-            continue
         bare.append(f"{fname}:{node.lineno}")
-    return bare, checked, hits
+    return bare, checked
 
 
 # 🔴 THE SITE COUNT, PINNED. Two-way with the phrase mapping above it: the
