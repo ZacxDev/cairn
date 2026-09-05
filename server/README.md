@@ -615,6 +615,13 @@ pattern, and it does not fold away. The cap is what makes "a token cannot be
 misread as a scope" true, and it is derived from the token floor in code
 (`MAX_SCOPE_CHARS = MIN_TOKEN_CHARS - 1`) so the two cannot drift apart.
 
+⚠ **The cap is absolute: a scope of 43 characters or more can never be
+allowlisted in a mapped row at all.** Nothing else in the store bounds a scope
+name, so such a scope remains reachable only to a legacy unrestricted row —
+there is no spelling of a mapped row that grants it. Rename the scope if you
+need one; see the preflight in *Rotating* below before deploying this version
+against an existing token file.
+
 A scope outside the allowlist answers **exactly what a scope that never existed
 answers** — `200`, `X-Store-Status: scope-absent`, and a body byte-identical to
 the genuinely-absent one. There is no "forbidden" response, because a response
@@ -650,6 +657,29 @@ rotation — without it, "nobody uses the old token any more" is a guess:
 store-api audit ts=… ip=203.0.113.7 peer=trusted method=GET path=/api/v1/recall/x \
   token=dbb22a50030d auth=ok result=200 status=recalled
 ```
+
+0. **Preflight, ONCE, before the first deploy of the version that added
+   `MAX_SCOPE_CHARS`** — confirm no scope in the current token file is 43
+   characters or longer:
+
+   ```bash
+   awk 'NF>=3 {n=split($3,s,","); for (i=1;i<=n;i++) if (length(s[i])>=43) \
+     print "line "NR": scope "i" is "length(s[i])" chars"}' <token-file>
+   ```
+
+   Expect no output. 🔴 **The failure mode is a STARTUP REFUSAL, not a reload
+   refusal**, and the two are not interchangeable: a file that loaded before now
+   lands on guard 10 (`invalid scope in token row on line L of T`), `main`
+   prints it to stderr and returns `EXIT_CONFIG` **78**. On this deployment —
+   `replicas: 1`, `Recreate` — that is a crashloop and a total read outage until
+   a human edits the file, with no "REFUSED, still serving the old table" line
+   to fall back on, because there is no old table at startup.
+
+   Measured when the cap landed: the longest real scope on the live token file
+   and in the served store is **33 characters**, against a cap of 42 — nine
+   characters of headroom. The cap is not negotiable for that headroom (a
+   charset check can never support "this cannot be a credential"), so the
+   preflight is the whole mitigation.
 
 1. `sops clusters/homelab/apps/subsystem-store/secrets.enc.yaml` — put the NEW
    token on the first line, keep the old one below it. Commit; Flux applies.
@@ -775,8 +805,16 @@ to stdout. Case-folding is not redaction. **A charset check can never support
 why both rows above cite a number rather than a pattern.
 
 Values that have **already passed** those caps *are* quoted — the identity and
-the scope list both appear in the duplicate-token refusal. They are bounded below
-the token floor and appear in every audit line, so they are not secrets.
+the scope list both appear in the duplicate-token refusal. What makes that safe
+is the CAP alone: both are bounded below the token floor, so neither can be a
+credential this server would accept. `server.py`'s guard-11 docstring states the
+same argument against the two constants that carry it.
+
+🔴 **Do not extend "and it appears in every audit line" to the scope list — that
+is true of identities only.** An audit line carries `identity=`, and it carries
+the *requested* scope inside `path=`; a token's scope ALLOWLIST appears in no
+audit line, and a scope the token was refused for appears nowhere at all. The
+justification for printing it is the cap, not prior publication.
 
 🔴 **At STARTUP the same file still exits 78, and the asymmetry is the design.**
 On reload there is a working table to fall back to; at startup there is not, and

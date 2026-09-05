@@ -19801,31 +19801,35 @@ class TestReloadTokensSwapsRatherThanMutates:
 
         The same shape in `main`: two startup emitters printed a caller-supplied
         path and an unsanitised guard message raw.
+
+        🔴 "EVERY EMITTER ON THE STREAM" IS THE NAME, AND THE WALK NOW MATCHES
+        IT. It used to scan two HARDCODED function bodies for ONE call shape —
+        `print`/`emit` by bare name — which made two emitters measurably
+        invisible: one in a NEW HELPER called from `reload_tokens`, and a
+        `sys.stdout.write(f"…\\n")` inside `reload_tokens` itself. Both reported
+        `checked=6, bare=[]`. The sibling ledger landing in the same commit
+        (`_load_tokens_raise_sites`) already walked transitively, so two ledgers
+        with inconsistent reach shipped together. See `_reload_stream_emitters`.
         """
-        tree = ast.parse(SERVER_PATH.read_text(encoding="utf-8"))
-        funcs = _module_functions(tree)
-        bare: "list[str]" = []
-        checked = 0
-        for fname in ("reload_tokens", "main"):
-            for node in ast.walk(funcs[fname]):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
-                    continue
-                if node.func.id not in ("print", "emit") or not node.args:
-                    continue
-                checked += 1
-                arg = node.args[0]
-                wrapped = (
-                    isinstance(arg, ast.Call)
-                    and isinstance(arg.func, ast.Name)
-                    and arg.func.id == "reload_safe"
-                )
-                if not wrapped:
-                    bare.append(f"{fname}:{node.lineno}")
+        bare, checked, hits = _bare_reload_emitters(
+            SERVER_PATH.read_text(encoding="utf-8")
+        )
         # POSITIVE CONTROL: the walk found emitters at all. A renamed function
         # would report a clean zero from a scan of nothing.
-        assert checked >= 5, (
-            f"the walk found only {checked} emitter call(s) in `reload_tokens` "
-            f"and `main` — it is scanning the wrong functions"
+        assert checked >= 6, (
+            f"the walk found only {checked} emitter call(s) reachable from "
+            f"`reload_tokens` and `main` — it is scanning the wrong functions"
+        )
+        # …AND THE EXEMPTIONS ARE A SECOND POSITIVE CONTROL, plus the thing that
+        # stops one going stale. Each must be hit EXACTLY once: zero means the
+        # walk no longer reaches `load_tokens` (or the emitter changed and the
+        # reason no longer applies), two means a SECOND emitter of that shape
+        # was added there and is silently inheriting somebody else's argument.
+        assert hits == {k: 1 for k in _RELOAD_STREAM_EXEMPT}, (
+            f"the enumerated exemptions were hit {hits}, expected exactly once "
+            f"each. An exemption that matches nothing is stale; one that matches "
+            f"twice is covering an emitter nobody reasoned about. Keys: "
+            f"{sorted(_RELOAD_STREAM_EXEMPT)}"
         )
         assert not bare, (
             f"{len(bare)} emitter(s) on the reload/startup stream bypass "
@@ -19843,7 +19847,7 @@ class TestReloadTokensSwapsRatherThanMutates:
         escaped it escaped as one.
         """
         src = SERVER_PATH.read_text(encoding="utf-8")
-        anchor = "    emit = log if log is not None else _reload_log\n"
+        anchor = _RELOAD_EMIT_ANCHOR
         assert src.count(anchor) == 1, (
             f"the mutation anchor appears {src.count(anchor)} times"
         )
@@ -19852,34 +19856,109 @@ class TestReloadTokensSwapsRatherThanMutates:
         )
         assert mutant != src, "the mutation did not apply — this test is vacuous"
 
-        def _bare(source: str) -> "list[int]":
-            funcs = _module_functions(ast.parse(source))
-            out = []
-            for fname in ("reload_tokens", "main"):
-                for node in ast.walk(funcs[fname]):
-                    if not (
-                        isinstance(node, ast.Call)
-                        and isinstance(node.func, ast.Name)
-                        and node.func.id in ("print", "emit")
-                        and node.args
-                    ):
-                        continue
-                    arg = node.args[0]
-                    if not (
-                        isinstance(arg, ast.Call)
-                        and isinstance(arg.func, ast.Name)
-                        and arg.func.id == "reload_safe"
-                    ):
-                        out.append(node.lineno)
-            return out
-
-        assert _bare(src) == [], (
+        assert _bare_reload_emitters(src)[0] == [], (
             "the UNMUTATED tree already reports a bare emitter, so the "
             "assertion below cannot distinguish the mutant from the baseline"
         )
-        assert len(_bare(mutant)) == 1, (
+        assert len(_bare_reload_emitters(mutant)[0]) == 1, (
             "a NEW bare emitter added to `reload_tokens` was not reported — the "
             "ledger is inert against the shape that has now escaped twice"
+        )
+
+    def test_the_EMITTER_LEDGER_goes_RED_on_an_emitter_in_a_NEW_HELPER(self):
+        """🔴 THE REACH GAP, MEASURED: an emitter one call away.
+
+        The mutant above lands the bare emitter INSIDE `reload_tokens`, which is
+        the only place the old two-function scan could see it. Put the same
+        `print` in a new module-level helper and call the helper from
+        `reload_tokens` — the ordinary way a function that has grown to 170
+        lines gets a line added to it — and the old ledger reported
+        `checked=6, bare=[]`: a clean scan of the wrong set.
+
+        The sibling ledger in the same commit already walked transitively
+        (`_reachable_from`), so this is the shape that a reader comparing the two
+        would assume was covered.
+        """
+        src = SERVER_PATH.read_text(encoding="utf-8")
+        head = "def reload_tokens(\n"
+        assert src.count(head) == 1, (
+            f"the helper anchor appears {src.count(head)} times"
+        )
+        assert src.count(_RELOAD_EMIT_ANCHOR) == 1, (
+            f"the call anchor appears {src.count(_RELOAD_EMIT_ANCHOR)} times"
+        )
+        mutant = src.replace(
+            head,
+            "def _reload_note(token_file):\n"
+            '    print(f"reload starting: {token_file}")\n'
+            "\n"
+            "\n" + head,
+            1,
+        )
+        mutant = mutant.replace(
+            _RELOAD_EMIT_ANCHOR,
+            _RELOAD_EMIT_ANCHOR + "    _reload_note(token_file)\n",
+            1,
+        )
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+
+        before_bare, before_checked, _ = _bare_reload_emitters(src)
+        after_bare, after_checked, _ = _bare_reload_emitters(mutant)
+        assert before_bare == [], (
+            "the UNMUTATED tree already reports a bare emitter, so the "
+            "assertion below cannot distinguish the mutant from the baseline"
+        )
+        # The walk must REACH the helper at all — otherwise `bare == []` below
+        # would be the reassuring zero of a scan that never looked.
+        assert after_checked == before_checked + 1, (
+            f"the walk did not reach the new helper ({before_checked} -> "
+            f"{after_checked} emitter calls examined), so a clean `bare` list "
+            f"would say nothing about it"
+        )
+        assert [b.split(":")[0] for b in after_bare] == ["_reload_note"], (
+            f"a bare emitter in a helper called from `reload_tokens` was not "
+            f"reported — the ledger's reach is narrower than its name: "
+            f"{after_bare}"
+        )
+
+    def test_the_EMITTER_LEDGER_goes_RED_on_a_direct_stdout_WRITE(self):
+        """🔴 THE CALL-SHAPE GAP, MEASURED: `sys.stdout.write` is an emitter and
+        the ledger could not see one.
+
+        The old scan required `ast.Name` for the callee, so it matched `print`
+        and `emit` and nothing else. `sys.stdout.write(f"…\\n")` INSIDE
+        `reload_tokens` — in the function the scan did cover — reported
+        `checked=6, bare=[]`. It is not a hypothetical spelling: the backstop in
+        that same function already reaches for `file=sys.stderr, flush=True`,
+        and a `.write` is what somebody reaches for when they do not want
+        `print`'s newline handling.
+        """
+        src = SERVER_PATH.read_text(encoding="utf-8")
+        anchor = _RELOAD_EMIT_ANCHOR
+        assert src.count(anchor) == 1, (
+            f"the mutation anchor appears {src.count(anchor)} times"
+        )
+        mutant = src.replace(
+            anchor,
+            anchor + '    sys.stdout.write(f"reload starting: {token_file}\\n")\n',
+            1,
+        )
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+
+        before_bare, before_checked, _ = _bare_reload_emitters(src)
+        after_bare, after_checked, _ = _bare_reload_emitters(mutant)
+        assert before_bare == [], (
+            "the UNMUTATED tree already reports a bare emitter, so the "
+            "assertion below cannot distinguish the mutant from the baseline"
+        )
+        assert after_checked == before_checked + 1, (
+            f"the walk did not COUNT the `.write` call ({before_checked} -> "
+            f"{after_checked}), so it is not an emitter to this ledger at all"
+        )
+        assert [b.split(":")[0] for b in after_bare] == ["reload_tokens"], (
+            f"a direct `sys.stdout.write` on the reload stream was not reported "
+            f"— the ledger only recognises `print`/`emit` by bare name: "
+            f"{after_bare}"
         )
 
     def test_the_BACKSTOP_reports_ONE_LINE_and_always_states_the_TABLE_state(
@@ -20101,8 +20180,10 @@ def _literal_text(node: "ast.expr") -> str:
     return ""
 
 
-def _load_tokens_raise_sites(source: "str | None" = None) -> "set[str]":
-    """Every `raise` REACHABLE FROM `load_tokens`, by its message's opening text.
+def _load_tokens_raise_sites(
+    source: "str | None" = None,
+) -> "dict[tuple[str, int], str]":
+    """Every `raise` REACHABLE FROM `load_tokens`, KEYED BY WHERE IT IS.
 
     🔴 THE LEDGER THE FIXTURE TABLE IS PINNED AGAINST, AND IT READS THE CODE.
     The previous ledger read `load_tokens.__doc__` — so it could only ever
@@ -20111,11 +20192,32 @@ def _load_tokens_raise_sites(source: "str | None" = None) -> "set[str]":
     watching. A thirteenth `raise` added to `_parse_token_row` and to nothing
     else is invisible to a docstring ledger and loud to this one.
 
+    🔴 THE KEY IS `(function, lineno)`, NOT THE MESSAGE, AND THAT IS A FIX. This
+    returned a `set` of message texts, which made it inert for the two shapes a
+    thirteenth guard is most likely to actually be written in — both measured:
+
+      * **A message bound to a variable first.** `_msg = f"guard 13:
+        {fields[0]}"; raise ValueError(_msg)` gives `_literal_text` an
+        `ast.Name`, which it answers `""` for; the old `{s for s in sites if s}`
+        then DROPPED the site, the count stayed at 13, and the full file stayed
+        green with a guard echoing the raw token. Not exotic — guard 6 already
+        builds `hint` as a variable, so "build the message first" is the local
+        idiom.
+      * **Literal chunks byte-identical to an existing site.** A copy of guard 8
+        with `{LEGACY_IDENTITY!r}` swapped for `{fields[0]!r}` has the same
+        literal text with the interpolations elided, and a SET collapsed the two
+        into one. The count never moved.
+
+    So the value may now be `""` and the site still counts — an unreadable
+    message is reported as UNCLAIMED (see `_unclaimed_raise_sites`) rather than
+    dropped, which is the direction the emitter ledger already fails in.
+
     ⚠ WHAT IT IS NOT. It is not a guard COUNT: guard 2 owns TWO raise sites (the
     path is not a file; the read raised `OSError`), so sites and guards are
     many-to-one on purpose. The fixture table claims sites by PHRASE, and the
     site count is pinned separately — a new site whose phrase collides with an
-    existing one would slip the phrase check and is caught by the count.
+    existing one slips the phrase check and is caught by the count, WHICH IS NOW
+    TRUE: keyed by position, two byte-identical literals are two sites.
 
     ⚠ AND IT IS A STATIC WALK, so a guard reached only through an attribute call
     (`rc.something(...)`) or a dynamic dispatch is outside it. That is stated
@@ -20128,15 +20230,141 @@ def _load_tokens_raise_sites(source: "str | None" = None) -> "set[str]":
         source if source is not None else SERVER_PATH.read_text(encoding="utf-8")
     )
     funcs = _module_functions(tree)
-    sites: "set[str]" = set()
+    sites: "dict[tuple[str, int], str]" = {}
     for name in _reachable_from(tree, "load_tokens"):
         for node in ast.walk(funcs[name]):
             if not isinstance(node, ast.Raise) or node.exc is None:
                 continue
             exc = node.exc
             if isinstance(exc, ast.Call) and exc.args:
-                sites.add(_literal_text(exc.args[0]))
-    return {s for s in sites if s}
+                sites[(name, node.lineno)] = _literal_text(exc.args[0])
+    return sites
+
+
+def _unclaimed_raise_sites(
+    sites: "dict[tuple[str, int], str]", phrases: "set[str]"
+) -> "list[str]":
+    """The sites in `sites` that NO fixture phrase claims, as `func:line: text`.
+
+    🔴 ONE PREDICATE, ONE PLACE — three tests asked this question and two of them
+    spelled it independently, which is how the empty-text hole survived a review.
+
+    🔴 AND IT FAILS CLOSED ON A SITE WITH NO LITERAL TEXT. A `raise
+    ValueError(_msg)` cannot be matched by any phrase, so the honest answer is
+    "unclaimed", not "not a site". The alternative — the one this replaced —
+    silently made the whole ledger blind to the message-in-a-variable shape.
+    """
+    return [
+        f"{func}:{lineno}: {text!r}"
+        for (func, lineno), text in sorted(sites.items())
+        if not (text and any(p in text for p in phrases))
+    ]
+
+
+# The statement `reload_tokens` resolves its sink on. Used as the mutation
+# anchor by three emitter mutants, so it is written once.
+_RELOAD_EMIT_ANCHOR = "    emit = log if log is not None else _reload_log\n"
+
+# What counts as an emitter. `print`/`emit` by bare name was the whole set, and
+# it missed `sys.stdout.write(f"…\n")` in the function the scan already covered.
+_EMITTER_NAMES = ("print", "emit")
+_EMITTER_ATTRS = ("write", "writelines")
+
+# How much of a message's literal text an exemption key carries. Long enough
+# that no two emitters in this module share a prefix; short enough to read.
+_EXEMPT_PREFIX_CHARS = 64
+
+# 🔴 THE EMITTERS ON THE RELOAD/STARTUP STREAM THAT DELIBERATELY DO NOT ROUTE
+# THROUGH `reload_safe`, ENUMERATED WITH THEIR REASON — never a pattern, and not
+# overridable. An emitter not listed here is a finding by default, which is what
+# makes the ledger's name ("EVERY emitter") true rather than aspirational. Each
+# key must be hit EXACTLY once; the test asserts that, so a stale exemption and a
+# second emitter quietly inheriting one are both red.
+_RELOAD_STREAM_EXEMPT = {
+    (
+        "load_tokens",
+        "subsystem-store-api: 🔴 UNRESTRICTED-SCOPE LEGACY MODE —  of  tok",
+        "JoinedStr",
+    ): (
+        "the unrestricted-scope banner. `reload_tokens` documents `warn=` as "
+        "DELIBERATELY not redirected through `emit` — it keeps the one spelling "
+        "and the one stream it has at startup — and the message interpolates "
+        "only two ints, the module constant LEGACY_IDENTITY, and hex "
+        "fingerprints from `token_id`. No caller-supplied text reaches it, so "
+        "there is nothing a line separator could arrive in."
+    ),
+    ("load_tokens", "", "Name"): (
+        "the `lambda line: print(line, file=sys.stderr)` default sink for that "
+        "same banner. It re-emits the string built one line above, which the "
+        "entry above already accounts for."
+    ),
+}
+
+
+def _reload_stream_emitters(source: str) -> "list[tuple[str, ast.Call]]":
+    """Every emitter call REACHABLE FROM `reload_tokens` or `main`.
+
+    🔴 TRANSITIVE, BECAUSE THE LEDGER'S NAME SAYS "EVERY EMITTER ON THE STREAM"
+    AND A TWO-FUNCTION SCAN IS NOT THAT. Measured invisible to the previous
+    version: a bare `print` in a NEW HELPER called from `reload_tokens`, and a
+    `sys.stdout.write` inside `reload_tokens` itself — both reported
+    `checked=6, bare=[]`, a clean number from a scan of the wrong set. The
+    sibling ledger `_load_tokens_raise_sites` already used `_reachable_from`, so
+    two ledgers with inconsistent reach landed in one commit.
+
+    ⚠ SAME STATIC-WALK CAVEAT AS THE RAISE LEDGER: an emitter reached only
+    through a dynamic dispatch, or a sink handed around as a value, is outside
+    it. The `checked` floor and the exemption hit-counts are what stop a walk
+    that reaches nothing from reading as a clean result.
+    """
+    tree = ast.parse(source)
+    funcs = _module_functions(tree)
+    roots = _reachable_from(tree, "reload_tokens") | _reachable_from(tree, "main")
+    out: "list[tuple[str, ast.Call]]" = []
+    for fname in sorted(roots):
+        for node in ast.walk(funcs[fname]):
+            if not (isinstance(node, ast.Call) and node.args):
+                continue
+            func = node.func
+            named = isinstance(func, ast.Name) and func.id in _EMITTER_NAMES
+            attr = isinstance(func, ast.Attribute) and func.attr in _EMITTER_ATTRS
+            if named or attr:
+                out.append((fname, node))
+    return out
+
+
+def _bare_reload_emitters(
+    source: str,
+) -> "tuple[list[str], int, dict[tuple[str, str, str], int]]":
+    """`(bare, checked, exemption_hits)` for the reload/startup stream.
+
+    `bare` is every emitter whose first argument is not `reload_safe(...)` and
+    which no entry in `_RELOAD_STREAM_EXEMPT` claims. `checked` and the hit
+    counts are the positive controls — a zero from either is a scan that found
+    nothing, not a clean result.
+    """
+    bare: "list[str]" = []
+    hits: "dict[tuple[str, str, str], int]" = {}
+    checked = 0
+    for fname, node in _reload_stream_emitters(source):
+        checked += 1
+        arg = node.args[0]
+        if (
+            isinstance(arg, ast.Call)
+            and isinstance(arg.func, ast.Name)
+            and arg.func.id == "reload_safe"
+        ):
+            continue
+        key = (
+            fname,
+            _literal_text(arg)[:_EXEMPT_PREFIX_CHARS],
+            type(arg).__name__,
+        )
+        if key in _RELOAD_STREAM_EXEMPT:
+            hits[key] = hits.get(key, 0) + 1
+            continue
+        bare.append(f"{fname}:{node.lineno}")
+    return bare, checked, hits
 
 
 # 🔴 THE SITE COUNT, PINNED. Two-way with the phrase mapping above it: the
@@ -20145,6 +20373,16 @@ def _load_tokens_raise_sites(source: "str | None" = None) -> "set[str]":
 # raises from two places (`is_file()` false, and the read raising `OSError`).
 # Changing it means a guard was added or removed; add its fixture row in the
 # SAME commit, or the phrase check fails anyway.
+#
+# 🔴 "CAUGHT BY THE COUNT" IS A CLAIM ABOUT THE KEY, AND IT WAS FALSE UNTIL THE
+# KEY CHANGED. While `_load_tokens_raise_sites` returned a set of message TEXTS,
+# a new site whose literal chunks were byte-identical to an existing one — the
+# copy-the-neighbouring-`raise` shape, i.e. the most likely way a guard is
+# actually written — collapsed into it and the count did not move. The sentence
+# above described coverage the implementation did not provide, which is the
+# defect class this PR has now hit three times. The key is `(function, lineno)`,
+# so two identical literals are two sites; `test_the_LEDGER_goes_RED_on_a_guard_
+# whose_literal_text_COLLIDES_with_an_existing_one` is the mutant that pins it.
 _EXPECTED_RAISE_SITES = 13
 
 
@@ -20360,9 +20598,20 @@ class TestNoRefusalEVEREchoesAnUNVALIDATEDFieldValue:
             f"{_EXPECTED_RAISE_SITES}: {sorted(sites)}. A guard was added or "
             f"removed — give it a row in `_cases` in the SAME commit."
         )
+        # 🔴 EVERY SITE MUST HAVE READABLE LITERAL TEXT, ASSERTED SEPARATELY
+        # FROM THE COUNT. The ledger deliberately KEEPS a site whose message is
+        # a variable (`raise ValueError(_msg)`) and reports it unclaimed rather
+        # than dropping it; that is the fail-closed direction, but it also means
+        # the count alone no longer implies the phrase half has anything to
+        # work with. Today every guard interpolates its message inline.
+        textless = sorted(k for k, v in sites.items() if not v)
+        assert not textless, (
+            f"{len(textless)} raise site(s) have no literal message text, so no "
+            f"fixture phrase can ever claim them: {textless}"
+        )
         phrases = {p for (_b, p, _s, _r) in self._cases(tmp_path).values()}
         unmatched = {
-            p for p in phrases if not any(p in site for site in sites)
+            p for p in phrases if not any(p in site for site in sites.values())
         }
         assert not unmatched, (
             f"fixture phrases matching NO raise site in the code: "
@@ -20382,10 +20631,7 @@ class TestNoRefusalEVEREchoesAnUNVALIDATEDFieldValue:
         `load_tokens` claimed by a row that drives a secret through it.
         """
         phrases = {p for (_b, p, _s, _r) in self._cases(tmp_path).values()}
-        unclaimed = sorted(
-            site for site in _load_tokens_raise_sites()
-            if not any(p in site for p in phrases)
-        )
+        unclaimed = _unclaimed_raise_sites(_load_tokens_raise_sites(), phrases)
         assert not unclaimed, (
             f"{len(unclaimed)} raise site(s) reachable from `load_tokens` have "
             f"NO fixture row driving a secret through them, so nothing in this "
@@ -20427,8 +20673,10 @@ class TestNoRefusalEVEREchoesAnUNVALIDATEDFieldValue:
         # …and the ledger's own assertion is what must fail. The added guard is
         # claimed by no fixture phrase, which is the finding.
         phrases = {p for (_b, p, _s, _r) in self._cases(Path("/nonexistent")).values()}
-        unclaimed = [s for s in after if not any(p in s for p in phrases)]
-        assert unclaimed == ["guard 13 says no: "], (
+        unclaimed = _unclaimed_raise_sites(after, phrases)
+        assert [u.split(": ", 1)[1] for u in unclaimed] == [
+            "'guard 13 says no: '"
+        ], (
             f"a guard added to the code alone was NOT reported as unclaimed — "
             f"the two-way pin is inert: {unclaimed}"
         )
@@ -20439,8 +20687,165 @@ class TestNoRefusalEVEREchoesAnUNVALIDATEDFieldValue:
         # NEGATIVE CONTROL, on the same predicate: the UNMUTATED tree must be
         # clean, or "unclaimed is non-empty" is a fact about the predicate
         # rather than about the mutation.
-        assert not [s for s in before if not any(p in s for p in phrases)], (
+        assert not _unclaimed_raise_sites(before, phrases), (
             "the unmutated tree already reports unclaimed sites, so the "
+            "assertion above cannot distinguish the mutant from the baseline"
+        )
+
+    def test_the_LEDGER_goes_RED_on_a_guard_whose_MESSAGE_IS_A_VARIABLE(self):
+        """🔴 THE SHAPE THAT ESCAPED THE MUTANT ABOVE, MEASURED. The mutant above
+        interpolates its message inline, which is the only spelling the old
+        ledger could see. Bind it to a name first —
+
+            _msg = f"guard 13: {fields[0]}"
+            raise ValueError(_msg)
+
+        — and `_literal_text` is handed an `ast.Name`, answers `""`, and the old
+        `{s for s in sites if s}` DROPPED the site: the count stayed at 13, the
+        phrase check had nothing to fail on, and the full file stayed green with
+        a thirteenth guard echoing the raw token. That is exactly the outcome
+        `test_the_LEDGER_goes_RED_on_a_guard_added_to_the_CODE_ONLY` exists to
+        prevent, reached by rewriting the guard rather than by hiding it.
+
+        Not a contrived spelling: guard 6 builds its `hint` as a variable
+        already, so "assemble the message, then raise" is the local idiom.
+        """
+        src = SERVER_PATH.read_text(encoding="utf-8")
+        anchor = "    token = fields[0]\n"
+        assert src.count(anchor) == 1, (
+            f"the mutation anchor appears {src.count(anchor)} times — this test "
+            f"would mutate the wrong site or none"
+        )
+        mutant = src.replace(
+            anchor,
+            '    if fields[0].endswith("q"):\n'
+            '        _msg = f"guard 13: {fields[0]}"\n'
+            "        raise ValueError(_msg)\n" + anchor,
+            1,
+        )
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+
+        before = _load_tokens_raise_sites(src)
+        after = _load_tokens_raise_sites(mutant)
+        # The site is KEPT with empty text, not dropped. Both halves matter: it
+        # must be counted (so the pinned count moves) AND its text must be empty
+        # (so the phrase check cannot accidentally claim it).
+        #
+        # ⚠ COMPARED BY VALUE, NOT BY KEY. An inserted mutation shifts the
+        # `lineno` of every site below it, so `set(after) - set(before)` is the
+        # whole ladder rather than the addition.
+        assert len(after) == len(before) + 1, (
+            f"the walk DROPPED the added guard ({len(before)} -> {len(after)}) "
+            f"— a message bound to a variable is invisible again"
+        )
+        assert list(before.values()).count("") == 0, (
+            "the unmutated tree already has a site with no literal text, so the "
+            "assertion below cannot distinguish the mutant from the baseline"
+        )
+        assert list(after.values()).count("") == 1, (
+            f"expected exactly one new site with no literal text, got "
+            f"{sorted(k for k, v in after.items() if not v)}"
+        )
+        assert len(after) != _EXPECTED_RAISE_SITES
+
+        phrases = {p for (_b, p, _s, _r) in self._cases(Path("/nonexistent")).values()}
+        unclaimed = _unclaimed_raise_sites(after, phrases)
+        assert [u.split(": ", 1)[1] for u in unclaimed] == ["''"], (
+            f"a guard whose message is a VARIABLE was not reported as unclaimed "
+            f"— the ledger drops what it cannot read instead of failing closed: "
+            f"{unclaimed}"
+        )
+        # NEGATIVE CONTROL on the same predicate.
+        assert not _unclaimed_raise_sites(before, phrases), (
+            "the unmutated tree already reports unclaimed sites, so the "
+            "assertion above cannot distinguish the mutant from the baseline"
+        )
+
+    def test_the_LEDGER_goes_RED_on_a_guard_whose_literal_text_COLLIDES_with_an_existing_one(
+        self,
+    ):
+        """🔴 THE COPY-THE-NEIGHBOURING-`raise` SHAPE — the most likely way a
+        thirteenth guard actually gets written, and the one the ledger's own
+        comment CLAIMED was "caught by the count" while it was not.
+
+        This mutant is guard 8's `raise` with `{LEGACY_IDENTITY!r}` swapped for
+        `{fields[0]!r}`. Interpolations are elided by `_literal_text`, so the two
+        sites have BYTE-IDENTICAL literal text — and while the ledger returned a
+        `set` of texts they collapsed into one. The count did not move, the
+        phrase check was satisfied by the original guard's row, and a guard
+        echoing the raw token was invisible to both halves of a two-way pin.
+
+        Keyed by `(function, lineno)` the collision is two sites. The phrase
+        check still cannot see it — that is not a defect, it is the division of
+        labour the count exists for — so this test asserts the mutant dies on
+        the COUNT specifically, and asserts the phrase set does NOT move, which
+        is what makes "the count is the half that catches this" a measurement
+        rather than a sentence.
+        """
+        src = SERVER_PATH.read_text(encoding="utf-8")
+        anchor = "    token = fields[0]\n"
+        assert src.count(anchor) == 1, (
+            f"the mutation anchor appears {src.count(anchor)} times — this test "
+            f"would mutate the wrong site or none"
+        )
+        # Byte-for-byte guard 8's literal chunks; only the interpolation differs.
+        collision = (
+            '    if fields[0].endswith("z"):\n'
+            "        raise ValueError(\n"
+            '            f"reserved identity in token row on line {line} of {total}: "\n'
+            '            f"{fields[0]!r} is what a BARE token line is given, and it "\n'
+            '            f"means unrestricted scope. Name this row\'s holder instead"\n'
+            "        )\n"
+        )
+        mutant = src.replace(anchor, collision + anchor, 1)
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+
+        before = _load_tokens_raise_sites(src)
+        after = _load_tokens_raise_sites(mutant)
+        # POSITIVE CONTROL FOR THE COLLISION ITSELF: guard 8's literal text must
+        # now appear TWICE, byte-identical. If it appears once the mutant did not
+        # collide and this test is aimed at an ordinary new guard instead.
+        #
+        # ⚠ COUNTED BY VALUE, NOT BY KEY: an inserted mutation shifts the
+        # `lineno` of every site below it, so a key-set difference is useless.
+        guard_8 = [
+            t for t in before.values()
+            if t.startswith("reserved identity in token row")
+        ]
+        assert len(guard_8) == 1, (
+            f"expected exactly one `reserved identity` site in the unmutated "
+            f"tree, found {len(guard_8)} — this mutant's premise is gone"
+        )
+        assert list(after.values()).count(guard_8[0]) == 2, (
+            f"guard 8's literal text appears "
+            f"{list(after.values()).count(guard_8[0])} time(s) after the "
+            f"mutation, expected 2 — the mutant is not byte-identical and so is "
+            f"not the colliding shape"
+        )
+        # THE SHAPE THAT USED TO ESCAPE: as a set of texts, nothing moved.
+        assert set(after.values()) == set(before.values()), (
+            "the mutant changed the set of message TEXTS, so it would have been "
+            "caught by the old phrase-keyed ledger and proves nothing here"
+        )
+        # …and it is invisible to the phrase check, by construction.
+        phrases = {p for (_b, p, _s, _r) in self._cases(Path("/nonexistent")).values()}
+        assert not _unclaimed_raise_sites(after, phrases), (
+            "the colliding guard was reported as unclaimed — then the count is "
+            "not the half under test here and this mutant is mis-aimed"
+        )
+        # THE KILL: the pinned site COUNT, which now counts positions.
+        assert len(after) == len(before) + 1, (
+            f"two byte-identical literals COLLAPSED ({len(before)} -> "
+            f"{len(after)}) — the ledger is keyed on the message again and the "
+            f"copy-the-neighbouring-raise shape is invisible"
+        )
+        assert len(after) != _EXPECTED_RAISE_SITES, (
+            "the pinned site count is not red for a colliding guard, so nothing "
+            "in this suite catches it"
+        )
+        # NEGATIVE CONTROL: the unmutated tree matches the pin.
+        assert len(before) == _EXPECTED_RAISE_SITES, (
+            "the unmutated tree already misses the pinned count, so the "
             "assertion above cannot distinguish the mutant from the baseline"
         )
 
