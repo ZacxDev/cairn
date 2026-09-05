@@ -603,8 +603,17 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(43))'   # 58 chars
 A **mapped** row names who holds the token and which scopes it may read. The
 identity is lowercase `[a-z0-9-]`, at most 32 characters — deliberately BELOW
 the 43-character token floor, so a token can never be misread as an identity.
-Scopes are comma-separated, each matching `[A-Za-z0-9_-]+`, folded by the
-reader's own `normalize_ref` so `Kelp_Forest` and `kelp-forest` are one scope.
+Scopes are comma-separated, each matching `[A-Za-z0-9_-]+` and **at most 42
+characters**, folded by the reader's own `normalize_ref` so `Kelp_Forest` and
+`kelp-forest` are one scope.
+
+🔴 **42 is `43 − 1`, and it is the same argument as the identity cap rather than
+a tidy round number.** The scope charset `[A-Za-z0-9_-]` is *exactly* the
+alphabet `secrets.token_urlsafe` draws from, so without a cap a real token
+pasted into field 3 is a perfectly legal scope name — it does not fail the
+pattern, and it does not fold away. The cap is what makes "a token cannot be
+misread as a scope" true, and it is derived from the token floor in code
+(`MAX_SCOPE_CHARS = MIN_TOKEN_CHARS - 1`) so the two cannot drift apart.
 
 A scope outside the allowlist answers **exactly what a scope that never existed
 answers** — `200`, `X-Store-Status: scope-absent`, and a body byte-identical to
@@ -648,8 +657,15 @@ store-api audit ts=… ip=203.0.113.7 peer=trusted method=GET path=/api/v1/recal
    then **read the log for the verdict line it must have produced**:
 
    ```bash
-   kubectl -n subsystem-store logs --tail=20 deploy/subsystem-store-api | grep 'token reload:'
+   kubectl -n subsystem-store logs --since=5m deploy/subsystem-store-api | grep 'token reload:'
    ```
+
+   🔴 **`--since`, NOT `--tail=N`, AND THAT IS NOT A STYLE PREFERENCE.** The
+   audit stream and the reload verdict share **stdout**. On a pod answering
+   requests, 20 lines can be under a second of traffic — so a `--tail=20` that
+   ran a moment too late returns NOTHING for a reload that succeeded, and the
+   paragraph directly below says an empty result means it did not happen. A
+   time window costs nothing and cannot be outrun by the audit log.
 
    `token reload: LOADED 2 identities [<new>:legacy,<old>:legacy] (was 1 [<old>:legacy])`
    — every fingerprint in file order, each with its identity, and what it
@@ -730,20 +746,37 @@ identities [dbb22a50030d:legacy,07c358b5e95b:legacy]. Fix the file and send
 SIGHUP again
 ```
 
-🔴 **AND A REFUSAL NEVER QUOTES THE FIELD IT REFUSED.** The two guards handed an
-UNVALIDATED field — the identity (field 2) and each scope (field 3) — describe
-it instead of echoing it: `field 2 is not an identity (58 chars,
-fp=07c358b5e95b)`. That matters because the field an operator gets wrong while
-installing a credential *is* the credential — `<current> <new> alpha`, a token
-written one field to the left, is refused by the identity guard every time,
-since a token (>= 43 chars) can never be short enough to be an identity
-(<= 32) — and this message goes to **stdout**, from a healthy process, on every
-signal. The length and the fingerprint are enough to recognise a mis-pasted
-token, and the fingerprint is the same `token_id` the audit log prints, so the
-refused row can be tied to the `token=` id it will authorise under once fixed.
-The row's line number is what locates it in the file. Identities that have
-already passed validation *are* quoted — they are capped below the token floor
-and appear in every audit line, so they are not secrets.
+🔴 **AND A REFUSAL NEVER QUOTES AN *UNVALIDATED* FIELD.** The two guards handed
+one — the identity (field 2) and each scope (field 3) — describe it instead of
+echoing it: `field 2 is not an identity (58 chars, fp=07c358b5e95b)`. That
+matters because the field an operator gets wrong while installing a credential
+*is* the credential, and this message goes to **stdout**, from a healthy
+process, on every signal. The length and the fingerprint are enough to recognise
+a mis-pasted token, and the fingerprint is the same `token_id` the audit log
+prints, so the refused row can be tied to the `token=` id it will authorise
+under once fixed. The row's line number is what locates it in the file.
+
+**Both directions of the slip are covered, and they are covered by two different
+mechanisms — a length CAP, not the charset:**
+
+| the slip | field | why it cannot be misread |
+|---|---|---|
+| `<current> <new> alpha` — one field LEFT | identity | a token is `>= 43` chars, an identity `<= 32`, so it always lands on the identity guard |
+| `<current> zach <new>` — one field RIGHT | scope | a scope is capped at `42` chars, deliberately below the same token floor |
+
+🔴 **The second row is a fix, and the sentence above it was previously false.** A
+token from the generator this file prescribes (`secrets.token_urlsafe(43)`) is 58
+characters of `[A-Za-z0-9_-]` — which is exactly the scope charset. With no
+length cap it passed validation and became a **scope name**: `<current> zach
+<new>` loaded CLEAN, silently granting a credential nothing, and on the
+duplicate-row shape the duplicate-token guard printed that scope — case-folded —
+to stdout. Case-folding is not redaction. **A charset check can never support
+"this cannot be a credential"; only a cap below the token floor can**, which is
+why both rows above cite a number rather than a pattern.
+
+Values that have **already passed** those caps *are* quoted — the identity and
+the scope list both appear in the duplicate-token refusal. They are bounded below
+the token floor and appear in every audit line, so they are not secrets.
 
 🔴 **At STARTUP the same file still exits 78, and the asymmetry is the design.**
 On reload there is a working table to fall back to; at startup there is not, and
