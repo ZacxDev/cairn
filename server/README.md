@@ -603,8 +603,24 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(43))'   # 58 chars
 A **mapped** row names who holds the token and which scopes it may read. The
 identity is lowercase `[a-z0-9-]`, at most 32 characters — deliberately BELOW
 the 43-character token floor, so a token can never be misread as an identity.
-Scopes are comma-separated, each matching `[A-Za-z0-9_-]+`, folded by the
-reader's own `normalize_ref` so `Kelp_Forest` and `kelp-forest` are one scope.
+Scopes are comma-separated, each matching `[A-Za-z0-9_-]+` and **at most 42
+characters**, folded by the reader's own `normalize_ref` so `Kelp_Forest` and
+`kelp-forest` are one scope.
+
+🔴 **42 is `43 − 1`, and it is the same argument as the identity cap rather than
+a tidy round number.** The scope charset `[A-Za-z0-9_-]` is *exactly* the
+alphabet `secrets.token_urlsafe` draws from, so without a cap a real token
+pasted into field 3 is a perfectly legal scope name — it does not fail the
+pattern, and it does not fold away. The cap is what makes "a token cannot be
+misread as a scope" true, and it is derived from the token floor in code
+(`MAX_SCOPE_CHARS = MIN_TOKEN_CHARS - 1`) so the two cannot drift apart.
+
+⚠ **The cap is absolute: a scope of 43 characters or more can never be
+allowlisted in a mapped row at all.** Nothing else in the store bounds a scope
+name, so such a scope remains reachable only to a legacy unrestricted row —
+there is no spelling of a mapped row that grants it. Rename the scope if you
+need one; see the preflight in *Rotating* below before deploying this version
+against an existing token file.
 
 A scope outside the allowlist answers **exactly what a scope that never existed
 answers** — `200`, `X-Store-Status: scope-absent`, and a body byte-identical to
@@ -642,21 +658,215 @@ store-api audit ts=… ip=203.0.113.7 peer=trusted method=GET path=/api/v1/recal
   token=dbb22a50030d auth=ok result=200 status=recalled
 ```
 
+0. **Preflight, ONCE, before the first deploy of the version that added
+   `MAX_SCOPE_CHARS`** — confirm no scope in the current token file is 43
+   characters or longer.
+
+   🔴 **RUN IT AGAINST THE DECRYPTED TOKEN FILE THE POD ACTUALLY LOADS — the
+   live `subsystem-store-token` Secret — NOT against
+   `clusters/homelab/apps/subsystem-store/secrets.enc.yaml`, which step 1 below
+   names and which is sops CIPHERTEXT, not a token file.** Pointed at the
+   encrypted file the command reads it happily and its verdict is meaningless
+   in *both* directions: it can print nothing, which the "Expect no output"
+   below then reads as a PASS over a file it never inspected — and it can
+   FIRE. Measured against a representative sops-encrypted Secret: `- recipient:
+   age1…` is three whitespace-separated fields whose third is 66 characters, so
+   the command reported `line 11: scope 1 is 66 chars` for a file containing no
+   scopes at all. Both answers are about the ciphertext's line shapes. The
+   pipeline is written out in full here rather than cross-referenced (the
+   plaintext recipe otherwise appears only in *Operating it*, ~290 lines up, in
+   an unrelated context), and it never puts the plaintext on disk:
+
+   ```bash
+   kubectl -n subsystem-store get secret subsystem-store-token \
+     -o jsonpath='{.data.token}' | base64 -d |
+   awk 'NF>=3 {n=split($3,s,","); for (i=1;i<=n;i++) if (length(s[i])>=43) \
+     print "line "NR": scope "i" is "length(s[i])" chars"}'
+   ```
+
+   ⚠ **The `awk` prints line numbers and lengths only, never a field**, so its
+   output is safe on a shared terminal even though its input is credentials.
+   ⚠ **POSITIVE CONTROL, because the expected result is silence** — pipe a row
+   you know is too long through the same `awk` and watch it print, before
+   trusting the empty answer:
+
+   ```bash
+   printf 'tok zach %s\n' "$(python3 -c 'print("x"*43)')" |
+   awk 'NF>=3 {n=split($3,s,","); for (i=1;i<=n;i++) if (length(s[i])>=43) \
+     print "line "NR": scope "i" is "length(s[i])" chars"}'   # must print
+   ```
+
+   Expect no output from the FIRST pipeline (the control above must print, or
+   you have not established that this `awk` can say anything at all).
+   🔴 **The failure mode is a STARTUP REFUSAL, not a reload
+   refusal**, and the two are not interchangeable: a file that loaded before now
+   lands on guard 10 (`invalid scope in token row on line L of T`), `main`
+   prints it to stderr and returns `EXIT_CONFIG` **78**. On this deployment —
+   `replicas: 1`, `Recreate` — that is a crashloop and a total read outage until
+   a human edits the file, with no "REFUSED, still serving the old table" line
+   to fall back on, because there is no old table at startup.
+
+   Measured when the cap landed: the longest real scope on the live token file
+   and in the served store is **33 characters**, against a cap of 42 — nine
+   characters of headroom. The cap is not negotiable for that headroom (a
+   charset check can never support "this cannot be a credential"), so the
+   preflight is the whole mitigation.
+
 1. `sops clusters/homelab/apps/subsystem-store/secrets.enc.yaml` — put the NEW
    token on the first line, keep the old one below it. Commit; Flux applies.
-2. Restart the pod. Its startup line prints every fingerprint in file order,
-   each with its identity: `token-ids=<new>:legacy,<old>:legacy`.
+2. `kubectl -n subsystem-store exec deploy/subsystem-store-api -- sh -c 'kill -HUP 1'`,
+   then **read the log for the verdict line it must have produced**:
+
+   ```bash
+   kubectl -n subsystem-store logs --since=5m deploy/subsystem-store-api | grep 'token reload:'
+   ```
+
+   🔴 **`--since`, NOT `--tail=N`, AND THAT IS NOT A STYLE PREFERENCE.** The
+   audit stream and the reload verdict share **stdout**. On a pod answering
+   requests, 20 lines can be under a second of traffic — so a `--tail=20` that
+   ran a moment too late returns NOTHING for a reload that succeeded, and the
+   paragraph directly below says an empty result means it did not happen. A
+   time window costs nothing and cannot be outrun by the audit log.
+
+   `token reload: LOADED 2 identities [<new>:legacy,<old>:legacy] (was 1 [<old>:legacy])`
+   — every fingerprint in file order, each with its identity, and what it
+   replaced.
+
+   🔴 **THE EXIT CODE OF STEP 2 IS NOT THE RESULT. If no `token reload:` line
+   appeared, the reload DID NOT HAPPEN — stop here and do not go on to step 3
+   or 4.** `kill` reports whether the signal was *sent*, never what the target
+   did with it, and the way this fails is silent rather than loud: the server
+   is PID 1, and the kernel **discards** a default-action signal sent to a
+   namespace's init from inside that namespace. So against an image that
+   predates this feature — one with no handler installed — step 2 exits **0**,
+   prints nothing, and reloads nothing. (Measured under `unshare --fork --pid`:
+   PID 1 with no handler survived a SIGHUP from a child; the same program at
+   any other pid was killed by it. An ordinary process would at least die
+   loudly; PID 1 does not.) `token reload: REFUSED` is a different outcome and
+   also a stop: the file did not parse, the previous table is still serving,
+   and the line says which guard refused it.
+
+   Replacing the pod still works and prints the same fingerprints as
+   `token-ids=` on its startup line — it is no longer the only way, and it is
+   the fallback when no verdict line appears.
 3. Roll clients onto the new token. Watch the audit stream until the OLD
    fingerprint stops appearing:
    `kubectl -n subsystem-store logs deploy/subsystem-store-api | grep 'token=<old>'`
-4. Only then delete the old line, commit, restart. A request presenting it is
-   now an ordinary 401.
+4. Only then delete the old line, commit, and SIGHUP again — **and confirm the
+   retired fingerprint is GONE from the new `LOADED` list**:
+   `token reload: LOADED 1 identities [<new>:legacy] (was 2 [<new>:legacy,<old>:legacy])`.
+
+   🔴 **That list is the revocation receipt, and nothing else is.** A `LOADED`
+   line still naming `<old>` means the process re-read a file that still
+   contains it, and the credential you believe you retired is live. A request
+   presenting it is only an ordinary 401 once it is absent here.
+
+   ⚠ **A SIGHUP sent promptly after the secret changes can read the OLD file.**
+   The token arrives on a projected secret volume, and the kubelet refreshes
+   those on its own sync period — so `kill -HUP` immediately after Flux applies
+   can re-read the previous contents and report a perfectly truthful `LOADED`
+   for a file that has not been updated yet. Step 4's fingerprint check is what
+   catches it; if `<old>` is still listed, wait and signal again. A pod replace
+   never had this failure mode, because it always mounted the volume fresh.
 
 Step 3 is the step that does not exist without step 2's fingerprint, and step 4
 is the one people skip — a rotation that leaves the old credential live is not a
 rotation. The whole sequence is exercised in-band by
 `TestTokenSetAndOverlapRotation::test_a_ROTATION_end_to_end_old_still_works_then_stops`
 and against the real process by `TestTheDeployedEntrypoint`.
+
+### Reloading the token file — `SIGHUP`, and what it will refuse
+
+The startup banner advertises it (`reload=SIGHUP`). `kill -HUP <pid>` re-reads
+the token file **through the same `load_tokens` ladder** that ran at startup —
+not a second parser — and swaps the result in only if every guard passes.
+
+⚠ **The `sh -c` wrapper in step 2 is derived from the Dockerfile, not measured
+against a running pod.** `CMD` is exec-form, so the server is PID 1; the image
+installs no packages, so there is no `/usr/bin/kill` from `procps` and the shell
+builtin is what actually sends the signal. The reload itself is exercised
+against a real process by `TestSighupReloadsTheTokenTable`, which spawns
+`server.py` and sends the real signal — the `kubectl` spelling above is the only
+part of this that has not been run.
+
+🔴 **Being PID 1 is also why step 2 must be verified by its LOG LINE.** A
+default-action signal sent to a namespace's init from inside that namespace is
+discarded by the kernel, so an image with no handler answers `kill -HUP 1` with
+exit 0 and silence. Measured under `unshare --fork --pid`: PID 1 with no
+handler survived; the same program at any other pid was killed by the same
+signal. There is no exit code that distinguishes "reloaded" from "ignored" —
+only the verdict line does.
+
+🔴 **A parse failure on RELOAD does not take the server down.** The previously
+loaded table keeps serving and the log says why:
+
+```
+token reload: REFUSED — the token source did not parse (ValueError: duplicate
+identity 'alpha': …). NOTHING CHANGED: still serving the 2 previously loaded
+identities [dbb22a50030d:legacy,07c358b5e95b:legacy]. Fix the file and send
+SIGHUP again
+```
+
+🔴 **AND A REFUSAL NEVER QUOTES AN *UNVALIDATED* FIELD.** The two guards handed
+one — the identity (field 2) and each scope (field 3) — describe it instead of
+echoing it: `field 2 is not an identity (58 chars, fp=07c358b5e95b)`. That
+matters because the field an operator gets wrong while installing a credential
+*is* the credential, and this message goes to **stdout**, from a healthy
+process, on every signal. The length and the fingerprint are enough to recognise
+a mis-pasted token, and the fingerprint is the same `token_id` the audit log
+prints, so the refused row can be tied to the `token=` id it will authorise
+under once fixed. The row's line number is what locates it in the file.
+
+**Both directions of the slip are covered, and they are covered by two different
+mechanisms — a length CAP, not the charset:**
+
+| the slip | field | why it cannot be misread |
+|---|---|---|
+| `<current> <new> alpha` — one field LEFT | identity | a token is `>= 43` chars, an identity `<= 32`, so it always lands on the identity guard |
+| `<current> zach <new>` — one field RIGHT | scope | a scope is capped at `42` chars, deliberately below the same token floor |
+
+🔴 **The second row is a fix, and the sentence above it was previously false.** A
+token from the generator this file prescribes (`secrets.token_urlsafe(43)`) is 58
+characters of `[A-Za-z0-9_-]` — which is exactly the scope charset. With no
+length cap it passed validation and became a **scope name**: `<current> zach
+<new>` loaded CLEAN, silently granting a credential nothing, and on the
+duplicate-row shape the duplicate-token guard printed that scope — case-folded —
+to stdout. Case-folding is not redaction. **A charset check can never support
+"this cannot be a credential"; only a cap below the token floor can**, which is
+why both rows above cite a number rather than a pattern.
+
+Values that have **already passed** those caps *are* quoted — the identity and
+the scope list both appear in the duplicate-token refusal. What makes that safe
+is the CAP alone: both are bounded below the token floor, so neither can be a
+credential this server would accept. `server.py`'s guard-11 docstring states the
+same argument against the two constants that carry it.
+
+🔴 **Do not extend "and it appears in every audit line" to the scope list — that
+is true of identities only.** An audit line carries `identity=`, and it carries
+the *requested* scope inside `path=`; a token's scope ALLOWLIST appears in no
+audit line, and a scope the token was refused for appears nowhere at all. The
+justification for printing it is the cap, not prior publication.
+
+🔴 **At STARTUP the same file still exits 78, and the asymmetry is the design.**
+On reload there is a working table to fall back to; at startup there is not, and
+a process that came up serving no valid token would look healthy while answering
+401 to everything. Do not "improve" the startup path to match this one.
+
+What a reload is and is not:
+
+| | |
+|---|---|
+| revocation | **yes** — a row removed from the file stops being accepted |
+| addition, and scope changes | yes, in both directions |
+| atomicity | the table is an immutable tuple, rebound in one assignment; a request in flight sees the whole old table or the whole new one |
+| the env fallback (`$SUBSYSTEM_STORE_TOKEN`) | reloads to the same value — a process's own environment does not change under it. The file is the thing SIGHUP exists to re-read |
+| `--store`, the proxy allowlist, the rate-limit knobs | **not** reloaded. Only the token table |
+
+Why it matters here specifically: the deployment is single-replica (see the
+`other`-row note above), so "restart the pod to change a credential" is a hard
+read outage rather than a rolling one — and before this existed, a typo in the
+secret turned that outage into an indefinite one, because the replacement
+exited 78 and stayed down.
 
 ## Rate limit, lockout and the client address
 

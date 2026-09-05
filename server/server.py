@@ -283,6 +283,7 @@ import json
 import math
 import os
 import re
+import signal
 import sys
 import tarfile
 import tempfile
@@ -492,6 +493,43 @@ DRAIN_DEADLINE_S = 10.0
 # the names are client-confidential and this repo is PUBLIC.)
 SAFE_PATH_COMPONENT = re.compile(r"[A-Za-z0-9_-]+")
 
+# 🔴 A SCOPE IS CAPPED BELOW THE TOKEN FLOOR, FOR THE SAME REASON `MAX_IDENTITY_
+# CHARS` IS, AND THIS IS A FIX RATHER THAN SYMMETRY. The identity cap made a
+# mis-paste one field to the LEFT structurally impossible to misread; the scope
+# field had no such cap, and the mis-paste one field to the RIGHT was therefore
+# read as a legitimate scope NAME. Measured, with a token from the generator this
+# server's own README prescribes (`secrets.token_urlsafe(43)` — 58 characters of
+# `[A-Za-z0-9_-]`):
+#
+#   * `<current> <identity> <new-token>` LOADED CLEAN. A real token contains no
+#     `=` and no `.`, so it matched `SAFE_PATH_COMPONENT`, `normalize_ref` folded
+#     it to a non-empty string, and the credential the operator was installing
+#     became a scope name authorising nothing. Guard 10 was never reached.
+#   * On the duplicate-row shape (`<tok> zach alpha` above `<tok> zach <new>`)
+#     guard 11 then printed that scope — CASE-FOLDED and `_`→`-` — to STDOUT, on
+#     every refused signal. Folding is not redaction: it removes ~2^38 of a
+#     43-byte token's entropy and leaves the rest, and `token_id` is an unsalted
+#     truncated SHA-256 the audit log publishes for every live credential, so a
+#     folded string plus a published fingerprint is an offline oracle.
+#
+# The cap is DERIVED, never a second literal: `MAX_SCOPE_CHARS < MIN_TOKEN_CHARS`
+# is the whole safety argument, and a hand-typed 42 is one edit away from being a
+# 44 that silently re-opens both halves. `test_a_SCOPE_CANNOT_BE_LONG_ENOUGH_TO_
+# BE_A_TOKEN` pins the relation itself, not the number.
+#
+# ⚠ WHAT THIS DOES NOT CLAIM. It does not make a short secret safe to paste into
+# field 3 — it makes a value THIS SERVER WOULD ACCEPT AS A TOKEN impossible to
+# reach guard 11's echo, which is exactly the claim guard 7's cap makes for the
+# identity field and no more. A 20-character password in the scope field is still
+# printed; it is also not a credential this server has ever accepted (guard 5
+# refuses anything below `MIN_TOKEN_CHARS`), so it is outside the property.
+#
+# ⚠ AND IT IS NOT A HEURISTIC. Nothing here asks whether a value "looks like" a
+# token — the one classification that fails open. It asks whether the value could
+# be one AT ALL under this file's own definition of the word, which is a length
+# this same file enforces on the token field.
+MAX_SCOPE_CHARS = MIN_TOKEN_CHARS - 1
+
 # --- The write path (phase 3, criteria 4-7) -------------------------------------
 
 # 🔴 A SESSION ID IS CORRELATION DATA, NOT AN IDENTITY CLAIM, so unlike the actor
@@ -616,6 +654,28 @@ LISTEN_BACKLOG = 128
 
 EXIT_CONFIG = 78  # sysexits.h EX_CONFIG — a misconfiguration, not a crash.
 
+# 🔴 THE TWO RELOAD VERDICTS, AS CONSTANTS, BECAUSE THE OPERATOR'S ONLY SIGNAL
+# THAT A `kill -HUP` DID ANYTHING IS THIS LINE.
+#
+# A reload is fire-and-forget: the signal returns immediately whether the file
+# parsed or not, so "did my edit take effect" is not answerable from the sending
+# side at all. If the two outcomes are not distinguishable in the log, a REFUSED
+# reload is indistinguishable from a successful one, and the operator walks away
+# believing a credential was revoked when it is still live. That is strictly
+# worse than the pre-reload status quo, where a bad file at least announced
+# itself as a CrashLoopBackOff.
+#
+# They are constants rather than inline strings so a test can pin the verdict
+# without pinning the sentence around it — the sentence is a diagnostic and
+# should stay free to improve.
+# The shared stem is a constant too, so "is this line a reload verdict at all"
+# is one question with one answer. A reader that filtered on the two outcomes
+# separately would silently stop seeing a THIRD outcome the day one is added,
+# which is the shape that turns a new failure mode into an invisible one.
+RELOAD_PREFIX = "token reload: "
+RELOAD_LOADED = RELOAD_PREFIX + "LOADED"
+RELOAD_REFUSED = RELOAD_PREFIX + "REFUSED"
+
 
 class _Rejected(Exception):
     """Auth said no. Carries nothing: the response body is a constant."""
@@ -629,6 +689,63 @@ def token_id(token: str) -> str:
     leak the log exists to detect.
     """
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+
+def redacted_field(value: str) -> str:
+    """How an UNVALIDATED field of the token file reads in an error message.
+
+    🔴 NEVER THE VALUE ITSELF, AND THAT IS A FIX RATHER THAN A PRECAUTION. A
+    guard that quotes the field it refused publishes whatever the operator
+    wrote there — and the field an operator gets wrong while installing a
+    credential IS the credential. `<current> <new> alpha`, a token pasted one
+    field to the left, is the shape: `MIN_TOKEN_CHARS` (43) is deliberately
+    ABOVE `MAX_IDENTITY_CHARS` (32), so a token in the identity field cannot
+    be anything BUT too long, always lands on that guard, and was quoted back
+    in full. Not a corner case — the guard's own reachability argument is what
+    makes the leak unconditional.
+
+    🔴 AND IT IS NOT CONFINED TO A CRASH. `reload_tokens` prints the guard's
+    message to STDOUT on every refused `SIGHUP`, from a process that stays
+    healthy and can be signalled again — the stream the audit log is read out
+    of, with wider read access than the encrypted secret the token came from.
+    A startup failure at least exits 78 once and stops.
+
+    So the value is replaced by two facts that are not secrets and are enough
+    to act on:
+
+      * its LENGTH — a 58-character "identity" is visibly the operator's token
+        rather than a typo;
+      * its FINGERPRINT — the SAME `token_id` the audit log carries. If the
+        field really was a credential, this is the `token=` id it will show up
+        under once the row is fixed, so the two can be tied together without
+        either of them ever printing the token.
+
+    The row's POSITION does the locating (`line L of T`, a physical line number
+    an editor can count to). The echoed value never did that job.
+
+    ⚠ A LENGTH OR CHARSET HEURISTIC — "elide it only if it looks like a token"
+    — was considered and rejected: it fails OPEN, because the one input it must
+    catch is by definition an input nobody classified correctly. Losing the
+    echo of a genuine typo (`Za_CH_BAD` now reads `9 chars, fp=…`) is the price,
+    and the line number plus the rule the message states is what replaces it.
+
+    ⚠ FOR UNVALIDATED FIELDS ONLY, AND "VALIDATED" MEANS *LENGTH-CAPPED*, NOT
+    MERELY "SOME GUARD LOOKED AT IT". An identity that has passed guard 7 is
+    quoted verbatim by guards 9-12 on purpose: it matches `[a-z0-9][a-z0-9-]*`,
+    is capped below the token floor so it CANNOT be a credential, and is printed
+    in every audit line already. Naming it is the entire diagnostic there, and
+    eliding it would be a cost with no hazard.
+
+    🔴 THAT SENTENCE USED TO SAY THIS OF THE SCOPES TOO, AND IT WAS FALSE. Guard
+    11 quotes the SCOPE LIST (via `_authority_of`), and a scope had passed a
+    charset check and a folding check but no LENGTH check — neither of which a
+    real `secrets.token_urlsafe(43)` fails. So an unvalidated field WAS being
+    echoed by a guard whose own comment said it was not. `MAX_SCOPE_CHARS` is
+    what makes the sentence true rather than aspirational: the cap, not the
+    charset, is the half that does the work, because "capped below the token
+    floor" is the entire argument and only a cap can supply it.
+    """
+    return f"{len(value)} chars, fp={token_id(value)}"
 
 
 @dataclass(frozen=True)
@@ -682,6 +799,28 @@ def _authority_of(record: TokenRecord) -> str:
     Used only by the duplicate-token guard, whose whole job is to say that two
     rows disagree — so it has to be able to say what they disagree ABOUT, and
     the identity and the scope list are the two facts that are not secrets.
+
+    🔴 "NOT SECRETS" IS A CLAIM ABOUT THE GUARDS UPSTREAM, NOT ABOUT THE STRINGS,
+    AND IT WAS FALSE OF THE SCOPES UNTIL `MAX_SCOPE_CHARS` EXISTED. This function
+    interpolates the SCOPE LIST, and a scope reached it having passed a charset
+    check and a folding check but NO LENGTH CHECK — so a token mis-pasted into
+    field 3 was a legal scope name, and guard 11 printed it (case-folded, `_`→
+    `-`) to stdout on every refused signal. Measured; see `MAX_SCOPE_CHARS`.
+
+    What makes both halves safe now is the same argument, applied twice: every
+    value this function can print has passed a guard that caps it BELOW
+    `MIN_TOKEN_CHARS`, so it cannot be a credential this server would accept.
+    The identity has passed guard 7 (`MAX_IDENTITY_CHARS`); every scope has
+    passed guard 10 (`MAX_SCOPE_CHARS`). Both caps are what this docstring is
+    asserting — remove either and this function starts echoing an unvalidated
+    field again. `test_guard_11_can_only_ever_print_values_BOUNDED_BELOW_the_
+    token_floor` pins it by CONSTRUCTION rather than by reading this paragraph:
+    it builds the largest row every earlier guard accepts — identity at
+    `MAX_IDENTITY_CHARS`, scopes at `MAX_SCOPE_CHARS` — drives guard 11 with it,
+    and requires the message to contain no `[A-Za-z0-9_-]` run of
+    `MIN_TOKEN_CHARS` or more. That assertion needs to know neither the secret
+    nor which field carried it, so it also catches a future guard that starts
+    quoting something nobody added a check for.
     """
     if record.scopes is None:
         return f"{record.identity} (UNRESTRICTED)"
@@ -777,11 +916,20 @@ def _parse_token_row(fields: list[str], line: int, total: int) -> TokenRecord:
         len(identity) > MAX_IDENTITY_CHARS
         or not IDENTITY_COMPONENT.fullmatch(identity)
     ):
+        # 🔴 THE FIELD IS DESCRIBED, NEVER QUOTED — see `redacted_field`. This
+        # guard is the one a mis-pasted credential ALWAYS lands on (a token is
+        # >= 43 chars, an identity <= 32), and its message reaches stdout on
+        # every refused reload, not just once at startup.
         raise ValueError(
-            f"invalid identity in token row on line {line} of {total}: {identity!r} — "
-            f"expected lowercase letters, digits and dashes, starting on an "
-            f"alphanumeric, at most {MAX_IDENTITY_CHARS} characters. The "
-            f"identity is quoted into the audit log, so it must be one spelling"
+            f"invalid identity in token row on line {line} of {total}: field 2 "
+            f"is not an identity ({redacted_field(identity)}; the value is NOT "
+            f"echoed — a token pasted into this field would be a live "
+            f"credential in a log line) — expected lowercase letters, digits "
+            f"and dashes, starting on an alphanumeric, at most "
+            f"{MAX_IDENTITY_CHARS} characters. If that length looks like your "
+            f"TOKEN, field 2 is where the identity goes: the row is `<token> "
+            f"<identity> <scopes>`. The identity is quoted into the audit log, "
+            f"so it must be one spelling"
         )
     if identity == LEGACY_IDENTITY:
         # 🔴 A MAPPED ROW MAY NOT CLAIM THE UNRESTRICTED NAME. `legacy` in the
@@ -820,13 +968,45 @@ def _parse_token_row(fields: list[str], line: int, total: int) -> TokenRecord:
         # provably redundant and was removed; this second clause is a different
         # claim and is reachable by an input the first accepts.)
         folded = rc.normalize_ref(raw)
-        if not SAFE_PATH_COMPONENT.fullmatch(raw) or not folded:
+        if (
+            not SAFE_PATH_COMPONENT.fullmatch(raw)
+            or not folded
+            or len(raw) > MAX_SCOPE_CHARS
+        ):
+            # 🔴 THE SCOPE IS DESCRIBED, NEVER QUOTED — same reason as guard 7,
+            # and reachable by the same slip one field further right (`<token>
+            # <identity> <token>`).
+            #
+            # 🔴 THE LENGTH CLAUSE IS NOT A THIRD SPELLING OF THE FIRST TWO, AND
+            # THE CHARSET CLAUSE DOES NOT COVER IT. That was the assumption this
+            # guard shipped on and it was measured WRONG: `secrets.token_urlsafe`
+            # — the generator `server/README.md` tells the operator to use —
+            # emits only `[A-Za-z0-9_-]`, so a REAL token matches
+            # `SAFE_PATH_COMPONENT` and folds to a non-empty ref. The fixture
+            # that "covered" this appended an `=`, a character that generator
+            # never produces, so the realistic input took a different path
+            # entirely and loaded clean. See `MAX_SCOPE_CHARS`.
+            #
+            # `raw` is measured, not `folded`: `normalize_ref` only lowercases,
+            # substitutes and collapses, so it can never LENGTHEN a string —
+            # bounding the input bounds the output, and bounding the input is
+            # what stops the value reaching guard 11 in the first place.
+            #
+            # `identity` HAS passed guard 7 by now — bounded below the token
+            # floor and already in every audit line — so quoting THAT is the
+            # diagnostic, not a leak.
             raise ValueError(
-                f"invalid scope in token row on line {line} of {total} ({identity!r}): "
-                f"{raw!r} — a scope must match {SAFE_PATH_COMPONENT.pattern} AND "
-                f"still name something once folded the way the reader folds a "
-                f"scope. An entry that no request could name, or that folds away "
-                f"to nothing, is refused here rather than sitting inert"
+                f"invalid scope in token row on line {line} of {total} "
+                f"({identity!r}): field 3 holds a name that is not a scope "
+                f"({redacted_field(raw)}; the value is NOT echoed — see "
+                f"`redacted_field`) — a scope must match "
+                f"{SAFE_PATH_COMPONENT.pattern}, be at most {MAX_SCOPE_CHARS} "
+                f"characters (deliberately below the {MIN_TOKEN_CHARS}-character "
+                f"token floor, so a token pasted into field 3 cannot be read as "
+                f"a scope name), AND still name something once folded the way "
+                f"the reader folds a scope. An entry that no request could name, "
+                f"that folds away to nothing, or that is long enough to be a "
+                f"credential, is refused here rather than sitting inert"
             )
         scopes.append(folded)
     return TokenRecord(
@@ -876,7 +1056,9 @@ def load_tokens(
       7.  identity is well-formed -> "invalid identity in token row on line L of T"
       8.  identity is not taken   -> "reserved identity in token row on line L of T"
       9.  the allowlist is real   -> "empty scope allowlist in token row on line L of T"
-      10. every scope is namable  -> "invalid scope in token row on line L of T"
+      10. every scope is namable
+          AND SHORT ENOUGH NOT
+          TO BE A CREDENTIAL     -> "invalid scope in token row on line L of T"
       11. one authority per token -> "duplicate token on lines L and M"
       12. one row per identity    -> "duplicate identity"
 
@@ -892,9 +1074,43 @@ def load_tokens(
     operator can find the line" is the whole reason an index is carried at all.
     Every one of them names a real line number now.
 
-    Guard 5 names the POSITION, never the token — saying "one of them is short"
-    would leave the operator grepping a secret by hand — and 6-12 keep that
-    property for the same reason.
+    🔴 NO GUARD ECHOES AN **UNVALIDATED** FIELD, AND EVERY EARLIER WORDING OF
+    THIS PARAGRAPH HAS BEEN FALSE OF AT LEAST ONE GUARD. The history is the
+    point, because the same defect has now been found twice by two different
+    readers and each time the prose had already declared it closed:
+
+      * It first read "guard 5 names the POSITION, never the token … and 6-12
+        keep that property for the same reason" — true of 5, and an unchecked
+        assertion about 6-12. Guards **7** and **10** quoted their input
+        (`{identity!r}`, `{raw!r}`) and guard 7's own reachability argument made
+        that leak unconditional: a token is >= `MIN_TOKEN_CHARS` (43), an
+        identity <= `MAX_IDENTITY_CHARS` (32), so a token in field 2 can ONLY
+        land on guard 7. Both now describe the field (`redacted_field`).
+      * It then read "NO GUARD ECHOES A FIELD IT WAS HANDED", which was false of
+        **11**: it prints the SCOPE LIST via `_authority_of`, and a scope had no
+        LENGTH cap. A real `secrets.token_urlsafe(43)` passes the charset and
+        folding checks, so a token mis-pasted into field 3 became a scope name
+        — loading CLEAN in the single-row shape, and echoed case-folded by guard
+        11 in the duplicate-row shape. `MAX_SCOPE_CHARS` closes both.
+
+    🔴 THE COMMON FAILURE IS THE SAME ONE BOTH TIMES: a claim of the form "guard
+    N is safe because its field is validated" where the validation is a CHARSET
+    rather than a LENGTH. Only a cap below `MIN_TOKEN_CHARS` supports the
+    sentence, because the sentence is "this cannot be a credential" and the
+    charset a token is drawn from is `[A-Za-z0-9_-]` — the scope charset exactly.
+    Guards 9 and 11-12 quote an identity capped by guard 7; guard 11 quotes
+    scopes capped by guard 10; guard 5 names a position only, since "one of them
+    is short" would leave the operator grepping a secret by hand.
+
+    The property is enforced rather than asserted:
+    `TestNoRefusalEVEREchoesAnUNVALIDATEDFieldValue` drives a secret-bearing
+    fixture through every numbered guard above and reads the whole emitted text,
+    on the startup path and the reload path both, in every SPELLING the code can
+    produce (a folded echo is not a raw one, and a raw-substring check was blind
+    to it). Its ledger is pinned to the CODE's raise sites — an AST walk from
+    this function — not to this docstring: the previous ledger compared the
+    fixture table against the numbered list ABOVE, so a 13th guard added to the
+    code, echoing its field, left the whole class green.
 
     🔴 EVERY ROW REACHES THE LADDER, AND THAT IS A FIX, NOT A STYLE CHOICE.
     This loop used to drop a line whose FIRST FIELD had already been seen —
@@ -1078,15 +1294,37 @@ def load_tokens(
         # place that knows a row was bare, and a caller obliged to re-derive it
         # is a caller that can forget to. Printed to stderr so it lands in the
         # pod log beside the startup banner.
-        emit = warn if warn is not None else (lambda line: print(line, file=sys.stderr))
-        emit(
+        #
+        # 🔴 AND IT GOES THROUGH `reload_safe` LIKE EVERY OTHER EMITTER ON THIS
+        # STREAM — BOTH HERE AND IN THE DEFAULT SINK. It used to be the one
+        # ENUMERATED EXEMPTION in the emitter ledger, justified by a survey of
+        # which values interpolate: two ints, a module constant, and hex
+        # fingerprints, none of them caller-supplied. That reason was true and
+        # UNPINNED — the exemption's key carried the first 64 literal characters
+        # and the argument's node type, so it saw neither the interpolations nor
+        # anything past the banner's opening clause. Measured: appending
+        # `f" (source: {token_file})"` here — an operator-supplied path, exactly
+        # the "`OSError` naming a path" text `reload_safe` exists for — left the
+        # ledger at `checked=8 bare=[] hits=={each: 1}` and the whole suite
+        # green. A guard whose reason can stop holding without the guard
+        # noticing is a guard-shaped hole, so the reason is now enforced instead
+        # of asserted: sanitise unconditionally and the ledger's name ("EVERY
+        # emitter") is true with no exemption table at all. `reload_safe` is
+        # idempotent (a character class substitution), so the double application
+        # on the default sink is free.
+        emit = (
+            warn
+            if warn is not None
+            else (lambda line: print(reload_safe(line), file=sys.stderr))
+        )
+        emit(reload_safe(
             f"subsystem-store-api: 🔴 UNRESTRICTED-SCOPE LEGACY MODE — "
             f"{len(legacy)} of {len(records)} token rows are bare tokens with no "
             f"identity and NO scope allowlist (identity={LEGACY_IDENTITY!r}); "
             f"they can read EVERY scope in the store. Fingerprints: "
             f"{','.join(r.fingerprint for r in legacy)}. Give each holder its own "
             f"`<token> <identity> <scopes>` row and delete these lines"
-        )
+        ))
     return records
 
 
@@ -4697,6 +4935,318 @@ def build_server(
     return _Server((host, port), _Handler)
 
 
+def _reload_log(line: str) -> None:
+    """Where a reload verdict goes when nobody injects a sink.
+
+    🔴 STDOUT, NOT STDERR, AND THAT IS AN ARGUMENT RATHER THAN A COIN FLIP. The
+    startup banner — the `token-ids=<fp>:<identity>,…` list an operator greps to
+    decide which line of the secret is safe to delete — is printed to stdout. A
+    reload REPLACES that list. Putting its successor on the other stream leaves
+    a reader of stdout holding a token-id list that is silently stale, which is
+    the exact fact the banner exists to make checkable.
+
+    ⚠ IT IS NOT WHERE THE LEGACY BANNER GOES, AND THAT WAS TRIED THE OTHER WAY.
+    Routing `load_tokens`' `warn=` callback through here — so one reload reads
+    as one contiguous record — MEASURED as a double prefix
+    (`subsystem-store-api: subsystem-store-api: 🔴 UNRESTRICTED…`), because that
+    banner already carries the program name in the string it emits. The reload
+    path therefore leaves `warn=` at its default, which means the
+    unrestricted-scope banner reads IDENTICALLY and lands on the same stream
+    whether it came from a load or a reload — a better property than adjacency,
+    since it is the line an operator greps for across the whole pod log.
+    """
+    print(f"subsystem-store-api: {line}", flush=True)
+
+
+# C0 and C1 control characters, PLUS U+2028 and U+2029. NOT `_AUDIT_SAFE`
+# (`[^\x20-\x7e]`), which would also eat the em-dashes and the 🔴 the reload
+# lines are written with.
+#
+# 🔴 THE TWO UNICODE SEPARATORS ARE NOT DECORATION, AND THE CLASS WAS NARROWER
+# THAN THE FUNCTION'S OWN SENTENCE WITHOUT THEM. `reload_safe` promises to strip
+# "anything that could forge a LINE BOUNDARY"; the C0/C1 class alone let U+2028
+# (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR) straight through, and
+# `str.splitlines()` — the idiom this module and its tests read the stream with —
+# SPLITS ON BOTH. Measured: a message carrying one folded into two lines, the
+# second a fabricated audit record.
+#
+# THE FULL LEDGER `str.splitlines()` SPLITS ON, so the next reader can check this
+# class against it rather than re-deriving it: \n \r \v \f \x1c \x1d \x1e (C0),
+# \x85 (C1 NEL), \u2028, \u2029. The first seven are inside `[\x00-\x1f]`, NEL is
+# inside `[\x7f-\x9f]`, and the last two are why this class is not just C0/C1.
+# 🔴 AND THE TEST DERIVES THAT LEDGER RATHER THAN RESTATING IT.
+# `test_reload_safe_strips_EVERY_separator_str_splitlines_recognises` asks
+# `str.splitlines()` itself, one codepoint at a time, which two-way-pins this
+# class: a separator this regex misses fails, and so does a future Python that
+# recognises a new one. An assertion on `"\n" not in` — which is what the old
+# test had — is exactly as narrow as the bug was, and stayed green through it.
+_RELOAD_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def reload_safe(line: str) -> str:
+    """Strip anything that could forge a LINE BOUNDARY on the reload stream.
+
+    ⚠ THIS IS THE RESIDUAL, NOT THE FIX, and saying which is the point. The
+    leak it used to be asked to cover — a token echoed by a guard — is fixed at
+    the GUARDS (`redacted_field`), because those messages are also what the
+    startup path prints, and a sanitiser here would have left `EXIT_CONFIG`
+    publishing the credential exactly as before. Nothing that reaches this
+    function still carries an unvalidated field value.
+
+    What is left is exception text this module does not author — an `OSError`
+    naming a path, or a genuine loader bug — reaching a stream that is read by
+    machine (`grep 'token reload:'`, and the audit records beside it). A
+    newline in there is a second, syntactically perfect log line of somebody
+    else's choosing, which is the injection `audit_field` exists to stop one
+    layer over. Control characters become `?`; spaces are LEFT ALONE, because
+    a refusal is prose rather than a whitespace-delimited field record and
+    `audit_field`'s space folding would make every reload line unreadable.
+
+    🔴 "A LINE BOUNDARY" IS WHATEVER THE READER SPLITS ON, NOT `\\n`. This
+    function's class was C0/C1 only, which is narrower than the sentence above:
+    U+2028 and U+2029 passed through and `str.splitlines()` — the idiom this
+    module and its tests read the stream with — then reported TWO lines, the
+    second a fabricated audit record. Measured. The class is derived from
+    `str.splitlines()`' own behaviour now; see `_RELOAD_CONTROL`.
+
+    🔴 AND IT ONLY HELPS THE EMITTERS THAT CALL IT. `reload_tokens`' outer
+    backstop interpolated `traceback.format_exc()` and did NOT route through
+    here — a second emitter added after the rule, in the one place nobody
+    re-reads. Both startup emitters in `main` had the same gap. All three call
+    this now; `test_EVERY_emitter_on_the_reload_STREAM_goes_through_reload_safe`
+    pins the set from the AST rather than from this paragraph.
+    """
+    return _RELOAD_CONTROL.sub("?", line)
+
+
+def reload_tokens(
+    handler_cls: type,
+    token_file: str | None,
+    env: dict[str, str],
+    *,
+    log: Callable[[str], None] | None = None,
+) -> bool:
+    """Re-read the token source and SWAP IT IN — but only if it parses.
+
+    Returns whether the table was replaced. Never raises, and never exits.
+
+    🔴 A PARSE FAILURE HERE MUST NOT TAKE THE SERVER DOWN, AND THAT IS THE WHOLE
+    FEATURE. At STARTUP a malformed file is `EXIT_CONFIG`, because there is
+    nothing to fall back to and a store that came up serving nothing looks
+    healthy while being useless. On RELOAD there IS something to fall back to —
+    the table that has been authorising every request until this instant — so
+    exiting would turn a typo in a secret into a read outage. The deployment
+    this serves runs `replicas: 1` with a `Recreate` strategy, so that outage is
+    total and lasts until a human notices. Refusing the new table and saying so
+    is strictly better than both alternatives (exiting, or loading a table
+    nobody validated).
+
+    🔴 SO THE `except` IS DELIBERATELY `Exception`, NOT `ValueError`. `ValueError`
+    is what `load_tokens` raises for every guard it owns, and catching only that
+    would be the tidier spelling — but this function is called from a SIGNAL
+    HANDLER running on the main thread, which is blocked in `serve_forever()`.
+    An exception that escapes there propagates out of `serve_forever` and ends
+    the process, which is precisely the outcome the paragraph above rules out.
+    An `OSError` from a path that is not readable in a way `load_tokens` did not
+    anticipate is enough to do it. The exception TYPE is named in the log line
+    so a genuine bug in the loader is still legible as one, rather than being
+    laundered into "your file was malformed".
+
+    🔴 THE VALIDATION IS `load_tokens`, NOT A SECOND COPY OF IT. Every guard in
+    that ladder — a token too short, a row that does not parse, a reserved or
+    duplicated identity, one credential carrying two authorities — has to hold
+    on a reloaded file exactly as it does on a loaded one, and the only way to
+    keep two implementations of that predicate in step is to have one. A reload
+    path with its own parser is the shape where the migration guards silently
+    stop applying to the only file anybody edits after day one.
+
+    🔴 THE SWAP IS ONE REBIND OF ONE REFERENCE, AND `expected_tokens` IS AN
+    IMMUTABLE TUPLE. The server is threaded and each request reads the table
+    once, so a reader either resolves the attribute before the assignment and
+    sees the whole old table, or after it and sees the whole new one. Mutating
+    the existing sequence in place — clear-then-refill, or append-then-prune —
+    would expose a window in which `authorize` iterates a table that is neither:
+    an emptied one rejects a credential that is valid in BOTH files, which reads
+    to the client as a spurious 401 during every reload.
+
+    🔴 AND IT IS SET ON THE CLASS THE SERVER ACTUALLY USES. `build_server`
+    creates a per-server `_Handler` subclass and sets `expected_tokens` on IT;
+    an assignment to `StoreRequestHandler` would be shadowed by that subclass
+    attribute and change nothing, silently, while every log line claimed a
+    successful reload. `install_sighup_reload` takes the class off the running
+    server for that reason rather than importing one.
+
+    ⚠ AN EMPTY TABLE IS NOT GUARDED HERE, AND THAT IS A REACHABILITY CLAIM.
+    `load_tokens` guard 3 ("token is empty") refuses a source that resolves to
+    whitespace only, and guards 1-2 refuse an absent or unreadable one, so a
+    successful return cannot be an empty list. A guard here would be dead code
+    that no test could reach, which is worse than the sentence you are reading.
+
+    ⚠ `env` IS A SNAPSHOT, AND THE ENV FALLBACK CANNOT ACTUALLY CHANGE. A
+    process's own environment does not change under it, so reloading a server
+    configured from `$SUBSYSTEM_STORE_TOKEN` re-reads the same value and reports
+    a successful no-op. That is honest rather than useful; the file is the thing
+    a `kill -HUP` exists to re-read.
+    """
+    emit = log if log is not None else _reload_log
+    swapped = False
+    # 🔴 THE WHOLE BODY IS INSIDE THE GUARD, INCLUDING THE TWO `emit` CALLS.
+    # They used to sit outside it, which is the one arrangement the docstring's
+    # justification cannot survive: the argument for catching `Exception` at
+    # all is that an exception escaping a signal handler unwinds
+    # `serve_forever` and ends the process, and the two statements that do real
+    # I/O — the ones that can meet a closed or full stdout, or an injected sink
+    # that raises — were the two the guard did not cover. That is a
+    # claim/code mismatch rather than a measured crash: 20,000 SIGHUPs did not
+    # reach a failure, and the reentrant-`print` theory for it was tried and
+    # REFUTED. It is fixed as a mismatch, by making the code as wide as the
+    # sentence, not by narrowing the sentence.
+    try:
+        # Read BEFORE the attempt: on refusal this is the table that keeps
+        # serving, and the operator needs to be told what that is — "refused"
+        # without "and these are still live" leaves them guessing whether a
+        # revocation landed.
+        previous: "tuple[TokenRecord, ...]" = tuple(
+            getattr(handler_cls, "expected_tokens", ())
+        )
+        try:
+            # `warn=` is deliberately NOT redirected to `emit` — see
+            # `_reload_log`. The unrestricted-scope banner keeps the one
+            # spelling and the one stream it has at startup.
+            records = load_tokens(token_file, env)
+            table = tuple(as_token_record(record) for record in records)
+        except Exception as exc:  # noqa: BLE001 — see the docstring; this is the point
+            # 🔴 `{exc}` NO LONGER CARRIES A FIELD VALUE. Every guard that used
+            # to quote the row it refused now describes it (`redacted_field`),
+            # so a token mis-pasted into the identity or scope field cannot
+            # arrive here. `reload_safe` is the residual for text this module
+            # does not author, and it is not what closes the leak.
+            emit(reload_safe(
+                f"{RELOAD_REFUSED} — the token source did not parse "
+                f"({type(exc).__name__}: {exc}). NOTHING CHANGED: still serving "
+                f"the {len(previous)} previously loaded identities "
+                f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in previous)}]. "
+                f"Fix the file and send SIGHUP again"
+            ))
+            return False
+        # THE SWAP. One statement, one name, one immutable value — see above.
+        handler_cls.expected_tokens = table
+        swapped = True
+        emit(reload_safe(
+            f"{RELOAD_LOADED} {len(table)} identities "
+            f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in table)}] "
+            f"(was {len(previous)} "
+            f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in previous)}])"
+        ))
+        return True
+    except Exception as exc:  # noqa: BLE001 — the signal-handler backstop; see above
+        # 🔴 REPORTS WHAT HAPPENED, NOT WHAT WAS ATTEMPTED. `swapped` is set
+        # between the assignment and the verdict line, so a sink that raises
+        # AFTER a successful swap still returns True: the table really was
+        # replaced, and answering False there would make the return value lie
+        # about the server's state to keep the docstring's promise.
+        #
+        # 🔴 AND IT GOES THROUGH `reload_safe` LIKE EVERY OTHER EMITTER. This one
+        # did not, and it was the only emitter in the function that did not —
+        # which is the shape a sanitiser is always defeated by: a backstop added
+        # after the rule, in the place nobody re-reads. Two consequences, both
+        # measured rather than theorised:
+        #
+        #   * `traceback.format_exc(limit=0)` is MULTI-LINE BY CONSTRUCTION for a
+        #     CHAINED exception — it renders the `__context__` chain and the
+        #     "During handling of the above exception…" banner — so this line
+        #     stopped mid-sentence and never reached the REPLACED / NOT replaced
+        #     verdict that is the only reason an operator reads it. `README.md`
+        #     tells them to `grep 'token reload:'`, which returns the truncated
+        #     half.
+        #   * The sink's own exception text landed VERBATIM on a line of its own,
+        #     on the stream the audit records share. That is precisely the
+        #     forgery `reload_safe` and
+        #     `test_a_REFUSAL_cannot_forge_a_SECOND_LINE_on_the_reload_stream`
+        #     exist to stop, re-opened one `except` further out.
+        #
+        # It needs no attacker: a closed or full stdout raises `BrokenPipeError`
+        # / `OSError` from the `print` inside the `try`, and the backstop then
+        # formats THAT while the original loader exception is still the context.
+        #
+        # `type(exc).__name__: exc` rather than `format_exc`: one line by
+        # construction, and it carries the same two facts the traceback's last
+        # line did. The traceback FRAMES were never the diagnostic here — the
+        # raise sites are three, all in this file, and the message names which.
+        try:
+            print(
+                reload_safe(
+                    f"subsystem-store-api: {RELOAD_PREFIX}the verdict could not "
+                    f"be reported ({type(exc).__name__}: {exc}); the table was "
+                    f"{'REPLACED' if swapped else 'NOT replaced'}"
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:  # noqa: BLE001 — best effort; stderr may be gone too
+            pass
+        return swapped
+
+
+def install_sighup_reload(
+    httpd: ThreadingHTTPServer,
+    token_file: str | None,
+    env: dict[str, str],
+    *,
+    log: Callable[[str], None] | None = None,
+) -> "Callable[[int, Any], None]":
+    """Make `kill -HUP <pid>` re-read the token file. Returns the handler.
+
+    🔴 "THE HANDLER IS DEFINED" AND "THE HANDLER IS INSTALLED" ARE NOT ONE
+    CLAIM, and what an uninstalled handler costs depends on WHERE the process
+    is running — measured at both points, because one measurement here would
+    have been a claim about the wrong one:
+
+      * an ORDINARY process (any pid but 1): SIGHUP's default disposition is
+        TERMINATE, so `kill -HUP` does not fail to reload, it KILLS the
+        process. Measured: exit `-1`, death by signal 1. This is what
+        `TestSighupReloadsTheTokenTable` spawns, and why its red at the base
+        ref is a dead server rather than a missing log line.
+      * the DEPLOYED shape, where the container's exec-form `CMD` makes the
+        server PID 1 of its namespace: the kernel DISCARDS a default-action
+        signal sent to a namespace's init from inside that namespace, so
+        `kubectl exec … kill -HUP 1` is a SILENT NO-OP — exit 0, no output,
+        nothing reloaded. Measured under `unshare --fork --pid`: PID 1 with no
+        handler survived a SIGHUP sent by a child; the same program at any
+        other pid died 128+1.
+
+    The silent one is the worse failure and the one the README's revocation
+    step has to defend against, because the operator's next move after an
+    exit-0 is to delete the old credential's line believing it was replaced.
+    A test that calls `reload_tokens` directly proves nothing about either
+    outcome — only sending the real signal to a real process does.
+
+    🔴 IT MUST RUN ON THE MAIN THREAD. `signal.signal` raises `ValueError`
+    anywhere else, and the reload work then happens on the main thread too,
+    interleaved with `serve_forever`'s `select()` rather than concurrently with
+    it. That is the simple correct arrangement here: the main thread does no
+    request work, so a reload that takes a millisecond of file I/O blocks
+    nothing, and the alternative — handing the work to a worker — buys
+    concurrency this does not need at the price of a second ordering problem.
+
+    The handler is RETURNED rather than only installed so a caller can identify
+    it: `signal.getsignal(SIGHUP) is <the returned object>` is what makes
+    "installed" checkable without sending a signal.
+
+    ⚠ `signal.SIGHUP` DOES NOT EXIST ON WINDOWS. Nothing here has ever run
+    there — the deployable is a Linux container — and an `AttributeError` at
+    startup on a platform this was never built for is a louder, more honest
+    failure than a silently inert reload, so it is not defended against.
+    """
+    handler_cls = httpd.RequestHandlerClass
+
+    def _on_sighup(signum: int, frame: Any) -> None:
+        reload_tokens(handler_cls, token_file, env, log=log)
+
+    signal.signal(signal.SIGHUP, _on_sighup)
+    return _on_sighup
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="subsystem-store-api",
@@ -4728,9 +5278,20 @@ def main(argv: list[str] | None = None) -> int:
         # The default path does not exist and an env token does: use it, and SAY
         # SO. Falling back silently is how a deployment that lost its secret mount
         # keeps serving on a token nobody meant to be authoritative.
+        #
+        # 🔴 SANITISED, BECAUSE THE STARTUP/RELOAD SYMMETRY APPLIES TO INJECTION
+        # AS WELL AS TO THE LEAK. The credential leak was fixed at the guards
+        # precisely because a reload-only fix would leave startup publishing the
+        # token — and then the SAME asymmetry was left in place for the newline
+        # forgery: `reload_safe` covered the reload stream while these two
+        # emitters printed a caller-supplied PATH and an unsanitised guard
+        # message raw. Both streams are read by machine and both carry the same
+        # `subsystem-store-api:` prefix a reader greps for.
         print(
-            f"subsystem-store-api: token file {token_file} absent; "
-            f"falling back to $SUBSYSTEM_STORE_TOKEN",
+            reload_safe(
+                f"subsystem-store-api: token file {token_file} absent; "
+                f"falling back to $SUBSYSTEM_STORE_TOKEN"
+            ),
             file=sys.stderr,
         )
         token_file = None
@@ -4740,7 +5301,9 @@ def main(argv: list[str] | None = None) -> int:
         trusted_proxies = load_trusted_proxies(dict(os.environ))
         max_failures, window_s, lockout_s = limiter_settings(dict(os.environ))
     except ValueError as exc:
-        print(f"subsystem-store-api: {exc}", file=sys.stderr)
+        # Sanitised for the same reason as the fallback notice above: guard 2
+        # interpolates the token-file PATH, and a path may contain a separator.
+        print(reload_safe(f"subsystem-store-api: {exc}"), file=sys.stderr)
         return EXIT_CONFIG
 
     limiter = RateLimiter(
@@ -4754,12 +5317,50 @@ def main(argv: list[str] | None = None) -> int:
         trusted_proxies=trusted_proxies,
         limiter=limiter,
     )
+    # 🔴 INSTALLED BEFORE `serve_forever`, AND `token_file` IS THE RESOLVED ONE.
+    #
+    # Before, because the window between the first accepted connection and the
+    # handler being installed is a window in which a `kill -HUP` is LOST. It is
+    # short and it is real, and there is nothing between `build_server` and
+    # here that needs to happen first.
+    #
+    # 🔴 THE ORDERING IS RIGHT; ITS OLD STATED REASON WAS NOT, AND THE WRONG
+    # REASON POINTED AT THE WRONG HAZARD. This said the window "KILLS THE POD".
+    # That is true of an ordinary process — SIGHUP terminates by default — and
+    # FALSE of the shape this file is deployed in: the `CMD` is exec-form, so
+    # the server is PID 1, and the kernel DISCARDS a default-action signal sent
+    # to a namespace's init from inside that namespace. Measured under
+    # `unshare --fork --pid`: PID 1, no handler, SIGHUP from a child — alive,
+    # exit 0. The same program at any other pid died 128+1.
+    #
+    # So in production the window is SILENT rather than fatal, which is worse
+    # to be in: a fatal one crashloops and forces someone to look, while a
+    # silent one returns success and leaves the operator believing a credential
+    # change landed. See `install_sighup_reload`, and step 2 of the README's
+    # revocation procedure, which is written against the silent shape.
+    #
+    # The RESOLVED path — the local rebound above, not `args.token_file` — so a
+    # process that fell back to `$SUBSYSTEM_STORE_TOKEN` because the mount was
+    # absent keeps re-reading the source it is actually serving from, rather
+    # than silently starting to read a file it deliberately ignored at startup.
+    #
+    # ⚠ `dict(os.environ)` is snapshotted here rather than read per reload, for
+    # the same reason `main` snapshots it three times above: a process's own
+    # environment does not change under it. See `reload_tokens`.
+    install_sighup_reload(httpd, token_file, dict(os.environ))
     # 🔴 The startup line prints every FINGERPRINT, in the order the file lists
     # them, and never a token. It is what makes an overlap rotation checkable:
     # the operator reads these ids, then greps the audit log for the one that
     # should have stopped appearing before deleting its line from the secret.
+    # 🔴 SANITISED LIKE EVERY OTHER EMITTER ON THIS STREAM, and it is not a
+    # formality: `--store` and `--host` come straight from argv, and this line
+    # shares stdout with the audit records AND with the reload verdict it is the
+    # predecessor of. `reload_tokens` REPLACES the `token-ids=` list this prints,
+    # so the two are read together by anyone checking a rotation — a forged
+    # second line here is the same defect as a forged one there.
     print(
-        f"subsystem-store-api: listening on {args.host}:{args.port} "
+        reload_safe(
+            f"subsystem-store-api: listening on {args.host}:{args.port} "
         # 🔴 `<fingerprint>:<identity>` — the fingerprint FIRST and unchanged in
         # form, because the rotation procedure in the README greps for it. The
         # identity is appended, not substituted: two rows can hold one holder's
@@ -4771,7 +5372,13 @@ def main(argv: list[str] | None = None) -> int:
         # 🔴 PRINTED, so "which peers may set CF-Connecting-IP" is a fact in the
         # pod log rather than a value nobody can read back out of a running
         # container. It is configuration, not a credential.
-        f"trusted-proxies={','.join(str(n) for n in trusted_proxies)}",
+        f"trusted-proxies={','.join(str(n) for n in trusted_proxies)} "
+        # 🔴 ADVERTISED, because a reload mechanism nobody knows about is a
+        # mechanism nobody uses: the operator's instinct on a credential change
+        # is to replace the pod, and the whole point of this line is to give
+        # them a cheaper move that is visible from the log they are already in.
+            f"reload=SIGHUP"
+        ),
         flush=True,
     )
     try:
