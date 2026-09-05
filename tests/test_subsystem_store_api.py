@@ -6108,6 +6108,10 @@ class TestPhaseOneScope:
 
 SECOND_TOKEN = "q" * 20 + "R" * 20 + "s" * 8  # 48 chars, disjoint from GOOD_TOKEN
 THIRD_TOKEN = "m" * 20 + "N" * 20 + "o" * 8
+# The credential an operator is MID-WAY THROUGH INSTALLING — the one a refusal
+# is most likely to be holding, and the one the leak below published. Disjoint
+# from the three above so a leak can be attributed to the row that carried it.
+INSTALLING_TOKEN = "z" * 20 + "Y" * 20 + "x" * 8
 
 
 class TestTokenSetAndOverlapRotation:
@@ -9012,7 +9016,9 @@ def test_every_audit_reading_test_goes_through_the_shared_helper():
 # leaves the companion test asserting "fixture drift" against a tree that has
 # not drifted. The count is a ledger of how many tests read the subprocess's
 # stream; it grows when coverage grows, and it must FAIL when coverage shrinks.
-_EXPECTED_DRAIN_SITES = 11
+# 11 -> 12: `test_a_MIS_PASTED_CREDENTIAL_is_refused_without_reaching_the_LOG`
+# reads the whole stream of a real process to prove a token never reaches it.
+_EXPECTED_DRAIN_SITES = 12
 
 
 def _drain_output_call_sites(source: "str | None" = None) -> int:
@@ -10630,12 +10636,29 @@ class TestScopedTokenRowGuards:
         assert ZACH_TOKEN not in message
 
     def test_GUARD_7_an_identity_outside_the_charset_is_refused(self, tmp_path: Path):
+        """🔴 THE FIELD IS DESCRIBED, NOT QUOTED, AND THIS TEST USED TO PIN THE
+        OPPOSITE. It asserted `"Za_ch" in str(exc.value)` — i.e. it required the
+        guard to echo the field it was handed, which is precisely how a live
+        bearer token reached stdout: the identity field is where a mis-pasted
+        credential ALWAYS lands (a token is >= 43 chars, an identity <= 32), so
+        the echo this pinned was unconditional. Reversed rather than deleted,
+        because the diagnostic requirement is real and has to be met some other
+        way — see `redacted_field`, and `TestNoRefusalEVEREchoesAFieldValue`.
+        """
         # Passes guard 6: three fields. Fails only on the identity's spelling.
         path = self._write(tmp_path, f"{ZACH_TOKEN} Za_ch {ALLOW_SCOPE}")
         with pytest.raises(ValueError) as exc:
             api.load_tokens(path, {}, warn=lambda _l: None)
-        assert "invalid identity in token row on line 1 of 1" in str(exc.value)
-        assert "Za_ch" in str(exc.value)
+        message = str(exc.value)
+        assert "invalid identity in token row on line 1 of 1" in message
+        assert "Za_ch" not in message, (
+            f"the guard echoed the field it refused: {message!r}"
+        )
+        # …and still says enough to act on: how long it was, and the same
+        # `token_id` the audit log carries, so a mis-pasted credential can be
+        # tied to the `token=` id it will authorise under once the row is fixed.
+        assert f"{len('Za_ch')} chars" in message, message
+        assert api.token_id("Za_ch") in message, message
 
     def test_GUARD_7_a_TOKEN_can_never_be_read_as_an_identity(self, tmp_path: Path):
         """🔴 THE STRUCTURAL HALF OF THE FORMAT CHANGE, AND THE FIXTURE HAS TO
@@ -10691,8 +10714,20 @@ class TestScopedTokenRowGuards:
         path = self._write(tmp_path, f"{ZACH_TOKEN} zach kelp.forest")
         with pytest.raises(ValueError) as exc:
             api.load_tokens(path, {}, warn=lambda _l: None)
-        assert "invalid scope in token row on line 1 of 1" in str(exc.value)
-        assert "kelp.forest" in str(exc.value)
+        message = str(exc.value)
+        assert "invalid scope in token row on line 1 of 1" in message
+        # 🔴 SAME REVERSAL AS GUARD 7, AND FOR THE SAME REACHABLE INPUT. This
+        # asserted `"kelp.forest" in …`, and field 3 takes an unvalidated value
+        # too: a token carrying a character outside `SAFE_PATH_COMPONENT` lands
+        # here and was quoted back in full.
+        assert "kelp.forest" not in message, (
+            f"the guard echoed the field it refused: {message!r}"
+        )
+        assert f"{len('kelp.forest')} chars" in message, message
+        assert api.token_id("kelp.forest") in message, message
+        # The IDENTITY is still named, because it has already passed guard 7:
+        # capped below the token floor, and in every audit line already.
+        assert "'zach'" in message, message
 
     def test_GUARD_10_also_catches_an_EMPTY_entry_inside_a_real_list(
         self, tmp_path: Path
@@ -10781,7 +10816,12 @@ class TestScopedTokenRowGuards:
             api.load_tokens(path, {}, warn=lambda _l: None)
         message = str(exc.value)
         assert "invalid identity in token row on line 2 of 2" in message
-        assert "Za_CH_BAD" in message
+        # The row it names is the LINE NUMBER, not an echo of the field: guard 7
+        # describes what it was handed rather than quoting it, because that
+        # field is where a mis-pasted credential lands. The fingerprint is what
+        # ties the refusal to a specific value without printing one.
+        assert "Za_CH_BAD" not in message, message
+        assert api.token_id("Za_CH_BAD") in message, message
 
     def test_GUARD_11_collapses_ONE_GRANT_SPELLED_TWO_WAYS(self, tmp_path: Path):
         """🔴 THE OTHER DIRECTION — OVER-REFUSING IS ALSO A FAILURE, and this is
@@ -18693,7 +18733,15 @@ class TestSighupReloadsTheTokenTable:
         non-zero number of verdict lines (a helper wired to nothing would report
         an unfalsifiable zero forever), and a SIGHUP against an UNCHANGED file
         leaves the process alive and still serving. The second is the difference
-        between "the handler is installed" and "SIGHUP kills the pod".
+        between "the handler is installed" and "SIGHUP kills this process".
+
+        ⚠ "KILLS THE PROCESS" IS THE SHAPE MEASURED *HERE*, NOT IN THE POD. A
+        spawned server is an ordinary pid and SIGHUP terminates it by default;
+        the deployed one is PID 1, where the kernel DISCARDS a default-action
+        signal from inside the namespace, so an uninstalled handler there is a
+        silent no-op instead. Both are measured — see `install_sighup_reload` —
+        and the silent one is why the README's revocation step is written to
+        require the verdict LINE rather than an exit code.
         """
         path = tmp_path / "token"
         path.write_text(GOOD_TOKEN + "\n")
@@ -18844,6 +18892,19 @@ class TestSighupReloadsTheTokenTable:
         It also pins the observability requirement: an operator has to be able
         to tell WHY a reload was refused from the log line alone, without
         re-deriving it by hand.
+
+        ⚠ ITS NO-CREDENTIAL CHECK IS AN INVARIANT GUARD FOR **ONE** SHAPE, AND
+        THE COMMENT BELOW USED TO CLAIM MORE. It said the whole file was
+        asserted so "a token leaked on any other line must still fail this",
+        which read as coverage of the hazard in general. It is not: guard 12's
+        message is built from identities and fingerprints, so it CANNOT echo a
+        token however the guards are written, and this assertion was
+        unfalsifiable for the leak it appeared to be watching — one did ship
+        past it, through guards 7 and 10. The sweep across every guard in the
+        ladder lives in `TestNoRefusalEVEREchoesAFieldValue`; what is left here
+        is a whole-stream check on the shape this test already spawns, kept
+        because a process boundary is a different observation from an
+        in-process sink and labelled for what it is.
         """
         path = tmp_path / "token"
         path.write_text(f"{GOOD_TOKEN}\n")
@@ -18865,14 +18926,74 @@ class TestSighupReloadsTheTokenTable:
         # And the refusal says what is STILL LIVE, because "refused" alone
         # leaves the operator guessing whether their revocation landed.
         assert api.token_id(GOOD_TOKEN) in verdict, verdict
-        # 🔴 NEVER A CREDENTIAL, on the reload path either. The whole file is
-        # asserted, not just the verdict line — a token leaked on any other line
-        # must still fail this.
+        # 🔴 NEVER A CREDENTIAL — for THIS refusal shape, which is guard 12's.
+        # The whole stream is read rather than the verdict line, so a token
+        # printed anywhere else by this run still fails; it is NOT a claim
+        # about the other eleven guards. See the docstring, and
+        # `TestNoRefusalEVEREchoesAFieldValue` for the ones that can leak.
         assert out.wait_closed(HANG_TIMEOUT), (
             f"the stream never reached EOF within {HANG_TIMEOUT:g}s, so the "
             f"leak check below is racing lines still in flight:\n{out.text}"
         )
         assert GOOD_TOKEN not in out.text and SECOND_TOKEN not in out.text
+
+    def test_a_MIS_PASTED_CREDENTIAL_is_refused_without_reaching_the_LOG(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 THE LEAK, AGAINST A REAL PROCESS AND ITS REAL STDOUT.
+
+        `TestNoRefusalEVEREchoesAFieldValue` drives every guard through an
+        in-process sink. This drives the ONE guard an operator actually reaches
+        by accident, all the way out to the pipe: a token written one field to
+        the left (`<current> <new> <scope>`) always lands on the identity
+        guard, because a token cannot be short enough to be an identity.
+
+        Three claims, and the third is the one that shipped broken: the process
+        survives, the previous table keeps serving, and NEITHER credential —
+        not the live one, not the one being installed — appears anywhere in the
+        stream. The stream is read after EOF, so a line printed during shutdown
+        is inside the check too.
+        """
+        path = tmp_path / "token"
+        path.write_text(f"{GOOD_TOKEN}\n")
+        with self._spawn(store, path) as (base, proc):
+            out = drain_output(proc)
+            path.write_text(f"{GOOD_TOKEN} {INSTALLING_TOKEN} {SCOPE}\n")
+            hup(proc)
+            lines = await_reload(out, 1)
+            alive = proc.poll()
+            still = fetch(f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN)[0]
+        assert alive is None, f"the server EXITED (rc={proc.returncode})"
+        assert still == 200, "the previously-loaded table stopped serving"
+        assert api.RELOAD_REFUSED in lines[-1], lines
+        assert "invalid identity in token row" in lines[-1], lines
+        assert out.wait_closed(HANG_TIMEOUT), (
+            f"the stream never reached EOF within {HANG_TIMEOUT:g}s, so the "
+            f"leak check below is racing lines still in flight:\n{out.text}"
+        )
+        # 🔴 BOTH HALVES OF THE PAIR, AND THE LEAK IS ASSERTED FIRST ON PURPOSE.
+        # The refusal must carry the mis-pasted field's FINGERPRINT — that is
+        # what makes "the token is absent" a fact about a stream derived from
+        # it rather than about a run that printed nothing. Passing requires
+        # both, so the pair is reported either way; the order only decides
+        # which failure a reader sees first, and against the pre-fix code the
+        # informative one is the credential, not the missing fingerprint.
+        leaked = [
+            name for name, tok in
+            (("the live token", GOOD_TOKEN), ("the token being installed", INSTALLING_TOKEN))
+            if tok in out.text
+        ]
+        fingerprinted = api.token_id(INSTALLING_TOKEN) in out.text
+        assert not leaked, (
+            f"{' and '.join(leaked)} reached the process's STDOUT on a refused "
+            f"reload — the stream the audit log is read from, from a process "
+            f"that is still healthy (fingerprint present: {fingerprinted}):"
+            f"\n{out.text}"
+        )
+        assert fingerprinted, (
+            f"the refusal named no fingerprint, so the 'no credential' check "
+            f"above may simply have read a stream that says nothing:\n{out.text}"
+        )
 
     def test_a_reload_that_makes_the_file_UNREADABLE_is_also_survived(
         self, store: Path, tmp_path: Path
@@ -18897,6 +19018,15 @@ class TestSighupReloadsTheTokenTable:
         assert old == 200, "the previously-loaded table stopped serving"
         assert api.RELOAD_REFUSED in lines[-1], lines
         assert "token file unreadable" in lines[-1], lines
+
+
+# How long a process that IS going to exit 78 is given to do it. NOT a hang
+# bound: a hang bound asks "when do we call this stuck", this asks "how long is
+# long enough that a timeout means SERVING rather than SLOW". It is only ever
+# spent by the positive control below, and that control checks the bound is
+# wide enough before it relies on it — so this number cannot quietly become the
+# thing being measured.
+SHORT_EXIT_BOUND = 8.0
 
 
 class TestStartupStillRefusesAMalformedFile:
@@ -18935,6 +19065,25 @@ class TestStartupStillRefusesAMalformedFile:
                 "the server did not exit on a malformed token file — it is "
                 "serving, which is the failure this guard pins against"
             )
+
+    def _run_to_completion_with_bound(self, store: Path, token_file: Path, *, bound):
+        """`_run_to_completion` with its completion deadline shortened.
+
+        🔴 A SEPARATE ENTRY POINT, exactly as `_raw_exchange_with_bound` is, and
+        for the same reason: a `timeout=` parameter on the shared helper is one
+        refactor away from an ordinary call site pinning its own bound, which is
+        the drift `test_no_hang_detector_is_still_bound_by_a_LITERAL` exists to
+        stop. Nothing in the suite proper reaches this — it exists so a control
+        that must NOT exit can be observed without spending `HANG_TIMEOUT`
+        seconds waiting for a process whose whole job is to keep running.
+        """
+        global HANG_TIMEOUT
+        previous = HANG_TIMEOUT
+        HANG_TIMEOUT = bound
+        try:
+            return self._run_to_completion(store, token_file)
+        finally:
+            HANG_TIMEOUT = previous
 
     def test_a_SHORT_token_at_startup_still_exits_78(
         self, store: Path, tmp_path: Path
@@ -18976,18 +19125,50 @@ class TestStartupStillRefusesAMalformedFile:
         A VALID file makes this process serve rather than exit, so the runner
         must time out and raise. That is the non-78 outcome, and it is the one
         that separates "78 because of the token file" from "78 no matter what".
+
+        🔴 IT DOES NOT SPEND `HANG_TIMEOUT` TO LEARN THIS, AND THE SHORT BOUND
+        IS SELF-VALIDATING. Waiting out the full hang bound to watch a process
+        that is working exactly as intended is 60 s of suite time for one bit.
+        The obvious fix — just wait less — introduces a NEW way to be vacuous: a
+        bound short enough that even a process which WOULD exit 78 gets killed
+        by the timeout first would make this control pass while measuring
+        nothing at all.
+
+        So the same short bound is spent on BOTH legs. The malformed leg has to
+        still reach 78 inside it, which is what proves the bound is long enough
+        for a process that exits; only then does the valid leg's timeout mean
+        "it is serving" rather than "the bound was too small".
         """
-        path = tmp_path / "token"
-        path.write_text(GOOD_TOKEN + "\n")
+        bad = tmp_path / "malformed"
+        bad.write_text("short\n")
+        good = tmp_path / "token"
+        good.write_text(GOOD_TOKEN + "\n")
+        # LEG 1 — the bound is provably wide enough for a process that exits.
+        (_out, err), rc = self._run_to_completion_with_bound(
+            store, bad, bound=SHORT_EXIT_BOUND
+        )
+        assert rc == api.EXIT_CONFIG, (
+            f"a malformed file did not reach {api.EXIT_CONFIG} within "
+            f"{SHORT_EXIT_BOUND:g}s (got {rc}) — the bound is too short, so "
+            f"leg 2's timeout below would prove nothing: {err}"
+        )
+        # LEG 2 — and a VALID file does not exit inside the same bound.
         with pytest.raises(AssertionError, match="did not exit"):
-            self._run_to_completion(store, path)
+            self._run_to_completion_with_bound(store, good, bound=SHORT_EXIT_BOUND)
 
 
 class TestTheHandlerIsInstalledNotMerelyDefined:
     """🔴 A FUNCTION THAT RELOADS IS NOT A SERVER THAT RELOADS. `reload_tokens`
-    can be perfect and `kill -HUP` can still kill the pod, because SIGHUP's
-    default disposition is terminate and nothing about defining a handler
-    changes that. These tests are about the WIRING.
+    can be perfect and `kill -HUP` can still do something other than reload,
+    because SIGHUP's default disposition is not "ignored" and nothing about
+    DEFINING a handler changes what is INSTALLED. These tests are about the
+    WIRING.
+
+    ⚠ WHAT AN UNINSTALLED HANDLER COSTS DEPENDS ON THE PID, and both points are
+    measured (see `install_sighup_reload`): an ordinary process is TERMINATED
+    (128+1), while the deployed PID 1 has the signal DISCARDED and reports
+    success. The wiring claim is the same either way; the failure it prevents
+    is loud in the first case and silent in the second.
     """
 
     def test_install_sighup_reload_REGISTERS_the_handler_it_returns(
@@ -19280,6 +19461,13 @@ class TestReloadTokensSwapsRatherThanMutates:
         guard, an absent file, and a source that is present but empty. A handler
         that caught `ValueError` from the parse but not the file access would
         pass the first two and take the pod down on the third.
+
+        ⚠ IT SWEEPS SEVEN SOURCES AND USED TO ASSERT ONLY THE BOOLEAN, which is
+        how a credential got printed to stdout under a fully green sweep: the
+        one observable nobody looked at was the TEXT. Every source's emitted
+        line is now captured and checked, so the sweep's breadth counts for the
+        leak too rather than for the return value alone. The exhaustive
+        per-guard version is `TestNoRefusalEVEREchoesAFieldValue`.
         """
         httpd = self._server(store, GOOD_TOKEN)
         good = tmp_path / "good"
@@ -19291,24 +19479,31 @@ class TestReloadTokensSwapsRatherThanMutates:
             "whitespace only": "   \n\n",
         }
         results = {}
+        emitted: "dict[str, str]" = {}
+
+        def _reload(name: str, source):
+            sink: "list[str]" = []
+            results[name] = api.reload_tokens(
+                handler, source, {}, log=sink.append
+            )
+            emitted[name] = "\n".join(sink)
+
         try:
             handler = httpd.RequestHandlerClass
             baseline = handler.expected_tokens
             for name, body in sources.items():
                 path = tmp_path / name.replace(" ", "-")
                 path.write_text(body)
-                results[name] = api.reload_tokens(handler, str(path), {})
-            results["absent file"] = api.reload_tokens(
-                handler, str(tmp_path / "never-existed"), {}
-            )
+                _reload(name, str(path))
+            _reload("absent file", str(tmp_path / "never-existed"))
             # A directory, not a file: `Path.is_file()` is False, so this lands
             # on guard 2 by a different route than "the path does not exist".
-            results["a directory"] = api.reload_tokens(handler, str(tmp_path), {})
+            _reload("a directory", str(tmp_path))
             unchanged = handler.expected_tokens is baseline
             # 🔴 POSITIVE CONTROL, in the same process and on the same handler:
             # if EVERY source refused, `False` would be indistinguishable from a
             # reloader that is inert. One of them must be able to say True.
-            results["a VALID file"] = api.reload_tokens(handler, str(good), {})
+            _reload("a VALID file", str(good))
         finally:
             httpd.server_close()
         assert results == {
@@ -19321,6 +19516,458 @@ class TestReloadTokensSwapsRatherThanMutates:
             "a VALID file": True,
         }, results
         assert unchanged, "a refused reload replaced the table"
+        # 🔴 THE TEXT, ACROSS THE SAME SEVEN SOURCES. Every one of them was
+        # handed a file containing `GOOD_TOKEN`, or names a path — none has any
+        # business printing the credential, and the LOADED line least of all.
+        assert all(emitted.values()), (
+            f"a reload verdict was empty, so the leak check below is reading "
+            f"nothing: { {k: v for k, v in emitted.items() if not v} }"
+        )
+        assert api.token_id(GOOD_TOKEN) in emitted["a VALID file"], (
+            "the LOADED line does not carry the fingerprint, so 'the token is "
+            "absent' is not a claim about a line derived from it"
+        )
+        leaked = [name for name, text in emitted.items() if GOOD_TOKEN in text]
+        assert not leaked, f"the credential was emitted by: {leaked}\n{emitted}"
+
+    def test_reload_tokens_NEVER_raises_when_the_SINK_ITSELF_raises(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 THE TWO STATEMENTS THAT DO I/O USED TO SIT OUTSIDE THE GUARD.
+
+        The whole justification for catching bare `Exception` here is that this
+        runs in a signal handler on the thread blocked in `serve_forever`, so
+        anything escaping ends the process. The two `emit` calls — the only
+        statements that touch the outside world, and the ones that can meet a
+        closed stdout, a full disk or an injected sink — were the two the `try`
+        did not cover, while the docstring said "never raises, and never exits".
+
+        A claim/code mismatch rather than a demonstrated crash: 20,000 SIGHUPs
+        did not reach it and the reentrant-`print` theory for it was REFUTED.
+        It is closed by making the code as wide as the sentence, and this is
+        what says the sentence is now true — for the REFUSED emit and the
+        LOADED emit both, which are different statements on different paths.
+
+        🔴 AND THE RETURN VALUE STILL DESCRIBES THE TABLE. A sink that raises
+        AFTER a successful swap must not report `False`: the table really was
+        replaced, and lying about that to keep a promise about exceptions would
+        make the caller's view of the server wrong.
+        """
+        def boom(_line: str) -> None:
+            raise RuntimeError("the log sink is broken")
+
+        good = tmp_path / "good"
+        good.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
+        bad = tmp_path / "bad"
+        bad.write_text("short\n")
+        httpd = self._server(store, GOOD_TOKEN)
+        try:
+            handler = httpd.RequestHandlerClass
+            before = handler.expected_tokens
+            # The REFUSED path: nothing swapped, and the verdict cannot be told.
+            refused = api.reload_tokens(handler, str(bad), {}, log=boom)
+            after_refusal = handler.expected_tokens
+            # The LOADED path: the swap DID happen before the sink blew up.
+            loaded = api.reload_tokens(handler, str(good), {}, log=boom)
+            after_load = handler.expected_tokens
+        finally:
+            httpd.server_close()
+        assert refused is False
+        assert after_refusal is before, "a refused reload replaced the table"
+        assert loaded is True, (
+            "a sink that raised AFTER the swap made the reload report failure, "
+            "so the return value now disagrees with the server's actual table"
+        )
+        assert {r.token for r in after_load} == {GOOD_TOKEN, SECOND_TOKEN}
+
+    def test_a_REFUSAL_cannot_forge_a_SECOND_LINE_on_the_reload_stream(
+        self, store: Path, tmp_path: Path
+    ):
+        """🔴 THE RESIDUAL, AND IT IS DELIBERATELY NARROW. The verdict goes to
+        STDOUT, beside the audit records, and both are read by machine. A
+        newline reaching that stream is a second, syntactically perfect line of
+        somebody else's choosing — the injection `audit_field` closes one layer
+        over, in a place that had no equivalent.
+
+        The reachable route is the ONE message built from text this module does
+        not author: guard 2 interpolates the token-file PATH, and a path may
+        contain a newline. So the fixture is a real path with a real forged
+        audit record in it, not a `\\n` in a string — a scanner that only
+        recognises its own textbook example passes the real thing.
+
+        ⚠ THIS IS NOT WHAT FIXED THE CREDENTIAL LEAK. That is fixed at the
+        guards, because those messages are also what STARTUP prints; a
+        sanitiser here would have left exit-78 publishing the token. See
+        `TestNoRefusalEVEREchoesAFieldValue`.
+        """
+        forged = (
+            "store-api audit ts=2000-01-01T00:00:00Z ip=203.0.113.7 peer=trusted "
+            "method=GET path=/api/v1/recall/x token=deadbeefcafe auth=ok result=200"
+        )
+        # A path that does not exist, whose name carries the forged record on a
+        # line of its own. Guard 2 quotes the path.
+        hostile = tmp_path / f"token\n{forged}"
+        httpd = self._server(store, GOOD_TOKEN)
+        sink: "list[str]" = []
+        try:
+            handler = httpd.RequestHandlerClass
+            refused = api.reload_tokens(handler, str(hostile), {}, log=sink.append)
+        finally:
+            httpd.server_close()
+        assert refused is False
+        text = "\n".join(sink)
+        # POSITIVE CONTROL: the path really did reach the message, so the
+        # absence of a newline below is a fact about the sanitiser rather than
+        # about a fixture that never arrived.
+        assert "token=deadbeefcafe" in text, (
+            f"the hostile path never reached the verdict, so this test is "
+            f"measuring nothing: {text!r}"
+        )
+        assert len(sink) == 1, f"the refusal emitted {len(sink)} calls: {sink}"
+        assert "\n" not in text and "\r" not in text, (
+            f"a refused reload put a LINE BOUNDARY on the machine-parsed "
+            f"stream, so a caller-supplied string can forge a record: {text!r}"
+        )
+
+
+def _refusal_ladder_guard_numbers() -> "set[int]":
+    """The guard NUMBERS `load_tokens`' own docstring enumerates.
+
+    🔴 READ OUT OF THE SOURCE OF TRUTH, so the sweep below is pinned two-way: a
+    guard added to the ladder with no fixture row fails, and a fixture row
+    naming a guard the ladder does not have fails. A hand-written `range(1, 13)`
+    would drift silently, which is the whole failure mode this class exists for
+    — the previous no-token guard was one input wide and read as if it were
+    twelve.
+    """
+    doc = api.load_tokens.__doc__ or ""
+    return {int(m) for m in re.findall(r"^\s+(\d+)\.\s+\S", doc, re.MULTILINE)}
+
+
+class TestNoRefusalEVEREchoesAFieldValue:
+    """🔴 A LIVE BEARER TOKEN WAS PRINTED VERBATIM TO STDOUT ON A REFUSED RELOAD.
+
+    The shape, and it is unconditional rather than a corner case. An operator
+    installing a new credential writes the row one field short —
+    `<current-token> <new-token> alpha` — and `MIN_TOKEN_CHARS` (43) is
+    deliberately ABOVE `MAX_IDENTITY_CHARS` (32), so a token in field 2 can
+    only ever be too long: it ALWAYS reaches the invalid-identity guard, which
+    quoted `{identity!r}` back. `reload_tokens` then interpolated that message
+    into its REFUSED line and printed it to STDOUT — the stream the audit log
+    is read out of, from a process that stays healthy and can be signalled
+    again, holding the credential the operator was in the middle of installing.
+    The scope guard had the same defect one field further right.
+
+    🔴 WHY THE GUARD THAT SHOULD HAVE CAUGHT THIS DID NOT. There was already a
+    "never a credential" assertion on a reload verdict, and its comment said
+    "the whole file is asserted — a token leaked on any other line must still
+    fail this". It ran against exactly ONE refusal shape: guard 12, whose
+    message is built from identities and fingerprints and therefore CANNOT
+    contain a token whatever the implementation does. Unfalsifiable for the
+    hazard it named. So the assertion here is driven across EVERY guard in the
+    ladder, with the ladder itself read out of `load_tokens.__doc__` rather
+    than restated, and each row carries a secret it would leak if that guard
+    echoed its input.
+
+    Both paths, because the guards are shared: `load_tokens` is what STARTUP
+    prints to stderr before exiting 78, and `reload_tokens` is what a live
+    process prints to stdout. Fixing the emit alone would have left startup
+    publishing the credential exactly as before.
+    """
+
+    def _server(self, store: Path, *tokens: str):
+        return api.build_server(
+            host="127.0.0.1", port=0, store_root=str(store),
+            tokens=tokens, trusted_proxies=(LOOPBACK_PROXY,),
+        )
+
+    # guard -> (file body or None for "no source", the phrase that guard owns,
+    #           the secrets that must not appear, whether the value is REDACTED
+    #           rather than absent-by-construction)
+    #
+    # 🔴 EVERY ROW CARRIES A SECRET IT WOULD LEAK IF ITS GUARD ECHOED THE FIELD,
+    # including the rows whose guard structurally cannot. Those are not padding:
+    # they are what stops the next edit from moving an echo into a guard nobody
+    # is watching, and they are the difference between this sweep and the
+    # one-input assertion it replaces.
+    def _cases(self, tmp_path: Path):
+        five = "\n".join(
+            f"{c * 20}{c.upper() * 20}{c * 8}" for c in "abcdefg"[: api.MAX_TOKENS + 1]
+        )
+        truncated = INSTALLING_TOKEN[:20]
+        return {
+            1: (None, "no token source", (GOOD_TOKEN,), False),
+            2: (
+                # A path that is not a file: the message names the PATH, and the
+                # path is `--token-file`/env configuration rather than file
+                # content, so nothing from the secret can reach it.
+                str(tmp_path / "never-existed"),
+                "token file unreadable",
+                (GOOD_TOKEN, INSTALLING_TOKEN),
+                False,
+            ),
+            3: ("   \n\n", "token is empty", (GOOD_TOKEN,), False),
+            4: (five + "\n", "too many tokens", tuple(five.split("\n")), False),
+            # A TRUNCATED live credential, not the word "short": an editor that
+            # ate the tail of a real token is the case guard 5 was written for,
+            # and the remaining prefix is still secret.
+            5: (truncated + "\n", "is too short", (truncated,), False),
+            # Two tokens on one line — the exact shape the row format made
+            # ambiguous, and the one whose second field is a whole credential.
+            6: (
+                f"{GOOD_TOKEN} {INSTALLING_TOKEN}\n",
+                "malformed token row",
+                (GOOD_TOKEN, INSTALLING_TOKEN),
+                False,
+            ),
+            # 🔴 THE DEFECT. The new credential in the identity field.
+            7: (
+                f"{GOOD_TOKEN} {INSTALLING_TOKEN} {SCOPE}\n",
+                "invalid identity in token row",
+                (GOOD_TOKEN, INSTALLING_TOKEN),
+                True,
+            ),
+            8: (
+                _mapped_row(GOOD_TOKEN, api.LEGACY_IDENTITY, SCOPE) + "\n",
+                "reserved identity in token row",
+                (GOOD_TOKEN,),
+                False,
+            ),
+            9: (
+                f"{GOOD_TOKEN} alpha ,\n",
+                "empty scope allowlist",
+                (GOOD_TOKEN,),
+                False,
+            ),
+            # 🔴 THE SAME DEFECT ONE FIELD RIGHT. A token carrying a character
+            # `SAFE_PATH_COMPONENT` excludes is not a legal scope, so it lands
+            # here — and was quoted back the same way.
+            10: (
+                f"{GOOD_TOKEN} alpha {INSTALLING_TOKEN}=\n",
+                "invalid scope in token row",
+                (GOOD_TOKEN, INSTALLING_TOKEN),
+                True,
+            ),
+            11: (
+                _mapped_row(GOOD_TOKEN, "alpha", SCOPE) + "\n"
+                + _mapped_row(GOOD_TOKEN, "beta", OTHER_SCOPE) + "\n",
+                "duplicate token on lines",
+                (GOOD_TOKEN,),
+                False,
+            ),
+            12: (
+                _mapped_row(GOOD_TOKEN, "alpha", SCOPE) + "\n"
+                + _mapped_row(SECOND_TOKEN, "alpha", OTHER_SCOPE) + "\n",
+                "duplicate identity",
+                (GOOD_TOKEN, SECOND_TOKEN),
+                False,
+            ),
+        }
+
+    def _source(self, tmp_path: Path, guard: int, body):
+        """A row's `token_file` argument. Guard 1 has none; guard 2 names a path
+        that is deliberately not written; every other row is a real file.
+        """
+        if body is None:
+            return None
+        if guard == 2:
+            return body
+        path = tmp_path / f"guard-{guard}"
+        path.write_text(body)
+        return str(path)
+
+    def test_the_LADDER_and_the_fixture_table_name_the_SAME_guards(self):
+        """🔴 THE ANTI-VACUITY LEDGER, AND IT IS TWO-WAY. This sweep's whole
+        claim is "every refusal shape", so a guard the table does not reach is
+        the defect, not an omission — and a table row for a guard the ladder
+        does not have means the fixture is testing something that no longer
+        exists. Either way the sentence in this class's docstring stops being
+        true, and only this test can see it.
+        """
+        ladder = _refusal_ladder_guard_numbers()
+        assert ladder, (
+            "no guard numbers were parsed out of `load_tokens.__doc__` — the "
+            "ledger below is comparing against an empty set, which every table "
+            "would satisfy"
+        )
+        assert set(self._cases(Path("/nonexistent"))) == ladder, (
+            f"the fixture table covers {sorted(self._cases(Path('/nonexistent')))} "
+            f"and the ladder documents {sorted(ladder)}"
+        )
+
+    def test_NO_guard_echoes_a_field_value_at_STARTUP(self, tmp_path: Path):
+        """The `load_tokens` path — what `main` prints to stderr before exiting
+        78. The message is asserted WHOLE: `secret not in str(exc)`, not a
+        substring of it.
+        """
+        messages: "dict[int, str]" = {}
+        for guard, (body, phrase, secrets, _redacted) in self._cases(tmp_path).items():
+            source = self._source(tmp_path, guard, body)
+            try:
+                api.load_tokens(source, {})
+            except ValueError as exc:
+                messages[guard] = str(exc)
+                continue
+            raise AssertionError(
+                f"guard {guard}'s fixture LOADED instead of refusing, so its "
+                f"leak assertion would have been vacuous"
+            )
+        cases = self._cases(tmp_path)
+        # 🔴 EACH ROW REACHED THE GUARD IT NAMES. Without this the table could
+        # silently collapse onto one early guard and still report twelve
+        # passes — which is the exact failure the previous one-shape assertion
+        # made: coverage claimed by a docstring and provided by nothing.
+        for guard, message in messages.items():
+            assert cases[guard][1] in message, (
+                f"guard {guard}'s fixture was refused by a DIFFERENT guard: "
+                f"expected {cases[guard][1]!r}, got {message!r}"
+            )
+        assert len(set(messages.values())) == len(messages), (
+            f"two guards produced the SAME message, so fewer than "
+            f"{len(messages)} distinct guards were exercised: {messages}"
+        )
+        leaked = {
+            guard: secret
+            for guard, (_b, _p, secrets, _r) in cases.items()
+            for secret in secrets
+            if secret in messages[guard]
+        }
+        assert not leaked, (
+            f"a credential was echoed VERBATIM by {len(leaked)} guard(s) "
+            f"{sorted(leaked)}. This message is printed to stderr at startup "
+            f"and to STDOUT on every refused reload:\n"
+            + "\n".join(f"  guard {g}: {messages[g]}" for g in sorted(leaked))
+        )
+
+    def test_NO_guard_echoes_a_field_value_on_a_REFUSED_RELOAD(
+        self, store: Path, tmp_path: Path
+    ):
+        """The `reload_tokens` path — what a LIVE, HEALTHY process prints to
+        STDOUT, repeatedly, for as long as the operator keeps signalling it.
+
+        Same table, and the assertion is on the WHOLE captured sink, not on the
+        verdict line alone: a token printed on any other line the reload emits
+        must still fail this.
+        """
+        httpd = self._server(store, GOOD_TOKEN)
+        cases = self._cases(tmp_path)
+        emitted: "dict[int, str]" = {}
+        refused: "dict[int, bool]" = {}
+        try:
+            handler = httpd.RequestHandlerClass
+            for guard, (body, _phrase, _secrets, _r) in cases.items():
+                sink: "list[str]" = []
+                refused[guard] = api.reload_tokens(
+                    handler, self._source(tmp_path, guard, body), {}, log=sink.append
+                )
+                emitted[guard] = "\n".join(sink)
+            # 🔴 POSITIVE CONTROL, same process, same handler, same sink shape:
+            # if every source refused, a clean "no token in the output" would be
+            # indistinguishable from a reloader that emits nothing at all.
+            good = tmp_path / "valid"
+            good.write_text(f"{GOOD_TOKEN}\n")
+            ok_sink: "list[str]" = []
+            ok = api.reload_tokens(handler, str(good), {}, log=ok_sink.append)
+        finally:
+            httpd.server_close()
+        assert ok is True and ok_sink and api.RELOAD_LOADED in ok_sink[0], (
+            f"the reloader never said LOADED for a VALID file, so every refusal "
+            f"above is a fact about an inert reloader: {ok!r} {ok_sink!r}"
+        )
+        assert set(refused.values()) == {False}, (
+            f"these guards did not refuse on the reload path: "
+            f"{sorted(g for g, r in refused.items() if r)}"
+        )
+        for guard, text in emitted.items():
+            assert text, f"guard {guard} refused SILENTLY — nothing was emitted"
+            assert api.RELOAD_REFUSED in text, (guard, text)
+            assert cases[guard][1] in text, (
+                f"guard {guard}'s reload refusal names a different guard: {text!r}"
+            )
+        leaked = {
+            guard: secret
+            for guard, (_b, _p, secrets, _r) in cases.items()
+            for secret in secrets
+            if secret in emitted[guard]
+        }
+        assert not leaked, (
+            f"a credential reached STDOUT on a refused reload via guard(s) "
+            f"{sorted(leaked)}:\n"
+            + "\n".join(f"  guard {g}: {emitted[g]}" for g in sorted(leaked))
+        )
+
+    def test_the_REDACTING_guards_still_name_the_field_they_refused(
+        self, tmp_path: Path
+    ):
+        """🔴 THE POSITIVE CONTROL FOR THE LEAK ASSERTION ITSELF, and without it
+        the two tests above are satisfied by an EMPTY message.
+
+        For the two guards that receive an unvalidated field, the message must
+        carry that field's `token_id` — the same fingerprint the audit log
+        prints — and its LENGTH. So the text under test is provably DERIVED
+        from the very value it does not contain, and the operator can tie a
+        refused row to the `token=` id it will authorise under once fixed.
+        """
+        cases = self._cases(tmp_path)
+        redacting = [g for g, (_b, _p, _s, red) in cases.items() if red]
+        assert redacting, "no guard is marked as receiving an unvalidated field"
+        seen = {}
+        for guard in redacting:
+            body, _phrase, _secrets, _r = cases[guard]
+            # The field this guard was handed: field 2 for the identity guard,
+            # field 3 for the scope guard. Derived from the fixture row, so a
+            # changed fixture cannot leave this asserting a stale constant.
+            fields = body.split("\n")[0].split()
+            offending = fields[1] if guard == 7 else fields[2]
+            try:
+                api.load_tokens(self._source(tmp_path, guard, body), {})
+            except ValueError as exc:
+                seen[guard] = str(exc)
+            assert api.token_id(offending) in seen[guard], (
+                f"guard {guard} elided the field WITHOUT fingerprinting it — "
+                f"the operator is told a row is wrong and given nothing to tie "
+                f"it to the audit log: {seen[guard]!r}"
+            )
+            assert f"{len(offending)} chars" in seen[guard], (
+                f"guard {guard} does not state the field's LENGTH, which is "
+                f"what makes a mis-pasted token recognisable: {seen[guard]!r}"
+            )
+            assert offending not in seen[guard], "the field was echoed after all"
+        assert len(seen) == len(redacting)
+
+    def test_POSITIVE_CONTROL_this_suites_leak_check_CAN_go_red(self):
+        """🔴 THE NEGATIVE CONTROL FOR THE INSTRUMENT. The two sweeps above
+        report a clean zero; a zero is indistinguishable from a check wired to
+        nothing until it has been watched to fail.
+
+        The check is `secret in text` over the WHOLE emitted string, so this
+        feeds it the pre-fix message shape — the guard's own sentence with the
+        field quoted back into it — and requires the leak to be found.
+        """
+        pre_fix = (
+            f"invalid identity in token row on line 1 of 1: "
+            f"{INSTALLING_TOKEN!r} — expected lowercase letters, digits and "
+            f"dashes"
+        )
+        assert INSTALLING_TOKEN in pre_fix, (
+            "the deliberately-leaking fixture does not contain the secret, so "
+            "this control proves nothing about the check"
+        )
+        post_fix = (
+            f"invalid identity in token row on line 1 of 1: field 2 is not an "
+            f"identity ({api.redacted_field(INSTALLING_TOKEN)})"
+        )
+        assert INSTALLING_TOKEN not in post_fix
+        assert api.token_id(INSTALLING_TOKEN) in post_fix
+
+
+# How long the atomicity sampler is allowed to race the swap. NOT a hang
+# detector — it is a work BUDGET, and it is deliberately not `HANG_TIMEOUT`: a
+# hang bound answers "how long before we call this stuck", this answers "how
+# much machine is this claim worth". The floors the test asserts (samples and
+# both states) are what fail if it is ever too small; see
+# `test_no_observer_EVER_sees_a_table_that_is_neither`.
+ATOMICITY_SAMPLE_BUDGET_S = 3.0
 
 
 class TestAReloadIsAtomicUnderLoad:
@@ -19404,6 +20051,38 @@ class TestAReloadIsAtomicUnderLoad:
         🔴 THE SAMPLER MATERIALISES THE ROWS rather than only holding the
         reference, because holding an immutable tuple is trivially safe and
         would make this test vacuous. Iterating it is what a request does.
+
+        🔴 IT IS BOUNDED IN TIME AND IN MEMORY, AND NEITHER BOUND TOUCHES THE
+        VERDICT. As first written it was bounded by nothing: four threads
+        appending to one list in an uncapped loop, for 400 reloads, with the
+        runtime set by GIL contention. Measured at two points, and they differ
+        by more than an order of magnitude in both dimensions — 47.5M samples /
+        3.3 GiB / 26 s on one host, 13.6 GiB / 75 s on another. A test whose
+        cost is a property of the machine is one nobody can reason about, and
+        3 GiB of retained tuples is a way to fail a CI runner rather than a way
+        to observe a swap.
+
+        The two bounds are separate on purpose, because they are answers to
+        different problems:
+
+          * MEMORY — only a state CHANGE is recorded, into a set. Every sample
+            is still taken and still counted; what is not kept is the 47
+            millionth copy of a tuple already in the set. The verdict reads the
+            distinct states, so it sees exactly what it saw before.
+          * TIME — a fixed sampling BUDGET, after which the samplers stop and
+            the driver stops reloading. Bounding by a sample COUNT was tried on
+            paper and rejected: the samplers start before the first reload, so
+            a count budget can be spent entirely inside the window where only
+            ONE table has ever existed, and the both-states control would then
+            fail as a flake on a fast host. A wall-clock budget spans swaps by
+            construction.
+
+        🔴 SO THE FLOOR IS A FLOOR, NOT A TARGET. `> 1000` samples and BOTH
+        states are still required, and they are now the things that fail if the
+        budget turns out to be too small on some host — rather than the budget
+        silently deciding what the test measures. That is the trade this makes:
+        fewer swaps are observed (bounded by the budget instead of always 400),
+        and the test says so if the number ever drops to nothing.
         """
         a = tmp_path / "a"
         a.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
@@ -19417,16 +20096,40 @@ class TestAReloadIsAtomicUnderLoad:
             trusted_proxies=(LOOPBACK_PROXY,),
         )
         handler = httpd.RequestHandlerClass
-        seen: list[tuple] = []
+        samplers = 4
+        # One slot per thread, single-writer, so no lock is needed and the
+        # count is readable while the run is still going.
+        counts = [0] * samplers
+        distinct: "set[tuple]" = set()
         stop = threading.Event()
+        deadline = time.monotonic() + ATOMICITY_SAMPLE_BUDGET_S
 
-        def sampler():
+        def sampler(slot: int):
+            taken = 0
+            last = None
+            since_check = 0
             while not stop.is_set():
-                seen.append(tuple(r.token for r in handler.expected_tokens))
+                state = tuple(r.token for r in handler.expected_tokens)
+                taken += 1
+                if state != last:
+                    last = state
+                    distinct.add(state)     # atomic; bounded by the state count
+                # The clock is read once per block rather than once per sample:
+                # a `time.monotonic()` per iteration would itself become the
+                # thing being measured.
+                since_check += 1
+                if since_check >= 256:
+                    since_check = 0
+                    counts[slot] = taken
+                    if time.monotonic() >= deadline:
+                        break
+            counts[slot] = taken
 
+        reloads = 0
         try:
             threads = [
-                threading.Thread(target=sampler, daemon=True) for _ in range(4)
+                threading.Thread(target=sampler, args=(i,), daemon=True)
+                for i in range(samplers)
             ]
             for t in threads:
                 t.start()
@@ -19435,25 +20138,35 @@ class TestAReloadIsAtomicUnderLoad:
                     api.reload_tokens(
                         handler, str(a if i % 2 else b), {}, log=lambda line: None
                     )
+                    reloads += 1
+                    if time.monotonic() >= deadline:
+                        break
             finally:
                 stop.set()
                 for t in threads:
                     t.join(timeout=HANG_TIMEOUT)
         finally:
             httpd.server_close()
-        assert len(seen) > 1000, (
-            f"only {len(seen)} samples were taken, which is too few to claim "
-            f"anything about a window — the sampler is not racing the swap"
+        taken = sum(counts)
+        assert taken > 1000, (
+            f"only {taken} samples were taken in {ATOMICITY_SAMPLE_BUDGET_S:g}s, "
+            f"which is too few to claim anything about a window — the sampler "
+            f"is not racing the swap"
+        )
+        assert reloads >= 2, (
+            f"only {reloads} reload(s) were driven inside the "
+            f"{ATOMICITY_SAMPLE_BUDGET_S:g}s budget, so at most one swap was "
+            f"available to observe and the verdict below is about a static table"
         )
         # 🔴 POSITIVE CONTROL FOR THE SAMPLER: it must have observed BOTH
         # states. If it only ever saw one, its "no third state" verdict would be
         # a fact about a sampler that never raced anything.
-        assert state_a in set(seen) and state_b in set(seen), (
-            f"the sampler never observed both tables (saw {set(seen)}), so it "
-            f"was not running concurrently with the swap and its verdict is "
-            f"about nothing"
+        assert state_a in distinct and state_b in distinct, (
+            f"the sampler never observed both tables (saw {distinct}) across "
+            f"{reloads} reload(s) and {taken} samples, so it was not running "
+            f"concurrently with the swap and its verdict is about nothing"
         )
-        bad = sorted(set(seen) - {state_a, state_b})
+        bad = sorted(distinct - {state_a, state_b})
         assert not bad, (
             f"observers saw {len(bad)} table state(s) that are neither the old "
             f"table nor the new one — the swap is not atomic: {bad}"

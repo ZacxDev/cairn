@@ -654,6 +654,53 @@ def token_id(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
 
 
+def redacted_field(value: str) -> str:
+    """How an UNVALIDATED field of the token file reads in an error message.
+
+    🔴 NEVER THE VALUE ITSELF, AND THAT IS A FIX RATHER THAN A PRECAUTION. A
+    guard that quotes the field it refused publishes whatever the operator
+    wrote there — and the field an operator gets wrong while installing a
+    credential IS the credential. `<current> <new> alpha`, a token pasted one
+    field to the left, is the shape: `MIN_TOKEN_CHARS` (43) is deliberately
+    ABOVE `MAX_IDENTITY_CHARS` (32), so a token in the identity field cannot
+    be anything BUT too long, always lands on that guard, and was quoted back
+    in full. Not a corner case — the guard's own reachability argument is what
+    makes the leak unconditional.
+
+    🔴 AND IT IS NOT CONFINED TO A CRASH. `reload_tokens` prints the guard's
+    message to STDOUT on every refused `SIGHUP`, from a process that stays
+    healthy and can be signalled again — the stream the audit log is read out
+    of, with wider read access than the encrypted secret the token came from.
+    A startup failure at least exits 78 once and stops.
+
+    So the value is replaced by two facts that are not secrets and are enough
+    to act on:
+
+      * its LENGTH — a 58-character "identity" is visibly the operator's token
+        rather than a typo;
+      * its FINGERPRINT — the SAME `token_id` the audit log carries. If the
+        field really was a credential, this is the `token=` id it will show up
+        under once the row is fixed, so the two can be tied together without
+        either of them ever printing the token.
+
+    The row's POSITION does the locating (`line L of T`, a physical line number
+    an editor can count to). The echoed value never did that job.
+
+    ⚠ A LENGTH OR CHARSET HEURISTIC — "elide it only if it looks like a token"
+    — was considered and rejected: it fails OPEN, because the one input it must
+    catch is by definition an input nobody classified correctly. Losing the
+    echo of a genuine typo (`Za_CH_BAD` now reads `9 chars, fp=…`) is the price,
+    and the line number plus the rule the message states is what replaces it.
+
+    ⚠ FOR UNVALIDATED FIELDS ONLY. An identity that has already passed guard 7
+    is quoted verbatim by guards 9-12 on purpose: it matches
+    `[a-z0-9][a-z0-9-]*`, is capped below the token floor so it CANNOT be a
+    credential, and is printed in every audit line already. Naming it is the
+    entire diagnostic there, and eliding it would be a cost with no hazard.
+    """
+    return f"{len(value)} chars, fp={token_id(value)}"
+
+
 @dataclass(frozen=True)
 class TokenRecord:
     """One credential, and what it is allowed to SEE. Phase 3, criterion 1.
@@ -800,11 +847,20 @@ def _parse_token_row(fields: list[str], line: int, total: int) -> TokenRecord:
         len(identity) > MAX_IDENTITY_CHARS
         or not IDENTITY_COMPONENT.fullmatch(identity)
     ):
+        # 🔴 THE FIELD IS DESCRIBED, NEVER QUOTED — see `redacted_field`. This
+        # guard is the one a mis-pasted credential ALWAYS lands on (a token is
+        # >= 43 chars, an identity <= 32), and its message reaches stdout on
+        # every refused reload, not just once at startup.
         raise ValueError(
-            f"invalid identity in token row on line {line} of {total}: {identity!r} — "
-            f"expected lowercase letters, digits and dashes, starting on an "
-            f"alphanumeric, at most {MAX_IDENTITY_CHARS} characters. The "
-            f"identity is quoted into the audit log, so it must be one spelling"
+            f"invalid identity in token row on line {line} of {total}: field 2 "
+            f"is not an identity ({redacted_field(identity)}; the value is NOT "
+            f"echoed — a token pasted into this field would be a live "
+            f"credential in a log line) — expected lowercase letters, digits "
+            f"and dashes, starting on an alphanumeric, at most "
+            f"{MAX_IDENTITY_CHARS} characters. If that length looks like your "
+            f"TOKEN, field 2 is where the identity goes: the row is `<token> "
+            f"<identity> <scopes>`. The identity is quoted into the audit log, "
+            f"so it must be one spelling"
         )
     if identity == LEGACY_IDENTITY:
         # 🔴 A MAPPED ROW MAY NOT CLAIM THE UNRESTRICTED NAME. `legacy` in the
@@ -844,12 +900,21 @@ def _parse_token_row(fields: list[str], line: int, total: int) -> TokenRecord:
         # claim and is reachable by an input the first accepts.)
         folded = rc.normalize_ref(raw)
         if not SAFE_PATH_COMPONENT.fullmatch(raw) or not folded:
+            # 🔴 THE SCOPE IS DESCRIBED, NEVER QUOTED — same reason as guard 7,
+            # and reachable by the same slip one field further right (`<token>
+            # <identity> <token>`: a token carrying `=` or `.` is not a legal
+            # scope, so it lands here). `identity` HAS passed guard 7 by now —
+            # bounded below the token floor and already in every audit line —
+            # so quoting THAT is the diagnostic, not a leak.
             raise ValueError(
-                f"invalid scope in token row on line {line} of {total} ({identity!r}): "
-                f"{raw!r} — a scope must match {SAFE_PATH_COMPONENT.pattern} AND "
-                f"still name something once folded the way the reader folds a "
-                f"scope. An entry that no request could name, or that folds away "
-                f"to nothing, is refused here rather than sitting inert"
+                f"invalid scope in token row on line {line} of {total} "
+                f"({identity!r}): field 3 holds a name that is not a scope "
+                f"({redacted_field(raw)}; the value is NOT echoed — see "
+                f"`redacted_field`) — a scope must match "
+                f"{SAFE_PATH_COMPONENT.pattern} AND still name something once "
+                f"folded the way the reader folds a scope. An entry that no "
+                f"request could name, or that folds away to nothing, is refused "
+                f"here rather than sitting inert"
             )
         scopes.append(folded)
     return TokenRecord(
@@ -915,9 +980,30 @@ def load_tokens(
     operator can find the line" is the whole reason an index is carried at all.
     Every one of them names a real line number now.
 
-    Guard 5 names the POSITION, never the token — saying "one of them is short"
-    would leave the operator grepping a secret by hand — and 6-12 keep that
-    property for the same reason.
+    🔴 NO GUARD ECHOES A FIELD IT WAS HANDED, AND THIS SENTENCE USED TO BE
+    FALSE OF TWO OF THEM. It read "guard 5 names the POSITION, never the token
+    … and 6-12 keep that property for the same reason", which was true of 5 and
+    an assertion about 6-12 that nobody had checked. Guards **7** and **10**
+    quoted their input — `{identity!r}` and `{raw!r}` — and the reachability
+    argument for guard 7 is exactly what made the leak unconditional: a token
+    is >= `MIN_TOKEN_CHARS` (43) and an identity <= `MAX_IDENTITY_CHARS` (32),
+    so a token written into field 2 can ONLY land on guard 7, which then
+    printed it in full. `reload_tokens` put that message on **stdout**, from a
+    live process, on every refused signal.
+
+    Both now describe the field instead (`redacted_field`: its length and its
+    `token_id`). Guard 5 still names the position only — saying "one of them is
+    short" would leave the operator grepping a secret by hand. Guards 9 and
+    11-12 quote an identity that has ALREADY passed guard 7, which is bounded
+    below the token floor and printed in every audit line, so that is a
+    diagnostic rather than an echo.
+
+    The property is enforced rather than asserted:
+    `TestNoRefusalEVEREchoesAFieldValue` drives a secret-bearing fixture
+    through every numbered guard above and reads the whole emitted text, on the
+    startup path and the reload path both. The previous guard checked ONE
+    refusal shape — guard 12's, whose message structurally cannot contain a
+    token — and read as coverage while providing none.
 
     🔴 EVERY ROW REACHES THE LADDER, AND THAT IS A FIX, NOT A STYLE CHOICE.
     This loop used to drop a line whose FIRST FIELD had already been seen —
@@ -4743,6 +4829,33 @@ def _reload_log(line: str) -> None:
     print(f"subsystem-store-api: {line}", flush=True)
 
 
+# C0 and C1 control characters. NOT `_AUDIT_SAFE` (`[^\x20-\x7e]`), which would
+# also eat the em-dashes and the 🔴 the reload lines are written with.
+_RELOAD_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def reload_safe(line: str) -> str:
+    """Strip anything that could forge a LINE BOUNDARY on the reload stream.
+
+    ⚠ THIS IS THE RESIDUAL, NOT THE FIX, and saying which is the point. The
+    leak it used to be asked to cover — a token echoed by a guard — is fixed at
+    the GUARDS (`redacted_field`), because those messages are also what the
+    startup path prints, and a sanitiser here would have left `EXIT_CONFIG`
+    publishing the credential exactly as before. Nothing that reaches this
+    function still carries an unvalidated field value.
+
+    What is left is exception text this module does not author — an `OSError`
+    naming a path, or a genuine loader bug — reaching a stream that is read by
+    machine (`grep 'token reload:'`, and the audit records beside it). A
+    newline in there is a second, syntactically perfect log line of somebody
+    else's choosing, which is the injection `audit_field` exists to stop one
+    layer over. Control characters become `?`; spaces are LEFT ALONE, because
+    a refusal is prose rather than a whitespace-delimited field record and
+    `audit_field`'s space folding would make every reload line unreadable.
+    """
+    return _RELOAD_CONTROL.sub("?", line)
+
+
 def reload_tokens(
     handler_cls: type,
     token_file: str | None,
@@ -4813,36 +4926,73 @@ def reload_tokens(
     a `kill -HUP` exists to re-read.
     """
     emit = log if log is not None else _reload_log
-    # Read BEFORE the attempt: on refusal this is the table that keeps serving,
-    # and the operator needs to be told what that is — "refused" without "and
-    # these are still live" leaves them guessing whether a revocation landed.
-    previous: "tuple[TokenRecord, ...]" = tuple(
-        getattr(handler_cls, "expected_tokens", ())
-    )
+    swapped = False
+    # 🔴 THE WHOLE BODY IS INSIDE THE GUARD, INCLUDING THE TWO `emit` CALLS.
+    # They used to sit outside it, which is the one arrangement the docstring's
+    # justification cannot survive: the argument for catching `Exception` at
+    # all is that an exception escaping a signal handler unwinds
+    # `serve_forever` and ends the process, and the two statements that do real
+    # I/O — the ones that can meet a closed or full stdout, or an injected sink
+    # that raises — were the two the guard did not cover. That is a
+    # claim/code mismatch rather than a measured crash: 20,000 SIGHUPs did not
+    # reach a failure, and the reentrant-`print` theory for it was tried and
+    # REFUTED. It is fixed as a mismatch, by making the code as wide as the
+    # sentence, not by narrowing the sentence.
     try:
-        # `warn=` is deliberately NOT redirected to `emit` — see `_reload_log`.
-        # The unrestricted-scope banner keeps the one spelling and the one
-        # stream it has at startup.
-        records = load_tokens(token_file, env)
-        table = tuple(as_token_record(record) for record in records)
-    except Exception as exc:  # noqa: BLE001 — see the docstring; this is the point
-        emit(
-            f"{RELOAD_REFUSED} — the token source did not parse "
-            f"({type(exc).__name__}: {exc}). NOTHING CHANGED: still serving the "
-            f"{len(previous)} previously loaded identities "
-            f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in previous)}]. "
-            f"Fix the file and send SIGHUP again"
+        # Read BEFORE the attempt: on refusal this is the table that keeps
+        # serving, and the operator needs to be told what that is — "refused"
+        # without "and these are still live" leaves them guessing whether a
+        # revocation landed.
+        previous: "tuple[TokenRecord, ...]" = tuple(
+            getattr(handler_cls, "expected_tokens", ())
         )
-        return False
-    # THE SWAP. One statement, one name, one immutable value — see the docstring.
-    handler_cls.expected_tokens = table
-    emit(
-        f"{RELOAD_LOADED} {len(table)} identities "
-        f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in table)}] "
-        f"(was {len(previous)} "
-        f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in previous)}])"
-    )
-    return True
+        try:
+            # `warn=` is deliberately NOT redirected to `emit` — see
+            # `_reload_log`. The unrestricted-scope banner keeps the one
+            # spelling and the one stream it has at startup.
+            records = load_tokens(token_file, env)
+            table = tuple(as_token_record(record) for record in records)
+        except Exception as exc:  # noqa: BLE001 — see the docstring; this is the point
+            # 🔴 `{exc}` NO LONGER CARRIES A FIELD VALUE. Every guard that used
+            # to quote the row it refused now describes it (`redacted_field`),
+            # so a token mis-pasted into the identity or scope field cannot
+            # arrive here. `reload_safe` is the residual for text this module
+            # does not author, and it is not what closes the leak.
+            emit(reload_safe(
+                f"{RELOAD_REFUSED} — the token source did not parse "
+                f"({type(exc).__name__}: {exc}). NOTHING CHANGED: still serving "
+                f"the {len(previous)} previously loaded identities "
+                f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in previous)}]. "
+                f"Fix the file and send SIGHUP again"
+            ))
+            return False
+        # THE SWAP. One statement, one name, one immutable value — see above.
+        handler_cls.expected_tokens = table
+        swapped = True
+        emit(reload_safe(
+            f"{RELOAD_LOADED} {len(table)} identities "
+            f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in table)}] "
+            f"(was {len(previous)} "
+            f"[{','.join(f'{t.fingerprint}:{t.identity}' for t in previous)}])"
+        ))
+        return True
+    except Exception:  # noqa: BLE001 — the signal-handler backstop; see above
+        # 🔴 REPORTS WHAT HAPPENED, NOT WHAT WAS ATTEMPTED. `swapped` is set
+        # between the assignment and the verdict line, so a sink that raises
+        # AFTER a successful swap still returns True: the table really was
+        # replaced, and answering False there would make the return value lie
+        # about the server's state to keep the docstring's promise.
+        try:
+            print(
+                f"subsystem-store-api: {RELOAD_PREFIX}the verdict could not be "
+                f"reported ({traceback.format_exc(limit=0).strip()}); the table "
+                f"was {'REPLACED' if swapped else 'NOT replaced'}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:  # noqa: BLE001 — best effort; stderr may be gone too
+            pass
+        return swapped
 
 
 def install_sighup_reload(
@@ -4854,11 +5004,29 @@ def install_sighup_reload(
 ) -> "Callable[[int, Any], None]":
     """Make `kill -HUP <pid>` re-read the token file. Returns the handler.
 
-    🔴 SIGHUP'S DEFAULT DISPOSITION IS *TERMINATE*, so "the handler is defined"
-    and "the handler is installed" are not the same claim by a wide margin: with
-    the `signal.signal` call missing, a `kill -HUP` does not fail to reload, it
-    KILLS THE POD. A test that calls `reload_tokens` directly proves nothing
-    about either outcome — only sending the real signal to a real process does.
+    🔴 "THE HANDLER IS DEFINED" AND "THE HANDLER IS INSTALLED" ARE NOT ONE
+    CLAIM, and what an uninstalled handler costs depends on WHERE the process
+    is running — measured at both points, because one measurement here would
+    have been a claim about the wrong one:
+
+      * an ORDINARY process (any pid but 1): SIGHUP's default disposition is
+        TERMINATE, so `kill -HUP` does not fail to reload, it KILLS the
+        process. Measured: exit `-1`, death by signal 1. This is what
+        `TestSighupReloadsTheTokenTable` spawns, and why its red at the base
+        ref is a dead server rather than a missing log line.
+      * the DEPLOYED shape, where the container's exec-form `CMD` makes the
+        server PID 1 of its namespace: the kernel DISCARDS a default-action
+        signal sent to a namespace's init from inside that namespace, so
+        `kubectl exec … kill -HUP 1` is a SILENT NO-OP — exit 0, no output,
+        nothing reloaded. Measured under `unshare --fork --pid`: PID 1 with no
+        handler survived a SIGHUP sent by a child; the same program at any
+        other pid died 128+1.
+
+    The silent one is the worse failure and the one the README's revocation
+    step has to defend against, because the operator's next move after an
+    exit-0 is to delete the old credential's line believing it was replaced.
+    A test that calls `reload_tokens` directly proves nothing about either
+    outcome — only sending the real signal to a real process does.
 
     🔴 IT MUST RUN ON THE MAIN THREAD. `signal.signal` raises `ValueError`
     anywhere else, and the reload work then happens on the main thread too,
@@ -4946,9 +5114,24 @@ def main(argv: list[str] | None = None) -> int:
     # 🔴 INSTALLED BEFORE `serve_forever`, AND `token_file` IS THE RESOLVED ONE.
     #
     # Before, because the window between the first accepted connection and the
-    # handler being installed is a window in which `kill -HUP` KILLS THE POD
-    # (SIGHUP terminates by default). It is short and it is real, and there is
-    # nothing between `build_server` and here that needs to happen first.
+    # handler being installed is a window in which a `kill -HUP` is LOST. It is
+    # short and it is real, and there is nothing between `build_server` and
+    # here that needs to happen first.
+    #
+    # 🔴 THE ORDERING IS RIGHT; ITS OLD STATED REASON WAS NOT, AND THE WRONG
+    # REASON POINTED AT THE WRONG HAZARD. This said the window "KILLS THE POD".
+    # That is true of an ordinary process — SIGHUP terminates by default — and
+    # FALSE of the shape this file is deployed in: the `CMD` is exec-form, so
+    # the server is PID 1, and the kernel DISCARDS a default-action signal sent
+    # to a namespace's init from inside that namespace. Measured under
+    # `unshare --fork --pid`: PID 1, no handler, SIGHUP from a child — alive,
+    # exit 0. The same program at any other pid died 128+1.
+    #
+    # So in production the window is SILENT rather than fatal, which is worse
+    # to be in: a fatal one crashloops and forces someone to look, while a
+    # silent one returns success and leaves the operator believing a credential
+    # change landed. See `install_sighup_reload`, and step 2 of the README's
+    # revocation procedure, which is written against the silent shape.
     #
     # The RESOLVED path — the local rebound above, not `args.token_file` — so a
     # process that fell back to `$SUBSYSTEM_STORE_TOKEN` because the mount was

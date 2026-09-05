@@ -644,17 +644,53 @@ store-api audit ts=… ip=203.0.113.7 peer=trusted method=GET path=/api/v1/recal
 
 1. `sops clusters/homelab/apps/subsystem-store/secrets.enc.yaml` — put the NEW
    token on the first line, keep the old one below it. Commit; Flux applies.
-2. `kubectl -n subsystem-store exec deploy/subsystem-store-api -- sh -c 'kill -HUP 1'`.
-   The reload line prints every fingerprint in file order, each with its
-   identity, and says what it replaced:
+2. `kubectl -n subsystem-store exec deploy/subsystem-store-api -- sh -c 'kill -HUP 1'`,
+   then **read the log for the verdict line it must have produced**:
+
+   ```bash
+   kubectl -n subsystem-store logs --tail=20 deploy/subsystem-store-api | grep 'token reload:'
+   ```
+
    `token reload: LOADED 2 identities [<new>:legacy,<old>:legacy] (was 1 [<old>:legacy])`
-   (A pod restart still works and prints the same fingerprints as `token-ids=`
-   on its startup line — it is just no longer the only way.)
+   — every fingerprint in file order, each with its identity, and what it
+   replaced.
+
+   🔴 **THE EXIT CODE OF STEP 2 IS NOT THE RESULT. If no `token reload:` line
+   appeared, the reload DID NOT HAPPEN — stop here and do not go on to step 3
+   or 4.** `kill` reports whether the signal was *sent*, never what the target
+   did with it, and the way this fails is silent rather than loud: the server
+   is PID 1, and the kernel **discards** a default-action signal sent to a
+   namespace's init from inside that namespace. So against an image that
+   predates this feature — one with no handler installed — step 2 exits **0**,
+   prints nothing, and reloads nothing. (Measured under `unshare --fork --pid`:
+   PID 1 with no handler survived a SIGHUP from a child; the same program at
+   any other pid was killed by it. An ordinary process would at least die
+   loudly; PID 1 does not.) `token reload: REFUSED` is a different outcome and
+   also a stop: the file did not parse, the previous table is still serving,
+   and the line says which guard refused it.
+
+   Replacing the pod still works and prints the same fingerprints as
+   `token-ids=` on its startup line — it is no longer the only way, and it is
+   the fallback when no verdict line appears.
 3. Roll clients onto the new token. Watch the audit stream until the OLD
    fingerprint stops appearing:
    `kubectl -n subsystem-store logs deploy/subsystem-store-api | grep 'token=<old>'`
-4. Only then delete the old line, commit, and SIGHUP again. A request presenting
-   it is now an ordinary 401.
+4. Only then delete the old line, commit, and SIGHUP again — **and confirm the
+   retired fingerprint is GONE from the new `LOADED` list**:
+   `token reload: LOADED 1 identities [<new>:legacy] (was 2 [<new>:legacy,<old>:legacy])`.
+
+   🔴 **That list is the revocation receipt, and nothing else is.** A `LOADED`
+   line still naming `<old>` means the process re-read a file that still
+   contains it, and the credential you believe you retired is live. A request
+   presenting it is only an ordinary 401 once it is absent here.
+
+   ⚠ **A SIGHUP sent promptly after the secret changes can read the OLD file.**
+   The token arrives on a projected secret volume, and the kubelet refreshes
+   those on its own sync period — so `kill -HUP` immediately after Flux applies
+   can re-read the previous contents and report a perfectly truthful `LOADED`
+   for a file that has not been updated yet. Step 4's fingerprint check is what
+   catches it; if `<old>` is still listed, wait and signal again. A pod replace
+   never had this failure mode, because it always mounted the volume fresh.
 
 Step 3 is the step that does not exist without step 2's fingerprint, and step 4
 is the one people skip — a rotation that leaves the old credential live is not a
@@ -676,6 +712,14 @@ against a real process by `TestSighupReloadsTheTokenTable`, which spawns
 `server.py` and sends the real signal — the `kubectl` spelling above is the only
 part of this that has not been run.
 
+🔴 **Being PID 1 is also why step 2 must be verified by its LOG LINE.** A
+default-action signal sent to a namespace's init from inside that namespace is
+discarded by the kernel, so an image with no handler answers `kill -HUP 1` with
+exit 0 and silence. Measured under `unshare --fork --pid`: PID 1 with no
+handler survived; the same program at any other pid was killed by the same
+signal. There is no exit code that distinguishes "reloaded" from "ignored" —
+only the verdict line does.
+
 🔴 **A parse failure on RELOAD does not take the server down.** The previously
 loaded table keeps serving and the log says why:
 
@@ -685,6 +729,21 @@ identity 'alpha': …). NOTHING CHANGED: still serving the 2 previously loaded
 identities [dbb22a50030d:legacy,07c358b5e95b:legacy]. Fix the file and send
 SIGHUP again
 ```
+
+🔴 **AND A REFUSAL NEVER QUOTES THE FIELD IT REFUSED.** The two guards handed an
+UNVALIDATED field — the identity (field 2) and each scope (field 3) — describe
+it instead of echoing it: `field 2 is not an identity (58 chars,
+fp=07c358b5e95b)`. That matters because the field an operator gets wrong while
+installing a credential *is* the credential — `<current> <new> alpha`, a token
+written one field to the left, is refused by the identity guard every time,
+since a token (>= 43 chars) can never be short enough to be an identity
+(<= 32) — and this message goes to **stdout**, from a healthy process, on every
+signal. The length and the fingerprint are enough to recognise a mis-pasted
+token, and the fingerprint is the same `token_id` the audit log prints, so the
+refused row can be tied to the `token=` id it will authorise under once fixed.
+The row's line number is what locates it in the file. Identities that have
+already passed validation *are* quoted — they are capped below the token floor
+and appear in every audit line, so they are not secrets.
 
 🔴 **At STARTUP the same file still exits 78, and the asymmetry is the design.**
 On reload there is a working table to fall back to; at startup there is not, and
