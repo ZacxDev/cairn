@@ -20098,6 +20098,95 @@ class TestReloadTokensSwapsRatherThanMutates:
             f"caller's mark and the sink's, got {err.count('«rs»')}: {err!r}"
         )
 
+    def test_the_messageless_raise_COLLECTOR_finds_the_shapes_it_claims(self):
+        """POSITIVE CONTROL. Without it the assertion below is a reassuring zero.
+
+        `_messageless_raise_sites` reports the shapes `_load_tokens_raise_sites`
+        drops. On the live server that set is EMPTY — so a test asserting "it is
+        empty" is satisfied equally by a collector wired to nothing. This feeds it
+        a source that MUST produce three, and watches the number move.
+        """
+        src = (
+            "class TokenError(Exception):\n    pass\n"
+            "def load_tokens(f):\n"
+            "    try:\n"
+            "        raise TokenError\n"          # bare Name
+            "    except TokenError:\n"
+            "        raise\n"                     # bare re-raise
+            "    raise ValueError()\n"            # Call with no args
+        )
+        dropped = _messageless_raise_sites(src)
+        assert len(dropped) == 3, (
+            f"the collector must see all three message-less shapes; got {dropped}"
+        )
+        shapes = sorted(dropped.values())
+        assert shapes == ["bare re-raise", "raise TokenError", "raise ValueError()"], shapes
+
+        # …and it must NOT claim a raise that DOES carry a message, or it would
+        # double-count every site the main ledger already owns.
+        with_msg = "def load_tokens(f):\n    raise ValueError('a message')\n"
+        assert _messageless_raise_sites(with_msg) == {}, (
+            "a raise WITH a literal message belongs to the main ledger, not here"
+        )
+
+    def test_NO_raise_is_SILENTLY_dropped_by_the_raise_site_ledger(self):
+        """⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled, per the rule.
+
+        The live count is **0**: no message-less raise is reachable from
+        `load_tokens` today, so this pins a property no bug has violated. It is
+        worth having anyway because the drop used to be SILENT and counted
+        nowhere — a reader asking "does this ledger see every raise?" was told
+        yes, and the honest answer was no. A new `raise TokenError` now moves this
+        number instead of vanishing.
+
+        The positive control above is what makes the 0 mean something.
+        """
+        dropped = _messageless_raise_sites()
+        assert dropped == {}, (
+            "a message-less raise is now reachable from `load_tokens`. That is not "
+            "necessarily a defect — such a raise carries no text and so cannot echo "
+            "an unvalidated field — but it must be SEEN. Add it to the ledger's "
+            f"reasoning, or give it a message: {sorted(dropped.items())}"
+        )
+
+    def test_the_EMITTER_scan_ignores_a_NON_STDIO_receiver(self):
+        """🔴 `_EMITTER_ATTRS` matched `.write` on ANY receiver.
+
+        `server.py`'s only `.write` receivers are `fh` (binary, in the atomic
+        replace path) and `self.wfile` (the HTTP body) — no log stream among
+        them. Let a module-level writer become reachable from
+        `reload_tokens`/`main` and the ledger would demand `reload_safe(...)` on
+        BYTES, which is not meaningful: `reload_safe` is a character-class
+        substitution over text.
+
+        Two-way, because a matcher can fail in both directions.
+        """
+        stdio = "import sys\ndef reload_tokens():\n    sys.stdout.write('x')\n"
+        binary = "def reload_tokens():\n    fh.write(data)\n"
+        assert len(_reload_stream_emitters(stdio)) == 1, (
+            "a stdio write IS an emitter — narrowing must not lose the shape the "
+            "attr arm was added for"
+        )
+        assert _reload_stream_emitters(binary) == [], (
+            "a binary file write is NOT an emitter and must not be asked to pass "
+            "its bytes through reload_safe"
+        )
+
+    def test_narrowing_the_emitter_receiver_did_NOT_lose_live_coverage(self):
+        """The control for the narrowing: the real source must still yield 8.
+
+        Measured before and after — every one of the 8 is `print`/`emit` by bare
+        NAME, so the attr arm contributes zero matches either way and the change
+        is behaviour-neutral TODAY. Asserting the count is what would catch a
+        narrowing that quietly dropped a real emitter.
+        """
+        _, checked = _bare_reload_emitters(SERVER_PATH.read_text(encoding="utf-8"))
+        assert checked == 8, (
+            f"the reload-stream scan checked {checked} emitters, not 8. If an "
+            f"emitter was legitimately added or removed, update this number; if "
+            f"it FELL, the receiver narrowing dropped a real sink."
+        )
+
     def test_the_EMITTER_LEDGER_goes_RED_on_a_NEW_bare_emitter(self):
         """🔴 THE SECOND MUTANT OF THE CLASS THAT ESCAPED TWICE — a NEW EMITTER
         added where no fixture looks, the sibling of the new-GUARD mutant in
@@ -20502,6 +20591,41 @@ def _load_tokens_raise_sites(
     return sites
 
 
+def _messageless_raise_sites(source: "str | None" = None) -> "dict[tuple[str, int], str]":
+    """The raise sites `_load_tokens_raise_sites` DROPS, as `(func, line) -> shape`.
+
+    🔴 THIS EXISTS BECAUSE THE DROP WAS SILENT AND COUNTED NOWHERE. The collector
+    keeps a site only `if isinstance(exc, ast.Call) and exc.args`, so
+    `raise TokenError`, `raise ValueError()` and a bare re-raise vanished before
+    any predicate saw them. That is NOT a hole in the property the ledger guards —
+    a message-less raise carries no text, so it cannot echo an unvalidated field —
+    but it WAS a hole in the sentence: a reader asking "does this ledger see every
+    raise?" got yes, and the honest answer was no.
+
+    The fix the previous docstring prescribed, and this is it: COUNT the dropped
+    shapes and assert the count, rather than widening the phrase match. A new
+    message-less raise now moves a number instead of disappearing.
+    """
+    tree = ast.parse(
+        source if source is not None else SERVER_PATH.read_text(encoding="utf-8")
+    )
+    funcs = _module_functions(tree)
+    dropped: "dict[tuple[str, int], str]" = {}
+    for name in _reachable_from(tree, "load_tokens"):
+        for node in ast.walk(funcs[name]):
+            if not isinstance(node, ast.Raise):
+                continue
+            exc = node.exc
+            if exc is None:
+                dropped[(name, node.lineno)] = "bare re-raise"
+            elif isinstance(exc, ast.Name):
+                dropped[(name, node.lineno)] = f"raise {exc.id}"
+            elif isinstance(exc, ast.Call) and not exc.args:
+                shape = exc.func.id if isinstance(exc.func, ast.Name) else "?"
+                dropped[(name, node.lineno)] = f"raise {shape}()"
+    return dropped
+
+
 def _unclaimed_raise_sites(
     sites: "dict[tuple[str, int], str]", phrases: "set[str]"
 ) -> "list[str]":
@@ -20552,6 +20676,33 @@ _EMITTER_NAMES = ("print", "emit")
 # set of sinks (`sys.stdout`/`sys.stderr`/the log stream) rather than to drop
 # the attribute shape, which is what closed a measured hole.
 _EMITTER_ATTRS = ("write", "writelines")
+#: 🔴 …AND ONLY ON A STDIO SINK. `_EMITTER_ATTRS` alone matched `.write` on ANY
+#: receiver, which is latent today (measured: the scan returns `checked=8` and
+#: every one is `print`/`emit` by bare NAME — not a single attribute call) and
+#: wrong the moment it is not. `server.py` has exactly three `.write` receivers:
+#: `fh.write(data)` twice — BINARY file writes in the atomic-replace path — and
+#: `self.wfile.write(...)`, the HTTP response body. None is a log stream. Let a
+#: module-level writer become reachable from `reload_tokens`/`main` and the
+#: ledger would demand `reload_safe(...)` on BYTES, which is neither possible nor
+#: meaningful: `reload_safe` is a character-class substitution over text.
+#: So the receiver must name a stream. `sys.stdout`/`sys.stderr` covers the shape
+#: the ledger was widened for in the first place.
+_EMITTER_RECEIVERS = ("stdout", "stderr")
+
+
+def _is_stdio_sink(value: ast.AST) -> bool:
+    """True for `sys.stdout` / `sys.stderr`, false for a file handle.
+
+    Deliberately structural rather than name-based: `fh`, `self.wfile` and any
+    other bare name are NOT sinks, and `sys.stdout` is matched by its two parts
+    rather than by the string "stdout" appearing somewhere.
+    """
+    return (
+        isinstance(value, ast.Attribute)
+        and value.attr in _EMITTER_RECEIVERS
+        and isinstance(value.value, ast.Name)
+        and value.value.id == "sys"
+    )
 
 # 🔴 THERE IS NO EXEMPTION TABLE ANY MORE, AND ITS ABSENCE IS THE FIX.
 #
@@ -20609,7 +20760,11 @@ def _reload_stream_emitters(source: str) -> "list[tuple[str, ast.Call]]":
                 continue
             func = node.func
             named = isinstance(func, ast.Name) and func.id in _EMITTER_NAMES
-            attr = isinstance(func, ast.Attribute) and func.attr in _EMITTER_ATTRS
+            attr = (
+                isinstance(func, ast.Attribute)
+                and func.attr in _EMITTER_ATTRS
+                and _is_stdio_sink(func.value)
+            )
             if named or attr:
                 out.append((fname, node))
     return out
