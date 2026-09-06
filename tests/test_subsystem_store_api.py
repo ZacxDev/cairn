@@ -79,6 +79,7 @@ import textwrap
 import threading
 import time
 import traceback
+import warnings
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -7084,6 +7085,7 @@ def _child_verdict(proc: subprocess.Popen) -> tuple[str, str, str] | None:
 
 
 def _never_healthy_message(
+    host: str,
     port: int,
     proc: subprocess.Popen,
     last_probe: BaseException | None,
@@ -7100,14 +7102,17 @@ def _never_healthy_message(
     up and refused, so it identifies none of them — the next occurrence has to
     answer that on its own or it buys nothing.
 
-    🔴 IT DOES NOT REPORT WHETHER THE CHILD WAS ALIVE, and that omission is
-    deliberate. The first draft did, and mutation testing showed the field was
+    🔴 IT REPORTS THE CHILD'S ALIVENESS AS A PRECONDITION, NOT AS A FIELD, and
+    that distinction is the whole of it. The first draft printed
+    `child_was_alive={alive}`, and mutation testing showed the value
     structurally pinned to `True`: this is only ever reached when
     `_child_verdict` returned `None`, which IS "the child is still running". A
     field that cannot vary is not evidence, and a test asserting it reads as
-    coverage while providing none. What the reported `exit` DOES carry is that
-    the reap below happened at all — anything other than the signal we send
-    means the child died on its own between the verdict and the terminate.
+    coverage while providing none. So the sentence states the precondition once,
+    in the past tense of the moment the budget expired, and the reader is told
+    plainly that the `exit` beside it is the signal THIS function then sent —
+    an audit read the first wording ("the child was still running" next to
+    `exit=-15`) as a contradiction, and it was right to.
     """
     proc.terminate()
     try:
@@ -7116,9 +7121,10 @@ def _never_healthy_message(
         proc.kill()
         out, err = proc.communicate()
     return (
-        f"server never became healthy on 127.0.0.1:{port} within "
-        f"{STARTUP_BUDGET_S:g}s — the child was still running. "
-        f"exit={proc.returncode} last_probe={last_probe!r} port_races={races} "
+        f"server never became healthy on {host}:{port} within "
+        f"{STARTUP_BUDGET_S:g}s — it was still running when the budget expired, "
+        f"so this check reaped it; exit={proc.returncode} is the signal that "
+        f"reap sent. last_probe={last_probe!r} port_races={races} "
         f"stderr={(err or '').strip()!r} stdout={(out or '').strip()!r}"
     )
 
@@ -7138,6 +7144,7 @@ def _spawn_serving(
     startup regression into a slow, silent pass.
     """
     races: list[str] = []
+    last_race_err = ""
     for attempt in range(1, SPAWN_ATTEMPTS + 1):
         port = _free_port()
         proc = subprocess.Popen(
@@ -7161,8 +7168,11 @@ def _spawn_serving(
         base = f"http://{host}:{port}"
         last_probe: BaseException | None = None
         deadline = time.time() + STARTUP_BUDGET_S
+        # `host`, not a hardcoded `127.0.0.1`: the parameter exists to be
+        # varied, and a note naming an address the child never used is a
+        # false statement in the one place someone reads under pressure.
         note = (
-            f"attempt {attempt}: 127.0.0.1:{port} was taken between picking it "
+            f"attempt {attempt}: {host}:{port} was taken between picking it "
             "and binding it"
         )
         while time.time() < deadline:
@@ -7171,6 +7181,7 @@ def _spawn_serving(
                 kind, out, err = verdict
                 if kind == "race":
                     races.append(note)
+                    last_race_err = err
                     break
                 raise AssertionError(f"server exited {proc.returncode}: {err or out}")
             try:
@@ -7213,15 +7224,26 @@ def _spawn_serving(
             verdict = _child_verdict(proc)
             if verdict is None:
                 raise AssertionError(
-                    _never_healthy_message(port, proc, last_probe, races)
+                    _never_healthy_message(host, port, proc, last_probe, races)
                 )
             kind, out, err = verdict
             if kind != "race":
                 raise AssertionError(f"server exited {proc.returncode}: {err or out}")
             races.append(note)
+            last_race_err = err
+    # 🔴 IT CARRIES THE LAST CHILD'S STDERR, and the first draft did not — it
+    # listed three port numbers and nothing else, which is STRICTLY LESS than
+    # the base ref printed for the same deaths (`server exited 1: <traceback>`).
+    # That matters most in the case this arm is likeliest to see: the predicate
+    # matches EADDRINUSE anywhere in stderr, so a future second `bind()` in
+    # `server.py` — a metrics or admin port — would be classified as a race on
+    # every attempt and reported with the one fact that identifies it thrown
+    # away. A message that says "it was a race" three times is not evidence
+    # that it was.
     raise AssertionError(
         f"lost the port race {SPAWN_ATTEMPTS} times running, which is not a "
-        f"flake any more: {races}"
+        f"flake any more: {races} — the last child said: "
+        f"{last_race_err.strip()!r}"
     )
 
 
@@ -7245,9 +7267,20 @@ def running_subprocess(
     startup diagnostics can be driven directly, without a context manager in
     the way.
     """
-    base, proc, _races = _spawn_serving(
+    base, proc, races = _spawn_serving(
         store_root, token_file, trusted_proxies=trusted_proxies, host=host
     )
+    # 🔴 A RACE THAT WAS LOST AND THEN WON MUST STILL LEAVE A TRACE. Discarded,
+    # a run that raced is byte-identical to one that never did — so the retry
+    # would make the rate this whole change was written to measure permanently
+    # unmeasurable, at the exact moment it started mattering. A warning is the
+    # right volume: pytest counts it in the summary line, and nothing goes red
+    # for a hazard that was handled.
+    if races:
+        warnings.warn(
+            f"the spawn lost the port race and retried: {races}",
+            stacklevel=2,
+        )
     try:
         yield base, proc
     finally:
@@ -7264,12 +7297,14 @@ class TestTheSpawnHarnessAndThePortRace:
 
     🔴 NONE OF THIS IS REGRESSION COVERAGE FOR A DEFECT ANYONE OBSERVED, and it
     is not offered as such. `test_a_TWO_LINE_token_file_authorises_BOTH_lines`
-    failed once in ~34 full-suite runs (1 local, then 0 in 9 CI runs plus this
-    branch's), and the traceback was never captured, so which branch fired is
-    unknown and stays unknown. What IS measured is that the mechanism these
-    tests close CAN fire — see `_free_port`'s docstring for the numbers — and
-    that a harness which cannot say what it saw is the reason one occurrence
-    taught nobody anything.
+    failed ONCE, and the traceback was never captured, so which branch fired is
+    unknown and stays unknown. (The run count is deliberately NOT quoted here:
+    nothing asserts on it, it grows with every CI run, and the version in this
+    docstring was already behind the PR that introduced it. The population is
+    in `ZacxDev/cairn` #3.) What IS measured is that the mechanism these tests
+    close CAN fire — see `_free_port`'s docstring for the numbers — and that a
+    harness which cannot say what it saw is the reason one occurrence taught
+    nobody anything.
 
     So: the retry is a hazard closed by construction, and the message is the
     instrument that makes the NEXT occurrence attributable. Neither claims to
@@ -7284,7 +7319,9 @@ class TestTheSpawnHarnessAndThePortRace:
 
     @staticmethod
     @contextmanager
-    def _squatting_on(port_holder: list[int], *, listening: bool) -> Iterator[None]:
+    def _squatting_on(
+        port_holder: list[int], *, listening: bool, host: str = "127.0.0.1"
+    ) -> Iterator[None]:
         """Hold a REAL socket on a port and publish its number.
 
         A real bound socket, not a number chosen to look taken: the thing under
@@ -7305,7 +7342,7 @@ class TestTheSpawnHarnessAndThePortRace:
           after-the-deadline re-check in `_spawn_serving`.
         """
         sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
+        sock.bind((host, 0))
         if listening:
             sock.listen(1)
         port_holder.append(sock.getsockname()[1])
@@ -7322,6 +7359,11 @@ class TestTheSpawnHarnessAndThePortRace:
         Asserted on BOTH halves — that a second port was picked (so the retry
         really executed, rather than the first attempt happening to work) and
         that the server the retry produced serves real content.
+
+        🔴 AND THAT IT WARNED. A race that is lost and then won must not be
+        silent: discarded, a run that raced is byte-identical to one that never
+        did, so the retry would make the very rate this change exists to measure
+        permanently unmeasurable at the moment it started mattering.
         """
         held: list[int] = []
         picks: list[int] = []
@@ -7332,10 +7374,11 @@ class TestTheSpawnHarnessAndThePortRace:
                 return picks[-1]
 
             monkeypatch.setattr(sys.modules[__name__], "_free_port", picker)
-            with running_subprocess(store, token_file) as (base, _proc):
-                code, headers, body = fetch(
-                    f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
-                )
+            with pytest.warns(UserWarning, match="lost the port race and retried"):
+                with running_subprocess(store, token_file) as (base, _proc):
+                    code, headers, body = fetch(
+                        f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
+                    )
         assert len(picks) == 2, f"the harness never re-picked a port: {picks}"
         assert picks[0] == held[0] and picks[1] != held[0]
         assert code == 200
@@ -7347,22 +7390,39 @@ class TestTheSpawnHarnessAndThePortRace:
     ):
         """The negative control. A retry that cannot fail is not a retry, it is
         a swallow — and it would report a box with no usable ports as a hang.
+
+        🔴 It runs on `UNTRUSTED_PEER`, the OTHER loopback address, for free:
+        the note interpolates `host`, and with every test on `127.0.0.1` a
+        hardcoded address in that sentence is indistinguishable from a correct
+        one. `127.0.0.0/8` is entirely local on Linux, so this costs nothing.
         """
         held: list[int] = []
         picks: list[int] = []
-        with self._squatting_on(held, listening=False):
+        with self._squatting_on(held, listening=False, host=UNTRUSTED_PEER):
             def always_taken() -> int:
                 picks.append(held[0])
                 return held[0]
 
             monkeypatch.setattr(sys.modules[__name__], "_free_port", always_taken)
             with pytest.raises(AssertionError) as raised:
-                with running_subprocess(store, token_file):
+                with running_subprocess(store, token_file, host=UNTRUSTED_PEER):
                     pass  # pragma: no cover - the spawn must never get here
         assert len(picks) == SPAWN_ATTEMPTS, (
             f"expected exactly {SPAWN_ATTEMPTS} attempts, made {len(picks)}"
         )
-        assert f"lost the port race {SPAWN_ATTEMPTS} times" in str(raised.value)
+        message = str(raised.value)
+        assert f"lost the port race {SPAWN_ATTEMPTS} times" in message
+        # 🔴 AND IT CARRIES THE CHILD'S OWN WORDS. The first draft listed three
+        # port numbers and nothing else — strictly LESS than the base ref, which
+        # printed `server exited 1: <traceback>` for the first of those deaths.
+        # This arm's likeliest real cause is a death the predicate CLASSIFIES as
+        # a race without being one, and the stderr is the only thing that could
+        # say so. Derived from `errno.EADDRINUSE`, not spelled.
+        assert os.strerror(errno.EADDRINUSE) in message, (
+            f"the exhaustion message dropped the child's stderr: {message}"
+        )
+        # The note names the address the child was actually given.
+        assert f"{UNTRUSTED_PEER}:{held[0]}" in message, message
 
     def test_a_thief_that_ACCEPTS_AND_NEVER_ANSWERS_is_retried_too(
         self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
@@ -7376,22 +7436,52 @@ class TestTheSpawnHarnessAndThePortRace:
         runs again. Before the re-check this reported "never became healthy",
         which is a true sentence about the wrong thing.
 
-        The budget is shortened because the point is the branch, not the wait.
+        🔴 THE BUDGET IS SHORTENED, AND THAT IS A BET ON THE SCHEDULER — see
+        this module's header, which records `HANG_TIMEOUT` going 15 → 60 s
+        because a localhost round-trip lost the scheduler for >15 s in CI. The
+        first attempt spends the WHOLE budget by construction (that is the
+        branch under test), so the budget is also this test's cost; what has to
+        fit inside the SECOND one is an ordinary spawn. Measured on a loaded
+        24-core host: attempt 2 took ~0.33 s against 4.0 s, ~12x, where the
+        header's documented bad case wants ~8x. So the bound stays — but a
+        failure here is RE-BLAMED below rather than reported as a defect in the
+        retry, because on a 2-core runner that margin is smaller than measured
+        here and "never became healthy" is precisely the sentence this PR calls
+        true about the wrong thing.
         """
         held: list[int] = []
         picks: list[int] = []
         real_free_port = _free_port
-        monkeypatch.setattr(sys.modules[__name__], "STARTUP_BUDGET_S", 4.0)
+        budget = 4.0
+        monkeypatch.setattr(sys.modules[__name__], "STARTUP_BUDGET_S", budget)
         with self._squatting_on(held, listening=True):
             def picker() -> int:
                 picks.append(held[0] if not picks else real_free_port())
                 return picks[-1]
 
             monkeypatch.setattr(sys.modules[__name__], "_free_port", picker)
-            with running_subprocess(store, token_file) as (base, _proc):
-                code, _headers, _body = fetch(
-                    f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
-                )
+            # 🔴 RE-BLAMED, exactly as leg 1 of
+            # `test_POSITIVE_CONTROL_the_same_runner_reaches_a_NON_78_exit`
+            # re-blames its own short bound. Without this a host too slow for
+            # the SHORTENED budget reports "never became healthy" — a claim
+            # about the retry — and the next person debugs their diff.
+            try:
+                with running_subprocess(store, token_file) as (base, _proc):
+                    code, _headers, _body = fetch(
+                        f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
+                    )
+            except AssertionError as exc:
+                if "never became healthy" in str(exc):
+                    raise AssertionError(
+                        f"attempt {len(picks)} did not come up inside the "
+                        f"SHORTENED STARTUP_BUDGET_S={budget:g}s, so this "
+                        f"control cannot run: the budget is too short for this "
+                        f"host, NOT a regression in the retry (which "
+                        f"`test_POSITIVE_CONTROL_a_port_lost_AFTER_it_is_"
+                        f"picked_is_retried_and_survived` measures at the full "
+                        f"budget). Raise it. Underlying: {exc}"
+                    ) from exc
+                raise
         assert len(picks) == 2, f"the silent thief was not retried: {picks}"
         assert code == 200
 
@@ -7427,19 +7517,33 @@ class TestTheSpawnHarnessAndThePortRace:
         🔴 Each assertion below is a fact the previous five-word message did not
         carry, and the absence of which is why the one recorded occurrence of
         the full-suite intermittent could not be attributed to a branch.
+
+        🔴 THE BUDGET IS A RACE THIS TEST MUST WIN, so it is not as short as it
+        could be. The whole budget is spent by construction — every probe is
+        refused — but the child has to reach `load_tokens` and emit its startup
+        warning BEFORE the reap, or the drained-stderr assertion below fails
+        with a claim about the message code when the cause is the host.
+        Measured: the child reaches that point in 0.085-0.262 s across 8 samples
+        on a loaded 24-core box. At 1.0 s that was 4-10x, under the ~8x this
+        module's header says the documented bad case needs; 3.0 s buys 11-35x
+        for two extra seconds, and the failure is re-blamed below on top.
         """
         module = sys.modules[__name__]
-        monkeypatch.setattr(module, "STARTUP_BUDGET_S", 1.0)
+        budget = 3.0
+        monkeypatch.setattr(module, "STARTUP_BUDGET_S", budget)
 
         def refuse_every_probe(*_args, **_kwargs):
             raise RuntimeError("probe refused by the control")
 
         monkeypatch.setattr(module, "fetch", refuse_every_probe)
         with pytest.raises(AssertionError) as raised:
-            with running_subprocess(store, token_file):
+            # `UNTRUSTED_PEER` for the same reason as the bounded control above:
+            # with every test on 127.0.0.1 a hardcoded address in the message is
+            # indistinguishable from the interpolated `host`.
+            with running_subprocess(store, token_file, host=UNTRUSTED_PEER):
                 pass  # pragma: no cover - the spawn must never get here
         message = str(raised.value)
-        assert "server never became healthy on 127.0.0.1:" in message
+        assert f"server never became healthy on {UNTRUSTED_PEER}:" in message
         assert "port_races=[]" in message
         # The last probe, verbatim: "it timed out" and "it was refused" are
         # different diagnoses and the old message could express neither.
@@ -7456,8 +7560,17 @@ class TestTheSpawnHarnessAndThePortRace:
         # The quote character is whichever `!r` chose — the child's warning
         # contains an apostrophe, so hardcoding `'` would match nothing.
         drained = re.search(r"stderr=(['\"])(.*?)\1 stdout=", message, re.DOTALL)
-        assert drained and drained.group(2).strip(), (
-            f"the child's stderr was not carried into the message: {message}"
+        assert drained, f"the message has no stderr field at all: {message}"
+        # 🔴 RE-BLAMED when the field is PRESENT but EMPTY. That is the one
+        # outcome the host can cause: the child had not printed its startup
+        # warning before the budget expired. Reported as a defect in the
+        # message code it sends the next reader to debug the wrong file.
+        assert drained.group(2).strip(), (
+            f"the message carried an EMPTY stderr. The field is there, so the "
+            f"drain works; the child had not written anything within the "
+            f"SHORTENED STARTUP_BUDGET_S={budget:g}s. That is the budget being "
+            f"too short for this host, NOT a regression in "
+            f"`_never_healthy_message` — raise it. Message: {message}"
         )
 
 
@@ -19540,8 +19653,13 @@ class TestStartupStillRefusesAMalformedFile:
         documents would kill it with rc 1 inside the bound, which this class
         would read as "the startup guard fired", the exact wrong diagnosis its
         control-for-the-control exists to prevent.
+
+        It makes at most `SPAWN_ATTEMPTS` spawns and RAISES if every one of them
+        lost the race — it never returns a raced result as though the server
+        had had an opinion about the token file.
         """
-        for attempt in range(1, SPAWN_ATTEMPTS + 1):
+        last_err = ""
+        for _attempt in range(SPAWN_ATTEMPTS):
             proc = subprocess.Popen(
                 [
                     sys.executable,
@@ -19565,11 +19683,22 @@ class TestStartupStillRefusesAMalformedFile:
                     "the server did not exit on a malformed token file — it is "
                     "serving, which is the failure this guard pins against"
                 )
-            if attempt < SPAWN_ATTEMPTS and _lost_the_port_race(proc.returncode, err):
+            # 🔴 THE RACE CHECK COMES FIRST, AND THE `continue` IS
+            # UNCONDITIONAL. Written as `attempt < SPAWN_ATTEMPTS and
+            # _lost_the_port_race(...)` the conjunct short-circuits on the LAST
+            # attempt, so a third lost race fell through to the `return` below
+            # and handed rc 1 back as if the server had refused — the exact
+            # mis-diagnosis this retry exists to prevent, and it also made the
+            # raise underneath unreachable while `# pragma: no cover` said only
+            # that it was uncovered. Measured: `RETURNED (no raise): rc=1
+            # picks=3`. Exhausting the loop is what reaches the raise.
+            if _lost_the_port_race(proc.returncode, err):
+                last_err = err
                 continue
             return (out, err), proc.returncode
-        raise AssertionError(  # pragma: no cover
-            f"lost the port race {SPAWN_ATTEMPTS} times running for {token_file}"
+        raise AssertionError(
+            f"lost the port race {SPAWN_ATTEMPTS} times running for "
+            f"{token_file} — the last child said: {last_err.strip()!r}"
         )
 
     def _run_to_completion_with_bound(self, store: Path, token_file: Path, *, bound):
@@ -19630,6 +19759,55 @@ class TestStartupStillRefusesAMalformedFile:
         finally:
             squatter.close()
         assert len(picks) == 2, f"the stolen port was not retried: {picks}"
+
+    def test_EVERY_attempt_losing_the_race_RAISES_rather_than_returning_rc_1(
+        self, store: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """🔴 THE EXHAUSTION ARM, AND IT WAS DEAD CODE UNTIL AN AUDIT READ IT.
+
+        The retry was written `if attempt < SPAWN_ATTEMPTS and
+        _lost_the_port_race(...)`. On the LAST attempt the conjunct
+        short-circuits, so a third lost race fell through to the `return` and
+        handed rc 1 back as though the server had refused the token file —
+        making the whole class report `exited 1, expected 78`, i.e. "the startup
+        guard stopped working", which is the exact mis-diagnosis the retry
+        exists to prevent. It also made the `raise` below unreachable while its
+        `# pragma: no cover` claimed only that it was uncovered.
+
+        Measured before the fix: `RETURNED (no raise): rc=1 picks=3`.
+        """
+        good = tmp_path / "token"
+        good.write_text(GOOD_TOKEN + "\n")
+        squatter = socket.socket()
+        squatter.bind(("127.0.0.1", 0))
+        picks: list[int] = []
+
+        def always_taken() -> int:
+            picks.append(squatter.getsockname()[1])
+            return picks[-1]
+
+        monkeypatch.setattr(sys.modules[__name__], "_free_port", always_taken)
+        try:
+            with pytest.raises(AssertionError) as raised:
+                self._run_to_completion(store, good)
+        finally:
+            squatter.close()
+        assert len(picks) == SPAWN_ATTEMPTS, (
+            f"expected {SPAWN_ATTEMPTS} attempts, made {len(picks)}"
+        )
+        message = str(raised.value)
+        assert f"lost the port race {SPAWN_ATTEMPTS} times" in message
+        # The child's own words, derived from the errno rather than spelled —
+        # without them "it was a race" is asserted three times and evidenced
+        # none.
+        assert os.strerror(errno.EADDRINUSE) in message, message
+        # 🔴 NO ASSERTION HERE THAT THE REFUSAL CODE IS ABSENT. The obvious one
+        # — `str(api.EXIT_CONFIG) not in message` — was written and MEASURED
+        # false: the interpolated traceback contains `line 478`, so a bare "78"
+        # matches a line number. A substring check on a small integer is not a
+        # guard, and the property that matters is pinned above anyway, by
+        # `pytest.raises`: the defect was RETURNING rc 1, and a raise cannot be
+        # mistaken for a return.
 
     def test_a_SHORT_token_at_startup_still_exits_78(
         self, store: Path, tmp_path: Path
