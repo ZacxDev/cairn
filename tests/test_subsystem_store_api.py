@@ -7142,7 +7142,8 @@ def _never_healthy_message(
     contract stated twice is a contract that will disagree with itself, which
     is how the two-case rule survived a round that had already refuted it.
     """
-    # 🔴 READ BEFORE THE TERMINATE, and it is the SIGTERM arm's conjunct. Five
+    # 🔴 READ BEFORE THE TERMINATE. It is not the SIGTERM arm's conjunct —
+    # `delivered_sigterm` below is; see the note there for what this buys. Five
     # rounds running, this function has credited itself with a signal it did not
     # send; each round fixed one branch and left the same defect on another. The
     # SIGTERM branch was the last of them, and round 5 made it worse by adding a
@@ -7177,9 +7178,20 @@ def _never_healthy_message(
     # set `returncode` when it does deliver — so `returncode is None` here says
     # exactly whether the signal went out. Same shape as `escalated` below:
     # ask the branch that acts, not the state afterwards. MEASURED exact in all
-    # three cases. The pre-poll stays because it is the honest record of what we
-    # saw, and pairing the two is what survives a `send_signal` that stops
-    # polling internally.
+    # three cases.
+    #
+    # ⚠ `was_running` IS REDUNDANT TODAY AND THE MUTANT THAT DROPS IT SURVIVES.
+    # Measured: `delivered_sigterm = proc.returncode is None` passes the whole
+    # file. It has to — `poll()` sets `returncode` iff the child is dead and
+    # `terminate()` can only set it, never clear it, so right here the two
+    # conjuncts are the same bit. An earlier draft justified keeping it as what
+    # "survives a `send_signal` that stops polling internally"; that is FALSE
+    # while the pre-poll is present, because then nothing between the two reads
+    # can move `returncode` either. What it actually buys is the case where the
+    # pre-poll is REMOVED as dead code: without it, an already-dead-but-unreaped
+    # child reads `returncode is None` and gets credited. So it is kept as the
+    # thing that makes deleting the pre-poll safe to notice, and it is NOT
+    # claimed as covered — nothing fails if you delete it.
     was_running = proc.poll() is None
     proc.terminate()
     delivered_sigterm = was_running and proc.returncode is None
@@ -7616,7 +7628,8 @@ class TestTheSpawnHarnessAndThePortRace:
 
         # 1b. A SIGTERM this check did NOT send — same return code, opposite
         #     answer, and the case `pkill` produces because SIGTERM is its
-        #     default. Only `was_running` can tell these two apart.
+        #     default. `delivered_sigterm` is what tells these two apart —
+        #     either of its conjuncts would do it alone; see its note.
         outside_term = _never_healthy_message(
             "127.0.0.1", 1, already_dead(signal.SIGTERM), None, []
         )
@@ -7884,7 +7897,11 @@ class TestTheSpawnHarnessAndThePortRace:
         """
         stub = self._DiesInTheSignalWindow()
         message = _never_healthy_message("127.0.0.1", 1, stub, None, [])
-        assert stub.polls >= 2 and not stub.delivered, (
+        # `== 2`, not `>=`: production polls exactly twice (ours, then
+        # `send_signal`'s). Admitting a third would let a future extra poll make
+        # OURS the killing one, silently turning this into the already-dead case
+        # that `outside_term` covers — while every assertion here still passed.
+        assert stub.polls == 2 and not stub.delivered, (
             f"the stub did not reach the signal window: polls={stub.polls} "
             f"delivered={stub.delivered}"
         )
@@ -7946,12 +7963,14 @@ class TestTheSpawnHarnessAndThePortRace:
 
     def test_the_child_is_POLLED_before_it_is_TERMINATED(self):
         assert self._poll_runs_before_terminate(), (
-            "`was_running` is read AFTER `proc.terminate()`, so it no longer "
-            "records what was true BEFORE this check signalled — it collapses "
-            "into `delivered_sigterm`, and the message loses the ability to "
-            "say a child was already dead when we found it. The window is too "
-            "narrow for any test to see reliably, which is why this is asserted "
-            "structurally rather than hoped for."
+            "`was_running` is read AFTER `proc.terminate()`. MEASURED cost of "
+            "that order: a SIGTERM this check DID send is denied — the message "
+            "says `is NOT a signal this check sent` and points the reader at an "
+            "outside killer that does not exist. (Not the over-credit the "
+            "opposite mistake produces; an earlier version of this message said "
+            "so and was wrong.) The window is too narrow for any test to see "
+            "reliably, which is why the order is asserted structurally rather "
+            "than hoped for."
         )
 
     def test_the_POLL_ORDER_detector_can_actually_SEE_the_wrong_order(self):
