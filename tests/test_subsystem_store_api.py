@@ -7135,31 +7135,37 @@ def _never_healthy_message(
     interesting: the child can exit on its own in the window between
     `_child_verdict` returning `None` and the `terminate` below, and then the
     code is its own. Saying so unconditionally puts a false statement in the
-    message this whole change exists to make trustworthy. `-SIGTERM` means the
-    reap; anything else means it died on its own, and the reader is told which.
+    message this whole change exists to make trustworthy. The reader is told
+    which of THREE things the exit code is; the cases are enumerated at the
+    `how` below, and this sentence deliberately does not restate them — a
+    contract stated twice is a contract that will disagree with itself, which
+    is how the two-case rule survived a round that had already refuted it.
     """
     proc.terminate()
+    # 🔴 RECORDED, NOT DERIVED. `escalated` is set where the escalation ACTUALLY
+    # HAPPENS, and nowhere else. Reading `-SIGKILL` off the return code instead
+    # was the previous version, and it credited this function with every SIGKILL
+    # on the box: the kernel OOM killer — a first-class cause of "never became
+    # healthy" — an operator's `kill -9`, a sibling agent's sweep. Each produced
+    # TWO false clauses (a SIGKILL this check never sent, after a bound that
+    # never elapsed) and sent the reader to debug SIGTERM handling in a server
+    # that has none. A return code cannot prove who sent the signal; the branch
+    # that sent it can.
+    escalated = False
     try:
         out, err = proc.communicate(timeout=REAP_TIMEOUT_S)
-    except subprocess.TimeoutExpired:  # pragma: no cover
+    except subprocess.TimeoutExpired:
+        escalated = True
         proc.kill()
         out, err = proc.communicate()
-    # 🔴 THREE CASES, NOT TWO. The two-case version said anything other than
-    # -SIGTERM meant "it died on its own first" — and an audit measured that
-    # false for the branch directly above: when the child ignores or outruns
-    # SIGTERM this function SIGKILLs it, so `-9` is still THIS check's doing.
-    # Claiming otherwise inside a sentence that already says "so this check
-    # reaped it" is the same self-contradicting message the round before had
-    # just removed from the other branch.
-    reaped, killed = -int(signal.SIGTERM), -int(signal.SIGKILL)
-    how = {
-        reaped: "the signal this check sent",
-        killed: f"this check's SIGKILL, after SIGTERM did not take in "
-                f"{REAP_TIMEOUT_S:g}s",
-    }.get(
-        proc.returncode,
-        "NOT a signal this check sent — it died on its own first",
-    )
+    if proc.returncode == -int(signal.SIGTERM):
+        how = "the signal this check sent"
+    elif escalated:
+        how = (f"this check's SIGKILL, after SIGTERM did not take in "
+               f"{REAP_TIMEOUT_S:g}s")
+    else:
+        how = "NOT a signal this check sent — it died on its own or was killed "\
+              "from outside"
     return (
         f"{NEVER_HEALTHY} on {host}:{port} within "
         f"{STARTUP_BUDGET_S:g}s — it was still running when the budget expired, "
@@ -7331,10 +7337,13 @@ def running_subprocess(
     finally:
         proc.terminate()
         try:
-            proc.wait(timeout=10)
+            # `REAP_TIMEOUT_S`, not a literal: this reaps the SAME child as
+            # `_never_healthy_message` and by the same escalation, so the two
+            # must not be retunable apart.
+            proc.wait(timeout=REAP_TIMEOUT_S)
         except subprocess.TimeoutExpired:  # pragma: no cover
             proc.kill()
-            proc.wait(timeout=10)
+            proc.wait(timeout=REAP_TIMEOUT_S)
 
 
 class TestTheSpawnHarnessAndThePortRace:
@@ -7426,11 +7435,21 @@ class TestTheSpawnHarnessAndThePortRace:
         because the child cannot reach its bind failure in time. Measured at two
         load points, and it INVERTS between them: at load 18-36, one attempt (as
         that draft said); at load ~6, TWO attempts in 24 of 24 observations,
-        across four budgets from 0.0005 s to 0.05 s and both squatter kinds. The
-        mechanism is the `max(0.25, ...)` probe floor in `_spawn_serving`, which
-        hands the child a quarter-second no matter how small the budget is. So
-        an end-to-end driver here would pass on a quiet box and fail on a busy
-        one — exactly the bet this file exists to avoid.
+        across four budgets from 0.0005 s to 0.05 s and both squatter kinds.
+
+        🔴 AND THE MECHANISM IS DIFFERENT FOR THE TWO SQUATTERS — a later audit
+        measured that too, after a draft of THIS paragraph named one of them for
+        both. Against `listening=True` the child's grace is the `max(0.25, ...)`
+        probe floor (measured ~0.227 s per attempt); against `listening=False`
+        the probe is REFUSED in 0.0002-0.008 s, the floor is never spent, and
+        the grace is the `time.sleep(0.1)` on the retry path instead (~0.102 s
+        per attempt). That second number is the one that matters, because the
+        non-listening squatter is the realistic thief — and it sits right beside
+        the 0.074-0.085 s the child takes to reach `EADDRINUSE` at load 13.
+        Which side of 0.1 s that lands on IS the inversion.
+
+        So an end-to-end driver here would pass on a quiet box and fail on a
+        busy one — exactly the bet this file exists to avoid.
         """
         # `NEVER_HEALTHY`, not a retyped copy: the producer, this discriminator
         # and the control below are one seam, and a reword that touched only two
@@ -7463,7 +7482,7 @@ class TestTheSpawnHarnessAndThePortRace:
             return "ok"
         return "budget" if not stdout.strip() else "dropped"
 
-    def test_the_EXIT_reading_names_all_THREE_ways_the_child_can_be_dead(
+    def test_the_EXIT_reading_names_all_FOUR_causes_not_just_the_three_codes(
         self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
     ):
         """🔴 THE BRANCH THAT WAS UNPINNED FOR TWO ROUNDS, and wrong in both.
@@ -7474,46 +7493,76 @@ class TestTheSpawnHarnessAndThePortRace:
         outruns or ignores SIGTERM, `_never_healthy_message` kills it, so `-9`
         is still THIS check's doing and the message said the opposite.
 
-        Neither round's mutation sweep could see it: the reading is only
-        observable once the child is dead, and no fixture forced any code but
-        `-SIGTERM`. This drives the function directly with a real, already-dead
-        process for each of the three cases, so the branch is no longer
-        reachable only through a race.
+        🔴 FOUR CAUSES, NOT THREE — and an audit caught the earlier version of
+        this test conflating two of them. `-SIGKILL` has TWO causes: this
+        function escalating after SIGTERM did not take, and a SIGKILL from
+        somewhere else entirely (the kernel OOM killer, an operator, a sibling
+        agent's sweep). The first draft sent SIGKILL from HERE — the external
+        case — and then asserted the message credited this check, which is the
+        false reading. Worse, it would have gone RED against the correct fix.
+
+        Each leg below therefore names its CAUSE, not its code, and the
+        escalation leg drives the real `except TimeoutExpired` branch with a
+        child that ignores SIGTERM. That branch used to be `# pragma: no cover`
+        and never executed.
         """
         module = sys.modules[__name__]
         monkeypatch.setattr(module, "STARTUP_BUDGET_S", 5.0)
 
-        def dead_child(sig: int) -> subprocess.Popen:
-            """A real process, already reaped, carrying `-sig` as its code."""
-            proc = subprocess.Popen(
-                [sys.executable, "-c", "import time; time.sleep(30)"],
+        def child(*code: str) -> subprocess.Popen:
+            return subprocess.Popen(
+                [sys.executable, "-c", *code],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
+
+        def already_dead(sig: int) -> subprocess.Popen:
+            """A real process killed from OUTSIDE, and already reaped."""
+            proc = child("import time; time.sleep(30)")
             proc.send_signal(sig)
             proc.wait(timeout=HANG_TIMEOUT)
             return proc
 
-        term = _never_healthy_message(
-            "127.0.0.1", 1, dead_child(signal.SIGTERM), None, []
-        )
+        # 1. This check's SIGTERM — the ordinary case.
+        term = _never_healthy_message("127.0.0.1", 1, already_dead(signal.SIGTERM),
+                                      None, [])
         assert f"exit={-int(signal.SIGTERM)} is the signal this check sent" in term
 
-        kill = _never_healthy_message(
-            "127.0.0.1", 1, dead_child(signal.SIGKILL), None, []
+        # 2. This check's SIGKILL. The child IGNORES SIGTERM, so the escalation
+        #    branch is the only way it can die — no other leg reaches it.
+        monkeypatch.setattr(module, "REAP_TIMEOUT_S", 0.5)
+        stubborn = child(
+            "import signal, time;"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+            "print('armed', flush=True);"
+            "time.sleep(30)"
         )
-        assert f"exit={-int(signal.SIGKILL)} is this check's SIGKILL" in kill
-        # 🔴 The bound is interpolated, never spelled, so retuning it cannot
-        # leave this sentence claiming a number that no longer decides anything.
-        assert f"in {REAP_TIMEOUT_S:g}s" in kill
-        # And it must NOT accuse the child of dying on its own — that is the
-        # exact false clause an audit found.
-        assert "died on its own" not in kill, kill
+        # 🔴 A HANDSHAKE, NOT A SLEEP. Without it this leg races the child's own
+        # interpreter startup: measured, `terminate()` arrived before
+        # `signal.signal` ran and the child died of SIGTERM, so the leg reported
+        # `exit=-15` and tested the wrong branch. Reading the line is the only
+        # thing that proves the handler is installed.
+        assert stubborn.stdout is not None
+        assert stubborn.stdout.readline().strip() == "armed"
+        escalated = _never_healthy_message("127.0.0.1", 1, stubborn, None, [])
+        assert f"exit={-int(signal.SIGKILL)} is this check's SIGKILL" in escalated
+        # 🔴 THE WHOLE CLAUSE, not `in {N}s` — an audit measured that fragment
+        # satisfied by the message's OWN `within {STARTUP_BUDGET_S:g}s` whenever
+        # the two constants coincide, so a hardcoded bound passed a test whose
+        # comment says it prevents exactly that.
+        assert (f"after SIGTERM did not take in {REAP_TIMEOUT_S:g}s"
+                in escalated), escalated
+        assert "died on its own" not in escalated, escalated
 
-        # A code this check cannot have sent: the child really did die first.
-        own = subprocess.Popen(
-            [sys.executable, "-c", "raise SystemExit(3)"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        )
+        # 3. A SIGKILL this check did NOT send. Same return code as leg 2, and
+        #    it must NOT be credited to this check — the code cannot tell them
+        #    apart, only the branch that sent it can.
+        outside = _never_healthy_message("127.0.0.1", 1,
+                                         already_dead(signal.SIGKILL), None, [])
+        assert f"exit={-int(signal.SIGKILL)} is NOT a signal this check sent" in outside
+        assert "this check's SIGKILL" not in outside, outside
+
+        # 4. Self-exit: the child really did die first.
+        own = child("raise SystemExit(3)")
         own.wait(timeout=HANG_TIMEOUT)
         assert "exit=3 is NOT a signal this check sent" in _never_healthy_message(
             "127.0.0.1", 1, own, None, []
@@ -7717,6 +7766,18 @@ class TestTheSpawnHarnessAndThePortRace:
                 # count pinned here would be a second thing to update on every
                 # unrelated warning. Measured instead, per run, from the summary
                 # line: the baseline is 3, all `tar.extractall`.
+                #
+                # 🔴 ONE ALTERNATIVE WAS WEIGHED AND REJECTED ON ITS MERITS, not
+                # missed. A message-scoped `filterwarnings = error:the spawn
+                # lost the port race` DOES work as a guard — a later audit
+                # measured it failing the leaking case and passing the swallowed
+                # one, with no count to maintain. It is rejected because of what
+                # it does to a race that is NOT in a test: this warning fires
+                # when the retry WORKS, so promoting it to an error turns every
+                # handled race anywhere in the suite into a red run. That is a
+                # gate which fires on the hazard being correctly absorbed —
+                # precisely the permanently-red gate everyone learns to click
+                # through, and it would defeat the retry this PR exists to add.
                 with pytest.warns(UserWarning, match="lost the port race"):
                     with running_subprocess(store, token_file) as (base, _proc):
                         code, _headers, _body = fetch(
