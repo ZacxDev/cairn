@@ -73,6 +73,7 @@ import socketserver
 import stat
 import tarfile
 import secrets
+import select
 import subprocess
 import sys
 import textwrap
@@ -7160,7 +7161,18 @@ def _never_healthy_message(
         out, err = proc.communicate()
     if proc.returncode == -int(signal.SIGTERM):
         how = "the signal this check sent"
-    elif escalated:
+    # 🔴 BOTH CONJUNCTS. `escalated` alone records that the branch RAN, not that
+    # a SIGKILL was DELIVERED: `Popen.kill()` polls first and skips signalling a
+    # process it already knows is dead, so the branch can be entered and the
+    # signal never sent — an audit reproduced `escalated=True` with
+    # `returncode=7`, from a child that ignored SIGTERM, left a grandchild
+    # holding the pipes, and exited 7 while `communicate` waited. The message
+    # then claimed a SIGKILL nobody sent, after a bound the child never
+    # outlived: the identical false pair the previous round removed from the
+    # return-code-derived version, arriving from the other side. Requiring the
+    # code to AGREE with the branch cannot lose a case — when they disagree the
+    # honest default below is the true answer.
+    elif escalated and proc.returncode == -int(signal.SIGKILL):
         how = (f"this check's SIGKILL, after SIGTERM did not take in "
                f"{REAP_TIMEOUT_S:g}s")
     else:
@@ -7439,14 +7451,24 @@ class TestTheSpawnHarnessAndThePortRace:
 
         🔴 AND THE MECHANISM IS DIFFERENT FOR THE TWO SQUATTERS — a later audit
         measured that too, after a draft of THIS paragraph named one of them for
-        both. Against `listening=True` the child's grace is the `max(0.25, ...)`
-        probe floor (measured ~0.227 s per attempt); against `listening=False`
-        the probe is REFUSED in 0.0002-0.008 s, the floor is never spent, and
-        the grace is the `time.sleep(0.1)` on the retry path instead (~0.102 s
-        per attempt). That second number is the one that matters, because the
-        non-listening squatter is the realistic thief — and it sits right beside
-        the 0.074-0.085 s the child takes to reach `EADDRINUSE` at load 13.
-        Which side of 0.1 s that lands on IS the inversion.
+        both. BOTH arms pay the `time.sleep(0.1)` on the retry path; the probe
+        floor is the only difference, so the graces ADD rather than substitute.
+        Measured per attempt, at load 2.2: `listening=True` 0.351-0.359 s (the
+        `max(0.25, ...)` floor plus the sleep), `listening=False` 0.1007-0.1008 s
+        (the probe is REFUSED in microseconds, the floor is never spent, the
+        sleep is all there is).
+
+        The second number is the one that matters, because the non-listening
+        squatter is the realistic thief — and it sits right beside the
+        0.074-0.085 s the child takes to reach `EADDRINUSE`. Which side of 0.1 s
+        that lands on IS the inversion; the listening arm has ~4x the headroom
+        and does not invert.
+
+        ⚠ An earlier draft of this paragraph said ~0.227 s for the listening
+        arm, which is below the 0.25 s floor it names in the same sentence. That
+        number was copied out of an audit's table rather than derived, and
+        nothing caught it until it was measured here — a figure taken from a
+        report is exactly as unverified as one taken from memory.
 
         So an end-to-end driver here would pass on a quiet box and fail on a
         busy one — exactly the bet this file exists to avoid.
@@ -7522,7 +7544,14 @@ class TestTheSpawnHarnessAndThePortRace:
             proc.wait(timeout=HANG_TIMEOUT)
             return proc
 
-        # 1. This check's SIGTERM — the ordinary case.
+        # 1. The READING of this check's SIGTERM — deliberately not its sending.
+        #    `terminate()` is a no-op on an already-reaped child, so this leg is
+        #    structurally the same construction as leg 3. That is sound only
+        #    because `terminate()` is UNCONDITIONAL, so `-15` always agrees with
+        #    "the signal this check sent"; SIGKILL is conditional, which is why
+        #    legs 2 and 3 must differ in how the child dies and this one need
+        #    not. 🔴 If anyone ever adds a `terminated` flag by symmetry with
+        #    `escalated`, this leg pins nothing and must be rebuilt.
         term = _never_healthy_message("127.0.0.1", 1, already_dead(signal.SIGTERM),
                                       None, [])
         assert f"exit={-int(signal.SIGTERM)} is the signal this check sent" in term
@@ -7541,8 +7570,25 @@ class TestTheSpawnHarnessAndThePortRace:
         # `signal.signal` ran and the child died of SIGTERM, so the leg reported
         # `exit=-15` and tested the wrong branch. Reading the line is the only
         # thing that proves the handler is installed.
+        #
+        # 🔴 AND IT IS BOUNDED, because this child IGNORES SIGTERM and sleeps 30
+        # s: a bare `readline()` on a child that never prints would hang the
+        # suite, and there is no `pytest-timeout` here — `under_deadline` exists
+        # in this file for exactly that. The `finally` matters for the same
+        # reason: if the handshake fails, nothing else would reap a process that
+        # declines the polite signal.
         assert stubborn.stdout is not None
-        assert stubborn.stdout.readline().strip() == "armed"
+        try:
+            ready = select.select([stubborn.stdout], [], [], HANG_TIMEOUT)[0]
+            assert ready, (
+                f"the stubborn child printed nothing in {HANG_TIMEOUT:g}s, so "
+                f"this leg cannot know its SIGTERM handler is installed"
+            )
+            assert stubborn.stdout.readline().strip() == "armed"
+        except BaseException:
+            stubborn.kill()
+            stubborn.communicate()
+            raise
         escalated = _never_healthy_message("127.0.0.1", 1, stubborn, None, [])
         assert f"exit={-int(signal.SIGKILL)} is this check's SIGKILL" in escalated
         # 🔴 THE WHOLE CLAUSE, not `in {N}s` — an audit measured that fragment
@@ -7567,6 +7613,119 @@ class TestTheSpawnHarnessAndThePortRace:
         assert "exit=3 is NOT a signal this check sent" in _never_healthy_message(
             "127.0.0.1", 1, own, None, []
         )
+
+    #: The two sites that reap the spawned child, as `(function, callee)`. Both
+    #: must bind their timeout to `REAP_TIMEOUT_S`, never a literal.
+    _REAP_SITES = {("_never_healthy_message", "communicate"),
+                   ("running_subprocess", "wait")}
+
+    @staticmethod
+    def _literal_reap_bounds(source: "str | None" = None) -> "list[tuple[str, int]]":
+        """Reap waits bound by a NUMERIC LITERAL instead of `REAP_TIMEOUT_S`.
+
+        🔴 TEETH, NOT A SENTENCE — this file's own words, three thousand lines
+        up, about the bound that drifted while a comment said it could not.
+        `REAP_TIMEOUT_S` is 10.0 and the literal it replaced was 10, so the
+        regression is invisible: an audit measured that reverting either site to
+        `timeout=10` leaves the whole class green. The existing
+        `_literal_bound_hang_detectors` cannot cover this — it demands
+        `HANG_TIMEOUT`, a different constant for a different quantity.
+        """
+        src = source if source is not None else Path(__file__).read_text()
+        bad = []
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                callee = getattr(call.func, "attr", None)
+                if (node.name, callee) not in TestTheSpawnHarnessAndThePortRace._REAP_SITES:
+                    continue
+                for kw in call.keywords:
+                    if kw.arg == "timeout" and isinstance(kw.value, ast.Constant):
+                        bad.append((f"{node.name}:{callee}", call.lineno))
+        return bad
+
+    def test_no_reap_wait_is_bound_by_a_LITERAL(self):
+        stragglers = self._literal_reap_bounds()
+        assert not stragglers, (
+            f"these reap waits are bound by a literal instead of "
+            f"REAP_TIMEOUT_S: {stragglers}. Both sites reap the SAME child by "
+            f"the same escalation; a literal at one of them lets the two be "
+            f"retuned apart, silently."
+        )
+
+    def test_the_literal_REAP_bound_detector_can_actually_SEE_one(self):
+        """🔴 The positive control. A finder that matches nothing reports a
+        clean zero forever, and "no stragglers" would then mean "the walk found
+        no call sites" — which is exactly what a renamed callee would cause.
+        """
+        src = Path(__file__).read_text()
+        assert self._literal_reap_bounds(src) == [], "fixture drift: already dirty"
+        mutant = src.replace("proc.wait(timeout=REAP_TIMEOUT_S)",
+                             "proc.wait(timeout=10)", 1)
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+        found = self._literal_reap_bounds(mutant)
+        assert len(found) == 1 and found[0][0] == "running_subprocess:wait", (
+            f"re-introducing one literal reap bound did not surface it: {found}. "
+            f"A finder that matches nothing reports a clean zero forever."
+        )
+
+    class _EscalatedButNotKilled:
+        """A child that makes `_never_healthy_message` ESCALATE and then does
+        NOT die of SIGKILL — the case `escalated` alone cannot see.
+
+        🔴 A STUB, AND NARROWLY SO. It mirrors ONE measured stdlib behaviour:
+        `Popen.kill()` polls first and skips signalling a process it already
+        knows is dead, so the escalation branch can run while no SIGKILL is
+        delivered. An audit reproduced that against the real function with a
+        child that ignored SIGTERM, left a grandchild holding the pipes, and
+        exited 7 — 4 s per run, and dependent on fd inheritance. This reaches
+        the same branch deterministically and instantly. Everything it does NOT
+        stub (the whole message construction) is the real code path.
+        """
+
+        returncode = 7
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.killed = False
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def terminate(self) -> None:
+            pass
+
+        def kill(self) -> None:
+            # Exactly `Popen.kill`'s behaviour for an already-dead child.
+            self.killed = True
+
+        def communicate(self, timeout: float | None = None):
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired("stub", timeout or 0)
+            return ("", "")
+
+    def test_ESCALATING_is_not_the_same_as_having_SENT_a_SIGKILL(self):
+        """🔴 The control for round 5's own fix, and the reason the branch needs
+        BOTH conjuncts.
+
+        `escalated` records that the `except TimeoutExpired` arm ran. It does
+        not record that a signal was delivered, and the two come apart whenever
+        the child dies between the timeout firing and `kill()`. Crediting the
+        check anyway prints a SIGKILL nobody sent, after a bound the child never
+        outlived — the identical false pair two earlier rounds each removed from
+        a different branch.
+        """
+        stub = self._EscalatedButNotKilled()
+        message = _never_healthy_message("127.0.0.1", 1, stub, None, [])
+        assert stub.calls == 2 and stub.killed, (
+            "the escalation branch did not run, so this control drives nothing"
+        )
+        assert "exit=7 is NOT a signal this check sent" in message, message
+        assert "this check's SIGKILL" not in message, message
 
     def test_the_REBLAME_HELPERS_discriminate_both_ways(self):
         """🔴 THE CONTROL FOR THE TWO RE-BLAME ARMS, both directions.
