@@ -58,29 +58,54 @@ def dockerfile_env(text: str) -> dict[str, str]:
     return out
 
 
-def dockerfile_user(text: str) -> str | None:
-    m = re.search(r"^USER\s+(\S+)\s*$", text, re.M)
-    return m.group(1) if m else None
+# 🔴 THESE RETURN EVERY OCCURRENCE, NOT THE FIRST, AND THAT IS A BUG FIX.
+# They used to be `re.search`, which yields the FIRST match — while Docker
+# applies the LAST `USER` and the LAST `CMD`, and ALL `EXPOSE` lines. So an
+# appended `USER root` (a debugging step somebody forgot to revert) left the
+# original `USER 65532:65532` as the only line these functions could see: the
+# suite reported "the uid agrees" while the deployed pod ran as ROOT against
+# the PVC. Measured as mutants — `append-USER-root` and `append-second-CMD`
+# both scored 11 passed before this change. Returning all occurrences lets the
+# assertions below pin BOTH the effective value and the count.
+
+def dockerfile_users(text: str) -> list[str]:
+    return re.findall(r"^USER\s+(\S+)\s*$", text, re.M)
 
 
-def dockerfile_expose(text: str) -> str | None:
-    m = re.search(r"^EXPOSE\s+(\d+)\s*$", text, re.M)
-    return m.group(1) if m else None
+def dockerfile_exposes(text: str) -> list[str]:
+    return re.findall(r"^EXPOSE\s+(\d+)\s*$", text, re.M)
 
 
-def dockerfile_cmd_script(text: str) -> str | None:
-    """The SCRIPT the CMD runs, ignoring which python resolves it.
+def dockerfile_cmd_scripts(text: str) -> list[str]:
+    """The SCRIPT each CMD runs, ignoring which python resolves it.
 
     The Dockerfile says `python3` (resolved from the image's PATH); the flake
     names an absolute store path. Comparing the interpreter would pin a
     difference that is correct and intended, so only the script is compared.
     """
-    m = re.search(r"^CMD\s+(\[.*\])\s*$", text, re.M)
-    if not m:
-        return None
-    argv = json.loads(m.group(1))
-    scripts = [a for a in argv if a.endswith(".py")]
-    return scripts[-1] if scripts else None
+    out: list[str] = []
+    for raw in re.findall(r"^CMD\s+(\[.*\])\s*$", text, re.M):
+        scripts = [a for a in json.loads(raw) if a.endswith(".py")]
+        if scripts:
+            out.append(scripts[-1])
+    return out
+
+
+def dockerfile_user(text: str) -> str | None:
+    """The EFFECTIVE user — Docker applies the last `USER`."""
+    users = dockerfile_users(text)
+    return users[-1] if users else None
+
+
+def dockerfile_expose(text: str) -> str | None:
+    users = dockerfile_exposes(text)
+    return users[-1] if users else None
+
+
+def dockerfile_cmd_script(text: str) -> str | None:
+    """The EFFECTIVE CMD — Docker applies the last one."""
+    cmds = dockerfile_cmd_scripts(text)
+    return cmds[-1] if cmds else None
 
 
 def flake_attrset(text: str, name: str) -> dict[str, str]:
@@ -214,6 +239,79 @@ class TestTheTwoBuildsAgree:
 
     def test_the_entrypoint_script_agrees(self, dockerfile, flake):
         assert dockerfile_cmd_script(dockerfile) == flake_cmd_script(flake)
+
+    def test_the_flake_image_declares_a_PATH_and_carries_the_operational_toolchain(
+        self, flake
+    ):
+        """🔴 THE POD IS OPERATED THROUGH `kubectl exec`, AND THIS PINS THAT.
+
+        The Dockerfile inherits a shell, a tar and a PATH from `python:*-slim`
+        and needs no declaration. The flake image gets ONLY what `contents`
+        names, and the first version named the code alone — so the built image
+        had no `PATH` at all and no `sh`/`tar`/`find`/`cut`. It started, passed
+        health checks and served, and every documented operational procedure
+        against it failed:
+
+          * `server/seed.sh` pushes the store with `kubectl exec … -- tar -xf -`
+            and runs its containment guard through `sh -c`, so the pod COULD NOT
+            BE SEEDED — and `server/README.md` says hand-seeding is the only path;
+          * `server/README.md`'s token revocation is
+            `kubectl exec … -- sh -c 'kill -HUP 1'`, so a LEAKED CREDENTIAL
+            could not be revoked without deleting the pod.
+
+        None of the other assertions in this file can see that: they pin
+        env/uid/port/entrypoint, and all four agreed while the image was unfit
+        for its own documented operation. This is a STRUCTURAL check on the
+        flake source rather than on a built image, because building one takes
+        minutes and this suite runs on every commit — so it pins the DECLARATION
+        and `checks`/CI pin that the declaration builds.
+        """
+        assert re.search(r'^\s*serverPath\s*=\s*"[^"]+"\s*;', flake, re.M), (
+            "flake.nix declares no `serverPath` — without a PATH in the image "
+            "config, `kubectl exec … -- tar` fails with `executable file not "
+            "found in $PATH` even when the binary is present"
+        )
+        m = re.search(r"^\s*serverTools\s*=\s*pkgs:\s*\[(.*?)\];", flake, re.M | re.S)
+        assert m, "flake.nix declares no `serverTools`"
+        assert "busybox" in m.group(1), (
+            "the image carries no busybox, so it has no sh/tar/find/cut — "
+            "seeding and token revocation both go through `kubectl exec`"
+        )
+        # And the PATH must actually be handed to the image config, not merely
+        # defined: a declared-but-unused binding is the shape that reads as
+        # covered while changing nothing.
+        assert re.search(r"PATH\s*=\s*serverPath", flake), (
+            "`serverPath` is defined but never placed into the image's Env"
+        )
+
+    def test_exactly_one_user_and_one_cmd_are_declared(self, dockerfile):
+        """🔴 A SECOND `USER` OR `CMD` IS THE HAZARD, NOT A STYLE POINT.
+
+        The comparisons above now read the LAST occurrence, which is what
+        Docker applies — so a stray appended `USER root` changes the pod and
+        the uid comparison correctly goes red. This pins the other half: two
+        such lines are a mistake even when the last one happens to be right,
+        because the file then says two different things and the next reader
+        edits whichever they see first.
+        """
+        assert dockerfile_users(dockerfile) == ["65532:65532"], (
+            "expected exactly one USER line; a second one silently changes "
+            "which uid the pod drops to"
+        )
+        assert len(dockerfile_cmd_scripts(dockerfile)) == 1, (
+            "expected exactly one CMD; Docker applies the last, so an extra "
+            "one changes the entrypoint without changing the first"
+        )
+
+    def test_every_exposed_port_is_the_one_the_server_binds(self, dockerfile, flake):
+        """ALL `EXPOSE` lines apply, so checking one of them is not enough."""
+        exposed = dockerfile_exposes(dockerfile)
+        assert exposed, "no EXPOSE parsed"
+        port = flake_attrset(flake, "serverEnv")["SUBSYSTEM_STORE_PORT"]
+        assert set(exposed) == {port}, (
+            f"EXPOSE declares {sorted(set(exposed))} but the server binds {port} — "
+            "an exposed port nothing listens on reads as a working route"
+        )
 
     def test_the_entrypoint_is_a_file_that_exists(self, dockerfile):
         """The path is `/app/...` inside the image; check the repo half of it.

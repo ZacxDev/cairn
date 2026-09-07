@@ -109,7 +109,7 @@ SKIP_FILES = {"tests/leakscan.py"}
 # difference visible. If you add a file type, add it here in the same commit.
 TEXT_SUFFIXES = {
     ".py", ".sh", ".md", ".yml", ".yaml", ".json", ".toml", ".txt", ".cfg",
-    ".mjs", ".js", ".ts", ".nix", ".lock", "",
+    ".mjs", ".js", ".ts", ".nix", ".lock", ".dockerignore", "",
 }
 
 

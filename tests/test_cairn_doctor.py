@@ -828,3 +828,79 @@ class TestTheDiskHelpers:
                 cd.store_entry_files(blocked)
         finally:
             blocked.chmod(0o700)
+
+
+class TestAnUnconfiguredMirrorDoesNotCrashTheVisibilityCheck:
+    """🔴 REGRESSION: `doctor` died on every default deployment.
+
+    `mirror_root` became optional when the frozen mirror became configurable
+    (`CAIRN_MIRROR_ROOT`, unset by default). The `frozen-mirror` check was
+    widened to accept `None`; `_visibility_check` was NOT, so it handed `None`
+    to `_describe` and `doctor` died with
+
+        AttributeError: 'NoneType' object has no attribute 'iterdir'
+
+    — zero stdout, exit 1 — whenever no mirror was configured AND the cache
+    root existed. That is the ORDINARY state of a fresh install, so the command
+    was broken for every user who had run `cairn sync` and never migrated from
+    a pre-cutover local store.
+
+    🔴 IT SURVIVED BECAUSE EVERY EXISTING TEST PINNED THE DIMENSION. `_collect`
+    defaults `mirror_root` to a real path, and the packaged client's build-time
+    check runs in a nix sandbox whose HOME has no cache root — so the crash
+    needed BOTH `mirror_root=None` AND a cache that exists, and no fixture
+    combined them. Reaching it is the whole point of this class.
+    """
+
+    def _cache_with_a_scope(self, tmp_path):
+        cache = tmp_path / "cache"
+        (cache / "alpha").mkdir(parents=True)
+        (cache / "alpha" / "widget.md").write_text("# widget\n", encoding="utf-8")
+        return cache
+
+    def test_collect_does_not_raise_when_no_mirror_is_configured(self, tmp_path):
+        """The crash itself: a real cache root plus `mirror_root=None`."""
+        cache = self._cache_with_a_scope(tmp_path)
+        checks = _by_name(_collect(
+            resolved_root=cache, cache_root=cache, mirror_root=None,
+            pod=cd.PodFacts(reached=True, visible_entries=1, store_wide_entries=1,
+                            visible_scopes=("alpha",), snapshot_header="entry-files=1"),
+        ))
+        assert "token-scopes" in checks
+
+    def test_an_unconfigured_mirror_is_not_reported_as_an_unreadable_root(self, tmp_path):
+        """🔴 THE FIX MUST NOT OVERSHOOT, AND THIS IS THE HALF THAT CATCHES IT.
+
+        Folding `None` into the "unreadable local root" list would stop the
+        crash and downgrade the check to UNMEASURED on every default
+        deployment — a false alarm forever, which is the same defect pointed
+        the other way. An unconfigured mirror contributes no scopes and is not
+        a hole in coverage, so with the pod's scopes matching the cache's this
+        must be a clean OK.
+        """
+        cache = self._cache_with_a_scope(tmp_path)
+        check = _by_name(_collect(
+            resolved_root=cache, cache_root=cache, mirror_root=None,
+            pod=cd.PodFacts(reached=True, visible_entries=1, store_wide_entries=1,
+                            visible_scopes=("alpha",), snapshot_header="entry-files=1"),
+        ))["token-scopes"]
+        assert check.state == cd.OK, f"expected OK, got {check.state}: {check.detail}"
+        assert "unreadable" not in check.detail.lower()
+
+    def test_a_scope_the_token_cannot_reach_is_still_reported_without_a_mirror(self, tmp_path):
+        """The check must still DO its job with no mirror — not merely not crash.
+
+        A fix that returned early on `mirror_root is None` would pass both
+        tests above while silently disabling the visibility check for every
+        default deployment. This is the case that separates those.
+        """
+        cache = self._cache_with_a_scope(tmp_path)
+        (cache / "beta").mkdir()
+        (cache / "beta" / "thing.md").write_text("# thing\n", encoding="utf-8")
+        check = _by_name(_collect(
+            resolved_root=cache, cache_root=cache, mirror_root=None,
+            pod=cd.PodFacts(reached=True, visible_entries=1, store_wide_entries=2,
+                            visible_scopes=("alpha",), snapshot_header="entry-files=1"),
+        ))["token-scopes"]
+        assert check.state == cd.PROBLEM
+        assert "beta" in check.detail

@@ -10,7 +10,15 @@
       # Darwin is listed because the CLIENT is stdlib Python and has no reason
       # not to build there. The IMAGE is Linux-only, and is exposed only on
       # Linux rather than failing at evaluation with a `dockerTools` error.
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      # 🔴 `x86_64-darwin` IS DELIBERATELY ABSENT, AND ITS ABSENCE IS LOAD-BEARING.
+      # nixpkgs 26.11 — which `flake.lock` pins — DROPPED that platform, so
+      # listing it made `nix flake show` and `nix flake check --all-systems`
+      # exit 1 for the whole flake, not just for that attribute. The canonical
+      # "is this flake healthy" commands were therefore red from the first
+      # commit, and the CI `nix` job could not see it because that job builds
+      # three explicit `x86_64-linux` attributes and never evaluates the rest.
+      # Re-add it only against a nixpkgs that still has it.
+      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
       linuxSystems = [ "x86_64-linux" "aarch64-linux" ];
 
       forSystems = list: f: nixpkgs.lib.genAttrs list (system: f nixpkgs.legacyPackages.${system});
@@ -49,6 +57,37 @@
       };
       serverUid = 65532;
       serverPort = 8102;
+
+      # 🔴 THE INTERPRETER IS PINNED TO THE ONE THE SUITE ACTUALLY RUNS UNDER.
+      # `pkgs.python3` follows nixpkgs and was 3.14 here, while
+      # `server/Dockerfile` is `python:3.12-slim` and CI pins `python-version:
+      # "3.12"` — so the packaged client and the flake image shipped an
+      # interpreter NOTHING in this repo had ever run the suite against, and a
+      # lock bump could move it again silently. The suite already emits a 3.14
+      # tar-extraction DeprecationWarning, so the gap is behaviourally live,
+      # not theoretical. Change this in the same commit as the Dockerfile and
+      # the CI matrix, never alone.
+      python = pkgs: pkgs.python312;
+
+      # 🔴 THE POD IS OPERATED THROUGH `kubectl exec`, SO THE IMAGE MUST CARRY A
+      # SHELL AND A TAR. This is not convenience: with `contents` set to the
+      # code alone, the image has NO `PATH` and no `sh`/`tar`/`find`/`cut`, and
+      # every documented operational procedure breaks on an image that
+      # otherwise starts, passes health checks and serves —
+      #   * `server/seed.sh` pushes the store with `kubectl exec … -- tar -xf -`
+      #     and runs its containment guard through `sh -c` — so a pod built this
+      #     way CANNOT BE SEEDED, and `server/README.md` says seeding by hand is
+      #     the only path there is;
+      #   * `server/README.md`'s token-revocation procedure is
+      #     `kubectl exec … -- sh -c 'kill -HUP 1'` — so a LEAKED CREDENTIAL
+      #     could not be revoked without deleting the pod.
+      # busybox rather than coreutils+gnutar+findutils: it supplies every one of
+      # those applets in ~2 MB, and the procedures use only POSIX spellings.
+      # `serverPath` is asserted against this list by
+      # `tests/test_flake_image_matches_dockerfile.py`, so dropping a binary
+      # here fails the suite rather than a future seed.
+      serverPath = "/bin";
+      serverTools = pkgs: [ pkgs.busybox ];
 
       # 🔴 AN ALLOWLIST, NOT AN EXCLUDE LIST, FOR THE SAME REASON
       # `server/Dockerfile.dockerignore` is one: a working tree of this repo
@@ -102,13 +141,18 @@
           # the machine that built it and fails on one with no system python —
           # a failure landing nowhere near its cause.
           substituteInPlace $out/libexec/cairn/cairn \
-            --replace-fail '#!/usr/bin/env python3' '#!${pkgs.python3}/bin/python3'
+            --replace-fail '#!/usr/bin/env python3' '#!${(python pkgs)}/bin/python3'
 
           # `git` is invoked by BARE NAME (`lib/entry_shape.py::_git`) to derive
           # a repo's scope. Prefixed rather than suffixed so the package carries
           # its own answer instead of inheriting whatever the caller's PATH holds.
+          #
+          # `gitMinimal`, not `git`: the only invocations are `rev-parse` and
+          # `merge-base`, and full `git` drags perl's CGI/libwww stack — 385 MiB
+          # of a 386 MiB closure, paid on every consumer's switch, for an 800 KB
+          # stdlib script. gitMinimal supplies both and closes at 159 MiB.
           makeWrapper $out/libexec/cairn/cairn $out/bin/cairn \
-            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.gitMinimal ]}
 
           runHook postInstall
         '';
@@ -125,6 +169,31 @@
         # eagerly, pulling in `cairn_doctor`. It is NOT enough for the depth
         # `checks.client-resolves-its-lib` covers, which runs a real subcommand
         # to completion — see the note there.
+        # 🔴 WITHOUT THIS THE DERIVATION IS NOT REPRODUCIBLE, and `nix build
+        # --rebuild` says so: the install check below IMPORTS the whole closure,
+        # CPython writes `lib/__pycache__/*.pyc` into `$out` before the daemon
+        # seals it, and each `.pyc` header records the source mtime as build
+        # WALL-CLOCK while the installed `.py` are normalised to mtime 1. Two
+        # builds of one input then differ in exactly those seven files.
+        # Worse, that bytecode is permanently INVALID and never used — the
+        # recorded mtime never matches the sealed source, so every invocation
+        # recompiles anyway and the files are dead weight in the closure.
+        PYTHONDONTWRITEBYTECODE = "1";
+
+        # 🔴 AT BUILD TIME, NOT ONLY IN `checks`. A consumer pinning this flake
+        # builds the PACKAGE and never runs `nix flake check`, so a
+        # sibling-import break would otherwise reach a machine and be found by
+        # the operator at the moment they wanted to read a note.
+        #
+        # ⚠ `--help` IS SUFFICIENT FOR THAT BREAK — an earlier version of this
+        # comment claimed the opposite ("argparse is built before any subcommand
+        # imports anything, so `--help` alone is not evidence") and it was
+        # MEASURED FALSE: the imports are at module scope, so removing `lib/`
+        # kills `--help` at line 91 with `ModuleNotFoundError: timeouts`, right
+        # here, before `checks.client-resolves-its-lib` can even be built.
+        # `checks.client-resolves-its-lib` therefore earns its place on the
+        # POSITIVE side — it runs a real subcommand to completion against a real
+        # cache root — not as a deeper detector of a missing `lib/`.
         doInstallCheck = true;
         installCheckPhase = ''
           runHook preInstallCheck
@@ -159,7 +228,7 @@
         pkgs.dockerTools.buildLayeredImage {
           name = "cairn-store";
           tag = version;
-          contents = [ tree ];
+          contents = [ tree ] ++ serverTools pkgs;
 
           # `/data` is where the PVC mounts and `/home/nonroot` is what HOME
           # names; both are created and owned here so the image is runnable
@@ -171,8 +240,13 @@
           enableFakechroot = true;
 
           config = {
-            Cmd = [ "${pkgs.python3}/bin/python3" "/app/server/server.py" ];
-            Env = pkgs.lib.mapAttrsToList (k: v: "${k}=${v}") serverEnv;
+            Cmd = [ "${(python pkgs)}/bin/python3" "/app/server/server.py" ];
+            # 🔴 `PATH` IS DECLARED, and its absence was not cosmetic. Without
+            # it `kubectl exec … -- tar` resolves nothing even once busybox is
+            # in the image, so the seed path fails with `executable file not
+            # found in $PATH` rather than anything naming the real cause.
+            Env = pkgs.lib.mapAttrsToList (k: v: "${k}=${v}")
+              (serverEnv // { PATH = serverPath; });
             User = "${toString serverUid}:${toString serverUid}";
             ExposedPorts = { "${toString serverPort}/tcp" = { }; };
             WorkingDir = "/app";
