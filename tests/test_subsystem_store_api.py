@@ -7152,6 +7152,20 @@ def _never_healthy_message(
     # never elapsed) and sent the reader to debug SIGTERM handling in a server
     # that has none. A return code cannot prove who sent the signal; the branch
     # that sent it can.
+    # 🔴 READ BEFORE THE TERMINATE, and it is the SIGTERM arm's conjunct. Five
+    # rounds running, this function has credited itself with a signal it did not
+    # send; each round fixed one branch and left the same defect on another. The
+    # SIGTERM branch was the last of them, and round 5 made it worse by adding a
+    # comment CERTIFYING it sound: "`terminate()` is UNCONDITIONAL, so `-15`
+    # always agrees". That is true of the CALL and false of the DELIVERY.
+    # `Popen.send_signal` polls first and skips a process it already knows is
+    # dead, and a child killed by an outside SIGTERM before this runs is `-15`
+    # that is not ours either way. MEASURED: `os.kill(pid, SIGTERM)` from
+    # outside, then this function, printed "exit=-15 is the signal this check
+    # sent". 🔴 AND IT IS THE LIKELIEST BRANCH TO BE WRONG ON, because the
+    # threat model above names a sibling agent's sweep — and `pkill` sends
+    # SIGTERM by default.
+    was_running = proc.poll() is None
     escalated = False
     try:
         out, err = proc.communicate(timeout=REAP_TIMEOUT_S)
@@ -7159,7 +7173,7 @@ def _never_healthy_message(
         escalated = True
         proc.kill()
         out, err = proc.communicate()
-    if proc.returncode == -int(signal.SIGTERM):
+    if was_running and proc.returncode == -int(signal.SIGTERM):
         how = "the signal this check sent"
     # 🔴 BOTH CONJUNCTS. `escalated` alone records that the branch RAN, not that
     # a SIGKILL was DELIVERED: `Popen.kill()` polls first and skips signalling a
@@ -7175,6 +7189,17 @@ def _never_healthy_message(
     elif escalated and proc.returncode == -int(signal.SIGKILL):
         how = (f"this check's SIGKILL, after SIGTERM did not take in "
                f"{REAP_TIMEOUT_S:g}s")
+    elif escalated:
+        # 🔴 THE ESCALATION IS STILL REPORTED, even though the code cannot be
+        # credited to it. Adding the return-code conjunct made this case print a
+        # sentence byte-identical to the never-escalated one, so "the child
+        # ignored SIGTERM for the whole bound and then died of something else"
+        # and "the child exited immediately" became indistinguishable — an empty
+        # result that cannot separate two mechanisms, inside the function whose
+        # first line is that the one recorded failure carried no evidence at all.
+        how = (f"NOT a signal this check sent — but this check DID escalate to "
+               f"SIGKILL after SIGTERM did not take in {REAP_TIMEOUT_S:g}s, so "
+               f"it died of something else inside that window")
     else:
         how = "NOT a signal this check sent — it died on its own or was killed "\
               "from outside"
@@ -7460,7 +7485,7 @@ class TestTheSpawnHarnessAndThePortRace:
 
         The second number is the one that matters, because the non-listening
         squatter is the realistic thief — and it sits right beside the
-        0.074-0.085 s the child takes to reach `EADDRINUSE`. Which side of 0.1 s
+        0.074-0.085 s the child takes to reach `EADDRINUSE` at load 13. Which side of 0.1 s
         that lands on IS the inversion; the listening arm has ~4x the headroom
         and does not invert.
 
@@ -7544,17 +7569,24 @@ class TestTheSpawnHarnessAndThePortRace:
             proc.wait(timeout=HANG_TIMEOUT)
             return proc
 
-        # 1. The READING of this check's SIGTERM — deliberately not its sending.
-        #    `terminate()` is a no-op on an already-reaped child, so this leg is
-        #    structurally the same construction as leg 3. That is sound only
-        #    because `terminate()` is UNCONDITIONAL, so `-15` always agrees with
-        #    "the signal this check sent"; SIGKILL is conditional, which is why
-        #    legs 2 and 3 must differ in how the child dies and this one need
-        #    not. 🔴 If anyone ever adds a `terminated` flag by symmetry with
-        #    `escalated`, this leg pins nothing and must be rebuilt.
-        term = _never_healthy_message("127.0.0.1", 1, already_dead(signal.SIGTERM),
-                                      None, [])
+        # 1. THIS CHECK'S SIGTERM — a LIVE child, so the function does the
+        #    sending. 🔴 The previous version passed an ALREADY-DEAD child from
+        #    `already_dead`, whose own docstring says "killed from OUTSIDE", and
+        #    asserted the message credited this check. That is verbatim the
+        #    shape an earlier round recorded as its own bug, and it pinned the
+        #    false answer while a comment argued it was sound.
+        alive = child("import time; time.sleep(30)")
+        term = _never_healthy_message("127.0.0.1", 1, alive, None, [])
         assert f"exit={-int(signal.SIGTERM)} is the signal this check sent" in term
+
+        # 1b. A SIGTERM this check did NOT send — same return code, opposite
+        #     answer, and the case `pkill` produces because SIGTERM is its
+        #     default. Only `was_running` can tell these two apart.
+        outside_term = _never_healthy_message(
+            "127.0.0.1", 1, already_dead(signal.SIGTERM), None, []
+        )
+        assert (f"exit={-int(signal.SIGTERM)} is NOT a signal this check sent"
+                in outside_term), outside_term
 
         # 2. This check's SIGKILL. The child IGNORES SIGTERM, so the escalation
         #    branch is the only way it can die — no other leg reaches it.
@@ -7672,6 +7704,41 @@ class TestTheSpawnHarnessAndThePortRace:
             f"A finder that matches nothing reports a clean zero forever."
         )
 
+        # 🔴 AND THE OTHER SITE, because a control that exercises ONE of two
+        # ledger entries is half as wide as its own sentence. An audit measured
+        # the gap: renaming `_never_healthy_message` while leaving its ledger
+        # entry stale AND reverting its reap to a literal left BOTH these tests
+        # green, with the guard covering nothing at that site.
+        other = src.replace("out, err = proc.communicate(timeout=REAP_TIMEOUT_S)",
+                            "out, err = proc.communicate(timeout=10)", 1)
+        assert other != src, "the second mutation did not apply"
+        found = self._literal_reap_bounds(other)
+        assert (len(found) == 1
+                and found[0][0] == "_never_healthy_message:communicate"), found
+
+    def test_every_REAP_SITE_names_a_function_and_callee_that_EXIST(self):
+        """🔴 The ledger is only a guard while its entries resolve. A rename on
+        either side turns `_REAP_SITES` into a set of names matching nothing,
+        and `_literal_reap_bounds` then returns a permanently clean zero — the
+        failure its own positive control is written against, arriving through
+        the ledger instead of through the finder.
+        """
+        src = ast.parse(Path(__file__).read_text())
+        seen = set()
+        for node in ast.walk(src):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call):
+                    callee = getattr(call.func, "attr", None)
+                    if (node.name, callee) in self._REAP_SITES:
+                        seen.add((node.name, callee))
+        assert seen == self._REAP_SITES, (
+            f"these reap sites name nothing in the file: "
+            f"{sorted(self._REAP_SITES - seen)}. The ledger and the code have "
+            f"drifted, so the literal-bound guard covers less than it claims."
+        )
+
     class _EscalatedButNotKilled:
         """A child that makes `_never_healthy_message` ESCALATE and then does
         NOT die of SIGKILL — the case `escalated` alone cannot see.
@@ -7690,7 +7757,7 @@ class TestTheSpawnHarnessAndThePortRace:
 
         def __init__(self) -> None:
             self.calls = 0
-            self.killed = False
+            self.kill_called = False
 
         def poll(self) -> int:
             return self.returncode
@@ -7699,8 +7766,10 @@ class TestTheSpawnHarnessAndThePortRace:
             pass
 
         def kill(self) -> None:
-            # Exactly `Popen.kill`'s behaviour for an already-dead child.
-            self.killed = True
+            # `Popen.kill` on an already-dead child delivers NOTHING, so the
+            # flag records the CALL, not a signal. Naming it `killed` was the
+            # very confusion this control exists to pin.
+            self.kill_called = True
 
         def communicate(self, timeout: float | None = None):
             self.calls += 1
@@ -7721,11 +7790,16 @@ class TestTheSpawnHarnessAndThePortRace:
         """
         stub = self._EscalatedButNotKilled()
         message = _never_healthy_message("127.0.0.1", 1, stub, None, [])
-        assert stub.calls == 2 and stub.killed, (
+        assert stub.calls == 2 and stub.kill_called, (
             "the escalation branch did not run, so this control drives nothing"
         )
         assert "exit=7 is NOT a signal this check sent" in message, message
-        assert "this check's SIGKILL" not in message, message
+        # 🔴 The code is not credited to the check — AND the escalation is still
+        # reported. Asserting only the first made this case byte-identical to a
+        # child that exited 7 immediately, which is an empty result dressed as a
+        # diagnosis.
+        assert (f"DID escalate to SIGKILL after SIGTERM did not take in "
+                f"{REAP_TIMEOUT_S:g}s") in message, message
 
     def test_the_REBLAME_HELPERS_discriminate_both_ways(self):
         """🔴 THE CONTROL FOR THE TWO RE-BLAME ARMS, both directions.
