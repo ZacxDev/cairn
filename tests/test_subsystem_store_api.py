@@ -7110,9 +7110,18 @@ def _never_healthy_message(
     field that cannot vary is not evidence, and a test asserting it reads as
     coverage while providing none. So the sentence states the precondition once,
     in the past tense of the moment the budget expired, and the reader is told
-    plainly that the `exit` beside it is the signal THIS function then sent —
-    an audit read the first wording ("the child was still running" next to
-    `exit=-15`) as a contradiction, and it was right to.
+    plainly what the `exit` beside it means — an audit read the first wording
+    ("the child was still running" next to `exit=-15`) as a contradiction, and
+    it was right to.
+
+    🔴 THE `exit` IS REPORTED CONDITIONALLY, and the round that fixed the
+    contradiction briefly broke this. It asserted flatly that the exit "is the
+    signal that reap sent", which is FALSE in the one case where the field is
+    interesting: the child can exit on its own in the window between
+    `_child_verdict` returning `None` and the `terminate` below, and then the
+    code is its own. Saying so unconditionally puts a false statement in the
+    message this whole change exists to make trustworthy. `-SIGTERM` means the
+    reap; anything else means it died on its own, and the reader is told which.
     """
     proc.terminate()
     try:
@@ -7120,11 +7129,17 @@ def _never_healthy_message(
     except subprocess.TimeoutExpired:  # pragma: no cover
         proc.kill()
         out, err = proc.communicate()
+    reaped = -int(signal.SIGTERM)
+    how = (
+        "the signal this check sent"
+        if proc.returncode == reaped
+        else f"NOT the {reaped} this check sent — it died on its own first"
+    )
     return (
         f"server never became healthy on {host}:{port} within "
         f"{STARTUP_BUDGET_S:g}s — it was still running when the budget expired, "
-        f"so this check reaped it; exit={proc.returncode} is the signal that "
-        f"reap sent. last_probe={last_probe!r} port_races={races} "
+        f"so this check reaped it; exit={proc.returncode} is {how}. "
+        f"last_probe={last_probe!r} port_races={races} "
         f"stderr={(err or '').strip()!r} stdout={(out or '').strip()!r}"
     )
 
@@ -7277,9 +7292,14 @@ def running_subprocess(
     # right volume: pytest counts it in the summary line, and nothing goes red
     # for a hazard that was handled.
     if races:
+        # 🔴 `stacklevel=3`, NOT 2. This is a `@contextmanager`, so the frame one
+        # level up is `contextlib.__enter__` — measured: every emission was
+        # attributed to `.../contextlib.py:137`, which is the field a human
+        # reads first and it named the stdlib. 3 reaches the `with
+        # running_subprocess(...)` line that actually spawned.
         warnings.warn(
             f"the spawn lost the port race and retried: {races}",
-            stacklevel=2,
+            stacklevel=3,
         )
     try:
         yield base, proc
@@ -7351,6 +7371,82 @@ class TestTheSpawnHarnessAndThePortRace:
         finally:
             sock.close()
 
+    @staticmethod
+    def _budget_reblame(
+        exc: BaseException, *, attempts: int, budget: float
+    ) -> AssertionError | None:
+        """The re-blame, as ONE function the guard and its control both drive.
+
+        🔴 IT RETURNS `None` WHEN THE FAILURE IS *NOT* THE BUDGET, and that half
+        is the whole fix. The first version was written inline and re-blamed
+        EVERY "never became healthy", so an audit reverting the
+        after-the-deadline re-check — the exact regression the thief control
+        exists to catch — got told "the budget is too short for this host, NOT a
+        regression in the retry". Pointing away from the code is worse than the
+        sentence it replaced.
+
+        The discriminator was already in hand: attempt 1 spends the whole budget
+        BY CONSTRUCTION, so only a failure on a LATER attempt can be the host.
+        One attempt means the retry never fired, which is a regression.
+
+        Driving this through a real spawn is not possible without a timing bet —
+        a budget short enough to be unmeetable is also too short for the child
+        to reach its bind failure, so the race is never detected and only one
+        attempt happens (measured). Hence a pure function with a synthetic
+        control.
+        """
+        if "never became healthy" not in str(exc) or attempts < 2:
+            return None
+        return AssertionError(
+            f"attempt {attempts} did not come up inside the SHORTENED "
+            f"STARTUP_BUDGET_S={budget:g}s, so this control cannot run: the "
+            f"budget is too short for this host, NOT a regression in the retry "
+            f"(which `test_POSITIVE_CONTROL_a_port_lost_AFTER_it_is_picked_is_"
+            f"retried_and_survived` measures at the full budget). Raise it. "
+            f"Underlying: {exc}"
+        )
+
+    @staticmethod
+    def _drain_verdict(stderr: str, stdout: str) -> str:
+        """`ok` | `dropped` | `budget` — what an empty stderr field MEANS.
+
+        🔴 Both streams empty is the ONLY shape a slow host can produce: the
+        child had not run far enough to write to either. An empty stderr beside
+        a NON-EMPTY stdout means the drain lost one of them, which is a defect
+        in `_never_healthy_message` and must surface as one. The first version
+        omitted this distinction and an audit measured the cost — forcing
+        `stderr=''` produced a three-clause sentence ("the drain works; the
+        child had not written anything") in a message whose own stdout field
+        carried the child's listening line.
+        """
+        if stderr.strip():
+            return "ok"
+        return "budget" if not stdout.strip() else "dropped"
+
+    def test_the_REBLAME_HELPERS_discriminate_both_ways(self):
+        """🔴 THE CONTROL FOR THE TWO RE-BLAME ARMS, both directions.
+
+        A re-blame that cannot decline is not a diagnosis, it is a relabel — and
+        these arms are error paths a green run never executes, so without this
+        nothing in the file has ever run either of them.
+        """
+        never = AssertionError("server never became healthy on 127.0.0.1:1 …")
+        # Fires only when the retry actually ran and a LATER attempt lost.
+        blamed = self._budget_reblame(never, attempts=2, budget=4.0)
+        assert blamed is not None and "too short for this host" in str(blamed)
+        assert "STARTUP_BUDGET_S=4s" in str(blamed)
+        # Declines when the retry never fired — that is the regression itself.
+        assert self._budget_reblame(never, attempts=1, budget=4.0) is None
+        # Declines on a failure that is not about coming up at all.
+        other = AssertionError("server exited 78: SUBSYSTEM_STORE_TRUSTED_PROXIES")
+        assert self._budget_reblame(other, attempts=3, budget=4.0) is None
+
+        # And the stream verdict, all three outcomes.
+        assert self._drain_verdict("subsystem-store-api: …", "") == "ok"
+        assert self._drain_verdict("", "") == "budget"
+        assert self._drain_verdict("", "listening on 127.0.0.1:1") == "dropped"
+        assert self._drain_verdict("   ", "  \n ") == "budget"
+
     def test_POSITIVE_CONTROL_a_port_lost_AFTER_it_is_picked_is_retried_and_survived(
         self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
     ):
@@ -7374,11 +7470,22 @@ class TestTheSpawnHarnessAndThePortRace:
                 return picks[-1]
 
             monkeypatch.setattr(sys.modules[__name__], "_free_port", picker)
-            with pytest.warns(UserWarning, match="lost the port race and retried"):
+            with pytest.warns(
+                UserWarning, match="lost the port race and retried"
+            ) as caught:
                 with running_subprocess(store, token_file) as (base, _proc):
                     code, headers, body = fetch(
                         f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
                     )
+        # 🔴 AND IT IS ATTRIBUTED TO THE CALLER. `stacklevel` inside a
+        # `@contextmanager` is off by one, and at 2 every emission named
+        # `.../contextlib.py` — the file:line a human reads first, pointing at
+        # the stdlib. Asserted rather than eyeballed, because nothing else can
+        # see it once `pytest.warns` swallows the output.
+        assert Path(caught[0].filename).name == Path(__file__).name, (
+            f"the race warning was attributed to {caught[0].filename}, not to "
+            f"the caller that spawned — check `stacklevel`"
+        )
         assert len(picks) == 2, f"the harness never re-picked a port: {picks}"
         assert picks[0] == held[0] and picks[1] != held[0]
         assert code == 200
@@ -7442,12 +7549,18 @@ class TestTheSpawnHarnessAndThePortRace:
         first attempt spends the WHOLE budget by construction (that is the
         branch under test), so the budget is also this test's cost; what has to
         fit inside the SECOND one is an ordinary spawn. Measured on a loaded
-        24-core host: attempt 2 took ~0.33 s against 4.0 s, ~12x, where the
-        header's documented bad case wants ~8x. So the bound stays — but a
-        failure here is RE-BLAMED below rather than reported as a defect in the
-        retry, because on a 2-core runner that margin is smaller than measured
-        here and "never became healthy" is precisely the sentence this PR calls
-        true about the wrong thing.
+        24-core host: attempt 2 took ~0.33 s against 4.0 s, ~12x.
+
+        🔴 NO DOCUMENTED BAR IS CITED, because there is none for this quantity.
+        An earlier draft said "the header's documented bad case wants ~8x" and
+        an audit measured that false: the header states 4x (`60 s absorbs a 4x
+        scheduling delay`), and the only ~8x in this file is `_spawn_serving`'s
+        own comment, which derives it for a PROBE bound against a scheduler
+        stall — a different quantity from process startup, and an assertion
+        rather than a source. Inventing a bar to justify a bound is how a fix
+        round's prose becomes the next round's finding. So: the margin measured
+        above is the whole argument, and the re-blame below is what covers the
+        residual on a 2-core runner, where it is smaller than measured here.
         """
         held: list[int] = []
         picks: list[int] = []
@@ -7465,22 +7578,42 @@ class TestTheSpawnHarnessAndThePortRace:
             # re-blames its own short bound. Without this a host too slow for
             # the SHORTENED budget reports "never became healthy" — a claim
             # about the retry — and the next person debugs their diff.
+            #
+            # 🔴 AND IT BRANCHES ON THE DISCRIMINATOR. The first version did
+            # not: it re-blamed EVERY "never became healthy", including the one
+            # this test exists to catch. An audit measured it — reverting the
+            # after-the-deadline re-check, which is exactly the pre-fix state
+            # named above, made this print "the budget is too short for this
+            # host, NOT a regression in the retry". Pointing AWAY from the code
+            # is worse than the sentence it replaced, by this file's own rule at
+            # `test_a_TOO_SHORT_bound_is_reported_as_a_BOUND_problem_not_a_
+            # REGRESSION`: a test that names the wrong cause sends somebody to
+            # debug their diff.
+            #
+            # `len(picks)` was already in hand and settles it. Attempt 1 spends
+            # the whole budget BY CONSTRUCTION, so a genuinely slow host can
+            # only lose on attempt 2; one pick means the retry never fired,
+            # which is a regression and must surface as one.
             try:
-                with running_subprocess(store, token_file) as (base, _proc):
-                    code, _headers, _body = fetch(
-                        f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
-                    )
+                # 🔴 IT SWALLOWS ITS OWN WARNING. This control races on purpose
+                # and every green run of it emits one, so leaving it loose makes
+                # the suite's baseline ONE race warning rather than zero — and
+                # then a real race in some other test is invisible unless the
+                # reader checks node ids. `pytest.warns` also asserts it fired.
+                with pytest.warns(UserWarning, match="lost the port race"):
+                    with running_subprocess(store, token_file) as (base, _proc):
+                        code, _headers, _body = fetch(
+                            f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
+                        )
             except AssertionError as exc:
-                if "never became healthy" in str(exc):
-                    raise AssertionError(
-                        f"attempt {len(picks)} did not come up inside the "
-                        f"SHORTENED STARTUP_BUDGET_S={budget:g}s, so this "
-                        f"control cannot run: the budget is too short for this "
-                        f"host, NOT a regression in the retry (which "
-                        f"`test_POSITIVE_CONTROL_a_port_lost_AFTER_it_is_"
-                        f"picked_is_retried_and_survived` measures at the full "
-                        f"budget). Raise it. Underlying: {exc}"
-                    ) from exc
+                # Through `_budget_reblame`, so the control that proves this
+                # DISCRIMINATES drives that function rather than a copy of it.
+                # `None` means "not the budget" — re-raise unchanged.
+                reblamed = self._budget_reblame(
+                    exc, attempts=len(picks), budget=budget
+                )
+                if reblamed is not None:
+                    raise reblamed from exc
                 raise
         assert len(picks) == 2, f"the silent thief was not retried: {picks}"
         assert code == 200
@@ -7524,9 +7657,12 @@ class TestTheSpawnHarnessAndThePortRace:
         warning BEFORE the reap, or the drained-stderr assertion below fails
         with a claim about the message code when the cause is the host.
         Measured: the child reaches that point in 0.085-0.262 s across 8 samples
-        on a loaded 24-core box. At 1.0 s that was 4-10x, under the ~8x this
-        module's header says the documented bad case needs; 3.0 s buys 11-35x
-        for two extra seconds, and the failure is re-blamed below on top.
+        on a loaded 24-core box, so 1.0 s was 4-12x and 3.0 s is 11-35x. Two
+        extra seconds for triple the margin, and the failure is re-blamed below
+        on top of that. 🔴 No documented bar is cited here either, and an
+        earlier draft cited one that does not exist — see the sibling
+        `test_a_thief_that_ACCEPTS_AND_NEVER_ANSWERS_is_retried_too` for what
+        the header actually says.
         """
         module = sys.modules[__name__]
         budget = 3.0
@@ -7561,16 +7697,35 @@ class TestTheSpawnHarnessAndThePortRace:
         # contains an apostrophe, so hardcoding `'` would match nothing.
         drained = re.search(r"stderr=(['\"])(.*?)\1 stdout=", message, re.DOTALL)
         assert drained, f"the message has no stderr field at all: {message}"
-        # 🔴 RE-BLAMED when the field is PRESENT but EMPTY. That is the one
-        # outcome the host can cause: the child had not printed its startup
-        # warning before the budget expired. Reported as a defect in the
-        # message code it sends the next reader to debug the wrong file.
-        assert drained.group(2).strip(), (
-            f"the message carried an EMPTY stderr. The field is there, so the "
-            f"drain works; the child had not written anything within the "
-            f"SHORTENED STARTUP_BUDGET_S={budget:g}s. That is the budget being "
-            f"too short for this host, NOT a regression in "
-            f"`_never_healthy_message` — raise it. Message: {message}"
+        # 🔴 RE-BLAMED when the field is PRESENT but EMPTY — AND ONLY WHEN
+        # `stdout` IS EMPTY TOO. The first version omitted that second half and
+        # an audit measured what it cost: forcing `_never_healthy_message` to
+        # emit `stderr=''` made this print "the drain works; the child had not
+        # written anything", in a message whose own `stdout` field carried the
+        # child's listening line. Three false clauses pointing away from the
+        # code that was actually broken.
+        #
+        # Both streams empty is the ONLY shape the host can produce: the child
+        # had not run far enough to write to either. stderr empty beside a
+        # non-empty stdout means the drain dropped one of them, which is a
+        # defect in this message and must surface as one.
+        printed = re.search(r"stdout=(['\"])(.*?)\1$", message, re.DOTALL)
+        assert printed, f"the message has no stdout field at all: {message}"
+        # Through `_drain_verdict`, so the control that proves this
+        # discriminates drives that function rather than a copy of it.
+        verdict = self._drain_verdict(drained.group(2), printed.group(2))
+        assert verdict != "dropped", (
+            f"the message carried an EMPTY stderr beside a NON-EMPTY stdout, so "
+            f"the child did write and the drain dropped it — a defect in "
+            f"`_never_healthy_message`, not a budget too short for this host. "
+            f"Message: {message}"
+        )
+        assert verdict == "ok", (
+            f"the message carried an EMPTY stderr AND an empty stdout: the "
+            f"child had not written anything within the SHORTENED "
+            f"STARTUP_BUDGET_S={budget:g}s. That is the budget being too short "
+            f"for this host, NOT a regression in `_never_healthy_message` — "
+            f"raise it. Message: {message}"
         )
 
 
