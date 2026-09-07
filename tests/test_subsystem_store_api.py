@@ -7142,16 +7142,6 @@ def _never_healthy_message(
     contract stated twice is a contract that will disagree with itself, which
     is how the two-case rule survived a round that had already refuted it.
     """
-    proc.terminate()
-    # 🔴 RECORDED, NOT DERIVED. `escalated` is set where the escalation ACTUALLY
-    # HAPPENS, and nowhere else. Reading `-SIGKILL` off the return code instead
-    # was the previous version, and it credited this function with every SIGKILL
-    # on the box: the kernel OOM killer — a first-class cause of "never became
-    # healthy" — an operator's `kill -9`, a sibling agent's sweep. Each produced
-    # TWO false clauses (a SIGKILL this check never sent, after a bound that
-    # never elapsed) and sent the reader to debug SIGTERM handling in a server
-    # that has none. A return code cannot prove who sent the signal; the branch
-    # that sent it can.
     # 🔴 READ BEFORE THE TERMINATE, and it is the SIGTERM arm's conjunct. Five
     # rounds running, this function has credited itself with a signal it did not
     # send; each round fixed one branch and left the same defect on another. The
@@ -7163,9 +7153,27 @@ def _never_healthy_message(
     # that is not ours either way. MEASURED: `os.kill(pid, SIGTERM)` from
     # outside, then this function, printed "exit=-15 is the signal this check
     # sent". 🔴 AND IT IS THE LIKELIEST BRANCH TO BE WRONG ON, because the
-    # threat model above names a sibling agent's sweep — and `pkill` sends
+    # threat model below names a sibling agent's sweep — and `pkill` sends
     # SIGTERM by default.
+    #
+    # 🔴 AND THE ORDER IS THE WHOLE GUARD. The previous round wrote this comment
+    # and then placed the read 23 lines BELOW the terminate, so the comment and
+    # the commit message both described code that did not exist. The window
+    # between them measures ~100 us — an audit flipped it to 200/200 with a
+    # 0.1 ms delay — on a host this file's own header documents as losing the
+    # scheduler for >15 s. `terminate()` already polls internally, so reading
+    # first costs nothing and closes the window instead of narrowing it.
     was_running = proc.poll() is None
+    proc.terminate()
+    # 🔴 RECORDED, NOT DERIVED. `escalated` is set where the escalation ACTUALLY
+    # HAPPENS, and nowhere else. Reading `-SIGKILL` off the return code instead
+    # was the previous version, and it credited this function with every SIGKILL
+    # on the box: the kernel OOM killer — a first-class cause of "never became
+    # healthy" — an operator's `kill -9`, a sibling agent's sweep. Each produced
+    # TWO false clauses (a SIGKILL this check never sent, after a bound that
+    # never elapsed) and sent the reader to debug SIGTERM handling in a server
+    # that has none. A return code cannot prove who sent the signal; the branch
+    # that sent it can.
     escalated = False
     try:
         out, err = proc.communicate(timeout=REAP_TIMEOUT_S)
@@ -7197,6 +7205,15 @@ def _never_healthy_message(
         # and "the child exited immediately" became indistinguishable — an empty
         # result that cannot separate two mechanisms, inside the function whose
         # first line is that the one recorded failure carried no evidence at all.
+        #
+        # ⚠ NOT EVERY escalation, and the round that added this clause claimed
+        # otherwise. A child that escalated and then exited `-SIGTERM` while
+        # alive at entry takes clause 1 and reports no escalation at all — still
+        # byte-identical to a clean reap. Reachable only via the
+        # grandchild-holds-the-pipes shape, unreached by any test, and left as
+        # it is: clause 1's answer is TRUE there, just incomplete, and widening
+        # it would put a third conjunct on the branch this ladder has already
+        # broken twice. Recorded rather than fixed.
         how = (f"NOT a signal this check sent — but this check DID escalate to "
                f"SIGKILL after SIGTERM did not take in {REAP_TIMEOUT_S:g}s, so "
                f"it died of something else inside that window")
@@ -7642,9 +7659,18 @@ class TestTheSpawnHarnessAndThePortRace:
         # 4. Self-exit: the child really did die first.
         own = child("raise SystemExit(3)")
         own.wait(timeout=HANG_TIMEOUT)
-        assert "exit=3 is NOT a signal this check sent" in _never_healthy_message(
-            "127.0.0.1", 1, own, None, []
-        )
+        self_exit = _never_healthy_message("127.0.0.1", 1, own, None, [])
+        assert "exit=3 is NOT a signal this check sent" in self_exit, self_exit
+        # 🔴 THE NEGATIVE DIRECTION FOR CLAUSE 3, and without it the clause is
+        # unguarded where it matters. An audit measured `elif escalated:` ->
+        # `elif True:` surviving 784 tests, emitting "this check DID escalate to
+        # SIGKILL ... so it died of something else inside that window" for a
+        # child that exited immediately and was never escalated: two false
+        # clauses, the same pair three earlier rounds each removed from a
+        # different branch. Nothing here reached it — the existing denials name
+        # "this check's SIGKILL" and "died on its own", neither of which clause
+        # 3 contains.
+        assert "DID escalate to SIGKILL" not in self_exit, self_exit
 
     #: The two sites that reap the spawned child, as `(function, callee)`. Both
     #: must bind their timeout to `REAP_TIMEOUT_S`, never a literal.
@@ -7655,8 +7681,12 @@ class TestTheSpawnHarnessAndThePortRace:
     def _literal_reap_bounds(source: "str | None" = None) -> "list[tuple[str, int]]":
         """Reap waits bound by a NUMERIC LITERAL instead of `REAP_TIMEOUT_S`.
 
-        🔴 TEETH, NOT A SENTENCE — this file's own words, three thousand lines
-        up, about the bound that drifted while a comment said it could not.
+        🔴 TEETH, NOT A SENTENCE — the words are `_literal_bound_hang_detectors`'s,
+        about the bound that drifted while a comment said it could not. (No line
+        offset: the previous "three thousand lines up" pointed 2,405 lines the
+        WRONG WAY, and the round that claimed to fix it did not — a `replace`
+        with no assert matched nothing and the commit said otherwise. A distance
+        is a cross-reference that rots on every edit; a name is not.)
         `REAP_TIMEOUT_S` is 10.0 and the literal it replaced was 10, so the
         regression is invisible: an audit measured that reverting either site to
         `timeout=10` leaves the whole class green. The existing
@@ -7753,13 +7783,18 @@ class TestTheSpawnHarnessAndThePortRace:
         stub (the whole message construction) is the real code path.
         """
 
-        returncode = 7
-
         def __init__(self) -> None:
             self.calls = 0
             self.kill_called = False
+            # 🔴 ALIVE AT ENTRY, and that is the state the docstring names. A
+            # previous version hardcoded `returncode = 7`, so `poll()` reported
+            # a child already dead before the function ran — a different state,
+            # in which clause 3's "inside that window" is false. The value was
+            # inert until `was_running` started reading it, and then the control
+            # was asserting a sentence that did not hold for the state it built.
+            self.returncode: int | None = None
 
-        def poll(self) -> int:
+        def poll(self) -> "int | None":
             return self.returncode
 
         def terminate(self) -> None:
@@ -7774,6 +7809,8 @@ class TestTheSpawnHarnessAndThePortRace:
         def communicate(self, timeout: float | None = None):
             self.calls += 1
             if self.calls == 1:
+                # It dies of something else DURING the wait — the window.
+                self.returncode = 7
                 raise subprocess.TimeoutExpired("stub", timeout or 0)
             return ("", "")
 
@@ -7789,6 +7826,7 @@ class TestTheSpawnHarnessAndThePortRace:
         a different branch.
         """
         stub = self._EscalatedButNotKilled()
+        assert stub.poll() is None, "the stub must be ALIVE at entry"
         message = _never_healthy_message("127.0.0.1", 1, stub, None, [])
         assert stub.calls == 2 and stub.kill_called, (
             "the escalation branch did not run, so this control drives nothing"
@@ -7800,6 +7838,57 @@ class TestTheSpawnHarnessAndThePortRace:
         # diagnosis.
         assert (f"DID escalate to SIGKILL after SIGTERM did not take in "
                 f"{REAP_TIMEOUT_S:g}s") in message, message
+
+    @staticmethod
+    def _poll_runs_before_terminate(source: "str | None" = None) -> bool:
+        """Does `_never_healthy_message` read `poll()` BEFORE `terminate()`?
+
+        🔴 A STRUCTURAL GUARD, BECAUSE THE BEHAVIOURAL ONE CANNOT EXIST. The
+        difference between the two orders is a ~100 us window — an audit
+        measured 0 flips in 500 attempts at two load points, and 200/200 once a
+        0.1 ms delay was inserted. So a test that merely calls the function wins
+        by luck: MEASURED, the mutant that moves the read back below the
+        terminate SURVIVES the whole class. Pinning it with a sleep would be the
+        timing bet this file exists to avoid. The order is the invariant, so the
+        order is what gets asserted.
+        """
+        src = source if source is not None else Path(__file__).read_text()
+        for node in ast.walk(ast.parse(src)):
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name == "_never_healthy_message"):
+                polls = [n.lineno for n in ast.walk(node)
+                         if isinstance(n, ast.Call)
+                         and getattr(n.func, "attr", None) == "poll"]
+                terms = [n.lineno for n in ast.walk(node)
+                         if isinstance(n, ast.Call)
+                         and getattr(n.func, "attr", None) == "terminate"]
+                assert polls and terms, f"finder saw poll={polls} terminate={terms}"
+                return min(polls) < min(terms)
+        raise AssertionError("_never_healthy_message not found")
+
+    def test_the_child_is_POLLED_before_it_is_TERMINATED(self):
+        assert self._poll_runs_before_terminate(), (
+            "`was_running` is read AFTER `proc.terminate()`. The window is "
+            "~100us wide, so no test can see the difference reliably and every "
+            "green run is luck — but a child that died in it gets its own "
+            "SIGTERM credited to this check, which is the defect this whole "
+            "ladder keeps re-finding on one branch or another."
+        )
+
+    def test_the_POLL_ORDER_detector_can_actually_SEE_the_wrong_order(self):
+        """🔴 The positive control. A finder that always returns True is a test
+        that passes forever — and this one returns a bool, the shape most able
+        to hide that.
+        """
+        src = Path(__file__).read_text()
+        assert self._poll_runs_before_terminate(src), "fixture drift"
+        mutant = src.replace(
+            "    was_running = proc.poll() is None\n    proc.terminate()",
+            "    proc.terminate()\n    was_running = proc.poll() is None", 1)
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+        assert not self._poll_runs_before_terminate(mutant), (
+            "swapping the two calls did not change the finder's answer"
+        )
 
     def test_the_REBLAME_HELPERS_discriminate_both_ways(self):
         """🔴 THE CONTROL FOR THE TWO RE-BLAME ARMS, both directions.
