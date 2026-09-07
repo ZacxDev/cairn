@@ -7161,10 +7161,28 @@ def _never_healthy_message(
     # the commit message both described code that did not exist. The window
     # between them measures ~100 us — an audit flipped it to 200/200 with a
     # 0.1 ms delay — on a host this file's own header documents as losing the
-    # scheduler for >15 s. `terminate()` already polls internally, so reading
-    # first costs nothing and closes the window instead of narrowing it.
+    # scheduler for >15 s.
+    #
+    # 🔴 BUT REORDERING ALONE DOES NOT CLOSE THE WINDOW — it MOVES it, and the
+    # round that did it claimed otherwise in this very comment. MEASURED across
+    # the three places the child's death can land: with the poll first, a child
+    # that dies between our poll and `send_signal`'s own poll is still credited
+    # with a SIGTERM nobody delivered. That is the OVER-credit direction, which
+    # is the worse one — it HIDES the outside killer this branch's threat model
+    # is about, where the old order merely sent the reader looking for one that
+    # was there.
+    #
+    # So delivery is RECORDED, not inferred from an ordering. `send_signal`
+    # polls and returns early when the child is already dead, and it does NOT
+    # set `returncode` when it does deliver — so `returncode is None` here says
+    # exactly whether the signal went out. Same shape as `escalated` below:
+    # ask the branch that acts, not the state afterwards. MEASURED exact in all
+    # three cases. The pre-poll stays because it is the honest record of what we
+    # saw, and pairing the two is what survives a `send_signal` that stops
+    # polling internally.
     was_running = proc.poll() is None
     proc.terminate()
+    delivered_sigterm = was_running and proc.returncode is None
     # 🔴 RECORDED, NOT DERIVED. `escalated` is set where the escalation ACTUALLY
     # HAPPENS, and nowhere else. Reading `-SIGKILL` off the return code instead
     # was the previous version, and it credited this function with every SIGKILL
@@ -7181,7 +7199,7 @@ def _never_healthy_message(
         escalated = True
         proc.kill()
         out, err = proc.communicate()
-    if was_running and proc.returncode == -int(signal.SIGTERM):
+    if delivered_sigterm and proc.returncode == -int(signal.SIGTERM):
         how = "the signal this check sent"
     # 🔴 BOTH CONJUNCTS. `escalated` alone records that the branch RAN, not that
     # a SIGKILL was DELIVERED: `Popen.kill()` polls first and skips signalling a
@@ -7683,10 +7701,13 @@ class TestTheSpawnHarnessAndThePortRace:
 
         🔴 TEETH, NOT A SENTENCE — the words are `_literal_bound_hang_detectors`'s,
         about the bound that drifted while a comment said it could not. (No line
-        offset: the previous "three thousand lines up" pointed 2,405 lines the
-        WRONG WAY, and the round that claimed to fix it did not — a `replace`
-        with no assert matched nothing and the commit said otherwise. A distance
-        is a cross-reference that rots on every edit; a name is not.)
+        offset, and no count either: the previous "three thousand lines up"
+        pointed the WRONG WAY, the round that claimed to fix it did not — a
+        `replace` with no assert matched nothing while the commit said
+        otherwise — and the round after that replaced the bad figure with
+        another one that does not reproduce. Three tries; the number was never
+        the useful part. A distance is a cross-reference that rots on every
+        edit; a name is not.)
         `REAP_TIMEOUT_S` is 10.0 and the literal it replaced was 10, so the
         regression is invisible: an audit measured that reverting either site to
         `timeout=10` leaves the whole class green. The existing
@@ -7814,6 +7835,63 @@ class TestTheSpawnHarnessAndThePortRace:
                 raise subprocess.TimeoutExpired("stub", timeout or 0)
             return ("", "")
 
+    class _DiesInTheSignalWindow:
+        """Alive when this check polls, dead by the time `terminate()` polls.
+
+        🔴 THE OVER-CREDIT CASE, and the one reordering the poll could not
+        close. `Popen.send_signal` polls first and returns early on a dead
+        child, so nothing is delivered — but `was_running` was already True, and
+        the SIGTERM arm keyed on it alone then credited this check with a signal
+        it never sent. That is the exact false sentence `was_running` was added
+        to remove, reintroduced in a narrower window by the fix for it.
+
+        The stub is faithful in the one respect that decides the branch: a
+        delivered signal leaves `returncode` None, because the child is not
+        reaped until a later wait. A first draft set it inside `terminate()` and
+        that alone made the delivered and not-delivered cases indistinguishable.
+        """
+
+        def __init__(self) -> None:
+            self.polls = 0
+            self.returncode: "int | None" = None
+            self.delivered = False
+
+        def poll(self) -> "int | None":
+            self.polls += 1
+            if self.polls > 1:  # an OUTSIDE SIGTERM lands after our own look
+                self.returncode = -int(signal.SIGTERM)
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.poll()
+            if self.returncode is not None:
+                return
+            self.delivered = True  # `os.kill` only; `returncode` stays None
+
+        def kill(self) -> None:
+            pass
+
+        def communicate(self, timeout: float | None = None):
+            return ("", "")
+
+    def test_a_SIGTERM_that_landed_in_the_SIGNAL_WINDOW_is_not_credited(self):
+        """🔴 Reordering the poll MOVED this window rather than closing it, and
+        the round that reordered claimed the opposite in the code comment.
+
+        Delivery is recorded now instead of inferred from an ordering, so this
+        is deterministic: the stub is alive when the check looks and dead when
+        `terminate()` looks, nothing is delivered, and the message must say so.
+        """
+        stub = self._DiesInTheSignalWindow()
+        message = _never_healthy_message("127.0.0.1", 1, stub, None, [])
+        assert stub.polls >= 2 and not stub.delivered, (
+            f"the stub did not reach the signal window: polls={stub.polls} "
+            f"delivered={stub.delivered}"
+        )
+        assert stub.returncode == -int(signal.SIGTERM), stub.returncode
+        assert (f"exit={-int(signal.SIGTERM)} is NOT a signal this check sent"
+                in message), message
+
     def test_ESCALATING_is_not_the_same_as_having_SENT_a_SIGKILL(self):
         """🔴 The control for round 5's own fix, and the reason the branch needs
         BOTH conjuncts.
@@ -7868,11 +7946,12 @@ class TestTheSpawnHarnessAndThePortRace:
 
     def test_the_child_is_POLLED_before_it_is_TERMINATED(self):
         assert self._poll_runs_before_terminate(), (
-            "`was_running` is read AFTER `proc.terminate()`. The window is "
-            "~100us wide, so no test can see the difference reliably and every "
-            "green run is luck — but a child that died in it gets its own "
-            "SIGTERM credited to this check, which is the defect this whole "
-            "ladder keeps re-finding on one branch or another."
+            "`was_running` is read AFTER `proc.terminate()`, so it no longer "
+            "records what was true BEFORE this check signalled — it collapses "
+            "into `delivered_sigterm`, and the message loses the ability to "
+            "say a child was already dead when we found it. The window is too "
+            "narrow for any test to see reliably, which is why this is asserted "
+            "structurally rather than hoped for."
         )
 
     def test_the_POLL_ORDER_detector_can_actually_SEE_the_wrong_order(self):
