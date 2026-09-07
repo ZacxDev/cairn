@@ -99,9 +99,17 @@ RULES: list[tuple[str, str, str]] = [
 
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules"}
 SKIP_FILES = {"tests/leakscan.py"}
+# 🔴 AN ENUMERATION, SO A NEW FILE TYPE IS UNSCANNED UNTIL SOMEBODY ADDS IT
+# HERE — and the scan reports a confident "0 findings" over a tree it only
+# partly read. `.nix` was added when `flake.nix` arrived and was, until that
+# moment, exactly this hazard: the first file of its kind in the repo, holding
+# hand-written prose, invisible to the gate that is the reason this repository
+# can be public at all. The count printed by a run is files SCANNED, never
+# files present; comparing it against `git ls-files` is what makes the
+# difference visible. If you add a file type, add it here in the same commit.
 TEXT_SUFFIXES = {
     ".py", ".sh", ".md", ".yml", ".yaml", ".json", ".toml", ".txt", ".cfg",
-    ".mjs", ".js", ".ts", "",
+    ".mjs", ".js", ".ts", ".nix", ".lock", "",
 }
 
 

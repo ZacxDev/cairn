@@ -72,6 +72,41 @@ These are the house style, and they are why the guards here are worth trusting:
 | `lib/` | the reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
 | `tests/` | the suites, plus `leakscan.py` |
+| `flake.nix` | the packaged client, the server image, and the checks over both |
+
+## Installing and building with nix
+
+```bash
+nix run   github:ZacxDev/cairn -- doctor    # the client, without installing it
+nix build github:ZacxDev/cairn#cairn        # the client
+nix build github:ZacxDev/cairn#server-image # the pod image, as a loadable tarball
+```
+
+Consumers pin this flake as an input; that is the supported way to get a `cairn`
+whose version cannot disagree with the code in it, because **the version is the
+git revision** and is never written down by hand.
+
+🔴 **`lib/` MUST STAY BESIDE THE CLIENT SCRIPT, AND THE PACKAGE IS BUILT THAT
+WAY ON PURPOSE.** `cairn` finds its modules with
+`Path(__file__).resolve().parent / "lib"`. `.resolve()` follows symlinks, so
+what matters is the directory holding the REAL file — the package therefore
+installs the script and `lib/` together under `libexec` and puts a wrapper in
+`bin/`. Do not "simplify" this by exporting `PYTHONPATH`: that makes the modules
+reachable by a second mechanism which shadows the first, leaving the file's own
+stated one dead and the next layout change silently broken.
+`checks.client-resolves-its-lib` runs a real subcommand from the store path to
+catch exactly that, and `packages.cairn` fails its own install check too, so a
+broken client cannot even be built.
+
+🔴 **THERE ARE TWO WAYS TO BUILD THE POD AND THEY MUST NOT DIVERGE.**
+`server/Dockerfile` is what is deployed today; `packages.server-image` is the
+reproducible alternative. The runtime contract — env, port, uid, entrypoint — is
+written in both, so `tests/test_flake_image_matches_dockerfile.py` pins them
+against each other and goes red when one moves alone. Change one, change the
+other, in the same commit. The module set is deliberately *not* duplicated: the
+Dockerfile enumerates its `COPY`s (kept honest by
+`test_the_image_copies_every_module_it_needs`) while the flake copies all of
+`lib/`, so there is nothing there for the two to disagree about.
 
 ## Naming
 

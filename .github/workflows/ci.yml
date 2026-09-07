@@ -60,3 +60,43 @@ jobs:
               sys.exit(1)
           sys.exit(1 if fail else 0)
           PY
+
+  # 🔴 A FLAKE NOBODY BUILDS IS DECORATION, AND ITS ROT IS SILENT. `flake.nix`
+  # is what a consumer pins — devrc is the first — so a break here does not
+  # surface in this repo at all: it surfaces in someone else's `home-manager
+  # switch`, at the moment they wanted to read a note, with no obvious link back
+  # to the commit that caused it. This job is what makes the flake an instrument
+  # rather than a claim.
+  #
+  # Its own verdict is trustworthy for the same reason the suite's is: the
+  # things being built REFUSE rather than warn. `packages.cairn` runs an
+  # `installCheckPhase` that dies if the packaged client cannot import its own
+  # `lib/`, and `checks.client-resolves-its-lib` runs a real subcommand and
+  # fails on an ImportError. Neither can pass by doing nothing.
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # 🔴 ONE `nix build` PER STEP, NOT ONE COMBINED INVOCATION. Concurrent
+      # builds of sibling derivations contend on the store, and a contended run
+      # can report a failure that a sequential run of the SAME tree does not
+      # reproduce. Separate steps also mean the checks list says WHICH output
+      # broke instead of "the nix job is red".
+      - name: the client package builds, and can import its own lib/
+        run: nix build .#packages.x86_64-linux.cairn --no-link --print-build-logs
+
+      - name: the packaged client runs a real subcommand from /nix/store
+        run: nix build .#checks.x86_64-linux.client-resolves-its-lib --no-link --print-build-logs
+
+      # The image is built because it is what a deployment consumes, and
+      # because a break in it is otherwise found only by whoever next tries to
+      # ship the pod — which may be months later and someone else's problem.
+      # This asserts it BUILDS; that it RUNS is not asserted here, and saying
+      # so is the point: a green here is not a claim about a working pod.
+      - name: the server image builds
+        run: nix build .#packages.x86_64-linux.server-image --no-link --print-build-logs
