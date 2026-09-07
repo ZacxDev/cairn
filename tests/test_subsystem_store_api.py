@@ -73,12 +73,14 @@ import socketserver
 import stat
 import tarfile
 import secrets
+import select
 import subprocess
 import sys
 import textwrap
 import threading
 import time
 import traceback
+import warnings
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -6961,8 +6963,27 @@ class TestLockoutOverHTTP:
 
 
 def _free_port() -> int:
-    import socket
+    """A port that is free RIGHT NOW — and held by nobody once this returns.
 
+    🔴 THAT IS A TOCTOU, AND THE KERNEL DEMONSTRABLY RECYCLES THE PORT. Between
+    this returning and the spawned child calling `bind()` — one interpreter
+    startup, ~0.2-0.4 s — anything else on the box may be handed the same
+    number, including this very process: the health probe below `connect()`s,
+    and an outbound connect draws its LOCAL port from the same ephemeral range.
+    Measured on the dev host: 3000 trials x 20 subsequent `bind(("127.0.0.1",
+    0))` calls recycled the just-released port 8 times (0.013% per bind), while
+    the control — the same loop with the socket still OPEN — recycled it 0
+    times, so that is the kernel and not the probe.
+
+    Every caller that actually BINDS must therefore treat "the child died with
+    EADDRINUSE" as a retry, not as a failure. Two do: `_spawn_serving`, and
+    `TestStartupStillRefusesAMalformedFile._run_to_completion` — whose short-
+    bound control passes a VALID token file on purpose, so that leg binds. The
+    other two callers pass a `trusted_proxies` value the server refuses, and
+    `main` returns `EXIT_CONFIG` before `build_server` is ever reached, so the
+    port they were handed is never used. 🔴 Check that before adding a caller:
+    "it exits 78" is only true of the arguments those tests pass.
+    """
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
@@ -7026,49 +7047,242 @@ def _child_env(trusted_proxies: str | None) -> dict[str, str]:
     return env
 
 
-@contextmanager
-def running_subprocess(
+#: The budget a spawned server gets to answer /healthz. Named rather than
+#: written into the loop because the "never became healthy" branch is otherwise
+#: unreachable from a test: a control for it must not spend 20 s per run.
+STARTUP_BUDGET_S = 20.0
+
+#: The opening of the never-healthy failure, as ONE string. 🔴 It is the SEAM
+#: between three parties: `_never_healthy_message` produces it, `_budget_reblame`
+#: keys its whole decision on it, and the assertions below pin it. Hand-typed at
+#: each site — which is how it was first written — a reword of the message
+#: silently disarms the re-blame and every test stays green, because nothing
+#: derives the needle from the producer. This PR reworded that message in BOTH
+#: of its fix rounds, so that is not a hypothetical edit.
+NEVER_HEALTHY = "server never became healthy"
+
+#: How long the never-healthy reap waits for SIGTERM before escalating to
+#: SIGKILL. Named so the message that reports which signal landed cannot drift
+#: from the bound that decided it — the same reason `HANG_TIMEOUT` is
+#: interpolated rather than spelled at its call sites.
+REAP_TIMEOUT_S = 10.0
+
+#: How many times `_spawn_serving` will re-pick a port after LOSING the race
+#: documented on `_free_port`. Bounded on purpose — an unbounded retry turns a
+#: box with no free ports at all into a hang instead of a failure.
+SPAWN_ATTEMPTS = 3
+
+
+def _lost_the_port_race(returncode: int | None, err: str) -> bool:
+    """Did the child die because something took its port between pick and bind?
+
+    🔴 The needle is DERIVED from `errno.EADDRINUSE`, never spelled. A copied
+    prose string is a guard that a different libc's wording, or a different
+    Python's traceback formatting, walks straight past — and it would walk past
+    SILENTLY, downgrading the retry to a no-op while every test still passes.
+    """
+    if returncode is None or returncode == 0:
+        return False
+    return f"[Errno {errno.EADDRINUSE}]" in err or os.strerror(errno.EADDRINUSE) in err
+
+
+def _child_verdict(proc: subprocess.Popen) -> tuple[str, str, str] | None:
+    """`(kind, stdout, stderr)` if the child has EXITED, else `None`.
+
+    `kind` is `"race"` when it died the one way that is worth another attempt,
+    `"died"` otherwise. One function, so the two places that have to ask —
+    inside the wait loop and once more after the budget expires — cannot drift
+    into disagreeing about what counts as a lost race.
+    """
+    if proc.poll() is None:
+        return None
+    out, err = proc.communicate()
+    return ("race" if _lost_the_port_race(proc.returncode, err) else "died", out, err)
+
+
+def _never_healthy_message(
+    host: str,
+    port: int,
+    proc: subprocess.Popen,
+    last_probe: BaseException | None,
+    races: list[str],
+) -> str:
+    """Kill the child, drain it, and say what was actually observed.
+
+    🔴 THIS EXISTS BECAUSE THE ONE RECORDED FAILURE OF THIS HARNESS CARRIED NO
+    EVIDENCE AT ALL. `TestTheDeployedEntrypoint::test_a_TWO_LINE_token_file_
+    authorises_BOTH_lines` failed once in a full suite and the branch that fired
+    was never established, because this site raised a five-word sentence and the
+    run was read through `pytest -q | tail -1`. A bare "never became healthy"
+    cannot distinguish a slow start from a stolen port from a server that came
+    up and refused, so it identifies none of them — the next occurrence has to
+    answer that on its own or it buys nothing.
+
+    🔴 IT REPORTS THE CHILD'S ALIVENESS AS A PRECONDITION, NOT AS A FIELD, and
+    that distinction is the whole of it. The first draft printed
+    `child_was_alive={alive}`, and mutation testing showed the value
+    structurally pinned to `True`: this is only ever reached when
+    `_child_verdict` returned `None`, which IS "the child is still running". A
+    field that cannot vary is not evidence, and a test asserting it reads as
+    coverage while providing none. So the sentence states the precondition once,
+    in the past tense of the moment the budget expired, and the reader is told
+    plainly what the `exit` beside it means — an audit read the first wording
+    ("the child was still running" next to `exit=-15`) as a contradiction, and
+    it was right to.
+
+    🔴 THE `exit` IS REPORTED CONDITIONALLY, and the round that fixed the
+    contradiction briefly broke this. It asserted flatly that the exit "is the
+    signal that reap sent", which is FALSE in the one case where the field is
+    interesting: the child can exit on its own in the window between
+    `_child_verdict` returning `None` and the `terminate` below, and then the
+    code is its own. Saying so unconditionally puts a false statement in the
+    message this whole change exists to make trustworthy. The reader is told
+    which of THREE things the exit code is; the cases are enumerated at the
+    `how` below, and this sentence deliberately does not restate them — a
+    contract stated twice is a contract that will disagree with itself, which
+    is how the two-case rule survived a round that had already refuted it.
+    """
+    # 🔴 READ BEFORE THE TERMINATE, and it is the SIGTERM arm's conjunct. Five
+    # rounds running, this function has credited itself with a signal it did not
+    # send; each round fixed one branch and left the same defect on another. The
+    # SIGTERM branch was the last of them, and round 5 made it worse by adding a
+    # comment CERTIFYING it sound: "`terminate()` is UNCONDITIONAL, so `-15`
+    # always agrees". That is true of the CALL and false of the DELIVERY.
+    # `Popen.send_signal` polls first and skips a process it already knows is
+    # dead, and a child killed by an outside SIGTERM before this runs is `-15`
+    # that is not ours either way. MEASURED: `os.kill(pid, SIGTERM)` from
+    # outside, then this function, printed "exit=-15 is the signal this check
+    # sent". 🔴 AND IT IS THE LIKELIEST BRANCH TO BE WRONG ON, because the
+    # threat model below names a sibling agent's sweep — and `pkill` sends
+    # SIGTERM by default.
+    #
+    # 🔴 AND THE ORDER IS THE WHOLE GUARD. The previous round wrote this comment
+    # and then placed the read 23 lines BELOW the terminate, so the comment and
+    # the commit message both described code that did not exist. The window
+    # between them measures ~100 us — an audit flipped it to 200/200 with a
+    # 0.1 ms delay — on a host this file's own header documents as losing the
+    # scheduler for >15 s. `terminate()` already polls internally, so reading
+    # first costs nothing and closes the window instead of narrowing it.
+    was_running = proc.poll() is None
+    proc.terminate()
+    # 🔴 RECORDED, NOT DERIVED. `escalated` is set where the escalation ACTUALLY
+    # HAPPENS, and nowhere else. Reading `-SIGKILL` off the return code instead
+    # was the previous version, and it credited this function with every SIGKILL
+    # on the box: the kernel OOM killer — a first-class cause of "never became
+    # healthy" — an operator's `kill -9`, a sibling agent's sweep. Each produced
+    # TWO false clauses (a SIGKILL this check never sent, after a bound that
+    # never elapsed) and sent the reader to debug SIGTERM handling in a server
+    # that has none. A return code cannot prove who sent the signal; the branch
+    # that sent it can.
+    escalated = False
+    try:
+        out, err = proc.communicate(timeout=REAP_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        escalated = True
+        proc.kill()
+        out, err = proc.communicate()
+    if was_running and proc.returncode == -int(signal.SIGTERM):
+        how = "the signal this check sent"
+    # 🔴 BOTH CONJUNCTS. `escalated` alone records that the branch RAN, not that
+    # a SIGKILL was DELIVERED: `Popen.kill()` polls first and skips signalling a
+    # process it already knows is dead, so the branch can be entered and the
+    # signal never sent — an audit reproduced `escalated=True` with
+    # `returncode=7`, from a child that ignored SIGTERM, left a grandchild
+    # holding the pipes, and exited 7 while `communicate` waited. The message
+    # then claimed a SIGKILL nobody sent, after a bound the child never
+    # outlived: the identical false pair the previous round removed from the
+    # return-code-derived version, arriving from the other side. Requiring the
+    # code to AGREE with the branch cannot lose a case — when they disagree the
+    # honest default below is the true answer.
+    elif escalated and proc.returncode == -int(signal.SIGKILL):
+        how = (f"this check's SIGKILL, after SIGTERM did not take in "
+               f"{REAP_TIMEOUT_S:g}s")
+    elif escalated:
+        # 🔴 THE ESCALATION IS STILL REPORTED, even though the code cannot be
+        # credited to it. Adding the return-code conjunct made this case print a
+        # sentence byte-identical to the never-escalated one, so "the child
+        # ignored SIGTERM for the whole bound and then died of something else"
+        # and "the child exited immediately" became indistinguishable — an empty
+        # result that cannot separate two mechanisms, inside the function whose
+        # first line is that the one recorded failure carried no evidence at all.
+        #
+        # ⚠ NOT EVERY escalation, and the round that added this clause claimed
+        # otherwise. A child that escalated and then exited `-SIGTERM` while
+        # alive at entry takes clause 1 and reports no escalation at all — still
+        # byte-identical to a clean reap. Reachable only via the
+        # grandchild-holds-the-pipes shape, unreached by any test, and left as
+        # it is: clause 1's answer is TRUE there, just incomplete, and widening
+        # it would put a third conjunct on the branch this ladder has already
+        # broken twice. Recorded rather than fixed.
+        how = (f"NOT a signal this check sent — but this check DID escalate to "
+               f"SIGKILL after SIGTERM did not take in {REAP_TIMEOUT_S:g}s, so "
+               f"it died of something else inside that window")
+    else:
+        how = "NOT a signal this check sent — it died on its own or was killed "\
+              "from outside"
+    return (
+        f"{NEVER_HEALTHY} on {host}:{port} within "
+        f"{STARTUP_BUDGET_S:g}s — it was still running when the budget expired, "
+        f"so this check reaped it; exit={proc.returncode} is {how}. "
+        f"last_probe={last_probe!r} port_races={races} "
+        f"stderr={(err or '').strip()!r} stdout={(out or '').strip()!r}"
+    )
+
+
+def _spawn_serving(
     store_root: Path,
     token_file: Path,
     *,
-    trusted_proxies: str | None = LOOPBACK_PROXY,
-    host: str = "127.0.0.1",
-):
-    """Spawn the REAL `server.py` process and wait for it to answer /healthz.
+    trusted_proxies: str | None,
+    host: str,
+) -> tuple[str, subprocess.Popen, list[str]]:
+    """Spawn `server.py` on a free port and return once it answers /healthz.
 
-    `trusted_proxies` goes in as `$SUBSYSTEM_STORE_TRUSTED_PROXIES`. It is a
-    string, not a list, so a test can pass a deliberately malformed value; pass
-    `None` to leave the variable UNSET, which is how the startup refusal is
-    exercised. 🔴 The base ref ignores this variable entirely, which is what
-    makes the tests below behavioural rather than AttributeErrors.
+    Retries ONLY the lost port race, and only `SPAWN_ATTEMPTS` times. Every
+    other way a child can die still raises on the first attempt, with the
+    child's own stderr — a retry that swallowed those would convert a real
+    startup regression into a slow, silent pass.
     """
-    import time
-
-    port = _free_port()
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            str(SERVER_PATH),
-            "--store",
-            str(store_root),
-            "--host",
-            host,
-            "--port",
-            str(port),
-            "--token-file",
-            str(token_file),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=_child_env(trusted_proxies),
-    )
-    base = f"http://{host}:{port}"
-    try:
-        deadline = time.time() + 20
+    races: list[str] = []
+    last_race_err = ""
+    for attempt in range(1, SPAWN_ATTEMPTS + 1):
+        port = _free_port()
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                str(SERVER_PATH),
+                "--store",
+                str(store_root),
+                "--host",
+                host,
+                "--port",
+                str(port),
+                "--token-file",
+                str(token_file),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_child_env(trusted_proxies),
+        )
+        base = f"http://{host}:{port}"
+        last_probe: BaseException | None = None
+        deadline = time.time() + STARTUP_BUDGET_S
+        # `host`, not a hardcoded `127.0.0.1`: the parameter exists to be
+        # varied, and a note naming an address the child never used is a
+        # false statement in the one place someone reads under pressure.
+        note = (
+            f"attempt {attempt}: {host}:{port} was taken between picking it "
+            "and binding it"
+        )
         while time.time() < deadline:
-            if proc.poll() is not None:
-                out, err = proc.communicate()
+            verdict = _child_verdict(proc)
+            if verdict is not None:
+                kind, out, err = verdict
+                if kind == "race":
+                    races.append(note)
+                    last_race_err = err
+                    break
                 raise AssertionError(f"server exited {proc.returncode}: {err or out}")
             try:
                 # 🔴 DEADLINE-RELATIVE, not a fixed short bound — this is a RETRY
@@ -7093,19 +7307,926 @@ def running_subprocess(
                 probe_bound = max(0.25, deadline - time.time())
                 if fetch(f"{base}/healthz", client_ip=None,
                          timeout=probe_bound)[0] == 200:
-                    break
-            except Exception:
+                    return base, proc, races
+            except Exception as exc:
+                last_probe = exc
                 time.sleep(0.1)
         else:
-            raise AssertionError("server never became healthy")
+            # 🔴 ASK AGAIN. The budget can expire INSIDE a single probe — the
+            # bound is deadline-relative, so the FIRST probe may spend all of
+            # it — and then the loop's top-of-iteration death check never runs
+            # after the child died. Measured while writing the control below: a
+            # thief that accepts the connection and never answers holds the
+            # probe for the whole budget, and the lost race was reported as
+            # "never became healthy" instead of retried. A `break` cannot
+            # substitute for this: nothing here is executing when the child
+            # dies.
+            verdict = _child_verdict(proc)
+            if verdict is None:
+                raise AssertionError(
+                    _never_healthy_message(host, port, proc, last_probe, races)
+                )
+            kind, out, err = verdict
+            if kind != "race":
+                raise AssertionError(f"server exited {proc.returncode}: {err or out}")
+            races.append(note)
+            last_race_err = err
+    # 🔴 IT CARRIES THE LAST CHILD'S STDERR, and the first draft did not — it
+    # listed three port numbers and nothing else, which is STRICTLY LESS than
+    # the base ref printed for the same deaths (`server exited 1: <traceback>`).
+    # That matters most in the case this arm is likeliest to see: the predicate
+    # matches EADDRINUSE anywhere in stderr, so a future second `bind()` in
+    # `server.py` — a metrics or admin port — would be classified as a race on
+    # every attempt and reported with the one fact that identifies it thrown
+    # away. A message that says "it was a race" three times is not evidence
+    # that it was.
+    raise AssertionError(
+        f"lost the port race {SPAWN_ATTEMPTS} times running, which is not a "
+        f"flake any more: {races} — the last child said: "
+        f"{last_race_err.strip()!r}"
+    )
+
+
+@contextmanager
+def running_subprocess(
+    store_root: Path,
+    token_file: Path,
+    *,
+    trusted_proxies: str | None = LOOPBACK_PROXY,
+    host: str = "127.0.0.1",
+):
+    """Spawn the REAL `server.py` process and wait for it to answer /healthz.
+
+    `trusted_proxies` goes in as `$SUBSYSTEM_STORE_TRUSTED_PROXIES`. It is a
+    string, not a list, so a test can pass a deliberately malformed value; pass
+    `None` to leave the variable UNSET, which is how the startup refusal is
+    exercised. 🔴 The base ref ignores this variable entirely, which is what
+    makes the tests below behavioural rather than AttributeErrors.
+
+    The spawn itself lives in `_spawn_serving` so the port-race retry and the
+    startup diagnostics can be driven directly, without a context manager in
+    the way.
+    """
+    base, proc, races = _spawn_serving(
+        store_root, token_file, trusted_proxies=trusted_proxies, host=host
+    )
+    # 🔴 A RACE THAT WAS LOST AND THEN WON MUST STILL LEAVE A TRACE. Discarded,
+    # a run that raced is byte-identical to one that never did — so the retry
+    # would make the rate this whole change was written to measure permanently
+    # unmeasurable, at the exact moment it started mattering. A warning is the
+    # right volume: pytest counts it in the summary line, and nothing goes red
+    # for a hazard that was handled.
+    if races:
+        # 🔴 `stacklevel=3`, NOT 2. This is a `@contextmanager`, so the frame one
+        # level up is `contextlib.__enter__` — measured: every emission was
+        # attributed to `.../contextlib.py:137`, which is the field a human
+        # reads first and it named the stdlib. 3 reaches the `with
+        # running_subprocess(...)` line that actually spawned.
+        warnings.warn(
+            f"the spawn lost the port race and retried: {races}",
+            stacklevel=3,
+        )
+    try:
         yield base, proc
     finally:
         proc.terminate()
         try:
-            proc.wait(timeout=10)
+            # `REAP_TIMEOUT_S`, not a literal: this reaps the SAME child as
+            # `_never_healthy_message` and by the same escalation, so the two
+            # must not be retunable apart.
+            proc.wait(timeout=REAP_TIMEOUT_S)
         except subprocess.TimeoutExpired:  # pragma: no cover
             proc.kill()
-            proc.wait(timeout=10)
+            proc.wait(timeout=REAP_TIMEOUT_S)
+
+
+class TestTheSpawnHarnessAndThePortRace:
+    """The harness `TestTheDeployedEntrypoint` runs on, tested as a subject.
+
+    🔴 NONE OF THIS IS REGRESSION COVERAGE FOR A DEFECT ANYONE OBSERVED, and it
+    is not offered as such. `test_a_TWO_LINE_token_file_authorises_BOTH_lines`
+    failed ONCE, and the traceback was never captured, so which branch fired is
+    unknown and stays unknown. (The run count is deliberately NOT quoted here:
+    nothing asserts on it, it grows with every CI run, and the version in this
+    docstring was already behind the PR that introduced it. The population is
+    in `ZacxDev/cairn` #3.) What IS measured is that the mechanism these tests
+    close CAN fire — see `_free_port`'s docstring for the numbers — and that a
+    harness which cannot say what it saw is the reason one occurrence taught
+    nobody anything.
+
+    So: the retry is a hazard closed by construction, and the message is the
+    instrument that makes the NEXT occurrence attributable. Neither claims to
+    have fixed the intermittent.
+    """
+
+    @pytest.fixture
+    def token_file(self, tmp_path: Path) -> Path:
+        path = tmp_path / "token"
+        path.write_text(GOOD_TOKEN + "\n")
+        return path
+
+    @staticmethod
+    @contextmanager
+    def _squatting_on(
+        port_holder: list[int], *, listening: bool, host: str = "127.0.0.1"
+    ) -> Iterator[None]:
+        """Hold a REAL socket on a port and publish its number.
+
+        A real bound socket, not a number chosen to look taken: the thing under
+        test is whether the CHILD's `bind()` fails the way the retry recognises,
+        and only an occupied port produces that.
+
+        🔴 `listening` IS THE WHOLE EXPERIMENT, not a convenience flag, because
+        the two settings are two different failures.
+
+        * `listening=False` is the REALISTIC thief — an outbound `connect()`
+          whose local port the kernel drew from the same ephemeral range, which
+          is the most likely way this race is actually lost. A probe against it
+          is refused instantly, so the wait loop iterates and sees the dead
+          child.
+        * `listening=True` accepts the connection and never answers, so the
+          probe holds the ENTIRE budget and the loop never iterates again. That
+          one is rarer and nastier, and it is the case that forced the
+          after-the-deadline re-check in `_spawn_serving`.
+        """
+        sock = socket.socket()
+        sock.bind((host, 0))
+        if listening:
+            sock.listen(1)
+        port_holder.append(sock.getsockname()[1])
+        try:
+            yield
+        finally:
+            sock.close()
+
+    @staticmethod
+    def _budget_reblame(
+        exc: BaseException, *, attempts: int, budget: float
+    ) -> AssertionError | None:
+        """The re-blame, as ONE function the guard and its control both drive.
+
+        🔴 IT RETURNS `None` WHEN THE FAILURE IS *NOT* THE BUDGET, and that half
+        is the whole fix. The first version was written inline and re-blamed
+        EVERY "never became healthy", so an audit reverting the
+        after-the-deadline re-check — the exact regression the thief control
+        exists to catch — got told "the budget is too short for this host, NOT a
+        regression in the retry". Pointing away from the code is worse than the
+        sentence it replaced.
+
+        The discriminator was already in hand: attempt 1 spends the whole budget
+        BY CONSTRUCTION, so a host slow enough to lose attempt 2 is the case
+        worth re-blaming, while one attempt means the retry never fired, which
+        is a regression. ⚠ NOT an impossibility claim in the other direction —
+        attempt 1 can also fail on a genuinely slow host, if the child needs
+        longer than the whole budget to reach `bind()` (~15x the 0.085-0.262 s
+        measured below). That case is now reported unrelabelled. It is the
+        rarer of the two and the trade is deliberate: under-blaming costs a
+        confusing sentence, over-blaming hides a broken retry.
+
+        🔴 DRIVING THIS THROUGH A REAL SPAWN IS LOAD-DEPENDENT, WHICH IS WHY THE
+        CONTROL IS A PURE FUNCTION. An earlier draft asserted something stronger
+        and false — that an unmeetably short budget always yields ONE attempt
+        because the child cannot reach its bind failure in time. Measured at two
+        load points, and it INVERTS between them: at load 18-36, one attempt (as
+        that draft said); at load ~6, TWO attempts in 24 of 24 observations,
+        across four budgets from 0.0005 s to 0.05 s and both squatter kinds.
+
+        🔴 AND THE MECHANISM IS DIFFERENT FOR THE TWO SQUATTERS — a later audit
+        measured that too, after a draft of THIS paragraph named one of them for
+        both. BOTH arms pay the `time.sleep(0.1)` on the retry path; the probe
+        floor is the only difference, so the graces ADD rather than substitute.
+        Measured per attempt, at load 2.2: `listening=True` 0.351-0.359 s (the
+        `max(0.25, ...)` floor plus the sleep), `listening=False` 0.1007-0.1008 s
+        (the probe is REFUSED in microseconds, the floor is never spent, the
+        sleep is all there is).
+
+        The second number is the one that matters, because the non-listening
+        squatter is the realistic thief — and it sits right beside the
+        0.074-0.085 s the child takes to reach `EADDRINUSE` at load 13. Which side of 0.1 s
+        that lands on IS the inversion; the listening arm has ~4x the headroom
+        and does not invert.
+
+        ⚠ An earlier draft of this paragraph said ~0.227 s for the listening
+        arm, which is below the 0.25 s floor it names in the same sentence. That
+        number was copied out of an audit's table rather than derived, and
+        nothing caught it until it was measured here — a figure taken from a
+        report is exactly as unverified as one taken from memory.
+
+        So an end-to-end driver here would pass on a quiet box and fail on a
+        busy one — exactly the bet this file exists to avoid.
+        """
+        # `NEVER_HEALTHY`, not a retyped copy: the producer, this discriminator
+        # and the control below are one seam, and a reword that touched only two
+        # of the three would disarm this silently.
+        if NEVER_HEALTHY not in str(exc) or attempts < 2:
+            return None
+        return AssertionError(
+            f"attempt {attempts} did not come up inside the SHORTENED "
+            f"STARTUP_BUDGET_S={budget:g}s, so this control cannot run: the "
+            f"budget is too short for this host, NOT a regression in the retry "
+            f"(which `test_POSITIVE_CONTROL_a_port_lost_AFTER_it_is_picked_is_"
+            f"retried_and_survived` measures at the full budget). Raise it. "
+            f"Underlying: {exc}"
+        )
+
+    @staticmethod
+    def _drain_verdict(stderr: str, stdout: str) -> str:
+        """`ok` | `dropped` | `budget` — what an empty stderr field MEANS.
+
+        🔴 Both streams empty is the ONLY shape a slow host can produce: the
+        child had not run far enough to write to either. An empty stderr beside
+        a NON-EMPTY stdout means the drain lost one of them, which is a defect
+        in `_never_healthy_message` and must surface as one. The first version
+        omitted this distinction and an audit measured the cost — forcing
+        `stderr=''` produced a three-clause sentence ("the drain works; the
+        child had not written anything") in a message whose own stdout field
+        carried the child's listening line.
+        """
+        if stderr.strip():
+            return "ok"
+        return "budget" if not stdout.strip() else "dropped"
+
+    def test_the_EXIT_reading_names_all_FOUR_causes_not_just_the_three_codes(
+        self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """🔴 THE BRANCH THAT WAS UNPINNED FOR TWO ROUNDS, and wrong in both.
+
+        Round 1 said the exit was always this check's signal; round 2 said
+        anything but `-SIGTERM` meant the child died on its own. An audit
+        measured the second false for the SIGKILL fallback — when the child
+        outruns or ignores SIGTERM, `_never_healthy_message` kills it, so `-9`
+        is still THIS check's doing and the message said the opposite.
+
+        🔴 FOUR CAUSES, NOT THREE — and an audit caught the earlier version of
+        this test conflating two of them. `-SIGKILL` has TWO causes: this
+        function escalating after SIGTERM did not take, and a SIGKILL from
+        somewhere else entirely (the kernel OOM killer, an operator, a sibling
+        agent's sweep). The first draft sent SIGKILL from HERE — the external
+        case — and then asserted the message credited this check, which is the
+        false reading. Worse, it would have gone RED against the correct fix.
+
+        Each leg below therefore names its CAUSE, not its code, and the
+        escalation leg drives the real `except TimeoutExpired` branch with a
+        child that ignores SIGTERM. That branch used to be `# pragma: no cover`
+        and never executed.
+        """
+        module = sys.modules[__name__]
+        monkeypatch.setattr(module, "STARTUP_BUDGET_S", 5.0)
+
+        def child(*code: str) -> subprocess.Popen:
+            return subprocess.Popen(
+                [sys.executable, "-c", *code],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+
+        def already_dead(sig: int) -> subprocess.Popen:
+            """A real process killed from OUTSIDE, and already reaped."""
+            proc = child("import time; time.sleep(30)")
+            proc.send_signal(sig)
+            proc.wait(timeout=HANG_TIMEOUT)
+            return proc
+
+        # 1. THIS CHECK'S SIGTERM — a LIVE child, so the function does the
+        #    sending. 🔴 The previous version passed an ALREADY-DEAD child from
+        #    `already_dead`, whose own docstring says "killed from OUTSIDE", and
+        #    asserted the message credited this check. That is verbatim the
+        #    shape an earlier round recorded as its own bug, and it pinned the
+        #    false answer while a comment argued it was sound.
+        alive = child("import time; time.sleep(30)")
+        term = _never_healthy_message("127.0.0.1", 1, alive, None, [])
+        assert f"exit={-int(signal.SIGTERM)} is the signal this check sent" in term
+
+        # 1b. A SIGTERM this check did NOT send — same return code, opposite
+        #     answer, and the case `pkill` produces because SIGTERM is its
+        #     default. Only `was_running` can tell these two apart.
+        outside_term = _never_healthy_message(
+            "127.0.0.1", 1, already_dead(signal.SIGTERM), None, []
+        )
+        assert (f"exit={-int(signal.SIGTERM)} is NOT a signal this check sent"
+                in outside_term), outside_term
+
+        # 2. This check's SIGKILL. The child IGNORES SIGTERM, so the escalation
+        #    branch is the only way it can die — no other leg reaches it.
+        monkeypatch.setattr(module, "REAP_TIMEOUT_S", 0.5)
+        stubborn = child(
+            "import signal, time;"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+            "print('armed', flush=True);"
+            "time.sleep(30)"
+        )
+        # 🔴 A HANDSHAKE, NOT A SLEEP. Without it this leg races the child's own
+        # interpreter startup: measured, `terminate()` arrived before
+        # `signal.signal` ran and the child died of SIGTERM, so the leg reported
+        # `exit=-15` and tested the wrong branch. Reading the line is the only
+        # thing that proves the handler is installed.
+        #
+        # 🔴 AND IT IS BOUNDED, because this child IGNORES SIGTERM and sleeps 30
+        # s: a bare `readline()` on a child that never prints would hang the
+        # suite, and there is no `pytest-timeout` here — `under_deadline` exists
+        # in this file for exactly that. The `finally` matters for the same
+        # reason: if the handshake fails, nothing else would reap a process that
+        # declines the polite signal.
+        assert stubborn.stdout is not None
+        try:
+            ready = select.select([stubborn.stdout], [], [], HANG_TIMEOUT)[0]
+            assert ready, (
+                f"the stubborn child printed nothing in {HANG_TIMEOUT:g}s, so "
+                f"this leg cannot know its SIGTERM handler is installed"
+            )
+            assert stubborn.stdout.readline().strip() == "armed"
+        except BaseException:
+            stubborn.kill()
+            stubborn.communicate()
+            raise
+        escalated = _never_healthy_message("127.0.0.1", 1, stubborn, None, [])
+        assert f"exit={-int(signal.SIGKILL)} is this check's SIGKILL" in escalated
+        # 🔴 THE WHOLE CLAUSE, not `in {N}s` — an audit measured that fragment
+        # satisfied by the message's OWN `within {STARTUP_BUDGET_S:g}s` whenever
+        # the two constants coincide, so a hardcoded bound passed a test whose
+        # comment says it prevents exactly that.
+        assert (f"after SIGTERM did not take in {REAP_TIMEOUT_S:g}s"
+                in escalated), escalated
+        assert "died on its own" not in escalated, escalated
+
+        # 3. A SIGKILL this check did NOT send. Same return code as leg 2, and
+        #    it must NOT be credited to this check — the code cannot tell them
+        #    apart, only the branch that sent it can.
+        outside = _never_healthy_message("127.0.0.1", 1,
+                                         already_dead(signal.SIGKILL), None, [])
+        assert f"exit={-int(signal.SIGKILL)} is NOT a signal this check sent" in outside
+        assert "this check's SIGKILL" not in outside, outside
+
+        # 4. Self-exit: the child really did die first.
+        own = child("raise SystemExit(3)")
+        own.wait(timeout=HANG_TIMEOUT)
+        self_exit = _never_healthy_message("127.0.0.1", 1, own, None, [])
+        assert "exit=3 is NOT a signal this check sent" in self_exit, self_exit
+        # 🔴 THE NEGATIVE DIRECTION FOR CLAUSE 3, and without it the clause is
+        # unguarded where it matters. An audit measured `elif escalated:` ->
+        # `elif True:` surviving 784 tests, emitting "this check DID escalate to
+        # SIGKILL ... so it died of something else inside that window" for a
+        # child that exited immediately and was never escalated: two false
+        # clauses, the same pair three earlier rounds each removed from a
+        # different branch. Nothing here reached it — the existing denials name
+        # "this check's SIGKILL" and "died on its own", neither of which clause
+        # 3 contains.
+        assert "DID escalate to SIGKILL" not in self_exit, self_exit
+
+    #: The two sites that reap the spawned child, as `(function, callee)`. Both
+    #: must bind their timeout to `REAP_TIMEOUT_S`, never a literal.
+    _REAP_SITES = {("_never_healthy_message", "communicate"),
+                   ("running_subprocess", "wait")}
+
+    @staticmethod
+    def _literal_reap_bounds(source: "str | None" = None) -> "list[tuple[str, int]]":
+        """Reap waits bound by a NUMERIC LITERAL instead of `REAP_TIMEOUT_S`.
+
+        🔴 TEETH, NOT A SENTENCE — the words are `_literal_bound_hang_detectors`'s,
+        about the bound that drifted while a comment said it could not. (No line
+        offset: the previous "three thousand lines up" pointed 2,405 lines the
+        WRONG WAY, and the round that claimed to fix it did not — a `replace`
+        with no assert matched nothing and the commit said otherwise. A distance
+        is a cross-reference that rots on every edit; a name is not.)
+        `REAP_TIMEOUT_S` is 10.0 and the literal it replaced was 10, so the
+        regression is invisible: an audit measured that reverting either site to
+        `timeout=10` leaves the whole class green. The existing
+        `_literal_bound_hang_detectors` cannot cover this — it demands
+        `HANG_TIMEOUT`, a different constant for a different quantity.
+        """
+        src = source if source is not None else Path(__file__).read_text()
+        bad = []
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                callee = getattr(call.func, "attr", None)
+                if (node.name, callee) not in TestTheSpawnHarnessAndThePortRace._REAP_SITES:
+                    continue
+                for kw in call.keywords:
+                    if kw.arg == "timeout" and isinstance(kw.value, ast.Constant):
+                        bad.append((f"{node.name}:{callee}", call.lineno))
+        return bad
+
+    def test_no_reap_wait_is_bound_by_a_LITERAL(self):
+        stragglers = self._literal_reap_bounds()
+        assert not stragglers, (
+            f"these reap waits are bound by a literal instead of "
+            f"REAP_TIMEOUT_S: {stragglers}. Both sites reap the SAME child by "
+            f"the same escalation; a literal at one of them lets the two be "
+            f"retuned apart, silently."
+        )
+
+    def test_the_literal_REAP_bound_detector_can_actually_SEE_one(self):
+        """🔴 The positive control. A finder that matches nothing reports a
+        clean zero forever, and "no stragglers" would then mean "the walk found
+        no call sites" — which is exactly what a renamed callee would cause.
+        """
+        src = Path(__file__).read_text()
+        assert self._literal_reap_bounds(src) == [], "fixture drift: already dirty"
+        mutant = src.replace("proc.wait(timeout=REAP_TIMEOUT_S)",
+                             "proc.wait(timeout=10)", 1)
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+        found = self._literal_reap_bounds(mutant)
+        assert len(found) == 1 and found[0][0] == "running_subprocess:wait", (
+            f"re-introducing one literal reap bound did not surface it: {found}. "
+            f"A finder that matches nothing reports a clean zero forever."
+        )
+
+        # 🔴 AND THE OTHER SITE, because a control that exercises ONE of two
+        # ledger entries is half as wide as its own sentence. An audit measured
+        # the gap: renaming `_never_healthy_message` while leaving its ledger
+        # entry stale AND reverting its reap to a literal left BOTH these tests
+        # green, with the guard covering nothing at that site.
+        other = src.replace("out, err = proc.communicate(timeout=REAP_TIMEOUT_S)",
+                            "out, err = proc.communicate(timeout=10)", 1)
+        assert other != src, "the second mutation did not apply"
+        found = self._literal_reap_bounds(other)
+        assert (len(found) == 1
+                and found[0][0] == "_never_healthy_message:communicate"), found
+
+    def test_every_REAP_SITE_names_a_function_and_callee_that_EXIST(self):
+        """🔴 The ledger is only a guard while its entries resolve. A rename on
+        either side turns `_REAP_SITES` into a set of names matching nothing,
+        and `_literal_reap_bounds` then returns a permanently clean zero — the
+        failure its own positive control is written against, arriving through
+        the ledger instead of through the finder.
+        """
+        src = ast.parse(Path(__file__).read_text())
+        seen = set()
+        for node in ast.walk(src):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call):
+                    callee = getattr(call.func, "attr", None)
+                    if (node.name, callee) in self._REAP_SITES:
+                        seen.add((node.name, callee))
+        assert seen == self._REAP_SITES, (
+            f"these reap sites name nothing in the file: "
+            f"{sorted(self._REAP_SITES - seen)}. The ledger and the code have "
+            f"drifted, so the literal-bound guard covers less than it claims."
+        )
+
+    class _EscalatedButNotKilled:
+        """A child that makes `_never_healthy_message` ESCALATE and then does
+        NOT die of SIGKILL — the case `escalated` alone cannot see.
+
+        🔴 A STUB, AND NARROWLY SO. It mirrors ONE measured stdlib behaviour:
+        `Popen.kill()` polls first and skips signalling a process it already
+        knows is dead, so the escalation branch can run while no SIGKILL is
+        delivered. An audit reproduced that against the real function with a
+        child that ignored SIGTERM, left a grandchild holding the pipes, and
+        exited 7 — 4 s per run, and dependent on fd inheritance. This reaches
+        the same branch deterministically and instantly. Everything it does NOT
+        stub (the whole message construction) is the real code path.
+        """
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.kill_called = False
+            # 🔴 ALIVE AT ENTRY, and that is the state the docstring names. A
+            # previous version hardcoded `returncode = 7`, so `poll()` reported
+            # a child already dead before the function ran — a different state,
+            # in which clause 3's "inside that window" is false. The value was
+            # inert until `was_running` started reading it, and then the control
+            # was asserting a sentence that did not hold for the state it built.
+            self.returncode: int | None = None
+
+        def poll(self) -> "int | None":
+            return self.returncode
+
+        def terminate(self) -> None:
+            pass
+
+        def kill(self) -> None:
+            # `Popen.kill` on an already-dead child delivers NOTHING, so the
+            # flag records the CALL, not a signal. Naming it `killed` was the
+            # very confusion this control exists to pin.
+            self.kill_called = True
+
+        def communicate(self, timeout: float | None = None):
+            self.calls += 1
+            if self.calls == 1:
+                # It dies of something else DURING the wait — the window.
+                self.returncode = 7
+                raise subprocess.TimeoutExpired("stub", timeout or 0)
+            return ("", "")
+
+    def test_ESCALATING_is_not_the_same_as_having_SENT_a_SIGKILL(self):
+        """🔴 The control for round 5's own fix, and the reason the branch needs
+        BOTH conjuncts.
+
+        `escalated` records that the `except TimeoutExpired` arm ran. It does
+        not record that a signal was delivered, and the two come apart whenever
+        the child dies between the timeout firing and `kill()`. Crediting the
+        check anyway prints a SIGKILL nobody sent, after a bound the child never
+        outlived — the identical false pair two earlier rounds each removed from
+        a different branch.
+        """
+        stub = self._EscalatedButNotKilled()
+        assert stub.poll() is None, "the stub must be ALIVE at entry"
+        message = _never_healthy_message("127.0.0.1", 1, stub, None, [])
+        assert stub.calls == 2 and stub.kill_called, (
+            "the escalation branch did not run, so this control drives nothing"
+        )
+        assert "exit=7 is NOT a signal this check sent" in message, message
+        # 🔴 The code is not credited to the check — AND the escalation is still
+        # reported. Asserting only the first made this case byte-identical to a
+        # child that exited 7 immediately, which is an empty result dressed as a
+        # diagnosis.
+        assert (f"DID escalate to SIGKILL after SIGTERM did not take in "
+                f"{REAP_TIMEOUT_S:g}s") in message, message
+
+    @staticmethod
+    def _poll_runs_before_terminate(source: "str | None" = None) -> bool:
+        """Does `_never_healthy_message` read `poll()` BEFORE `terminate()`?
+
+        🔴 A STRUCTURAL GUARD, BECAUSE THE BEHAVIOURAL ONE CANNOT EXIST. The
+        difference between the two orders is a ~100 us window — an audit
+        measured 0 flips in 500 attempts at two load points, and 200/200 once a
+        0.1 ms delay was inserted. So a test that merely calls the function wins
+        by luck: MEASURED, the mutant that moves the read back below the
+        terminate SURVIVES the whole class. Pinning it with a sleep would be the
+        timing bet this file exists to avoid. The order is the invariant, so the
+        order is what gets asserted.
+        """
+        src = source if source is not None else Path(__file__).read_text()
+        for node in ast.walk(ast.parse(src)):
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name == "_never_healthy_message"):
+                polls = [n.lineno for n in ast.walk(node)
+                         if isinstance(n, ast.Call)
+                         and getattr(n.func, "attr", None) == "poll"]
+                terms = [n.lineno for n in ast.walk(node)
+                         if isinstance(n, ast.Call)
+                         and getattr(n.func, "attr", None) == "terminate"]
+                assert polls and terms, f"finder saw poll={polls} terminate={terms}"
+                return min(polls) < min(terms)
+        raise AssertionError("_never_healthy_message not found")
+
+    def test_the_child_is_POLLED_before_it_is_TERMINATED(self):
+        assert self._poll_runs_before_terminate(), (
+            "`was_running` is read AFTER `proc.terminate()`. The window is "
+            "~100us wide, so no test can see the difference reliably and every "
+            "green run is luck — but a child that died in it gets its own "
+            "SIGTERM credited to this check, which is the defect this whole "
+            "ladder keeps re-finding on one branch or another."
+        )
+
+    def test_the_POLL_ORDER_detector_can_actually_SEE_the_wrong_order(self):
+        """🔴 The positive control. A finder that always returns True is a test
+        that passes forever — and this one returns a bool, the shape most able
+        to hide that.
+        """
+        src = Path(__file__).read_text()
+        assert self._poll_runs_before_terminate(src), "fixture drift"
+        mutant = src.replace(
+            "    was_running = proc.poll() is None\n    proc.terminate()",
+            "    proc.terminate()\n    was_running = proc.poll() is None", 1)
+        assert mutant != src, "the mutation did not apply — this test is vacuous"
+        assert not self._poll_runs_before_terminate(mutant), (
+            "swapping the two calls did not change the finder's answer"
+        )
+
+    def test_the_REBLAME_HELPERS_discriminate_both_ways(self):
+        """🔴 THE CONTROL FOR THE TWO RE-BLAME ARMS, both directions.
+
+        A re-blame that cannot decline is not a diagnosis, it is a relabel — and
+        these arms are error paths a green run never executes, so without this
+        nothing in the file has ever run either of them.
+        """
+        never = AssertionError(f"{NEVER_HEALTHY} on 127.0.0.1:1 …")
+        # Fires only when the retry actually ran and a LATER attempt lost.
+        blamed = self._budget_reblame(never, attempts=2, budget=4.0)
+        assert blamed is not None and "too short for this host" in str(blamed)
+        assert "STARTUP_BUDGET_S=4s" in str(blamed)
+        # Declines when the retry never fired — that is the regression itself.
+        assert self._budget_reblame(never, attempts=1, budget=4.0) is None
+        # Declines on a failure that is not about coming up at all.
+        other = AssertionError("server exited 78: SUBSYSTEM_STORE_TRUSTED_PROXIES")
+        assert self._budget_reblame(other, attempts=3, budget=4.0) is None
+
+        # And the stream verdict, all three outcomes.
+        assert self._drain_verdict("subsystem-store-api: …", "") == "ok"
+        assert self._drain_verdict("", "") == "budget"
+        assert self._drain_verdict("", "listening on 127.0.0.1:1") == "dropped"
+        assert self._drain_verdict("   ", "  \n ") == "budget"
+
+    def test_POSITIVE_CONTROL_a_port_lost_AFTER_it_is_picked_is_retried_and_survived(
+        self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The whole point: one lost race must cost a re-pick, not a failure.
+
+        Asserted on BOTH halves — that a second port was picked (so the retry
+        really executed, rather than the first attempt happening to work) and
+        that the server the retry produced serves real content.
+
+        🔴 AND THAT IT WARNED. A race that is lost and then won must not be
+        silent: discarded, a run that raced is byte-identical to one that never
+        did, so the retry would make the very rate this change exists to measure
+        permanently unmeasurable at the moment it started mattering.
+        """
+        held: list[int] = []
+        picks: list[int] = []
+        real_free_port = _free_port
+        with self._squatting_on(held, listening=False):
+            def picker() -> int:
+                picks.append(held[0] if not picks else real_free_port())
+                return picks[-1]
+
+            monkeypatch.setattr(sys.modules[__name__], "_free_port", picker)
+            with pytest.warns(
+                UserWarning, match="lost the port race and retried"
+            ) as caught:
+                with running_subprocess(store, token_file) as (base, _proc):
+                    code, headers, body = fetch(
+                        f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
+                    )
+        # 🔴 AND IT IS ATTRIBUTED TO THE CALLER. `stacklevel` inside a
+        # `@contextmanager` is off by one, and at 2 every emission named
+        # `.../contextlib.py` — the file:line a human reads first, pointing at
+        # the stdlib. Asserted rather than eyeballed, because nothing else can
+        # see it once `pytest.warns` swallows the output.
+        #
+        # 🔴 SELECTED BY MESSAGE, NOT BY POSITION. `pytest.warns` records EVERY
+        # warning raised in the block, matching or not, in emission order — an
+        # audit measured `caught[0]` naming `socket.py` after injecting one
+        # stray `ResourceWarning`. `caught[0]` would therefore red this test,
+        # with a message sending the reader to debug `stacklevel` in a harness
+        # that is correct, the first time an unclosed socket or a stdlib
+        # deprecation lands inside the retry.
+        ours = [w for w in caught if "lost the port race and retried" in str(w.message)]
+        assert len(ours) == 1, f"expected exactly one race warning, got {len(ours)}"
+        assert Path(ours[0].filename).name == Path(__file__).name, (
+            f"the race warning was attributed to {ours[0].filename}, not to "
+            f"the caller that spawned — check `stacklevel`"
+        )
+        assert len(picks) == 2, f"the harness never re-picked a port: {picks}"
+        assert picks[0] == held[0] and picks[1] != held[0]
+        assert code == 200
+        assert headers["X-Store-Status"] == "recalled"
+        assert POINTER_LINE.encode() in body
+
+    def test_the_retry_is_BOUNDED_and_still_goes_RED_when_the_port_never_frees(
+        self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The negative control. A retry that cannot fail is not a retry, it is
+        a swallow — and it would report a box with no usable ports as a hang.
+
+        🔴 It runs on `UNTRUSTED_PEER`, the OTHER loopback address, for free:
+        the note interpolates `host`, and with every test on `127.0.0.1` a
+        hardcoded address in that sentence is indistinguishable from a correct
+        one. `127.0.0.0/8` is entirely local on Linux, so this costs nothing.
+        """
+        held: list[int] = []
+        picks: list[int] = []
+        with self._squatting_on(held, listening=False, host=UNTRUSTED_PEER):
+            def always_taken() -> int:
+                picks.append(held[0])
+                return held[0]
+
+            monkeypatch.setattr(sys.modules[__name__], "_free_port", always_taken)
+            with pytest.raises(AssertionError) as raised:
+                with running_subprocess(store, token_file, host=UNTRUSTED_PEER):
+                    pass  # pragma: no cover - the spawn must never get here
+        assert len(picks) == SPAWN_ATTEMPTS, (
+            f"expected exactly {SPAWN_ATTEMPTS} attempts, made {len(picks)}"
+        )
+        message = str(raised.value)
+        assert f"lost the port race {SPAWN_ATTEMPTS} times" in message
+        # 🔴 AND IT CARRIES THE CHILD'S OWN WORDS. The first draft listed three
+        # port numbers and nothing else — strictly LESS than the base ref, which
+        # printed `server exited 1: <traceback>` for the first of those deaths.
+        # This arm's likeliest real cause is a death the predicate CLASSIFIES as
+        # a race without being one, and the stderr is the only thing that could
+        # say so. Derived from `errno.EADDRINUSE`, not spelled.
+        assert os.strerror(errno.EADDRINUSE) in message, (
+            f"the exhaustion message dropped the child's stderr: {message}"
+        )
+        # The note names the address the child was actually given.
+        assert f"{UNTRUSTED_PEER}:{held[0]}" in message, message
+
+    def test_a_thief_that_ACCEPTS_AND_NEVER_ANSWERS_is_retried_too(
+        self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """🔴 The case the wait loop alone cannot see, and the reason
+        `_spawn_serving` re-asks after its budget expires.
+
+        The probe is deadline-relative, so against a listener that accepts and
+        stays silent the FIRST probe spends the whole budget — the child dies of
+        EADDRINUSE while nothing is executing, and the top-of-loop check never
+        runs again. Before the re-check this reported "never became healthy",
+        which is a true sentence about the wrong thing.
+
+        🔴 THE BUDGET IS SHORTENED, AND THAT IS A BET ON THE SCHEDULER — see
+        this module's header, which records `HANG_TIMEOUT` going 15 → 60 s
+        because a localhost round-trip lost the scheduler for >15 s in CI. The
+        first attempt spends the WHOLE budget by construction (that is the
+        branch under test), so the budget is also this test's cost; what has to
+        fit inside the SECOND one is an ordinary spawn. Measured on a loaded
+        24-core host: attempt 2 took ~0.33 s against 4.0 s, ~12x.
+
+        🔴 NO DOCUMENTED BAR IS CITED, because there is none for this quantity.
+        An earlier draft said "the header's documented bad case wants ~8x" and
+        an audit measured that false: the header states 4x (`60 s absorbs a 4x
+        scheduling delay`), and the only ~8x in this file is `_spawn_serving`'s
+        own comment, which derives it for a PROBE bound against a scheduler
+        stall — a different quantity from process startup, and an assertion
+        rather than a source. Inventing a bar to justify a bound is how a fix
+        round's prose becomes the next round's finding. So: the margin measured
+        above is the whole argument, and the re-blame below is what covers the
+        residual on a 2-core runner, where it is smaller than measured here.
+        """
+        held: list[int] = []
+        picks: list[int] = []
+        real_free_port = _free_port
+        budget = 4.0
+        monkeypatch.setattr(sys.modules[__name__], "STARTUP_BUDGET_S", budget)
+        with self._squatting_on(held, listening=True):
+            def picker() -> int:
+                picks.append(held[0] if not picks else real_free_port())
+                return picks[-1]
+
+            monkeypatch.setattr(sys.modules[__name__], "_free_port", picker)
+            # 🔴 RE-BLAMED, exactly as leg 1 of
+            # `test_POSITIVE_CONTROL_the_same_runner_reaches_a_NON_78_exit`
+            # re-blames its own short bound. Without this a host too slow for
+            # the SHORTENED budget reports "never became healthy" — a claim
+            # about the retry — and the next person debugs their diff.
+            #
+            # 🔴 AND IT BRANCHES ON THE DISCRIMINATOR. The first version did
+            # not: it re-blamed EVERY "never became healthy", including the one
+            # this test exists to catch. An audit measured it — reverting the
+            # after-the-deadline re-check, which is exactly the pre-fix state
+            # named above, made this print "the budget is too short for this
+            # host, NOT a regression in the retry". Pointing AWAY from the code
+            # is worse than the sentence it replaced, by this file's own rule at
+            # `test_a_TOO_SHORT_bound_is_reported_as_a_BOUND_problem_not_a_
+            # REGRESSION`: a test that names the wrong cause sends somebody to
+            # debug their diff.
+            #
+            # `len(picks)` was already in hand and settles it. Attempt 1 spends
+            # the whole budget BY CONSTRUCTION, so attempt 2 is where a slow
+            # host shows up; one pick means the retry never fired, which is a
+            # regression and must surface as one. ⚠ The converse is NOT claimed
+            # — see `_budget_reblame`, which records the case this deliberately
+            # under-blames.
+            try:
+                # 🔴 IT SWALLOWS ITS OWN WARNING. This control races on purpose
+                # and every green run of it emits one, so leaving it loose makes
+                # the suite's baseline ONE race warning rather than zero — and
+                # then a real race in some other test is invisible unless the
+                # reader checks node ids. `pytest.warns` also asserts it fired.
+                #
+                # ⚠ OPEN, AND DELIBERATELY NOT GUARDED: nothing goes red if a
+                # future edit re-leaks this. An audit confirmed it — deleting
+                # this `pytest.warns` leaves the subset green at `1 warning`.
+                # The property is "the SUITE emits no stray race warnings",
+                # which no test inside the suite can assert about itself, and a
+                # count pinned here would be a second thing to update on every
+                # unrelated warning. Measured instead, per run, from the summary
+                # line: the baseline is 3, all `tar.extractall`.
+                #
+                # 🔴 ONE ALTERNATIVE WAS WEIGHED AND REJECTED ON ITS MERITS, not
+                # missed. A message-scoped `filterwarnings = error:the spawn
+                # lost the port race` DOES work as a guard — a later audit
+                # measured it failing the leaking case and passing the swallowed
+                # one, with no count to maintain. It is rejected because of what
+                # it does to a race that is NOT in a test: this warning fires
+                # when the retry WORKS, so promoting it to an error turns every
+                # handled race anywhere in the suite into a red run. That is a
+                # gate which fires on the hazard being correctly absorbed —
+                # precisely the permanently-red gate everyone learns to click
+                # through, and it would defeat the retry this PR exists to add.
+                with pytest.warns(UserWarning, match="lost the port race"):
+                    with running_subprocess(store, token_file) as (base, _proc):
+                        code, _headers, _body = fetch(
+                            f"{base}/api/v1/recall/{SCOPE}", token=GOOD_TOKEN
+                        )
+            except AssertionError as exc:
+                # Through `_budget_reblame`, so the control that proves this
+                # DISCRIMINATES drives that function rather than a copy of it.
+                # `None` means "not the budget" — re-raise unchanged.
+                reblamed = self._budget_reblame(
+                    exc, attempts=len(picks), budget=budget
+                )
+                if reblamed is not None:
+                    raise reblamed from exc
+                raise
+        assert len(picks) == 2, f"the silent thief was not retried: {picks}"
+        assert code == 200
+
+    def test_a_child_that_dies_for_a_DIFFERENT_REASON_is_not_retried_at_all(
+        self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """🔴 The narrowness guard, and the one that makes the retry safe to
+        keep. The trusted-proxies refusal (exit 78) has nothing to do with the
+        port; retrying it would spend three spawns to reach the same failure and
+        would hide a real startup regression behind a slower one.
+        """
+        picks: list[int] = []
+        real_free_port = _free_port
+
+        def counting() -> int:
+            picks.append(real_free_port())
+            return picks[-1]
+
+        monkeypatch.setattr(sys.modules[__name__], "_free_port", counting)
+        with pytest.raises(AssertionError) as raised:
+            with running_subprocess(store, token_file, trusted_proxies=None):
+                pass  # pragma: no cover - the spawn must never get here
+        assert len(picks) == 1, "a death unrelated to the port was retried"
+        assert "server exited 78" in str(raised.value)
+        assert "SUBSYSTEM_STORE_TRUSTED_PROXIES" in str(raised.value)
+
+    def test_the_NEVER_HEALTHY_message_names_everything_the_old_one_dropped(
+        self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Drives the real branch: the child comes up fine and every probe
+        fails, which is the shape a slow start and a stolen port both wear.
+
+        🔴 Each assertion below is a fact the previous five-word message did not
+        carry, and the absence of which is why the one recorded occurrence of
+        the full-suite intermittent could not be attributed to a branch.
+
+        🔴 THE BUDGET IS A RACE THIS TEST MUST WIN, so it is not as short as it
+        could be. The whole budget is spent by construction — every probe is
+        refused — but the child has to reach `load_tokens` and emit its startup
+        warning BEFORE the reap, or the drained-stderr assertion below fails
+        with a claim about the message code when the cause is the host.
+        Measured: the child reaches that point in 0.085-0.262 s across 8 samples
+        on a loaded 24-core box, so 1.0 s was 4-12x and 3.0 s is 11-35x. Two
+        extra seconds for triple the margin, and the failure is re-blamed below
+        on top of that. 🔴 No documented bar is cited here either, and an
+        earlier draft cited one that does not exist — see the sibling
+        `test_a_thief_that_ACCEPTS_AND_NEVER_ANSWERS_is_retried_too` for what
+        the header actually says.
+        """
+        module = sys.modules[__name__]
+        budget = 3.0
+        monkeypatch.setattr(module, "STARTUP_BUDGET_S", budget)
+
+        def refuse_every_probe(*_args, **_kwargs):
+            raise RuntimeError("probe refused by the control")
+
+        monkeypatch.setattr(module, "fetch", refuse_every_probe)
+        with pytest.raises(AssertionError) as raised:
+            # `UNTRUSTED_PEER` for the same reason as the bounded control above:
+            # with every test on 127.0.0.1 a hardcoded address in the message is
+            # indistinguishable from the interpolated `host`.
+            with running_subprocess(store, token_file, host=UNTRUSTED_PEER):
+                pass  # pragma: no cover - the spawn must never get here
+        message = str(raised.value)
+        assert f"{NEVER_HEALTHY} on {UNTRUSTED_PEER}:" in message
+        assert "port_races=[]" in message
+        # The last probe, verbatim: "it timed out" and "it was refused" are
+        # different diagnoses and the old message could express neither.
+        assert "probe refused by the control" in message
+        # The child was REAPED by this function rather than left behind — the
+        # reported exit is the signal it sent, derived rather than spelled.
+        # `exit=None` would mean the process is still running and the streams
+        # below were never drained.
+        assert f"exit={-int(signal.SIGTERM)}" in message
+        # And its streams were DRAINED, not merely mentioned. 🔴 `"stderr=''"
+        # not in message` was the first spelling and it is vacuous against the
+        # mutant that matters: delete the field and the absent-empty-string
+        # check passes. Read the value out and require content.
+        # The quote character is whichever `!r` chose — the child's warning
+        # contains an apostrophe, so hardcoding `'` would match nothing.
+        drained = re.search(r"stderr=(['\"])(.*?)\1 stdout=", message, re.DOTALL)
+        assert drained, f"the message has no stderr field at all: {message}"
+        # 🔴 RE-BLAMED when the field is PRESENT but EMPTY — AND ONLY WHEN
+        # `stdout` IS EMPTY TOO. The first version omitted that second half and
+        # an audit measured what it cost: forcing `_never_healthy_message` to
+        # emit `stderr=''` made this print "the drain works; the child had not
+        # written anything", in a message whose own `stdout` field carried the
+        # child's listening line. Three false clauses pointing away from the
+        # code that was actually broken.
+        #
+        # Both streams empty is the ONLY shape the host can produce: the child
+        # had not run far enough to write to either. stderr empty beside a
+        # non-empty stdout means the drain dropped one of them, which is a
+        # defect in this message and must surface as one.
+        printed = re.search(r"stdout=(['\"])(.*?)\1$", message, re.DOTALL)
+        assert printed, f"the message has no stdout field at all: {message}"
+        # Through `_drain_verdict`, so the control that proves this
+        # discriminates drives that function rather than a copy of it.
+        verdict = self._drain_verdict(drained.group(2), printed.group(2))
+        assert verdict != "dropped", (
+            f"the message carried an EMPTY stderr beside a NON-EMPTY stdout, so "
+            f"the child did write and the drain dropped it — a defect in "
+            f"`_never_healthy_message`, not a budget too short for this host. "
+            f"Message: {message}"
+        )
+        assert verdict == "ok", (
+            f"the message carried an EMPTY stderr AND an empty stdout: the "
+            f"child had not written anything within the SHORTENED "
+            f"STARTUP_BUDGET_S={budget:g}s. That is the budget being too short "
+            f"for this host, NOT a regression in `_never_healthy_message` — "
+            f"raise it. Message: {message}"
+        )
 
 
 class TestTheDeployedEntrypoint:
@@ -19177,29 +20298,63 @@ class TestStartupStillRefusesAMalformedFile:
     """
 
     def _run_to_completion(self, store: Path, token_file: Path):
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                str(SERVER_PATH),
-                "--store", str(store),
-                "--host", "127.0.0.1",
-                "--port", str(_free_port()),
-                "--token-file", str(token_file),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=_child_env(LOOPBACK_PROXY),
-        )
-        try:
-            return proc.communicate(timeout=HANG_TIMEOUT), proc.returncode
-        except subprocess.TimeoutExpired:  # pragma: no cover
-            proc.kill()
-            proc.communicate()
-            raise AssertionError(
-                "the server did not exit on a malformed token file — it is "
-                "serving, which is the failure this guard pins against"
+        """🔴 IT RETRIES THE LOST PORT RACE, and it is not the malformed legs
+        that need that.
+
+        A malformed file returns `EXIT_CONFIG` from `main` before `build_server`
+        binds anything, so the port it was handed is never used. But the SHORT
+        BOUND control below passes a VALID file precisely so the process does
+        NOT exit — and that one binds. A port stolen in the window `_free_port`
+        documents would kill it with rc 1 inside the bound, which this class
+        would read as "the startup guard fired", the exact wrong diagnosis its
+        control-for-the-control exists to prevent.
+
+        It makes at most `SPAWN_ATTEMPTS` spawns and RAISES if every one of them
+        lost the race — it never returns a raced result as though the server
+        had had an opinion about the token file.
+        """
+        last_err = ""
+        for _attempt in range(SPAWN_ATTEMPTS):
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(SERVER_PATH),
+                    "--store", str(store),
+                    "--host", "127.0.0.1",
+                    "--port", str(_free_port()),
+                    "--token-file", str(token_file),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=_child_env(LOOPBACK_PROXY),
             )
+            try:
+                out, err = proc.communicate(timeout=HANG_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                raise AssertionError(
+                    "the server did not exit on a malformed token file — it is "
+                    "serving, which is the failure this guard pins against"
+                )
+            # 🔴 THE RACE CHECK COMES FIRST, AND THE `continue` IS
+            # UNCONDITIONAL. Written as `attempt < SPAWN_ATTEMPTS and
+            # _lost_the_port_race(...)` the conjunct short-circuits on the LAST
+            # attempt, so a third lost race fell through to the `return` below
+            # and handed rc 1 back as if the server had refused — the exact
+            # mis-diagnosis this retry exists to prevent, and it also made the
+            # raise underneath unreachable while `# pragma: no cover` said only
+            # that it was uncovered. Measured: `RETURNED (no raise): rc=1
+            # picks=3`. Exhausting the loop is what reaches the raise.
+            if _lost_the_port_race(proc.returncode, err):
+                last_err = err
+                continue
+            return (out, err), proc.returncode
+        raise AssertionError(
+            f"lost the port race {SPAWN_ATTEMPTS} times running for "
+            f"{token_file} — the last child said: {last_err.strip()!r}"
+        )
 
     def _run_to_completion_with_bound(self, store: Path, token_file: Path, *, bound):
         """`_run_to_completion` with its completion deadline shortened.
@@ -19219,6 +20374,95 @@ class TestStartupStillRefusesAMalformedFile:
             return self._run_to_completion(store, token_file)
         finally:
             HANG_TIMEOUT = previous
+
+    def test_a_LOST_PORT_RACE_is_retried_rather_than_scored_as_a_REFUSAL(
+        self, store: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """🔴 rc 1 with EADDRINUSE is a stolen port, not a startup refusal, and
+        without the retry this class scores it as one.
+
+        🔴 IT USES A **VALID** FILE, AND THAT IS THE WHOLE POINT. A malformed
+        file returns `EXIT_CONFIG` from `main` before `build_server` binds, so
+        an occupied port is invisible to it — the first draft of this test used
+        `short\\n`, made ONE pick, and would have passed with the retry deleted.
+        Only the leg that reaches `bind()` can lose the race, which is the leg
+        the short-bound control below spawns.
+
+        So the expected outcome is the runner's own "did not exit" — the second
+        attempt binds and serves out the bound. Without the retry the first
+        attempt returns rc 1 and nothing raises at all.
+        """
+        good = tmp_path / "token"
+        good.write_text(GOOD_TOKEN + "\n")
+        squatter = socket.socket()
+        squatter.bind(("127.0.0.1", 0))
+        picks: list[int] = []
+        real_free_port = _free_port
+
+        def picker() -> int:
+            picks.append(
+                squatter.getsockname()[1] if not picks else real_free_port()
+            )
+            return picks[-1]
+
+        monkeypatch.setattr(sys.modules[__name__], "_free_port", picker)
+        try:
+            with pytest.raises(AssertionError, match="did not exit"):
+                self._run_to_completion_with_bound(
+                    store, good, bound=SHORT_EXIT_BOUND
+                )
+        finally:
+            squatter.close()
+        assert len(picks) == 2, f"the stolen port was not retried: {picks}"
+
+    def test_EVERY_attempt_losing_the_race_RAISES_rather_than_returning_rc_1(
+        self, store: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """🔴 THE EXHAUSTION ARM, AND IT WAS DEAD CODE UNTIL AN AUDIT READ IT.
+
+        The retry was written `if attempt < SPAWN_ATTEMPTS and
+        _lost_the_port_race(...)`. On the LAST attempt the conjunct
+        short-circuits, so a third lost race fell through to the `return` and
+        handed rc 1 back as though the server had refused the token file —
+        making the whole class report `exited 1, expected 78`, i.e. "the startup
+        guard stopped working", which is the exact mis-diagnosis the retry
+        exists to prevent. It also made the `raise` below unreachable while its
+        `# pragma: no cover` claimed only that it was uncovered.
+
+        Measured before the fix: `RETURNED (no raise): rc=1 picks=3`.
+        """
+        good = tmp_path / "token"
+        good.write_text(GOOD_TOKEN + "\n")
+        squatter = socket.socket()
+        squatter.bind(("127.0.0.1", 0))
+        picks: list[int] = []
+
+        def always_taken() -> int:
+            picks.append(squatter.getsockname()[1])
+            return picks[-1]
+
+        monkeypatch.setattr(sys.modules[__name__], "_free_port", always_taken)
+        try:
+            with pytest.raises(AssertionError) as raised:
+                self._run_to_completion(store, good)
+        finally:
+            squatter.close()
+        assert len(picks) == SPAWN_ATTEMPTS, (
+            f"expected {SPAWN_ATTEMPTS} attempts, made {len(picks)}"
+        )
+        message = str(raised.value)
+        assert f"lost the port race {SPAWN_ATTEMPTS} times" in message
+        # The child's own words, derived from the errno rather than spelled —
+        # without them "it was a race" is asserted three times and evidenced
+        # none.
+        assert os.strerror(errno.EADDRINUSE) in message, message
+        # 🔴 NO ASSERTION HERE THAT THE REFUSAL CODE IS ABSENT. The obvious one
+        # — `str(api.EXIT_CONFIG) not in message` — was written and MEASURED
+        # false: the interpolated traceback contains `line 478`, so a bare "78"
+        # matches a line number. A substring check on a small integer is not a
+        # guard, and the property that matters is pinned above anyway, by
+        # `pytest.raises`: the defect was RETURNING rc 1, and a raise cannot be
+        # mistaken for a return.
 
     def test_a_SHORT_token_at_startup_still_exits_78(
         self, store: Path, tmp_path: Path
