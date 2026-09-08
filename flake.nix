@@ -83,9 +83,20 @@
       #     could not be revoked without deleting the pod.
       # busybox rather than coreutils+gnutar+findutils: it supplies every one of
       # those applets in ~2 MB, and the procedures use only POSIX spellings.
-      # `serverPath` is asserted against this list by
-      # `tests/test_flake_image_matches_dockerfile.py`, so dropping a binary
-      # here fails the suite rather than a future seed.
+      #
+      # 🔴 `serverPath` MUST NAME A DIRECTORY THE APPLETS ACTUALLY LAND IN, and
+      # `serverTools` MUST REACH `contents`. Both are asserted by
+      # `tests/test_flake_image_matches_dockerfile.py`, and BOTH assertions
+      # exist because their absence was measured: with the guard pinning only
+      # the two bindings, a mutant that reverted `contents` to `[ tree ]` and a
+      # mutant that set `serverPath = "/nonexistent"` EACH SURVIVED the whole
+      # suite while restoring the exact defect the guard was written for — a
+      # pod that starts, serves, and cannot be seeded or rotated.
+      #
+      # ⚠ An earlier version of this comment said `serverPath` was "asserted
+      # against this list". It was not: nothing connected the path to the tools,
+      # and the sentence was a coverage claim wider than the code. That is the
+      # same shape as the defect below it, one level up.
       serverPath = "/bin";
       serverTools = pkgs: [ pkgs.busybox ];
 
@@ -157,18 +168,6 @@
           runHook postInstall
         '';
 
-        # 🔴 AT BUILD TIME, NOT ONLY IN `checks`, AND THAT IS NOT REDUNDANT.
-        # A consumer pinning this flake — devrc's `home-manager switch` is the
-        # first — builds the PACKAGE and never runs `nix flake check`. A
-        # sibling-import break would therefore reach a machine and be found by
-        # the operator, at the moment they wanted to read a note. Failing here
-        # means such a build cannot produce an artefact at all.
-        #
-        # `--help` is enough for THIS depth because the imports are at module
-        # scope and `build_parser` additionally calls `_doctor_epilog()`
-        # eagerly, pulling in `cairn_doctor`. It is NOT enough for the depth
-        # `checks.client-resolves-its-lib` covers, which runs a real subcommand
-        # to completion — see the note there.
         # 🔴 WITHOUT THIS THE DERIVATION IS NOT REPRODUCIBLE, and `nix build
         # --rebuild` says so: the install check below IMPORTS the whole closure,
         # CPython writes `lib/__pycache__/*.pyc` into `$out` before the daemon
@@ -274,14 +273,23 @@
       checks = forAll (pkgs: {
         cairn = mkCairn pkgs;
 
-        # 🔴 THIS IS THE CHECK THAT EARNS ITS KEEP, AND IT IS NOT A TAUTOLOGY.
-        # The one thing packaging can silently break is the sibling-import
-        # mechanism above: drop `lib/` from the install, or put the real script
-        # somewhere `lib/` is not, and `cairn` still EXISTS and still has a
-        # `--help` — argparse is built before any subcommand imports anything.
-        # So `--help` alone is not evidence. `doctor` is used because it drives
-        # the imports for real: it reaches `cairn_doctor`, `subsystem_read_store`
-        # and `entry_shape`, which is the closure a store-path build would lose.
+        # 🔴 THIS CHECK IS THE POSITIVE HALF, AND IT IS *NOT* THE DETECTOR FOR A
+        # MISSING `lib/` — `doInstallCheck` above is, and it fires first.
+        #
+        # An earlier version of this comment claimed the opposite: that dropping
+        # `lib/` would leave `cairn` with a working `--help` because "argparse is
+        # built before any subcommand imports anything". MEASURED FALSE — the
+        # imports are at MODULE SCOPE (`cairn:91`), so `--help` dies with
+        # `ModuleNotFoundError: timeouts` during the package's own install check,
+        # and this derivation never gets built. The sentence is deleted rather
+        # than reworded because a maintainer who believed it would conclude
+        # `doInstallCheck` proves nothing and delete the only build-time gate
+        # standing between a broken client and a consumer's `home-manager switch`.
+        #
+        # What this check adds is DEPTH THE INSTALL CHECK DOES NOT REACH: it runs
+        # a real subcommand to completion against a real cache root, driving
+        # `cairn_doctor`, `subsystem_read_store` and `entry_shape` through their
+        # logic rather than merely importing them.
         #
         # Its EXIT CODE is deliberately not asserted. `doctor` reports on an
         # operator's configuration, and in a build sandbox there is no store, no
@@ -331,8 +339,15 @@
 
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
+          # 🔴 THE SAME PIN AS THE ARTEFACTS, AND THIS WAS THE FOURTH THING.
+          # `pkgs.python3` here resolved to 3.14 while the package shebang, the
+          # image `Cmd`, `server/Dockerfile` and the CI matrix were all 3.12 —
+          # so the shell `shellHook` tells you to run the suite in was on a
+          # DIFFERENT interpreter from the one shipped, and a lock bump would
+          # move it again silently. That is precisely what pinning the other
+          # three was supposed to close.
           packages = [
-            (pkgs.python3.withPackages (ps: [ ps.pytest ]))
+            ((python pkgs).withPackages (ps: [ ps.pytest ]))
             pkgs.git
           ];
           shellHook = ''

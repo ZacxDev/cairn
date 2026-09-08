@@ -131,9 +131,33 @@ seeded and whose leaked credential cannot be revoked**, behind four green
 assertions. The image now carries busybox and declares `PATH`, and
 `test_the_flake_image_declares_a_PATH_and_carries_the_operational_toolchain`
 pins that — but the general lesson stands: **before swapping the deployed
-image, diff the two for what the test cannot read.** Known remaining
-differences, measured: the flake image has no `/etc` or `/usr`, `WorkingDir` is
-`/app` rather than `/`, and it is larger.
+image, diff the two for what the test cannot read.**
+
+Known remaining differences, measured on the built images (26 layers,
+209,252,641 bytes):
+
+| | `server/Dockerfile` | `packages.server-image` |
+|---|---|---|
+| `/etc`, `/usr` | present | **absent** |
+| `WorkingDir` | `/` | `/app` |
+| shell / `tar` / `find` / `cut` | from `python:3.12-slim` | busybox 1.37.0 |
+| `bash`, `apt-get` | **present** | absent |
+| `wget`, `nc`, `httpd`, `telnetd` | **absent** | **present** (busybox applets) |
+| size | smaller | larger |
+
+🔴 **NEITHER IMAGE'S TOOL SURFACE IS A SUBSET OF THE OTHER'S, and the row that
+matters is the last one.** busybox ships 402 applets at `/bin` (and `/sbin`, a
+byte-identical duplicate), which puts an HTTP server, a telnet server and two
+egress clients into a pod that mounts a credential at
+`/run/secrets/subsystem-store/token` — none of which the deployed image has.
+Against that: the pod runs as uid 65532, no applet is setuid, and the deployed
+image ships `bash` and `apt-get`, so neither is meaningfully "hardened"
+relative to the other. **This is recorded rather than fixed, deliberately** —
+trimming means `pkgs.busybox.override { extraConfig = "CONFIG_HTTPD n\n…"; }`,
+which rebuilds busybox from source with no cache hit, and the applets are not
+reachable without execution the attacker would already need. If this image is
+ever actually deployed, revisit that trade **then**, with the threat model in
+front of you; do not read this row as settled.
 
 🔴 **THE INTERPRETER IS PINNED, NOT INHERITED.** `flake.nix` uses
 `pkgs.python312` because `server/Dockerfile` is `python:3.12-slim` and CI pins

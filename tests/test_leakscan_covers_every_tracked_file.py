@@ -32,8 +32,46 @@ import leakscan  # noqa: E402
 
 
 def tracked_files() -> list[str]:
+    """Every file the SCANNER would consider, before its suffix filter.
+
+    🔴 THE FLAGS MUST MATCH `leakscan.tracked_files`, AND THE FIRST VERSION OF
+    THIS DID NOT. It shelled a bare `git ls-files` — cached only — while the
+    scanner enumerates `--cached --others --exclude-standard`, deliberately,
+    because its own docstring says "`git ls-files` ALONE IS BLIND to a file not
+    yet added, and 'I forgot to git add it' is not a reason for a leak to ship."
+    So the guard written to make a coverage gap impossible re-introduced exactly
+    that blindness one level up.
+
+    MEASURED: an UNTRACKED `notes.rst` holding a real hostname and an email
+    address scanned clean (`0 findings across 38 file(s)`, rc 0) and this guard
+    passed, while the byte-identical content in `notes.md` was caught
+    immediately — so the scanner could see the leak and the suffix set skipped
+    it. The exposure window was precisely the pre-`git add` window leakscan
+    exists to cover.
+
+    The enumeration is duplicated rather than imported because this test must
+    be able to see files the scanner's suffix filter has already dropped —
+    that is the whole question it asks. What must not diverge is the FLAGS, so
+    they are stated once here with the reason, and `test_this_guard_and_the_scanner_
+    enumerate_the_same_files` pins the two against each other.
+    """
+    return _enumerate(ROOT)
+
+
+def _enumerate(root: Path) -> list[str]:
+    """The enumeration itself, parameterised so a fixture can reach it.
+
+    🔴 IT TAKES A ROOT BECAUSE THE PARITY TEST BELOW CANNOT OTHERWISE REACH THE
+    DIFFERENCE IT CHECKS. In a clean checkout every file is committed, so
+    `--cached` and `--cached --others` return the SAME set and a parity
+    assertion is satisfied by two identical lists no matter which flags either
+    side uses. Measured: with this hardcoded to ROOT, a mutant narrowing it
+    back to cached-only SURVIVED the whole suite. The difference only exists
+    when an UNTRACKED file does, so the test builds one.
+    """
     out = subprocess.run(
-        ["git", "-C", str(ROOT), "ls-files"],
+        ["git", "-C", str(root), "ls-files", "--cached", "--others",
+         "--exclude-standard"],
         capture_output=True, text=True, check=True,
     ).stdout
     return [line for line in out.splitlines() if line]
@@ -80,6 +118,72 @@ def test_the_types_this_repo_actually_carries_are_scanned(suffix):
     `.nix` is first in the list because it is the one that was actually missing.
     """
     assert suffix in leakscan.TEXT_SUFFIXES
+
+
+def test_this_guard_and_the_scanner_enumerate_the_same_files():
+    """🔴 PINS THE ONE THING THAT MUST NOT DIVERGE — the enumeration FLAGS.
+
+    This guard asks "is any file type unscanned?", so it must start from the
+    same candidate set the scanner does. If it starts from a NARROWER set, a
+    file outside it is invisible to both and the guard reports coverage it does
+    not have — which is what happened: a bare `git ls-files` here versus
+    `--cached --others --exclude-standard` there.
+
+    Every file the SCANNER returns must appear in this module's enumeration.
+    The reverse does not hold and must not be asserted: the scanner has already
+    applied its suffix filter, so it legitimately returns fewer files. Pinning
+    equality would fail on every correctly-skipped binary.
+    """
+    mine = set(tracked_files())
+    theirs = {str(Path(p).relative_to(ROOT)) for p in leakscan.tracked_files()}
+    missing = sorted(theirs - mine)
+    assert not missing, (
+        f"the scanner considers {missing} which this guard's enumeration does "
+        f"not see — the flags have diverged, so this guard is blind to exactly "
+        f"the files it exists to check"
+    )
+
+
+def test_the_enumeration_sees_an_UNTRACKED_file(tmp_path, monkeypatch):
+    """🔴 THE CASE THE PARITY TEST ABOVE CANNOT REACH ON ITS OWN.
+
+    In a clean checkout every file is committed, so cached-only and
+    cached-plus-others return identical sets and the parity assertion holds
+    whatever flags either side uses. MEASURED: a mutant narrowing `_enumerate`
+    to a bare `git ls-files` SURVIVED the entire suite. The blindness only
+    becomes observable when an untracked file exists, so this builds one in a
+    throwaway repo and drives BOTH enumerations against it — the shipped code,
+    not a copy of it.
+
+    This is the failure the whole module exists for: leakscan scans untracked
+    files deliberately ("'I forgot to git add it' is not a reason for a leak to
+    ship"), so a coverage guard that cannot see them certifies nothing about
+    precisely the window that matters.
+    """
+    repo = tmp_path / "repo"
+    (repo / "sub").mkdir(parents=True)
+    (repo / "tracked.md").write_text("# tracked\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "tracked.md"], check=True)
+
+    # The untracked file, of a type the scanner reads.
+    (repo / "sub" / "untracked.md").write_text("# untracked\n", encoding="utf-8")
+
+    seen = _enumerate(repo)
+    assert "sub/untracked.md" in seen, (
+        f"the enumeration missed an UNTRACKED file (saw {seen}) — it is "
+        f"cached-only, so it is blind to the pre-`git add` window that "
+        f"leakscan deliberately covers"
+    )
+    assert "tracked.md" in seen, "the enumeration missed a TRACKED file"
+
+    # And the scanner's own enumeration agrees, driven against the same repo.
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+    theirs = {str(Path(p).relative_to(repo)) for p in leakscan.tracked_files()}
+    assert "sub/untracked.md" in theirs, (
+        "the SCANNER does not see the untracked file either — this test's "
+        "premise about leakscan's flags is wrong, fix the premise not the flags"
+    )
 
 
 def test_the_scanner_reads_the_flake_when_it_walks_the_tree():

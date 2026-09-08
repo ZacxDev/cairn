@@ -98,8 +98,8 @@ def dockerfile_user(text: str) -> str | None:
 
 
 def dockerfile_expose(text: str) -> str | None:
-    users = dockerfile_exposes(text)
-    return users[-1] if users else None
+    ports = dockerfile_exposes(text)
+    return ports[-1] if ports else None
 
 
 def dockerfile_cmd_script(text: str) -> str | None:
@@ -284,6 +284,48 @@ class TestTheTwoBuildsAgree:
             "`serverPath` is defined but never placed into the image's Env"
         )
 
+        # 🔴 THE SAME RULE APPLIED TO `serverTools`, AND ITS ABSENCE WAS
+        # MEASURED. With only the assertions above, a mutant reverting
+        # `contents = [ tree ] ++ serverTools pkgs;` to `contents = [ tree ];`
+        # SURVIVED the whole suite — busybox declared, never installed, and the
+        # round-1 🔴 fully restored behind a green test whose docstring is forty
+        # lines about that exact failure. Declaring a binding is not wiring it.
+        # Anchored for the same reason as `serverPath` below: unanchored, this
+        # would match a COMMENT quoting the wiring — and every comment in this
+        # area quotes it, because they are all about it.
+        assert re.search(
+            r"^\s*contents\s*=\s*\[[^\]]*\]\s*\+\+\s*serverTools\s+pkgs", flake, re.M
+        ), (
+            "`serverTools` is declared but never added to the image's `contents` "
+            "— the binaries are not in the image, so `kubectl exec … -- tar` "
+            "still fails and the pod still cannot be seeded"
+        )
+
+        # 🔴 AND THE PATH MUST NAME WHERE THE APPLETS ACTUALLY LAND. A mutant
+        # setting `serverPath = "/nonexistent"` ALSO survived: the tools were in
+        # the image and unreachable, which is the same end state by another
+        # route. `buildLayeredImage` places a package's `bin/` at the image root
+        # as `/bin`, so that is the value this pins — deliberately a literal,
+        # because the point is to fail when someone changes it without changing
+        # the layout.
+        #
+        # 🔴 ANCHORED TO A LINE-START BINDING, AND THE UNANCHORED VERSION WAS
+        # WRITTEN FIRST AND CAUGHT BY THIS FILE'S OWN MUTATION BATTERY. A bare
+        # `re.search(r'serverPath\s*=\s*"([^"]+)"')` matched the FIRST
+        # occurrence in the file — which is the COMMENT above the binding,
+        # quoting `serverPath = "/nonexistent"` as the mutant it describes. So
+        # the guard read a value out of prose and failed on a correct tree.
+        # That is the same first-occurrence defect this class fixes in the
+        # Dockerfile extractors, re-committed in the fix for it: a guard
+        # matching a WORD that another line can spell, rather than the
+        # STRUCTURE it means to read.
+        m2 = re.search(r'^\s*serverPath\s*=\s*"([^"]+)"\s*;', flake, re.M)
+        assert m2 and m2.group(1) == "/bin", (
+            f"serverPath is {m2.group(1) if m2 else None!r}, but busybox's "
+            f"applets land at /bin in the built image — a PATH pointing "
+            f"elsewhere leaves them present and unreachable"
+        )
+
     def test_exactly_one_user_and_one_cmd_are_declared(self, dockerfile):
         """🔴 A SECOND `USER` OR `CMD` IS THE HAZARD, NOT A STYLE POINT.
 
@@ -294,9 +336,16 @@ class TestTheTwoBuildsAgree:
         because the file then says two different things and the next reader
         edits whichever they see first.
         """
-        assert dockerfile_users(dockerfile) == ["65532:65532"], (
-            "expected exactly one USER line; a second one silently changes "
-            "which uid the pod drops to"
+        # 🔴 THE COUNT, NOT THE VALUE. `test_the_uid_agrees` owns whether the
+        # uid is right; this owns whether there is exactly one of it. An earlier
+        # version asserted the literal here too, so a legitimate uid change
+        # failed with "expected exactly one USER line" — a message describing a
+        # problem the tree did not have, which is how a correct change gets
+        # reverted.
+        assert len(dockerfile_users(dockerfile)) == 1, (
+            f"expected exactly one USER line, found "
+            f"{len(dockerfile_users(dockerfile))}: Docker applies the last, so "
+            f"a second one silently changes which uid the pod drops to"
         )
         assert len(dockerfile_cmd_scripts(dockerfile)) == 1, (
             "expected exactly one CMD; Docker applies the last, so an extra "
