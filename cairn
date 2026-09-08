@@ -743,7 +743,47 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
         )
         text = rc.render_search(report)
     else:
-        report = rc.recall(str(args.cache), scope, mode=args.mode)
+        # 🔴 THE DIGEST'S OWN FOOTER PRESCRIBES THESE FLAGS, so the client has to
+        # have them. It told readers "`--ref <name>` prints any one of them in
+        # full; `--limit N` prints them all" while this subcommand exited 2 on
+        # both — documentation naming a drill-down the shipped binary lacked,
+        # which sends a reader to a dead end and then to the raw module.
+        # The mapping and the refusals are `rc`'s, NOT re-derived here: a second
+        # copy of either is the shape that ends up wrong on one side.
+        refusal = rc.reject_recall_flags(
+            ref=args.ref, listing=args.listing, limit=args.limit, page=args.page
+        )
+        if refusal is not None:
+            print(f"cairn: {refusal}", file=sys.stderr)
+            return EXIT_USAGE
+        selection = rc.recall_selection(
+            listing=args.listing, limit=args.limit, page=args.page
+        )
+        # `--mode` stays authoritative when the caller passed it explicitly:
+        # it predates these flags and something may already drive it.
+        mode = args.mode if args.mode != rc.DEFAULT_MODE else selection.mode
+        # 🔴 REACHABLE ONLY BECAUSE THIS COMMIT EXPOSED `--limit`/`--page`, and
+        # it was watched: before this guard, `cairn recall --limit 0` raised
+        # `ValueError: limit must be an int >= 1` as an UNCAUGHT traceback at
+        # rc 1. The module's own CLI entrypoint has always caught it and
+        # answered 2 with the message alone; a wrapper that tracebacks where
+        # the module it wraps explains itself is worse than not offering the
+        # flag. (Spelled without the callee's name on purpose: a ledger in
+        # `tests/test_subsystem_read_store.py` greps this file's TEXT to prove
+        # the client reaches the library and never that entrypoint, and a
+        # comment quoting it is indistinguishable from a call.)
+        try:
+            report = rc.recall(
+                str(args.cache),
+                scope,
+                ref=args.ref,
+                limit=selection.limit,
+                mode=mode,
+                page=selection.page,
+            )
+        except ValueError as exc:
+            print(f"cairn: {exc}", file=sys.stderr)
+            return EXIT_USAGE
         text = rc.render_text(report)
 
     # An empty scope reached through a LIVE fetch is `scope-empty`; the same
@@ -1459,6 +1499,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = common(sub.add_parser("recall", help="the scope's digest"))
     r.add_argument("--mode", default=rc.DEFAULT_MODE)
+    # The digest's footer names `--ref` and `--limit` by hand; `--list` and
+    # `--page` are the other two the reader has always had. All four are
+    # forwarded to `rc`, never re-implemented — see `cmd_recall`.
+    r.add_argument(
+        "--ref",
+        default=None,
+        help="surface ONE entry by ref instead of the whole scope",
+    )
+    r.add_argument(
+        "--list",
+        action="store_true",
+        dest="listing",
+        help="the INDEX ONLY: one line per entry, never a body, never truncated",
+    )
+    r.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="print up to N entry BODIES instead of the default digest",
+    )
+    r.add_argument(
+        "--page",
+        type=int,
+        default=None,
+        help="which page of the INDEX to list, 1-based",
+    )
     r.set_defaults(func=cmd_recall)
 
     q = common(sub.add_parser("search", help="search the scope for hunks"))

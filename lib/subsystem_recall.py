@@ -3242,43 +3242,108 @@ def _with_stamp(payload: dict, store: "_read_store.ReadStore") -> dict:
     return {**payload, "read_store_stamp": list(store.stamp or ())}
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _build_parser().parse_args(list(argv) if argv is not None else None)
+@dataclass(frozen=True)
+class RecallSelection:
+    """What a set of recall flags SELECTS: the render mode, the body cap, the page."""
 
-    # 🔴 Rejected, not silently reconciled. Every combination below has an obvious
-    # "sensible" reading and they are DIFFERENT readings, so honouring one would
-    # give the caller output they did not ask for and no sign of it.
+    mode: str
+    limit: int
+    page: int
+
+
+def recall_selection(
+    *,
+    listing: bool = False,
+    limit: int | None = None,
+    page: int | None = None,
+) -> RecallSelection:
+    """Map recall's FLAGS onto `recall()`'s arguments — the ONE place that does.
+
+    🔴 THIS EXISTS BECAUSE THE MAPPING HAD A SECOND CALLER AND NO HOME. `main()`
+    derived `mode`/`limit`/`page` inline, so the `cairn` wrapper — which reaches
+    this module as a LIBRARY, not through `main()` — could not offer `--ref`,
+    `--list`, `--limit` or `--page` without open-coding the same three
+    expressions. The digest's own footer told readers to run `--ref <name>` and
+    `--limit N`, and the wrapper exited 2 on both: the documentation prescribed a
+    drill-down the shipped client did not have.
+
+    `--limit` is what selects the pre-digest full-body mode, and nothing else
+    does: defaulting `limit` to `DEFAULT_ENTRY_LIMIT` at the call site would make
+    "the caller asked for a cap" indistinguishable from "the caller asked for
+    nothing", which is the distinction `mode` is derived from.
+    """
+    return RecallSelection(
+        mode="list" if listing else ("full" if limit is not None else DEFAULT_MODE),
+        limit=limit if limit is not None else DEFAULT_ENTRY_LIMIT,
+        page=page if page is not None else 1,
+    )
+
+
+def reject_recall_flags(
+    *,
+    search: str | None = None,
+    ref: str | None = None,
+    listing: bool = False,
+    limit: int | None = None,
+    page: int | None = None,
+) -> str | None:
+    """The flag combinations recall REFUSES, as a message — or None if coherent.
+
+    🔴 REJECTED, NOT SILENTLY RECONCILED. Every combination below has an obvious
+    "sensible" reading and they are DIFFERENT readings, so honouring one would
+    give the caller output they did not ask for and no sign of it.
+
+    🔴 AND IT IS SHARED, NOT COPIED. Two callers enforce these rules — this
+    module's `main()` and the `cairn` client's `recall` subcommand — and a
+    predicate open-coded at two sites is the shape that ends up wrong at one of
+    them. The messages are returned rather than printed so both callers own
+    their own stream and exit code; the WORDING is pinned by tests that drive
+    this function, so the two cannot drift apart in what they say either.
+    """
     chosen = [
         flag
         for flag, _what in _SELECTORS
-        if (flag == "--search" and args.search is not None)
-        or (flag == "--ref" and args.ref is not None)
-        or (flag == "--list" and args.listing)
+        if (flag == "--search" and search is not None)
+        or (flag == "--ref" and ref is not None)
+        or (flag == "--list" and listing)
     ]
     if len(chosen) > 1:
         what = {f: w for f, w in _SELECTORS}
-        print(
-            "subsystem-recall: "
-            + " and ".join(chosen)
+        return (
+            " and ".join(chosen)
             + " select different things ("
             + " vs ".join(what[f] for f in chosen)
-            + "). Pass one.",
-            file=sys.stderr,
+            + "). Pass one."
         )
-        return 2
-    if args.listing and args.limit is not None:
-        print(
-            "subsystem-recall: --limit is a cap on entry BODIES and --list prints none; "
-            "the index is never truncated. Drop one.",
-            file=sys.stderr,
+    if listing and limit is not None:
+        return (
+            "--limit is a cap on entry BODIES and --list prints none; "
+            "the index is never truncated. Drop one."
         )
-        return 2
-    if args.page is not None and (args.ref is not None or args.limit is not None):
-        print(
-            "subsystem-recall: --page pages the INDEX, and --ref/--limit print no index "
-            "at all. Drop one.",
-            file=sys.stderr,
+    if page is not None and (ref is not None or limit is not None):
+        return (
+            "--page pages the INDEX, and --ref/--limit print no index "
+            "at all. Drop one."
         )
+    return None
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _build_parser().parse_args(list(argv) if argv is not None else None)
+
+    # 🔴 The rules themselves live in `reject_recall_flags`, which the `cairn`
+    # client's `recall` subcommand also calls — see that function for why they
+    # are refused rather than reconciled, and why they are shared rather than
+    # copied. This site owns only the stream and the exit code.
+    refusal = reject_recall_flags(
+        search=args.search,
+        ref=args.ref,
+        listing=args.listing,
+        limit=args.limit,
+        page=args.page,
+    )
+    if refusal is not None:
+        print(f"subsystem-recall: {refusal}", file=sys.stderr)
         return 2
     if args.search is None:
         stray = [
@@ -3316,11 +3381,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # one renderer quietly stops matching what a skill tells a reader to relay.
     stamp_header = list(_read_store.stamp_header(read_store.stamp))
 
-    # `--limit` is what selects the pre-digest full-body mode. Nothing else does:
-    # a default of DEFAULT_ENTRY_LIMIT here would make "the caller asked for a cap"
-    # indistinguishable from "the caller asked for nothing".
-    mode = "list" if args.listing else ("full" if args.limit is not None else DEFAULT_MODE)
-    limit = args.limit if args.limit is not None else DEFAULT_ENTRY_LIMIT
+    # The derivation lives in `recall_selection`, shared with the `cairn` client.
+    selection = recall_selection(
+        listing=args.listing, limit=args.limit, page=args.page
+    )
+    mode, limit = selection.mode, selection.limit
 
     try:
         repo = Path(args.repo).resolve()
@@ -3369,7 +3434,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ref=args.ref,
             limit=limit,
             mode=mode,
-            page=args.page if args.page is not None else 1,
+            page=selection.page,
             focus_paths=window.paths,
             focus_source=window.source,
         )

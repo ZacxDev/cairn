@@ -23,6 +23,7 @@ import importlib.util
 import io
 import ipaddress
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -1304,3 +1305,109 @@ def test_cairn_still_resolves_its_lib_relative_to_its_own_file():
     assert (REPO / "lib" / "subsystem_recall.py").exists()
 
 
+class TestTheDigestFooterPrescribesFlagsTheClientMustHave:
+    """🔴 THE DOCUMENTATION AND THE BINARY DISAGREED, AND THE DOCUMENTATION WON THE READER.
+
+    The digest's own footer told readers to run `--ref <name>` and `--limit N`
+    to drill into an entry. `cairn recall` accepted neither and exited 2 with
+    `unrecognized arguments`, so a reader following the output it had just been
+    shown hit a dead end and fell back to invoking the raw module — which is
+    the thing the client exists to wrap.
+
+    The second test is the one that closes the CLASS rather than the instance:
+    it DERIVES the prescribed flags from the footer the run actually printed,
+    so a future footer naming a fifth flag fails here instead of shipping.
+    """
+
+    def _synced_cache(self, live_store, tmp_path: Path) -> Path:
+        cache = tmp_path / "cache"
+        proc = run_cairn("sync", url=live_store.base, cache=cache)
+        assert proc.returncode == 0, proc.stderr
+        return cache
+
+    def test_recall_ref_surfaces_ONE_entry_instead_of_the_whole_scope(
+        self, live_store, tmp_path: Path
+    ):
+        cache = self._synced_cache(live_store, tmp_path)
+        proc = run_cairn(
+            "recall", "--scope", "widget-cfg", "--ref", "thing-beta", "--no-sync",
+            url=None, cache=cache,
+        )
+        assert proc.returncode == 0, f"rc={proc.returncode} stderr={proc.stderr}"
+        # The asked-for body is present and the SIBLING's body is not: an
+        # assertion on presence alone would pass on the full digest, which
+        # prints every entry and would make `--ref` look like it worked.
+        assert "sidecar drops its lease" in proc.stdout, proc.stdout
+        assert "probe lies for 40s" not in proc.stdout, (
+            "`--ref` printed the sibling entry too, so it did not narrow anything"
+        )
+
+    def test_every_flag_the_footer_PRESCRIBES_is_accepted_by_the_client(
+        self, live_store, tmp_path: Path
+    ):
+        cache = self._synced_cache(live_store, tmp_path)
+        digest = run_cairn(
+            "recall", "--scope", "widget-cfg", "--no-sync", url=None, cache=cache
+        )
+        assert digest.returncode == 0, digest.stderr
+
+        prescribed = sorted(set(re.findall(r"`(--[a-z][a-z-]*)", digest.stdout)))
+        # 🔴 POSITIVE CONTROL. A regex that matched nothing would make every
+        # assertion below vacuous and the test would pass over a footer naming
+        # flags the client lacks — the exact defect it is here to catch.
+        assert len(prescribed) >= 2, (
+            f"extracted {prescribed} from the digest; the footer names at least "
+            f"--ref and --limit, so this regex is not reading the footer"
+        )
+
+        helptext = run_cairn("recall", "--help", url=None, cache=cache).stdout
+        missing = [f for f in prescribed if f not in helptext]
+        assert not missing, (
+            f"the digest tells readers to run {missing}, and `cairn recall` does "
+            f"not accept them. Either wire the flag through to `rc`, or stop the "
+            f"footer prescribing it — a client that cannot run its own printed "
+            f"advice sends the reader to the raw module."
+        )
+
+    def test_the_refusals_are_the_SHARED_ones_not_a_second_copy(
+        self, live_store, tmp_path: Path
+    ):
+        cache = self._synced_cache(live_store, tmp_path)
+        proc = run_cairn(
+            "recall", "--scope", "widget-cfg", "--list", "--limit", "3", "--no-sync",
+            url=None, cache=cache,
+        )
+        assert proc.returncode != 0, "an incoherent flag pair was accepted"
+        # Drive the SHIPPED predicate, never a re-implementation of it: a copy
+        # here would drift from the thing it is supposed to be checking, which
+        # is the failure this repo already recorded for an exporter's control.
+        sys.path.insert(0, str(REPO / "lib"))
+        import subsystem_recall as rc  # noqa: PLC0415
+
+        expected = rc.reject_recall_flags(listing=True, limit=3)
+        assert expected is not None, "the shared predicate no longer refuses this pair"
+        assert expected in proc.stderr, (
+            f"the client's refusal is not the shared one.\n"
+            f"shared:  {expected}\nclient:  {proc.stderr}"
+        )
+
+    def test_an_out_of_range_limit_is_EXPLAINED_not_a_traceback(
+        self, live_store, tmp_path: Path
+    ):
+        """🔴 A DEFECT THIS FEATURE INTRODUCED, CAUGHT BY EXERCISING IT.
+
+        `recall()` validates `limit`/`page` by raising, and `rc.main()` has
+        always caught that and answered 2 with the message. Exposing `--limit`
+        on the wrapper made the raise reachable from the command line for the
+        first time: before the guard, `--limit 0` printed a traceback and
+        exited 1. A wrapper that tracebacks where the module it wraps explains
+        itself is worse than not offering the flag at all.
+        """
+        cache = self._synced_cache(live_store, tmp_path)
+        proc = run_cairn(
+            "recall", "--scope", "widget-cfg", "--limit", "0", "--no-sync",
+            url=None, cache=cache,
+        )
+        assert proc.returncode == 2, f"rc={proc.returncode}: {proc.stderr}"
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "limit must be an int >= 1" in proc.stderr, proc.stderr
