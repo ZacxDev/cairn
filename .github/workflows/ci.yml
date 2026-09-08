@@ -43,13 +43,27 @@ jobs:
       # 🔴 READ THE COLLECTED COUNT, NOT JUST THE EXIT CODE. pytest can collect
       # ZERO tests and exit 0 — an empty suite is indistinguishable from a green
       # one if you only look at the status. The floor makes that impossible.
+      #
+      # 🔴 AND A FLOOR FAR BELOW THE SUITE IS THE SAME BLINDNESS ONE STEP UP. At
+      # 200 against a suite of 1698 it could not see a collection narrowing to
+      # 300 — 82% of the suite gone, silently — which is the exact failure the
+      # paragraph above says it prevents. The floor is `m - min(50, max(1, m/20))`
+      # for a measured `m`: close enough that a real narrowing cannot hide under
+      # it, loose enough that removing a handful of tests in a PR does not turn
+      # this into a permanently-red gate nobody reads.
+      #
+      # ⚠ THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No bug ever
+      # narrowed this suite; it pins a property so that one cannot pass unseen.
       - name: run the suite with a collected-test floor
         run: |
           set -o pipefail
           python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
-          FLOOR = 200          # raise as the suite grows; never lower without saying why
+          # 1698 collected, measured 2026-09-08. Raise as the suite grows —
+          # `m - min(50, max(1, m/20))` for the m you measured; never lower
+          # without saying why.
+          FLOOR = 1648
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

@@ -23022,6 +23022,18 @@ class TestNoRefusalEVEREchoesAnUNVALIDATEDFieldValue:
 # `test_no_observer_EVER_sees_a_table_that_is_neither`.
 ATOMICITY_SAMPLE_BUDGET_S = 3.0
 
+# 🔴 THE BUDGET IS NOT ALLOWED TO BOUND THE CONTROL THAT POLICES IT. The driver
+# keeps reloading, and the samplers keep sampling, until at least this many
+# reloads have been driven; the budget only decides when they may stop AFTER
+# that. MEASURED: bounded by the budget alone, the entire budget could be spent
+# inside a SINGLE `reload_tokens` call while four sampler threads contend for
+# the GIL, leaving `reloads == 1` — which is both of the only two failures in
+# this repository's first 26 CI runs. The control was CORRECT to refuse a
+# verdict about a static table and is unchanged; what changed is that the loop
+# now guarantees the minimum it demands. ONE constant feeds BOTH the loop and
+# the assertion, so they cannot drift apart.
+ATOMICITY_MIN_RELOADS = 2
+
 
 class TestAReloadIsAtomicUnderLoad:
     """🔴 THE SEAM, NOT THE COMPONENT. Every claim above is about one thread.
@@ -23122,13 +23134,14 @@ class TestAReloadIsAtomicUnderLoad:
             is still taken and still counted; what is not kept is the 47
             millionth copy of a tuple already in the set. The verdict reads the
             distinct states, so it sees exactly what it saw before.
-          * TIME — a fixed sampling BUDGET, after which the samplers stop and
-            the driver stops reloading. Bounding by a sample COUNT was tried on
-            paper and rejected: the samplers start before the first reload, so
-            a count budget can be spent entirely inside the window where only
-            ONE table has ever existed, and the both-states control would then
-            fail as a flake on a fast host. A wall-clock budget spans swaps by
-            construction.
+          * TIME — a fixed sampling BUDGET, after which the driver stops
+            reloading and the samplers stop with it — but never before
+            `ATOMICITY_MIN_RELOADS` reloads have been driven; see below.
+            Bounding by a sample COUNT was tried on paper and rejected: the
+            samplers start before the first reload, so a count budget can be
+            spent entirely inside the window where only ONE table has ever
+            existed, and the both-states control would then fail as a flake on
+            a fast host. A wall-clock budget spans swaps by construction.
 
         🔴 SO THE FLOOR IS A FLOOR, NOT A TARGET. `> 1000` samples and BOTH
         states are still required, and they are now the things that fail if the
@@ -23136,6 +23149,20 @@ class TestAReloadIsAtomicUnderLoad:
         silently deciding what the test measures. That is the trade this makes:
         fewer swaps are observed (bounded by the budget instead of always 400),
         and the test says so if the number ever drops to nothing.
+
+        🔴 EXCEPT FOR THE RELOAD FLOOR, WHICH THE BUDGET MAY NOT DECIDE — IT
+        DID, AND IT FIRED. On 2 of this repository's first 26 CI runs (the only
+        two failures in that history) one `reload_tokens` call outlasted the
+        whole budget under sampler contention, the driver's deadline check
+        stopped the loop at `reloads == 1`, and this test's own control refused
+        to certify. The control was right: with one swap there is nothing to
+        observe. The defect was that the same deadline bounded the MINIMUM as
+        well as the SAMPLING, so the control could be starved by the budget it
+        was written to police. Both the driver and the samplers now run on
+        until `ATOMICITY_MIN_RELOADS` reloads are driven, and the assertion
+        reads that same constant. The samplers are gated on it too and not on
+        the clock alone: a minimum reached after every observer had gone home
+        would satisfy the assertion while making it vacuous.
         """
         a = tmp_path / "a"
         a.write_text(f"{GOOD_TOKEN}\n{SECOND_TOKEN}\n")
@@ -23156,6 +23183,10 @@ class TestAReloadIsAtomicUnderLoad:
         distinct: "set[tuple]" = set()
         stop = threading.Event()
         deadline = time.monotonic() + ATOMICITY_SAMPLE_BUDGET_S
+        # How many reloads the driver has completed. One int slot, written by
+        # the driver thread only and read by the samplers, so no lock is needed
+        # and no sampler can stop before the swaps it exists to observe exist.
+        driven = [0]
 
         def sampler(slot: int):
             taken = 0
@@ -23174,7 +23205,13 @@ class TestAReloadIsAtomicUnderLoad:
                 if since_check >= 256:
                     since_check = 0
                     counts[slot] = taken
-                    if time.monotonic() >= deadline:
+                    # 🔴 THE CLOCK IS NECESSARY BUT NOT SUFFICIENT. Stopping on
+                    # the deadline alone lets the driver reach its minimum after
+                    # the last observer has stopped, which passes the assertion
+                    # while emptying it. `stop` (set by the driver in its
+                    # `finally`) is what bounds this if the driver ends first.
+                    if (time.monotonic() >= deadline
+                            and driven[0] >= ATOMICITY_MIN_RELOADS):
                         break
             counts[slot] = taken
 
@@ -23192,7 +23229,14 @@ class TestAReloadIsAtomicUnderLoad:
                         handler, str(a if i % 2 else b), {}, log=lambda line: None
                     )
                     reloads += 1
-                    if time.monotonic() >= deadline:
+                    driven[0] = reloads
+                    # THREE BOUNDS, AND EACH ANSWERS A DIFFERENT QUESTION. The
+                    # deadline is what normally ends this; the minimum is what
+                    # the deadline is not allowed to cut short; `range(400)` is
+                    # the upper bound that stops a pathological host — one where
+                    # every reload outlasts the budget — from running away.
+                    if (reloads >= ATOMICITY_MIN_RELOADS
+                            and time.monotonic() >= deadline):
                         break
             finally:
                 stop.set()
@@ -23202,14 +23246,17 @@ class TestAReloadIsAtomicUnderLoad:
             httpd.server_close()
         taken = sum(counts)
         assert taken > 1000, (
-            f"only {taken} samples were taken in {ATOMICITY_SAMPLE_BUDGET_S:g}s, "
-            f"which is too few to claim anything about a window — the sampler "
-            f"is not racing the swap"
+            f"only {taken} samples were taken in at least "
+            f"{ATOMICITY_SAMPLE_BUDGET_S:g}s — the samplers outlive the budget "
+            f"when the driver needs longer to reach its minimum — which is too "
+            f"few to claim anything about a window: the sampler is not racing "
+            f"the swap"
         )
-        assert reloads >= 2, (
-            f"only {reloads} reload(s) were driven inside the "
-            f"{ATOMICITY_SAMPLE_BUDGET_S:g}s budget, so at most one swap was "
-            f"available to observe and the verdict below is about a static table"
+        assert reloads >= ATOMICITY_MIN_RELOADS, (
+            f"only {reloads} reload(s) were driven, short of the "
+            f"{ATOMICITY_MIN_RELOADS} the loop above guarantees — so at most "
+            f"one swap was available to observe and the verdict below is about "
+            f"a static table"
         )
         # 🔴 POSITIVE CONTROL FOR THE SAMPLER: it must have observed BOTH
         # states. If it only ever saw one, its "no third state" verdict would be
