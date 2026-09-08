@@ -3919,7 +3919,15 @@ class TestMutationKillMatrix:
         sites, and `claude/RULES.md` is explicit that such a predicate is wrong at
         N−1 of them. The kill below therefore uses the ONE guard, and proves it
         with two different pairs so a mutation that only broke one pair is
-        visible."""
+        visible.
+
+        ⚠ THE ANCHORS MOVED, AND THE BATTERY IS WHAT SAID SO. The three refusal
+        guards now live in `reject_recall_flags`, which `main()` and the `cairn`
+        client both call — so the mutants read `listing`/`limit`/`ref`/`page`
+        rather than `args.*`. When the guards moved, this test failed with
+        `mutation anchor occurs 0x, expected exactly 1`, which is the harness
+        refusing to score an unapplied mutation as a pass. It is the reason the
+        anchor-uniqueness assert exists, seen working."""
         store = _make_store(tmp_path / "s")
         base = ["--store", str(store), "--scope", SCOPE]
         cases = [
@@ -3934,12 +3942,12 @@ class TestMutationKillMatrix:
             ),
             (
                 "m_list_limit",
-                "    if args.listing and args.limit is not None:",
+                "    if listing and limit is not None:",
                 [base + ["--list", "--limit", "2"]],
             ),
             (
                 "m_page_body",
-                "    if args.page is not None and (args.ref is not None or args.limit is not None):",
+                "    if page is not None and (ref is not None or limit is not None):",
                 [base + ["--page", "2", "--ref", "collector"], base + ["--page", "2", "--limit", "2"]],
             ),
             (
