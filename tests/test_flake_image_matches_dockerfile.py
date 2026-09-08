@@ -121,6 +121,53 @@ def flake_int(text: str, name: str) -> str | None:
     return m.group(1) if m else None
 
 
+def flake_image_block(text: str) -> str | None:
+    """The `buildLayeredImage { … }` argument set, brace-matched.
+
+    🔴 THE SCOPE IS THE POINT, AND MATCHING LINE-ANYWHERE WAS NOT ENOUGH. Two
+    separate guards were defeated by a binding of the right NAME in the wrong
+    PLACE — the defect is always "declared but not wired", and a regex over the
+    whole file cannot tell the two apart:
+
+      * a decoy `contents = …` in `mkServerImage`'s `let`, with the argument
+        left as `[ tree ]` — closed by counting, but then
+      * the single real binding MOVED into that `let` with NO argument passed:
+        count is still 1, the old assertion still matched, and the built image
+        had 24 layers, no `/bin`, no `/sbin` and an EMPTY `/app` — the container
+        does not start at all (`can't open file '/app/server/server.py'`).
+
+    Reading the argument block instead makes both spellings unrepresentable,
+    and it is also what removes the FALSE REDS the line-matching version
+    introduced: a multi-line list, or an extra `++ [ … ]` term, are ordinary
+    formatting that produced a byte-identical derivation and a red test.
+    """
+    i = text.find("buildLayeredImage")
+    if i == -1:
+        return None
+    try:
+        j = text.index("{", i)
+    except ValueError:
+        return None
+    depth = 0
+    for k in range(j, len(text)):
+        if text[k] == "{":
+            depth += 1
+        elif text[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[j:k + 1]
+    return None
+
+
+def flake_image_arg(text: str, name: str) -> str | None:
+    """One `name = <value>;` argument from inside the image block."""
+    block = flake_image_block(text)
+    if block is None:
+        return None
+    m = re.search(rf"^\s*{re.escape(name)}\s*=\s*(.*?);\s*$", block, re.M | re.S)
+    return m.group(1).strip() if m else None
+
+
 def flake_cmd_script(text: str) -> str | None:
     m = re.search(r"Cmd\s*=\s*\[(.*?)\];", text, re.S)
     if not m:
@@ -244,6 +291,23 @@ class TestTheTwoBuildsAgree:
         """
         uid = flake_int(flake, "serverUid")
         assert uid is not None, "no serverUid parsed"
+
+        # 🔴 THE IMAGE'S OWN `User`, NOT ONLY THE `let` BINDING — AND THIS WAS
+        # THE GAP THAT MADE THIS TEST'S DOCSTRING FALSE FOR A COMMIT. It read
+        # `serverUid` and nothing else; no test in the repo touched
+        # `config.User`. MEASURED: `User = "0:0";` with `serverUid = 65532;`
+        # left the file at 15 passed while the built image reported
+        # `Config.User=0:0` and `docker run … id` returned `uid=0(root)`.
+        # "This test owns the VALUE" was a claim about a binding, not about the
+        # artefact. Same declared-but-not-wired class as `contents` above.
+        user_arg = flake_image_arg(flake, "User")
+        assert user_arg is not None, "no `User` argument in the image block"
+        assert "serverUid" in user_arg, (
+            f"the image's `User` is {user_arg!r} — it does not derive from "
+            f"`serverUid`, so the binding this test checks and the uid the pod "
+            f"actually runs as can differ, and only the binding is guarded"
+        )
+
         assert uid != "0", (
             "the flake image would run the pod as ROOT. It mounts a PVC and a "
             "bearer token; the non-root uid is the containment. If this is "
@@ -257,8 +321,31 @@ class TestTheTwoBuildsAgree:
         # runAsUser, which is what makes the fsGroup story on the PVC hold.
         assert uid == "65532", (
             f"serverUid is {uid!r}, not the 65532 the PVC's fsGroup story "
-            f"depends on — see server/Dockerfile's comment. Change both sides "
-            f"and this assertion together, deliberately."
+            f"depends on. Changing it means editing FOUR sites deliberately: "
+            f"`serverUid` in flake.nix, `USER` in server/Dockerfile, that "
+            f"file's `chown -R` line, and this assertion."
+        )
+
+    def test_the_dockerfile_chowns_the_uid_it_actually_drops_to(self, dockerfile):
+        """🔴 A SECOND, INDEPENDENT LITERAL — and nothing read it.
+
+        `server/Dockerfile` runs `chown -R 65532:65532 …` on one line and
+        `USER 65532:65532` on another. They are unrelated tokens: MEASURED,
+        setting the chown to `1000:1000` while `USER` stays `65532:65532` left
+        the suite at 15 passed, and the deployed pod could write neither
+        `/data` nor `$HOME`.
+
+        This is the same shape as the uid gap above — a value the docstring
+        claimed to own while the assertion read a different site — so it is
+        closed here rather than left as a note saying it exists.
+        """
+        m = re.search(r"^RUN .*chown -R (\d+):(\d+)", dockerfile, re.M)
+        assert m, "no `chown -R <uid>:<gid>` line found in server/Dockerfile"
+        user = dockerfile_user(dockerfile)
+        assert user == f"{m.group(1)}:{m.group(2)}", (
+            f"the Dockerfile chowns to {m.group(1)}:{m.group(2)} but drops to "
+            f"{user!r} — the pod would run as a uid that cannot write /data "
+            f"or $HOME"
         )
 
     def test_the_port_agrees(self, dockerfile, flake):
@@ -343,23 +430,23 @@ class TestTheTwoBuildsAgree:
         # `re.search` takes the FIRST match, so a decoy binding anywhere above
         # the real one satisfies it. Counting is what closes that: two bindings
         # named `contents` is itself the defect, whichever one is right.
-        contents_bindings = re.findall(r"^\s*contents\s*=\s*(.+)$", flake, re.M)
-        assert len(contents_bindings) == 1, (
-            f"expected exactly one `contents =` binding in flake.nix, found "
-            f"{len(contents_bindings)}: {contents_bindings}. A second one lets "
-            f"the wired argument and the asserted one be different lines — the "
-            f"image then ships without its toolchain behind a green test."
+        contents = flake_image_arg(flake, "contents")
+        assert contents is not None, (
+            "no `contents` argument found inside the `buildLayeredImage { … }` "
+            "block — the image is built from something this guard cannot see, "
+            "so nothing here is evidence about what it ships"
         )
-        # `(serverTools pkgs)` and `serverTools pkgs` are the same expression,
-        # so both are accepted: a guard that reddens on a byte-identical
-        # derivation reports a problem the tree does not have, which is the
-        # failure this class fixed for the `USER` guard.
-        assert re.match(
-            r"\[[^\]]*\]\s*\+\+\s*\(?\s*serverTools\s+pkgs\s*\)?\s*;", contents_bindings[0]
-        ), (
-            f"the image's `contents` is {contents_bindings[0]!r} — `serverTools` "
-            f"is not added to it, so the binaries are not in the image, "
-            f"`kubectl exec … -- tar` fails and the pod cannot be seeded"
+        # 🔴 A SUBSTRING TEST, DELIBERATELY, AND THE STRUCTURAL VERSION WAS
+        # WORSE. Requiring `[ … ] ++ serverTools pkgs;` in one line reddened on
+        # a multi-line list and on an extra `++ [ pkgs.cacert ]` term — both
+        # ordinary edits producing a BYTE-IDENTICAL derivation, both reported
+        # with a message naming a cause the tree did not have. Scoping to the
+        # image block is what makes the loose test safe: inside it, `serverTools`
+        # appearing in `contents` can only mean it is wired in.
+        assert "serverTools" in contents, (
+            f"the image's `contents` is {contents!r} — `serverTools` is not in "
+            f"it, so busybox is not in the image: `kubectl exec … -- tar` fails "
+            f"and the pod can be neither seeded nor rotated"
         )
 
         # 🔴 AND THE PATH MUST NAME WHERE THE APPLETS ACTUALLY LAND. A mutant

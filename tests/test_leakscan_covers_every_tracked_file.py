@@ -218,6 +218,17 @@ def test_a_quoted_path_does_not_produce_a_false_diagnosis(tmp_path, monkeypatch)
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    # 🔴 PIN THE DIMENSION THIS TEST'S PREMISE DEPENDS ON. Quoting is
+    # `core.quotePath`, which defaults to true but is COMMONLY turned off in a
+    # developer's global config. MEASURED: with `quotePath = false`, removing
+    # `-z` from `_enumerate` left this test PASSING — the guard was silently
+    # inert on exactly the hosts whose owners had customised git, and a
+    # mutation sweep run there would have scored it SURVIVED. A test whose
+    # config leaves a dimension free is structurally blind to that dimension's
+    # bugs, so this sets it rather than inheriting it.
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "core.quotePath", "true"], check=True
+    )
     (repo / "café.md").write_text("# accented\n", encoding="utf-8")
 
     seen = _enumerate(repo)

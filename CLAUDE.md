@@ -148,10 +148,17 @@ Known remaining differences, measured on the built images (26 layers,
 🔴 **NEITHER IMAGE'S TOOL SURFACE IS A SUBSET OF THE OTHER'S, and the row that
 matters is the `wget`/`nc`/`httpd`/`telnetd` one** — not the size row below it.
 busybox ships 402 applets at `/bin` (with `/sbin` a SYMLINK to it, so one
-directory, not two), which puts an HTTP server, a telnet server and several
-network clients — `wget`, `nc`, `ftpget`, `ftpput`, `tftp`, `nslookup` — into a
-pod that mounts a credential at `/run/secrets/subsystem-store/token`, none of
-which the deployed image has. Against that: the pod runs as uid 65532, no
+directory, not two), which puts **four network servers** — `httpd`, `telnetd`,
+`ftpd`, `tftpd` — and a set of network clients — `wget`, `nc`, `telnet`,
+`ftpget`, `ftpput`, `tftp`, `nslookup`, `ping`, `traceroute`, `nbd-client`,
+`udhcpc`, `ntpd`, `rdate`, and notably **`ssl_client`** — into a pod that mounts
+a credential at `/run/secrets/subsystem-store/token`, none of which the deployed
+image has. ⚠ Two earlier drafts of this sentence undercounted, each in the
+direction of the previous fix ("two egress clients", then "an HTTP server, a
+telnet server"); enumerate from `busybox --list` on the built image rather than
+from this paragraph, because a reader told to "revisit the trade with the threat
+model in front of you" needs the real set and `ssl_client` is the one that
+matters for a token. Against that: the pod runs as uid 65532, no
 applet is setuid, and the deployed image ships `bash`, `apt-get` and **8 setuid
 binaries including `su` and `passwd`** — so neither is meaningfully "hardened"
 relative to the other. **This is recorded rather than fixed, deliberately** —
