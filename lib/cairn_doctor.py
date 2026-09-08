@@ -442,8 +442,23 @@ def collect(
     return checks
 
 
-def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path) -> Check:
-    """Scopes and entries on this disk that the store's answer did not carry."""
+def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path | None) -> Check:
+    """Scopes and entries on this disk that the store's answer did not carry.
+
+    🔴 `mirror_root` IS OPTIONAL AND UNSET IS THE DEFAULT. When the mirror
+    became configurable this signature was not widened with it, so `_describe`
+    was handed `None` and `doctor` died with `AttributeError: 'NoneType' object
+    has no attribute 'iterdir'` — zero stdout, exit 1 — for every deployment
+    that had never set `CAIRN_MIRROR_ROOT` and had a synced cache, which is the
+    ordinary state of a new one. The `frozen-mirror` check above had already
+    been widened; this one had not, and nothing joined the two.
+
+    🔴 AN UNCONFIGURED MIRROR IS NOT AN UNREADABLE ROOT. It contributes no
+    scopes and it is not a hole in this check's coverage, so it must NOT land in
+    `unread` — doing so would downgrade a complete answer to UNMEASURED on every
+    default deployment, which is the same false-alarm-forever failure in the
+    opposite direction.
+    """
     if not pod.reached:
         return Check(
             "token-scopes", UNMEASURED,
@@ -461,7 +476,8 @@ def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path) -> Che
     # named on the workbench were mirror-only.
     where: dict[str, list[str]] = {}
     unread: list[str] = []
-    for label, root in (("cache", cache_root), ("mirror", mirror_root)):
+    roots = [("cache", cache_root)] + ([] if mirror_root is None else [("mirror", mirror_root)])
+    for label, root in roots:
         reading = _describe(root, store_scopes)
         if not reading.ok:
             # An ABSENT root contributes nothing and is not a failure; an
