@@ -221,6 +221,46 @@ class TestTheTwoBuildsAgree:
             "a PVC written by one is then unreadable by the other"
         )
 
+    def test_the_pod_does_not_run_as_root(self, dockerfile, flake):
+        """🔴 THE VALUE, NOT THE AGREEMENT — AND THE SUITE LOST THIS FOR A ROUND.
+
+        `test_the_uid_agrees` asserts the two builds say the SAME uid. It says
+        nothing about WHICH uid, so both sides moving together satisfy it.
+        An earlier version of the count guard also pinned the literal
+        `65532:65532`, which meant a legitimate uid change failed with the
+        message "expected exactly one USER line" — a complaint about a problem
+        the tree did not have. Fixing that message DROPPED the literal instead
+        of MOVING it, and for one commit no test in the repo asserted a
+        non-root uid at all.
+
+        MEASURED at `465f8a3`: `USER 0:0` in the Dockerfile plus
+        `serverUid = 0;` in the flake ran the full suite to **1695 passed**.
+        The pod mounts a PVC and a bearer token at
+        `/run/secrets/subsystem-store/token`; running it as root is a real
+        change that nothing observed.
+
+        This test owns the VALUE and says so in its own message, so a
+        deliberate uid change fails HERE, with an explanation that fits.
+        """
+        uid = flake_int(flake, "serverUid")
+        assert uid is not None, "no serverUid parsed"
+        assert uid != "0", (
+            "the flake image would run the pod as ROOT. It mounts a PVC and a "
+            "bearer token; the non-root uid is the containment. If this is "
+            "deliberate, change it here and say why in the commit."
+        )
+        user = dockerfile_user(dockerfile)
+        assert user is not None and not user.startswith("0:"), (
+            f"server/Dockerfile drops to {user!r} — the pod would run as ROOT"
+        )
+        # The specific uid is pinned too: 65532 is the clawgate precedent's
+        # runAsUser, which is what makes the fsGroup story on the PVC hold.
+        assert uid == "65532", (
+            f"serverUid is {uid!r}, not the 65532 the PVC's fsGroup story "
+            f"depends on — see server/Dockerfile's comment. Change both sides "
+            f"and this assertion together, deliberately."
+        )
+
     def test_the_port_agrees(self, dockerfile, flake):
         assert dockerfile_expose(dockerfile) == flake_int(flake, "serverPort")
 
@@ -290,15 +330,36 @@ class TestTheTwoBuildsAgree:
         # SURVIVED the whole suite — busybox declared, never installed, and the
         # round-1 🔴 fully restored behind a green test whose docstring is forty
         # lines about that exact failure. Declaring a binding is not wiring it.
-        # Anchored for the same reason as `serverPath` below: unanchored, this
-        # would match a COMMENT quoting the wiring — and every comment in this
-        # area quotes it, because they are all about it.
-        assert re.search(
-            r"^\s*contents\s*=\s*\[[^\]]*\]\s*\+\+\s*serverTools\s+pkgs", flake, re.M
+        # 🔴 EXACTLY ONE `contents` BINDING, AND IT MUST BE THE WIRED ONE.
+        # Anchoring alone was not enough and this was MEASURED: a `contents =
+        # [ tree ] ++ serverTools pkgs;` added to `mkServerImage`'s `let`, with
+        # the ARGUMENT to `buildLayeredImage` set to `contents = [ tree ];`,
+        # left this file fully green — 14 passed — while the built image had 25
+        # layers, root entries `['app','data','home']`, NO `/bin`, no busybox,
+        # and `PATH=/bin` pointing at a directory that does not exist. That is
+        # the round-1 🔴 restored: a pod that starts, serves, and cannot be
+        # seeded or rotated.
+        #
+        # `re.search` takes the FIRST match, so a decoy binding anywhere above
+        # the real one satisfies it. Counting is what closes that: two bindings
+        # named `contents` is itself the defect, whichever one is right.
+        contents_bindings = re.findall(r"^\s*contents\s*=\s*(.+)$", flake, re.M)
+        assert len(contents_bindings) == 1, (
+            f"expected exactly one `contents =` binding in flake.nix, found "
+            f"{len(contents_bindings)}: {contents_bindings}. A second one lets "
+            f"the wired argument and the asserted one be different lines — the "
+            f"image then ships without its toolchain behind a green test."
+        )
+        # `(serverTools pkgs)` and `serverTools pkgs` are the same expression,
+        # so both are accepted: a guard that reddens on a byte-identical
+        # derivation reports a problem the tree does not have, which is the
+        # failure this class fixed for the `USER` guard.
+        assert re.match(
+            r"\[[^\]]*\]\s*\+\+\s*\(?\s*serverTools\s+pkgs\s*\)?\s*;", contents_bindings[0]
         ), (
-            "`serverTools` is declared but never added to the image's `contents` "
-            "— the binaries are not in the image, so `kubectl exec … -- tar` "
-            "still fails and the pod still cannot be seeded"
+            f"the image's `contents` is {contents_bindings[0]!r} — `serverTools` "
+            f"is not added to it, so the binaries are not in the image, "
+            f"`kubectl exec … -- tar` fails and the pod cannot be seeded"
         )
 
         # 🔴 AND THE PATH MUST NAME WHERE THE APPLETS ACTUALLY LAND. A mutant
@@ -319,6 +380,15 @@ class TestTheTwoBuildsAgree:
         # Dockerfile extractors, re-committed in the fix for it: a guard
         # matching a WORD that another line can spell, rather than the
         # STRUCTURE it means to read.
+        #
+        # ⚠ THE ANCHOR DEFEATS `#` COMMENTS ONLY, AND A WIDER CLAIM WAS MADE
+        # FOR IT ONCE. Nix also has `/* … */` block comments and `''…''`
+        # multi-line strings, and a line inside either still begins with the
+        # binding text after `^\s*`, so both can still satisfy these regexes.
+        # `#` is the only comment form this repo uses, which is why the anchor
+        # is enough IN PRACTICE — that is a fact about the codebase, not about
+        # the regex, and it is written here rather than asserted so nobody
+        # reads the guard as stronger than it is.
         m2 = re.search(r'^\s*serverPath\s*=\s*"([^"]+)"\s*;', flake, re.M)
         assert m2 and m2.group(1) == "/bin", (
             f"serverPath is {m2.group(1) if m2 else None!r}, but busybox's "

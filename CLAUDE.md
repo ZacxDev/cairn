@@ -146,12 +146,14 @@ Known remaining differences, measured on the built images (26 layers,
 | size | smaller | larger |
 
 🔴 **NEITHER IMAGE'S TOOL SURFACE IS A SUBSET OF THE OTHER'S, and the row that
-matters is the last one.** busybox ships 402 applets at `/bin` (and `/sbin`, a
-byte-identical duplicate), which puts an HTTP server, a telnet server and two
-egress clients into a pod that mounts a credential at
-`/run/secrets/subsystem-store/token` — none of which the deployed image has.
-Against that: the pod runs as uid 65532, no applet is setuid, and the deployed
-image ships `bash` and `apt-get`, so neither is meaningfully "hardened"
+matters is the `wget`/`nc`/`httpd`/`telnetd` one** — not the size row below it.
+busybox ships 402 applets at `/bin` (with `/sbin` a SYMLINK to it, so one
+directory, not two), which puts an HTTP server, a telnet server and several
+network clients — `wget`, `nc`, `ftpget`, `ftpput`, `tftp`, `nslookup` — into a
+pod that mounts a credential at `/run/secrets/subsystem-store/token`, none of
+which the deployed image has. Against that: the pod runs as uid 65532, no
+applet is setuid, and the deployed image ships `bash`, `apt-get` and **8 setuid
+binaries including `su` and `passwd`** — so neither is meaningfully "hardened"
 relative to the other. **This is recorded rather than fixed, deliberately** —
 trimming means `pkgs.busybox.override { extraConfig = "CONFIG_HTTPD n\n…"; }`,
 which rebuilds busybox from source with no cache hit, and the applets are not

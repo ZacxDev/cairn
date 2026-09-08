@@ -53,7 +53,8 @@ def tracked_files() -> list[str]:
     be able to see files the scanner's suffix filter has already dropped —
     that is the whole question it asks. What must not diverge is the FLAGS, so
     they are stated once here with the reason, and `test_this_guard_and_the_scanner_
-    enumerate_the_same_files` pins the two against each other.
+    enumerate_the_same_files` pins the two against each other — the flags AND
+    the `-z` framing, both of which `_enumerate`'s docstring explains.
     """
     return _enumerate(ROOT)
 
@@ -68,13 +69,26 @@ def _enumerate(root: Path) -> list[str]:
     side uses. Measured: with this hardcoded to ROOT, a mutant narrowing it
     back to cached-only SURVIVED the whole suite. The difference only exists
     when an UNTRACKED file does, so the test builds one.
+
+    🔴 `-z` IS PART OF THE CONTRACT, NOT A DETAIL. `git ls-files` QUOTES a
+    path containing non-ASCII bytes under the default `core.quotePath`, so
+    without `-z` this returns `"caf\303\251.md"` where `leakscan.tracked_files`
+    (which does pass `-z`) returns `café.md`. MEASURED with an untracked
+    `café.md` in the tree: the coverage test failed with `tracked file type(s)
+    ['.md"']` and told the developer to add `.md"` to `TEXT_SUFFIXES`, and the
+    parity test failed saying "the flags have diverged" — **which was false**.
+    The flags were identical; the OUTPUT ENCODING was not, and a maintainer
+    following that message would have changed the one thing that was right.
+
+    So what must not diverge is the flags AND the framing. Both are stated
+    here once, beside the reason.
     """
     out = subprocess.run(
         ["git", "-C", str(root), "ls-files", "--cached", "--others",
-         "--exclude-standard"],
+         "--exclude-standard", "-z"],
         capture_output=True, text=True, check=True,
     ).stdout
-    return [line for line in out.splitlines() if line]
+    return [name for name in out.split("\0") if name]
 
 
 # Types that are genuinely not text and must NOT be scanned. An entry here is a
@@ -183,6 +197,42 @@ def test_the_enumeration_sees_an_UNTRACKED_file(tmp_path, monkeypatch):
     assert "sub/untracked.md" in theirs, (
         "the SCANNER does not see the untracked file either — this test's "
         "premise about leakscan's flags is wrong, fix the premise not the flags"
+    )
+
+
+def test_a_quoted_path_does_not_produce_a_false_diagnosis(tmp_path, monkeypatch):
+    """🔴 THE `-z` HALF, AND ITS ABSENCE GAVE A CONFIDENTLY WRONG REMEDY.
+
+    `git ls-files` QUOTES non-ASCII paths under the default `core.quotePath`.
+    Without `-z`, this module saw `"caf\\303\\251.md"` where the scanner saw
+    `café.md`, and the two tests above then failed with diagnoses that named
+    the wrong cause: one told the developer to add `.md"` (with a quote
+    character) to `TEXT_SUFFIXES`, the other said "the flags have diverged"
+    when the flags were identical.
+
+    🔴 A WRONG REMEDY IS WORSE THAN A MISSING ONE — a maintainer following
+    either message would have changed something that was already correct. So
+    this pins the encoding, not just the flag list, with a filename that
+    actually triggers quoting.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    (repo / "café.md").write_text("# accented\n", encoding="utf-8")
+
+    seen = _enumerate(repo)
+    assert "café.md" in seen, (
+        f"the enumeration returned {seen!r} rather than the real filename — "
+        f"`git ls-files` quoted it, which means `-z` is missing and every "
+        f"diagnosis this module produces about such a file names the wrong cause"
+    )
+
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+    theirs = {str(Path(p).relative_to(repo)) for p in leakscan.tracked_files()}
+    assert seen and set(seen) == theirs, (
+        f"this guard sees {sorted(seen)} and the scanner sees {sorted(theirs)} "
+        f"for the same tree — the two enumerations disagree on ENCODING, not "
+        f"on which files exist"
     )
 
 
