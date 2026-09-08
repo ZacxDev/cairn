@@ -1,21 +1,32 @@
-"""The leak gate's coverage is an ENUMERATION, so pin what it enumerates.
+"""The leak gate's coverage is DERIVED from content — pin that it stays derived.
 
-🔴 WHY. `tests/leakscan.py` decides what to read from a hand-written
-`TEXT_SUFFIXES` set. A file type absent from it is skipped silently while the
-run prints a confident `0 findings across N file(s)` — and N is files SCANNED,
-never files present, so nothing in the output distinguishes "clean" from "did
+🔴 WHY. `tests/leakscan.py` used to decide what to read from a hand-written
+`TEXT_SUFFIXES` set. A file type absent from it was skipped silently while the
+run printed a confident `0 findings across N file(s)` — and N is files SCANNED,
+never files present, so nothing in the output distinguished "clean" from "did
 not look". This repository is PUBLIC and was extracted from a private one; the
-leak gate is the reason it can be public at all, which makes a silent gap in
-its coverage the most expensive kind of bug here.
+leak gate is the reason it can be public at all, which makes a silent gap in its
+coverage the most expensive kind of bug here.
 
 It was not hypothetical. `.nix` was missing when `flake.nix` — hand-written
 prose, the exact thing the scanner exists to read — was added, and the gate
-reported clean over a tree it had not fully read.
+reported clean over a tree it had not fully read. `.dockerignore` was missing
+before that. Each was closed by hand, after the fact.
 
-⚠ THIS DOES NOT MAKE THE COVERAGE DERIVED, and that is still the better fix.
-It pins the enumeration against the tracked tree, which catches the case that
-actually happened (a new file type nobody added). A genuinely derived scanner
-would not need this file.
+⚠ THE EARLIER VERSION OF THIS FILE PINNED THE ENUMERATION AGAINST THE TRACKED
+TREE, and said in its own docstring that this "does not make the coverage
+derived, and that is still the better fix. A genuinely derived scanner would not
+need this file." That fix has now landed, so these tests changed shape: they no
+longer ask "is every suffix declared?" — there is no list to declare into — but
+"is every enumerated file accounted for, and is an unfamiliar text type actually
+READ?"
+
+🔴 THESE DRIVE THE SHIPPED FUNCTIONS, NEVER A COPY. The previous version
+duplicated the git enumeration here and had to justify the duplication at
+length; the module then grew a test whose only job was to police the drift
+between the copy and the original. `leakscan.enumerate_repo` now takes a root,
+so this file calls it. A control re-implemented from the instrument it validates
+certifies nothing — that failure is on record in this project already.
 """
 from __future__ import annotations
 
@@ -31,207 +42,341 @@ sys.path.insert(0, str(ROOT / "tests"))
 import leakscan  # noqa: E402
 
 
-def tracked_files() -> list[str]:
-    """Every file the SCANNER would consider, before its suffix filter.
+def _leak() -> str:
+    """A realistic leak — assembled at runtime, NEVER written as one literal.
 
-    🔴 THE FLAGS MUST MATCH `leakscan.tracked_files`, AND THE FIRST VERSION OF
-    THIS DID NOT. It shelled a bare `git ls-files` — cached only — while the
-    scanner enumerates `--cached --others --exclude-standard`, deliberately,
-    because its own docstring says "`git ls-files` ALONE IS BLIND to a file not
-    yet added, and 'I forgot to git add it' is not a reason for a leak to ship."
-    So the guard written to make a coverage gap impossible re-introduced exactly
-    that blindness one level up.
+    🔴 THAT IS NOT FASTIDIOUSNESS, IT IS THE ONLY WAY THIS FILE CAN EXIST. This
+    module is itself scanned by the gate it tests: it is not in `SKIP_FILES` and
+    must not be, since exempting a test file is how the exempt set grows until
+    it hides something. But a payload realistic enough to prove the scanner READ
+    a file is by definition a payload the scanner REFUSES — so writing it out
+    whole here would turn the leak gate red on its own suite.
 
-    MEASURED: an UNTRACKED `notes.rst` holding a real hostname and an email
-    address scanned clean (`0 findings across 38 file(s)`, rc 0) and this guard
-    passed, while the byte-identical content in `notes.md` was caught
-    immediately — so the scanner could see the leak and the suffix set skipped
-    it. The exposure window was precisely the pre-`git add` window leakscan
-    exists to cover.
-
-    The enumeration is duplicated rather than imported because this test must
-    be able to see files the scanner's suffix filter has already dropped —
-    that is the whole question it asks. What must not diverge is the FLAGS, so
-    they are stated once here with the reason, and `test_this_guard_and_the_scanner_
-    enumerate_the_same_files` pins the two against each other — the flags AND
-    the `-z` framing, both of which `_enumerate`'s docstring explains.
+    The fragments are joined at run time, so no single SOURCE LINE contains the
+    pattern while every RUNTIME value does. ⚠ Do not "tidy" this into a single
+    string; `test_the_payload_is_one_the_gate_actually_refuses` below is what
+    catches the opposite mistake, a payload so defanged it proves nothing.
     """
-    return _enumerate(ROOT)
+    return "deploy target: store.example-real." + "zacx" + "." + "dev" + "\n"
 
 
-def _enumerate(root: Path) -> list[str]:
-    """The enumeration itself, parameterised so a fixture can reach it.
+def _repo_with(tmp_path: Path, name: str, body: str | bytes) -> Path:
+    """A throwaway git repo holding one committed file. Returns the repo root."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    target = repo / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(body, bytes):
+        target.write_bytes(body)
+    else:
+        target.write_text(body, encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    return repo
 
-    🔴 IT TAKES A ROOT BECAUSE THE PARITY TEST BELOW CANNOT OTHERWISE REACH THE
-    DIFFERENCE IT CHECKS. In a clean checkout every file is committed, so
-    `--cached` and `--cached --others` return the SAME set and a parity
-    assertion is satisfied by two identical lists no matter which flags either
-    side uses. Measured: with this hardcoded to ROOT, a mutant narrowing it
-    back to cached-only SURVIVED the whole suite. The difference only exists
-    when an UNTRACKED file does, so the test builds one.
 
-    🔴 `-z` IS PART OF THE CONTRACT, NOT A DETAIL. `git ls-files` QUOTES a
-    path containing non-ASCII bytes under the default `core.quotePath`, so
-    without `-z` this returns `"caf\303\251.md"` where `leakscan.tracked_files`
-    (which does pass `-z`) returns `café.md`. MEASURED with an untracked
-    `café.md` in the tree: the coverage test failed with `tracked file type(s)
-    ['.md"']` and told the developer to add `.md"` to `TEXT_SUFFIXES`, and the
-    parity test failed saying "the flags have diverged" — **which was false**.
-    The flags were identical; the OUTPUT ENCODING was not, and a maintainer
-    following that message would have changed the one thing that was right.
+def test_the_payload_is_one_the_gate_actually_refuses():
+    """🔴 THE CONTROL ON THIS MODULE'S OWN FIXTURE, AND IT IS LOAD-BEARING.
 
-    So what must not diverge is the flags AND the framing. Both are stated
-    here once, beside the reason.
+    Every coverage test here proves a file was READ by planting `_leak()` in it
+    and watching the gate refuse. If the payload were defanged — a fragment
+    mis-joined, a rule later narrowed, a "tidy-up" that broke the concatenation
+    — those tests would keep passing while asserting nothing at all, because a
+    file that is read and a file that is skipped both produce zero findings for
+    content that is not a leak.
+
+    So: the assembled string must be refused, and refused as a hostname
+    specifically. This is the positive control that makes every `0 findings`
+    elsewhere in this module mean something.
     """
-    out = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "--cached", "--others",
-         "--exclude-standard", "-z"],
-        capture_output=True, text=True, check=True,
-    ).stdout
-    return [name for name in out.split("\0") if name]
-
-
-# Types that are genuinely not text and must NOT be scanned. An entry here is a
-# deliberate exemption, so it is spelled out rather than pattern-matched: the
-# point of the test is that adding a type is a decision somebody makes on
-# purpose, in the commit that adds it.
-BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".gz", ".woff2"}
+    found = leakscan.scan_text(_leak(), "<fixture-control>")
+    assert found, (
+        "the fixture payload is NOT refused by the gate, so every test in this "
+        "module that plants it proves nothing — a read file and a skipped file "
+        "would both come back clean"
+    )
+    assert {f.rule for f in found} == {"reachable-hostname"}, (
+        f"the payload trips {sorted({f.rule for f in found})} rather than the "
+        f"hostname rule it was written for"
+    )
 
 
 def test_the_tracked_tree_has_files_to_check():
     """🔴 POSITIVE CONTROL. Without this, an empty `git ls-files` — a wrong cwd,
     a missing git, a detached environment — makes every assertion below pass
     over nothing, which is the same silent zero this file exists to prevent."""
-    files = tracked_files()
+    files = leakscan.enumerate_repo(ROOT)
     assert len(files) > 20, f"expected a populated repo, got {len(files)} tracked file(s)"
 
 
-def test_every_tracked_text_file_has_a_suffix_the_scanner_reads():
-    """The enumeration must cover the tree as it actually is, today."""
-    missed = sorted({
-        Path(f).suffix
-        for f in tracked_files()
-        if Path(f).suffix not in leakscan.TEXT_SUFFIXES
-        and Path(f).suffix not in BINARY_SUFFIXES
-    })
-    assert not missed, (
-        f"tracked file type(s) {missed} are not in leakscan's TEXT_SUFFIXES and "
-        f"are not declared binary, so the scan SKIPS them and still reports "
-        f"`0 findings`. Add each to TEXT_SUFFIXES (or to BINARY_SUFFIXES here "
-        f"if it is genuinely not text) in the commit that introduces it."
+def test_a_tracked_text_file_of_an_UNFAMILIAR_TYPE_is_scanned(tmp_path, monkeypatch):
+    """🔴 THE REGRESSION TEST. RED BEFORE THIS CHANGE, GREEN AFTER.
+
+    `.rst` was not in the old `TEXT_SUFFIXES`, and nothing about it is special —
+    it stands in for whatever file type this repository gains next, which is the
+    case the enumeration could never get ahead of.
+
+    MEASURED at the merge base `9213726`, driving this same shipped
+    `tracked_files()`: the file is ABSENT from the returned set, the scan reads
+    38 of 39 files and prints `0 findings`, exit 0 — a clean bill of health over
+    a hostname it never looked at. With coverage derived from the bytes it is
+    read like any other text file.
+
+    This asserts COVERAGE (the file is in the set to be read). That the leak is
+    then actually reported is a separate claim, made by the test below — a file
+    can be in the set while a second filter drops it.
+    """
+    repo = _repo_with(tmp_path, "notes.rst", _leak())
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+
+    scanned = {str(Path(p).relative_to(repo)) for p in leakscan.tracked_files()}
+    assert "notes.rst" in scanned, (
+        f"a tracked, plainly-textual .rst file is not in the set the scanner "
+        f"reads (it returned {sorted(scanned)}) — coverage is being decided by "
+        f"the file's NAME rather than its CONTENT, so the next new file type in "
+        f"this public repo ships unscanned under a confident `0 findings`"
     )
 
 
-@pytest.mark.parametrize("suffix", [".nix", ".py", ".md", ".yml", ".sh", ".json"])
-def test_the_types_this_repo_actually_carries_are_scanned(suffix):
-    """Named explicitly, so deleting one from `TEXT_SUFFIXES` fails HERE.
+def test_the_leak_in_that_unfamiliar_type_is_actually_REFUSED(tmp_path, monkeypatch, capsys):
+    """🔴 BEHAVIOURAL, NOT STRUCTURAL — a set membership is not a code path.
 
-    The test above is derived from the tree and would go quiet if the last file
+    The test above proves the file reaches the scan list. This drives `main()`
+    end to end and asserts the run REFUSES: exit 1, with the finding naming the
+    file. Without it, coverage could be correct while the reading, decoding or
+    reporting leg dropped the file anyway.
+    """
+    repo = _repo_with(tmp_path, "notes.rst", _leak())
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+
+    rc = leakscan.main([])
+    out = capsys.readouterr().out
+
+    assert rc == 1, (
+        f"a real hostname in a tracked .rst file did not turn the gate red "
+        f"(exit {rc}) — the scan looked at the file and published it anyway"
+    )
+    assert "notes.rst" in out, (
+        "the run refused, but its output does not name the file that caused it"
+    )
+
+
+def test_a_BINARY_file_is_skipped_and_the_skip_is_NAMED(tmp_path, monkeypatch):
+    """The other half of derived coverage: what is provably binary stays unread.
+
+    🔴 AND IT MUST BE NAMED, NOT MERELY DROPPED. An unread file that appears
+    nowhere in the output is exactly the silent gap this module exists to close;
+    a skip is only acceptable while a reader can see it and check the reason.
+    """
+    blob = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 64
+    repo = _repo_with(tmp_path, "logo.png", blob)
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+
+    scanned, skipped = leakscan.partition_tracked_files()
+    assert not [p for p in scanned if p.name == "logo.png"], (
+        "a NUL-bearing binary was queued for scanning"
+    )
+    entry = next((s for s in skipped if s.path == "logo.png"), None)
+    assert entry is not None, (
+        f"the binary was neither scanned nor reported as skipped — it fell out "
+        f"of the accounting entirely (skips were {[s.path for s in skipped]})"
+    )
+    assert "binary" in entry.why, (
+        f"the skip is unexplained ({entry.why!r}), so a reader cannot tell a "
+        f"correctly-ignored binary from a file the gate cannot see"
+    )
+
+
+def test_a_TEXT_file_with_no_suffix_at_all_is_scanned(tmp_path, monkeypatch):
+    """A name carries no evidence about content, and this is the extreme case.
+
+    `Dockerfile`, `LICENSE` and `.dockerignore` are all real examples in this
+    tree. The old set handled them by listing `""` and `".dockerignore"`
+    explicitly — two more entries that had to be thought of in advance.
+    """
+    repo = _repo_with(tmp_path, "Dockerfile", _leak())
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+
+    scanned = {str(Path(p).relative_to(repo)) for p in leakscan.tracked_files()}
+    assert "Dockerfile" in scanned
+
+
+def test_every_enumerated_file_lands_in_EXACTLY_one_bucket():
+    """🔴 THE STRUCTURAL INVARIANT THAT REPLACED THE SUFFIX LIST.
+
+    Scanned ∪ skipped must equal the enumeration exactly — no file dropped, no
+    file counted twice. This is what makes "0 findings across N files" mean
+    something: N plus the named skips accounts for every file git reports.
+
+    Asserted against the REAL tree, and it re-implements none of the filtering
+    it checks — `partition_tracked_files` buckets even the directory skips, so
+    both sides of this comparison come from shipped code.
+    """
+    scanned, skipped = leakscan.partition_tracked_files()
+    enumerated = set(leakscan.enumerate_repo(ROOT))
+
+    got = [str(Path(p).relative_to(ROOT)) for p in scanned] + [s.path for s in skipped]
+    assert len(got) == len(set(got)), (
+        f"a file appears in more than one bucket: "
+        f"{sorted({x for x in got if got.count(x) > 1})}"
+    )
+    assert set(got) == enumerated, (
+        f"the accounting does not reconcile with the enumeration. Unaccounted "
+        f"for: {sorted(enumerated - set(got))}; invented: "
+        f"{sorted(set(got) - enumerated)}. A file in neither bucket is read by "
+        f"nothing and reported by nothing."
+    )
+
+
+def test_a_real_run_PRINTS_every_skip(capsys):
+    """The invariant above is about the data; this is about the OUTPUT.
+
+    🔴 A PROPERTY TRUE IN MEMORY AND ABSENT FROM THE REPORT DOES NOT HELP THE
+    PERSON READING CI. The run is the only artefact anyone sees, so the skips
+    have to appear in it — this drives the real `main()` over the real tree and
+    reads its stdout.
+    """
+    rc = leakscan.main([])
+    out = capsys.readouterr().out
+    assert rc == 0, f"the tree is not clean (exit {rc}); this test cannot judge output"
+
+    _, skipped = leakscan.partition_tracked_files()
+    assert skipped, (
+        "no skips exist in this tree, so this test would pass vacuously — it "
+        "asserts that skips are PRINTED, and needs at least one to exist. "
+        "`tests/leakscan.py` itself is exempt by name and should be here."
+    )
+    for s in skipped:
+        assert s.path in out, (
+            f"{s.path} was not scanned and is not named in the run's output — "
+            f"it is invisible to anyone reading the verdict"
+        )
+    assert "SKIPPED" in out
+
+
+def test_the_types_this_repo_actually_carries_are_read():
+    """Behavioural coverage of the tree as it stands, derived from the tree.
+
+    The earlier version asserted suffix membership in `TEXT_SUFFIXES` and worried
+    in its docstring that a tree-derived check "would go quiet if the last file
     of some type were removed — at which point dropping the suffix would look
-    free, and re-adding a file of that type later would silently be unscanned.
-    `.nix` is first in the list because it is the one that was actually missing.
+    free". That concern is now void: there is no set to drop an entry from, so
+    the only thing worth asserting is that the real files of each type are in
+    fact read.
     """
-    assert suffix in leakscan.TEXT_SUFFIXES
+    scanned = {str(Path(p).relative_to(ROOT)) for p in leakscan.tracked_files()}
+    by_suffix: dict[str, list[str]] = {}
+    for n in leakscan.enumerate_repo(ROOT):
+        by_suffix.setdefault(Path(n).suffix, []).append(n)
+
+    for suffix in (".nix", ".py", ".md", ".yml", ".sh", ".json"):
+        present = by_suffix.get(suffix, [])
+        assert present, f"this repo no longer carries any {suffix} file"
+        unread = [n for n in present if n not in scanned and n not in leakscan.SKIP_FILES]
+        assert not unread, f"{suffix} file(s) {unread} are enumerated but not read"
 
 
-def test_this_guard_and_the_scanner_enumerate_the_same_files():
-    """🔴 PINS THE ONE THING THAT MUST NOT DIVERGE — the enumeration FLAGS.
+@pytest.mark.parametrize(
+    "case,expected,why",
+    [
+        ("source", False, "plain source"),
+        ("empty", False, "an empty file is not binary"),
+        ("png", True, "a NUL early in the stream"),
+        ("nul_at_last_sniffed_byte", True, "a NUL at the last sniffed byte"),
+        ("nul_past_the_window", False, "a NUL PAST the sniff window"),
+    ],
+)
+def test_is_binary_answers_both_ways_and_at_its_boundary(case, expected, why):
+    """🔴 BOTH CONTROLS ON THE CLASSIFIER ITSELF, PLUS ITS BOUNDARY.
 
-    This guard asks "is any file type unscanned?", so it must start from the
-    same candidate set the scanner does. If it starts from a NARROWER set, a
-    file outside it is invisible to both and the guard reports coverage it does
-    not have — which is what happened: a bare `git ls-files` here versus
-    `--cached --others --exclude-standard` there.
+    A classifier stuck at False scans everything (noisy but safe); one stuck at
+    True skips everything while the run still prints a reassuring `0 findings`.
+    Only exercising both directions distinguishes them.
 
-    Every file the SCANNER returns must appear in this module's enumeration.
-    The reverse does not hold and must not be asserted: the scanner has already
-    applied its suffix filter, so it legitimately returns fewer files. Pinning
-    equality would fail on every correctly-skipped binary.
+    The last two cases are the boundary, measured either side of it: the sniff
+    window is bounded deliberately so a huge binary is not read in full, and the
+    final case documents the accepted residual — a NUL beyond the window means
+    the file is SCANNED, decoded with `errors="replace"`. That is the safe
+    direction and it is stated here rather than left to be discovered.
+
+    🔴 THE FIXTURES ARE BUILT IN THE BODY, NOT IN THE DECORATOR. A
+    `parametrize` list that reads `leakscan.BINARY_SNIFF_BYTES` is evaluated at
+    IMPORT time, so on any tree where that constant does not exist the whole
+    module fails to COLLECT — and a collection error is not a test result. That
+    is not hypothetical: it happened while measuring this change against its own
+    merge base, and it hid the red that the regression test above exists to
+    show. A test module must be importable against the code it is testing even
+    when that code is the OLD version, or it cannot be used to demonstrate a
+    regression at all.
     """
-    mine = set(tracked_files())
-    theirs = {str(Path(p).relative_to(ROOT)) for p in leakscan.tracked_files()}
-    missing = sorted(theirs - mine)
-    assert not missing, (
-        f"the scanner considers {missing} which this guard's enumeration does "
-        f"not see — the flags have diverged, so this guard is blind to exactly "
-        f"the files it exists to check"
-    )
+    window = leakscan.BINARY_SNIFF_BYTES
+    data = {
+        "source": b"#!/usr/bin/env python3\nprint('hi')\n",
+        "empty": b"",
+        "png": b"\x89PNG\r\n\x1a\n\x00\x00",
+        "nul_at_last_sniffed_byte": b"x" * (window - 1) + b"\x00",
+        "nul_past_the_window": b"x" * window + b"\x00",
+    }[case]
+    assert leakscan.is_binary(data) is expected, why
 
 
 def test_the_enumeration_sees_an_UNTRACKED_file(tmp_path, monkeypatch):
-    """🔴 THE CASE THE PARITY TEST ABOVE CANNOT REACH ON ITS OWN.
+    """🔴 leakscan SCANS UNTRACKED FILES DELIBERATELY, so this pins that it can.
 
-    In a clean checkout every file is committed, so cached-only and
-    cached-plus-others return identical sets and the parity assertion holds
-    whatever flags either side uses. MEASURED: a mutant narrowing `_enumerate`
-    to a bare `git ls-files` SURVIVED the entire suite. The blindness only
-    becomes observable when an untracked file exists, so this builds one in a
-    throwaway repo and drives BOTH enumerations against it — the shipped code,
-    not a copy of it.
-
-    This is the failure the whole module exists for: leakscan scans untracked
-    files deliberately ("'I forgot to git add it' is not a reason for a leak to
-    ship"), so a coverage guard that cannot see them certifies nothing about
-    precisely the window that matters.
+    Its own docstring: "`git ls-files` ALONE IS BLIND to a file not yet added,
+    and 'I forgot to git add it' is not a reason for a leak to ship." In a clean
+    checkout every file is committed, so `--cached` and `--cached --others`
+    return the SAME set and no assertion over the real tree can tell the flags
+    apart. MEASURED previously: a mutant narrowing the enumeration to cached-only
+    SURVIVED the whole suite. The difference only exists when an untracked file
+    does, so this builds one.
     """
-    repo = tmp_path / "repo"
-    (repo / "sub").mkdir(parents=True)
-    (repo / "tracked.md").write_text("# tracked\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "tracked.md"], check=True)
+    repo = _repo_with(tmp_path, "tracked.md", "# tracked\n")
+    (repo / "sub").mkdir()
+    (repo / "sub" / "untracked.rst").write_text(_leak(), encoding="utf-8")
 
-    # The untracked file, of a type the scanner reads.
-    (repo / "sub" / "untracked.md").write_text("# untracked\n", encoding="utf-8")
-
-    seen = _enumerate(repo)
-    assert "sub/untracked.md" in seen, (
+    seen = leakscan.enumerate_repo(repo)
+    assert "sub/untracked.rst" in seen, (
         f"the enumeration missed an UNTRACKED file (saw {seen}) — it is "
         f"cached-only, so it is blind to the pre-`git add` window that "
         f"leakscan deliberately covers"
     )
     assert "tracked.md" in seen, "the enumeration missed a TRACKED file"
 
-    # And the scanner's own enumeration agrees, driven against the same repo.
     monkeypatch.setattr(leakscan, "ROOT", repo)
-    theirs = {str(Path(p).relative_to(repo)) for p in leakscan.tracked_files()}
-    assert "sub/untracked.md" in theirs, (
-        "the SCANNER does not see the untracked file either — this test's "
-        "premise about leakscan's flags is wrong, fix the premise not the flags"
+    scanned = {str(Path(p).relative_to(repo)) for p in leakscan.tracked_files()}
+    assert "sub/untracked.rst" in scanned, (
+        "the untracked file is enumerated but not queued for scanning"
     )
 
 
 def test_a_quoted_path_does_not_produce_a_false_diagnosis(tmp_path, monkeypatch):
-    """🔴 THE `-z` HALF, AND ITS ABSENCE GAVE A CONFIDENTLY WRONG REMEDY.
+    """🔴 THE `-z` HALF, AND ITS ABSENCE ONCE GAVE A CONFIDENTLY WRONG REMEDY.
 
     `git ls-files` QUOTES non-ASCII paths under the default `core.quotePath`.
-    Without `-z`, this module saw `"caf\\303\\251.md"` where the scanner saw
-    `café.md`, and the two tests above then failed with diagnoses that named
-    the wrong cause: one told the developer to add `.md"` (with a quote
-    character) to `TEXT_SUFFIXES`, the other said "the flags have diverged"
-    when the flags were identical.
+    Without `-z` the enumeration returns `"caf\\303\\251.md"` where the file on
+    disk is `café.md`, and every message naming that path names something that
+    does not exist. When this module kept its own copy of the enumeration, the
+    mismatch produced two failures that each blamed the wrong thing — one told
+    the developer to add `.md"` (with a quote character) to the suffix set, the
+    other said "the flags have diverged" when the flags were identical.
 
-    🔴 A WRONG REMEDY IS WORSE THAN A MISSING ONE — a maintainer following
-    either message would have changed something that was already correct. So
-    this pins the encoding, not just the flag list, with a filename that
-    actually triggers quoting.
+    🔴 A WRONG REMEDY IS WORSE THAN A MISSING ONE, so this pins the ENCODING.
     """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    repo = _repo_with(tmp_path, "café.md", "# accented\n")
     # 🔴 PIN THE DIMENSION THIS TEST'S PREMISE DEPENDS ON. Quoting is
     # `core.quotePath`, which defaults to true but is COMMONLY turned off in a
     # developer's global config. MEASURED: with `quotePath = false`, removing
-    # `-z` from `_enumerate` left this test PASSING — the guard was silently
-    # inert on exactly the hosts whose owners had customised git, and a
-    # mutation sweep run there would have scored it SURVIVED. A test whose
-    # config leaves a dimension free is structurally blind to that dimension's
-    # bugs, so this sets it rather than inheriting it.
+    # `-z` left this test PASSING — the guard was silently inert on exactly the
+    # hosts whose owners had customised git, and a mutation sweep run there
+    # would have scored it SURVIVED. A test whose config leaves a dimension free
+    # is structurally blind to that dimension's bugs, so this sets it rather
+    # than inheriting it.
     subprocess.run(
         ["git", "-C", str(repo), "config", "core.quotePath", "true"], check=True
     )
-    (repo / "café.md").write_text("# accented\n", encoding="utf-8")
 
-    seen = _enumerate(repo)
+    seen = leakscan.enumerate_repo(repo)
     assert "café.md" in seen, (
         f"the enumeration returned {seen!r} rather than the real filename — "
         f"`git ls-files` quoted it, which means `-z` is missing and every "
@@ -239,23 +384,23 @@ def test_a_quoted_path_does_not_produce_a_false_diagnosis(tmp_path, monkeypatch)
     )
 
     monkeypatch.setattr(leakscan, "ROOT", repo)
-    theirs = {str(Path(p).relative_to(repo)) for p in leakscan.tracked_files()}
-    assert seen and set(seen) == theirs, (
-        f"this guard sees {sorted(seen)} and the scanner sees {sorted(theirs)} "
-        f"for the same tree — the two enumerations disagree on ENCODING, not "
-        f"on which files exist"
+    scanned = {str(Path(p).relative_to(repo)) for p in leakscan.tracked_files()}
+    assert scanned == {"café.md"}, (
+        f"the scan queue is {sorted(scanned)} for a one-file tree — the "
+        f"enumeration and the scanner disagree on ENCODING, not on which files "
+        f"exist, and the file would be read from a path that does not resolve"
     )
 
 
 def test_the_scanner_reads_the_flake_when_it_walks_the_tree():
-    """Behavioural, not structural — a suffix set is not a code path.
+    """`flake.nix` is the file whose absence from coverage started all of this.
 
-    `TEXT_SUFFIXES` containing `.nix` is a declaration; this drives the
-    scanner's own file walk and asserts `flake.nix` is in what it returns.
-    Without it the set could be right while a second filter dropped the file.
+    Kept as a named case rather than folded into the derived checks: it is the
+    one this project actually shipped unscanned, and a regression on it should
+    say so by name.
     """
     scanned = {str(Path(p).relative_to(ROOT)) for p in leakscan.tracked_files()}
     assert "flake.nix" in scanned, (
         f"the scanner's own walk does not return flake.nix (returned "
-        f"{len(scanned)} file(s)) — the suffix set is not the only filter"
+        f"{len(scanned)} file(s))"
     )

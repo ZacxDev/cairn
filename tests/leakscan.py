@@ -98,19 +98,39 @@ RULES: list[tuple[str, str, str]] = [
 ]
 
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules"}
+
+#: The one file the scan does not read, because it CONTAINS the fixtures — a
+#: realistic token, a real-looking hostname, an operator address. The exemption
+#: is deliberate; REPORTING it is what keeps it from being a silent hole, so it
+#: gets its own bucket in `partition_tracked_files` rather than being dropped.
 SKIP_FILES = {"tests/leakscan.py"}
-# 🔴 AN ENUMERATION, SO A NEW FILE TYPE IS UNSCANNED UNTIL SOMEBODY ADDS IT
-# HERE — and the scan reports a confident "0 findings" over a tree it only
-# partly read. `.nix` was added when `flake.nix` arrived and was, until that
-# moment, exactly this hazard: the first file of its kind in the repo, holding
-# hand-written prose, invisible to the gate that is the reason this repository
-# can be public at all. The count printed by a run is files SCANNED, never
-# files present; comparing it against `git ls-files` is what makes the
-# difference visible. If you add a file type, add it here in the same commit.
-TEXT_SUFFIXES = {
-    ".py", ".sh", ".md", ".yml", ".yaml", ".json", ".toml", ".txt", ".cfg",
-    ".mjs", ".js", ".ts", ".nix", ".lock", ".dockerignore", "",
-}
+
+# --------------------------------------------------------------------------
+# 🔴 COVERAGE IS DERIVED FROM CONTENT. IT USED TO BE AN ENUMERATION, AND THE
+# ENUMERATION IS WHAT KEPT FAILING.
+#
+# A hand-written `TEXT_SUFFIXES` set decided what to read. The hazard was
+# structural rather than accidental: a file type nobody had thought of was
+# skipped SILENTLY while the run printed a confident `0 findings across N
+# file(s)` — N being files SCANNED, never files present, so nothing in the
+# output distinguished "clean" from "did not look". `.nix` was absent on the
+# day `flake.nix` arrived — hand-written prose, in the repository whose single
+# critical property is that private content stays out. `.dockerignore` was
+# absent before that. Each gap was closed by hand, after the fact, which is a
+# process that cannot get ahead of the next new file type in a PUBLIC repo.
+#
+# So "is this text?" is now asked of the BYTES: a file is binary if it holds a
+# NUL within its first `BINARY_SNIFF_BYTES`, the same rule git itself uses, so
+# this agrees with what every other tool in the tree already believes.
+# Everything else is scanned. There is no list left to fall behind.
+#
+# 🔴 THE DIRECTION OF THE RESIDUAL ERROR IS THE DESIGN. A binary file whose
+# first 8000 bytes happen to hold no NUL is SCANNED — harmless, since it is
+# decoded with `errors="replace"`, and at worst a false positive a human
+# resolves. No text file can be skipped. This gate's job is to fail toward
+# reading too much, never toward reading too little.
+# --------------------------------------------------------------------------
+BINARY_SNIFF_BYTES = 8000
 
 
 class Finding:
@@ -146,32 +166,101 @@ def scan_text(text: str, path: str = "<memory>") -> list[Finding]:
     return out
 
 
-def tracked_files() -> list[Path]:
+class Skipped:
+    """A file the scan did NOT read, carrying the reason it did not.
+
+    🔴 THE REASON IS NOT DECORATION. A skip with no stated cause is exactly the
+    silent gap this module used to have; naming it is what lets a reader tell
+    "binary, correctly ignored" from "the gate cannot see this".
+    """
+
+    __slots__ = ("path", "why")
+
+    def __init__(self, path: str, why: str):
+        self.path, self.why = path, why
+
+    def __str__(self) -> str:
+        return f"{self.path} — {self.why}"
+
+
+def enumerate_repo(root: Path) -> list[str]:
     """Files git knows about, plus untracked-but-not-ignored ones.
 
     🔴 `git ls-files` ALONE IS BLIND to a file not yet added, and "I forgot to
-    git add it" is not a reason for a leak to ship.
+    git add it" is not a reason for a leak to ship. The `-z` framing is part of
+    the contract too: without it git QUOTES a non-ASCII path under the default
+    `core.quotePath`, and every downstream message then names a filename that
+    does not exist.
     """
     try:
         r = subprocess.run(
-            ["git", "-C", str(ROOT), "ls-files", "--cached", "--others",
+            ["git", "-C", str(root), "ls-files", "--cached", "--others",
              "--exclude-standard", "-z"],
             capture_output=True, text=True, check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"leakscan: COULD NOT RUN — git enumeration failed: {e}", file=sys.stderr)
         raise SystemExit(2)
-    keep: list[Path] = []
-    for n in (x for x in r.stdout.split("\0") if x):
-        if n in SKIP_FILES:
-            continue
+    return [x for x in r.stdout.split("\0") if x]
+
+
+def is_binary(data: bytes) -> bool:
+    """git's own rule: a NUL byte within the first `BINARY_SNIFF_BYTES`.
+
+    Borrowed rather than invented so that this gate's idea of "binary" is the
+    same one `git diff` and `git grep` already act on in this repository.
+    """
+    return b"\0" in data[:BINARY_SNIFF_BYTES]
+
+
+def partition_tracked_files() -> tuple[list[Path], list[Skipped]]:
+    """Split every enumerated file into exactly two buckets: scan, or skip.
+
+    🔴 EVERY ENUMERATED FILE LANDS IN EXACTLY ONE OF THEM, AND THAT IS THE
+    PROPERTY THAT REPLACED THE SUFFIX LIST. There is no branch that quietly
+    drops a file — not even the directory skips, which produce a named entry
+    like everything else — so `set(scanned) | set(skipped)` equals the
+    enumeration exactly, and a test can assert that without re-implementing a
+    single line of the filtering it is checking. `main` prints both counts and
+    names every skip, so the reconciliation is visible in the OUTPUT rather
+    than merely true in the code.
+
+    A skip is only ever produced for a reason a reader can check: the path is
+    under a non-source directory, it is the gate's own fixture file, or the
+    BYTES are binary.
+    """
+    scan: list[Path] = []
+    skipped: list[Skipped] = []
+    for n in enumerate_repo(ROOT):
         p = Path(n)
-        if any(part in SKIP_DIRS for part in p.parts):
+        d = next((part for part in p.parts if part in SKIP_DIRS), None)
+        if d is not None:
+            skipped.append(Skipped(n, f"under {d}/, which is not source"))
             continue
-        if p.suffix and p.suffix not in TEXT_SUFFIXES:
+        if n in SKIP_FILES:
+            skipped.append(Skipped(n, "the gate's own fixtures, exempt by name"))
             continue
-        keep.append(ROOT / n)
-    return keep
+        try:
+            with open(ROOT / n, "rb") as fh:
+                head = fh.read(BINARY_SNIFF_BYTES)
+        except OSError as e:
+            # 🔴 UNREADABLE IS NOT CLEAN. A file the gate cannot open is the
+            # one case where neither bucket is honest, so it stops the run
+            # rather than being counted as skipped.
+            print(f"leakscan: COULD NOT READ {n}: {e}", file=sys.stderr)
+            raise SystemExit(2)
+        if is_binary(head):
+            skipped.append(Skipped(
+                n, f"binary: a NUL byte within the first {BINARY_SNIFF_BYTES} bytes"))
+            continue
+        scan.append(ROOT / n)
+    return scan, skipped
+
+
+def tracked_files() -> list[Path]:
+    """The files the scan reads. Kept as its own name because that is the
+    question most callers are asking; the skip half is available beside it."""
+    return partition_tracked_files()[0]
 
 
 # --------------------------------------------------------------------------
@@ -246,12 +335,21 @@ def self_test() -> int:
     return 0 if ok else 2
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """🔴 `argv` IS A PARAMETER SO THIS IS DRIVABLE FROM A TEST.
+
+    With `parse_args()` reading `sys.argv` unconditionally, calling `main()`
+    under pytest made argparse see the RUNNER's arguments and exit 2 — so the
+    only tests that could exist were structural ones about the functions
+    underneath, and the actual verdict a user sees was unreachable. That is the
+    gap the behavioural tests in `test_leakscan_covers_every_tracked_file.py`
+    needed closed; `None` still means `sys.argv` for the real entry point.
+    """
     ap = argparse.ArgumentParser(
         description=(__doc__ or "refuse sensitive content").splitlines()[0])
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--quiet", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
@@ -264,11 +362,18 @@ def main() -> int:
         return 2
     print()
 
-    files = tracked_files()
+    files, skipped = partition_tracked_files()
     if not files:
         print("leakscan: COULD NOT RUN — enumerated 0 files. A zero here is a "
               "broken enumeration, not a clean tree.", file=sys.stderr)
         return 2
+
+    # 🔴 NAME EVERY SKIP, ALWAYS — INCLUDING UNDER `--quiet`. An unread file is
+    # the one thing a leak gate's output must never leave implicit: a count of
+    # files scanned cannot distinguish a clean tree from a partly-read one, and
+    # that ambiguity is the whole defect this accounting replaced.
+    for s in skipped:
+        print(f"  SKIPPED  {s}")
 
     findings: list[Finding] = []
     for f in files:
@@ -280,7 +385,8 @@ def main() -> int:
             print(f"leakscan: COULD NOT READ {f}: {e}", file=sys.stderr)
             return 2
 
-    print(f"== UNDER TEST: {len(files)} file(s) scanned ==")
+    print(f"== UNDER TEST: {len(files)} file(s) scanned, "
+          f"{len(skipped)} skipped ==")
     if findings:
         for f in findings:
             print(f"  {f}")
