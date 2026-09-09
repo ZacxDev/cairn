@@ -1500,8 +1500,14 @@ def build_parser() -> argparse.ArgumentParser:
     # stays the single point of truth and a test can repoint reader and writer
     # together with one assignment.
     p.add_argument("--cache", type=Path, default=_read_store.read_store_root())
-    # `None` = not given. The store commands resolve it to DEFAULT_TIMEOUT;
-    # `who` resolves it to its own, longer default. See `_who_timeout`.
+    # `None` = not given, resolved to `DEFAULT_TIMEOUT` by `_store_timeout`,
+    # which is the ONLY resolver — there is no second, longer default.
+    # (This comment used to promise one, naming a subcommand and a helper that
+    # were both removed before this repo was published — two symbols that have
+    # never existed here. A comment is a claim, and one pointing at absent
+    # symbols sends a reader hunting a timeout path that is not there. The
+    # removed names are deliberately not repeated: the closing condition for
+    # this fix is that they grep to zero in this file.)
     p.add_argument("--timeout", type=int, default=None)
     sub = p.add_subparsers(dest="cmd", required=True)
 
