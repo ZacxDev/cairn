@@ -654,6 +654,45 @@ class TestValidateActuallyRuns:
         assert proc.returncode == 0, proc.stdout + proc.stderr
         assert "unrecognized arguments" not in (proc.stdout + proc.stderr)
 
+    def test_validate_REPORTS_WHAT_IT_CHECKED_and_the_count_MOVES(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 A CLEAN SCOPE USED TO PRINT NOTHING, WHICH IS BYTE-IDENTICAL TO A
+        VALIDATE THAT PARSED NO FILES.
+
+        `cmd_validate` printed a line per MALFORMED entry and nothing else, so
+        success was silent and exit 0. That is the reassuring zero its own
+        docstring says this command was rewritten to close — committed on the
+        success path instead of the empty one. It matters more than an ordinary
+        cosmetic gap because this command is the post-write check the
+        index-write protocol MANDATES, so the silence was being read as "the
+        entry I just wrote is fine".
+
+        The assertion is on a count that MOVES with the store, not on a fixed
+        string: a hardcoded literal would satisfy the first half and could not
+        satisfy the second.
+        """
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        before = run_cairn("validate", "--no-sync", url=None, cache=cache)
+        assert before.returncode == 0, before.stdout + before.stderr
+        out = before.stdout + before.stderr
+        # The fixture store holds widget-cfg (2 entries) and gizmo-notes (1).
+        assert "widget-cfg: 2 of 2 entry file(s) parse, 0 malformed" in out, out
+        assert "gizmo-notes: 1 of 1 entry file(s) parse, 0 malformed" in out, out
+
+        # 🔴 THE CONTROL. Add an entry, re-sync, and the SAME command must
+        # report a DIFFERENT number. Without this a constant string passes.
+        (source_store / "widget-cfg" / "thing-gamma.md").write_text(
+            _entry("thing-gamma", "widget-cfg", "- 2026-01-05: a third entry.")
+        )
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        after = run_cairn("validate", "--no-sync", url=None, cache=cache)
+        assert after.returncode == 0, after.stdout + after.stderr
+        assert "widget-cfg: 3 of 3 entry file(s) parse, 0 malformed" in (
+            after.stdout + after.stderr
+        ), after.stdout + after.stderr
+
     def test_validate_exits_NONZERO_on_a_malformed_cache(
         self, source_store: Path, live_store, tmp_path: Path
     ):
