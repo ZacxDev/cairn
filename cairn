@@ -919,13 +919,29 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # separate authoring tool's `--validate`, which was a second
         # implementation of the same predicate — exactly the shape that lets a
         # file validate clean and then fail to render.
-        malformed = subsystem_resolver.load_index(
+        index = subsystem_resolver.load_index(
             args.cache,
             on_malformed=subsystem_resolver.ON_MALFORMED_COLLECT,
             visible_scopes=[scope],
-        ).malformed
+        )
+        malformed = index.malformed
         for entry in malformed:
             print(f"cairn: {scope}: malformed: {entry}", file=sys.stderr)
+        # 🔴 REPORT WHAT WAS CHECKED, NOT ONLY WHAT WAS WRONG. Until this line
+        # a CLEAN scope printed NOTHING and exited 0, which is byte-identical
+        # to a validate that parsed no files at all — and this command is the
+        # post-write check the index-write protocol MANDATES, so that zero was
+        # being read as "the entry I just wrote is fine". The docstring above
+        # says this command was rewritten to close "the silent zero"; it then
+        # committed a different one, on the success path instead of the empty
+        # one. A count that MOVES with the store is what makes the zero mean
+        # something: parse one entry and it says 1, parse none and it says 0
+        # and you can see that it did nothing.
+        checked = sum(1 for _ in (args.cache / scope).glob("*.md"))
+        print(
+            f"cairn: {scope}: {checked - len(malformed)} of {checked} "
+            f"entry file(s) parse, {len(malformed)} malformed"
+        )
         worst = max(worst, EXIT_CORRUPT if malformed else EXIT_OK)
     return worst
 
