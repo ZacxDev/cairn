@@ -762,6 +762,26 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
         # `--mode` stays authoritative when the caller passed it explicitly:
         # it predates these flags and something may already drive it.
         mode = args.mode if args.mode != rc.DEFAULT_MODE else selection.mode
+        # 🔴 THE FEATURED-ENTRY PICK NEEDS A FOCUS WINDOW, AND THIS CLIENT NEVER
+        # BUILT ONE — so the digest it printed could ONLY ever say
+        # `most-recent fallback`, whatever was actually relevant. Measured on a
+        # real store, same repo and same moment:
+        #   client      -> "most-recent fallback ... (no handoff doc to read a
+        #                   path window from)"
+        #   the module  -> "resolved via claudedocs/handoff-<topic>.md — 11 of
+        #                   48 quoted path(s) name it"
+        # The parenthetical was the tell and it was WRONG about the world: there
+        # was a handoff doc, this client just never looked. That inverted the
+        # advice everything gives — the wrapper readers are told to run was
+        # strictly worse than the raw module they are told not to.
+        # The condition mirrors the module's own: a window is a claim about
+        # THIS repo's newest handoff doc, so it is meaningless once the caller
+        # names a scope directly or asks for a non-default mode.
+        window = (
+            rc.focus_window(args.repo)
+            if mode == rc.DEFAULT_MODE and args.scope is None
+            else rc.FocusWindow()
+        )
         # 🔴 REACHABLE ONLY BECAUSE THIS COMMIT EXPOSED `--limit`/`--page`, and
         # it was watched: before this guard, `cairn recall --limit 0` raised
         # `ValueError: limit must be an int >= 1` as an UNCAUGHT traceback at
@@ -780,6 +800,8 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
                 limit=selection.limit,
                 mode=mode,
                 page=selection.page,
+                focus_paths=window.paths,
+                focus_source=window.source,
             )
         except ValueError as exc:
             print(f"cairn: {exc}", file=sys.stderr)
