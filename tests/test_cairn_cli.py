@@ -1411,3 +1411,40 @@ class TestTheDigestFooterPrescribesFlagsTheClientMustHave:
         assert proc.returncode == 2, f"rc={proc.returncode}: {proc.stderr}"
         assert "Traceback" not in proc.stderr, proc.stderr
         assert "limit must be an int >= 1" in proc.stderr, proc.stderr
+
+    def test_the_featured_pick_RESOLVES_via_the_handoff_instead_of_falling_back(
+        self, live_store, tmp_path: Path
+    ):
+        """🔴 THE WRAPPER READERS ARE TOLD TO RUN WAS WORSE THAN THE RAW MODULE.
+
+        The featured-entry pick is driven by a focus window built from the
+        repo's newest handoff doc. This client never built one, so its digest
+        could only ever say `most-recent fallback` — and its parenthetical said
+        "no handoff doc to read a path window from", which was WRONG about the
+        world rather than merely unhelpful: the doc was there, the client never
+        looked. Measured on a real store, same repo and same instant, the
+        module resolved the doc and the client did not.
+        """
+        cache = self._synced_cache(live_store, tmp_path)
+        # Named for the scope so `scope_for_repo` derives it: passing --scope
+        # would SUPPRESS the window, which is the module's own rule, so the
+        # fixture has to reach it the way a real caller does.
+        repo = tmp_path / "widget-cfg"
+        (repo / "claudedocs").mkdir(parents=True)
+        (repo / "claudedocs" / "handoff-focus.md").write_text(
+            "Work on `apps/thing-beta/config.yaml` and `apps/thing-beta/svc.yaml`.\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
+
+        proc = run_cairn(
+            "recall", "--repo", str(repo), "--no-sync", url=None, cache=cache
+        )
+        assert proc.returncode == 0, proc.stderr
+        featured = [l for l in proc.stdout.splitlines() if "FEATURED IN FULL" in l]
+        assert featured, f"no featured line at all:\n{proc.stdout[:600]}"
+        line = featured[0]
+        assert "resolved via claudedocs/handoff-focus.md" in line, (
+            f"the client did not build a focus window, so the pick fell back:\n{line}"
+        )
+        assert "most-recent fallback" not in line, line
