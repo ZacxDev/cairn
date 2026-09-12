@@ -5606,16 +5606,32 @@ class TestTheSearchReportCaveat:
 # THE READER COVERS ONE HOST'S STORE, AND MUST SAY WHICH
 # =============================================================================
 #
-# 🔴 SAME DEFECT AS THE WRITER'S, SAME MEASUREMENT (2026-08-27): the store under
-# `~/.claude/analyze-service-index/` is PER-HOST with no replication — workbench
-# 115 entries / 14 scopes, laptop 33 / 11, exactly ONE entry name in common
-# across the four scopes both machines have, seven scopes only on the laptop and
-# ten only on the workbench. `scope-absent` therefore reports one disk, and the
-# old wording ("the store has no `<scope>/` directory") stated it as the fleet's.
+# 🔴 SAME DEFECT AS THE WRITER'S, SAME MEASUREMENT (2026-08-27, PRE-CUTOVER):
+# the store under `~/.claude/analyze-service-index/` was PER-HOST with no
+# replication — workbench 115 entries / 14 scopes, laptop 33 / 11, exactly ONE
+# entry name in common across the four scopes both machines have, seven scopes
+# only on the laptop and ten only on the workbench. `scope-absent` therefore
+# reports one disk, and the old wording ("the store has no `<scope>/` directory")
+# stated it as the fleet's. That much is unchanged.
+#
+# 🔴 WHAT CHANGED, AND WHY THESE LITERALS MOVED. The Cairn cutover made a hosted
+# pod the canonical datastore and `~/.cache/subsystem-store` a SYNCED
+# READ-THROUGH CACHE of it. The reader's prose had not caught up and still said
+# the store was "PER-HOST and unreplicated", which told a reader that an absence
+# HERE was an absence EVERYWHERE — false, and it propagated into a downstream
+# handoff doc before anyone caught it. The replication is OBSERVED, not inferred
+# from config: within one session that wrote nothing, the pod's own snapshot
+# moved `entry-files=232` -> `239` between two reads about an hour apart.
+#
+# The boundary the reader must still state is therefore FRESHNESS, not isolation:
+# the read is offline against a local cache, so an entry written elsewhere and
+# not yet synced here is invisible. That claim is true and is what these guards
+# now pin.
 #
 # The guards pin WHOLE NORMALISED STRINGS: prose is walkable by rewording, and
-# the half that mattered — "no other host was consulted, and it may hold this" —
-# is exactly the half a keyword guard would let a reword delete.
+# the half that mattered — "no other host was consulted, and it may already hold
+# this" — is exactly the half a keyword guard would let a reword delete. This
+# defect was ITSELF a prose defect, which is why nothing here is a keyword match.
 #
 # The host is INJECTED at `subsystem_touch.this_host`, the single call site of
 # `host_identity.this_host` shared by both modules. That the reader moves when
@@ -5626,8 +5642,8 @@ class TestTheSearchReportCaveat:
 FIXTURE_HOST = "fixture-host-0123456789abcdef0123456789abcdef"
 
 PER_HOST_CLAUSE = (
-    "the store is PER-HOST and unreplicated; this run read THIS machine's disk "
-    "and consulted no other"
+    "the store is read through a PER-HOST CACHE, only as fresh as its last sync; "
+    "this run read THIS machine's disk and consulted no other"
 )
 
 
@@ -5664,14 +5680,17 @@ class TestTheRecallCoversOneHostsStore:
     )
 
     EXPECTED_NOT_THE_FLEET = _norm(
-        f"NOT A FACT ABOUT THE FLEET — {PER_HOST_CLAUSE}. The other host keeps a "
-        f"DIFFERENT store, not a copy, and it may hold `never-indexed/`."
+        f"NOT A FACT ABOUT THE FLEET — {PER_HOST_CLAUSE}. The other host syncs the "
+        f"SAME hosted store through its own cache, and may already hold "
+        f"`never-indexed/` where this one has not synced it yet."
     )
 
     EXPECTED_CAVEAT_CLAUSE = (
-        "This store is PER-HOST and unreplicated, so this window also CANNOT see "
-        "any scope or entry that exists only on the OTHER machine — nothing here "
-        "consulted it, and an absence below is an absence HERE."
+        "This window read a LOCAL CACHE of the hosted store, not the store itself, "
+        "so it is only as complete as the last `cairn sync` on THIS machine: an "
+        "entry written on the OTHER machine that has not synced here yet is "
+        "invisible, and an absence below is an absence AS OF THAT SYNC, not a fact "
+        "about the store."
     )
 
     def test_recall_scope_absent_is_qualified_to_this_host(
@@ -5746,25 +5765,80 @@ class TestTheRecallCoversOneHostsStore:
                 f"  got:      {following!r}"
             )
 
-    def test_the_caveat_names_the_other_machine_as_something_it_CANNOT_see(
+    def test_the_caveat_states_the_SYNC_boundary_it_cannot_see_past(
         self,
     ) -> None:
         """🔴 THE CAVEAT IS THE ONE BLOCK PRINTED ON EVERY STATUS, INCLUDING THE
         ONES THAT SURFACE ENTRIES. `scope-absent` is not the only place the
         boundary matters: a `recalled` run showing three entries is ALSO silent
-        about a fourth that lives on the other machine, and only the caveat
-        speaks on that path."""
+        about a fourth that was written elsewhere and has not synced here yet,
+        and only the caveat speaks on that path.
+
+        🔴 WHAT THIS PINS IS THE *FRESHNESS* BOUNDARY, NOT AN ISOLATION ONE. The
+        sentence this replaced claimed the store was unreplicated, so an absence
+        here was an absence everywhere. It is not: the caches converge on the
+        hosted pod. The honest caveat is that the read is offline against a local
+        cache and is therefore only as complete as its last sync."""
         text = rc.caveat_text("example-scope/", frozenset())
         assert self.EXPECTED_CAVEAT_CLAUSE in text, (
-            "the reader's caveat no longer states the per-host boundary.\n"
+            "the reader's caveat no longer states the sync-freshness boundary.\n"
             f"  expected: {self.EXPECTED_CAVEAT_CLAUSE}\n"
-            "It lists what this window CANNOT see; the other host's store is on "
-            "that list and is the only item nothing else in the output mentions."
+            "It lists what this window CANNOT see; an entry written elsewhere and "
+            "not yet synced here is on that list and is the only item nothing else "
+            "in the output mentions."
         )
         assert "in THIS HOST's store" in text, (
             "the CANNOT-see list still says 'in this store', which reads as one "
             "store for the fleet."
         )
+
+    def test_no_reader_surface_claims_the_store_is_UNREPLICATED(
+        self, store: Path, pinned_host: str
+    ) -> None:
+        """🔴 THE REGRESSION TRIPWIRE FOR THE DEFECT ITSELF, ACROSS EVERY SURFACE.
+
+        The false sentence did not live in one renderer — it reached users
+        through the caveat, both `scope-absent` verdicts and the `host:` header,
+        because they share `STORE_IS_PER_HOST` and a house style. Any one of them
+        re-acquiring it re-creates the harm, which is a reader concluding that an
+        absence HERE is an absence on the fleet. That already happened once and
+        was copied into a downstream handoff doc.
+
+        ⚠ THIS IS A KEYWORD TRIPWIRE AND IT IS *NOT* THE COVERAGE. A reword can
+        walk it ("nothing replicates it"), which is exactly why the whole
+        normalised strings above exist and are the real guard; a few such rewords
+        are listed here anyway because they are what the repo actually used to
+        say. This catches the cheap copy-paste relapse, nothing more — do not
+        read it as proof the prose is correct."""
+        surfaces = {
+            "caveat_text": rc.caveat_text("example-scope/", frozenset()),
+            "render_text/scope-absent": rc.render_text(rc.recall(store, "never-indexed")),
+            "render_search/scope-absent": rc.render_search(
+                rc.search(store, "never-indexed", "compaction")
+            ),
+            "render_text/recalled": rc.render_text(rc.recall(store, SCOPE)),
+            "render_search/found": rc.render_search(rc.search(store, SCOPE, "collector")),
+            "store_host_line": st.store_host_line(),
+        }
+        # Typed literally; never derived from the module under test.
+        banned = (
+            "unreplicated",
+            "nothing replicates it",
+            "no replication",
+            "a DIFFERENT store, not a copy",
+            "an absence below is an absence HERE",
+        )
+        for name, text in surfaces.items():
+            lowered = text.lower()
+            for phrase in banned:
+                assert phrase.lower() not in lowered, (
+                    f"{name} asserts the store is unreplicated: {phrase!r}.\n"
+                    "The hosted pod IS the datastore and the local store is a "
+                    "synced read-through cache of it, so content written on the "
+                    "other machine does arrive here. The true boundary is "
+                    "FRESHNESS — say 'only as complete as the last sync', never "
+                    "'an absence here is an absence everywhere'."
+                )
 
     def test_the_json_reports_carry_the_host(
         self, store: Path, pinned_host: str

@@ -393,7 +393,7 @@ two that each made this script permanently red in turn:
 | difference | why it is legitimate | how it is canonicalised |
 |---|---|---|
 | `  store: <root>` | the pod serves a copy at a different path | rewritten to a fixed token **on both sides** |
-| `  host: <id>` | `store_host_line()` names the machine whose disk was read — the store is PER-HOST, and saying so is the entire point of the line | rewritten to a fixed token **on both sides** |
+| `  host: <id>` | `store_host_line()` names the machine whose disk was read — the store is reached through a PER-HOST CACHE that is only as fresh as its last sync, and saying so is the entire point of the line | rewritten to a fixed token **on both sides** |
 | the `🔴 SNAPSHOT` block | a transport annotation the server prepends and the local CLI correctly does not emit | removed from the **remote** only |
 | the INDEX row **order** | the index is newest-first by entry-file **mtime**, and the transport (`rsync` to a stage, `tar` into the pod) does not carry mtime | index rows compared as a **sorted set** on both sides; everything else in the stream compared verbatim, in order |
 

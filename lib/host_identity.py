@@ -2,11 +2,21 @@
 """WHICH MACHINE am I — one implementation, every consumer.
 
 🔴 A HOSTNAME IS NOT AN IDENTITY. Machines provisioned from one image commonly
-report the SAME hostname, and cairn's local cache is PER-HOST and unreplicated:
-two machines holding the same scope can hold different entries in it.
+report the SAME hostname, and cairn's local cache is PER-HOST and independently
+STALE: two machines holding the same scope can hold different entries in it at
+any given instant.
 
-A tool that reads such a store and reports a GLOBAL fact ("the store has no
-`billing/` scope") is stating one machine's disk as though it were the fleet's.
+⚠ NOT "UNREPLICATED", WHICH IS WHAT THIS SAID AND IS NO LONGER TRUE. Since the
+Cairn cutover the hosted pod is the canonical datastore and each machine's
+`~/.cache/subsystem-store` is a SYNCED READ-THROUGH CACHE of it, so the two
+caches CONVERGE — eventually, via the pod, whenever `cairn sync` runs on each.
+What survives is the divergence at an instant, and that is enough: nothing makes
+the two caches agree at the moment a tool reads one of them.
+
+So the module's thesis is UNCHANGED, only its reason is. A tool that reads such
+a cache and reports a GLOBAL fact ("the store has no `billing/` scope") is
+stating one machine's disk as though it were the fleet's — it is now wrong by
+STALENESS rather than by isolation, which is the same wrong answer to the reader.
 That is the defect this module exists to make un-writable: every consumer prints
 the identity of the machine it actually read.
 
