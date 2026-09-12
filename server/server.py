@@ -303,6 +303,16 @@ sys.path.insert(0, str(_LIB))
 
 import subsystem_recall as rc  # noqa: E402
 
+# 🔴 `BULLET_TEXT_MAX` IS IMPORTED, NOT DEFINED HERE, BECAUSE THE CLIENT REFUSES
+# ON IT TOO. It used to be a module-level constant in this file, which made the
+# only way to learn the limit exceeding it: the client had no copy, so every
+# over-long bullet cost a composed payload and a round trip. A second hardcoded
+# 2000 in the client would have bought the local check at the price of two
+# numbers that can drift silently — so it lives in the module whose whole stated
+# purpose is one spelling for both halves. Re-exported under its original name:
+# the boundary tests address it as an attribute of this module.
+from entry_shape import BULLET_TEXT_MAX  # noqa: E402,F401
+
 # 🔴 THE PATH CLASSIFIER IS IMPORTED, NOT DEFINED HERE — it moved into
 # `subsystem_resolver` when `load_index` grew an entry-kind guard of its own.
 # "What IS this path" spelled at N sites is wrong at N-1 of them, and the two
@@ -546,8 +556,14 @@ SESSION_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 # bullet whose second line is prose it thought was separate — and a caller that
 # sent a leading `- ` would get TWO bullets from one POST, only one of which
 # carries an attribution trailer. Both are content the store cannot account for.
-BULLET_TEXT_MAX = 2000
-
+#
+# ⚠ THIS PARAGRAPH USED TO SIT ABOVE `BULLET_TEXT_MAX`, WHERE IT READ AS THAT
+# CONSTANT'S JUSTIFICATION AND IS NOT ONE — it justifies the predicate below, and
+# a length cap enforces none of it. The effect was a number that looked argued
+# for while carrying no argument at all. `BULLET_TEXT_MAX` now lives in
+# `entry_shape` with its own reasoning; this text stayed with the constraint it
+# actually describes.
+#
 # 🔴 EVERY CHARACTER `str.splitlines()` TREATS AS A LINE BREAK — TEN OF THEM,
 # NOT TWO. The validator used to read `if "\n" in text or "\r" in text`, which is
 # a membership test on two characters standing in for a predicate about ten.
@@ -4805,7 +4821,18 @@ def _bullet_request_problem(payload: Any) -> str | None:
     if not isinstance(text, str) or not text.strip():
         return "`text` is required and must be a non-empty string"
     if len(text) > BULLET_TEXT_MAX:
-        return f"`text` is {len(text)} characters, max {BULLET_TEXT_MAX}"
+        # 🔴 THE OVERAGE IS THE ONLY NUMBER THE CALLER CAN ACT ON, and it is the
+        # one the message used to omit. Two absolute figures make a caller
+        # subtract on every retry, and a caller who is over by 1,210 has to
+        # rewrite rather than trim — which is a different decision, taken from a
+        # number they had to compute themselves. Naming the excess turns the
+        # refusal into an instruction. See `entry_shape.BULLET_TEXT_MAX` for why
+        # this cap exists at all; it is editorial, not structural, so being clear
+        # about it is the whole of its value to a writer.
+        return (
+            f"`text` is {len(text)} characters, max {BULLET_TEXT_MAX} "
+            f"— {len(text) - BULLET_TEXT_MAX} over"
+        )
     if len(text.splitlines()) > 1 or text.strip(LINE_BREAK_CHARS) != text:
         # 🔴 `len(splitlines()) > 1` IS THE HONEST PREDICATE — it asks the very
         # function that decides how many lines these bytes become, so it cannot

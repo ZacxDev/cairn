@@ -343,6 +343,87 @@ class TestAppendLands:
         ).stdout
         assert "--actor" not in help_text
 
+    def test_an_OVERLONG_text_is_refused_BEFORE_the_store_is_contacted(self, live, tmp_path):
+        """The limit must cost a caller nothing to learn.
+
+        🔴 THE REQUEST-COUNT ASSERTION IS THE POINT, not the exit code. A client
+        that refused locally and ALSO sent the body would satisfy every message
+        assertion below while buying nothing — the whole value here is that a
+        composed bullet is not spent on a round trip whose answer was knowable.
+        So this counts what the server saw.
+        """
+        import entry_shape
+
+        before = len(live.handler.seen)
+        over_by = 37
+        proc = run_cairn(
+            "append", "--scope", "widget-cfg", "--ref", "thing-alpha",
+            "--text", "x" * (entry_shape.BULLET_TEXT_MAX + over_by),
+            "--session", SESSION, url=live.base, cache=tmp_path / "c",
+        )
+        assert proc.returncode != 0, proc.stdout
+        assert len(live.handler.seen) == before, (
+            "the client contacted the store for a payload it had already refused"
+        )
+        # The OVERAGE, not just the two absolutes — a caller over by 37 trims,
+        # one over by 1,210 rewrites, and that is a different decision.
+        assert f"{over_by} over" in proc.stderr, proc.stderr
+        assert str(entry_shape.BULLET_TEXT_MAX) in proc.stderr, proc.stderr
+
+    def test_a_text_AT_the_limit_still_reaches_the_store(self, live, tmp_path):
+        """The other side of the client's boundary.
+
+        Without this, a client-side cap off by one — or one that simply refused
+        everything — passes the test above and silently narrows what the store
+        accepts. That failure is worse than the round trip the check saves,
+        because the store would have taken the write.
+        """
+        import entry_shape
+
+        proc = run_cairn(
+            "append", "--scope", "widget-cfg", "--ref", "thing-alpha",
+            "--text", "y" * entry_shape.BULLET_TEXT_MAX,
+            "--session", SESSION, url=live.base, cache=tmp_path / "c",
+        )
+        assert proc.returncode == 0, why_the_write_failed(proc, live)
+        assert "appended" in proc.stdout, proc.stdout
+
+    def test_append_help_NAMES_the_limit(self):
+        """Criterion 3's cheapest half: the bound is discoverable without hitting it.
+
+        Asserted against the shared constant rather than the literal, so a help
+        string that goes stale when the value moves fails here instead of
+        misinforming a caller. Nothing else tests prose.
+        """
+        import entry_shape
+
+        help_text = subprocess.run(
+            [sys.executable, str(CAIRN_CLI), "append", "--help"],
+            capture_output=True, text=True, timeout=60,
+        ).stdout
+        assert str(entry_shape.BULLET_TEXT_MAX) in help_text, help_text
+
+    def test_the_CLIENT_and_the_SERVER_share_ONE_bullet_cap(self):
+        """A seam test: two copies of this number is the failure mode to prevent.
+
+        🔴 PINS THE RELATIONSHIP, NOT EITHER SIDE'S VALUE. A client cap that
+        drifted BELOW the server's refuses writes the store would accept; one
+        that drifted ABOVE spends a round trip to be told no. Both read as
+        deliberate at each site, which is why the assertion is that neither file
+        spells the number at all — the shape a value-equality check would pass
+        while two literals sat there agreeing today.
+        """
+        import entry_shape
+
+        assert isinstance(entry_shape.BULLET_TEXT_MAX, int)
+        for path in (CAIRN_CLI, REPO / "server" / "server.py"):
+            src = path.read_text()
+            assert "BULLET_TEXT_MAX" in src, path
+            assert f"BULLET_TEXT_MAX = {entry_shape.BULLET_TEXT_MAX}" not in src, (
+                f"{path} defines its own copy of the cap; it must import it from "
+                "entry_shape"
+            )
+
     def test_a_REPEAT_of_the_same_text_reports_duplicate_not_appended(self, live, tmp_path):
         """Idempotence is what makes a retry after a timeout safe — and it must SAY so.
 
