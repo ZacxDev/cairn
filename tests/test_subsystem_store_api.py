@@ -15647,6 +15647,44 @@ class TestTheAppendRequestIsValidated:
         assert b"characters, max" in resp
         assert tree_hash(scoped_store) == before
 
+    def test_the_refusal_names_the_OVERAGE_not_only_the_two_absolutes(
+        self, scoped_store: Path
+    ):
+        """Two absolute figures make a caller subtract on every retry.
+
+        🔴 THE OVERAGE IS CHOSEN SO IT CANNOT COINCIDE WITH EITHER ABSOLUTE, and
+        that is the whole design of this fixture: at `MAX + 1` the excess is `1`,
+        a digit that appears inside `2000` and inside the length, so an assertion
+        on it would pass against a message that never computed anything. 1,210 is
+        a substring of neither the cap nor the resulting length.
+        """
+        over_by = 1210
+        payload = {
+            "text": "x" * (api.BULLET_TEXT_MAX + over_by), "session": SESSION_A
+        }
+        with running(scoped_store, tokens=(ZACH,)) as (base, _):
+            code, _h, resp = self._post_raw(base, json.dumps(payload).encode())
+        assert code == 400
+        text = resp.decode()
+        assert str(over_by) in text, text
+        assert str(api.BULLET_TEXT_MAX) in text, text
+        assert str(api.BULLET_TEXT_MAX + over_by) in text, text
+
+    def test_the_cap_is_IMPORTED_from_the_shared_module_not_redefined_here(self):
+        """The server and the client must refuse on ONE number.
+
+        A cap the server defined privately is how the client came to have no copy
+        at all — the limit was unlearnable without exceeding it. Pinning the
+        IDENTITY of the object, not its value, is what keeps a future
+        `BULLET_TEXT_MAX = 2000` typed back into the server from passing while
+        both sites happen to agree.
+        """
+        import entry_shape
+
+        assert api.BULLET_TEXT_MAX is entry_shape.BULLET_TEXT_MAX
+        src = (Path(api.__file__).resolve()).read_text()
+        assert f"BULLET_TEXT_MAX = {entry_shape.BULLET_TEXT_MAX}" not in src
+
     def test_a_text_at_the_LIMIT_is_accepted(self, scoped_store: Path):
         """The other side of the boundary. A cap tested only from above is a cap
         tested on one side of its condition."""

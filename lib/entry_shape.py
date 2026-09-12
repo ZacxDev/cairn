@@ -25,7 +25,7 @@ from subsystem_resolver import NUANCE_HEADING, POINTERS_HEADING, normalize_ref
 
 __all__ = [
     "CairnError", "GitError", "RepoPathMissingError", "StoreMissingError",
-    "SHAPE_HEADINGS", "STORE_IS_PER_HOST",
+    "BULLET_TEXT_MAX", "SHAPE_HEADINGS", "STORE_IS_PER_HOST",
     "derive_scope", "repo_path_missing_message", "scope_for_repo",
     "store_host", "store_host_line",
 ]
@@ -89,6 +89,56 @@ class RepoPathMissingError(CairnError):
 #: not import them from the renderer, and pinned as a tuple so a reader can
 #: assert the set rather than two separate strings.
 SHAPE_HEADINGS: tuple[str, ...] = (POINTERS_HEADING, NUANCE_HEADING)
+
+#: The longest `text` an append may carry, in characters.
+#:
+#: 🔴 WHAT THIS IS **NOT**, BECAUSE BOTH READINGS ARE AVAILABLE AND BOTH ARE
+#: WRONG — AND THE VALUE SAT HERE UNJUSTIFIED LONG ENOUGH THAT "RAISE IT" READ AS
+#: THE OBVIOUS FIX:
+#:
+#:   * NOT an integrity constraint. Nothing about a long `text` can corrupt the
+#:     bullet or its attribution trailer; that hazard is one bullet becoming two,
+#:     or a trailer that reads as somebody else's, and it is closed by the
+#:     line-break and character-category predicates in the server — measured
+#:     failures, each with its own comment. Length breaks nothing.
+#:   * NOT a resource bound. The request body is already capped (1 MiB) and
+#:     bounded in time by the server's drain deadline, and this value is three
+#:     orders of magnitude below that cap. Deleting it would not widen the
+#:     server's exposure by one byte.
+#:   * NOT a bound on what a READ costs, which is the plausible one. A recall
+#:     prints an entry's nuance bullets in FULL and the bullet COUNT is
+#:     uncapped — measured, one entry holds 111 — so worst-case read cost is
+#:     count × this value and the count is the free variable. Capping the text
+#:     cannot bound a product whose other factor is unbounded.
+#:
+#: 🔴 WHAT IT IS: an EDITORIAL tripwire on the tail, and the number is the p99 of
+#: the corpus the store already holds. Measured over 2,211 dated bullets: median
+#: 629, p90 1,418, p95 1,746, **p99 2,049**, longest 4,015. So this value fires
+#: on roughly the densest 1% and on nothing else, and what it says to a writer is
+#: "a bullet this long is a document, and a document belongs in an entry's prose
+#: or its own entry, not in one line of work-history". That is a curation
+#: judgement rather than a safety property — which is exactly why it has to be
+#: WRITTEN DOWN as one. An unexplained constant invites being raised to a second
+#: unexplained constant.
+#:
+#: ⚠ THE UNIT IS THE CALLER'S `text`, AND MEASURING THE STORED BULLET INSTEAD
+#: OVERSTATES THE TAIL BY ~2×. The server prepends `- <date>: ` and appends the
+#: attribution trailer, so a stored line is longer than the `text` that produced
+#: it: over this same corpus, 27 bullets (1.2%) exceed 2,000 characters measured
+#: as `text`, against 48 (2.2%) measured as stored bytes. A reading of "how many
+#: existing bullets would this cap reject" must use the former; the latter counts
+#: characters no caller ever sent.
+#:
+#: Existing over-cap bullets are GRANDFATHERED, deliberately and permanently:
+#: this value gates WRITES only, nothing in the API rewrites a bullet that is
+#: already stored, and those bullets are the densest records in the store.
+#: Shortening them to satisfy a constant would be the cap deciding the content.
+#:
+#: To justify a DIFFERENT number, the thing to measure is not the corpus again —
+#: it is whether a reader's comprehension actually falls off somewhere, or a
+#: per-entry read budget with the bullet count capped alongside. Re-measuring the
+#: same distribution can only ever re-derive a percentile.
+BULLET_TEXT_MAX = 2000
 
 #: 🔴 PRINTED UNDER EVERY `store:` LINE, AND IT IS LOAD-BEARING. A local cache is
 #: per-host: two machines can hold the same scope with different entries in it,

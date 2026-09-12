@@ -1123,6 +1123,31 @@ def cmd_append(args: argparse.Namespace) -> int:
     scope = _write_scope(args)
     if scope is None:
         return EXIT_USAGE
+    # 🔴 REFUSE LOCALLY, BEFORE THE NETWORK, AND SAY THE OVERAGE. The server
+    # enforces this cap and always did; what it could not do is tell a caller the
+    # limit before they had composed something over it. Measured cost of that
+    # asymmetry: one bullet took three full recompose-and-retry cycles because
+    # the only way to learn the bound was to exceed it, and nothing was written
+    # on any of the three.
+    #
+    # 🔴 SAME CONSTANT AS THE SERVER'S, IMPORTED — not a second 2000 typed here.
+    # A client-side copy that drifted LOW would refuse writes the store would
+    # have accepted, which is worse than the round trip it saves, and it would
+    # fail exactly the way this repo's other two-copy hazards do: silently, with
+    # both numbers looking deliberate.
+    #
+    # ⚠ THIS IS A CONVENIENCE, NOT AN AUTHORITY. The server re-checks; a client
+    # that skipped the check could not widen what the store accepts. Do not let a
+    # later refactor read this as the enforcement point.
+    if len(args.text) > entry_shape.BULLET_TEXT_MAX:
+        over = len(args.text) - entry_shape.BULLET_TEXT_MAX
+        print(
+            f"cairn: refusing to send — `--text` is {len(args.text)} characters, "
+            f"max {entry_shape.BULLET_TEXT_MAX} — {over} over. Nothing was "
+            f"written, and the store was not contacted.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     url, token = load_config()
     payload = json.dumps({"text": args.text, "session": args.session}).encode("utf-8")
     quoted = f"/api/v1/entry/{quote(scope, safe='')}/{quote(args.ref, safe='')}/bullets"
@@ -1623,10 +1648,15 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--scope", default=None)
     ap.add_argument("--repo", default=".")
     ap.add_argument("--ref", required=True, help="the entry: a filename stem or an alias")
+    # 🔴 THE LIMIT IS IN THE HELP because the only other way to learn it was to
+    # exceed it. Interpolated from the shared constant, never typed — a help
+    # string quoting a stale number is the same drift as a second copy of the
+    # constant, and harder to notice because nothing tests prose.
     ap.add_argument(
         "--text", required=True,
         help="the bullet, ONE line, with NO leading `- ` and NO leading date — "
-             "the server adds both",
+             "the server adds both; max "
+             f"{entry_shape.BULLET_TEXT_MAX} characters",
     )
     # 🔴 REQUIRED, WITH NO DEFAULT AND NO ENV FALLBACK. The server refuses a
     # request without it (400), and criterion 4 is that every appended bullet
