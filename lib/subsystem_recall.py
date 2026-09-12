@@ -185,12 +185,15 @@ share no spelling:
     "scope-absent"    THIS HOST's store has no `<scope>/` directory — NOTHING
                       RECORDED YET, HERE. The ordinary case in most repos (the
                       store holds few scopes; work spans ~12 repos) and NOT an
-                      error. 🔴 IT IS ALSO NOT A FACT ABOUT THE FLEET: the store
-                      is per-host and nothing replicates it, so the OTHER machine
-                      may hold that scope with entries in it. Measured
-                      2026-08-27 — workbench 115 entries / 14 scopes, laptop
-                      33 / 11, seven scopes on the laptop alone and ten on the
-                      workbench alone. Every renderer says so; do not report
+                      error. 🔴 IT IS ALSO NOT A FACT ABOUT THE FLEET: this is a
+                      per-host CACHE of the hosted store, fresh only to its last
+                      `cairn sync`, so the OTHER machine may already hold that
+                      scope and it simply has not arrived here. Measured
+                      2026-08-27, BEFORE the cutover made the pod canonical —
+                      workbench 115 entries / 14 scopes, laptop 33 / 11, seven
+                      scopes on the laptop alone and ten on the workbench alone.
+                      Those caches now converge via the pod, but not at the
+                      instant of a read. Every renderer says so; do not report
                       this status as "unrecorded" without saying "on this host".
     "scope-empty"     `<scope>/` exists and holds no entries. Also nothing
                       recorded yet, by a DIFFERENT mechanism — someone made the
@@ -718,9 +721,11 @@ def caveat_text(scope: str, badges: "frozenset[str] | None" = None) -> str:
         f"fixed. This window CANNOT see: live state of any kind, any repo whose scope "
         f"has no directory in THIS HOST's store, and any work neither `/analyze-service` nor "
         f"`/handoff` ever recorded. Treat every line as a POINTER to verify, never as "
-        f"a current reading. This store is PER-HOST and unreplicated, so this window "
-        f"also CANNOT see any scope or entry that exists only on the OTHER machine — "
-        f"nothing here consulted it, and an absence below is an absence HERE. "
+        f"a current reading. This window read a LOCAL CACHE of the hosted store, not "
+        f"the store itself, so it is only as complete as the last `cairn sync` on THIS "
+        f"machine: an entry written on the OTHER machine that has not synced here yet "
+        f"is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact "
+        f"about the store. "
         f"`🔴 N OPEN` on an index row means N bullets DECLARE "
         f"unfinished business — re-check each against the repo, because a remedy that "
         f"has since landed reads exactly like one that has not; the absence of that "
@@ -1985,12 +1990,15 @@ def render_text(report: RecallReport, *, extra_header: Sequence[str] = ()) -> st
             f"for this repo ON THIS MACHINE."
         )
         # 🔴 THE SECOND SENTENCE IS THE ONE THE OLD WORDING LACKED. "The store"
-        # reads as one thing; it is two. Measured 2026-08-27: seven scopes existed
-        # only on the laptop and ten only on the workbench, so "not recorded" is
-        # routinely false of the fleet while true of the disk that was read.
+        # reads as one thing; the CACHES are two. Measured 2026-08-27, before the
+        # cutover: seven scopes existed only on the laptop and ten only on the
+        # workbench, so "not recorded" is routinely false of the fleet while true
+        # of the disk that was read. Post-cutover the caches converge via the pod
+        # — but only when each syncs, so a read still sees one disk at one time.
         out.append(
-            f"  NOT A FACT ABOUT THE FLEET — {STORE_IS_PER_HOST}. The other host keeps "
-            f"a DIFFERENT store, not a copy, and it may hold `{report.scope}/`."
+            f"  NOT A FACT ABOUT THE FLEET — {STORE_IS_PER_HOST}. The other host syncs "
+            f"the SAME hosted store through its own cache, and may already hold "
+            f"`{report.scope}/` where this one has not synced it yet."
         )
         out.append(
             f"  scopes THIS HOST's store holds: "
@@ -2891,8 +2899,9 @@ def render_search(report: SearchReport, *, extra_header: Sequence[str] = ()) -> 
             f"'no matches': nothing was searched, so nothing can be concluded from it."
         )
         out.append(
-            f"  NOT A FACT ABOUT THE FLEET — {STORE_IS_PER_HOST}. The other host keeps "
-            f"a DIFFERENT store, not a copy, and it may hold `{report.scope}/`."
+            f"  NOT A FACT ABOUT THE FLEET — {STORE_IS_PER_HOST}. The other host syncs "
+            f"the SAME hosted store through its own cache, and may already hold "
+            f"`{report.scope}/` where this one has not synced it yet."
         )
         out.append(
             f"  scopes THIS HOST's store holds: "

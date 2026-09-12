@@ -140,20 +140,36 @@ SHAPE_HEADINGS: tuple[str, ...] = (POINTERS_HEADING, NUANCE_HEADING)
 #: same distribution can only ever re-derive a percentile.
 BULLET_TEXT_MAX = 2000
 
-#: 🔴 PRINTED UNDER EVERY `store:` LINE, AND IT IS LOAD-BEARING. A local cache is
-#: per-host: two machines can hold the same scope with different entries in it,
-#: and nothing reconciles them automatically. A verdict printed without naming
-#: the host it read is therefore not a smaller claim than the truth — it is a
-#: different, false one ("the store has no X" instead of "this disk has no X").
+#: 🔴 PRINTED UNDER EVERY `store:` LINE, AND IT IS LOAD-BEARING. The CACHE is
+#: per-host: two machines can hold the same scope with different entries in it
+#: at any given instant, because each converges on the hosted store only when
+#: `cairn sync` runs there. A verdict printed without naming the host it read is
+#: therefore not a smaller claim than the truth — it is a different, false one
+#: ("the store has no X" instead of "this disk has no X, as of its last sync").
+#:
+#: 🔴 THE FIRST CLAUSE USED TO READ "PER-HOST AND UNREPLICATED", AND THAT IS THE
+#: DEFECT THIS WORDING EXISTS TO CORRECT. Since the Cairn cutover the hosted pod
+#: is the canonical datastore and `~/.cache/subsystem-store` is a SYNCED
+#: READ-THROUGH CACHE of it, so content written on one machine does reach the
+#: other. Observed, not inferred from config: within one session that wrote
+#: nothing, the pod's own snapshot moved `entry-files=232` -> `239` between two
+#: reads about an hour apart. "Unreplicated" told readers an absence here was an
+#: absence everywhere, and that false sentence propagated into a downstream
+#: handoff doc before it was caught.
+#:
+#: The SECOND clause is untouched and still exactly true: the reader is offline
+#: against the local cache and contacts no pod and no peer. What bounds it is
+#: FRESHNESS, not isolation — an entry written elsewhere and not yet synced here
+#: is invisible, and that is the honest caveat to print.
 #:
 #: ⚠ THIS SENTENCE BECOMES INCOMPLETE THE MOMENT A CLIENT IS POINTED AT MORE
 #: THAN ONE INSTANCE. With several instances configured, an absence is also
 #: explainable by "that scope lives on another instance", and a reader told only
-#: that the store is per-host will draw the wrong conclusion. Whoever adds
+#: that the cache is per-host will draw the wrong conclusion. Whoever adds
 #: multi-instance routing must rewrite this string in the same change.
 STORE_IS_PER_HOST = (
-    "the store is PER-HOST and unreplicated; this run read THIS machine's disk "
-    "and consulted no other"
+    "the store is read through a PER-HOST CACHE, only as fresh as its last sync; "
+    "this run read THIS machine's disk and consulted no other"
 )
 
 

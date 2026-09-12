@@ -319,9 +319,11 @@ tar -C "$STAGE" -cf - -- "${members[@]}" \
 # `remote_entries != staged_entries -> exit 7`, which is only correct while
 # exactly ONE host ever seeds.
 #
-# The store is PER-HOST and unreplicated, and the extract adds and overwrites
-# but never deletes — so a second host's entries legitimately sit in $DEST that
-# this stage never held. Counting then failed a CORRECT push, and did it AFTER
+# Each host stages from its OWN cache, and the extract adds and overwrites but
+# never deletes — so a second host's entries legitimately sit in $DEST that this
+# stage never held. (This used to say the store was "PER-HOST and unreplicated";
+# it is the CACHES that are per-host, and they converge on $DEST. The conclusion
+# is unaffected: a push still cannot assume $DEST holds only what it staged.) Counting then failed a CORRECT push, and did it AFTER
 # the content had already landed: a failure verdict on a push that worked, which
 # invites a retry that changes nothing. That is the same shape the tar member
 # list above was fixed for. MEASURED 2026-08-28: this host staged 129 over a pod

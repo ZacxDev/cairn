@@ -2972,8 +2972,9 @@ class TestSeedPushVerdict:
     ):
         """🔴 THE REGRESSION. Red before this change: the old guard compared
         COUNTS, so a pod already holding a second host's entries made a correct
-        push exit 7 — after the content had landed. The store is per-host and
-        the extract never deletes, so this is the NORMAL state, not an error."""
+        push exit 7 — after the content had landed. Each host stages from its own
+        cache and the extract never deletes, so this is the NORMAL state, not an
+        error."""
         env, dest = fake_cluster
         foreign = dest / "a-scope-only-the-laptop-has"
         foreign.mkdir()
