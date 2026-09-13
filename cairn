@@ -428,7 +428,7 @@ def install_snapshot(body: bytes, cache: Path, headers: dict[str, str]) -> int:
     with no error, and further runs died with `FileExistsError` /
     `Directory not empty`. The reader then rendered that partial tree under its
     own "none omitted" header — the completeness lie, arriving by the one route
-    this function exists to close. This repo's CLAUDE.md says concurrent
+    this function exists to close. This repo's AGENTS.md says concurrent
     sessions are normal, and a timer is planned, so it was not a corner case.
 
     Two changes make it safe: a PER-RUN staging directory (so runs cannot share

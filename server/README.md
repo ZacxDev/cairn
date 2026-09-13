@@ -1,11 +1,16 @@
 # subsystem-store-api — phase 1 + 1.5 + phase 3
 
 HTTP layer over the `/analyze-service` subsystem index, so the store is
-reachable from more than the workbench. Design: `claudedocs/proposal-subsystem-store-homelab.md`.
+reachable from more than the workbench. Design: the private monorepo's
+`claudedocs/proposal-subsystem-store-homelab.md` (not extracted; the mechanism
+survives here and in the guards below).
 
-**Not referenced from `CLAUDE.md` on purpose.** That file loads every session and
-this is not yet something a session uses — the CLI wrapper that would make it
-usable is phase 2. Add the pointer when there is something to point at.
+**Referenced from `AGENTS.md`** — the repo's canonical agent-instruction file
+(`CLAUDE.md` is a one-line stub importing it, for tools that read that name).
+The phase-2 CLI wrapper it once deferred, `cairn`, SHIPPED: it syncs a
+read-through cache and drives the write path below, so an earlier revision's
+"this is not yet something a session uses" is history, kept only so the
+framing of the phases in this table still parses.
 
 ## What phase 1 is, and where it stops
 
@@ -17,7 +22,7 @@ usable is phase 2. Add the pointer when there is something to point at.
 | per-token identity + **scope allowlist** on every read route (phase 3, criteria 1-3) | — |
 | the WRITE path: attributed append + `If-Match` PUT (phase 3, criteria **4-7**) | the re-seed, the cache cutover and retiring the legacy credential → **criteria 8-10**, which are OPERATIONS, not code |
 | cluster-internal `ClusterIP` | 🔴 IngressRoute + DNS → **an UNMERGED PR** |
-| byte-identity verified against local | the CLI wrapper + read-through cache → **phase 2** |
+| byte-identity verified against local | the CLI wrapper + read-through cache → **phase 2, SHIPPED**: `cairn` syncs a stamped cache and runs the unmodified reader against it |
 
 🔴 **Phase 1.5 landed the hardening and NOT the exposure.** The store is still
 unreachable from the internet: the IngressRoute and DNS Ingress live in a
@@ -36,7 +41,7 @@ Replication happens over this API; those tests are untouched.
 | file | what |
 |---|---|
 | `server.py` | the HTTP layer. Imports `subsystem_recall`, returns `render_text`/`render_search` verbatim |
-| `Dockerfile` | image, built from the **repo root** as context (the modules live in `scripts/lib`) |
+| `Dockerfile` | image, built from the **repo root** as context (the modules live in `lib/`) |
 | `build-push.sh` | build + push to Harbor. Refuses to push if `/data` in the image is non-empty |
 | `seed.sh` | `rsync` the local store into a stage, optionally `tar`-push it into the pod. Never writes to the source |
 | `verify-byte-identity.sh` | the phase-1 acceptance comparator, per scope: the `mode=list` render (index rows as a **sorted set**), the entry **set** by `comm`, then **each entry's** own single-ref render |
@@ -352,10 +357,10 @@ oversight: it is CLI-only and nothing in `server.py` imports `subsystem_touch`.
 
 ```bash
 # build + push (immutable tag, no default)
-scripts/subsystem-store-api/build-push.sh 0.1.0
+server/build-push.sh 0.1.0
 
 # seed the pod from the local store (source is read-only)
-scripts/subsystem-store-api/seed.sh \
+server/seed.sh \
     --store ~/.claude/analyze-service-index \
     --stage /tmp/store-stage \
     --push subsystem-store/subsystem-store-api
@@ -364,7 +369,7 @@ scripts/subsystem-store-api/seed.sh \
 kubectl -n subsystem-store port-forward svc/subsystem-store-api 18102:8102
 
 # the acceptance check, every scope
-scripts/subsystem-store-api/verify-byte-identity.sh \
+server/verify-byte-identity.sh \
     --store ~/.claude/analyze-service-index \
     --url http://127.0.0.1:18102 \
     --token-file <(kubectl -n subsystem-store get secret subsystem-store-token \
@@ -1045,12 +1050,15 @@ layers' job; this layer is the only one that can see a wrong credential.
   row's allowlist governs both reads and writes; splitting the two would mean a
   second field on every row and a second thing to get wrong. What DOES gate
   writes today is identity: a BARE (legacy) token cannot write at all.
-- **A CLI verb for writing** — `scripts/cairn` still only reads. The API is the
-  contract; the wrapper is a separate change and is not claimed here.
+- **A CLI verb for writing** — LANDED, no longer deferred. The client (`cairn`,
+  repo root) ships `append`, `put` and `create` as the write verbs' mirror
+  image, with exit codes 6–9 disjoint from every read code; the API remains the
+  contract, and the wrapper's own docstring is the client-side authority.
 - **Backup CronJob, daily-commit CronJob** — the workbench copy is
   authoritative until criteria 8-10 land, so the PVC is a second copy, not the
   only one.
-- **A `rotate-token` script** — the procedure above is four steps across a SOPS
-  file and a `kubectl` restart in another repo, and §2b's "one command" is worth
-  building only once phase 2's wrapper exists to be the thing that holds it.
-  Stated here rather than claimed as done.
+- **A `rotate-token` script** — still unbuilt, but its premise changed: the
+  phase-2 wrapper whose existence was the reason to wait now exists, so the
+  one-command rotation has a thing to live in. The procedure above remains four
+  steps across a SOPS file and a `kubectl` signal. Stated here rather than
+  claimed as done.

@@ -5105,7 +5105,9 @@ class TestByteIdentityVerifier:
             "server/README.md",
             # 🔴 A FILE OUTSIDE THE OBVIOUS TWO. A hand-written ledger of "where
             # the claim was copied to" missed a site once; the enumeration has to
-            # reach files nobody thought to list.
+            # reach files nobody thought to list. `AGENTS.md` is the canonical
+            # agent-rules file; `CLAUDE.md` is its one-line import stub.
+            "AGENTS.md",
             "CLAUDE.md",
         ):
             assert must in files, f"the scan does not reach {must}"

@@ -2,10 +2,11 @@
 
 WHY
 ---
-This repo is PUBLIC (`gh repo view --json visibility`), and `CLAUDE.md` says so:
-"Never commit a real media-library path, directory name, filename, route log, or
-a real third-party hostname used as an example." A production cluster's public
-IP is the same class of disclosure, and one sat in
+This repo is PUBLIC (`gh repo view --json visibility`), and `AGENTS.md` says so
+(the canonical agent-instruction file; `CLAUDE.md` is a one-line stub importing
+it): never commit a hostname or cluster name from a private deployment, a
+private IP, or a real third-party address of any kind. A production cluster's
+public IP is the same class of disclosure, and one sat in
 `scripts/opencode/agent/k8s.md` from #276 until it was found by hand.
 
 Hand-finding it is the problem. This module makes it deterministic.
