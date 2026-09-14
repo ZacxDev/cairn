@@ -60,20 +60,17 @@ jobs:
           python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
-          # 1805 collected, measured 2026-09-14 on the Go-port branch: 1798 on
-          # `main` plus the seven guards `TestTheOracleSpecificMark` adds for the
-          # oracle-only mechanism. The previous constant was 1748 against 1798 on
-          # `main` AFTER three PRs landed together (#17 the scrub fix, #18 the
-          # capability ledger, #19 the conformance suite) — the two feature PRs
-          # each measured their OWN branch (1740 and 1769) and neither number was
-          # ever true of the merged tree, which is why this is re-measured rather
-          # than carried over from whichever branch landed last.
+          # 1819 collected, measured on the P1b branch: 1806 at `3058af3` plus the
+          # eight guards the tightened relations add (three statuses x two relation
+          # kinds, plus the one-real-answer positive control and the mixed pair) and
+          # the five in `test_reader_fixtures.py`. The previous constant was 1755
+          # against 1805 measured on the P1a branch.
           #
           # Raise as the suite grows — `m - min(50, max(1, m/20))` for the m you
           # measured; never lower without saying why. ⚠ THE GO TESTS ARE NOT IN
           # THIS NUMBER: they are a different runner in a different job, and
           # folding them in would make one floor answer two questions.
-          FLOOR = 1755
+          FLOOR = 1769
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -127,27 +124,29 @@ jobs:
           set -o pipefail
           go test ./... | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
-          # EIGHT packages carry tests, measured 2026-09-14: api, authz, netid,
-          # pytext, report, snapshot, store, write. The floor is ONE BELOW that,
-          # so deleting a package's tests fails here while adding a package does
-          # not — the same shape as the Python collected-test floor, and for the
-          # same reason: `go test` over a package with no test files exits 0, so
-          # the exit code alone cannot tell a green suite from an absent one.
+          # NINE packages carry tests, measured on the P1b branch: api, authz, hostid,
+          # netid, pytext, report, snapshot, store, write. It was EIGHT at P1a; `hostid`
+          # arrived with the renderer, which needed a "whose disk is this" answer. The
+          # floor is ONE BELOW that, so deleting a package's tests fails here while
+          # adding a package does not — the same shape as the Python collected-test
+          # floor, and for the same reason: `go test` over a package with no test files
+          # exits 0, so the exit code alone cannot tell a green suite from an absent one.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 7 ]; then
+          if [ "$ok" -lt 8 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
 
       # 🔴 THE P1 GATE ITSELF: the conformance corpus, replayed against the Go
-      # server. It is expected to be PARTIAL at P1a — the `/recall` and `/search`
-      # rendering is P1b — so the assertion is on the split rather than on zero
-      # failures, and the numbers are read out of the runner's own summary line.
+      # server. At P1a it was expected to be PARTIAL — the `/recall` and `/search`
+      # rendering was P1b's — so this asserted a SPLIT. P1b landed the renderer and
+      # the split is gone, so the assertion is now zero failures of every kind.
       #
-      # ⚠ A CEILING, NOT A FLOOR, AND THE DIRECTION IS THE POINT: the run must not
-      # get WORSE. A floor on passes would go green for a server that started
-      # failing cases it used to pass, as long as it passed enough others.
-      - name: the conformance corpus against the Go server (P1a is partial by design)
+      # ⚠ THE PASS FLOOR STAYS, AND IT IS NOT REDUNDANT WITH "ZERO FAILURES". A run
+      # that collected nothing has zero failures too; the floor is what tells a green
+      # corpus from an absent one, which is the same reason the Python job counts
+      # collected tests instead of reading an exit code.
+      - name: the conformance corpus against the Go server
         run: |
           set -o pipefail
           tests/conformance/run_go.sh > /tmp/conformance.txt 2>&1 || true
@@ -167,43 +166,36 @@ jobs:
           skips=$(grep -c '^SKIP ' /tmp/conformance.txt || true)
           echo "passes=$passes failing-cases=$cases failing-normalizations=$norms failing-relations=$relations skips=$skips"
 
-          # Measured at P1a: 94 PASS lines (cases and relations), 22 failing cases
-          # — every one a `/recall` or `/search` RENDERING case — 44 failing
-          # normalizations (two report-body licences per rendering case, which
-          # cannot fire on a 501), 0 failing relations, and 5 SKIP lines (4
+          # Measured at P1b: 116 PASS lines (cases and relations), 0 failing cases,
+          # 0 failing normalizations, 0 failing relations, 5 SKIP lines (4
           # oracle-specific cases plus the one uniform-401 member that belongs to
-          # one of them). P1b lands the renderer and drops all three failure counts
-          # to 0; RAISE the pass floor and LOWER the failure ceilings in the same
-          # change.
+          # one of them). At P1a it was 94 / 22 / 44 / 0 / 5 — the 22 were every
+          # `/recall` and `/search` RENDERING case and the 44 were their two
+          # report-body normalizations, which cannot fire on a 501 body.
           #
-          # ⚠ A CEILING ON FAILURES AND A FLOOR ON PASSES, AND BOTH DIRECTIONS
-          # MATTER: a floor on passes alone goes green for a server that started
-          # failing cases it used to pass, as long as it passed enough others.
-          if [ "$passes" -lt 94 ]; then
-            echo "REFUSING: $passes passes, and 94 were measured at P1a — the run got worse"
+          # ⚠ THE PREVIOUS VERSION OF THIS STEP ALSO CHECKED THAT EVERY FAILING LINE
+          # NAMED A REPORT ROUTE, so a regression could not hide inside the expected
+          # partial split. With the ceiling at zero that check is subsumed: there is no
+          # allowed failure left for anything to hide among, which is why it is deleted
+          # rather than kept as a second spelling of the same refusal.
+          if [ "$passes" -lt 116 ]; then
+            echo "REFUSING: $passes passes, and 116 were measured at P1b — the run got worse"
             exit 1
           fi
-          if [ "$cases" -gt 22 ] || [ "$norms" -gt 44 ]; then
-            echo "REFUSING: $cases failing cases and $norms failing normalizations;"
-            echo "          22 and 44 were measured at P1a"
+          if [ "$cases" -ne 0 ] || [ "$norms" -ne 0 ] || [ "$relations" -ne 0 ]; then
+            echo "REFUSING: $cases failing cases, $norms failing normalizations,"
+            echo "          $relations failing relations; P1b measured 0 of each"
             grep '^FAIL ' /tmp/conformance.txt
             exit 1
           fi
-          # 🔴 A FAILING RELATION IS NEVER ATTRIBUTABLE TO P1b. The relations are
-          # about REFUSALS being indistinguishable and a HEAD agreeing with its
-          # GET; a missing renderer cannot break either, so any failure here is a
-          # real one.
-          if [ "$relations" -ne 0 ]; then
-            echo "REFUSING: a relational property failed, which the missing renderer cannot explain"
-            grep '^FAIL relation ' /tmp/conformance.txt
-            exit 1
-          fi
-          # 🔴 EVERY REMAINING FAILURE MUST BE ATTRIBUTABLE TO P1b BY NAME. A
-          # failure anywhere else is a regression wearing the P1a costume, so the
-          # SET is checked and not only its size.
-          if grep '^FAIL ' /tmp/conformance.txt |
-               grep -vE '^FAIL (normalization )?(recall|search|raw-recall)'; then
-            echo "REFUSING: a failing line that is NOT a report-rendering case"
+          # 🔴 AND THE SKIP SET IS PINNED BY SIZE, BECAUSE A SKIP NOBODY COUNTS IS
+          # INDISTINGUISHABLE FROM A PASS. Four rows are `oracle_only` plus the one
+          # uniform-401 member belonging to one of them; the mechanism is the one thing
+          # in this corpus that is ALLOWED to stop comparing a case, so a fifth
+          # oracle-specific row appearing has to be a decision somebody made.
+          if [ "$skips" -ne 5 ]; then
+            echo "REFUSING: $skips SKIP lines, and 5 were measured — a row stopped being compared"
+            grep '^SKIP ' /tmp/conformance.txt
             exit 1
           fi
 

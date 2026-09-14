@@ -77,6 +77,30 @@ def _raw_corpus() -> dict:
     return json.loads(cases_mod.REQUESTS_PATH.read_text(encoding="utf-8"))
 
 
+def _records_answering(corpus: cases_mod.Corpus, status: int) -> dict:
+    """A record per case, all IDENTICAL apart from the id, answering `status`.
+
+    Identical on purpose: it makes every between-responses comparison SUCCEED, so a
+    failure from `check_scope_pairs` or `check_head_pairs` over these records can only
+    come from the guard under test and not from the comparison the guard sits in front of.
+    """
+    return {
+        case.id: {
+            "case": case.id,
+            "status": status,
+            "reason": "synthetic",
+            "headers": [],
+            "body": {
+                "kind": "text_lines",
+                "text_lines": ["same"],
+                "sha256": "x",
+                "bytes": 4,
+            },
+        }
+        for case in corpus.cases
+    }
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -382,6 +406,84 @@ class TestTheOracleSpecificMark:
         ), caveated.lines
 
 
+class TestARelationCannotBeSatisfiedByTwoSERVERERRORS:
+    """🔴 THE CAVEAT ABOVE ANNOTATES A PASS; IT DOES NOT WITHHOLD ONE — so the two report
+    relations really did report a property over four members that all answered
+    `501 not-implemented`. A prose caveat on a green line is a comment competing with a
+    verdict, and the deterministic fix beats the prose one: a relation now REFUSES to
+    vouch for a set in which no member gave a real answer.
+
+    Both directions are measured here, and the negative control comes first: a guard that
+    has not been watched to go red is not known to be wired to anything.
+    """
+
+    @pytest.mark.parametrize("status", [500, 501, 503])
+    def test_a_scope_pair_of_two_5xx_answers_is_a_FAILURE(self, corpus, status):
+        outcome = suite.Outcome()
+        suite.check_scope_pairs(
+            corpus, _records_answering(corpus, status), outcome,
+            skipped=set(), failed=set(),
+        )
+        # EVERY pair, not merely one: the mechanism is the status, so a guard that fired
+        # on the first pair and not the rest would be a guard at one call site.
+        assert len(outcome.failures) == len(corpus.scope_pairs), outcome.failures
+        assert all("no member that gave a real answer" in f for f in outcome.failures)
+        assert all(str(status) in f for f in outcome.failures)
+        assert not any(ln.startswith("PASS relation refused-equals-absent") for ln in outcome.lines)
+
+    @pytest.mark.parametrize("status", [500, 501, 503])
+    def test_a_head_pair_of_two_5xx_answers_is_a_FAILURE(self, corpus, status):
+        outcome = suite.Outcome()
+        # 🔴 THE LENGTHS AGREE, which is what makes this the right control: the OLD claim
+        # is satisfied and the relation must refuse anyway. Feeding mismatched lengths
+        # would go red for the other reason and prove nothing about this guard.
+        outcome.raw_lengths = {
+            case.id: 41 for case in corpus.cases
+        }
+        suite.check_head_pairs(
+            corpus, _records_answering(corpus, status), outcome,
+            skipped=set(), failed=set(),
+        )
+        assert len(outcome.failures) == len(corpus.head_pairs), outcome.failures
+        assert all("no member that gave a real answer" in f for f in outcome.failures)
+        assert not any(ln.startswith("PASS relation head-matches-get") for ln in outcome.lines)
+
+    def test_ONE_real_answer_is_enough_and_a_4xx_counts_as_one(self, corpus):
+        """🔴 THE POSITIVE CONTROL, AND THE BOUNDARY IS 500 RATHER THAN 400 ON PURPOSE.
+        A 4xx refusal IS an answer — the uniformity of this server's refusals is itself
+        part of the contract — so a pair of 404s must still be compared. Only a 5xx says
+        "the server did not answer the question", and only then is comparing two of them
+        free.
+        """
+        for status in (200, 404, 428):
+            outcome = suite.Outcome()
+            suite.check_scope_pairs(
+                corpus, _records_answering(corpus, status), outcome,
+                skipped=set(), failed=set(),
+            )
+            assert outcome.failures == [], (status, outcome.failures)
+            assert any(
+                ln.startswith("PASS relation refused-equals-absent") for ln in outcome.lines
+            ), (status, outcome.lines)
+
+    def test_a_MIXED_pair_is_compared_rather_than_refused(self, corpus):
+        """One real answer is the bar, so a 503 beside a 200 is still measured — and it
+        FAILS, on the comparison, because a 503 and a 200 are not the same answer. That is
+        the shape that must not be swallowed by the new guard: a refused scope answering
+        503 while an absent one answers 200 is the enumeration API the relation exists to
+        catch."""
+        records = _records_answering(corpus, 200)
+        pair = corpus.scope_pairs[0]
+        records[pair.refused] = {**records[pair.refused], "status": 503, "reason": "x"}
+        outcome = suite.Outcome()
+        suite.check_scope_pairs(
+            corpus, records, outcome, skipped=set(), failed=set(),
+        )
+        assert len(outcome.failures) == 1, outcome.failures
+        assert "distinguishable from an" in outcome.failures[0]
+        assert "no member that gave a real answer" not in outcome.failures[0]
+
+
 class TestNormalizations:
     def test_the_bullet_date_normalization_maps_two_different_dates_together(self):
         """🔴 A TWO-POINT MEASUREMENT ON THE DIMENSION THAT MOVES. The generator
@@ -529,7 +631,7 @@ class TestTheFramingClaim:
             "search-authorized-head": 7,
             "search-authorized": 7,
         }
-        suite.check_head_pairs(corpus, outcome)
+        suite.check_head_pairs(corpus, _records_answering(corpus, 200), outcome)
         assert len(outcome.failures) == 1
         assert "understates the length" in outcome.failures[0]
         assert [ln for ln in outcome.lines if ln.startswith("FAIL relation head")]

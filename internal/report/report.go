@@ -1,23 +1,34 @@
-// Package report is the P1a/P1b SEAM, and it is the whole of it.
+// Package report is the store's REPORT RENDERER: the digest, the index page, the
+// malformed block, the sensitivity fold, the four-state discrimination, and the search
+// scorer under it. It is what `/api/v1/recall/{scope}` and `/api/v1/search/{scope}`
+// answer with, and it is a port of the oracle's reader function by function.
 //
-// 🔴 WHAT P1b ADDS AND WHAT IT MUST NOT TOUCH. `/api/v1/recall/{scope}` and
-// `/api/v1/search/{scope}` are the two routes whose 200 body is a RENDERED report —
-// the digest, the index page, the malformed block, the sensitivity fold, the
-// four-state discrimination. Porting that renderer is P1b. Everything else those two
-// routes do is here and is finished: their query parameters are parsed and VALIDATED
-// (a typo'd `?limit=abc` is a 400, never a silent default), the scope is narrowed by
-// the caller's allowlist, and their refusals are byte-identical to every other
-// route's.
+// 🔴 IT IS A LIBRARY, NOT A HANDLER, AND THAT IS THE WHOLE REASON THE REWRITE IS SAFE.
+// The pod and the CLI must run ONE renderer: two renderers in two languages agreeing
+// byte-for-byte forever is a discipline, and drift would arrive as "a different order
+// that reads as a stale cache" rather than as an error. So nothing here takes or returns
+// an HTTP type, nothing reads server configuration, and every error is classifiable by a
+// caller that is not a handler — `store.StoreMissingError`, `store.EntryUnreadableError`,
+// `ErrFocusSelectorUnported`, and the validation errors below. A CLI consumes `Recall` /
+// `Search` for the report, `RecallReport.RenderText` / `SearchReport.RenderText` for the
+// bytes (with its own `extraHeader` lines), and `ExitFor` for the exit code and the one
+// warning sentence. `Reader` is the thin adapter the pod hands to `internal/api`, and the
+// only type in the package that knows a server exists.
 //
-// So P1b's change is: implement Renderer, hand it to the api package, delete
-// Unimplemented. No route moves, no status code moves, no header set moves, and the
-// argument validation below does not get a second spelling on the way in.
+// ⚠ IT WAS THE P1a/P1b SEAM, AND THE SEAM IS SPENT. P1a shipped the routes with their
+// query parameters parsed and VALIDATED, the scope narrowed by the caller's allowlist and
+// their refusals byte-identical to every other route's, plus an `Unimplemented` renderer
+// answering 501. P1b implemented the renderer and deleted that type along with the
+// handler branch that read its error. What P1b also had to add, which the old wording
+// said would not move: `X-Store-Revision`, absent from the Go report response because no
+// report response existed to carry it.
 //
 // 🔴 THE VALIDATION LIVES HERE RATHER THAN IN THE HANDLER BECAUSE IT IS THE
 // REPORT'S OWN CONTRACT, NOT THE TRANSPORT'S. `limit must be an int >= 1` is a rule
 // about a report; the handler's job is to turn a refusal into a 400. Spelling it in
-// the handler would mean P1b either trusts an unvalidated option or validates it a
-// second time, and a predicate at two sites is wrong at one of them.
+// the handler would mean the renderer either trusts an unvalidated option or validates it
+// a second time, and a predicate at two sites is wrong at one of them. ⚠ `Recall` and
+// `Search` do NOT re-run it, for the same reason.
 package report
 
 import (
@@ -57,6 +68,14 @@ type RecallOptions struct {
 	Limit  int
 	Mode   string
 	Page   int
+
+	// FocusPaths is the repo-relative path window the FEATURED-ENTRY selector would
+	// resolve against. The store API never sets it — a pod has no repo to read a handoff
+	// doc out of — and the selector that consumes it is deliberately NOT ported, so a
+	// non-empty window is REFUSED by name rather than silently taking the fallback. See
+	// ErrFocusSelectorUnported for why that direction, and for the condition that closes
+	// it.
+	FocusPaths []string
 }
 
 // SearchOptions is one `/search` request, after parsing and before rendering.
@@ -69,47 +88,33 @@ type SearchOptions struct {
 	AllScopes bool
 }
 
-// Rendered is what a route needs to answer a report request: the four-state status,
-// the CLI exit code derived from it, the label the exit decision reads, and the body.
+// Rendered is what a route needs to answer a report request: the four-state status, the
+// CLI exit code derived from it, the scope the answer is about, the body, and the one
+// warning line that accompanies a non-zero exit.
 //
-// It is returned as one value rather than as four out-parameters so P1b cannot add a
-// field the handler forgets to read — the handler destructures exactly this and
-// nothing else.
+// It is returned as one value rather than as out-parameters so a renderer cannot add a
+// field the handler forgets to read — the handler destructures exactly this and nothing
+// else. ⚠ `Warning` IS THE FIELD P1b ADDED, and the paragraph above is why it is a field
+// rather than a `stderr` write inside the renderer: see ExitFor.
 type Rendered struct {
-	Status string
-	Scope  string
-	Exit   int
-	Text   string
+	Status  string
+	Scope   string
+	Exit    int
+	Text    string
+	Warning string
 }
 
-// Renderer is the seam. P1b implements it; P1a ships Unimplemented.
+// Renderer is the seam. Reader implements it.
+//
+// ⚠ P1a SHIPPED AN `Unimplemented` RENDERER HERE, ANSWERING A DISTINCT `501` SO AN
+// OPERATOR RUNNING BOTH SERVERS COULD TELL "this build does not do reports yet" FROM
+// "this build broke". Both it and the handler branch that read its error are GONE, deleted
+// with the renderer rather than left behind: a 501 arm no code path can reach is a branch
+// that reads as a live fallback, and the honest answer for a report route in this build is
+// now the report.
 type Renderer interface {
 	Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Rendered, error)
 	Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Rendered, error)
-}
-
-// ErrUnimplemented is what P1a's renderer returns. The handler answers 501 and says
-// which phase owns it.
-//
-// 🔴 IT IS A DISTINCT ERROR AND NOT A 500, BECAUSE THE TWO MEAN OPPOSITE THINGS TO
-// AN OPERATOR RUNNING BOTH SERVERS SIDE BY SIDE. A 500 says "this server broke"; a
-// 501 says "this server does not implement this yet, ask the other one". During a
-// dual-run those are the only two hypotheses worth telling apart.
-var ErrUnimplemented = errors.New("the report renderer is not implemented in this build")
-
-// Unimplemented is the P1a renderer. It validates nothing and renders nothing: the
-// validation has already run in the handler through ValidateRecall/ValidateSearch, so
-// a caller error is still a 400 here and only a well-formed request reaches this
-// refusal. That ordering is the point — it is what makes the parameter contract
-// measurable before the renderer exists.
-type Unimplemented struct{}
-
-func (Unimplemented) Recall(string, RecallOptions, store.ScopeSet) (Rendered, error) {
-	return Rendered{}, ErrUnimplemented
-}
-
-func (Unimplemented) Search(string, SearchOptions, store.ScopeSet) (Rendered, error) {
-	return Rendered{}, ErrUnimplemented
 }
 
 // ValidateRecall is the guard ladder a recall's options must pass, IN THIS ORDER,

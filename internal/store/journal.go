@@ -43,7 +43,7 @@ func IsFence(line string) bool {
 // than space and tab. Named for what it tests: an earlier spelling called it
 // `isSpaceOrTab`, which is a claim two characters narrower than the code.
 func isPyWhitespaceRune(r rune) bool {
-	return pytext.StripWhitespace(string(r)) == ""
+	return pytext.IsSpace(r)
 }
 
 // JournalBullet is one top-level bullet of a nuance section, VERBATIM.
@@ -55,14 +55,91 @@ func isPyWhitespaceRune(r rune) bool {
 // a truncated bullet is exactly the thing a writer would fail to recognise as a
 // near-duplicate of the line it is about to write.
 //
-// ⚠ IT CARRIES ONLY `Lines`, AND THAT IS DELIBERATE RATHER THAN INCOMPLETE. The
-// reader's bullet also carries a parsed DATE and an OPENNESS marker (`OPEN:` /
-// `RESOLVED <sha>:`); nothing on the write path branches on either, and a field in
-// a struct that no code path reads is a declaration nothing honours. They arrive
-// with the renderer, which is the only thing that reports them.
+// ⚠ IT USED TO CARRY ONLY `Lines`, ON THE GROUNDS THAT A FIELD NO CODE PATH READS IS
+// A DECLARATION NOTHING HONOURS — and it said the date and the openness marker would
+// "arrive with the renderer, which is the only thing that reports them". They have
+// arrived: `internal/report`'s index row is the consumer, so the fields are here and
+// the comment is updated rather than left contradicting the struct beside it.
 type JournalBullet struct {
 	Lines []string
+
+	// Date is the ISO date the bullet is dated with, or "". ~44% of the oracle's
+	// live corpus carries no date, so "" is an ordinary reading and not a parse
+	// failure.
+	Date string
+
+	// Openness is OpennessOpen, OpennessResolved or "" — the bullet's DECLARED
+	// marker. "" is by far the common reading and means only that nothing was
+	// declared. 🔴 It does NOT mean "this bullet proposes no work".
+	Openness string
+
+	// ResolvedBy is the sha a `RESOLVED <sha>:` bullet names as having closed it, or
+	// "". A `RESOLVED` with no sha parses fine and leaves this empty: the marker is
+	// still worth having, it just cannot be verified — which is exactly the
+	// distinction `PopulationUnverifiable` reports, so the field is branched on and
+	// not merely stored.
+	ResolvedBy string
 }
+
+// OpennessPopulation is WHICH of the six populations this bullet belongs to. Exactly
+// one.
+//
+// 🔴 THE SINGLE SOURCE OF THE PRECEDENCE ORDER, and the reason it exists rather than
+// each caller testing the fields. On the oracle a delta re-audit found one bullet
+// counted TWICE in a writer-facing block — a line that is both a near-miss and an
+// unmarked action rendered under both headings — because two surfaces each decided
+// membership for itself. Every consumer branches on this.
+//
+// Precedence, most-certain first; an earlier case wins outright:
+//
+//	open          the writer declared `OPEN:`. Exact.
+//	unverifiable  a `RESOLVED:` naming no sha; closed but unprovable.
+//	resolved      a `RESOLVED <sha>:`. Nothing to report.
+//	near-miss     no marker parsed, but the line looks like an attempt. Beats
+//	              `unmarked` because "your write did not land" is actionable and
+//	              specific, where "this reads like an open action" is a guess about
+//	              the same line.
+//	unmarked      no marker, and the prose matches the narrow floor.
+//	none          everything else — the overwhelming majority.
+//
+// ⚠ ONLY `near-miss` > `unmarked` IS OBSERVABLE, and this says so rather than implying
+// all five levels are load-bearing. `nearMissMarker` and `unmarkedAction` both
+// self-suppress once `Openness` is set, so reordering `open`/`resolved`/`unverifiable`
+// against them are EQUIVALENT mutants that no test can kill — measured as survivors on
+// the oracle's own battery. The order is still written most-certain-first because that
+// is what makes it readable; just do not count those levels as guards.
+func (b JournalBullet) OpennessPopulation() string {
+	switch b.Openness {
+	case OpennessOpen:
+		return PopulationOpen
+	case OpennessResolved:
+		if b.ResolvedBy != "" {
+			return PopulationResolved
+		}
+		return PopulationUnverifiable
+	}
+	if nearMissMarker(b.FirstLine()) {
+		return PopulationNearMiss
+	}
+	if unmarkedAction(b.Text()) {
+		return PopulationUnmarked
+	}
+	return PopulationNone
+}
+
+// FirstLine is the bullet's opening line, or "" for a bullet with no lines (which
+// ParseJournalBullets never produces, since a group is opened BY a line).
+func (b JournalBullet) FirstLine() string {
+	if len(b.Lines) == 0 {
+		return ""
+	}
+	return b.Lines[0]
+}
+
+// Text is the whole bullet, lines rejoined with `\n` — the unit `unmarkedAction`
+// searches, because that advisory is about the bullet's prose and a real bullet is
+// WRAPPED prose.
+func (b JournalBullet) Text() string { return strings.Join(b.Lines, "\n") }
 
 // ParseJournalBullets groups a nuance-section body into top-level bullets.
 //
@@ -105,7 +182,13 @@ func ParseJournalBullets(body string) []JournalBullet {
 		for len(group) > 0 && pytext.StripWhitespace(group[len(group)-1]) == "" {
 			group = group[:len(group)-1]
 		}
-		out = append(out, JournalBullet{Lines: group})
+		openness, resolvedBy := BulletOpenness(group[0])
+		out = append(out, JournalBullet{
+			Lines:      group,
+			Date:       BulletDate(group[0]),
+			Openness:   openness,
+			ResolvedBy: resolvedBy,
+		})
 	}
 	return out
 }

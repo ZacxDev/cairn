@@ -40,6 +40,7 @@ package pytext
 import (
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -169,6 +170,30 @@ func isPySpace(r rune) bool {
 	}
 	// U+2000..U+200A — EN QUAD through HAIR SPACE.
 	return r >= 0x2000 && r <= 0x200a
+}
+
+// IsSpace is isPySpace under an exported name, so a caller outside this package
+// asks the same question rather than spelling a second answer to it.
+//
+// 🔴 IT IS ALSO `re`'s `\s` FOR A `str` PATTERN, MEASURED AND NOT ASSUMED. On the
+// pinned interpreter (3.12) the set of code points matching `re.fullmatch(r"\s", c)`
+// and the set for which `c.isspace()` is true are THE SAME 29 code points — checked
+// exhaustively over 0 … U+10FFFF, zero in either direction. So a port of a Python
+// pattern containing `\s` uses this predicate, NOT Go's `\s`, which is only
+// `[\t\n\f\r ]` and would silently stop matching on a NO-BREAK SPACE.
+func IsSpace(r rune) bool { return isPySpace(r) }
+
+// IsWordChar is `re`'s `\w` for a `str` pattern, which is what Python's `\b` is
+// defined against.
+//
+// 🔴 GO's `\b` IS ASCII-ONLY AND PYTHON's IS NOT, so a pattern anchored on `\b`
+// cannot be transcribed. Measured exhaustively over 0 … U+10FFFF on the pinned
+// interpreter: Python's `\w` is exactly `L* | N* | '_'` — 137,936 code points, and
+// notably it does NOT include the 2,450 COMBINING MARKS (`Mc`/`Me`/`Mn`) that a
+// `IsLetter|IsNumber|IsMark` guess would add. Checked in both directions: nothing
+// Python matches is missing here and nothing here is unmatched there.
+func IsWordChar(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
 // SplitWhitespace is `str.split()` with no argument: split on runs of

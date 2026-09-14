@@ -282,6 +282,22 @@ func buildFixtureStore(t *testing.T) string {
 	}
 	put("alpha-notes", "gadget-one.md", entry("gadget-one", "alpha-notes"))
 	put("beta-notes", "widget-three.md", entry("widget-three", "beta-notes"))
+	// 🔴 `alpha-notes` IS A GIT REPO IN THIS FIXTURE, AND WITHOUT THAT THE `X-Store-Revision`
+	// ALLOWLIST GATE IS UNREACHABLE. That header is the ONE answer not derived from the
+	// narrowed index — it is read straight off `<scope>/.git/HEAD` — so it is the one place a
+	// refused scope could still be told apart from an absent one. With no `.git` anywhere,
+	// every scope answers `unknown`, the refused-equals-absent assertion passes for the wrong
+	// reason, and a mutant DELETING the gate SURVIVES. Measured exactly that way.
+	//
+	// A bare sha is written rather than a real repository: the reader accepts a detached HEAD
+	// and nothing here spawns git. The value is synthetic hex that spells nothing.
+	if err := os.MkdirAll(filepath.Join(root, "alpha-notes", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "alpha-notes", ".git", "HEAD"),
+		[]byte("a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, ".seed-stamp"),
 		[]byte("2000-01-04T00:00:00Z\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1075,31 +1091,129 @@ func TestHEADCarriesEveryHeaderAndNoBody(t *testing.T) {
 	}
 }
 
-func TestTheReportRoutesAreRoutedAndAuthorisedButNotRendered(t *testing.T) {
+func TestTheReportRoutesRenderAndStillRefuseFirst(t *testing.T) {
 	h := newHarness(t)
-	// The P1a state, pinned so it cannot be mistaken for a working renderer: the two
-	// report routes authenticate, authorise and validate their parameters, then answer
-	// 501 rather than a body.
+	// ⚠ THIS TEST USED TO PIN THE P1a STATE — a 501 with `X-Store-Status:
+	// not-implemented` — so a missing renderer could not be mistaken for a working one.
+	// P1b implemented it, so the assertion moved with the behaviour rather than being
+	// deleted: what still has to hold is that the LADDER in front of the renderer is
+	// unchanged, which is the half a working renderer could quietly swallow.
 	got := h.do(t, "GET", "/api/v1/recall/alpha-notes", wideToken, nil, "")
-	if got.status != 501 {
+	if got.status != 200 {
 		t.Fatalf("got %d %q", got.status, got.body)
 	}
-	if got.headers.Get("X-Store-Status") != "not-implemented" {
-		t.Fatalf("X-Store-Status %q", got.headers.Get("X-Store-Status"))
+	if got.headers.Get("X-Store-Status") != "recalled" || got.headers.Get("X-Store-Exit") != "0" {
+		t.Fatalf("X-Store-Status %q X-Store-Exit %q",
+			got.headers.Get("X-Store-Status"), got.headers.Get("X-Store-Exit"))
 	}
-	// 🔴 501, NOT 500, AND THE TWO MEAN OPPOSITE THINGS TO AN OPERATOR RUNNING BOTH
-	// SERVERS SIDE BY SIDE. A 500 says "this server broke"; a 501 says "this server does
-	// not implement this yet, ask the other one".
-	if !strings.Contains(got.body, "not implemented") {
+	// 🔴 `X-Store-Revision` IS THE HEADER P1b ADDED, and it is the ONE header on this route
+	// that is not derived from the narrowed index — it is read off `<scope>/.git/HEAD`. A
+	// report answered without it is a report whose scope cannot be quoted as `scope@sha`,
+	// and its ABSENCE is what a P1a-era port shipped.
+	// The fixture makes `alpha-notes` a repo on purpose — see buildFixtureStore — so this
+	// asserts the sha and not the `unknown` fallback. Asserting `unknown` would be the
+	// vacuous version: it passes with the whole function replaced by a constant.
+	if got.headers.Get("X-Store-Revision") != "a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b" {
+		t.Fatalf("X-Store-Revision %q, want the scope's own HEAD",
+			got.headers.Get("X-Store-Revision"))
+	}
+	if !strings.Contains(got.body, "subsystem-recall: status=recalled scope=alpha-notes") {
 		t.Fatalf("body %q", got.body)
 	}
-	// …and the REFUSALS on those routes are the contract, not the 501: an unauthorised
-	// caller must never learn that the route is unimplemented.
+	// …and the REFUSALS on those routes come FIRST: an unauthorised caller must never reach
+	// the renderer, and a bad parameter must not be silently defaulted by it.
 	if unauth := h.do(t, "GET", "/api/v1/recall/alpha-notes", "", nil, ""); unauth.status != 401 {
 		t.Fatalf("authentication precedes the renderer: got %d", unauth.status)
 	}
 	if bad := h.do(t, "GET", "/api/v1/recall/alpha-notes?limit=0", wideToken, nil, ""); bad.status != 400 {
 		t.Fatalf("parameter validation precedes the renderer: got %d %q", bad.status, bad.body)
+	}
+	// 🔴 AND THE REFUSED SCOPE IS STILL INDISTINGUISHABLE FROM AN ABSENT ONE ON THE HEADER
+	// THE RENDERER DOES NOT CONTROL. `narrow-reader` may not see `alpha-notes`; a scope that
+	// never existed answers the same. The single licence to differ is the scope NAME, which
+	// a report echoes.
+	refused := h.do(t, "GET", "/api/v1/recall/alpha-notes", narrowToken, nil, "")
+	absent := h.do(t, "GET", "/api/v1/recall/ghost-void", narrowToken, nil, "")
+	if refused.headers.Get("X-Store-Revision") != absent.headers.Get("X-Store-Revision") {
+		t.Fatalf("a refused scope's revision must match an absent one's: %q vs %q",
+			refused.headers.Get("X-Store-Revision"), absent.headers.Get("X-Store-Revision"))
+	}
+	// 🔴 AND THE COMPARISON ABOVE IS ONLY A MEASUREMENT BECAUSE THE VALUE COULD HAVE
+	// DIFFERED. `alpha-notes` really does have a HEAD, and `wide-reader` really does see it,
+	// so the refused answer being `unknown` is a NARROWING and not a store with no repos in
+	// it. Without this line the pair could both be `unknown` for the uninteresting reason.
+	if refused.headers.Get("X-Store-Revision") != "unknown" {
+		t.Fatalf("a refused scope must answer `unknown`, got %q",
+			refused.headers.Get("X-Store-Revision"))
+	}
+	if got.headers.Get("X-Store-Revision") == refused.headers.Get("X-Store-Revision") {
+		t.Fatalf("the allowlist gate changes nothing: an ALLOWED caller and a REFUSED one "+
+			"both answered %q, so this pair cannot see a leak", refused.headers.Get("X-Store-Revision"))
+	}
+	if refused.headers.Get("X-Store-Status") != "scope-absent" {
+		t.Fatalf("a refused scope answers what an absent one answers: %q",
+			refused.headers.Get("X-Store-Status"))
+	}
+}
+
+func TestTheRENDERERSWarningReachesTheLog(t *testing.T) {
+	// 🔴 A FIELD ON A STRUCT IS NOT A GUARD — ONLY A BRANCH ON IT IS. `Rendered.Warning`
+	// carries the reader's own one-sentence summary of a `*-unreachable` report, and on the
+	// oracle the reader WRITES it to stderr itself, which is how the pod log gets it. Porting
+	// it as a returned value is the one deliberate difference in that path, so a handler that
+	// dropped it would lose the signal with every other byte still identical: the body, the
+	// status and `X-Store-Exit: 3` are all unchanged.
+	//
+	// ⚠ THE CONFORMANCE CORPUS CANNOT SEE THIS. It speaks HTTP, and this is a log line.
+	srv, err := newTestServer(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warnings []string
+	srv.Audit = func(string) {}
+	srv.Warn = func(line string) { warnings = append(warnings, line) }
+	// A scope holding entry files NONE of which can be indexed: the one state that produces
+	// a warning at all.
+	rubble := filepath.Join(srv.StoreRoot, "rubble-heap")
+	if err := os.MkdirAll(rubble, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rubble, "broken.md"),
+		[]byte("no front matter here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetTokens(append(srv.Tokens(), authz.TokenRecord{
+		Token: strings.Repeat("r", len(wideToken)), Identity: "rubble-reader",
+		Scopes: []string{"rubble-heap"},
+	}))
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	h := &harness{srv: srv, root: srv.StoreRoot, tsrv: ts}
+
+	got := h.do(t, "GET", "/api/v1/recall/rubble-heap", strings.Repeat("r", len(wideToken)), nil, "")
+	if got.status != 200 || got.headers.Get("X-Store-Status") != "scope-unreadable" {
+		t.Fatalf("got %d %q %q", got.status, got.headers.Get("X-Store-Status"), got.body)
+	}
+	// 🔴 200 WITH EXIT 3, WHICH IS THE WHOLE FOUR-STATE POINT: the store WAS read, and what
+	// it says is "none of this could be indexed".
+	if got.headers.Get("X-Store-Exit") != "3" {
+		t.Fatalf("X-Store-Exit %q", got.headers.Get("X-Store-Exit"))
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("got %d warning lines, want exactly 1: %v", len(warnings), warnings)
+	}
+	if !strings.HasPrefix(warnings[0], "subsystem-recall: scope-unreadable: all 1 entry file under `rubble-heap/` are MALFORMED") {
+		t.Fatalf("the sentence must be the reader's own: %q", warnings[0])
+	}
+
+	// The NEGATIVE control on the same sink: an ordinary readable scope produces NO warning,
+	// so this is not a handler that logs on every report.
+	warnings = nil
+	if ok := h.do(t, "GET", "/api/v1/recall/alpha-notes", wideToken, nil, ""); ok.status != 200 {
+		t.Fatalf("got %d", ok.status)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a readable scope must warn about nothing: %v", warnings)
 	}
 }
 

@@ -53,6 +53,16 @@ func (m MalformedEntry) Label() string {
 	return m.Scope + "/" + m.Filename
 }
 
+// Line is ONE row of a rendered MALFORMED block, carrying the sentinel phrase.
+//
+// 🔴 THE SENTINEL IS REPEATED PER ROW rather than hoisted into a block header, because
+// a row is what gets copied into a report, quoted in a message, or grepped for — and a
+// row that has left its header behind is a row that no longer says what kind of problem
+// it describes.
+func (m MalformedEntry) Line() string {
+	return "malformed index entry `" + m.Label() + "`: " + m.Reason
+}
+
 // TaskRef is one `<system>:<id>` reference from an entry's `tasks:` front matter.
 type TaskRef struct {
 	// System is normalized — lowercased and `-`-folded, like every other ref.

@@ -68,12 +68,12 @@ func isIgnoredStatErrno(err error) bool {
 	return false
 }
 
-// decodeReplace is Python's `read_text(encoding="utf-8", errors="replace")`.
+// DecodeReplace is Python's `read_text(encoding="utf-8", errors="replace")`.
 //
 // It delegates to `pytext`, which is where the CPython string rules live: the query
 // parser in `internal/api` needs the SAME decode for a percent-escaped byte run, and a
 // second copy is the duplicated predicate this codebase keeps finding. See
 // `pytext.DecodeUTF8Replace` for why it is one replacement per invalid BYTE.
-func decodeReplace(data []byte) string {
+func DecodeReplace(data []byte) string {
 	return pytext.DecodeUTF8Replace(data)
 }

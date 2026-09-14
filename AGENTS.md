@@ -85,8 +85,11 @@ These are the house style, and they are why the guards here are worth trusting:
 conformance corpus can be replayed against both implementations on the same store and
 the difference MEASURED. The sequence is fixed — the Go server passes the corpus, then
 both run over one store and byte-identity is compared, then the client is ported, then
-Python is retired. Do not declare a step done early, and do not switch the deployed
-image while the corpus is partial.
+Python is retired. **Step one is done and step two is not**: the corpus is green for both
+implementations, and no dual-run comparison has been made. Do not declare a step done
+early, and do not switch the deployed image on the strength of a green corpus — the
+sentence here used to read "while the corpus is partial", which a green corpus would have
+satisfied while leaving every remaining step untouched.
 
 🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP
 IDENTITY IS UNATTAINABLE — MEASURED, NOT ASSUMED.** `/api/v1/snapshot` ships
@@ -116,10 +119,14 @@ missing `path` record, a reordered record set and a moved checksum all normalise
 the comparison happens. Byte-diff the two archives when you change that writer; the tree
 comparison structurally cannot see it.
 
-**The corpus is the specification, and at P1a it is deliberately PARTIAL.** Measured on
-this tree: 94 PASS, 22 failing cases — every one a `/api/v1/recall/{scope}` or
-`/api/v1/search/{scope}` **rendering** case, which is P1b's job — 4 rows skipped as
-oracle-specific, 0 failing relations.
+**The corpus is the specification, and it is now GREEN for both implementations.**
+Measured on this tree: the Go server answers **116 PASS, 0 failing cases, 0 failing
+relations, 4 rows skipped** as oracle-specific; the oracle answers **0 failures, 0
+skipped**. At P1a the split was 94 PASS and 22 failing cases — every one of them a
+`/api/v1/recall/{scope}` or `/api/v1/search/{scope}` **rendering** case, which is what
+P1b closed. 🔴 **A GREEN CORPUS IS THE START OF THE BYTE-IDENTITY QUESTION, NOT THE END
+OF IT** — see the two paragraphs below, and note that the next step in the sequence is
+running both servers over ONE store and comparing, which the corpus does not do.
 
 ```bash
 go vet ./... && go test ./...            # the port's own guards
@@ -127,12 +134,29 @@ tests/conformance/run_go.sh              # the P1 gate: the corpus against the G
 python3 tests/conformance/suite.py run   # …and against the oracle, which must stay 0 failures
 ```
 
+⚠ **A GREEN `run_go.sh` AND A GREEN `go test` ARE DIFFERENT CLAIMS, AND NEITHER IMPLIES THE
+OTHER.** The corpus measures the SERVED HTTP contract over the bodies `requests.json`
+declares; `go test` measures the renderer against the oracle's bytes over shapes the corpus
+never sends (see the reader fixture below) and the decoding differences the corpus is
+structurally blind to. Read both.
+
 🔴 **A REFUSAL THAT IS "THE SAME" ON BOTH SERVERS MAY BE THE SAME FOR THE WRONG REASON.**
 A relation between two responses that both fail their own golden still PASSES — it
 compares them to each other, not to the contract — and at P1a `refused-equals-absent`
-and `head-matches-get` do exactly that for the two report routes, because
-`501 not-implemented` is beautifully uniform. The runner now prints that caveat on the
-line itself; read it rather than the verdict.
+and `head-matches-get` did exactly that for the two report routes, because
+`501 not-implemented` is beautifully uniform. Two things now stand against it, and the
+order matters because the first was **measured insufficient**:
+
+- the runner prints the caveat on the line itself. That annotates a PASS; it does not
+  withhold one, so it is a comment competing with a verdict.
+- 🔴 **the deterministic half, added at P1b: a relation with NO non-5xx member is a
+  FAILURE.** Every 5xx this server emits is uniform *by design* — it names no scope — so
+  two of them compare equal for free. `_any_real_answer` refuses to vouch for that set.
+  The bar is **one** real answer and the floor is **500, not 400**: a 4xx refusal IS an
+  answer, and the uniformity of those refusals is itself part of the contract.
+  Watched to work rather than reasoned about — a build whose report routes answer 500
+  produces `FAIL relation refused-equals-absent recall (every member answered 5xx …)`
+  for all four report members while the `snapshot`/`append`/`replace` pairs still PASS.
 
 🔴 **A GREEN CORPUS IS NOT A GREEN PORT, AND THAT IS MEASURED RATHER THAN CAUTIONARY.**
 Two defects shipped in the first Go commit with all four CI jobs green and the split
@@ -144,6 +168,98 @@ character — which is what `cairn append` sends, because `json.dumps` defaults 
 function, not by the suite; the suite builds its bodies from `requests.json` and no row
 carries either shape. **When the corpus is green, the question left is "what does it not
 send", and DECODING differences are the answer.**
+
+🔴 **AND THE RENDERER'S OWN GATE IS A DIFFERENTIAL FIXTURE, BECAUSE THE CORPUS CANNOT
+SEND MOST OF WHAT IT RENDERS.** `internal/report/testdata/reader_fixtures.json` holds the
+**oracle's own rendered bytes** for 50 cases over a 122-entry synthetic world, generated by
+`tests/reader_fixtures.py` and replayed by `internal/report`'s tests. It exists because no
+corpus row carries an openness marker, a near-miss marker, a `tasks:` key, a duplicate
+heading, a fenced region, a scope over the 100-line index page, an ambiguous ref, a bare
+entry, a present-but-EMPTY section, an entry with no `## What it is`, an honoured
+`sensitivity:`, an exact mtime TIE, a name-only search hit, a sub-threshold near miss, a
+fuzzy/prefix/substring match, a joined compound term, a `--max-hits` truncation, a malformed
+entry BESIDE readable ones, a `search-unreadable` scope, or an EMPTY allowlist — and every
+one of those is a branch.
+
+```bash
+python3 tests/reader_fixtures.py generate     # re-record from the oracle's reader
+python3 tests/reader_fixtures.py print <case> # read one case's expected bytes
+```
+
+Three properties keep it honest, each the same shape as the HTTP corpus':
+`tests/test_reader_fixtures.py` **regenerates and diffs** (a stale fixture is a failure, not
+a weaker comparison); `TestTheFixtureCoversTheSHAPESTheCorpusCannotSend` is a **ledger over
+the rendered output**, keyed on strings only each branch can produce, so the set cannot
+shrink; and two tables measure the functions no rendered case can reach properly —
+`difflib.SequenceMatcher.ratio()` over 20 pairs including the autojunk boundary, and
+CPython's `round(x, 3)` over 19 values including `.xx5` boundaries. ⚠ **The fixture is in
+`flake.nix`'s `onlyGo` filter for the same reason `requests.json` is** — leave it out and
+the sandbox tier's `go test` goes red naming it, which is the good direction and still worth
+saying.
+
+🔴 **THE MUTATION BATTERY: 56 mutants over two targets, 52 KILLED, 4 SURVIVED — and every
+survivor is LABELLED EQUIVALENT AT THE CODE, with the reasoning, because three of them
+corrected a comment that was wrong.**
+
+**46 over the RENDERER**, in three rounds: round 1 killed 24 of 40 and its 13 survivors are
+what built the fixture above; round 2 killed 40 of 46; round 3 killed 43 of 46 and is clean.
+The three correct survivors: `sort.SliceStable` → `sort.Slice` (the comparator is a total
+order); `1e-9*nsec` → `nsec/1e9` (**measured bit-identical at every realistic mtime
+magnitude** — the ULP of the sum dwarfs the difference, and the old comment claimed the
+hazard was reachable); and disabling `difflib`'s extension loops (**with an empty junk set
+the DP has already found the longest contiguous run, so neither loop can advance** — the old
+comment said two of the four "can run", which is two more than can).
+
+**10 over `store.ScopeRevision` AND THE WARNING SINK**, the two surfaces P1b added with one
+branch of coverage each: 9 killed by the guard's own test, 1 labelled equivalent. That round
+also found a defect in the new code — `readGitText` stripped the WHOLE file where the oracle
+reads `packed-refs` unstripped, which removed the last line's trailing whitespace and made
+the per-field strip unreachable from a fixture whose matching row came last.
+
+🔴 **THE RENDERER IS A LIBRARY, NOT A HANDLER, BECAUSE P2 IMPORTS IT.** `internal/report`
+holds `Recall`, `Search`, `RecallReport.RenderText`, `SearchReport.RenderText` and
+`ExitFor` — plain values in, plain values out, no `net/http` type in any signature, no
+server config, and every error classifiable with `errors.As`/`errors.Is`
+(`store.StoreMissingError`, `store.EntryUnreadableError`,
+`report.ErrFocusSelectorUnported`). `report.Reader` is the thin `Renderer` the pod hands
+to `internal/api` and the ONLY type in the package that knows a server exists. That shape
+is the whole point of P2: **pod and CLI run one renderer**, which is what makes
+byte-identity a property rather than a discipline — rewriting the server alone would leave
+two renderers agreeing forever by review.
+
+⚠ **THREE PLACES THE PORTED READER DELIBERATELY DIFFERS FROM THE ORACLE, each recorded
+because none is visible to the corpus:**
+
+| where | the difference | why |
+|---|---|---|
+| `report.ErrFocusSelectorUnported` | a non-empty focus path window is REFUSED, not served | the oracle's featured pick has two selectors and only the most-recent fallback is ported. A window that silently fell back would print a basis claiming a resolved pick — a wrong claim, silently. Closing condition: `associate_paths` ported with a red-at-baseline differential test, then the guard is deleted with it |
+| `store.ScopeRevision` on a `.git/HEAD` that is not valid UTF-8 | ONE `400` audit line here, **two** (`200` then `400`) on the oracle | there the strict decode raises while the response's arguments are being evaluated, after the 200 line is already written. Reproducing a mid-response raise to duplicate a log line is a worse trade than naming it |
+| `store.ScopeRevision` resolving a `ref:` | `filepath.Join` CLEANS, so a `ref:` naming `../…` cannot climb out of the git dir; the oracle's `git / ref` can | a NARROWING, in the safe direction. A HEAD pointing outside its own repo is not a revision worth reporting |
+
+🔴 **AND ONE DIVERGENCE IS OPEN RATHER THAN DELIBERATE: AN INTEGER QUERY PARAMETER WIDER
+THAN `int64`.** `_int_param` is `int(v)`, which is arbitrary precision; `intParam` is
+`strconv.Atoi`, which is not. **Measured live on both servers over one world**, not derived
+from reading:
+
+```
+GET /api/v1/recall/alpha-notes?page=999999999999999999999
+  oracle 200: INDEX (from index) — no entries: page 999999999999999999999 is past the end …
+  go     400: bad request: page must be an integer, got '999999999999999999999'
+GET /api/v1/recall/alpha-notes?limit=999999999999999999999
+  oracle 200: INDEX (from index) — ALL 2 entries in `alpha-notes/`, none omitted …
+  go     400: bad request: limit must be an integer, got '999999999999999999999'
+```
+
+It is a P1a-era parsing difference that only became OBSERVABLE at P1b, because before the
+renderer existed both answers were refusals. `tests/conformance/` cannot see it — the runner
+builds its targets from `requests.json` and no row carries a 21-digit parameter.
+⚠ **It is recorded here and NOT fixed in the same change as the renderer**, deliberately:
+widening `intParam`'s range is a change to the validation ladder, and P1b's whole claim is
+that the ladder did not move. **Closing condition:** a `requests.json` row carrying a
+21-digit `?page=`, regenerated against the oracle, and `run_go.sh` exiting 0 with it present
+— which forces whoever lands it to decide between matching `int()` and declaring the
+difference in `wire.NORMALIZATIONS`. The check is mechanical; the decision is not, which is
+why it is a separate change.
 
 🔴 **THE GO SIDE CARRIES ITS OWN ROUTE LEDGER, BECAUSE THE SUITE CANNOT BUILD ONE FOR
 IT.** `cases.declared_routes` reads the oracle's dispatch tables by AST and has no

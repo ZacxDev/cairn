@@ -2,6 +2,7 @@ package report
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -119,19 +120,55 @@ func TestTheModeVocabularyIsQuotedAsAPythonTuple(t *testing.T) {
 	}
 }
 
-func TestTheUnimplementedRendererIsADISTINCTError(t *testing.T) {
-	// 🔴 501, NOT 500, AND THE TWO MEAN OPPOSITE THINGS TO AN OPERATOR RUNNING BOTH
-	// SERVERS SIDE BY SIDE. A 500 says "this server broke"; a 501 says "this server does
-	// not implement this yet, ask the other one". During a dual-run those are the only
-	// two hypotheses worth telling apart, so the handler branches on THIS error and not
-	// on a generic failure.
-	var renderer Renderer = Unimplemented{}
-	_, err := renderer.Recall("/store", RecallOptions{}, store.Unrestricted())
-	if !errors.Is(err, ErrUnimplemented) {
-		t.Fatalf("got %v", err)
+func TestAMissingStoreIsANAMEDErrorAndNotAnEmptyReport(t *testing.T) {
+	// ⚠ THIS TEST REPLACES ONE THAT PINNED P1a's `ErrUnimplemented`. That error and its
+	// renderer are gone, so what is pinned instead is the claim that mattered underneath
+	// it: an error out of this seam is CLASSIFIABLE by a caller that is not an HTTP
+	// handler, which is what lets the CLI (P2) map it to an exit code without re-deriving
+	// the mapping from a message.
+	var renderer Renderer = Reader{Host: func() string { return "test-host" }}
+	_, err := renderer.Recall(filepath.Join(t.TempDir(), "absent"),
+		RecallOptions{Scope: "alpha", Limit: 12, Page: 1, Mode: DefaultMode},
+		store.Unrestricted())
+	var missing *store.StoreMissingError
+	if !errors.As(err, &missing) {
+		t.Fatalf("got %#v, want a *store.StoreMissingError", err)
 	}
-	_, err = renderer.Search("/store", SearchOptions{}, store.Unrestricted())
-	if !errors.Is(err, ErrUnimplemented) {
-		t.Fatalf("got %v", err)
+	// 🔴 THE SENTENCE SAYS WHAT DID NOT HAPPEN. "store root not found" alone reads as the
+	// ordinary nothing-recorded-yet case, which is the confident zero this whole reader
+	// exists to prevent.
+	if !strings.Contains(err.Error(), "Nothing was recalled; this is NOT 'nothing recorded yet'") {
+		t.Fatalf("the verb must name the read that did not happen: %q", err)
+	}
+	_, err = renderer.Search(filepath.Join(t.TempDir(), "absent"),
+		SearchOptions{Scope: "alpha", Query: "x", Threshold: DefaultThreshold,
+			MaxHits: DefaultMaxHits, Context: ContextBullet},
+		store.Unrestricted())
+	if !errors.As(err, &missing) {
+		t.Fatalf("got %#v, want a *store.StoreMissingError", err)
+	}
+	if !strings.Contains(err.Error(), "Nothing was searched;") {
+		t.Fatalf("search must name ITS verb, not recall's: %q", err)
+	}
+}
+
+func TestAFocusWindowIsREFUSEDRatherThanSilentlyIgnored(t *testing.T) {
+	// 🔴 THE FAIL-LOUD DIRECTION. The oracle's featured pick has two selectors and only the
+	// fallback is ported. A caller that passed a path window and got the fallback would read
+	// a printed basis claiming a resolved pick — a wrong claim, silently — so the window is
+	// refused by name until the matcher is ported.
+	_, err := Recall(t.TempDir(),
+		RecallOptions{Scope: "alpha", Limit: 12, Page: 1, Mode: DefaultMode,
+			FocusPaths: []string{"claudedocs/handoff-x.md"}},
+		store.Unrestricted())
+	if !errors.Is(err, ErrFocusSelectorUnported) {
+		t.Fatalf("got %#v, want ErrFocusSelectorUnported", err)
+	}
+	// The positive control: the SAME call with no window reaches the store, which is what
+	// proves the guard is the window and not the arguments around it.
+	if _, err := Recall(t.TempDir(),
+		RecallOptions{Scope: "alpha", Limit: 12, Page: 1, Mode: DefaultMode},
+		store.Unrestricted()); errors.Is(err, ErrFocusSelectorUnported) {
+		t.Fatalf("an empty window must not be refused: %v", err)
 	}
 }

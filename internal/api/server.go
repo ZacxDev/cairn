@@ -90,6 +90,16 @@ type Server struct {
 	Renderer       report.Renderer
 	// Audit is the sink for the one line per API request. nil means stdout.
 	Audit func(string)
+	// Warn is the sink for a renderer's own warning line — today only the
+	// "nothing could be read" sentence a `*-unreachable` report carries. nil means
+	// stderr, unprefixed.
+	//
+	// 🔴 IT IS STDERR AND NOT THE AUDIT SINK, AND NOT `log.Printf`. The oracle's reader
+	// writes this sentence to `sys.stderr` from inside the library, which is how the pod
+	// log gets it; `Audit` is stdout and carries one machine-readable record per request,
+	// so putting prose in it would corrupt a stream whose record boundaries are the whole
+	// point. `log.Printf` would prepend a timestamp the oracle does not write.
+	Warn func(string)
 	// Now is the clock the append date comes from. nil means time.Now.
 	Now func() time.Time
 
@@ -123,7 +133,7 @@ func New(storeRoot string, tokens []authz.TokenRecord, trustedProxies []netip.Pr
 		StoreRoot:      storeRoot,
 		TrustedProxies: trustedProxies,
 		Limiter:        limiter,
-		Renderer:       report.Unimplemented{},
+		Renderer:       report.Reader{},
 	}
 	s.SetTokens(tokens)
 	s.readRoutes = map[string]readRoute{
@@ -599,6 +609,7 @@ func (rq *request) finish(err error) {
 	var badReq *badRequestError
 	var storeMissing *store.StoreMissingError
 	var unreadable *store.EntryUnreadableError
+	var revisionUnreadable *store.RevisionUnreadableError
 	switch {
 	case errors.As(err, &badReq):
 		// A caller error, and the caller is authenticated, so it may be told what it
@@ -613,14 +624,16 @@ func (rq *request) finish(err error) {
 		// read. Not a 200, not an empty digest, not "nothing recorded yet" — a 503 that
 		// says so, carrying the reader's own sentence.
 		rq.storeUnreachable(unreadable.Error() + "\n")
-	case errors.Is(err, report.ErrUnimplemented):
-		rq.audit(501, "not-implemented")
-		rq.respond(501, []byte(
-			"not implemented: this build serves the store API without the report "+
-				"renderer. `/api/v1/recall/{scope}` and `/api/v1/search/{scope}` are "+
-				"answered by the Python server until the renderer is ported\n"),
+	case errors.As(err, &revisionUnreadable):
+		// 🔴 A `.git/HEAD` THAT IS NOT VALID UTF-8 IS A CALLER-VISIBLE 400 AND NOT A 500,
+		// because on the oracle the strict decode raises a `ValueError` and the dispatch's
+		// `except ValueError` arm owns it. The caller is authenticated, so it may be told;
+		// the sentence is the codec's own. See store.ScopeRevision for the one measured
+		// difference this cannot reproduce (an extra 200 audit line there).
+		rq.audit(400, "bad-request")
+		rq.respond(400, []byte("bad request: "+revisionUnreadable.Error()+"\n"),
 			"text/plain; charset=utf-8",
-			map[string]string{"X-Store-Status": "not-implemented"})
+			map[string]string{"X-Store-Status": "bad-request"})
 	default:
 		rq.internalError(err)
 	}
@@ -861,7 +874,7 @@ func (s *Server) recall(rq *request, parts []string, params url.Values) error {
 	if err != nil {
 		return err
 	}
-	return rq.serveReport(rendered)
+	return rq.serveReport(parts[0], rendered)
 }
 
 func (s *Server) search(rq *request, parts []string, params url.Values) error {
@@ -917,27 +930,59 @@ func (s *Server) search(rq *request, parts []string, params url.Values) error {
 	if err != nil {
 		return err
 	}
-	return rq.serveReport(rendered)
+	return rq.serveReport(parts[0], rendered)
 }
 
-// serveReport is the ONE place a rendered report becomes a response, so the freshness
-// stamp cannot be forgotten by a future route.
+// serveReport is the ONE place a rendered report becomes a response, so neither the
+// freshness stamp nor the scope revision can be forgotten by a future route.
 //
 // 🔴 THE STAMP GOES IN THE BODY, NOT ONLY THE HEADER, AND IT GOES FIRST. A header
 // alone would not do: the measured failure was an AGENT reading the rendered text and
 // believing its "none omitted" line, and an agent that pipes the body never sees a
 // header. It precedes the report because a caveat printed after the thing it qualifies
 // has already been believed.
-func (rq *request) serveReport(rendered report.Rendered) error {
+//
+// ⚠ `pathScope` IS THE URL's OWN SPELLING AND NOT THE REPORT'S NORMALIZED ONE. The revision
+// is read from `<store>/<scope>/.git/HEAD`, so the answer has to be about the directory the
+// caller's name reaches; every path component has already been refused unless it is a safe
+// one. The report's own `Scope` field is normalized and is what the BODY prints.
+func (rq *request) serveReport(pathScope string, rendered report.Rendered) error {
+	// 🔴 COMPUTED BEFORE THE AUDIT LINE, because it can REFUSE. A revision read that fails
+	// its strict decode is a 400, and a 200 audit record written first would claim an answer
+	// this request never gave.
+	revision, err := store.ScopeRevision(rq.srv.StoreRoot, pathScope, rq.visible)
+	if err != nil {
+		return err
+	}
+	if rendered.Warning != "" {
+		// 🔴 FORWARDED, NOT DROPPED. This is the reader's own one-sentence summary of a
+		// `*-unreachable` report, and the pod log is exactly where a
+		// nothing-could-be-read reject should be visible. The per-entry detail is in the
+		// body; this is the quotable line.
+		rq.srv.warn(rendered.Warning)
+	}
 	freshHeader, freshProse := snapshot.Freshness(rq.srv.StoreRoot)
 	body := freshProse + "\n\n" + rendered.Text + "\n"
 	rq.audit(200, rendered.Status)
 	rq.respond(200, []byte(body), "text/plain; charset=utf-8", map[string]string{
-		"X-Store-Status":   rendered.Status,
-		"X-Store-Exit":     strconv.Itoa(rendered.Exit),
+		"X-Store-Status": rendered.Status,
+		"X-Store-Exit":   strconv.Itoa(rendered.Exit),
+		// 🔴 GATED ON THE CALLER'S ALLOWLIST, INSIDE ScopeRevision. This one header does
+		// NOT come from the narrowed index — it is read off `<store>/<scope>/.git/HEAD` —
+		// so it is the one place a refused scope could still be told apart from an absent
+		// one.
+		"X-Store-Revision": revision,
 		"X-Store-Snapshot": freshHeader,
 	})
 	return nil
+}
+
+func (s *Server) warn(line string) {
+	if s.Warn != nil {
+		s.Warn(line)
+		return
+	}
+	fmt.Fprintln(os.Stderr, line)
 }
 
 func (s *Server) snapshot(rq *request, _ []string, params url.Values) error {
