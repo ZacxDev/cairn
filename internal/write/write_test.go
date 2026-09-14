@@ -611,6 +611,68 @@ func TestBulletRequestProblem(t *testing.T) {
 		}
 	})
 
+	t.Run("a well-formed surrogate PAIR is ordinary text", func(t *testing.T) {
+		// 🔴 REGRESSION. The first version of the surrogate guard was one regexp whose
+		// two alternatives were `D800-DBFF` and `DC00-DFFF` — whose union is the ENTIRE
+		// surrogate block — so it could not tell a lone surrogate from a pair and
+		// refused on any match. That BROKE THE SHIPPED CLIENT for every non-BMP
+		// character: `cairn append` builds its body with `json.dumps`, whose default
+		// `ensure_ascii=True` encodes an astral character as a surrogate PAIR.
+		//
+		// MEASURED against both servers on the same world, body
+		// `{"session":"probe1","text":"an emoji \ud83d\ude00 bullet"}`:
+		//     oracle -> 200, `- <date>: an emoji 😀 bullet [cairn: wide-reader/probe1]`
+		//     Go     -> 400, "the body carries the unpaired surrogate escape `\ud83d`"
+		raw := []byte(`{"text":"an emoji \ud83d\ude00 bullet","session":"s"}`)
+		payload, err := DecodeBulletBody(raw)
+		if err != nil {
+			t.Fatalf("a surrogate pair is valid JSON: %v", err)
+		}
+		if problem := BulletRequestProblem(raw, payload); problem != "" {
+			t.Fatalf("a well-formed surrogate PAIR must be accepted — this is what the "+
+				"shipped client sends for every emoji: %q", problem)
+		}
+		// …and the character really did survive the decode, so the pass above is not
+		// "the guard was skipped".
+		if text := BulletText(payload); !strings.Contains(text, "\U0001F600") {
+			t.Fatalf("the pair must decode to the astral character, got %q", text)
+		}
+	})
+
+	t.Run("a body with an invalid UTF-8 byte is REFUSED, not silently replaced", func(t *testing.T) {
+		// 🔴 REGRESSION, AND THE WORSE OF THE TWO. `json.Unmarshal` REPLACES a byte
+		// that is not valid UTF-8 rather than refusing it, so the append path wrote a
+		// permanent U+FFFD into a non-re-derivable entry and answered `200 appended`.
+		// MEASURED against both servers, body
+		// `{"session":"probe9","text":"a bad \xff byte here"}`:
+		//     oracle -> 400 bad request: body must be JSON ('utf-8' codec can't decode
+		//               byte 0xff in position 37: invalid start byte)
+		//     Go     -> 200 appended, and `beta-notes/spare-six.md` grew a U+FFFD
+		//
+		// This is verbatim the defect class `AppendBullet`'s own docstring records as
+		// already fixed once, reintroduced through the DECODER rather than the rewrite —
+		// which is why the strict decode has to run BEFORE the JSON parse, exactly as
+		// the oracle orders it.
+		raw := []byte("{\"text\":\"a bad \xff byte here\",\"session\":\"s\"}")
+		_, err := DecodeBulletBody(raw)
+		if err == nil {
+			t.Fatal("a body carrying a byte that is not valid UTF-8 must be REFUSED: " +
+				"accepting it writes a permanent U+FFFD into a curated entry at 200")
+		}
+		// The sentence is CPython-shaped: the byte, the position and the reason.
+		for _, want := range []string{"'utf-8' codec can't decode byte 0xff", "position 15", "invalid start byte"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("the refusal must carry %q, got %q", want, err.Error())
+			}
+		}
+		// The POSITIVE control: the same body with the byte replaced by ordinary text
+		// decodes, so the refusal is the byte and not the shape.
+		clean := []byte(`{"text":"a bad Z byte here","session":"s"}`)
+		if _, err := DecodeBulletBody(clean); err != nil {
+			t.Fatalf("the control failed: a valid body must decode: %v", err)
+		}
+	})
+
 	t.Run("an unpaired surrogate ESCAPE in the raw body is refused", func(t *testing.T) {
 		// 🔴 A GO-SIDE GUARD WITH NO ORACLE COUNTERPART, IN THE STRICT DIRECTION.
 		// CPython's decoder yields a LONE SURROGATE for `\udc80`, so the `Cs` clause

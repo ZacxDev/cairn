@@ -269,6 +269,22 @@ encodes:
   loopback socket.
 - **SIGHUP token reload, startup refusals, and every exit-code path.** Those are
   process behaviour, not request/response behaviour.
+- **A REQUEST BODY THAT IS NOT VALID UTF-8, AND AN ESCAPED NON-BMP CHARACTER.** Both
+  measured as real divergences against a Go port while all four CI jobs were green, so
+  this entry is evidence rather than caution. The runner builds every body from
+  `requests.json`, and no row carries either shape:
+  - a body with a byte that is not valid UTF-8 — the oracle refuses it with a 400
+    (`body.decode("utf-8")` is strict and runs BEFORE `json.loads`), while a decoder
+    that replaces the byte answers `200 appended` and writes a permanent U+FFFD into a
+    curated entry;
+  - a `\uD83D\uDE00`-style surrogate PAIR — which is what `cairn append` puts on the
+    wire for any astral character, because `json.dumps` defaults to
+    `ensure_ascii=True`. A guard that cannot tell a pair from a lone surrogate 400s
+    every emoji the shipped client sends.
+  Both now have Go-side regression coverage with a red-at-baseline matrix. 🔴 THE
+  LESSON GENERALISES: the corpus pins the bytes it was told to send, so a decoding
+  difference between two implementations is exactly the class it is blind to. A port's
+  own tests own that half.
 - **A hostname shorter than four characters**, for the leak guard: a
   three-character host name is a substring of ordinary English, so the short case
   is left uncovered rather than wrongly covered.

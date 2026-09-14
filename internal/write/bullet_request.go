@@ -2,6 +2,7 @@ package write
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -56,9 +57,6 @@ var forbiddenCategories = map[string]*unicode.RangeTable{
 	"Co": unicode.Co,
 }
 
-// loneSurrogateEscape matches a `\uD800`-`\uDFFF` JSON escape.
-var loneSurrogateEscape = regexp.MustCompile(`(?i)\\u(d[89ab][0-9a-f]{2}|d[c-f][0-9a-f]{2})`)
-
 // DecodeBulletBody decodes an append request body.
 //
 // It returns the decoded value — which may be any JSON type, because "the body is
@@ -75,6 +73,16 @@ var loneSurrogateEscape = regexp.MustCompile(`(?i)\\u(d[89ab][0-9a-f]{2}|d[c-f][
 // answered rather than survived; the guard is named here so the property is
 // attributable rather than inherited.
 func DecodeBulletBody(body []byte) (any, error) {
+	// 🔴 THE STRICT DECODE COMES FIRST, BECAUSE THE JSON PARSER IS WHAT HIDES THE BYTE.
+	// `json.Unmarshal` REPLACES a byte that is not valid UTF-8 rather than refusing it,
+	// so without this the append path wrote a permanent U+FFFD into a non-re-derivable
+	// entry at `200 appended` — measured against both servers, where the oracle answers
+	// 400. The oracle's order is `json.loads(body.decode("utf-8"))`: decode, THEN parse.
+	// See utf8DecodeProblem for the measurement and for what the message does and does
+	// not reproduce.
+	if problem := utf8DecodeProblem(body); problem != "" {
+		return nil, errors.New(problem)
+	}
 	var payload any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
@@ -105,22 +113,21 @@ func DecodeBulletBody(body []byte) (any, error) {
 // `raw` is the request body as it arrived, and it is inspected for exactly one thing
 // the decoded value cannot carry — see the surrogate clause.
 func BulletRequestProblem(raw []byte, payload any) string {
-	// 🔴 A GO-SIDE GUARD WITH NO PYTHON COUNTERPART, AND THE DIVERGENCE IS
-	// DELIBERATE AND IN THE STRICT DIRECTION. CPython's JSON decoder yields a LONE
-	// SURROGATE for a `\udc80`-style escape, so the `Cs` clause below refuses it
-	// there. Go's decoder replaces an unpaired surrogate escape with U+FFFD, whose
-	// category is `So` — so the `Cs` clause is UNREACHABLE here and the bullet would
-	// be stored carrying a replacement character the Python server refuses. Scanning
-	// the RAW body closes that, and it closes it slightly WIDER than Python: an
-	// unpaired escape in a key this server ignores (`actor`) is a 400 here and a 200
-	// there. No case in the conformance corpus sends one; the direction is the safe
-	// one; and `Cs` stays in the category table above because the PREDICATE is the
-	// rule, and a future decoder that preserves surrogates must not silently open
-	// the hole this scan is covering.
-	if match := loneSurrogateEscape.FindString(string(raw)); match != "" {
-		return fmt.Sprintf(
-			"the body carries the unpaired surrogate escape `%s`, which is not text that can be written into a curated entry",
-			match)
+	// 🔴 AN **UNPAIRED** SURROGATE ESCAPE ONLY. CPython's JSON decoder yields a LONE
+	// SURROGATE for a `\udc80`-style escape, so the `Cs` clause below refuses it there;
+	// Go's decoder replaces one with U+FFFD, whose category is `So`, so that clause is
+	// unreachable here and the bullet would be STORED carrying a replacement character
+	// the oracle refuses. This scan closes that, and the residual divergence is the
+	// narrow one: an unpaired escape in a key this server ignores (`actor`) is a 400
+	// here and a 200 there. `Cs` stays in the category table above because the
+	// PREDICATE is the rule, and a future decoder that preserves surrogates must not
+	// silently reopen the hole this scan covers.
+	//
+	// ⚠ THE FIRST VERSION REFUSED EVERY WELL-FORMED **PAIR** TOO, and that broke the
+	// shipped client for every non-BMP character — see unpairedSurrogateEscape for the
+	// measurement and for why one regexp could not express the rule.
+	if escape := unpairedSurrogateEscape(string(raw)); escape != "" {
+		return describeSurrogate(escape)
 	}
 	object, isObject := payload.(map[string]any)
 	if !isObject {

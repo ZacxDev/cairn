@@ -106,6 +106,17 @@ and `head-matches-get` do exactly that for the two report routes, because
 `501 not-implemented` is beautifully uniform. The runner now prints that caveat on the
 line itself; read it rather than the verdict.
 
+🔴 **A GREEN CORPUS IS NOT A GREEN PORT, AND THAT IS MEASURED RATHER THAN CAUTIONARY.**
+Two defects shipped in the first Go commit with all four CI jobs green and the split
+exactly as documented above: a body with an invalid UTF-8 byte answered `200 appended`
+and wrote a permanent U+FFFD into a curated entry (the oracle refuses it 400), and a
+guard that could not tell a surrogate PAIR from a lone surrogate 400'd every astral
+character — which is what `cairn append` sends, because `json.dumps` defaults to
+`ensure_ascii=True`. Both were found by reading the port against `server.py` function by
+function, not by the suite; the suite builds its bodies from `requests.json` and no row
+carries either shape. **When the corpus is green, the question left is "what does it not
+send", and DECODING differences are the answer.**
+
 🔴 **THE GO SIDE CARRIES ITS OWN ROUTE LEDGER, BECAUSE THE SUITE CANNOT BUILD ONE FOR
 IT.** `cases.declared_routes` reads the oracle's dispatch tables by AST and has no
 equivalent for a compiled binary, so the blind spot — a route added after the fixtures
