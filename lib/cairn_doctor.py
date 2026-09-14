@@ -558,8 +558,12 @@ def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path | None)
 #: what a number meant.
 #:
 #: 🔴 THEY ARE SCOPED PER COMMAND, NOT GLOBALLY UNIQUE, AND 9 IS SHARED ON
-#: PURPOSE. `doctor` returns 0/9/10. The client returns 0/2/3/4/5 for read
-#: outcomes and 6/7/8/9 for write outcomes, so two numbers are shared: 0, which
+#: PURPOSE. `doctor` returns 0/9/10. The client returns 0/3/4/5 for read outcomes,
+#: 6/7/8/9 for write outcomes, and 2 for USAGE — which is a third bucket, not a
+#: read outcome. An earlier draft of this sentence folded 2 in with the reads, and
+#: the argparse bullet further down this same comment says the opposite, so the
+#: block contradicted itself; the distinction is the point of that bullet.
+#: So two numbers are shared: 0, which
 #: means success in both because that is what 0 means, and 9, which is this
 #: command's "a check MEASURED a problem" and `create`'s `EXIT_WRITE_EXISTS`.
 #: Neither is ambiguous where a code is actually read — at ONE call site, which
@@ -571,8 +575,13 @@ def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path | None)
 #: design.
 #:
 #: 🔴 WHAT THE PER-COMMAND SCOPING DOES NOT COVER IS THE ONLY THING TO PROTECT
-#: HERE: a code that a `doctor` invocation can return ALONGSIDE these. There are
-#: TWO, not one, so the set a `doctor` caller may observe is 0/1/2/9/10:
+#: HERE: a code that a `doctor` invocation can return ALONGSIDE these. TWO more
+#: are returned deliberately, so the codes a `doctor` caller may be handed BY
+#: DESIGN are 0/1/2/9/10. 🔴 THAT IS A LIST OF WHAT THIS CLI CHOOSES TO RETURN,
+#: NOT AN EXHAUSTIVE LIST OF WHAT A CALLER CAN OBSERVE — two earlier drafts
+#: claimed exhaustiveness and were wrong, each time for a member nobody had
+#: measured (0/2/9/10, then 0/1/2/9/10 with the 120 below missing). Treat any
+#: future "the set is" here as a claim needing a measurement:
 #:
 #:   - **2 — usage.** argparse exits 2 on a bad flag for every subcommand
 #:     (measured: `cairn doctor --bogus-flag` -> 2).
@@ -580,14 +589,38 @@ def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path | None)
 #:     traceback that reaches the top, so this is not one mechanism but a class.
 #:     One route is reachable BY DESIGN: `cairn`'s lazy `_cairn_doctor()` import
 #:     is deliberately unguarded at its `cmd_doctor` call site — see the docstring
-#:     at `cairn:_doctor_epilog`, which states that the help-string import FAILS
-#:     SOFT while `cmd_doctor` still fails LOUDLY — so with `lib/cairn_doctor.py`
-#:     absent, `cairn doctor` exits 1 with `ModuleNotFoundError` from
-#:     `cairn:cmd_doctor`. Measured at a second point too: a module present but
-#:     unparseable raises `SyntaxError`, which is not an `ImportError` and so is
-#:     not soft-caught either — also exit 1, from `build_parser`. And the
-#:     `AttributeError` recorded in `AGENTS.md` under
-#:     `checks.client-resolves-its-lib` was a third.
+#:     at `cairn:_doctor_epilog`, which states that the help-string import fails
+#:     soft FOR AN `ImportError` ONLY while `cmd_doctor` still fails LOUDLY — so
+#:     with `lib/cairn_doctor.py` absent, `cairn doctor` exits 1 with
+#:     `ModuleNotFoundError` from `cairn:cmd_doctor`. Measured at a second point
+#:     too: a module present but unparseable raises `SyntaxError`, which is not an
+#:     `ImportError`, so `_doctor_epilog`'s `except ImportError` does not catch it
+#:     and it takes `build_parser` — and therefore EVERY verb — down at exit 1
+#:     (measured on a tree with this file replaced by `def broken(`:
+#:     `cairn doctor`, `cairn ls-entries`, `cairn ls-entries --help` and
+#:     `cairn --help` all 1, all `SyntaxError`; with the file merely ABSENT the
+#:     same four are 1 / 3 / 0 / 0, and the 3 is the ordinary no-cache read
+#:     outcome an untouched tree gives). And the `AttributeError` recorded in
+#:     `AGENTS.md` under `checks.client-resolves-its-lib` was a third.
+#:
+#: ⚠ AND ONE MORE THE INTERPRETER RETURNS, WHICH IS WHY THE LIST IS NO LONGER
+#: CLAIMED EXHAUSTIVE: **120**, CPython's code for a stdout it could not FLUSH at
+#: shutdown. `cairn doctor | <consumer that exits before reading>` is an ordinary
+#: invocation; the departed reader turns the final flush into a `BrokenPipeError`,
+#: printed as `Exception ignored in: <_io.TextIOWrapper name='<stdout>' …>` and
+#: exited 120. 🔴 THE MECHANISM IS A PIPE WHOSE READER LEFT, NOT "NO STDOUT", and
+#: the two read differently — measured at four points rather than one, because the
+#: first draft of this note named the wrong one: `| true` -> **120** (5/5 runs);
+#: `--json | true` -> 120; stdout genuinely CLOSED with `1>&-` -> **9** (5/5),
+#: because `sys.stdout` is then `None`, nothing is written and so nothing can fail
+#: to flush; `| head -1` -> **9** (5/5), because doctor's 2,016 bytes fit the
+#: 64 KiB pipe buffer and the write lands before `head` exits — that point would
+#: INVERT for an output larger than the buffer, so it is a fact about this output
+#: size, not a general one. Nor is it doctor-specific: `cairn --help | true` is
+#: 120 as well. 120 stays OUT of the operative instruction below because no doctor
+#: code could be chosen to avoid it and it cannot collide with a plausible one; it
+#: is recorded so the enumeration above stops reading as a claim about everything
+#: a caller can see.
 #:
 #: 1 and 2 are both clear of this block today because doctor's own codes are
 #: 0/9/10, and BOTH must stay clear: a doctor code of 1 would be indistinguishable
@@ -602,11 +635,22 @@ def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path | None)
 #: remove a collision that was never a defect. A NEW overlap is safe only if it
 #: too is unreachable from any one call site, which is a fact about the dispatcher
 #: and not about which numbers happen to look free.
-#: `tests/test_cairn_doctor.py` pins the shared set as a ledger and is the
-#: authority on which codes overlap — it goes red when that set GROWS and when it
-#: SHRINKS. It carries a second, separate assertion that 1 is not one of these
-#: three, because the ledger structurally cannot: 1 is not in the client's set, so
-#: an `EXIT_DOCTOR_* = 1` leaves the intersection at {0, 9} and the ledger green.
+#: `tests/test_cairn_doctor.py` pins the shared set as a ledger: it DISCOVERS both
+#: operands — doctor's `EXIT_DOCTOR_*` ∪ `EXIT_LEGEND`, and the client's `EXIT_*`
+#: read out of `cairn` — so it goes red when the shared set GROWS from EITHER side
+#: and when it SHRINKS. 🔴 IT WAS NOT THAT WHILE IT HAND-LISTED BOTH OPERANDS, and
+#: the first version of this sentence called it "the authority on which codes
+#: overlap" anyway. Nine client names and three doctor ones were written out, so a
+#: TENTH client code colliding with the 10 left the intersection at {0, 9} and the
+#: file green at 60 passed — the exact case the failure message advertised
+#: catching. What discovery still does not see is named in that file: a code
+#: spelled without the `EXIT_`/`EXIT_DOCTOR_` prefix, and — on the client side,
+#: which is read by AST — one whose value is computed rather than an integer
+#: literal; the second is cross-checked against the exec'd module's own namespace
+#: rather than assumed away. It carries a second, separate assertion that 1 is not
+#: one of doctor's codes, because the ledger structurally cannot: 1 is not in the
+#: client's set, so an `EXIT_DOCTOR_* = 1` leaves the intersection at {0, 9} and
+#: the ledger green.
 EXIT_DOCTOR_OK = 0
 EXIT_DOCTOR_PROBLEM = 9
 EXIT_DOCTOR_UNMEASURED = 10

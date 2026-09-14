@@ -1501,11 +1501,31 @@ def _doctor_epilog() -> str:
     records for `_who_default_timeout`. The import stays function-scoped for
     honesty about what this file needs to START, not as an optimisation.
 
-    🔴 AND IT FAILS SOFT. With `cairn_doctor.py` missing, an eager unguarded
+    🔴 AND IT FAILS SOFT — FOR AN `ImportError`, WHICH IS NOT THE SAME AS "FOR A
+    BROKEN `cairn_doctor`". With `cairn_doctor.py` missing, an eager unguarded
     import took `cairn ls-entries` — a subcommand that has nothing to do with
     doctor — down with `ModuleNotFoundError` at exit 1, traceback and all.
     `cmd_doctor` still fails LOUDLY, because that is the caller who asked for it;
     an unrelated verb must not inherit the blast radius of a help string.
+
+    ⚠ AND THE GUARANTEE STOPS AT THE `except` CLAUSE BELOW, so do not read the
+    paragraph above as "any broken doctor module is contained". A module that is
+    PRESENT but UNPARSEABLE raises `SyntaxError`, which is not an `ImportError`:
+    nothing here catches it, it propagates out of `build_parser`, and every verb
+    dies with it. Measured on a tree with `lib/cairn_doctor.py` replaced by
+    `def broken(` — `cairn doctor`, `cairn ls-entries`, `cairn ls-entries --help`
+    and `cairn --help` are ALL exit 1 with `SyntaxError`. Control on the
+    `ImportError` path, same tree with the file merely absent: the same four are
+    1 / 3 / 0 / 0, and that 3 is the ordinary no-cache read outcome an untouched
+    tree gives for `ls-entries`, so the soft-fail is real — it is just narrower
+    than "fails soft". The epilog STRING below is accurate about this because it
+    only ever renders on the `ImportError` path; on the `SyntaxError` path there
+    is no parser to attach an epilog to.
+
+    🔴 WIDENING THIS `except` IS NOT THE OBVIOUS FIX. Catching `SyntaxError` here
+    would make `--help` render for every verb over a module that `cmd_doctor` is
+    about to die on, and the loud failure is the point of the design. This is
+    recorded, deliberately, rather than closed.
     """
     try:
         doctor = _cairn_doctor()

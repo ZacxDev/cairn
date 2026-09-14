@@ -19,8 +19,12 @@ stub — the pattern Anthropic's own docs prescribe).
 ## State now
 - Branch: `docs/agents-migration` (off `main` @ `1e7aedf`). **MERGED.** **PR #14**
   (https://github.com/ZacxDev/cairn/pull/14) squash-merged to `main` as **`3c316ff`**;
-  pushed branch head was `92d2e80`. Merged without an audit — see rank 1 below for the
-  decision and how the merge was verified.
+  pushed branch head was `92d2e80`. Merged without an audit — the decision and how the
+  merge was verified are under **Closed — do not re-derive these**, in the `Decide PR #14`
+  item. (An earlier version of this line said "see rank 1 below", which is the
+  snapshot-sync item and never held this content: a pointer to a RANK NUMBER dangles the
+  moment the ranks are renumbered — which this doc had already recorded happening once, in
+  the `IN FLIGHT` bullet below. Name the section and the item, never the rank.)
   Re-verified on the committed tree before the commit, not carried over from the session
   that wrote it: suite **1716 passed / 0 failed** (exit 0, counted from the runner's own
   summary line), leakscan **0 findings across 42 files** with the positive control
@@ -85,8 +89,17 @@ Recorded with what closed each item, and with what was **not** done, so the next
   inside the branch it describes. Ask the API instead —
   `gh pr view 15 --json state,mergedAt,mergeCommit` — and confirm by CONTENT, never by
   ancestry (a squash makes `--is-ancestor` false forever).
-  **Audit: `/audit-pr 15` round 0 RAN** against head `634b01e`; verdict *proceed to the
-  checklist*, with two 🟡 findings, both fixed by the commit that rewrote this paragraph:
+  **Audit: `/audit-pr 15` round 0 RAN** against the branch head, which is `de0b37c` in any
+  clone of this repo. 🔴 **The commit the audit actually ran on was `634b01e`, and citing
+  that sha here was a defect: it is UNREACHABLE from any ref** — the pre-rebase twin of
+  `de0b37c`, alive only in one machine's object store, so a reader of the public repo
+  cannot resolve it. `de0b37c` is the honest citation: rebasing onto `c536c52` added
+  exactly one file to the tree (`claudedocs/plan-cairn-control-plane.md`, from #16), which
+  the audit did not touch, so the audited content is `de0b37c`'s minus that file. **Never
+  cite an orphan sha** — if a rebase moved the tree, cite the reachable commit and say what
+  the rebase changed.
+  Verdict *proceed to the checklist*, with two 🟡 findings, both fixed by the commit that
+  rewrote this paragraph:
   (1) the exit-code comment enumerated the codes a `doctor` caller may observe as
   0/2/9/10 when the set is **0/1/2/9/10** — an incomplete enumeration inside the fix for
   an incomplete enumeration — and the test ledger was structurally unable to catch a
@@ -138,9 +151,12 @@ git log --oneline -3 main    # 3c316ff is #14's squash; c536c52 is #16's
 Expected counts are **per tree, so name the tree** rather than carrying one number
 forward: **1716 passed / 0 failed** at `3c316ff` and at `c536c52`, **1717** on
 `fix/doctor-exit-code-comment` once rebased onto `c536c52` (the extra one is
-`test_1_is_NOT_one_of_doctors_codes`). leakscan scans the tracked text files, so its
-denominator moves with the repo: **42** at `3c316ff`, **43** at `c536c52`. A count that
-does not match is a question about which tree you are on before it is a finding.
+`test_1_is_NOT_one_of_doctors_codes`); still **1717** after round 1 of that PR's audit,
+which added no test — it replaced two hand-listed operand sets with discovered ones.
+leakscan scans the tracked text files, so its denominator moves with the repo: **42** at
+`3c316ff`, **43** at `c536c52`, **44** on `fix/doctor-exit-code-comment` after round 1
+(the new `tests/testlib/cairn_source.py`). A count that does not match is a question about
+which tree you are on before it is a finding.
 🔴 Do NOT verify #14 with `git merge-base --is-ancestor 92d2e80 main` — it is false after
 every squash merge and always will be. Diff the 8 changed paths instead, proving each
 exists on `main` first.
