@@ -60,11 +60,15 @@ jobs:
           python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
-          # 1769 collected, measured 2026-09-14 (was 1698 on 2026-09-08; the
-          # conformance suite added 52). Raise as the suite grows —
-          # `m - min(50, max(1, m/20))` for the m you measured; never lower
-          # without saying why.
-          FLOOR = 1719
+          # 1798 collected, measured 2026-09-14 on `main` AFTER three PRs landed
+          # together (#17 the scrub fix, #18 the capability ledger, #19 the
+          # conformance suite). The two feature PRs each measured their OWN
+          # branch — 1740 and 1769 — and neither number was ever true of the
+          # merged tree, which is the reason this constant is re-measured on
+          # `main` rather than carried over from whichever branch landed last.
+          # Raise as the suite grows — `m - min(50, max(1, m/20))` for the m you
+          # measured; never lower without saying why.
+          FLOOR = 1748
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

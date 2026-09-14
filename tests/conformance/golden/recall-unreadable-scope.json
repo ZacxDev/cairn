@@ -1,8 +1,8 @@
 {
   "body": {
-    "bytes": 3041,
+    "bytes": 3053,
     "kind": "text_lines",
-    "sha256": "afa961a4dce88026e29f514df990a6a9889f09952ae47912dbda4c71ed79fe1d",
+    "sha256": "05bec9d1b1a8489d70b8aca4bfc041048567c9829d12a943dc0ec3f86cbf84df",
     "text_lines": [
       "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=5. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
       "",
@@ -13,7 +13,7 @@
       "",
       "🔴 MALFORMED — 1 entry file in `rubble-heap/` could NOT be indexed and is therefore absent from EVERYTHING below (the index, --ref, --search). Not dropped, not hidden: listed here, once each.",
       "  malformed index entry `rubble-heap/broken-four.md`: missing or empty `service:` — an entry with no name cannot be addressed",
-      "  (A STORE DEFECT, not an absence of content. Front matter is parsed LINE BY LINE, so the usual cause is a value wrapped across two physical lines — an `aliases: [...]` list in particular must be on ONE line. Check a file with `a writer --validate <path>`, or a whole scope with `--validate`.)",
+      "  (A STORE DEFECT, not an absence of content. Front matter is parsed LINE BY LINE, so the usual cause is a value wrapped across two physical lines — an `aliases: [...]` list in particular must be on ONE line. Check a scope with `cairn validate --scope <scope>`, which names each file that fails to parse.)",
       "",
       "NOTHING COULD BE READ — `rubble-heap/` holds 1 entry file and NOT ONE of them could be indexed. This is NOT an empty scope and NOT 'nothing recorded yet': there is content here and the tool cannot see it. Every reason is listed above; fix the file(s) and re-run.",
       ""
