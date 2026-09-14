@@ -85,8 +85,11 @@ These are the house style, and they are why the guards here are worth trusting:
 conformance corpus can be replayed against both implementations on the same store and
 the difference MEASURED. The sequence is fixed — the Go server passes the corpus, then
 both run over one store and byte-identity is compared, then the client is ported, then
-Python is retired. Do not declare a step done early, and do not switch the deployed
-image while the corpus is partial.
+Python is retired. **Step one is done and step two is not**: the corpus is green for both
+implementations, and no dual-run comparison has been made. Do not declare a step done
+early, and do not switch the deployed image on the strength of a green corpus — the
+sentence here used to read "while the corpus is partial", which a green corpus would have
+satisfied while leaving every remaining step untouched.
 
 🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP
 IDENTITY IS UNATTAINABLE — MEASURED, NOT ASSUMED.** `/api/v1/snapshot` ships
