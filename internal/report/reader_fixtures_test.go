@@ -403,6 +403,77 @@ func TestPyRoundIsCPythonsRoundBitForBit(t *testing.T) {
 	}
 }
 
+func TestACLIConsumesTheReportWithoutAServer(t *testing.T) {
+	// 🔴 THIS IS THE P2 CONTRACT, EXERCISED RATHER THAN ASSERTED. The pod and the CLI must
+	// run ONE renderer, so the package has to be consumable by a caller that has no HTTP
+	// request, no server config and no handler to turn an error into a status. This walks
+	// exactly that path: the report, its bytes with the CLI's OWN header lines, and the exit
+	// decision with its warning sentence.
+	//
+	// 🔴 AND `extraHeader` IS OTHERWISE DEAD. The pod passes nil — its `/data` has no sync
+	// stamp to print — so without this the parameter is a declaration nothing honours, and
+	// the day the CLI passes one is the day its POSITION is discovered to be wrong.
+	fx := loadFixture(t)
+	root := buildFixtureStore(t, fx)
+
+	rep, err := Recall(root, RecallOptions{
+		Scope: "alpha-notes", Limit: DefaultEntryLimit, Mode: DefaultMode, Page: 1,
+	}, store.Unrestricted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := []string{"  read store: /cache/subsystem-store", "  synced: 2000-01-04T00:00:00Z"}
+	text := rep.RenderText(fx.Host, stamp)
+	code, warning := ExitFor(rep.Status, rep.Scope+"/", rep.Malformed)
+
+	if code != 0 || warning != "" {
+		t.Fatalf("a readable scope exits 0 with nothing to warn about: %d %q", code, warning)
+	}
+	// The extra lines land in the HEADER BLOCK — after the host line and BEFORE the caveat —
+	// which is the whole reason the parameter exists rather than the caller prepending its
+	// own text.
+	lines := strings.Split(text, "\n")
+	if len(lines) < 6 {
+		t.Fatalf("too few lines to check the header block:\n%s", text)
+	}
+	if !strings.HasPrefix(lines[2], "  host: ") {
+		t.Fatalf("line 3 should be the host line, got %q", lines[2])
+	}
+	if lines[3] != stamp[0] || lines[4] != stamp[1] {
+		t.Fatalf("the extra header must sit between the host line and the caveat:\n%q\n%q",
+			lines[3], lines[4])
+	}
+	if !strings.HasPrefix(lines[5], "  caveat: ") {
+		t.Fatalf("the caveat must follow the extra header, got %q", lines[5])
+	}
+	// And the same report renders WITHOUT them, byte-identical apart from those two lines —
+	// so the parameter adds and never reflows.
+	bare := rep.RenderText(fx.Host, nil)
+	if withoutStamp := strings.Replace(text, stamp[0]+"\n"+stamp[1]+"\n", "", 1); withoutStamp != bare {
+		t.Fatalf("the extra header must be purely additive")
+	}
+
+	// The search half of the same contract, including the `*-unreachable` exit and its
+	// sentence — the one output a CLI has to forward to its own stderr.
+	sr, err := Search(root, SearchOptions{
+		Scope: "rubble-heap", Query: "lease", Context: ContextBullet,
+		Threshold: DefaultThreshold, MaxHits: DefaultMaxHits,
+	}, store.Unrestricted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchCode, searchWarning := ExitFor(sr.Status, sr.Label(), sr.Malformed)
+	if searchCode != 3 {
+		t.Fatalf("a scope nothing could be read from exits 3, got %d", searchCode)
+	}
+	if !strings.HasPrefix(searchWarning, "subsystem-recall: search-unreadable: all 2 entry files under `rubble-heap/` are MALFORMED") {
+		t.Fatalf("the warning is the reader's own sentence: %q", searchWarning)
+	}
+	if !strings.Contains(sr.RenderText(fx.Host, stamp), stamp[1]) {
+		t.Fatal("the search renderer takes the same extra header")
+	}
+}
+
 func TestTheNearMissScoreKeepsThreeDecimals(t *testing.T) {
 	// 🔴 THE RENDERED BYTES CANNOT SEE THIS, AND A MUTANT PROVED IT. `pyRound(score, 3)` at
 	// the call site was changed to `2` and the whole 49-case rendered battery stayed green,
