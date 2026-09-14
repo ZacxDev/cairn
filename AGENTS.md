@@ -75,8 +75,57 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cairn` | the client CLI — sync, recall, search, ls-entries, doctor, append, put, create |
 | `lib/` | the reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
-| `tests/` | the suites, plus `leakscan.py` |
-| `flake.nix` | the packaged client, the server image, and the checks over both |
+| `cmd/`, `internal/`, `go.mod` | the Go port of the server (P1), stdlib-only — see below |
+| `tests/` | the suites, plus `leakscan.py` and `conformance/` |
+| `flake.nix` | the packaged client, the server image, the Go server, and the checks over all three |
+
+## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
+
+`cmd/cairn-server` is the Go port. It is **not deployed by anything**: it exists so the
+conformance corpus can be replayed against both implementations on the same store and
+the difference MEASURED. The sequence is fixed — the Go server passes the corpus, then
+both run over one store and byte-identity is compared, then the client is ported, then
+Python is retired. Do not declare a step done early, and do not switch the deployed
+image while the corpus is partial.
+
+**The corpus is the specification, and at P1a it is deliberately PARTIAL.** Measured on
+this tree: 94 PASS, 22 failing cases — every one a `/api/v1/recall/{scope}` or
+`/api/v1/search/{scope}` **rendering** case, which is P1b's job — 4 rows skipped as
+oracle-specific, 0 failing relations.
+
+```bash
+go vet ./... && go test ./...            # the port's own guards
+tests/conformance/run_go.sh              # the P1 gate: the corpus against the Go server
+python3 tests/conformance/suite.py run   # …and against the oracle, which must stay 0 failures
+```
+
+🔴 **A REFUSAL THAT IS "THE SAME" ON BOTH SERVERS MAY BE THE SAME FOR THE WRONG REASON.**
+A relation between two responses that both fail their own golden still PASSES — it
+compares them to each other, not to the contract — and at P1a `refused-equals-absent`
+and `head-matches-get` do exactly that for the two report routes, because
+`501 not-implemented` is beautifully uniform. The runner now prints that caveat on the
+line itself; read it rather than the verdict.
+
+🔴 **THE GO SIDE CARRIES ITS OWN ROUTE LEDGER, BECAUSE THE SUITE CANNOT BUILD ONE FOR
+IT.** `cases.declared_routes` reads the oracle's dispatch tables by AST and has no
+equivalent for a compiled binary, so the blind spot — a route added after the fixtures
+were generated — is closed on the Go side by `api.DeclaredRoutes()`, checked against
+`tests/conformance/requests.json` by `TestTheRouteLedgerMatchesTheConformanceCorpus`,
+against the wiring at construction, and against the ledger's own spelling by
+`checks.go-server-declares-its-routes` (which reads it out of the RUNNING binary).
+Adding a row to a dispatch table is adding a public, internet-reachable endpoint; all
+four of those have to move together.
+
+🔴 **THE GO TOOLCHAIN IS PINNED, NOT INHERITED** — the same discipline as the
+interpreter, and for the same reason. `go.mod` says 1.25, `flake.nix` uses
+`buildGo125Module` (nixpkgs' default `go` is **1.26** against the pinned lock), and CI
+pins `go-version: "1.25"`. Move all three together or not at all. ⚠ `buildGoModule`
+with the compiler in `nativeBuildInputs` is a NO-OP for the pin: it uses the `go` from
+its own scope, so the build fetched 1.26 while the derivation advertised 1.25.
+
+🔴 **STDLIB ONLY.** `go.mod` has no `require` block and `flake.nix` passes
+`vendorHash = null`; together those make a new dependency in the serving path a build
+FAILURE rather than a silent addition.
 
 ## Installing and building with nix
 

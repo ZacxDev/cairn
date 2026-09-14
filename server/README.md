@@ -48,6 +48,16 @@ Replication happens over this API; those tests are untouched.
 
 Manifests: `homelab-talos` → `clusters/homelab/apps/subsystem-store/`.
 
+🔴 **THERE IS NOW A SECOND IMPLEMENTATION, AND `server.py` IS THE ORACLE.**
+`cmd/cairn-server` (Go, stdlib only) is a port of everything in this document except
+the two report-rendering routes; it is **not deployed by anything** and nothing in this
+runbook targets it. Its purpose is to be MEASURED against this file: the HTTP contract
+below is recorded as generated golden fixtures in `tests/conformance/`, and the corpus
+is replayed against both servers. Until that corpus is green for the port, and until
+`verify-byte-identity.sh` has compared the two over one store, every procedure here is
+about `server.py`. See `AGENTS.md` → "TWO SERVERS ARE ALIVE" for the sequence and for
+what the corpus currently does and does not cover.
+
 ## Endpoints
 
 ```

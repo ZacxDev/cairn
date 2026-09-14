@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -210,6 +211,175 @@ class TestCorpusGuards:
         assert cases_mod.declared_routes(src) == {
             "GET alpha", "HEAD alpha", "POST beta",
         }
+
+
+class TestTheOracleSpecificMark:
+    """🔴 THE ONE MECHANISM THAT IS ALLOWED TO SKIP A CASE, AND EVERY GUARD ON IT.
+
+    A row marked `oracle_only` records an answer that is `http.server`'s or CPython's
+    own shape rather than a contract any implementation can honour — an HTTP/0.9
+    response with no status line, a request line the framework rejects before a handler
+    exists, a body quoting the `json` module's diagnostic. It is asserted against the
+    oracle and SKIPPED, by id and with its reason, for anything else.
+
+    ⚠ IT IS THE LAST RESORT AND NOT THE FIRST. A response differing in ONE FIELD
+    belongs in `wire.NORMALIZATIONS`, which keeps every other byte pinned for both
+    implementations; this mark stops the whole case being compared, so the guards below
+    exist to make sure it cannot be used quietly.
+    """
+
+    def test_the_marked_set_is_exactly_the_four_rows_that_carry_a_reason(self, corpus):
+        """An INVARIANT GUARD on today's set, spelled by hand: four rows carry the
+        mark, and the list is written out so a fifth cannot appear unreviewed."""
+        marked = {c.id for c in corpus.cases if c.oracle_only}
+        assert marked == {
+            "raw-malformed-request-line",
+            "raw-malformed-absolute-target",
+            "post-bullets-not-json",
+            "post-bullets-deeply-nested-json",
+        }
+        for case in corpus.cases:
+            assert case.oracle_only == bool(case.oracle_only_why.strip())
+
+    def test_a_mark_with_no_reason_is_refused(self, tmp_path):
+        raw = _raw_corpus()
+        for row in raw["cases"]:
+            if row["id"] == "health-unauthenticated":
+                row["oracle_only"] = True
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(raw, tmp_path)
+        assert "states no reason" in str(exc.value)
+
+    def test_a_reason_with_no_mark_is_refused(self, tmp_path):
+        """The other direction: a reason on an unmarked row describes nothing, and
+        the row IS compared against every implementation — so the prose would read
+        as a licence that is not in force."""
+        raw = _raw_corpus()
+        for row in raw["cases"]:
+            if row["id"] == "health-unauthenticated":
+                row["oracle_only_why"] = "because reasons"
+        with pytest.raises(cases_mod.CorpusError) as exc:
+            _corpus_from(raw, tmp_path)
+        assert "is not marked oracle_only" in str(exc.value)
+
+    def test_the_oracle_run_SKIPS_NOTHING(self):
+        """🔴 THE PROPERTY THAT MAKES THE MARK SAFE. Skipping against the oracle would
+        silently stop covering the oracle's real behaviour, which is worse than
+        asserting it against a port — so `run_against_oracle` asserts every marked row
+        and `run`'s default is the strict direction."""
+        outcome = suite.run_against_oracle()
+        assert outcome.failures == []
+        assert outcome.skipped == []
+        assert not [ln for ln in outcome.lines if ln.startswith("SKIP")]
+
+    def test_skipping_is_REPORTED_by_id_and_by_reason(self):
+        """A skip nobody can see is indistinguishable from a pass, which is the whole
+        failure mode this suite is built against — so the run names every skipped id on
+        its own line, with the row's reason, and counts them in the summary."""
+        with tempfile.TemporaryDirectory(prefix="cairn-conformance-") as td:
+            with oracle.running_oracle(Path(td)) as ora:
+                outcome = suite.run(
+                    ora.base_url, ora.token_file, GOLDEN,
+                    assert_oracle_specific=False,
+                )
+        assert sorted(outcome.skipped) == sorted(
+            [
+                "post-bullets-deeply-nested-json",
+                "post-bullets-not-json",
+                "raw-malformed-absolute-target",
+                "raw-malformed-request-line",
+            ]
+        )
+        # Per-CASE skip lines only: the relation lines below are their own claim and
+        # are counted separately, because "a case was not compared" and "a relation
+        # lost a member" are different facts and folding them would make the count
+        # agree with either.
+        skip_lines = [
+            ln for ln in outcome.lines
+            if ln.startswith("SKIP ") and not ln.startswith("SKIP relation ")
+        ]
+        assert len(skip_lines) == len(outcome.skipped)
+        for line in skip_lines:
+            assert "oracle-specific: " in line
+            # …and the reason is the ROW's, not a constant this runner invented.
+            assert len(line.split("oracle-specific: ", 1)[1]) > 80
+        summary = [ln for ln in outcome.lines if ln.startswith("SUMMARY")][0]
+        assert "skipped=4" in summary
+        assert "raw-malformed-request-line" in summary
+        # 🔴 THE REQUEST IS STILL ISSUED. Only the comparison is skipped, because the
+        # request itself is part of the run's arithmetic: fifteen deliberate refusals
+        # from one client address, and a canary at the end that proves no lockout
+        # tripped. Dropping a request would change what the limiter saw.
+        assert outcome.requests == len(cases_mod.load_corpus().cases) + 1
+        # The oracle answers every one of them correctly, so a skip must not turn into
+        # a failure — and the relation whose member was skipped must still be asserted
+        # over what is left.
+        assert outcome.failures == []
+        relation_skips = [
+            ln for ln in outcome.lines if ln.startswith("SKIP relation uniform-401")
+        ]
+        assert len(relation_skips) == 1
+        assert "asserted over the remaining 14 members" in relation_skips[0]
+
+    def test_a_relation_whose_every_member_is_skipped_FAILS(self, tmp_path):
+        """🔴 THE ANTI-VACUITY GUARD ON THE MECHANISM. A relation left with no members
+        asserts nothing at all, and reporting that as a pass is exactly the reassuring
+        zero the rest of this suite is built to refuse."""
+        raw = _raw_corpus()
+        members = set(raw["relations"]["uniform_401"])
+        for row in raw["cases"]:
+            if row["id"] in members:
+                row["oracle_only"] = True
+                row["oracle_only_why"] = (
+                    "a synthetic mark, used only to prove the relation refuses to "
+                    "report a pass over an empty member set"
+                )
+        corpus = _corpus_from(raw, tmp_path)
+        outcome = suite.Outcome()
+        suite.check_uniform_401(corpus, {}, outcome, skipped=members)
+        assert any("asserts nothing at all" in f for f in outcome.failures)
+
+    def test_a_relation_between_two_FAILING_answers_says_so(self, tmp_path):
+        """🔴 A RELATION BETWEEN TWO RESPONSES THAT BOTH FAILED THEIR OWN GOLDEN STILL
+        PASSES, AND THE LINE HAS TO SAY SO. The claim is "these two answers are the
+        SAME", which is true of two answers that are identically WRONG — so the verdict
+        is not a defect, but a reader seeing `PASS relation refused-equals-absent
+        recall` next to a failing `recall-refused-scope` would reasonably conclude the
+        refusal path is correct. MEASURED on the Go port at P1a: both report relations
+        passed while all four members answered `501 not-implemented`, because a
+        not-implemented answer is beautifully uniform."""
+        corpus = cases_mod.load_corpus()
+        pair = corpus.scope_pairs[0]
+        identical = {
+            "case": "x",
+            "status": 200,
+            "reason": "OK",
+            "headers": [],
+            "body": {"kind": "text_lines", "text_lines": ["same"], "sha256": "x", "bytes": 4},
+        }
+        # Every pair needs a record, because the checker walks all of them — a
+        # partial map would fail on a missing key instead of on the claim.
+        records = {}
+        for other in corpus.scope_pairs:
+            records[other.refused] = dict(identical)
+            records[other.absent] = dict(identical)
+
+        clean = suite.Outcome()
+        suite.check_scope_pairs(corpus, records, clean, skipped=set(), failed=set())
+        assert any(
+            ln == f"PASS relation refused-equals-absent {pair.name}" for ln in clean.lines
+        ), clean.lines
+
+        caveated = suite.Outcome()
+        suite.check_scope_pairs(
+            corpus, records, caveated,
+            skipped=set(), failed={pair.refused, pair.absent},
+        )
+        assert any(
+            ln.startswith(f"PASS relation refused-equals-absent {pair.name} (")
+            and "both members failed their own golden" in ln
+            for ln in caveated.lines
+        ), caveated.lines
 
 
 class TestNormalizations:

@@ -71,6 +71,12 @@ class Outcome:
     assertions: int = 0
     failures: list[str] = None  # type: ignore[assignment]
     lines: list[str] = None  # type: ignore[assignment]
+    #: Cases NOT compared on this run because they are marked `oracle_only` and the
+    #: server under test is not the oracle. 🔴 REPORTED BY ID IN THE SUMMARY AND
+    #: NAMED WITH ITS REASON ON ITS OWN LINE, because a skip nobody can see is
+    #: indistinguishable from a pass — which is the whole failure mode this suite is
+    #: built against, arriving through the one mechanism that is allowed to skip.
+    skipped: list[str] = None  # type: ignore[assignment]
     #: `Content-Length` as the server sent it, per case, BEFORE normalization.
     #: The HEAD/GET relation needs the un-normalized value and nothing else does.
     raw_lengths: dict[str, int | None] = None  # type: ignore[assignment]
@@ -82,6 +88,8 @@ class Outcome:
             self.lines = []
         if self.raw_lengths is None:
             self.raw_lengths = {}
+        if self.skipped is None:
+            self.skipped = []
 
     def line(self, text: str) -> None:
         self.lines.append(text)
@@ -158,7 +166,9 @@ def _framing(case: cases_mod.Case, resp: wire.Response, outcome: Outcome) -> int
 
 
 def check_declared_normalizations(
-    corpus: cases_mod.Corpus, answers: dict[str, tuple[wire.Response, set[str]]]
+    corpus: cases_mod.Corpus,
+    answers: dict[str, tuple[wire.Response, set[str]]],
+    skipped: "set[str] | None" = None,
 ) -> list[str]:
     """A declared normalization that changed nothing is a silent widening.
 
@@ -169,7 +179,14 @@ def check_declared_normalizations(
     row's answer.
     """
     problems: list[str] = []
+    skipped = skipped or set()
     for case in corpus.cases:
+        if case.id in skipped:
+            # The case is not being compared at all, so a normalization that did not
+            # fire on it carries no licence to differ — there is nothing left to
+            # widen. Asserting here would turn every oracle-specific row into a
+            # failure about a field nobody is reading.
+            continue
         _resp, fired = answers[case.id]
         for name in case.normalize:
             if name not in fired:
@@ -225,6 +242,7 @@ def check_uniform_401(
     corpus: cases_mod.Corpus,
     records: dict[str, dict[str, Any]],
     outcome: Outcome,
+    skipped: "set[str] | None" = None,
 ) -> None:
     """Every declared 401 case must be byte-identical to the first.
 
@@ -233,7 +251,27 @@ def check_uniform_401(
     header — the regenerated golden would simply record the difference. The
     property is that they are the SAME answer, so it is asserted between them.
     """
-    ids = list(corpus.uniform_401)
+    skipped = skipped or set()
+    ids = [i for i in corpus.uniform_401 if i not in skipped]
+    for case_id in corpus.uniform_401:
+        if case_id in skipped:
+            # 🔴 A MEMBER DROPPED FROM THIS RELATION IS A WEAKER CLAIM, SO IT IS SAID
+            # OUT LOUD RATHER THAN LEFT TO BE COUNTED. The relation still holds over
+            # the members that remain; what it no longer covers is this one, and the
+            # row's own `oracle_only_why` has to say where that is covered instead.
+            outcome.line(
+                f"SKIP relation uniform-401 {case_id} "
+                f"(oracle-specific; the relation is asserted over the remaining "
+                f"{len(ids)} members)"
+            )
+    if not ids:
+        outcome.fail(
+            "uniform-401",
+            "every member of the uniform-401 relation is oracle-specific on this "
+            "run, so the relation asserts nothing at all",
+        )
+        outcome.line("FAIL relation uniform-401 (no members left to compare)")
+        return
     reference = ids[0]
     ref = _relational_form(records[reference])
     outcome.assertions += 1
@@ -265,6 +303,8 @@ def check_scope_pairs(
     corpus: cases_mod.Corpus,
     records: dict[str, dict[str, Any]],
     outcome: Outcome,
+    skipped: "set[str] | None" = None,
+    failed: "set[str] | None" = None,
 ) -> None:
     """A refused scope must answer what a never-existed scope answers.
 
@@ -273,7 +313,13 @@ def check_scope_pairs(
     demanding it would be a test that cannot pass. Each pair declares the two
     names; every other byte, and every header, must match.
     """
+    skipped = skipped or set()
     for pair in corpus.scope_pairs:
+        if pair.refused in skipped or pair.absent in skipped:
+            outcome.line(
+                f"SKIP relation refused-equals-absent {pair.name} (oracle-specific)"
+            )
+            continue
         left = _relational_form(
             records[pair.refused],
             substitute=pair.refused_scope,
@@ -296,10 +342,18 @@ def check_scope_pairs(
             )
             outcome.line(f"FAIL relation refused-equals-absent {pair.name}")
         else:
-            outcome.line(f"PASS relation refused-equals-absent {pair.name}")
+            outcome.line(
+                f"PASS relation refused-equals-absent {pair.name}"
+                + _both_wrong(pair.refused, pair.absent, failed)
+            )
 
 
-def check_head_pairs(corpus: cases_mod.Corpus, outcome: Outcome) -> None:
+def check_head_pairs(
+    corpus: cases_mod.Corpus,
+    outcome: Outcome,
+    skipped: "set[str] | None" = None,
+    failed: "set[str] | None" = None,
+) -> None:
     """A HEAD must report the Content-Length its GET would have sent.
 
     🔴 THE REASON THIS IS A RELATION AND NOT A GOLDEN. A report body carries the
@@ -311,7 +365,11 @@ def check_head_pairs(corpus: cases_mod.Corpus, outcome: Outcome) -> None:
     length. Comparing the two answers to EACH OTHER keeps the claim and drops the
     dependence.
     """
+    skipped = skipped or set()
     for pair in corpus.head_pairs:
+        if pair.head in skipped or pair.get in skipped:
+            outcome.line(f"SKIP relation head-matches-get {pair.name} (oracle-specific)")
+            continue
         head = outcome.raw_lengths.get(pair.head)
         get = outcome.raw_lengths.get(pair.get)
         outcome.assertions += 1
@@ -324,7 +382,32 @@ def check_head_pairs(corpus: cases_mod.Corpus, outcome: Outcome) -> None:
             )
             outcome.line(f"FAIL relation head-matches-get {pair.name}")
         else:
-            outcome.line(f"PASS relation head-matches-get {pair.name}")
+            outcome.line(
+                f"PASS relation head-matches-get {pair.name}"
+                + _both_wrong(pair.head, pair.get, failed)
+            )
+
+
+#: 🔴 A RELATION BETWEEN TWO RESPONSES THAT BOTH FAILED THEIR OWN GOLDEN STILL
+#: PASSES, AND SAYING SO ON THE LINE IS THE ONLY THING THAT STOPS IT READING AS
+#: COVERAGE. The claim these relations make is "these two answers are the SAME"; it
+#: is true of two answers that are identically WRONG, so the verdict is not a defect
+#: — but a reader seeing `PASS relation refused-equals-absent recall` next to a
+#: failing `recall-refused-scope` would reasonably conclude the refusal path is
+#: correct. MEASURED, on the Go port at P1a: both report/relation pairs passed while
+#: all four members answered `501 not-implemented`, because a not-implemented answer
+#: is beautifully uniform. The per-case FAIL lines carried the information and the
+#: relation line contradicted them; now it carries the caveat itself.
+_BOTH_WRONG = (
+    " (⚠ both members failed their own golden, so this compares two answers that "
+    "are not the contract)"
+)
+
+
+def _both_wrong(left: str, right: str, failed: "set[str] | None") -> str:
+    if failed and left in failed and right in failed:
+        return _BOTH_WRONG
+    return ""
 
 
 def _diff(left: list[str], right: list[str], left_name: str, right_name: str) -> str:
@@ -506,25 +589,53 @@ def run(
     token_file: Path,
     golden_dir: Path = GOLDEN_DIR,
     corpus: cases_mod.Corpus | None = None,
+    *,
+    assert_oracle_specific: bool = True,
 ) -> Outcome:
-    """Replay the corpus against any server and diff against the goldens."""
+    """Replay the corpus against any server and diff against the goldens.
+
+    🔴 `assert_oracle_specific` DEFAULTS TO **TRUE**, WHICH IS THE STRICT
+    DIRECTION, AND THAT IS DELIBERATE. A row marked `oracle_only` records an answer
+    that is the Python server's own shape rather than a contract any implementation
+    can honour (see `cases.Case.oracle_only`). Asserting it against a port fails;
+    skipping it against the ORACLE would silently stop covering the oracle's real
+    behaviour, which is the worse of the two, so a caller that does not say gets the
+    assertion. The CLI turns it off for `--base-url` and REPORTS every skip by id.
+    """
     corpus = corpus or cases_mod.load_corpus()
     principals = oracle.principals_from_token_file(token_file)
     outcome = Outcome()
     answers = execute(base_url, principals, corpus, outcome)
-    for problem in check_declared_normalizations(corpus, answers):
+    # 🔴 THE CASE IS STILL ISSUED. Only the COMPARISON is skipped — because the
+    # request itself is part of the run's arithmetic: the corpus issues fifteen
+    # deliberate refusals from one client address and the canary at the end is what
+    # proves no lockout tripped. Dropping a request would change what the limiter
+    # saw, so a skipped row would quietly alter the answers of the rows around it.
+    skipped = set()
+    if not assert_oracle_specific:
+        skipped = {c.id for c in corpus.cases if c.oracle_only}
+    for problem in check_declared_normalizations(corpus, answers, skipped):
         outcome.failures.append(problem)
         outcome.line("FAIL normalization " + problem.split(":")[0])
     records: dict[str, dict[str, Any]] = {}
+    failed: set[str] = set()
     for case in corpus.cases:
         resp, _fired = answers[case.id]
+        if case.id in skipped:
+            outcome.skipped.append(case.id)
+            outcome.line(
+                f"SKIP {case.id} (oracle-specific: {case.oracle_only_why})"
+            )
+            continue
         records[case.id] = wire.record(case, resp)
         golden = wire.read_golden(golden_dir, case.id)
         ok = compare(case, resp, golden, outcome)
+        if not ok:
+            failed.add(case.id)
         outcome.line(("PASS " if ok else "FAIL ") + case.id)
-    check_uniform_401(corpus, records, outcome)
-    check_scope_pairs(corpus, records, outcome)
-    check_head_pairs(corpus, outcome)
+    check_uniform_401(corpus, records, outcome, skipped)
+    check_scope_pairs(corpus, records, outcome, skipped, failed)
+    check_head_pairs(corpus, outcome, skipped, failed)
 
     # 🔴 THE CANARY, AND IT IS NOT DECORATION. The rate limiter answers the SAME
     # uniform 401 a bad token does, so once a lockout trips every authorized
@@ -553,17 +664,25 @@ def run(
             )
     outcome.line(
         f"SUMMARY requests={outcome.requests} assertions={outcome.assertions} "
-        f"failures={len(outcome.failures)}"
+        f"failures={len(outcome.failures)} skipped={len(outcome.skipped)}"
+        + (" [" + ",".join(outcome.skipped) + "]" if outcome.skipped else "")
     )
     return outcome
 
 
 def run_against_oracle(golden_dir: Path = GOLDEN_DIR, corpus: cases_mod.Corpus | None = None,
                        **oracle_kwargs) -> Outcome:
-    """Boot the Python oracle over a fresh world and replay against it."""
+    """Boot the Python oracle over a fresh world and replay against it.
+
+    Every `oracle_only` row is ASSERTED here — this function is the one place that
+    knows the server it is talking to IS `server/server.py`.
+    """
     with tempfile.TemporaryDirectory(prefix="cairn-conformance-") as td:
         with oracle.running_oracle(Path(td), **oracle_kwargs) as ora:
-            return run(ora.base_url, ora.token_file, golden_dir, corpus)
+            return run(
+                ora.base_url, ora.token_file, golden_dir, corpus,
+                assert_oracle_specific=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -596,6 +715,20 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--base-url", default=None, help="default: boot the Python oracle")
     r.add_argument("--token-file", type=Path, default=None)
     r.add_argument("--golden-dir", type=Path, default=GOLDEN_DIR)
+    r.add_argument(
+        "--oracle-specific",
+        choices=("skip", "assert"),
+        default="skip",
+        help=(
+            "what to do with a row marked `oracle_only` — a response whose shape is "
+            "the Python server's own artifact rather than a contract (see "
+            "`cases.Case.oracle_only`). `skip` (the default for --base-url) does NOT "
+            "compare it and names every skipped id with its reason in the output and "
+            "in the SUMMARY; `assert` compares it, which is what you want when "
+            "--base-url points at a hand-started ORACLE rather than at a port. "
+            "Omitting --base-url boots the oracle and always asserts."
+        ),
+    )
 
     sub.add_parser("normalizations", help="print the declared normalization table")
 
@@ -624,7 +757,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if args.token_file is None:
             p.error("--token-file is required with --base-url")
-        outcome = run(args.base_url, args.token_file, args.golden_dir)
+        outcome = run(
+            args.base_url, args.token_file, args.golden_dir,
+            assert_oracle_specific=args.oracle_specific == "assert",
+        )
     for line in outcome.lines:
         print(line)
     if outcome.failures:

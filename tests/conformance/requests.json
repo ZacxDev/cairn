@@ -153,13 +153,17 @@
         "",
         ""
       ],
-      "why": "urlsplit RAISES on this target, and absolute-form is mandatory-to-accept - so a conforming client can send it. It must be a uniform 401, not an unhandled ValueError with no response at all."
+      "why": "urlsplit RAISES on this target, and absolute-form is mandatory-to-accept - so a conforming client can send it. It must be a uniform 401, not an unhandled ValueError with no response at all.",
+      "oracle_only": true,
+      "oracle_only_why": "THE REQUEST LINE NEVER REACHES A HANDLER IN A SERVER WHOSE FRAMEWORK PARSES IT FIRST. `urlsplit` RAISES on this target, so the oracle has to catch it INSIDE its own handler and answer the uniform 401 - which is the contract this row was written to pin, and it is the oracle's to keep. Go's `net/http` rejects the request line in `readRequest`, before any handler exists to be reached, and answers its own 400. The SECURITY property survives intact on both: an unparseable target reveals nothing about the store, which is the same reasoning `raw-malformed-request-line` is already recorded under rather than called a defect. What is asserted for a port instead: NOTHING, and saying so is the point. The answer comes from the framework's own request parser, before a line of the port runs, so there is no code here to write a test against - the security property holds because a framed 400 mentions no scope, which is a property of that framework rather than one this repository can pin. That is the honest shape of this particular skip, and it is why the row's own `why` is kept above it."
     },
     {
       "id": "raw-malformed-request-line",
       "phase": "read",
       "raw_request": ["GET", "", ""],
-      "why": "six bytes, before `self.path` exists. The answer is a bare HTTP/0.9 body with NO status line and NO headers, because parse_request never established a version - recorded as its own shape rather than faked into a 401."
+      "why": "six bytes, before `self.path` exists. The answer is a bare HTTP/0.9 body with NO status line and NO headers, because parse_request never established a version - recorded as its own shape rather than faked into a 401.",
+      "oracle_only": true,
+      "oracle_only_why": "HTTP/0.9 IS A PROPERTY OF `http.server`, NOT A DESIGNED CONTRACT. `parse_request` never establishes a version for a six-byte request line, so `send_response_only` suppresses the status line and every header and the body arrives with no framing at all. That is the oracle's own shape and it is worth recording FOR THE ORACLE; no other implementation has a reason to reproduce it, and Go's `net/http` answers a framed 400. Already excluded from the uniform-401 set for the same reason."
     },
     {
       "id": "raw-recall-read-to-eof",
@@ -745,7 +749,9 @@
       "body": {
         "raw_text": "{not json"
       },
-      "why": "a malformed body is a caller error, answered as one - and the parser's own sentence rides the response."
+      "why": "a malformed body is a caller error, answered as one - and the parser's own sentence rides the response.",
+      "oracle_only": true,
+      "oracle_only_why": "THE PARENTHESISED SENTENCE IS CPython's `json` MODULE'S DIAGNOSTIC (`Expecting property name enclosed in double quotes: line 1 column 2 (char 1)`), and it is an artifact of that parser rather than a contract a port can honour without shipping a second JSON parser to reproduce its wording. The row stays asserted against the oracle because the sentence really does ride the response there. What a port must still get right - a 400, `X-Store-Status: bad-request`, the `bad request: body must be JSON (` prefix, and a connection that is not dropped - is pinned in the Go tests named in README.md, because that is where an implementation's own diagnostics belong."
     },
     {
       "id": "post-bullets-deeply-nested-json",
@@ -756,7 +762,9 @@
       "body": {
         "raw_text": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["
       },
-      "why": "nesting is what once raised RecursionError - not a ValueError - inside json.loads, dropping the connection with no response and NO AUDIT LINE. This depth is shallow enough to parse; the shape is the point."
+      "why": "nesting is what once raised RecursionError - not a ValueError - inside json.loads, dropping the connection with no response and NO AUDIT LINE. This depth is shallow enough to parse; the shape is the point.",
+      "oracle_only": true,
+      "oracle_only_why": "SAME REASON AS `post-bullets-not-json`: the body quotes CPython's own `Expecting value: line 1 column 51 (char 50)`. The DEFECT this row exists for - a nested body raising an error type the handler did not name, dropping the connection with no response and no audit line - is implementation-specific too: it was a `RecursionError` out of `json.loads`, and a parser that returns an error instead of unwinding the stack cannot reproduce it. The Go side pins the answerable half (a 400, not a dropped connection) in its own tests."
     },
     {
       "id": "post-bullets-missing-session",

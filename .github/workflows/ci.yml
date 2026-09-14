@@ -60,15 +60,20 @@ jobs:
           python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
-          # 1798 collected, measured 2026-09-14 on `main` AFTER three PRs landed
-          # together (#17 the scrub fix, #18 the capability ledger, #19 the
-          # conformance suite). The two feature PRs each measured their OWN
-          # branch — 1740 and 1769 — and neither number was ever true of the
-          # merged tree, which is the reason this constant is re-measured on
-          # `main` rather than carried over from whichever branch landed last.
+          # 1805 collected, measured 2026-09-14 on the Go-port branch: 1798 on
+          # `main` plus the seven guards `TestTheOracleSpecificMark` adds for the
+          # oracle-only mechanism. The previous constant was 1748 against 1798 on
+          # `main` AFTER three PRs landed together (#17 the scrub fix, #18 the
+          # capability ledger, #19 the conformance suite) — the two feature PRs
+          # each measured their OWN branch (1740 and 1769) and neither number was
+          # ever true of the merged tree, which is why this is re-measured rather
+          # than carried over from whichever branch landed last.
+          #
           # Raise as the suite grows — `m - min(50, max(1, m/20))` for the m you
-          # measured; never lower without saying why.
-          FLOOR = 1748
+          # measured; never lower without saying why. ⚠ THE GO TESTS ARE NOT IN
+          # THIS NUMBER: they are a different runner in a different job, and
+          # folding them in would make one floor answer two questions.
+          FLOOR = 1755
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -79,6 +84,128 @@ jobs:
               sys.exit(1)
           sys.exit(1 if fail else 0)
           PY
+
+  # 🔴 THE GO PORT'S OWN GATE, AND IT IS A SEPARATE JOB FOR THE SAME REASON THE
+  # LEAK SCAN IS: its verdict is readable on its own in the checks list, and a
+  # Python failure can never mask it or the other way round.
+  #
+  # 🔴 THE TOOLCHAIN IS PINNED, NOT INHERITED. 1.25 is what `go.mod` declares and
+  # what `flake.nix` builds with (`buildGo125Module` — nixpkgs' default `go` is
+  # 1.26 against the pinned lock). Move all three together or not at all; the
+  # same discipline the Python 3.12 pin is under, and for the same reason.
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      # 🔴 THE CONFORMANCE RUNNER IS PYTHON, AND IT IS PINNED HERE FOR THE SAME REASON
+      # IT IS PINNED IN THE `tests` JOB. `run_go.sh` materialises the fixture world and
+      # replays the corpus with `tests/conformance/suite.py`; letting that run on
+      # whatever interpreter the runner image happens to ship would measure the Go
+      # server with a tool nothing else in this repo has ever used.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 🔴 `vet` BEFORE `test`, and both before the corpus. Each is a different
+      # question: vet reads the code, the unit tests exercise the guards, and the
+      # conformance corpus measures the SERVED behaviour against the oracle's
+      # recorded contract. A green on any one of them is not the others.
+      - name: go vet
+        run: go vet ./...
+
+      # 🔴 READ THE PER-PACKAGE RESULT LINES, NOT JUST THE EXIT CODE. `go test`
+      # over a module with no test files exits 0 — and that is not hypothetical
+      # here: the flake's own check phase was measured running ZERO tests while
+      # reporting green, because a `subPackages` narrowing had scoped the test
+      # walk to the one directory that has none. The floor makes that impossible.
+      - name: go test, with an `ok` floor
+        run: |
+          set -o pipefail
+          go test ./... | tee /tmp/go-test.txt
+          ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
+          # EIGHT packages carry tests, measured 2026-09-14: api, authz, netid,
+          # pytext, report, snapshot, store, write. The floor is ONE BELOW that,
+          # so deleting a package's tests fails here while adding a package does
+          # not — the same shape as the Python collected-test floor, and for the
+          # same reason: `go test` over a package with no test files exits 0, so
+          # the exit code alone cannot tell a green suite from an absent one.
+          echo "packages with passing tests: $ok"
+          if [ "$ok" -lt 7 ]; then
+            echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
+            exit 1
+          fi
+
+      # 🔴 THE P1 GATE ITSELF: the conformance corpus, replayed against the Go
+      # server. It is expected to be PARTIAL at P1a — the `/recall` and `/search`
+      # rendering is P1b — so the assertion is on the split rather than on zero
+      # failures, and the numbers are read out of the runner's own summary line.
+      #
+      # ⚠ A CEILING, NOT A FLOOR, AND THE DIRECTION IS THE POINT: the run must not
+      # get WORSE. A floor on passes would go green for a server that started
+      # failing cases it used to pass, as long as it passed enough others.
+      - name: the conformance corpus against the Go server (P1a is partial by design)
+        run: |
+          set -o pipefail
+          tests/conformance/run_go.sh > /tmp/conformance.txt 2>&1 || true
+          grep '^SUMMARY' /tmp/conformance.txt
+          # 🔴 THREE KINDS OF `FAIL ` LINE, COUNTED SEPARATELY, BECAUSE THEY ARE
+          # THREE DIFFERENT CLAIMS. `FAIL <case>` is a case whose answer differs
+          # from its golden; `FAIL normalization <case>` is a declared licence to
+          # differ that matched nothing (which a 501 body necessarily produces for
+          # every report row); `FAIL relation <name>` is a between-responses
+          # property. A single `grep -c '^FAIL '` folds all three into one number
+          # that agrees with any of them — measured: 66, against 22 real case
+          # failures.
+          passes=$(grep -c '^PASS ' /tmp/conformance.txt || true)
+          cases=$(grep '^FAIL ' /tmp/conformance.txt | grep -cvE '^FAIL (normalization|relation) ' || true)
+          norms=$(grep -c '^FAIL normalization ' /tmp/conformance.txt || true)
+          relations=$(grep -c '^FAIL relation ' /tmp/conformance.txt || true)
+          skips=$(grep -c '^SKIP ' /tmp/conformance.txt || true)
+          echo "passes=$passes failing-cases=$cases failing-normalizations=$norms failing-relations=$relations skips=$skips"
+
+          # Measured at P1a: 94 PASS lines (cases and relations), 22 failing cases
+          # — every one a `/recall` or `/search` RENDERING case — 44 failing
+          # normalizations (two report-body licences per rendering case, which
+          # cannot fire on a 501), 0 failing relations, and 5 SKIP lines (4
+          # oracle-specific cases plus the one uniform-401 member that belongs to
+          # one of them). P1b lands the renderer and drops all three failure counts
+          # to 0; RAISE the pass floor and LOWER the failure ceilings in the same
+          # change.
+          #
+          # ⚠ A CEILING ON FAILURES AND A FLOOR ON PASSES, AND BOTH DIRECTIONS
+          # MATTER: a floor on passes alone goes green for a server that started
+          # failing cases it used to pass, as long as it passed enough others.
+          if [ "$passes" -lt 94 ]; then
+            echo "REFUSING: $passes passes, and 94 were measured at P1a — the run got worse"
+            exit 1
+          fi
+          if [ "$cases" -gt 22 ] || [ "$norms" -gt 44 ]; then
+            echo "REFUSING: $cases failing cases and $norms failing normalizations;"
+            echo "          22 and 44 were measured at P1a"
+            grep '^FAIL ' /tmp/conformance.txt
+            exit 1
+          fi
+          # 🔴 A FAILING RELATION IS NEVER ATTRIBUTABLE TO P1b. The relations are
+          # about REFUSALS being indistinguishable and a HEAD agreeing with its
+          # GET; a missing renderer cannot break either, so any failure here is a
+          # real one.
+          if [ "$relations" -ne 0 ]; then
+            echo "REFUSING: a relational property failed, which the missing renderer cannot explain"
+            grep '^FAIL relation ' /tmp/conformance.txt
+            exit 1
+          fi
+          # 🔴 EVERY REMAINING FAILURE MUST BE ATTRIBUTABLE TO P1b BY NAME. A
+          # failure anywhere else is a regression wearing the P1a costume, so the
+          # SET is checked and not only its size.
+          if grep '^FAIL ' /tmp/conformance.txt |
+               grep -vE '^FAIL (normalization )?(recall|search|raw-recall)'; then
+            echo "REFUSING: a failing line that is NOT a report-rendering case"
+            exit 1
+          fi
 
   # 🔴 A FLAKE NOBODY BUILDS IS DECORATION, AND ITS ROT IS SILENT. `flake.nix`
   # is what a consumer pins — devrc is the first — so a break here does not
@@ -119,3 +246,16 @@ jobs:
       # so is the point: a green here is not a claim about a working pod.
       - name: the server image builds
         run: nix build .#packages.x86_64-linux.server-image --no-link --print-build-logs
+
+      # The Go server is packaged too, and its build RUNS the unit tests — so this
+      # step is a second, independent reading of the `go` job's verdict under the
+      # PINNED toolchain rather than the one `setup-go` installed. Two tiers, both
+      # read: an environment silently decides which tests execute, and greening one
+      # while the other stays unobservable moves a bug rather than removing it.
+      - name: the Go server package builds, and its unit tests pass under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-server-go --no-link --print-build-logs
+
+      # …and the binary's own route ledger is read out of the running binary,
+      # which is the one claim a compile cannot make.
+      - name: the Go server declares exactly the routes the ledger names
+        run: nix build .#checks.x86_64-linux.go-server-declares-its-routes --no-link --print-build-logs

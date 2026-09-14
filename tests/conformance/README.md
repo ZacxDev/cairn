@@ -91,6 +91,40 @@ authenticated, touches no store state, and is re-issued as the last request of
 every run. If it stops matching its golden, either a lockout tripped or the run
 mutated state a read depends on, and nothing after that point can be trusted.
 
+## Four rows are asserted against the ORACLE ONLY
+
+🔴 **Some recorded behaviour is CPython or `http.server` ARTIFACT, not designed
+contract**, and the corpus has to be able to say which. A row marked `oracle_only`
+is asserted against the Python server and **skipped — by id, with its reason, counted
+in the summary — for any other implementation**. `cases.py` refuses a mark with no
+reason, and refuses a reason with no mark.
+
+⚠ **IT IS THE LAST RESORT AND NOT THE FIRST.** A response differing in ONE FIELD
+belongs in `wire.NORMALIZATIONS`, which keeps every other byte pinned for both
+implementations. This mark stops the whole case being compared, so whatever the row was
+covering has to be covered somewhere else and the reason must say where.
+
+| row | the artifact | where the contract half is covered |
+|---|---|---|
+| `raw-malformed-request-line` | HTTP/0.9: `parse_request` never established a version, so `send_response_only` suppresses the status line and every header | nowhere else — the property is "it does not crash", and a framed 400 from a port satisfies it |
+| `raw-malformed-absolute-target` | the request line never reaches a handler in a server whose framework parses it first; Go's `net/http` answers its own 400 in `readRequest` | **nowhere** — the answer comes from the framework's parser before any port code runs, so there is nothing to test; the security property holds because a framed 400 names no scope |
+| `post-bullets-not-json` | the body quotes CPython's `json` diagnostic (`Expecting property name enclosed in double quotes: line 1 column 2 (char 1)`) | `write.TestDecodeBulletBodyRefusesRatherThanCrashing` and `api.TestAMalformedBodyIsAnsweredAndNotDropped` pin the 400, the `X-Store-Status`, the message prefix, and that the connection survives |
+| `post-bullets-deeply-nested-json` | the same, plus a defect (`RecursionError` out of `json.loads`) that a parser returning an error instead of unwinding the stack cannot reproduce | the same two Go tests |
+
+Both raw rows were ALREADY excluded from the uniform-401 relation for the first row's
+reason ("it reveals nothing about the store, so this is recorded rather than called a
+defect"); the second now carries the same reasoning. When a member of a relation is
+skipped the runner says so on its own line and names how many members are left, and a
+relation left with NO members is a **failure** rather than a pass.
+
+```bash
+python3 tests/conformance/suite.py run --base-url … --token-file …                     # skips them, loudly
+python3 tests/conformance/suite.py run --base-url … --token-file … --oracle-specific assert
+```
+
+The second form is for a `--base-url` pointing at a hand-started **oracle**. Omitting
+`--base-url` boots the oracle and always asserts.
+
 ## Three cases send literal request bytes
 
 `raw_request` rows write the request line themselves over a socket and read the
