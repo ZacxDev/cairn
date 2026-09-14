@@ -225,6 +225,31 @@ because none is visible to the corpus:**
 | `store.ScopeRevision` on a `.git/HEAD` that is not valid UTF-8 | ONE `400` audit line here, **two** (`200` then `400`) on the oracle | there the strict decode raises while the response's arguments are being evaluated, after the 200 line is already written. Reproducing a mid-response raise to duplicate a log line is a worse trade than naming it |
 | `store.ScopeRevision` resolving a `ref:` | `filepath.Join` CLEANS, so a `ref:` naming `../…` cannot climb out of the git dir; the oracle's `git / ref` can | a NARROWING, in the safe direction. A HEAD pointing outside its own repo is not a revision worth reporting |
 
+🔴 **AND ONE DIVERGENCE IS OPEN RATHER THAN DELIBERATE: AN INTEGER QUERY PARAMETER WIDER
+THAN `int64`.** `_int_param` is `int(v)`, which is arbitrary precision; `intParam` is
+`strconv.Atoi`, which is not. **Measured live on both servers over one world**, not derived
+from reading:
+
+```
+GET /api/v1/recall/alpha-notes?page=999999999999999999999
+  oracle 200: INDEX (from index) — no entries: page 999999999999999999999 is past the end …
+  go     400: bad request: page must be an integer, got '999999999999999999999'
+GET /api/v1/recall/alpha-notes?limit=999999999999999999999
+  oracle 200: INDEX (from index) — ALL 2 entries in `alpha-notes/`, none omitted …
+  go     400: bad request: limit must be an integer, got '999999999999999999999'
+```
+
+It is a P1a-era parsing difference that only became OBSERVABLE at P1b, because before the
+renderer existed both answers were refusals. `tests/conformance/` cannot see it — the runner
+builds its targets from `requests.json` and no row carries a 21-digit parameter.
+⚠ **It is recorded here and NOT fixed in the same change as the renderer**, deliberately:
+widening `intParam`'s range is a change to the validation ladder, and P1b's whole claim is
+that the ladder did not move. **Closing condition:** a `requests.json` row carrying a
+21-digit `?page=`, regenerated against the oracle, and `run_go.sh` exiting 0 with it present
+— which forces whoever lands it to decide between matching `int()` and declaring the
+difference in `wire.NORMALIZATIONS`. The check is mechanical; the decision is not, which is
+why it is a separate change.
+
 🔴 **THE GO SIDE CARRIES ITS OWN ROUTE LEDGER, BECAUSE THE SUITE CANNOT BUILD ONE FOR
 IT.** `cases.declared_routes` reads the oracle's dispatch tables by AST and has no
 equivalent for a compiled binary, so the blind spot — a route added after the fixtures
