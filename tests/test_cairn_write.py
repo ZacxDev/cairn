@@ -36,7 +36,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
-from testlib import hang_mechanism, store_siting  # noqa: E402
+from testlib import cairn_source, hang_mechanism, store_siting  # noqa: E402
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
 GOOD_TOKEN = "w" * 20 + "R" * 20 + "t" * 8
@@ -200,38 +200,20 @@ def _dead_port() -> int:
         return sock.getsockname()[1]
 
 
-def _cairn_ast() -> "ast.Module":
-    import ast as _ast
-
-    return _ast.parse(CAIRN_CLI.read_text())
-
-
-def _module_constants() -> dict[str, int]:
-    """Module-level `NAME = <int>` from `cairn`, read by AST.
-
-    🔴 NOT `exec`, AND NOT A REGEX. `exec`ing the file (even a prefix of it)
-    fails on `__file__`, which is absent from a synthetic namespace — measured,
-    it raised `NameError` at `Path(__file__)`. A regex over the source would
-    silently miss a re-spelling. The AST answers the question the test is
-    actually asking: what integer does this module bind to this name?
-    """
-    import ast as _ast
-
-    out: dict[str, int] = {}
-    for node in _cairn_ast().body:
-        if isinstance(node, _ast.Assign) and len(node.targets) == 1:
-            target = node.targets[0]
-            if isinstance(target, _ast.Name) and isinstance(node.value, _ast.Constant):
-                if isinstance(node.value.value, int):
-                    out[target.id] = node.value.value
-    return out
+# 🔴 `cairn_ast` / `module_constants` MOVED TO `testlib.cairn_source`, UNCHANGED.
+# They were local to this file until `tests/test_cairn_doctor.py`'s exit-code
+# ledger needed the same operand set — the client's `EXIT_*` constants,
+# DISCOVERED rather than hand-listed. A second AST walker there would have been a
+# second thing to keep true over one question; `claude/RULES.md` → "One rule, one
+# place". The header of that module carries the `exec`-vs-AST reasoning and, newly,
+# what AST discovery cannot see.
 
 
 def _write_status_table() -> dict[int, int]:
     """`_WRITE_STATUS_EXITS` as a real dict, read by AST for the same reason."""
     import ast as _ast
 
-    for node in _cairn_ast().body:
+    for node in cairn_source.cairn_ast().body:
         targets = getattr(node, "targets", []) or (
             [node.target] if isinstance(node, _ast.AnnAssign) else []
         )
@@ -1043,7 +1025,7 @@ class TestTheAlreadyExistsTokenIsTheDISCRIMINATOR:
     def _token_table(self) -> "dict[str, object]":
         import ast as _ast
 
-        for node in _cairn_ast().body:
+        for node in cairn_source.cairn_ast().body:
             targets = getattr(node, "targets", []) or (
                 [node.target] if isinstance(node, _ast.AnnAssign) else []
             )
@@ -1059,7 +1041,7 @@ class TestTheAlreadyExistsTokenIsTheDISCRIMINATOR:
     def test_the_already_exists_token_maps_to_its_own_exit_code(self):
         table = self._token_table()
         assert table == {"already-exists": "EXIT_WRITE_EXISTS"}, table
-        assert _module_constants()["EXIT_WRITE_EXISTS"] == 9
+        assert cairn_source.module_constants()["EXIT_WRITE_EXISTS"] == 9
 
     def test_the_token_the_SERVER_emits_is_the_token_the_CLIENT_keys_on(self):
         """🔴 THE SEAM. Both sides are read from their own source and compared
@@ -1101,7 +1083,7 @@ class TestExitCodesDoNotOverlap:
         """Pinned as a SET, not as four separate assertions, because the hazard
         is a future verb reusing a number rather than any one of them being
         wrong today."""
-        ns = _module_constants()
+        ns = cairn_source.module_constants()
         reads = {ns["EXIT_OK"], ns["EXIT_UNREACHABLE_NO_CACHE"], ns["EXIT_USAGE"],
                  ns["EXIT_REFRESH_FAILED"], ns["EXIT_CORRUPT"]}
         writes = {ns["EXIT_WRITE_REFUSED"], ns["EXIT_WRITE_UNREACHABLE"],

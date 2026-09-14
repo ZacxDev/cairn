@@ -41,6 +41,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "lib"))
 
 import cairn_doctor as cd  # noqa: E402
+from testlib import cairn_source  # noqa: E402
 
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
@@ -55,6 +56,78 @@ def _load_cairn_cli():
     mod.__file__ = str(CAIRN_CLI)
     exec(compile(CAIRN_CLI.read_text(encoding="utf-8"), str(CAIRN_CLI), "exec"), mod.__dict__)
     return mod
+
+
+def _doctor_codes() -> set[int]:
+    """Every integer `cairn doctor` can hand a caller BY DESIGN, DISCOVERED.
+
+    🔴 DISCOVERED, NEVER HAND-LISTED, AND THAT IS THE WHOLE POINT OF THE HELPER.
+    A hand list of the three codes that exist today is blind to a FOURTH being
+    added, which is the case both callers below are graded on. Hand-listing is
+    also how the guard this class replaced ended up narrower than its own name.
+
+    `EXIT_LEGEND` is unioned in because that tuple is what `render` and `--json`
+    publish, so a number can reach a caller through it as well as through a
+    constant.
+
+    ⚠ STILL BLIND TO A CODE SPELLED SOMETHING OTHER THAN `EXIT_DOCTOR_*` and not
+    in the legend either. That is a convention, not a structure; it is named here
+    rather than left for a reader to assume away.
+    """
+    names = {n for n in dir(cd) if n.startswith("EXIT_DOCTOR_")}
+    # Validate the instrument before reading its verdict: an empty discovery
+    # would pass either caller's claim vacuously. This is a positive control on
+    # `dir`, not a second claim about the codes — and it cannot short-circuit the
+    # assertions it protects, because renumbering a code leaves every NAME in
+    # place, and ADDING one only grows this set.
+    assert names >= {
+        "EXIT_DOCTOR_OK", "EXIT_DOCTOR_PROBLEM", "EXIT_DOCTOR_UNMEASURED",
+    }, f"discovery found no doctor exit codes to check: {sorted(names)}"
+    return {getattr(cd, n) for n in names} | {c for c, _ in cd.EXIT_LEGEND}
+
+
+def _client_codes() -> set[int]:
+    """Every `EXIT_*` integer the `cairn` CLI DEFINES, DISCOVERED by AST.
+
+    🔴 THE OPERAND SET THE LEDGER BELOW USED TO HAND-LIST, AND THE FIX FOR ITS
+    ONE-DIRECTION BLINDNESS. Nine `cli.EXIT_*` names were written out there, so a
+    TENTH client code colliding with one of doctor's left the intersection at
+    {0, 9} and the ledger GREEN — measured: `EXIT_STALE_MIRROR = 10` added to
+    `cairn` survived the whole file at 60 passed. Discovery closes that, and the
+    walker is the one `tests/test_cairn_write.py` already uses — promoted to
+    `testlib.cairn_source` so both suites read it from one place, rather than a
+    second AST walker over one question.
+
+    🔴 TWO CONTROLS, BECAUSE A DISCOVERED SET THAT SILENTLY COMES BACK EMPTY IS
+    THE REASSURING ZERO WEARING A NEW WORD. The floor proves discovery found at
+    least the nine codes that existed when this was written. The cross-check
+    against the exec'd module's own namespace proves the AST saw everything the
+    RUNTIME has: AST discovery reports module-level `NAME = <int literal>` only,
+    so a computed `EXIT_X = EXIT_WRITE_EXISTS + 1` is invisible to it while `dir`
+    sees it. Disagreement in the other direction is worth a human too — an
+    `EXIT_*` that `dir` has and the AST does not may be a code IMPORTED from
+    another module, which is not the client's to own and would silently widen
+    this ledger's scope past doctor-vs-client.
+    """
+    names = cairn_source.exit_constant_names()
+    assert len(names) >= 9, (
+        f"discovery found only {len(names)} client exit code(s) — "
+        f"{sorted(names)} — where nine existed when this was written. Either the "
+        f"AST walker in testlib/cairn_source.py stopped working, in which case "
+        f"every assertion built on it is vacuous, or a code was deleted."
+    )
+    runtime = {n for n in dir(_load_cairn_cli()) if n.startswith("EXIT_")}
+    assert runtime == names, (
+        f"the client's EXIT_* names read from the SOURCE and from the exec'd "
+        f"MODULE disagree: source-only {sorted(names - runtime)}, "
+        f"module-only {sorted(runtime - names)}. A module-only name is either a "
+        f"computed constant (AST discovery cannot see one, so this ledger is "
+        f"undercounting the client's codes) or one IMPORTED from another module "
+        f"(which this ledger's doctor-vs-client scope does not cover). Decide "
+        f"which, and widen testlib/cairn_source.py or this scope deliberately."
+    )
+    consts = cairn_source.module_constants()
+    return {consts[n] for n in names}
 
 
 def _load_api():
@@ -121,28 +194,151 @@ class TestTheStateVocabulary:
         assert cd.STATES == ("OK", "PROBLEM", "UNMEASURED", "NOT-OBSERVABLE")
 
     def test_the_exit_codes_are_exactly_these_literals(self) -> None:
-        """🔴 DISJOINT FROM EVERY OTHER `cairn` CODE, and that is graded below
-        against the CLI rather than asserted here alone."""
+        """These three are the printed contract — `render` and `--json` both
+        publish them — so they are written out here rather than read off the
+        module. Which of them OVERLAP the client's codes is a separate question,
+        graded against the CLI below."""
         assert cd.EXIT_DOCTOR_OK == 0
         assert cd.EXIT_DOCTOR_PROBLEM == 9
         assert cd.EXIT_DOCTOR_UNMEASURED == 10
 
-    def test_doctors_codes_collide_with_NO_other_cairn_exit_code(self) -> None:
-        """🔴 SEAM GUARD. `cairn`'s 4 already means two different things across
-        two tools (`EXIT_REFRESH_FAILED` vs the reader's
-        `EXIT_UNSTAMPED_READ_STORE`) and `/resume` carries a paragraph about it.
-        A third collision is a defect this file can prevent for free."""
-        cli = _load_cairn_cli()
-        others = {
-            cli.EXIT_OK, cli.EXIT_USAGE, cli.EXIT_UNREACHABLE_NO_CACHE,
-            cli.EXIT_REFRESH_FAILED, cli.EXIT_CORRUPT, cli.EXIT_WRITE_REFUSED,
-            cli.EXIT_WRITE_UNREACHABLE, cli.EXIT_WRITE_PRECONDITION,
-        }
-        assert others == {0, 2, 3, 4, 5, 6, 7, 8}, (
-            f"cairn's existing exit codes moved: {sorted(others)}"
+    def test_the_codes_doctor_SHARES_with_the_client_are_EXACTLY_0_and_9(
+        self,
+    ) -> None:
+        """🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No bug ever made
+        these two sets disagree; the defect was a COMMENT that claimed doctor's
+        codes were "disjoint from every other `cairn` code" while
+        `EXIT_DOCTOR_PROBLEM` and `EXIT_WRITE_EXISTS` are both 9. So this pins a
+        fact nothing has yet violated, and must not be counted as a regression
+        test for anything.
+
+        🔴 AND IT REPLACES A GUARD THAT WAS NARROWER THAN ITS OWN NAME. The
+        version here was called `..._collide_with_NO_other_cairn_exit_code` and
+        asserted `EXIT_DOCTOR_PROBLEM not in others` — against an `others` set
+        that enumerated EIGHT of the client's NINE codes and left
+        `EXIT_WRITE_EXISTS` out. It passed because the one colliding number was
+        outside the set it looked at, and it read as coverage of exactly the
+        claim it could not see.
+
+        🔴 ENUMERATING A SET BY HAND IS THE MECHANISM, AND THE FIRST VERSION OF
+        THIS LEDGER DID IT TWICE — which left it blind in the one direction its
+        own failure message advertised. Both operands were written out: nine
+        `cli.EXIT_*` names and three `cd.EXIT_DOCTOR_*`. So a NEW constant on
+        either side was invisible, and "red when the shared set GROWS" was false
+        for the case a reader would picture. Measured on this file: adding
+        `EXIT_STALE_MIRROR = 10` to `cairn` — a new client code colliding with
+        `EXIT_DOCTOR_UNMEASURED` — left it at 60 passed. BOTH operands are now
+        DISCOVERED (`_client_codes`, `_doctor_codes`), each with its own control
+        against a vacuous discovery.
+
+        The relationship is graded as a SET INTERSECTION against a literal, so it
+        fails in BOTH directions a maintainer needs to hear about: red when the
+        shared set GROWS (a new code on EITHER side reuses one of the other's
+        numbers) and red when it SHRINKS (someone renumbers the 9 apart and leaves
+        `lib/cairn_doctor.py` documenting an overlap that no longer exists).
+
+        🔴 THE `client` PIN BELOW IS THE CONTROL, NOT A HAND LIST OF THE OPERAND.
+        Once the set is discovered, a literal pin on its VALUES is what proves the
+        discovery found something: `set() == {0, 2, …}` fails loudly, where
+        `set() & set() == set()` would have passed the claim above vacuously. It
+        is also a deliberate change-detector — adding a client code that collides
+        with nothing still fails here, on purpose, because a new exit code is
+        exactly when a human should look at the overlap question. Adding it to the
+        literal is the acknowledgement.
+
+        0 is in the ledger and is not a hazard: it means success on both sides.
+        9 is the real overlap, and it is unambiguous because no single call site
+        can produce both meanings — `doctor` never creates an entry and `create`
+        never runs diagnostics. Nor is it the first: `cairn`'s
+        `EXIT_REFRESH_FAILED` and `lib/subsystem_read_store`'s
+        `EXIT_UNSTAMPED_READ_STORE` are both 4 across two tools. The scope of THIS
+        ledger is doctor-vs-client only; the reader defines exactly one code and it
+        is not in doctor's set.
+
+        🔴 THE INTERSECTION IS ALSO WHY THERE IS NO SEPARATE `EXIT_USAGE` CHECK
+        HERE. 2 is the one client code a `doctor` caller CAN receive alongside
+        doctor's own — argparse returns it for a bad flag on every subcommand
+        (measured: `cairn doctor --bogus-flag` -> 2) — so 2 entering this block
+        WOULD be genuinely ambiguous, unlike any write code. But 2 is already in
+        `client`, so a doctor code of 2 puts 2 in the intersection and this one
+        assertion fails. A second assertion for it would be unreachable: nothing
+        can add 2 to doctor's codes without first moving the set below.
+
+        🔴 1 IS THE OPPOSITE CASE AND DOES NEED ITS OWN ASSERTION — the next test.
+        A `doctor` caller can receive 1 as well as 2, but 1 is not one of the
+        client's nine codes, so an `EXIT_DOCTOR_* = 1` leaves this intersection at
+        {0, 9} and this test GREEN. Do not read "the ledger covers the codes a
+        caller can also receive" off this docstring: it covers the ones that are
+        `cairn` constants.
+        """
+        client = _client_codes()
+        doctor_codes = _doctor_codes()
+        # The substantive claim first, so a new colliding code fails with the
+        # message about the OVERLAP rather than with the control's message about
+        # the literal below having moved.
+        assert doctor_codes & client == {0, 9}, (
+            f"the codes doctor shares with the client are now "
+            f"{sorted(doctor_codes & client)}, not [0, 9]. Doctor's discovered "
+            f"codes are {sorted(doctor_codes)}, the client's {sorted(client)}. "
+            f"GROWN means a new overlap nobody documented — and it can have "
+            f"arrived from EITHER side, a new EXIT_DOCTOR_* or a new cairn "
+            f"EXIT_*; SHRUNK means the 9 was renumbered and the comment above "
+            f"EXIT_DOCTOR_OK in lib/cairn_doctor.py, which states that overlap "
+            f"and says not to remove it, is now false."
         )
-        assert cd.EXIT_DOCTOR_PROBLEM not in others
-        assert cd.EXIT_DOCTOR_UNMEASURED not in others
+        assert client == {0, 2, 3, 4, 5, 6, 7, 8, 9}, (
+            f"cairn's exit codes are now {sorted(client)}, not [0, 2, 3, 4, 5, 6, "
+            f"7, 8, 9]. This pin is the control on the discovery above — an empty "
+            f"or truncated discovery fails HERE rather than passing the "
+            f"intersection vacuously. If you added a code deliberately and it "
+            f"collides with none of doctor's, add it to this literal; that edit "
+            f"is the record that a human looked at the overlap question."
+        )
+
+    def test_1_is_NOT_one_of_doctors_codes(self) -> None:
+        """🔴 THE LEDGER ABOVE IS STRUCTURALLY BLIND TO THIS, WHICH IS WHY IT IS
+        ITS OWN TEST AND NOT ANOTHER LINE IN THAT ONE. The ledger grades
+        `doctor_codes & client`. 1 is not one of the client's nine codes, so an
+        `EXIT_DOCTOR_* = 1` leaves that intersection at {0, 9} and the ledger stays
+        GREEN — while the new code is as ambiguous as a doctor code of 2 would be,
+        reached by a path the intersection cannot see.
+
+        1 is what a `doctor` invocation returns for an uncaught exception, so it is
+        a CLASS of outcome rather than one bug: 1 is the interpreter's own code for
+        any traceback that reaches the top. One route is reachable BY DESIGN —
+        `cairn`'s lazy `_cairn_doctor()` import is deliberately unguarded at its
+        `cmd_doctor` call site, so with `lib/cairn_doctor.py` absent `cairn doctor`
+        exits 1 with `ModuleNotFoundError`; the docstring at `cairn:_doctor_epilog`
+        states that the help-string import FAILS SOFT while `cmd_doctor` still
+        fails LOUDLY. Measured at a second point: a module that is present but
+        unparseable raises `SyntaxError`, which is not an `ImportError` and so is
+        not soft-caught either — also exit 1. A doctor code of 1 is
+        indistinguishable from both.
+
+        🟡 AN INVARIANT GUARD, NOT REGRESSION COVERAGE. Nothing has ever set one of
+        doctor's codes to 1. It exists because the comment it defends enumerates
+        0/1/2/9/10 where the previous version of that comment enumerated 0/2/9/10:
+        an INCOMPLETE ENUMERATION is the defect that keeps recurring in this spot,
+        so the member that went missing gets a machine-readable claim instead of a
+        sentence.
+
+        The set is DISCOVERED, not hand-listed — by `_doctor_codes`, which the
+        ledger above now shares, since a set discovered two ways is two things to
+        keep true. Hand-listing is how the guard this class replaced ended up
+        narrower than its own name, and the case in view — someone adding a FOURTH
+        `EXIT_DOCTOR_*` constant — is precisely the one a hand list of three cannot
+        see. That helper carries the positive control on `dir` and the reason
+        `EXIT_LEGEND` is unioned in.
+        """
+        codes = _doctor_codes()
+        assert 1 not in codes, (
+            f"a doctor exit code is now 1, which a `doctor` caller cannot tell "
+            f"from an uncaught exception: `cairn doctor` exits 1 with "
+            f"ModuleNotFoundError when lib/cairn_doctor.py is absent, because the "
+            f"lazy import at cairn:cmd_doctor is unguarded on purpose. The ledger "
+            f"above cannot catch this — 1 is not one of the client's codes, so its "
+            f"intersection stays [0, 9]. Doctor's codes are now {sorted(codes)}."
+        )
 
     def test_a_check_with_an_EMPTY_detail_is_refused(self) -> None:
         """🔴 A bare `UNMEASURED` with no reason is the reassuring zero wearing
