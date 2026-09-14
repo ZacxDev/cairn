@@ -71,8 +71,8 @@ Recorded with what closed each item, and with what was **not** done, so the next
   run `34788483377`), and the branch was **0 commits behind `main`**, so that green was a
   merged-tree green rather than a branch-only one.
 - ~~`lib/cairn_doctor.py`'s exit-code comment~~ — **RESOLVED on branch
-  `fix/doctor-exit-code-comment`** (PR pending at the time of writing; find it with
-  `gh pr list --head fix/doctor-exit-code-comment`). What the comment claimed was that
+  `fix/doctor-exit-code-comment`** — **PR #15** (https://github.com/ZacxDev/cairn/pull/15),
+  base `main`, OPEN and not merged; not audited. What the comment claimed was that
   doctor's codes are "disjoint from every other `cairn` code" while enumerating only
   0/3/4/5 and 6/7/8 — the omission of 9 is how the overstatement survived, since
   `EXIT_DOCTOR_PROBLEM = 9` and the client's `EXIT_WRITE_EXISTS = 9`. It now states the
