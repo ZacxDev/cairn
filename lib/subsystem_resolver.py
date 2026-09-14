@@ -760,7 +760,7 @@ class SubsystemEntry:
             normalized.add(na)
 
         # --- `tasks:` / `task:` -------------------------------------------------
-        # 🔴 VALIDATED HERE AND NOWHERE ELSE. `the writer half --validate` answers
+        # 🔴 VALIDATED HERE AND NOWHERE ELSE. The writer's own validate pass answers
         # "would the loader accept this file?" by constructing exactly what the
         # loader constructs (see `entry_mapping`), so putting the check here is
         # what makes the validator and the reader agree by construction rather
@@ -1411,7 +1411,7 @@ _UNMARKED_ACTION = re.compile(r"\bFIX\s*[(:]|\bnot (yet )?addressed\b", re.I)
 # ⚠ ONLY THE BARE `^` IS REDUNDANT. The `[-*][ \t]+` after it is LOAD-BEARING in
 # BOTH patterns, and two earlier versions of this comment said the opposite.
 #
-# Measured against the full the writer half's own suite (baseline 712 passed):
+# Measured against the writer half's own full suite (baseline 712 passed):
 #     delete `^[-*][ \t]+` from `_JOURNAL_OPENNESS`  → 22 FAILURES
 #     delete `^[-*][ \t]+` from `_NEAR_MISS_MARKER`  → 19 FAILURES
 #     delete only the `^` from either                → 712 passed (equivalent)
@@ -1575,7 +1575,7 @@ def extract_sections(text: str, headings: Sequence[str]) -> dict[str, str]:
 
     A heading written TWICE has its blocks CONCATENATED under the one key, and
     whatever sat under an intervening heading is dropped. That is a silent merge
-    and it is why `the writer half --validate` reports duplicates from
+    and it is why the writer's own validate pass reports duplicates from
     `scan_headings` rather than from this mapping, which cannot show them.
     """
     wanted: dict[str, list[str]] = {h: [] for h in headings}
@@ -2228,7 +2228,7 @@ def entry_mapping(text: str, *, filename: str, scope: str) -> dict[str, object]:
     """ONE entry file's bytes -> the mapping `from_mapping` would be handed.
 
     🔴 EXTRACTED FROM `load_index` SO A VALIDATOR CANNOT BUILD A DIFFERENT ONE.
-    `the writer half --validate` has to answer "would the loader accept this
+    The writer's own validate pass has to answer "would the loader accept this
     file?", and the only honest way to answer it is to construct exactly what the
     loader constructs. Re-spelling these four lines at the validator would be the
     duplicated predicate `claude/RULES.md` names: the day one side learns a new
@@ -2616,7 +2616,7 @@ def load_index(
     wrapped `aliases:` line took `/resume` step 4, `--list`, `--ref` and
     `--search` down together. The reader (`subsystem_recall`) therefore loads
     with `COLLECT` and reports every reject per-entry in the same output; the
-    writer's probe (`entry_shape.build_report`) keeps `RAISE`, because it
+    writer's probe keeps `RAISE`, because it
     gates a WRITE into a store it would then be reading only partially.
 
     🔴 What `COLLECT` is NOT is "skip the bad entry". Silently serving a short

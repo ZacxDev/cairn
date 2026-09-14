@@ -250,7 +250,7 @@ the moment a reject exists.
 
     "malformed index entry"  the row's sentinel, one per rejected file. It is a
                              ROW and no longer a raise for the reader; the
-                             WRITER's probe (`entry_shape.build_report`)
+                             WRITER's probe
                              still raises it, because it gates a write into a
                              store it would otherwise be reading in part.
 
@@ -802,8 +802,7 @@ def render_malformed(
             "  (A STORE DEFECT, not an absence of content. Front matter is parsed LINE BY "
             "LINE, so the usual cause is a value wrapped across two physical lines — an "
             "`aliases: [...]` list in particular must be on ONE line. Check a scope with "
-            "`cairn validate --scope <scope>`. A single-FILE check belongs to the writer "
-            "half, which this package does not ship.)"
+            "`cairn validate --scope <scope>`, which names each file that fails to parse.)"
         )
     if elsewhere:
         by_scope: dict[str, int] = {}
@@ -950,7 +949,7 @@ class RecalledEntry:
     nuance bullets: **8 declare `OPEN:` and parse, 11 declare `RESOLVED <sha>:`,
     and 2 attempted a marker and missed** (one `OPEN`-shaped, one
     `RESOLVED`-shaped). The advisory that reported those 2 lived only in
-    `the writer half --validate`, which `/resume` never runs.
+    the writer's own validate pass, which `/resume` never runs.
 
     ⚠ The proposal this closes states "2 of 10 textual `OPEN:` markers do not
     parse". The near-miss count of 2 reproduces exactly; the denominator does
@@ -1414,7 +1413,7 @@ def load_store(
     back on `index.malformed` and every caller of this function is obliged to
     render it (`render_malformed`). The measurement that forced the change is in
     the module docstring — fail-closed cost the whole scope, 2 good entries and 1
-    bad one served ZERO. The WRITER (`entry_shape.build_report`) deliberately
+    bad one served ZERO. The WRITER's probe deliberately
     keeps the raise: it gates a write, and writing into a store you have read
     only part of is the one case where aborting is cheaper than degrading.
 
@@ -3236,8 +3235,8 @@ def _exit_for(status: str, label: str, malformed: Sequence[MalformedEntry]) -> i
         f"subsystem-recall: {status}: all {n} entry file{'' if n == 1 else 's'} under "
         f"`{label}` are MALFORMED — nothing could be read, so recall was unavailable. "
         f"This is NOT an empty scope and NOT 'nothing recorded yet'. Per-entry reasons "
-        f"are on stdout; check a scope with `cairn validate --scope <scope>`. A "
-        f"single-FILE check belongs to the writer half, which this package does not ship.",
+        f"are on stdout; check a scope with `cairn validate --scope <scope>`, which "
+        f"names each file that fails to parse.",
         file=sys.stderr,
     )
     return 3

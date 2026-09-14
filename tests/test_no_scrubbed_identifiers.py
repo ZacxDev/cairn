@@ -21,11 +21,19 @@ Inside a CODE SPAN or a PATH it is broken, and it was broken at four sites:
 🔴 AND THE REMEDY WAS WRONG ABOUT THIS PACKAGE, NOT MERELY MIS-SPELLED. Fixing
 the name alone would still have been wrong: `cmd_validate` takes `--scope`,
 `--repo` and `--no-sync` and has NO single-file path, so "check a file with
-<anything>" promises a capability that does not exist here. The corrected strings
-name `cairn validate --scope <scope>` and say plainly that a single-FILE check
-belongs to the writer half, which this package does not ship. A remedy that names
-a capability the package lacks is worse than no remedy: it sends the reader
-looking for a flag instead of telling them where the check actually lives.
+<anything>" named a capability the CLI does not expose. The corrected strings
+name `cairn validate --scope <scope>`, which does run here and names each file
+that fails to parse.
+
+⚠ AND THE FIRST FIX OVERCORRECTED INTO THE SAME CLASS, WHICH IS WHY THIS
+PARAGRAPH EXISTS. It replaced the dead command with the sentence "a single-FILE
+check belongs to the writer half, which this package does not ship" — and that is
+FALSE. `subsystem_resolver.entry_mapping` + `SubsystemEntry.from_mapping` IS a
+single-file check, it ships here, and `server/server.py:2570` already runs it to
+REFUSE a malformed PUT. So a remedy naming a capability the package lacks was
+swapped for a dis-claim of a capability it HAS — the same defect, inverted, in
+the same two operator-facing strings. Both sentences are gone; the remedy now
+says only what it can demonstrate.
 
 WHAT THIS TEST IS
 -----------------
@@ -48,18 +56,34 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import leakscan  # noqa: E402
 from leakscan import partition_tracked_files  # noqa: E402
 
-#: The phrase the extraction substituted for the writer module's real name.
-SCRUB = r"a writer"
+#: The phrases the extraction substituted for the writer module's real name.
+#: There is more than one, which is what the first version of this guard got
+#: wrong — see the note on `_IN_CODE_SPAN`.
+SCRUB_PHRASES = ("a writer", "the writer half")
 
 #: Two broken shapes, and ONLY these two:
 #:   1. the phrase inside a backticked code span -- `... a writer ...`
 #:   2. the phrase used as a path segment -- lib/a writer, scripts/a writer
 #: Prose is untouched by both, which is the point: `a writer` in a sentence is
 #: correct English and this repo uses it correctly in many places.
-_IN_CODE_SPAN = re.compile(r"`[^`\n]*\ba writer\b[^`\n]*`")
-_AS_PATH = re.compile(r"[\w./-]+/a writer\b")
+#
+# 🔴 THE SCRUB USED MORE THAN ONE REPLACEMENT STRING, AND THE FIRST VERSION OF
+# THIS GUARD ONLY KNEW ONE. It matched `a writer` and called itself a CLASS
+# guard, while EIGHT sibling sites survived: four code spans reading
+# `the writer half --validate`, three naming `entry_shape.build_report` (a symbol
+# that does not exist in this package), and one line of prose reading "the full
+# the writer half's own suite". A class claim you half-implement is WORSE than
+# four string pins, because the guard's presence stops the next reader looking.
+# Both phrases are matched now, and `test_the_patterns_can_fire` carries a
+# fixture for each.
+_IN_CODE_SPAN = re.compile(r"`[^`\n]*\b(?:a writer|the writer half)\b[^`\n]*`")
+_AS_PATH = re.compile(r"[\w./-]+/(?:a writer|the writer half)\b")
+#: "the full the writer half's own suite" — a determiner left stranded in front
+#: of the replacement, the same shape as `_STRANDED_DETERMINER` but with `the`.
+_DOUBLED_DETERMINER = re.compile(r"\bthe\s+(?:full\s+)?the\s+writer\s+half\b")
 
 #: The scrub also landed inside sentences built around the old NAME, leaving a
 #: determiner stranded in front of the replacement (`a **the writer half** flag`).
@@ -100,6 +124,7 @@ def _findings() -> tuple[list[str], list[str]]:
                 _IN_CODE_SPAN.search(line)
                 or _AS_PATH.search(line)
                 or _STRANDED_DETERMINER.search(line)
+                or _DOUBLED_DETERMINER.search(line)
             ):
                 out.append(f"{path}:{i}: {line.strip()}")
     return out, exempted
@@ -113,14 +138,32 @@ def test_the_self_exemption_is_exactly_one_file():
     how a gate goes quietly blind: add a file here to make it green and the class
     is re-opened with the suite still passing. So the count AND the name are
     asserted, and widening this requires editing an assertion that says why.
+
+    🔴 THE FIRST VERSION OF THIS TEST DID NOT DO WHAT ITS DOCSTRING SAID, AND
+    round 0 MEASURED IT. It only inspected the files this module skips, so the
+    realistic widening path was invisible: add a name to `leakscan.SKIP_FILES`
+    and that file never enters `scanned` at all, so it is never appended to
+    `exempted` and this assertion still sees exactly one name. Demonstrated by
+    planting `lib/planted_violation.py`, watching it go RED, then adding it
+    upstream — **22 passed**, violation and all. `test_leakscan_covers_every_tracked_file`
+    cannot catch it either; it explicitly excludes `SKIP_FILES`.
+
+    So the UPSTREAM set is pinned too. That is the seam: this gate's coverage is
+    `tracked − leakscan.SKIP_FILES − SELF`, and both subtrahends have to be
+    asserted or the guard is only as honest as a file it does not control.
     """
     _found, exempted = _findings()
-    assert exempted == [str(SELF.relative_to(SELF.parent.parent))] or [
-        Path(e).resolve() for e in exempted
-    ] == [SELF], (
+    assert [Path(e).resolve() for e in exempted] == [SELF], (
         f"the self-exemption is no longer exactly this file: {exempted}. Exempting "
         f"anything else re-opens the class while the suite stays green — fix the "
         f"site instead, or state here why that file cannot be fixed."
+    )
+    assert leakscan.SKIP_FILES == {"tests/leakscan.py"}, (
+        f"`leakscan.SKIP_FILES` is {sorted(leakscan.SKIP_FILES)}, not just its own "
+        f"fixtures file. Anything listed there is invisible to THIS gate as well — "
+        f"it never reaches `scanned`, so the exemption check above cannot see it. "
+        f"Adding a name there silently narrows this guard's corpus; if that is "
+        f"intended, widen this assertion deliberately and say why."
     )
 
 
@@ -168,13 +211,18 @@ def test_no_tracked_file_puts_the_scrub_phrase_where_an_identifier_belongs():
     """REGRESSION. RED at `c536c52` on four sites across two files."""
     found, _exempt = _findings()
     assert not found, (
-        "the extraction scrub phrase %r appears inside a code span, a path, or a "
+        "an extraction-scrub phrase (%s) appears inside a code span, a path, or a "
         "sentence built around the old name — none of which is prose, and each of "
         "which names something an operator cannot run:\n  %s\n"
-        "Fix the SITE, not this test: name a command this package actually ships "
-        "(`cairn validate --scope <scope>`), or say plainly that the capability "
-        "belongs to the writer half and is not shipped here."
-        % (SCRUB, "\n  ".join(found))
+        "🔴 The line below may contain ANY of those phrases, not just the first — "
+        "an earlier message named only %r and then listed a site matching a "
+        "DIFFERENT pattern, sending the reader grepping for a string that was not "
+        "there.\n"
+        "Fix the SITE, not this test: name something this package actually ships "
+        "(`cairn validate --scope <scope>` runs here and names each unparseable "
+        "file). Do NOT replace it with a claim about what the package does NOT "
+        "ship unless you have checked — the first fix did, and was wrong."
+        % (", ".join(repr(p) for p in SCRUB_PHRASES), "\n  ".join(found), SCRUB_PHRASES[0])
     )
 
 
@@ -193,16 +241,29 @@ def test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS():
     registered = set(re.findall(r'sub\.add_parser\(\s*"([a-z-]+)"', cli))
     assert registered, "no subcommands parsed out of the CLI — this check is vacuous"
 
-    recall = (root / "lib" / "subsystem_recall.py").read_text(encoding="utf-8")
-    cited = set(re.findall(r"`cairn ([a-z-]+)", recall)) | set(
-        re.findall(r"`cairn ([a-z-]+)", cli)
-    )
-    assert cited, "no `cairn <verb>` citations found — this check is vacuous"
+    # 🔴 EVERY TRACKED FILE, NOT TWO. The first version read `cairn` and
+    # `lib/subsystem_recall.py` only, while its docstring claimed "every
+    # `cairn <verb>` an operator-facing string tells someone to run". Round 0
+    # measured the gap: 57 citations across 14 files, including README.md and
+    # AGENTS.md — the MOST operator-facing of all — and renaming a verb in
+    # `lib/cairn_doctor.py` left the file green. A description claiming a
+    # relationship over an implementation that inspects one slice is the same
+    # defect this module exists to catch, one level up.
+    cited: dict[str, list[str]] = {}
+    scanned, _skipped = partition_tracked_files()
+    for path in scanned:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for verb in re.findall(r"`cairn ([a-z-]+)", text):
+            cited.setdefault(verb, []).append(str(path))
+    assert cited, "no `cairn <verb>` citations found anywhere — this check is vacuous"
 
-    unknown = sorted(cited - registered)
+    unknown = {v: sorted(set(f))[:3] for v, f in cited.items() if v not in registered}
     assert not unknown, (
-        f"operator-facing text tells someone to run `cairn {unknown}`, which the "
-        f"CLI does not register. Registered: {sorted(registered)}. A remedy naming "
-        f"a verb that does not exist sends the reader hunting for a flag instead "
-        f"of telling them where the check lives."
+        f"text tells someone to run a `cairn <verb>` the CLI does not register: "
+        f"{unknown}. Registered: {sorted(registered)}. A remedy naming a verb that "
+        f"does not exist sends the reader hunting for a flag instead of telling "
+        f"them where the check lives."
     )
