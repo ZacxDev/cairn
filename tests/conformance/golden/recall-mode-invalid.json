@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 77,
+    "kind": "text_lines",
+    "sha256": "e17c55fe393d668980bf45487a160fb33865f80f758c1cec9dd5b5444f397b47",
+    "text_lines": [
+      "bad request: mode must be one of ('digest', 'list', 'full'), got 'telepathy'",
+      ""
+    ]
+  },
+  "case": "recall-mode-invalid",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "77"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

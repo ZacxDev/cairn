@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 17,
+    "kind": "text_lines",
+    "sha256": "99d4305369ee449c7988a0cc31f5f0690a9bc374b9bffa6516bb1659285cf2f9",
+    "text_lines": [
+      "no such endpoint",
+      ""
+    ]
+  },
+  "case": "recall-arity-too-short",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "17"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "no-route"
+    ]
+  ],
+  "reason": "Not Found",
+  "status": 404
+}

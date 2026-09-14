@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 109,
+    "kind": "text_lines",
+    "sha256": "0dada61a4c9a5f7fdaa14e9cada0e61ff6b497822d24a73a32cb8eb5cc3bef08",
+    "text_lines": [
+      "bad request: body must be JSON (Expecting property name enclosed in double quotes: line 1 column 2 (char 1))",
+      ""
+    ]
+  },
+  "case": "post-bullets-not-json",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "109"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 151,
+    "kind": "text_lines",
+    "sha256": "94d002071108372d2ab898bd72cd35a84fae6a5930677261a551decf4fa4db8f",
+    "text_lines": [
+      "forbidden: this credential has no identity, so a bullet written with it could not record an actor. Give the holder a `<token> <identity> <scopes>` row",
+      ""
+    ]
+  },
+  "case": "put-entry-legacy-token",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "151"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "legacy-cannot-write"
+    ]
+  ],
+  "reason": "Forbidden",
+  "status": 403
+}

@@ -1,0 +1,58 @@
+{
+  "body": {
+    "kind": "tar_gz_manifest",
+    "members": [
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.0",
+        "name": ".seed-stamp",
+        "sha256": "fd899d84cd69424a1b1da0ae6597eb14acabf2fb181f4291138f6213a946e08e",
+        "size": 21,
+        "text_lines": [
+          "2000-01-04T00:00:00Z",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      }
+    ],
+    "mtime_order": [
+      ".seed-stamp"
+    ]
+  },
+  "case": "snapshot-scope-absent",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Type",
+      "application/gzip"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Entries",
+      "0"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+    ],
+    [
+      "X-Store-Status",
+      "snapshot"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

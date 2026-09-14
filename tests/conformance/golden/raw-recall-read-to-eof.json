@@ -1,0 +1,71 @@
+{
+  "body": {
+    "bytes": 3345,
+    "kind": "text_lines",
+    "sha256": "e9cf1bd9f9fc08742d0646f8b59a69d61660f000c5217e627e3814f84e70457c",
+    "text_lines": [
+      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=5. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
+      "",
+      "subsystem-recall: status=recalled scope=alpha-notes",
+      "  store: <STORE-ROOT>",
+      "  host: <HOST-IDENTITY>  (the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other)",
+      "  caveat: from index — RECALL, NOT LIVE OBSERVATION. These are notes curated by PAST sessions in the local store under `alpha-notes/`. Nothing here was re-derived just now, nothing was matched against anything THIS session has done, and an entry is exactly as fresh as the last time someone pruned it (prune-on-resolve is manual), so a bullet may describe a gotcha already fixed. This window CANNOT see: live state of any kind, any repo whose scope has no directory in THIS HOST's store, and any work neither `/analyze-service` nor `/handoff` ever recorded. Treat every line as a POINTER to verify, never as a current reading. This window read a LOCAL CACHE of the hosted store, not the store itself, so it is only as complete as the last `cairn sync` on THIS machine: an entry written on the OTHER machine that has not synced here yet is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact about the store. `🔴 N OPEN` on an index row means N bullets DECLARE unfinished business — re-check each against the repo, because a remedy that has since landed reads exactly like one that has not; the absence of that marker means nothing was declared, NOT that nothing is open. Sensitivity is marked per entry; absent means `client-confidential` — never copy an entry's content into a public repo.",
+      "",
+      "  (+1 further malformed entry in OTHER scopes of this store, not shown: rubble-heap (1). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
+      "",
+      "INDEX (from index) — ALL 2 entries in `alpha-notes/`, none omitted (newest-first by file mtime):",
+      "  gadget-two    1 nuance   client-confidential (declared: internal)",
+      "  gadget-one    1 nuance   client-confidential (declared: internal)",
+      "",
+      "FEATURED IN FULL (from index) — 1 of 2, most-recent fallback — newest entry file in `alpha-notes/` (no handoff doc to read a path window from):",
+      "",
+      "  ### gadget-two  (alpha-notes/gadget-two.md, sensitivity=client-confidential (declared: internal))",
+      "    ## What it is",
+      "      A second synthetic entry, newer than gadget-one by 500ms and no more.",
+      "    ## Pointers",
+      "      - ops skill `manage-gadget` - the same skill, deliberately",
+      "    ## Nuance / work-history",
+      "      - 2000-01-02: the sidecar drops its lease during a rollout.",
+      "",
+      "… 1 further entry in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 2` prints them all.",
+      ""
+    ]
+  },
+  "case": "raw-recall-read-to-eof",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Revision",
+      "a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+    ],
+    [
+      "X-Store-Status",
+      "recalled"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

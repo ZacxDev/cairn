@@ -1,0 +1,43 @@
+{
+  "body": {
+    "bytes": 0,
+    "kind": "text_lines",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "text_lines": [
+      ""
+    ]
+  },
+  "case": "snapshot-authorized-head",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Type",
+      "application/gzip"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Entries",
+      "5"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+    ],
+    [
+      "X-Store-Status",
+      "snapshot"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

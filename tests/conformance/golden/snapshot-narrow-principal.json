@@ -1,0 +1,118 @@
+{
+  "body": {
+    "kind": "tar_gz_manifest",
+    "members": [
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.0",
+        "name": ".seed-stamp",
+        "sha256": "fd899d84cd69424a1b1da0ae6597eb14acabf2fb181f4291138f6213a946e08e",
+        "size": 21,
+        "text_lines": [
+          "2000-01-04T00:00:00Z",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946771200.25",
+        "name": "beta-notes/spare-six.md",
+        "sha256": "e3cedc8844f84a314ad260fa2296f7aec01cabb445947a8862562c354983b5b6",
+        "size": 418,
+        "text_lines": [
+          "---",
+          "service: spare-six",
+          "scope: beta-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "The target of every write case that must leave the store UNCHANGED - a",
+          "stale If-Match, an unprocessable body. Its revision therefore stays the",
+          "revision of these bytes for the whole run.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-spare` - invoke it for restarts",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-03: nothing has ever been written to this entry.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946771200.5",
+        "name": "beta-notes/widget-three.md",
+        "sha256": "dd2956775415ddcea25eb73369ff439ebaf9645891b2577c8d81062729487cf7",
+        "size": 307,
+        "text_lines": [
+          "---",
+          "service: widget-three",
+          "scope: beta-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "The replace target. A PUT with a correct If-Match overwrites this file.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-widget` - invoke it for restarts",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-03: the lease renewal races the readiness gate.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      }
+    ],
+    "mtime_order": [
+      "beta-notes/widget-three.md",
+      "beta-notes/spare-six.md",
+      ".seed-stamp"
+    ]
+  },
+  "case": "snapshot-narrow-principal",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Type",
+      "application/gzip"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Entries",
+      "2"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+    ],
+    [
+      "X-Store-Status",
+      "snapshot"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

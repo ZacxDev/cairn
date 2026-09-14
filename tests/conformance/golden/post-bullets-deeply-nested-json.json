@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 77,
+    "kind": "text_lines",
+    "sha256": "8bc57b305045407852943338e261c5ee0a392d82fbad11c67f52eeae813ee88e",
+    "text_lines": [
+      "bad request: body must be JSON (Expecting value: line 1 column 51 (char 50))",
+      ""
+    ]
+  },
+  "case": "post-bullets-deeply-nested-json",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "77"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

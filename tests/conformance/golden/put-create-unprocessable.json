@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 175,
+    "kind": "text_lines",
+    "sha256": "b54d5055cea418e1ad830231eb9f61753c1ba25c92932a0e66e551b5dca545d1",
+    "text_lines": [
+      "unprocessable: the index loader would reject these bytes: malformed index entry 'rejected-eight.md': missing or empty `service:` — an entry with no name cannot be addressed",
+      ""
+    ]
+  },
+  "case": "put-create-unprocessable",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "175"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "entry-shape"
+    ]
+  ],
+  "reason": "Unprocessable Entity",
+  "status": 422
+}

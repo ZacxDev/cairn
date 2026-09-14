@@ -1,0 +1,53 @@
+{
+  "body": {
+    "bytes": 2753,
+    "kind": "text_lines",
+    "sha256": "393b7170d982a6971779c02f03595c90579768f624035d95048bde618ebd89e5",
+    "text_lines": [
+      "🔴 SNAPSHOT, NOT THE SOURCE — seeded=2000-01-04T00:00:00Z newest-entry=2000-01-03T00:00:00Z entry-files=5. This host serves a COPY of the authoritative store, pushed by `seed.sh`; nothing syncs it continuously, so it can be arbitrarily behind and it CANNOT KNOW BY HOW MUCH. The \"none omitted\" below is true of THIS DISK and says nothing about the source. Before trusting an absence — a missing entry, a missing badge, a zero — re-run the read against the local store, or re-seed. UNSTAMPED/UNREADABLE/NONE each mean the stated fact could not be established, never that it is fine.",
+      "",
+      "subsystem-recall: status=scope-absent scope=alpha-notes query='lease' threshold=0.60 context=bullet",
+      "  store: <STORE-ROOT>",
+      "  host: <HOST-IDENTITY>  (the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other)",
+      "  caveat: from index — RECALL, NOT LIVE OBSERVATION. These are notes curated by PAST sessions in the local store under `(no scope)`. Nothing here was re-derived just now, nothing was matched against anything THIS session has done, and an entry is exactly as fresh as the last time someone pruned it (prune-on-resolve is manual), so a bullet may describe a gotcha already fixed. This window CANNOT see: live state of any kind, any repo whose scope has no directory in THIS HOST's store, and any work neither `/analyze-service` nor `/handoff` ever recorded. Treat every line as a POINTER to verify, never as a current reading. This window read a LOCAL CACHE of the hosted store, not the store itself, so it is only as complete as the last `cairn sync` on THIS machine: an entry written on the OTHER machine that has not synced here yet is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact about the store. `🔴 N OPEN` on an index row means N bullets DECLARE unfinished business — re-check each against the repo, because a remedy that has since landed reads exactly like one that has not; the absence of that marker means nothing was declared, NOT that nothing is open. Sensitivity is marked per entry; absent means `client-confidential` — never copy an entry's content into a public repo.",
+      "",
+      "NOTHING RECORDED YET ON THIS HOST — <HOST-IDENTITY>'s store has no `alpha-notes/` directory, so the query was never run. This is NOT 'no matches': nothing was searched, so nothing can be concluded from it.",
+      "  NOT A FACT ABOUT THE FLEET — the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other. The other host syncs the SAME hosted store through its own cache, and may already hold `alpha-notes/` where this one has not synced it yet.",
+      "  scopes THIS HOST's store holds: beta-notes",
+      ""
+    ]
+  },
+  "case": "search-refused-scope",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Revision",
+      "unknown"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+    ],
+    [
+      "X-Store-Status",
+      "scope-absent"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

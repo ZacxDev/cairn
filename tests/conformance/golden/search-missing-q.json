@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 49,
+    "kind": "text_lines",
+    "sha256": "ac13f1652881676ba0c84faa1965a16f0792de8b9025788c2933129c9b9d11bd",
+    "text_lines": [
+      "bad request: q is required and must be non-empty",
+      ""
+    ]
+  },
+  "case": "search-missing-q",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "49"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

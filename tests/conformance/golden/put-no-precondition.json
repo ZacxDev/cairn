@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 183,
+    "kind": "text_lines",
+    "sha256": "c41dce21d1803571c061fe59bb173a481e615c73157907056efd536cb9814626",
+    "text_lines": [
+      "precondition required: send If-Match with the entry revision (sha256 of the entry file, first 16 hex characters) to replace an existing entry, or If-None-Match: * to create a new one",
+      ""
+    ]
+  },
+  "case": "put-no-precondition",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "183"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "precondition-required"
+    ]
+  ],
+  "reason": "Precondition Required",
+  "status": 428
+}

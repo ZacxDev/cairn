@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 63,
+    "kind": "text_lines",
+    "sha256": "43b91042c7cadb94974156cbe06a91e315e175fd8109b2e848996f4f7801f059",
+    "text_lines": [
+      "bad request: `text` is required and must be a non-empty string",
+      ""
+    ]
+  },
+  "case": "post-bullets-blank-text",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "63"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

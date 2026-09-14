@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 10,
+    "kind": "text_lines",
+    "sha256": "709009e02c8e364113b28205aadde30cce270d709073f28153c85fdc5036c96d",
+    "text_lines": [
+      "not found",
+      ""
+    ]
+  },
+  "case": "post-bullets-actor-in-body-is-discarded",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "10"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "not-found"
+    ]
+  ],
+  "reason": "Not Found",
+  "status": 404
+}

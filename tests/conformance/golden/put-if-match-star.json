@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 182,
+    "kind": "text_lines",
+    "sha256": "a9c85ac3a882d972d58f074fb5828a38bd1584ff11bfe6f8e4badf1819895a92",
+    "text_lines": [
+      "bad request: If-Match: * is refused - it matches any revision, which is the same as sending no precondition at all. To create an entry that does not exist yet, send If-None-Match: *",
+      ""
+    ]
+  },
+  "case": "put-if-match-star",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "182"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}
