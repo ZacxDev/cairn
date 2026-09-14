@@ -171,6 +171,13 @@ class TestTheStateVocabulary:
         `client`, so a doctor code of 2 puts 2 in the intersection and this one
         assertion fails. A second assertion for it would be unreachable: nothing
         can add 2 to doctor's codes without first moving the set below.
+
+        🔴 1 IS THE OPPOSITE CASE AND DOES NEED ITS OWN ASSERTION — the next test.
+        A `doctor` caller can receive 1 as well as 2, but 1 is not one of the
+        client's nine codes, so an `EXIT_DOCTOR_* = 1` leaves this intersection at
+        {0, 9} and this test GREEN. Do not read "the ledger covers the codes a
+        caller can also receive" off this docstring: it covers the ones that are
+        `cairn` constants.
         """
         cli = _load_cairn_cli()
         client = {
@@ -191,6 +198,59 @@ class TestTheStateVocabulary:
             f"overlap nobody documented; SHRUNK means the 9 was renumbered and "
             f"the comment above EXIT_DOCTOR_OK in lib/cairn_doctor.py, which "
             f"states that overlap and says not to remove it, is now false."
+        )
+
+    def test_1_is_NOT_one_of_doctors_codes(self) -> None:
+        """🔴 THE LEDGER ABOVE IS STRUCTURALLY BLIND TO THIS, WHICH IS WHY IT IS
+        ITS OWN TEST AND NOT ANOTHER LINE IN THAT ONE. The ledger grades
+        `doctor_codes & client`. 1 is not one of the client's nine codes, so an
+        `EXIT_DOCTOR_* = 1` leaves that intersection at {0, 9} and the ledger stays
+        GREEN — while the new code is as ambiguous as a doctor code of 2 would be,
+        reached by a path the intersection cannot see.
+
+        1 is what a `doctor` invocation returns for an uncaught exception, so it is
+        a CLASS of outcome rather than one bug: 1 is the interpreter's own code for
+        any traceback that reaches the top. One route is reachable BY DESIGN —
+        `cairn`'s lazy `_cairn_doctor()` import is deliberately unguarded at its
+        `cmd_doctor` call site, so with `lib/cairn_doctor.py` absent `cairn doctor`
+        exits 1 with `ModuleNotFoundError`; the docstring at `cairn:_doctor_epilog`
+        states that the help-string import FAILS SOFT while `cmd_doctor` still
+        fails LOUDLY. Measured at a second point: a module that is present but
+        unparseable raises `SyntaxError`, which is not an `ImportError` and so is
+        not soft-caught either — also exit 1. A doctor code of 1 is
+        indistinguishable from both.
+
+        🟡 AN INVARIANT GUARD, NOT REGRESSION COVERAGE. Nothing has ever set one of
+        doctor's codes to 1. It exists because the comment it defends enumerates
+        0/1/2/9/10 where the previous version of that comment enumerated 0/2/9/10:
+        an INCOMPLETE ENUMERATION is the defect that keeps recurring in this spot,
+        so the member that went missing gets a machine-readable claim instead of a
+        sentence.
+
+        The set is DISCOVERED, not hand-listed. Hand-listing is how the guard this
+        class replaced ended up narrower than its own name, and the case in view —
+        someone adding a FOURTH `EXIT_DOCTOR_*` constant — is precisely the one a
+        hand list of three cannot see. `EXIT_LEGEND` is unioned in because that
+        tuple is what `render` and `--json` publish, so a number can reach a caller
+        through it as well as through a constant.
+        """
+        names = {n for n in dir(cd) if n.startswith("EXIT_DOCTOR_")}
+        # Validate the instrument before reading its verdict: an empty discovery
+        # would pass the claim below vacuously. This is a positive control on
+        # `dir`, not a second claim about the codes — and it cannot short-circuit
+        # the assertion it protects, because renumbering a code leaves every NAME
+        # in place.
+        assert names >= {
+            "EXIT_DOCTOR_OK", "EXIT_DOCTOR_PROBLEM", "EXIT_DOCTOR_UNMEASURED",
+        }, f"discovery found no doctor exit codes to check: {sorted(names)}"
+        codes = {getattr(cd, n) for n in names} | {c for c, _ in cd.EXIT_LEGEND}
+        assert 1 not in codes, (
+            f"a doctor exit code is now 1, which a `doctor` caller cannot tell "
+            f"from an uncaught exception: `cairn doctor` exits 1 with "
+            f"ModuleNotFoundError when lib/cairn_doctor.py is absent, because the "
+            f"lazy import at cairn:cmd_doctor is unguarded on purpose. The ledger "
+            f"above cannot catch this — 1 is not one of the client's codes, so its "
+            f"intersection stays [0, 9]. Doctor's codes are now {sorted(codes)}."
         )
 
     def test_a_check_with_an_EMPTY_detail_is_refused(self) -> None:

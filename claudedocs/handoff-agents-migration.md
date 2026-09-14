@@ -38,7 +38,10 @@ stub — the pattern Anthropic's own docs prescribe).
 - Verified: full suite **1716 passed, 0 failed**; leakscan clean with both controls watched (positive + negative), `--self-test` rc 0.
 - Deploy/verify status: N/A (docs only). Pushed and merged. Clawgate board resolved NOTHING for this session (rc 5, empty array — cannot distinguish "no task" from "wrong id"; no field written, no task created).
 - Base clone re-synced `--ff-only` after the merge, so it is not silently behind `main`.
-- IN FLIGHT: nothing. The docs work is on `main`; the follow-on comment fix is its own PR (rank 2).
+- IN FLIGHT: nothing. The docs work is on `main`; the follow-on comment fix is its own PR —
+  #15, recorded under **Closed** below, which deliberately states no merge state for it.
+  (An earlier version of this line pointed at "rank 2"; the ranks were renumbered and that
+  pointer dangled.)
 
 ## Next steps (ranked)
 Every rank the previous version of this doc carried is now closed; they moved to
@@ -72,7 +75,24 @@ Recorded with what closed each item, and with what was **not** done, so the next
   merged-tree green rather than a branch-only one.
 - ~~`lib/cairn_doctor.py`'s exit-code comment~~ — **RESOLVED on branch
   `fix/doctor-exit-code-comment`** — **PR #15** (https://github.com/ZacxDev/cairn/pull/15),
-  base `main`, OPEN and not merged; not audited. What the comment claimed was that
+  base `main`.
+  🔴 **THIS LINE DELIBERATELY RECORDS NO MERGE STATE FOR #15, AND NEITHER SHOULD YOU.**
+  A merge claim a branch makes about ITS OWN PR cannot be true on both sides of that
+  merge: "OPEN and not merged", written here, is false the instant #15 lands — a false
+  claim in a tracked file in a public repo, and a `/resume` that believes it either
+  re-opens finished work or re-pushes a merged branch. #14 above states "squash-merged as
+  `3c316ff`" safely only because that sentence was written on `main` AFTER the merge, not
+  inside the branch it describes. Ask the API instead —
+  `gh pr view 15 --json state,mergedAt,mergeCommit` — and confirm by CONTENT, never by
+  ancestry (a squash makes `--is-ancestor` false forever).
+  **Audit: `/audit-pr 15` round 0 RAN** against head `634b01e`; verdict *proceed to the
+  checklist*, with two 🟡 findings, both fixed by the commit that rewrote this paragraph:
+  (1) the exit-code comment enumerated the codes a `doctor` caller may observe as
+  0/2/9/10 when the set is **0/1/2/9/10** — an incomplete enumeration inside the fix for
+  an incomplete enumeration — and the test ledger was structurally unable to catch a
+  doctor code of 1, since 1 is not one of the client's nine codes; (2) this line asserted
+  #15's own merge state. Nothing is claimed here about rounds that have not run.
+  What the comment claimed was that
   doctor's codes are "disjoint from every other `cairn` code" while enumerating only
   0/3/4/5 and 6/7/8 — the omission of 9 is how the overstatement survived, since
   `EXIT_DOCTOR_PROBLEM = 9` and the client's `EXIT_WRITE_EXISTS = 9`. It now states the
@@ -88,6 +108,17 @@ Recorded with what closed each item, and with what was **not** done, so the next
   `{0, 9}`, which fails when the shared set grows or shrinks. Labelled an **invariant
   guard**, not regression coverage: nothing ever violated the invariant, the defect was
   the claim about it.
+  🔴 **The intersection ledger has a blind spot that a sibling test now covers**:
+  `test_1_is_NOT_one_of_doctors_codes` pins that no `EXIT_DOCTOR_*` constant and no
+  `EXIT_LEGEND` row is **1** — the code a `doctor` invocation returns for an uncaught
+  exception (`cairn doctor` exits 1 with `ModuleNotFoundError` when `lib/cairn_doctor.py`
+  is absent, because the lazy import at `cairn:cmd_doctor` is unguarded on purpose;
+  measured again with an unparseable module, which raises `SyntaxError` and is not
+  soft-caught either). It is separate because the ledger grades an intersection with the
+  client's codes and 1 is not one of them, so it stays GREEN while 1 is genuinely
+  ambiguous — demonstrated: adding `EXIT_DOCTOR_SOMETHING = 1` fails only the new test.
+  It discovers the set by introspection rather than hand-listing it, since a hand list of
+  three is what a FOURTH constant walks past. Also an **invariant guard**.
 
 ## Gotchas / decisions / dead-ends
 - pytest is NOT in the default nix profile: `uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly` (CI pip-installs pytest the same way; 3.12 is the pinned interpreter — do not use bare `python3`).
@@ -100,10 +131,16 @@ Recorded with what closed each item, and with what was **not** done, so the next
 ```bash
 cd /home/zach/workspace/cairn
 python3 tests/leakscan.py && python3 tests/leakscan.py --self-test
-uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly   # 1716 expected
+uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
 head -1 CLAUDE.md            # -> @AGENTS.md (stub intact)
-git log --oneline -1 main    # -> 3c316ff … (#14), the squash merge
+git log --oneline -3 main    # 3c316ff is #14's squash; c536c52 is #16's
 ```
+Expected counts are **per tree, so name the tree** rather than carrying one number
+forward: **1716 passed / 0 failed** at `3c316ff` and at `c536c52`, **1717** on
+`fix/doctor-exit-code-comment` once rebased onto `c536c52` (the extra one is
+`test_1_is_NOT_one_of_doctors_codes`). leakscan scans the tracked text files, so its
+denominator moves with the repo: **42** at `3c316ff`, **43** at `c536c52`. A count that
+does not match is a question about which tree you are on before it is a finding.
 🔴 Do NOT verify #14 with `git merge-base --is-ancestor 92d2e80 main` — it is false after
 every squash merge and always will be. Diff the 8 changed paths instead, proving each
 exists on `main` first.

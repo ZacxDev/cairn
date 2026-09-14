@@ -571,11 +571,31 @@ def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path | None)
 #: design.
 #:
 #: 🔴 WHAT THE PER-COMMAND SCOPING DOES NOT COVER IS THE ONLY THING TO PROTECT
-#: HERE: a code that a `doctor` invocation can return ALONGSIDE these. argparse
-#: exits 2 on a bad flag for every subcommand, so the set a `doctor` caller may
-#: observe is 0/2/9/10 — measured, `cairn doctor --bogus-flag` -> 2 — and 2 is
-#: therefore what must stay clear of this block. The write codes cannot reach
-#: this call site at all.
+#: HERE: a code that a `doctor` invocation can return ALONGSIDE these. There are
+#: TWO, not one, so the set a `doctor` caller may observe is 0/1/2/9/10:
+#:
+#:   - **2 — usage.** argparse exits 2 on a bad flag for every subcommand
+#:     (measured: `cairn doctor --bogus-flag` -> 2).
+#:   - **1 — an uncaught exception.** 1 is the interpreter's own code for any
+#:     traceback that reaches the top, so this is not one mechanism but a class.
+#:     One route is reachable BY DESIGN: `cairn`'s lazy `_cairn_doctor()` import
+#:     is deliberately unguarded at its `cmd_doctor` call site — see the docstring
+#:     at `cairn:_doctor_epilog`, which states that the help-string import FAILS
+#:     SOFT while `cmd_doctor` still fails LOUDLY — so with `lib/cairn_doctor.py`
+#:     absent, `cairn doctor` exits 1 with `ModuleNotFoundError` from
+#:     `cairn:cmd_doctor`. Measured at a second point too: a module present but
+#:     unparseable raises `SyntaxError`, which is not an `ImportError` and so is
+#:     not soft-caught either — also exit 1, from `build_parser`. And the
+#:     `AttributeError` recorded in `AGENTS.md` under
+#:     `checks.client-resolves-its-lib` was a third.
+#:
+#: 1 and 2 are both clear of this block today because doctor's own codes are
+#: 0/9/10, and BOTH must stay clear: a doctor code of 1 would be indistinguishable
+#: from a crash, exactly as a doctor code of 2 would be from a usage error. 1 is
+#: the more insidious of the two, because it is not any `cairn` constant — nothing
+#: in the client's nine codes is 1 — so a set-intersection ledger against the
+#: client cannot see it and it is asserted separately. The write codes cannot
+#: reach this call site at all.
 #:
 #: 🔴 SO DO NOT RENUMBER THE 9 TO MAKE IT UNIQUE, and do not read the overlap as
 #: licence to add another. Renumbering changes a contract this command PRINTS, to
@@ -584,7 +604,9 @@ def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path | None)
 #: and not about which numbers happen to look free.
 #: `tests/test_cairn_doctor.py` pins the shared set as a ledger and is the
 #: authority on which codes overlap — it goes red when that set GROWS and when it
-#: SHRINKS.
+#: SHRINKS. It carries a second, separate assertion that 1 is not one of these
+#: three, because the ledger structurally cannot: 1 is not in the client's set, so
+#: an `EXIT_DOCTOR_* = 1` leaves the intersection at {0, 9} and the ledger green.
 EXIT_DOCTOR_OK = 0
 EXIT_DOCTOR_PROBLEM = 9
 EXIT_DOCTOR_UNMEASURED = 10
