@@ -91,6 +91,40 @@ authenticated, touches no store state, and is re-issued as the last request of
 every run. If it stops matching its golden, either a lockout tripped or the run
 mutated state a read depends on, and nothing after that point can be trusted.
 
+## Four rows are asserted against the ORACLE ONLY
+
+🔴 **Some recorded behaviour is CPython or `http.server` ARTIFACT, not designed
+contract**, and the corpus has to be able to say which. A row marked `oracle_only`
+is asserted against the Python server and **skipped — by id, with its reason, counted
+in the summary — for any other implementation**. `cases.py` refuses a mark with no
+reason, and refuses a reason with no mark.
+
+⚠ **IT IS THE LAST RESORT AND NOT THE FIRST.** A response differing in ONE FIELD
+belongs in `wire.NORMALIZATIONS`, which keeps every other byte pinned for both
+implementations. This mark stops the whole case being compared, so whatever the row was
+covering has to be covered somewhere else and the reason must say where.
+
+| row | the artifact | where the contract half is covered |
+|---|---|---|
+| `raw-malformed-request-line` | HTTP/0.9: `parse_request` never established a version, so `send_response_only` suppresses the status line and every header | nowhere else — the property is "it does not crash", and a framed 400 from a port satisfies it |
+| `raw-malformed-absolute-target` | the request line never reaches a handler in a server whose framework parses it first; Go's `net/http` answers its own 400 in `readRequest` | **nowhere** — the answer comes from the framework's parser before any port code runs, so there is nothing to test; the security property holds because a framed 400 names no scope |
+| `post-bullets-not-json` | the body quotes CPython's `json` diagnostic (`Expecting property name enclosed in double quotes: line 1 column 2 (char 1)`) | `write.TestDecodeBulletBodyRefusesRatherThanCrashing` and `api.TestAMalformedBodyIsAnsweredAndNotDropped` pin the 400, the `X-Store-Status`, the message prefix, and that the connection survives |
+| `post-bullets-deeply-nested-json` | the same, plus a defect (`RecursionError` out of `json.loads`) that a parser returning an error instead of unwinding the stack cannot reproduce | the same two Go tests |
+
+Both raw rows were ALREADY excluded from the uniform-401 relation for the first row's
+reason ("it reveals nothing about the store, so this is recorded rather than called a
+defect"); the second now carries the same reasoning. When a member of a relation is
+skipped the runner says so on its own line and names how many members are left, and a
+relation left with NO members is a **failure** rather than a pass.
+
+```bash
+python3 tests/conformance/suite.py run --base-url … --token-file …                     # skips them, loudly
+python3 tests/conformance/suite.py run --base-url … --token-file … --oracle-specific assert
+```
+
+The second form is for a `--base-url` pointing at a hand-started **oracle**. Omitting
+`--base-url` boots the oracle and always asserts.
+
 ## Three cases send literal request bytes
 
 `raw_request` rows write the request line themselves over a socket and read the
@@ -231,10 +265,50 @@ encodes:
 - **Header order.** Recorded sorted. `_respond` emits a fixed order, RFC 9110
   gives it no meaning, and pinning it would fail a correct implementation.
 - **The raw snapshot bytes**, for the reason above.
+- 🔴 **EVERY USTAR HEADER FIELD A PAX EXTENDED RECORD OVERRIDES.** The snapshot is
+  compared as its **extracted tree**, and every POSIX reader prefers an extended
+  record over the ustar field it shadows — so the comparison normalises the header
+  away before it happens. Measured as four real divergences against CPython's own
+  writer, all invisible here and to every reader: the ustar `mtime` field is
+  `round(val)` there (half-to-**even**) and was `int64()` truncation in the Go
+  writer, which differs at `.75` always and at `.5` on an odd second; the extended
+  records are emitted in dict-insertion order (`path` before `mtime`) and were
+  emitted `mtime`-first; a **non-ASCII member name** gets a `path` record at any
+  length there (the ASCII test runs before the length test) and got one only above
+  100 bytes; and the header **checksum** moves with the first of those. 193 bytes
+  across 7 header blocks, behind a green extracted-tree comparison.
+  **Byte-diff the two archives when you touch `internal/snapshot/paxtar.go`** —
+  after the fix they are byte-identical over a member list carrying all four
+  classes. `AGENTS.md` records why the byte-identity gate is scoped to the
+  *uncompressed* tar (gzip identity is unattainable, measured).
+- **A `seeded=` value that is not printable ASCII.** `world.json` declares an ASCII
+  seed stamp, so no case reaches the three accidents a non-ASCII one produced on the
+  oracle — one of which **truncated the response after the status line**. Fixed in
+  the oracle and matched in Go; covered by
+  `TestSnapshotStamp::test_a_stamp_that_cannot_GO_IN_A_HEADER_is_UNREADABLE` and by
+  `snapshot.TestFreshnessNamesEveryFailureState` instead. Regenerating all 98
+  goldens after that fix moved **none** of them, which is the same statement from the
+  other side.
 - **TLS, the gateway, and anything a proxy does.** The suite talks plain HTTP to a
   loopback socket.
 - **SIGHUP token reload, startup refusals, and every exit-code path.** Those are
   process behaviour, not request/response behaviour.
+- **A REQUEST BODY THAT IS NOT VALID UTF-8, AND AN ESCAPED NON-BMP CHARACTER.** Both
+  measured as real divergences against a Go port while all four CI jobs were green, so
+  this entry is evidence rather than caution. The runner builds every body from
+  `requests.json`, and no row carries either shape:
+  - a body with a byte that is not valid UTF-8 — the oracle refuses it with a 400
+    (`body.decode("utf-8")` is strict and runs BEFORE `json.loads`), while a decoder
+    that replaces the byte answers `200 appended` and writes a permanent U+FFFD into a
+    curated entry;
+  - a `\uD83D\uDE00`-style surrogate PAIR — which is what `cairn append` puts on the
+    wire for any astral character, because `json.dumps` defaults to
+    `ensure_ascii=True`. A guard that cannot tell a pair from a lone surrogate 400s
+    every emoji the shipped client sends.
+  Both now have Go-side regression coverage with a red-at-baseline matrix. 🔴 THE
+  LESSON GENERALISES: the corpus pins the bytes it was told to send, so a decoding
+  difference between two implementations is exactly the class it is blind to. A port's
+  own tests own that half.
 - **A hostname shorter than four characters**, for the leak guard: a
   three-character host name is a substring of ordinary English, so the short case
   is left uncovered rather than wrongly covered.

@@ -75,8 +75,96 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cairn` | the client CLI — sync, recall, search, ls-entries, doctor, append, put, create |
 | `lib/` | the reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
-| `tests/` | the suites, plus `leakscan.py` |
-| `flake.nix` | the packaged client, the server image, and the checks over both |
+| `cmd/`, `internal/`, `go.mod` | the Go port of the server (P1), stdlib-only — see below |
+| `tests/` | the suites, plus `leakscan.py` and `conformance/` |
+| `flake.nix` | the packaged client, the server image, the Go server, and the checks over all three |
+
+## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
+
+`cmd/cairn-server` is the Go port. It is **not deployed by anything**: it exists so the
+conformance corpus can be replayed against both implementations on the same store and
+the difference MEASURED. The sequence is fixed — the Go server passes the corpus, then
+both run over one store and byte-identity is compared, then the client is ported, then
+Python is retired. Do not declare a step done early, and do not switch the deployed
+image while the corpus is partial.
+
+🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP
+IDENTITY IS UNATTAINABLE — MEASURED, NOT ASSUMED.** `/api/v1/snapshot` ships
+`tarfile.open(mode="w:gz")` output on the oracle and `compress/gzip` output in Go, and the
+two cannot be made equal at any setting. Two independent reasons, so closing one does not
+help:
+
+- **the 10-byte gzip header.** Go's `compress/gzip` hardcodes the OS byte to `0xff`
+  (unknown) with no API to change it; CPython writes `0x03` (Unix). At level 9 the XFL
+  bytes agree (`02`) and the OS bytes still differ.
+- **the DEFLATE stream itself**, which differs in LENGTH and not merely in content —
+  512 bytes from Go against 511 from zlib at level 9 on one 20,480-byte tar. `compress/flate`
+  and zlib make different match and block choices; that is a permitted freedom of the
+  format, not a defect in either.
+
+So the gate compares **the tar inside the gzip**, which IS achievable: after the header
+fixes in `internal/snapshot/paxtar.go`, the Go writer's archive was byte-identical to
+CPython's `PAX_FORMAT` output over a member list carrying a whole second, `.25`, `.5` on an
+even second, `.5` on an odd one, `.75`, a non-ASCII name and a name over 100 bytes. The
+corpus already avoids the compressed bytes for the same reason — `wire.py` drops
+`Content-Length` on `/snapshot` and compares the **extracted tree** — so do not add a gate
+on the gzip bytes and do not read this row as "nobody looked".
+
+⚠ **The extracted-tree comparison is ALSO what hid four header divergences**: every POSIX
+reader prefers a PAX extended record over the ustar field, so a wrong `mtime` field, a
+missing `path` record, a reordered record set and a moved checksum all normalise away before
+the comparison happens. Byte-diff the two archives when you change that writer; the tree
+comparison structurally cannot see it.
+
+**The corpus is the specification, and at P1a it is deliberately PARTIAL.** Measured on
+this tree: 94 PASS, 22 failing cases — every one a `/api/v1/recall/{scope}` or
+`/api/v1/search/{scope}` **rendering** case, which is P1b's job — 4 rows skipped as
+oracle-specific, 0 failing relations.
+
+```bash
+go vet ./... && go test ./...            # the port's own guards
+tests/conformance/run_go.sh              # the P1 gate: the corpus against the Go server
+python3 tests/conformance/suite.py run   # …and against the oracle, which must stay 0 failures
+```
+
+🔴 **A REFUSAL THAT IS "THE SAME" ON BOTH SERVERS MAY BE THE SAME FOR THE WRONG REASON.**
+A relation between two responses that both fail their own golden still PASSES — it
+compares them to each other, not to the contract — and at P1a `refused-equals-absent`
+and `head-matches-get` do exactly that for the two report routes, because
+`501 not-implemented` is beautifully uniform. The runner now prints that caveat on the
+line itself; read it rather than the verdict.
+
+🔴 **A GREEN CORPUS IS NOT A GREEN PORT, AND THAT IS MEASURED RATHER THAN CAUTIONARY.**
+Two defects shipped in the first Go commit with all four CI jobs green and the split
+exactly as documented above: a body with an invalid UTF-8 byte answered `200 appended`
+and wrote a permanent U+FFFD into a curated entry (the oracle refuses it 400), and a
+guard that could not tell a surrogate PAIR from a lone surrogate 400'd every astral
+character — which is what `cairn append` sends, because `json.dumps` defaults to
+`ensure_ascii=True`. Both were found by reading the port against `server.py` function by
+function, not by the suite; the suite builds its bodies from `requests.json` and no row
+carries either shape. **When the corpus is green, the question left is "what does it not
+send", and DECODING differences are the answer.**
+
+🔴 **THE GO SIDE CARRIES ITS OWN ROUTE LEDGER, BECAUSE THE SUITE CANNOT BUILD ONE FOR
+IT.** `cases.declared_routes` reads the oracle's dispatch tables by AST and has no
+equivalent for a compiled binary, so the blind spot — a route added after the fixtures
+were generated — is closed on the Go side by `api.DeclaredRoutes()`, checked against
+`tests/conformance/requests.json` by `TestTheRouteLedgerMatchesTheConformanceCorpus`,
+against the wiring at construction, and against the ledger's own spelling by
+`checks.go-server-declares-its-routes` (which reads it out of the RUNNING binary).
+Adding a row to a dispatch table is adding a public, internet-reachable endpoint; all
+four of those have to move together.
+
+🔴 **THE GO TOOLCHAIN IS PINNED, NOT INHERITED** — the same discipline as the
+interpreter, and for the same reason. `go.mod` says 1.25, `flake.nix` uses
+`buildGo125Module` (nixpkgs' default `go` is **1.26** against the pinned lock), and CI
+pins `go-version: "1.25"`. Move all three together or not at all. ⚠ `buildGoModule`
+with the compiler in `nativeBuildInputs` is a NO-OP for the pin: it uses the `go` from
+its own scope, so the build fetched 1.26 while the derivation advertised 1.25.
+
+🔴 **STDLIB ONLY.** `go.mod` has no `require` block and `flake.nix` passes
+`vendorHash = null`; together those make a new dependency in the serving path a build
+FAILURE rather than a silent addition.
 
 ## Installing and building with nix
 

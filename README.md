@@ -71,13 +71,31 @@ runbook (seeding, byte-identity verification, rotation, rate limiting), is
 | `cairn` | the client CLI |
 | `lib/` | the reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
-| `tests/` | the suites, plus `leakscan.py` |
-| `flake.nix` | the packaged client, the server image, and the checks over both |
+| `cmd/`, `internal/` | the Go port of the server — in progress, not deployed |
+| `tests/` | the suites, plus `leakscan.py` and the HTTP conformance corpus |
+| `flake.nix` | the packaged client, the server image, the Go server, and the checks |
+
+## The Go port, and why two servers are alive
+
+`server/server.py` is the **oracle**. `cmd/cairn-server` is a stdlib-only Go port of it,
+and it is not deployed by anything yet: it exists so the store API's contract can be
+replayed against both implementations on one store and the difference measured rather
+than reviewed. The contract is recorded as HTTP-level golden fixtures generated from the
+oracle — 98 cases, 99 requests, 426 assertions — in
+[`tests/conformance/`](tests/conformance/README.md).
+
+At this stage the Go server answers everything except the two **report-rendering**
+routes, which still need the reader ported; it routes and authorises them and answers
+`501` rather than a body, so their refusals are already the contract. Both numbers are
+in CI, as a floor on passes and a ceiling on failures.
 
 ## Development
 
 ```bash
-pytest tests/                         # the suite
+pytest tests/                         # the Python suite
+go vet ./... && go test ./...         # the Go port's own guards
+tests/conformance/run_go.sh           # the corpus against the Go server
+python3 tests/conformance/suite.py run  # …and against the oracle: must stay at 0 failures
 python3 tests/leakscan.py             # the leak gate — runs in CI on every commit
 python3 tests/leakscan.py --self-test # prove the gate is an instrument
 ```

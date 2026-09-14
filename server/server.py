@@ -2761,6 +2761,23 @@ WRITE_ROUTES: dict[tuple[str, str], tuple[str, int, tuple[str, ...]]] = {
 _FRESHNESS_MAXDEPTH = 2
 
 
+def _header_safe(value: str) -> bool:
+    """Every character is PRINTABLE ASCII (0x20..0x7E) — what a header value can
+    carry identically in any implementation.
+
+    🔴 THE BOUND IS THE HEADER, NOT THE FILESYSTEM. `http.server` encodes header
+    values as latin-1, so U+0000..U+001F and U+007F frame-break or vanish, and
+    U+0080..U+00FF encode to ONE byte here and TWO in any UTF-8 writer — a
+    divergence in bytes a golden pins, with no error on either side. Above U+00FF
+    the encode RAISES, mid-response.
+
+    Deliberately narrower than "latin-1 encodable": the whole point is that the
+    value is the same bytes everywhere, and the latin-1 range is exactly where two
+    correct implementations disagree silently.
+    """
+    return all("\x20" <= ch <= "\x7e" for ch in value)
+
+
 def snapshot_freshness(store_root: str | Path) -> tuple[str, str]:
     """`(header_value, prose_line)` dating the copy this process is serving.
 
@@ -2810,6 +2827,41 @@ def snapshot_freshness(store_root: str | Path) -> tuple[str, str]:
     except FileNotFoundError:
         seeded = "UNSTAMPED"
     except OSError:
+        seeded = "UNREADABLE"
+    except UnicodeDecodeError:
+        # 🔴 NOT AN `OSError`, SO THE ARM ABOVE NEVER CAUGHT IT — AND IT ESCAPED
+        # `snapshot_freshness` ENTIRELY. A stamp carrying a byte that is not valid
+        # UTF-8 raised out of this function (a `UnicodeDecodeError` is a
+        # `ValueError`), and the caller turned it into a 503 for a store that is
+        # perfectly readable apart from one unreadable metadata file. `UNREADABLE`
+        # is the state this docstring already defines for exactly that fact.
+        seeded = "UNREADABLE"
+
+    # 🔴 A STAMP THAT CANNOT GO IN A HEADER CLEANLY IS `UNREADABLE`, AND THIS IS A
+    # CORRECTION TO THE ORACLE ITSELF RATHER THAN A PORT CONCESSION. `seeded` is
+    # emitted as `X-Store-Snapshot: seeded=<value>`, and `http.server` encodes
+    # header values as **latin-1**. Three measured outcomes for a stamp nobody
+    # validated, none of them designed:
+    #
+    #   `2000-01-01 café`  -> the header goes on the wire as latin-1 `caf\xe9`,
+    #                         ONE byte, where any implementation that writes UTF-8
+    #                         sends TWO. A silent byte divergence in a pinned header.
+    #   `2000-01-01 <emoji>` -> `send_header` raises `UnicodeEncodeError` AFTER the
+    #                         status line has already been written, so the response
+    #                         is TRUNCATED mid-stream (measured: `curl` exit 8).
+    #   an invalid UTF-8 byte -> 503, handled above.
+    #
+    # A contract cannot include "sometimes truncate the response after the status
+    # line", so the value is constrained to what a header can carry identically
+    # everywhere: PRINTABLE ASCII. Anything else is a stamp this server cannot
+    # report, which is what `UNREADABLE` means.
+    #
+    # ⚠ NO LEGITIMATE STAMP IS AFFECTED. `seed.sh` writes an ISO-8601 timestamp,
+    # which is pure ASCII; this can only fire on a stamp file somebody else wrote.
+    # The alternative — percent-encoding or `?`-substituting the value — was
+    # rejected because it REPORTS A DATE THAT IS NOT THE ONE IN THE FILE, and every
+    # other failure in this block is a named state rather than a mangled value.
+    if seeded not in ("UNSTAMPED", "UNREADABLE") and not _header_safe(seeded):
         seeded = "UNREADABLE"
 
     newest: float | None = None

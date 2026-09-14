@@ -60,6 +60,20 @@ class Case:
     normalize: tuple[str, ...] = ()
     body_kind: str = "auto"
     canary: bool = False
+    #: 🔴 THIS ROW RECORDS AN ANSWER THAT IS THE ORACLE'S OWN SHAPE RATHER THAN A
+    #: CONTRACT A PORT CAN HONOUR, so it is asserted against the Python server and
+    #: SKIPPED — by id, with its reason, reported in the summary — for any other
+    #: implementation. `oracle_only_why` states which artifact, and
+    #: `validate_corpus` refuses a mark with no reason: a licence to differ that
+    #: nobody can read is the same defect as an unused normalization one level up.
+    #:
+    #: ⚠ IT IS THE LAST RESORT, NOT THE FIRST. A response that differs only in ONE
+    #: FIELD belongs in `wire.NORMALIZATIONS`, which keeps every other byte pinned
+    #: for both implementations; this mark stops the whole case being compared, so
+    #: whatever the row was covering has to be covered somewhere else and the
+    #: reason must say where. Four rows carry it today.
+    oracle_only: bool = False
+    oracle_only_why: str = ""
     #: 🔴 THIS ROW DELIBERATELY ADDRESSES A METHOD/HEAD THE SERVER HAS NO ROUTE
     #: FOR — a `PATCH` at the entry noun, a `GET` at it, a `POST` at a read
     #: route. Such a row must NOT count as coverage of a route (its answer is a
@@ -146,6 +160,8 @@ def load_corpus(path: Path | None = None) -> Corpus:
                 body_kind=row.get("body_kind", "auto"),
                 canary=bool(row.get("canary", False)),
                 negative_route=bool(row.get("negative_route", False)),
+                oracle_only=bool(row.get("oracle_only", False)),
+                oracle_only_why=row.get("oracle_only_why", ""),
             )
         )
     corpus = Corpus(
@@ -204,6 +220,22 @@ def validate_corpus(corpus: Corpus, *, routes: set[str] | None = None) -> None:
             )
         if not case.why.strip():
             raise CorpusError(f"case {case.id!r}: every row states why it is here")
+        if case.oracle_only and not case.oracle_only_why.strip():
+            raise CorpusError(
+                f"case {case.id!r} is marked oracle_only and states no reason. The "
+                f"mark stops the WHOLE case being compared for every implementation "
+                f"but the Python one, so it has to say which artifact it is excusing "
+                f"and where the part that IS a contract is covered instead. An "
+                f"unexplained licence to differ is the defect `wire.py`'s "
+                f"anti-widening guard exists to prevent, one level up."
+            )
+        if case.oracle_only_why.strip() and not case.oracle_only:
+            raise CorpusError(
+                f"case {case.id!r} states an oracle_only reason but is not marked "
+                f"oracle_only, so the reason describes nothing and the row IS "
+                f"compared against every implementation. Set the mark, or delete "
+                f"the reason."
+            )
 
     # 🔴 READS BEFORE WRITES. See this module's docstring: the freshness fields a
     # report carries move the instant anything is written, so a read recorded

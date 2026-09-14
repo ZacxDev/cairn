@@ -120,6 +120,127 @@
           || (rel == "server/server.py");
       };
 
+      # 🔴 A SECOND ALLOWLIST FOR THE GO TREE, AND IT IS SEPARATE FROM
+      # `onlyCode` ON PURPOSE. `onlyCode` feeds the PYTHON artefacts — the
+      # packaged client and the pod image — and widening it to carry `go.mod`,
+      # `cmd/` and `internal/` would put the Go sources into both of those
+      # closures for nothing, and would change the `server-image` layer contents
+      # that `tests/test_flake_image_matches_dockerfile.py` is written against.
+      # Two filters is the honest shape while two implementations are alive; the
+      # day Python is retired, one of them goes away rather than being widened.
+      #
+      # An allowlist rather than an exclude list, for the same reason as
+      # `onlyCode`: a working tree of this repo holds store CONTENT and caches
+      # that must never reach a build artefact, and an exclude list ships
+      # whatever nobody thought to name.
+      #
+      # 🔴 `tests/conformance/requests.json` IS IN THIS FILTER ON PURPOSE, AND IT
+      # IS THE ONE NON-GO FILE HERE. `TestTheRouteLedgerMatchesTheConformance
+      # Corpus` reads that list and compares it against the routes this server
+      # dispatches, in BOTH directions — it is the guard that closes the
+      # "a route added after the fixtures were generated" blind spot for a
+      # non-Python implementation, which `tests/conformance/README.md` names as
+      # explicitly open on this side. Leaving the file out would make the
+      # package's own test run skip its most load-bearing guard, in a sandbox,
+      # silently. A sandbox that pins a dimension cannot be read as coverage of
+      # it — so the dimension is supplied instead.
+      onlyGo = pkgs: pkgs.lib.cleanSourceWith {
+        src = ./.;
+        name = "cairn-go-source";
+        filter = path: type:
+          let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+          in
+          (type == "directory" && (
+            rel == "cmd" || rel == "internal"
+            || rel == "tests" || rel == "tests/conformance"
+            || pkgs.lib.hasPrefix "cmd/" rel || pkgs.lib.hasPrefix "internal/" rel
+          ))
+          || (rel == "go.mod")
+          || (rel == "tests/conformance/requests.json")
+          # A `.go` file only under the two directories this module is made of. A
+          # bare suffix test would also carry a stray `.go` anywhere in the tree,
+          # which is an allowlist that says something wider than it means.
+          || ((pkgs.lib.hasPrefix "cmd/" rel || pkgs.lib.hasPrefix "internal/" rel)
+              && pkgs.lib.hasSuffix ".go" rel);
+      };
+
+      # 🔴 THE GO TOOLCHAIN IS PINNED THE SAME WAY THE INTERPRETER IS, AND FOR
+      # THE SAME REASON. `pkgs.go` follows nixpkgs and is **1.26.7** against the
+      # pinned lock, while `go.mod` declares 1.25 and the tests were run under
+      # 1.25.14 — so the default would have built the server under a compiler
+      # nothing in this repo had ever run the tests under, and a lock bump would
+      # move it again silently. That is the exact shape of the defect
+      # `pkgs.python3` produced here before the interpreter was pinned. Move
+      # this, `go.mod`'s `go` directive and the CI job's `go-version` together or
+      # not at all.
+      #
+      # 🔴 AND IT IS `buildGo125Module`, NOT `buildGoModule` WITH THE COMPILER IN
+      # `nativeBuildInputs`. That spelling was tried and is a NO-OP for the
+      # pin: `buildGoModule` uses the `go` from its OWN scope, so the build
+      # fetched 1.26.7 while the derivation advertised 1.25 in its inputs —
+      # a pin that reads as one and is not.
+      #
+      # ⚠ `go_1_25` TRACKS A SERIES, NOT A PATCH RELEASE. Measured against this
+      # lock it is exactly 1.25.14, the version the tests ran under; the property
+      # this pin holds is "the MINOR version", which is what a language-version
+      # skew would break.
+      buildGoPinned = pkgs: pkgs.buildGo125Module;
+
+      # 🔴 NO VENDOR HASH, BECAUSE THERE ARE NO DEPENDENCIES. `null` is
+      # `buildGoModule`'s spelling for "this module requires nothing outside the
+      # standard library". That is not a convenience: it is the property
+      # `go.mod`'s missing `require` block states, and this is the line that makes
+      # a new dependency a build FAILURE rather than a silent addition to the
+      # serving path.
+      mkGoServer = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-server";
+        inherit version;
+        src = onlyGo pkgs;
+        vendorHash = null;
+
+        subPackages = [ "cmd/cairn-server" ];
+
+        # 🔴 THE UNIT TESTS RUN IN THE BUILD, NOT ONLY IN `checks`. A consumer
+        # that pins this flake builds the PACKAGE and never runs
+        # `nix flake check`, so a broken token parser or a broken tar writer
+        # would otherwise reach a machine — and `checks` is also where a
+        # `--no-link` CI job is easiest to forget.
+        doCheck = true;
+
+        # 🔴 `go test ./...`, SPELLED OUT, BECAUSE THE DEFAULT CHECK PHASE
+        # HONOURS `subPackages` AND THAT MADE IT VACUOUS. MEASURED: with
+        # `subPackages = [ "cmd/cairn-server" ]` and `doCheck = true`, the build
+        # log read
+        #
+        #     Running phase: checkPhase
+        #     ?  github.com/ZacxDev/cairn/cmd/cairn-server  [no test files]
+        #     Running phase: installPhase
+        #
+        # — a GREEN check phase that ran ZERO tests, because every test in this
+        # module lives under `internal/` and `subPackages` had scoped the test
+        # walk to the one directory that has none. That is the reassuring zero
+        # this repository keeps finding, arriving through a build option whose
+        # only documented job is to narrow what gets INSTALLED.
+        #
+        # `go vet` is here too: it is the cheapest check that reads the code
+        # rather than running it, and a printf-shaped mistake in a refusal
+        # message is a refusal the goldens would catch much later.
+        checkPhase = ''
+          runHook preCheck
+          go vet ./...
+          go test ./...
+          runHook postCheck
+        '';
+
+        meta = with pkgs.lib; {
+          description = "The Go port of the cairn store API (P1: dual-run against the Python oracle)";
+          homepage = "https://github.com/ZacxDev/cairn";
+          license = licenses.mit;
+          mainProgram = "cairn-server";
+          platforms = platforms.unix;
+        };
+      };
+
       mkCairn = pkgs: pkgs.stdenv.mkDerivation {
         pname = "cairn";
         inherit version;
@@ -254,7 +375,15 @@
     in
     {
       packages = forAll (pkgs:
-        { cairn = mkCairn pkgs; default = mkCairn pkgs; }
+        {
+          cairn = mkCairn pkgs;
+          default = mkCairn pkgs;
+          # 🔴 `default` STAYS THE PYTHON CLIENT. The Go server is a SECOND
+          # artefact during the dual-run, not a replacement for anything: making
+          # it the default would change what `nix run github:…/cairn` executes
+          # for every existing consumer, which is a cutover and not a build.
+          cairn-server-go = mkGoServer pkgs;
+        }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
         });
@@ -272,6 +401,61 @@
 
       checks = forAll (pkgs: {
         cairn = mkCairn pkgs;
+        cairn-server-go = mkGoServer pkgs;
+
+        # 🔴 THE POSITIVE HALF FOR THE GO SERVER, AND IT IS A DIFFERENT CLAIM
+        # FROM "IT COMPILES". The package's own `checkPhase` runs the unit
+        # tests; this runs the BINARY and reads what it prints, which is the one
+        # thing a compile cannot establish — that the dispatch tables were
+        # actually wired and agree with the ledger the conformance suite reads.
+        #
+        # 🔴 AND IT IS A PAIR, NOT A ZERO. A check that asserted only "the
+        # command exited 0" would pass for a binary that printed nothing, which
+        # is the reassuring zero this repository keeps finding. So the exact
+        # route set is pinned, spelled out by hand — the same set
+        # `tests/test_conformance_suite.py` spells for the oracle, which is what
+        # makes the two implementations comparable at all.
+        #
+        # ⚠ WHAT THIS SANDBOX CANNOT HAVE, stated rather than assumed away: no
+        # store, no token file and no network, so it exercises the LEDGER and
+        # nothing about serving. The conformance corpus is what measures the
+        # served behaviour, and it needs a running pair of servers that a nix
+        # sandbox is the wrong place for.
+        go-server-declares-its-routes = pkgs.runCommand "cairn-go-server-declares-its-routes"
+          { nativeBuildInputs = [ (mkGoServer pkgs) ]; } ''
+          set -o pipefail
+          cairn-server -routes > routes.txt
+
+          if ! grep -q . routes.txt; then
+            echo "FAIL: the binary printed NO route at all, so a ledger built from"
+            echo "      this output would agree with anything."
+            exit 1
+          fi
+
+          cat > want.txt <<'EOF'
+          GET recall
+          GET search
+          GET snapshot
+          HEAD recall
+          HEAD search
+          HEAD snapshot
+          POST entry
+          PUT entry
+          EOF
+          sed -i 's/^ *//' want.txt
+
+          if ! diff -u want.txt routes.txt; then
+            echo "FAIL: the Go server's declared route set is not the set this check"
+            echo "      names. Adding a row to a dispatch table is adding a public,"
+            echo "      internet-reachable endpoint, and this is where somebody has"
+            echo "      to think about it — update the conformance request list and"
+            echo "      regenerate in the same change."
+            exit 1
+          fi
+
+          echo "ok: $(wc -l < routes.txt) declared routes, matching the ledger"
+          cp routes.txt $out
+        '';
 
         # 🔴 THIS CHECK IS THE POSITIVE HALF, AND IT IS *NOT* THE DETECTOR FOR A
         # MISSING `lib/` — `doInstallCheck` above is, and it fires first.
@@ -349,10 +533,17 @@
           packages = [
             ((python pkgs).withPackages (ps: [ ps.pytest ]))
             pkgs.git
+            # The same toolchain the package and the CI job use — see
+            # `buildGoPinned` above for why it is pinned rather than inherited.
+            pkgs.go_1_25
           ];
           shellHook = ''
             echo "cairn dev shell — run the suite with:"
             echo "    python3 -m pytest tests -q -p no:randomly"
+            echo "the Go port's own tests:"
+            echo "    go test ./... && go vet ./..."
+            echo "the conformance corpus against the Go server (the P1 gate):"
+            echo "    tests/conformance/run_go.sh"
             echo "and the leak gate, which must pass before any push:"
             echo "    python3 tests/leakscan.py --self-test && python3 tests/leakscan.py"
           '';
