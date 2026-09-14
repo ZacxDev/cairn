@@ -61,7 +61,7 @@ from leakscan import partition_tracked_files  # noqa: E402
 
 #: The phrases the extraction substituted for the writer module's real name.
 #: There is more than one, which is what the first version of this guard got
-#: wrong — see the note on `_IN_CODE_SPAN`.
+#: wrong — see the note on `_code_span_hit`.
 SCRUB_PHRASES = ("a writer", "the writer half")
 
 #: Two broken shapes, and ONLY these two:
@@ -79,8 +79,31 @@ SCRUB_PHRASES = ("a writer", "the writer half")
 # four string pins, because the guard's presence stops the next reader looking.
 # Both phrases are matched now, and `test_the_patterns_can_fire` carries a
 # fixture for each.
-_IN_CODE_SPAN = re.compile(r"`[^`\n]*\b(?:a writer|the writer half)\b[^`\n]*`")
+#
+# 🔴 CODE SPANS ARE PAIRED, NOT PATTERN-MATCHED — and the first two versions of
+# this got it wrong in a way that reds CI on CORRECT ENGLISH. A regex of the form
+# `` `[^`]*PHRASE[^`]*` `` happily opens at the CLOSING backtick of one span and
+# closes at the OPENING backtick of the NEXT, so the PROSE BETWEEN two inline
+# code spans is treated as code. Measured on the very line this PR authored, with
+# one ordinary further code span added:
+#     `/handoff` (the writer half, which this `package` does not ship)
+# matched `` ` (the writer half, which this ` `` and reported the line as "none of
+# which is prose", instructing the author to rewrite a correct sentence. TWELVE
+# lines in this tree already carry a scrub phrase plus two or more backticks and
+# are one such edit away. The narrowness control could not see it either: its
+# fixtures were all BACKTICK-FREE.
+#
+# So spans are EXTRACTED by pairing backticks left to right, and only the span
+# CONTENTS are searched. `test_correct_prose_between_two_code_spans_is_NOT_flagged`
+# is the control.
+_CODE_SPAN = re.compile(r"`([^`\n]*)`")
+_PHRASE = re.compile(r"\b(?:a writer|the writer half)\b")
 _AS_PATH = re.compile(r"[\w./-]+/(?:a writer|the writer half)\b")
+
+
+def _code_span_hit(line: str) -> bool:
+    """True when a scrub phrase sits INSIDE a paired inline code span."""
+    return any(_PHRASE.search(span) for span in _CODE_SPAN.findall(line))
 #: "the full the writer half's own suite" — a determiner left stranded in front
 #: of the replacement, the same shape as `_STRANDED_DETERMINER` but with `the`.
 _DOUBLED_DETERMINER = re.compile(r"\bthe\s+(?:full\s+)?the\s+writer\s+half\b")
@@ -110,23 +133,34 @@ def _findings() -> tuple[list[str], list[str]]:
     """
     out: list[str] = []
     exempted: list[str] = []
+    unreadable: list[str] = []
     scanned, _skipped = partition_tracked_files()
     for path in scanned:
         if path.resolve() == SELF:
             exempted.append(str(path))
             continue
+        # 🔴 `errors="replace"`, MATCHING leakscan. The previous version caught
+        # UnicodeDecodeError and `continue`d, blaming "leakscan's own bucketing" —
+        # which was WRONG: leakscan buckets on a NUL sniff and itself reads with
+        # errors="replace", so a NUL-free latin-1 file IS in `scanned` and this
+        # module dropped it silently, in neither `out` nor `exempted`. Measured: a
+        # tracked latin-1 .txt carrying a violation SURVIVED while the identical
+        # UTF-8 bytes went red. An unreported third bucket in a module whose whole
+        # claim is that `scanned | skipped` is the tree.
         try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue  # binary or unreadable; leakscan's own bucketing owns that
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            unreadable.append(str(path))
+            continue
         for i, line in enumerate(text.splitlines(), 1):
             if (
-                _IN_CODE_SPAN.search(line)
+                _code_span_hit(line)
                 or _AS_PATH.search(line)
                 or _STRANDED_DETERMINER.search(line)
                 or _DOUBLED_DETERMINER.search(line)
             ):
                 out.append(f"{path}:{i}: {line.strip()}")
+    assert not unreadable, f"unreadable tracked files, silently unscanned: {unreadable}"
     return out, exempted
 
 
@@ -192,9 +226,17 @@ def test_the_patterns_can_fire():
     unmatchable would make the corpus scan green forever. These are the exact
     shapes removed from the tree, so they double as the record of what was there.
     """
-    assert _IN_CODE_SPAN.search("check a file with `a writer --validate <path>`.")
+    assert _code_span_hit("check a file with `a writer --validate <path>`.")
+    assert _code_span_hit("`the writer half --validate`, which `/resume` never runs.")
     assert _AS_PATH.search("`/handoff` (`lib/a writer`) — and no general reader.")
     assert _STRANDED_DETERMINER.search("which is a **the writer half** flag — the reader")
+    # 🔴 ADDED AFTER ROUND 1 MEASURED ITS ABSENCE. `_DOUBLED_DETERMINER` shipped
+    # with NO fixture while the commit message claimed "carries a fixture for
+    # each" — replacing the pattern with an unmatchable one left all 5 tests
+    # green, which is exactly the vacuity this test's own docstring names.
+    assert _DOUBLED_DETERMINER.search(
+        "# Measured against the full the writer half's own suite (baseline 712 passed):"
+    )
     # …and the mirror image: correct PROSE must NOT match, or the guard would
     # demand that good English be rewritten.
     for ok in (
@@ -202,9 +244,39 @@ def test_the_patterns_can_fire():
         "Re-exported here so a writer does not have to re-spell them.",
         "That is right for a writer: it is answering \"what did I touch?\",",
     ):
-        assert not _IN_CODE_SPAN.search(ok), ok
+        assert not _code_span_hit(ok), ok
         assert not _AS_PATH.search(ok), ok
         assert not _STRANDED_DETERMINER.search(ok), ok
+        assert not _DOUBLED_DETERMINER.search(ok), ok
+
+
+def test_correct_prose_between_two_code_spans_is_NOT_flagged():
+    """🔴 THE FALSE-POSITIVE CONTROL, and it is a REGRESSION, not a nit.
+
+    Round 1 measured the previous pattern matching the PROSE BETWEEN two inline
+    code spans: `` `[^`]*PHRASE[^`]*` `` opens at the CLOSING backtick of one span
+    and closes at the OPENING backtick of the next. The fixture below is
+    `lib/subsystem_recall.py:5` AS THIS PR WROTE IT, plus one ordinary extra code
+    span — so the guard would have reddened CI on a correct sentence in a line
+    this PR authored, with a message telling the author it was "none of which is
+    prose". Twelve lines in this tree are one such edit away.
+
+    🔴 It is separate from `test_the_patterns_can_fire`'s narrowness loop on
+    purpose: those fixtures are BACKTICK-FREE and therefore structurally blind to
+    this class. A control that cannot see the defect is not a control.
+    """
+    for ok in (
+        "`/handoff` (the writer half, which this `package` does not ship) — no reader.",
+        "`cairn recall` hands a writer nothing; `cairn sync` is the other half.",
+        "the reader/a writer boundary is `entry_shape`, not `subsystem_resolver`.",
+    ):
+        assert not _code_span_hit(ok), (
+            f"flagged CORRECT prose: {ok!r}. The phrase is between code spans, not "
+            f"inside one — pairing, not pattern-matching, is what tells them apart."
+        )
+    # …and the mirror: the phrase genuinely INSIDE a span must still be caught,
+    # or this control could be satisfied by a guard that matches nothing at all.
+    assert _code_span_hit("run `a writer --validate <path>` to check it")
 
 
 def test_no_tracked_file_puts_the_scrub_phrase_where_an_identifier_belongs():
@@ -256,7 +328,7 @@ def test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS():
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for verb in re.findall(r"`cairn ([a-z-]+)", text):
+        for verb in re.findall(r"`cairn ([a-z][a-z-]*)", text):
             cited.setdefault(verb, []).append(str(path))
     assert cited, "no `cairn <verb>` citations found anywhere — this check is vacuous"
 
