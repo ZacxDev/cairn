@@ -123,96 +123,13 @@ func hexNibbleValue(c byte) (byte, bool) {
 	return 0, false
 }
 
-// utf8DecodeProblem reports why `data` is not a strict UTF-8 decode, in CPython's
-// shape, or "" when it decodes cleanly.
-//
-// 🔴 THE APPEND PATH DECODED ITS BODY LENIENTLY AND WROTE U+FFFD INTO THE STORE AT
-// `200 appended`. `json.Unmarshal` REPLACES an invalid byte rather than refusing it, so
-// a body carrying one landed a permanent replacement character in a non-re-derivable
-// entry — while `server.py:4391` is `json.loads(body.decode("utf-8"))`, a STRICT decode
-// whose failure is a 400. MEASURED against both servers on the same world:
-//
-//	oracle -> 400 bad request: body must be JSON ('utf-8' codec can't decode byte
-//	          0xff in position 37: invalid start byte)
-//	Go     -> 200 appended, and `beta-notes/spare-six.md` grew a U+FFFD
-//
-// That is verbatim the defect class `append_bullet`'s own docstring records as already
-// fixed once — "a byte that is not valid UTF-8 became U+FFFD, permanently, at
-// 200 appended with no error" — reintroduced through the DECODER instead of through the
-// rewrite. The strict decode has to happen before the JSON parse, exactly as the oracle
-// orders it, because the JSON parser is the thing that hides the byte.
-//
-// ⚠ THE SENTENCE IS CPython-SHAPED BUT NOT CPython-IDENTICAL, and no golden pins it:
-// the reason clause ("invalid start byte" / "invalid continuation byte" /
-// "unexpected end of data") is reproduced, the byte and the position are reproduced,
-// and any further divergence in CPython's wording is unmeasured. What IS pinned for
-// both implementations is the status, the `X-Store-Status`, and the
-// `bad request: body must be JSON (` prefix — see the Go test.
-func utf8DecodeProblem(data []byte) string {
-	for i := 0; i < len(data); {
-		c := data[i]
-		if c < 0x80 {
-			i++
-			continue
-		}
-		size, reason := utf8SequenceLength(c)
-		if size == 0 {
-			return codecMessage(c, i, reason)
-		}
-		if i+size > len(data) {
-			return codecMessage(c, i, "unexpected end of data")
-		}
-		for offset := 1; offset < size; offset++ {
-			if data[i+offset]&0xc0 != 0x80 {
-				return codecMessage(data[i+offset], i+offset, "invalid continuation byte")
-			}
-		}
-		// Overlong forms, surrogates and anything past U+10FFFF are refused the way a
-		// strict decoder refuses them: the first byte is the one named.
-		value := decodeSequence(data[i:i+size], size)
-		if value < minForLength(size) || (value >= 0xd800 && value <= 0xdfff) || value > 0x10ffff {
-			return codecMessage(c, i, "invalid continuation byte")
-		}
-		i += size
-	}
-	return ""
-}
-
-func codecMessage(b byte, position int, reason string) string {
-	return fmt.Sprintf("'utf-8' codec can't decode byte 0x%02x in position %d: %s",
-		b, position, reason)
-}
-
-func utf8SequenceLength(c byte) (int, string) {
-	switch {
-	case c&0xe0 == 0xc0:
-		return 2, ""
-	case c&0xf0 == 0xe0:
-		return 3, ""
-	case c&0xf8 == 0xf0:
-		return 4, ""
-	}
-	return 0, "invalid start byte"
-}
-
-func decodeSequence(data []byte, size int) rune {
-	masks := map[int]byte{2: 0x1f, 3: 0x0f, 4: 0x07}
-	value := rune(data[0] & masks[size])
-	for offset := 1; offset < size; offset++ {
-		value = value<<6 | rune(data[offset]&0x3f)
-	}
-	return value
-}
-
-func minForLength(size int) rune {
-	switch size {
-	case 2:
-		return 0x80
-	case 3:
-		return 0x800
-	}
-	return 0x10000
-}
+// 🔴 THE STRICT UTF-8 DECODE MOVED TO `pytext.DecodeStrictProblem`, AND THE MOVE IS
+// THE FIX FOR A SECOND DEFECT RATHER THAN TIDYING. It lived here because the append
+// path was its only caller; the TOKEN LOADER needs exactly the same predicate, and had
+// open-coded `string(data)` instead — which turned 43 bytes of `0xFF` into an
+// unrestricted-scope legacy credential the oracle refuses to load at all. Two copies of
+// "is this byte run text" is the shape where one gets fixed and the other serves the
+// store. See `pytext.DecodeStrictProblem` for both measurements.
 
 // describeSurrogate is how the refusal names what it found, so a caller can see the
 // escape rather than being told about a category.

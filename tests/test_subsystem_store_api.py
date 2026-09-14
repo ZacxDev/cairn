@@ -2646,6 +2646,64 @@ class TestSnapshotStamp:
         assert "seeded=UNREADABLE" in header
         assert "UNSTAMPED" not in header
 
+    def test_a_stamp_that_cannot_GO_IN_A_HEADER_is_UNREADABLE(self, store: Path):
+        """🔴 THREE ACCIDENTS, ONE DESIGNED STATE.
+
+        `seeded` is emitted as `X-Store-Snapshot: seeded=<value>`, and
+        `http.server` encodes a header value as **latin-1**. Nothing validated
+        the value, so a stamp file somebody else wrote produced three different
+        undesigned outcomes — all MEASURED before this guard existed:
+
+          * `2000-01-01 café`  — the header went on the wire as latin-1
+            `caf\\xe9`, ONE byte, where any UTF-8 writer sends TWO. A silent
+            divergence in a header the conformance goldens pin.
+          * `2000-01-01 <emoji>` — `send_header` raised `UnicodeEncodeError`
+            AFTER the status line had been written, so the response was
+            TRUNCATED mid-stream. Measured as `curl` exit 8.
+          * an invalid UTF-8 byte — `read_text` raised a `UnicodeDecodeError`,
+            which is a `ValueError` and so was NOT caught by the `except
+            OSError` arm; it escaped `snapshot_freshness` and 503'd a store that
+            was perfectly readable apart from one metadata file.
+
+        A contract cannot include "sometimes truncate the response after the
+        status line". So the value is constrained to printable ASCII and
+        anything else is `UNREADABLE`, the state this block already defines —
+        never a mangled or percent-encoded date, because every other failure
+        here is a NAMED STATE rather than an altered value.
+        """
+        stamp = store / api.SEED_STAMP_NAME
+        for name, body in (
+            ("latin-1 encodable", "2000-01-01 café\n".encode("utf-8")),
+            ("astral", "2000-01-01 \U0001F600\n".encode("utf-8")),
+            ("not valid UTF-8", b"2000-01-01 \xff\n"),
+            ("a control character", b"2000-01-01\x01ok\n"),
+            ("DEL", b"2000-01-01\x7fok\n"),
+            # 🔴 THE ROW THAT REACHES THE **DECODE** RATHER THAN THE HEADER CHECK.
+            # Every row above is caught by the printable-ASCII test as well, so
+            # a table without this one cannot tell the two guards apart — the
+            # Go-side mutation sweep SURVIVED deleting the strict decode until
+            # this case existed. Here the FIRST LINE is pure ASCII and the bad
+            # byte is on the SECOND, so only `read_text`'s strictness over the
+            # whole file sees it.
+            ("an ASCII first line and a bad byte later", b"2000-01-01T00:00:00Z\nhost=\xff\n"),
+        ):
+            stamp.write_bytes(body)
+            header, prose = self._fresh(store)
+            assert "seeded=UNREADABLE" in header, f"{name}: {header!r}"
+            # 🔴 AND THE WHOLE HEADER MUST BE EMITTABLE, which is the property the
+            # truncation case violated. `latin-1` is what `http.server` uses; ASCII
+            # is what makes the bytes identical in any implementation.
+            header.encode("ascii")
+            prose.encode("utf-8")
+
+        # 🔴 THE POSITIVE CONTROL, AND IT IS NOT DECORATION: an ordinary ASCII stamp
+        # must still be REPORTED VERBATIM. Without it this guard passes with
+        # `seeded` hardcoded to `UNREADABLE`, which would hide every real date.
+        stamp.write_text("2000-01-01T00:00:00Z staged_entries=71\n")
+        header, _ = self._fresh(store)
+        assert "seeded=2000-01-01T00:00:00Z staged_entries=71" in header
+        assert "UNREADABLE" not in header
+
     def test_an_EMPTY_store_says_NONE_and_zero_not_a_fabricated_date(
         self, tmp_path: Path
     ):

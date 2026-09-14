@@ -14,6 +14,8 @@ package store
 import (
 	"regexp"
 	"strings"
+
+	"github.com/ZacxDev/cairn/internal/pytext"
 )
 
 // Kinds is the kind enum from the store's own schema. A trailing dot-segment is
@@ -42,17 +44,44 @@ var (
 // Returns "" for input that normalizes away entirely; every caller treats an
 // empty result as "not a ref", never as a wildcard.
 //
-// ⚠ ONE MEASURED RESIDUAL AGAINST THE PYTHON ORACLE, stated rather than left to
-// be found. `str.lower()` in Python may expand one code point into several
-// (U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE lowercases to `i` + U+0307)
-// while `strings.ToLower` maps it to a single `i`. Both then reach the same
-// folded string here, because the combining mark is outside the class and
-// collapses away — checked for that code point specifically. The residual is
-// that a FUTURE Unicode special-casing pair could diverge; nothing in this
-// store's charset (`SAFE_PATH_COMPONENT` is ASCII) can reach it, because a
-// scope or ref that is not ASCII cannot be named in a URL path at all.
+// 🔴 `pytext.Lower`, NOT `strings.ToLower`, AND THE COMMENT THAT USED TO SIT HERE
+// DENIED THE BUG IT WAS STANDING ON. It said U+0130's expansion "reaches the same
+// folded string here, because the combining mark is outside the class and collapses
+// away — checked for that code point specifically". The check was real and it was only
+// ever run on the character ALONE, where the resulting dash is at the end of the string
+// and `strings.Trim` removes it. In the middle of a string that dash SURVIVES, because
+// U+0307 is outside `[a-z0-9.-]` and therefore becomes a SEPARATOR:
+//
+//	İ    -> oracle "i"     old Go "i"     (agreed — the trailing dash is trimmed)
+//	İa   -> oracle "i-a"   old Go "ia"    (DIVERGED)
+//	aİb  -> oracle "ai-b"  old Go "aib"   (DIVERGED)
+//	İİ   -> oracle "i-i"   old Go "ii"    (DIVERGED)
+//
+// A ref that folds differently resolves to a different entry or to none, so this is a
+// create/alias collision rather than a cosmetic difference.
+//
+// ⚠ AND "NOT REACHABLE FROM A URL" IS NOT "NOT REACHABLE". The old note reasoned that
+// `SAFE_PATH_COMPONENT` is ASCII so a non-ASCII ref cannot be named in a path — true, and
+// irrelevant, because this fold is also applied to entry FRONT MATTER: `service:`,
+// `scope:`/`repo:` and every `aliases:` entry go through it, and those arrive in a `PUT`
+// BODY. `EntryFromMapping` is the caller that makes it reachable.
+//
+// ⚠ ONE DIVERGENCE, MEASURED OVER THE WHOLE CODE-POINT RANGE rather than argued: U+0130
+// is the only code point whose `str.lower()` is not a single code point on the pinned
+// interpreter, and no code point lowers in Go but not in Python. See `pytext.Lower`.
+//
+// ⚠ `pytext.StripWhitespace` REPLACED `strings.TrimSpace` IN THE SAME CHANGE AND IS
+// **NOT** A FIX — labelled so it is not counted as one, and so nobody "simplifies" it
+// back. The two predicates genuinely differ (`str.isspace()` is true for U+001C..U+001F,
+// `unicode.IsSpace` is not), but the difference is UNOBSERVABLE here for a structural
+// reason: any character this strip would have removed is outside `[a-z0-9.-]`, so
+// `nonSlug` turns it into a leading or trailing `-` that the closing `strings.Trim`
+// removes anyway. Checked at three points — leading, trailing, and a whole string of it.
+// It is changed because the oracle's line is `raw.strip().lower()` and porting one half of
+// it faithfully while leaving the other on Go's predicate is how the next caller of this
+// function inherits a difference nobody decided on.
 func NormalizeRef(raw string) string {
-	s := strings.ToLower(strings.TrimSpace(raw))
+	s := pytext.Lower(pytext.StripWhitespace(raw))
 	s = nonSlug.ReplaceAllString(s, "-")
 	s = dashRun.ReplaceAllString(s, "-")
 	return strings.Trim(s, "-")

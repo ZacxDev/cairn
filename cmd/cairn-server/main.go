@@ -83,7 +83,11 @@ func main() {
 
 	env := environ()
 	resolvedTokenFile := *tokenFile
-	if resolvedTokenFile != "" && !isFile(resolvedTokenFile) && env["SUBSYSTEM_STORE_TOKEN"] != "" {
+	// 🔴 `authz.IsTokenFile`, NOT A LOCAL COPY. This test and the loader's guard 2 decide
+	// the SAME question, and the local `!IsDir()` version they used to share accepted a
+	// character device — so `/dev/null` at the default path took this fallback away and
+	// exited 78 where the oracle falls back and serves. See authz.IsTokenFile.
+	if resolvedTokenFile != "" && !authz.IsTokenFile(resolvedTokenFile) && env["SUBSYSTEM_STORE_TOKEN"] != "" {
 		// The default path does not exist and an environment token does: use it, and SAY
 		// SO. Falling back silently is how a deployment that lost its secret mount keeps
 		// serving on a token nobody meant to be authoritative.
@@ -286,9 +290,4 @@ func environ() map[string]string {
 		}
 	}
 	return out
-}
-
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

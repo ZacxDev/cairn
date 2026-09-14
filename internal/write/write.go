@@ -140,10 +140,26 @@ func AppendBullet(path, text, actor, session, today string, interleave func()) (
 	// so the two lists index alike and `insertAt` means the same line in both.
 	// Anything else here is an off-by-one on a file the caller cannot see.
 	rawLines := pytext.SplitLinesKeepEnds(textIn)
-	heading := ""
-	if insertAt-1 < len(rawLines) {
-		heading = rawLines[insertAt-1]
-	}
+	// 🔴 INDEXED DIRECTLY, AND THE BOUNDS CHECK THAT USED TO GUARD IT IS DELETED ON
+	// PURPOSE. The oracle's line is `heading = raw_lines[insert_at - 1]`, which raises
+	// `IndexError` if the invariant below is ever broken. The Go version was
+	// `if insertAt-1 < len(rawLines) { heading = … }` with `heading` left "" otherwise —
+	// which READS as handling a violation and does not: the very next statement slices
+	// `rawLines[:insertAt]`, which panics for exactly the inputs the guard admitted. So it
+	// was a dead branch whose only effect was to make an unkillable mutant look like a
+	// safety check, and to describe a fail-open path that the line after it forbids.
+	//
+	// THE INVARIANT, stated because deleting the branch is only correct if it holds:
+	// `SplitLines` and `SplitLinesKeepEnds` split on EXACTLY the same set, so the two
+	// lists have the same length; `NuanceBlock` returns an `insertAt` that indexes into
+	// the list it was given, so `1 <= insertAt <= len(lines) == len(rawLines)`.
+	//
+	// A violation is therefore a bug in one of those two functions, and a panic is the
+	// right answer to it: `rq.backstop` turns it into a `500` with the detail in the
+	// process log, which is what the oracle's uncaught `IndexError` also produces. Failing
+	// open — splicing at a guessed offset into a curated file — is the one outcome that
+	// must not happen.
+	heading := rawLines[insertAt-1]
 	// Whatever the splitter treated as this line's break, VERBATIM — derived by
 	// asking the same function, never by guessing a newline and never by stripping a
 	// hand-written character class (which would also eat trailing spaces the heading

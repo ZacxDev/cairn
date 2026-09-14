@@ -714,6 +714,91 @@ func TestBulletRequestProblem(t *testing.T) {
 	})
 }
 
+// 🔴 THE RAW SURROGATE SCAN IS THE **LAST** CLAUSE, SO EVERY OTHER REFUSAL WINS OVER IT.
+// It used to run first, which meant any body carrying an unpaired escape got the scan's
+// sentence whatever else was wrong with it — and the guard's comment documented the scan as
+// WIDER than Python's while saying nothing about WHERE it sits, so nobody measured the
+// order. Every `want` below is the ORACLE's answer for that body, run on the pinned
+// interpreter.
+//
+// 🔴 EVERY ROW CARRIES AN UNPAIRED ESCAPE, which is what makes this a clause-ORDER test
+// rather than a validation test: with the scan first, all nine produce one identical
+// sentence, so a table without the escape in it cannot fail.
+func TestTheSurrogateScanIsTheLastClauseAndNotTheFirst(t *testing.T) {
+	// `\ud800` in a key this server DISCARDS, so it never changes the oracle's answer.
+	const escape = `"actor":"\ud800"`
+
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"a non-object body", `["\ud800"]`, "the body must be a JSON object"},
+		{"a string body", `"\ud800"`, "the body must be a JSON object"},
+		{"no `text`", `{"session":"s",` + escape + `}`,
+			"`text` is required and must be a non-empty string"},
+		{"`text` is not a string", `{"text":123,"session":"s",` + escape + `}`,
+			"`text` is required and must be a non-empty string"},
+		{"`text` has a newline", `{"text":"a\nb","session":"s",` + escape + `}`,
+			"`text` must be ONE line — an embedded newline would be attached to this " +
+				"bullet as a continuation, or would start a second, unattributed bullet"},
+		// The control character is the six-character JSON ESCAPE `\u0001`, never a raw
+		// 0x01 byte in this source file: an invisible byte here is unreviewable, and JSON
+		// forbids a raw control character in a string anyway, so the body would not parse.
+		{"`text` has a control character", `{"text":"a\u0001b","session":"s",` + escape + `}`,
+			"`text` contains U+0001 (Cc), a control or formatting character that must " +
+				"not be written into a curated entry"},
+		{"`text` opens a markdown bullet", `{"text":"- oops","session":"s",` + escape + `}`,
+			"`text` must not open a markdown bullet — the `- ` is added here, and a " +
+				"second one would start a bullet with no attribution trailer"},
+		{"a malformed `session`", `{"text":"ok","session":"!!",` + escape + `}`,
+			"`session` is required and must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63} — " +
+				"every appended bullet records the actor AND the session that wrote it"},
+		{"no `session`", `{"text":"ok",` + escape + `}`,
+			"`session` is required and must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63} — " +
+				"every appended bullet records the actor AND the session that wrote it"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, err := DecodeBulletBody([]byte(tc.body))
+			if err != nil {
+				t.Fatalf("the body parses on both sides: %v", err)
+			}
+			got := BulletRequestProblem([]byte(tc.body), payload)
+			if got != tc.want {
+				t.Fatalf("problem =\n %q\nwant\n %q", got, tc.want)
+			}
+			// 🔴 AND IT MUST NOT BE THE SCAN'S SENTENCE — asserted separately, because
+			// `got != tc.want` would also fire for an unrelated wrong answer and this row
+			// exists to pin WHICH clause spoke.
+			if strings.Contains(got, "unpaired surrogate escape") {
+				t.Fatalf("the scan answered ahead of the clause that should have: %q", got)
+			}
+		})
+	}
+
+	// 🔴 THE POSITIVE CONTROL — the scan must STILL FIRE when nothing else is wrong, or
+	// "it runs last" has been implemented as "it never runs" and a bullet carrying a
+	// replacement character the oracle refuses would be STORED. This is the reachability
+	// half; without it every row above passes with the scan deleted.
+	body := `{"text":"ok","session":"s",` + escape + `}`
+	payload, err := DecodeBulletBody([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := BulletRequestProblem([]byte(body), payload)
+	if !strings.Contains(got, "unpaired surrogate escape `\\ud800`") {
+		t.Fatalf("the scan must still refuse an otherwise-valid body: %q", got)
+	}
+	// …and a well-formed PAIR must still be accepted, which is the divergence that broke
+	// every emoji the shipped client sends.
+	pair := `{"text":"an emoji 😀 bullet","session":"s"}`
+	pairPayload, err := DecodeBulletBody([]byte(pair))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problem := BulletRequestProblem([]byte(pair), pairPayload); problem != "" {
+		t.Fatalf("a well-formed surrogate PAIR is ordinary text: %q", problem)
+	}
+}
+
 func TestDecodeBulletBodyRefusesRatherThanCrashing(t *testing.T) {
 	// 🔴 THE ANSWERABLE HALF OF THE TWO ORACLE-SPECIFIC CORPUS CASES. Their bodies quote
 	// CPython's own parser diagnostic, which is why they are asserted against the oracle
@@ -732,5 +817,73 @@ func TestDecodeBulletBodyRefusesRatherThanCrashing(t *testing.T) {
 	}
 	if _, err := DecodeBulletBody([]byte(`{"text":"x","session":"s"}`)); err != nil {
 		t.Fatalf("the positive control: a valid body must decode: %v", err)
+	}
+}
+
+// 🔴 `1e999` IS VALID JSON NUMBER SYNTAX AND Go's DEFAULT DECODER REFUSES IT. CPython's
+// `json.loads` yields `inf`; `json.Unmarshal` into `any` answers
+// `cannot unmarshal number 1e999 into Go value of type float64`. The consequence that
+// matters is the middle row: a stray out-of-range number under a key this server DISCARDS
+// was a 400 here and a `200 appended` on the oracle — a write the oracle performs and the
+// port refuses.
+func TestAnOutOfRangeNumberIsAcceptedTheWayTheOracleAcceptsIt(t *testing.T) {
+	// Every `want` is the ORACLE's answer, run on the pinned interpreter.
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		// The oracle stores this bullet. Nothing reads `n`.
+		{"an out-of-range number under an ignored key", `{"text":"ok","session":"s","n":1e999}`, ""},
+		// `text` is a float there, so it fails the type clause — NOT the parser.
+		{"an out-of-range number as `text`", `{"text":1e999,"session":"s"}`,
+			"`text` is required and must be a non-empty string"},
+		// A bare number is a JSON document, so the refusal is the OBJECT clause.
+		{"a bare out-of-range number", `1e999`, "the body must be a JSON object"},
+		// …and the same three shapes with an ordinary number, as the control: if these
+		// diverged the rows above would prove nothing about the RANGE.
+		{"an ordinary number under an ignored key", `{"text":"ok","session":"s","n":1}`, ""},
+		{"an ordinary number as `text`", `{"text":1,"session":"s"}`,
+			"`text` is required and must be a non-empty string"},
+		{"a bare ordinary number", `42`, "the body must be a JSON object"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, err := DecodeBulletBody([]byte(tc.body))
+			if err != nil {
+				t.Fatalf("the oracle parses this; the port must too: %v", err)
+			}
+			if got := BulletRequestProblem([]byte(tc.body), payload); got != tc.want {
+				t.Fatalf("problem = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// 🔴 A SECOND JSON VALUE AFTER THE FIRST MUST STILL BE REFUSED. Switching to a streaming
+// decoder for the row above gives this away silently: `Decoder.Decode` reads ONE value and
+// returns, so `{"text":"a"}{"text":"b"}` would have validated only the first and appended
+// it. `json.loads` refuses it (`Extra data: …`). This guard exists because the FIX above
+// could introduce it, not because it ever shipped — an INVARIANT GUARD in the strict sense,
+// labelled as one.
+func TestTrailingJSONIsRefusedAndTrailingWhitespaceIsNot(t *testing.T) {
+	for _, body := range []string{
+		`{"text":"a","session":"s"}{"text":"b","session":"s"}`,
+		`{"text":"a","session":"s"} 1`,
+		`[1] [2]`,
+		`{"text":"a","session":"s"}null`,
+	} {
+		if _, err := DecodeBulletBody([]byte(body)); err == nil {
+			t.Fatalf("two JSON values are not one document: %q", body)
+		}
+	}
+	// 🔴 THE CONTROL THAT STOPS THIS BECOMING A REGRESSION OF ITS OWN: trailing
+	// WHITESPACE is ordinary and the oracle accepts it, so a guard that refused
+	// `{"…"}\n` would break every client that ends its body with a newline.
+	for _, body := range []string{
+		`{"text":"a","session":"s"}`,
+		"{\"text\":\"a\",\"session\":\"s\"}\n",
+		"{\"text\":\"a\",\"session\":\"s\"}  \t\r\n",
+	} {
+		if _, err := DecodeBulletBody([]byte(body)); err != nil {
+			t.Fatalf("trailing whitespace is not extra data: %q -> %v", body, err)
+		}
 	}
 }

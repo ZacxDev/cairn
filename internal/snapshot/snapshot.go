@@ -102,16 +102,54 @@ func EntryAction(kind store.Kind) (store.Action, bool) {
 // walk that hit an error says `newest=UNREADABLE` — each distinguishable from the
 // genuinely empty store, which says `newest=NONE entry-files=0`. An absent block would
 // read as "this is the source", which is the exact confusion the block removes.
+// headerSafe reports whether every character is PRINTABLE ASCII (0x20..0x7E) — what a
+// header value can carry identically in any implementation. It is `server.py`'s
+// `_header_safe`, and the two must stay in step.
+//
+// 🔴 THE BOUND IS THE HEADER, NOT THE FILESYSTEM, and it is deliberately NARROWER than
+// "encodable". U+0000..U+001F and U+007F frame-break or vanish; U+0080..U+00FF is the
+// range where two CORRECT implementations disagree silently, because `http.server`
+// encodes a header value as latin-1 (one byte) and a UTF-8 writer sends two. Above
+// U+00FF the oracle's encode raises mid-response. Restricting to printable ASCII is the
+// only bound under which the byte sequence is the same on both.
+func headerSafe(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 func Freshness(storeRoot string) (header, prose string) {
 	seeded := "UNSTAMPED"
 	if data, err := os.ReadFile(filepath.Join(storeRoot, SeedStampName)); err == nil {
-		text := pytext.StripWhitespace(string(data))
-		if text == "" {
+		// 🔴 A STRICT DECODE, BECAUSE THE ORACLE'S `read_text(encoding="utf-8")` IS ONE.
+		// A stamp carrying a byte that is not valid UTF-8 is `UNREADABLE` on both sides;
+		// `string(data)` would have carried the byte into a header.
+		if pytext.DecodeStrictProblem(data) != "" {
+			seeded = "UNREADABLE"
+		} else if text := pytext.StripWhitespace(string(data)); text == "" {
 			seeded = "UNREADABLE"
 		} else {
 			seeded = pytext.StripWhitespace(pytext.SplitLines(text)[0])
 		}
 	} else if !os.IsNotExist(err) {
+		seeded = "UNREADABLE"
+	}
+	// 🔴 A STAMP THAT CANNOT GO IN A HEADER CLEANLY IS `UNREADABLE` — AND THE ORACLE WAS
+	// CHANGED TO AGREE, rather than this side being bent to reproduce an accident. Three
+	// measured outcomes there for a stamp nobody validated: a latin-1-encodable character
+	// went on the wire as ONE byte where any UTF-8 writer sends TWO (a silent divergence
+	// in a pinned header); an emoji made `send_header` raise AFTER the status line was
+	// written, TRUNCATING the response (`curl` exit 8); and an invalid UTF-8 byte 503'd a
+	// store that was perfectly readable. None is designed behaviour, and a contract cannot
+	// include "sometimes truncate the response mid-stream" — so the value is constrained to
+	// PRINTABLE ASCII, which is what a header carries identically everywhere, and anything
+	// else is the `UNREADABLE` state this block already defines.
+	//
+	// ⚠ NO LEGITIMATE STAMP IS AFFECTED: `server/seed.sh` writes an ISO-8601 timestamp.
+	if seeded != "UNSTAMPED" && seeded != "UNREADABLE" && !headerSafe(seeded) {
 		seeded = "UNREADABLE"
 	}
 

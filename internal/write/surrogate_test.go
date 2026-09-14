@@ -48,36 +48,7 @@ func TestUnpairedSurrogateEscape(t *testing.T) {
 	}
 }
 
-func TestUTF8DecodeProblem(t *testing.T) {
-	// The message is CPython-shaped: the offending byte, its position, and the reason.
-	// No golden pins it (no corpus case sends an invalid body), so what is asserted is
-	// the three facts a caller can act on — and, above all, that a bad byte is an ERROR.
-	cases := []struct {
-		name string
-		data []byte
-		want string
-	}{
-		{"clean ASCII", []byte("hello"), ""},
-		{"clean multi-byte", []byte("caf\u00e9 \U0001F600"), ""},
-		{"an invalid start byte", []byte("a\xffb"),
-			"'utf-8' codec can't decode byte 0xff in position 1: invalid start byte"},
-		{"a truncated sequence at the end", []byte("a\xf0\x9f"),
-			"'utf-8' codec can't decode byte 0xf0 in position 1: unexpected end of data"},
-		{"a bad continuation byte", []byte("a\xc3zb"),
-			"'utf-8' codec can't decode byte 0x7a in position 2: invalid continuation byte"},
-		{"a bare continuation byte", []byte("a\x80b"),
-			"'utf-8' codec can't decode byte 0x80 in position 1: invalid start byte"},
-		{"an overlong encoding", []byte("a\xc0\x80b"),
-			"'utf-8' codec can't decode byte 0xc0 in position 1: invalid continuation byte"},
-		{"a surrogate encoded as UTF-8", []byte("a\xed\xa0\x80b"),
-			"'utf-8' codec can't decode byte 0xed in position 1: invalid continuation byte"},
-		{"the empty body", []byte(""), ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := utf8DecodeProblem(tc.data); got != tc.want {
-				t.Fatalf("utf8DecodeProblem(%q) = %q, want %q", tc.data, got, tc.want)
-			}
-		})
-	}
-}
+// The strict-decode table moved WITH the function, to
+// `pytext.TestDecodeStrictProblem`. A table left behind here would be this package
+// asserting another package's contract — the shape that lets the owning package be
+// changed while its own suite stays green.

@@ -38,6 +38,7 @@
 package pytext
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -239,4 +240,164 @@ func DecodeUTF8Replace(data []byte) string {
 		i += w
 	}
 	return string(out)
+}
+
+// Lower is CPython's `str.lower()`.
+//
+// 🔴 `strings.ToLower` IS NOT IT, AND THE DIFFERENCE IS EXACTLY ONE CODE POINT — WHICH IS
+// WHY IT SURVIVED A REVIEW THAT SAID SO. `str.lower()` applies Unicode's FULL lowercase
+// mapping, which may expand one code point into SEVERAL; `strings.ToLower` applies the
+// SIMPLE mapping, one rune to one rune. Measured differentially over every code point in
+// the range (0 … U+10FFFF, 1,433 of which lower at all) on the pinned interpreter:
+//
+//	U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE  ->  Python "i̇"   Go "i"
+//	every other code point                        ->  identical
+//
+// One divergence, in both directions (no code point lowers in Go and not in Python).
+// `TestLowerMatchesCPython` pins the pair, and the sweep's own positive control is that
+// the U+0130 row FAILS when this function delegates straight to `strings.ToLower`.
+//
+// ⚠ THE COMBINING MARK IS THE WHOLE HAZARD, AND A PREVIOUS COMMENT DISMISSED IT ON A
+// MEASUREMENT THAT ONLY LOOKED AT THE EASY CASE. `store.NormalizeRef` folds everything
+// outside `[a-z0-9.-]` to `-`, and U+0307 is outside it — so the expansion becomes a
+// SEPARATOR. At the end of a string that separator is trimmed and the two agree, which is
+// what the old note measured; ANYWHERE ELSE it does not:
+//
+//	İ    -> oracle "i"     Go "i"     (agree — the trailing dash is trimmed)
+//	xİ   -> oracle "xi"    Go "xi"    (agree, same reason)
+//	İa   -> oracle "i-a"   Go "ia"    (DIVERGE)
+//	aİb  -> oracle "ai-b"  Go "aib"   (DIVERGE)
+//	İİ   -> oracle "i-i"   Go "ii"    (DIVERGE)
+//
+// A ref that folds to a different string resolves to a different entry, or to none — which
+// is a create/alias collision, and it is reachable from a request BODY (an entry's
+// `service:`, `scope:` and `aliases:` front matter all go through the fold) even though the
+// URL path cannot carry it.
+func Lower(s string) string {
+	// The fast path is the common one and is not an optimisation for its own sake: it also
+	// documents that the special case is a single code point rather than a general
+	// algorithm, so a reader can see the whole divergence in one branch.
+	if !strings.ContainsRune(s, dottedCapitalI) {
+		return strings.ToLower(s)
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	for _, r := range s {
+		if r == dottedCapitalI {
+			b.WriteRune('i')
+			b.WriteRune(combiningDotAbove)
+			continue
+		}
+		b.WriteString(strings.ToLower(string(r)))
+	}
+	return b.String()
+}
+
+// The one full-lowercase expansion in the Unicode tables the pinned interpreter ships, as
+// NUMERIC RUNE CONSTANTS for the reason the package comment gives: U+0307 is invisible
+// beside its neighbour in source, so a literal here would be unreviewable.
+const (
+	dottedCapitalI    = rune(0x0130)
+	combiningDotAbove = rune(0x0307)
+)
+
+// DecodeStrictProblem reports why `data` is not a STRICT UTF-8 decode, in CPython's
+// `UnicodeDecodeError` shape, or "" when it decodes cleanly. It is
+// `bytes.decode("utf-8")` with no error handler — the sibling of
+// DecodeUTF8Replace above, and the reason the two live together: Go's
+// `string(data)` is neither of them. It is a reinterpret-cast that cannot fail, so
+// every place the oracle relies on a strict decode to REFUSE something has to ask
+// this function instead of trusting a conversion that always succeeds.
+//
+// 🔴 TWO CALLERS, AND THE SECOND ONE IS WHY THIS MOVED HERE. Both are places where
+// the oracle's strictness is the whole guard and Go's leniency is the whole defect:
+//
+//   - the append path (`write.DecodeBulletBody`). `json.Unmarshal` REPLACES an
+//     invalid byte rather than refusing it, so a body carrying one landed a
+//     permanent U+FFFD in a non-re-derivable entry at `200 appended`, while
+//     `server.py`'s `json.loads(body.decode("utf-8"))` is a strict decode whose
+//     failure is a 400. MEASURED against both servers on the same world: oracle
+//     `400 bad request: body must be JSON ('utf-8' codec can't decode byte 0xff in
+//     position 37: invalid start byte)`, Go `200 appended` plus a U+FFFD in the file.
+//   - the token loader (`authz.LoadTokens`). `read_text(encoding="utf-8")` raises
+//     there, so the oracle will not START on a token file that is not text; Go's
+//     `string(data)` turned 43 bytes of `0xFF` into a 43-rune BARE LEGACY ROW —
+//     an UNRESTRICTED-scope credential — and served `200` plus the whole store to a
+//     caller presenting those bytes. MEASURED on both: oracle exit 78 with the codec
+//     message, Go serving.
+//
+// A copy per caller is the duplicated predicate that diverges the day one is fixed,
+// and these two are exactly the pair where a divergence is a credential.
+//
+// ⚠ THE SENTENCE IS CPython-SHAPED BUT NOT CPython-IDENTICAL, and that limit is
+// deliberate rather than unmeasured: the reason clause (`invalid start byte` /
+// `invalid continuation byte` / `unexpected end of data`), the offending byte and its
+// position are reproduced; any further divergence in CPython's wording is unmeasured
+// and no golden pins it. What IS pinned for both implementations is the status, the
+// `X-Store-Status` and the `bad request: body must be JSON (` prefix on the append
+// path, and a non-zero exit with a named refusal on the token path.
+func DecodeStrictProblem(data []byte) string {
+	for i := 0; i < len(data); {
+		c := data[i]
+		if c < 0x80 {
+			i++
+			continue
+		}
+		size, reason := utf8SequenceLength(c)
+		if size == 0 {
+			return codecMessage(c, i, reason)
+		}
+		if i+size > len(data) {
+			return codecMessage(c, i, "unexpected end of data")
+		}
+		for offset := 1; offset < size; offset++ {
+			if data[i+offset]&0xc0 != 0x80 {
+				return codecMessage(data[i+offset], i+offset, "invalid continuation byte")
+			}
+		}
+		// Overlong forms, surrogates and anything past U+10FFFF are refused the way a
+		// strict decoder refuses them: the first byte is the one named.
+		value := decodeSequence(data[i:i+size], size)
+		if value < minForLength(size) || (value >= 0xd800 && value <= 0xdfff) || value > 0x10ffff {
+			return codecMessage(c, i, "invalid continuation byte")
+		}
+		i += size
+	}
+	return ""
+}
+
+func codecMessage(b byte, position int, reason string) string {
+	return fmt.Sprintf("'utf-8' codec can't decode byte 0x%02x in position %d: %s",
+		b, position, reason)
+}
+
+func utf8SequenceLength(c byte) (int, string) {
+	switch {
+	case c&0xe0 == 0xc0:
+		return 2, ""
+	case c&0xf0 == 0xe0:
+		return 3, ""
+	case c&0xf8 == 0xf0:
+		return 4, ""
+	}
+	return 0, "invalid start byte"
+}
+
+func decodeSequence(data []byte, size int) rune {
+	masks := map[int]byte{2: 0x1f, 3: 0x0f, 4: 0x07}
+	value := rune(data[0] & masks[size])
+	for offset := 1; offset < size; offset++ {
+		value = value<<6 | rune(data[offset]&0x3f)
+	}
+	return value
+}
+
+func minForLength(size int) rune {
+	switch size {
+	case 2:
+		return 0x80
+	case 3:
+		return 0x800
+	}
+	return 0x10000
 }

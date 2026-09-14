@@ -187,9 +187,40 @@ func LoadIndex(root string, onMalformed OnMalformed, visible ScopeSet) (*Index, 
 	for _, name := range names {
 		scopePath := filepath.Join(root, name)
 		info, statErr := os.Stat(scopePath)
-		if statErr != nil || !info.IsDir() {
-			// `p.is_dir()` on the Python side, which follows the link and is
-			// false for anything that is not a directory OR cannot be stat'd.
+		if statErr != nil {
+			// 🔴 `p.is_dir()` DOES NOT RETURN FALSE WHEN THE STAT FAILS — IT RETURNS
+			// FALSE FOR FOUR ERRNOS AND **RAISES** FOR EVERY OTHER ONE. The comment
+			// that used to sit here said the opposite ("false for anything that …
+			// cannot be stat'd"), and `continue` implemented what the comment said.
+			// `classify_path`'s docstring states the real rule correctly, three
+			// hundred lines away, which is how the two came to disagree.
+			//
+			// `pathlib._IGNORED_ERRNOS == (ENOENT, ENOTDIR, EBADF, ELOOP)` on the
+			// pinned interpreter. Those four mean "this is not a directory, or it is
+			// not there" — a fact, so skipping is honest. Anything else (EACCES,
+			// ESTALE, EIO) means WE DO NOT KNOW WHAT THIS IS, and skipping it claims
+			// an absence about a scope nobody could look at. That claim is the entire
+			// defect class this file's action tables exist to refuse.
+			//
+			// 🔴 MEASURED CONSEQUENCE OF THE `continue`: a store root that is readable
+			// but NOT searchable (mode 0o444 — `ReadDir` lists the names, `Stat` on
+			// each child fails EACCES) produced an EMPTY INDEX and no error. The
+			// oracle raises `PermissionError` out of `load_index`, `load_store` turns
+			// it into `EntryUnreadableError`, and the route answers
+			// `503 store-unreachable`. Go answered as though the store were empty —
+			// "nothing recorded yet" for a store it never read.
+			//
+			// Returned rather than wrapped here: `LoadStore` already wraps any
+			// non-MalformedEntryError from this function in the oracle's own
+			// `index entry unreachable: under <root> (<Type>: <err>) — the store was
+			// not fully read, so this report would be INCOMPLETE` sentence. Wrapping
+			// twice would be a second policy site.
+			if isIgnoredStatErrno(statErr) {
+				continue
+			}
+			return nil, statErr
+		}
+		if !info.IsDir() {
 			continue
 		}
 		if !visible.Allows(name) {

@@ -1,6 +1,7 @@
 package netid
 
 import (
+	"math"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -272,6 +273,102 @@ func TestLimiterSettingsRefuseRatherThanDefault(t *testing.T) {
 	})
 	if err != nil || maxFailures != 1000000 || window != 1500*time.Millisecond || lockout != 2*time.Second {
 		t.Fatalf("got %d %v %v err=%v", maxFailures, window, lockout, err)
+	}
+}
+
+// 🔴 A LOCKOUT THE LOG CLAIMS AND THE LIMITER DOES NOT HOLD. `time.Duration(f *
+// float64(time.Second))` is implementation-defined once the product leaves int64, and on
+// amd64 it yields `math.MinInt64` — so `LOCKOUT_S` above ~9.223e9 set `lockedUntil` to a
+// time 292 years in the PAST while `RecordFailure` returned true. The audit log wrote
+// `status=lockout-triggered`, `LockedOut` answered false, and the same branch wiped the
+// failure streak: unlimited brute force behind an alert that says it is being stopped.
+//
+// 🔴 MEASURED AT BOTH SIDES OF THE BOUNDARY, NOT AT ONE POINT, because the defect IS the
+// boundary — a test that only tried `1e10` could not tell a saturating conversion from a
+// blanket refusal, and a test that only tried `900` sees nothing at all.
+//
+// The oracle has no such ceiling (`now + lockout_s` is Python float arithmetic), so the
+// contract is "accept it and make it work", never "refuse it" — which is why the FIRST
+// assertion here is that the value still loads.
+func TestALockoutLargerThanADurationStillLocksOut(t *testing.T) {
+	// 9223372036.854775807 seconds is the exact int64-nanosecond ceiling. Spelled as a
+	// literal, not derived from the constant the code uses, per this file's header.
+	const ceilingSeconds = 9223372036.854775807
+
+	for _, tc := range []struct {
+		raw        string
+		wantAtMost time.Duration // 0 means "no ceiling expected — it fits"
+	}{
+		{"900", 0},
+		// Just BELOW the ceiling: must be carried through unchanged, so a fix that
+		// saturated everything would be caught here rather than looking correct.
+		{"9.2e9", 0},
+		// 🔴 THE CEILING ITSELF, SPELLED EXACTLY, because the guard is a COMPARISON and a
+		// table that straddles the boundary without landing ON it cannot tell `>=` from
+		// `>`. This value times 1e9 rounds to 9223372036854775808.0, which is one MORE
+		// than MaxInt64 — so `>` overflows here and `>=` does not.
+		{"9223372036.854775808", math.MaxInt64},
+		// Just ABOVE it, and then far above it. Both must saturate, and both must LOCK.
+		{"9.3e9", math.MaxInt64},
+		{"1e10", math.MaxInt64},
+		{"1e300", math.MaxInt64},
+		{"1.7976931348623157e308", math.MaxInt64}, // the largest finite float64
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			_, _, lockout, err := LimiterSettings(map[string]string{EnvLockout: tc.raw})
+			if err != nil {
+				t.Fatalf("the oracle accepts %s and serves, so this must load it: %v", tc.raw, err)
+			}
+			if lockout <= 0 {
+				t.Fatalf("LOCKOUT_S=%s produced a NON-POSITIVE duration (%v, %d ns) — "+
+					"a lockout that has already expired before it is stored",
+					tc.raw, lockout, int64(lockout))
+			}
+			if tc.wantAtMost != 0 && lockout != tc.wantAtMost {
+				t.Fatalf("LOCKOUT_S=%s must saturate at %d ns, got %d",
+					tc.raw, int64(tc.wantAtMost), int64(lockout))
+			}
+
+			// 🔴 THE BEHAVIOURAL HALF, AND IT IS THE ONE THAT MATTERS. A positive
+			// duration is necessary and not sufficient: the claim is that the client is
+			// actually held, so the lockout is taken and then OBSERVED through the same
+			// accessor the request path uses.
+			now := time.Unix(946684800, 0)
+			limiter := &RateLimiter{MaxFailures: 2, Window: time.Minute, Lockout: lockout,
+				Now: func() time.Time { return now }}
+			var reported bool
+			for i := 0; i < 2; i++ {
+				reported = limiter.RecordFailure("client")
+			}
+			if !reported {
+				t.Fatalf("LOCKOUT_S=%s: RecordFailure did not report a lockout", tc.raw)
+			}
+			if !limiter.LockedOut("client") {
+				t.Fatalf("LOCKOUT_S=%s: RecordFailure reported `lockout-triggered` to the "+
+					"audit log and LockedOut says the client is free", tc.raw)
+			}
+			// …and the streak must not have been wiped into nothing by a branch that
+			// thought it had created a lockout.
+			if !limiter.LockedOut("client") {
+				t.Fatalf("LOCKOUT_S=%s: the lockout did not survive a second read", tc.raw)
+			}
+		})
+	}
+
+	// The window overflows through the SAME conversion, in the opposite direction:
+	// negating MinInt64 is MinInt64 again, so the cutoff landed 292 years in the past and
+	// nothing was ever pruned — an effectively INFINITE window, which makes the limiter
+	// stricter rather than disabled. Pinned because the direction is counter-intuitive and
+	// the first write-up of it was wrong.
+	_, window, _, err := LimiterSettings(map[string]string{EnvFailureWindow: "1e10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window <= 0 {
+		t.Fatalf("FAILURE_WINDOW_S=1e10 produced %v (%d ns)", window, int64(window))
+	}
+	if ceilingSeconds*float64(time.Second) < float64(math.MaxInt64) {
+		t.Fatal("the spelled ceiling is below MaxInt64 nanoseconds — the fixture is wrong")
 	}
 }
 

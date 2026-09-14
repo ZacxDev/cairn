@@ -1,6 +1,7 @@
 package write
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,17 +79,70 @@ func DecodeBulletBody(body []byte) (any, error) {
 	// so without this the append path wrote a permanent U+FFFD into a non-re-derivable
 	// entry at `200 appended` — measured against both servers, where the oracle answers
 	// 400. The oracle's order is `json.loads(body.decode("utf-8"))`: decode, THEN parse.
-	// See utf8DecodeProblem for the measurement and for what the message does and does
-	// not reproduce.
-	if problem := utf8DecodeProblem(body); problem != "" {
+	// See pytext.DecodeStrictProblem for the measurement and for what the message does
+	// and does not reproduce.
+	if problem := pytext.DecodeStrictProblem(body); problem != "" {
 		return nil, errors.New(problem)
 	}
+	// 🔴 `UseNumber`, BECAUSE `json.Unmarshal` INTO `any` REFUSES A NUMBER IT CANNOT FIT
+	// IN A float64 AND CPython DOES NOT. `1e999` is valid JSON number SYNTAX; CPython's
+	// `json.loads` yields `inf` for it, Go's default decoder returns
+	// `cannot unmarshal number 1e999 into Go value of type float64`. MEASURED on the
+	// three shapes that reach it:
+	//
+	//	{"text": 1e999, …}         oracle 400 "`text` is required and must be a
+	//	                           non-empty string"   Go 400 "body must be JSON (…)"
+	//	{"text":"ok", …, "n":1e999} oracle 200 APPENDED  Go 400
+	//	1e999                      oracle 400 "the body must be a JSON object"
+	//	                                                Go 400 "body must be JSON (…)"
+	//
+	// The middle row is the one that matters: the oracle STORES the bullet. `UseNumber`
+	// defers the conversion to a `json.Number` (a string), so the syntax is accepted and
+	// the value is never converted — which is exactly right here, because NOTHING in this
+	// request reads a number. `text` and `session` must both be strings, and every other
+	// key is discarded. All three rows then match the oracle.
+	//
+	// ⚠ `NaN`, `Infinity` AND `-Infinity` ARE **NOT** FIXED BY THIS, and the residual is
+	// recorded rather than closed. CPython's decoder accepts those three as bare literals
+	// (a documented non-standard extension); Go's rejects them as invalid tokens, and no
+	// decoder option changes that. Measured: `{"text": NaN, …}` is the oracle's
+	// "`text` is required…" and Go's "body must be JSON (invalid character 'N'…)" — same
+	// status, different sentence — while `{"text":"ok", …, "n": NaN}` is 200 on the oracle
+	// and 400 here. Closing it needs a PRE-PASS TOKENIZER over the raw body to rewrite
+	// those three literals outside string context, i.e. a second JSON parser with its own
+	// string-escape bugs, to fix a refusal-versus-acceptance on a key this server
+	// discards. That trade is stated so the next reader can take it deliberately; the
+	// deterministic alternative if it is ever wanted is to rewrite them to `null`, which
+	// is behaviourally exact for every input THIS validator can see (no key here is read
+	// as a number) and a lie for any future one that is.
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
 	var payload any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	if err := decoder.Decode(&payload); err != nil {
 		return nil, err
+	}
+	// 🔴 A SECOND VALUE AFTER THE FIRST IS NOT ONE JSON DOCUMENT. `json.Unmarshal`
+	// refuses trailing content; `Decoder.Decode` reads ONE value and stops, so switching
+	// to it would have quietly accepted `{"text":"a"}{"text":"b"}` and validated only the
+	// first. CPython's `json.loads` refuses it ("Extra data"), so this restores the
+	// property the switch to a streaming decoder gave away. Not a divergence that ever
+	// shipped — it is one this change would have INTRODUCED.
+	if decoder.More() {
+		return nil, errExtraData
 	}
 	return payload, nil
 }
+
+// errExtraData is the refusal for a body carrying a second JSON value.
+//
+// ⚠ CPython's SENTENCE CARRIES A POSITION AND THIS ONE DOES NOT: `json.loads` raises
+// `Extra data: line 1 column 8 (char 7)`. The stem is reproduced, the position clause is
+// not, and no golden pins either — a body quoting CPython's `json` diagnostic is exactly
+// what `tests/conformance/README.md` records as `oracle_only`, with the answerable half
+// (400, `X-Store-Status: bad-request`, the `body must be JSON (` prefix, a surviving
+// connection) pinned in this package's own tests. Stated so "it is not in the
+// normalization table" cannot be read as "somebody measured it".
+var errExtraData = errors.New("Extra data")
 
 // BulletRequestProblem validates an append request. It returns the sentence to
 // refuse with, or "" when the request is acceptable.
@@ -113,22 +167,6 @@ func DecodeBulletBody(body []byte) (any, error) {
 // `raw` is the request body as it arrived, and it is inspected for exactly one thing
 // the decoded value cannot carry — see the surrogate clause.
 func BulletRequestProblem(raw []byte, payload any) string {
-	// 🔴 AN **UNPAIRED** SURROGATE ESCAPE ONLY. CPython's JSON decoder yields a LONE
-	// SURROGATE for a `\udc80`-style escape, so the `Cs` clause below refuses it there;
-	// Go's decoder replaces one with U+FFFD, whose category is `So`, so that clause is
-	// unreachable here and the bullet would be STORED carrying a replacement character
-	// the oracle refuses. This scan closes that, and the residual divergence is the
-	// narrow one: an unpaired escape in a key this server ignores (`actor`) is a 400
-	// here and a 200 there. `Cs` stays in the category table above because the
-	// PREDICATE is the rule, and a future decoder that preserves surrogates must not
-	// silently reopen the hole this scan covers.
-	//
-	// ⚠ THE FIRST VERSION REFUSED EVERY WELL-FORMED **PAIR** TOO, and that broke the
-	// shipped client for every non-BMP character — see unpairedSurrogateEscape for the
-	// measurement and for why one regexp could not express the rule.
-	if escape := unpairedSurrogateEscape(string(raw)); escape != "" {
-		return describeSurrogate(escape)
-	}
 	object, isObject := payload.(map[string]any)
 	if !isObject {
 		return "the body must be a JSON object"
@@ -175,6 +213,51 @@ func BulletRequestProblem(raw []byte, payload any) string {
 		return fmt.Sprintf(
 			"`session` is required and must match %s — every appended bullet records the actor AND the session that wrote it",
 			SessionComponentPattern)
+	}
+
+	// 🔴 AN **UNPAIRED** SURROGATE ESCAPE ONLY, AND IT IS THE **LAST** CLAUSE. CPython's
+	// JSON decoder yields a LONE SURROGATE for a `\udc80`-style escape, so the `Cs` clause
+	// above refuses it there; Go's decoder replaces one with U+FFFD, whose category is
+	// `So`, so that clause is unreachable here and the bullet would be STORED carrying a
+	// replacement character the oracle refuses. This scan closes that.
+	//
+	// 🔴 IT USED TO RUN **FIRST**, WHICH IS A CLAUSE-ORDER DIVERGENCE THE COMMENT NEVER
+	// MENTIONED — it documented the scan as WIDER than Python's and said nothing about
+	// where it sits, so every input carrying an unpaired escape got the scan's sentence
+	// instead of the oracle's, whatever else was wrong with the body. Running LAST is the
+	// placement that minimises the divergence, MEASURED over 25 shapes: it fires only
+	// where the oracle would otherwise ACCEPT. Nine inputs changed answer, and all nine
+	// moved TOWARDS the oracle:
+	//
+	//	body                            oracle                    scan first
+	//	"\ud800"                        the body must be a JSON …  the scan's sentence
+	//	["\ud800"]                      the body must be a JSON …  the scan's sentence
+	//	{"session":…,"actor":"\ud800"}   `text` is required…        the scan's sentence
+	//	{"text":123,…,"actor":…}         `text` is required…        the scan's sentence
+	//	{"text":"a\nb",…,"actor":…}      `text` must be ONE line…   the scan's sentence
+	//	{"text":"ab",…,"actor":…}  `text` contains U+0001…    the scan's sentence
+	//	{"text":"- oops",…,"actor":…}    `text` must not open …     the scan's sentence
+	//	{"text":"ok","session":"!!",…}   `session` is required…     the scan's sentence
+	//	{"text":"ok","actor":"\ud800"}   `session` is required…     the scan's sentence
+	//
+	// ⚠ TWO RESIDUAL DIVERGENCES SURVIVE, AND BOTH ARE NAMED BECAUSE THE PREVIOUS COMMENT
+	// NAMED ONLY ONE OF THEM ("an unpaired escape in a key this server ignores"):
+	//
+	//  1. an unpaired escape in a key this server DISCARDS (`actor`) is a 400 here and a
+	//     200 there — the one the old comment named;
+	//  2. an unpaired escape in `text` gets THIS sentence where the oracle answers
+	//     "`text` contains U+D800 (Cs), a control or formatting character…". Same status,
+	//     different sentence. Matching it would need a surrogate-PRESERVING JSON string
+	//     decoder, because Go's has already replaced the escape with U+FFFD by the time the
+	//     `Cs` loop runs and the code point is unrecoverable from the decoded value.
+	//
+	// ⚠ THE FIRST VERSION REFUSED EVERY WELL-FORMED **PAIR** TOO, and that broke the
+	// shipped client for every non-BMP character — see unpairedSurrogateEscape.
+	//
+	// `Cs` stays in the category table above because the PREDICATE is the rule, and a
+	// future decoder that preserves surrogates must not silently reopen this hole.
+	if escape := unpairedSurrogateEscape(string(raw)); escape != "" {
+		return describeSurrogate(escape)
 	}
 	return ""
 }

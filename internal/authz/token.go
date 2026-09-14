@@ -310,13 +310,55 @@ func ParseTokenRow(fields []string, line, total int) (TokenRecord, error) {
 		// value reaching guard 11 in the first place.
 		folded := store.NormalizeRef(raw)
 		if !SafePathComponent.MatchString(raw) || folded == "" || len([]rune(raw)) > MaxScopeChars {
+			// 🔴 THE MESSAGE SAYS `` see `redacted_field` ``, WITH THE PYTHON SPELLING, AND
+			// THAT IS NOT A TYPO TO BE "FIXED" TO THE GO IDENTIFIER. This sentence is
+			// reproduced from the oracle, and a port's job is to be indistinguishable in the
+			// bytes it emits — a Go identifier leaking into a message is not an
+			// implementation diagnostic the way CPython's `json` wording is, it is just a
+			// different string. The Go function is `RedactedField`; the message names the
+			// oracle's `redacted_field`, because that is what the oracle writes.
 			return TokenRecord{}, fmt.Errorf(
-				"invalid scope in token row on line %d of %d ('%s'): field 3 holds a name that is not a scope (%s; the value is NOT echoed — see RedactedField) — a scope must match %s, be at most %d characters (deliberately below the %d-character token floor, so a token pasted into field 3 cannot be read as a scope name), AND still name something once folded the way the reader folds a scope. An entry that no request could name, that folds away to nothing, or that is long enough to be a credential, is refused here rather than sitting inert",
+				"invalid scope in token row on line %d of %d ('%s'): field 3 holds a name that is not a scope (%s; the value is NOT echoed — see `redacted_field`) — a scope must match %s, be at most %d characters (deliberately below the %d-character token floor, so a token pasted into field 3 cannot be read as a scope name), AND still name something once folded the way the reader folds a scope. An entry that no request could name, that folds away to nothing, or that is long enough to be a credential, is refused here rather than sitting inert",
 				line, total, identity, RedactedField(raw), SafePathComponentPattern, MaxScopeChars, MinTokenChars)
 		}
 		scopes = append(scopes, folded)
 	}
 	return TokenRecord{Token: token, Identity: identity, Scopes: dedupe(scopes)}, nil
+}
+
+// IsTokenFile is `pathlib.Path(p).is_file()` — S_ISREG on a stat that FOLLOWS a
+// symlink — and it is the predicate BOTH places that ask "is there a token file here"
+// must use.
+//
+// 🔴 ONE PREDICATE, TWO CALLERS, AND THE SPLIT IS WHAT MADE THE BUG. `os.Stat` plus
+// `!info.IsDir()` reads as "is a file" and is not: it accepts a FIFO, a socket, a
+// character device and a block device. Both consequences were measured against the
+// oracle, and they point in OPPOSITE directions, which is why neither caller could be
+// fixed alone:
+//
+//   - a FIFO at the token path made `os.ReadFile` BLOCK FOREVER — no diagnostic, no
+//     exit, a process that never finishes starting and never serves. The oracle's
+//     `is_file()` is false for it, so it refuses in milliseconds with guard 2's
+//     sentence. An availability defect where a hang is strictly worse than an error.
+//   - `/dev/null` at the DEFAULT token path with `$SUBSYSTEM_STORE_TOKEN` set: the
+//     oracle's `is_file()` is false, so it falls back to the environment and serves.
+//     `!IsDir` is TRUE for a character device, so Go took the fallback branch away from
+//     itself, read zero bytes, and exited 78 on "token is empty".
+//
+// ⚠ IT FOLLOWS SYMLINKS, DELIBERATELY. A Kubernetes secret mount is a symlink to a
+// `..data/` path; refusing one would refuse the deployed shape. `Path.is_file()` has
+// exactly this behaviour, which is the reason to state it rather than to reimplement it.
+//
+// ⚠ AND IT RETURNS FALSE WHERE THE ORACLE **RAISES**, on one input class: `is_file()`
+// returns False only for `pathlib._IGNORED_ERRNOS` (ENOENT, ENOTDIR, EBADF, ELOOP) and
+// raises for anything else, so an EACCES on the path's parent is a `PermissionError`
+// there (uncaught out of `load_tokens` — a traceback and exit 1) and guard 2's named
+// refusal at exit 78 here. Both refuse to serve; only the exit code and the wording
+// differ, and the Go side is the better of the two. Recorded because "it matches
+// `is_file()`" would otherwise read as covering this case too.
+func IsTokenFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // LoadTokens resolves the bearer token SET. FILE FIRST, environment only as a
@@ -386,13 +428,42 @@ func LoadTokens(tokenFile string, env map[string]string, warn func(string)) ([]T
 	var raw string
 	switch {
 	case tokenFile != "":
-		info, err := os.Stat(tokenFile)
-		if err != nil || info.IsDir() {
+		// GUARD 2 — `IsRegular`, NOT `!IsDir`. See IsTokenFile: `!IsDir` accepted
+		// every non-directory, and a FIFO then blocked `os.ReadFile` FOREVER with no
+		// log line, where the oracle's `is_file()` refuses in milliseconds.
+		if !IsTokenFile(tokenFile) {
 			return nil, fmt.Errorf("token file unreadable: %s is not a file", tokenFile)
 		}
 		data, readErr := os.ReadFile(tokenFile)
 		if readErr != nil {
 			return nil, fmt.Errorf("token file unreadable: %s (%v)", tokenFile, readErr)
+		}
+		// 🔴 GUARD 2b — THE FILE MUST DECODE AS TEXT, AND `string(data)` IS NOT A
+		// DECODE. This guard has no NUMBER on the oracle's side because the oracle gets
+		// it for free: `read_text(encoding="utf-8")` is strict, and the
+		// `UnicodeDecodeError` it raises is a `ValueError`, so `main` prints the codec
+		// message and exits EXIT_CONFIG. It is numbered 2b rather than 3 because it
+		// answers the same question guard 2 does — "can this file be read AS TEXT at
+		// all" — and must run before anything counts rows in it.
+		//
+		// 🔴 MEASURED, AND IT WAS A FULL-STORE READ RATHER THAN A PARSER NICETY. A token
+		// file of 43 × `0xFF`, mode 0600: the oracle refuses to start ('utf-8' codec
+		// can't decode byte 0xff in position 0). Go's `raw = string(data)` reinterpreted
+		// the bytes, counted 43 runes, cleared MinTokenChars and parsed them as a BARE
+		// LEGACY ROW — `UNRESTRICTED-SCOPE LEGACY MODE, 1 of 1 token rows`. With
+		// SUBSYSTEM_STORE_TRUSTED_PROXIES set, as the conformance env and every real
+		// deployment sets it, the server came up and `GET /api/v1/snapshot` with those
+		// 43 bytes as the bearer token answered 200 WITH THE WHOLE STORE.
+		//
+		// ⚠ THE ENVIRONMENT FALLBACK BELOW IS DELIBERATELY **NOT** GUARDED, and that
+		// asymmetry is the port being faithful rather than an omission. `os.environ` on
+		// Linux is decoded with `surrogateescape`, so a non-UTF-8 env token becomes a
+		// `str` carrying lone surrogates and the oracle LOADS it as a credential. Adding
+		// a guard here would be a NEW divergence in the opposite direction.
+		if problem := pytext.DecodeStrictProblem(data); problem != "" {
+			return nil, fmt.Errorf(
+				"token file is not valid UTF-8: %s (%s) — a credential file is TEXT, and a byte run that does not decode is refused here rather than reinterpreted, because ANY %d-byte run clears the length floor and would load as a BARE legacy row: an UNRESTRICTED-scope credential nobody wrote",
+				tokenFile, problem, MinTokenChars)
 		}
 		raw = string(data)
 	case env["SUBSYSTEM_STORE_TOKEN"] != "":

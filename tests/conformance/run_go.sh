@@ -16,7 +16,15 @@
 #   usage: tests/conformance/run_go.sh [extra suite.py run arguments]
 set -euo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# 🔴 `CDPATH= cd --`, WHICH IS WHAT THE OTHER TWO SCRIPTS IN THIS REPO ALREADY DO
+# (`server/build-push.sh`, `server/verify-byte-identity.sh`). A plain `cd <relative>`
+# PRINTS the resolved directory whenever it reached it through `CDPATH` — so with
+# `CDPATH` exported (`.` as its first entry is a common spelling) this command
+# substitution captured the path TWICE, `$repo` became `"<path>\n<path>"`, and the
+# build failed with `go: chdir <path>\n<path>: no such file or directory`. Measured in
+# an environment with `CDPATH=.:…` set; the failure is invisible in one without it,
+# which is why this script was the last of the three to be hardened.
+repo="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/cairn-go-conformance-XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 

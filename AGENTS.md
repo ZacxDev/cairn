@@ -88,6 +88,34 @@ both run over one store and byte-identity is compared, then the client is ported
 Python is retired. Do not declare a step done early, and do not switch the deployed
 image while the corpus is partial.
 
+🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP
+IDENTITY IS UNATTAINABLE — MEASURED, NOT ASSUMED.** `/api/v1/snapshot` ships
+`tarfile.open(mode="w:gz")` output on the oracle and `compress/gzip` output in Go, and the
+two cannot be made equal at any setting. Two independent reasons, so closing one does not
+help:
+
+- **the 10-byte gzip header.** Go's `compress/gzip` hardcodes the OS byte to `0xff`
+  (unknown) with no API to change it; CPython writes `0x03` (Unix). At level 9 the XFL
+  bytes agree (`02`) and the OS bytes still differ.
+- **the DEFLATE stream itself**, which differs in LENGTH and not merely in content —
+  512 bytes from Go against 511 from zlib at level 9 on one 20,480-byte tar. `compress/flate`
+  and zlib make different match and block choices; that is a permitted freedom of the
+  format, not a defect in either.
+
+So the gate compares **the tar inside the gzip**, which IS achievable: after the header
+fixes in `internal/snapshot/paxtar.go`, the Go writer's archive was byte-identical to
+CPython's `PAX_FORMAT` output over a member list carrying a whole second, `.25`, `.5` on an
+even second, `.5` on an odd one, `.75`, a non-ASCII name and a name over 100 bytes. The
+corpus already avoids the compressed bytes for the same reason — `wire.py` drops
+`Content-Length` on `/snapshot` and compares the **extracted tree** — so do not add a gate
+on the gzip bytes and do not read this row as "nobody looked".
+
+⚠ **The extracted-tree comparison is ALSO what hid four header divergences**: every POSIX
+reader prefers a PAX extended record over the ustar field, so a wrong `mtime` field, a
+missing `path` record, a reordered record set and a moved checksum all normalise away before
+the comparison happens. Byte-diff the two archives when you change that writer; the tree
+comparison structurally cannot see it.
+
 **The corpus is the specification, and at P1a it is deliberately PARTIAL.** Measured on
 this tree: 94 PASS, 22 failing cases — every one a `/api/v1/recall/{scope}` or
 `/api/v1/search/{scope}` **rendering** case, which is P1b's job — 4 rows skipped as

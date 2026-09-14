@@ -5,6 +5,7 @@ package snapshot
 import (
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -87,6 +88,56 @@ func formatPyFloat(f float64) string {
 	return s
 }
 
+// roundHalfToEven is Python's `round(<float>)` — the value CPython puts in the ustar
+// numeric field for a float it also writes as an extended record.
+//
+// 🔴 PYTHON'S `round()` IS HALF-TO-**EVEN**, NOT HALF-UP, AND NOT TRUNCATION. That is
+// three distinct functions and they give three different answers for `x.5`:
+// `round(946684801.5)` is 946684802 while `round(946684800.5)` is 946684800, because the
+// tie goes to the even integer. `math.RoundToEven` is that rule exactly; `math.Round`
+// (half away from zero) and `int64(f)` (truncate) are both wrong, and the truncation is
+// what shipped.
+//
+// ⚠ ONE FUNCTION, TWO WRONG NEIGHBOURS — so a reader reaching for a "simpler" spelling
+// has both named here rather than having to rediscover which one CPython uses.
+func roundHalfToEven(f float64) int64 {
+	return int64(math.RoundToEven(f))
+}
+
+// asciiReplace is `s.encode("ascii", "replace")` as a Go string: every code point outside
+// ASCII becomes exactly ONE `?`.
+//
+// 🔴 PER CODE POINT, NOT PER BYTE, and the difference is observable in the FIELD LENGTH.
+// CPython's `replace` handler substitutes one `?` for each unencodable CHARACTER, so
+// `café.md` is `caf?.md` — 7 bytes from 8 UTF-8 bytes. A byte-wise loop would emit two
+// `?` for `é` and shift every following byte of the 100-byte name field.
+//
+// Returning the input unchanged for pure-ASCII input is also how the caller decides
+// whether a `path` record is needed: `asciiReplace(name) != name` IS
+// "`name.encode('ascii', 'strict')` would have raised", which is the test CPython makes.
+func asciiReplace(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r < 0x80 {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('?')
+	}
+	return b.String()
+}
+
 // paxRecord renders one extended record: `<len> <key>=<value>\n`, where `<len>`
 // counts the WHOLE record including its own decimal digits. The length is therefore
 // self-referential and is solved by iterating to a fixed point, which is what the
@@ -122,20 +173,62 @@ func (w *paxWriter) pad() error {
 // WriteMember writes one regular file, preceded by the extended header that carries
 // its mtime.
 func (w *paxWriter) WriteMember(m member) error {
-	records := paxRecord("mtime", formatPyFloat(m.MTime))
-	// A name too long for the 100-byte ustar field, or a size too large for its
-	// 11-octal-digit field, rides an extended record too — the same rule CPython
-	// applies, so an archive of a deep store is readable by the same readers.
-	ustarName := m.Name
-	if len(m.Name) > 100 {
+	// 🔴 THE RECORD ORDER IS `path`, `size`, `mtime`, AND IT IS NOT A STYLE CHOICE —
+	// IT IS WHAT CPython EMITS, MEASURED BYTE FOR BYTE. `create_pax_header` builds
+	// `pax_headers` as a dict and Python dicts preserve insertion order: it runs the
+	// STRING field loop first (`path`, `linkpath`, `uname`, `gname`) and the NUMBER
+	// loop second (`uid`, `gid`, `size`, `mtime`). This used to emit `mtime` first,
+	// which produced a byte-different extended header for every long-named member and
+	// is invisible to any POSIX reader, because a reader parses records by key:
+	//
+	//	go : "21 mtime=946684803.5\n117 path=beta-notes/deep-…-fifteen.md\n"
+	//	py : "117 path=beta-notes/deep-…-fifteen.md\n21 mtime=946684803.5\n"
+	//
+	// `linkpath`/`uname`/`gname` are not emitted: this writer writes regular files
+	// only, and uname/gname are normalised to "" (which is ASCII and within 32 bytes,
+	// so CPython emits no record for them either).
+	records := ""
+
+	// 🔴 A `path` RECORD IS EMITTED FOR A NON-ASCII NAME **AT ANY LENGTH**, not only
+	// above 100 bytes, and missing that cost two divergences in one member. CPython
+	// tests the string field twice: `info[name].encode("ascii", "strict")` first — any
+	// failure means a record — and only THEN the length. So `beta-notes/café.md`, 18
+	// bytes and far inside the field, still gets one. MEASURED:
+	//
+	//	go : (no record)                    ustar name "beta-notes/café.md"
+	//	py : "28 path=beta-notes/café.md\n"  ustar name "beta-notes/caf?.md"
+	//
+	// …and the ustar name is the second half: `_create_header` writes it through
+	// `stn(…, 100, "ascii", "replace")`, so every unencodable CHARACTER becomes ONE
+	// `?` — `é` is two UTF-8 bytes and one `?`, which is why the two name fields also
+	// differ in LENGTH. The extended record is what carries the real name; the ustar
+	// field is the lossy fallback for a reader that ignores records.
+	ustarName := asciiReplace(m.Name)
+	if len(m.Name) > 100 || ustarName != m.Name {
 		records += paxRecord("path", m.Name)
-		ustarName = m.Name[:100]
+	}
+	if len(ustarName) > 100 {
+		ustarName = ustarName[:100]
 	}
 	ustarSize := m.Size
 	if m.Size > 0o77777777777 {
 		records += paxRecord("size", strconv.FormatInt(m.Size, 10))
 		ustarSize = 0
 	}
+	// The mtime record is emitted UNCONDITIONALLY, which is what CPython does for a
+	// FLOAT mtime (`needs_pax = True` on the `val_is_float` arm) and what the contract
+	// needs: the reader orders its index newest-first by entry mtime, and the ustar
+	// field carries whole seconds only.
+	ustarMTime := roundHalfToEven(m.MTime)
+	if ustarMTime < 0 || ustarMTime >= 1<<33 {
+		// CPython's overflow arm: `not 0 <= val_int < 8 ** (digits - 1)` with
+		// `digits = 12` is `0 <= v < 8589934592`, so it zeroes the ustar field and
+		// relies on the record. UNREACHABLE FROM ANY FILESYSTEM TODAY — 8589934592 is
+		// the year 2242 — and written anyway, because the alternative is an octal
+		// field that silently wraps. `1<<33` is 8589934592 spelled as a shift.
+		ustarMTime = 0
+	}
+	records += paxRecord("mtime", formatPyFloat(m.MTime))
 
 	// The extended header's own member. CPython writes it with name
 	// `././@PaxHeader`, mode 0, uid/gid 0 and mtime 0 — matched exactly, because
@@ -157,21 +250,32 @@ func (w *paxWriter) WriteMember(m member) error {
 		return err
 	}
 
-	// The file's own header. `MTime` here is the TRUNCATED integer second, which the
-	// extended record above overrides for every POSIX-aware reader.
+	// The file's own header. `MTime` here is the ROUNDED integer second; the extended
+	// record above carries the full precision for every POSIX-aware reader.
 	//
-	// ⚠ CPython WRITES ZERO IN THIS FIELD (it clears the value it moved into the
-	// record) AND THIS WRITES THE REAL SECONDS. The difference is invisible to every
-	// reader that honours extended records — CPython's own `tarfile`, Go's
-	// `archive/tar` and GNU tar all prefer the record — so no conformance case can
-	// see it, and it is recorded here for that reason rather than left as an
-	// unexplained divergence. The real seconds are written because a reader that
-	// ignores extended headers gets a true timestamp instead of the epoch.
+	// 🔴 THE COMMENT THAT USED TO SIT HERE WAS FALSE, AND IT WAS FALSE IN A WAY THAT
+	// EXCUSED A REAL DIVERGENCE. It said "CPython WRITES ZERO IN THIS FIELD (it clears
+	// the value it moved into the record)" — it does not. `create_pax_header` computes
+	// `val_int = round(val)` and assigns `info[name] = val_int`, so the ustar field
+	// carries the ROUNDED seconds; zero is written only on the OVERFLOW arm. This code
+	// wrote `int64(m.MTime)`, a TRUNCATION, and the two disagree whenever rounding and
+	// truncation do:
+	//
+	//	.25 on any second  -> agree (round down == truncate)
+	//	.5  on an EVEN second -> agree (Python's round() is half-to-EVEN)
+	//	.5  on an ODD second  -> DIFFER by one second
+	//	.75 on any second  -> DIFFER by one second, always
+	//
+	// MEASURED against CPython's own writer on a member list carrying all four: three
+	// of seven headers differed, and the CHECKSUM moved with each of them, so the
+	// divergence is 2 fields × 3 members. Invisible to every reader that honours
+	// extended records — which is all of them — and that invisibility is exactly why
+	// a false comment about it survived.
 	if err := w.writeHeader(header{
 		Name:     ustarName,
 		Mode:     0o644,
 		Size:     ustarSize,
-		MTime:    int64(m.MTime),
+		MTime:    ustarMTime,
 		TypeFlag: '0',
 	}); err != nil {
 		return err

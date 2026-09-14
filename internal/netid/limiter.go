@@ -77,9 +77,59 @@ func LimiterSettings(env map[string]string) (maxFailures int, window, lockout ti
 		if f <= 0 {
 			return 0, 0, 0, fmt.Errorf("%s must be positive, got '%s'", spec.name, raw)
 		}
-		*spec.target = time.Duration(f * float64(time.Second))
+		*spec.target = secondsToDuration(f)
 	}
 	return maxFailures, window, lockout, nil
+}
+
+// maxDurationSeconds is the largest number of seconds `time.Duration` can hold, as a
+// float64. `time.Duration` is int64 NANOSECONDS, so the ceiling is ~9.223e9 seconds —
+// about 292 years.
+const maxDurationSeconds = float64(math.MaxInt64) / float64(time.Second)
+
+// secondsToDuration converts a positive, finite seconds value to a Duration, SATURATING
+// instead of overflowing.
+//
+// 🔴 `time.Duration(f * float64(time.Second))` IS NOT A CONVERSION FOR LARGE `f` — IT IS
+// AN UNDEFINED-BEHAVIOUR SIGN FLIP, AND IT DISABLED THE LOCKOUT WHILE LOGGING ONE. Go
+// leaves a float-to-integer conversion implementation-defined when the value does not fit;
+// on amd64 it yields `math.MinInt64`. MEASURED here, at both sides of the boundary rather
+// than at one point, because the whole defect lives at the boundary:
+//
+//	LOCKOUT_S=9.2e9  -> +2555555h33m20s   RecordFailure=true   LockedOut=TRUE
+//	LOCKOUT_S=9.3e9  -> -2562047h47m16s   RecordFailure=true   LockedOut=FALSE
+//	LOCKOUT_S=1e10   -> -2562047h47m16s   RecordFailure=true   LockedOut=FALSE
+//	LOCKOUT_S=1e300  -> -2562047h47m16s   RecordFailure=true   LockedOut=FALSE
+//
+// The third column is the finding. `RecordFailure` reports that it STARTED a lockout — so
+// the audit log writes `status=lockout-triggered`, the one line an operator alerts on —
+// and `lockedUntil[key]` is set to a time 292 years in the PAST, so `LockedOut` finds it
+// expired, deletes it, and answers false. Worse, taking that branch also
+// `delete(l.failures, key)`: the streak is wiped every `MaxFailures` failures, so no state
+// ever accumulates and the brute force is UNLIMITED. A guard that reports itself active
+// while being inert is worse than no guard, because it is what the alert is wired to.
+//
+// ⚠ THE WINDOW OVERFLOWS TOO, IN THE OPPOSITE DIRECTION, AND MEASURING IT IS WHAT STOPPED
+// A WRONG COMMENT HERE. `FAILURE_WINDOW_S=9.3e9` also yields `MinInt64`, and negating
+// `MinInt64` is `MinInt64` again, so `now.Add(-l.Window)` puts the cutoff 292 years in the
+// PAST and nothing is ever pruned: the window becomes effectively infinite, which makes
+// the limiter STRICTER rather than disabled. Measured, not assumed — the first draft of
+// this comment said it disabled the limiter, by analogy with the lockout, and that was
+// wrong. Both are fixed by this one function because both are the same conversion.
+//
+// 🔴 SATURATING RATHER THAN REFUSING, AND THAT IS NOT A RETREAT FROM
+// `LimiterSettings`' "it refuses rather than silently defaulting". Defaulting throws the
+// operator's value away and substitutes a DIFFERENT, smaller one; saturating gives them
+// the largest value the type can express, which for a lockout is 292 years — behaviourally
+// indistinguishable from the 317 years `LOCKOUT_S=1e10` asks for, and from the ~3e292
+// years `1e300` asks for, in any run anyone will observe. Refusing would be a NEW
+// divergence: the oracle's `now + lockout_s` is Python float arithmetic with no such
+// ceiling, so it accepts these values and serves.
+func secondsToDuration(seconds float64) time.Duration {
+	if seconds >= maxDurationSeconds {
+		return math.MaxInt64
+	}
+	return time.Duration(seconds * float64(time.Second))
 }
 
 // RateLimiter is N failed auths per client per window, then a lockout.

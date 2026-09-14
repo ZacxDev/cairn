@@ -1,8 +1,11 @@
 package store
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -20,11 +23,51 @@ func TestNormalizeRef(t *testing.T) {
 		// kind qualification (`<slug>.<kind>`) and a dotted slug work at all.
 		{"forgejo.example.com", "forgejo.example.com"},
 		{"repo-cos.process", "repo-cos.process"},
+		// 🔴 U+0130 — THE ONE CODE POINT WHOSE `str.lower()` EXPANDS, AND EVERY `want`
+		// BELOW IS TRANSCRIBED FROM `lib/subsystem_resolver.normalize_ref` RUN ON THE
+		// PINNED INTERPRETER, never from this implementation. `İ`.lower() is `i` + U+0307,
+		// and U+0307 is outside `[a-z0-9.-]`, so it folds to a SEPARATOR.
+		//
+		// 🔴 THE FIRST TWO ROWS ARE THE CONTROL THAT MAKES THE OTHER THREE MEAN SOMETHING.
+		// They AGREED before the fix, because a trailing dash is trimmed — so a table
+		// containing only them measured the code point and concluded there was no
+		// divergence, which is exactly what the old comment here claimed. Position on the
+		// dimension is what decides the answer; these rows name both ends and the middle.
+		{"İ", "i"},      // alone: the dash is trailing, so it is trimmed
+		{"xİ", "xi"},    // trailing: same
+		{"İa", "i-a"},   // LEADING: the dash survives between `i` and `a`
+		{"aİb", "ai-b"}, // interior
+		{"İİ", "i-i"},   // two of them
+		// …and an ordinary capital I must NOT gain a separator, or the fix has widened
+		// into every ASCII ref in the store.
+		{"Ia", "ia"},
+		{"aIb", "aib"},
 	}
 	for _, tc := range cases {
 		if got := NormalizeRef(tc.in); got != tc.want {
 			t.Fatalf("NormalizeRef(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// 🔴 THE FOLD IS REACHABLE FROM A REQUEST **BODY**, AND THE OLD COMMENT'S DISMISSAL RESTED
+// ON IT NOT BEING. "A scope or ref that is not ASCII cannot be named in a URL path at all"
+// is true and does not cover this: entry front matter goes through the same fold, and front
+// matter arrives in a `PUT` body. This test is the reachability half — without it the row
+// above is a claim about a function nobody can reach.
+func TestTheFoldIsReachableFromEntryFrontMatter(t *testing.T) {
+	entry, err := EntryFromMapping(map[string]any{
+		"service":  "gadget-İone",
+		"scope":    "alpha-notes",
+		"filename": "gadget-i̇one.md",
+	}, "gadget-i̇one.md")
+	if err != nil {
+		t.Fatalf("front matter carrying U+0130 must validate the way the oracle validates it: %v", err)
+	}
+	// Spelled by hand from the oracle's fold: `gadget-İone` -> `gadget-i` + U+0307 + `one`
+	// -> `gadget-i-one`.
+	if entry.Slug != "gadget-i-one" {
+		t.Fatalf("`service:` folded to %q, oracle folds it to %q", entry.Slug, "gadget-i-one")
 	}
 }
 
@@ -255,6 +298,182 @@ func TestTheActionTablesAreTotal(t *testing.T) {
 		if action != Refuse && hasReason {
 			t.Fatalf("kind %q is not refused but carries a refusal reason", kind)
 		}
+	}
+}
+
+// 🔴 AN UNREADABLE STORE MUST NOT RENDER AS AN EMPTY ONE. `p.is_dir()` returns False for
+// four errnos and RAISES for every other one, so the oracle answers
+// `503 store-unreachable` for a store root it could not walk. The Go loader `continue`d on
+// ANY stat error, which produced a clean, empty index and no error — "nothing recorded yet"
+// for a store it never read.
+//
+// The shape: a store root that is READABLE but not SEARCHABLE (mode 0o444). `ReadDir`
+// succeeds and lists the scope names; `Stat` on each child fails EACCES.
+func TestAnUnsearchableStoreRootIsREPORTEDAndNotRenderedEmpty(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the search bit, so this shape is unreachable as root")
+	}
+	root := buildStore(t)
+
+	// The POSITIVE CONTROL FIRST, and it is not decoration: if this load came back empty
+	// for an unrelated reason, every assertion below would pass with the guard deleted.
+	before, err := LoadIndex(root, Collect, Unrestricted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Scopes()) == 0 {
+		t.Fatal("the fixture store must have scopes, or this test cannot see the defect")
+	}
+
+	if err := os.Chmod(root, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	// Restored so `t.TempDir()` can remove the tree — an unsearchable directory cannot be
+	// emptied, and the cleanup failure would be reported as a test failure elsewhere.
+	defer func() { _ = os.Chmod(root, 0o755) }()
+
+	index, err := LoadIndex(root, Collect, Unrestricted())
+	if err == nil {
+		t.Fatalf("an unsearchable store root produced a CLEAN index of %d scope(s) and no "+
+			"error — the oracle raises PermissionError here and the route answers 503",
+			len(index.Scopes()))
+	}
+	// 🔴 AND IT MUST BE THE ERRNO-CARRYING ERROR, not a generic one: `LoadStore` maps it
+	// through `osErrorTypeName`, and the oracle's sentence names the exception CLASS.
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("the error must carry the permission errno so the 503 can name it: %v", err)
+	}
+
+	// The end-to-end half, through the function every route actually calls: the error has
+	// to arrive as `EntryUnreadableError`, because that is the type `finish` maps to
+	// `503 store-unreachable`. A raw errno would fall through to a 500.
+	_, storeErr := LoadStore(root, "recalled", Unrestricted())
+	var unreadable *EntryUnreadableError
+	if !errors.As(storeErr, &unreadable) {
+		t.Fatalf("LoadStore must report this as EntryUnreadableError (which maps to 503), got %T: %v",
+			storeErr, storeErr)
+	}
+	if !strings.Contains(unreadable.Error(), "the store was not fully read, so this report would be INCOMPLETE") {
+		t.Fatalf("the 503 body must say the store was not fully read: %s", unreadable)
+	}
+}
+
+// The other side of the same predicate: the four errnos CPython swallows must still be
+// skipped, or every store with a dangling scope symlink starts answering 503. This is the
+// control that stops the fix above from becoming "fail on everything".
+func TestTheFourIgnoredErrnosAreStillSkipped(t *testing.T) {
+	root := t.TempDir()
+	// A dangling symlink at scope level: `Stat` follows it and fails ENOENT, which
+	// `is_dir()` reports as plain False.
+	if err := os.Symlink(filepath.Join(root, "nowhere"), filepath.Join(root, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	// …and a symlink loop, which fails ELOOP.
+	if err := os.Symlink(filepath.Join(root, "loop"), filepath.Join(root, "loop")); err != nil {
+		t.Fatal(err)
+	}
+	index, err := LoadIndex(root, Collect, Unrestricted())
+	if err != nil {
+		t.Fatalf("ENOENT and ELOOP are in _IGNORED_ERRNOS and must not fail the load: %v", err)
+	}
+	if len(index.Scopes()) != 0 {
+		t.Fatalf("neither broken pointer is a scope, got %v", index.Scopes())
+	}
+
+	// And the predicate itself, at both ends, so "is this errno ignored" is pinned rather
+	// than inferred from the two shapes above.
+	for _, e := range []syscall.Errno{syscall.ENOENT, syscall.ENOTDIR, syscall.EBADF, syscall.ELOOP} {
+		if !isIgnoredStatErrno(e) {
+			t.Fatalf("%v is in pathlib._IGNORED_ERRNOS and must be skipped", e)
+		}
+	}
+	for _, e := range []syscall.Errno{syscall.EACCES, syscall.EIO, syscall.ESTALE} {
+		if isIgnoredStatErrno(e) {
+			t.Fatalf("%v is NOT in pathlib._IGNORED_ERRNOS — CPython raises, so this must report", e)
+		}
+	}
+}
+
+// 🔴 A LEDGER, NOT AN ASSERTION ABOUT ONE FIELD — AND WRITING IT IS WHAT FOUND THE BUG.
+// The first version of this test declared all three of `Entry`'s slice fields `nil` when
+// empty, on the strength of reading `parseTasksField`. It went RED on `Aliases`, which is an
+// empty slice because `sortedKeys` always allocates. So the three fields gave TWO different
+// answers to one question, in one struct, undecided — the `nil`-versus-`[]` split that
+// `encoding/json` turns into `null`-versus-`[]` the moment anything marshals an entry. They
+// are all empty slices now, matching the oracle's tuples.
+//
+// The ledger does two things a per-field assertion cannot: it RE-MEASURES the claim written
+// on the struct, so that comment cannot drift from the code, and it fails when the set of
+// slice fields GROWS or SHRINKS, so a field added later cannot inherit this silently.
+func TestTheEmptySliceLedgerIsComplete(t *testing.T) {
+	// The declared ledger: every slice-typed field of `Entry`, and what it is when empty.
+	// `nil` here is a STATEMENT OF FACT about today's code, re-measured below, not a wish.
+	ledger := map[string]string{
+		"Aliases":    "empty slice",
+		"RawAliases": "empty slice",
+		"Tasks":      "empty slice",
+	}
+
+	typ := reflect.TypeOf(Entry{})
+	found := map[string]bool{}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Type.Kind() != reflect.Slice {
+			continue
+		}
+		found[field.Name] = true
+		if _, listed := ledger[field.Name]; !listed {
+			t.Fatalf("`Entry.%s` is a slice field and is NOT in the empty-slice ledger. "+
+				"Decide what it is when empty — nil marshals as JSON `null`, an empty slice "+
+				"as `[]` — record it on the struct, and add it here.", field.Name)
+		}
+	}
+	for name := range ledger {
+		if !found[name] {
+			t.Fatalf("the ledger names `Entry.%s`, which no longer exists — a stale ledger "+
+				"reads as coverage while providing none", name)
+		}
+	}
+
+	// 🔴 AND THE LEDGER'S CLAIM IS RE-MEASURED, not trusted. An entry with no aliases and
+	// no tasks must actually produce nil for each field the ledger says is nil — otherwise
+	// the comment on the struct is a claim the code contradicts, which is the thing this
+	// repo keeps finding.
+	entry, err := EntryFromMapping(map[string]any{
+		"service":  "gadget-one",
+		"scope":    "alpha-notes",
+		"filename": "gadget-one.md",
+	}, "gadget-one.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := reflect.ValueOf(entry)
+	for name, want := range ledger {
+		got := "nil"
+		if !value.FieldByName(name).IsNil() {
+			got = "empty slice"
+		}
+		if got != want {
+			t.Fatalf("`Entry.%s` on an entry with none: ledger says %s, measured %s",
+				name, want, got)
+		}
+	}
+
+	// `tasks: []` and an absent `tasks:` key mean the same thing on the oracle
+	// (`lib/subsystem_resolver` says so explicitly), so they must agree here too — which is
+	// the behavioural property the nil/empty question is usually reaching for.
+	withEmpty, err := EntryFromMapping(map[string]any{
+		"service":  "gadget-one",
+		"scope":    "alpha-notes",
+		"filename": "gadget-one.md",
+		"tasks":    []string{},
+	}, "gadget-one.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(withEmpty.Tasks) != 0 || len(entry.Tasks) != 0 {
+		t.Fatalf("`tasks: []` and an absent key must both be zero-length, got %d and %d",
+			len(withEmpty.Tasks), len(entry.Tasks))
 	}
 }
 

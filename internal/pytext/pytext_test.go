@@ -1,6 +1,7 @@
 package pytext
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -201,5 +202,96 @@ func TestContainsSpace(t *testing.T) {
 	}
 	if ContainsSpace("abc") {
 		t.Fatal("…and must not fire on ordinary text")
+	}
+}
+
+// 🔴 `str.lower()` APPLIES THE FULL LOWERCASE MAPPING AND `strings.ToLower` APPLIES THE
+// SIMPLE ONE. The expectations below are transcribed from the pinned interpreter, never
+// from this implementation.
+func TestLowerMatchesCPython(t *testing.T) {
+	// U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE, built from its code point rather than
+	// pasted, per this file's header — and U+0307 is invisible beside an `i` on screen,
+	// which is the whole reason that rule exists.
+	dotted := string(rune(0x0130))
+	dot := string(rune(0x0307))
+
+	for _, tc := range []struct{ in, want string }{
+		{dotted, "i" + dot},
+		{dotted + "a", "i" + dot + "a"},
+		{"a" + dotted + "b", "ai" + dot + "b"},
+		{dotted + dotted, "i" + dot + "i" + dot},
+		// The ordinary path must be untouched, in both scripts — a special case that
+		// leaked would show up here first.
+		{"ABC", "abc"},
+		{"I", "i"},
+		{"ǅ", "ǆ"}, // a titlecase letter, which has a simple mapping and no expansion
+		{"", ""},
+	} {
+		if got := Lower(tc.in); got != tc.want {
+			t.Fatalf("Lower(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	// 🔴 THE STRUCTURAL HALF: U+0130 IS THE **ONLY** CODE POINT THIS FUNCTION TREATS
+	// SPECIALLY, asserted over the whole range rather than over a table somebody chose.
+	// It fails when the set GROWS (a second special case added without a decision) and
+	// when it SHRINKS (the special case removed), which is the property a row-by-row table
+	// cannot express. It needs no Python at run time: the claim is about the RELATIONSHIP
+	// between this function and `strings.ToLower`, and the one place they may differ.
+	diverged := []rune{}
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		if r >= 0xD800 && r <= 0xDFFF {
+			continue // a lone surrogate is not a code point a Go string can carry
+		}
+		s := string(r)
+		if Lower(s) != strings.ToLower(s) {
+			diverged = append(diverged, r)
+		}
+	}
+	if len(diverged) != 1 || diverged[0] != 0x0130 {
+		t.Fatalf("Lower must differ from strings.ToLower at U+0130 and nowhere else, "+
+			"differs at %d code point(s): %U", len(diverged), diverged)
+	}
+}
+
+func TestDecodeStrictProblem(t *testing.T) {
+	// The message is CPython-shaped: the offending byte, its position, and the reason.
+	// No golden pins it (no corpus case sends an invalid body), so what is asserted is
+	// the three facts a caller can act on — and, above all, that a bad byte is an ERROR
+	// rather than a silent U+FFFD. Moved here WITH the function, because its second
+	// caller is the token loader, where a lenient decode is a live credential.
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"clean ASCII", []byte("hello"), ""},
+		{"clean multi-byte", []byte("café \U0001F600"), ""},
+		{"an invalid start byte", []byte("a\xffb"),
+			"'utf-8' codec can't decode byte 0xff in position 1: invalid start byte"},
+		{"a truncated sequence at the end", []byte("a\xf0\x9f"),
+			"'utf-8' codec can't decode byte 0xf0 in position 1: unexpected end of data"},
+		{"a bad continuation byte", []byte("a\xc3zb"),
+			"'utf-8' codec can't decode byte 0x7a in position 2: invalid continuation byte"},
+		{"a bare continuation byte", []byte("a\x80b"),
+			"'utf-8' codec can't decode byte 0x80 in position 1: invalid start byte"},
+		{"an overlong encoding", []byte("a\xc0\x80b"),
+			"'utf-8' codec can't decode byte 0xc0 in position 1: invalid continuation byte"},
+		{"a surrogate encoded as UTF-8", []byte("a\xed\xa0\x80b"),
+			"'utf-8' codec can't decode byte 0xed in position 1: invalid continuation byte"},
+		{"the empty body", []byte(""), ""},
+		// 🔴 THE TOKEN-FILE SHAPE, VERBATIM. 43 bytes of 0xFF is exactly
+		// `authz.MinTokenChars` runes when the bytes are REINTERPRETED rather than
+		// decoded, which is how such a file loaded as an unrestricted legacy row. This
+		// row is what makes the second caller's guard reachable at all.
+		{"a 43-byte run of 0xFF — the token-file shape", bytes.Repeat([]byte{0xff}, 43),
+			"'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DecodeStrictProblem(tc.data); got != tc.want {
+				t.Fatalf("DecodeStrictProblem(%q) = %q, want %q", tc.data, got, tc.want)
+			}
+		})
 	}
 }

@@ -1,10 +1,13 @@
 package authz
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // 🔴 EVERY EXPECTATION IN THIS FILE IS SPELLED BY HAND, NEVER DERIVED FROM THE CODE
@@ -453,6 +456,175 @@ func TestAuthorizeReturnsTheMatchedRecord(t *testing.T) {
 	// paragraph, and the honest form is to say so instead of counting it as covered.
 	if _, err := Authorize("Bearer "+strings.ToUpper(b), table); err == nil {
 		t.Fatal("the credential is NOT case-folded")
+	}
+}
+
+// 🔴 THE SHAPE THAT SERVED THE WHOLE STORE ON A CREDENTIAL THE ORACLE REFUSES TO LOAD.
+// 43 × `0xFF`, mode 0600. The oracle will not start on it ('utf-8' codec can't decode
+// byte 0xff in position 0, out of `read_text(encoding="utf-8")`, which its `except
+// OSError` does not catch); Go's `raw = string(data)` reinterpreted the bytes, counted 43
+// runes, cleared MinTokenChars and parsed them as a BARE LEGACY ROW — unrestricted scope,
+// fingerprint and all. With `SUBSYSTEM_STORE_TRUSTED_PROXIES` set, which the conformance
+// env and every real deployment set, the server came up and answered
+// `GET /api/v1/snapshot` with 200 and the full store to a caller presenting those bytes.
+//
+// Three assertions, because only the conjunction is the finding: it is REFUSED, the
+// refusal NAMES the decode problem rather than a length or a row count, and NO record
+// comes back. A guard that refused with "token is empty" would pass a test that only
+// checked for an error, and would be diagnosing the wrong file.
+func TestATokenFileThatIsNotUTF8IsRefusedRatherThanReinterpreted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens")
+	// 🔴 EXACTLY MinTokenChars BYTES, WHICH IS THE WHOLE POINT: one byte fewer and the
+	// length floor would refuse it for an unrelated reason and this test would pass with
+	// the decode guard deleted. The literal 43 is spelled by hand for the reason the
+	// file header gives; the relation to MinTokenChars is asserted, not interpolated.
+	if MinTokenChars != 43 {
+		t.Fatalf("this fixture is built for a 43-character floor, got %d", MinTokenChars)
+	}
+	if err := os.WriteFile(path, bytes.Repeat([]byte{0xff}, 43), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := LoadTokens(path, nil, func(string) {})
+	if err == nil {
+		t.Fatalf("43 bytes of 0xFF LOADED as %d record(s) — the oracle refuses to start on this file", len(records))
+	}
+	if len(records) != 0 {
+		t.Fatalf("a refusal must return no records, got %d", len(records))
+	}
+	// The sentence has to name the DECODE, or the operator is sent to look at the row
+	// count of a file that has no rows.
+	for _, want := range []string{
+		"token file is not valid UTF-8",
+		"'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal does not name %q: %s", want, err)
+		}
+	}
+}
+
+// 🔴 THE ENVIRONMENT FALLBACK IS THE OTHER HALF, AND IT MUST **NOT** BE GUARDED. Pinned
+// as a decision rather than left to be "fixed": `os.environ` on Linux decodes with
+// `surrogateescape`, so the oracle turns a non-UTF-8 env token into a `str` with lone
+// surrogates and LOADS it. A strict guard here would refuse a credential the oracle
+// accepts — a new divergence created by fixing the file path. This test fails the day
+// somebody adds one.
+func TestTheEnvironmentTokenIsNotHeldToTheFilesDecodeRule(t *testing.T) {
+	raw := strings.Repeat("\xff", MinTokenChars)
+	records, err := LoadTokens("", map[string]string{"SUBSYSTEM_STORE_TOKEN": raw}, func(string) {})
+	if err != nil {
+		t.Fatalf("the env token must load exactly as the oracle loads it: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record from the env fallback, got %d", len(records))
+	}
+}
+
+// 🔴 A FIFO AT THE TOKEN PATH BLOCKED `os.ReadFile` FOREVER — no diagnostic, no exit, a
+// process that never finished starting. The oracle's `is_file()` refuses it in
+// milliseconds. `os.Stat` + `!IsDir()` is what accepted it.
+//
+// 🔴 THE TIMEOUT IS THE ASSERTION, and it is why this test is written with a goroutine
+// rather than as a straight call: a test that simply called LoadTokens would HANG at the
+// pre-fix tree instead of failing, and a hung test is a red nobody can read. 5s is far
+// above the microseconds a stat-and-refuse takes and far below any plausible CI budget.
+func TestAFifoTokenFileIsRefusedRatherThanBlockingForever(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Skipf("cannot create a FIFO here: %v", err)
+	}
+
+	type outcome struct {
+		records []TokenRecord
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		records, err := LoadTokens(path, nil, func(string) {})
+		done <- outcome{records, err}
+	}()
+
+	select {
+	case got := <-done:
+		if got.err == nil {
+			t.Fatalf("a FIFO loaded as %d record(s)", len(got.records))
+		}
+		if !strings.Contains(got.err.Error(), "is not a file") {
+			t.Fatalf("a FIFO must be refused by guard 2's sentence, got: %v", got.err)
+		}
+	case <-time.After(5 * time.Second):
+		// 🔴 NOT `t.Fatal` FROM THE OTHER GOROUTINE, and not a leaked reader either: the
+		// blocked `os.ReadFile` is unblocked by opening the write end, so the goroutine
+		// can finish and the temp dir can be removed.
+		if w, openErr := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); openErr == nil {
+			w.Close()
+		}
+		t.Fatal("LoadTokens BLOCKED on a FIFO for 5s — the oracle refuses it in milliseconds")
+	}
+}
+
+// A character device is the OTHER side of the same predicate, and it fails in the
+// opposite direction — so a fix that only covered the FIFO would leave this open.
+// `/dev/null` at the default token path with an env token set: the oracle's `is_file()`
+// is false, so it FALLS BACK and serves; `!IsDir()` is true for a character device, so Go
+// took its own fallback away, read zero bytes and exited 78 on "token is empty".
+func TestACharacterDeviceIsNotATokenFile(t *testing.T) {
+	if IsTokenFile("/dev/null") {
+		t.Fatal("/dev/null is not a regular file, so it must not satisfy the token-file test")
+	}
+	// The positive control, because "returns false" is indistinguishable from a
+	// predicate wired to nothing: a real token file must satisfy it.
+	if path := writeTokenFile(t, aToken('a')); !IsTokenFile(path) {
+		t.Fatalf("%s is a regular file and must satisfy the token-file test", path)
+	}
+	// And a symlink TO one must too — a Kubernetes secret mount is exactly that shape,
+	// so a predicate that refused a link would refuse the deployed configuration.
+	real := writeTokenFile(t, aToken('b'))
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if !IsTokenFile(link) {
+		t.Fatal("a symlink to a regular file is what a secret mount looks like")
+	}
+}
+
+// 🔴 THE REFUSAL SENTENCES ARE REPRODUCED FROM THE ORACLE, SO A GO IDENTIFIER MUST NOT
+// LEAK INTO ONE. Guard 10's message pointed the reader at `RedactedField` — the Go
+// function — where the oracle writes “ `redacted_field` “. Nothing pinned it, which is
+// exactly why it drifted: the token loader's messages reach stdout on every refused reload
+// and are read by machine, and "the port emits a different string here" is not an
+// implementation diagnostic the way CPython's `json` wording is.
+//
+// The whole normalised sentence is asserted, not a substring: a guard on the WORD
+// `redacted_field` is walkable by any rewording that keeps the word, and this is prose.
+func TestGuardTenQuotesTheORACLESHelperNameAndNotTheGoOne(t *testing.T) {
+	// A scope field that is long enough to be a credential — the shape guard 10 exists
+	// for. `aToken` is exactly MinTokenChars, which is above MaxScopeChars.
+	path := writeTokenFile(t, aToken('a')+" reader "+aToken('b'))
+	_, err := LoadTokens(path, nil, func(string) {})
+	if err == nil {
+		t.Fatal("a token pasted into field 3 must be refused by guard 10")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "see `redacted_field`") {
+		t.Fatalf("guard 10 must name the ORACLE's helper: %s", got)
+	}
+	// 🔴 AND THE GO NAME MUST BE ABSENT. Without this the test passes if the message
+	// somehow names BOTH, which is the shape a careless fix produces.
+	if strings.Contains(got, "RedactedField") {
+		t.Fatalf("the Go identifier leaked into a reproduced sentence: %s", got)
+	}
+	// The positive control on the guard itself: it is guard 10 speaking, and the value is
+	// not echoed.
+	if !strings.Contains(got, "invalid scope in token row on line 1 of 1") {
+		t.Fatalf("expected guard 10, got: %s", got)
+	}
+	if strings.Contains(got, aToken('b')) {
+		t.Fatalf("guard 10 echoed the credential it refused: %s", got)
 	}
 }
 

@@ -34,6 +34,40 @@ func osErrorTypeName(err error) string {
 	return "OSError"
 }
 
+// ignoredStatErrnos is `pathlib._IGNORED_ERRNOS`, measured on the pinned interpreter
+// rather than transcribed from documentation:
+//
+//	>>> [errno.errorcode[e] for e in pathlib._IGNORED_ERRNOS]
+//	['ENOENT', 'ENOTDIR', 'EBADF', 'ELOOP']
+//
+// 🔴 IT IS THE **WHOLE** DIFFERENCE BETWEEN "NOT A DIRECTORY" AND "I COULD NOT LOOK",
+// and it is why `is_dir()`/`is_file()` cannot be spelled as "err == nil && …" in Go.
+// Those predicates fail in two different ways: they return False for these four, and
+// they RAISE for every other errno. A port that collapses both into `continue` claims
+// an absence it did not establish, which is the one claim this store is built not to
+// make.
+//
+// ⚠ `_IGNORED_WINERRORS` EXISTS TOO AND IS DELIBERATELY NOT PORTED. This server runs
+// on Linux in a container; a Windows error-code table here would be untested code
+// asserting a platform nobody builds for.
+var ignoredStatErrnos = []syscall.Errno{
+	syscall.ENOENT,
+	syscall.ENOTDIR,
+	syscall.EBADF,
+	syscall.ELOOP,
+}
+
+// isIgnoredStatErrno reports whether a stat failure is one CPython's path predicates
+// swallow into a plain `False`, as opposed to one they raise.
+func isIgnoredStatErrno(err error) bool {
+	for _, e := range ignoredStatErrnos {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
 // decodeReplace is Python's `read_text(encoding="utf-8", errors="replace")`.
 //
 // It delegates to `pytext`, which is where the CPython string rules live: the query

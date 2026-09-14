@@ -308,6 +308,22 @@ from a genuinely empty store, which reads `newest=NONE entry-files=0`. The walk
 uses `os.walk(onerror=…)` rather than `Path.rglob` precisely because `rglob`
 swallows a permission error and would report an unreadable store as an empty one.
 
+🔴 **`seeded=` IS PRINTABLE ASCII OR IT IS `UNREADABLE`, and that rule was added
+after three measured accidents** — none of them designed, all from a stamp file
+that nothing validated. `X-Store-Snapshot` is a header, and `http.server` encodes
+a header value as **latin-1**: a stamp containing `café` went on the wire as ONE
+byte where any UTF-8 writer sends TWO (a silent byte divergence in a header the
+conformance goldens pin); a stamp containing an emoji made `send_header` raise
+**after the status line had already been sent**, truncating the response mid-stream
+(`curl` exit 8); and a stamp carrying a byte that is not valid UTF-8 raised a
+`UnicodeDecodeError` — which is a `ValueError`, so the `except OSError` arm never
+caught it — and 503'd a store that was perfectly readable apart from that one
+metadata file. A contract cannot include "sometimes truncate the response", so the
+value is now constrained to `\x20`–`\x7e` and anything else is the `UNREADABLE`
+state above. **No stamp `seed.sh` writes is affected**: it writes an ISO-8601
+timestamp. The value is never mangled or percent-encoded into something that is not
+the date in the file — every other failure here is a named state, and so is this one.
+
 🔴 **`scope-empty` and `store-unreachable` do not render alike.** Reached the
 store and found nothing → `200` + `X-Store-Status: scope-empty`. Read nothing at
 all → `503` + `X-Store-Status: store-unreachable`, carrying the reader's own

@@ -265,6 +265,30 @@ encodes:
 - **Header order.** Recorded sorted. `_respond` emits a fixed order, RFC 9110
   gives it no meaning, and pinning it would fail a correct implementation.
 - **The raw snapshot bytes**, for the reason above.
+- 🔴 **EVERY USTAR HEADER FIELD A PAX EXTENDED RECORD OVERRIDES.** The snapshot is
+  compared as its **extracted tree**, and every POSIX reader prefers an extended
+  record over the ustar field it shadows — so the comparison normalises the header
+  away before it happens. Measured as four real divergences against CPython's own
+  writer, all invisible here and to every reader: the ustar `mtime` field is
+  `round(val)` there (half-to-**even**) and was `int64()` truncation in the Go
+  writer, which differs at `.75` always and at `.5` on an odd second; the extended
+  records are emitted in dict-insertion order (`path` before `mtime`) and were
+  emitted `mtime`-first; a **non-ASCII member name** gets a `path` record at any
+  length there (the ASCII test runs before the length test) and got one only above
+  100 bytes; and the header **checksum** moves with the first of those. 193 bytes
+  across 7 header blocks, behind a green extracted-tree comparison.
+  **Byte-diff the two archives when you touch `internal/snapshot/paxtar.go`** —
+  after the fix they are byte-identical over a member list carrying all four
+  classes. `AGENTS.md` records why the byte-identity gate is scoped to the
+  *uncompressed* tar (gzip identity is unattainable, measured).
+- **A `seeded=` value that is not printable ASCII.** `world.json` declares an ASCII
+  seed stamp, so no case reaches the three accidents a non-ASCII one produced on the
+  oracle — one of which **truncated the response after the status line**. Fixed in
+  the oracle and matched in Go; covered by
+  `TestSnapshotStamp::test_a_stamp_that_cannot_GO_IN_A_HEADER_is_UNREADABLE` and by
+  `snapshot.TestFreshnessNamesEveryFailureState` instead. Regenerating all 98
+  goldens after that fix moved **none** of them, which is the same statement from the
+  other side.
 - **TLS, the gateway, and anything a proxy does.** The suite talks plain HTTP to a
   loopback socket.
 - **SIGHUP token reload, startup refusals, and every exit-code path.** Those are

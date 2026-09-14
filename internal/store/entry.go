@@ -66,6 +66,26 @@ type TaskRef struct {
 func (t TaskRef) String() string { return t.System + ":" + t.Ident }
 
 // Entry is one validated index entry.
+//
+// 🔴 EVERY SLICE FIELD IS NON-NIL EVEN WHEN EMPTY, AND THE THREE OF THEM USED TO DISAGREE.
+// Measured on an entry with no aliases and no tasks: `Aliases` was an empty slice (because
+// `sortedKeys` always allocates) while `RawAliases` and `Tasks` were `nil` — two answers to
+// one question inside one struct, and nobody had decided either. The oracle has no such
+// split: `aliases`, `raw_aliases` and `tasks` are all tuples on `SubsystemEntry`, `tasks`
+// defaults to `()`, and `tasks: []` is documented as meaning exactly what an absent key
+// means. So all three are empty slices here.
+//
+// ⚠ WHY IT MATTERED AT ALL, since `len`, `range`, index and append are identical on nil:
+// the difference is invisible until something SERIALISES or COMPARES these, and then it is
+// not. `encoding/json` writes a nil slice as `null` and an empty one as `[]`; `== nil` reads
+// as "unset", which no absent key here means; `reflect.DeepEqual` against a literal is false
+// for nil. There is no JSON surface on `Entry` today and the control plane is where one
+// arrives, which is exactly why this was worth settling before it had a consumer rather
+// than after.
+//
+// `TestTheEmptySliceLedgerIsComplete` enforces both halves: it re-measures the claim above,
+// and it enumerates the slice fields by reflection so the set cannot GROW or SHRINK without
+// somebody deciding for the new field.
 type Entry struct {
 	// Slug is the filename's slug part, with `service:` and the filename agreeing.
 	Slug string
@@ -196,7 +216,12 @@ func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 	if aliasErr != nil {
 		return Entry{}, aliasErr
 	}
-	var rawAliases []string
+	// 🔴 NON-NIL EVEN WHEN EMPTY, AND THE THREE SLICE FIELDS AGREE ON THAT. See the
+	// ledger on `Entry`: `Aliases` came back as an empty slice (`sortedKeys` always
+	// allocates) while `RawAliases` and `Tasks` came back `nil` — three fields, two
+	// answers, in one struct, none of it decided. The oracle has no such split:
+	// `aliases`, `raw_aliases` and `tasks` are all tuples, so none is ever `None`.
+	rawAliases := []string{}
 	normalizedSet := map[string]struct{}{}
 	for _, alias := range rawAliasesIn {
 		if pytext.StripWhitespace(alias) == "" {
@@ -289,7 +314,10 @@ func parseTasksField(mapping FrontMatter, source string) ([]TaskRef, error) {
 		}
 		items = []string{s}
 	}
-	var out []TaskRef
+	// Non-nil when empty, for the reason the ledger on `Entry` gives: the oracle's
+	// `tasks` defaults to `()` and `tasks: []` means the same thing as an absent key, so
+	// there is no state here that `nil` would be expressing.
+	out := []TaskRef{}
 	seen := map[string]struct{}{}
 	for _, item := range items {
 		ref, err := ParseTaskRef(item)
