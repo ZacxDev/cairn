@@ -1,0 +1,44 @@
+{
+  "body": {
+    "bytes": 8,
+    "kind": "text_lines",
+    "sha256": "59134a4054b27a3fc30e1ac81d9b9168dc0561f65982151324a021fe8ce88d06",
+    "text_lines": [
+      "created",
+      ""
+    ]
+  },
+  "case": "put-create",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "8"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "ETag",
+      "\"f504d45848cde203\""
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "created"
+    ]
+  ],
+  "reason": "Created",
+  "status": 201
+}

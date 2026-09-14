@@ -1,0 +1,44 @@
+{
+  "body": {
+    "bytes": 60,
+    "kind": "text_lines",
+    "sha256": "d7acd62372e4706f810be903fba9168ad8437250d2b57f54165dbcb3fe840b92",
+    "text_lines": [
+      "- 2000-01-02: the sidecar drops its lease during a rollout.",
+      ""
+    ]
+  },
+  "case": "post-bullets-duplicate",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "60"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "ETag",
+      "\"4aaf25e31b6ab6c4\""
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Cairn-Bullet",
+      "b73e114626ef7880"
+    ],
+    [
+      "X-Store-Status",
+      "duplicate"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

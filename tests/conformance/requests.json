@@ -1,0 +1,1128 @@
+{
+  "_comment": [
+    "THE DECLARED REQUEST LIST. One row per case; adding a case is adding a row.",
+    "",
+    "Fields: `id` (also the golden's filename), `phase`, `why`, `method`, `target`,",
+    "`principal` (a name from world.json, or null for no Authorization header),",
+    "`token_literal` (a credential that is not in the token file), `client_ip`",
+    "(null omits CF-Connecting-IP), `headers` (ordered pairs, duplicates allowed),",
+    "`body` ({text_lines|json|raw_text}), `raw_request` (literal request lines, for",
+    "the two cases whose request line cannot be expressed by an HTTP client at",
+    "all), `normalize` (declared licences to differ - see suite.py normalizations),",
+    "`body_kind` (`snapshot` records the extracted tree instead of the bytes),",
+    "`canary`, `negative_route`.",
+    "",
+    "PHASE is `write` for a case that MAY CHANGE THE STORE, and `read` for every",
+    "case that cannot. cases.py refuses a `read` row placed after the first",
+    "`write` row: a successful write moves entry mtimes, and every report body",
+    "carries `entry-files=` and `newest=<mtime>`, so a read recorded afterwards",
+    "would depend on list order rather than on the declared world.",
+    "",
+    "The If-Match literals below are the sha256 (first 16 hex) of the declared",
+    "entry bytes, SPELLED BY HAND. If world.json's text changes they stop",
+    "matching and the case answers 412 - loudly, in the diff, which is the",
+    "intended behaviour: the precondition is a contract with a caller and the",
+    "caller computes it from bytes it holds."
+  ],
+  "cases": [
+    {
+      "id": "health-unauthenticated",
+      "phase": "read",
+      "method": "GET",
+      "target": "/healthz",
+      "principal": null,
+      "why": "the kubelet's probe. Unauthenticated by design, and it says nothing but `ok`."
+    },
+    {
+      "id": "health-no-client-ip",
+      "phase": "read",
+      "method": "GET",
+      "target": "/healthz",
+      "principal": null,
+      "client_ip": null,
+      "why": "the probe must not require a CF-Connecting-IP the kubelet has no reason to send: health is answered BEFORE the client-IP check."
+    },
+    {
+      "id": "health-head",
+      "phase": "read",
+      "method": "HEAD",
+      "target": "/healthz",
+      "principal": null,
+      "why": "HEAD carries the same headers and no body."
+    },
+    {
+      "id": "health-authorized",
+      "phase": "read",
+      "method": "GET",
+      "target": "/healthz",
+      "principal": "wide-reader",
+      "why": "a valid credential buys NOTHING extra here - no version, no scope count, no revision."
+    },
+    {
+      "id": "root-path",
+      "phase": "read",
+      "method": "GET",
+      "target": "/",
+      "principal": null,
+      "why": "a non-API path is the uniform 401, not a 404: a 404 would let an unauthenticated caller map the URL space."
+    },
+    {
+      "id": "api-prefix-without-trailing-slash",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1",
+      "principal": "wide-reader",
+      "why": "one missing slash is not the API prefix. Answered 401 even to a VALID credential, because the prefix check precedes the token check."
+    },
+    {
+      "id": "unlisted-path-with-valid-token",
+      "phase": "read",
+      "method": "GET",
+      "target": "/metrics",
+      "principal": "wide-reader",
+      "why": "the same, for the path an operator's instinct reaches for. It is also NOT counted as a failed auth - see the rate-limit note in server.py."
+    },
+    {
+      "id": "recall-unauthenticated",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes",
+      "principal": null,
+      "why": "no Authorization header at all."
+    },
+    {
+      "id": "recall-bad-token",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes",
+      "token_literal": "wrong-cred",
+      "why": "a credential that is not in the token file. Must be indistinguishable from every other refusal."
+    },
+    {
+      "id": "recall-no-client-ip",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes",
+      "principal": "wide-reader",
+      "client_ip": null,
+      "why": "the peer is a trusted proxy and sent no CF-Connecting-IP: there is no bucket to meter, so the request FAILS CLOSED rather than sharing one key with everybody."
+    },
+    {
+      "id": "recall-duplicate-client-ip",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes",
+      "principal": "wide-reader",
+      "headers": [
+        ["CF-Connecting-IP", "203.0.113.99"]
+      ],
+      "why": "TWO CF-Connecting-IP headers. Which one is the client is unanswerable, so the request is refused rather than guessed at."
+    },
+    {
+      "id": "options-root",
+      "phase": "read",
+      "method": "OPTIONS",
+      "target": "/",
+      "principal": null,
+      "why": "an unhandled method reaches send_error, which is overridden to answer the ONE uniform 401 rather than a 501 page that echoes the verb."
+    },
+    {
+      "id": "trace-root",
+      "phase": "read",
+      "method": "TRACE",
+      "target": "/",
+      "principal": null,
+      "why": "the same, for the verb that would otherwise echo the request."
+    },
+    {
+      "id": "invented-verb-root",
+      "phase": "read",
+      "method": "FROBNICATE",
+      "target": "/",
+      "principal": null,
+      "why": "an invented verb. It must look exactly like a bad token, and it must be METERED like one."
+    },
+    {
+      "id": "raw-malformed-absolute-target",
+      "phase": "read",
+      "raw_request": [
+        "GET http://[ HTTP/1.1",
+        "Host: conformance.invalid",
+        "CF-Connecting-IP: 203.0.113.7",
+        "Connection: close",
+        "",
+        ""
+      ],
+      "why": "urlsplit RAISES on this target, and absolute-form is mandatory-to-accept - so a conforming client can send it. It must be a uniform 401, not an unhandled ValueError with no response at all."
+    },
+    {
+      "id": "raw-malformed-request-line",
+      "phase": "read",
+      "raw_request": ["GET", "", ""],
+      "why": "six bytes, before `self.path` exists. The answer is a bare HTTP/0.9 body with NO status line and NO headers, because parse_request never established a version - recorded as its own shape rather than faked into a 401."
+    },
+    {
+      "id": "raw-recall-read-to-eof",
+      "phase": "read",
+      "raw_request": ["GET /api/v1/recall/alpha-notes HTTP/1.1", "Host: conformance.invalid", "CF-Connecting-IP: 203.0.113.7", "Authorization: Bearer {{wide-reader}}", "Connection: close", "", ""],
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "🔴 THE ONE CASE THAT CAN SEE A MIS-FRAMED REPORT. Every other case is issued through an HTTP client, which reads EXACTLY Content-Length bytes - so comparing the two asks the client whether it agrees with itself, and a wrong length is invisible (measured: mutating the server to send len(body)-1 failed exactly ONE case). Asking for `Connection: close` makes the body readable to EOF, so its length is an independent observation. It is also why `report-content-length` may drop the header from a report's golden without dropping the claim."
+    },
+    {
+      "id": "recall-authorized",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "the ordinary read. Two entries, newest first, with the scope's git HEAD in X-Store-Revision."
+    },
+    {
+      "id": "recall-authorized-head",
+      "phase": "read",
+      "method": "HEAD",
+      "target": "/api/v1/recall/alpha-notes",
+      "principal": "wide-reader",
+      "why": "HEAD keeps every header and sends no body. Its Content-Length is normalized away for the same reason its GET's is - see the head_matches_get relation, which pins that the two agree.",
+      "normalize": ["report-content-length"]
+    },
+    {
+      "id": "recall-legacy-token",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes",
+      "principal": "legacy",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "a bare row is UNRESTRICTED, so it reads a scope no allowlist names. Reads from a legacy token are deliberately unchanged by the scoping migration."
+    },
+    {
+      "id": "recall-refused-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes",
+      "principal": "narrow-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity", "report-host-sentence"],
+      "why": "alpha-notes EXISTS and this caller may not see it. The refused half of the pair."
+    },
+    {
+      "id": "recall-absent-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/ghost-void",
+      "principal": "narrow-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity", "report-host-sentence"],
+      "why": "a scope that has never existed, asked by the same caller. The absent half of the pair."
+    },
+    {
+      "id": "recall-empty-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/hollow-set",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "a directory that exists and holds no entry: `scope-empty`, which must never render like a store that could not be read."
+    },
+    {
+      "id": "recall-unreadable-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/rubble-heap",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "every file in the scope is malformed: `scope-unreadable`, X-Store-Exit 3, on a 200. The state this whole design exists to keep separate from `nothing recorded yet`."
+    },
+    {
+      "id": "recall-ref-hit",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?ref=gadget-two",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "?ref= addresses one entry."
+    },
+    {
+      "id": "recall-ref-absent",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?ref=ghost-ref",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "a ref that resolves to nothing inside a scope that does."
+    },
+    {
+      "id": "recall-mode-list",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?mode=list",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "?mode= is one of digest|list|full."
+    },
+    {
+      "id": "recall-mode-full",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?mode=full",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "the third mode, so the vocabulary is pinned rather than sampled."
+    },
+    {
+      "id": "recall-mode-invalid",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?mode=telepathy",
+      "principal": "wide-reader",
+      "why": "an unknown mode is a caller error, and the caller is authenticated so it may be told what it sent."
+    },
+    {
+      "id": "recall-limit-and-page",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?limit=1&page=2",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "?limit= and ?page= together, on a scope with exactly two entries so page 2 is the last."
+    },
+    {
+      "id": "recall-limit-not-an-integer",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?limit=abc",
+      "principal": "wide-reader",
+      "why": "a query parameter NEVER silently defaults: a typo is a 400, not the default value."
+    },
+    {
+      "id": "recall-limit-zero",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?limit=0",
+      "principal": "wide-reader",
+      "why": "parseable and out of range."
+    },
+    {
+      "id": "recall-repeated-parameter",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes?limit=1&limit=2",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "a repeated parameter: the server reads the LAST value, and that choice is a contract a port must reproduce."
+    },
+    {
+      "id": "recall-bad-path-component",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/%2e%2e",
+      "principal": "wide-reader",
+      "why": "`%2e%2e` decodes to `..`, and a path component reaches the filesystem. Refused 400 on the charset, not on the two spellings somebody thought of."
+    },
+    {
+      "id": "recall-arity-too-short",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall",
+      "principal": "wide-reader",
+      "why": "the route table names an arity, and a request that does not match it does not dispatch."
+    },
+    {
+      "id": "recall-arity-too-long",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/alpha-notes/extra",
+      "principal": "wide-reader",
+      "why": "the same from the other side. `len(parts) == arity` mutated to `>=` once survived 318 tests."
+    },
+    {
+      "id": "api-root-slash",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/",
+      "principal": "wide-reader",
+      "why": "the prefix with nothing after it: an API path with no head at all."
+    },
+    {
+      "id": "unknown-route",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/raw_dump",
+      "principal": "wide-reader",
+      "negative_route": true,
+      "why": "a head with no row. Spelled with an underscore on purpose - that spelling defeated a regex-based route guard once."
+    },
+    {
+      "id": "search-authorized",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/beta-notes?q=lease",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "the ordinary search."
+    },
+    {
+      "id": "search-authorized-head",
+      "phase": "read",
+      "method": "HEAD",
+      "target": "/api/v1/search/beta-notes?q=lease",
+      "principal": "wide-reader",
+      "why": "HEAD on the second read route, paired with its GET the same way.",
+      "normalize": ["report-content-length"]
+    },
+    {
+      "id": "search-missing-q",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/beta-notes",
+      "principal": "wide-reader",
+      "why": "`q` is required. There is no default query."
+    },
+    {
+      "id": "search-blank-q",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/beta-notes?q=%20",
+      "principal": "wide-reader",
+      "why": "present and whitespace-only, which is the shape a required parameter is most often lost as."
+    },
+    {
+      "id": "search-no-hit",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/beta-notes?q=zzzzqqqqq&threshold=0.99",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "a query that matches nothing, with the threshold pinned so the miss is a property of the query and not of the default."
+    },
+    {
+      "id": "search-tuning-parameters",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/beta-notes?q=lease&context=0&max_hits=1&threshold=0.2",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "every remaining query parameter this route accepts, at once."
+    },
+    {
+      "id": "search-threshold-not-a-float",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/beta-notes?q=lease&threshold=warm",
+      "principal": "wide-reader",
+      "why": "the float parameter's own refusal, which is a different code path from the int one."
+    },
+    {
+      "id": "search-all-scopes",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/beta-notes?q=lease&all_scopes=1",
+      "principal": "narrow-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "`all_scopes=1` names no scope, so a per-scope refusal has nothing to refuse. It means ALL THE CALLER'S SCOPES because the INDEX is narrowed - this row is what pins that."
+    },
+    {
+      "id": "search-refused-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/alpha-notes?q=lease",
+      "principal": "narrow-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity", "report-host-sentence"],
+      "why": "the refused half of the search pair."
+    },
+    {
+      "id": "search-absent-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/ghost-void?q=lease",
+      "principal": "narrow-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity", "report-host-sentence"],
+      "why": "the absent half of the search pair."
+    },
+    {
+      "id": "search-legacy-token",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/search/alpha-notes?q=lease",
+      "principal": "legacy",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "unrestricted scope on the search route too."
+    },
+    {
+      "id": "snapshot-authorized",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot",
+      "principal": "wide-reader",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"],
+      "why": "the whole store as a gzipped PAX tar. The goldens hold the EXTRACTED tree - paths, contents, and mtimes to sub-second precision - never the archive bytes."
+    },
+    {
+      "id": "snapshot-authorized-head",
+      "phase": "read",
+      "method": "HEAD",
+      "target": "/api/v1/snapshot",
+      "principal": "wide-reader",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"],
+      "why": "HEAD on the snapshot route: every header, no archive."
+    },
+    {
+      "id": "snapshot-narrow-principal",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot",
+      "principal": "narrow-reader",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"],
+      "why": "the FOURTH enumeration channel. This route builds no index, so the allowlist is applied to the candidate directory list - without it a caller allowed one scope could download every scope's files."
+    },
+    {
+      "id": "snapshot-legacy-token",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot",
+      "principal": "legacy",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"],
+      "why": "unrestricted: the same member set the wide principal gets."
+    },
+    {
+      "id": "snapshot-scope-filter",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot?scope=alpha-notes",
+      "principal": "wide-reader",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"],
+      "why": "?scope= narrows the archive, and X-Store-Entries describes the same filtered set."
+    },
+    {
+      "id": "snapshot-scope-refused",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot?scope=alpha-notes",
+      "principal": "narrow-reader",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"],
+      "why": "the refused half of the snapshot pair: a scope filter naming a scope this caller may not see."
+    },
+    {
+      "id": "snapshot-scope-absent",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot?scope=ghost-void",
+      "principal": "narrow-reader",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"],
+      "why": "the absent half of the snapshot pair."
+    },
+    {
+      "id": "snapshot-bad-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot?scope=a.b",
+      "principal": "wide-reader",
+      "why": "?scope= reaches the filesystem, so it is charset-checked exactly like a path component."
+    },
+    {
+      "id": "snapshot-unauthenticated",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot",
+      "principal": null,
+      "why": "the snapshot route is not a second, weaker door."
+    },
+    {
+      "id": "post-to-recall-route",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/recall/alpha-notes",
+      "principal": "wide-reader",
+      "body": {
+        "raw_text": "{}"
+      },
+      "negative_route": true,
+      "why": "`read-only` is a claim about THIS ROUTE. recall has no write verb and never will."
+    },
+    {
+      "id": "put-to-snapshot-route",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/snapshot",
+      "principal": "wide-reader",
+      "body": {
+        "raw_text": "{}"
+      },
+      "negative_route": true,
+      "why": "the snapshot route added a GET and no write verb: WRITE_ROUTES holds no row for it."
+    },
+    {
+      "id": "patch-entry-route",
+      "phase": "read",
+      "method": "PATCH",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "body": {
+        "raw_text": "{}"
+      },
+      "negative_route": true,
+      "why": "PATCH appears in no row, which is how it stays refused - not by a separate rejecter it could be re-bound away from."
+    },
+    {
+      "id": "delete-entry-route",
+      "phase": "read",
+      "method": "DELETE",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "negative_route": true,
+      "why": "the same for DELETE, on the noun that has content to lose."
+    },
+    {
+      "id": "get-entry-route",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "negative_route": true,
+      "why": "`entry` is a WRITE head only. A GET at it is a 404 from the read table, not a 405."
+    },
+    {
+      "id": "post-to-healthz",
+      "phase": "read",
+      "method": "POST",
+      "target": "/healthz",
+      "principal": "wide-reader",
+      "body": {
+        "raw_text": ""
+      },
+      "why": "a write verb at a non-API path still goes through authenticate-then-refuse, so it is metered like everything else."
+    },
+    {
+      "id": "post-bullets-unauthenticated",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": null,
+      "body": {
+        "json": {
+          "text": "an unauthenticated append",
+          "session": "conf-1"
+        }
+      },
+      "why": "a write attempt with no credential is an unauthorised request, not a wrong method - and it is charged as one."
+    },
+    {
+      "id": "post-bullets-bad-token",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "token_literal": "wrong-cred",
+      "body": {
+        "json": {
+          "text": "an append with a bad credential",
+          "session": "conf-1"
+        }
+      },
+      "why": "the same, with a credential that is merely wrong."
+    },
+    {
+      "id": "put-entry-unauthenticated",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": null,
+      "headers": [
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "authentication precedes the precondition ladder entirely."
+    },
+    {
+      "id": "post-bullets-legacy-token",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "legacy",
+      "body": {
+        "json": {
+          "text": "a legacy append",
+          "session": "conf-1"
+        }
+      },
+      "why": "a bare row has no identity, so there is no ACTOR to attribute a bullet to. 403, and it says which row shape fixes it."
+    },
+    {
+      "id": "put-entry-legacy-token",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/legacy-create",
+      "principal": "legacy",
+      "headers": [
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "the legacy refusal is on the write ROUTES, so PUT is refused for the same reason POST is - and BEFORE anything is created."
+    },
+    {
+      "id": "put-no-precondition",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "canary": true,
+      "why": "an optional precondition is no precondition: 428. ALSO THE CANARY - it is authenticated and it touches no store state, which is what makes it the one authorized case that can be re-issued after the write phase and still expect the same answer."
+    },
+    {
+      "id": "put-both-preconditions",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-Match", "\"dd2956775415ddce\""],
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "`it exists and is exactly this` and `it does not exist` are mutually exclusive. Refused, never resolved by picking one."
+    },
+    {
+      "id": "put-if-match-star",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-Match", "*"]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "`*` is the one value that turns the guard off while looking like it is on."
+    },
+    {
+      "id": "put-if-match-empty",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-Match", ","]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "a header that is present and names no entity-tag is not a precondition."
+    },
+    {
+      "id": "put-if-none-match-list",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-None-Match", "\"aaaaaaaaaaaaaaaa\", \"bbbbbbbbbbbbbbbb\""]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "a LIST on If-None-Match would mean `overwrite unless it is one of these`, which is the lost update If-Match exists to refuse, spelled backwards."
+    },
+    {
+      "id": "post-bullets-not-json",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "raw_text": "{not json"
+      },
+      "why": "a malformed body is a caller error, answered as one - and the parser's own sentence rides the response."
+    },
+    {
+      "id": "post-bullets-deeply-nested-json",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "raw_text": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["
+      },
+      "why": "nesting is what once raised RecursionError - not a ValueError - inside json.loads, dropping the connection with no response and NO AUDIT LINE. This depth is shallow enough to parse; the shape is the point."
+    },
+    {
+      "id": "post-bullets-missing-session",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "no session declared"
+        }
+      },
+      "why": "every appended bullet records the actor AND the session."
+    },
+    {
+      "id": "post-bullets-bad-session",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "a space in the session",
+          "session": "bad session"
+        }
+      },
+      "why": "the session is caller-supplied correlation data, so it is charset-checked before it goes anywhere near a file."
+    },
+    {
+      "id": "post-bullets-blank-text",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "   ",
+          "session": "conf-1"
+        }
+      },
+      "why": "whitespace is not text."
+    },
+    {
+      "id": "post-bullets-over-long-text",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": {
+            "repeat": ["x", 2001]
+          },
+          "session": "conf-1"
+        }
+      },
+      "why": "one character over BULLET_TEXT_MAX, which the client refuses locally from the SAME constant. The server's own refusal is the contract."
+    },
+    {
+      "id": "post-bullets-actor-in-body-is-discarded",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "narrow-reader",
+      "body": {
+        "json": {
+          "text": "a forged actor",
+          "session": "conf-1",
+          "actor": "somebody-else"
+        }
+      },
+      "why": "an `actor` key is accepted and DISCARDED. This row sends one at a scope the caller cannot reach, so the answer is the 404 - the point is that the key does not turn it into a 400."
+    },
+    {
+      "id": "post-bullets-refused-scope",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "narrow-reader",
+      "body": {
+        "json": {
+          "text": "an append to a scope I may not see",
+          "session": "conf-1"
+        }
+      },
+      "why": "the refused half of the append pair. A refusal that is distinguishable from an absence is an enumeration API on a write verb just as on a read."
+    },
+    {
+      "id": "post-bullets-absent-scope",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/ghost-void/gadget-one/bullets",
+      "principal": "narrow-reader",
+      "body": {
+        "json": {
+          "text": "an append to a scope I may not see",
+          "session": "conf-1"
+        }
+      },
+      "why": "the absent half of the append pair."
+    },
+    {
+      "id": "put-refused-scope",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "narrow-reader",
+      "headers": [
+        ["If-Match", "\"0000000000000000\""]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "the refused half of the replace pair. Note the precondition is WRONG and the answer is still 404, because the target does not resolve at all for this caller."
+    },
+    {
+      "id": "put-absent-scope",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/ghost-void/gadget-one",
+      "principal": "narrow-reader",
+      "headers": [
+        ["If-Match", "\"0000000000000000\""]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "the absent half of the replace pair."
+    },
+    {
+      "id": "post-bullets-absent-ref",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/ghost-ref/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "an append to nothing",
+          "session": "conf-1"
+        }
+      },
+      "why": "a ref that resolves to no entry, inside a scope the caller CAN write. Same 404, deliberately."
+    },
+    {
+      "id": "post-bullets-malformed-entry",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/rubble-heap/broken-four/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "an append to a file the loader rejects",
+          "session": "conf-1"
+        }
+      },
+      "why": "an entry the loader could not parse is not a writable target, and it answers the same 404 as an absence."
+    },
+    {
+      "id": "post-bullets-scope-normalizes-away",
+      "phase": "read",
+      "method": "POST",
+      "target": "/api/v1/entry/___/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "an append to a nameless scope",
+          "session": "conf-1"
+        }
+      },
+      "why": "a component that is a valid path segment and names nothing. On the append route it is a 404 (the allowlist answers first); on the create route the same shape is a 400 - see put-create-ref-normalizes-away."
+    },
+    {
+      "id": "put-create-ref-normalizes-away",
+      "phase": "read",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/___",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "the scope is allowed and the REF normalizes to nothing: a caller error with a defined remedy, so it is said rather than 404'd. The asymmetry with the row above is real and is recorded rather than smoothed over."
+    },
+    {
+      "id": "post-bullets-duplicate",
+      "phase": "write",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-two/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "the sidecar drops its lease during a rollout.",
+          "session": "conf-1"
+        }
+      },
+      "why": "text that hashes equal to a bullet already on disk. NOT ONE BYTE is written, and the response echoes the STORED line - whose year-2000 date is fixture data and is therefore pinned literally, with no date normalization on this row."
+    },
+    {
+      "id": "post-bullets-appended",
+      "phase": "write",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "the conformance suite appended this bullet.",
+          "session": "conf-1"
+        }
+      },
+      "normalize": ["bullet-date", "append-etag"],
+      "why": "the real append. The rendered line is pinned byte for byte EXCEPT its date - including the `[cairn: wide-reader/conf-1]` trailer, which is the whole of the attribution guarantee: the actor comes from the token and the body has no way to reach it."
+    },
+    {
+      "id": "post-bullets-appended-again",
+      "phase": "write",
+      "method": "POST",
+      "target": "/api/v1/entry/alpha-notes/gadget-one/bullets",
+      "principal": "wide-reader",
+      "body": {
+        "json": {
+          "text": "the conformance suite appended this bullet.",
+          "session": "conf-2"
+        }
+      },
+      "normalize": ["bullet-date", "append-etag"],
+      "why": "THE IDEMPOTENCY CRITERION, as a relationship between two requests: the identical text under a DIFFERENT session answers `duplicate` and writes nothing, because content_hash covers neither the date, the actor nor the session."
+    },
+    {
+      "id": "put-replace",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/widget-three",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-Match", "\"dd2956775415ddce\""]
+      ],
+      "body": {
+        "text_lines": ["---", "service: widget-three", "scope: beta-notes", "sensitivity: internal", "---", "", "## What it is", "REPLACED by the conformance suite, through PUT with a correct If-Match.", "", "## Pointers", "- ops skill `manage-widget` - invoke it for restarts", "", "## Nuance / work-history", "- 2000-01-03: the lease renewal races the readiness gate.", ""]
+      },
+      "why": "the whole-file replace. Its ETag is sha256 of the bytes THIS REQUEST sent, so it is deterministic and pinned literally - no normalization."
+    },
+    {
+      "id": "put-replace-stale-if-match",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/spare-six",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-Match", "\"0000000000000000\""]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "the lost-update refusal. The file is UNCHANGED and the CURRENT revision rides the response, because a client told only `no` cannot retry - and a client that cannot retry re-sends without the precondition."
+    },
+    {
+      "id": "put-replace-unprocessable",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/spare-six",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-Match", "\"e3cedc8844f84a31\""]
+      ],
+      "body": {
+        "raw_text": "not an entry at all\n"
+      },
+      "why": "a CORRECT precondition and bytes the loader would reject: 422, and nothing is written. Targets the one fixture entry no other write case changes, so its revision is the same for both spare-six rows."
+    },
+    {
+      "id": "put-create",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/newcomer-five",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "text_lines": ["---", "service: newcomer-five", "scope: beta-notes", "sensitivity: internal", "---", "", "## What it is", "CREATED by the conformance suite, through PUT with If-None-Match: *.", "", "## Pointers", "- ops skill `manage-newcomer` - invoke it for restarts", "", "## Nuance / work-history", "- 2000-01-03: this entry did not exist until the suite created it.", ""]
+      },
+      "why": "create-if-absent. 201, not 200 - it is the only way a client can tell a create that landed from a replace that did, since both carry an ETag."
+    },
+    {
+      "id": "put-create-already-exists",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/alpha-notes/gadget-one",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "raw_text": "nope\n"
+      },
+      "why": "412 with a DISTINCT status token: a caller told only `412` cannot tell `somebody moved it, re-sync` from `it is already there, you wanted a replace`, and one of those is an infinite retry."
+    },
+    {
+      "id": "put-create-unprocessable",
+      "phase": "write",
+      "method": "PUT",
+      "target": "/api/v1/entry/beta-notes/rejected-eight",
+      "principal": "wide-reader",
+      "headers": [
+        ["If-None-Match", "*"]
+      ],
+      "body": {
+        "raw_text": "not an entry at all\n"
+      },
+      "why": "the create half's validity gate. The name stays free, so nothing later in the corpus depends on it."
+    }
+  ],
+  "relations": {
+    "_comment": ["TWO PROPERTIES THAT ARE RELATIONSHIPS BETWEEN RESPONSES. No per-response", "golden can hold either: each case has its own file, and each would keep", "passing if one of them grew a distinguishing header, because whoever", "regenerated would have recorded the divergence."],
+    "uniform_401": ["recall-bad-token", "recall-unauthenticated", "recall-no-client-ip", "recall-duplicate-client-ip", "root-path", "api-prefix-without-trailing-slash", "unlisted-path-with-valid-token", "options-root", "trace-root", "invented-verb-root", "raw-malformed-absolute-target", "snapshot-unauthenticated", "post-bullets-unauthenticated", "post-bullets-bad-token", "put-entry-unauthenticated"],
+    "refused_equals_absent": [
+      {
+        "name": "recall",
+        "refused": "recall-refused-scope",
+        "absent": "recall-absent-scope",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
+      {
+        "name": "search",
+        "refused": "search-refused-scope",
+        "absent": "search-absent-scope",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
+      {
+        "name": "snapshot",
+        "refused": "snapshot-scope-refused",
+        "absent": "snapshot-scope-absent",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
+      {
+        "name": "append",
+        "refused": "post-bullets-refused-scope",
+        "absent": "post-bullets-absent-scope",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      },
+      {
+        "name": "replace",
+        "refused": "put-refused-scope",
+        "absent": "put-absent-scope",
+        "refused_scope": "alpha-notes",
+        "absent_scope": "ghost-void"
+      }
+    ],
+    "head_matches_get": [
+      {
+        "_why": "a HEAD must report the Content-Length its GET would have sent. Both values are host-dependent in LENGTH, so neither can live in a golden - but they can be compared to each other in one run.",
+        "name": "recall",
+        "head": "recall-authorized-head",
+        "get": "recall-authorized"
+      },
+      {
+        "name": "search",
+        "head": "search-authorized-head",
+        "get": "search-authorized"
+      }
+    ]
+  }
+}

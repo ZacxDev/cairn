@@ -1,0 +1,31 @@
+{
+  "body": {
+    "bytes": 0,
+    "kind": "text_lines",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "text_lines": [
+      ""
+    ]
+  },
+  "case": "health-head",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "3"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 224,
+    "kind": "text_lines",
+    "sha256": "ec544461a0060ebcbea911cb682225c3a4cff3e1d565e4c338982b444cf0f0b3",
+    "text_lines": [
+      "bad request: only `If-None-Match: *` is supported - a list of entity-tags there would mean 'overwrite unless it is one of these', which is a blind overwrite of every other revision. To replace a known revision send If-Match",
+      ""
+    ]
+  },
+  "case": "put-if-none-match-list",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "224"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

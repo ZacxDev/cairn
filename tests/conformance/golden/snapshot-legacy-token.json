@@ -1,0 +1,192 @@
+{
+  "body": {
+    "kind": "tar_gz_manifest",
+    "members": [
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.0",
+        "name": ".seed-stamp",
+        "sha256": "fd899d84cd69424a1b1da0ae6597eb14acabf2fb181f4291138f6213a946e08e",
+        "size": 21,
+        "text_lines": [
+          "2000-01-04T00:00:00Z",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.25",
+        "name": "alpha-notes/gadget-one.md",
+        "sha256": "309f24c8216cd5683a0573d716c6600520b1bc61281fd51fb1791632ada1ab49",
+        "size": 310,
+        "text_lines": [
+          "---",
+          "service: gadget-one",
+          "scope: alpha-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "A synthetic entry that exists so the suite has something to recall.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - invoke it for restarts",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the readiness probe reports ready 40s before it is.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.75",
+        "name": "alpha-notes/gadget-two.md",
+        "sha256": "4aaf25e31b6ab6c44f950f8e60c83e3ee55ba35a134ef277f0c9728afbf5b8a5",
+        "size": 312,
+        "text_lines": [
+          "---",
+          "service: gadget-two",
+          "scope: alpha-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "A second synthetic entry, newer than gadget-one by 500ms and no more.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the sidecar drops its lease during a rollout.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946771200.25",
+        "name": "beta-notes/spare-six.md",
+        "sha256": "e3cedc8844f84a314ad260fa2296f7aec01cabb445947a8862562c354983b5b6",
+        "size": 418,
+        "text_lines": [
+          "---",
+          "service: spare-six",
+          "scope: beta-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "The target of every write case that must leave the store UNCHANGED - a",
+          "stale If-Match, an unprocessable body. Its revision therefore stays the",
+          "revision of these bytes for the whole run.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-spare` - invoke it for restarts",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-03: nothing has ever been written to this entry.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946771200.5",
+        "name": "beta-notes/widget-three.md",
+        "sha256": "dd2956775415ddcea25eb73369ff439ebaf9645891b2577c8d81062729487cf7",
+        "size": 307,
+        "text_lines": [
+          "---",
+          "service: widget-three",
+          "scope: beta-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "The replace target. A PUT with a correct If-Match overwrites this file.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-widget` - invoke it for restarts",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-03: the lease renewal races the readiness gate.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946857600.125",
+        "name": "rubble-heap/broken-four.md",
+        "sha256": "db990bc7e89344971b325c29931dea494fcaa30259914f2a4ee49c0ebd32ead0",
+        "size": 63,
+        "text_lines": [
+          "no front matter here, so the loader collects this as MALFORMED",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      }
+    ],
+    "mtime_order": [
+      "rubble-heap/broken-four.md",
+      "beta-notes/widget-three.md",
+      "beta-notes/spare-six.md",
+      "alpha-notes/gadget-two.md",
+      "alpha-notes/gadget-one.md",
+      ".seed-stamp"
+    ]
+  },
+  "case": "snapshot-legacy-token",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Type",
+      "application/gzip"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Entries",
+      "5"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+    ],
+    [
+      "X-Store-Status",
+      "snapshot"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

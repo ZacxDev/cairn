@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 13,
+    "kind": "text_lines",
+    "sha256": "fc547a7c4f95feffe054ebecd32254e5888c80c86715edec5b8cd7d3ea2e857b",
+    "text_lines": [
+      "unauthorized",
+      ""
+    ]
+  },
+  "case": "recall-bad-token",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "13"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "WWW-Authenticate",
+      "Bearer realm=\"subsystem-store\""
+    ]
+  ],
+  "reason": "Unauthorized",
+  "status": 401
+}

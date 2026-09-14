@@ -1,0 +1,44 @@
+{
+  "body": {
+    "bytes": 63,
+    "kind": "text_lines",
+    "sha256": "e875495d27df03fb65796e49c3a678fd59829d18700fc0a68146753d1ba613ad",
+    "text_lines": [
+      "precondition failed: the entry has changed since that revision",
+      ""
+    ]
+  },
+  "case": "put-replace-stale-if-match",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "63"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "ETag",
+      "\"e3cedc8844f84a31\""
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "precondition-failed"
+    ]
+  ],
+  "reason": "Precondition Failed",
+  "status": 412
+}

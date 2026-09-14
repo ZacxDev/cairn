@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 42,
+    "kind": "text_lines",
+    "sha256": "1eb76dca1b3f8c97045d4ae81c4f8dd4410abadd6094e89f950b56ac987c70b8",
+    "text_lines": [
+      "bad request: If-Match names no entity-tag",
+      ""
+    ]
+  },
+  "case": "put-if-match-empty",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "42"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

@@ -1,0 +1,44 @@
+{
+  "body": {
+    "bytes": 87,
+    "kind": "text_lines",
+    "sha256": "53e9076be94ae14d0f912dd296df76eca85e05333bc1d428094accc2f17ee8a8",
+    "text_lines": [
+      "- <TODAY-UTC>: the conformance suite appended this bullet. [cairn: wide-reader/conf-1]",
+      ""
+    ]
+  },
+  "case": "post-bullets-appended-again",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "86"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "ETag",
+      "\"<SHA256-16-OF-DATE-STAMPED-CONTENT>\""
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Cairn-Bullet",
+      "6d4355b170cb4bd4"
+    ],
+    [
+      "X-Store-Status",
+      "duplicate"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

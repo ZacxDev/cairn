@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 75,
+    "kind": "text_lines",
+    "sha256": "10fd6977dc50ee64ee8a67fc3e2136d0bde83fc4d45b8e272ee9ec23d2e8c840",
+    "text_lines": [
+      "bad request: the scope and the ref must each normalize to a non-empty slug",
+      ""
+    ]
+  },
+  "case": "put-create-ref-normalizes-away",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "75"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

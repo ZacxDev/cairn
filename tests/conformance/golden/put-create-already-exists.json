@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 216,
+    "kind": "text_lines",
+    "sha256": "e8011b919965a673f8b678b2a78bb55396134c8d80ecac984b8f620a6995d6ff",
+    "text_lines": [
+      "precondition failed: `gadget-one.md` already exists as `gadget-one.md`, and If-None-Match: * means create only if absent. Nothing was written; use PUT with If-Match to replace it, or POST .../bullets to append to it",
+      ""
+    ]
+  },
+  "case": "put-create-already-exists",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "216"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "already-exists"
+    ]
+  ],
+  "reason": "Precondition Failed",
+  "status": 412
+}

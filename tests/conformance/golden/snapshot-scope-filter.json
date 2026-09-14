@@ -1,0 +1,116 @@
+{
+  "body": {
+    "kind": "tar_gz_manifest",
+    "members": [
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.0",
+        "name": ".seed-stamp",
+        "sha256": "fd899d84cd69424a1b1da0ae6597eb14acabf2fb181f4291138f6213a946e08e",
+        "size": 21,
+        "text_lines": [
+          "2000-01-04T00:00:00Z",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.25",
+        "name": "alpha-notes/gadget-one.md",
+        "sha256": "309f24c8216cd5683a0573d716c6600520b1bc61281fd51fb1791632ada1ab49",
+        "size": 310,
+        "text_lines": [
+          "---",
+          "service: gadget-one",
+          "scope: alpha-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "A synthetic entry that exists so the suite has something to recall.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - invoke it for restarts",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the readiness probe reports ready 40s before it is.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.75",
+        "name": "alpha-notes/gadget-two.md",
+        "sha256": "4aaf25e31b6ab6c44f950f8e60c83e3ee55ba35a134ef277f0c9728afbf5b8a5",
+        "size": 312,
+        "text_lines": [
+          "---",
+          "service: gadget-two",
+          "scope: alpha-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "A second synthetic entry, newer than gadget-one by 500ms and no more.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the sidecar drops its lease during a rollout.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      }
+    ],
+    "mtime_order": [
+      "alpha-notes/gadget-two.md",
+      "alpha-notes/gadget-one.md",
+      ".seed-stamp"
+    ]
+  },
+  "case": "snapshot-scope-filter",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Type",
+      "application/gzip"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Entries",
+      "2"
+    ],
+    [
+      "X-Store-Exit",
+      "0"
+    ],
+    [
+      "X-Store-Snapshot",
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+    ],
+    [
+      "X-Store-Status",
+      "snapshot"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

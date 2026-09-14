@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 9,
+    "kind": "text_lines",
+    "sha256": "e2208f01e42b2cab0fef975b55dc70d39579dd3d0c5d0758c499baa5109ef187",
+    "text_lines": [
+      "replaced",
+      ""
+    ]
+  },
+  "case": "put-replace",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "9"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "ETag",
+      "\"ceba77f3e8fbe518\""
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "replaced"
+    ]
+  ],
+  "reason": "OK",
+  "status": 200
+}

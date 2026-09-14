@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 170,
+    "kind": "text_lines",
+    "sha256": "929e33913ad2157461d2fd7496e26be905832a5a5e30d26f5f54244e2c20fdab",
+    "text_lines": [
+      "bad request: If-Match and If-None-Match are contradictory on a PUT - If-Match replaces an entry that exists, If-None-Match: * creates one that does not. Send exactly one",
+      ""
+    ]
+  },
+  "case": "put-both-preconditions",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "170"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

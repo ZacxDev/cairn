@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 60,
+    "kind": "text_lines",
+    "sha256": "6c295948c7d31d6ec67c43b3a36df21a0552ad42ad094e02515b9289546d4d99",
+    "text_lines": [
+      "bad request: `text` is 2001 characters, max 2000 — 1 over",
+      ""
+    ]
+  },
+  "case": "post-bullets-over-long-text",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "60"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

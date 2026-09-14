@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 170,
+    "kind": "text_lines",
+    "sha256": "a277f50e04dc33d10918a64040521b03ad5eff2435c11e390888806870fa6604",
+    "text_lines": [
+      "unprocessable: the index loader would reject these bytes: malformed index entry 'spare-six.md': missing or empty `service:` — an entry with no name cannot be addressed",
+      ""
+    ]
+  },
+  "case": "put-replace-unprocessable",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "170"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "entry-shape"
+    ]
+  ],
+  "reason": "Unprocessable Entity",
+  "status": 422
+}

@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 46,
+    "kind": "text_lines",
+    "sha256": "958b4659f2433f61254c106364eb3be9439787fe9c6217b1af985565d7b501ab",
+    "text_lines": [
+      "bad request: limit must be an int >= 1, got 0",
+      ""
+    ]
+  },
+  "case": "recall-limit-zero",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "46"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}
