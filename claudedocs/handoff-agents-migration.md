@@ -17,9 +17,10 @@ Make the cairn repo's docs accurate and agent-standard: fix stale/false claims i
 stub — the pattern Anthropic's own docs prescribe).
 
 ## State now
-- Branch: `docs/agents-migration` (off `main` @ `1e7aedf`). **COMMITTED, PUSHED, PR OPEN**
-  as `dae15b0` → **PR #14** (https://github.com/ZacxDev/cairn/pull/14), base `main`,
-  `mergeable: MERGEABLE`. Working tree clean of the docs work. NOT merged.
+- Branch: `docs/agents-migration` (off `main` @ `1e7aedf`). **MERGED.** **PR #14**
+  (https://github.com/ZacxDev/cairn/pull/14) squash-merged to `main` as **`3c316ff`**;
+  pushed branch head was `92d2e80`. Merged without an audit — see rank 1 below for the
+  decision and how the merge was verified.
   Re-verified on the committed tree before the commit, not carried over from the session
   that wrote it: suite **1716 passed / 0 failed** (exit 0, counted from the runner's own
   summary line), leakscan **0 findings across 42 files** with the positive control
@@ -35,26 +36,58 @@ stub — the pattern Anthropic's own docs prescribe).
   - `cairn:431` and `tests/testlib/public_ip_scan.py:5` docstrings now cite `AGENTS.md`; the latter had quoted pre-extraction rule text that existed NOWHERE in the repo.
   - `tests/test_subsystem_store_api.py` scan must-reach ledger now requires `AGENTS.md` AND `CLAUDE.md`.
 - Verified: full suite **1716 passed, 0 failed**; leakscan clean with both controls watched (positive + negative), `--self-test` rc 0.
-- Deploy/verify status: N/A (docs only). Not pushed. Clawgate board resolved NOTHING for this session (rc 5, empty array — cannot distinguish "no task" from "wrong id"; no field written, no task created).
-- IN FLIGHT: nothing beyond the uncommitted diff itself.
+- Deploy/verify status: N/A (docs only). Pushed and merged. Clawgate board resolved NOTHING for this session (rc 5, empty array — cannot distinguish "no task" from "wrong id"; no field written, no task created).
+- Base clone re-synced `--ff-only` after the merge, so it is not silently behind `main`.
+- IN FLIGHT: nothing. The docs work is on `main`; the follow-on comment fix is its own PR (rank 2).
 
 ## Next steps (ranked)
-1. ~~Commit and push the docs work~~ — **DONE**, `dae15b0`, claim `agents-migration-1` released.
-2. ~~Open a PR~~ — **DONE**, PR #14, claim `agents-migration-2` released.
-3. Decide PR #14: audit it (`/audit-pr 14`, ROUND 0 first — it is the only round that can
-   conclude "close this, do not audit it", and only while the merge decision is open) and
-   then squash-merge, or merge as-is. Docs-and-comments only, no behaviour change.
-   forcing: nothing blocks it; CI green is the gate.
-4. `lib/cairn_doctor.py`'s exit-code comment (near `EXIT_DOCTOR_PROBLEM`) claims doctor's
-   codes are "disjoint from every other `cairn` code", then enumerates only 0/3/4/5 and
-   6/7/8 — it omits 9, and `EXIT_DOCTOR_PROBLEM = 9` collides with `EXIT_WRITE_EXISTS = 9`.
-   Harmless behaviourally (codes are per-command; no caller can confuse `create` with
-   `doctor`) but the comment overstates its own claim, and "a comment is a claim too".
-   Found while verifying the README's exit-code table; deliberately NOT fixed in the docs
-   pass. Closing condition: the comment enumerates 9 as write-side and states the
-   per-command scoping, landed in a merged PR.
-5. Separate effort (no doc yet — mint one then): conditional/incremental snapshot sync. `GET /api/v1/snapshot` ships a full tar with no ETag/304 (ETags exist only on entry writes), so every sync is O(store) per client — the main scale gap found in this session's north-star evaluation. Verify the claim against current `server/server.py::_snapshot` before designing.
+Every rank the previous version of this doc carried is now closed; they moved to
+**Closed — do not re-derive these** below, with what closed each one. One live item
+remains, so it is rank 1.
+
+1. Separate effort (no doc yet — mint one then): conditional/incremental snapshot sync.
+   `GET /api/v1/snapshot` ships a full tar with no ETag/304 (ETags exist only on entry
+   writes), so every sync is O(store) per client — the main scale gap found in this
+   session's north-star evaluation. Verify the claim against current
+   `server/server.py::_snapshot` before designing.
    forcing: none
+
+## Closed — do not re-derive these
+Recorded with what closed each item, and with what was **not** done, so the next
+`/resume` neither re-opens a settled decision nor credits work that never happened.
+
+- ~~Commit and push the docs work~~ — DONE, `dae15b0`; claim `agents-migration-1` released.
+- ~~Open a PR~~ — DONE, PR #14; claim `agents-migration-2` released.
+- ~~Decide PR #14~~ — **RESOLVED: squash-merged to `main` as `3c316ff`.**
+  🔴 **MERGED WITHOUT AN AUDIT.** The `/audit-pr 14` step the old rank 3 offered was
+  skipped, not run-and-passed. Do not read this as "audited clean".
+  **Verified by CONTENT, not by ancestry:** all 8 changed paths are byte-identical
+  between the pushed head `92d2e80` and `origin/main`, and each was separately proven to
+  EXIST on `origin/main` before being compared — a diff against an absent operand reports
+  SAME, not MISSING. 🔴 Ancestry is not usable here and will mislead: a squash merge makes
+  `git merge-base --is-ancestor 92d2e80 origin/main` **false forever**, because the squash
+  is a new commit with different parents. That false reads as "not merged — redo the work".
+  CI on `92d2e80` was green on all three jobs (`leakscan` 6s, `nix` 29s, `tests` 8m16s;
+  run `34788483377`), and the branch was **0 commits behind `main`**, so that green was a
+  merged-tree green rather than a branch-only one.
+- ~~`lib/cairn_doctor.py`'s exit-code comment~~ — **RESOLVED on branch
+  `fix/doctor-exit-code-comment`** (PR pending at the time of writing; find it with
+  `gh pr list --head fix/doctor-exit-code-comment`). What the comment claimed was that
+  doctor's codes are "disjoint from every other `cairn` code" while enumerating only
+  0/3/4/5 and 6/7/8 — the omission of 9 is how the overstatement survived, since
+  `EXIT_DOCTOR_PROBLEM = 9` and the client's `EXIT_WRITE_EXISTS = 9`. It now states the
+  true claim: the codes are scoped per command, 0 and 9 are shared deliberately, and no
+  call site can receive an ambiguous 9. **No exit code was renumbered** — `EXIT_LEGEND` is
+  printed on every `doctor` run, so the numbers are a contract.
+  🔴 **A second, worse instance was found while fixing it, in the tests**:
+  `test_doctors_codes_collide_with_NO_other_cairn_exit_code` asserted
+  `EXIT_DOCTOR_PROBLEM not in others` against an `others` set that enumerated **eight of
+  the client's nine** codes, omitting `EXIT_WRITE_EXISTS`. It passed because the one
+  colliding number sat outside the set it looked at — a guard whose name claimed the
+  coverage its body could not provide. Replaced by an intersection ledger pinned to
+  `{0, 9}`, which fails when the shared set grows or shrinks. Labelled an **invariant
+  guard**, not regression coverage: nothing ever violated the invariant, the defect was
+  the claim about it.
 
 ## Gotchas / decisions / dead-ends
 - pytest is NOT in the default nix profile: `uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly` (CI pip-installs pytest the same way; 3.12 is the pinned interpreter — do not use bare `python3`).
@@ -69,5 +102,8 @@ cd /home/zach/workspace/cairn
 python3 tests/leakscan.py && python3 tests/leakscan.py --self-test
 uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly   # 1716 expected
 head -1 CLAUDE.md            # -> @AGENTS.md (stub intact)
-git log --oneline -3         # after step 1: the docs commit on docs/agents-migration
+git log --oneline -1 main    # -> 3c316ff … (#14), the squash merge
 ```
+🔴 Do NOT verify #14 with `git merge-base --is-ancestor 92d2e80 main` — it is false after
+every squash merge and always will be. Diff the 8 changed paths instead, proving each
+exists on `main` first.

@@ -554,9 +554,37 @@ def _visibility_check(pod: PodFacts, cache_root: Path, mirror_root: Path | None)
 # --------------------------------------------------------------------------- #
 
 #: 🔴 THE EXIT CODES, OWNED BY THE COMMAND AND DOCUMENTED BY IT. `render` prints
-#: this legend on every run, so a caller never has to find a skill to learn what
-#: a number meant. They are disjoint from every other `cairn` code: 0/3/4/5 are
-#: read outcomes, 6/7/8 are write outcomes, 2 is usage.
+#: the legend below on every run, so a caller never has to find a skill to learn
+#: what a number meant.
+#:
+#: 🔴 THEY ARE SCOPED PER COMMAND, NOT GLOBALLY UNIQUE, AND 9 IS SHARED ON
+#: PURPOSE. `doctor` returns 0/9/10. The client returns 0/2/3/4/5 for read
+#: outcomes and 6/7/8/9 for write outcomes, so two numbers are shared: 0, which
+#: means success in both because that is what 0 means, and 9, which is this
+#: command's "a check MEASURED a problem" and `create`'s `EXIT_WRITE_EXISTS`.
+#: Neither is ambiguous where a code is actually read — at ONE call site, which
+#: already knows the verb it invoked. `doctor` never creates an entry and
+#: `create` never runs diagnostics, so no caller can receive a 9 whose meaning is
+#: in doubt. Nor is 9 the first such overlap: `cairn`'s `EXIT_REFRESH_FAILED` and
+#: the reader's `lib/subsystem_read_store.EXIT_UNSTAMPED_READ_STORE` are both 4,
+#: across two tools, for the same reason. Globally unique numbers were never the
+#: design.
+#:
+#: 🔴 WHAT THE PER-COMMAND SCOPING DOES NOT COVER IS THE ONLY THING TO PROTECT
+#: HERE: a code that a `doctor` invocation can return ALONGSIDE these. argparse
+#: exits 2 on a bad flag for every subcommand, so the set a `doctor` caller may
+#: observe is 0/2/9/10 — measured, `cairn doctor --bogus-flag` -> 2 — and 2 is
+#: therefore what must stay clear of this block. The write codes cannot reach
+#: this call site at all.
+#:
+#: 🔴 SO DO NOT RENUMBER THE 9 TO MAKE IT UNIQUE, and do not read the overlap as
+#: licence to add another. Renumbering changes a contract this command PRINTS, to
+#: remove a collision that was never a defect. A NEW overlap is safe only if it
+#: too is unreachable from any one call site, which is a fact about the dispatcher
+#: and not about which numbers happen to look free.
+#: `tests/test_cairn_doctor.py` pins the shared set as a ledger and is the
+#: authority on which codes overlap — it goes red when that set GROWS and when it
+#: SHRINKS.
 EXIT_DOCTOR_OK = 0
 EXIT_DOCTOR_PROBLEM = 9
 EXIT_DOCTOR_UNMEASURED = 10

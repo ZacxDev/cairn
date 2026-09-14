@@ -121,28 +121,77 @@ class TestTheStateVocabulary:
         assert cd.STATES == ("OK", "PROBLEM", "UNMEASURED", "NOT-OBSERVABLE")
 
     def test_the_exit_codes_are_exactly_these_literals(self) -> None:
-        """🔴 DISJOINT FROM EVERY OTHER `cairn` CODE, and that is graded below
-        against the CLI rather than asserted here alone."""
+        """These three are the printed contract — `render` and `--json` both
+        publish them — so they are written out here rather than read off the
+        module. Which of them OVERLAP the client's codes is a separate question,
+        graded against the CLI below."""
         assert cd.EXIT_DOCTOR_OK == 0
         assert cd.EXIT_DOCTOR_PROBLEM == 9
         assert cd.EXIT_DOCTOR_UNMEASURED == 10
 
-    def test_doctors_codes_collide_with_NO_other_cairn_exit_code(self) -> None:
-        """🔴 SEAM GUARD. `cairn`'s 4 already means two different things across
-        two tools (`EXIT_REFRESH_FAILED` vs the reader's
-        `EXIT_UNSTAMPED_READ_STORE`) and `/resume` carries a paragraph about it.
-        A third collision is a defect this file can prevent for free."""
+    def test_the_codes_doctor_SHARES_with_the_client_are_EXACTLY_0_and_9(
+        self,
+    ) -> None:
+        """🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No bug ever made
+        these two sets disagree; the defect was a COMMENT that claimed doctor's
+        codes were "disjoint from every other `cairn` code" while
+        `EXIT_DOCTOR_PROBLEM` and `EXIT_WRITE_EXISTS` are both 9. So this pins a
+        fact nothing has yet violated, and must not be counted as a regression
+        test for anything.
+
+        🔴 AND IT REPLACES A GUARD THAT WAS NARROWER THAN ITS OWN NAME. The
+        version here was called `..._collide_with_NO_other_cairn_exit_code` and
+        asserted `EXIT_DOCTOR_PROBLEM not in others` — against an `others` set
+        that enumerated EIGHT of the client's NINE codes and left
+        `EXIT_WRITE_EXISTS` out. It passed because the one colliding number was
+        outside the set it looked at, and it read as coverage of exactly the
+        claim it could not see. Enumerating a set by hand is the mechanism;
+        the pin on `client` below is what keeps that list honest.
+
+        The relationship is graded as a SET INTERSECTION against a literal, so it
+        fails in BOTH directions a maintainer needs to hear about: red when the
+        shared set GROWS (a new verb reuses one of doctor's numbers) and red when
+        it SHRINKS (someone renumbers the 9 apart and leaves `lib/cairn_doctor.py`
+        documenting an overlap that no longer exists).
+
+        0 is in the ledger and is not a hazard: it means success on both sides.
+        9 is the real overlap, and it is unambiguous because no single call site
+        can produce both meanings — `doctor` never creates an entry and `create`
+        never runs diagnostics. Nor is it the first: `cairn`'s
+        `EXIT_REFRESH_FAILED` and `lib/subsystem_read_store`'s
+        `EXIT_UNSTAMPED_READ_STORE` are both 4 across two tools. The scope of THIS
+        ledger is doctor-vs-client only; the reader defines exactly one code and it
+        is not in doctor's set.
+
+        🔴 THE INTERSECTION IS ALSO WHY THERE IS NO SEPARATE `EXIT_USAGE` CHECK
+        HERE. 2 is the one client code a `doctor` caller CAN receive alongside
+        doctor's own — argparse returns it for a bad flag on every subcommand
+        (measured: `cairn doctor --bogus-flag` -> 2) — so 2 entering this block
+        WOULD be genuinely ambiguous, unlike any write code. But 2 is already in
+        `client`, so a doctor code of 2 puts 2 in the intersection and this one
+        assertion fails. A second assertion for it would be unreachable: nothing
+        can add 2 to doctor's codes without first moving the set below.
+        """
         cli = _load_cairn_cli()
-        others = {
+        client = {
             cli.EXIT_OK, cli.EXIT_USAGE, cli.EXIT_UNREACHABLE_NO_CACHE,
             cli.EXIT_REFRESH_FAILED, cli.EXIT_CORRUPT, cli.EXIT_WRITE_REFUSED,
             cli.EXIT_WRITE_UNREACHABLE, cli.EXIT_WRITE_PRECONDITION,
+            cli.EXIT_WRITE_EXISTS,
         }
-        assert others == {0, 2, 3, 4, 5, 6, 7, 8}, (
-            f"cairn's existing exit codes moved: {sorted(others)}"
+        assert client == {0, 2, 3, 4, 5, 6, 7, 8, 9}, (
+            f"cairn's existing exit codes moved: {sorted(client)}"
         )
-        assert cd.EXIT_DOCTOR_PROBLEM not in others
-        assert cd.EXIT_DOCTOR_UNMEASURED not in others
+        doctor_codes = {
+            cd.EXIT_DOCTOR_OK, cd.EXIT_DOCTOR_PROBLEM, cd.EXIT_DOCTOR_UNMEASURED,
+        }
+        assert doctor_codes & client == {0, 9}, (
+            f"the codes doctor shares with the client are now "
+            f"{sorted(doctor_codes & client)}, not [0, 9]. GROWN means a new "
+            f"overlap nobody documented; SHRUNK means the 9 was renumbered and "
+            f"the comment above EXIT_DOCTOR_OK in lib/cairn_doctor.py, which "
+            f"states that overlap and says not to remove it, is now false."
+        )
 
     def test_a_check_with_an_EMPTY_detail_is_refused(self) -> None:
         """🔴 A bare `UNMEASURED` with no reason is the reassuring zero wearing
