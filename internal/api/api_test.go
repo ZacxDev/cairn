@@ -282,6 +282,22 @@ func buildFixtureStore(t *testing.T) string {
 	}
 	put("alpha-notes", "gadget-one.md", entry("gadget-one", "alpha-notes"))
 	put("beta-notes", "widget-three.md", entry("widget-three", "beta-notes"))
+	// 🔴 `alpha-notes` IS A GIT REPO IN THIS FIXTURE, AND WITHOUT THAT THE `X-Store-Revision`
+	// ALLOWLIST GATE IS UNREACHABLE. That header is the ONE answer not derived from the
+	// narrowed index — it is read straight off `<scope>/.git/HEAD` — so it is the one place a
+	// refused scope could still be told apart from an absent one. With no `.git` anywhere,
+	// every scope answers `unknown`, the refused-equals-absent assertion passes for the wrong
+	// reason, and a mutant DELETING the gate SURVIVES. Measured exactly that way.
+	//
+	// A bare sha is written rather than a real repository: the reader accepts a detached HEAD
+	// and nothing here spawns git. The value is synthetic hex that spells nothing.
+	if err := os.MkdirAll(filepath.Join(root, "alpha-notes", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "alpha-notes", ".git", "HEAD"),
+		[]byte("a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, ".seed-stamp"),
 		[]byte("2000-01-04T00:00:00Z\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1094,8 +1110,11 @@ func TestTheReportRoutesRenderAndStillRefuseFirst(t *testing.T) {
 	// that is not derived from the narrowed index — it is read off `<scope>/.git/HEAD`. A
 	// report answered without it is a report whose scope cannot be quoted as `scope@sha`,
 	// and its ABSENCE is what a P1a-era port shipped.
-	if got.headers.Get("X-Store-Revision") != "unknown" {
-		t.Fatalf("X-Store-Revision %q, want `unknown` for a scope that is not a git repo",
+	// The fixture makes `alpha-notes` a repo on purpose — see buildFixtureStore — so this
+	// asserts the sha and not the `unknown` fallback. Asserting `unknown` would be the
+	// vacuous version: it passes with the whole function replaced by a constant.
+	if got.headers.Get("X-Store-Revision") != "a11ba11ba11ba11ba11ba11ba11ba11ba11ba11b" {
+		t.Fatalf("X-Store-Revision %q, want the scope's own HEAD",
 			got.headers.Get("X-Store-Revision"))
 	}
 	if !strings.Contains(got.body, "subsystem-recall: status=recalled scope=alpha-notes") {
@@ -1118,6 +1137,18 @@ func TestTheReportRoutesRenderAndStillRefuseFirst(t *testing.T) {
 	if refused.headers.Get("X-Store-Revision") != absent.headers.Get("X-Store-Revision") {
 		t.Fatalf("a refused scope's revision must match an absent one's: %q vs %q",
 			refused.headers.Get("X-Store-Revision"), absent.headers.Get("X-Store-Revision"))
+	}
+	// 🔴 AND THE COMPARISON ABOVE IS ONLY A MEASUREMENT BECAUSE THE VALUE COULD HAVE
+	// DIFFERED. `alpha-notes` really does have a HEAD, and `wide-reader` really does see it,
+	// so the refused answer being `unknown` is a NARROWING and not a store with no repos in
+	// it. Without this line the pair could both be `unknown` for the uninteresting reason.
+	if refused.headers.Get("X-Store-Revision") != "unknown" {
+		t.Fatalf("a refused scope must answer `unknown`, got %q",
+			refused.headers.Get("X-Store-Revision"))
+	}
+	if got.headers.Get("X-Store-Revision") == refused.headers.Get("X-Store-Revision") {
+		t.Fatalf("the allowlist gate changes nothing: an ALLOWED caller and a REFUSED one "+
+			"both answered %q, so this pair cannot see a leak", refused.headers.Get("X-Store-Revision"))
 	}
 	if refused.headers.Get("X-Store-Status") != "scope-absent" {
 		t.Fatalf("a refused scope answers what an absent one answers: %q",

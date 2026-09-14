@@ -108,11 +108,24 @@ func (m *matcher) findLongestMatch(alo, ahi, blo, bhi int) (besti, bestj, bestsi
 		}
 		j2len = newj2len
 	}
-	// The two extension loops. CPython runs FOUR — two that refuse to cross junk and
-	// two that only cross it — but `isjunk` is None here, so `bjunk` is empty, the
-	// `not isbjunk(...)` guard is always true and the `isbjunk(...)` pair can never
-	// advance. Written as the two that can run, with the reason stated, rather than as
-	// four of which half are dead.
+	// 🔴 THE EXTENSION LOOPS, AND ALL FOUR OF CPython's ARE PROVABLY NO-OPS HERE —
+	// MEASURED, AND AN EARLIER VERSION OF THIS COMMENT GOT IT HALF WRONG. That version said
+	// `isjunk` being None leaves "the two that can run", which is two more than can. With an
+	// empty junk set the DP above has already found the LONGEST common contiguous run in the
+	// window, so extending backwards would require `a[besti-1] == b[bestj-1]` — and that
+	// would have given the DP a run of `bestsize+1`, contradicting `bestsize` being the
+	// maximum. Same argument forwards. The mutation that measured it: disabling both loops
+	// SURVIVED a 20-pair differential table against CPython, including repeated-character
+	// runs and the autojunk boundary.
+	//
+	// They are kept rather than deleted because they are the TRANSCRIPTION, and they become
+	// live the moment a caller wants a junk predicate — the shape CPython wrote them for.
+	// Labelled here so a sweep does not re-derive the equivalence and so nobody "simplifies"
+	// them away believing they were live.
+	//
+	// The junk-crossing pair CPython runs after these is omitted rather than written as dead
+	// code: `bjunk` is empty by construction at this call site, so those loops have no
+	// predicate to consult.
 	for besti > alo && bestj > blo && m.a[besti-1] == m.b[bestj-1] {
 		besti, bestj, bestsize = besti-1, bestj-1, bestsize+1
 	}

@@ -57,12 +57,12 @@ type RecalledEntry struct {
 	// identical bytes for an unchanged store, and a printed timestamp would make a diff
 	// of two runs show movement that is not there.
 	//
-	// 🔴 IT IS A `float64` OF SECONDS AND NOT A `time.Time`, BECAUSE THE TIE-BREAK
-	// DEPENDS ON THE PRECISION. CPython's `st_mtime` is `sec + 1e-9*nsec` computed as a
-	// double, so two files whose nanosecond stamps differ can land on ONE float and fall
-	// through to the ref tie-break. Comparing `time.Time` would order them by
-	// nanosecond instead and produce a different index order with no error and no
-	// missing entry — which reads as a stale cache. See pyMtime.
+	// 🔴 IT IS A `float64` OF SECONDS AND NOT A `time.Time`, BECAUSE THE PRECISION IS
+	// WHAT DECIDES WHETHER THE TIE-BREAK RUNS. CPython's `st_mtime` is a double, so two
+	// files whose NANOSECOND stamps differ can land on ONE float and fall through to the
+	// ref tie-break. Comparing `time.Time` would order them by nanosecond instead and
+	// produce a different index order with no error and no missing entry — which reads as
+	// a stale cache. See pyMtime.
 	MTime float64
 
 	// MissingSections is requested COUNTED headings this entry does not carry —
@@ -161,15 +161,31 @@ func ReadEntry(storeRoot string, entry store.Entry) (RecalledEntry, error) {
 }
 
 // pyMtime is CPython's `os.stat_result.st_mtime`: `sec + 1e-9*nsec`, evaluated as a
-// double in that order.
+// double in that order. The expression is transcribed rather than reasoned about, because
+// the index order is decided by comparing these numbers and `TestTheMTimeIsCPythonsST
+// MTIMEBitForBit` compares them against the doubles CPython actually produced.
 //
-// 🔴 THE EXPRESSION IS THE CONTRACT, NOT THE VALUE. `float64(nsec)/1e9` and
-// `1e-9*float64(nsec)` are NOT the same double for every nsec — `1e-9` is not exactly
-// representable, so the two differ in the last bit on some inputs — and the index order
-// is decided by comparing these numbers. Two entries written inside one second are
-// exactly the shape the corpus fixture carries on purpose, so a last-bit difference is
-// reachable: it flips a comparison that then falls to the ref tie-break, and the
-// resulting order reads as a stale cache rather than as an error.
+// ⚠ AND THE OBVIOUS HAZARD IS **NOT REACHABLE HERE — MEASURED, AND AN EARLIER VERSION OF
+// THIS COMMENT CLAIMED OTHERWISE.** That version said `float64(nsec)/1e9` and
+// `1e-9*float64(nsec)` "differ in the last bit on some inputs" and that the difference is
+// reachable, which was a plausible theory stated as a fact. It is half true and the wrong
+// half. Measured over sampled nanosecond values at eight magnitudes of `sec`:
+//
+//	sec = 0        8,535 of 20,008 sampled nsec DIFFER
+//	sec = 1        2,697 of 20,008 DIFFER
+//	sec = 1000     3 of 20,008 DIFFER
+//	sec >= 1e6     0 of 20,008 — and 0 at 946684800, 2^31 and 2^40
+//
+// The reason is that the ULP of the SUM at store magnitudes (~1.2e-7 s near 2^30) dwarfs
+// the ~1e-25 s by which the two spellings of the fraction can differ, so both round to the
+// same double. So a mutant swapping the two is a KNOWN EQUIVALENT MUTANT at any realistic
+// mtime, labelled here so a sweep does not re-derive it — it SURVIVED, and that is correct
+// rather than a gap.
+//
+// 🔴 WHAT IS REACHABLE, AND WHAT THAT TEST ACTUALLY KILLS, is losing the fraction at all:
+// `info.ModTime().Unix()` truncates to the whole second, and a truncated mtime collapses
+// every entry written inside one second onto one value — which is precisely the input shape
+// the corpus fixture carries on purpose. That mutant dies immediately.
 func pyMtime(info os.FileInfo) float64 {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {

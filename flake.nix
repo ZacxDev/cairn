@@ -144,6 +144,17 @@
       # package's own test run skip its most load-bearing guard, in a sandbox,
       # silently. A sandbox that pins a dimension cannot be read as coverage of
       # it — so the dimension is supplied instead.
+      #
+      # 🔴 AND `internal/report/testdata/reader_fixtures.json` IS HERE FOR EXACTLY THE
+      # SAME REASON, WHICH IS WHY THE TWO SIT TOGETHER. That file is the ORACLE'S OWN
+      # rendered bytes for fifty report shapes the HTTP corpus cannot send — every
+      # badge, the pagination branches, the search rungs, the difflib ratios — and
+      # `TestTheRenderedBytesMatchTheORACLE…` is the differential gate over it.
+      # Leaving it out would not skip quietly: the test calls `t.Fatalf`, so the
+      # sandbox build would go RED. That is the good direction, and it is still worth
+      # naming, because the failure would read as "the flake is broken" rather than
+      # "the fixture is not in the filter". A `.json` suffix test was declined for the
+      # reason the `.go` one below gives: it would say something wider than it means.
       onlyGo = pkgs: pkgs.lib.cleanSourceWith {
         src = ./.;
         name = "cairn-go-source";
@@ -157,6 +168,7 @@
           ))
           || (rel == "go.mod")
           || (rel == "tests/conformance/requests.json")
+          || (rel == "internal/report/testdata/reader_fixtures.json")
           # A `.go` file only under the two directories this module is made of. A
           # bare suffix test would also carry a stray `.go` anywhere in the tree,
           # which is an allowlist that says something wider than it means.

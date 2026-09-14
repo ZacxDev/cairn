@@ -342,6 +342,12 @@ func readAll(storeRoot string, entries []store.Entry) ([]RecalledEntry, error) {
 // exactly such a pair, differing only in the fraction, because getting this wrong
 // produces a different order with no error and no missing entry — which reads as a stale
 // cache.
+// ⚠ `SliceStable` IS BELT-AND-BRACES AND NOT A GUARD — LABELLED SO A SWEEP DOES NOT
+// RE-DERIVE IT. The comparator is a TOTAL order (refs are unique within a scope, so no two
+// entries compare equal), which makes stability unobservable: a mutant swapping it for
+// `sort.Slice` SURVIVED the whole battery, correctly. It stays because "equal elements keep
+// their order" is the property a reader assumes of an ordering function, and the day a
+// future field makes the comparator partial is the day it starts mattering.
 func ListingOrder(entries []RecalledEntry) []RecalledEntry {
 	out := make([]RecalledEntry, len(entries))
 	copy(out, entries)
