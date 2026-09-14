@@ -1156,6 +1156,67 @@ func TestTheReportRoutesRenderAndStillRefuseFirst(t *testing.T) {
 	}
 }
 
+func TestTheRENDERERSWarningReachesTheLog(t *testing.T) {
+	// 🔴 A FIELD ON A STRUCT IS NOT A GUARD — ONLY A BRANCH ON IT IS. `Rendered.Warning`
+	// carries the reader's own one-sentence summary of a `*-unreachable` report, and on the
+	// oracle the reader WRITES it to stderr itself, which is how the pod log gets it. Porting
+	// it as a returned value is the one deliberate difference in that path, so a handler that
+	// dropped it would lose the signal with every other byte still identical: the body, the
+	// status and `X-Store-Exit: 3` are all unchanged.
+	//
+	// ⚠ THE CONFORMANCE CORPUS CANNOT SEE THIS. It speaks HTTP, and this is a log line.
+	srv, err := newTestServer(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warnings []string
+	srv.Audit = func(string) {}
+	srv.Warn = func(line string) { warnings = append(warnings, line) }
+	// A scope holding entry files NONE of which can be indexed: the one state that produces
+	// a warning at all.
+	rubble := filepath.Join(srv.StoreRoot, "rubble-heap")
+	if err := os.MkdirAll(rubble, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rubble, "broken.md"),
+		[]byte("no front matter here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetTokens(append(srv.Tokens(), authz.TokenRecord{
+		Token: strings.Repeat("r", len(wideToken)), Identity: "rubble-reader",
+		Scopes: []string{"rubble-heap"},
+	}))
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	h := &harness{srv: srv, root: srv.StoreRoot, tsrv: ts}
+
+	got := h.do(t, "GET", "/api/v1/recall/rubble-heap", strings.Repeat("r", len(wideToken)), nil, "")
+	if got.status != 200 || got.headers.Get("X-Store-Status") != "scope-unreadable" {
+		t.Fatalf("got %d %q %q", got.status, got.headers.Get("X-Store-Status"), got.body)
+	}
+	// 🔴 200 WITH EXIT 3, WHICH IS THE WHOLE FOUR-STATE POINT: the store WAS read, and what
+	// it says is "none of this could be indexed".
+	if got.headers.Get("X-Store-Exit") != "3" {
+		t.Fatalf("X-Store-Exit %q", got.headers.Get("X-Store-Exit"))
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("got %d warning lines, want exactly 1: %v", len(warnings), warnings)
+	}
+	if !strings.HasPrefix(warnings[0], "subsystem-recall: scope-unreadable: all 1 entry file under `rubble-heap/` are MALFORMED") {
+		t.Fatalf("the sentence must be the reader's own: %q", warnings[0])
+	}
+
+	// The NEGATIVE control on the same sink: an ordinary readable scope produces NO warning,
+	// so this is not a handler that logs on every report.
+	warnings = nil
+	if ok := h.do(t, "GET", "/api/v1/recall/alpha-notes", wideToken, nil, ""); ok.status != 200 {
+		t.Fatalf("got %d", ok.status)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a readable scope must warn about nothing: %v", warnings)
+	}
+}
+
 func TestAuditFieldCannotForgeARecordBoundary(t *testing.T) {
 	// 🔴 THE AUDIT LINE IS A LOG-INJECTION SINK REACHED BEFORE AUTH. The request path is
 	// percent-decoded, so `%0a` becomes a REAL NEWLINE — and a caller who can forge a

@@ -79,14 +79,26 @@ func ScopeRevision(storeRoot, scope string, visible ScopeSet) (string, error) {
 		}
 		return RevisionUnknown, nil
 	}
-	packed, err := readGitText(filepath.Join(gitDir, "packed-refs"))
+	// ⚠ `packed-refs` IS THE ONE FILE THE ORACLE READS **UNSTRIPPED** (`read_text` with no
+	// `.strip()`), and it is read raw here for a reason that is about the TEST rather than
+	// about the answer: reading it stripped removed the trailing whitespace from the LAST
+	// line, which made the per-field strip below unreachable from any fixture whose matching
+	// row came last — measured, the mutant deleting that strip SURVIVED.
+	//
+	// ⚠ LABELLED EQUIVALENT, SO A SWEEP DOES NOT RE-DERIVE IT: reverting this to a stripped
+	// read changes no ANSWER, and a mutant doing so survives correctly. A whole-file strip
+	// can only touch the first and last lines, `split(None, 1)` already skips leading
+	// whitespace, and the per-field strip already handles a trailing run — so the two spellings
+	// agree on every input. What the raw read buys is that the guard below is REACHABLE, which
+	// a stripped read quietly took away.
+	packed, err := readGitBytes(filepath.Join(gitDir, "packed-refs"))
 	if err != nil {
 		return RevisionUnknown, err
 	}
 	if packed == nil {
 		return RevisionUnknown, nil
 	}
-	for _, line := range pytext.SplitLines(*packed) {
+	for _, line := range pytext.SplitLines(string(packed)) {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -130,18 +142,34 @@ func splitWhitespaceOnce(line string) (first, rest string, twoFields bool) {
 	return first, string(runes[i:]), true
 }
 
-// readGitText reads one `.git` file the way the oracle does: `(nil, nil)` for any
-// OSError — which is what makes an absent repo an ordinary `unknown` — a STRIPPED
-// string otherwise, and an error only when the bytes are not valid UTF-8.
-//
-// ⚠ THE STRIP IS `str.strip()`, WHICH IS 29 CODE POINTS AND NOT `TrimSpace`'s SET.
-func readGitText(path string) (*string, error) {
+// readGitBytes reads one `.git` file the way the oracle does: `(nil, nil)` for any OSError
+// — which is what makes an absent repo an ordinary `unknown` — the raw bytes otherwise, and
+// an error only when they are not valid UTF-8.
+func readGitBytes(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil
 	}
 	if problem := pytext.DecodeStrictProblem(data); problem != "" {
 		return nil, &RevisionUnreadableError{message: problem}
+	}
+	if data == nil {
+		// An EMPTY file is not an ABSENT one, and `os.ReadFile` returns an empty non-nil
+		// slice for it — except that a zero-length read may yield nil, so the distinction is
+		// forced here rather than relied on. `nil` means "there was no file".
+		data = []byte{}
+	}
+	return data, nil
+}
+
+// readGitText is readGitBytes plus the oracle's `.strip()` — which `HEAD` and a loose ref
+// file get and `packed-refs` does not.
+//
+// ⚠ THE STRIP IS `str.strip()`, WHICH IS 29 CODE POINTS AND NOT `TrimSpace`'s SET.
+func readGitText(path string) (*string, error) {
+	data, err := readGitBytes(path)
+	if err != nil || data == nil {
+		return nil, err
 	}
 	value := pytext.StripWhitespace(string(data))
 	return &value, nil
