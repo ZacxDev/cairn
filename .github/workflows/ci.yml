@@ -60,17 +60,17 @@ jobs:
           python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
-          # 1818 collected, measured on the P1b branch: 1806 at `3058af3` plus the
+          # 1819 collected, measured on the P1b branch: 1806 at `3058af3` plus the
           # eight guards the tightened relations add (three statuses x two relation
           # kinds, plus the one-real-answer positive control and the mixed pair) and
-          # the four in `test_reader_fixtures.py`. The previous constant was 1755
+          # the five in `test_reader_fixtures.py`. The previous constant was 1755
           # against 1805 measured on the P1a branch.
           #
           # Raise as the suite grows — `m - min(50, max(1, m/20))` for the m you
           # measured; never lower without saying why. ⚠ THE GO TESTS ARE NOT IN
           # THIS NUMBER: they are a different runner in a different job, and
           # folding them in would make one floor answer two questions.
-          FLOOR = 1768
+          FLOOR = 1769
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
