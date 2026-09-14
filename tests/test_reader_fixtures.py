@@ -60,6 +60,38 @@ def test_the_committed_fixture_is_what_the_generator_produces(regenerated, commi
     )
 
 
+def test_the_bytes_do_not_depend_on_the_STORE_PATHS_LENGTH(tmp_path):
+    """🔴 THE DIMENSION THAT FOUND A REAL DEFECT IN THE HTTP CORPUS, measured here too.
+
+    There, a longer host label moved 21 goldens, because `Content-Length` counted the
+    un-normalized body — and a same-directory determinism check was structurally blind to
+    it. This fixture has no length-derived field, so the claim should hold; "should" is
+    what this replaces. The store path is the one input whose LENGTH varies between runs,
+    so the fixture is regenerated under a deliberately much longer directory and compared
+    byte for byte against what is committed.
+
+    ⚠ The HOST is pinned by construction rather than measured at a second point: both
+    sides are handed the same literal, which is the whole reason every other line can be
+    compared. That is a narrower claim than the corpus's and it is stated rather than
+    implied.
+    """
+    longer = tmp_path / ("d" * 120) / ("e" * 120)
+    longer.mkdir(parents=True)
+    fixture = reader_fixtures.generate(longer / "store")
+    assert reader_fixtures.dumps(fixture) == reader_fixtures.FIXTURE.read_text("utf-8"), (
+        "the fixture moved under a longer store path, so some field is length-derived "
+        "and the Go test's comparison would fail on any machine whose TMPDIR differs"
+    )
+    # The POSITIVE CONTROL on this test's own premise: the path really was long, and it
+    # really did reach the renderer — so a pass is not "the path never mattered because it
+    # was never used".
+    assert len(str(longer)) > 200
+    assert any(
+        reader_fixtures.STORE_PLACEHOLDER in "\n".join(case["expect"]["text_lines"])
+        for case in fixture["cases"]
+    )
+
+
 def test_generating_does_not_leave_the_HOST_SEAM_REBOUND(regenerated):
     """🔴 THE GENERATOR PATCHES A LIBRARY GLOBAL, AND IT MUST PUT IT BACK.
 

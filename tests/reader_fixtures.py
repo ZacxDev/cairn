@@ -36,6 +36,13 @@ THE HOST IS PINNED BY PATCHING THE WRITER'S SEAM, which is the one place "whose 
 this" is answered. The Go side is handed the same literal. That is deliberate rather than
 convenient: the host line is the ONE line of this output that is supposed to be
 machine-dependent, so pinning it is what lets every OTHER line be compared byte for byte.
+
+DETERMINISM IS MEASURED ON THE ONE DIMENSION THAT MOVES, which is the store path's LENGTH.
+The HTTP corpus found a real defect there — a longer host label moved 21 goldens, because
+`Content-Length` counted the un-normalized body, and a same-directory check was
+structurally blind to it. This fixture has no length-derived field, so the bytes should not
+move; `test_the_bytes_do_not_depend_on_the_STORE_PATHS_LENGTH` is what replaces "should",
+regenerating under a 240-character directory and comparing against what is committed.
 """
 from __future__ import annotations
 
