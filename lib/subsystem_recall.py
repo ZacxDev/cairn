@@ -2,7 +2,8 @@
 """Surface what the `/analyze-service` index already records about a scope.
 
 THE READ HALF. The store had two writers — `/analyze-service` (infra recon) and
-`/handoff` (`lib/a writer`) — and no general reader. `/resume`
+`/handoff` (the writer half, which this package does not ship) — and no general
+reader. `/resume`
 never opened it: a fresh session read the handoff doc, reconciled live state via
 `resume-state.sh`, and the store's stated purpose — "the terse pointer sheet that
 outlives this handoff doc" — outlived the doc with nobody looking at it.
@@ -800,8 +801,9 @@ def render_malformed(
         out.append(
             "  (A STORE DEFECT, not an absence of content. Front matter is parsed LINE BY "
             "LINE, so the usual cause is a value wrapped across two physical lines — an "
-            "`aliases: [...]` list in particular must be on ONE line. Check a file with "
-            "`a writer --validate <path>`, or a whole scope with `--validate`.)"
+            "`aliases: [...]` list in particular must be on ONE line. Check a scope with "
+            "`cairn validate --scope <scope>`. A single-FILE check belongs to the writer "
+            "half, which this package does not ship.)"
         )
     if elsewhere:
         by_scope: dict[str, int] = {}
@@ -3234,7 +3236,8 @@ def _exit_for(status: str, label: str, malformed: Sequence[MalformedEntry]) -> i
         f"subsystem-recall: {status}: all {n} entry file{'' if n == 1 else 's'} under "
         f"`{label}` are MALFORMED — nothing could be read, so recall was unavailable. "
         f"This is NOT an empty scope and NOT 'nothing recorded yet'. Per-entry reasons "
-        f"are on stdout; check a file with `a writer --validate <path>`.",
+        f"are on stdout; check a scope with `cairn validate --scope <scope>`. A "
+        f"single-FILE check belongs to the writer half, which this package does not ship.",
         file=sys.stderr,
     )
     return 3
