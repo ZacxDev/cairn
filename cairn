@@ -861,7 +861,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     """Validate the CACHE with the writer's own parser.
 
     🔴 THIS COMMAND NEVER WORKED. It shelled `subsystem_recall.main` with
-    `--validate`, which is a **the writer half** flag — the reader has no such
+    `--validate`, which is a WRITER-half flag — the reader has no such
     option, so every invocation exited 2 with `unrecognized arguments:
     --validate`. Worse, the test written to close the "no validate coverage"
     gap asserted only that the cache directory was unchanged, so it passed
