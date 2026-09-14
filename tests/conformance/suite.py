@@ -320,6 +320,18 @@ def check_scope_pairs(
                 f"SKIP relation refused-equals-absent {pair.name} (oracle-specific)"
             )
             continue
+        outcome.assertions += 1
+        if not _any_real_answer(records, pair.refused, pair.absent):
+            outcome.fail(pair.refused, _NO_REAL_ANSWER.format(
+                relation="refused-equals-absent",
+                members=f"{pair.refused}, {pair.absent}",
+                statuses=_statuses(records, pair.refused, pair.absent),
+            ))
+            outcome.line(
+                f"FAIL relation refused-equals-absent {pair.name} "
+                f"(every member answered 5xx, so the comparison is vacuous)"
+            )
+            continue
         left = _relational_form(
             records[pair.refused],
             substitute=pair.refused_scope,
@@ -350,6 +362,7 @@ def check_scope_pairs(
 
 def check_head_pairs(
     corpus: cases_mod.Corpus,
+    records: dict[str, dict[str, Any]],
     outcome: Outcome,
     skipped: "set[str] | None" = None,
     failed: "set[str] | None" = None,
@@ -369,6 +382,18 @@ def check_head_pairs(
     for pair in corpus.head_pairs:
         if pair.head in skipped or pair.get in skipped:
             outcome.line(f"SKIP relation head-matches-get {pair.name} (oracle-specific)")
+            continue
+        outcome.assertions += 1
+        if not _any_real_answer(records, pair.head, pair.get):
+            outcome.fail(pair.head, _NO_REAL_ANSWER.format(
+                relation="head-matches-get",
+                members=f"{pair.head}, {pair.get}",
+                statuses=_statuses(records, pair.head, pair.get),
+            ))
+            outcome.line(
+                f"FAIL relation head-matches-get {pair.name} "
+                f"(every member answered 5xx, so the comparison is vacuous)"
+            )
             continue
         head = outcome.raw_lengths.get(pair.head)
         get = outcome.raw_lengths.get(pair.get)
@@ -408,6 +433,40 @@ def _both_wrong(left: str, right: str, failed: "set[str] | None") -> str:
     if failed and left in failed and right in failed:
         return _BOTH_WRONG
     return ""
+
+
+#: 🔴 THE CAVEAT ABOVE WAS NOT ENOUGH, AND THIS IS THE DETERMINISTIC HALF OF THE SAME
+#: FINDING. `_BOTH_WRONG` annotates a PASS; it does not withhold one, so the two report
+#: relations still reported a property over four members that all answered
+#: `501 not-implemented` — and a prose caveat on a green line is a comment competing with
+#: a verdict. `claude/RULES.md` is explicit that the deterministic fix beats the prose one,
+#: so a relation now REFUSES to vouch for a set in which no member gave a real answer.
+#:
+#: 5xx AND NOT "failed its own golden", deliberately, and the difference is what makes this
+#: a different guard rather than a louder copy of `_BOTH_WRONG`: two members can fail their
+#: goldens while still being real 200 answers whose SAMENESS is a genuine measurement, and
+#: that case keeps its PASS plus the caveat. What cannot be a measurement is a pair of
+#: server errors, because every 5xx this server emits is uniform BY DESIGN — a
+#: not-implemented, a store-unreachable and an internal error each say nothing about a
+#: scope, which is exactly why they compare equal for free.
+_NO_REAL_ANSWER = (
+    "the {relation} relation has no member that gave a real answer: {members} answered "
+    "{statuses}. A 5xx is uniform BY DESIGN on this server — it names no scope — so two "
+    "of them compare equal for free and the relation would vouch for a property nothing "
+    "measured. At least one member must be non-5xx for this comparison to mean anything."
+)
+
+#: The floor. 5xx is "the server did not answer the question"; every code below it is an
+#: answer, including the 4xx refusals whose uniformity is itself part of the contract.
+_SERVER_ERROR_FLOOR = 500
+
+
+def _any_real_answer(records: dict[str, dict[str, Any]], *ids: str) -> bool:
+    return any(records[i]["status"] < _SERVER_ERROR_FLOOR for i in ids)
+
+
+def _statuses(records: dict[str, dict[str, Any]], *ids: str) -> str:
+    return ", ".join(str(records[i]["status"]) for i in ids)
 
 
 def _diff(left: list[str], right: list[str], left_name: str, right_name: str) -> str:
@@ -502,7 +561,7 @@ def generate(
                 texts[case.id] = text
             check_uniform_401(corpus, records, outcome)
             check_scope_pairs(corpus, records, outcome)
-            check_head_pairs(corpus, outcome)
+            check_head_pairs(corpus, records, outcome)
             if outcome.failures:
                 raise SuiteError(
                     "refusing to record goldens: the ORACLE itself violates a "
@@ -635,7 +694,7 @@ def run(
         outcome.line(("PASS " if ok else "FAIL ") + case.id)
     check_uniform_401(corpus, records, outcome, skipped)
     check_scope_pairs(corpus, records, outcome, skipped, failed)
-    check_head_pairs(corpus, outcome, skipped, failed)
+    check_head_pairs(corpus, records, outcome, skipped, failed)
 
     # 🔴 THE CANARY, AND IT IS NOT DECORATION. The rate limiter answers the SAME
     # uniform 401 a bad token does, so once a lockout trips every authorized

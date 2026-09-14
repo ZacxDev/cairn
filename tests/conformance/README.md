@@ -209,6 +209,39 @@ regenerated the goldens would have recorded the divergence.
 of them — otherwise the first divergence would be baked in and the suite would
 then defend it.
 
+### 🔴 …AND A RELATION WITH NO NON-5xx MEMBER IS A FAILURE, NOT A PASS
+
+A between-responses claim is satisfied by two answers that are identically WRONG. That
+is not a defect in the claim — "these two are the same" really is what it asserts — but
+it is how one gets BELIEVED: measured at P1a, `refused-equals-absent` and
+`head-matches-get` both reported PASS for the two report routes while **all four members
+answered `501 not-implemented`**, because a not-implemented answer is beautifully
+uniform.
+
+P1a's remedy was a caveat printed on the line. That annotates a PASS; it does not
+withhold one, so a reader still had a green verdict arguing with a prose footnote.
+`refused-equals-absent` and `head-matches-get` now **refuse to vouch** for a member set
+in which nothing answered below 500:
+
+- **one** real answer is enough — the relation's job is comparing them, not grading them;
+- the floor is **500 and not 400**, because a 4xx refusal IS an answer and the uniformity
+  of those refusals is part of the contract. Only a 5xx says the server did not answer
+  the question, and every 5xx here is uniform *by design* (it names no scope), which is
+  exactly why two of them compare equal for free;
+- the caveat stays, for the case it really covers: two members can fail their goldens
+  while still being real 200s whose SAMENESS is a genuine measurement.
+
+Watched to work rather than reasoned about, in both tiers:
+
+| control | result |
+|---|---|
+| a Go build whose report routes answer 500, replayed through `run_go.sh` | `FAIL relation refused-equals-absent recall / search` and `FAIL relation head-matches-get recall / search` — while `snapshot`, `append` and `replace` still PASS, so the guard is not blanket-failing |
+| `TestARelationCannotBeSatisfiedByTwoSERVERERRORS` | every pair fails at 500, 501 and 503; 200, 404 and 428 all pass; a MIXED 503/200 pair is still COMPARED and fails on the comparison, not on this guard |
+
+The head-pair control feeds **matching** lengths on purpose: the old claim is satisfied
+and the relation must refuse anyway. Mismatched lengths would go red for the other
+reason and prove nothing about this guard.
+
 ## Determinism is proven, on the dimensions that move
 
 `generate` was run twice against a freshly-built world and the 98 goldens were

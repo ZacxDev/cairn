@@ -116,10 +116,14 @@ missing `path` record, a reordered record set and a moved checksum all normalise
 the comparison happens. Byte-diff the two archives when you change that writer; the tree
 comparison structurally cannot see it.
 
-**The corpus is the specification, and at P1a it is deliberately PARTIAL.** Measured on
-this tree: 94 PASS, 22 failing cases — every one a `/api/v1/recall/{scope}` or
-`/api/v1/search/{scope}` **rendering** case, which is P1b's job — 4 rows skipped as
-oracle-specific, 0 failing relations.
+**The corpus is the specification, and it is now GREEN for both implementations.**
+Measured on this tree: the Go server answers **116 PASS, 0 failing cases, 0 failing
+relations, 4 rows skipped** as oracle-specific; the oracle answers **0 failures, 0
+skipped**. At P1a the split was 94 PASS and 22 failing cases — every one of them a
+`/api/v1/recall/{scope}` or `/api/v1/search/{scope}` **rendering** case, which is what
+P1b closed. 🔴 **A GREEN CORPUS IS THE START OF THE BYTE-IDENTITY QUESTION, NOT THE END
+OF IT** — see the two paragraphs below, and note that the next step in the sequence is
+running both servers over ONE store and comparing, which the corpus does not do.
 
 ```bash
 go vet ./... && go test ./...            # the port's own guards
@@ -130,9 +134,20 @@ python3 tests/conformance/suite.py run   # …and against the oracle, which must
 🔴 **A REFUSAL THAT IS "THE SAME" ON BOTH SERVERS MAY BE THE SAME FOR THE WRONG REASON.**
 A relation between two responses that both fail their own golden still PASSES — it
 compares them to each other, not to the contract — and at P1a `refused-equals-absent`
-and `head-matches-get` do exactly that for the two report routes, because
-`501 not-implemented` is beautifully uniform. The runner now prints that caveat on the
-line itself; read it rather than the verdict.
+and `head-matches-get` did exactly that for the two report routes, because
+`501 not-implemented` is beautifully uniform. Two things now stand against it, and the
+order matters because the first was **measured insufficient**:
+
+- the runner prints the caveat on the line itself. That annotates a PASS; it does not
+  withhold one, so it is a comment competing with a verdict.
+- 🔴 **the deterministic half, added at P1b: a relation with NO non-5xx member is a
+  FAILURE.** Every 5xx this server emits is uniform *by design* — it names no scope — so
+  two of them compare equal for free. `_any_real_answer` refuses to vouch for that set.
+  The bar is **one** real answer and the floor is **500, not 400**: a 4xx refusal IS an
+  answer, and the uniformity of those refusals is itself part of the contract.
+  Watched to work rather than reasoned about — a build whose report routes answer 500
+  produces `FAIL relation refused-equals-absent recall (every member answered 5xx …)`
+  for all four report members while the `snapshot`/`append`/`replace` pairs still PASS.
 
 🔴 **A GREEN CORPUS IS NOT A GREEN PORT, AND THAT IS MEASURED RATHER THAN CAUTIONARY.**
 Two defects shipped in the first Go commit with all four CI jobs green and the split
@@ -144,6 +159,26 @@ character — which is what `cairn append` sends, because `json.dumps` defaults 
 function, not by the suite; the suite builds its bodies from `requests.json` and no row
 carries either shape. **When the corpus is green, the question left is "what does it not
 send", and DECODING differences are the answer.**
+
+🔴 **THE RENDERER IS A LIBRARY, NOT A HANDLER, BECAUSE P2 IMPORTS IT.** `internal/report`
+holds `Recall`, `Search`, `RecallReport.RenderText`, `SearchReport.RenderText` and
+`ExitFor` — plain values in, plain values out, no `net/http` type in any signature, no
+server config, and every error classifiable with `errors.As`/`errors.Is`
+(`store.StoreMissingError`, `store.EntryUnreadableError`,
+`report.ErrFocusSelectorUnported`). `report.Reader` is the thin `Renderer` the pod hands
+to `internal/api` and the ONLY type in the package that knows a server exists. That shape
+is the whole point of P2: **pod and CLI run one renderer**, which is what makes
+byte-identity a property rather than a discipline — rewriting the server alone would leave
+two renderers agreeing forever by review.
+
+⚠ **THREE PLACES THE PORTED READER DELIBERATELY DIFFERS FROM THE ORACLE, each recorded
+because none is visible to the corpus:**
+
+| where | the difference | why |
+|---|---|---|
+| `report.ErrFocusSelectorUnported` | a non-empty focus path window is REFUSED, not served | the oracle's featured pick has two selectors and only the most-recent fallback is ported. A window that silently fell back would print a basis claiming a resolved pick — a wrong claim, silently. Closing condition: `associate_paths` ported with a red-at-baseline differential test, then the guard is deleted with it |
+| `store.ScopeRevision` on a `.git/HEAD` that is not valid UTF-8 | ONE `400` audit line here, **two** (`200` then `400`) on the oracle | there the strict decode raises while the response's arguments are being evaluated, after the 200 line is already written. Reproducing a mid-response raise to duplicate a log line is a worse trade than naming it |
+| `store.ScopeRevision` resolving a `ref:` | `filepath.Join` CLEANS, so a `ref:` naming `../…` cannot climb out of the git dir; the oracle's `git / ref` can | a NARROWING, in the safe direction. A HEAD pointing outside its own repo is not a revision worth reporting |
 
 🔴 **THE GO SIDE CARRIES ITS OWN ROUTE LEDGER, BECAUSE THE SUITE CANNOT BUILD ONE FOR
 IT.** `cases.declared_routes` reads the oracle's dispatch tables by AST and has no

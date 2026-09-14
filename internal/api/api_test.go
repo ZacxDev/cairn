@@ -1075,31 +1075,53 @@ func TestHEADCarriesEveryHeaderAndNoBody(t *testing.T) {
 	}
 }
 
-func TestTheReportRoutesAreRoutedAndAuthorisedButNotRendered(t *testing.T) {
+func TestTheReportRoutesRenderAndStillRefuseFirst(t *testing.T) {
 	h := newHarness(t)
-	// The P1a state, pinned so it cannot be mistaken for a working renderer: the two
-	// report routes authenticate, authorise and validate their parameters, then answer
-	// 501 rather than a body.
+	// ⚠ THIS TEST USED TO PIN THE P1a STATE — a 501 with `X-Store-Status:
+	// not-implemented` — so a missing renderer could not be mistaken for a working one.
+	// P1b implemented it, so the assertion moved with the behaviour rather than being
+	// deleted: what still has to hold is that the LADDER in front of the renderer is
+	// unchanged, which is the half a working renderer could quietly swallow.
 	got := h.do(t, "GET", "/api/v1/recall/alpha-notes", wideToken, nil, "")
-	if got.status != 501 {
+	if got.status != 200 {
 		t.Fatalf("got %d %q", got.status, got.body)
 	}
-	if got.headers.Get("X-Store-Status") != "not-implemented" {
-		t.Fatalf("X-Store-Status %q", got.headers.Get("X-Store-Status"))
+	if got.headers.Get("X-Store-Status") != "recalled" || got.headers.Get("X-Store-Exit") != "0" {
+		t.Fatalf("X-Store-Status %q X-Store-Exit %q",
+			got.headers.Get("X-Store-Status"), got.headers.Get("X-Store-Exit"))
 	}
-	// 🔴 501, NOT 500, AND THE TWO MEAN OPPOSITE THINGS TO AN OPERATOR RUNNING BOTH
-	// SERVERS SIDE BY SIDE. A 500 says "this server broke"; a 501 says "this server does
-	// not implement this yet, ask the other one".
-	if !strings.Contains(got.body, "not implemented") {
+	// 🔴 `X-Store-Revision` IS THE HEADER P1b ADDED, and it is the ONE header on this route
+	// that is not derived from the narrowed index — it is read off `<scope>/.git/HEAD`. A
+	// report answered without it is a report whose scope cannot be quoted as `scope@sha`,
+	// and its ABSENCE is what a P1a-era port shipped.
+	if got.headers.Get("X-Store-Revision") != "unknown" {
+		t.Fatalf("X-Store-Revision %q, want `unknown` for a scope that is not a git repo",
+			got.headers.Get("X-Store-Revision"))
+	}
+	if !strings.Contains(got.body, "subsystem-recall: status=recalled scope=alpha-notes") {
 		t.Fatalf("body %q", got.body)
 	}
-	// …and the REFUSALS on those routes are the contract, not the 501: an unauthorised
-	// caller must never learn that the route is unimplemented.
+	// …and the REFUSALS on those routes come FIRST: an unauthorised caller must never reach
+	// the renderer, and a bad parameter must not be silently defaulted by it.
 	if unauth := h.do(t, "GET", "/api/v1/recall/alpha-notes", "", nil, ""); unauth.status != 401 {
 		t.Fatalf("authentication precedes the renderer: got %d", unauth.status)
 	}
 	if bad := h.do(t, "GET", "/api/v1/recall/alpha-notes?limit=0", wideToken, nil, ""); bad.status != 400 {
 		t.Fatalf("parameter validation precedes the renderer: got %d %q", bad.status, bad.body)
+	}
+	// 🔴 AND THE REFUSED SCOPE IS STILL INDISTINGUISHABLE FROM AN ABSENT ONE ON THE HEADER
+	// THE RENDERER DOES NOT CONTROL. `narrow-reader` may not see `alpha-notes`; a scope that
+	// never existed answers the same. The single licence to differ is the scope NAME, which
+	// a report echoes.
+	refused := h.do(t, "GET", "/api/v1/recall/alpha-notes", narrowToken, nil, "")
+	absent := h.do(t, "GET", "/api/v1/recall/ghost-void", narrowToken, nil, "")
+	if refused.headers.Get("X-Store-Revision") != absent.headers.Get("X-Store-Revision") {
+		t.Fatalf("a refused scope's revision must match an absent one's: %q vs %q",
+			refused.headers.Get("X-Store-Revision"), absent.headers.Get("X-Store-Revision"))
+	}
+	if refused.headers.Get("X-Store-Status") != "scope-absent" {
+		t.Fatalf("a refused scope answers what an absent one answers: %q",
+			refused.headers.Get("X-Store-Status"))
 	}
 }
 

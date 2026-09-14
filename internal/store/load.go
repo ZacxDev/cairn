@@ -270,7 +270,7 @@ func LoadIndex(root string, onMalformed OnMalformed, visible ScopeSet) (*Index, 
 			if readFileErr != nil {
 				return nil, readFileErr
 			}
-			mappings = append(mappings, EntryMapping(decodeReplace(data), entryName, name))
+			mappings = append(mappings, EntryMapping(DecodeReplace(data), entryName, name))
 		}
 	}
 
@@ -311,6 +311,22 @@ func mdNamesIn(dir string) ([]string, error) {
 	}
 	slices.Sort(out)
 	return out, nil
+}
+
+// EntryUnreadable is the sentence the READER raises when ONE entry file it was told
+// about cannot be opened. It lives here beside LoadStore's store-wide twin so the two
+// "the store was not fully read" sentences cannot drift apart, and so a renderer does not
+// have to reach for the OS-error class name itself.
+//
+// ⚠ `nothing was written` IS PART OF THE ORACLE'S SENTENCE and is kept verbatim even
+// though the reader has no write path. It is a claim about the RUN, which is what a
+// reader of the message needs to know; rewording it would be a divergence with nothing
+// behind it.
+func EntryUnreadable(path string, cause error) *EntryUnreadableError {
+	return &EntryUnreadableError{message: fmt.Sprintf(
+		"index entry unreadable: %s (%s: %s) — the store was not fully read, so this "+
+			"report is INCOMPLETE; nothing was written",
+		path, osErrorTypeName(cause), cause)}
 }
 
 // LoadStore resolves the store root and loads its index.
