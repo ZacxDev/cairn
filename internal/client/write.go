@@ -130,7 +130,18 @@ func SendWrite(cfg Config, method, path string, body []byte, timeout int,
 	}
 	defer resp.Body.Close()
 	answer, readErr := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
+	// 🔴 ANY 2xx IS SUCCESS, AND `== 200` WAS A MEASURED DEFECT. `create` answers **201**, and
+	// `urllib`'s `HTTPErrorProcessor` raises only for a code outside 200–299 — so the oracle
+	// prints the created entry and exits 0 while a `!= 200` test here fell through
+	// `classifyWrite`'s unrecognised-code arm and reported `unrecognised HTTP 201 on a write
+	// route — treating the write as NOT LANDED` at exit 6. A SUCCESSFUL create reported as a
+	// refusal, which is the worst direction for this verb: the caller's remedy for a 6 is to
+	// change the request, and the entry is already there.
+	//
+	// Found by the parity harness's `create-ok` row, not by reading the code — the status is in
+	// no conformance golden this client replays, and every write test written against `append`
+	// passes on a 200.
+	if resp.StatusCode/100 != 2 {
 		detail := ""
 		if readErr == nil {
 			detail = oneLine(answer, 400)

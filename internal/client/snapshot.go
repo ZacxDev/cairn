@@ -262,6 +262,24 @@ func InstallSnapshot(body []byte, cache string, headers http.Header) (int, error
 		if err := out.Close(); err != nil {
 			return 0, err
 		}
+		// 🔴 THE MEMBER'S MTIME IS RESTORED, AND DROPPING IT WAS A MEASURED DEFECT OF EXACTLY
+		// THE KIND THIS WHOLE PROJECT EXISTS TO PREVENT. The reader orders its index by entry
+		// mtime, so a cache whose files all carry the extraction time is ordered by TAR ORDER —
+		// and the parity harness's `recall-digest` row caught it as a listing in the opposite
+		// order with a DIFFERENT featured entry: no error, no missing entry, and it reads as a
+		// stale cache. `tarfile.extract` calls `os.utime` from the header; this is that call.
+		//
+		// ⚠ SUB-SECOND PRECISION COMES FROM THE PAX RECORD, WHICH IS WHY IT SURVIVES AT ALL.
+		// The ustar mtime field is whole seconds; the snapshot writer emits PAX, so
+		// `header.ModTime` carries the fraction — and the fraction is what decides the tie-break
+		// for two entries written in the same second. Measured on this world: `widget-cfg`
+		// (.25) and `ledger-svc` (.75) share a whole second and order correctly only with the
+		// fraction preserved.
+		if !header.ModTime.IsZero() {
+			if err := os.Chtimes(target, header.ModTime, header.ModTime); err != nil {
+				return 0, err
+			}
+		}
 		if strings.HasSuffix(name, ".md") {
 			count++
 		}

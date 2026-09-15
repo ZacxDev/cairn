@@ -52,14 +52,15 @@ const (
 // binds the path before a test (or a wrapper) can repoint it, and the Python module's own
 // docstring names that spelling as the one that defeats a repoint.
 //
-// 🔴 `CAIRN_CACHE_ROOT` IS READ FIRST, AND IT IS NOT A NEW CAPABILITY — it is what makes a
-// two-client parity harness possible at all. The Python client resolves the same override
-// through `--cache`, which every verb accepts; the env var is the spelling that survives
-// being passed to a subprocess whose argv the harness does not want to vary.
+// 🔴 THERE IS NO ENV OVERRIDE, AND AN EARLIER DRAFT OF THIS PORT ADDED ONE. A `CAIRN_CACHE_ROOT`
+// looked free — the parity harness wanted a cache root it could set without varying argv — and it
+// was a CAPABILITY THE ORACLE DOES NOT HAVE. The gate caught it immediately and in exactly the
+// place it matters: `doctor` resolves the READER's store through this function and not through
+// `--cache`, so the Go client reported a different `reader-resolution` root from the Python one on
+// every doctor row. It is deleted rather than mirrored into the Python client, because `--cache`
+// already exists on every verb and a second mechanism reaching the same value is the shape that
+// leaves the first one silently dead.
 func DefaultCacheRoot() string {
-	if override := strings.TrimSpace(os.Getenv("CAIRN_CACHE_ROOT")); override != "" {
-		return expandUser(override)
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		// The oracle's `Path.home()` RAISES here, and a client that guessed `/` instead
