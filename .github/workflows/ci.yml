@@ -60,7 +60,17 @@ jobs:
           python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
-          # 1839 collected, measured after the AGENTS.md weight work: 1832 on the P2
+          # 1856 collected, measured on the server dual-run branch: 1839 plus the seventeen
+          # in `test_dualrun_harness.py` — the ledger over `tests/dualrun/`, which pins the
+          # gate's route coverage against the oracle's own dispatch tables, its parameter
+          # coverage at two or more values each, its declared licences, its target-id
+          # uniqueness, that the write phase addresses a SUCCESS on both halves of the PUT,
+          # that its three modules are not the identically-named parity ones, and its seven
+          # negative controls. ⚠ The Go-side regression test added
+          # in the same change (`api.TestTheAuditRecordIsTheORACLESSPELLING…`) is NOT in this
+          # number: it is a different runner in a different job.
+          #
+          # 1839 was measured after the AGENTS.md weight work: 1832 on the P2
           # branch plus the six in `test_agent_instructions_weight.py` (the byte ceiling
           # on the instructions every session loads) and the one added to
           # `test_go_client_ledgers.py` (the Go-ONLY ledger-flag set, residual 7's gate).
@@ -85,7 +95,7 @@ jobs:
           # THIS NUMBER: they are a different runner in a different job, and
           # folding them in would make one floor answer two questions. Nor is the
           # PARITY gate: it is its own job with its own floor, for the same reason.
-          FLOOR = 1789
+          FLOOR = 1806
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -314,6 +324,128 @@ jobs:
           # …and the harness's own two in-run controls, read rather than assumed.
           grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
+
+  # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY
+  # GATE ARE: its verdict is readable on its own in the checks list, and a failure in either
+  # language can never mask it. It needs BOTH runtimes — the Python server is the oracle and
+  # the Go one is under test — so it pins both pins.
+  #
+  # 🔴 IT RUNS MODE 2 ONLY, AND THAT IS NOT A SHORTCUT. Mode 1 is pointed at an operator's
+  # real store, and this repository is PUBLIC: mode 1's per-target lines name that
+  # operator's scopes, so its output belongs nowhere near a CI log. Mode 2's generated store
+  # is synthetic by construction. `tests/dualrun/README.md` states what mode 2 can and
+  # cannot stand in for; CI can only ever run the synthetic one.
+  dualrun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 🔴 THE CONTROLS FIRST, ALL THREE, BECAUSE TWO SERVERS FAILING IDENTICALLY COMPARE
+      # EQUAL AND THIS GATE'S WHOLE OUTPUT IS AN EQUALITY. The P2 parity gate's first full
+      # run reported 72 PASS / 0 FAIL while every request was refused; there is no reason
+      # this shape would be safer.
+      - name: prove every ARM can go RED (7 mutants, each on the comparison it names)
+        run: python3 tests/dualrun/harness.py --self-test
+
+      - name: prove the PRE-FLIGHT refuses two servers that both answer nothing
+        run: |
+          set +e
+          python3 tests/dualrun/harness.py --break-both > /tmp/dualrun-broken.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/dualrun-broken.txt
+          # exit 2 is "could not vouch", which is a DIFFERENT verdict from 1 ("a target
+          # differs"). A 1 here would mean the gate had reported a comparison result over a
+          # run in which nothing was comparable.
+          if [ "$rc" -ne 2 ]; then
+            echo "REFUSING: two servers configured to refuse every direct request produced"
+            echo "          rc=$rc, not 2. The pre-flight is the only thing standing between"
+            echo "          this gate and a green computed over two identical failures."
+            exit 1
+          fi
+          grep -q 'REFUSING TO VOUCH' /tmp/dualrun-broken.txt
+
+      # 🔴 THE POSITIVE CONTROL, AND IT IS A DIFFERENT CLAIM FROM THE OTHER TWO. They prove
+      # the gate can go red; this proves the COUNT is counting the store. A harness
+      # enumerating a hardcoded list would print the same reassuring number over an empty one.
+      - name: prove the comparison count MOVES when the store grows
+        run: python3 tests/dualrun/harness.py --positive-control
+
+      - name: the dual-run gate
+        run: |
+          # 🔴 `set -euo pipefail` EXPLICITLY, AND NOT BECAUSE OF A STYLE PREFERENCE. The
+          # runner's default shell already carries `-e`, so a step can look correct while
+          # depending on it — and a block whose verdict depends on the RUNNER's flags is one
+          # whose verdict cannot be reproduced by running the same lines locally. MEASURED:
+          # this block was first written with its `python3 - <<'PY'` check in the MIDDLE,
+          # where the heredoc's `sys.exit(1)` is swallowed by the commands after it, and
+          # under `bash -c` (no `-e`) it printed `REFUSING: 1 difference(s)` and exited 0.
+          # Every assertion is now ordered so the exit status cannot be lost, and the
+          # deciding check is LAST.
+          set -euo pipefail
+          python3 tests/dualrun/harness.py | tee /tmp/dualrun.txt
+          passes=$(grep -c '^PASS ' /tmp/dualrun.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/dualrun.txt || true)
+          echo "passes=$passes failures=$fails"
+          # 363 PASS lines measured on this branch: 361 targets plus the audit-stream and
+          # process-stream arms. ⚠ THE FLOOR IS NOT REDUNDANT WITH "ZERO FAILURES" — a run
+          # that compared nothing has zero failures too, which is the whole reason the
+          # summary reports a PAIR.
+          if [ "$passes" -lt 363 ]; then
+            echo "REFUSING: $passes passes, and 363 were measured — the gate got smaller"
+            exit 1
+          fi
+          if [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $fails differing target(s)"
+            grep '^FAIL ' /tmp/dualrun.txt
+            exit 1
+          fi
+          # Every declared licence to differ must have FIRED. One that matched nothing is
+          # either dead, or a difference that has been closed, or a pattern that stopped
+          # matching and is now hiding a real difference.
+          for name in date-header snapshot-gzip-envelope json-decoder-diagnostic \
+                      audit-timestamp-instant listen-port; do
+            grep -q "^DIFFERENCE $name " /tmp/dualrun.txt || {
+              echo "REFUSING: the declared licence '$name' did not fire"; exit 1; }
+          done
+          # …and the two arms no other gate in this repository reads at all.
+          grep -q '^PASS audit-stream' /tmp/dualrun.txt
+          grep -q '^PASS process-stream' /tmp/dualrun.txt
+          # 🔴 LAST, SO ITS EXIT STATUS IS THE STEP'S. The in-run numbers, read rather than
+          # assumed — the comparison floor is what makes `differences=0` mean something.
+          python3 - <<'PY'
+          import re, sys
+          text = open("/tmp/dualrun.txt").read()
+          m = re.search(r"^SUMMARY targets=(\d+) comparisons=(\d+) differences=(\d+) "
+                        r"entries=(\d+)$", text, re.M)
+          if not m:
+              print("REFUSING: no SUMMARY line — the run did not finish")
+              sys.exit(1)
+          targets, comparisons, differences, entries = (int(g) for g in m.groups())
+          print(f"targets={targets} comparisons={comparisons} "
+                f"differences={differences} entries={entries}")
+          # Measured on this branch: 361 / 1489 / 0 / 119. Floors rather than equalities, so
+          # ADDING a target is not a red gate; a NARROWING is.
+          problems = []
+          if targets < 361:
+              problems.append(f"targets {targets} < 361")
+          if comparisons < 1489:
+              problems.append(f"comparisons {comparisons} < 1489")
+          if entries < 119:
+              problems.append(f"per-entry comparisons {entries} < 119")
+          if differences:
+              problems.append(f"{differences} difference(s)")
+          if problems:
+              print("REFUSING: " + "; ".join(problems))
+              sys.exit(1)
+          PY
 
   # 🔴 A FLAKE NOBODY BUILDS IS DECORATION, AND ITS ROT IS SILENT. `flake.nix`
   # is what a consumer pins — devrc is the first — so a break here does not

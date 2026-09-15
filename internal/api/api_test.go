@@ -1260,6 +1260,56 @@ func TestAuditFieldCannotForgeARecordBoundary(t *testing.T) {
 	}
 }
 
+func TestTheAuditRecordIsTheORACLESSPELLINGFieldForField(t *testing.T) {
+	// 🔴 THE WHOLE NORMALISED LINE, NOT A SET OF `Contains` CHECKS. The audit stream is
+	// read by machine — the documented token-rotation procedure is "read the fingerprints,
+	// then grep this stream for the one that should have stopped appearing" — so a guard on
+	// a few words is walkable by re-spelling every other field. The clock is pinned, so
+	// every byte including `ts=` is a literal.
+	//
+	// 🔴 AND IT EXISTS BECAUSE `ts=` WAS WRONG, MEASURED BY THE DUAL-RUN GATE AND BY
+	// NOTHING ELSE. `time.RFC3339` is `Z07:00`, which collapses UTC to a bare `Z`; the
+	// oracle's `datetime.isoformat(timespec="seconds")` writes `+00:00`. Every byte on the
+	// wire agreed, so the conformance corpus, `go test` and the parity gate were all green
+	// — the corpus names the audit log under what it cannot reach, and it is right.
+	// RED AT `38b358d`: `ts=2000-01-05T00:00:00Z`, one character short of this string.
+	var lines []string
+	srv, err := newTestServer(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Audit = func(line string) { lines = append(lines, line) }
+	srv.Now = func() time.Time { return time.Date(2000, 1, 5, 0, 0, 0, 0, time.UTC) }
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	h := &harness{srv: srv, root: srv.StoreRoot, tsrv: ts}
+
+	if got := h.do(t, "GET", "/api/v1/snapshot", wideToken, nil, "").status; got != 200 {
+		t.Fatalf("the request the record is about answered %d, so this test is vacuous", got)
+	}
+	want := "store-api audit ts=2000-01-05T00:00:00+00:00 ip=203.0.113.7 peer=trusted " +
+		"method=GET path=/api/v1/snapshot token=" + authz.TokenID(wideToken) +
+		" identity=wide-reader auth=ok result=200 status=snapshot"
+	if len(lines) != 1 {
+		t.Fatalf("one line per API request is the contract; got %d: %v", len(lines), lines)
+	}
+	if lines[0] != want {
+		t.Fatalf("the audit record is not the oracle's spelling.\n  got:  %q\n  want: %q",
+			lines[0], want)
+	}
+	// The NEGATIVE control on the layout itself: a bare `Z` is what `time.RFC3339` would
+	// have produced, and it must not be what this server emits.
+	if strings.Contains(lines[0], "T00:00:00Z ") {
+		t.Fatalf("the timestamp collapsed UTC to `Z`, which is `time.RFC3339` and not the "+
+			"oracle's numeric zone: %q", lines[0])
+	}
+	// …and the layout really is RFC 3339, so matching the oracle did not cost validity.
+	stamp := strings.TrimPrefix(strings.Fields(lines[0])[2], "ts=")
+	if _, err := time.Parse(time.RFC3339, stamp); err != nil {
+		t.Fatalf("the timestamp %q does not parse as RFC 3339: %v", stamp, err)
+	}
+}
+
 func TestTheSnapshotIsNarrowedButFreshnessIsStoreWide(t *testing.T) {
 	h := newHarness(t)
 	wide := h.do(t, "GET", "/api/v1/snapshot", wideToken, nil, "")
