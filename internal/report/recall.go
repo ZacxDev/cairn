@@ -2,7 +2,9 @@ package report
 
 import (
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -17,24 +19,22 @@ import (
 // entry, and the truncation notice names both the count and the parameter.
 const ListingPageSize = 100
 
-// ErrFocusSelectorUnported is returned when a caller supplies a focus path window.
+// FocusMinPaths is `subsystem_recall.FOCUS_MIN_PATHS`: ONE quoted path is enough to
+// feature an entry.
 //
-// 🔴 A DELIBERATE REFUSAL, NOT AN OVERSIGHT, AND IT IS THE FAIL-LOUD DIRECTION. The
-// oracle's featured-entry pick has TWO selectors: a path window resolved through the
-// WRITER's own `associate_paths` matcher, and the most-recent fallback. Only the fallback
-// is ported, because the store API never sends a path window — a pod has no repo to read
-// a handoff doc out of — so porting the matcher here would ship an unexercised second
-// implementation of the writer's ranking, which is exactly the "free to drift" shape this
-// codebase refuses.
-//
-// The CLI (P2) does read a window, and it must not silently get the fallback while the
-// report PRINTS a basis claiming a resolved pick. So a non-empty window is refused by
-// name until the matcher is ported with its own tests. Closing condition: `associate_paths`
-// ported into `internal/store` with a red-at-baseline differential test against the
-// oracle, at which point this error and its guard are deleted together.
-var ErrFocusSelectorUnported = errors.New(
-	"the focus-path featured-entry selector is not ported: pass no focus paths, or port " +
-		"`associate_paths` first — a window that silently fell back would print a basis it did not use")
+// ⚠ IT IS A READER'S FLOOR AND NOT THE WRITER'S. The writer answers "what did I
+// touch?" and wants corroboration; this answers "what is being worked on", where a
+// single handoff doc naming one entry is the whole signal there is.
+const FocusMinPaths = 1
+
+// ⚠ `ErrFocusSelectorUnported` IS GONE, AND ITS CLOSING CONDITION IS WHY. P1b refused a
+// non-empty focus window by name on the stated grounds that the store API never sends
+// one — true of the pod, false of the CLI, which builds a window out of the repo's
+// newest handoff doc on the commonest invocation of `recall`. The condition AGENTS.md
+// recorded for deleting the error was "`associate_paths` ported with a red-at-baseline
+// differential test"; `store.AssociatePaths` is that port and
+// `store.TestAssociatePathsMatchesTheOracle` is that test, so the error and its guard
+// are deleted together as promised rather than left as a branch no caller can reach.
 
 // RecallReport is one deterministic answer to "what does the index already record here?".
 type RecallReport struct {
@@ -167,9 +167,6 @@ func (r RecallReport) Caveat() string {
 // absent, `scope-absent` (and its KnownScopes list) is what a refused scope produces,
 // which is byte-for-byte what a scope that never existed produces.
 func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (RecallReport, error) {
-	if len(opts.FocusPaths) > 0 {
-		return RecallReport{}, ErrFocusSelectorUnported
-	}
 	index, err := store.LoadStore(storeRoot, "recalled", visible)
 	if err != nil {
 		return RecallReport{}, err
@@ -307,7 +304,10 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 		return out, nil
 	}
 
-	featuredRef, basis := selectFeatured(read, opts.Scope)
+	featuredRef, basis, featErr := selectFeatured(read, index, opts.Scope, opts.FocusPaths, opts.FocusSource)
+	if featErr != nil {
+		return RecallReport{}, featErr
+	}
 	for _, e := range read {
 		if e.Ref == featuredRef {
 			out.Entries = append(out.Entries, e)
@@ -403,7 +403,73 @@ func ListingPageOf(entries []RecalledEntry, page int) ([]RecalledEntry, int) {
 // the oracle interpolates into the printed basis. Every other sentence in the report uses
 // the normalized scope; this one does not, and the difference is observable the moment a
 // caller asks for `Alpha_Notes`.
-func selectFeatured(entries []RecalledEntry, scope string) (ref, basis string) {
+//
+// 🔴 TWO SELECTORS, IN THIS ORDER, AND THE SECOND SENTENCE DIFFERS BY WHICH ONE FIRED.
+// A resolved pick names the doc and the count; the fallback names WHY it fell back, and
+// "no handoff doc to read a path window from" is a DIFFERENT sentence from "nothing
+// quoted in <doc> resolved to an entry". Collapsing them is how a window that was read
+// and matched nothing renders as a window that was never read.
+//
+// ⚠ THE TIE-BREAK ON A RESOLVED PICK IS THE FALLBACK'S OWN SIGNAL, NOT A THIRD RULE:
+// path count descending, then mtime descending, then ref ascending. Only `Matched` is
+// consulted, and only for entries this report actually read — an entry the visible-scope
+// narrowing removed must not be featurable through the matcher.
+func selectFeatured(
+	entries []RecalledEntry, index *store.Index, scope string,
+	focusPaths []string, focusSource string,
+) (ref, basis string, err error) {
+	if len(entries) == 0 {
+		// Callers guard on `scope-empty` first; this is the oracle's own refusal, kept
+		// so a future caller that forgets cannot get a pick out of nothing.
+		return "", "", errors.New("select_featured called with no entries")
+	}
+
+	if len(focusPaths) > 0 {
+		byRef := make(map[string]RecalledEntry, len(entries))
+		for _, e := range entries {
+			byRef[e.Ref] = e
+		}
+		assoc, assocErr := store.AssociatePaths(focusPaths, index, scope, FocusMinPaths)
+		if assocErr != nil {
+			return "", "", assocErr
+		}
+		var matched []store.SubsystemMatch
+		for _, m := range assoc.Matched {
+			if _, read := byRef[m.Entry.Ref()]; read {
+				matched = append(matched, m)
+			}
+		}
+		if len(matched) > 0 {
+			sort.SliceStable(matched, func(i, j int) bool {
+				a, b := matched[i], matched[j]
+				if a.PathCount() != b.PathCount() {
+					return a.PathCount() > b.PathCount()
+				}
+				am, bm := byRef[a.Entry.Ref()].MTime, byRef[b.Entry.Ref()].MTime
+				if am != bm {
+					return am > bm
+				}
+				return a.Entry.Ref() < b.Entry.Ref()
+			})
+			best := matched[0]
+			shown := strings.Join(best.Paths[:min(3, len(best.Paths))], ", ")
+			if best.PathCount() > 3 {
+				shown += " …"
+			}
+			source := focusSource
+			if source == "" {
+				source = "the supplied path window"
+			}
+			return best.Entry.Ref(), fmt.Sprintf(
+				"resolved via %s — %d of %d quoted path(s) name it: %s",
+				source, best.PathCount(), len(focusPaths), shown), nil
+		}
+	}
+
+	why := "no handoff doc to read a path window from"
+	if len(focusPaths) > 0 {
+		why = "nothing quoted in " + focusSource + " resolved to an entry"
+	}
 	best := entries[0]
 	for _, e := range entries[1:] {
 		if e.MTime > best.MTime || (e.MTime == best.MTime && e.Ref > best.Ref) {
@@ -411,5 +477,5 @@ func selectFeatured(entries []RecalledEntry, scope string) (ref, basis string) {
 		}
 	}
 	return best.Ref, "most-recent fallback — newest entry file in `" + scope +
-		"/` (no handoff doc to read a path window from)"
+		"/` (" + why + ")", nil
 }

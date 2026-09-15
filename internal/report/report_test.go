@@ -2,9 +2,11 @@ package report
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/store"
 )
@@ -152,23 +154,87 @@ func TestAMissingStoreIsANAMEDErrorAndNotAnEmptyReport(t *testing.T) {
 	}
 }
 
-func TestAFocusWindowIsREFUSEDRatherThanSilentlyIgnored(t *testing.T) {
-	// 🔴 THE FAIL-LOUD DIRECTION. The oracle's featured pick has two selectors and only the
-	// fallback is ported. A caller that passed a path window and got the fallback would read
-	// a printed basis claiming a resolved pick — a wrong claim, silently — so the window is
-	// refused by name until the matcher is ported.
-	_, err := Recall(t.TempDir(),
-		RecallOptions{Scope: "alpha", Limit: 12, Page: 1, Mode: DefaultMode,
-			FocusPaths: []string{"claudedocs/handoff-x.md"}},
-		store.Unrestricted())
-	if !errors.Is(err, ErrFocusSelectorUnported) {
-		t.Fatalf("got %#v, want ErrFocusSelectorUnported", err)
+// focusWorld writes a two-entry scope whose entries differ in EVERY field the selector
+// reads, so no assertion below can pass by accident of two values agreeing:
+// `widget-cfg` is the OLDER file and `ledger-svc` the newer one, so the fallback and a
+// path window that names `widget-cfg` disagree about which entry wins.
+func focusWorld(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	scope := filepath.Join(root, "alpha-notes")
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// The positive control: the SAME call with no window reaches the store, which is what
-	// proves the guard is the window and not the arguments around it.
-	if _, err := Recall(t.TempDir(),
-		RecallOptions{Scope: "alpha", Limit: 12, Page: 1, Mode: DefaultMode},
-		store.Unrestricted()); errors.Is(err, ErrFocusSelectorUnported) {
-		t.Fatalf("an empty window must not be refused: %v", err)
+	body := func(service string) string {
+		return "---\nservice: " + service + "\nscope: alpha-notes\n---\n\n" +
+			"## What it is\n\nA synthetic entry.\n\n## Pointers\n\n- `x`\n\n" +
+			"## Nuance / work-history\n\n- 2000-01-01: a synthetic bullet.\n"
+	}
+	for i, name := range []string{"widget-cfg", "ledger-svc"} {
+		path := filepath.Join(scope, name+".md")
+		if err := os.WriteFile(path, []byte(body(name)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Distinct whole seconds, ascending with the loop, so `ledger-svc` is newest and
+		// the mtime tie-break is not the thing under test here.
+		stamp := time.Unix(int64(946684800+60*(i+1)), 0)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestAFocusWindowIsRESOLVEDAndTheBasisSaysWhichSelectorFired(t *testing.T) {
+	// 🔴 RED AT `1e593a8`: `Recall` returned `ErrFocusSelectorUnported` for every case
+	// below that carries a window, so the first two subtests could not run at all. This
+	// is the guard that replaces that refusal, and it pins the thing the refusal was
+	// protecting: the printed basis must say WHICH selector chose the entry, and the two
+	// fallback sentences must stay distinguishable.
+	root := focusWorld(t)
+	recall := func(paths []string, source string) RecallReport {
+		t.Helper()
+		rep, err := Recall(root, RecallOptions{
+			Scope: "alpha-notes", Limit: DefaultEntryLimit, Page: 1, Mode: DefaultMode,
+			FocusPaths: paths, FocusSource: source,
+		}, store.Unrestricted())
+		if err != nil {
+			t.Fatalf("recall: %v", err)
+		}
+		return rep
+	}
+
+	// A window naming the OLDER entry must beat the fallback, which is what proves the
+	// matcher ran rather than the pick being the newest file either way.
+	rep := recall([]string{"claudedocs/handoff-alpha.md", "apps/widget-cfg/values.yaml"},
+		"claudedocs/handoff-alpha.md")
+	if len(rep.Entries) != 1 || rep.Entries[0].Ref != "widget-cfg" {
+		t.Fatalf("a resolved window must feature widget-cfg, got %#v", rep.Entries)
+	}
+	want := "resolved via claudedocs/handoff-alpha.md — 1 of 2 quoted path(s) name it: " +
+		"apps/widget-cfg/values.yaml"
+	if rep.FeaturedBasis != want {
+		t.Fatalf("basis\n got: %s\nwant: %s", rep.FeaturedBasis, want)
+	}
+
+	// A window that was READ and matched NOTHING is a different sentence from a window
+	// that was never read. Collapsing the two is how a miss renders as an absence.
+	rep = recall([]string{"claudedocs/handoff-alpha.md", "apps/unrelated/values.yaml"},
+		"claudedocs/handoff-alpha.md")
+	if rep.Entries[0].Ref != "ledger-svc" {
+		t.Fatalf("a window that matched nothing must fall back to the newest: %#v", rep.Entries)
+	}
+	want = "most-recent fallback — newest entry file in `alpha-notes/` " +
+		"(nothing quoted in claudedocs/handoff-alpha.md resolved to an entry)"
+	if rep.FeaturedBasis != want {
+		t.Fatalf("basis\n got: %s\nwant: %s", rep.FeaturedBasis, want)
+	}
+
+	// The pod's own case, unchanged by any of this: no window at all.
+	rep = recall(nil, "")
+	want = "most-recent fallback — newest entry file in `alpha-notes/` " +
+		"(no handoff doc to read a path window from)"
+	if rep.FeaturedBasis != want {
+		t.Fatalf("basis\n got: %s\nwant: %s", rep.FeaturedBasis, want)
 	}
 }
