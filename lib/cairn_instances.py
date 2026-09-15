@@ -345,8 +345,15 @@ class Routing:
         )
 
     def check(self, scopes: Mapping[str, str] | set[str] | tuple[str, ...] | list[str]
-              ) -> tuple[str, ...]:
+              ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Grade this host's routing table against reality, IN BOTH DIRECTIONS.
+
+        Returns `(problems, notes)`, each a tuple of strings in a stable order.
+        A PROBLEM is a defect this check can actually decide, and it is what
+        takes `routes --check` to exit 11. A NOTE is something worth printing
+        that the available evidence CANNOT decide; it never changes the exit
+        code. Callers must not read a truthy/falsy bare return, which is why
+        both halves are strings rather than a bool.
 
         🔴 BOTH DIRECTIONS, BECAUSE EACH MISSES A DIFFERENT DEFECT. A scope with
         no entry is a scope whose next write REFUSES — annoying but loud. An
@@ -362,9 +369,35 @@ class Routing:
         had two implementations and the second one could have drifted without
         any test noticing; one rule, one place.
 
-        Returns the problems, one string each, in a stable order. An empty tuple
-        is the only clean result — callers must not read a truthy/falsy bare
-        return, which is why this returns strings rather than a bool.
+        🔴 AND DIRECTION TWO IS A **NOTE**, NOT A PROBLEM, BECAUSE THE SCOPE SET
+        IT SUBTRACTS FROM CANNOT SEE AN EMPTY SCOPE. The caller's scope set is a
+        cache's DIRECTORY LISTING, and a snapshot ships entry FILES — no
+        directory member — so a scope holding no entries is absent from the
+        cache whether it has been retired, pre-registered before its first
+        write, or simply pruned back to nothing. Measured, one instance, a table
+        naming `hollow-set`:
+
+            routes --check            rc=11  "…exists on no configured instance"
+            recall --scope hollow-set rc=0   "scope-empty — reached the store"
+
+        Grading that at exit 11 makes the check unusable as the TWO-WAY REGISTRY
+        it exists to be — a table is supposed to name a scope BEFORE the first
+        write lands — and the remedy the sentence implies (delete the line) is
+        actively wrong: with more than one instance the next write to that scope
+        then REFUSES. So the observation is kept and the verdict is dropped.
+
+        ⚠ THIS COSTS REAL TEETH AND SAYING SO IS THE POINT: a genuinely stale
+        entry now reads as a note. **Closing condition** — the discriminator
+        exists, it is just not in the snapshot: the SERVER reads the real store,
+        where `subsystem_resolver.build_index` registers a scope directory it
+        found empty (`extra_scopes`), so `GET /api/v1/recall/<scope>` answers
+        `scope-empty`
+        for a live-but-empty scope and `scope-absent` for one that does not
+        exist. When this check probes the ROUTED instance per table entry and
+        both clients do it identically with a parity row over it, direction two
+        can become a problem again. It is not done here because it turns a
+        two-request command into an O(table) one and that is a separate decision
+        from the one this fixes.
         """
         if self.routes is None:
             raise RoutingConfigError(
@@ -374,6 +407,7 @@ class Routing:
             )
         scope_set = set(scopes)
         problems: list[str] = []
+        notes: list[str] = []
         # 🔴 DIRECTION ONE ASKS THE RESOLVER, IT DOES NOT SUBTRACT KEY SETS. The
         # finding this raises is "a write to it will REFUSE", which is a claim
         # about what `alias_for` does — and on a ONE-instance host it does not
@@ -391,12 +425,19 @@ class Routing:
                 )
         # ⚠ DIRECTION TWO IS NOT A RESOLVER QUESTION, DELIBERATELY. `alias_for`
         # resolves a stale entry perfectly well — it names a configured alias —
-        # so asking it here would grade this direction clean. The defect is that
-        # the scope does not EXIST, which only the scope set can see.
+        # so asking it here would grade this direction clean. What the resolver
+        # cannot see is whether the scope EXISTS; what the SCOPE SET cannot see
+        # is whether it exists but holds nothing. Hence a NOTE: see the
+        # docstring for the measurement and the closing condition.
         for scope in sorted(set(self.routes) - scope_set):
-            problems.append(
-                f"the routing table names scope `{scope}`, which exists on no "
-                f"configured instance — a stale entry reads as coverage"
+            notes.append(
+                f"the routing table names scope `{scope}`, which holds no entry "
+                f"on any configured instance — a stale entry reads as coverage, "
+                f"but a scope pre-registered before its first write or pruned "
+                f"back to nothing looks IDENTICAL here, because a snapshot ships "
+                f"entry files and not directories. Check it rather than deleting "
+                f"the line: with more than one instance, deleting it makes the "
+                f"next write to `{scope}` REFUSE."
             )
         for scope in sorted(self.routes):
             try:
@@ -411,7 +452,7 @@ class Routing:
                     f"the routing table routes `{scope}` to instance "
                     f"`{self.routes[scope]}`, which is not configured on this host"
                 )
-        return tuple(problems)
+        return tuple(problems), tuple(notes)
 
 
 def discover(env: Mapping[str, str] | None = None) -> Routing:
@@ -442,6 +483,19 @@ def discover(env: Mapping[str, str] | None = None) -> Routing:
         ) from exc
     for path in entries:
         if not path.name.endswith(INSTANCE_SUFFIX) or path.is_dir():
+            continue
+        # 🔴 A DOTFILE IS NOT A FILE THE OPERATOR WROTE, AND THE REFUSAL BELOW
+        # TOOK EVERY VERB TO EXIT 11 WHILE ONE WAS OPEN. Emacs' lock file for
+        # `secondary.env` is `.#secondary.env`: it ends in `.env`, its stem
+        # `.#secondary` is not a usable alias, and it is a DANGLING SYMLINK, so
+        # `is_dir()` is False and it reached the hard error — so every `cairn`
+        # invocation on that host refused to run until the buffer was closed.
+        # The snapshot builder already learned this one suffix over (`.#entry.md`
+        # 503'd the whole store); the rule there is the rule here — NAME rules
+        # are separate from TYPE rules — and the intent the refusal serves, "a
+        # file the operator wrote and would otherwise get no message about", is
+        # untouched by skipping names a human did not choose.
+        if path.name.startswith("."):
             continue
         alias = path.name[: -len(INSTANCE_SUFFIX)]
         # 🔴 A FILE THAT CANNOT BE AN INSTANCE IS AN ERROR, NOT A SKIP. Skipping

@@ -2019,13 +2019,22 @@ def cmd_routes(args: argparse.Namespace) -> int:
             )
             return EXIT_UNROUTED
         scopes.update(p.name for p in cache.iterdir() if p.is_dir())
-    problems = routing.check(scopes)
+    problems, notes = routing.check(scopes)
     for problem in problems:
         print(f"🔴 cairn: {problem}", file=sys.stderr)
+    # ⚠ NOTES CARRY A DIFFERENT MARKER AND DO NOT MOVE THE EXIT CODE. A finding
+    # the available evidence cannot decide must not fail a gate: `Routing.check`
+    # names the one direction that is undecidable from a snapshot, and printing
+    # it at 🔴 exit 11 is what made `routes --check` refuse every table that
+    # pre-registered a scope — which is the two-way registry this verb exists
+    # for. Printed AFTER the problems so a real finding is never buried.
+    for note in notes:
+        print(f"⚠ cairn: {note}", file=sys.stderr)
     print(
         f"routes: {len(routing.routes)} entr"
         f"{'y' if len(routing.routes) == 1 else 'ies'}, {len(scopes)} scope(s) "
-        f"across {len(routing.instances)} instance(s), {len(problems)} problem(s)"
+        f"across {len(routing.instances)} instance(s), {len(problems)} problem(s), "
+        f"{len(notes)} note(s)"
     )
     return EXIT_UNROUTED if problems else EXIT_OK
 

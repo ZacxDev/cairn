@@ -52,14 +52,24 @@ knows how to route and nothing about who routes where.
 naming the scope.** It never falls back to an instance: a write that lands in a
 store nobody reads is found days later, if at all, and a refusal costs one error
 message. `cairn routes --check` grades the table in both directions — a scope
-with no entry, and an entry naming a scope or an alias that does not exist.
+with no entry, and an entry naming an alias that does not exist. A table entry
+naming a scope that holds **no entries** prints as a ⚠ note and does *not* fail
+the check: a snapshot ships entry files rather than directories, so a stale entry
+and one pre-registered before its first write look identical from here, and
+failing on it would break the very thing the table is for.
 
-With **one** instance configured nothing is labelled and every byte of output is
-what it was before any of this existed — including when a table is already
-present, which is the normal state while you are writing one. The single
-exception, at any instance count: a table entry naming an alias this host has no
-config for still refuses, because that entry says where the scope lives and this
-machine cannot reach it.
+With **one** instance configured, every READ prints what it always did —
+including when a table is already present, which is the normal state while you
+are writing one. Two exceptions, at any instance count, and neither is an
+accident:
+
+- **the write verbs name their instance unconditionally.** `append`, `put` and
+  `create` print `instance=personal` even on a one-store host, because "where did
+  that bullet go" is a question about a durable record, asked later, by someone
+  who no longer has the terminal. ⚠ If you parse `cairn: appended scope=… ref=…`
+  positionally, that field is new — it sits between the status and `scope=`.
+- **a table entry naming an alias this host has no config for still refuses**,
+  because that entry says where the scope lives and this machine cannot reach it.
 
 **Reads never lie about why nothing was printed.** A report states which of
 `live` / `cached (stale <age>)` / `scope-empty` produced it — all exit 0 —

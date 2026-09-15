@@ -68,7 +68,13 @@ func Routes(env Env, opts Options) (int, error) {
 		if cacheErr != nil {
 			return 0, cacheErr
 		}
-		state, stateErr := ResolveState(cache, opts.NoSync, "", opts.Timeout)
+		// 🔴 THE ALIAS IS THREADED, AND THE CACHE ALONE IS NOT ENOUGH. `ResolveState` fetches
+		// as well as unpacks, so handing it instance `N`'s cache root while it loads instance
+		// `personal`'s credentials writes the DEFAULT instance's snapshot into every other
+		// instance's cache — the exact damage `refuseSharedCache` exists to prevent, arriving
+		// through the code path rather than through `--cache`. The grader then reads a scope
+		// set that belongs to one store and reports the others' scopes as stale.
+		state, stateErr := ResolveState(cache, opts.NoSync, "", opts.Timeout, instance.Alias)
 		if stateErr != nil {
 			return 0, stateErr
 		}
@@ -97,16 +103,23 @@ func Routes(env Env, opts Options) (int, error) {
 		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
-	problems, checkErr := routing.Check(scopes)
+	problems, notes, checkErr := routing.Check(scopes)
 	if checkErr != nil {
 		return 0, checkErr
 	}
 	for _, problem := range problems {
 		fmt.Fprintf(env.Stderr, "🔴 cairn: %s\n", problem)
 	}
-	fmt.Fprintf(env.Stdout, "routes: %d entr%s, %d scope(s) across %d instance(s), %d problem(s)\n",
+	// ⚠ NOTES CARRY A DIFFERENT MARKER AND DO NOT MOVE THE EXIT CODE. A finding the available
+	// evidence cannot decide must not fail a gate — see `Routing.Check`. Printed AFTER the
+	// problems so a real finding is never buried.
+	for _, note := range notes {
+		fmt.Fprintf(env.Stderr, "⚠ cairn: %s\n", note)
+	}
+	fmt.Fprintf(env.Stdout,
+		"routes: %d entr%s, %d scope(s) across %d instance(s), %d problem(s), %d note(s)\n",
 		len(routing.Routes), plural(len(routing.Routes)), len(scopes), len(routing.Instances),
-		len(problems))
+		len(problems), len(notes))
 	if len(problems) > 0 {
 		return ExitUnrouted, nil
 	}

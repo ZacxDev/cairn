@@ -21,14 +21,32 @@ import (
 // in this repository: a public tool that shipped somebody's taxonomy would be publishing their
 // org chart.
 //
-// 🔴 WHAT IS PORTED HERE AND WHAT IS NOT, STATED RATHER THAN LEFT TO BE FOUND. `routes` and
-// `ExitUnrouted` are ported: the verb ledger and the shared exit-code ledger read this binary's
-// own tables, and a Go client missing either would leave both gates green over a client that
-// had silently lost a capability. The READ and WRITE verbs do NOT yet consult `AliasFor` —
-// that needs the caveat's multi-instance clause inside `internal/report`, which is the renderer
-// the POD shares and which has no instance context at all. Declared difference 8 in
-// `tests/parity/README.md` carries the closing condition. Until it closes, a multi-instance
-// host runs the Python client.
+// 🔴 WHAT IS PORTED HERE AND WHAT IS NOT, STATED RATHER THAN LEFT TO BE FOUND — AND THE
+// WRITE/READ SPLIT IS THE PART TO GET RIGHT, BECAUSE THIS PARAGRAPH USED TO GET IT BACKWARDS.
+// It read "the READ and WRITE verbs do NOT yet consult `AliasFor`", which was false of the
+// writes on the very commit that introduced it: `writeInstance` calls `AliasFor` and `append`,
+// `put` and `create` all go through it. A wrong sentence in the header of the file holding the
+// function it is wrong about is the shape that stops anyone looking — and it is the premise a
+// maintainer would have carried into `Put`'s revision derivation, which really was reading the
+// default instance. What is true:
+//
+//   - `routes` and `ExitUnrouted` are ported. The verb ledger and the shared exit-code ledger
+//     read this binary's own tables, and a Go client missing either would leave both gates
+//     green over a client that had silently lost a capability.
+//   - **The WRITE verbs ROUTE.** `append`, `put` and `create` resolve the scope through
+//     `AliasFor`, load the ROUTED instance's credentials, sync the ROUTED instance's cache,
+//     and print `instance=<alias>` unconditionally. `tests/parity/README.md` row 8 has said
+//     so since the writes landed; this header now agrees with it.
+//   - **The READ verbs do NOT.** `sync`, `ls-entries`, `recall`/`search`, `validate` and
+//     `doctor` call `RefuseUnportedMultiInstance` instead: routing a read needs the caveat's multi-instance
+//     clause inside `internal/report`, which is the renderer the POD shares and which has no
+//     instance context at all. Declared difference 8 in `tests/parity/README.md` carries the
+//     closing condition. Until it closes, a multi-instance host reads with the Python client.
+//   - ⚠ **`routes` is deliberately NOT behind that refusal**, and `put` is not either. Both
+//     route. `routes --check` is the verb an operator runs WHILE STANDING UP a second
+//     instance, so a refusal there would disable the grading tool at the one moment it is the
+//     tool for; the read verbs are different because they have a working alternative and no
+//     role in that moment.
 
 const (
 	// ConfigEnv names the DEFAULT instance's config file. It predates instances and keeps
@@ -218,6 +236,10 @@ func (r Routing) AliasFor(scope string) (string, error) {
 
 // Check grades this host's routing table against reality, IN BOTH DIRECTIONS.
 //
+// It returns `(problems, notes, err)`. A PROBLEM is a defect this check can actually decide,
+// and it is what takes `routes --check` to exit 11. A NOTE is worth printing and is NOT
+// decidable from the evidence available, so it never moves the exit code.
+//
 // 🔴 BOTH DIRECTIONS, BECAUSE EACH MISSES A DIFFERENT DEFECT. A scope with no entry is a scope
 // whose next write REFUSES — annoying but loud. An entry naming a scope that does not exist is
 // the silent one: it reads as coverage, survives the scope being renamed or retired, and is
@@ -227,9 +249,26 @@ func (r Routing) AliasFor(scope string) (string, error) {
 // will REFUSE" and "that alias is not configured" are both claims about `AliasFor`; re-deriving
 // them from the table's key set gave the first one a confident warning on every unnamed scope of
 // every ONE-instance host, where no refusal happens.
-func (r Routing) Check(scopes []string) ([]string, error) {
+//
+// 🔴 AND DIRECTION TWO IS A NOTE, NOT A PROBLEM, BECAUSE ITS SCOPE SET CANNOT SEE AN EMPTY
+// SCOPE. `scopes` is a cache's DIRECTORY LISTING and a snapshot ships entry FILES — no directory
+// member — so a scope holding no entries is missing from it whether it was retired,
+// pre-registered before its first write, or pruned back to nothing. Measured at one instance
+// with a table naming `hollow-set`: `routes --check` exited 11 saying "exists on no configured
+// instance" while `recall --scope hollow-set` exited 0 saying `scope-empty — reached the store`.
+// Failing there makes the check unusable as the TWO-WAY REGISTRY it exists to be, and the
+// remedy the sentence implies — delete the line — makes the next write to that scope REFUSE.
+//
+// ⚠ THAT COSTS REAL TEETH. **Closing condition**: the discriminator exists and is simply not in
+// the snapshot — the SERVER reads the real store, where `store.BuildIndex` registers a scope
+// directory holding no entries (`extraScopes`), so `GET /api/v1/recall/<scope>` answers
+// `scope-empty` for a live-but-empty scope and `scope-absent` for one that does not exist. When
+// this check probes the ROUTED instance per table entry, identically on both clients, with a
+// parity row over it, direction two can be a problem again. Not done here: it turns a
+// two-request command into an O(table) one, which is a separate decision.
+func (r Routing) Check(scopes []string) ([]string, []string, error) {
 	if r.Routes == nil {
-		return nil, &RoutingConfigError{Detail: "there is no routing table on this host to " +
+		return nil, nil, &RoutingConfigError{Detail: "there is no routing table on this host to " +
 			"grade. A caller that reached here read an absent table as an empty one, which " +
 			"would report every scope as unrouted."}
 	}
@@ -238,8 +277,13 @@ func (r Routing) Check(scopes []string) ([]string, error) {
 		inScopes[s] = true
 	}
 	var problems []string
+	// ⚠ THE UNNAMED SET IS BUILT FROM `inScopes`, NOT FROM THE SLICE. The oracle takes
+	// `set(scopes) - set(self.routes)`, so a scope appearing twice in the caller's list
+	// produces ONE finding there and produced as many as the slice held here. `Routes`
+	// deduplicates upstream, so nothing reachable today could observe it — an alignment, not a
+	// fix for a live defect, and labelled as one rather than counted as regression coverage.
 	var unnamed []string
-	for _, s := range scopes {
+	for s := range inScopes {
 		if _, ok := r.Routes[s]; !ok {
 			unnamed = append(unnamed, s)
 		}
@@ -254,8 +298,9 @@ func (r Routing) Check(scopes []string) ([]string, error) {
 	}
 	// ⚠ DIRECTION TWO IS NOT A RESOLVER QUESTION, DELIBERATELY. `AliasFor` resolves a stale
 	// entry perfectly well — it names a configured alias — so asking it here would grade this
-	// direction clean. The defect is that the scope does not EXIST, which only the scope set
-	// can see.
+	// direction clean. What the resolver cannot see is whether the scope EXISTS; what the
+	// scope set cannot see is whether it exists but holds nothing. Hence a NOTE.
+	var notes []string
 	var stale []string
 	for scope := range r.Routes {
 		if !inScopes[scope] {
@@ -264,9 +309,13 @@ func (r Routing) Check(scopes []string) ([]string, error) {
 	}
 	sort.Strings(stale)
 	for _, scope := range stale {
-		problems = append(problems, fmt.Sprintf(
-			"the routing table names scope `%s`, which exists on no configured instance — a "+
-				"stale entry reads as coverage", scope))
+		notes = append(notes, fmt.Sprintf(
+			"the routing table names scope `%s`, which holds no entry on any configured "+
+				"instance — a stale entry reads as coverage, but a scope pre-registered before "+
+				"its first write or pruned back to nothing looks IDENTICAL here, because a "+
+				"snapshot ships entry files and not directories. Check it rather than deleting "+
+				"the line: with more than one instance, deleting it makes the next write to "+
+				"`%s` REFUSE.", scope, scope))
 	}
 	var named []string
 	for scope := range r.Routes {
@@ -280,7 +329,7 @@ func (r Routing) Check(scopes []string) ([]string, error) {
 					"this host", scope, r.Routes[scope]))
 		}
 	}
-	return problems, nil
+	return problems, notes, nil
 }
 
 // RefuseUnportedMultiInstance is the guard that keeps this port's PARTIAL routing from being a
@@ -543,6 +592,19 @@ func Discover(env envLookup) (Routing, error) {
 	// `os.ReadDir` already sorts by filename, which is the oracle's `sorted(iterdir())`.
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), InstanceSuffix) {
+			continue
+		}
+		// 🔴 A DOTFILE IS NOT A FILE THE OPERATOR WROTE, AND THE REFUSAL BELOW TOOK EVERY
+		// VERB TO EXIT 11 WHILE ONE WAS OPEN. Emacs' lock file for `secondary.env` is
+		// `.#secondary.env`: it ends in `.env`, its stem `.#secondary` is not a usable
+		// alias, and it is a DANGLING SYMLINK, so `IsDir()` is false and it reached the
+		// hard error — meaning every `cairn` invocation on that host refused to run until
+		// the buffer was closed. `internal/snapshot` already learned this exact lesson one
+		// suffix over (`.#entry.md` 503'd the whole store); the rule there is the rule
+		// here — **name rules are separate from type rules** — and the intent the refusal
+		// serves, "a file the operator wrote and would otherwise get no message about", is
+		// untouched by skipping names a human did not choose.
+		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		alias := strings.TrimSuffix(entry.Name(), InstanceSuffix)

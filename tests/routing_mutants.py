@@ -183,9 +183,11 @@ MUTANTS: list[Mutant] = [
         target="lib/cairn_instances.py",
         old="        for scope in sorted(set(self.routes) - scope_set):",
         new="        for scope in sorted(set()):",
-        why="the SILENT direction — a table entry for a scope that exists nowhere reads as "
-            "coverage and survives a rename.",
-        kills="test_an_entry_naming_NO_scope_is_a_problem",
+        why="the SILENT direction — a table entry for a scope that holds nothing is not "
+            "reported at all, so a genuinely stale one reads as coverage and survives a rename. "
+            "It is a NOTE rather than a problem (see `Routing.check`), and deleting a note is "
+            "exactly as invisible as deleting a finding.",
+        kills="test_an_entry_naming_NO_scope_is_a_NOTE_and_not_a_problem",
     ),
     Mutant(
         id="check-direction3-deleted",
@@ -336,6 +338,116 @@ MUTANTS: list[Mutant] = [
             "does not name it",
         why="finding 3 in the port: the grader predicts a refusal it has not asked about.",
         kills="TestCheckAsksTheResolverRatherThanSubtractingKeySets",
+        go_package="./internal/client/",
+    ),
+
+    # --- finding 4: direction two is a NOTE, not a verdict -------------------
+    Mutant(
+        id="py-direction2-is-a-verdict-again",
+        target="lib/cairn_instances.py",
+        old="            notes.append(",
+        new="            problems.append(",
+        why="the SHIPPED DEFECT restored: a table entry for a scope that holds no entries is "
+            "graded at exit 11, which fails every table that pre-registers a scope before its "
+            "first write — and the remedy its wording implies (delete the line) makes the next "
+            "write to that scope REFUSE.",
+        kills="test_an_entry_naming_NO_scope_is_a_NOTE_and_not_a_problem",
+    ),
+    Mutant(
+        id="py-routes-check-fails-on-a-note",
+        target="cairn",
+        old="    return EXIT_UNROUTED if problems else EXIT_OK",
+        new="    return EXIT_UNROUTED if problems or notes else EXIT_OK",
+        why="the same defect one layer up, and the one a demotion inside `check` alone would "
+            "not close: the CLI re-promotes the note by gating its exit code on it.",
+        kills="test_the_CLI_REPORTS_a_stale_entry_without_FAILING_on_it",
+    ),
+
+    # --- finding 6: an editor lock file is not an instance file --------------
+    Mutant(
+        id="py-editor-lock-file-refuses-again",
+        target="lib/cairn_instances.py",
+        old='        if path.name.startswith("."):',
+        new="        if False:",
+        why="Emacs' `.#secondary.env` reaches the hard alias refusal again, so EVERY verb on "
+            "that host exits 11 while one buffer is open.",
+        kills="test_an_EDITOR_LOCK_FILE_does_not_take_every_verb_to_exit_11",
+    ),
+
+    # --- findings 1 and 2, in the Go port ------------------------------------
+    Mutant(
+        id="go-resolve-state-ignores-its-instance",
+        target="internal/client/state.go",
+        old="\tcfg, err := LoadConfigFor(aliasOrDefault(instance))",
+        new="\tcfg, err := LoadConfigFor(DefaultAlias)",
+        why="THE SHIPPED DEFECT, at the site that caused it: `ResolveState` takes a cache "
+            "directory and loads the DEFAULT instance's credentials, so every instance walk "
+            "fetches `personal` N times and unpacks it over the others' caches.",
+        kills="TestRoutesCheckReadsEACHInstanceFromITSOWNConfig",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-routes-check-passes-the-default-alias",
+        target="internal/client/routes.go",
+        old='ResolveState(cache, opts.NoSync, "", opts.Timeout, instance.Alias)',
+        new='ResolveState(cache, opts.NoSync, "", opts.Timeout, DefaultAlias)',
+        why="the same defect at the CALLER rather than the callee — threading a parameter is "
+            "worth nothing if the one caller that walks instances passes a constant.",
+        kills="TestRoutesCheckReadsEACHInstanceFromITSOWNConfig",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-put-derives-from-the-default-instance",
+        target="internal/client/verbs.go",
+        old='ResolveState(cache, false, "", opts.Timeout, alias)',
+        new='ResolveState(cache, false, "", opts.Timeout, DefaultAlias)',
+        why="finding 2's dangerous arm: the ref exists on BOTH stores, so the precondition is "
+            "computed from the DEFAULT instance's bytes, sent to the ROUTED one, and announced "
+            "as `derived If-Match … from the live snapshot`.",
+        kills="TestAPutDerivesItsPreconditionFromTheROUTEDStore",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-put-uses-the-default-cache",
+        target="internal/client/verbs.go",
+        old="\talias, cfg, cache, err := writeInstance(opts, scope)",
+        new="\talias, cfg, _, err := writeInstance(opts, scope)\n\tcache := opts.Cache",
+        why="finding 2's other half: the routed instance's snapshot is unpacked into the "
+            "DEFAULT instance's cache root, so the two stores interleave and `.sync-stamp` "
+            "dates whichever synced last.",
+        kills="TestAPutDerivesItsPreconditionFromTheROUTEDStore",
+        go_package="./internal/client/",
+    ),
+
+    # --- findings 4, 6 and 7, in the Go port ---------------------------------
+    Mutant(
+        id="go-direction2-is-a-verdict-again",
+        target="internal/client/instances.go",
+        old="\t\tnotes = append(notes, fmt.Sprintf(",
+        new="\t\tproblems = append(problems, fmt.Sprintf(",
+        why="the Python defect, ported: an exists-but-empty scope grades at exit 11.",
+        kills="TestAScopeThatEXISTSBUTIsEMPTYIsANoteAndNOTAVerdict",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-editor-lock-file-refuses-again",
+        target="internal/client/instances.go",
+        old='\t\tif strings.HasPrefix(entry.Name(), ".") {',
+        new="\t\tif false {",
+        why="the Go client refuses every verb at 11 while an editor lock file sits beside an "
+            "instance config.",
+        kills="TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-direction1-walks-the-slice",
+        target="internal/client/instances.go",
+        old="\tfor s := range inScopes {",
+        new="\tfor _, s := range scopes {",
+        why="finding 7: the oracle subtracts SETS, so a repeated scope is one finding there and "
+            "as many as the slice holds here. ⚠ An ALIGNMENT — `Routes` deduplicates upstream, "
+            "so no CLI input reaches it today.",
+        kills="TestDirectionOneCountsAScopeONCEHoweverOftenTheCallerNamesIt",
         go_package="./internal/client/",
     ),
 ]

@@ -93,7 +93,22 @@ type State struct {
 // "serving from cache" at exit 0, and a server shipping a link, a traversal member, a
 // duplicate or a count disagreeing with its own header must instead STOP the run — cache or
 // no cache. Returning it as a fourth state would put the decision in every caller.
-func ResolveState(cache string, noSync bool, scope string, timeout int) (State, error) {
+//
+// 🔴 `instance` NAMES WHICH CONFIGURED INSTANCE TO FETCH FROM, AND OMITTING IT WAS A MEASURED
+// SILENT MISROUTE. This function takes a CACHE DIRECTORY and, until this parameter existed,
+// derived its credentials from `LoadConfig()` — which is always the DEFAULT instance. Any
+// caller that walks instances therefore fetched `personal`'s store N times and unpacked it
+// into each alias's sibling cache root in turn: `routes --check` on a two-instance host read
+// the second instance's banner as `fetched from <personal's URL>`, OVERWROTE that instance's
+// cache with the default instance's snapshot, and then graded the table against a scope set
+// that was the default instance's — inventing the "exists on no configured instance" finding
+// for every scope that only lives on the other one. The oracle's `resolve_state` has taken
+// `instance` from the start and `cmd_routes` passes `instance.alias`; this is the port
+// following.
+//
+// `""` is the default instance, which is what `instance=None` means on the oracle — the one
+// path the `SUBSYSTEM_STORE_URL`/`_TOKEN` environment override applies to (`LoadConfigFor`).
+func ResolveState(cache string, noSync bool, scope string, timeout int, instance string) (State, error) {
 	if noSync {
 		age, known, fields := CacheAge(cache)
 		if !StampExists(cache) {
@@ -103,7 +118,7 @@ func ResolveState(cache string, noSync bool, scope string, timeout int) (State, 
 			agePhrase(age, known), fieldOr(fields, "revision", "unknown")), 0}, nil
 	}
 
-	cfg, err := LoadConfig()
+	cfg, err := LoadConfigFor(aliasOrDefault(instance))
 	if err == nil {
 		body, h, fetchErr := FetchSnapshot(cfg, scope, timeout)
 		err = fetchErr
@@ -214,6 +229,17 @@ func trimSpaceBothEnds(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// aliasOrDefault is the oracle's `instance or DEFAULT_ALIAS`. 🔴 IT IS NOT COSMETIC:
+// `LoadConfigFor("")` would compare `"" == "personal"`, decide this is NOT the default
+// instance, and go looking for `instances/.env` — a file nobody writes — so an empty alias
+// would fail with "config incomplete" rather than reading the host's long-standing config.
+func aliasOrDefault(alias string) string {
+	if alias == "" {
+		return DefaultAlias
+	}
+	return alias
 }
 
 func fieldOr(fields map[string]string, key, fallback string) string {

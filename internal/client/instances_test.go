@@ -1,12 +1,21 @@
 package client
 
 import (
+	"archive/tar"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // 🔴 WHAT THIS FILE GUARDS, IN ONE SENTENCE: that this port's routing answers the same three
@@ -183,18 +192,20 @@ func TestCheckAsksTheResolverRatherThanSubtractingKeySets(t *testing.T) {
 		Instances: []Instance{{Alias: DefaultAlias}, {Alias: "secondary"}},
 		Routes:    map[string]string{"alpha-notes": DefaultAlias, "retired-scope": "secondary"},
 	}
-	problems, err := two.Check([]string{"alpha-notes", "beta-notes"})
+	problems, notes, err := two.Check([]string{"alpha-notes", "beta-notes"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(problems) != 2 {
-		t.Fatalf("both directions must fire: %q", problems)
+	if len(problems) != 1 {
+		t.Fatalf("direction 1 is the only PROBLEM here: %q", problems)
 	}
 	if !strings.Contains(problems[0], "beta-notes") || !strings.Contains(problems[0], "REFUSE") {
-		t.Fatalf("direction 1 first: %q", problems)
+		t.Fatalf("direction 1: %q", problems)
 	}
-	if !strings.Contains(problems[1], "retired-scope") {
-		t.Fatalf("direction 2 second: %q", problems)
+	// Direction 2 still FIRES — it is reported, it is simply not a verdict. Asserting the note
+	// rather than only the problem count is what keeps "demoted" from becoming "deleted".
+	if len(notes) != 1 || !strings.Contains(notes[0], "retired-scope") {
+		t.Fatalf("direction 2 must still be REPORTED, as a note: %q", notes)
 	}
 
 	// 🔴 THE SAME TABLE ON A ONE-INSTANCE HOST REPORTS NEITHER THE REFUSAL NOR A FALSE ONE.
@@ -203,18 +214,18 @@ func TestCheckAsksTheResolverRatherThanSubtractingKeySets(t *testing.T) {
 		Instances: []Instance{{Alias: DefaultAlias}},
 		Routes:    map[string]string{"alpha-notes": DefaultAlias},
 	}
-	problems, err = one.Check([]string{"alpha-notes", "beta-notes"})
+	problems, notes, err = one.Check([]string{"alpha-notes", "beta-notes"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(problems) != 0 {
-		t.Fatalf("one instance: an unnamed scope resolves, so there is nothing to warn about: %q",
-			problems)
+	if len(problems) != 0 || len(notes) != 0 {
+		t.Fatalf("one instance: an unnamed scope resolves, so there is nothing to say: %q %q",
+			problems, notes)
 	}
 	// …but an UNCONFIGURED alias is still a problem at one instance, which is the row that
 	// keeps the line above from being "the check was switched off".
 	one.Routes = map[string]string{"alpha-notes": "ghost"}
-	problems, err = one.Check([]string{"alpha-notes"})
+	problems, _, err = one.Check([]string{"alpha-notes"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,11 +234,50 @@ func TestCheckAsksTheResolverRatherThanSubtractingKeySets(t *testing.T) {
 	}
 }
 
+// TestAScopeThatEXISTSBUTIsEMPTYIsANoteAndNOTAVerdict is finding 4.
+//
+// 🔴 THE TWO STATES ARE INDISTINGUISHABLE IN THE INPUT, WHICH IS WHY THE VERDICT HAD TO GO. The
+// caller's scope set is a cache directory listing, and a snapshot ships entry FILES, so a table
+// entry for a scope holding nothing is absent from that set whether it is stale, pre-registered
+// before its first write, or pruned back to empty. All three produce the identical note and NO
+// problem, so `routes --check` exits 0 — which is the two-way registry the verb exists to be.
+func TestAScopeThatEXISTSBUTIsEMPTYIsANoteAndNOTAVerdict(t *testing.T) {
+	one := Routing{
+		Instances: []Instance{{Alias: DefaultAlias}},
+		Routes:    map[string]string{"alpha-notes": DefaultAlias, "hollow-set": DefaultAlias},
+	}
+	problems, notes, err := one.Check([]string{"alpha-notes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 0 {
+		t.Fatalf("a pre-registered scope must not be a VERDICT — that is what made the check "+
+			"refuse every table written before its first write: %q", problems)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "hollow-set") {
+		t.Fatalf("…and it must still be REPORTED: %q", notes)
+	}
+	// 🔴 THE NOTE MUST NOT TELL THE READER TO DELETE THE LINE, because with more than one
+	// instance that makes the next write to the scope REFUSE. Pinned as text because the
+	// wrong remedy is the harm, and it is only expressible in the sentence.
+	if !strings.Contains(notes[0], "rather than deleting") || !strings.Contains(notes[0], "REFUSE") {
+		t.Fatalf("the note must name the remedy trap: %q", notes[0])
+	}
+	// The control for all of the above: a table that names only scopes that DO hold entries
+	// produces neither. Without it every assertion here is satisfied by a `Check` that
+	// returns nothing at all.
+	one.Routes = map[string]string{"alpha-notes": DefaultAlias}
+	problems, notes, err = one.Check([]string{"alpha-notes"})
+	if err != nil || len(problems) != 0 || len(notes) != 0 {
+		t.Fatalf("an exactly-correct table says nothing: %q %q %v", problems, notes, err)
+	}
+}
+
 // TestCheckRefusesAHostWithNoTable — an absent table read as an empty one would report every
 // scope as unrouted.
 func TestCheckRefusesAHostWithNoTable(t *testing.T) {
 	routing := Routing{Instances: []Instance{{Alias: DefaultAlias}}}
-	if _, err := routing.Check([]string{"alpha-notes"}); err == nil {
+	if _, _, err := routing.Check([]string{"alpha-notes"}); err == nil {
 		t.Fatal("grading a host with no table must refuse rather than report findings")
 	}
 }
@@ -407,5 +457,354 @@ func TestLoadConfigForReadsTheENVIRONMENTForTheDefaultInstanceONLY(t *testing.T)
 	if _, err := LoadConfigFor("absent-instance"); err == nil ||
 		!strings.Contains(err.Error(), "NOT consulted") {
 		t.Fatalf("the non-default refusal must explain the asymmetry: %v", err)
+	}
+}
+
+// =============================================================================
+// THE TWO-INSTANCE BEHAVIOURAL TEST. Findings 1 and 2.
+// =============================================================================
+
+// twoInstanceWorld stands up two real HTTP stores, points a HOME at both, and returns the
+// per-instance snapshot request counters.
+//
+// 🔴 A SIGNATURE ASSERTION WOULD NOT HAVE CAUGHT THIS. "`ResolveState` now takes an alias"
+// type-checks while the caller passes the wrong one, so what is measured here is the two
+// OBSERVABLES a misroute actually moves: WHICH URL was fetched, and WHICH cache directory was
+// written. Both were wrong before the fix and neither is visible from a message check.
+func twoInstanceWorld(t *testing.T) (home string, hits map[string]*int32, urls map[string]string) {
+	t.Helper()
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+	// 🔴 EVERY INHERITED POINTER IS CLEARED. `SUBSYSTEM_STORE_URL` overrides the DEFAULT
+	// instance — the one path where the environment wins — so a developer's own value would
+	// point `personal` at their live store and this test would measure their machine.
+	for _, key := range []string{"SUBSYSTEM_STORE_URL", "SUBSYSTEM_STORE_TOKEN", ConfigEnv, RoutesEnv} {
+		t.Setenv(key, "")
+	}
+
+	stamp := time.Unix(946684800, 0)
+	hits = map[string]*int32{DefaultAlias: new(int32), "secondary": new(int32)}
+	urls = map[string]string{}
+	bodies := map[string][]byte{
+		DefaultAlias: gzTar(t, func(tw *tar.Writer) {
+			regular(tw, "alpha-notes/one.md", []byte("alpha\n"), stamp)
+		}),
+		"secondary": gzTar(t, func(tw *tar.Writer) {
+			regular(tw, "gamma-notes/two.md", []byte("gamma\n"), stamp)
+		}),
+	}
+	for _, alias := range []string{DefaultAlias, "secondary"} {
+		alias, counter, body := alias, hits[alias], bodies[alias]
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/snapshot" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			atomic.AddInt32(counter, 1)
+			w.Header().Set("X-Store-Entries", "1")
+			w.Header().Set("X-Store-Snapshot", "snap-"+alias)
+			_, _ = w.Write(body)
+		}))
+		t.Cleanup(srv.Close)
+		urls[alias] = srv.URL
+	}
+
+	configDir := filepath.Join(home, ".config", "subsystem-store")
+	if err := os.MkdirAll(filepath.Join(configDir, InstanceDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, url, token string) {
+		t.Helper()
+		body := "SUBSYSTEM_STORE_URL=" + url + "\nSUBSYSTEM_STORE_TOKEN=" + token + "\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(configDir, "env"), urls[DefaultAlias], "token-default")
+	write(filepath.Join(configDir, InstanceDirName, "secondary"+InstanceSuffix),
+		urls["secondary"], "token-secondary")
+	return home, hits, urls
+}
+
+func writeRoutesIn(t *testing.T, home string, body string) {
+	t.Helper()
+	path := filepath.Join(home, ".config", "subsystem-store", RoutesFileName)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// scopeDirs is the scope directories a cache root actually holds, sorted.
+func scopeDirs(t *testing.T, root string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestRoutesCheckReadsEACHInstanceFromITSOWNConfig is the Go twin of the oracle's
+// `test_a_CORRECT_table_passes_the_CLI_check`, with the two observables a misroute moves.
+//
+// 🔴 MEASURED BEFORE THE FIX, on exactly this world: `routes --check` fetched `personal`'s URL
+// TWICE and `secondary`'s ZERO times, overwrote `<cache>-secondary` with `personal`'s snapshot,
+// and then reported `gamma-notes` as "a scope that exists on no configured instance" — a FALSE
+// finding in the direction the design calls the silent one, at exit 11, with the second
+// instance's real scope set never read at all.
+func TestRoutesCheckReadsEACHInstanceFromITSOWNConfig(t *testing.T) {
+	home, hits, urls := twoInstanceWorld(t)
+	writeRoutesIn(t, home, `{"alpha-notes": "personal", "gamma-notes": "secondary"}`)
+
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	code, runErr := Routes(Env{Stdout: &stdout, Stderr: stderr},
+		Options{Cache: DefaultCacheRoot(), Timeout: 5, Check: true})
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	errText, err := os.ReadFile(stderr.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// OBSERVABLE 1 — which URL was fetched. One request per instance, to ITS OWN store.
+	for _, alias := range []string{DefaultAlias, "secondary"} {
+		if n := atomic.LoadInt32(hits[alias]); n != 1 {
+			t.Fatalf("instance %q served %d snapshot request(s), want exactly 1 — a client "+
+				"reading every instance from the default config fetches `%s` N times and the "+
+				"others never", alias, n, DefaultAlias)
+		}
+	}
+	// …and the banner says so, which is the operator-visible half of the same fact.
+	if !strings.Contains(string(errText), "cairn[secondary]: live — fetched from "+urls["secondary"]) {
+		t.Fatalf("the `secondary` banner must name SECONDARY's URL (%s), not %s:\n%s",
+			urls["secondary"], urls[DefaultAlias], errText)
+	}
+
+	// OBSERVABLE 2 — which cache directory was written. Each instance's snapshot lands in its
+	// own root, and the sibling root is NOT overwritten with the default instance's store.
+	defaultRoot, err := CacheRootFor(DefaultAlias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRoot, err := CacheRootFor("secondary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := scopeDirs(t, defaultRoot); !reflect.DeepEqual(got, []string{"alpha-notes"}) {
+		t.Fatalf("the default cache root holds %q, want [alpha-notes]", got)
+	}
+	if got := scopeDirs(t, secondRoot); !reflect.DeepEqual(got, []string{"gamma-notes"}) {
+		t.Fatalf("`secondary`'s cache root holds %q, want [gamma-notes] — holding "+
+			"[alpha-notes] is the default instance's snapshot unpacked over it, which is the "+
+			"damage `refuseSharedCache` exists to prevent arriving through the code path", got)
+	}
+
+	// …and therefore the GRADE is right: the table matches reality on both instances.
+	if code != ExitOK {
+		t.Fatalf("a table that matches both instances must exit %d, got %d\nstdout: %s\nstderr: %s",
+			ExitOK, code, stdout.String(), errText)
+	}
+	if !strings.Contains(stdout.String(), "0 problem(s)") {
+		t.Fatalf("stdout must report a clean grade: %s", stdout.String())
+	}
+	if strings.Contains(string(errText), "gamma-notes") {
+		t.Fatalf("`gamma-notes` lives on `secondary` and was found there — no finding may "+
+			"name it:\n%s", errText)
+	}
+	if got := len(scopeDirs(t, defaultRoot)) + len(scopeDirs(t, secondRoot)); got != 2 {
+		t.Fatalf("the graded scope set must be the UNION of both instances, saw %d dirs", got)
+	}
+}
+
+// TestAPutDerivesItsPreconditionFromTheROUTEDStore is finding 2.
+//
+// 🔴 THE DANGEROUS CASE IS A REF THAT EXISTS ON BOTH STORES, so this world gives the two
+// instances the SAME scope and ref with DIFFERENT bytes. A `put` that derived its `If-Match`
+// from the default instance's cache would send a well-formed precondition computed from the
+// wrong store's bytes, print "derived If-Match … from the live snapshot", and be wrong about
+// both halves. The observable is the `If-Match` value on the wire.
+func TestAPutDerivesItsPreconditionFromTheROUTEDStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, key := range []string{"SUBSYSTEM_STORE_URL", "SUBSYSTEM_STORE_TOKEN", ConfigEnv, RoutesEnv} {
+		t.Setenv(key, "")
+	}
+	stamp := time.Unix(946684800, 0)
+	// 🔴 THE SAME SCOPE AND THE SAME REF ON BOTH STORES, DIFFERENT BYTES. With different refs
+	// the defect merely exits 2 ("cannot derive a revision"), which is the BENIGN outcome and
+	// would make this test pass against the bug for the wrong reason.
+	defaultBytes := []byte("the DEFAULT instance's copy\n")
+	routedBytes := []byte("the ROUTED instance's copy\n")
+	bodies := map[string][]byte{
+		DefaultAlias: gzTar(t, func(tw *tar.Writer) {
+			regular(tw, "shared-scope/thing.md", defaultBytes, stamp)
+		}),
+		"secondary": gzTar(t, func(tw *tar.Writer) {
+			regular(tw, "shared-scope/thing.md", routedBytes, stamp)
+		}),
+	}
+	urls := map[string]string{}
+	var sentIfMatch string
+	var sentTo string
+	for _, alias := range []string{DefaultAlias, "secondary"} {
+		alias, body := alias, bodies[alias]
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1/snapshot" {
+				w.Header().Set("X-Store-Entries", "1")
+				_, _ = w.Write(body)
+				return
+			}
+			sentIfMatch, sentTo = r.Header.Get("If-Match"), alias
+			w.Header().Set("X-Store-Status", "replaced")
+			w.Header().Set("ETag", `"newrevision0000"`)
+			_, _ = w.Write([]byte("ok\n"))
+		}))
+		t.Cleanup(srv.Close)
+		urls[alias] = srv.URL
+	}
+	configDir := filepath.Join(home, ".config", "subsystem-store")
+	if err := os.MkdirAll(filepath.Join(configDir, InstanceDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, alias := range map[string]string{
+		filepath.Join(configDir, "env"):                                       DefaultAlias,
+		filepath.Join(configDir, InstanceDirName, "secondary"+InstanceSuffix): "secondary",
+	} {
+		body := "SUBSYSTEM_STORE_URL=" + urls[alias] + "\nSUBSYSTEM_STORE_TOKEN=t-" + alias + "\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeRoutesIn(t, home, `{"shared-scope": "secondary"}`)
+
+	replacement := filepath.Join(t.TempDir(), "new.md")
+	if err := os.WriteFile(replacement, []byte("replacement\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	code, runErr := Put(Env{Stdout: &stdout, Stderr: stderr}, Options{
+		Cache: DefaultCacheRoot(), Timeout: 5,
+		Scope: "shared-scope", Ref: "thing", File: replacement,
+	})
+	if runErr != nil || code != ExitOK {
+		body, _ := os.ReadFile(stderr.Name())
+		t.Fatalf("put failed: code=%d err=%v stderr=%s", code, runErr, body)
+	}
+	if sentTo != "secondary" {
+		t.Fatalf("the write went to %q, and the table routes `shared-scope` to `secondary`", sentTo)
+	}
+	sum := sha256.Sum256(routedBytes)
+	want := `"` + hex.EncodeToString(sum[:])[:16] + `"`
+	wrong := sha256.Sum256(defaultBytes)
+	if sentIfMatch == `"`+hex.EncodeToString(wrong[:])[:16]+`"` {
+		t.Fatalf("If-Match was derived from the DEFAULT instance's bytes and sent to the "+
+			"ROUTED one: %s", sentIfMatch)
+	}
+	if sentIfMatch != want {
+		t.Fatalf("If-Match %s, want %s (sha256 of the ROUTED store's bytes)", sentIfMatch, want)
+	}
+	// …and the ROUTED cache is what was refreshed, not the default one.
+	secondRoot, err := CacheRootFor("secondary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !StampExists(secondRoot) {
+		t.Fatal("the routed instance's cache must be the one that was synced")
+	}
+}
+
+// TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11 is finding 6.
+//
+// 🔴 EVERY VERB, NOT JUST `routes`. `Discover` runs on the routing path of every write and on
+// `RefuseUnportedMultiInstance` for every read, so a hard `*RoutingConfigError` here refused the
+// whole tool while one buffer was open. Emacs writes `.#secondary.env` as a DANGLING SYMLINK,
+// so `IsDir()` is false and the name ends in `.env` — it reached the refusal.
+func TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11(t *testing.T) {
+	dir := configuredHost(t, t.TempDir())
+	instances := filepath.Join(dir, InstanceDirName)
+	if err := os.MkdirAll(instances, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(instances, "secondary"+InstanceSuffix), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two shapes, because one is what Emacs actually creates and the other is the one a test
+	// is tempted to write instead.
+	lock := filepath.Join(instances, ".#secondary"+InstanceSuffix)
+	if err := os.Symlink("zach@host.12345:1700000000", lock); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(lock); err == nil {
+		t.Fatal("the fixture must be a DANGLING link, as Emacs writes it")
+	}
+	routing, err := Discover(nil)
+	if err != nil {
+		t.Fatalf("a dangling editor lock file must not refuse: %v", err)
+	}
+	if !reflect.DeepEqual(routing.Aliases(), []string{DefaultAlias, "secondary"}) {
+		t.Fatalf("…and it must not become an instance either: %q", routing.Aliases())
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+
+	plain := filepath.Join(instances, ".#vim-style"+InstanceSuffix)
+	if err := os.WriteFile(plain, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Discover(nil); err != nil {
+		t.Fatalf("a plain dotfile must not refuse either: %v", err)
+	}
+	if err := os.Remove(plain); err != nil {
+		t.Fatal(err)
+	}
+
+	// 🔴 THE CONTROL: a NON-dotted file the operator really did write is still an ERROR. The
+	// rule is NARROWED to names a human did not choose, not removed — and without this line
+	// the test is satisfied by deleting the refusal outright.
+	if err := os.WriteFile(filepath.Join(instances, "Upper"+InstanceSuffix), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Discover(nil); err == nil {
+		t.Fatal("a file the operator wrote that cannot be an alias is still an ERROR")
+	}
+}
+
+// TestDirectionOneCountsAScopeONCEHoweverOftenTheCallerNamesIt is finding 7.
+//
+// ⚠ AN ALIGNMENT, NOT REGRESSION COVERAGE, AND LABELLED AS ONE. The oracle subtracts SETS
+// (`set(scopes) - set(self.routes)`); this port walked the caller's SLICE, so a repeated scope
+// produced a repeated finding. `Routes` builds its scope set from a map and therefore cannot
+// hand `Check` a duplicate today — no input reachable from the CLI observes this. It is pinned
+// because the two implementations are supposed to be one rule, and a divergence nobody can
+// reach today is reachable the moment a second caller appears.
+func TestDirectionOneCountsAScopeONCEHoweverOftenTheCallerNamesIt(t *testing.T) {
+	two := Routing{
+		Instances: []Instance{{Alias: DefaultAlias}, {Alias: "secondary"}},
+		Routes:    map[string]string{"alpha-notes": DefaultAlias},
+	}
+	problems, _, err := two.Check([]string{"alpha-notes", "beta-notes", "beta-notes", "beta-notes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 1 {
+		t.Fatalf("one unnamed scope is one finding however often it is named: %q", problems)
 	}
 }

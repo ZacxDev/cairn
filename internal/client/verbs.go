@@ -42,6 +42,12 @@ func (e Env) host() string {
 // REFRESH, so "I did not reach the store" is a failed operation no matter how good the cache is
 // — exit non-zero, naming the host. A `sync` that exited 0 on an outage is how a timer reports
 // success forever while the cache silently ages out.
+//
+// 🔴 THE FOUR READ VERBS BELOW PASS `DefaultAlias` EXPLICITLY, AND THAT IS A CLAIM RATHER
+// THAN A PLACEHOLDER. Each is guarded by `RefuseUnportedMultiInstance`, so the only host that
+// reaches them has exactly one instance and `personal` is the only answer. Spelling it out is
+// what makes a future caller that drops the guard — or adds a fifth read verb — write down
+// which store it means, instead of inheriting the default from a function that hid it.
 func Sync(env Env, opts Options) (int, error) {
 	if code, stop := RefuseUnportedMultiInstance(env, "sync"); stop {
 		return code, nil
@@ -52,7 +58,7 @@ func Sync(env Env, opts Options) (int, error) {
 	// no 'other-scope/' directory" at exit 0 — a claim about the STORE derived from a
 	// filtered cache. The server keeps `?scope=`; it is a legitimate API capability that may
 	// not narrow THIS cache.
-	state, err := ResolveState(opts.Cache, false, "", opts.Timeout)
+	state, err := ResolveState(opts.Cache, false, "", opts.Timeout, DefaultAlias)
 	if err != nil {
 		return 0, err
 	}
@@ -72,7 +78,7 @@ func LsEntries(env Env, opts Options) (int, error) {
 	if code, stop := RefuseUnportedMultiInstance(env, "ls-entries"); stop {
 		return code, nil
 	}
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout)
+	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
 	if err != nil {
 		return 0, err
 	}
@@ -98,7 +104,7 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 	// 🔴 SYNC THE WHOLE STORE, NEVER `scope=opts.Scope`. A scope-filtered cache makes the
 	// reader answer `scope-absent` for every scope that was simply not fetched —
 	// indistinguishable, in the output, from a scope the store has never held.
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout)
+	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
 	if err != nil {
 		return 0, err
 	}
@@ -240,7 +246,7 @@ func Validate(env Env, opts Options) (int, error) {
 	if code, stop := RefuseUnportedMultiInstance(env, "validate"); stop {
 		return code, nil
 	}
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout)
+	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
 	if err != nil {
 		return 0, err
 	}
@@ -336,7 +342,8 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
-// writeInstance is `(alias, config)` for a write, or an `*UnroutedScope` that never guesses.
+// writeInstance is `(alias, config, cache)` for a write, or an `*UnroutedScope` that never
+// guesses. It is the Go spelling of the oracle's `_instance_for`.
 //
 // 🔴 A WRITE NAMES ITS INSTANCE UNCONDITIONALLY, UNLIKE A READ'S LABEL. "Where did that bullet
 // go" is a question about a DURABLE record, asked later, by someone who no longer has the
@@ -344,20 +351,31 @@ func containsString(items []string, want string) bool {
 //
 // 🔴 AND THE CONFIG COMES FROM THE ROUTED INSTANCE, NOT FROM THE DEFAULT ONE. Printing the right
 // alias while sending to the wrong store is the shape of bug a message check cannot see.
-func writeInstance(scope string) (string, Config, error) {
+//
+// 🔴 THE CACHE IS RETURNED TOO, BECAUSE `put` DERIVES A PRECONDITION FROM IT. Returning only
+// `(alias, config)` let `Put` resolve the route AFTER it had already synced and globbed
+// `opts.Cache` — the DEFAULT instance's root — so a routed write computed its `If-Match` from
+// the wrong store's bytes and then sent it to the right one. The benign outcome is rc 2
+// ("cannot derive a revision"); the dangerous one is a ref that exists on BOTH stores, where
+// the precondition is well-formed, wrong, and printed as "derived … from the live snapshot".
+func writeInstance(opts Options, scope string) (string, Config, string, error) {
 	routing, err := Discover(nil)
 	if err != nil {
-		return "", Config{}, err
+		return "", Config{}, "", err
 	}
 	alias, err := routing.AliasFor(scope)
 	if err != nil {
-		return "", Config{}, err
+		return "", Config{}, "", err
 	}
 	cfg, err := LoadConfigFor(alias)
 	if err != nil {
-		return "", Config{}, err
+		return "", Config{}, "", err
 	}
-	return alias, cfg, nil
+	cache, err := instanceCache(opts, alias)
+	if err != nil {
+		return "", Config{}, "", err
+	}
+	return alias, cfg, cache, nil
 }
 
 // Append appends ONE dated bullet — `POST /api/v1/entry/<scope>/<ref>/bullets`.
@@ -385,7 +403,7 @@ func Append(env Env, opts Options) (int, error) {
 			runes, write.BulletTextMax, runes-write.BulletTextMax)
 		return ExitUsage, nil
 	}
-	alias, cfg, err := writeInstance(scope)
+	alias, cfg, _, err := writeInstance(opts, scope)
 	if err != nil {
 		return 0, err
 	}
@@ -431,8 +449,19 @@ func Put(env Env, opts Options) (int, error) {
 		return ExitUsage, nil
 	}
 	revision := opts.IfMatch
+	// 🔴 THE ROUTE IS RESOLVED BEFORE THE REVISION IS DERIVED, AND THE ORDER IS THE WHOLE
+	// POINT. The precondition is `sha256(<the ROUTED store's bytes>)`, so a sync and a glob
+	// against the DEFAULT instance's cache — which is what `opts.Cache` is — computes it from
+	// a store this write is not addressing. The oracle resolves the route first
+	// (`cmd_put` -> `_instance_for`) and syncs the routed cache; this is the port following.
+	// ⚠ It stays BELOW the `--file` read: "cannot read --file" is rc 2 and must not be
+	// preceded by a routing refusal or a network round trip.
+	alias, cfg, cache, err := writeInstance(opts, scope)
+	if err != nil {
+		return 0, err
+	}
 	if revision == "" {
-		state, err := ResolveState(opts.Cache, false, "", opts.Timeout)
+		state, err := ResolveState(cache, false, "", opts.Timeout, alias)
 		if err != nil {
 			return 0, err
 		}
@@ -452,10 +481,10 @@ func Put(env Env, opts Options) (int, error) {
 				"explicitly if you already hold it.\n", state.Detail)
 			return ExitWriteUnreachable, nil
 		}
-		matches, _ := filepath.Glob(filepath.Join(opts.Cache, scope, opts.Ref+".md"))
+		matches, _ := filepath.Glob(filepath.Join(cache, scope, opts.Ref+".md"))
 		sort.Strings(matches)
 		if len(matches) == 0 {
-			matches, _ = filepath.Glob(filepath.Join(opts.Cache, scope, opts.Ref+".*.md"))
+			matches, _ = filepath.Glob(filepath.Join(cache, scope, opts.Ref+".*.md"))
 			sort.Strings(matches)
 		}
 		if len(matches) != 1 {
@@ -471,10 +500,6 @@ func Put(env Env, opts Options) (int, error) {
 		sum := sha256.Sum256(data)
 		revision = hex.EncodeToString(sum[:])[:16]
 		fmt.Fprintf(env.Stderr, "cairn: derived If-Match %s from the live snapshot\n", revision)
-	}
-	alias, cfg, err := writeInstance(scope)
-	if err != nil {
-		return 0, err
 	}
 	path := fmt.Sprintf("/api/v1/entry/%s/%s", quoteAll(scope), quoteAll(opts.Ref))
 	headers, body, err := SendWrite(cfg, "PUT", path, payload, opts.Timeout,
@@ -512,7 +537,7 @@ func Create(env Env, opts Options) (int, error) {
 		fmt.Fprintf(env.Stderr, "cairn: cannot read --file %s: %s\n", opts.File, pyOSError(readErr))
 		return ExitUsage, nil
 	}
-	alias, cfg, err := writeInstance(scope)
+	alias, cfg, _, err := writeInstance(opts, scope)
 	if err != nil {
 		return 0, err
 	}

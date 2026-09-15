@@ -176,6 +176,15 @@ class Case:
     in_repo: bool = False
     #: Reset the cache root before this case, so a `--no-sync` row can be about an ABSENT cache.
     wipe_cache: bool = False
+    #: Run WITHOUT the harness's shared `--cache`, so each client resolves the default root PER
+    #: INSTANCE.
+    #:
+    #: 🔴 IT EXISTS BECAUSE `--cache` IS REFUSED ON A MULTI-INSTANCE FAN-OUT, AND THAT REFUSAL
+    #: IS WHAT KEPT THIS GATE BLIND. `routes --check` walking N instances with one explicit
+    #: cache directory would make them overwrite each other, so both clients exit 2 before the
+    #: walk begins — which compares equal and measures nothing about the walk. A row that wants
+    #: to observe WHICH URL each instance was fetched from has to let the roots be derived.
+    no_cache_flag: bool = False
     #: A command run with the ORACLE client, after the store is restored and before the measured
     #: pair, so a case can be about a store some earlier write already changed.
     #:
@@ -565,12 +574,32 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "a table present on a ONE-instance host. It prints, sorted, and STILL labels "
              "nothing: a table says where scopes live, not how many stores this host can reach",
              ["routes"], env={"CAIRN_ROUTES": "<ROUTES>"}),
-        Case("routes-check-finds-a-stale-entry",
-             "🔴 exit 11, AND IT IS THE ONLY ROW THAT REACHES THAT CODE. The table names a scope "
-             "that exists on no instance — the silent direction, which reads as coverage and "
-             "survives a rename. Both clients refresh live, enumerate the cache, grade in both "
-             "directions and print the same findings on stderr",
+        Case("routes-check-finds-an-unconfigured-alias",
+             "🔴 exit 11, AND IT IS THE ONLY SINGLE-INSTANCE ROW THAT REACHES THAT CODE. The "
+             "table routes a scope to an alias this host has no config for — a refusal that "
+             "fires at ONE instance as well as at many. The same table ALSO names a scope that "
+             "holds no entries, which prints as a ⚠ note and does NOT move the exit code: both "
+             "the 🔴 finding and the ⚠ note are compared byte for byte, so a client that "
+             "re-promoted the note would differ here",
              ["routes", "--check"], env={"CAIRN_ROUTES": "<ROUTES>"}),
+        Case("routes-multi-instance-check",
+             "🔴 THE ROW THE GATE DID NOT HAVE, AND ITS ABSENCE IS WHY A MISROUTE SHIPPED. Every "
+             "other `routes` row points `SUBSYSTEM_STORE_CONFIG` at a path that does not exist, "
+             "so `instances/` never exists and the walk is one instance long. This one "
+             "configures a SECOND instance against a SECOND pod: both clients must label each "
+             "banner with its own alias AND name that instance's OWN URL, sync each into its own "
+             "cache root, and grade the table against the UNION of the two scope sets. A client "
+             "that read every instance from the default config prints the default pod's URL "
+             "under `cairn[secondary]`, which is a byte difference on this row",
+             ["routes", "--check"], no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+        Case("routes-multi-instance-refuses-an-explicit-cache",
+             "🔴 exit 2: a fan-out over N instances with ONE explicit `--cache` would unpack two "
+             "stores into one directory, interleaving their scopes while `.sync-stamp` dated "
+             "whichever synced last. Both clients refuse BEFORE the walk, and this row is the "
+             "one that keeps `no_cache_flag` above from being the only multi-instance path",
+             ["routes", "--check"],
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
         Case("routes-check-refuses-a-STALE-cache",
              "🔴 exit 11 FOR A DIFFERENT REASON, AND THE DISTINCTION IS THE POINT: `--no-sync` "
              "with no cache means the scope set would be a fact about this disk rather than "
@@ -765,19 +794,34 @@ def main(argv: list[str] | None = None) -> int:
             "## Nuance / work-history\n\n- 2000-01-04: replaced.\n", encoding="utf-8")
         # The scope→instance table the `routes` rows point `$CAIRN_ROUTES` at.
         #
-        # 🔴 IT NAMES A SCOPE THE STORE DOES NOT HOLD, DELIBERATELY. `routes --check` grades in
-        # both directions and the STALE one is the direction that is silent in real life: an
-        # entry for a scope that has been renamed or retired reads as coverage forever. That
-        # finding is what takes the `--check` row to exit 11 on both clients.
+        # 🔴 IT NAMES THREE THINGS DELIBERATELY, AND THEY GRADE DIFFERENTLY. `ghost-void` is
+        # routed to an alias this host has no config for — a 🔴 PROBLEM at one instance as well
+        # as at many, and what takes this row to exit 11. `hollow-set` is a scope the world
+        # holds as a DIRECTORY WITH NO ENTRIES (`world.EMPTY_SCOPES`), so it is present to the
+        # server and absent from every client cache: a ⚠ NOTE, which prints and does NOT move
+        # the exit code. Both texts are compared byte for byte, so a client that graded the
+        # note as a verdict — or dropped it — differs on this row.
         #
-        # ⚠ IT IS WRITTEN ONCE, BESIDE THE WORLD, AND NOT INTO `$HOME`. Both clients resolve the
-        # table from `$CAIRN_ROUTES` when it is set and from the config directory otherwise, so
-        # putting it here keeps every OTHER row's "no table at all" state intact — which is the
-        # state that proves the routing machinery inert on a one-instance host.
-        routes_table = work / "routes.json"
+        # ⚠ THE EXISTS-BUT-EMPTY CASE WAS UNREACHABLE HERE BEFORE. The old table named
+        # `retired-scope`, which exists nowhere at all, and the two states are indistinguishable
+        # from a snapshot — so the row could not tell a demotion from a deletion.
+        #
+        # 🔴 IT LIVES IN A SUBDIRECTORY, AND THE OBVIOUS PLACE WAS WRONG. The comment here used
+        # to say that writing it beside the world "keeps every OTHER row's 'no table at all'
+        # state intact", and that was FALSE: the default table path is
+        # `Path($SUBSYSTEM_STORE_CONFIG).parent / "routes.json"`, and this world points that
+        # variable at `<work>/no-such-config` — so `<work>/routes.json` WAS the default path and
+        # the table was live for every row in the gate, `CAIRN_ROUTES` or not. Nothing went red,
+        # because both clients read the same table and compared equal; the cost was that
+        # `routes-none-configured` measured a host that HAD a table while its own description
+        # said otherwise. Found by adding an entry for `ghost-void` to this table and watching
+        # three unrelated `*-absent-scope` rows change behaviour. A directory of its own makes
+        # the description true, and makes `$CAIRN_ROUTES` the only way a row opts in.
+        (work / "tables").mkdir()
+        routes_table = work / "tables" / "routes.json"
         routes_table.write_text(
             '{"alpha-notes": "personal", "beta-notes": "personal", '
-            '"retired-scope": "personal"}\n', encoding="utf-8")
+            '"hollow-set": "personal", "ghost-void": "no-such-instance"}\n', encoding="utf-8")
         new_file = work / "created.md"
         new_file.write_text(
             "---\nservice: fresh-entry\nscope: beta-notes\n---\n\n"
@@ -785,13 +829,62 @@ def main(argv: list[str] | None = None) -> int:
             "## Pointers\n\n- `apps/fresh-entry/values.yaml`\n\n"
             "## Nuance / work-history\n\n- 2000-01-04: created.\n", encoding="utf-8")
 
+        # 🔴 A SECOND STORE AND A SECOND POD, FOR THE MULTI-INSTANCE ROWS. Pointing the second
+        # instance at the FIRST pod would have been cheaper and would have measured nothing: the
+        # defect these rows exist to catch is a client that fetches every instance from the
+        # DEFAULT instance's config, and with one URL that client and a correct one are
+        # byte-identical. The two pods must be distinguishable, so they are.
+        #
+        # ⚠ IT CARRIES A SCOPE THE FIRST STORE DOES NOT. The URL in the banner is one
+        # observable; the graded scope set is the other, and a walk that never read this
+        # instance reports `gamma-notes` as a table entry matching nothing.
+        second_store = W.build_store(work / "store-second")
+        (second_store / "gamma-notes").mkdir(parents=True, exist_ok=True)
+        (second_store / "gamma-notes" / "gauge-api.md").write_text(
+            "---\nservice: gauge-api\nscope: gamma-notes\n---\n\n"
+            "## What it is\n\nthe second instance's own entry.\n\n"
+            "## Pointers\n\n- `apps/gauge-api/values.yaml`\n\n"
+            "## Nuance / work-history\n\n- 2000-01-05: synthetic.\n", encoding="utf-8")
+        # 🔴 A PINNED MTIME, LIKE EVERY OTHER MEMBER OF THIS WORLD. Writing the file sets the
+        # mtime to NOW, which lands a wall-clock date in `X-Store-Snapshot`'s `newest=` and
+        # therefore in the banner this row compares. It is identical for both clients within a
+        # run, so it hides no difference — but it makes two runs' logs incomparable by eye, and
+        # it puts a real date in a repository whose fixtures are deliberately year-2000.
+        os.utime(second_store / "gamma-notes" / "gauge-api.md",
+                 ns=(W.EPOCH_NS + 9, W.EPOCH_NS + 9))
+        second_tokens = work / "tokens-second"
+        second_tokens.write_text(
+            W.TOKEN_ROW.rstrip("\n").replace(
+                ",".join(W.ALLOWED_SCOPES),
+                ",".join(W.ALLOWED_SCOPES + ("gamma-notes",))) + "\n", encoding="utf-8")
+
+        # The multi-instance HOME. 🔴 A DIRECTORY OF ITS OWN, NOT THE ONE EVERY OTHER ROW USES:
+        # creating `instances/` beside the shared config path would make EVERY read row
+        # multi-instance, and the Go client refuses those (`RefuseUnportedMultiInstance`) — the
+        # gate would go red on thirty rows that are not about routing at all.
+        multi_dir = work / "multi-config"
+        (multi_dir / "instances").mkdir(parents=True)
+        multi_config = multi_dir / "env"          # deliberately NOT created: the DEFAULT
+        multi_routes = multi_dir / "routes.json"  # instance comes from the environment
+
         closed = free_port()  # bound and released, so a connect to it is REFUSED
         hostile_server, hostile_port = hostile.start()
         port = free_port()
+        second_port = free_port()
         log = work / "oracle.log"
+        second_log = work / "oracle-second.log"
         proc = start_oracle(store, token_file, log, port, break_pod=args.break_pod)
+        second_proc = start_oracle(second_store, second_tokens, second_log, second_port,
+                                   break_pod=args.break_pod)
         try:
             wait_for_health(port, proc, log)
+            wait_for_health(second_port, second_proc, second_log)
+            (multi_dir / "instances" / "secondary.env").write_text(
+                f"SUBSYSTEM_STORE_URL=http://127.0.0.1:{second_port}\n"
+                f"SUBSYSTEM_STORE_TOKEN={W.TOKEN}\n", encoding="utf-8")
+            multi_routes.write_text(
+                '{"alpha-notes": "personal", "beta-notes": "personal", '
+                '"gamma-notes": "secondary"}\n', encoding="utf-8")
 
             go_binary = args.go_binary
             if not go_binary:
@@ -850,7 +943,9 @@ def main(argv: list[str] | None = None) -> int:
                 for key, value in case.env.items():
                     env[key] = (value
                                 .replace("<MIRROR>", str(mirror))
-                                .replace("<ROUTES>", str(routes_table)))
+                                .replace("<ROUTES>", str(routes_table))
+                                .replace("<ROUTES2>", str(multi_routes))
+                                .replace("<MULTICFG>", str(multi_config)))
                 argv_case = [
                     a.replace("<PUTFILE>", str(put_file))
                      .replace("<NEWFILE>", str(new_file))
@@ -859,6 +954,14 @@ def main(argv: list[str] | None = None) -> int:
                 ]
                 cwd = repo if case.in_repo else work
                 shared = ["--cache", str(cache)] if argv_case else []
+                if case.no_cache_flag:
+                    # 🔴 AND THE DERIVED ROOTS ARE WIPED FIRST. Without `--cache` both clients
+                    # resolve `$HOME/.cache/subsystem-store[-<alias>]`, and the oracle runs
+                    # first: a root left behind by the previous client would let the second one
+                    # answer from a cache the first one wrote, which is not a comparison.
+                    shared = []
+                    for root in (home / ".cache").glob("subsystem-store*"):
+                        shutil.rmtree(root, ignore_errors=True)
 
                 def once(cmd: list[str]) -> Outcome:
                     restore_store(pristine, store)
@@ -1068,11 +1171,12 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             hostile_server.shutdown()
             hostile_server.server_close()
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            for handle in (proc, second_proc):
+                handle.terminate()
+                try:
+                    handle.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    handle.kill()
             if log.exists() and os.environ.get("PARITY_SHOW_SERVER_LOG"):
                 print("--- oracle log ---")
                 print(log.read_text(errors="replace"))

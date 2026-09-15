@@ -156,6 +156,18 @@ def world(tmp_path: Path):
             path.chmod(0o600)
             return path
 
+        def add_empty_scope(self, store: "_Store", name: str) -> Path:
+            """A scope DIRECTORY holding no entry file.
+
+            🔴 IT IS NOT REACHABLE THROUGH THE SNAPSHOT, WHICH IS THE POINT. The
+            server ships `<scope>/<x>.md` members and no directory members, so a
+            scope in this state is present to the SERVER (its index registers it
+            via `extra_scopes`) and absent from every client cache.
+            """
+            path = store.root / name
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+
         def write_routes(self, table: dict) -> Path:
             path = home / ".config" / "subsystem-store" / "routes.json"
             path.write_text(json.dumps(table))
@@ -451,7 +463,12 @@ class TestTheTableIsGradedBothWays:
     ALIASES = (rs.DEFAULT_ALIAS, SECOND_ALIAS)
 
     def _check(self, table, scopes, aliases=None):
-        return ci.routing_for(table, aliases or self.ALIASES).check(scopes)
+        """The PROBLEMS half. `check` returns `(problems, notes)` — see
+        `_notes` for the other half and `Routing.check` for why there are two."""
+        return ci.routing_for(table, aliases or self.ALIASES).check(scopes)[0]
+
+    def _notes(self, table, scopes, aliases=None):
+        return ci.routing_for(table, aliases or self.ALIASES).check(scopes)[1]
 
     def test_a_scope_with_NO_entry_is_a_problem(self):
         problems = self._check(
@@ -461,13 +478,18 @@ class TestTheTableIsGradedBothWays:
         assert SECOND_SCOPE in problems[0]
         assert "REFUSE" in problems[0]
 
-    def test_an_entry_naming_NO_scope_is_a_problem(self):
-        problems = self._check(
-            {DEFAULT_SCOPE: rs.DEFAULT_ALIAS, "retired-scope": SECOND_ALIAS},
-            {DEFAULT_SCOPE},
-        )
-        assert len(problems) == 1, problems
-        assert "retired-scope" in problems[0]
+    def test_an_entry_naming_NO_scope_is_a_NOTE_and_not_a_problem(self):
+        """🔴 DEMOTED, AND THE DEMOTION IS THE FIX. This direction subtracts the
+        cache's DIRECTORY LISTING from the table's keys, and a snapshot ships
+        entry FILES — so a scope holding nothing is missing from that set whether
+        it is stale, pre-registered, or pruned back to empty. See
+        `test_an_EXISTS_BUT_EMPTY_scope_is_not_graded_stale` for the case that
+        forced it."""
+        table = {DEFAULT_SCOPE: rs.DEFAULT_ALIAS, "retired-scope": SECOND_ALIAS}
+        assert self._check(table, {DEFAULT_SCOPE}) == ()
+        notes = self._notes(table, {DEFAULT_SCOPE})
+        assert len(notes) == 1, notes
+        assert "retired-scope" in notes[0]
 
     def test_an_entry_naming_an_UNCONFIGURED_alias_is_a_problem(self):
         problems = self._check({DEFAULT_SCOPE: "ghost"}, {DEFAULT_SCOPE})
@@ -506,10 +528,12 @@ class TestTheTableIsGradedBothWays:
     def test_a_table_that_agrees_with_reality_has_NO_problems(self):
         """The control. Without it every assertion above is satisfiable by a
         function that returns a problem for everything."""
-        assert self._check(
-            {DEFAULT_SCOPE: rs.DEFAULT_ALIAS, SECOND_SCOPE: SECOND_ALIAS},
-            {DEFAULT_SCOPE, SECOND_SCOPE},
-        ) == ()
+        table = {DEFAULT_SCOPE: rs.DEFAULT_ALIAS, SECOND_SCOPE: SECOND_ALIAS}
+        scopes = {DEFAULT_SCOPE, SECOND_SCOPE}
+        assert self._check(table, scopes) == ()
+        # …and no NOTE either, which is what keeps the demotion in the test
+        # above from being satisfiable by a `check` that notes everything.
+        assert self._notes(table, scopes) == ()
 
     def test_grading_a_host_with_NO_TABLE_refuses_rather_than_reporting_clean(self):
         """🔴 AN ABSENT TABLE READ AS AN EMPTY ONE WOULD REPORT EVERY SCOPE AS
@@ -521,7 +545,11 @@ class TestTheTableIsGradedBothWays:
         with pytest.raises(ci.RoutingConfigError):
             routing.check({DEFAULT_SCOPE})
 
-    def test_the_CLI_grades_the_table_and_exits_NONZERO_on_a_stale_entry(self, world):
+    def test_the_CLI_REPORTS_a_stale_entry_without_FAILING_on_it(self, world):
+        """🔴 REPORTED, NOT GRADED, AND THAT IS THE WHOLE OF FINDING 4. An entry
+        naming a scope that holds nothing is indistinguishable from one naming a
+        scope pre-registered before its first write, so it prints as a ⚠ note
+        and the command still exits 0."""
         world.add_instance()
         world.write_routes({
             DEFAULT_SCOPE: rs.DEFAULT_ALIAS,
@@ -529,10 +557,48 @@ class TestTheTableIsGradedBothWays:
             "retired-scope": SECOND_ALIAS,
         })
         proc = world.run("routes", "--check")
-        assert proc.returncode == 11, (proc.returncode, proc.stdout, proc.stderr)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
         assert "retired-scope" in proc.stderr, proc.stderr
+        assert "1 note(s)" in proc.stdout, proc.stdout
+        assert "0 problem(s)" in proc.stdout, proc.stdout
+        # 🔴 AND IT MUST NOT TELL THE OPERATOR TO DELETE THE LINE. With two
+        # instances configured, deleting it makes the next write REFUSE — the
+        # remedy the old wording implied was the harm.
+        assert "rather than deleting" in proc.stderr, proc.stderr
+
+    def test_an_EXISTS_BUT_EMPTY_scope_is_not_graded_stale(self, world):
+        """🔴 THE CASE THAT FORCED THE DEMOTION, MEASURED THROUGH THE CLI. The
+        scope EXISTS on the second instance — `recall` reaches it and says
+        `scope-empty` — but it holds no entry file, and a snapshot ships entry
+        files rather than directories, so the cache has no directory for it and
+        the grader cannot tell it from a retired one.
+
+        Before the fix this exited 11 naming `hollow-set`, and the two
+        assertions below disagreed with each other on the same world."""
+        world.add_instance()
+        world.add_empty_scope(world.second, "hollow-set")
+        world.write_routes({
+            DEFAULT_SCOPE: rs.DEFAULT_ALIAS,
+            SECOND_SCOPE: SECOND_ALIAS,
+            "hollow-set": SECOND_ALIAS,
+        })
+        # The store's own answer about that scope, which is the fact the grader
+        # was contradicting. Without this the test below is a claim about a
+        # scope nobody proved exists.
+        recalled = world.run("recall", "--scope", "hollow-set")
+        assert recalled.returncode == 0, (recalled.returncode, recalled.stderr)
+        assert "scope-empty" in recalled.stdout + recalled.stderr, recalled.stdout
+
+        proc = world.run("routes", "--check")
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert "hollow-set" in proc.stderr, proc.stderr
+        assert "0 problem(s)" in proc.stdout, proc.stdout
 
     def test_the_CLI_grades_the_table_and_exits_NONZERO_on_a_missing_entry(self, world):
+        """Direction ONE through the CLI: a scope that EXISTS and is unnamed. 🔴 IT
+        IS STILL A VERDICT — only direction TWO was demoted to a note, and without
+        this row "the check exits 0 now" would be satisfiable by a check that
+        graded nothing at all."""
         world.add_instance()
         world.write_routes({DEFAULT_SCOPE: rs.DEFAULT_ALIAS})
         proc = world.run("routes", "--check")
@@ -540,11 +606,49 @@ class TestTheTableIsGradedBothWays:
         assert SECOND_SCOPE in proc.stderr, proc.stderr
 
     def test_a_CORRECT_table_passes_the_CLI_check(self, world):
+        """🔴 THE CONTROL FOR EVERY ROW IN THIS CLASS, AND THE ORACLE HALF OF THE
+        TWO-INSTANCE PAIR. `TestRoutesCheckReadsEACHInstanceFromITSOWNConfig` in
+        `internal/client/instances_test.go` is its Go twin: the Go client fetched
+        the DEFAULT pod twice and graded the second instance's scopes as missing,
+        which is the state THIS test would have caught had the port had one."""
         world.add_instance()
         world.write_routes({DEFAULT_SCOPE: rs.DEFAULT_ALIAS, SECOND_SCOPE: SECOND_ALIAS})
         proc = world.run("routes", "--check")
         assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
         assert "0 problem(s)" in proc.stdout, proc.stdout
+
+    def test_DELETING_a_pre_registered_line_is_what_makes_the_write_REFUSE(self, world):
+        """🔴 THE REASON THE OLD REMEDY WAS WRONG, MEASURED RATHER THAN ARGUED.
+        The old note said the entry "exists on no configured instance — a stale
+        entry reads as coverage", which implies deleting the line. The line is
+        what lets the write RESOLVE at all: with it, the client routes and the
+        STORE decides; without it, the client refuses at 11 having contacted
+        nothing.
+
+        ⚠ NARROWED TO THE CLIENT'S DECISION ON PURPOSE. What the store then says
+        about a scope it has never held is the store's business and a different
+        contract — so this asserts `!= EXIT_UNROUTED` on the routed arm rather
+        than `== 0`, which would be a claim about the server."""
+        world.add_instance()
+        new_entry = world.home / "new.md"
+        new_entry.write_text(_entry("fresh-thing", "not-yet-written"))
+        args = ("create", "--scope", "not-yet-written", "--ref", "fresh-thing",
+                "--file", str(new_entry))
+
+        world.write_routes({
+            DEFAULT_SCOPE: rs.DEFAULT_ALIAS,
+            SECOND_SCOPE: SECOND_ALIAS,
+            "not-yet-written": SECOND_ALIAS,
+        })
+        routed = world.run(*args)
+        assert routed.returncode != 11, (routed.returncode, routed.stderr)
+
+        # …and with the line REMOVED — the remedy the old wording implied — the
+        # same invocation refuses before the store is reached.
+        world.write_routes({DEFAULT_SCOPE: rs.DEFAULT_ALIAS, SECOND_SCOPE: SECOND_ALIAS})
+        refused = world.run(*args)
+        assert refused.returncode == 11, (refused.returncode, refused.stdout, refused.stderr)
+        assert "not-yet-written" in refused.stderr, refused.stderr
 
 
 # =============================================================================
@@ -712,6 +816,42 @@ class TestDiscoveryAndTheTableFile:
         with pytest.raises(ci.RoutingConfigError) as exc:
             ci.discover({"SUBSYSTEM_STORE_CONFIG": str(cfg)})
         assert "Upper" in str(exc.value)
+
+    def test_an_EDITOR_LOCK_FILE_does_not_take_every_verb_to_exit_11(self, tmp_path):
+        """🔴 FINDING 6. Emacs' lock file for `secondary.env` is
+        `.#secondary.env`: it ends in `.env`, its stem is not a usable alias, and
+        it is a DANGLING SYMLINK so `is_dir()` is False — so it reached the hard
+        refusal above and EVERY `cairn` invocation on that host exited 11 while
+        the buffer was open.
+
+        Two cases, because one of them is the realistic shape and the other is
+        the one a test is tempted to write: a dangling symlink (what Emacs
+        actually creates) and a plain file."""
+        cfg = tmp_path / "config" / "env"
+        cfg.parent.mkdir(parents=True)
+        instances = cfg.parent / "instances"
+        instances.mkdir()
+        (instances / f"{SECOND_ALIAS}.env").write_text("")
+
+        lock = instances / f".#{SECOND_ALIAS}.env"
+        lock.symlink_to("zach@host.12345:1700000000")  # dangling, as Emacs writes it
+        assert not lock.exists(), "the fixture must be a DANGLING link, as Emacs writes it"
+        routing = ci.discover({"SUBSYSTEM_STORE_CONFIG": str(cfg)})
+        assert routing.aliases == (rs.DEFAULT_ALIAS, SECOND_ALIAS), routing.aliases
+        lock.unlink()
+
+        plain = instances / ".#vim-style.env"
+        plain.write_text("")
+        routing = ci.discover({"SUBSYSTEM_STORE_CONFIG": str(cfg)})
+        assert routing.aliases == (rs.DEFAULT_ALIAS, SECOND_ALIAS), routing.aliases
+        plain.unlink()
+
+        # 🔴 THE CONTROL: a NON-dotted file the operator really did write is
+        # still an ERROR. Without it this test is satisfied by deleting the
+        # refusal, which is the rule it is narrowing rather than removing.
+        (instances / "Upper.env").write_text("")
+        with pytest.raises(ci.RoutingConfigError):
+            ci.discover({"SUBSYSTEM_STORE_CONFIG": str(cfg)})
 
     def test_an_instances_file_may_NOT_claim_the_default_alias(self, tmp_path):
         cfg = tmp_path / "config" / "env"

@@ -80,23 +80,78 @@ anyone editing that path:
   its instance always.** "Where did that bullet go" is a question about a durable
   record, asked later, by someone who no longer has the terminal.
 - **Two harnesses carry the claims a suite cannot make, and they are RUNNABLE rather than
-  written down.** `tests/unchanged_output_capture.py` runs six read shapes against TWO TREES —
-  `origin/main` and this one — in BOTH configurations (no table, and a table present on a
-  one-instance host) and diffs the bytes, with a one-character perturbation of the caveat as its
-  positive control; it exits **2** if that control does not move. `tests/routing_mutants.py`
-  breaks each routing guard on purpose and requires each mutant to die **to its own test's
-  name** (`kills`), with a deliberately-fatal row as its positive control and a `PYTHONDONTWRITE
-  BYTECODE=1` + `__pycache__` sweep so a same-length edit cannot be scored SURVIVED without
-  having run. ⚠ The capture's first version ran only the no-table configuration — the one state
-  in which the old predicate was `False` by construction — so it measured green over the defect
-  above. Re-run it with `--base 58b4971` to watch it report the 77 diff lines it could not see.
-- ⚠ **THE GO CLIENT CARRIES THE VERB AND THE CODE, NOT THE ROUTING.** `cmd/cairn`
-  declares `routes` and `EXIT_UNROUTED = 11` and implements both — the ledgers
-  and the parity gate would otherwise be green over a client that had silently
-  lost a verb and a code. What it does **not** do is consult the table on
-  `recall`/`search`/`append`/`put`/`create`: that needs the caveat's
-  multi-instance clause inside `internal/report`, which is the renderer the POD
-  shares and which has no instance context at all. Declared difference 8 in
-  `tests/parity/README.md` carries the closing condition. Until it closes, a
-  multi-instance host must run the Python client.
+  written down.** `tests/unchanged_output_capture.py` runs six READ shapes and three WRITE
+  shapes against TWO TREES — `origin/main` and this one — in BOTH configurations (no table, and
+  a table present on a one-instance host) and diffs the bytes. `tests/routing_mutants.py` breaks
+  each routing guard on purpose and requires each mutant to die **to its own test's name**
+  (`kills`), with a deliberately-fatal row as its positive control and a
+  `PYTHONDONTWRITEBYTECODE=1` + `__pycache__` sweep so a same-length edit cannot be scored
+  SURVIVED without having run.
+  ⚠ **THE CAPTURE HAS BEEN BLIND TWICE, IN THE SAME SHAPE, AND BOTH ARE WORTH KNOWING.** Its
+  first version ran only the no-table configuration — the one state in which the old predicate
+  was `False` by construction — so it measured green over the defect above; re-run it with
+  `--base 2301876` — this branch's first commit — to watch it report the 77 diff lines it
+  could not see. ⚠ A SHA in prose is rebase-fragile: that reference has been rewritten
+  twice by rebases onto a moving `main`, so if it does not resolve, use the commit whose
+  subject is "route a scope to an INSTANCE, and refuse when nobody said which". Its second version ran
+  only READS, so it could not see that `append`/`put`/`create` print `instance=personal`
+  unconditionally — which is the one place a one-instance host's bytes really did move, and
+  `README.md` was promising they had not.
+  🔴 **SO IT CARRIES ONE POSITIVE CONTROL PER HALF, AND REFUSES (exit 2) IF EITHER FAILS TO
+  MOVE.** A control licenses a conclusion about the dimension it was built to test and not a
+  neighbouring one: the caveat perturbation moves every read and NO write, because a write
+  prints no caveat. The write half's control is a one-character edit to `DEFAULT_ALIAS`, which
+  is the value the `instance=` field carries. A write shape that exits non-zero also refuses to
+  vouch — a refused write never reaches the `instance=` line, so it would contribute a
+  reassuring "identical" while measuring nothing.
+- ⚠ **THE GO CLIENT ROUTES ITS WRITES AND REFUSES ITS READS, AND THIS BULLET USED
+  TO SAY OTHERWISE.** It read "what it does **not** do is consult the table on
+  `recall`/`search`/`append`/`put`/`create`", which was false of the three write
+  verbs on the commit that introduced it and contradicted `tests/parity/`
+  README's row 8, which had it right. What is true:
+  - `cmd/cairn` declares `routes` and `EXIT_UNROUTED = 11` and implements both —
+    the ledgers and the parity gate would otherwise be green over a client that
+    had silently lost a verb and a code.
+  - `append`, `put` and `create` **do** consult the table: `writeInstance` calls
+    `Routing.AliasFor`, loads the ROUTED instance's credentials, syncs the ROUTED
+    instance's cache (which is what `put` derives its `If-Match` from) and prints
+    `instance=<alias>` unconditionally.
+  - `sync`, `ls-entries`, `recall`/`search`, `validate` and `doctor` do **not**:
+    they call `RefuseUnportedMultiInstance`, because routing a read needs the caveat's
+    multi-instance clause inside `internal/report` — the renderer the POD shares,
+    which has no instance context at all. Declared difference 8 in
+    `tests/parity/README.md` carries the closing condition. Until it closes, a
+    multi-instance host must READ with the Python client.
+  - 🔴 `routes` is deliberately **not** behind that refusal. It is the verb an
+    operator runs *while standing up* a second instance, so refusing there would
+    disable the grading tool at the one moment it is the tool for. The read verbs
+    are different: they have a working alternative and no role in that moment.
+- 🔴 **`routes --check` MUST THREAD THE ALIAS INTO THE STATE RESOLVER, NOT JUST THE
+  CACHE PATH.** `resolve_state`/`ResolveState` FETCHES as well as unpacks, so a
+  caller that hands it instance `N`'s cache root while it loads the DEFAULT
+  instance's credentials fetches `personal` N times and unpacks it over every
+  other instance's cache — the exact damage the sibling-directory layout exists to
+  prevent, arriving through the code path instead of through `--cache`. The
+  grader then reads one store's scope set and reports the others' scopes as
+  missing. Measured on a two-instance host before the fix: `cairn[secondary]`
+  banner naming `personal`'s URL, `secondary`'s cache holding `personal`'s
+  scopes, and a false "exists on no configured instance" at exit 11.
+- 🔴 **DIRECTION TWO OF `Routing.check` IS A NOTE, NOT A VERDICT.** It subtracts the
+  cache's DIRECTORY LISTING from the table's keys, and a snapshot ships entry
+  FILES — so a scope holding no entries is missing from that set whether it is
+  stale, pre-registered before its first write, or pruned back to empty. Grading
+  it at exit 11 made the check refuse exactly the two-way-pinned registry it
+  exists to be, and the remedy its wording implied — delete the line — makes the
+  next write to that scope REFUSE. The discriminator exists and is simply not in
+  the snapshot (the server answers `scope-empty` vs `scope-absent` on
+  `GET /api/v1/recall/<scope>`); promoting it back is gated on probing the ROUTED
+  instance per table entry, identically in both clients, with a parity row.
+- 🔴 **NAME RULES ARE SEPARATE FROM TYPE RULES IN `instances/`.** A file whose name
+  begins with `.` is skipped rather than refused. Emacs' lock file for
+  `secondary.env` is `.#secondary.env` — it ends in `.env`, its stem is not a
+  usable alias, and it is a dangling symlink — so it reached the hard
+  `RoutingConfigError` and took **every** verb on that host to exit 11 while one
+  buffer was open. The refusal's stated intent ("a file the operator wrote and
+  would otherwise get no message about") is untouched: a non-dotted file that
+  cannot be an alias is still an error.
 
