@@ -321,8 +321,9 @@ is the one renderer; the pod reaches it through `report.Reader` and the CLI call
 `Recall`/`Search`/`RenderText`/`ExitFor` directly. **One renderer, three consumers** (pod, CLI,
 a future UI) is the deliverable, not a second client.
 
-**Measured on this tree: 77 cases, 78 PASS, 0 failures, 0 dead normalizations** — all nine
-verbs, every output-shaping flag, every documented exit code, and `cache-mtime-parity` on top.
+**Measured on this tree: 81 cases, 82 PASS, 0 failures, 0 dead normalizations** — all nine
+verbs, every output-shaping flag, every documented exit code, `--help` in four spellings, and
+`cache-mtime-parity` on top.
 
 🔴 **THE FIRST FULL RUN OF THAT GATE REPORTED 72 PASS / 0 FAIL AND MEASURED NOTHING.**
 `SUBSYSTEM_STORE_TRUSTED_PROXIES=127.0.0.1/32`, copied from the conformance runner where it is
@@ -336,13 +337,15 @@ different claims, so read all three:
 |---|---|---|
 | `PREFLIGHT status=… declared-entries=…` | the POD answers a non-empty snapshot for this token | exit **2** — "could not vouch", not "failed" |
 | `CONTENT-FLOOR live-banner=… rendered-digest=…` | the CLIENTS reached a live fetch and a rendered digest | exit 2 |
-| `--self-test` → `sabotaged=3 caught=3` | the differ goes red on stdout, on stderr **AND** on the exit code | exit 2 |
+| `--self-test` → `sabotaged=4 caught=4` | the differ goes red on stdout, on stderr, on the exit code **AND** on `exit+stdout` | exit 2 |
 
 `--break-pod` is the negative control on the first of those: it reconfigures the pod into
-exactly the state above and the harness must answer 2, not 78 PASS. ⚠ **Three sabotage rows,
+exactly the state above and the harness must answer 2, not 82 PASS. ⚠ **Four sabotage rows,
 not one**, because a `compare="exit"` row is STRUCTURALLY blind to stdout and stderr — one
-control over "something went red" would vouch for a differ that had lost two of its three
-comparisons.
+control over "something went red" would vouch for a differ that had lost most of its
+comparisons. 🔴 **And one of them REPLACES the Go argv rather than appending to it**: both
+clients handle `--help` before anything else, so no extra argument changes either answer and an
+append-only mechanism had NO control over the `exit+stdout` mode at all.
 
 🔴 **THE GATE FOUND THREE DEFECTS NO EXISTING TEST OR GOLDEN COULD SEE, and each is worth
 knowing because each is a class rather than a typo:**
@@ -360,7 +363,15 @@ knowing because each is a class rather than a typo:**
    `reader-resolution` roots on every doctor row. Deleted rather than mirrored into Python: a
    second mechanism reaching one value is the shape that leaves the first silently dead.
 
-A fourth came out of the Go unit battery: a truncated gzip stream and an HTML error page
+**A fourth was found by asking what the gate does NOT send: `--help`.** Every other row asserts
+something a caller asked the tool to DO; `--help` is how a human finds out what it can do, and
+there was no row for it. The Go client exited **2 with an empty stdout** for `--help`, `-h`,
+`recall --help` and `doctor --help` where the oracle exits **0** with its help text — on the
+single most common invocation there is. Four rows now cover it, under a THIRD comparison mode
+that asserts the exit code AND that both sides put something on stdout, because a client that
+printed nothing and exited 0 would pass an exit-only row while telling the reader nothing.
+
+A fifth came out of the Go unit battery: a truncated gzip stream and an HTML error page
 surface as the SAME `io.ErrUnexpectedEOF` out of `tar.Next`, so classifying on the error VALUE
 called `<html>nope</html>` a truncated tar where the oracle says `did not return an archive`.
 `gzipLayerError` records WHICH LAYER failed at the point it is known, and `validateGzipLayer`
@@ -405,10 +416,12 @@ line here: concurrency (both clients take the same `flock`, but nothing runs the
 instant), real network failures beyond a connect refusal, a narrowed credential (the SERVER's
 narrowing is the corpus's claim), and the `doctor` states no healthy world reaches.
 
-## 🔴 THE MUTATION BATTERY OVER P2: 51 MUTANTS, 48 KILLED, 3 LABELLED EQUIVALENT AT THE CODE
+## 🔴 THE MUTATION BATTERY OVER P2: 55 MUTANTS, 52 KILLED, 3 LABELLED EQUIVALENT AT THE CODE
 
-Round 1 killed 44, and its findings are why there is a round 2 — **every one of them was a hole
-in a guard rather than a defect in the code**, which is the useful direction:
+Round 1 killed 44 of 51, and its findings are why there was a round 2 — **every one of them was a
+hole in a guard rather than a defect in the code**, which is the useful direction. Round 3 added
+four mutants over the `--help` path that round 2 had no code to mutate, and it is CLEAN: the three
+survivors below are labelled equivalent, which is not a finding, so the ladder ends there.
 
 - **a `-run` filter that excluded the killing test.** `-run EMPTYDetail` matches nothing against
   `TestACheckWithAnEmptyDetailIsREFUSEDAtConstruction`, so deleting `Check`'s empty-detail

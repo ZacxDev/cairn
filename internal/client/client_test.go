@@ -880,6 +880,63 @@ func TestTheParserAcceptsBothFlagSpellingsAndRefusesTheRest(t *testing.T) {
 	}
 }
 
+func TestHELPIsAnANSWEROnStdoutAtExitZero(t *testing.T) {
+	// 🔴 A MEASURED DIVERGENCE ON THE MOST COMMON INVOCATION THERE IS. Before `ErrHelpRequested`
+	// existed, all four spellings below exited **2 with an empty stdout** where the oracle exits
+	// **0** with its help text: `--help` looked like an unrecognised GLOBAL option, `-h` like an
+	// unknown SUBCOMMAND, and `<verb> --help` like a flag that verb does not take. Three different
+	// code paths, one wrong answer, and the parity gate had no row for any of them — the gap was
+	// found by asking what the gate does NOT send.
+	//
+	// 🔴 STDOUT AND NOT STDERR. A `--help` on stderr at exit 2 is what a shell pipeline reads as a
+	// failure, which is why this asserts the STREAM and not only the code.
+	for _, tc := range []struct {
+		argv      []string
+		mustHave  string
+		mustNotBe string
+	}{
+		{[]string{"--help"}, "subcommands:", ""},
+		{[]string{"-h"}, "subcommands:", ""},
+		// A per-verb help documents THAT verb, and must not fall back to the top-level text.
+		{[]string{"recall", "--help"}, "usage: cairn recall", "subcommands:"},
+		{[]string{"doctor", "--help"}, "usage: cairn doctor", "subcommands:"},
+		// `--help` wins over an otherwise-fatal command line: asking a question is not an error.
+		{[]string{"append", "--help"}, "usage: cairn append", "subcommands:"},
+		{[]string{"recall", "--bogus-flag", "--help"}, "usage: cairn recall", ""},
+	} {
+		t.Run(strings.Join(tc.argv, " "), func(t *testing.T) {
+			var stdout strings.Builder
+			// ⚠ STDERR IS THE PROCESS'S OWN, BECAUSE `Env.Stderr` IS AN `*os.File` — so what this
+			// row can assert is that stdout carries the answer, not that stderr is silent. The
+			// parity gate covers the stream split end to end; naming the narrower claim here is
+			// better than implying the wider one.
+			code := Run(Env{Stdout: &stdout, Stderr: os.Stderr}, tc.argv)
+			if code != ExitOK {
+				t.Fatalf("exit %d, want 0 — help is an ANSWER, not a refusal", code)
+			}
+			if !strings.Contains(stdout.String(), tc.mustHave) {
+				t.Fatalf("stdout does not contain %q:\n%s", tc.mustHave, stdout.String())
+			}
+			if tc.mustNotBe != "" && strings.Contains(stdout.String(), tc.mustNotBe) {
+				t.Fatalf("a per-verb help fell back to the top-level text (found %q)", tc.mustNotBe)
+			}
+			// 🔴 AND IT NAMES THE EXIT CODES, because `cairn doctor --help`'s legend is where a
+			// caller learns what a number meant without finding a skill that restates it.
+			for _, code := range []string{"   0 ", "   9 ", "  10 "} {
+				if !strings.Contains(stdout.String(), code) {
+					t.Errorf("the help text does not carry the exit legend row %q", code)
+				}
+			}
+		})
+	}
+	// The negative control on the whole row set: a command line with NO help flag still refuses,
+	// so the passes above are about `--help` and not about a `Run` that exits 0 on anything.
+	var stdout strings.Builder
+	if code := Run(Env{Stdout: &stdout, Stderr: os.Stderr}, []string{"telepathy"}); code != ExitUsage {
+		t.Fatalf("an unknown subcommand must still be exit 2, got %d", code)
+	}
+}
+
 func TestAJSONBodyEscapesAnAstralCharacterAsASurrogatePAIR(t *testing.T) {
 	// 🔴 `ensure_ascii=True` IS CPYTHON'S DEFAULT AND IT IS LOAD-BEARING ON THIS ROUTE. The
 	// server's guard once could not tell a surrogate PAIR from a LONE surrogate and 400'd every

@@ -3,6 +3,7 @@
 ```bash
 python3 tests/parity/harness.py              # the gate
 python3 tests/parity/harness.py --self-test  # prove the differ can go RED
+python3 tests/parity/harness.py --break-pod  # prove the PRE-FLIGHT refuses to vouch (rc 2)
 python3 tests/parity/harness.py --only recall-digest --keep   # one row, world kept
 ```
 
@@ -12,17 +13,19 @@ single request was refused `401 status=no-client-ip`, no cache was ever written,
 rendered `store-unreachable` — because `SUBSYSTEM_STORE_TRUSTED_PROXIES` had been copied from the
 conformance runner, where `127.0.0.1/32` is correct, into a harness whose clients connect
 *directly*. Two clients failing identically compare equal. Three controls now stand against that,
-and they are three different claims:
+and they are three different claims (the third is itself four mutants):
 
 | control | what it proves | how it reads |
 |---|---|---|
 | `PREFLIGHT status=… declared-entries=…` | the POD answers a snapshot for this token, non-empty | exit **2** ("could not vouch"), not 1, if it does not |
 | `CONTENT-FLOOR live-banner=… rendered-digest=…` | the CLIENTS got as far as a live fetch and a rendered digest | exit 2 if either is false |
-| `--self-test` → `SELF-TEST sabotaged=3 caught=3` | the differ can go RED on stdout, on stderr **and** on the exit code | exit 2 if any sabotaged row is not reported |
+| `--self-test` → `SELF-TEST sabotaged=4 caught=4` | the differ can go RED on stdout, on stderr, on the exit code **and** on `exit+stdout` | exit 2 if any sabotaged row is not reported |
 
-The three sabotage rows are separate on purpose: `compare="exit"` rows are **structurally blind**
-to stdout and stderr, so one control over "something went red" would vouch for a differ that had
-lost two of its three comparisons.
+The four sabotage rows are separate on purpose: `compare="exit"` rows are **structurally blind** to
+stdout and stderr, so one control over "something went red" would vouch for a differ that had lost
+most of its comparisons. 🔴 **And one of them is a `replace`, not an `append`** — both clients
+handle `--help` before anything else, so no extra argument changes either answer and an
+append-only mechanism had **no control at all** over the `exit+stdout` mode's two assertions.
 
 ## What is compared
 
@@ -46,7 +49,7 @@ sequence while every timestamp is wrong.
 
 | # | difference | why it is not closed |
 |---|---|---|
-| 1 | **argparse's usage text.** Unknown flag, missing required flag, unknown subcommand, non-integer `--limit`, `doctor --scope`, bare invocation: the oracle prints argparse's `usage:` block and its wording; the Go client prints its own sentence. | Reproducing argparse's layout, its prefix abbreviation (`--sc` → `--scope`) and its exact phrasing in Go is a second implementation of a library nobody reads twice. **The exit code is 2 on both** and that is the half a caller branches on, so those rows are `compare="exit"` — declared per row, never applied silently. |
+| 1 | **argparse's usage and help text.** Unknown flag, missing required flag, unknown subcommand, non-integer `--limit`, `doctor --scope`, bare invocation — and `--help` / `-h` / `<verb> --help`: the oracle prints argparse's `usage:` block and its wording; the Go client prints its own. | Reproducing argparse's layout, its prefix abbreviation (`--sc` → `--scope`) and its exact phrasing in Go is a second implementation of a library nobody reads twice. **The exit code matches on all of them** — 2 for the refusals, **0 for the help rows** — and that is the half a caller branches on. Refusal rows are `compare="exit"`; help rows are `compare="exit+stdout"`, which also asserts BOTH sides put something on stdout, because a client that printed nothing and exited 0 would pass an exit-only row while telling the reader nothing. 🔴 Before those four rows existed the Go client exited **2 with an empty stdout** on all of them — on the single most common invocation there is. |
 | 2 | **`urllib` vs `net/http` failure text.** `<host> unreachable: <reason>` has a `urllib` tail on one side and a Go tail on the other; the oracle distinguishes a DNS/connect failure (`URLError.reason`) from a socket timeout (a bare `OSError`) where Go returns one `*url.Error` for both. | The host and the word `unreachable` — what a reader greps and what a human needs — are identical. Matching the tails would mean transcribing two libraries' error strings, which change with their versions. Rows that reach these are `compare="exit"`. |
 | 3 | **Sub-microsecond mtime.** The oracle's `tarfile` carries a PAX mtime as a Python **float** and `os.utime` writes it back, losing precision Go's exact decimal parse keeps: measured `…236263` (oracle) vs `…236300` (Go) on the seed stamp, 37 ns. | **Measured unable to matter.** Both collapse to the same `float64`, which is the value the index order is decided on: one ULP is 238 ns at the current epoch — measured at four magnitudes (year 2000 → 119 ns, now → 238, 2038 → 238, 2100 → 477). `cache-mtime-parity` asserts the doubles are identical **and** that the raw delta stays under that ULP, so a future change that widened it fails here rather than reordering an index. |
 | 4 | **A reader error's exit route.** A missing store root or an unreadable entry exits **3** on the Go client, naming the error. The oracle raises out of its subcommand and prints a traceback at exit **1**. | The Go behaviour is the CONTRACT the reader documents (3 is "the store is broken"); the oracle's 1 is an uncaught exception. Reproducing a traceback would be reproducing a defect. No row reaches it — the world is always readable — so it is declared, not measured. |

@@ -73,18 +73,27 @@ BOOT_TIMEOUT_S = 30.0
 #: `--self-test` appends these arguments to the GO side of three rows and REFUSES unless the differ
 #: reports all three — one row that must fail on stdout, one on stderr, and one on the exit code,
 #: because those are three separate comparisons and a harness can lose any one of them alone.
-SABOTAGE: dict[str, list[str]] = {
+#: 🔴 A SABOTAGE IS `("append", …)` OR `("replace", …)`, AND THE SECOND FORM EXISTS BECAUSE THE
+#: `--help` ROWS CANNOT BE SABOTAGED BY APPENDING. Both clients handle `--help` before anything
+#: else, so no extra argument changes either answer — which means an append-only mechanism had NO
+#: control over the third comparison mode at all, and its two assertions (the exit code AND a
+#: non-empty stdout) would have been vouched for by nothing.
+SABOTAGE: dict[str, tuple[str, list[str]]] = {
     # stdout: a different page of the same index is a well-formed answer to a different question.
-    "recall-list": ["--page", "9"],
+    "recall-list": ("append", ["--page", "9"]),
     # stderr: `--no-sync` changes the BANNER, which `validate` writes to stderr, while stdout's
     # per-scope counts stay identical — so this row can only fail on the stderr comparison.
-    "validate-one-scope": ["--no-sync"],
+    "validate-one-scope": ("append", ["--no-sync"]),
     # exit: this row is `compare="exit"`, so a stdout or stderr difference is INVISIBLE to it by
     # construction — which is exactly why the exit comparator needs its own control. A second
     # `--text` over the bullet cap makes the Go side refuse LOCALLY at exit 2 where the oracle
     # still reports the unreachable write at 7. Both command lines are well-formed; they mean
     # different things.
-    "append-unreachable": ["--text", "x" * 2001],
+    "append-unreachable": ("append", ["--text", "x" * 2001]),
+    # exit+stdout: REPLACED, for the reason above. An unknown subcommand makes the Go side exit 2
+    # with an empty stdout where the oracle prints its help at 0 — so this one mutant exercises
+    # BOTH of that mode's assertions at once.
+    "help-top-level": ("replace", ["telepathy"]),
 }
 
 
@@ -144,6 +153,12 @@ def normalizations() -> list[Normalization]:
 #: to be written down beside it or the gate quietly shrinks.
 COMPARE_ALL = "all"
 COMPARE_EXIT = "exit"
+#: 🔴 A THIRD MODE, AND IT EXISTS BECAUSE `exit` ALONE WAS NOT ENOUGH FOR `--help`. Help text is
+#: argparse's on the oracle and this port's own, so the bytes cannot be compared — but a client that
+#: printed NOTHING and exited 0 would pass an exit-only row while telling the reader nothing, which
+#: is the reassuring zero wearing a different hat. This mode asserts the code AND that both sides
+#: put something on stdout.
+COMPARE_EXIT_AND_STDOUT_NONEMPTY = "exit+stdout"
 
 
 @dataclass
@@ -427,6 +442,29 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "the same hostile archive under `recall`: exit 5 and NO digest, even though a healthy "
              "cache is sitting right there. A read degrades for an OUTAGE and must not for this",
              ["recall", "--scope", "alpha-notes"], env=hostile_env("duplicate"), presync=True),
+
+        # --- `--help`, which is how a human finds out what the tool does ---------
+        # 🔴 EVERY OTHER ROW ASSERTS SOMETHING A CALLER ASKED THE TOOL TO DO, AND THAT IS WHY
+        # THESE FOUR WERE MISSING. Before they existed the Go client exited **2 with nothing on
+        # stdout** for all four where the oracle exits **0** with its help text — on the single
+        # most common invocation there is. The gap was found by asking what the gate does not
+        # send, not by any test.
+        Case("help-top-level",
+             "`cairn --help` is exit 0 WITH output. Text excluded: argparse's layout is a "
+             "library's (declared difference 1); the code and a non-empty stdout are the contract",
+             ["--help"], compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
+        Case("help-short-flag",
+             "`cairn -h` is the same answer. It looked like an unknown SUBCOMMAND to an earlier "
+             "draft of the parser, which is a different code path from `--help`",
+             ["-h"], compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
+        Case("help-per-verb",
+             "`cairn recall --help` documents the VERB, and it looked like a flag `recall` does "
+             "not take — a third code path, and the one a reader reaches from the digest's footer",
+             ["recall", "--help"], compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
+        Case("help-doctor",
+             "`cairn doctor --help` carries the exit legend, which `doctor` also prints on every "
+             "run — so a reader never has to find a skill to learn what a number meant",
+             ["doctor", "--help"], compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
 
         # --- the usage surface -------------------------------------------------
         # 🔴 `compare="exit"` ON EVERY ROW BELOW, AND THE REASON IS THE SAME ONE EACH TIME: the
@@ -743,8 +781,28 @@ def main(argv: list[str] | None = None) -> int:
                 # can crash, not that the COMPARISON can see a difference — the thing being
                 # controlled for is the differ, and it has to be fed two well-formed runs that
                 # genuinely disagree.
-                sabotage = SABOTAGE.get(case.id, []) if args.self_test else []
-                go = once([go_binary] + shared + argv_case + sabotage)
+                go_argv = argv_case
+                if args.self_test and case.id in SABOTAGE:
+                    how, extra = SABOTAGE[case.id]
+                    go_argv = (argv_case + extra) if how == "append" else extra
+                go = once([go_binary] + shared + go_argv)
+
+                if case.compare == COMPARE_EXIT_AND_STDOUT_NONEMPTY:
+                    problems = []
+                    if py.rc != go.rc:
+                        problems.append(f"exit {py.rc} (oracle) vs {go.rc} (go)")
+                    for label, out in (("oracle", py.stdout), ("go", go.stdout)):
+                        if not out.strip():
+                            problems.append(f"{label} put NOTHING on stdout")
+                    if problems:
+                        failures.append(case.id)
+                        print(f"FAIL {case.id} — " + "; ".join(problems))
+                        print(f"     why: {case.why}")
+                    else:
+                        print(f"PASS {case.id} (exit {py.rc}, both stdout non-empty: "
+                              f"oracle {len(py.stdout)}B, go {len(go.stdout)}B)")
+                        passes += 1
+                    continue
 
                 if case.compare == COMPARE_EXIT:
                     if py.rc == go.rc:

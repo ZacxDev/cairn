@@ -112,6 +112,92 @@ func DeclaredVerbs() []string {
 	return out
 }
 
+// ErrHelpRequested is `--help` / `-h`, which is NOT a usage error.
+//
+// 🔴 A MEASURED DIVERGENCE, AND ON THE MOST COMMON INVOCATION THERE IS. Before this existed
+// `cairn --help` exited **2 with nothing on stdout** where the oracle exits **0 with 1,333 bytes**,
+// and `cairn recall --help`, `cairn doctor --help` and `cairn -h` did the same. Every parity row
+// asserts something a caller asked the tool to DO; `--help` is how a human finds out what it can
+// do, and the harness had no row for it — so the gap was found by asking what the gate does not
+// send rather than by any test. There is a row for each of those four now.
+var ErrHelpRequested = errors.New("help requested")
+
+// Usage is this client's own help text.
+//
+// ⚠ IT IS NOT ARGPARSE'S, AND THAT IS DECLARED DIFFERENCE 1 IN `tests/parity/README.md`.
+// Reproducing argparse's `usage:` block, its column layout and its wording in Go would be a second
+// implementation of a library nobody reads twice. What the parity gate compares on these rows is
+// the EXIT CODE and that stdout is NON-EMPTY — the second half matters, because a client that
+// printed nothing and exited 0 would pass an exit-only comparison while telling the reader nothing.
+func Usage(verb string) string {
+	var b strings.Builder
+	if verb == "" {
+		b.WriteString("usage: cairn [--cache PATH] [--timeout SECONDS] <subcommand> [options]\n\n")
+		b.WriteString("Read-through client for the hosted subsystem store. Syncs a local cache and\n")
+		b.WriteString("runs the reader against it, so a recall never depends on the network and never\n")
+		b.WriteString("reports an unreachable store as an empty one.\n\n")
+		b.WriteString("subcommands:\n")
+		for _, v := range Verbs() {
+			effect := ""
+			if v.Writes {
+				effect = "  [writes]"
+			}
+			fmt.Fprintf(&b, "  %-11s %s%s\n", v.Name, v.Help, effect)
+		}
+		b.WriteString("\nglobal options:\n")
+		b.WriteString("  --cache PATH       the local cache root (default: ~/.cache/subsystem-store)\n")
+		fmt.Fprintf(&b, "  --timeout SECONDS  bound on every store call (default: %d)\n", DefaultTimeout)
+		b.WriteString("\n")
+		b.WriteString(exitLegendText())
+		return b.String()
+	}
+	for _, v := range Verbs() {
+		if v.Name != verb {
+			continue
+		}
+		fmt.Fprintf(&b, "usage: cairn %s [options]\n\n%s\n\n", v.Name, v.Help)
+		b.WriteString("options:\n")
+		for _, flag := range v.Flags {
+			required := ""
+			for _, need := range requiredFlags[v.Name] {
+				if need == flag {
+					required = "  (required)"
+				}
+			}
+			fmt.Fprintf(&b, "  %-14s%s\n", flag, required)
+		}
+		if v.Name == "search" {
+			b.WriteString("  <query>         (required, positional)\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(exitLegendText())
+		return b.String()
+	}
+	return Usage("")
+}
+
+// exitLegendText renders the exit-code contract. 🔴 READ FROM `doctor.ExitLegend` FOR DOCTOR'S
+// HALF, NEVER RESTATED — a second copy of the legend is a second thing to keep true, and the
+// numbers are the part a caller branches on.
+func exitLegendText() string {
+	var b strings.Builder
+	b.WriteString("exit codes:\n")
+	b.WriteString("   0  content was served (live, cached, or a genuinely empty scope)\n")
+	b.WriteString("   2  usage: the command line must change\n")
+	b.WriteString("   3  store unreachable and NO cache — nothing was read at all\n")
+	b.WriteString("   4  `sync` only: not refreshed, though a usable cache survived\n")
+	b.WriteString("   5  the store's archive was REFUSED (link, traversal, duplicate, miscount)\n")
+	b.WriteString("   6  the store refused the write; change the request\n")
+	b.WriteString("   7  the write did NOT happen and a retry is the right response\n")
+	b.WriteString("   8  the precondition failed: re-sync, re-derive, re-apply\n")
+	b.WriteString("   9  `create` only: the entry ALREADY EXISTS; nothing was written\n")
+	b.WriteString("\n`doctor` has its own set, which it prints on every run:\n")
+	for _, row := range doctor.ExitLegend {
+		fmt.Fprintf(&b, "  %2d  %s\n", row.Code, row.Why)
+	}
+	return b.String()
+}
+
 // usageError is a command line this client refuses. 🔴 IT IS EXIT 2, WHICH IS THE ONE PART OF THE
 // USAGE CONTRACT BOTH CLIENTS SHARE. The MESSAGE is not: the Python client's usage text is
 // argparse's, and reproducing argparse's wording, its `usage:` line and its `--help` layout in Go
@@ -138,6 +224,18 @@ func Parse(argv []string) (Verb, Options, error) {
 		Timeout: DefaultTimeout,
 		Repo:    ".",
 		Mode:    report.DefaultMode,
+	}
+	// 🔴 `--help` AND `-h` ARE CHECKED BEFORE ANYTHING ELSE, ANYWHERE IN THE ARGUMENT LIST,
+	// because that is where argparse handles them and because a `--help` that lost a race with a
+	// usage error would exit 2 for asking a question. Both spellings, both positions: `cairn -h`
+	// looked like an unknown SUBCOMMAND to an earlier draft and `cairn recall --help` looked like a
+	// flag `recall` does not take — both exited 2 with NOTHING on stdout where the oracle exits 0
+	// with its help text. Measured at four points before the fix: `--help`, `-h`, `recall --help`,
+	// `doctor --help`.
+	for _, arg := range argv {
+		if arg == "--help" || arg == "-h" {
+			return Verb{}, opts, ErrHelpRequested
+		}
 	}
 	i := 0
 	// Global flags, BEFORE the verb — which is also argparse's rule for a parser with
@@ -297,6 +395,23 @@ func Parse(argv []string) (Verb, Options, error) {
 	return verb, opts, nil
 }
 
+// firstVerb is the first bare word of an argument list that names a verb, or "" — which is how
+// `cairn recall --help` is told from `cairn --help` without re-running the parser that just
+// returned ErrHelpRequested.
+func firstVerb(argv []string) string {
+	for _, arg := range argv {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		for _, v := range Verbs() {
+			if v.Name == arg {
+				return arg
+			}
+		}
+	}
+	return ""
+}
+
 func verbNames() []string {
 	var out []string
 	for _, v := range Verbs() {
@@ -308,6 +423,13 @@ func verbNames() []string {
 // Run is the whole client: parse, dispatch, and map every escaping error to its own exit code.
 func Run(env Env, argv []string) int {
 	verb, opts, err := Parse(argv)
+	if errors.Is(err, ErrHelpRequested) {
+		// 🔴 STDOUT AND EXIT 0. Help is an ANSWER, not a refusal — argparse does the same, and a
+		// `--help` on stderr at exit 2 is what a shell pipeline reads as a failure. The verb is
+		// taken from the first bare word so `cairn recall --help` documents `recall`.
+		fmt.Fprint(env.Stdout, Usage(firstVerb(argv)))
+		return ExitOK
+	}
 	if err != nil {
 		fmt.Fprintln(env.Stderr, err)
 		return ExitUsage

@@ -55,7 +55,11 @@ def test_every_CLI_verb_appears_in_at_least_one_case(cases):
     DISCOVERED from the parser rather than written here.
     """
     verbs = _cli_verbs()
-    covered = {case.argv[0] for case in cases if case.argv}
+    # ⚠ A ROW WHOSE FIRST ARGUMENT IS A FLAG NAMES NO VERB. `cairn --help` and `cairn -h` are
+    # rows about the tool rather than about a subcommand, and counting `--help` as a "verb the CLI
+    # does not have" would have made this guard fail for a row that is correct.
+    covered = {case.argv[0] for case in cases
+               if case.argv and not case.argv[0].startswith("-")}
     missing = sorted(verbs - covered)
     assert not missing, (
         f"{len(missing)} CLI verb(s) have NO parity case: {missing}. A verb the gate does not "
@@ -179,17 +183,27 @@ def test_every_sabotage_row_is_a_real_case(cases):
     missing = sorted(set(harness.SABOTAGE) - ids)
     assert not missing, f"the self-test sabotages rows that do not exist: {missing}"
     # …and it must cover all three comparisons, which is the whole reason there is more than one.
-    assert len(harness.SABOTAGE) >= 3, (
-        "the self-test sabotages fewer than three rows. stdout, stderr and the exit code are "
-        "three separate comparisons and an `exit`-only row is structurally blind to the first "
-        "two, so one control would vouch for a differ that had lost two of them."
+    assert len(harness.SABOTAGE) >= 4, (
+        "the self-test sabotages fewer than four rows. stdout, stderr and the exit code are three "
+        "separate comparisons, an `exit`-only row is structurally blind to the first two, and the "
+        "`exit+stdout` mode is a fourth assertion again — so a smaller set would vouch for a "
+        "differ that had lost some of them."
     )
     by_compare = {case.id: case.compare for case in cases}
     sabotaged_compares = {by_compare[cid] for cid in harness.SABOTAGE}
-    assert sabotaged_compares == {harness.COMPARE_ALL, harness.COMPARE_EXIT}, (
-        f"the sabotaged rows cover only {sorted(sabotaged_compares)}. Both comparison modes have "
-        f"to be controlled: an `exit`-only row cannot see a text difference at all."
+    every_mode = {harness.COMPARE_ALL, harness.COMPARE_EXIT,
+                  harness.COMPARE_EXIT_AND_STDOUT_NONEMPTY}
+    assert sabotaged_compares == every_mode, (
+        f"the sabotaged rows cover only {sorted(sabotaged_compares)}, not {sorted(every_mode)}. "
+        f"EVERY comparison mode has to be controlled: an `exit`-only row cannot see a text "
+        f"difference at all, and `exit+stdout` asserts something neither of the others does."
     )
+    # 🔴 AND EVERY SABOTAGE MUST DECLARE HOW IT IS APPLIED. `--help` rows cannot be sabotaged by
+    # APPENDING — both clients handle it before anything else — so an append-only mechanism had no
+    # control over that mode at all.
+    for cid, (how, extra) in harness.SABOTAGE.items():
+        assert how in ("append", "replace"), f"{cid}: unknown sabotage mode {how!r}"
+        assert extra, f"{cid}: an empty sabotage changes nothing and would vouch for nothing"
 
 
 def test_the_world_is_synthetic_and_dated_year_2000():
