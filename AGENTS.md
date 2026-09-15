@@ -93,6 +93,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
+| `internal/control` | P3a: principals, projects, grants, credentials — LIBRARY ONLY |
 | `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
 | `flake.nix` | both clients, the server image, the Go server, and the checks over all of them |
 
@@ -308,6 +309,11 @@ its own scope, so the build fetched 1.26 while the derivation advertised 1.25.
 🔴 **STDLIB ONLY.** `go.mod` has no `require` block and `flake.nix` passes
 `vendorHash = null`; together those make a new dependency in the serving path a build
 FAILURE rather than a silent addition.
+
+🔴 **P3a IS A LIBRARY — THE TOKEN FILE STILL AUTHORISES THE POD.** `internal/control` is
+the model, the append-only journal and the ONE predicate (`Resolve`); no route reads it.
+📄 `internal/control/README.md`: decisions, the 60-cell matrix and its 32/60 positive
+control, `tests/control_mutants.py` (23/22), and the stdlib-only collision P4 owns.
 
 ## 🔴 TWO CLIENTS ARE ALIVE, `cairn` IS THE ORACLE, AND `tests/parity/` IS THE GATE
 
