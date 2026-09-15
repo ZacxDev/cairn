@@ -2,7 +2,7 @@
 
 WHAT IS BEING PROTECTED
 -----------------------
-`claudedocs/decision-subsystem-store-rejected-2026-08-11.md` → "What replaced the
+`claudedocs/decision-subsystem-store-rejected.md` → "What replaced the
 premise": a session's subsystems are DERIVED from the paths it touched, by
 matching path components against each `/analyze-service` index entry's slug and
 `aliases:`. Nothing persists a location.
@@ -18,16 +18,16 @@ ACCOUNTED FOR (`unmatched_paths` covers the input).
 
 WHY THE FIXTURES ARE HAND-AUTHORED AND NOT A SNAPSHOT OF THE REAL STORE
 -----------------------------------------------------------------------
-🔴 The real corpus MUST NOT be copied in here. `~/.claude/analyze-service-index/`
+🔴 The real corpus MUST NOT be copied in here. `~/.claude/<mirror-root>/`
 carries client-identifying infrastructure detail; all 21 live entries lack a
 `sensitivity:` field, which `analyze-service/reference/index-store.md` defines as fail-safe
 `client-confidential`. This repo is PUBLIC, and `scripts/testlib/
 client_host_scan.py` exists precisely because six client subdomains had already
-leaked into fixtures once (devrc `60e6d9d` scrubbed them retroactively) — several
+leaked into fixtures once (alpha-toolkit `60e6d9d` scrubbed them retroactively) — several
 live aliases are exactly that shape.
 
-So the fixtures below reproduce the SHAPES measured in the live store on
-2026-08-10 (read-only probe, nothing written), with synthetic names.
+So the fixtures below reproduce the SHAPES measured in the live store
+(read-only probe, nothing written), with synthetic names.
 
 ⚠ The list that follows describes the LIVE CORPUS, not `ENTRIES` below.
 `ENTRIES` is 9 entries across 3 scopes — deliberately smaller and deliberately
@@ -36,7 +36,7 @@ instance of each SHAPE (and two constructed ones the live store does not contain
 at all: the ambiguity pair and a cross-entry alias clash). Read the counts here
 as "what the store looks like", never as "what the fixture asserts".
 
-Measured live, 2026-08-10:
+Measured live:
 
   * 21 entries, 1 scope, 0 `kind:` fields, 0 `sensitivity:` fields;
   * every entry still spells the scope `repo:`, not `scope:` — the loader must
@@ -112,8 +112,8 @@ import subsystem_resolver as sr  # noqa: E402
 # other except the ONE deliberate shadow case. So a matcher that compared the
 # wrong field would produce zero, not a plausible answer.
 
-SCOPE_A = "homelab-talos"   # the busy scope: no ambiguity anywhere in it
-SCOPE_B = "devrc"           # holds the deliberate kind-qualified ambiguity
+SCOPE_A = "gamma-cluster"   # the busy scope: no ambiguity anywhere in it
+SCOPE_B = "alpha-toolkit"           # holds the deliberate kind-qualified ambiguity
 SCOPE_EMPTY = "empty-scope"  # exists, holds nothing — an honest empty result
 
 ENTRIES: list[dict[str, object]] = [
@@ -219,8 +219,8 @@ class TestNormalizeRef:
             ("image_ingestion", "image-ingestion"),
             ("media_ingestion", "media-ingestion"),
             (
-                "bastion_config_stale_until_reload_2026_07_08",
-                "bastion-config-stale-until-reload-2026-07-08",
+                "bastion_config_stale_until_reload_2000_01_01",
+                "bastion-config-stale-until-reload-2000-01-01",
             ),
             # --- case + whitespace ---
             ("External DNS", "external-dns"),
@@ -300,10 +300,10 @@ class TestPathRefs:
         "path,expected",
         [
             (
-                "clusters/homelab/apps/pghero/values.yaml",
+                "clusters/gamma/apps/pghero/values.yaml",
                 (
                     ("clusters", "clusters"),
-                    ("homelab", "homelab"),
+                    ("gamma", "gamma"),
                     ("apps", "apps"),
                     ("pghero", "pghero"),
                     ("values.yaml", "values.yaml"),
@@ -550,7 +550,7 @@ class TestResolveRefTiers:
         assert sr.resolve_ref("collector", index, SCOPE_A) is None
 
     def test_scope_is_normalized_on_lookup(self, index: sr.SubsystemIndex) -> None:
-        assert sr.resolve_ref("collector", index, "DEVRC").filename == "collector.md"
+        assert sr.resolve_ref("collector", index, "ALPHA-TOOLKIT").filename == "collector.md"
 
     # --- kind qualification ---------------------------------------------------
 
@@ -646,16 +646,16 @@ class TestPositiveControl:
     path SHAPE, differing only in whether the directory names a real entry."""
 
     POSITIVE_PATHS = [
-        "clusters/homelab/apps/pghero/values.yaml",
-        "clusters/homelab/apps/pghero/kustomization.yaml",
-        "clusters/homelab/apps/pghero/ingressroute.yaml",
+        "clusters/gamma/apps/pghero/values.yaml",
+        "clusters/gamma/apps/pghero/kustomization.yaml",
+        "clusters/gamma/apps/pghero/ingressroute.yaml",
     ]
     # Same depth, same filenames, same scope — ONLY the subsystem directory
     # differs, and it names nothing in the index.
     NEGATIVE_PATHS = [
-        "clusters/homelab/apps/unlisted-widget/values.yaml",
-        "clusters/homelab/apps/unlisted-widget/kustomization.yaml",
-        "clusters/homelab/apps/unlisted-widget/ingressroute.yaml",
+        "clusters/gamma/apps/unlisted-widget/values.yaml",
+        "clusters/gamma/apps/unlisted-widget/kustomization.yaml",
+        "clusters/gamma/apps/unlisted-widget/ingressroute.yaml",
     ]
 
     def test_the_pair(self, index: sr.SubsystemIndex) -> None:
@@ -682,7 +682,7 @@ class TestPositiveControl:
     ) -> None:
         """`clusters`, `apps`, `values.yaml` appear in BOTH sets and name nothing.
         If they matched, the negative control above would be vacuous."""
-        for ref in ("clusters", "homelab", "apps", "values", "values.yaml", "kustomization"):
+        for ref in ("clusters", "gamma", "apps", "values", "values.yaml", "kustomization"):
             assert sr.resolve_ref(ref, index, SCOPE_A) is None, ref
 
 
@@ -692,7 +692,7 @@ class TestPositiveControl:
 
 
 class TestAssociateGuards:
-    GOOD = ["clusters/homelab/apps/pghero/values.yaml"]
+    GOOD = ["clusters/gamma/apps/pghero/values.yaml"]
 
     def test_unknown_scope(self, index: sr.SubsystemIndex) -> None:
         with pytest.raises(sr.UnknownScopeError) as exc:
@@ -728,7 +728,7 @@ class TestAssociateGuards:
         discriminator, and nothing else in the result is."""
         nothing_given = sr.associate_paths([], index, SCOPE_A)
         looked_and_missed = sr.associate_paths(
-            ["clusters/homelab/apps/unlisted-widget/values.yaml"], index, SCOPE_A
+            ["clusters/gamma/apps/unlisted-widget/values.yaml"], index, SCOPE_A
         )
 
         # Identical on the field a naive consumer reads …
@@ -736,11 +736,11 @@ class TestAssociateGuards:
         # … and DIFFERENT on the field that accounts for the input.
         assert nothing_given.considered_paths == ()
         assert looked_and_missed.considered_paths == (
-            "clusters/homelab/apps/unlisted-widget/values.yaml",
+            "clusters/gamma/apps/unlisted-widget/values.yaml",
         )
         assert nothing_given.unmatched_paths == ()
         assert looked_and_missed.unmatched_paths == (
-            "clusters/homelab/apps/unlisted-widget/values.yaml",
+            "clusters/gamma/apps/unlisted-widget/values.yaml",
         )
 
         # The named affordance over that same discriminator.
@@ -913,7 +913,7 @@ class TestPrecisionThreshold:
 
     @staticmethod
     def _paths(n: int) -> list[str]:
-        return [f"clusters/homelab/apps/pghero/file{i}.yaml" for i in range(n)]
+        return [f"clusters/gamma/apps/pghero/file{i}.yaml" for i in range(n)]
 
     @pytest.mark.parametrize(
         "min_paths,n,expect_matched",
@@ -998,9 +998,9 @@ class TestPrecisionThreshold:
     def test_path_refs_collapses_a_directory_that_repeats_as_the_stem(self) -> None:
         """The behaviour the old vacuous test was really exercising, asserted at
         the level it actually happens: `path_refs`, not `associate_paths`."""
-        assert sr.path_refs("clusters/homelab/apps/pghero/pghero.yaml") == (
+        assert sr.path_refs("clusters/gamma/apps/pghero/pghero.yaml") == (
             ("clusters", "clusters"),
-            ("homelab", "homelab"),
+            ("gamma", "gamma"),
             ("apps", "apps"),
             ("pghero", "pghero"),
             ("pghero.yaml", "pghero.yaml"),
@@ -1015,11 +1015,11 @@ class TestPrecisionThreshold:
 class TestEvidence:
     def test_filename_tier_evidence(self, index: sr.SubsystemIndex) -> None:
         result = sr.associate_paths(
-            ["clusters/homelab/apps/pghero/values.yaml"], index, SCOPE_A, min_paths=1
+            ["clusters/gamma/apps/pghero/values.yaml"], index, SCOPE_A, min_paths=1
         )
         (match,) = result.matched
         (ev,) = match.evidence
-        assert ev.path == "clusters/homelab/apps/pghero/values.yaml"
+        assert ev.path == "clusters/gamma/apps/pghero/values.yaml"
         assert ev.component == "pghero"
         assert ev.ref == "pghero"
         assert ev.tier == "filename"
@@ -1172,7 +1172,7 @@ class TestLiveCorpusPathShapes:
     sweep cannot find a case the fixtures cannot express; it can only find code
     the fixtures already reach.
 
-    Shapes below were measured against the live store on 2026-08-11 (read-only):
+    Shapes below were measured against the live store (read-only):
     2 aliases contain a SPACE, 2 contain a DOT, 9 carry 2+ hyphens, and the
     dominant layout is a per-service directory under a deep prefix — but a flat
     `<slug>.yaml` beside its siblings is also common, and NO test above ever
@@ -1307,34 +1307,34 @@ def _write_entry(dirpath: Path, name: str, body: str) -> None:
 
 class TestLoader:
     def test_legacy_repo_key_is_read_as_scope(self, tmp_path: Path) -> None:
-        """MEASURED on the live store 2026-08-10: 21 of 21 entries still spell it
+        """MEASURED on the live store: 21 of 21 entries still spell it
         `repo:`. A loader that only knows `scope:` reads the whole corpus as
         malformed — or, worse, as empty."""
         _write_entry(
-            tmp_path / "homelab-talos",
+            tmp_path / "gamma-cluster",
             "pghero.md",
-            "---\nservice: pghero\naliases: [pg-hero, pg_hero]\nrepo: homelab-talos\n"
+            "---\nservice: pghero\naliases: [pg-hero, pg_hero]\nrepo: gamma-cluster\n"
             "namespace: db-pghero\n---\n\n## What it is\nA dashboard.\n",
         )
         loaded = sr.load_index(tmp_path)
-        assert loaded.scopes == ("homelab-talos",)
-        assert sr.resolve_ref("pg_hero", loaded, "homelab-talos").filename == "pghero.md"
+        assert loaded.scopes == ("gamma-cluster",)
+        assert sr.resolve_ref("pg_hero", loaded, "gamma-cluster").filename == "pghero.md"
 
     def test_readme_is_not_an_entry(self, tmp_path: Path) -> None:
-        scope = tmp_path / "homelab-talos"
+        scope = tmp_path / "gamma-cluster"
         _write_entry(scope, "README.md", "# store policy\n\nNo remote. No stash.\n")
-        _write_entry(scope, "flux.md", "---\nservice: flux\nrepo: homelab-talos\n---\n")
+        _write_entry(scope, "flux.md", "---\nservice: flux\nrepo: gamma-cluster\n---\n")
         loaded = sr.load_index(tmp_path)
         assert len(loaded) == 1
-        assert sr.resolve_ref("readme", loaded, "homelab-talos") is None
+        assert sr.resolve_ref("readme", loaded, "gamma-cluster") is None
 
     def test_empty_scope_dir_is_registered_not_dropped(self, tmp_path: Path) -> None:
         (tmp_path / "brand-new-scope").mkdir()
         _write_entry(
-            tmp_path / "homelab-talos", "flux.md", "---\nservice: flux\nrepo: homelab-talos\n---\n"
+            tmp_path / "gamma-cluster", "flux.md", "---\nservice: flux\nrepo: gamma-cluster\n---\n"
         )
         loaded = sr.load_index(tmp_path)
-        assert loaded.scopes == ("brand-new-scope", "homelab-talos")
+        assert loaded.scopes == ("brand-new-scope", "gamma-cluster")
         # existing-but-empty → honest miss
         assert sr.resolve_ref("flux", loaded, "brand-new-scope") is None
         # never-heard-of → error
@@ -1354,32 +1354,32 @@ class TestLoader:
         looking at this test.
 
         With `setdefault`, the entry lands in scope `some-old-name` while
-        `homelab-talos` is registered empty — so the file is unreachable under
+        `gamma-cluster` is registered empty — so the file is unreachable under
         the scope it actually lives in.
         """
         _write_entry(
-            tmp_path / "homelab-talos",
+            tmp_path / "gamma-cluster",
             "flux.md",
             f"---\nservice: flux\n{key}: some-old-name\n---\n",
         )
         loaded = sr.load_index(tmp_path)
-        assert loaded.scopes == ("homelab-talos",)
+        assert loaded.scopes == ("gamma-cluster",)
         assert "some-old-name" not in loaded.scopes
-        assert sr.resolve_ref("flux", loaded, "homelab-talos").filename == "flux.md"
+        assert sr.resolve_ref("flux", loaded, "gamma-cluster").filename == "flux.md"
 
     def test_kind_qualified_filename_on_disk(self, tmp_path: Path) -> None:
-        scope = tmp_path / "devrc"
-        _write_entry(scope, "repo-cos.md", "---\nservice: repo-cos\nrepo: devrc\n---\n")
+        scope = tmp_path / "alpha-toolkit"
+        _write_entry(scope, "repo-cos.md", "---\nservice: repo-cos\nrepo: alpha-toolkit\n---\n")
         _write_entry(
-            scope, "repo-cos.process.md", "---\nservice: repo-cos\nrepo: devrc\n---\n"
+            scope, "repo-cos.process.md", "---\nservice: repo-cos\nrepo: alpha-toolkit\n---\n"
         )
         loaded = sr.load_index(tmp_path)
-        assert sr.resolve_ref("repo-cos.process", loaded, "devrc").filename == "repo-cos.process.md"
+        assert sr.resolve_ref("repo-cos.process", loaded, "alpha-toolkit").filename == "repo-cos.process.md"
         with pytest.raises(sr.AmbiguousRefError):
-            sr.resolve_ref("repo-cos", loaded, "devrc")
+            sr.resolve_ref("repo-cos", loaded, "alpha-toolkit")
 
     def test_a_malformed_file_names_itself(self, tmp_path: Path) -> None:
-        _write_entry(tmp_path / "devrc", "broken.md", "---\naliases: [x]\nrepo: devrc\n---\n")
+        _write_entry(tmp_path / "alpha-toolkit", "broken.md", "---\naliases: [x]\nrepo: alpha-toolkit\n---\n")
         with pytest.raises(sr.MalformedEntryError) as exc:
             sr.load_index(tmp_path)
         assert "broken.md" in str(exc.value)
@@ -1390,11 +1390,11 @@ class TestLoader:
 
         Files are CREATED in reverse name order here, so directory order (which
         on many filesystems is creation order) disagrees with the contract."""
-        scope = tmp_path / "homelab-talos"
+        scope = tmp_path / "gamma-cluster"
         for name in ("zeta", "mid", "alpha"):
-            _write_entry(scope, f"{name}.md", f"---\nservice: {name}\nrepo: homelab-talos\n---\n")
+            _write_entry(scope, f"{name}.md", f"---\nservice: {name}\nrepo: gamma-cluster\n---\n")
         loaded = sr.load_index(tmp_path)
-        assert [e.filename for e in loaded.entries("homelab-talos")] == [
+        assert [e.filename for e in loaded.entries("gamma-cluster")] == [
             "alpha.md",
             "mid.md",
             "zeta.md",
@@ -1424,12 +1424,12 @@ class TestFrontMatterParser:
     def test_flow_list_and_scalars(self) -> None:
         parsed = sr.parse_front_matter(
             "---\nservice: pghero\naliases: [pg-hero, pg_hero, hero dashboard]\n"
-            "repo: homelab-talos\nnamespace: db-pghero\n---\n\nbody\n"
+            "repo: gamma-cluster\nnamespace: db-pghero\n---\n\nbody\n"
         )
         assert parsed == {
             "service": "pghero",
             "aliases": ["pg-hero", "pg_hero", "hero dashboard"],
-            "repo": "homelab-talos",
+            "repo": "gamma-cluster",
             "namespace": "db-pghero",
         }
 
@@ -1456,9 +1456,9 @@ class TestFrontMatterParser:
 
     def test_comment_lines_inside_front_matter_are_skipped(self) -> None:
         parsed = sr.parse_front_matter(
-            "---\n# a note to the author\nservice: pghero\nrepo: homelab-talos\n---\n"
+            "---\n# a note to the author\nservice: pghero\nrepo: gamma-cluster\n---\n"
         )
-        assert parsed == {"service": "pghero", "repo": "homelab-talos"}
+        assert parsed == {"service": "pghero", "repo": "gamma-cluster"}
 
     def test_a_comment_CONTAINING_A_COLON_is_still_skipped(self) -> None:
         """🔴 The case that makes the comment skip load-bearing rather than
@@ -1661,7 +1661,7 @@ class TestMutationKillMatrix:
         idx = _mutant_index(mod)
         nothing_given = mod.associate_paths([], idx, SCOPE_A)
         looked_and_missed = mod.associate_paths(
-            ["clusters/homelab/apps/unlisted-widget/values.yaml"], idx, SCOPE_A
+            ["clusters/gamma/apps/unlisted-widget/values.yaml"], idx, SCOPE_A
         )
         assert nothing_given.considered_paths == looked_and_missed.considered_paths == ()
 
@@ -1678,7 +1678,7 @@ class TestMutationKillMatrix:
         )
         idx = _mutant_index(mod)
         result = mod.associate_paths(
-            ["clusters/homelab/apps/unlisted-widget/values.yaml"], idx, SCOPE_A
+            ["clusters/gamma/apps/unlisted-widget/values.yaml"], idx, SCOPE_A
         )
         # A zero that no longer says what it failed to match.
         assert result.matched == () and result.unmatched_paths == ()
@@ -1755,7 +1755,7 @@ class TestMutationKillMatrix:
         )
         idx = _mutant_index(mod)
         result = mod.associate_paths(
-            ["clusters/homelab/apps/pghero/file0.yaml"], idx, SCOPE_A, min_paths=3
+            ["clusters/gamma/apps/pghero/file0.yaml"], idx, SCOPE_A, min_paths=3
         )
         assert result.subsystem_refs == ("pghero",)  # a single graze now tags it
 
@@ -1803,11 +1803,11 @@ class TestMutationKillMatrix:
                 )
             ],
         )
-        store = tmp_path / "store" / "homelab-talos"
+        store = tmp_path / "store" / "gamma-cluster"
         store.mkdir(parents=True)
         (store / "README.md").write_text("# store policy\n", encoding="utf-8")
         (store / "flux.md").write_text(
-            "---\nservice: flux\nrepo: homelab-talos\n---\n", encoding="utf-8"
+            "---\nservice: flux\nrepo: gamma-cluster\n---\n", encoding="utf-8"
         )
         with pytest.raises(mod.MalformedEntryError):
             mod.load_index(tmp_path / "store")
@@ -1852,8 +1852,8 @@ class TestMutationKillMatrix:
 # `parse_journal_bullets` is new here for the same reason.
 #
 # 🔴 EVERY FIXTURE BELOW IS SYNTHETIC. This repo is PUBLIC and the real store is
-# client-confidential; the SHAPES are measured from the live corpus (2026-08-12,
-# read-only: 26 entries, 110 top-level bullets all at indent 0, 250 continuation
+# client-confidential; the SHAPES are measured from the live corpus
+# (read-only: 26 entries, 110 top-level bullets all at indent 0, 250 continuation
 # lines all at indent 2, 62 bullets dated and 48 not, longest bullet 19 lines),
 # the CONTENT is invented.
 # =============================================================================
@@ -2038,7 +2038,7 @@ class TestJournalBullets:
         assert sr.parse_journal_bullets("- 2026-02-30: x\n")[0].date is None
 
     def test_a_date_must_START_the_bullet(self) -> None:
-        assert sr.parse_journal_bullets("- fixed on 2026-01-01 by hand\n")[0].date is None
+        assert sr.parse_journal_bullets("- fixed by hand\n")[0].date is None
 
     def test_asterisk_bullets_parse_too(self) -> None:
         got = sr.parse_journal_bullets("* 2026-01-01: a\n* 2026-01-02: b\n")
@@ -2520,7 +2520,7 @@ def _bullet_with_continuation(*continuation: str) -> sr.JournalBullet:
 class TestMarkerReachability:
     """🔴 A MARKER SPELLED CORRECTLY WHERE THE PARSER NEVER LOOKS.
 
-    Measured in the field 2026-08-20 (`claudedocs/handoff-subsystem-store.md`):
+    Measured in the field (`claudedocs/handoff-subsystem-store.md`):
     one bullet carried a second, correctly-spelled marker several lines into its
     body. It showed on NO openness surface — not `OPEN`, not `NEAR-MISS` — and had
     only ever raised a badge BY ACCIDENT through a broken `RESOLVED —` above it,

@@ -4,15 +4,15 @@
 🔴 ONE RULE, ONE PLACE — "where does this host read the subsystem store from?".
 
 Before the Cairn cutover there was one answer and every reader baked it in:
-`entry_shape.DEFAULT_STORE_ROOT` (`~/.claude/analyze-service-index`), which was
+`entry_shape.DEFAULT_STORE_ROOT` (`~/.claude/<mirror-root>`), which was
 both the write target and the read target. The cutover made a hosted pod the
 canonical datastore, FROZE that directory (entry files `0444`, nothing refreshes
 it) and introduced a synced read-through cache that `cairn sync` / `cairn recall`
 maintain. The read path was not repointed, so two host-local read surfaces —
 `subsystem_recall.py`'s CLI and `service_recon.py`'s recon — went on reading the
-frozen copy. MEASURED 2026-09-02 on the workbench: the frozen mirror served 26
-`devrc/` entries and the cache 29, and the frozen one printed
-"ALL 26 entries in `devrc/`, none omitted" — a completeness claim about a store
+frozen copy. MEASURED on the workbench: the frozen mirror served 26
+`alpha-toolkit/` entries and the cache 29, and the frozen one printed
+"ALL 26 entries in `alpha-toolkit/`, none omitted" — a completeness claim about a store
 that had stopped moving the day before, with nothing in the output saying so.
 
 **The discriminator is the stamp, not the path.** `cairn sync` writes

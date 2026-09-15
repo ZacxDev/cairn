@@ -40,7 +40,7 @@ stub — the pattern Anthropic's own docs prescribe).
   - `cairn:431` and `tests/testlib/public_ip_scan.py:5` docstrings now cite `AGENTS.md`; the latter had quoted pre-extraction rule text that existed NOWHERE in the repo.
   - `tests/test_subsystem_store_api.py` scan must-reach ledger now requires `AGENTS.md` AND `CLAUDE.md`.
 - Verified: full suite **1716 passed, 0 failed**; leakscan clean with both controls watched (positive + negative), `--self-test` rc 0.
-- Deploy/verify status: N/A (docs only). Pushed and merged. Clawgate board resolved NOTHING for this session (rc 5, empty array — cannot distinguish "no task" from "wrong id"; no field written, no task created).
+- Deploy/verify status: N/A (docs only). Pushed and merged. The task board resolved NOTHING for this session (rc 5, empty array — cannot distinguish "no task" from "wrong id"; no field written, no task created).
 - Base clone re-synced `--ff-only` after the merge, so it is not silently behind `main`.
 - IN FLIGHT: nothing. The docs work is on `main`; the follow-on comment fix is its own PR —
   #15, recorded under **Closed** below, which deliberately states no merge state for it.

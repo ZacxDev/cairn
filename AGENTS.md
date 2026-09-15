@@ -24,7 +24,14 @@ removed.**
 - captured text of any kind — anyone's messages, prompts, transcripts, or a model's summaries
   of them — however it arrives. A test needs the SHAPE; regenerate it synthetic.
 
-**`tests/leakscan.py` enforces this and runs in CI on every commit.** Run it before you push:
+🔴 **`tests/leakscan.py` runs in CI on every commit AND IT DOES NOT COVER ALL FIVE — know
+which.** Credentials, private IPs and dated incident references are gated in GENERAL.
+Hostnames and project/scope names are gated only for a CLOSED SET of digests
+(`denied-identifier`): the names a scrub already removed cannot come back, a NEW one is
+invisible until you add it. Captured text is gated by NOTHING and cannot be; that bullet is
+yours. ⚠ This line used to read "enforces this" while the scanner's own docstring said it
+deliberately policed neither names nor dates — two bullets with no gate, and the most-read
+file in the repo claiming otherwise. Run it before you push:
 
 ```bash
 python3 tests/leakscan.py            # scan the tree
@@ -98,10 +105,11 @@ both run over one store and byte-identity is compared, then the client is ported
 Python is retired.
 
 ✅ **ALL THREE STEPS ARE DONE, AND STEP TWO IS `tests/dualrun/`.** Both servers run over
-ONE store; every route, scope, entry and principal is compared — **measured 612 targets /
-2,492 comparisons / 0 differences on a real store and 361 / 1,489 / 0 on a generated one**,
-uncompressed tar included. It found one divergence no other gate could see (the audit
-record's `ts=` spelling) and carries four refusals plus 7 mutants, 7 killed.
+ONE store; every route, scope, entry and principal is compared — **361 targets / 1,489
+comparisons / 0 differences on a GENERATED store**, uncompressed tar included. It found one
+divergence no other gate could see (the audit record's `ts=` spelling) and carries four
+refusals plus 7 mutants, 7 killed. ⚠ Mode 1 runs over a REAL store and nobody but the
+operator can reproduce its figures, so they are in the README, not here.
 📄 **`tests/dualrun/README.md`**: the arms, the licences, the battery, and what it CANNOT
 see. 🔴 Step 3 landed out of order deliberately and never implied this one — do not declare
 a step done early; the sentence here once read "while the corpus is partial", which a green
@@ -215,24 +223,10 @@ CPython's `round(x, 3)` over 19 values including `.xx5` boundaries. ⚠ **The fi
 the sandbox tier's `go test` goes red naming it, which is the good direction and still worth
 saying.
 
-🔴 **THE MUTATION BATTERY: 56 mutants over two targets, 52 KILLED, 4 SURVIVED — and every
-survivor is LABELLED EQUIVALENT AT THE CODE, with the reasoning, because three of them
-corrected a comment that was wrong.**
-
-**46 over the RENDERER**, in three rounds: round 1 killed 24 of 40 and its 13 survivors are
-what built the fixture above; round 2 killed 40 of 46; round 3 killed 43 of 46 and is clean.
-The three correct survivors: `sort.SliceStable` → `sort.Slice` (the comparator is a total
-order); `1e-9*nsec` → `nsec/1e9` (**measured bit-identical at every realistic mtime
-magnitude** — the ULP of the sum dwarfs the difference, and the old comment claimed the
-hazard was reachable); and disabling `difflib`'s extension loops (**with an empty junk set
-the DP has already found the longest contiguous run, so neither loop can advance** — the old
-comment said two of the four "can run", which is two more than can).
-
-**10 over `store.ScopeRevision` AND THE WARNING SINK**, the two surfaces P1b added with one
-branch of coverage each: 9 killed by the guard's own test, 1 labelled equivalent. That round
-also found a defect in the new code — `readGitText` stripped the WHOLE file where the oracle
-reads `packed-refs` unstripped, which removed the last line's trailing whitespace and made
-the per-field strip unreachable from a fixture whose matching row came last.
+📄 **THE MUTATION BATTERY OVER P1 — 56 mutants, 52 killed, 4 labelled EQUIVALENT at the
+code — is in `tests/conformance/README.md`**, rounds and survivor reasoning included.
+Three of those labels corrected a comment that was wrong, which is why the label beside
+the code is the authority and this file only says the battery exists.
 
 🔴 **THE RENDERER IS A LIBRARY, NOT A HANDLER, BECAUSE P2 IMPORTS IT.** `internal/report`
 holds `Recall`, `Search`, `RecallReport.RenderText`, `SearchReport.RenderText` and

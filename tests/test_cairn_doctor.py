@@ -4,7 +4,7 @@
 🔴 WHAT THIS FILE GRADES. Every other diagnostic in this subsystem has been
 caught reporting a zero it could not distinguish from a failure to look: the
 frozen mirror's "ALL 26 entries, none omitted"; the pod's "ALL 5 entries in
-devrc/" over a store holding 9; `cairn validate`'s "NOTHING WAS CHECKED" at exit
+alpha-toolkit/" over a store holding 9; `cairn validate`'s "NOTHING WAS CHECKED" at exit
 0. `doctor` exists to join those facts in one call, so it is exactly the place
 that defect would arrive next, wearing a nicer word.
 
@@ -536,7 +536,7 @@ class TestTheFrozenMirror:
     def test_a_WRITABLE_entry_file_is_a_PROBLEM(self, tmp_path) -> None:
         """🔴 THIS FOUND A LIVE DATA-LOSS PATH ON ITS FIRST RUN.
 
-        Measured on the workbench 2026-09-03: **7** entry files under the
+        Measured on the workbench: **7** entry files under the
         supposedly-frozen mirror were still mode 644, an append was watched to
         SUCCEED on one, and six entries created on the dead mirror after the
         cutover existed nowhere else. The operator has since completed the
@@ -605,8 +605,8 @@ class TestThePodProbe:
 
 class TestTheScopeVisibility:
     def test_a_local_scope_the_store_did_not_send_is_a_PROBLEM(self, tmp_path) -> None:
-        """🔴 MEASURED LIVE 2026-09-03: `civitai-app-requests` and
-        `civitai-developer-docs` exist in the frozen mirror and are absent from
+        """🔴 MEASURED LIVE: `delta-app-requests` and
+        `delta-developer-docs` exist in the frozen mirror and are absent from
         the snapshot this token receives."""
         cache = _store(tmp_path / "c", {"alpha": ["a.md"]})
         mirror = _store(tmp_path / "m", {"alpha": ["a.md"], "orphan": ["o.md"]})
@@ -815,7 +815,7 @@ class TestTheCliWiring:
         documents, and doctor asks about the HOST, not a scope."""
         cli = _load_cairn_cli()
         with pytest.raises(SystemExit):
-            cli.build_parser().parse_args(["doctor", "--scope", "devrc"])
+            cli.build_parser().parse_args(["doctor", "--scope", "alpha-toolkit"])
 
     def test_an_ABSENT_doctor_module_does_not_kill_an_UNRELATED_subcommand(
         self, monkeypatch

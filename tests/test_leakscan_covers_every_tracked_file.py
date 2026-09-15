@@ -30,6 +30,7 @@ certifies nothing — that failure is on record in this project already.
 """
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -159,6 +160,146 @@ def test_the_leak_in_that_unfamiliar_type_is_actually_REFUSED(tmp_path, monkeypa
     assert "notes.rst" in out, (
         "the run refused, but its output does not name the file that caused it"
     )
+
+
+#: A dated incident reference, assembled at run time for the same reason
+#: `_leak()` is: this module is SCANNED, and the `dated-incident` rule refuses
+#: exactly this shape, so a whole literal here would red the gate on its own
+#: suite. ⚠ Unlike `_leak()` the CONTENT is not sensitive — a date is not a
+#: secret — but the SHAPE is what the rule matches, so it must be assembled.
+def _dated_incident() -> str:
+    return "# MEASURED 2026" + "-09-01 against the live pod: 16 scopes\n"
+
+
+def test_the_denied_identifier_SET_cannot_shrink_unnoticed():
+    """🔴 THE ONE PROPERTY OF THE DIGEST SET THAT IS CHECKABLE FROM IN HERE.
+
+    `leakscan.DENIED_IDENTIFIER_DIGESTS` holds SHA-256 digests rather than
+    plaintext, because a denylist of private names written out in a PUBLIC repo
+    publishes the names it exists to remove. The cost is stated in that
+    constant's own header: nobody can verify from inside this repository that
+    the digests are digests of the RIGHT strings — a set auditable from here
+    would be a set readable from here.
+
+    ⚠ SO THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND IT PINS THE
+    ONLY THING LEFT: the SIZE. Deleting an entry is how this gate goes quietly
+    blind to one name while every test stays green, and a count makes that a
+    deliberate edit to an assertion instead. The canary is asserted separately
+    because the negative controls are built on it — lose it and every
+    `denied-identifier` control in `--self-test` passes against nothing.
+    """
+    assert len(leakscan.DENIED_IDENTIFIER_DIGESTS) == 16, (
+        f"the denied-identifier set holds "
+        f"{len(leakscan.DENIED_IDENTIFIER_DIGESTS)} digests, not 16. Adding a "
+        f"name is expected — raise this number in the same commit and say what "
+        f"it is for. REMOVING one un-gates a real project, repository, cluster "
+        f"or host name, and there is no other check that would notice."
+    )
+    for name, attr in (
+        (leakscan.DENY_CANARY, "DENY_CANARY"),
+        (leakscan.DENY_CANARY_WORD, "DENY_CANARY_WORD"),
+    ):
+        assert (
+            hashlib.sha256(name.encode()).hexdigest()
+            in leakscan.DENIED_IDENTIFIER_DIGESTS
+        ), (
+            f"`{attr}` ({name!r}) is not in the digest set, so every control and "
+            f"documented example built on it is asserting against a rule that "
+            f"cannot match it"
+        )
+
+
+def test_the_documented_matching_examples_are_TRUE_of_the_code():
+    """🔴 THE COMMENT ABOVE `DENIED_IDENTIFIER_DIGESTS` IS THE ONLY DOCUMENTATION
+    OF THE MATCHING RULE, SO A WRONG EXAMPLE THERE IS WORSE THAN NO EXAMPLE.
+
+    The digests cannot be read, so a reader learns what this rule matches from
+    that table and nowhere else. Every row of it is asserted here, in the same
+    order, against the real `denied_identifiers` — including the two `clean`
+    rows, because an illustration of NARROWNESS that is secretly a false
+    positive would teach the opposite of the truth.
+
+    ⚠ The `scoped-…` row is a declared LIMIT, not a triumph: a denied entry in
+    the TAIL of a compound is never reached, because the walk is over prefixes.
+    It is asserted so that widening the walk one day turns this test red and
+    forces the comment to be corrected with it, rather than leaving the file
+    documenting a narrowness it no longer has.
+    """
+    word, compound = leakscan.DENY_CANARY_WORD, leakscan.DENY_CANARY
+    fires = [
+        (f"{word}-ci-jx5fq", word),
+        (f"{word.upper()}_TEST_TMPFS", word),
+        (f"clusters/{word}/apps/x", word),
+        (f"{compound}-ci-jx5fq", compound),
+    ]
+    for sample, expected in fires:
+        assert expected in leakscan.denied_identifiers(sample), (
+            f"the documented table says {sample!r} FIRES on {expected!r}, and it "
+            f"does not. Fix the code or fix the comment — a reader has nothing "
+            f"else to go on."
+        )
+    for sample in (f"{word}s", f"{compound}d", f"scoped-{word}"):
+        assert leakscan.denied_identifiers(sample) == [], (
+            f"the documented table says {sample!r} is clean, and it is not: "
+            f"{leakscan.denied_identifiers(sample)}. Either the rule stopped "
+            f"being narrow or the comment is now wrong about it."
+        )
+
+
+def test_leakscans_OWN_CONTROLS_are_gated_by_THIS_job_too():
+    """🔴 TWO TIERS, AND ONLY ONE OF THEM USED TO READ THE CONTROLS.
+
+    `--self-test` runs in the `leakscan` CI job. This suite runs in the `tests`
+    job. A control that stopped working was therefore visible in exactly one
+    tier, and `AGENTS.md`'s own rule is that a suite running in two tiers must
+    be green in both — greening one while the other stays unobservable moves
+    the defect rather than removing it.
+
+    ⚠ This asserts the VERDICT, not the output text: `self_test` returns 0 only
+    when the positive control fired, every rule refused its realistic sample,
+    and no narrowness sample was refused.
+    """
+    assert leakscan.self_test() == 0, (
+        "leakscan's own controls do not pass — so its `0 findings` verdict is "
+        "not a measurement, and the scan's exit 0 means 'could not vouch' "
+        "regardless of what the tree contains. Read the printed FAIL lines."
+    )
+
+
+def test_the_two_NAME_and_DATE_rules_refuse_a_planted_file_END_TO_END(
+    tmp_path, monkeypatch, capsys
+):
+    """🔴 REACHABILITY, WHICH THE CONTROLS ABOVE DO NOT PROVE.
+
+    `--self-test` calls `scan_text` directly. That leaves the rest of the path
+    — enumerate, partition, decode, report, choose an exit code — unexercised
+    for these two rules specifically, and it is the same gap
+    `test_the_leak_in_that_unfamiliar_type_is_actually_REFUSED` was written for
+    one rule earlier: a set membership is not a code path.
+
+    Both new classes are planted in ONE file so the run has to report both, and
+    the assertion names each rule, because a single refusal would satisfy a
+    weaker version of this test while the other rule sat dead.
+    """
+    body = (
+        f"scopes: {leakscan.DENY_CANARY}, alpha-notes\n"
+        + _dated_incident()
+    )
+    repo = _repo_with(tmp_path, "notes.md", body)
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+
+    rc = leakscan.main([])
+    out = capsys.readouterr().out
+
+    assert rc == 1, (
+        f"a denied identifier AND a dated incident reference in a tracked file "
+        f"did not turn the gate red (exit {rc})"
+    )
+    for rule in ("denied-identifier", "dated-incident"):
+        assert f"[{rule}]" in out, (
+            f"the run refused, but no finding is attributed to {rule!r} — the "
+            f"other rule carried the refusal and this one may be inert"
+        )
 
 
 def test_a_BINARY_file_is_skipped_and_the_skip_is_NAMED(tmp_path, monkeypatch):

@@ -317,8 +317,9 @@ class TestTheTwoBuildsAgree:
         assert user is not None and not user.startswith("0:"), (
             f"server/Dockerfile drops to {user!r} — the pod would run as ROOT"
         )
-        # The specific uid is pinned too: 65532 is the clawgate precedent's
-        # runAsUser, which is what makes the fsGroup story on the PVC hold.
+        # The specific uid is pinned too: 65532 is the runAsUser of a sibling pod
+        # already in the cluster, which is what makes the fsGroup story on the
+        # PVC hold.
         assert uid == "65532", (
             f"serverUid is {uid!r}, not the 65532 the PVC's fsGroup story "
             f"depends on. Changing it means editing FOUR sites deliberately: "

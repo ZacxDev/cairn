@@ -2,7 +2,7 @@
 
 HTTP layer over the `/analyze-service` subsystem index, so the store is
 reachable from more than the workbench. Design: the private monorepo's
-`claudedocs/proposal-subsystem-store-homelab.md` (not extracted; the mechanism
+`claudedocs/proposal-subsystem-store.md` (not extracted; the mechanism
 survives here and in the guards below).
 
 **Referenced from `AGENTS.md`** — the repo's canonical agent-instruction file
@@ -26,10 +26,10 @@ framing of the phases in this table still parses.
 
 🔴 **Phase 1.5 landed the hardening and NOT the exposure.** The store is still
 unreachable from the internet: the IngressRoute and DNS Ingress live in a
-homelab-infra PR that is deliberately open and unmerged, because merging to
+gamma-infra PR that is deliberately open and unmerged, because merging to
 `trunk` there IS deploying and that merge is the go/no-go.
 
-The local store at `~/.claude/analyze-service-index/` stays **authoritative and
+The local store at `~/.claude/<mirror-root>/` stays **authoritative and
 untouched**. Rollback is `kubectl delete ns subsystem-store`.
 
 🔴 **No git remote is involved, anywhere.** The store's README forbids one and
@@ -46,7 +46,14 @@ Replication happens over this API; those tests are untouched.
 | `seed.sh` | `rsync` the local store into a stage, optionally `tar`-push it into the pod. Never writes to the source |
 | `verify-byte-identity.sh` | the phase-1 acceptance comparator, per scope: the `mode=list` render (index rows as a **sorted set**), the entry **set** by `comm`, then **each entry's** own single-ref render |
 
-Manifests: `homelab-talos` → `clusters/homelab/apps/subsystem-store/`.
+Manifests: `gamma-cluster` → `clusters/gamma/apps/subsystem-store/`.
+
+⚠ **Every repo, cluster and scope name in this document is SYNTHETIC** — this
+repository is public and was extracted from a private one. The shapes are real
+and are what an operator needs: manifests live at
+`<gitops-repo>/clusters/<cluster>/apps/subsystem-store/`, the local mirror at
+`~/.claude/<mirror-root>/`, the mounted credential at
+`/run/secrets/subsystem-store/token`. Substitute your own names.
 
 🔴 **THERE IS NOW A SECOND IMPLEMENTATION, AND `server.py` IS THE ORACLE.**
 `cmd/cairn-server` (Go, stdlib only) is a port of **everything in this document**; it is
@@ -234,11 +241,11 @@ If-None-Match: *
 <the whole new entry file>
 ```
 
-🔴 **This is the store's ONLY create verb, and until 2026-09-03 there was
+🔴 **This is the store's ONLY create verb, and for a while there was
 none.** `POST .../bullets` and `PUT` with `If-Match` both resolve an *existing*
 ref, so a brand-new entry could only be made by `seed.sh` or by writing into a
 host's local tree — and once reads moved to the pod cache, a locally-created
-entry was dark to every reader on every host. Measured 2026-09-02: five whole
+entry was dark to every reader on every host. Measured: five whole
 entries and 24 dated bullets existed on one machine only.
 
 * **`201 created`**, `X-Store-Status: created`, with the new revision as `ETag`.
@@ -299,8 +306,8 @@ other.
 nothing syncs that copy.** `seed.sh` pushes it by hand; there is no CronJob and
 no timer. Yet every report opens with `ALL N entries in <scope>/, none omitted`
 — a completeness claim that is *true of this disk* and says nothing about the
-source. MEASURED 2026-08-20, four days after cutover: the public endpoint
-answered `200` with `ALL 5 entries in devrc/` while the source held **9**, and
+source. MEASURED, four days after cutover: the public endpoint
+answered `200` with `ALL 5 entries in alpha-toolkit/` while the source held **9**, and
 one served entry was a 40-day-old version of a file edited that morning.
 Reachability, auth, the client-IP chain and the firewall all verified green
 throughout, because none of them compares served bytes to the source.
@@ -400,7 +407,7 @@ server/build-push.sh 0.1.0
 
 # seed the pod from the local store (source is read-only)
 server/seed.sh \
-    --store ~/.claude/analyze-service-index \
+    --store ~/.claude/<mirror-root> \
     --stage /tmp/store-stage \
     --push subsystem-store/subsystem-store-api
 
@@ -409,7 +416,7 @@ kubectl -n subsystem-store port-forward svc/subsystem-store-api 18102:8102
 
 # the acceptance check, every scope
 server/verify-byte-identity.sh \
-    --store ~/.claude/analyze-service-index \
+    --store ~/.claude/<mirror-root> \
     --url http://127.0.0.1:18102 \
     --token-file <(kubectl -n subsystem-store get secret subsystem-store-token \
                      -o jsonpath='{.data.token}' | base64 -d)
@@ -428,7 +435,7 @@ content. Redirect it to a file on a shared terminal.
 ## Why byte-identity is asserted "modulo FOUR named differences"
 
 `render_text` prints `  store: <root>`, and the pod's root is `/data` while the
-workbench's is `~/.claude/analyze-service-index`. The streams therefore cannot be
+workbench's is `~/.claude/<mirror-root>`. The streams therefore cannot be
 byte-identical, and a verifier that said they were would be lying.
 
 There are **four** such differences, not one, and the second and fourth are the
@@ -445,7 +452,7 @@ two that each made this script permanently red in turn:
 The digest also picks its one featured BODY by mtime (`select_featured`'s
 most-recent fallback), so on a multi-entry scope two byte-identical stores
 render a different index order *and* a different featured entry. Measured
-2026-09-01 against the live pod: `scopes=5 pass=1 fail=4`, and the `cli`
+against the live pod: `scopes=5 pass=1 fail=4`, and the `cli`
 scope's entire unaccounted difference being one row's POSITION. Instead, per
 scope:
 
@@ -461,15 +468,15 @@ scope:
 🔴 **That run was read wrong twice, and the corrected reading is this.** This
 paragraph used to add "the lone PASS being the only two-entry scope", and
 `verify-byte-identity.sh` concluded from it that the comparator "could not pass
-for any scope with more than two entries". Re-measured 2026-09-01 on the
+for any scope with more than two entries". Re-measured on the
 workbench, same store, counting entries as `subsystem_recall` **indexes** them:
-`cli`=5, `devrc`=26, `datapacket-talos`=49, `homelab-infra`=0,
+`cli`=5, `alpha-toolkit`=26, `beta-cluster`=49, `gamma-infra`=0,
 `storage-resolver`=1. `storage-resolver/` holds `backblaze.md` plus a
 `README.md`, and a README in a scope is correctly not indexed — so it is a
 **one**-entry scope, and **no two-entry scope appears in that run at all**. The
 boundary that holds is arithmetic rather than measured: a one-entry index has
 exactly one possible order and cannot diverge; **two or more** is where order
-can differ. `homelab-infra` was also not an ordering failure — 0 indexed
+can differ. `gamma-infra` was also not an ordering failure — 0 indexed
 entries means its local render is `status=scope-empty` with no INDEX block, so
 its 102 unaccounted lines cannot be ordering; that FAIL was a **set**
 difference. Three of the four FAILs were ordering.
@@ -487,16 +494,16 @@ while correctly noting in the same breath that the pod was larger and
 unmeasured — i.e. it quoted the non-binding side, and the error ran in the
 unsafe direction.
 
-Measured on both sides 2026-09-02 over the live store ingress, counting entries
+Measured on both sides over the live store ingress, counting entries
 as `subsystem_recall` **indexes** them. `LISTING_PAGE_SIZE` is **100**:
 
 | scope | local | pod |
 |---|---:|---:|
-| **`datapacket-talos`** | 49 | **51** ← the binding scope |
-| `homelab-talos` | 24 | 30 |
-| `devrc` | 26 | 29 |
-| `civitai` | 23 | 24 |
-| `homelab-infra` | 0 | 4 |
+| **`beta-cluster`** | 49 | **51** ← the binding scope |
+| `gamma-cluster` | 24 | 30 |
+| `alpha-toolkit` | 26 | 29 |
+| `delta-app` | 23 | 24 |
+| `gamma-infra` | 0 | 4 |
 | **TOTAL** | **141** | **189** |
 
 (154 vs 201 `.md` files; 16 vs 23 scopes.)
@@ -514,8 +521,8 @@ are enumerated from the **local** store, so a scope the pod holds and this host
 does not is never requested, never compared and never counted — and no arm can
 see one, because every arm starts from that list (the set arm compares entries
 *within* a shared scope). From the table above: 7 pod-only scopes
-(`auditloop`, `civitai-gpu-fleet`, `naida-ai`, `vetr`, `vetr-api`, `vetr-app`,
-`vetr-infra`) holding **48 entries — 25% of the served store** — are outside
+(`epsilon-loop`, `delta-gpu-fleet`, `zeta-ai`, `eta-svc`, `eta-api`, `eta-app`,
+`eta-infra`) holding **48 entries — 25% of the served store** — are outside
 every run's reach.
 
 It is not fixable by looking harder: the API exposes **no scope-enumeration
@@ -543,7 +550,7 @@ that shape today; the remedy when one does is a store fix (`prune-index`).
 
 ⚠ **The set arm is an acceptance check for the moment right after a push.**
 Post-cutover the pod is canonical and each host's store is a read-through cache
-that may legitimately lag — measured 2026-09-01, scope `devrc` at 26 entries
+that may legitimately lag — measured, scope `alpha-toolkit` at 26 entries
 locally against 29 on the pod, with nothing wrong. `cairn-cutover.py` runs this
 at P4, immediately after the push, which is where a set difference means the
 push was lossy. It is deliberately not weakened for the lagging-cache case: a
@@ -708,7 +715,7 @@ store-api audit ts=… ip=203.0.113.7 peer=trusted method=GET path=/api/v1/recal
 
    🔴 **RUN IT AGAINST THE DECRYPTED TOKEN FILE THE POD ACTUALLY LOADS — the
    live `subsystem-store-token` Secret — NOT against
-   `clusters/homelab/apps/subsystem-store/secrets.enc.yaml`, which step 1 below
+   `clusters/gamma/apps/subsystem-store/secrets.enc.yaml`, which step 1 below
    names and which is sops CIPHERTEXT, not a token file.** Pointed at the
    encrypted file the command reads it happily and its verdict is meaningless
    in *both* directions: it can print nothing, which the "Expect no output"
@@ -756,7 +763,7 @@ store-api audit ts=… ip=203.0.113.7 peer=trusted method=GET path=/api/v1/recal
    charset check can never support "this cannot be a credential"), so the
    preflight is the whole mitigation.
 
-1. `sops clusters/homelab/apps/subsystem-store/secrets.enc.yaml` — put the NEW
+1. `sops clusters/gamma/apps/subsystem-store/secrets.enc.yaml` — put the NEW
    token on the first line, keep the old one below it. Commit; Flux applies.
 2. `kubectl -n subsystem-store exec deploy/subsystem-store-api -- sh -c 'kill -HUP 1'`,
    then **read the log for the verdict line it must have produced**:
@@ -1024,14 +1031,14 @@ address — so one client's failures can lock out the others, and every line say
 way, so the probe will not tell you.
 
 ⚠ **What it cannot do.** The pod sees whatever last hop connected to it — in
-the homelab deployment the in-cluster gateway, never Cloudflare's own address.
+the gamma deployment the in-cluster gateway, never Cloudflare's own address.
 So this proves *the request came through the gateway*, not *the request came
 through Cloudflare*.
 
 Narrowing who can occupy that hop is a NetworkPolicy's job — 🔴 **and that
-NetworkPolicy is NOT DEPLOYED YET.** `homelab-infra`
-`clusters/homelab/apps/subsystem-store/networkpolicy.yaml` exists only on the
-unmerged branch of **homelab-infra #330**; on `trunk` that kustomization still
+NetworkPolicy is NOT DEPLOYED YET.** `gamma-infra`
+`clusters/gamma/apps/subsystem-store/networkpolicy.yaml` exists only on the
+unmerged branch of **gamma-infra #330**; on `trunk` that kustomization still
 lists four resources (`namespace`, `pvc`, `secrets.enc`, `deployment`) and no
 policy. Until #330 merges, **any pod in the cluster can address this pod on
 8102** and the app-layer gate above is the only layer there is. Do not read this

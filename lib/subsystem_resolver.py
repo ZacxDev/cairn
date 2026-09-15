@@ -1,7 +1,7 @@
 """Map changed repo-relative paths onto `/analyze-service` index entries.
 
 P0 of the derived session→subsystem association described in
-`claudedocs/decision-subsystem-store-rejected-2026-08-11.md` → "What replaced the
+`claudedocs/decision-subsystem-store-rejected.md` → "What replaced the
 premise: derived session association". This module is the WHOLE of P0: a pure,
 source-agnostic function plus a thin disk loader. It emits nothing, knows nothing
 about ClickHouse, and has never heard of Claude Code or opencode — P1 feeds it
@@ -364,8 +364,8 @@ class MalformedEntry:
 # what stops an unknown system becoming an unstorable one.
 #
 # 🔴 VERBATIM MEANS VERBATIM: `#` SURVIVES, AND THAT IS THE POINT.
-# GitHub's lossless form is `owner/repo#N`, so `github:innovation-upstream/devrc#428`
-# is one ref whose id half is `innovation-upstream/devrc#428`. Any encoding that
+# GitHub's lossless form is `owner/repo#N`, so `github:example-org/alpha-toolkit#428`
+# is one ref whose id half is `example-org/alpha-toolkit#428`. Any encoding that
 # cannot carry a `#` cannot carry a GitHub reference — see `lossy_tag_for` below
 # for what happens when one tries.
 #
@@ -377,7 +377,7 @@ class MalformedEntry:
 _TASK_REF_SPLIT = ":"
 
 TAG_MAX_RUNES = 64
-"""clawgate's tag length limit, which `lossy_tag_for` derives output for."""
+"""The downstream tag surface's length limit, which `lossy_tag_for` derives output for."""
 
 
 @dataclass(frozen=True)
@@ -509,15 +509,15 @@ def lossy_tag_for(ref: TaskRef) -> str:
     """A ref -> the flattened `<system>:<slug>` shape a TAG surface can hold.
 
     🔴 DERIVATION ONLY. There is deliberately no inverse, and adding one would be
-    a bug rather than a feature. clawgate's tag grammar is `[a-z0-9._/-]`, at most
+    a bug rather than a feature. The downstream tag grammar is `[a-z0-9._/-]`, at most
     one colon, 64 runes — `#` is illegal — so a GitHub ref must lose structure to
     become a tag at all, and the flattening is not injective:
 
-        github:zacxdev/homelab-infra#429   ->  github:zacxdev-homelab-infra-429
-        github:zacxdev-homelab/infra#429   ->  github:zacxdev-homelab-infra-429
+        github:example-org/gamma-infra#429   ->  github:example-org-gamma-infra-429
+        github:example-org-gamma/infra#429   ->  github:example-org-gamma-infra-429
 
-    Two distinct refs, one tag. `github-mirror`'s own docstring calls this "a
-    silent correlation collapse". So the lossless ref is the source of truth and
+    Two distinct refs, one tag — a silent correlation collapse. So the lossless
+    ref is the source of truth and
     the tag is computed FROM it on the way out; anything that parses a tag back
     into a ref is inventing one of the two originals with even odds.
 
@@ -534,7 +534,7 @@ def lossy_tag_for(ref: TaskRef) -> str:
     silently truncate. Raising is the correct direction: the caller has a
     lossless ref in hand and can decide, whereas a bad tag propagates.
 
-    ⚠ `TAG_MAX_RUNES` is clawgate's limit, restated here because this function's
+    ⚠ `TAG_MAX_RUNES` is the downstream surface's limit, restated here because this function's
     output is destined for it. It is not enforced anywhere else in this module.
     """
     slug = normalize_ref(ref.ident)
@@ -1319,7 +1319,7 @@ POINTERS_HEADING = "## Pointers"
 NUANCE_HEADING = "## Nuance / work-history"
 
 # A top-level journal bullet starts at COLUMN 0. Measured over the whole live
-# corpus on 2026-08-12 (26 entries, 110 top-level bullets): every bullet line is
+# corpus (26 entries, 110 top-level bullets): every bullet line is
 # at indent 0 and every one of the 250 continuation lines is at indent 2. So an
 # indented `-` is a CONTINUATION (a nested list, or prose that happens to start
 # with a dash), never a new bullet — folding the two together would split one
@@ -1335,8 +1335,8 @@ _JOURNAL_DATE = re.compile(r"^[-*][ \t]+(\d{4}-\d{2}-\d{2})(?=[:,)\]\s]|$)")
 # marker, and the reason it is a PREFIX rather than a phrase.
 #
 # 🔴 WHY THIS IS SCHEMA AND NOT A PROSE DETECTOR. The motivating entry
-# (`datapacket-talos/forgejo`) carries a bullet proposing a one-line config change
-# as future work. That change landed at 15:02:21 on 2026-07-24 (the sha is in the
+# (`beta-cluster/forgejo`) carries a bullet proposing a one-line config change
+# as future work. That change landed at 15:02:21 (the sha is in the
 # client repo and is deliberately not reproduced here);
 # the entry was written at
 # 15:00:18 — stale 2m03s after it was written, and still being served as an open
@@ -1344,7 +1344,7 @@ _JOURNAL_DATE = re.compile(r"^[-*][ \t]+(\d{4}-\d{2}-\d{2})(?=[:,)\]\s]|$)")
 # applied yet" was a claim made only in prose.
 #
 # The obvious repair is to grep the prose for remedy words. Measured over the live
-# corpus (196 nuance bullets, 2026-08-15) that finds TWO bullets — and
+# corpus (196 nuance bullets) that finds TWO bullets — and
 # `claude/RULES.md` names the failure it would be: "a guard on WORDS is walkable by
 # REWORDING". A writer who says "the endpoint is already correct" instead of
 # "FIX:" walks past it, and the walk is silent. A prefix a writer must TYPE cannot
@@ -1612,7 +1612,7 @@ class UnreachableMarker:
     """One correctly-spelled openness marker sitting where NO reader looks.
 
     🔴 THE SHAPE THAT COST A REAL OPEN ACTION ITS BADGE. Measured in the field
-    (`claudedocs/handoff-subsystem-store.md`, 2026-08-20): one bullet carried a
+    (`claudedocs/handoff-subsystem-store.md`): one bullet carried a
     second, correctly-spelled marker several lines into its body. `_bullet_openness`
     reads a bullet's OPENING line and the pattern is anchored at position 0, so
     that declaration reached no surface at all — it had only ever raised a badge
@@ -1681,7 +1681,7 @@ token or a ref form).
 🔴 IT IS NOT A PARSE AND MUST NEVER GATE ONE. A marker mid-line declares nothing
 to any reader in this module — that is deliberate and unchanged. This exists
 because a line that is ALREADY LOST is a different question from a line being
-parsed: the whole 2026-08-19 incident is a bullet whose `OPEN:` sat mid-line, so
+parsed: the whole motivating incident is a bullet whose `OPEN:` sat mid-line, so
 a signal anchored at position 0 is 0 on the only shape ever observed in the wild.
 Ranking that as ordinary lost text, rather than as a lost DECLARATION, is what
 the audit called inert.
@@ -1725,7 +1725,7 @@ class JournalBullet:
     """One top-level bullet of a `## Nuance / work-history` section, VERBATIM.
 
     🔴 `lines` IS A TUPLE, NOT A STRING, because a real bullet is WRAPPED PROSE.
-    Measured over the live corpus on 2026-08-12: 110 top-level bullets carry 250
+    Measured over the live corpus: 110 top-level bullets carry 250
     continuation lines between them — a median bullet is 3 lines and the longest
     is 19. Any model that assumed one line per bullet would silently truncate
     most of the corpus, and a truncated bullet is exactly the thing an agent
@@ -1740,8 +1740,8 @@ class JournalBullet:
     openness: str | None = None
     """`'open'` | `'resolved'` | None — the bullet's DECLARED openness marker.
 
-    None is by far the common reading — **195 of 196** bullets in the live corpus
-    on 2026-08-15 — and means only that nothing was declared. 🔴 It does NOT mean
+    None is by far the common reading — **195 of 196** bullets in the live
+    corpus — and means only that nothing was declared. 🔴 It does NOT mean
     "this bullet proposes no work": an unmarked bullet that proposes a remedy is
     exactly the `forgejo` failure, and `unmarked_action` is the (narrow,
     floor-only) net for that case.
@@ -2026,11 +2026,11 @@ def parse_front_matter(text: str) -> dict[str, object]:
     🔴 THE BLOCK FORM IS PARSED BECAUSE NOT PARSING IT CORRUPTED THE MAPPING —
     it was never merely "ignored". Measured on the real parser before this
     change, `tasks:` followed by `  - clickup:868abc123` and
-    `  - github:innovation-upstream/devrc#428` produced::
+    `  - github:example-org/alpha-toolkit#428` produced::
 
         {'service': 'thing', 'tasks': '',
          '- clickup': '868abc123',
-         '- github': 'innovation-upstream/devrc#428'}
+         '- github': 'example-org/alpha-toolkit#428'}
 
     — the key silently empty and EVERY item promoted to a phantom front-matter
     key by its own internal colon. A caller reading that mapping sees keys nobody

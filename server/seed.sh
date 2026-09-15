@@ -2,7 +2,7 @@
 # Seed the cluster store from the LOCAL one. Phase 1 (proposal §4).
 #
 # 🔴 THE LOCAL STORE IS AUTHORITATIVE, AND THIS SCRIPT NEVER WRITES TO IT.
-# `~/.claude/analyze-service-index/` is client-confidential, not re-derivable by
+# `~/.claude/<mirror-root>/` is client-confidential, not re-derivable by
 # re-running recon, and phase 1's whole premise is "local stays authoritative and
 # untouched".
 #
@@ -255,8 +255,8 @@ fi
 # 🔴 DATE THE COPY, IN THE COPY. The server cannot otherwise know how old the
 # tree it serves is, and it renders "ALL N entries ... none omitted" over it —
 # a completeness claim that reads identically whether the content was copied
-# this minute or four days ago. MEASURED 2026-08-20: the public endpoint served
-# `ALL 5 entries in devrc/` against a source holding 9, with nothing in the
+# this minute or four days ago. MEASURED: the public endpoint served
+# `ALL 5 entries in alpha-toolkit/` against a source holding 9, with nothing in the
 # payload able to say so. `server.snapshot_freshness` reads this file, and
 # reports its ABSENCE as `seeded=UNSTAMPED` rather than omitting the line, so an
 # unstamped store is loud rather than indistinguishable from a current one.
@@ -326,7 +326,7 @@ tar -C "$STAGE" -cf - -- "${members[@]}" \
 # is unaffected: a push still cannot assume $DEST holds only what it staged.) Counting then failed a CORRECT push, and did it AFTER
 # the content had already landed: a failure verdict on a push that worked, which
 # invites a retry that changes nothing. That is the same shape the tar member
-# list above was fixed for. MEASURED 2026-08-28: this host staged 129 over a pod
+# list above was fixed for. MEASURED: this host staged 129 over a pod
 # holding 75 (a strict subset, so equality happened to hold); the other host's
 # ~26 would have staged against a remote of 129+ and exited 7 every time,
 # leaving criterion 8 unfinishable by the tool meant to finish it.

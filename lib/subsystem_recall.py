@@ -5,7 +5,8 @@ THE READ HALF. The store had two writers — `/analyze-service` (infra recon) an
 `/handoff` (the writer half, which this package does not ship) — and no general
 reader. `/resume`
 never opened it: a fresh session read the handoff doc, reconciled live state via
-`resume-state.sh`, and the store's stated purpose — "the terse pointer sheet that
+the resume flow's own resolver, and the store's stated purpose — "the terse
+pointer sheet that
 outlives this handoff doc" — outlived the doc with nobody looking at it.
 
 🔴 THE PATTERN IS COPIED, NOT INVENTED. `/analyze-service` step 1 is why the
@@ -18,7 +19,7 @@ and pointed at a scope instead of at one service.
 and `TestRecallNeverWrites` hashes a store tree either side of every mode and
 every failure. The store is curated, client-confidential and not re-derivable by
 re-running recon, so the only writers stay the two diff-first ones in the skills —
-`/handoff` and `/analyze-service`, which since 2026-08-31 follow ONE append
+`/handoff` and `/analyze-service`, which now follow ONE append
 protocol (`claude/skills/subsystem-index/SKILL.md`) rather than a copy each. They
 were "confirm-gated" too until the y/N was retired; the diff is still shown.
 (This sentence used to justify the single-writer rule with "has no off-machine
@@ -80,7 +81,7 @@ know about — and it stands: the reader still reads every entry in the scope, a
 claim `claude/skills/resume/SKILL.md` made about the COST: "it costs a page, not a
 dump".
 
-Measured on 2026-08-13 against the scope holding 25 of the store's 29 entries:
+Measured against the scope holding 25 of the store's 29 entries:
 
     old default (`--limit 12`)   31,485 B  (~7,871 tok)  and it hid 13 of 25
     old `--limit 25`             62,643 B  (~15,660 tok)
@@ -190,7 +191,7 @@ share no spelling:
                       per-host CACHE of the hosted store, fresh only to its last
                       `cairn sync`, so the OTHER machine may already hold that
                       scope and it simply has not arrived here. Measured
-                      2026-08-27, BEFORE the cutover made the pod canonical —
+                      BEFORE the cutover made the pod canonical —
                       workbench 115 entries / 14 scopes, laptop 33 / 11, seven
                       scopes on the laptop alone and ten on the workbench alone.
                       Those caches now converge via the pod, but not at the
@@ -413,7 +414,7 @@ RECALL_LABEL = "from index"
 # 🔴 `## What it is` USED TO BE EXCLUDED, AND THE EXCLUSION WAS WRONG. The stated
 # reason was "one line of durable boilerplate a resuming session either already
 # knows or can read in the file, and including it turns a recall block into a
-# dump". Measured 2026-08-20 against the live store, both halves fail:
+# dump". Measured against the live store, both halves fail:
 #
 #   * it is not one line — 73 of 73 entries carry it, median 3 lines / 297 chars,
 #     p90 8 lines, max 12;
@@ -546,9 +547,9 @@ HUNK_BASES: tuple[str, ...] = ("line", "entry-name")
 # cost of a weak signal is a slightly worse first pick, not a wrong record.
 FOCUS_MIN_PATHS = 1
 
-# Where the path window comes from, in the order `scripts/resume-state.sh`
+# Where the path window comes from, in the order the resume flow's own resolver
 # resolves a handoff — lowercase family first, the uppercase `*HANDOFF*.md`
-# family (civitai-manager's `SESSION-HANDOFF.md`) only as a fallback. Same repo,
+# family (delta-manager's `SESSION-HANDOFF.md`) only as a fallback. Same repo,
 # same step, same doc: `/resume` has just read this file at step 2, so it is the
 # session's own statement of what is being worked on, and reading it costs one
 # file read with no git, no network and no subprocess.
@@ -556,7 +557,7 @@ HANDOFF_GLOBS: tuple[str, ...] = ("claudedocs/handoff-*.md", "claudedocs/*HANDOF
 
 # Path-shaped tokens are taken from BACKTICKED SPANS ONLY. Handoff docs are prose
 # and the convention in this fleet is that a real path is code-quoted; harvesting
-# bare prose would mint tokens out of ordinary English (`resume-state.sh` learned
+# bare prose would mint tokens out of ordinary English (the resume flow's own resolver learned
 # this the hard way with branch tokens — see its comment on the fabricated
 # "referenced by handoff no longer exists" line). The failure direction here is
 # benign either way: a token that names no entry is dropped by the resolver, and
@@ -945,7 +946,7 @@ class RecalledEntry:
     writer's `RESOLVED <sha> (<repo>):` or `**OPEN:**` declared nothing, the
     badge simply did not render, and the vanishing badge LOOKS like success.
 
-    Measured over the live store on 2026-08-19 — 53 entries, 323 top-level
+    Measured over the live store — 53 entries, 323 top-level
     nuance bullets: **8 declare `OPEN:` and parse, 11 declare `RESOLVED <sha>:`,
     and 2 attempted a marker and missed** (one `OPEN`-shaped, one
     `RESOLVED`-shaped). The advisory that reported those 2 lived only in
@@ -970,7 +971,7 @@ class RecalledEntry:
     `RESOLVED` is a real closure that simply cannot be checked with
     `git cat-file -e`. It rides the same row as `near_miss_count` because both
     are "the marker did not fully land" and a reader who sees one wants the
-    other. Measured 2026-08-19: **0** across all 53 live entries, so this badge
+    other. Measured: **0** across all 53 live entries, so this badge
     does not fire on the store today — it is here because a sha-less `RESOLVED`
     is one hurried write away, not because the corpus is full of them.
     """
@@ -1015,7 +1016,7 @@ class RecalledEntry:
     quoting the same bytes. The structured form stays available on the
     `SubsystemEntry` for anything that needs the halves.
 
-    Measured 2026-08-29 before this field existed: **0 of 120** entries in the
+    Measured before this field existed: **0 of 120** entries in the
     live store carry a `tasks:` key, so every index row renders byte-identical
     to what it rendered before. That is the same conditionality the badges above
     rely on, and it is what makes this additive rather than a reflow of the
@@ -1133,7 +1134,7 @@ def focus_paths_from_text(text: str) -> tuple[str, ...]:
 def focus_window(repo: str | Path) -> FocusWindow:
     """The repo's newest handoff doc, as a path window. READ-ONLY, one file read.
 
-    Resolution order mirrors the NO-ARGUMENT chain of `scripts/resume-state.sh`
+    Resolution order mirrors the NO-ARGUMENT chain of the resume flow's own resolver
     (see `HANDOFF_GLOBS`): lowercase family first, caps family second, newest
     within each.
 
@@ -1793,8 +1794,8 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
 
       `🔴 N NEAR-MISS`  N bullets tried to write a marker and missed the
                         grammar. They declare nothing, so `N OPEN` is short by
-                        up to N and the reader cannot tell. Measured
-                        2026-08-19: 2 such bullets across 53 entries, against
+                        up to N and the reader cannot tell. Measured:
+                        2 such bullets across 53 entries, against
                         8 that declare `OPEN:` and parse.
       `⚠ N UNVERIFIABLE` N `RESOLVED:` bullets name no sha. Advisory — closing
                         is the point — but the closure cannot be checked.
@@ -1806,7 +1807,7 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
                         it was computed and thrown away.
 
     All three are CONDITIONAL, like `OPEN` and for the same reason: measured
-    over the live store on 2026-08-19, 1 entry of 53 would carry a near-miss
+    over the live store, 1 entry of 53 would carry a near-miss
     badge and 0 would carry either of the other two, so the other 52 rows stay
     byte-identical to what they render today.
 
@@ -1826,13 +1827,13 @@ def listing_line(entry: RecalledEntry, width: int) -> str:
     the same grounds `OPEN` does: an entry joined to a task is an entry whose
     work has a tracked owner and a closing condition somewhere else, and that is
     the single fact that decides whether to spend a `--ref`. What it does NOT do
-    is print the refs themselves — `github:innovation-upstream/devrc#428` is 36
+    is print the refs themselves — `github:example-org/alpha-toolkit#428` is 36
     characters, three of them would triple the row, and the index's whole
     contract is one line per entry. The refs are printed in the ENTRY BODY, which
     `--ref <name>` and the featured entry already show; the row says only that
     there are some.
 
-    Conditional like the other four: measured 2026-08-29, **0 of 120** live
+    Conditional like the other four: measured, **0 of 120** live
     entries carry `tasks:`, so no row on the store today renders any differently
     than it did before this badge existed.
     """
@@ -1991,7 +1992,7 @@ def render_text(report: RecallReport, *, extra_header: Sequence[str] = ()) -> st
             f"for this repo ON THIS MACHINE."
         )
         # 🔴 THE SECOND SENTENCE IS THE ONE THE OLD WORDING LACKED. "The store"
-        # reads as one thing; the CACHES are two. Measured 2026-08-27, before the
+        # reads as one thing; the CACHES are two. Measured, before the
         # cutover: seven scopes existed only on the laptop and ten only on the
         # workbench, so "not recorded" is routinely false of the fleet while true
         # of the disk that was read. Post-cutover the caches converge via the pod
@@ -3049,7 +3050,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     # 🔴 "PATH" IS LOAD-BEARING IN THE HELP TOO. The old text said "repo", which
-    # is what invited `--repo datapacket-talos` — a bare name that silently
+    # is what invited `--repo beta-cluster` — a bare name that silently
     # becomes `$PWD/<name>`. The refusal explains it, but the flag's own
     # self-description should not have set the trap.
     p.add_argument(
@@ -3059,7 +3060,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--scope", default=None, help="override the derived store scope")
     # 🔴 THE SYNCED CACHE, NOT THE WRITER'S `DEFAULT_STORE_ROOT`. Since the Cairn
-    # cutover `~/.claude/analyze-service-index` is a FROZEN mirror that nothing
+    # cutover `~/.claude/<mirror-root>` is a FROZEN mirror that nothing
     # refreshes; defaulting to it made every `/resume` orient on a store that had
     # stopped moving while printing "ALL N entries … none omitted". Resolved at
     # parser-BUILD time through `read_store_root()`, so the module global is the

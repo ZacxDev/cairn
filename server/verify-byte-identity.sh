@@ -6,10 +6,10 @@
 # 🔴 "EVERY SCOPE" IS WHAT THIS LINE USED TO SAY, AND IT IS NOT TRUE — the
 # sweep is one-directional and can never be complete. Scopes are enumerated
 # from the LOCAL store, so a scope the pod holds and this host does not is
-# never requested, never compared, and never counted. MEASURED 2026-09-02:
+# never requested, never compared, and never counted. MEASURED:
 # local 16 scopes / 141 indexed entries, pod 23 / 189 — so 7 pod-only scopes
-# (auditloop, civitai-gpu-fleet, naida-ai, vetr, vetr-api, vetr-app,
-# vetr-infra) holding 48 entries, a QUARTER of the served store, are outside
+# (epsilon-loop, delta-gpu-fleet, zeta-ai, eta-svc, eta-api, eta-app,
+# eta-infra) holding 48 entries, a QUARTER of the served store, are outside
 # every run's reach.
 #
 # It is not fixable here: the API deliberately exposes no scope-enumeration
@@ -24,7 +24,7 @@
 # and exactly one line naming the machine whose disk was read:
 #
 #     store: /data                       host: subsystem-store-api-…   (pod)
-#     store: /home/zach/.claude/…        host: nixos-<id-prefix>       (workbench)
+#     store: /home/<user>/.claude/…      host: nixos-<id-prefix>       (workbench)
 #
 # and the server prepends a transport annotation (the SNAPSHOT block) that the
 # local CLI correctly does not emit. So the two byte streams are provably NOT
@@ -37,14 +37,14 @@
 # most-recent fallback). The transport does not preserve mtime — `seed.sh`
 # `rsync`s into a stage and `tar`s that into the pod — so two stores holding
 # byte-identical entries render their index in a DIFFERENT ORDER and feature a
-# DIFFERENT entry. MEASURED 2026-09-01 against the live pod, store
-# `~/.claude/analyze-service-index`, over a `kubectl port-forward`:
+# DIFFERENT entry. MEASURED against the live pod, store
+# `~/.claude/<mirror-root>`, over a `kubectl port-forward`:
 #
-#     FAIL scope=devrc            raw-diff-lines=45   accounted-for=6
+#     FAIL scope=alpha-toolkit    raw-diff-lines=45   accounted-for=6
 #     FAIL scope=cli              raw-diff-lines=8    accounted-for=6
 #     PASS scope=storage-resolver (1 entry)
-#     FAIL scope=homelab-infra    raw-diff-lines=108  accounted-for=6
-#     FAIL scope=datapacket-talos raw-diff-lines=336  accounted-for=6
+#     FAIL scope=gamma-infra      raw-diff-lines=108  accounted-for=6
+#     FAIL scope=beta-cluster     raw-diff-lines=336  accounted-for=6
 #
 # The `cli` scope is the clean isolation — its index ROWS were identical and the
 # only unaccounted difference was one row's POSITION. `claude/RULES.md`: a
@@ -53,10 +53,10 @@
 # 🔴 TWO READINGS OF THAT RUN WERE WRONG, AND THIS IS THE CORRECTION.
 # The `storage-resolver` line above said `(2 entries)` and the paragraph
 # concluded "every passing scope had 2 entries; every failing one had more".
-# RE-MEASURED 2026-09-01 on this host, same store, counting entries as
+# RE-MEASURED on this host, same store, counting entries as
 # `subsystem_recall` INDEXES them rather than as files on disk:
 #
-#     cli=5  devrc=26  datapacket-talos=49  homelab-infra=0  storage-resolver=1
+#     cli=5  alpha-toolkit=26  beta-cluster=49  gamma-infra=0  storage-resolver=1
 #
 # `storage-resolver/` holds `backblaze.md` plus a `README.md`, and a README in a
 # scope is correctly NOT indexed — so it is a ONE-entry scope. NO TWO-ENTRY
@@ -66,11 +66,11 @@
 # The boundary that does hold is ARITHMETIC, not measured: a ONE-entry index has
 # exactly one possible order and cannot diverge; TWO OR MORE is where the order
 # can differ. That is the same argument the ordering fixture in
-# `scripts/tests/test_subsystem_store_api.py` makes for itself when it chooses
+# `tests/test_subsystem_store_api.py` makes for itself when it chooses
 # FOUR refs — two entries admit only two orders, so a two-entry fixture is one
 # coin-flip away from asserting nothing.
 #
-# And `homelab-infra` was NOT an ordering failure. It holds ZERO indexed entries
+# And `gamma-infra` was NOT an ordering failure. It holds ZERO indexed entries
 # on this host (one `README.md`), so its local render is `status=scope-empty`
 # with no INDEX block at all — 102 unaccounted lines that ordering structurally
 # cannot produce. That FAIL was a SET difference, the lagging read-through cache
@@ -113,8 +113,8 @@
 #
 # 🔴 WHAT THIS SCRIPT IS AN ACCEPTANCE CHECK *FOR*, AND WHEN IT IS MEANINGFUL.
 # After the phase-1 cutover the POD is canonical and each host's local store is
-# a read-through CACHE that may legitimately lag: MEASURED 2026-09-01, scope
-# `devrc` held 26 entries locally and 29 on the pod, with nothing wrong. So an
+# a read-through CACHE that may legitimately lag: MEASURED, scope
+# `alpha-toolkit` held 26 entries locally and 29 on the pod, with nothing wrong. So an
 # entry-set difference is an ORDINARY OPERATIONAL STATE in general, and this
 # script is only an acceptance check IMMEDIATELY AFTER A SEED/PUSH — which is
 # exactly where `cairn-cutover.py` runs it (P4). Run it at any other moment and
@@ -135,7 +135,7 @@
 #
 # 🔴 CONTROLS. A comparator that always says PASS is indistinguishable from one
 # that works, so this script is exercised BOTH ways in
-# `scripts/tests/test_subsystem_store_api.py::TestByteIdentityVerifier`:
+# `tests/test_subsystem_store_api.py::TestByteIdentityVerifier`:
 # identical stores -> PASS, one entry mutated by a single character -> FAIL with
 # the scope named, a shuffled-mtime store -> PASS, an extra entry on one side ->
 # FAIL naming the ref, a mutation UNDER a shuffle -> FAIL, and a mutation behind
@@ -197,7 +197,7 @@ TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE")"
 # scope; nothing catches a missing SCOPE.
 #
 # The API has no scope-enumeration route by design, so this script cannot ask
-# the pod what it holds. MEASURED 2026-09-02: local 16 scopes / 141 entries,
+# the pod what it holds. MEASURED: local 16 scopes / 141 entries,
 # pod 23 / 189 — 7 pod-only scopes holding 48 entries, 25% of the served store.
 # `EXPLICIT_SCOPES` records whether the operator narrowed the run, so the
 # verdict can say which of the two it is rather than implying completeness.
@@ -421,25 +421,25 @@ for scope in "${SCOPES[@]}"; do
   # correctly saying the pod was larger and unmeasured, i.e. it quoted the
   # non-binding side, and the error was in the UNSAFE direction.
   #
-  # NOW MEASURED ON BOTH SIDES, 2026-09-02, over the live store ingress,
+  # NOW MEASURED ON BOTH SIDES, over the live store ingress,
   # counting entries as `subsystem_recall` INDEXES them. `LISTING_PAGE_SIZE`
-  # is 100; the largest scope is `datapacket-talos`:
+  # is 100; the largest scope is `beta-cluster`:
   #
-  #     scope              local   pod
-  #     datapacket-talos      49    51     <- the binding scope
-  #     homelab-talos         24    30
-  #     devrc                 26    29
-  #     civitai               23    24
-  #     homelab-infra          0     4
-  #     TOTAL                141   189     (154 vs 201 files; 16 vs 23 scopes)
+  #     scope           local   pod
+  #     beta-cluster       49    51     <- the binding scope
+  #     gamma-cluster      24    30
+  #     alpha-toolkit      26    29
+  #     delta-app          23    24
+  #     gamma-infra         0     4
+  #     TOTAL             141   189     (154 vs 201 files; 16 vs 23 scopes)
   #
   # So the headroom is 100 - 51 = 49 ENTRIES, not 51. The store is
   # append-mostly and pruning is manual, so the number only shrinks.
   #
   # ⚠ ALSO VISIBLE IN THAT TABLE, AND NOT A DEFECT THIS ARM OWNS: the scope
   # list is enumerated from the LOCAL store, so the 7 scopes that exist only on
-  # the pod (auditloop, civitai-gpu-fleet, naida-ai, vetr, vetr-api, vetr-app,
-  # vetr-infra) are not compared by this script at all.
+  # the pod (epsilon-loop, delta-gpu-fleet, zeta-ai, eta-svc, eta-api, eta-app,
+  # eta-infra) are not compared by this script at all.
   paged=$(( $(grep -cE '^INDEX \(.*\(page [0-9]+ of [0-9]+\):$' "$local_out" || true) \
           + $(grep -cE '^INDEX \(.*\(page [0-9]+ of [0-9]+\):$' "$remote_out" || true) ))
   if [[ "$paged" -gt 0 ]]; then
@@ -584,13 +584,13 @@ for scope in "${SCOPES[@]}"; do
     # `<slug>.<kind>.md` is documented (`KINDS = service|process|org|doc`,
     # worked example `repo-cos.process` in the resolver's own docstring).
     # No scope in the live store uses that shape today (0 of 154 files, measured
-    # 2026-09-01); the store is append-mostly. REPRODUCED end-to-end against a
+    # the live pod); the store is append-mostly. REPRODUCED end-to-end against a
     # real in-process server, two stores identical but for ONE CHARACTER inside
     # `alpha.md`'s nuance bullet — this script, at 7d9da8f5, printed:
     #   PASS scope=gadget-rack entries=3 bytes=6801 raw-diff-lines=18 … accounted-for=18
     #   verify: scopes=1 pass=1 fail=0 entries-compared=3
     # and exited 0. The fixture is `ambiguous_pair` in
-    # `scripts/tests/test_subsystem_store_api.py`.
+    # `tests/test_subsystem_store_api.py`.
     #
     # REFUSED, not merely left out of `entries=`. A stream silently dropped
     # from the count is the same coverage-in-name-only shape one level down:
@@ -684,7 +684,7 @@ done
 # COMPLETE COVERAGE. `verify: scopes=16 pass=16 fail=0 entries-compared=141` is
 # a true sentence that an operator reads as "the two stores agree" — and the
 # sweep never looked at the 7 scopes the pod holds and this host does not (48
-# entries, 25% of the served store, measured 2026-09-02). The disclosure has to
+# entries, 25% of the served store, measured on the live pod). The disclosure has to
 # be ON the verdict, not 200 lines away in a comment about pagination: this is
 # the line that gets pasted into a handoff.
 #
