@@ -30,6 +30,18 @@ reader stops looking:
     growth question with a message about vacuity. The vacuity claim belongs to
     the instrument tests; these own the set claim.
 
+🔴 AND A SECOND SET IT DOES NOT OWN, WHICH IS NEW AND EASY TO MISS. Every CLI
+claim here is read from the PYTHON parser (`cli_verbs_from_parser`), and there
+are now TWO clients: `cmd/cairn` is a compiled binary whose subcommands no
+argparse introspection can see. A Go-only verb, or a Go client that silently
+LOST one, leaves every assertion in this file green. That gap is closed by
+`tests/test_go_client_ledgers.py`, which reads `cairn -verbs` out of the RUNNING
+binary and requires the two sets to be EQUAL — and by
+`checks.go-client-declares-its-verbs`, which does it again in the nix sandbox.
+Neither can run in the `tests` job (no Go toolchain), so both are read in jobs
+that have one. Do not read this file's "every verb is accounted for" as covering
+the Go client.
+
 🔴 A SET THIS FILE DOES NOT OWN. The bound HTTP method surface — `do_GET`,
 `do_HEAD`, the four mutating verbs, and any `do_OPTIONS` somebody adds — is
 pinned by `test_subsystem_store_api.py::TestPhaseOneScope::

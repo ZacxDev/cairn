@@ -495,6 +495,14 @@ def _recall(case_id: str, why: str, **kwargs) -> dict:
         "mode": kwargs.pop("mode", rc.DEFAULT_MODE),
         "page": kwargs.pop("page", 1),
         "visible": kwargs.pop("visible", None),
+        # 🔴 THE FOCUS WINDOW IS A FIXTURE FIELD BECAUSE P2 MADE IT REACHABLE. The store
+        # API never sends one and the HTTP corpus therefore cannot carry one, so the
+        # `associate_paths` selector — the WRITER's matcher, which the reader calls and the
+        # Go port had to grow — has no gate anywhere else. These rows are the oracle's own
+        # rendered BASIS line for a resolved pick, a miss, an alias hit, an ambiguous ref
+        # and the `…` truncation, which is what makes the port a measurement.
+        "focus_paths": kwargs.pop("focus_paths", []),
+        "focus_source": kwargs.pop("focus_source", None),
     }
     assert not kwargs, kwargs
     return row
@@ -549,6 +557,34 @@ CASES: list[dict] = [
     _recall("page-past-the-end", "no arithmetic on a page that does not exist", scope="many-notes", mode="list", page=9),
     _recall("digest-page-two", "a digest whose index is on page 2 while its featured body is not", scope="many-notes", page=2),
     _recall("tied-digest", "two entries tied to the NANOSECOND: the index takes ref-ascending and the featured pick takes ref-greatest, and both tie-breaks are observable only here", scope="tied-notes"),
+    # --- THE FOCUS-WINDOW SELECTOR. -------------------------------------------------
+    # 🔴 EVERY ROW BELOW IS UNREACHABLE FROM THE HTTP CORPUS AND REACHABLE FROM `cairn
+    # recall`, which is the whole reason they exist: the pod has no repo to read a handoff
+    # doc out of, so `associate_paths` is a code path only the CLI drives. The default
+    # featured pick for `alpha-notes` is `marked-three` (much the newest file), so a row
+    # whose window resolves to anything else is a row where the matcher demonstrably ran.
+    _recall("digest-focus-resolved", "a window that RESOLVES, beating the most-recent fallback: the filename tier", scope="alpha-notes", focus_paths=["claudedocs/handoff-alpha.md", "apps/gadget-two/values.yaml"], focus_source="claudedocs/handoff-alpha.md"),
+    _recall("digest-focus-alias", "the ALIAS tier of the matcher, which resolves a component no filename carries", scope="alpha-notes", focus_paths=["claudedocs/handoff-alpha.md", "svc/lease-holder/main.go"], focus_source="claudedocs/handoff-alpha.md"),
+    _recall("digest-focus-miss", "a window that was READ and matched NOTHING — a DIFFERENT sentence from a window that was never read", scope="alpha-notes", focus_paths=["claudedocs/handoff-alpha.md", "apps/nothing-here/values.yaml"], focus_source="claudedocs/handoff-alpha.md"),
+    _recall("digest-focus-ambiguous", "an ambiguous ref contributes to NO subsystem rather than blinding the window, so this falls back", scope="alpha-notes", focus_paths=["claudedocs/handoff-alpha.md", "svc/shared-alias/main.go"], focus_source="claudedocs/handoff-alpha.md"),
+    _recall("digest-focus-tie", "two entries each named ONCE: the tie-break is the fallback's own mtime signal, not a third rule", scope="alpha-notes", focus_paths=["a/gadget-one/x.md", "b/gadget-two/y.md"], focus_source="claudedocs/handoff-alpha.md"),
+    # 🔴 TWO MATCHED ENTRIES WITH *DIFFERENT* PATH COUNTS, WHICH THE ROWS ABOVE DO NOT HAVE. Each
+    # of those resolves exactly ONE entry, so the ranking's PRIMARY key — path count, descending —
+    # is unreachable from them: a mutant that sorted ascending, or that dropped the count key
+    # entirely, survived every one. Here `gadget-one` is named TWICE and `gadget-two` once, and
+    # `gadget-two` is the NEWER file — so the count and the mtime tie-break disagree, and only the
+    # count's direction decides the answer.
+    _recall("digest-focus-count-beats-mtime", "the ranking's PRIMARY key: two matched entries whose path COUNTS differ, where the newer file has FEWER paths", scope="alpha-notes", focus_paths=["a/gadget-one/1.md", "b/gadget-one/2.md", "c/gadget-two/1.md"], focus_source="claudedocs/handoff-alpha.md"),
+    # 🔴 AND THE LAST RESORT: equal counts AND equal mtimes, so the REF decides. `tied-notes` holds
+    # two entries tied to the NANOSECOND, which is the only place in this world where the third key
+    # is reachable at all.
+    _recall("digest-focus-ref-is-the-last-resort", "equal path counts AND an mtime tie, so the ref breaks it — reachable only in the nanosecond-tied scope", scope="tied-notes", focus_paths=["a/tied-alpha/1.md", "b/tied-zulu/1.md"], focus_source="claudedocs/handoff-alpha.md"),
+    _recall("digest-focus-truncated", "FOUR paths on one entry: the basis shows three and appends `…`, and the count is the full one", scope="alpha-notes", focus_paths=["a/gadget-one/1.md", "b/gadget-one/2.md", "c/gadget-one/3.md", "d/gadget-one/4.md"], focus_source="claudedocs/handoff-alpha.md"),
+    # ⚠ AND ONE WITH NO SOURCE, which is the `the supplied path window` arm. It is not
+    # reachable from `cairn` — `focus.Window` sets paths and source together — so this row
+    # is the only thing that measures it, and it is labelled as covering an arm the CLI
+    # cannot produce rather than as parity coverage.
+    _recall("digest-focus-sourceless", "a window with no named source: the `the supplied path window` arm, which no CLI invocation can produce", scope="alpha-notes", focus_paths=["apps/gadget-two/values.yaml"]),
     _recall("ref-hit-emptysec", "a PRESENT-AND-EMPTY section, which must not render as an absent one", scope="alpha-notes", ref="emptysec-fourteen"),
     _search("hit", "the ordinary search", scope="alpha-notes", query="lease"),
     _search("hit-context", "a raw ±N window instead of the enclosing bullet", scope="alpha-notes", query="lease", context=2),
@@ -659,6 +695,8 @@ def _expect(case: dict, store: Path) -> dict:
             mode=case["mode"],
             page=case["page"],
             visible_scopes=visible,
+            focus_paths=case["focus_paths"],
+            focus_source=case["focus_source"],
         )
         text = rc.render_text(report)
         label = f"{report.scope}/"

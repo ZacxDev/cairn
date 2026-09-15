@@ -87,6 +87,11 @@ type fixtureCase struct {
 	// field were a plain slice with no pointer: `null` and `[]` are opposites here.
 	Visible *[]string `json:"visible"`
 
+	// FocusPaths / FocusSource are the CLI-only selector. No HTTP corpus row can carry
+	// one, so these rows are the only differential gate over `store.AssociatePaths`.
+	FocusPaths  []string `json:"focus_paths"`
+	FocusSource *string  `json:"focus_source"`
+
 	Expect fixtureExpect `json:"expect"`
 }
 
@@ -179,6 +184,10 @@ func TestTheRenderedBytesMatchTheORACLEOverShapesTheCorpusCannotSend(t *testing.
 				}
 				if tc.Ref != nil {
 					opts.Ref, opts.HasRef = *tc.Ref, true
+				}
+				opts.FocusPaths = tc.FocusPaths
+				if tc.FocusSource != nil {
+					opts.FocusSource = *tc.FocusSource
 				}
 				// The validation ladder is the HANDLER's, not the renderer's, so it is run
 				// here too — a fixture row that could not reach the renderer through a real
@@ -599,6 +608,21 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"a zero-line context window", "context=±0 raw lines"},
 		{"an all-scopes search", "scope=(all scopes)"},
 		{"a scope with no entries in the searched set", "(none)"},
+		// The focus-window selector, which no HTTP row can reach. Each marker is a
+		// string only ONE arm of `select_featured` produces, so the set below cannot
+		// shrink to "a window was passed somewhere".
+		{"a RESOLVED focus pick, via the filename tier", "resolved via claudedocs/handoff-alpha.md — 1 of 2 quoted path(s) name it: apps/gadget-two/values.yaml"},
+		{"a RESOLVED focus pick, via the ALIAS tier", "name it: svc/lease-holder/main.go"},
+		{"a window that was read and matched NOTHING", "(nothing quoted in claudedocs/handoff-alpha.md resolved to an entry)"},
+		{"the `…` truncation of a basis naming more than three paths", "c/gadget-one/3.md …"},
+		{"a window with no named source", "resolved via the supplied path window"},
+		{"NO window at all, which is the pod's own case", "(no handoff doc to read a path window from)"},
+		// The ranking's three keys, each reachable only from its own row: the PRIMARY key needs
+		// two matched entries with DIFFERENT counts (every other focus row resolves exactly one
+		// entry, so a mutant that sorted ascending survived all of them), and the LAST resort
+		// needs equal counts AND an mtime tie.
+		{"path COUNT beating the mtime signal", "2 of 3 quoted path(s) name it: a/gadget-one/1.md, b/gadget-one/2.md"},
+		{"the REF as the last resort, on a nanosecond mtime tie", "name it: a/tied-alpha/1.md"},
 	} {
 		if !strings.Contains(rendered, row.marker) {
 			t.Errorf("no fixture case renders %s (looked for %q). The fixture's whole value "+

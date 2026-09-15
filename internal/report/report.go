@@ -69,13 +69,23 @@ type RecallOptions struct {
 	Mode   string
 	Page   int
 
-	// FocusPaths is the repo-relative path window the FEATURED-ENTRY selector would
-	// resolve against. The store API never sets it — a pod has no repo to read a handoff
-	// doc out of — and the selector that consumes it is deliberately NOT ported, so a
-	// non-empty window is REFUSED by name rather than silently taking the fallback. See
-	// ErrFocusSelectorUnported for why that direction, and for the condition that closes
-	// it.
-	FocusPaths []string
+	// FocusPaths is the repo-relative path window the FEATURED-ENTRY selector resolves
+	// against, and FocusSource is the doc it was read out of — quoted back in the printed
+	// basis and nowhere else.
+	//
+	// 🔴 THE STORE API NEVER SETS EITHER, AND THE CLI ALWAYS MAY. A pod has no repo to
+	// read a handoff doc out of; `cairn recall` with no `--scope` and the default mode
+	// reads its repo's newest one. P1b REFUSED a non-empty window (see the note where
+	// `ErrFocusSelectorUnported` used to be); P2 ports the matcher instead, because the
+	// CLI cannot refuse and a silent fallback would print a basis claiming a resolved
+	// pick.
+	//
+	// ⚠ `FocusSource == ""` WITH A NON-EMPTY WINDOW IS UNREACHABLE FROM EITHER CALLER
+	// and renders differently from the oracle's `None` in the fallback sentence. Stated
+	// rather than defended against: the window and its source are built together by
+	// `focus.Window`, which sets both or neither.
+	FocusPaths  []string
+	FocusSource string
 }
 
 // SearchOptions is one `/search` request, after parsing and before rendering.

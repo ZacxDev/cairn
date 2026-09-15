@@ -253,6 +253,55 @@
         };
       };
 
+      # 🔴 THE GO CLIENT IS A SECOND ARTEFACT DURING P2, NOT A REPLACEMENT. `packages.cairn`
+      # stays the Python client and `apps.default` stays pointed at it: swapping them changes
+      # what `nix run github:…/cairn` executes for every existing consumer, which is a
+      # CUTOVER and not a build. The plan puts the cutover after the parity gate has held
+      # over real use and the deletion of Python at P8.
+      #
+      # 🔴 `gitMinimal` ON THE WRAPPER'S PATH, FOR THE SAME REASON THE PYTHON PACKAGE HAS IT.
+      # The client invokes `git` by BARE NAME to derive a repo's scope
+      # (`internal/client/reposcope.go`), so a package that did not carry its own answer
+      # would inherit whatever the caller's PATH holds — and `cairn recall` with no `--scope`
+      # would fail differently on two machines. `gitMinimal`, not `git`: the only invocations
+      # are two `rev-parse`s, and full `git` drags perl's CGI/libwww stack.
+      mkGoClient = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-go";
+        inherit version;
+        src = onlyGo pkgs;
+        vendorHash = null;
+
+        subPackages = [ "cmd/cairn" ];
+
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+
+        # 🔴 THE UNIT TESTS RUN IN THE BUILD, AND `checkPhase` IS SPELLED OUT BECAUSE THE
+        # DEFAULT HONOURS `subPackages` AND THAT MADE IT VACUOUS ON THE SERVER DERIVATION —
+        # measured there: a GREEN check phase that ran ZERO tests, because `subPackages` had
+        # scoped the test walk to the one directory with none. Every test in this module
+        # lives under `internal/`.
+        doCheck = true;
+        checkPhase = ''
+          runHook preCheck
+          go vet ./...
+          go test ./...
+          runHook postCheck
+        '';
+
+        postInstall = ''
+          wrapProgram $out/bin/cairn \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.gitMinimal ]}
+        '';
+
+        meta = with pkgs.lib; {
+          description = "The Go port of the cairn client (P2: parity-gated against the Python one)";
+          homepage = "https://github.com/ZacxDev/cairn";
+          license = licenses.mit;
+          mainProgram = "cairn";
+          platforms = platforms.unix;
+        };
+      };
+
       mkCairn = pkgs: pkgs.stdenv.mkDerivation {
         pname = "cairn";
         inherit version;
@@ -390,11 +439,12 @@
         {
           cairn = mkCairn pkgs;
           default = mkCairn pkgs;
-          # 🔴 `default` STAYS THE PYTHON CLIENT. The Go server is a SECOND
-          # artefact during the dual-run, not a replacement for anything: making
-          # it the default would change what `nix run github:…/cairn` executes
+          # 🔴 `default` STAYS THE PYTHON CLIENT. The Go server AND the Go client are
+          # SECOND artefacts during the dual-run, not replacements for anything: making
+          # either the default would change what `nix run github:…/cairn` executes
           # for every existing consumer, which is a cutover and not a build.
           cairn-server-go = mkGoServer pkgs;
+          cairn-go = mkGoClient pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
@@ -414,6 +464,84 @@
       checks = forAll (pkgs: {
         cairn = mkCairn pkgs;
         cairn-server-go = mkGoServer pkgs;
+        cairn-go = mkGoClient pkgs;
+
+        # 🔴 THE GO CLIENT'S OWN LEDGER, READ OUT OF THE RUNNING BINARY — the one claim a
+        # compile cannot make, and the one the PYTHON-side gates are structurally blind to.
+        # `capability_ledger.cli_verbs_from_parser` asks the PYTHON argparse parser what
+        # subcommands it has and has no equivalent for a compiled program, so a Go client
+        # that GAINED a verb or silently LOST one leaves that gate green.
+        #
+        # 🔴 AND IT IS A PAIR, NOT A ZERO. A check that asserted only "the command exited 0"
+        # would pass for a binary that printed nothing. The exact set is pinned by hand here
+        # — the same nine verbs `tests/test_capability_ledger.py` discovers from the Python
+        # parser, which is what makes the two implementations comparable at all.
+        #
+        # ⚠ WHAT THIS SANDBOX CANNOT HAVE: no store, no token, no network and no HOME with a
+        # cache root, so it exercises the LEDGERS and nothing about reading or writing. The
+        # parity harness is what measures behaviour, and it needs a running pod that a nix
+        # sandbox is the wrong place for.
+        go-client-declares-its-verbs = pkgs.runCommand "cairn-go-client-declares-its-verbs"
+          { nativeBuildInputs = [ (mkGoClient pkgs) ]; } ''
+          set -o pipefail
+          cairn -verbs > verbs.txt
+          cairn -exit-codes > codes.txt
+
+          if ! grep -q . verbs.txt || ! grep -q . codes.txt; then
+            echo "FAIL: the binary printed NO verb or NO exit code, so a ledger built from"
+            echo "      this output would agree with anything."
+            exit 1
+          fi
+
+          cat > want-verbs.txt <<'EOF'
+          append writes
+          create writes
+          doctor reads
+          ls-entries reads
+          put writes
+          recall reads
+          search reads
+          sync reads
+          validate reads
+          EOF
+          sed -i 's/^ *//' want-verbs.txt
+
+          if ! diff -u want-verbs.txt verbs.txt; then
+            echo "FAIL: the Go client's declared verb set is not the set this check names."
+            echo "      A verb is a CAPABILITY — the ledger in tests/testlib/capability_ledger.py"
+            echo "      has a row per capability and asserts it against the HTTP route table."
+            echo "      Adding or removing one here means updating that ledger in the same change."
+            # 🔴 SINGLE-QUOTED, BECAUSE BACKTICKS IN A DOUBLE-QUOTED `echo` ARE A COMMAND
+            # SUBSTITUTION. Measured while running this check's own negative control: the
+            # failure message printed `writes: command not found` and lost the word it was
+            # about — a refusal that mangles its own explanation, on the one path nobody reads
+            # until something is already broken.
+            echo '      The `writes` flag is not decoration either: it decides whether an'
+            echo "      unreachable store exits 7 (the record was NOT made) or 3 (nothing was"
+            echo "      displayed)."
+            exit 1
+          fi
+
+          # 🔴 THE SHARED EXIT-CODE SET, COMPUTED FROM THE BINARY'S OWN TWO TABLES. The Python
+          # ledger computes its intersection over the PYTHON client's nine codes, so a Go-only
+          # code colliding with `doctor`'s 10 leaves it green. `{0, 9}` is the documented set
+          # and this is where the Go side's version of it is checked.
+          grep '^client ' codes.txt | awk '{print $3}' | sort -u > client-values.txt
+          grep '^doctor ' codes.txt | awk '{print $3}' | sort -u > doctor-values.txt
+          comm -12 client-values.txt doctor-values.txt > shared.txt
+          printf '0\n9\n' > want-shared.txt
+          if ! diff -u want-shared.txt shared.txt; then
+            echo "FAIL: the Go client's exit codes share $(wc -l < shared.txt) value(s) with"
+            echo "      its doctor's, not exactly {0, 9}. GROWN means a new overlap nobody"
+            echo "      documented; SHRUNK means the 9 was renumbered and the comment that"
+            echo "      states the overlap is now false."
+            exit 1
+          fi
+
+          echo "ok: $(wc -l < verbs.txt) declared verbs, $(wc -l < codes.txt) exit codes,"
+          echo "    shared set exactly {0, 9}"
+          cat verbs.txt codes.txt > $out
+        '';
 
         # 🔴 THE POSITIVE HALF FOR THE GO SERVER, AND IT IS A DIFFERENT CLAIM
         # FROM "IT COMPILES". The package's own `checkPhase` runs the unit

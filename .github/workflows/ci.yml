@@ -60,17 +60,25 @@ jobs:
           python3 -m pytest tests -q -p no:randomly --junitxml=/tmp/r.xml | tee /tmp/out.txt
           python3 - <<'PY'
           import sys, xml.etree.ElementTree as ET
-          # 1819 collected, measured on the P1b branch: 1806 at `3058af3` plus the
-          # eight guards the tightened relations add (three statuses x two relation
-          # kinds, plus the one-real-answer positive control and the mixed pair) and
-          # the five in `test_reader_fixtures.py`. The previous constant was 1755
-          # against 1805 measured on the P1a branch.
+          # 1832 collected, measured on the P2 branch: 1819 at `1e593a8` plus the ten
+          # in `test_parity_harness.py` (the coverage ledger over the parity gate's own
+          # case list) and the three in `test_go_client_ledgers.py`. The previous
+          # constant was 1769 against 1819 measured on the P1b branch.
+          #
+          # ⚠ THE THREE LEDGER TESTS IN `test_go_client_ledgers.py` COUNT TOWARD THIS NUMBER
+          # WHETHER THEY RUN OR SKIP — pytest counts a skip as collected — so the floor is the
+          # same either way. Whether they actually skip HERE depends on whether the runner
+          # image ships a `go` toolchain, which this repository does not control and which is
+          # therefore NOT asserted: the `go` job runs that file explicitly and REFUSES on a
+          # skip, which is where the claim belongs. A skip nobody counts is indistinguishable
+          # from a pass.
           #
           # Raise as the suite grows — `m - min(50, max(1, m/20))` for the m you
           # measured; never lower without saying why. ⚠ THE GO TESTS ARE NOT IN
           # THIS NUMBER: they are a different runner in a different job, and
-          # folding them in would make one floor answer two questions.
-          FLOOR = 1769
+          # folding them in would make one floor answer two questions. Nor is the
+          # PARITY gate: it is its own job with its own floor, for the same reason.
+          FLOOR = 1782
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -124,18 +132,52 @@ jobs:
           set -o pipefail
           go test ./... | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
-          # NINE packages carry tests, measured on the P1b branch: api, authz, hostid,
-          # netid, pytext, report, snapshot, store, write. It was EIGHT at P1a; `hostid`
-          # arrived with the renderer, which needed a "whose disk is this" answer. The
-          # floor is ONE BELOW that, so deleting a package's tests fails here while
-          # adding a package does not — the same shape as the Python collected-test
-          # floor, and for the same reason: `go test` over a package with no test files
-          # exits 0, so the exit code alone cannot tell a green suite from an absent one.
+          # ELEVEN packages carry tests, measured on the P2 branch: api, authz, client,
+          # doctor, hostid, netid, pytext, report, snapshot, store, write. It was NINE at
+          # P1b; `client` and `doctor` arrived with the Go CLIENT. The floor is ONE BELOW
+          # that, so deleting a package's tests fails here while adding a package does not
+          # — the same shape as the Python collected-test floor, and for the same reason:
+          # `go test` over a package with no test files exits 0, so the exit code alone
+          # cannot tell a green suite from an absent one.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 8 ]; then
+          if [ "$ok" -lt 10 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
+
+      # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
+      # CAN READ THEM. `capability_ledger.cli_verbs_from_parser` asks the PYTHON argparse
+      # parser what subcommands it has, and `test_cairn_doctor.py` walks the `cairn`
+      # script's AST for its `EXIT_*` constants — neither has an equivalent for a binary.
+      # `tests/test_go_client_ledgers.py` reads both out of the RUNNING Go client, so it
+      # needs a Go toolchain and SKIPS in the `tests` job. A skip nobody counts is
+      # indistinguishable from a pass, which is why it is run explicitly here and why the
+      # step refuses on a skip rather than reading the exit code.
+      - name: the Go client's own verb and exit-code ledgers
+        run: |
+          set -o pipefail
+          python3 -m pip install --quiet pytest
+          python3 -m pytest tests/test_go_client_ledgers.py -q -p no:randomly \
+            --junitxml=/tmp/ledgers.xml | tee /tmp/ledgers.txt
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          t = ET.parse("/tmp/ledgers.xml").getroot()
+          suites = [t] if t.tag == "testsuite" else list(t)
+          ran = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          fail = sum(int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in suites)
+          print(f"collected={ran} skipped={skipped} failed={fail}")
+          # 🔴 A SKIP HERE IS A REAL HOLE, NOT A DETAIL: these three tests are the ONLY
+          # thing that reads the Go client's tables, so a skipped one leaves the capability
+          # gate and the shared-exit-code ledger green over an unmeasured binary.
+          if skipped:
+              print("REFUSING: a ledger test SKIPPED in the one job that can run it")
+              sys.exit(1)
+          if ran < 3:
+              print(f"REFUSING: collected {ran} < 3 — the ledger file narrowed")
+              sys.exit(1)
+          sys.exit(1 if fail else 0)
+          PY
 
       # 🔴 THE P1 GATE ITSELF: the conformance corpus, replayed against the Go
       # server. At P1a it was expected to be PARTIAL — the `/recall` and `/search`
@@ -199,6 +241,68 @@ jobs:
             exit 1
           fi
 
+  # 🔴 THE P2 GATE, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS IS: its verdict is
+  # readable on its own in the checks list, and a failure in either language can never mask it.
+  # It needs BOTH runtimes — the Python client is the oracle and the Go client is under test —
+  # so it is the one job that pins both pins.
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 🔴 THE CONTROLS FIRST, AND BOTH OF THEM, BECAUSE A GREEN FROM THIS HARNESS IS
+      # INDISTINGUISHABLE FROM A HARNESS WIRED TO NOTHING UNTIL THEY HAVE BEEN WATCHED TO WORK.
+      # That is not cautionary: the first full run of this gate reported 72 PASS / 0 FAIL while
+      # every request was refused `401 status=no-client-ip`, no cache was ever written, and every
+      # report rendered `store-unreachable`. Two clients failing identically compare equal.
+      - name: prove the differ can go RED (stdout, stderr AND the exit code)
+        run: python3 tests/parity/harness.py --self-test
+
+      - name: prove the pre-flight REFUSES a pod that cannot answer
+        run: |
+          set +e
+          python3 tests/parity/harness.py --break-pod > /tmp/broken.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/broken.txt
+          # exit 2 is "could not vouch", which is a DIFFERENT verdict from 1 ("a row differs").
+          if [ "$rc" -ne 2 ]; then
+            echo "REFUSING: a pod configured to refuse every direct request produced rc=$rc,"
+            echo "          not 2. The pre-flight is the only thing standing between this gate"
+            echo "          and a green computed over two identical failures."
+            exit 1
+          fi
+          grep -q 'REFUSING TO VOUCH' /tmp/broken.txt
+
+      - name: the parity gate
+        run: |
+          set -o pipefail
+          python3 tests/parity/harness.py | tee /tmp/parity.txt
+          passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
+          fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
+          echo "passes=$passes failures=$fails"
+          # 91 PASS lines measured on the P2 branch: 90 cases plus `cache-mtime-parity`.
+          # ⚠ THE FLOOR IS NOT REDUNDANT WITH "ZERO FAILURES". A run that compared nothing has
+          # zero failures too; the floor is what tells a green gate from an absent one.
+          if [ "$passes" -lt 91 ]; then
+            echo "REFUSING: $passes passes, and 91 were measured — the gate got smaller"
+            exit 1
+          fi
+          if [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $fails failing row(s)"
+            exit 1
+          fi
+          # …and the harness's own two in-run controls, read rather than assumed.
+          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True' /tmp/parity.txt
+          grep -q 'dead-normalizations=0' /tmp/parity.txt
+
   # 🔴 A FLAKE NOBODY BUILDS IS DECORATION, AND ITS ROT IS SILENT. `flake.nix`
   # is what a consumer pins — devrc is the first — so a break here does not
   # surface in this repo at all: it surfaces in someone else's `home-manager
@@ -251,3 +355,16 @@ jobs:
       # which is the one claim a compile cannot make.
       - name: the Go server declares exactly the routes the ledger names
         run: nix build .#checks.x86_64-linux.go-server-declares-its-routes --no-link --print-build-logs
+
+      # The Go CLIENT is packaged too, and for the same reasons: a consumer will eventually pin
+      # it, and its build runs the unit tests under the PINNED toolchain rather than the one
+      # `setup-go` installed. Two tiers, both read.
+      - name: the Go client package builds, and its unit tests pass under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-go --no-link --print-build-logs
+
+      # …and its verb and exit-code tables are read out of the running binary. This is the nix
+      # tier of the claim `tests/test_go_client_ledgers.py` makes in the `go` job — a different
+      # instrument in a different environment, which is the point: greening one tier while the
+      # other stays unobservable moves a bug rather than removing it.
+      - name: the Go client declares exactly the verbs and codes the ledger names
+        run: nix build .#checks.x86_64-linux.go-client-declares-its-verbs --no-link --print-build-logs
