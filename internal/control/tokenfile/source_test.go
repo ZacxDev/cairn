@@ -290,12 +290,21 @@ func TestTheProjectionIsAPureFunctionOfItsInputs(t *testing.T) {
 	// from the records BEFORE the directories, so naming them descending here makes the
 	// map's own order the OPPOSITE of the answer — which is what turns the sortedness
 	// check below from a coin flip into a measurement.
+	//
+	// 🔴 AND THE ALLOWLIST NAMES NEITHER EVERY DIRECTORY NOR ONLY DIRECTORIES, WHICH IS
+	// A FIX RATHER THAN A DETAIL. An earlier fixture gave this record all four directory
+	// names, and the union then had a redundant half: deleting `storeDirs()` outright
+	// left this test GREEN, because the allowlist alone still supplied every name. The
+	// record now names two of the four directories plus one scope that has NO directory,
+	// so the count below is 5 and BOTH halves are load-bearing — dropping the store half
+	// yields 3, dropping the allowlist half yields 4, and each is this test failing on
+	// its own precondition.
 	root := storeWith(t, "rubble-heap", "alpha-notes", "hollow-set", "beta-notes")
 	token := aToken('a')
 	src := sourceOver(root, authz.TokenRecord{
 		Token:    token,
 		Identity: "reader",
-		Scopes:   []string{"rubble-heap", "hollow-set", "beta-notes", "alpha-notes"},
+		Scopes:   []string{"rubble-heap", "hollow-set", "epsilon-notes"},
 	})
 
 	// 🔴 THE ORDER IS ASSERTED DIRECTLY AND REPEATEDLY, AND THE BATTERY IS WHAT FORCED
@@ -323,8 +332,14 @@ func TestTheProjectionIsAPureFunctionOfItsInputs(t *testing.T) {
 				created = append(created, e.DisplayName)
 			}
 		}
-		if len(created) != 4 {
-			t.Fatalf("precondition: four scopes must be enumerated, got %d (%v)", len(created), created)
+		// The precondition is the UNION's size: four directories and an allowlist
+		// naming two of them plus one scope with no directory. A number that is not 5
+		// means one half of the union stopped contributing, which is the defect this
+		// fixture was rebuilt to see.
+		if len(created) != 5 {
+			t.Fatalf("precondition: five scopes must be enumerated — four directories "+
+				"unioned with an allowlist naming two of them plus `epsilon-notes`, "+
+				"which has none — got %d (%v)", len(created), created)
 		}
 		if !sort.StringsAreSorted(created) {
 			t.Fatalf("iteration %d: the scope events must be emitted in a fixed order, got "+
@@ -512,8 +527,11 @@ func TestTheProjectionMintsNoUnrestrictedPrincipal(t *testing.T) {
 // ⚠ IT IS SCOPED TO A BARE ROW. A mapped row is unaffected — its allowlist is in the
 // file — and a scope created THROUGH this server is unaffected, because the creating
 // row is mapped and the scope was therefore in the model before the directory existed.
-// What is left is a directory created out of band, which is `server/seed.sh`, which is
-// an operation an operator already follows with a reload. See `Divergence`.
+// What is left is a directory created out of band, which is `server/seed.sh` — and the
+// runbook does NOT follow that with a reload, so what bounds the window is the refresh
+// TIMER. See the divergence declared in this package's doc, and
+// `cmd/cairn-server`'s `TestTheBinarysOwnTimerIsWhatClosesTheDivergence`, which is what
+// gates the timer itself.
 func TestAScopeCreatedAfterMaterializationIsInvisibleUntilTheNextRefresh(t *testing.T) {
 	root := storeWith(t, "alpha-notes")
 	token := aToken('a')

@@ -46,7 +46,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: 🔴 THREE PACKAGES, NOT ONE, BECAUSE THE GUARDS THIS BATTERY EXERCISES NOW SPAN A
+#: 🔴 FOUR PACKAGES, NOT ONE, BECAUSE THE GUARDS THIS BATTERY EXERCISES NOW SPAN A
 #: SEAM. `internal/control` is the model and its predicate; `internal/control/tokenfile`
 #: is the projection of the token file into that model; `internal/api` is the server that
 #: authorises from it. A mutant in the projection is killed by a guard in the server and
@@ -54,7 +54,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: suite that catches them was never run. `./internal/control/...` would cover the first
 #: two in one word; it is spelled out so that adding a sub-package is a deliberate act
 #: rather than something the pattern absorbs silently.
-PKGS = ("./internal/control/", "./internal/control/tokenfile/", "./internal/api/")
+#:
+#: 🔴 AND `cmd/cairn-server` IS THE FOURTH BECAUSE OF WHAT LIVES ONLY THERE. The refresh
+#: loop that bounds the divergence `tokenfile` declares is started by `main` and by
+#: nothing else — measured: deleting it left `go build`, `go vet` and all thirteen
+#: `internal/...` test packages green, and this battery never ran the package at all.
+#: A mitigation with no gate is a mitigation nobody can be told has stopped working.
+PKGS = (
+    "./internal/control/",
+    "./internal/control/tokenfile/",
+    "./internal/api/",
+    "./cmd/cairn-server/",
+)
 
 
 class MutationError(AssertionError):
@@ -784,6 +795,26 @@ MUTANTS: tuple[Mutant, ...] = (
         "improvement and it deletes the property the whole cache exists for: an "
         "outage of the authority would stop every read, which is the promise cairn "
         "makes about an offline orient-me.",
+    ),
+    # ---- the program: the only thing that bounds the declared divergence ----------
+    Mutant(
+        name="the-refresh-loop-has-no-triggers",
+        path="cmd/cairn-server/main.go",
+        # 🔴 EMPTYING THE TRIGGER SET RATHER THAN DELETING THE GOROUTINE, AND THAT IS
+        # NOT A WEAKER MUTATION — it is the one that COMPILES. Deleting the block
+        # leaves `context` and `internal/control` imported and unused, so the tree does
+        # not build and the mutant dies at the build, which proves nothing about any
+        # guard. Both edits produce the same behaviour: a loop that waits on nothing.
+        old="control.RefreshTriggers{Interval: refreshInterval}",
+        new="control.RefreshTriggers{}",
+        killer="TestTheBinarysOwnTimerIsWhatClosesTheDivergence",
+        why="the timer removed from the only loop that re-materializes the authority "
+        "without an operator. The divergence `tokenfile` declares is DECLARED rather "
+        "than closed, "
+        "and the declaration rests entirely on the window being bounded — so this "
+        "turns a bounded, reported lag into a permanent one, with every existing "
+        "gate green: a bare row simply never sees a scope that `server/seed.sh` "
+        "pushed, and nothing anywhere says so.",
     ),
 )
 

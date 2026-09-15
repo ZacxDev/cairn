@@ -1,16 +1,35 @@
 // Package tokenfile projects the static token file into a `control.Model`.
 //
-// 🔴 AN ADAPTER, NOT A MIGRATION, AND THE DIFFERENCE IS THE GATE. Wiring
+// 🔴 AN ADAPTER, NOT A MIGRATION, AND THE THREE REASONS ARE THESE. Wiring
 // `internal/api` to authorise from `internal/control` needs principals to exist; a
-// one-time conversion of the deployed token file into a journal would answer that
-// and would be a data change nobody could replay, compare or roll back. Reading the
-// SAME file the pod already reads and synthesizing the equivalent users, projects,
-// scopes, grants and credentials on every refresh answers it differently: the
-// deployed secret keeps working unchanged, the rollback is one commit, and
-// `tests/conformance/` becomes a DIFFERENTIAL gate over the migration — the corpus
-// replays the identical requests against a server whose authorization mechanism has
-// been swapped underneath it, and any movement in the served contract is a failure
-// rather than a golden to regenerate.
+// one-time conversion of the deployed token file into a journal would answer that.
+// Reading the SAME file the pod already reads and synthesizing the equivalent users,
+// projects, scopes, grants and credentials on every refresh answers it differently:
+//
+//  1. the DEPLOYED SECRET keeps working unchanged, so shipping this is a code change
+//     rather than a coordinated cutover against a live pod whose only principals are
+//     rows in that file;
+//  2. the ROLLBACK is one commit. Nothing is written: `Events` is read-only, no caller
+//     appends it to a `FileStore`, so reverting leaves no converted data behind to
+//     restore;
+//  3. the JOURNAL FORMAT IS NOT SETTLED. `go.mod` has no `require` block, which blocks
+//     every Postgres driver and every embedded SQL engine, so P4 owes a decision about
+//     stdlib-only before there is a durable authority to convert INTO — and piece (d)
+//     changes what a scope IS, from a directory this file enumerates to a
+//     `scope-created` event. A conversion today writes a format the next phase is
+//     about to move.
+//
+// 🔴 AND THE REASON THIS USED TO GIVE FIRST IS FALSE — MEASURED, NOT RECONSIDERED. It
+// read "because it makes the conformance corpus a DIFFERENTIAL gate over the
+// migration". The corpus's world holds four scopes and its `wide-reader` principal's
+// allowlist names all four, so no row anywhere in it exercises unrestricted-ness: the
+// corpus cannot tell "unrestricted" from "allowlisted everything", which is precisely
+// the property the adapter has to reproduce. Measured rather than argued — deleting the
+// store-directory half of the enumeration below leaves `run_go.sh` at **116 PASS /
+// 0 failures**. The corpus does gate that the served contract did not move for the
+// principals it declares, and that is worth having; what gates the unrestricted half is
+// `internal/api/authority_test.go`, whose `gamma-notes` is reachable by the BARE row
+// alone.
 //
 // 🔴 THE HARD CASE IS THE LEGACY BARE ROW, AND IT IS WHY THIS FILE IS LONGER THAN
 // ITS CODE. A bare token is UNRESTRICTED — `store.Unrestricted()`, a sentinel that
@@ -20,8 +39,52 @@
 // comment says exactly why: a wildcard serves a directory the model does not know
 // about, which is the cross-tenant read the package exists to prevent). So an
 // adapter has to ENUMERATE, and an enumeration is a claim about a moment. What that
-// costs, measured rather than reasoned about, is in `Divergence` below and in
-// `internal/control/README.md`.
+// costs, measured rather than reasoned about, is the next paragraph and the matching
+// section of `internal/control/README.md`.
+//
+// # THE DIVERGENCE
+//
+// 🔴 A SCOPE DIRECTORY CREATED AFTER THE LAST MATERIALIZATION IS NOT VISIBLE TO A BARE
+// (LEGACY) ROW UNTIL THE NEXT ONE. Today `store.Unrestricted()` is a sentinel evaluated
+// per request, so a directory that appeared one millisecond ago is readable by the next
+// request. Here the scope set is a snapshot, so it is readable after the next refresh.
+//
+// ⚠ IT IS BOUNDED AND REPORTED, NOT SILENT, WHICH IS THE SAME TRADE THE PLAN'S §D
+// ALREADY ACCEPTED FOR REVOCATION: `control.Cache` refreshes on a timer and on every
+// token reload, and `Staleness` renders the epoch and its age. A mapped row is
+// UNAFFECTED — its allowlist is in the file, so a scope it names is covered whether or
+// not the directory exists.
+//
+// ⚠ AND IT IS NARROWER THAN "A NEW SCOPE", because the two ways a scope appears do not
+// both reach it. A scope created THROUGH THIS SERVER (`PUT` with `If-None-Match: *`,
+// the first-entry case) is already in the enumeration: the creating row is mapped, so
+// the scope is in its allowlist, so it was in the model before the directory existed.
+// What is left is a directory created OUT OF BAND — `server/seed.sh`, which seeds
+// through `kubectl exec … tar -xf -`.
+//
+// 🔴 SO THE MITIGATION IS THE TIMER, AND NOT AN OPERATOR RELOAD — THIS PARAGRAPH SAID
+// OTHERWISE AND THE REPOSITORY'S OWN RUNBOOK REFUTES IT. It read "which is exactly the
+// operation an operator already follows with a reload". `server/README.md`'s seeding
+// procedure is `build-push.sh` → `seed.sh --push` → `port-forward` →
+// `verify-byte-identity.sh`, and there is no SIGHUP anywhere in it; the only documented
+// SIGHUP is the token-ROTATION procedure, a different operation with a different
+// trigger. A mitigation resting on a habit nobody documented is not a mitigation, and
+// the timer — gated by `cmd/cairn-server`'s
+// `TestTheBinarysOwnTimerIsWhatClosesTheDivergence`, which runs the binary and watches
+// the divergence heal with nobody asking — is the whole of it.
+//
+// CLOSING CONDITION, stated so it is checkable rather than aspirational: it closes when
+// scopes stop being discovered from the filesystem at all — when a scope is created by
+// an event in the control plane's own journal, which is the authority piece (d) and P4
+// build. At that point `storeDirs` has no reason to exist and the enumeration is
+// complete by construction. It does NOT close by widening this adapter, and it must not
+// be closed by reintroducing an unrestricted principal.
+//
+// ⚠ IT WAS ALSO A `const Divergence` STRING, AND THE STRING IS DELETED RATHER THAN
+// KEPT. Every reference to it in this repository was a comment or the NAME inside an
+// error message: exported API with no reader, which is the shape this package's own
+// rules refuse elsewhere ("minting a verb that no call site can branch on"). The claim
+// belongs where a reader of the package meets it, which is here.
 package tokenfile
 
 import (
@@ -352,34 +415,3 @@ func foldScope(raw string) string { return store.NormalizeRef(raw) }
 func scopeID(foldedName string) control.ID {
 	return control.DerivedID(control.PrefixScope, foldedName)
 }
-
-// Divergence is the one behaviour this adapter does NOT reproduce, named so that a
-// reader meets it before a user does.
-//
-// 🔴 A SCOPE DIRECTORY CREATED AFTER THE LAST MATERIALIZATION IS NOT VISIBLE TO A
-// BARE (LEGACY) ROW UNTIL THE NEXT ONE. Today `store.Unrestricted()` is a sentinel
-// evaluated per request, so a directory that appeared one millisecond ago is
-// readable by the next request. Here the scope set is a snapshot, so it is readable
-// after the next refresh.
-//
-// ⚠ IT IS BOUNDED AND REPORTED, NOT SILENT, WHICH IS THE SAME TRADE THE PLAN'S §D
-// ALREADY ACCEPTED FOR REVOCATION: `control.Cache` refreshes on a timer, on SIGHUP
-// and on every token reload, and `Staleness` renders the epoch and its age. A
-// mapped row is UNAFFECTED — its allowlist is in the file, so a scope it names is
-// covered whether or not the directory exists.
-//
-// ⚠ AND IT IS NARROWER THAN "A NEW SCOPE", because the two ways a scope appears do
-// not both reach it. A scope created THROUGH THIS SERVER (`PUT` with
-// `If-None-Match: *`, the first-entry case) is already in the enumeration: the
-// creating row is mapped, so the scope is in its allowlist, so it was in the model
-// before the directory existed. What is left is a directory created OUT OF BAND —
-// `server/seed.sh`, which seeds through `kubectl exec … tar -xf -` — which is
-// exactly the operation an operator follows with a reload.
-//
-// CLOSING CONDITION, stated so it is checkable rather than aspirational: it closes
-// when scopes stop being discovered from the filesystem at all — when a scope is
-// created by an event in the control plane's own journal, which is the authority
-// piece (d) and P4 build. At that point `storeDirs` has no reason to exist and the
-// enumeration is complete by construction. It does NOT close by widening this
-// adapter, and it must not be closed by reintroducing an unrestricted principal.
-const Divergence = "a scope directory created out of band is not visible to a legacy row until the next refresh"

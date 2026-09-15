@@ -59,6 +59,26 @@ const (
 	reloadRefused = reloadPrefix + "REFUSED"
 )
 
+// refreshInterval is `api.AuthorityRefreshInterval`, and it is a VAR rather than a
+// const for exactly one reason — stated here because a test hook inside a deployed
+// program is a cost that has to be earned.
+//
+// 🔴 THE LOOP BELOW IS THE ONLY MECHANISM BOUNDING THE DIVERGENCE `tokenfile` DECLARES
+// IN ITS PACKAGE DOC, AND ITS ONLY OBSERVABLE IS A SCOPE THAT APPEARS. There is no
+// counter, no log line per refresh and no route reporting the epoch (deliberately —
+// see `internal/control/README.md`), so the one way to watch the loop work is to
+// create a directory out of band and wait for a read to answer. At 30 seconds that is 30
+// seconds in every `go test ./...` and 30 minutes across the mutation battery, which
+// is how a gate ends up not existing at all: `main_test.go` re-executes THIS binary as
+// the server with a short interval instead, so deleting the goroutine is a RED test
+// rather than a comment nobody checks.
+//
+// Nothing in the serving path writes it: no flag, no environment variable, and
+// `main_test.go` is the only assignment in the package. An operator cannot reach it,
+// which is the difference between this and widening the pod's configuration surface
+// for a test's convenience.
+var refreshInterval = api.AuthorityRefreshInterval
+
 func main() {
 	store := flag.String("store", envOr("SUBSYSTEM_STORE_ROOT", defaultStore), "store root")
 	host := flag.String("host", envOr("SUBSYSTEM_STORE_HOST", "0.0.0.0"), "listen address")
@@ -145,17 +165,24 @@ func main() {
 	// adapter reads off the filesystem: a scope directory created OUT OF BAND —
 	// `server/seed.sh` seeds through `kubectl exec … tar -xf -` — is not visible to a
 	// bare (unrestricted) row until the next materialization, because the control plane
-	// has no unrestricted principal to answer with. See `tokenfile.Divergence`. The
-	// timer bounds that window; `Staleness` reports it.
+	// has no unrestricted principal to answer with. See the divergence declared in
+	// `tokenfile`'s package doc. The timer bounds that window; `Staleness` reports it.
 	//
 	// ⚠ SIGHUP IS DELIBERATELY NOT ONE OF THESE TRIGGERS. The reload path above already
 	// re-materializes as part of publishing the new table, and a second registration
 	// would refresh twice for one signal — `control.RefreshTriggers` documents that two
 	// `signal.Notify` channels BOTH receive it, so this would be an extra refresh, not
 	// a missed one. One trigger, one place.
+	//
+	// 🔴 AND IT IS GATED FROM OUTSIDE THIS PROCESS, BECAUSE NOTHING INSIDE IT CAN BE.
+	// `TestTheBinarysOwnTimerIsWhatClosesTheDivergence` runs this binary, creates a
+	// scope directory behind its back, sends no signal and calls no refresh, and
+	// requires the read to start answering. Deleting this goroutine — or emptying its
+	// trigger set — is that test going red, which is the only claim that could not be
+	// made while the loop lived in a package with no test files at all.
 	go func() {
 		if err := srv.Authority().Run(context.Background(),
-			control.RefreshTriggers{Interval: api.AuthorityRefreshInterval}); err != nil {
+			control.RefreshTriggers{Interval: refreshInterval}); err != nil {
 			fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: authority refresh loop stopped: "+err.Error()))
 		}
 	}()

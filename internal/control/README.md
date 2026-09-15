@@ -17,22 +17,50 @@ resolves a request.
 `tests/conformance/suite.py run` stays at **requests=99 / assertions=433 / 0 failures /
 0 skipped** and `tests/conformance/run_go.sh` at **116 PASS / assertions=415 / 0 failures
 / 4 skipped**, identical to the numbers at `3c8707c` — the same claim P1b made about the
-validation ladder, and the reason the token file became an ADAPTER rather than a one-time
-data conversion: the corpus replays the identical requests against a server whose
-authorization mechanism has been swapped underneath it, so it is a differential gate over
-the migration rather than a regression suite that happens to still pass.
+validation ladder. The corpus replays the identical requests against a server whose
+authorization mechanism has been swapped underneath it, and nothing in the served
+contract moved.
+
+🔴 **THAT IS NOT WHY THE TOKEN FILE BECAME AN ADAPTER, AND THIS PARAGRAPH USED TO SAY IT
+WAS.** It called the corpus "a differential gate over the migration rather than a
+regression suite that happens to still pass" — but the corpus cannot see the half the
+migration actually changes (see "The token file as a `Source`" below, and the measurement
+in the next paragraph). The three reasons that do carry the adapter are recorded there;
+what the corpus carries here is exactly the sentence above it and no more.
 
 ⚠ **AND THE CORPUS IS BLIND TO THE HALF THAT MATTERS MOST — MEASURED, NOT FEARED.**
 Deleting the store-directory half of the adapter's scope enumeration outright leaves the
 Go corpus at **116 PASS / 0 failures**, because every scope in the corpus's world is named
-by a mapped row, so the union already covers it. The same edit turns **seven** Go guards
+by a mapped row, so the union already covers it. The same edit turns **eight** Go guards
 red. A green corpus across this change is necessary and is not sufficient; see the
 battery and the tokenfile tests for what actually stands on it.
+
+🔴 **THAT NUMBER READ `seven` AND HAS NEVER MEASURED MORE THAN SIX — INCLUDING AT THE
+COMMIT THAT WROTE IT.** Re-measured at `cafeb87`, where the sentence was introduced: the
+same edit turned **six** guards red there, so the count was an overcount from the start
+rather than one that drifted. The guard a reader would expect in the set and would not
+find is `TestTheProjectionIsAPureFunctionOfItsInputs`: its fixture gave the one record an
+allowlist naming every directory in the store, so the union's store half contributed
+nothing to it and deleting `storeDirs()` left it green — a fixture that reads as coverage
+of the enumeration while measuring only one half of it. It now names two of the four
+directories plus one scope with **no** directory, so five scopes are enumerated and each
+half is separately load-bearing: dropping the store half yields three, dropping the
+allowlist half yields four, and each is that test failing on its own precondition.
+Measured on this tree, deleting the store half turns these eight red —
+`TestALegacyRowReachesEveryScopeAndMayWriteNone`,
+`TestAScopeCreatedAfterMaterializationIsInvisibleUntilTheNextRefresh`,
+`TestAScopeCreatedOutOfBandReachesABareRowAfterARefresh`,
+`TestTheAllowlistAsymmetrySurvivesTheProjection`,
+`TestTheBinarysOwnTimerIsWhatClosesTheDivergence`,
+`TestTheProjectionIsAPureFunctionOfItsInputs`,
+`TestTheServedAuthorizationMatrixIsExactlyThis` and
+`TestTwoDirectoriesThatFoldTogetherDoNotTakeTheAuthorityDown` — and deleting the
+allowlist half turns four red, which is a different set and a different claim.
 
 ## What the plan left open, and what was settled
 
 `claudedocs/plan-cairn-control-plane.md` §"Deferred decisions, to settle inside P3/P4"
-named four. The operator settled all four before any code was written:
+named **five**. The operator settled the first four before any code was written:
 
 | question | answer | why |
 |---|---|---|
@@ -40,6 +68,25 @@ named four. The operator settled all four before any code was written:
 | project as a grant subject / credential principal | **both** | otherwise "share with the team" is one grant per member that silently goes stale as membership changes — the drift the append-only table exists to prevent. `principal_kind` was already in the schema sketch, so it costs a branch in one function. |
 | what `project_id NULL` means | **there is no NULL** — every scope is in a project, and signup auto-creates a solo one | a NULL is a branch at every authorization site. Collapsing it means `Resolve` has exactly one resolution path. Costs a migration that mints a project per existing scope owner. |
 | where the authority lives | **behind a `Store` interface, file-backed first**; Postgres becomes a second backend at P4 | the hot path never touches the authority — it reads a materialized projection — so the matrix, the grants and the staleness report can all land and be gated with no Postgres in CI, where all four existing gates run today with no external dependency at all. |
+
+🔴 **AND THE FIFTH IS SETTLED HERE, BECAUSE PIECE (b) WOULD OTHERWISE HAVE SETTLED IT BY
+SHIPPING CODE.** *"Whether the legacy bare-token row survives the rewrite or is dropped
+at P8."* **It survives.** `internal/control/tokenfile` projects a bare row into a project
+principal holding `read` on the scopes project, so the unrestricted credential keeps
+working through the new predicate.
+
+The reason is that dropping it is not a code change. The deployed pod's only principals
+ARE bare rows — `server/README.md`'s rotation procedure shows the live table as
+`token reload: LOADED 2 identities [<new>:legacy,<old>:legacy]` — so retiring the shape
+means editing the secret, giving every holder an allowlist and doing it in step with a
+serving pod. That is a coordinated cutover against a live deployment, in the one change
+whose claim is that the served contract did not move.
+
+⚠ **It is survives-FOR-NOW, and P8 inherits the question**, which is recorded in the plan
+doc beside the decision rather than only here. The divergence in "The divergence, measured
+rather than reasoned about" below exists only while an unrestricted principal does, so it
+is part of the price of this answer; and the retirement must not be done by reintroducing
+an unrestricted principal in the model.
 
 🔴 **AND ONE CONSTRAINT THOSE ANSWERS COLLIDE WITH, RECORDED BECAUSE P4 OWNS IT.**
 `go.mod` has no `require` block and `flake.nix` passes `vendorHash = null`; together
@@ -181,18 +228,27 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 61 mutants, over THREE packages
+python3 tests/control_mutants.py          # 62 mutants, over FOUR packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 61 mutants, 60 killed, 1 labelled EQUIVALENT at the code,
+**Measured on this tree: 62 mutants, 61 killed, 1 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, positive control GREEN.**
 
-🔴 **IT RUNS OVER THREE PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** `internal/control`
+🔴 **IT RUNS OVER FOUR PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** `internal/control`
 is the model and its predicate, `internal/control/tokenfile` is the projection, and
 `internal/api` is the server that authorises from it — and a mutant in the projection is
 killed by a guard in the server and vice versa. A battery scoped to one package would have
 scored every one of those SURVIVED while the suite that catches them was never run.
+
+🔴 **AND `cmd/cairn-server` IS THE FOURTH, BECAUSE THE TIMER THAT BOUNDS THE DIVERGENCE
+LIVES ONLY THERE.** Measured before it was added: deleting the refresh goroutine from
+`main` — and the two imports it alone needed — left `go build ./...` clean, `go vet ./...`
+clean and all thirteen `internal/...` test packages green, with this battery not running
+the package at all. The one mechanism bounding a divergence the README declares had no
+gate of any kind. `the-refresh-loop-has-no-triggers` is that row, and it empties the
+trigger set rather than deleting the block, because the deletion does not COMPILE and a
+mutant that dies at the build proves nothing.
 
 ⚠ **ONE CACHE ROW EXISTS BECAUSE A FIXTURE SAT ON ITS OWN GUARD'S BOUNDARY.**
 `effective-by-measured-from-now` replaces `materializedAt + bound` with `now + bound`.
@@ -201,11 +257,17 @@ at the **same** pinned instant, which makes the two expressions identical — th
 would have SURVIVED a fully green test that appeared to assert the deadline. The fixture
 now moves its clock 20s between the two, and the test says why.
 
-🔴 **IT RUNS IN CI, IN THE `go` JOB, RATHER THAN BEING A NUMBER IN THIS FILE.** ~80s on
-one developer host, up from ~30s at 28 mutants: four of the cache rows are killed by a
-TIMEOUT rather than by an assertion (a dropped trigger and a stopped loop have no
-observable except the refresh that never comes), and that is what the extra minute buys. The
-other half of the pair — the matrix's own 32/60 positive control — runs on every CI run
+🔴 **IT RUNS IN CI, IN THE `go` JOB, RATHER THAN BEING A NUMBER IN THIS FILE.** **2m46s
+on one developer host, against 2m01s for the same battery at 61 mutants over three
+packages** — both measured back to back on that host, which is what makes the ~45s the
+fourth package costs a delta rather than an impression. (It costs that much because a
+mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
+binary to rebuild. An earlier `~80s` here was measured on a different host and is
+superseded rather than contradicted — the two were never comparable.) Four of the cache
+rows are killed by a TIMEOUT rather than by an assertion (a dropped trigger and a stopped
+loop have no observable except the refresh that never comes), and that is what the bulk
+of it buys. The other half of the pair — the matrix's own 32/60 positive control — runs
+on every CI run
 and is a claim about the *matrix*; this is a claim about each individual *guard*, and a
 battery nobody runs bit-rots into patterns that match nothing and score SURVIVED without
 ever executing. The harness refuses on an occurrence count that is not exactly what the
@@ -258,10 +320,38 @@ indexes are maps of maps.
 (b) could not avoid: **wiring `Principal` into the API is not shippable on its own,
 because with nothing else the server would have no principals at all.** The two answers
 available were a one-time conversion of the deployed secret into a journal, and a
-`Source` that reads the same file the pod already reads. The adapter was chosen for one
-reason above the others: **it makes the conformance corpus a differential gate over the
-migration.** A data conversion is a change nobody can replay; an adapter is a change the
-corpus can measure by sending the identical requests to both mechanisms.
+`Source` that reads the same file the pod already reads. Three reasons carry the
+adapter:
+
+1. **the deployed secret keeps working unchanged.** The live pod's only principals are
+   rows in that file, so a conversion is a coordinated cutover against a running
+   deployment; this is a code change.
+2. **the rollback is one commit.** Nothing is written — `Source.Events` is read-only and
+   no caller appends it to a `FileStore` — so reverting leaves no converted data to
+   restore.
+3. **the journal format is not settled.** `go.mod` has no `require` block, which blocks
+   every Postgres driver and every embedded SQL engine, so P4 owes a decision about
+   stdlib-only before there is a durable authority to convert *into*; and piece (d)
+   changes what a scope IS, from a directory the adapter enumerates to a `scope-created`
+   event. A conversion today writes a format the next phase is about to move.
+
+🔴 **AND THE REASON THIS SECTION GAVE FIRST WAS FALSE.** It read: *"the adapter was
+chosen for one reason above the others: it makes the conformance corpus a differential
+gate over the migration."* `tests/conformance/world.json` holds four scopes
+(`alpha-notes`, `beta-notes`, `hollow-set`, `rubble-heap`) and its `wide-reader`
+principal's allowlist names **all four** — so no row in the corpus ever exercises
+unrestricted-ness, and the corpus cannot distinguish "unrestricted" from "allowlisted
+everything", which is exactly the property the adapter has to reproduce. Measured rather
+than argued: deleting the store-directory half of the enumeration leaves `run_go.sh` at
+**116 PASS / 0 failures**. What the corpus does gate is that the served contract did not
+move for the principals it declares, which is worth having and is a narrower claim. What
+gates the unrestricted half is `internal/api/authority_test.go`, whose `gamma-notes`
+scope is reachable by the BARE row alone.
+
+⚠ **The fix for this is NOT to add a scope to `world.json`.** Widening the world moves
+the corpus in the one change whose whole claim is that the corpus is exactly unmoved; it
+is a follow-up, and the number above is what says how much the corpus is worth here in
+the meantime.
 
 What it synthesizes, and why each shape was picked:
 
@@ -296,8 +386,18 @@ It is **declared rather than closed**, and it is narrower than "a new scope":
 - a scope created THROUGH this server (`PUT` with `If-None-Match: *`) is unaffected, because
   the creating row is mapped and the scope was in the model before the directory was;
 - what is left is a directory created out of band — `server/seed.sh`, which seeds through
-  `kubectl exec … tar -xf -` — which is an operation an operator already follows with a
-  reload.
+  `kubectl exec … tar -xf -`.
+
+🔴 **AND THE MITIGATION IS THE TIMER, NOT AN OPERATOR RELOAD — THIS SECTION CLAIMED
+OTHERWISE AND `server/README.md` REFUTES IT.** The bullet above ended "which is an
+operation an operator already follows with a reload". The documented seeding procedure is
+`build-push.sh` → `seed.sh --push` → `port-forward` → `verify-byte-identity.sh`, and it
+contains no SIGHUP at all; the only documented SIGHUP is the token-**rotation**
+procedure, which is a different operation with a different trigger. So nothing but the
+schedule closes this window, which is why the schedule now has a gate of its own rather
+than a comment: `cmd/cairn-server`'s `TestTheBinarysOwnTimerIsWhatClosesTheDivergence`
+runs the binary, creates a directory behind its back, sends nothing, and requires the
+read to start answering.
 
 The window is **bounded** (`api.AuthorityRefreshInterval`, 30s, under
 `api.AuthorityMaxAge`, 2m) and **reported** (`Cache.Staleness`), which is the same trade

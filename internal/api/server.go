@@ -257,8 +257,9 @@ func (s *Server) SetTokens(tokens []authz.TokenRecord) error {
 // ⚠ IT BOUNDS THE REPORT, NOT THE READS — see `control.CacheOptions.MaxAge`. What it
 // is measuring here is narrow, and saying so is the point: the token table refreshes
 // on every reload, so the only thing that can age is the SCOPE ENUMERATION the
-// adapter reads off the filesystem (`tokenfile.Divergence`). A bound of zero would
-// render `bound=none`, which a reader cannot tell from "the bound was met".
+// adapter reads off the filesystem (the divergence declared in `tokenfile`'s package
+// doc). A bound of zero would render `bound=none`, which a reader cannot tell from
+// "the bound was met".
 const AuthorityMaxAge = 2 * time.Minute
 
 // AuthorityRefreshInterval is the schedule a caller running the cache should use. It

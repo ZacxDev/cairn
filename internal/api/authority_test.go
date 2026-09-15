@@ -247,8 +247,25 @@ func serviceIn(scope string) string {
 // the removed tests needed, and run this one test.
 //
 // ⚠ It is therefore NOT regression coverage for the contract — nothing was broken — but
-// it IS the seam guard for the MECHANISM: four rows of `tests/control_mutants.py` are
-// killed by this test and by nothing else.
+// it IS the seam guard for the MECHANISM.
+//
+// 🔴 AND THE ARGUMENT FOR IT IS NOT "MUTANTS ONLY THIS TEST KILLS", BECAUSE THERE ARE
+// NONE — this sentence claimed four and the battery says zero. Measured by running each
+// mutant and reading its WHOLE failing set rather than the row's declaration: six rows
+// of `tests/control_mutants.py` name this test, two of them (`write-gate-accepts-everybody`,
+// `read-set-uses-the-write-verb`) as the killer that MUST fail and four as a killer they
+// are merely allowed to be caught by — and every one of the six is also caught by at
+// least one other guard. A count of rows that NAME a test was never a count of what it
+// uniquely catches, and the two were being read as one number.
+//
+// 🔴 WHAT IT DOES CARRY ALONE IS THE LEDGER'S OWN SHAPE, AND THAT IS NOT A MUTANT AT
+// ALL. It fails when the world GROWS — a principal, a scope or a probe added to this
+// fixture without a row is a failure here rather than a quietly unmeasured cell — and
+// it pins the ALLOW COUNT from both sides at 24 of 60, so a server that refused
+// everything cannot satisfy it. `internal/control`'s own `TestTheAuthorizationMatrixIsExactlyThis` makes
+// both claims about the MODEL; this is the only one that makes them about what the
+// SERVER answers, and neither is something a textual mutation of the code under test
+// can express.
 func TestTheServedAuthorizationMatrixIsExactlyThis(t *testing.T) {
 	// The world, declared here so the ledger below can be checked against it rather
 	// than against itself.
@@ -533,8 +550,8 @@ func TestAScopeCreatedOutOfBandReachesABareRowAfterARefresh(t *testing.T) {
 	if first.headers.Get("X-Store-Status") != "scope-absent" {
 		t.Fatalf("answer one: a scope created after materialization is not yet visible "+
 			"to a bare row — got %q. If this is now `recalled`, the divergence has "+
-			"closed and `tokenfile.Divergence` plus the README row must be retired in "+
-			"the same change", first.headers.Get("X-Store-Status"))
+			"closed and the declaration in `tokenfile`'s package doc plus the README "+
+			"row must be retired in the same change", first.headers.Get("X-Store-Status"))
 	}
 
 	// ANSWER TWO — the remedy, which is the operator's existing muscle memory: a
