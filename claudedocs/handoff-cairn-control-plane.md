@@ -167,11 +167,18 @@ Fix as one round; closing one buys room for one rank.
 
 - 🔴 **THE `dated-incident` RULE FIRES ON VERIFICATION STAMPS, NOT ONLY ON INCIDENT
   NARRATION — and it caught the first draft of THIS doc.** `leakscan` refused
-  `verified 2026-09-15:` twice, on the PR immediately after the rule shipped. The fix is
-  not an exemption: **pin the claim to a COMMIT SHA instead of a day.** A date says when
-  somebody looked; a sha says which tree they looked at, which is the thing a later
+  `verified <a real date>:` twice, on the PR immediately after the rule shipped. The fix
+  is not an exemption: **pin the claim to a COMMIT SHA instead of a day.** A date says
+  when somebody looked; a sha says which tree they looked at, which is the thing a later
   reader can actually check out and re-measure. Prefer `verified at <sha>` everywhere in
   this repo's prose — it satisfies the gate and is strictly more useful.
+  🔴 **Then it fired a SECOND time — on this very bullet, for quoting the date it was
+  warning about.** Document the shape with the placeholder `<a real date>`, the way
+  `AGENTS.md` does; an example that instantiates the thing it forbids is the thing it
+  forbids. ⚠ And note what this exposed: `Gotchas` is an APPEND section, so
+  `handoff_doc.py` — which owns every write to this file — **structurally cannot correct
+  a line inside it**; appending leaves the bad line in place and the gate keeps refusing.
+  That correction had to be a direct edit, and that is the one case where it is right.
 
 ## How to verify
 ```bash
