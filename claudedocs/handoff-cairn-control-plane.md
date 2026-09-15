@@ -23,46 +23,65 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ `0497140`, clean, up to date with origin. **Twelve PRs merged this
-  session** (#14–#23, #25–#27). Only open PR is **another session's** #24
-  (`feat/client-multi-instance-routing`) — not this effort's.
-- **DONE — the foundation (plan phases P0–P2), all merged:**
-  - **P0** — `tests/conformance/` HTTP corpus, 98 generated goldens, 8 routes (#19);
-    `tests/testlib/capability_ledger.py` + `tests/test_capability_ledger.py`, CLI↔route
-    parity as a gate failing on GROW *and* SHRINK (#18).
-  - **P1** — the Go store API: `cmd/cairn-server/`, `internal/{api,authz,store,snapshot,
-    write,netid,pytext,report}` (#21, #22). Corpus green for **both** servers.
-  - **P1c** — `tests/dualrun/`: two servers, one store, every route (#26).
-  - **P2** — the Go client `cmd/cairn/` + `internal/client/`, one renderer three
-    consumers, with `tests/parity/` (90 cases) (#23).
-  - **Unplanned but urgent** — a live leak in this PUBLIC repo: real project/node names
-    and dated incident refs across 23 tracked files. Scrubbed, and the two ungated
-    `Never commit` bullets now have a mechanical gate (#27).
-- **NOT STARTED — everything the operator asked for directly.** P3 (data model,
-  projects, grants, memberships), P4 (identity/Supabase), P5 (the PWA), P6 (signup,
-  quotas, deletion/export). Measured: `supabase`, `project_id`, `oauth`, `PWA`,
-  `gomponents`, `htmx` each appear in **exactly one tracked file — the plan doc.**
-- **Deploy/verify status:** nothing deployed. `packages.default` is still the **Python**
-  client; the Go client and server are built but **not shipped**. The Go server has
-  never run against the real pod — only against copies of the store.
-- Gates on `main`: 1,860 tests · corpus 116 PASS/0 (Go, 4 `oracle_only` skips) and
-  121/0 (oracle) · dualrun 361/1,489/0 generated, **612 targets / 2,492 comparisons /
-  0 differences** against the operator's real store · parity 90 cases/91 passes/0 ·
-  leakscan 0 findings/244 files. Six CI jobs.
+- Branch `feat/control-plane-data-model` @ `5c02f2b`, pushed. **PR
+  [#29](https://github.com/ZacxDev/cairn/pull/29) OPEN, CI IN FLIGHT at handoff time** —
+  `leakscan` green, the other five jobs still running. 🔴 Nobody has read a green `go`,
+  `tests`, `parity`, `dualrun` or `nix` job on this branch; check before merging.
+  `mergeable=MERGEABLE` against `main`.
+- Other open PR is still **another session's** #24 (`feat/client-multi-instance-routing`)
+  — not this effort's, and see the merged-tree gotcha below.
+- **DONE this session — P3a, the control plane's data model and its one predicate:**
+  - `internal/control/` (10 files, ~3,900 lines with tests): `model.go` (users,
+    projects, memberships, immutable scope ids, append-only grants, credentials),
+    `verbset.go`, `journal.go` (11 event kinds, replay), `ids.go`, `resolve.go`
+    (`Resolve`, `Authenticate`, `Narrow`), `filestore.go` (the `Store` seam +
+    the file backend), `README.md`.
+  - `tests/control_mutants.py` — 28 mutants, wired into the `go` CI job (~30s).
+  - `.github/workflows/ci.yml` — the `go test` `ok` floor moves **10 → 11** (twelve
+    packages carry tests now; a floor left at 10 stops failing for the FIRST deletion).
+- **The four deferred decisions in `plan-cairn-control-plane.md` §"Deferred decisions"
+  are SETTLED by the operator** (recorded with their reasons in
+  `internal/control/README.md`): three verbs `read`/`write`/`admin`; a project is BOTH a
+  grant subject and a credential principal; **no NULL project** (signup mints a solo
+  one); the authority sits behind a `Store` interface with a file backend first.
+- **NOT DONE — the rest of P3, and it is the bulk of the wiring.** `internal/control` is
+  a LIBRARY: no route consults it, and `authz.TokenRecord` + the token file still
+  authorise the pod. The four remaining pieces are listed in rank 1 below and in
+  `internal/control/README.md` §"What is left of P3".
+- **Deploy/verify status: unchanged — nothing deployed.** `packages.default` is still
+  the Python client. The Go server has still never run against the real pod.
+- Gates measured on `5c02f2b`: 1,860 python tests · go vet + `go test ./...` **12/12
+  packages ok** · corpus **116 PASS / 0 failures / 4 oracle-specific skips** (Go) and
+  **99 requests / 433 assertions / 0 failures / 0 skipped** (oracle) · leakscan **0
+  findings / 259 files** with both controls PASS · control battery **28 mutants /
+  27 killed / 1 EQUIVALENT / 0 misattributed**, positive control GREEN ·
+  `nix build .#cairn-server-go` builds (its `go test ./...` runs in the derivation).
+  🔴 `parity` and `dualrun` were NOT run locally — they need a live pod, and this change
+  touches no serving path. CI is the only reading of them on this branch.
+- Measured on the **MERGED tree** (this branch + `origin/feat/client-multi-instance-routing`):
+  1,923 python tests · 12/12 Go packages · leakscan 0/267 · battery 28/27/1 ·
+  `test_agent_instructions_weight.py` green with **1,031 B headroom**.
 
 ## Next steps (ranked)
-1. **P3 — the data model and authorization.** `users`, `projects`, `memberships`,
-   immutable `scope` ids, append-only `grants`, credentials **derived** from grants
-   (never enumerated beside them), and a pod-side materialized cache with an epoch and
-   reported staleness. Authz matrix tests (principal × scope × verb) as a relationship,
-   not per-component. This is the gate on every item below it and on everything the
-   operator asked for. Repo `cairn`; new `internal/authz` surface + a store migration.
+1. **P3 — the REST of the control plane.** P3a (the model, the journal, `Resolve`,
+   `Authenticate`, `Narrow`, the `Store` seam) is PR #29. Four pieces remain, in
+   dependency order: **(a)** the materialized pod-side cache — refresh on change, on a
+   timer and on `SIGHUP`, with the epoch and its age reported in `doctor` and the status
+   surface; **(b)** wiring `control.Principal` into `internal/api` in place of
+   `authz.TokenRecord`, keeping the conformance corpus green; **(c)** the migration from
+   the token file, which is where the legacy **unrestricted** bare row has to become
+   explicit grants against a model that has no unrestricted principal by construction;
+   **(d)** immutable scope ids shipped in the snapshot, and the client renaming its local
+   directory when it sees a known id at a new name. Repo `cairn`; `internal/control`,
+   `internal/api`, `internal/snapshot`, `internal/client`.
    forcing: user — the operator specified per-scope sharing, projects and invites directly.
-2. **P4 — identity as an interface, two backends.** Supabase JWT verified locally
-   against cached JWKS, and trusted-header/forward-auth for a proxy-fronted instance.
+2. **P4 — identity as an interface, two backends.** Supabase JWT verified locally against
+   cached JWKS, and trusted-header/forward-auth for a proxy-fronted instance.
    🔴 The trusted-header backend must **refuse to start** unless explicitly configured as
    proxy-fronted with a source check — otherwise anyone reaching the pod directly is
-   anyone. Needs P3's principals to resolve to.
+   anyone. Needs P3's principals to resolve to, which now exist (`control.Principal`).
+   🔴 **AND IT INHERITS THE STDLIB-ONLY DECISION** — see the gotcha below; do not start
+   writing a Postgres backend before settling it.
    forcing: user — "identity via supabase (github and google)", plus a named second
    instance that will front it with an oauth proxy.
 3. **P5 — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
@@ -73,13 +92,12 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
 4. **P7 — conditional snapshot sync.** `GET /api/v1/snapshot` ships a full tar with no
    ETag/304 — verified at `0497140`: `_snapshot` contains zero ETag/304 handling — so
-   every sync is O(store) per client. Inherited as the only live rank from
-   `claudedocs/handoff-agents-migration.md`. 🔴 Once P3 lands this stops being a scale
+   every sync is O(store) per client. 🔴 Now that P3a exists this stops being a scale
    item: with many principals a mis-keyed cache cross-serves another tenant's tar, so key
-   it on **principal + epoch**.
+   it on **principal + epoch** — and `control.Authorization` already carries `Epoch`.
    forcing: none
 5. **The cutover decision** — `packages.default` → the Go client, and the deployed image
-   → the Go server. Now backed by P1's dual-run rather than a leap. 🔴 `AGENTS.md` says
+   → the Go server. Backed by P1's dual-run rather than a leap. 🔴 `AGENTS.md` says
    to diff the two images for what the agreement test cannot read before swapping;
    that instruction now has an instrument behind it.
    forcing: none
@@ -90,6 +108,14 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## Defects (batched)
 Fix as one round; closing one buys room for one rank.
+- 🔴 **`AGENTS.md` IS 584 B FROM ITS WORKING CEILING AND THE NEXT LINE ANYBODY ADDS
+  TRIPS IT.** 36,216 B + `CLAUDE.md` 267 B = 36,483 B against a 36,800 B working budget
+  (`MAX_BYTES` 37,700 − `MIN_HEADROOM_BYTES` 900). This session hit it TWICE while adding
+  a five-line pointer and had to delete the pointer to land. The eviction that resolves it
+  already has a closing condition: the ~15.9 KB server section relocates to
+  `tests/conformance/README.md`, where it is largely duplicated, and `MAX_BYTES` is
+  **lowered**. That is the one item on this list worth doing before any other work touches
+  that file.
 - **PR #15's six findings, still open on `main`** (recorded at
   https://github.com/ZacxDev/cairn/pull/15 when the operator chose to merge with them
   open; each re-checked present at `0497140`): `lib/cairn_doctor.py` claims "2,016
@@ -107,9 +133,6 @@ Fix as one round; closing one buys room for one rank.
 - **`server/seed.sh:110`** has the `( cd "$1" && … )` shape that made
   `tests/conformance/run_go.sh` unrunnable — a bare `cd <relative>` **prints** the
   directory when it resolves through `CDPATH`. The other scripts use `CDPATH= cd --`.
-- **`AGENTS.md`'s server section** is ~15.9 KB of 35.8 KB and largely duplicated in
-  `tests/conformance/README.md`. Closing condition already written: the section
-  relocates and `MAX_BYTES` in `tests/test_agent_instructions_weight.py` is *lowered*.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **A green corpus is not a green port.** The conformance split was 94/22/0/4 *before*
@@ -180,12 +203,71 @@ Fix as one round; closing one buys room for one rank.
   a line inside it**; appending leaves the bad line in place and the gate keeps refusing.
   That correction had to be a direct edit, and that is the one case where it is right.
 
+- 🔴 **TWO PRs THAT MERGE WITH ZERO TEXTUAL CONFLICT, BOTH INDIVIDUALLY GREEN, PRODUCED A
+  RED MERGED TREE — AND NEITHER PR'S CI COULD SEE IT.** This branch and #24 both add lines
+  to `AGENTS.md`. `git merge` was clean; `mergeable=MERGEABLE`; both branches green. The
+  merged tree failed `test_the_session_instructions_keep_WORKING_HEADROOM` with **716 B of
+  headroom against a required 900**. It was found only by BUILDING the merged tree in a
+  throwaway worktree and running the gate there. Fixed on this side at `5c02f2b` (the
+  pointer paragraph folded into the layout row) so merge ORDER does not decide whether
+  `main` goes red; merged headroom is now 1,031 B. **The general rule this instantiates:
+  a byte-budget gate over a shared file makes every concurrent PR a semantic conflict, and
+  the conflict is invisible to both.** Build the merged tree.
+- 🔴 **P3a's STORAGE ANSWER COLLIDES WITH THE `STDLIB ONLY` RULE, AND P4 OWNS THE
+  DECISION.** `go.mod` has no `require` block and `flake.nix` passes `vendorHash = null`,
+  which together make a dependency in the serving path a BUILD FAILURE rather than a
+  silent addition. Every embedded SQL engine for Go is a third-party dependency, and **so
+  is every Postgres driver**. So the file-backed journal is not a placeholder chosen for
+  speed — it is the only durable authority the stated constraint permits today, and the
+  plan's decision 1 ("authz state in Postgres/Supabase") **cannot be implemented without
+  first deciding what happens to stdlib-only.** Recorded in `internal/control/README.md`;
+  do not discover it halfway through P4.
+- 🔴 **A `Model` STRUCT COPY IS NOT A COPY, AND THAT DEFECT SHIPPED IN P3a's FIRST DRAFT.**
+  `control.Model` is six maps behind a struct header. `FileStore.Append` validated a batch
+  by applying it to `current` — which shares every bucket with the live cache — so a batch
+  rejected at its third event left the first two permanently applied to the served
+  authority with **nothing in the journal recording them**: a model WIDER than the file it
+  claims to project, and a restart silently "losing" grants that were never written.
+  `Model.clone` is the fix, `TestARejectedBatchLeavesNeitherBytesNorState` is the guard
+  (red at baseline by a one-word change), and the battery carries the same defect one
+  nesting level down because `maps.Clone` is ONE LEVEL DEEP and the two membership indexes
+  are maps of maps.
+- 🔴 **A MUTATION BATTERY'S OWN ROWS ARE AS WRONG-ABLE AS THE CODE, AND THREE OF THIS
+  ONE'S WERE.** `tests/control_mutants.py` found: a row naming a killer that **never
+  runs** (the narrowing test calls `Narrow` directly and never reaches `copyIDs`, so the
+  row read as coverage while providing none — inside the control built to refuse exactly
+  that); and two mutants that **failed to apply at all** — one drifted pattern, one that
+  left an import unused so the tree did not build. **A mutant that does not COMPILE dies
+  at the build rather than at a guard, which is the one outcome that proves nothing.**
+  Hence: attribution by WHICH TEST failed (a kill by another test is reported
+  MISATTRIBUTED, not as a pass), an occurrence-COUNT assertion on every pattern, a
+  "DID NOT BUILD" outcome distinct from a kill, and a positive control on an unedited copy.
+- **The authz matrix carries a positive control because a uniformly-refusing matrix is
+  self-consistent and measures nothing** — the same shape `tests/parity/README.md` records
+  (72 PASS / 0 FAIL while the pod refused every request). The allow count is pinned from
+  BOTH sides: **32 of 60 cells**, not 0 and not 60.
+- **Decision (operator, this session): a project principal has NO authority over its own
+  project's scopes.** A project is not a member of itself, so a service account for a
+  project reaches that project's scopes only if somebody granted it. The wide alternative
+  — "a project credential implicitly holds what the project owns" — is a rule that never
+  appears in the grant log, and "who could see this, and when" is the whole reason the log
+  exists. The same behaviour is available VISIBLY, via an explicit self-grant at project
+  creation; that is a policy decision for whoever wires this up, recorded in
+  `internal/control/README.md` because the default will otherwise read as an oversight to
+  the first person who creates a CI credential and finds it cannot write.
+- **`go test`'s `ok` floor is a LEDGER, not a smoke test** — it moved 10 → 11 with this
+  change because twelve packages now carry tests. A floor left one below an OLD count does
+  not fail late; it stops failing for the FIRST deletion, which is the only one anybody
+  would notice.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
-python3 tests/leakscan.py && python3 tests/leakscan.py --self-test   # 0 findings / 244 files, controls PASS
+python3 tests/leakscan.py && python3 tests/leakscan.py --self-test   # 0 findings / 259 files, controls PASS
 uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly # 1860 passed
-go vet ./... && go test ./...                                        # 11 packages ok
+go vet ./... && go test ./...                                        # 12 packages ok
+python3 tests/control_mutants.py                                     # 28 / 27 killed / 1 EQUIVALENT / 0 misattributed
+python3 tests/control_mutants.py --show                              # every edit, without running it
 python3 tests/conformance/suite.py run                               # oracle: failures=0 skipped=0
 bash tests/conformance/run_go.sh                                     # Go: 116 PASS / 0 failures / 4 skips
 python3 tests/parity/harness.py                                      # 90 cases / 91 passes / 0
@@ -195,5 +277,10 @@ python3 tests/dualrun/harness.py --break-both                        # MUST exit
 python3 tests/dualrun/harness.py --store ~/.claude/analyze-service-index   # 612 / 2492 / 0; reads only the summary
 ```
 🔴 The two `--break-*` runs are the point: a gate that cannot refuse has not been read.
-🔴 The last command prints **real scope names** per target — never paste its full output
-into a transcript, a PR or a CI log. Read the `SUMMARY` line only.
+🔴 The `--store` command prints **real scope names** per target — never paste its full
+output into a transcript, a PR or a CI log. Read the `SUMMARY` line only.
+🔴 **Before merging ANY branch alongside another open PR, build the MERGED tree and run
+the gate there** — `git worktree add <tmp> -b tmp/merged <yours>` → `git merge
+origin/<theirs>` → run `pytest tests -q`, `go test ./...` and
+`tests/test_agent_instructions_weight.py` in it. A clean `git merge` and a green
+`mergeable` are not evidence; this session measured a red merged tree behind both.
