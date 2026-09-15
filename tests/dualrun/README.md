@@ -359,6 +359,23 @@ extracted-tree comparison.** The reorder changes no member name, mode, mtime or 
 truncation changes no name and no byte of content. Both are caught only because the verdict is
 the **archive's own bytes**.
 
+### 2c. …and the gate is SYMMETRIC, measured rather than reasoned
+
+🔴 **Every one of the seven mutants above edits the ORACLE.** That the comparison is
+symmetric follows from its shape — but "follows from its shape" is reasoning, and the whole
+point of a negative control is not to accept that. So two mutants were applied to the **Go**
+server, rebuilt, and the gate required to go red:
+
+| Go-side mutant | edit | result |
+|---|---|---|
+| `G1-go-report-body-loses-its-trailing-newline` | `serveReport` drops the body's final `\n` | **red**: 305 of 361 targets, failing comparisons `body, headers` (`Content-Length` moves with the body) |
+| `G2-go-snapshot-mtime-truncated` | the **mirror** of the oracle's tar mutant — `MTime` truncated to whole seconds in `internal/snapshot` | **red**: 10 targets, failing comparison `tar` alone |
+
+G2 is the one worth having: it proves the `tar` arm is sensitive in **both** directions, so a
+future regression in the Go writer — the side that is going to be deployed — cannot pass a
+gate that only ever watched the oracle move. Control after restoring and rebuilding:
+`SUMMARY targets=361 comparisons=1489 differences=0`.
+
 ⚠ **Two things the sweep corrected about itself, recorded because a later round should not
 re-derive them:**
 
@@ -381,7 +398,7 @@ run against is scored SURVIVED for a reason that has nothing to do with the gate
 same string the edit is a **no-op**, so without `theta-ambiguous` it would survive a perfect
 gate.
 
-### 2b. A second battery, over this gate's OWN guards — 24 mutants in five rounds
+### 2b. A second battery, over this gate's OWN guards — 26 mutants in seven rounds
 
 `tests/test_dualrun_harness.py` is a ledger over the gate's declarations, and a ledger is a
 claim too. Three rounds, under `PYTHONDONTWRITEBYTECODE=1` throughout — a same-length edit
