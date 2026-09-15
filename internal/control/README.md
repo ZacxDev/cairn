@@ -348,10 +348,14 @@ move for the principals it declares, which is worth having and is a narrower cla
 gates the unrestricted half is `internal/api/authority_test.go`, whose `gamma-notes`
 scope is reachable by the BARE row alone.
 
-⚠ **The fix for this is NOT to add a scope to `world.json`.** Widening the world moves
-the corpus in the one change whose whole claim is that the corpus is exactly unmoved; it
-is a follow-up, and the number above is what says how much the corpus is worth here in
-the meantime.
+⚠ **The fix for this is NOT to add a scope to `world.json` here.** Widening the world
+moves the corpus in the one change whose whole claim is that the corpus is exactly
+unmoved; it is a FOLLOW-UP, and the number above is what says how much the corpus is
+worth in the meantime. 🔴 **Its closing condition is mechanical, so it is checkable
+rather than aspirational:** a `world.json` scope that **no mapped row names**, goldens
+regenerated against the oracle, and `tests/conformance/run_go.sh` going **RED** when
+`tokenfile.storeDirs` is deleted — the same edit that leaves it at 116 PASS today. The
+red is the whole point; a green corpus over a widened world would have bought nothing.
 
 What it synthesizes, and why each shape was picked:
 
