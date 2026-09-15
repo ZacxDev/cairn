@@ -374,6 +374,213 @@ MUTANTS: tuple[Mutant, ...] = (
             "matter'."
         ),
     ),
+    # ---- the materialized cache: staleness, the triggers, and the two write paths --
+    #
+    # 🔴 THE CACHE'S GUARDS ARE THE ONE PLACE WHERE A GREEN TEST AND A SILENT SECURITY
+    # FAILURE ARE THE SAME OBSERVABLE. A cache that serves a revoked grant returns a
+    # perfectly ordinary 200; nothing anywhere goes red. The rows below break each of
+    # the four things that stand between that and the operator: last-known-good on a
+    # failed refresh, an age that keeps growing, the bound that flags it, and the
+    # synchronous path that bypasses the wait.
+    Mutant(
+        name="failed-refresh-empties-the-authority",
+        path="internal/control/cache.go",
+        old="\tif err != nil {\n\t\tc.failures++",
+        new="\tif err != nil {\n\t\tc.model = m\n\t\tc.failures++",
+        killer="TestAKilledAuthorityKeepsServingAndTheAgeGrows",
+        why="the unconditional swap — assign what the Source returned, then check the "
+        "error. An empty Model authorises NOBODY, so this turns a transient authority "
+        "outage into a total read outage that looks exactly like a permissions problem, "
+        "which is the failure the offline promise exists to rule out.",
+    ),
+    Mutant(
+        name="failed-refresh-restamps-the-age",
+        path="internal/control/cache.go",
+        old="\t\tc.failures++\n\t\tc.lastErr = err\n\t\treturn err",
+        new="\t\tc.failures++\n\t\tc.lastErr = err\n\t\tc.materializedAt = now\n\t\treturn err",
+        killer="TestAFailedRefreshDoesNotResetTheReportedAge",
+        extra_killers=("TestAKilledAuthorityKeepsServingAndTheAgeGrows",),
+        why="stamping 'we tried' onto the field that means 'we succeeded' — one line, "
+        "entirely plausible, and it makes a cache whose authority died a week ago report "
+        "itself seconds old. The staleness report would then be most wrong exactly when "
+        "it is the only instrument left.",
+    ),
+    Mutant(
+        name="refresh-holds-the-lock-across-the-authority",
+        path="internal/control/cache.go",
+        old="\tm, err := c.src.Model(ctx)\n\tnow := c.clock()\n\n\tc.mu.Lock()",
+        new="\tc.mu.Lock()\n\tm, err := c.src.Model(ctx)\n\tnow := c.clock()",
+        killer="TestAHungAuthorityDoesNotBlockReads",
+        why="the ordinary way to write it — take the lock, then do the work. A HUNG "
+        "authority (as opposed to a failing one) then blocks every read behind it, "
+        "reintroducing the outage the cache exists to survive INSIDE the thing built to "
+        "survive it. No test that only kills the authority can see this.",
+    ),
+    Mutant(
+        name="hot-path-reads-the-authority",
+        path="internal/control/cache.go",
+        old="func (c *Cache) Model() Model {\n\tc.mu.RLock()\n\tdefer c.mu.RUnlock()\n\treturn c.model\n}",
+        new=(
+            "func (c *Cache) Model() Model {\n"
+            "\tif m, err := c.src.Model(context.Background()); err == nil {\n"
+            "\t\treturn m\n"
+            "\t}\n"
+            "\tc.mu.RLock()\n"
+            "\tdefer c.mu.RUnlock()\n"
+            "\treturn c.model\n}"
+        ),
+        killer="TestTheHotPathNeverCallsTheAuthority",
+        extra_killers=("TestAKilledAuthorityKeepsServingAndTheAgeGrows",),
+        why="'read through, fall back on error' — which reads like a strictly better "
+        "cache and is the single most likely thing a later contributor writes. It puts "
+        "a call to the authority on every authorization decision, so an authority that "
+        "is merely SLOW becomes the request latency.",
+    ),
+    Mutant(
+        name="exceeded-includes-the-boundary",
+        path="internal/control/cache.go",
+        old="s.Exceeded = c.maxAge > 0 && s.Age > c.maxAge",
+        new="s.Exceeded = c.maxAge > 0 && s.Age >= c.maxAge",
+        killer="TestTheStalenessRendersExactly",
+        why="the off-by-one on the bound itself. A schedule that refreshes every MaxAge "
+        "would then report `stale` on every single tick, which trains the operator to "
+        "ignore the word.",
+    ),
+    Mutant(
+        name="unmaterialized-reports-fresh",
+        path="internal/control/cache.go",
+        old="\tcase !s.Materialized:\n\t\ts.Status = CacheUnmaterialized",
+        new="\tcase false:\n\t\ts.Status = CacheUnmaterialized",
+        killer="TestAnUnmaterializedCacheAuthorisesNobodyAndSaysSo",
+        extra_killers=("TestTheStalenessRendersExactly",),
+        why="a cold start that never completed reporting itself healthy. It authorises "
+        "nobody while the status surface says `fresh` — the instrument failing silently, "
+        "which is the one shape this whole piece exists to refuse.",
+    ),
+    Mutant(
+        name="a-failing-authority-reports-fresh",
+        path="internal/control/cache.go",
+        old="\tcase s.Failing:\n\t\ts.Status = CacheDegraded",
+        new="\tcase false:\n\t\ts.Status = CacheDegraded",
+        killer="TestTheStalenessRendersExactly",
+        extra_killers=("TestAKilledAuthorityKeepsServingAndTheAgeGrows",),
+        why="dropping the only status that distinguishes 'serving last-known-good with "
+        "the authority unreachable' from 'serving a fresh read'. Inside the bound the "
+        "two then render identically, so an outage is invisible until it is also stale.",
+    ),
+    Mutant(
+        name="run-stops-on-a-failed-refresh",
+        path="internal/control/cache.go",
+        old="\t\tcase <-tick:\n\t\t\t_ = c.refresh(ctx, RefreshTimer)",
+        new="\t\tcase <-tick:\n\t\t\tif err := c.refresh(ctx, RefreshTimer); err != nil {\n\t\t\t\treturn err\n\t\t\t}",
+        killer="TestAFailedRefreshDoesNotStopTheLoop",
+        why="propagating the error, which is what a reviewer asks for on sight of `_ =`. "
+        "A transient outage then kills the refresher for good: the age grows forever and "
+        "the mechanism that could have fixed it is already dead, in a goroutine nobody "
+        "is watching.",
+    ),
+    Mutant(
+        name="timer-refresh-mislabelled",
+        path="internal/control/cache.go",
+        old="_ = c.refresh(ctx, RefreshTimer)",
+        new="_ = c.refresh(ctx, RefreshExplicit)",
+        killer="TestTheTimerTriggerRefreshes",
+        why="a copy-paste in the trigger label. `LastTrigger` is the ONLY thing that "
+        "distinguishes three mechanisms producing one observable, so a wrong label makes "
+        "the report unable to answer 'did my SIGHUP do anything'.",
+    ),
+    Mutant(
+        name="sighup-trigger-dropped",
+        path="internal/control/cache.go",
+        old="\t\tcase <-tr.Signals:\n\t\t\t_ = c.refresh(ctx, RefreshSignal)",
+        new="\t\tcase <-tr.Signals:\n\t\t\tcontinue",
+        killer="TestSIGHUPRefreshesTheCache",
+        why="draining the signal without acting on it — which is indistinguishable from "
+        "a working reload to the operator, because `kill -HUP` returns 0 either way. The "
+        "token file already trained that muscle memory; a HUP that silently does nothing "
+        "is worse than no handler at all.",
+    ),
+    Mutant(
+        name="change-trigger-dropped",
+        path="internal/control/cache.go",
+        old="\t\tcase <-tr.OnChange:\n\t\t\t_ = c.refresh(ctx, RefreshChange)",
+        new="\t\tcase <-tr.OnChange:\n\t\t\tcontinue",
+        killer="TestTheChangeTriggerRefreshes",
+        why="the same drop on the notification path. Here the revocation lag silently "
+        "falls back to the timer, so a bound that was being kept by change notifications "
+        "quietly becomes the worst case.",
+    ),
+    Mutant(
+        name="bound-check-inverted",
+        path="internal/control/cache.go",
+        old="if tr.Interval > 0 && c.maxAge > 0 && tr.Interval > c.maxAge {",
+        new="if tr.Interval > 0 && c.maxAge > 0 && tr.Interval < c.maxAge {",
+        killer="TestRunRefusesAScheduleThatCannotKeepTheBound",
+        why="the comparison written the wrong way round, which refuses every LEGAL "
+        "schedule and accepts exactly the ones that cannot keep the bound they declare. "
+        "A bound nothing keeps is read as a promise.",
+    ),
+    Mutant(
+        name="synchronous-revoke-is-not-synchronous",
+        path="internal/control/cache.go",
+        old="\tif materialize {\n\t\tc.model = next",
+        new="\tif false {\n\t\tc.model = next",
+        killer="TestASynchronousRevokeIsInForceBeforeItReturns",
+        why="`ApplyNow` silently degrading to `Apply`. The caller is told the revocation "
+        "is in force and it is not — the UI then says 'revoked' with no qualifier about "
+        "a grant this cache will keep honouring until the next tick.",
+    ),
+    Mutant(
+        name="effect-boundary-excludes-equality",
+        path="internal/control/cache.go",
+        old="\tif serving >= next.Epoch {",
+        new="\tif serving > next.Epoch {",
+        killer="TestASynchronousRevokeIsInForceBeforeItReturns",
+        why="the off-by-one on the invariant `Effect == immediate iff serving >= "
+        "written`. Every synchronous revoke would then report itself deferred — the safe "
+        "direction to be wrong in, and still a report that cannot be trusted either way.",
+    ),
+    Mutant(
+        name="effective-by-measured-from-now",
+        path="internal/control/cache.go",
+        old="\treturn c.materializedAt.Add(c.maxAge)",
+        new="\treturn c.clock().Add(c.maxAge)",
+        killer="TestAnOrdinaryRevokeIsDeferredAndSaysSo",
+        why="measuring the deadline from the wrong end. The stale window did not restart "
+        "because somebody wrote, so this promises a UI an 'effective by' later than the "
+        "truth — and it is invisible to any fixture that writes at the same instant it "
+        "materialized, which is why that fixture moves its clock first.",
+    ),
+    Mutant(
+        name="readonly-refusal-returns-no-error",
+        path="internal/control/cache.go",
+        old="\t\treturn WriteResult{}, ErrAuthorityReadOnly",
+        new="\t\treturn WriteResult{}, nil",
+        killer="TestAWriteToAReadOnlyAuthorityIsRefused",
+        why="a refusal that refuses silently. The caller gets a zero WriteResult and no "
+        "error, so a revocation against a read-only backend reads as an immediate "
+        "success over epoch 0.",
+    ),
+    Mutant(
+        name="empty-write-accepted",
+        path="internal/control/cache.go",
+        old="\tif len(events) == 0 {\n\t\treturn WriteResult{}, ErrNoEvents\n\t}",
+        new="\tif false {\n\t\treturn WriteResult{}, ErrNoEvents\n\t}",
+        killer="TestAWriteOfNoEventsIsRefused",
+        why="allowing the no-op write. It is the one input that makes `serving >= "
+        "written` true without anything having happened, so it puts a hole in the "
+        "structural invariant the Effect is derived from.",
+    ),
+    Mutant(
+        name="refused-write-claims-an-effect",
+        path="internal/control/cache.go",
+        old="\t\treturn WriteResult{}, fmt.Errorf(\"control cache: %w\", err)",
+        new="\t\treturn WriteResult{Effect: EffectImmediate}, fmt.Errorf(\"control cache: %w\", err)",
+        killer="TestAWriteRefusesCleanlyWhenTheAuthorityIsDown",
+        why="a populated result alongside an error — the shape a caller that checks the "
+        "value before the error will believe. A write that failed against a dead "
+        "authority would report itself immediately in force.",
+    ),
 )
 
 

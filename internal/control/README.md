@@ -1,11 +1,14 @@
 # `internal/control` — the control plane's data model and authorization
 
-This is **P3a** of `claudedocs/plan-cairn-control-plane.md`: the model, the durable
-authority, and the one predicate that decides what a principal may see. It is a
-**library only**. Nothing here is wired into `internal/api`, no route consults it, and
-the token file is still what authorises the running server. Replacing the token path is
-a behaviour change; this is not one, and keeping those in separate commits is what lets
-the conformance corpus stay green across this.
+This is **P3a** of `claudedocs/plan-cairn-control-plane.md` (the model, the durable
+authority, and the one predicate that decides what a principal may see) plus **P3b piece
+(a)** (the materialized cache, its epoch, and the staleness report). It is a **library
+only**. Nothing here is wired into `internal/api`, no route consults it, and the token
+file is still what authorises the running server. Replacing the token path is a
+behaviour change; this is not one, and keeping those in separate commits is what lets
+the conformance corpus stay green across this — measured at each step, not asserted:
+`tests/conformance/suite.py run` stays at **0 failures / 0 skipped** and
+`tests/conformance/run_go.sh` at **116 PASS / 0 failures / 4 skipped** across P3b(a).
 
 ## What the plan left open, and what was settled
 
@@ -75,17 +78,100 @@ compare equal. So the allow count is pinned from both sides — **32 of 60 cells
 not 0 and not 60 — and any fixture change moves that number and forces whoever made it
 to say what they expected.
 
+## The materialized cache — P3b piece (a)
+
+`cache.go` is the pod-side projection: a `Model`, the **epoch** it was built from, and
+the instant it was built. Reads come from it; `Source.Model` is called from `refresh`
+and from nowhere else, so a dead or hung authority cannot stop an authorization
+decision. That is the plan's §D promise — an offline "orient me" still answers —
+and it is bought with one honest cost, stated in the code and repeated here:
+
+🔴 **A REVOCATION IS NOT EFFECTIVE UNTIL THE CACHE REFRESHES.** No arrangement of this
+design makes that false, because a cache that asked the authority whether it was stale
+would be making exactly the call the outage is supposed to survive. So the lag is
+**bounded** by the schedule, **reported** by `Staleness`, and **bypassable** by
+`ApplyNow`.
+
+### The four design calls
+
+| decision | what was chosen | why |
+|---|---|---|
+| what the bound does | **bounds the REPORT, not the reads** | refusing to serve past `MaxAge` converts an authority outage into a total read outage, at the moment the operator can least fix it. An exceeded bound is LOUD and still serving. The one thing it must never be is silent. |
+| who installs the signal handler | **the caller does; the cache receives a channel** | `signal.Notify` is process-global state, and a library that calls it takes away the program's decision to have a handler at all — which on an ordinary process is the difference between a SIGHUP that reloads and one that terminates. `cmd/cairn-server` already owns that call for the token file. |
+| what `Effect` is derived from | **the two EPOCHS, never the call site** | a deferred write that a concurrent refresh has already picked up IS in force. Labelling it by its code path would have the UI say "effective within 60s" about something that already happened. The invariant is structural — `EffectImmediate` exactly when `ServingEpoch >= WrittenEpoch` — so a caller can check the label against the numbers beside it. |
+| where the staleness lives | **a VALUE with a `String()`, not a log line** | a log line is read by whoever happens to be tailing. A value can be rendered into a status surface, compared in a test, and asserted on. `TestTheStalenessRendersExactly` pins the **whole normalised line** for six states, because a guard on a few words is walkable by rewording. |
+
+⚠ **`Staleness.LastError` IS A FIELD AND IS DELIBERATELY NOT IN `String()`.** The text
+comes from the authority — an OS error naming a path, a journal parse failure quoting a
+line — and un-authored text on an operator stream can forge a line boundary, which is
+what `reloadSafe` in `cmd/cairn-server` exists for. The rendered line carries the
+BOOLEAN; the caller that wants the text sanitises it for its own stream. A second
+sanitiser here would be a second copy of a predicate that already exists.
+
+### Four states, and why `unmaterialized` is not `stale`
+
+`unmaterialized` · `fresh` · `degraded` · `stale`. The one worth naming: a cache whose
+**first** refresh never succeeded has nothing to serve and authorises nobody — that is a
+cold start, not an outage, and conflating it with `stale` would produce a cache that
+authorises nobody while reporting itself healthy. `bound=none` renders instead of
+`bound=0s` for the same reason: `Exceeded` is structurally false when no bound was
+declared, and a reader must not be able to mistake that for the bound being met.
+
+### The dependency kill
+
+Measured rather than reasoned about, with a `Store` double that has a power switch —
+the real `FileStore` cannot produce this failure, because once it has loaded its own
+last-known-good keeps answering:
+
+| claim | how it was measured |
+|---|---|
+| reads still serve | the authority is unplugged; `Authenticate(carolToken)` still returns carol's matrix row, at the last known-good epoch |
+| the age GROWS | two named points, **60s and 300s** after the last good materialization, straddling a 2m bound: `degraded` then `stale` |
+| a failed refresh does not reset the age | `MaterializedAt` is pinned across three failed attempts while `LastAttempt` moves — the two facts stay distinguishable |
+| writes refuse CLEANLY | `Apply` and `ApplyNow` both return the authority's error with a **zero** `WriteResult`, the cache's epoch and `MaterializedAt` are unmoved, and the double counts **2** attempts — the refusal reaches the authority rather than being guessed |
+| a HUNG authority is not a failing one | `Source.Model` blocks forever; a read completes against a 5s deadline. The lock is never held across the Source call, or the cache would reintroduce the outage it exists to survive |
+| the loop survives the outage | the authority dies, two attempts fail, the authority returns, and the **loop** is what notices |
+
+### What piece (a) structurally cannot see
+
+- **The running server.** Still nothing wired into `internal/api`; `authz.TokenRecord`
+  is still what authorises a request. Piece (b).
+- **Two processes.** Every trigger is measured in one process. Two pods over one journal
+  refresh independently and can serve different epochs at the same instant.
+- **A real clock.** Every staleness assertion runs on an injected clock. A stepped or
+  descheduled real clock is exactly what `Exceeded` is for and exactly what no test here
+  exercises.
+- **Whether the three triggers coexist.** Each is measured with the other two DISABLED,
+  so `LastTrigger` identifies the mechanism. That they are independent is the `select`'s
+  property, reasoned about rather than measured — with one exception that was worth
+  measuring: `TestTwoNotifyChannelsBothReceiveOneSIGHUP`, because the plausible belief
+  ("the token reload will swallow it") would make this trigger silently dead in the only
+  program that has both.
+- **Anything about another replica, or about a copy already synced.** `ApplyNow`'s
+  promise is about *this process's* cache. Revoking stops future syncs; it does not
+  recall the files already on somebody's laptop.
+
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 28 mutants
+python3 tests/control_mutants.py          # 46 mutants
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 28 mutants, 27 killed, 1 labelled EQUIVALENT at the code,
-0 misattributed, positive control GREEN.**
+**Measured on this tree: 46 mutants, 45 killed, 1 labelled EQUIVALENT at the code,
+0 misattributed, 0 harness errors, positive control GREEN.**
 
-🔴 **IT RUNS IN CI, IN THE `go` JOB, RATHER THAN BEING A NUMBER IN THIS FILE.** ~30s. The
+⚠ **ONE CACHE ROW EXISTS BECAUSE A FIXTURE SAT ON ITS OWN GUARD'S BOUNDARY.**
+`effective-by-measured-from-now` replaces `materializedAt + bound` with `now + bound`.
+The first draft of `TestAnOrdinaryRevokeIsDeferredAndSaysSo` materialized and then wrote
+at the **same** pinned instant, which makes the two expressions identical — the mutant
+would have SURVIVED a fully green test that appeared to assert the deadline. The fixture
+now moves its clock 20s between the two, and the test says why.
+
+🔴 **IT RUNS IN CI, IN THE `go` JOB, RATHER THAN BEING A NUMBER IN THIS FILE.** ~80s on
+one developer host, up from ~30s at 28 mutants: four of the cache rows are killed by a
+TIMEOUT rather than by an assertion (a dropped trigger and a stopped loop have no
+observable except the refresh that never comes), and that is what the extra minute buys. The
 other half of the pair — the matrix's own 32/60 positive control — runs on every CI run
 and is a claim about the *matrix*; this is a claim about each individual *guard*, and a
 battery nobody runs bit-rots into patterns that match nothing and score SURVIVED without
@@ -141,9 +227,14 @@ indexes are maps of maps.
   `write(2)` under `O_APPEND`, which is what makes read-validate-write atomic — but
   nothing in the tests runs two processes at the same instant, so that is a reasoned
   property, not a measured one.
-- **Staleness.** `Model.Epoch` exists and travels on every `Authorization`; nothing yet
-  *reports* it. Bounding revocation lag and surfacing the epoch in `doctor` is the next
-  piece, and until it lands a materialized copy still cannot say how old it is.
+- ✅ **Staleness — CLOSED by P3b piece (a), and this bullet is kept rather than deleted
+  because a comment is a claim too.** It used to read "nothing yet *reports* it".
+  `Cache.Staleness()` is now a renderable value with the epoch, its age, the declared
+  bound and whether the bound was exceeded, and `cache.go`'s section above is what it
+  was replaced by. ⚠ What is **not** closed is the surface that PRINTS it: nothing in
+  `cmd/cairn-server` or `internal/doctor` constructs a `control.Store` yet, so the value
+  exists and no deployed program renders it. That is piece (b)'s wiring, and calling
+  this row done would be declaring a step early.
 - **The token file.** Migrating the existing static credentials into grants is not done,
   and it is the change that has to reconcile the legacy bare token — which is
   unrestricted — with a model that has **no** unrestricted principal by construction.
@@ -166,8 +257,14 @@ credential and finds it cannot write.
 
 ## What is left of P3
 
-1. the materialized cache: refresh on change, on a timer and on `SIGHUP`, with the epoch
-   and its age reported in `doctor` and in the status surface;
+1. ◐ the materialized cache — **the library half is done** (`cache.go`: refresh on
+   change, on a timer and on `SIGHUP`, the staleness value, and the synchronous revoke
+   path). What is left is the **surface**: nothing constructs a `control.Store` in a
+   deployed program, so no `doctor` output and no startup banner carries the epoch yet.
+   🔴 Deliberately not done here: adding a field to `cmd/cairn-server`'s startup line
+   would change a string `tests/dualrun/harness.py` compares between the two servers,
+   and dualrun needs a live pod that this change was not in a position to run. Wire it
+   with that gate in front of you, not without it;
 2. wiring `Principal` into `internal/api` in place of `authz.TokenRecord`, keeping the
    conformance corpus green;
 3. the migration from the token file, which is where the legacy unrestricted row has to

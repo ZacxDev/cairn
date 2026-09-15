@@ -185,9 +185,11 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. ~30s, and it is what stops the rows bit-rotting into patterns that match
+      # kill. ~80s on one developer host (46 mutants; four of the cache rows are killed by
+      # a TIMEOUT rather than by an assertion, which is what the extra minute buys), and it
+      # is what stops the rows bit-rotting into patterns that match
       # nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (28 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (46 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
