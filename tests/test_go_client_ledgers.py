@@ -13,11 +13,12 @@ So while two clients are alive:
 Both are closed the same way `api.DeclaredRoutes()` and `cairn-server -routes` closed the route
 ledger's: the binary prints its own tables and this file reads them out of the RUNNING process.
 
-🔴 THIS FILE IS IN A DIFFERENT TIER FROM THE ONE THAT NEEDS IT. The `tests` job has no Go
-toolchain, so every test here SKIPS there — and a skip nobody counts is indistinguishable from a
-pass. The `go` job runs this file explicitly for that reason, and the skip message says which job
-does measure it. Greening one tier while the other stays unobservable moves a bug rather than
-removing it.
+🔴 THIS FILE IS MEASURED IN THE JOB THAT OWNS ITS DEPENDENCY, AND A SKIP IS REFUSED THERE. Whether
+it skips in the `tests` job depends on whether that runner image happens to ship a `go` toolchain —
+not something this repository controls, and therefore not something asserted anywhere. The `go` job
+runs this file explicitly and REFUSES on a skip, because a skip nobody counts is indistinguishable
+from a pass. Greening one tier while the other stays unobservable moves a bug rather than removing
+it.
 """
 from __future__ import annotations
 

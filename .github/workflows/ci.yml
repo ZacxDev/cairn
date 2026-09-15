@@ -65,11 +65,13 @@ jobs:
           # case list) and the three in `test_go_client_ledgers.py`. The previous
           # constant was 1769 against 1819 measured on the P1b branch.
           #
-          # ⚠ THE THREE LEDGER TESTS *SKIP* IN THIS JOB, WHICH HAS NO GO TOOLCHAIN, AND
-          # THEY STILL COUNT TOWARD `tests` — pytest counts a skip as collected. So this
-          # number is the same with and without Go, and the SKIP is refused separately in
-          # the `go` job, which is the only one that can measure them. A skip nobody
-          # counts is indistinguishable from a pass.
+          # ⚠ THE THREE LEDGER TESTS IN `test_go_client_ledgers.py` COUNT TOWARD THIS NUMBER
+          # WHETHER THEY RUN OR SKIP — pytest counts a skip as collected — so the floor is the
+          # same either way. Whether they actually skip HERE depends on whether the runner
+          # image ships a `go` toolchain, which this repository does not control and which is
+          # therefore NOT asserted: the `go` job runs that file explicitly and REFUSES on a
+          # skip, which is where the claim belongs. A skip nobody counts is indistinguishable
+          # from a pass.
           #
           # Raise as the suite grows — `m - min(50, max(1, m/20))` for the m you
           # measured; never lower without saying why. ⚠ THE GO TESTS ARE NOT IN
