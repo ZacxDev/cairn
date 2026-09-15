@@ -76,8 +76,26 @@ func DefaultConfigPath() string {
 // A missing FILE is not fatal on its own — the caller may have exported both values — but a
 // missing VALUE is, and the refusal says WHICH one. "No token" must not degrade into an
 // unauthenticated request that comes back 401 and gets read as "the store is down".
-func LoadConfig() (Config, error) {
+func LoadConfig() (Config, error) { return LoadConfigFor(DefaultAlias) }
+
+// LoadConfigFor is `LoadConfig` for ONE named instance.
+//
+// 🔴 THE ENVIRONMENT OVERRIDES THE DEFAULT INSTANCE ONLY, AND THE ASYMMETRY IS THE WHOLE REASON
+// A SECOND INSTANCE IS SAFE TO ADD. `SUBSYSTEM_STORE_URL` has always pointed this client at a
+// throwaway server, and letting it win for EVERY alias would point them all at one store: a
+// `doctor` that walked three instances would then measure one three times and report agreement
+// it never observed, and a routed write would land somewhere the table did not name. A
+// non-default alias reads its own file and nothing else.
+func LoadConfigFor(alias string) (Config, error) {
+	isDefault := alias == DefaultAlias
 	path := DefaultConfigPath()
+	if !isDefault {
+		dir, err := InstanceDir(nil)
+		if err != nil {
+			return Config{}, err
+		}
+		path = filepath.Join(dir, alias+InstanceSuffix)
+	}
 	fromFile := map[string]string{}
 	if data, err := os.ReadFile(path); err == nil {
 		for _, line := range splitLines(string(data)) {
@@ -90,12 +108,20 @@ func LoadConfig() (Config, error) {
 		}
 	}
 	pick := func(name string) string {
-		if v := os.Getenv(name); v != "" {
-			return v
+		if isDefault {
+			if v := os.Getenv(name); v != "" {
+				return v
+			}
 		}
 		return fromFile[name]
 	}
 	cfg := Config{URL: pick("SUBSYSTEM_STORE_URL"), Token: pick("SUBSYSTEM_STORE_TOKEN")}
+	where := fmt.Sprintf("(looked in %s and the environment)", path)
+	if !isDefault {
+		where = fmt.Sprintf("(looked in %s; the environment is NOT consulted for a "+
+			"non-default instance, so a `%s` instance is configured by that file alone)",
+			path, alias)
+	}
 	var missing []string
 	if cfg.URL == "" {
 		missing = append(missing, "SUBSYSTEM_STORE_URL")
@@ -105,8 +131,7 @@ func LoadConfig() (Config, error) {
 	}
 	if len(missing) > 0 {
 		return Config{}, unreachable(
-			"config incomplete: %s not set (looked in %s and the environment)",
-			strings.Join(missing, ", "), path)
+			"config incomplete: %s not set %s", strings.Join(missing, ", "), where)
 	}
 	cfg.URL = strings.TrimRight(cfg.URL, "/")
 	return cfg, nil

@@ -330,13 +330,14 @@ small Go renderer would also have satisfied. What carries the port is the reason
 property, not a P2 one** — the Python renderer ships as `packages.default` until the oracle is
 deleted, so until then the gate below IS the comparison rather than the absence of one.
 
-**Measured on this tree: 90 cases, 91 PASS, 0 failures, 0 dead normalizations** — all nine verbs,
+**Measured on this tree: 97 cases, 98 PASS, 0 failures, 0 dead normalizations** — all nine verbs,
 every output-shaping flag, every documented exit code, `--help` in four spellings, the
-argument-shape rules below, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 90 BYTE DIFFS:
-59 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8 compare the exit
-code plus "both sides put something on stdout" — so 31 of 90 never compare output text.** Declared
-per row and in the residual table; it is the HEADLINE that reads wider than the gate, so know which
-rows are load-bearing before trusting one.
+argument-shape rules below, a TWO-INSTANCE `routes --check` and a routed `put` against a second
+pod, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 97 BYTE DIFFS: 66 rows compare stdout,
+stderr AND the exit code; 23 compare the exit code ONLY; 8 compare the exit code plus "both sides
+put something on stdout" — so 31 of 97 never compare output text.** Declared per row and in the
+residual table; it is the HEADLINE that reads wider than the gate, so know which rows are
+load-bearing before trusting one.
 
 🔴 **ITS FIRST FULL RUN REPORTED 72 PASS / 0 FAIL AND MEASURED NOTHING** — a
 `SUBSYSTEM_STORE_TRUSTED_PROXIES` value copied from the conformance runner made the pod refuse every
@@ -349,7 +350,7 @@ the exit code **and** on `exit+stdout`). `--break-pod` is the negative control o
 all three; a green without them is a green about nothing.
 
 📄 **READ ON DEMAND RATHER THAN HERE, all in `tests/parity/README.md`:** what the gate FOUND
-(nine divergences in six findings), the MUTATION BATTERY over P2 (61 mutants, 58 killed, 3 labelled
+(ten divergences in seven findings), the MUTATION BATTERY over P2 (61 mutants, 58 killed, 3 labelled
 EQUIVALENT at the code), and the **P8 RETIREMENT LEDGER** — every file, guard and row that exists
 only while the Python oracle does. Those are records of rounds, not decision input before acting,
 and they were moved out of this file when it had quadrupled in one session; a survivor's authority
@@ -397,6 +398,10 @@ changes a contract the command PRINTS to remove a collision that was never a def
 line here: concurrency (both clients take the same `flock`, but nothing runs them at the same
 instant), real network failures beyond a connect refusal, a narrowed credential (the SERVER's
 narrowing is the corpus's claim), and the `doctor` states no healthy world reaches.
+
+## 🔴 SEVERAL INSTANCES: AN UNROUTED SCOPE REFUSES
+
+Binding rules: **`lib/README.md`**. Read it before editing any routing path.
 
 ## Installing and building with nix
 

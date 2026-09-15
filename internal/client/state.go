@@ -93,7 +93,22 @@ type State struct {
 // "serving from cache" at exit 0, and a server shipping a link, a traversal member, a
 // duplicate or a count disagreeing with its own header must instead STOP the run — cache or
 // no cache. Returning it as a fourth state would put the decision in every caller.
-func ResolveState(cache string, noSync bool, scope string, timeout int) (State, error) {
+//
+// 🔴 `instance` NAMES WHICH CONFIGURED INSTANCE TO FETCH FROM, AND OMITTING IT WAS A MEASURED
+// SILENT MISROUTE. This function takes a CACHE DIRECTORY and, until this parameter existed,
+// derived its credentials from `LoadConfig()` — which is always the DEFAULT instance. Any
+// caller that walks instances therefore fetched `personal`'s store N times and unpacked it
+// into each alias's sibling cache root in turn: `routes --check` on a two-instance host read
+// the second instance's banner as `fetched from <personal's URL>`, OVERWROTE that instance's
+// cache with the default instance's snapshot, and then graded the table against a scope set
+// that was the default instance's — inventing the "exists on no configured instance" finding
+// for every scope that only lives on the other one. The oracle's `resolve_state` has taken
+// `instance` from the start and `cmd_routes` passes `instance.alias`; this is the port
+// following.
+//
+// `""` is the default instance, which is what `instance=None` means on the oracle — the one
+// path the `SUBSYSTEM_STORE_URL`/`_TOKEN` environment override applies to (`LoadConfigFor`).
+func ResolveState(cache string, noSync bool, scope string, timeout int, instance string) (State, error) {
 	if noSync {
 		age, known, fields := CacheAge(cache)
 		if !StampExists(cache) {
@@ -103,7 +118,7 @@ func ResolveState(cache string, noSync bool, scope string, timeout int) (State, 
 			agePhrase(age, known), fieldOr(fields, "revision", "unknown")), 0}, nil
 	}
 
-	cfg, err := LoadConfig()
+	cfg, err := LoadConfigFor(aliasOrDefault(instance))
 	if err == nil {
 		body, h, fetchErr := FetchSnapshot(cfg, scope, timeout)
 		err = fetchErr
@@ -175,7 +190,19 @@ func classifyInstallFailure(storeURL string, err error) error {
 // reader locally against a cache DROPS the server's provenance banner, and the reader's "none
 // omitted" is a truthful claim about whatever bytes it was pointed at — so the client states,
 // in the output itself, which of four states produced it.
-func Banner(state, detail string) string {
+func Banner(state, detail string) string { return BannerNamed(state, detail, "") }
+
+// BannerNamed is the state line with an INSTANCE label, and `instance == ""` is the
+// single-instance host — which renders exactly what this client has always rendered.
+//
+// 🔴 ONE SPELLING OF THE MARKER LADDER, BECAUSE A SECOND ONE WOULD DRIFT. The label is the only
+// difference between the two forms; duplicating the `🔴`/`⚠` decision beside it would put the
+// state vocabulary in two places, and the symptom of those disagreeing is a line that calls the
+// same state by two names on one screen.
+//
+// ⚠ IT IS GATED ON THE INSTANCE COUNT BY ITS CALLERS, NEVER ON A ROUTING TABLE'S PRESENCE. A
+// host that has merely written a table still has one place an answer can come from.
+func BannerNamed(state, detail, instance string) string {
 	marker := ""
 	switch state {
 	case StateNoCache:
@@ -183,7 +210,11 @@ func Banner(state, detail string) string {
 	case StateCached:
 		marker = "⚠"
 	}
-	line := marker + " cairn: " + state + " — " + detail
+	name := "cairn"
+	if instance != "" {
+		name = "cairn[" + instance + "]"
+	}
+	line := marker + " " + name + ": " + state + " — " + detail
 	return trimSpaceBothEnds(line)
 }
 
@@ -198,6 +229,17 @@ func trimSpaceBothEnds(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// aliasOrDefault is the oracle's `instance or DEFAULT_ALIAS`. 🔴 IT IS NOT COSMETIC:
+// `LoadConfigFor("")` would compare `"" == "personal"`, decide this is NOT the default
+// instance, and go looking for `instances/.env` — a file nobody writes — so an empty alias
+// would fail with "config incomplete" rather than reading the host's long-standing config.
+func aliasOrDefault(alias string) string {
+	if alias == "" {
+		return DefaultAlias
+	}
+	return alias
 }
 
 func fieldOr(fields map[string]string, key, fallback string) string {

@@ -176,6 +176,15 @@ class Case:
     in_repo: bool = False
     #: Reset the cache root before this case, so a `--no-sync` row can be about an ABSENT cache.
     wipe_cache: bool = False
+    #: Run WITHOUT the harness's shared `--cache`, so each client resolves the default root PER
+    #: INSTANCE.
+    #:
+    #: 🔴 IT EXISTS BECAUSE `--cache` IS REFUSED ON A MULTI-INSTANCE FAN-OUT, AND THAT REFUSAL
+    #: IS WHAT KEPT THIS GATE BLIND. `routes --check` walking N instances with one explicit
+    #: cache directory would make them overwrite each other, so both clients exit 2 before the
+    #: walk begins — which compares equal and measures nothing about the walk. A row that wants
+    #: to observe WHICH URL each instance was fetched from has to let the roots be derived.
+    no_cache_flag: bool = False
     #: A command run with the ORACLE client, after the store is restored and before the measured
     #: pair, so a case can be about a store some earlier write already changed.
     #:
@@ -549,6 +558,79 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "🔴 `doctor` MUST REFUSE `--scope`. It asks about this host and this credential, "
              "and a `--scope` here would invite the filtered-cache mistake",
              ["doctor", "--scope", "alpha-notes"], compare=COMPARE_EXIT),
+
+        # --- `routes`: the scope→instance table --------------------------------
+        # 🔴 THESE ROWS ARE WHAT KEEPS A NEW VERB AND A NEW EXIT CODE FROM BEING DECLARED ON ONE
+        # CLIENT ONLY. The verb ledger in `test_parity_harness.py` requires every CLI verb to
+        # appear in a case, and the exit-code ledger requires every documented code to be named
+        # by one; a `routes` that existed in Python alone would leave both green while the two
+        # clients disagreed about what the tool can do.
+        Case("routes-none-configured",
+             "the ordinary host: ONE instance, no table, so every scope resolves to `personal` "
+             "and nothing is labelled. The full text is compared — this row is the one that "
+             "would catch a Go port that labelled a single-instance banner",
+             ["routes"]),
+        Case("routes-table-printed",
+             "a table present on a ONE-instance host. It prints, sorted, and STILL labels "
+             "nothing: a table says where scopes live, not how many stores this host can reach",
+             ["routes"], env={"CAIRN_ROUTES": "<ROUTES>"}),
+        Case("routes-check-finds-an-unconfigured-alias",
+             "🔴 exit 11, AND IT IS THE ONLY SINGLE-INSTANCE ROW THAT REACHES THAT CODE. The "
+             "table routes a scope to an alias this host has no config for — a refusal that "
+             "fires at ONE instance as well as at many. The same table ALSO names a scope that "
+             "holds no entries, which prints as a ⚠ note and does NOT move the exit code: both "
+             "the 🔴 finding and the ⚠ note are compared byte for byte, so a client that "
+             "re-promoted the note would differ here",
+             ["routes", "--check"], env={"CAIRN_ROUTES": "<ROUTES>"}),
+        Case("routes-multi-instance-check",
+             "🔴 THE ROW THE GATE DID NOT HAVE, AND ITS ABSENCE IS WHY A MISROUTE SHIPPED. Every "
+             "other `routes` row points `SUBSYSTEM_STORE_CONFIG` at a path that does not exist, "
+             "so `instances/` never exists and the walk is one instance long. This one "
+             "configures a SECOND instance against a SECOND pod: both clients must label each "
+             "banner with its own alias AND name that instance's OWN URL, sync each into its own "
+             "cache root, and grade the table against the UNION of the two scope sets. A client "
+             "that read every instance from the default config prints the default pod's URL "
+             "under `cairn[secondary]`, which is a byte difference on this row",
+             ["routes", "--check"], no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+        Case("routes-multi-instance-refuses-an-explicit-cache",
+             "🔴 exit 2: a fan-out over N instances with ONE explicit `--cache` would unpack two "
+             "stores into one directory, interleaving their scopes while `.sync-stamp` dated "
+             "whichever synced last. Both clients refuse BEFORE the walk, and this row is the "
+             "one that keeps `no_cache_flag` above from being the only multi-instance path",
+             ["routes", "--check"],
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+        Case("routes-check-refuses-a-STALE-cache",
+             "🔴 exit 11 FOR A DIFFERENT REASON, AND THE DISTINCTION IS THE POINT: `--no-sync` "
+             "with no cache means the scope set would be a fact about this disk rather than "
+             "about the table, so the check REFUSES to grade rather than inventing findings in "
+             "both directions",
+             ["routes", "--check", "--no-sync"], env={"CAIRN_ROUTES": "<ROUTES>"},
+             wipe_cache=True),
+
+        # --- a routed WRITE at a non-default alias -----------------------------
+        # 🔴 THE REGION THAT HAD ZERO BYTE COMPARISON, AND IT IS THE ONE THIS WORK EXISTS TO
+        # SHIP. Both `<MULTICFG>` rows above are `routes --check` — the GRADER — so the routed
+        # WRITE path was covered only by each client's own unit tests, which cannot compare
+        # bytes across the two. A live divergence was measured in exactly that gap (`put`
+        # against a routed instance with an incomplete config: same exit code, different
+        # sentence, because the oracle loads the credentials lazily and the port did not).
+        #
+        # ⚠ IT GOES LAST ON PURPOSE. It is the only row that WRITES to the second pod, and the
+        # `routes --check` rows above read that pod's scope set; `restore_store` on the second
+        # store makes the order irrelevant, and this placement means nothing depends on that
+        # being true.
+        Case("put-routed-to-a-NON-DEFAULT-instance",
+             "🔴 THE ROUTED WRITE, COMPARED BYTE FOR BYTE. `gamma-notes` lives on the SECOND "
+             "pod and only there, so every step has to be the routed one: the table resolves "
+             "the alias, the ROUTED credentials are loaded, the ROUTED cache is synced, the "
+             "`If-Match` is derived from the SECOND store's bytes and echoed on stderr, and "
+             "`instance=secondary` is printed. A client that used the default instance for any "
+             "one of those hits pod 1, whose token does not carry `gamma-notes` at all — so "
+             "this row moves rather than merely reporting a different revision",
+             ["put", "--scope", "gamma-notes", "--ref", "gauge-api", "--file", "<PUTFILE>"],
+             no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
     ]
 
 
@@ -734,6 +816,36 @@ def main(argv: list[str] | None = None) -> int:
             "## What it is\n\nreplaced by the parity harness.\n\n"
             "## Pointers\n\n- `apps/gauge-api/values.yaml`\n\n"
             "## Nuance / work-history\n\n- 2000-01-04: replaced.\n", encoding="utf-8")
+        # The scope→instance table the `routes` rows point `$CAIRN_ROUTES` at.
+        #
+        # 🔴 IT NAMES THREE THINGS DELIBERATELY, AND THEY GRADE DIFFERENTLY. `ghost-void` is
+        # routed to an alias this host has no config for — a 🔴 PROBLEM at one instance as well
+        # as at many, and what takes this row to exit 11. `hollow-set` is a scope the world
+        # holds as a DIRECTORY WITH NO ENTRIES (`world.EMPTY_SCOPES`), so it is present to the
+        # server and absent from every client cache: a ⚠ NOTE, which prints and does NOT move
+        # the exit code. Both texts are compared byte for byte, so a client that graded the
+        # note as a verdict — or dropped it — differs on this row.
+        #
+        # ⚠ THE EXISTS-BUT-EMPTY CASE WAS UNREACHABLE HERE BEFORE. The old table named
+        # `retired-scope`, which exists nowhere at all, and the two states are indistinguishable
+        # from a snapshot — so the row could not tell a demotion from a deletion.
+        #
+        # 🔴 IT LIVES IN A SUBDIRECTORY, AND THE OBVIOUS PLACE WAS WRONG. The comment here used
+        # to say that writing it beside the world "keeps every OTHER row's 'no table at all'
+        # state intact", and that was FALSE: the default table path is
+        # `Path($SUBSYSTEM_STORE_CONFIG).parent / "routes.json"`, and this world points that
+        # variable at `<work>/no-such-config` — so `<work>/routes.json` WAS the default path and
+        # the table was live for every row in the gate, `CAIRN_ROUTES` or not. Nothing went red,
+        # because both clients read the same table and compared equal; the cost was that
+        # `routes-none-configured` measured a host that HAD a table while its own description
+        # said otherwise. Found by adding an entry for `ghost-void` to this table and watching
+        # three unrelated `*-absent-scope` rows change behaviour. A directory of its own makes
+        # the description true, and makes `$CAIRN_ROUTES` the only way a row opts in.
+        (work / "tables").mkdir()
+        routes_table = work / "tables" / "routes.json"
+        routes_table.write_text(
+            '{"alpha-notes": "personal", "beta-notes": "personal", '
+            '"hollow-set": "personal", "ghost-void": "no-such-instance"}\n', encoding="utf-8")
         new_file = work / "created.md"
         new_file.write_text(
             "---\nservice: fresh-entry\nscope: beta-notes\n---\n\n"
@@ -741,13 +853,93 @@ def main(argv: list[str] | None = None) -> int:
             "## Pointers\n\n- `apps/fresh-entry/values.yaml`\n\n"
             "## Nuance / work-history\n\n- 2000-01-04: created.\n", encoding="utf-8")
 
+        # 🔴 A SECOND STORE AND A SECOND POD, FOR THE MULTI-INSTANCE ROWS. Pointing the second
+        # instance at the FIRST pod would have been cheaper and would have measured nothing: the
+        # defect these rows exist to catch is a client that fetches every instance from the
+        # DEFAULT instance's config, and with one URL that client and a correct one are
+        # byte-identical. The two pods must be distinguishable, so they are.
+        #
+        # ⚠ IT CARRIES A SCOPE THE FIRST STORE DOES NOT. The URL in the banner is one
+        # observable; the graded scope set is the other, and a walk that never read this
+        # instance reports `gamma-notes` as a table entry matching nothing.
+        second_store = W.build_store(work / "store-second")
+        (second_store / "gamma-notes").mkdir(parents=True, exist_ok=True)
+        (second_store / "gamma-notes" / "gauge-api.md").write_text(
+            "---\nservice: gauge-api\nscope: gamma-notes\n---\n\n"
+            "## What it is\n\nthe second instance's own entry.\n\n"
+            "## Pointers\n\n- `apps/gauge-api/values.yaml`\n\n"
+            "## Nuance / work-history\n\n- 2000-01-05: synthetic.\n", encoding="utf-8")
+        # 🔴 A PINNED MTIME, LIKE EVERY OTHER MEMBER OF THIS WORLD. Writing the file sets the
+        # mtime to NOW, which lands a wall-clock date in `X-Store-Snapshot`'s `newest=` and
+        # therefore in the banner this row compares. It is identical for both clients within a
+        # run, so it hides no difference — but it makes two runs' logs incomparable by eye, and
+        # it puts a real date in a repository whose fixtures are deliberately year-2000.
+        os.utime(second_store / "gamma-notes" / "gauge-api.md",
+                 ns=(W.EPOCH_NS + 9, W.EPOCH_NS + 9))
+        # 🔴 THE SECOND STORE GETS A PRISTINE COPY TOO, FOR THE REASON `restore_store`'s
+        # docstring already gives: a WRITE row runs the two clients in sequence, so without a
+        # restore between them the Go client sees the oracle's write. The routed `put` row
+        # below derives its `If-Match` from the bytes it finds, so the two arms would derive
+        # DIFFERENT preconditions and the harness would report a divergence that is its own
+        # doing. Nothing needed this while every `<MULTICFG>` row was a `routes --check`.
+        second_pristine = work / "store-second-pristine"
+        shutil.copytree(second_store, second_pristine, copy_function=shutil.copy2)
+        second_tokens = work / "tokens-second"
+        second_tokens.write_text(
+            W.TOKEN_ROW.rstrip("\n").replace(
+                ",".join(W.ALLOWED_SCOPES),
+                ",".join(W.ALLOWED_SCOPES + ("gamma-notes",))) + "\n", encoding="utf-8")
+
+        # The multi-instance HOME. 🔴 A DIRECTORY OF ITS OWN, NOT THE ONE EVERY OTHER ROW USES:
+        # creating `instances/` beside the shared config path would make EVERY read row
+        # multi-instance, and the Go client refuses those (`RefuseUnportedMultiInstance`) — the
+        # gate would go red on thirty rows that are not about routing at all.
+        multi_dir = work / "multi-config"
+        (multi_dir / "instances").mkdir(parents=True)
+        multi_config = multi_dir / "env"          # deliberately NOT created: the DEFAULT
+        multi_routes = multi_dir / "routes.json"  # instance comes from the environment
+
         closed = free_port()  # bound and released, so a connect to it is REFUSED
-        hostile_server, hostile_port = hostile.start()
         port = free_port()
+        second_port = free_port()
         log = work / "oracle.log"
-        proc = start_oracle(store, token_file, log, port, break_pod=args.break_pod)
+        second_log = work / "oracle-second.log"
+
+        # 🔴 EVERY LONG-LIVED HANDLE IS STARTED *INSIDE* THE `try`, AND THIS IS A MEASURED
+        # LEAK RATHER THAN A TIDINESS RULE. The starts used to sit ABOVE the `try` whose
+        # `finally` reaps them, so anything that raised between the first start and the `try`
+        # — a second `start_oracle` that could not bind, a `hostile.start()` that failed —
+        # left the handles already created running with nothing to reap them. Measured: four
+        # orphaned `server/server.py` processes survived one round of this harness and had to
+        # be resolved and killed by PID afterwards. The window grew from one handle to three
+        # as the multi-instance rows were added, which is the shape to watch: a new handle is
+        # cheap to add and its reaper is easy to forget.
+        #
+        # 🔴 AND THE NAMES ARE BOUND TO `None` FIRST, because `finally` runs on the way out of
+        # a `try` the interpreter entered — including when the raise happened on the FIRST
+        # line of it. Without these three bindings the reaper would itself raise
+        # `UnboundLocalError`, which replaces the original exception and loses the reason.
+        hostile_server = None
+        proc = None
+        second_proc = None
         try:
+            hostile_server, hostile_port = hostile.start()
+            proc = start_oracle(store, token_file, log, port, break_pod=args.break_pod)
+            second_proc = start_oracle(second_store, second_tokens, second_log, second_port,
+                                       break_pod=args.break_pod)
+            # 🔴 PRINTED, SO "THEY WERE REAPED" IS CHECKABLE INSTEAD OF ASSERTED. A reader who
+            # suspects a leak needs the PIDs this run owns; a `pgrep -f server/server.py`
+            # sweep cannot tell this run's pods from a sibling run's — or from the shell
+            # doing the sweeping.
+            print(f"PODS pids={proc.pid},{second_proc.pid}")
             wait_for_health(port, proc, log)
+            wait_for_health(second_port, second_proc, second_log)
+            (multi_dir / "instances" / "secondary.env").write_text(
+                f"SUBSYSTEM_STORE_URL=http://127.0.0.1:{second_port}\n"
+                f"SUBSYSTEM_STORE_TOKEN={W.TOKEN}\n", encoding="utf-8")
+            multi_routes.write_text(
+                '{"alpha-notes": "personal", "beta-notes": "personal", '
+                '"gamma-notes": "secondary"}\n', encoding="utf-8")
 
             go_binary = args.go_binary
             if not go_binary:
@@ -805,7 +997,10 @@ def main(argv: list[str] | None = None) -> int:
                 env = dict(base_env)
                 for key, value in case.env.items():
                     env[key] = (value
-                                .replace("<MIRROR>", str(mirror)))
+                                .replace("<MIRROR>", str(mirror))
+                                .replace("<ROUTES>", str(routes_table))
+                                .replace("<ROUTES2>", str(multi_routes))
+                                .replace("<MULTICFG>", str(multi_config)))
                 argv_case = [
                     a.replace("<PUTFILE>", str(put_file))
                      .replace("<NEWFILE>", str(new_file))
@@ -813,10 +1008,29 @@ def main(argv: list[str] | None = None) -> int:
                     for a in case.argv
                 ]
                 cwd = repo if case.in_repo else work
-                shared = ["--cache", str(cache)] if argv_case else []
+                # A `no_cache_flag` row passes NO `--cache`, so both clients resolve their own
+                # per-alias roots; `once()` wipes those per client.
+                shared = ([] if (case.no_cache_flag or not argv_case)
+                          else ["--cache", str(cache)])
 
                 def once(cmd: list[str]) -> Outcome:
+                    # 🔴 THE DERIVED ROOTS ARE WIPED PER CLIENT, INSIDE HERE — AND THE COMMENT
+                    # THAT USED TO SIT OUTSIDE CLAIMED ISOLATION THIS WIPE DID NOT DELIVER.
+                    # Without `--cache` both clients resolve
+                    # `$HOME/.cache/subsystem-store[-<alias>]`. The wipe ran ONCE per case,
+                    # above both `once()` calls, so the ORACLE populated those roots and the Go
+                    # client then ran against them — the exact state the comment said it
+                    # prevented. It was harmless only because both rows fetch live and
+                    # `install_snapshot` replaces the root wholesale, i.e. the safety came from
+                    # a different function's behaviour; a `no_cache_flag` row combined with
+                    # `--no-sync` would have compared the Go client against the oracle's cache
+                    # and reported PASS. Per-client is the structural fix, and it is the same
+                    # reason `restore_store` below is per-client rather than per-case.
+                    if case.no_cache_flag:
+                        for root in (home / ".cache").glob("subsystem-store*"):
+                            shutil.rmtree(root, ignore_errors=True)
                     restore_store(pristine, store)
+                    restore_store(second_pristine, second_store)
                     if case.presync:
                         run_client([sys.executable, str(ROOT / "cairn"), "--cache", str(cache),
                                     "sync"], work, base_env)
@@ -1021,13 +1235,20 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             return 1 if (failures or (dead and dead_is_fatal)) else 0
         finally:
-            hostile_server.shutdown()
-            hostile_server.server_close()
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            if hostile_server is not None:
+                hostile_server.shutdown()
+                hostile_server.server_close()
+            for handle in (proc, second_proc):
+                # 🔴 `None` MEANS THE START NEVER HAPPENED, which is exactly the case the
+                # bindings above exist for — skip it rather than letting the reaper raise.
+                if handle is None:
+                    continue
+                handle.terminate()
+                try:
+                    handle.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    handle.kill()
+                    handle.wait(timeout=10)
             if log.exists() and os.environ.get("PARITY_SHOW_SERVER_LOG"):
                 print("--- oracle log ---")
                 print(log.read_text(errors="replace"))
