@@ -48,16 +48,19 @@ stub — the pattern Anthropic's own docs prescribe).
   pointer dangled.)
 
 ## Next steps (ranked)
-Every rank the previous version of this doc carried is now closed; they moved to
-**Closed — do not re-derive these** below, with what closed each one. One live item
-remains, so it is rank 1.
+🔴 **This effort is CLOSED and this list is EMPTY ON PURPOSE — do not draw work from it.**
+Its goal (accurate docs; `CLAUDE.md` → `AGENTS.md`) was met, and every rank it carried is
+in **Closed — do not re-derive these** below.
 
-1. Separate effort (no doc yet — mint one then): conditional/incremental snapshot sync.
-   `GET /api/v1/snapshot` ships a full tar with no ETag/304 (ETags exist only on entry
-   writes), so every sync is O(store) per client — the main scale gap found in this
-   session's north-star evaluation. Verify the claim against current
-   `server/server.py::_snapshot` before designing.
-   forcing: none
+The one item that was still live here — conditional/incremental snapshot sync
+(`GET /api/v1/snapshot` ships a full tar with no ETag/304) — **moved** to
+`claudedocs/handoff-cairn-control-plane.md`, where it is **rank 4** and is scoped to key
+on **principal + epoch** because that plan introduces multiple principals. It is not
+listed here any more, and that is deliberate: two docs ranking one item is a shared queue
+with two different `claim-work` slugs for the same work, which is how two sessions do it
+twice. Claim it against the control-plane doc's rank 4, never against this file.
+
+For anything cairn after 2026-09-14, read `claudedocs/handoff-cairn-control-plane.md`.
 
 ## Closed — do not re-derive these
 Recorded with what closed each item, and with what was **not** done, so the next
