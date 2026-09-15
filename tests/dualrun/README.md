@@ -359,23 +359,6 @@ extracted-tree comparison.** The reorder changes no member name, mode, mtime or 
 truncation changes no name and no byte of content. Both are caught only because the verdict is
 the **archive's own bytes**.
 
-### 2c. …and the gate is SYMMETRIC, measured rather than reasoned
-
-🔴 **Every one of the seven mutants above edits the ORACLE.** That the comparison is
-symmetric follows from its shape — but "follows from its shape" is reasoning, and the whole
-point of a negative control is not to accept that. So two mutants were applied to the **Go**
-server, rebuilt, and the gate required to go red:
-
-| Go-side mutant | edit | result |
-|---|---|---|
-| `G1-go-report-body-loses-its-trailing-newline` | `serveReport` drops the body's final `\n` | **red**: 305 of 361 targets, failing comparisons `body, headers` (`Content-Length` moves with the body) |
-| `G2-go-snapshot-mtime-truncated` | the **mirror** of the oracle's tar mutant — `MTime` truncated to whole seconds in `internal/snapshot` | **red**: 10 targets, failing comparison `tar` alone |
-
-G2 is the one worth having: it proves the `tar` arm is sensitive in **both** directions, so a
-future regression in the Go writer — the side that is going to be deployed — cannot pass a
-gate that only ever watched the oracle move. Control after restoring and rebuilding:
-`SUMMARY targets=361 comparisons=1489 differences=0`.
-
 ⚠ **Two things the sweep corrected about itself, recorded because a later round should not
 re-derive them:**
 
@@ -398,10 +381,27 @@ run against is scored SURVIVED for a reason that has nothing to do with the gate
 same string the edit is a **no-op**, so without `theta-ambiguous` it would survive a perfect
 gate.
 
-### 2b. A second battery, over this gate's OWN guards — 26 mutants in seven rounds
+### 2b. …and the gate is SYMMETRIC, measured rather than reasoned
+
+🔴 **Every one of the seven mutants above edits the ORACLE.** That the comparison is
+symmetric follows from its shape — but "follows from its shape" is reasoning, and the whole
+point of a negative control is not to accept that. So two mutants were applied to the **Go**
+server, rebuilt, and the gate required to go red:
+
+| Go-side mutant | edit | result |
+|---|---|---|
+| `G1-go-report-body-loses-its-trailing-newline` | `serveReport` drops the body's final `\n` | **red**: 305 of 361 targets, failing comparisons `body, headers` (`Content-Length` moves with the body) |
+| `G2-go-snapshot-mtime-truncated` | the **mirror** of the oracle's tar mutant — `MTime` truncated to whole seconds in `internal/snapshot` | **red**: 10 targets, failing comparison `tar` alone |
+
+G2 is the one worth having: it proves the `tar` arm is sensitive in **both** directions, so a
+future regression in the Go writer — the side that is going to be deployed — cannot pass a
+gate that only ever watched the oracle move. Control after restoring and rebuilding:
+`SUMMARY targets=361 comparisons=1489 differences=0`.
+
+### 2c. A second battery, over this gate's OWN guards — 26 mutants in six rounds
 
 `tests/test_dualrun_harness.py` is a ledger over the gate's declarations, and a ledger is a
-claim too. Three rounds, under `PYTHONDONTWRITEBYTECODE=1` throughout — a same-length edit
+claim too. Six rounds, under `PYTHONDONTWRITEBYTECODE=1` throughout — a same-length edit
 landing in the same whole second as the last import is invisible to CPython's mtime+size
 bytecode cache, and the mutant would be scored SURVIVED without ever executing.
 
@@ -440,6 +440,15 @@ the shape that matters: the collision is silent in exactly one of them.
 sent as the **wide** principal → the pair guard fails. Two tiers rather than one because a
 structural check type-checks past a wrong argument and a runtime floor cannot say *which*
 declaration was wrong.
+
+**Round 6 — 1 mutant, over `mutants.py`'s own copy mechanics.** `shutil.rmtree` refuses a
+symbolic link and under `ignore_errors=True` refuses **silently**, so reusing one `dest` for a
+`server` mutation (which leaves `lib` a symlink) and a `lib/` mutation (which needs a real
+copy) breaks. ⚠ **Measured, and the hazard is a CRASH rather than a false SURVIVED** — the
+first comment claimed the worse one: `copytree` raises `FileExistsError` on the surviving
+link, which is loud and could not produce a wrong verdict. Unreachable today (every mutation
+gets its own `dest`); fixed anyway, and the fix watched to apply the edit to the **copy** with
+the real `lib/` verifiably untouched.
 
 ⚠ **One correction the sweep forced on its own attribution scheme**, recorded so a later
 round does not re-derive it: the first version read the failing TARGET's name and then added
