@@ -72,8 +72,8 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
    elsewhere. Pin the whole normalised string, not keywords.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
 4. **P7 — conditional snapshot sync.** `GET /api/v1/snapshot` ships a full tar with no
-   ETag/304 (verified 2026-09-15: zero ETag/304 handling in `_snapshot`), so every sync
-   is O(store) per client. Inherited as the only live rank from
+   ETag/304 — verified at `0497140`: `_snapshot` contains zero ETag/304 handling — so
+   every sync is O(store) per client. Inherited as the only live rank from
    `claudedocs/handoff-agents-migration.md`. 🔴 Once P3 lands this stops being a scale
    item: with many principals a mis-keyed cache cross-serves another tenant's tar, so key
    it on **principal + epoch**.
@@ -92,7 +92,7 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 Fix as one round; closing one buys room for one rank.
 - **PR #15's six findings, still open on `main`** (recorded at
   https://github.com/ZacxDev/cairn/pull/15 when the operator chose to merge with them
-  open; each verified still present 2026-09-15): `lib/cairn_doctor.py` claims "2,016
+  open; each re-checked present at `0497140`): `lib/cairn_doctor.py` claims "2,016
   bytes" for a value that is HOME-length dependent (measured 1,812/2,100/2,604) and
   claims a point "would INVERT" where it exits 1, not 120; `cairn:337` cites
   `server.py:422` for `sole_header`, which is at `server/server.py:1409`;
@@ -164,6 +164,14 @@ Fix as one round; closing one buys room for one rank.
 - **Dead end:** the narrow "audit/process arms only" shape for the dual-run was costed and
   rejected — it saves ~23 of 1,799 lines and forces out the tar arm, the one the corpus's
   own README flags 🔴 with four measured divergences.
+
+- 🔴 **THE `dated-incident` RULE FIRES ON VERIFICATION STAMPS, NOT ONLY ON INCIDENT
+  NARRATION — and it caught the first draft of THIS doc.** `leakscan` refused
+  `verified 2026-09-15:` twice, on the PR immediately after the rule shipped. The fix is
+  not an exemption: **pin the claim to a COMMIT SHA instead of a day.** A date says when
+  somebody looked; a sha says which tree they looked at, which is the thing a later
+  reader can actually check out and re-measure. Prefer `verified at <sha>` everywhere in
+  this repo's prose — it satisfies the gate and is strictly more useful.
 
 ## How to verify
 ```bash
