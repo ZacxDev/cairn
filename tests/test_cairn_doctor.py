@@ -286,7 +286,11 @@ class TestTheStateVocabulary:
             f"EXIT_DOCTOR_OK in lib/cairn_doctor.py, which states that overlap "
             f"and says not to remove it, is now false."
         )
-        assert client == {0, 2, 3, 4, 5, 6, 7, 8, 9}, (
+        # 11 is `EXIT_UNROUTED`: the client could not decide WHICH INSTANCE a
+        # scope belongs to and did nothing. Added deliberately, and the overlap
+        # question was looked at: doctor's codes are {0, 9, 10}, so 11 collides
+        # with none of them and the intersection above is unmoved.
+        assert client == {0, 2, 3, 4, 5, 6, 7, 8, 9, 11}, (
             f"cairn's exit codes are now {sorted(client)}, not [0, 2, 3, 4, 5, 6, "
             f"7, 8, 9]. This pin is the control on the discovery above — an empty "
             f"or truncated discovery fails HERE rather than passing the "

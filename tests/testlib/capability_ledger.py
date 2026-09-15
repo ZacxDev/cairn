@@ -173,6 +173,18 @@ LEDGER: tuple[Capability, ...] = (
                          "route could not observe any of it",
     ),
     Capability(
+        name="instance-routing",
+        effect=READS,
+        cli="routes",
+        route=None,
+        no_route_because="its subject is THIS host's configuration — which "
+                         "instances are configured here and which scope the "
+                         "operator's own table sends where. No instance can "
+                         "answer it: a pod knows nothing about its siblings, and "
+                         "the table is deliberately not something this software "
+                         "stores",
+    ),
+    Capability(
         name="append-bullet",
         effect=WRITES,
         cli="append",

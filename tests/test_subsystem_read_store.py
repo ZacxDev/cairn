@@ -158,6 +158,13 @@ WIRE_CONSTANTS: tuple[tuple[object, str, object], ...] = (
     # A RENDERED TOKEN two renderers emit and `analyze-service/SKILL.md` tells
     # the reader to relay ("the `stamp:` lines").
     (rs, "STAMP_PREFIX", "  stamp: "),
+    # The DEFAULT INSTANCE'S NAME. A wire fact on three surfaces at once: it
+    # names the config file `~/.config/subsystem-store/env` stands for, it is
+    # the alias whose cache root is `DEFAULT_CACHE_ROOT` itself, and it is a
+    # VALUE an operator writes into a routing table. Renaming it strands the
+    # cache and silently unroutes every scope the table sent here — the same
+    # class as moving the cache root, which is the row above it.
+    (rs, "DEFAULT_ALIAS", "personal"),
 )
 
 #: Module-scope names of `subsystem_read_store` that are NOT wire facts.

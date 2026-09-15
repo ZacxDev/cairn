@@ -64,6 +64,21 @@ creates only if absent and REFUSES (exit 9) rather than overwriting.
 CONFIG: `~/.config/subsystem-store/env` (mode 0600) — `SUBSYSTEM_STORE_URL`,
 `SUBSYSTEM_STORE_TOKEN`. Environment variables of the same name win, so a test
 can point this at a throwaway server without touching the file. See SECRETS.md.
+
+🔴 MORE THAN ONE INSTANCE, AND NOTHING CHANGES UNTIL THERE IS ONE. The file
+above is the `personal` instance; additional instances are ADDITIVE files at
+`~/.config/subsystem-store/instances/<alias>.env`, each with its own cache root
+and its own `.sync-stamp`. A scope is routed to an instance by a table the
+OPERATOR supplies (`~/.config/subsystem-store/routes.json`, or `$CAIRN_ROUTES`)
+— never by anything checked in here, because this program knows how to route
+and nothing about who routes where.
+
+🔴 AN UNREGISTERED SCOPE REFUSES AT EXIT 11, NAMING THE SCOPE. It never falls
+back to an instance. A default would silently recreate the failure this whole
+tool exists to close — a write landing in a store nobody reads — and that one is
+found days later, by accident, if at all. With ONE instance configured there is
+no second place a scope could go, so nothing routes, nothing is labelled, and
+every byte of output is what it was before any of this existed.
 """
 
 from __future__ import annotations
@@ -122,8 +137,12 @@ from entry_shape import scope_for_repo  # noqa: E402
 import subsystem_read_store as _read_store  # noqa: E402
 import subsystem_resolver  # noqa: E402
 from subsystem_read_store import SYNC_STAMP  # noqa: E402
-
-DEFAULT_CONFIG = Path.home() / ".config" / "subsystem-store" / "env"
+# 🔴 THE MODULE, FOR THE SAME REASON AS `_read_store` ABOVE. `cairn_instances`
+# resolves paths from `Path.home()` and the environment at CALL time, so a
+# `from … import config_path` here would bind the function but a
+# `from … import DEFAULT_*` would bind a value — and the config path is exactly
+# the kind of fact a test repoints. One import style for both.
+import cairn_instances  # noqa: E402
 DEFAULT_TIMEOUT = 20
 # Ceiling on what a snapshot may unpack to. The whole store measured ~63 KB of
 # markdown across 305 entries in 2026-08; 256 MB is ~4000x that, so it bounds a
@@ -182,6 +201,16 @@ EXIT_WRITE_PRECONDITION = 8
 #     which is the only place on the wire the difference exists.
 EXIT_WRITE_EXISTS = 9
 
+# --- ROUTING. Neither a read code nor a write code, deliberately. ---------
+# 11 = this client could not decide WHICH INSTANCE a scope belongs to, so it did
+#      nothing. Either the routing table does not name the scope, or the table
+#      itself cannot be read. 🔴 ITS OWN CODE, AND IT IS A READ/WRITE-NEUTRAL
+#      ONE: the refusal happens BEFORE either path, and collapsing it into 3
+#      ("nothing was displayed") or 7 ("the write did not happen") would tell a
+#      caller the store was unreachable when the store was never chosen. The
+#      remedy is a line in a table, not a retry.
+EXIT_UNROUTED = 11
+
 STATE_LIVE = "live"
 STATE_CACHED = "cached"
 STATE_EMPTY = "scope-empty"
@@ -223,15 +252,31 @@ class StoreCorrupt(Exception):
     """
 
 
-def load_config(path: Path | None = None) -> tuple[str, str]:
+def load_config(path: Path | None = None, *, instance: str | None = None) -> tuple[str, str]:
     """`(url, token)` from the env file, with real environment taking priority.
 
     A missing file is not fatal on its own — the caller may have exported both
     values — but a missing VALUE is, and it says which one. "No token" must not
     degrade into an unauthenticated request that comes back 401 and gets read as
     "the store is down".
+
+    🔴 THE ENVIRONMENT OVERRIDES THE DEFAULT INSTANCE ONLY, AND THE ASYMMETRY IS
+    THE WHOLE REASON A SECOND INSTANCE IS SAFE TO ADD. `SUBSYSTEM_STORE_URL` has
+    always pointed this client at a throwaway server, and letting it win for
+    EVERY alias would point them all at one store: a `doctor` that walks three
+    instances would then measure one three times and report agreement it never
+    observed, and a routed write would land somewhere the table did not name.
+    A non-default alias reads its own file and nothing else.
     """
-    path = path or Path(os.environ.get("SUBSYSTEM_STORE_CONFIG", DEFAULT_CONFIG))
+    alias = instance or _read_store.DEFAULT_ALIAS
+    is_default = alias == _read_store.DEFAULT_ALIAS
+    if path is None:
+        path = (
+            cairn_instances.config_path()
+            if is_default
+            else cairn_instances.instance_dir()
+            / f"{alias}{cairn_instances.INSTANCE_SUFFIX}"
+        )
     from_file: dict[str, str] = {}
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -243,10 +288,20 @@ def load_config(path: Path | None = None) -> tuple[str, str]:
     except OSError:
         pass
 
-    url = os.environ.get("SUBSYSTEM_STORE_URL") or from_file.get("SUBSYSTEM_STORE_URL")
-    token = os.environ.get("SUBSYSTEM_STORE_TOKEN") or from_file.get(
-        "SUBSYSTEM_STORE_TOKEN"
-    )
+    if is_default:
+        url = os.environ.get("SUBSYSTEM_STORE_URL") or from_file.get("SUBSYSTEM_STORE_URL")
+        token = os.environ.get("SUBSYSTEM_STORE_TOKEN") or from_file.get(
+            "SUBSYSTEM_STORE_TOKEN"
+        )
+        where = f"(looked in {path} and the environment)"
+    else:
+        url = from_file.get("SUBSYSTEM_STORE_URL")
+        token = from_file.get("SUBSYSTEM_STORE_TOKEN")
+        where = (
+            f"(looked in {path}; the environment is NOT consulted for a "
+            f"non-default instance, so a `{alias}` instance is configured by "
+            f"that file alone)"
+        )
     missing = [
         n
         for n, v in (("SUBSYSTEM_STORE_URL", url), ("SUBSYSTEM_STORE_TOKEN", token))
@@ -254,10 +309,171 @@ def load_config(path: Path | None = None) -> tuple[str, str]:
     ]
     if missing:
         raise StoreUnreachable(
-            f"config incomplete: {', '.join(missing)} not set "
-            f"(looked in {path} and the environment)"
+            f"config incomplete: {', '.join(missing)} not set {where}"
         )
     return url.rstrip("/"), token  # type: ignore[union-attr,return-value]
+
+
+# --- INSTANCES AND ROUTING --------------------------------------------------
+#
+# 🔴 EVERY INSTANCE-AWARE BEHAVIOUR ASKS `Routing.active`, AND NOTHING ELSE.
+# Labelling a banner, labelling a write, `doctor`'s per-instance sections, the
+# search fan-out and the caveat's extra clause are five sites that must agree
+# about whether this host is routing; five copies of "len(instances) > 1" would
+# be five chances to disagree, and the symptom of disagreeing is output that
+# names an instance the next line does not.
+
+
+def _routing() -> "cairn_instances.Routing":
+    """What is configured, read fresh. NOT cached in a module global.
+
+    A cache would be read once per process and then be wrong for any test that
+    repoints `$HOME` between calls — and it would buy a few `stat`s on a command
+    that is about to open a socket.
+    """
+    return cairn_instances.discover()
+
+
+def _instance_cache(args: argparse.Namespace, alias: str) -> Path:
+    """The cache root for `alias`, honouring an explicit `--cache`.
+
+    🔴 AN EXPLICIT `--cache` WINS, AND THE DEFAULT IS RESOLVED PER INSTANCE. The
+    parser's default is still the DEFAULT instance's root — unchanged, printed
+    in `--help`, and what a single-instance host uses — but a second instance
+    must not share one directory with the first: two stores unpacked over each
+    other would interleave scopes, and `.sync-stamp` would date whichever synced
+    last while the entries came from both.
+    """
+    if getattr(args, "cache_explicit", False):
+        return args.cache
+    return _read_store.cache_root_for(alias)
+
+
+def _instance_for(args: argparse.Namespace, scope: str) -> tuple[str, str | None, Path]:
+    """`(alias, label, cache)` for a scope. Raises `UnroutedScope` — never guesses.
+
+    `label` is the alias when this host is routing and `None` when it is not.
+    🔴 THAT `None` IS THE COMPATIBILITY GUARANTEE, not a formatting nicety: it is
+    what keeps a one-instance host's output byte-for-byte what it was, so the
+    routing machinery can ship and be proven inert before any data moves.
+    """
+    routing = _routing()
+    alias = routing.alias_for(scope)
+    return alias, (alias if routing.active else None), _instance_cache(args, alias)
+
+
+def _repo_scope(args: argparse.Namespace) -> str:
+    """The scope `--repo` derives, or `""` when it cannot be derived.
+
+    Swallows the error ON PURPOSE and only where the CALLER has a real answer
+    for the empty case — `validate` falls back to the default instance, because
+    "which cache am I checking" has one sensible answer outside a repo and
+    "where does this write land" does not.
+    """
+    try:
+        return scope_for_repo(args.repo) or ""
+    except Exception:  # GitError and anything else the resolver raises
+        return ""
+
+
+def _default_instance(args: argparse.Namespace) -> tuple[str, str | None, Path]:
+    """The default instance, LABELLED when this host is routing.
+
+    Used where there is no scope to route. The label still appears, because
+    "which of my instances did that read" is exactly as pressing when the
+    command picked one as when a table did.
+    """
+    routing = _routing()
+    alias = _read_store.DEFAULT_ALIAS
+    return alias, (alias if routing.active else None), _instance_cache(args, alias)
+
+
+def _refuse_shared_cache(
+    args: argparse.Namespace, routing: "cairn_instances.Routing", verb: str
+) -> int | None:
+    """Refuse an explicit `--cache` that would make N instances share one directory.
+
+    🔴 THE DAMAGE IS SILENT AND IT IS TO THE CACHE, NOT TO THE OUTPUT. Two
+    snapshots unpacked into one root interleave their scopes, and `.sync-stamp`
+    then dates whichever synced last while the entries beneath it came from
+    both — a store that can neither say what it holds nor how old it is. The
+    refusal costs an error message; the alternative is a cache nobody can
+    trust and no way to notice.
+    """
+    if len(routing.instances) > 1 and getattr(args, "cache_explicit", False):
+        print(
+            f"cairn: `{verb}` walks all {len(routing.instances)} configured "
+            f"instances ({', '.join(routing.aliases)}), so an explicit --cache "
+            f"would make them share one directory and overwrite each other. "
+            f"Drop --cache, or name one instance's scope.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    return None
+
+
+def _search_every_instance(
+    args: argparse.Namespace, routing: "cairn_instances.Routing", query: str
+) -> int:
+    """`search --all-scopes` across every configured instance.
+
+    🔴 A PARTIAL RESULT IS A LIE, SO AN UNREAD INSTANCE IS LOUD AND NON-ZERO.
+    "No matches" from a fan-out that silently skipped a store is the same
+    silent zero this client was built to prevent, one layer up: the caller
+    concludes the thing is not recorded anywhere. Hits that WERE found are
+    still printed — throwing away real answers to report a defect is its own
+    harm — but the run exits non-zero and names the instance it could not read.
+
+    🔴 AND EACH SECTION NAMES ITS INSTANCE. Without that, two hits with the
+    same ref from two stores are indistinguishable, which is the question a
+    second instance creates.
+    """
+    refusal = _refuse_shared_cache(args, routing, "search --all-scopes")
+    if refusal is not None:
+        return refusal
+    worst = EXIT_OK
+    unread: list[str] = []
+    for instance in routing.instances:
+        cache = _instance_cache(args, instance.alias)
+        state, detail, hint = resolve_state(
+            cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args),
+            instance=instance.alias,
+        )
+        if hint is not None:
+            print(banner(state, detail, instance.alias), file=sys.stderr)
+            unread.append(instance.alias)
+            worst = max(worst, hint)
+            continue
+        report = rc.search(
+            str(cache),
+            "",
+            query,
+            context=rc.CONTEXT_BULLET,
+            threshold=rc.DEFAULT_SEARCH_THRESHOLD,
+            max_hits=rc.DEFAULT_MAX_HITS,
+            all_scopes=True,
+        )
+        print(banner(state, detail, instance.alias))
+        print()
+        print(rc.render_search(report, instance=instance.alias))
+        print()
+        worst = max(worst, rc._exit_for(report.status, report.label, report.malformed))
+    if unread:
+        print(
+            f"🔴 cairn: PARTIAL — {len(unread)} of {len(routing.instances)} "
+            f"instance(s) could not be read ({', '.join(unread)}). Anything "
+            f"printed above is what the instances that ANSWERED hold; it is NOT "
+            f"an answer about the ones that did not, and 'no matches' above does "
+            f"not mean the query matches nothing.",
+            file=sys.stderr,
+        )
+    return worst
+
+
+def _unrouted(exc: "cairn_instances.UnroutedScope") -> int:
+    """Print the refusal and return its code. ONE spelling, four call sites."""
+    print(f"🔴 cairn: REFUSING — {exc.detail}", file=sys.stderr)
+    return EXIT_UNROUTED
 
 
 def _apply_standard_headers(req: "urllib.request.Request", token: str) -> None:
@@ -587,12 +803,21 @@ def human_age(seconds: int | None) -> str:
 
 
 def resolve_state(
-    cache: Path, *, no_sync: bool, scope: str | None, timeout: int
+    cache: Path,
+    *,
+    no_sync: bool,
+    scope: str | None,
+    timeout: int,
+    instance: str | None = None,
 ) -> tuple[str, str, int | None]:
     """`(state, detail, exit_hint)` — the four-state decision, in ONE place.
 
     Every caller reads its state from here so the four cannot drift apart per
     subcommand, which is how three of them end up rendering alike.
+
+    `instance` names which configured instance to read. `None` is the default
+    instance, which is what a single-instance host has and is the only path the
+    environment override applies to — see `load_config`.
     """
     if no_sync:
         age, fields = cache_age(cache)
@@ -608,7 +833,7 @@ def resolve_state(
         )
 
     try:
-        url, token = load_config()
+        url, token = load_config(instance=instance)
         body, headers = fetch_snapshot(url, token, scope=scope, timeout=timeout)
         try:
             count = install_snapshot(body, cache, headers)
@@ -652,9 +877,19 @@ def resolve_state(
         )
 
 
-def banner(state: str, detail: str) -> str:
+def banner(state: str, detail: str, instance: str | None = None) -> str:
+    """The state line. 🔴 NAMES THE INSTANCE WHENEVER THERE IS MORE THAN ONE.
+
+    `instance=None` is the single-instance host and renders exactly what this
+    client has always rendered — which is what makes the multi-instance
+    machinery provably inert before an operator configures a second store.
+    Given an alias, every state line carries it, because "where did that come
+    from" is the question a second instance creates and a banner is the only
+    line every read prints.
+    """
     marker = "🔴" if state == STATE_NO_CACHE else ("⚠" if state == STATE_CACHED else "")
-    return f"{marker} cairn: {state} — {detail}".strip()
+    name = "cairn" if instance is None else f"cairn[{instance}]"
+    return f"{marker} {name}: {state} — {detail}".strip()
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
@@ -679,61 +914,126 @@ def cmd_sync(args: argparse.Namespace) -> int:
     # silently inherit the completeness claim. The server keeps `?scope=` — it
     # is a legitimate API capability with its own tests; it is just not
     # something that may narrow this cache.
-    state, detail, hint = resolve_state(
-        args.cache, no_sync=False, scope=None, timeout=_store_timeout(args)
-    )
-    if state == STATE_LIVE:
-        print(banner(state, detail))
-        return EXIT_OK
-    print(banner(state, detail), file=sys.stderr)
-    return hint if hint is not None else EXIT_REFRESH_FAILED
+    # 🔴 EVERY CONFIGURED INSTANCE, NOT THE ROUTED ONE. `sync` takes no scope,
+    # so it has nothing to route — and refreshing one of two instances while
+    # reporting success would leave the other silently ageing, which is the
+    # failure this command's own docstring exists to prevent, one instance over.
+    routing = _routing()
+    refusal = _refuse_shared_cache(args, routing, "sync")
+    if refusal is not None:
+        return refusal
+    worst = EXIT_OK
+    for instance in routing.instances:
+        label = instance.alias if routing.active else None
+        state, detail, hint = resolve_state(
+            _instance_cache(args, instance.alias),
+            no_sync=False,
+            scope=None,
+            timeout=_store_timeout(args),
+            instance=instance.alias,
+        )
+        if state == STATE_LIVE:
+            print(banner(state, detail, label))
+            continue
+        print(banner(state, detail, label), file=sys.stderr)
+        worst = max(worst, hint if hint is not None else EXIT_REFRESH_FAILED)
+    return worst
 
 
 def cmd_ls_entries(args: argparse.Namespace) -> int:
-    state, detail, hint = resolve_state(
-        args.cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args)
-    )
-    if hint is not None:
-        print(banner(state, detail), file=sys.stderr)
-        return hint
-    print(banner(state, detail), file=sys.stderr)
-    for path in sorted(args.cache.glob("*/*.md")):
-        print(f"{path.parent.name}/{path.name}")
-    return EXIT_OK
+    """One `<scope>/<entry>.md` per line — per instance when there is more than one.
+
+    🔴 THE INSTANCE PREFIX IS A `[alias] ` ON THE LINE, NOT A THIRD PATH
+    SEGMENT. A consumer splits these on `/` expecting exactly two parts; making
+    it `alias/scope/entry.md` would silently re-point every such split at the
+    wrong field. The prefix is absent entirely on a single-instance host.
+    """
+    routing = _routing()
+    refusal = _refuse_shared_cache(args, routing, "ls-entries")
+    if refusal is not None:
+        return refusal
+    worst = EXIT_OK
+    for instance in routing.instances:
+        label = instance.alias if routing.active else None
+        cache = _instance_cache(args, instance.alias)
+        state, detail, hint = resolve_state(
+            cache,
+            no_sync=args.no_sync,
+            scope=None,
+            timeout=_store_timeout(args),
+            instance=instance.alias,
+        )
+        print(banner(state, detail, label), file=sys.stderr)
+        if hint is not None:
+            worst = max(worst, hint)
+            continue
+        prefix = "" if label is None else f"[{label}] "
+        for path in sorted(cache.glob("*/*.md")):
+            print(f"{prefix}{path.parent.name}/{path.name}")
+    return worst
 
 
 def _report(args: argparse.Namespace, *, search: str | None) -> int:
+    routing = _routing()
+    # 🔴 `--all-scopes` NAMES NO SCOPE, SO IT IS NOT ROUTED — IT FANS OUT. Asking
+    # the routing table about this repo's scope here would refuse a fleet-wide
+    # search because the scope the caller did not name is unregistered, which is
+    # a refusal about a question nobody asked.
+    if search is not None and getattr(args, "all_scopes", False) and routing.active:
+        return _search_every_instance(args, routing, search)
+
+    # 🔴 THE SCOPE IS DERIVED BEFORE THE SYNC, BECAUSE IT DECIDES WHICH STORE TO
+    # SYNC. The failure ORDER is preserved deliberately: a store that cannot be
+    # read is still reported before a scope that cannot be derived, because that
+    # is what this command has always done and the two are independent.
+    scope: str | None = None
+    scope_error: str | None = None
+    try:
+        # `scope_for_repo` raises GitError outside a git repo — previously
+        # uncaught, so `cairn recall` in a plain directory exited 1 with a
+        # traceback and the EXIT_USAGE path below was unreachable for the
+        # commonest way to hit it.
+        scope = args.scope or scope_for_repo(args.repo)
+    except Exception as exc:  # GitError and anything else the resolver raises
+        scope_error = (
+            f"cairn: could not derive a scope from {args.repo!r}: {exc}\n"
+            f"       pass --scope explicitly."
+        )
+    if scope_error is None and not scope:
+        scope_error = "cairn: --scope is required (no scope could be derived)"
+
+    if scope_error is None:
+        try:
+            alias, label, cache = _instance_for(args, scope)
+        except cairn_instances.UnroutedScope as exc:
+            # 🔴 BEFORE THE NETWORK. Nothing is fetched, nothing is written, and
+            # no cache is touched: the client does not know where this scope
+            # lives, so any store it contacted would be a guess.
+            return _unrouted(exc)
+    else:
+        # No scope means nothing to route; the default instance is the one this
+        # host has always read, and the usage error below is the real answer.
+        alias, label, cache = _read_store.DEFAULT_ALIAS, None, args.cache
+
     # 🔴 SYNC THE WHOLE STORE, NEVER `scope=args.scope`. A scope-filtered cache
     # makes the reader answer `scope-absent` for every scope that was simply not
     # fetched — indistinguishable, in the output, from a scope the store has
     # never held. That is the silent-zero this file exists to prevent, and the
     # first draft of this function had it.
     state, detail, hint = resolve_state(
-        args.cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args)
+        cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args),
+        instance=alias,
     )
     if hint is not None:
-        print(banner(state, detail), file=sys.stderr)
+        print(banner(state, detail, label), file=sys.stderr)
         return hint
-
-    # `scope_for_repo` raises GitError outside a git repo — previously uncaught,
-    # so `cairn recall` in a plain directory exited 1 with a traceback and the
-    # EXIT_USAGE path below was unreachable for the commonest way to hit it.
-    try:
-        scope = args.scope or scope_for_repo(args.repo)
-    except Exception as exc:  # GitError and anything else the resolver raises
-        print(
-            f"cairn: could not derive a scope from {args.repo!r}: {exc}\n"
-            f"       pass --scope explicitly.",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
-    if not scope:
-        print("cairn: --scope is required (no scope could be derived)", file=sys.stderr)
+    if scope_error is not None:
+        print(scope_error, file=sys.stderr)
         return EXIT_USAGE
 
     if search is not None:
         report = rc.search(
-            str(args.cache),
+            str(cache),
             scope,
             search,
             context=rc.CONTEXT_BULLET,
@@ -741,7 +1041,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
             max_hits=rc.DEFAULT_MAX_HITS,
             all_scopes=args.all_scopes,
         )
-        text = rc.render_search(report)
+        text = rc.render_search(report, instance=label)
     else:
         # 🔴 THE DIGEST'S OWN FOOTER PRESCRIBES THESE FLAGS, so the client has to
         # have them. It told readers "`--ref <name>` prints any one of them in
@@ -794,7 +1094,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
         # comment quoting it is indistinguishable from a call.)
         try:
             report = rc.recall(
-                str(args.cache),
+                str(cache),
                 scope,
                 ref=args.ref,
                 limit=selection.limit,
@@ -806,7 +1106,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
         except ValueError as exc:
             print(f"cairn: {exc}", file=sys.stderr)
             return EXIT_USAGE
-        text = rc.render_text(report)
+        text = rc.render_text(report, instance=label)
 
     # An empty scope reached through a LIVE fetch is `scope-empty`; the same
     # emptiness behind a cache stays `cached`, because we did not reach the
@@ -826,7 +1126,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
         state = STATE_EMPTY
         detail = f"reached the store; nothing recorded for this scope — {detail}"
 
-    print(banner(state, detail))
+    print(banner(state, detail, label))
     print()
     print(text)
     # 🔴 THE READER'S OWN EXIT CODE, PASSED THROUGH. The module docstring
@@ -871,22 +1171,34 @@ def cmd_validate(args: argparse.Namespace) -> int:
     The docstring also claimed "`subsystem_recall.py --validate` already answers
     that one", which was the same false belief stated as justification.
     """
+    # 🔴 ONE INSTANCE, ROUTED BY `--scope`/`--repo` LIKE A READ. Validation is a
+    # claim about the bytes of a particular cache, so it names which one rather
+    # than merging several — a merged verdict could not say where the malformed
+    # file is.
+    scope = args.scope or _repo_scope(args)
+    try:
+        alias, label, cache = (
+            _instance_for(args, scope) if scope else _default_instance(args)
+        )
+    except cairn_instances.UnroutedScope as exc:
+        return _unrouted(exc)
     # `scope=None` — see the note in `cmd_sync`. `--scope` still narrows what is
     # VALIDATED (below); it must never narrow what is CACHED.
     state, detail, hint = resolve_state(
-        args.cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args)
+        cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args),
+        instance=alias,
     )
     if hint is not None:
-        print(banner(state, detail), file=sys.stderr)
+        print(banner(state, detail, label), file=sys.stderr)
         return hint
-    print(banner(state, detail), file=sys.stderr)
+    print(banner(state, detail, label), file=sys.stderr)
     # 🔴 THE CACHE IS A MULTI-SCOPE STORE; `--validate` IS SCOPE-BOUND. With no
     # `--scope` the writer derives one from the REPO, so `cairn validate` in any
     # checkout validated a scope the cache does not hold and printed "NOTHING
     # WAS CHECKED — a zero here is NOT a clean bill of health" while exiting 0.
     # That is the silent zero this command exists to detect, committed by the
     # command itself. With no --scope we validate EVERY scope in the cache.
-    held = sorted(p.name for p in args.cache.iterdir() if p.is_dir())
+    held = sorted(p.name for p in cache.iterdir() if p.is_dir())
     if args.scope:
         # 🔴 THE SILENT ZERO THIS FUNCTION WAS REWRITTEN TO CLOSE, STILL OPEN ON
         # THIS BRANCH. The no-scope path was fixed to enumerate the cache; the
@@ -908,7 +1220,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         scopes = held
     if not scopes:
         print(
-            f"cairn: nothing to validate — {args.cache} holds no scopes",
+            f"cairn: nothing to validate — {cache} holds no scopes",
             file=sys.stderr,
         )
         return EXIT_UNREACHABLE_NO_CACHE
@@ -920,7 +1232,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # implementation of the same predicate — exactly the shape that lets a
         # file validate clean and then fail to render.
         index = subsystem_resolver.load_index(
-            args.cache,
+            cache,
             on_malformed=subsystem_resolver.ON_MALFORMED_COLLECT,
             visible_scopes=[scope],
         )
@@ -1148,7 +1460,11 @@ def cmd_append(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_USAGE
-    url, token = load_config()
+    try:
+        alias, _, _ = _instance_for(args, scope)
+    except cairn_instances.UnroutedScope as exc:
+        return _unrouted(exc)
+    url, token = load_config(instance=alias)
     payload = json.dumps({"text": args.text, "session": args.session}).encode("utf-8")
     quoted = f"/api/v1/entry/{quote(scope, safe='')}/{quote(args.ref, safe='')}/bullets"
     headers, body = send_write(
@@ -1164,8 +1480,15 @@ def cmd_append(args: argparse.Namespace) -> int:
     # store's own idempotency note says a genuinely new bullet whose text is
     # byte-identical to an existing one is silently NOT appended. Saying which
     # of the two happened is the whole difference.
+    # 🔴 A WRITE ALWAYS NAMES THE INSTANCE IT LANDED ON — unconditionally, where
+    # a READ names it only when there is more than one. The asymmetry is the
+    # same one this file already makes everywhere else: a read that degrades is
+    # recoverable by reading again, while "where did that bullet go" is a
+    # question about a DURABLE record, asked later, by someone who no longer has
+    # this terminal. It costs one field and it is the cheap permanent answer.
     print(
-        f"cairn: {status} scope={scope} ref={args.ref} revision={revision or 'unknown'}"
+        f"cairn: {status} instance={alias} scope={scope} ref={args.ref} "
+        f"revision={revision or 'unknown'}"
     )
     sys.stdout.write(body.decode("utf-8", "replace"))
     return EXIT_OK
@@ -1210,9 +1533,14 @@ def cmd_put(args: argparse.Namespace) -> int:
         print(f"cairn: cannot read --file {args.file}: {exc}", file=sys.stderr)
         return EXIT_USAGE
     revision = args.if_match
+    try:
+        alias, _, cache = _instance_for(args, scope)
+    except cairn_instances.UnroutedScope as exc:
+        return _unrouted(exc)
     if not revision:
         state, detail, hint = resolve_state(
-            args.cache, no_sync=False, scope=None, timeout=_store_timeout(args)
+            cache, no_sync=False, scope=None, timeout=_store_timeout(args),
+            instance=alias,
         )
         if state != STATE_LIVE:
             # 🔴 NOT "served from cache". A read may degrade; deriving a
@@ -1238,8 +1566,8 @@ def cmd_put(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return EXIT_WRITE_UNREACHABLE
-        matches = sorted(args.cache.glob(f"{scope}/{args.ref}.md")) or sorted(
-            args.cache.glob(f"{scope}/{args.ref}.*.md")
+        matches = sorted(cache.glob(f"{scope}/{args.ref}.md")) or sorted(
+            cache.glob(f"{scope}/{args.ref}.*.md")
         )
         if len(matches) != 1:
             print(
@@ -1251,7 +1579,7 @@ def cmd_put(args: argparse.Namespace) -> int:
             return EXIT_USAGE
         revision = hashlib.sha256(matches[0].read_bytes()).hexdigest()[:16]
         print(f"cairn: derived If-Match {revision} from the live snapshot", file=sys.stderr)
-    url, token = load_config()
+    url, token = load_config(instance=alias)
     quoted = f"/api/v1/entry/{quote(scope, safe='')}/{quote(args.ref, safe='')}"
     headers, body = send_write(
         url, token, method="PUT", path=quoted, body=payload,
@@ -1259,9 +1587,10 @@ def cmd_put(args: argparse.Namespace) -> int:
         extra_headers={"If-Match": f'"{revision}"'},
     )
     new_rev = (headers.get("ETag") or "").strip('"')
+    # The instance is named unconditionally — see `cmd_append`.
     print(
-        f"cairn: {headers.get('X-Store-Status', 'unknown')} scope={scope} "
-        f"ref={args.ref} revision={new_rev or 'unknown'}"
+        f"cairn: {headers.get('X-Store-Status', 'unknown')} instance={alias} "
+        f"scope={scope} ref={args.ref} revision={new_rev or 'unknown'}"
     )
     sys.stdout.write(body.decode("utf-8", "replace"))
     return EXIT_OK
@@ -1299,7 +1628,11 @@ def cmd_create(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"cairn: cannot read --file {args.file}: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    url, token = load_config()
+    try:
+        alias, _, _ = _instance_for(args, scope)
+    except cairn_instances.UnroutedScope as exc:
+        return _unrouted(exc)
+    url, token = load_config(instance=alias)
     quoted = f"/api/v1/entry/{quote(scope, safe='')}/{quote(args.ref, safe='')}"
     headers, body = send_write(
         url, token, method="PUT", path=quoted, body=payload,
@@ -1307,9 +1640,10 @@ def cmd_create(args: argparse.Namespace) -> int:
         extra_headers={"If-None-Match": "*"},
     )
     revision = (headers.get("ETag") or "").strip('"')
+    # The instance is named unconditionally — see `cmd_append`.
     print(
-        f"cairn: {headers.get('X-Store-Status', 'unknown')} scope={scope} "
-        f"ref={args.ref} revision={revision or 'unknown'}"
+        f"cairn: {headers.get('X-Store-Status', 'unknown')} instance={alias} "
+        f"scope={scope} ref={args.ref} revision={revision or 'unknown'}"
     )
     sys.stdout.write(body.decode("utf-8", "replace"))
     return EXIT_OK
@@ -1411,9 +1745,41 @@ def probe_store(url: str, token: str, *, timeout: int):
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """One call for every fact a reader otherwise assembles by hand."""
+    """One call for every fact a reader otherwise assembles by hand.
+
+    🔴 EVERY CONFIGURED INSTANCE, CHECKED SEPARATELY, SO A HEALTHY ONE CANNOT
+    MASK A BROKEN ONE. The checks are per-instance rows rather than a merged
+    verdict, and the exit code is the WORST of them: one reachable store must
+    never make a second one that is down look measured. On a host with one
+    instance the rows are exactly what they always were — no prefix, no extra
+    section — because there is nothing to disambiguate.
+    """
     doctor = _cairn_doctor()
-    resolved = _read_store.resolve_read_store(None)
+    routing = _routing()
+    refusal = _refuse_shared_cache(args, routing, "doctor")
+    if refusal is not None:
+        return refusal
+    checks: list = []
+    for instance in routing.instances:
+        checks.extend(_doctor_instance(args, doctor, routing, instance))
+    if args.json:
+        print(json.dumps(doctor.to_dict(checks), indent=2))
+    else:
+        print(doctor.render(checks))
+    return doctor.exit_code(checks)
+
+
+def _doctor_instance(args, doctor, routing, instance) -> list:
+    """The checks for ONE instance, named after it when this host is routing.
+
+    🔴 THE NAME CARRIES THE ALIAS, NOT THE DETAIL TEXT. `doctor --json` is
+    consumed by machine and `render` aligns on the name column, so an alias
+    buried in prose would be unreadable to both. `<alias>/<check>` keeps every
+    row addressable and sorts together.
+    """
+    resolved = _read_store.resolve_read_store(
+        None if instance.is_default else _read_store.cache_root_for(instance.alias)
+    )
 
     # 🔴 THE CONFIG LOAD HAPPENS EVEN UNDER `--no-sync`, AND THAT IS A FIX. It is
     # a local file read, so "is a credential configured on this host" is
@@ -1425,7 +1791,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     token: str | None = None
     token_reason = ""
     try:
-        url, token = load_config()
+        url, token = load_config(instance=instance.alias)
     except StoreUnreachable as exc:
         token_reason = str(exc)
         config_error: str | None = str(exc)
@@ -1446,18 +1812,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         resolved_root=resolved.root,
         stamp_lines=resolved.stamp,
         stamp_reason=resolved.reason,
-        cache_root=args.cache,
-        mirror_root=_mirror_root(),
+        cache_root=_instance_cache(args, instance.alias),
+        # 🔴 THE FROZEN MIRROR BELONGS TO THE DEFAULT INSTANCE ALONE. It is the
+        # pre-cutover local store this host migrated FROM, so there is exactly
+        # one of it however many instances are configured; reporting it under
+        # each would state one fact N times and make N-1 of the rows a claim
+        # about a directory that instance has nothing to do with.
+        mirror_root=_mirror_root() if instance.is_default else None,
         pod=pod,
         token=token,
         token_reason=token_reason,
         identity_remedy=IDENTITY_REMEDY,
     )
-    if args.json:
-        print(json.dumps(doctor.to_dict(checks), indent=2))
-    else:
-        print(doctor.render(checks))
-    return doctor.exit_code(checks)
+    if not routing.active:
+        return checks
+    return [
+        type(check)(f"{instance.alias}/{check.name}", check.state, check.detail)
+        for check in checks
+    ]
 
 
 
@@ -1547,6 +1919,95 @@ def _doctor_epilog() -> str:
     return "\n".join(lines)
 
 
+def cmd_routes(args: argparse.Namespace) -> int:
+    """Print the routing table, and grade it against what is actually there.
+
+    🔴 THE TABLE IS AN INPUT, NOT A CONSTANT IN THIS REPOSITORY, AND THAT IS A
+    DELIBERATE SEPARATION. A client that shipped somebody's scope->instance map
+    would be publishing their taxonomy; this program knows how to route and
+    nothing about who routes where. So the mechanism lives here and the table
+    lives wherever the operator keeps it — which makes THIS command the only
+    place the two meet, and the reason it grades rather than merely prints.
+
+    🔴 IT GRADES IN BOTH DIRECTIONS. A scope with no entry refuses its next
+    write — loud. An entry naming a scope that exists nowhere is the silent one:
+    it reads as coverage and survives a rename. See `cairn_instances.check_routes`.
+    """
+    routing = _routing()
+    print(f"instances: {', '.join(routing.aliases)}")
+    if routing.routes is None:
+        print(
+            "routes: NONE configured — every scope resolves to "
+            f"`{_read_store.DEFAULT_ALIAS}`"
+            if not routing.active
+            else "routes: NONE configured, and this host has more than one "
+                 "instance, so EVERY scope refuses until a table exists"
+        )
+        if not args.check:
+            return EXIT_OK
+        return EXIT_OK if not routing.active else EXIT_UNROUTED
+    print(f"routes: {routing.routes_source}")
+    for scope in sorted(routing.routes):
+        print(f"  {scope} -> {routing.routes[scope]}")
+    if not args.check:
+        return EXIT_OK
+
+    refusal = _refuse_shared_cache(args, routing, "routes --check")
+    if refusal is not None:
+        return refusal
+    # 🔴 THE SCOPE SET IS READ FROM THE INSTANCES THEMSELVES, REFRESHED FIRST.
+    # Grading a table against a stale cache invents both kinds of finding: a
+    # scope added elsewhere reads as "the table does not name it", and a scope
+    # deleted elsewhere reads as "the table names a scope that does not exist".
+    # An instance that cannot be refreshed is therefore named, and the check
+    # REFUSES rather than grading against what happens to be on this disk.
+    scopes: set[str] = set()
+    for instance in routing.instances:
+        cache = _instance_cache(args, instance.alias)
+        state, detail, hint = resolve_state(
+            cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args),
+            instance=instance.alias,
+        )
+        print(banner(state, detail, instance.alias), file=sys.stderr)
+        if hint is not None or state != STATE_LIVE:
+            print(
+                f"🔴 cairn: REFUSING to grade the table — instance "
+                f"`{instance.alias}` was not read LIVE, and a table graded "
+                f"against a stale or absent cache reports findings in both "
+                f"directions that are facts about this disk rather than about "
+                f"the table.",
+                file=sys.stderr,
+            )
+            return EXIT_UNROUTED
+        scopes.update(p.name for p in cache.iterdir() if p.is_dir())
+    problems = cairn_instances.check_routes(
+        routing.routes, scopes=scopes, aliases=routing.aliases
+    )
+    for problem in problems:
+        print(f"🔴 cairn: {problem}", file=sys.stderr)
+    print(
+        f"routes: {len(routing.routes)} entr"
+        f"{'y' if len(routing.routes) == 1 else 'ies'}, {len(scopes)} scope(s) "
+        f"across {len(routing.instances)} instance(s), {len(problems)} problem(s)"
+    )
+    return EXIT_UNROUTED if problems else EXIT_OK
+
+
+class _ExplicitCache(argparse.Action):
+    """Record that `--cache` was GIVEN, not merely defaulted.
+
+    🔴 THE DEFAULT AND AN EXPLICIT VALUE EQUAL TO IT ARE DIFFERENT FACTS, and
+    comparing the value against the default cannot tell them apart. With more
+    than one instance the default must be resolved PER INSTANCE while an
+    explicit `--cache` pins one directory, so the difference decides whether a
+    fan-out is allowed at all.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):  # noqa: D102
+        setattr(namespace, self.dest, values)
+        namespace.cache_explicit = True
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cairn",
@@ -1560,7 +2021,13 @@ def build_parser() -> argparse.ArgumentParser:
     # Resolved at parser-BUILD time through the accessor, so the module global
     # stays the single point of truth and a test can repoint reader and writer
     # together with one assignment.
-    p.add_argument("--cache", type=Path, default=_read_store.read_store_root())
+    p.add_argument(
+        "--cache", type=Path, default=_read_store.read_store_root(),
+        action=_ExplicitCache,
+    )
+    # The flag's own default lives here rather than on the action, because an
+    # Action only runs when the option APPEARS.
+    p.set_defaults(cache_explicit=False)
     # `None` = not given, resolved to `DEFAULT_TIMEOUT` by `_store_timeout`,
     # which is the ONLY resolver — there is no second, longer default.
     # (This comment used to promise one, naming a subcommand and a helper that
@@ -1652,6 +2119,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     d.set_defaults(func=cmd_doctor)
 
+    ro = sub.add_parser(
+        "routes",
+        help="print the scope->instance table, and grade it against reality",
+    )
+    ro.add_argument(
+        "--check", action="store_true",
+        help="grade the table BOTH ways and exit non-zero on any problem",
+    )
+    ro.add_argument(
+        "--no-sync", action="store_true",
+        help="do not refresh first (--check then refuses: see cmd_routes)",
+    )
+    ro.set_defaults(func=cmd_routes)
+
     # --- the write verbs -----------------------------------------------------
     # 🔴 `writes=True` IS NOT DECORATION. `main` maps a `StoreUnreachable` to
     # exit 3 ("store-unreachable, no cache"), which is a READ verdict and reads
@@ -1727,6 +2208,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.no_sync = False
     try:
         return args.func(args)
+    except cairn_instances.UnroutedScope as exc:
+        # A backstop, not the primary path: every call site that can raise this
+        # catches it where the remedy is clearest. Here so a future verb that
+        # forgets cannot turn a routing refusal into a traceback at exit 1.
+        return _unrouted(exc)
+    except cairn_instances.RoutingConfigError as exc:
+        # 🔴 THE SAME CODE AS AN UNROUTED SCOPE, DELIBERATELY. Both mean "this
+        # client could not decide which instance to use and did nothing"; the
+        # remedy for both is a file the operator owns. A second code would ask
+        # every consumer to learn a distinction neither of them can act on
+        # differently.
+        print(f"🔴 cairn: REFUSING — {exc}", file=sys.stderr)
+        return EXIT_UNROUTED
     except WriteRefused as exc:
         # 🔴 THE STORE ANSWERED, AND THE ANSWER IS NO. Printed with the server's
         # own `X-Store-Status`, because that token is what distinguishes the four

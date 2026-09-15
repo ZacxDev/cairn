@@ -26,8 +26,9 @@ from subsystem_resolver import NUANCE_HEADING, POINTERS_HEADING, normalize_ref
 __all__ = [
     "CairnError", "GitError", "RepoPathMissingError", "StoreMissingError",
     "BULLET_TEXT_MAX", "SHAPE_HEADINGS", "STORE_IS_PER_HOST",
+    "STORE_IS_ONE_INSTANCE",
     "derive_scope", "repo_path_missing_message", "scope_for_repo",
-    "store_host", "store_host_line",
+    "store_caveat", "store_host", "store_host_line",
 ]
 
 
@@ -162,14 +163,43 @@ BULLET_TEXT_MAX = 2000
 #: FRESHNESS, not isolation — an entry written elsewhere and not yet synced here
 #: is invisible, and that is the honest caveat to print.
 #:
-#: ⚠ THIS SENTENCE BECOMES INCOMPLETE THE MOMENT A CLIENT IS POINTED AT MORE
-#: THAN ONE INSTANCE. With several instances configured, an absence is also
-#: explainable by "that scope lives on another instance", and a reader told only
-#: that the cache is per-host will draw the wrong conclusion. Whoever adds
-#: multi-instance routing must rewrite this string in the same change.
+#: 🔴 THE MULTI-INSTANCE CASE IS NOW HANDLED, AND IT IS HANDLED BY
+#: `store_caveat`, NOT BY EDITING THIS STRING. The warning that used to sit here
+#: said "whoever adds multi-instance routing must rewrite this string in the
+#: same change", and the FIRST half of that is right: with several instances
+#: configured an absence is also explainable by "that scope lives on another
+#: instance", and a reader told only that the cache is per-host draws the wrong
+#: conclusion. The second half — rewrite THIS constant — is what the code
+#: measured wrong, and the reason is worth keeping because it is not obvious:
+#:
+#:   * this sentence is BYTE-MIRRORED into the Go port (`internal/hostid`) and
+#:     into two generated corpora — the reader fixture the Go renderer is
+#:     compared against, and the HTTP conformance goldens. Changing it
+#:     unconditionally is a four-place change across two languages, and two of
+#:     those places are regenerate-and-diff gates;
+#:   * and it would change the bytes of every SINGLE-instance recall, on every
+#:     host, to warn about a second instance that does not exist there.
+#:
+#: So the caveat became a FUNCTION of the instance context: unchanged where
+#: there is one instance (the server, the goldens, every existing host), and
+#: extended — at the point of rendering — where there is more than one. The
+#: clause below is the extension.
 STORE_IS_PER_HOST = (
     "the store is read through a PER-HOST CACHE, only as fresh as its last sync; "
     "this run read THIS machine's disk and consulted no other"
+)
+
+#: The clause the caveat gains when this host is configured with more than one
+#: instance. `{instance}` is the alias this run read.
+#:
+#: 🔴 IT NAMES THE INSTANCE, NOT JUST THE FACT OF ROUTING. "several instances
+#: exist" leaves the reader with the same question they started with; the alias
+#: is what makes an absence actionable — it says which store was consulted, so
+#: "look on the other one" is a command they can type.
+STORE_IS_ONE_INSTANCE = (
+    "and this run read the `{instance}` instance ONLY — with more than one "
+    "instance configured, an absence here is also explainable by the scope "
+    "living on another instance, so it is NOT an absence from the fleet"
 )
 
 
@@ -185,9 +215,24 @@ def store_host() -> str:
     return this_host()
 
 
-def store_host_line(indent: str = "  ") -> str:
+def store_caveat(instance: str | None = None) -> str:
+    """The per-host caveat, extended when this host reads more than one instance.
+
+    🔴 `None` IS THE SINGLE-INSTANCE CASE AND MUST STAY BYTE-IDENTICAL. The
+    server renders with no instance context, and so does every client on a host
+    with one instance configured; both produce exactly the sentence this
+    module's readers, its Go port and two generated corpora already agree on.
+    A caller passes an alias only when there IS more than one place the answer
+    could have come from.
+    """
+    if instance is None:
+        return STORE_IS_PER_HOST
+    return f"{STORE_IS_PER_HOST}, {STORE_IS_ONE_INSTANCE.format(instance=instance)}"
+
+
+def store_host_line(indent: str = "  ", *, instance: str | None = None) -> str:
     """`host: <id>  (<the per-host caveat>)` — printed under every `store:` line."""
-    return f"{indent}host: {store_host()}  ({STORE_IS_PER_HOST})"
+    return f"{indent}host: {store_host()}  ({store_caveat(instance)})"
 
 
 # --------------------------------------------------------------------------

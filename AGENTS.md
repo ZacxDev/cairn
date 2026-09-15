@@ -398,6 +398,41 @@ line here: concurrency (both clients take the same `flock`, but nothing runs the
 instant), real network failures beyond a connect refusal, a narrowed credential (the SERVER's
 narrowing is the corpus's claim), and the `doctor` states no healthy world reaches.
 
+## 🔴 THE CLIENT CAN BE POINTED AT SEVERAL INSTANCES, AND AN UNROUTED SCOPE REFUSES
+
+`lib/cairn_instances.py` owns three questions: what is configured, which
+instance a scope belongs to, and whether the two agree. The rules that bind
+anyone editing that path:
+
+- **The routing table is an INPUT, never a constant here.** A scope→alias map
+  lives in the operator's own configuration (`~/.config/subsystem-store/routes.json`
+  or `$CAIRN_ROUTES`). This repository is public: shipping a table would publish
+  somebody's taxonomy. Aliases only — never a hostname — in anything this repo
+  reads, prints or stores.
+- **An unregistered scope REFUSES (exit 11) and names the scope.** No fallback to
+  the default instance, the first instance, or the one that answers. The failure
+  a default recreates is a write landing in a store nobody reads, which is found
+  days later by accident if at all.
+- **One instance is not routing.** `Routing.active` is the ONE predicate — the
+  banner label, the write label, `doctor`'s per-instance rows, the `--all-scopes`
+  fan-out and the caveat's extra clause all ask it, so they cannot disagree about
+  whether this host routes. With a single instance every byte of output is what
+  it was before any of this existed, which is what made the machinery shippable
+  before any data moved.
+- **The default instance's cache root does not move.** `cache_root_for` returns
+  `DEFAULT_CACHE_ROOT` unchanged for `personal` and a SIBLING directory for every
+  other alias. A child directory would look exactly like a SCOPE to every reader
+  that enumerates `<root>/<dir>`.
+- 🔴 **`STORE_IS_PER_HOST` IS BYTE-MIRRORED INTO THE GO PORT AND TWO GENERATED
+  CORPORA** (`internal/hostid`, `internal/report/testdata/reader_fixtures.json`,
+  `tests/conformance/golden/*.json`). That is why the multi-instance caveat is a
+  clause `entry_shape.store_caveat` ADDS at render time rather than an edit to
+  the constant: changing the sentence is a four-place change across two
+  languages, two of them regenerate-and-diff gates.
+- **A read is labelled only when there is more than one instance; a WRITE names
+  its instance always.** "Where did that bullet go" is a question about a durable
+  record, asked later, by someone who no longer has the terminal.
+
 ## Installing and building with nix
 
 ```bash
