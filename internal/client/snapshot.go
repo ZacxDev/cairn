@@ -188,7 +188,13 @@ func validateGzipLayer(body []byte) error {
 // same bytes costs a re-inflate and no more. The alternative — buffering every body to
 // decide afterwards — would make the byte ceiling a comment, since the buffer it is meant to
 // bound would already be full.
-func checkCeilings(body []byte) error {
+// ⚠ THE LIMITS ARE PARAMETERS, AND THAT IS A TESTABILITY SEAM RATHER THAN A SETTING. Nothing in
+// production passes anything but the two constants — `InstallSnapshot` is the only caller — and a
+// test that had to build a 256 MB archive to reach the byte ceiling would not exist, which is
+// exactly what happened: the `sum` → `max` mutant SURVIVED a suite whose only byte-ceiling case
+// asserted that an honest archive is NOT refused. `sum`, not `max`, is the whole point (a `max`
+// ceiling passes a 1000 × 250 MB archive) and it needs a case where the two answers differ.
+func checkCeilings(body []byte, maxBytes int64, maxMembers int) error {
 	reader, err := openArchive(body)
 	if err != nil {
 		return err
@@ -206,13 +212,13 @@ func checkCeilings(body []byte) error {
 		declared += header.Size
 		members++
 	}
-	if declared > MaxUnpackedBytes {
+	if declared > maxBytes {
 		return corrupt("archive unpacks to %d bytes, over the %d-byte ceiling "+
-			"(%d bytes on the wire)", declared, MaxUnpackedBytes, len(body))
+			"(%d bytes on the wire)", declared, maxBytes, len(body))
 	}
-	if members > MaxMembers {
+	if members > maxMembers {
 		return corrupt("archive holds %d members, over the %d-member ceiling "+
-			"(%d bytes on the wire)", members, MaxMembers, len(body))
+			"(%d bytes on the wire)", members, maxMembers, len(body))
 	}
 	return nil
 }
@@ -249,7 +255,7 @@ func InstallSnapshot(body []byte, cache string, headers http.Header) (int, error
 	if err := validateGzipLayer(body); err != nil {
 		return 0, err
 	}
-	if err := checkCeilings(body); err != nil {
+	if err := checkCeilings(body, MaxUnpackedBytes, MaxMembers); err != nil {
 		return 0, err
 	}
 	reader, err := openArchive(body)

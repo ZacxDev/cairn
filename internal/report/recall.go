@@ -433,6 +433,14 @@ func selectFeatured(
 		if assocErr != nil {
 			return "", "", assocErr
 		}
+		// ⚠ THE `byRef` FILTER IS EQUIVALENT TODAY, AND IT IS LABELLED SO A SWEEP DOES NOT
+		// RE-DERIVE IT. A mutant deleting it SURVIVED the whole battery, correctly: `Matched`
+		// can only hold entries of `opts.Scope` (the matcher resolves against this same index)
+		// and `entries` in digest mode is EVERY entry of that scope, read or failed — a failed
+		// read aborts the report rather than producing a partial `read`. So the filter can
+		// never remove anything. It stays because it is the oracle's line and because the day
+		// a caller passes a NARROWED entry set is the day it starts mattering; `byRef` is also
+		// the mtime lookup below, so deleting it is not the simplification it looks like.
 		var matched []store.SubsystemMatch
 		for _, m := range assoc.Matched {
 			if _, read := byRef[m.Entry.Ref()]; read {
@@ -440,6 +448,12 @@ func selectFeatured(
 			}
 		}
 		if len(matched) > 0 {
+			// ⚠ `SliceStable` IS BELT-AND-BRACES, NOT A GUARD — the same label
+			// `ListingOrder` carries, and for the same measured reason: the comparator is a
+			// TOTAL order (refs are unique within a scope, so no two matches compare equal),
+			// which makes stability unobservable. A mutant swapping it for `sort.Slice`
+			// SURVIVED. It stays because "equal elements keep their order" is the property a
+			// reader assumes of an ordering function.
 			sort.SliceStable(matched, func(i, j int) bool {
 				a, b := matched[i], matched[j]
 				if a.PathCount() != b.PathCount() {

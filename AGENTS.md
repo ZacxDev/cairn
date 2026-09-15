@@ -72,12 +72,14 @@ These are the house style, and they are why the guards here are worth trusting:
 
 | path | what |
 |---|---|
-| `cairn` | the client CLI — sync, recall, search, ls-entries, doctor, append, put, create |
-| `lib/` | the reader: cache resolution, recall rendering, scope/ref resolution, doctor |
+| `cairn` | the PYTHON client CLI and the ORACLE — sync, recall, search, validate, ls-entries, doctor, append, put, create |
+| `lib/` | the Python reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
-| `cmd/`, `internal/`, `go.mod` | the Go port of the server (P1), stdlib-only — see below |
-| `tests/` | the suites, plus `leakscan.py` and `conformance/` |
-| `flake.nix` | the packaged client, the server image, the Go server, and the checks over all three |
+| `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
+| `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
+| `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
+| `tests/` | the suites, plus `leakscan.py`, `conformance/` (P1's gate) and `parity/` (P2's) |
+| `flake.nix` | both clients, the server image, the Go server, and the checks over all of them |
 
 ## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
 
@@ -85,11 +87,18 @@ These are the house style, and they are why the guards here are worth trusting:
 conformance corpus can be replayed against both implementations on the same store and
 the difference MEASURED. The sequence is fixed — the Go server passes the corpus, then
 both run over one store and byte-identity is compared, then the client is ported, then
-Python is retired. **Step one is done and step two is not**: the corpus is green for both
-implementations, and no dual-run comparison has been made. Do not declare a step done
-early, and do not switch the deployed image on the strength of a green corpus — the
-sentence here used to read "while the corpus is partial", which a green corpus would have
-satisfied while leaving every remaining step untouched.
+Python is retired.
+
+🔴 **STEPS ONE AND THREE ARE DONE; STEP TWO IS STILL NOT, AND IT IS NOT IMPLIED BY THE
+OTHER TWO.** The corpus is green for both server implementations (step 1) and the Go
+client is byte-identical to the Python one over `tests/parity/` (step 3) — but **no
+dual-run of the two SERVERS over one store has been made**, which is the comparison
+`server/verify-byte-identity.sh` exists for. Step 3 landing out of order is deliberate:
+it closes the two-renderer window, and it says nothing about the servers agreeing on a
+live store. Do not declare a step done early, and do not switch the deployed image on
+the strength of a green corpus plus a green parity gate — the sentence here once read
+"while the corpus is partial", which a green corpus would have satisfied while leaving
+every remaining step untouched.
 
 🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP
 IDENTITY IS UNATTAINABLE — MEASURED, NOT ASSUMED.** `/api/v1/snapshot` ships
@@ -220,21 +229,36 @@ the per-field strip unreachable from a fixture whose matching row came last.
 holds `Recall`, `Search`, `RecallReport.RenderText`, `SearchReport.RenderText` and
 `ExitFor` — plain values in, plain values out, no `net/http` type in any signature, no
 server config, and every error classifiable with `errors.As`/`errors.Is`
-(`store.StoreMissingError`, `store.EntryUnreadableError`,
-`report.ErrFocusSelectorUnported`). `report.Reader` is the thin `Renderer` the pod hands
-to `internal/api` and the ONLY type in the package that knows a server exists. That shape
-is the whole point of P2: **pod and CLI run one renderer**, which is what makes
-byte-identity a property rather than a discipline — rewriting the server alone would leave
-two renderers agreeing forever by review.
+(`store.StoreMissingError`, `store.EntryUnreadableError`). `report.Reader` is the thin
+`Renderer` the pod hands to `internal/api` and the ONLY type in the package that knows a
+server exists. **That shape is no longer a promise about P2: `internal/client` is the second
+consumer, and it calls `Recall`/`Search`/`RenderText`/`ExitFor` directly rather than through
+`Reader`.** Pod and CLI run ONE renderer, which is what makes byte-identity a property
+rather than a discipline — rewriting the server alone would have left two renderers
+agreeing forever by review.
 
-⚠ **THREE PLACES THE PORTED READER DELIBERATELY DIFFERS FROM THE ORACLE, each recorded
-because none is visible to the corpus:**
+⚠ **TWO PLACES THE PORTED READER DELIBERATELY DIFFERS FROM THE ORACLE, each recorded
+because neither is visible to the corpus:**
 
 | where | the difference | why |
 |---|---|---|
-| `report.ErrFocusSelectorUnported` | a non-empty focus path window is REFUSED, not served | the oracle's featured pick has two selectors and only the most-recent fallback is ported. A window that silently fell back would print a basis claiming a resolved pick — a wrong claim, silently. Closing condition: `associate_paths` ported with a red-at-baseline differential test, then the guard is deleted with it |
 | `store.ScopeRevision` on a `.git/HEAD` that is not valid UTF-8 | ONE `400` audit line here, **two** (`200` then `400`) on the oracle | there the strict decode raises while the response's arguments are being evaluated, after the 200 line is already written. Reproducing a mid-response raise to duplicate a log line is a worse trade than naming it |
 | `store.ScopeRevision` resolving a `ref:` | `filepath.Join` CLEANS, so a `ref:` naming `../…` cannot climb out of the git dir; the oracle's `git / ref` can | a NARROWING, in the safe direction. A HEAD pointing outside its own repo is not a revision worth reporting |
+
+✅ **AND ONE ROW OF THAT TABLE IS CLOSED, BY ITS OWN STATED CONDITION.**
+`report.ErrFocusSelectorUnported` refused a non-empty focus window, on the stated grounds
+that "the store API never sends one" — **true of the pod and FALSE of the CLI**, which is
+what P2 is. `cairn recall` with no `--scope` and the default `--mode` builds a window out of
+the repo's newest handoff doc and passes it straight through, so the refusal was reachable
+from the commonest invocation of the commonest verb and a Go client could not answer
+`recall` at all. The condition recorded for deleting it was "`associate_paths` ported with a
+red-at-baseline differential test"; `store.AssociatePaths` is that port, seven
+`digest-focus-*` rows in `reader_fixtures.json` carry the ORACLE's own rendered basis for it
+(a filename-tier hit, an alias-tier hit, a miss, an ambiguous ref, the mtime tie-break, the
+`…` truncation and the sourceless arm), and two more — `digest-focus-count-beats-mtime` and
+`digest-focus-ref-is-the-last-resort` — exist because a mutation sweep found the ranking's
+PRIMARY key and its LAST resort unreachable from the other seven. The error and its guard
+are deleted together, as promised, rather than left as a branch no caller can reach.
 
 🔴 **AND ONE DIVERGENCE IS OPEN RATHER THAN DELIBERATE: AN INTEGER QUERY PARAMETER WIDER
 THAN `int64`.** `_int_param` is `int(v)`, which is arbitrary precision; `intParam` is
@@ -282,6 +306,141 @@ its own scope, so the build fetched 1.26 while the derivation advertised 1.25.
 `vendorHash = null`; together those make a new dependency in the serving path a build
 FAILURE rather than a silent addition.
 
+## 🔴 TWO CLIENTS ARE ALIVE, `cairn` IS THE ORACLE, AND `tests/parity/` IS THE GATE
+
+```bash
+python3 tests/parity/harness.py              # the P2 gate: both clients, one cache root
+python3 tests/parity/harness.py --self-test   # prove the differ can go RED
+python3 tests/parity/harness.py --break-pod   # prove the PRE-FLIGHT refuses to vouch
+```
+
+`cmd/cairn` is the Go client. It exists for ONE reason: rewriting the server alone left **two
+renderers in two languages that must agree byte-for-byte forever**, with drift arriving as "a
+different order that reads as a stale cache" — no error, no missing entry. `internal/report`
+is the one renderer; the pod reaches it through `report.Reader` and the CLI calls
+`Recall`/`Search`/`RenderText`/`ExitFor` directly. **One renderer, three consumers** (pod, CLI,
+a future UI) is the deliverable, not a second client.
+
+**Measured on this tree: 77 cases, 78 PASS, 0 failures, 0 dead normalizations** — all nine
+verbs, every output-shaping flag, every documented exit code, and `cache-mtime-parity` on top.
+
+🔴 **THE FIRST FULL RUN OF THAT GATE REPORTED 72 PASS / 0 FAIL AND MEASURED NOTHING.**
+`SUBSYSTEM_STORE_TRUSTED_PROXIES=127.0.0.1/32`, copied from the conformance runner where it is
+correct, told the server the loopback peer was a PROXY — so every DIRECT request was refused
+`401 status=no-client-ip`, no cache was ever written, and every report rendered
+`store-unreachable`. **Two clients failing identically compare equal.** It was found by reading
+the pod's audit log, not by the green. Three controls now stand against it and they are three
+different claims, so read all three:
+
+| control | proves | refuses with |
+|---|---|---|
+| `PREFLIGHT status=… declared-entries=…` | the POD answers a non-empty snapshot for this token | exit **2** — "could not vouch", not "failed" |
+| `CONTENT-FLOOR live-banner=… rendered-digest=…` | the CLIENTS reached a live fetch and a rendered digest | exit 2 |
+| `--self-test` → `sabotaged=3 caught=3` | the differ goes red on stdout, on stderr **AND** on the exit code | exit 2 |
+
+`--break-pod` is the negative control on the first of those: it reconfigures the pod into
+exactly the state above and the harness must answer 2, not 78 PASS. ⚠ **Three sabotage rows,
+not one**, because a `compare="exit"` row is STRUCTURALLY blind to stdout and stderr — one
+control over "something went red" would vouch for a differ that had lost two of its three
+comparisons.
+
+🔴 **THE GATE FOUND THREE DEFECTS NO EXISTING TEST OR GOLDEN COULD SEE, and each is worth
+knowing because each is a class rather than a typo:**
+
+1. **`create` answers `201`.** `urllib`'s `HTTPErrorProcessor` raises only OUTSIDE 200–299, so
+   a `resp.StatusCode != 200` test reported a SUCCESSFUL create as `unrecognised HTTP 201 …
+   treating the write as NOT LANDED` at exit 6 — whose documented remedy is to change a request
+   that already landed. No conformance golden the client replays carries that status, and every
+   write test written against `append` passes on a 200.
+2. **The installer dropped every member's MTIME.** The reader orders its index by entry mtime,
+   so the cache was ordered by TAR ORDER: a different listing with a different featured entry.
+   Precisely the silent reordering this phase exists to prevent.
+3. **A `CAIRN_CACHE_ROOT` override the port invented.** `doctor` resolves the READER's store
+   through that function and NOT through `--cache`, so the two clients reported different
+   `reader-resolution` roots on every doctor row. Deleted rather than mirrored into Python: a
+   second mechanism reaching one value is the shape that leaves the first silently dead.
+
+A fourth came out of the Go unit battery: a truncated gzip stream and an HTML error page
+surface as the SAME `io.ErrUnexpectedEOF` out of `tar.Next`, so classifying on the error VALUE
+called `<html>nope</html>` a truncated tar where the oracle says `did not return an archive`.
+`gzipLayerError` records WHICH LAYER failed at the point it is known, and `validateGzipLayer`
+streams the compressed body to `io.Discard` **under a limit** — decompressing into memory to
+inspect it would make a decompression bomb a MEMORY bomb before either ceiling is consulted,
+because the ceilings read headers a truncated stream never reaches.
+
+🔴 **SIX RESIDUAL DIFFERENCES ARE DECLARED IN `tests/parity/README.md` RATHER THAN NORMALISED
+AWAY, and the one worth repeating here is the mtime.** The oracle's `tarfile` carries a PAX
+mtime as a Python **float** and `os.utime` writes it back, losing sub-microsecond precision
+Go's exact decimal parse keeps (measured: `…236263` vs `…236300`, 37 ns). It is **measured
+unable to matter**: both collapse to the same `float64`, which is the value
+`report.pyMtime` computes and the index order is decided on, because one ULP is 238 ns at the
+current epoch — 119/238/238/477 ns at four magnitudes (2000, now, 2038, 2100). The gate asserts
+the doubles are identical **and** that the raw delta stays under that bound, so a change that
+widened it fails there rather than reordering an index. The other five: argparse's usage text
+(exit code compared, text not), `urllib`-vs-`net/http` failure tails, a reader error's exit
+route (3 by contract on Go, 1 by traceback on the oracle), a `SyntaxError` in a runtime-loaded
+module (impossible in a binary), and `ReadStamp`'s missing "is not text" arm.
+
+🔴 **THE GO CLIENT CARRIES TWO LEDGERS OF ITS OWN, BECAUSE THE PYTHON-SIDE GATES ARE BLIND TO A
+COMPILED PROGRAM.** `capability_ledger.cli_verbs_from_parser` asks the PYTHON argparse parser
+what subcommands it has; `tests/test_cairn_doctor.py`'s exit-code ledger walks the `cairn`
+script's AST. Neither has an equivalent for a binary, so a Go-only verb, a Go client that
+silently LOST one, or a Go exit code colliding with `doctor`'s 10 would each leave those gates
+green. `cairn -verbs` and `cairn -exit-codes` print the tables the dispatcher and the exit
+model are built from, and they are read out of the RUNNING binary in **two tiers**:
+`tests/test_go_client_ledgers.py` (the `go` CI job, which REFUSES on a skip — the `tests` job
+has no toolchain, and a skip nobody counts is a pass) and
+`checks.go-client-declares-its-verbs` (the `nix` job). Same shape as
+`api.DeclaredRoutes()`/`cairn-server -routes`, and for the same reason.
+
+🔴 **THE EXIT-CODE MODEL IS A PRINTED CONTRACT AND THE `{0, 9}` OVERLAP IS DELIBERATE.** Read
+outcomes `0`/`3`/`4`/`5`, writes `6`/`7`/`8`/`9`, usage `2` — a third bucket, not a read — and
+`doctor`'s own `0`/`9`/`10`. Both clients declare identical values, asserted from BOTH
+discovered operand sets. Do not renumber the 9 to make it unique: it is unambiguous at every
+call site (`doctor` never creates an entry, `create` never runs diagnostics), and renumbering
+changes a contract the command PRINTS to remove a collision that was never a defect.
+
+⚠ **WHAT THE GATE STRUCTURALLY CANNOT SEE**, listed in `tests/parity/README.md` and worth one
+line here: concurrency (both clients take the same `flock`, but nothing runs them at the same
+instant), real network failures beyond a connect refusal, a narrowed credential (the SERVER's
+narrowing is the corpus's claim), and the `doctor` states no healthy world reaches.
+
+## 🔴 THE MUTATION BATTERY OVER P2: 51 MUTANTS, 48 KILLED, 3 LABELLED EQUIVALENT AT THE CODE
+
+Round 1 killed 44, and its findings are why there is a round 2 — **every one of them was a hole
+in a guard rather than a defect in the code**, which is the useful direction:
+
+- **a `-run` filter that excluded the killing test.** `-run EMPTYDetail` matches nothing against
+  `TestACheckWithAnEmptyDetailIsREFUSEDAtConstruction`, so deleting `Check`'s empty-detail
+  refusal was scored SURVIVED while the guard was live. The harness was wrong, not the code.
+- **an unreachable assertion inside a live guard.** A mutant removing the per-entry path dedup
+  survived, because the INPUT dedup's assertion ran first and short-circuited the `PathCount`
+  one. Isolating the mutation needed a path that names one entry TWICE — and the obvious fixture
+  (`apps/widget-cfg/widget-cfg.yaml`) does NOT work, because `PathRefs` collapses the identical
+  `("widget-cfg", "widget-cfg")` pair the directory and the stem both produce. It takes
+  `apps/widget-cfg/Widget_Config.yaml`: the filename tier from the directory, the ALIAS tier
+  from the stem.
+- **an empty stamp read as a stamp.** A zero-byte `.sync-stamp` reported STAMPED with no
+  fields, which makes `doctor` grade `reader-resolution` OK and `cache-stamp` OK with
+  `(the stamp is empty)` — a store that cannot date itself reporting a clean bill of health.
+- **a refusal message that mangled itself.** Backticks inside a double-quoted `echo` in
+  `checks.go-client-declares-its-verbs` are a command substitution: the failure printed
+  `writes: command not found` and lost the word it was about, on the one path nobody reads until
+  something is already broken. Found by running that check's OWN negative control.
+- **the ranking's primary key and last resort, unreachable.** Every `digest-focus-*` row
+  resolved exactly ONE entry, so a comparator sorted ascending — or with the count key deleted
+  entirely — survived. Two fixtures now make both observable.
+
+The three survivors are labelled EQUIVALENT at the code with the reasoning, not left for a
+sweep to re-derive: `report`'s `byRef` filter (`Matched` can only hold entries of the scope
+`read` already covers, and a failed read aborts the report rather than producing a partial one),
+`sort.SliceStable` over that total order (refs are unique within a scope, so stability is
+unobservable — the same label `ListingOrder` carries), and `doctor`'s `MirrorRoot != ""`
+condition in the visibility check (an empty path reaches `os.ReadDir("")`, fails ENOENT, and the
+`absent` re-check stats `""` to the same answer — so it degrades to the benign branch **by
+accident of a libc detail**, which is not a property to bet the NOT-OBSERVABLE-versus-absent
+distinction on; the `frozen-mirror` check branches on the same condition and is NOT equivalent).
+
 ## Installing and building with nix
 
 ```bash
@@ -294,8 +453,17 @@ Consumers pin this flake as an input; that is the supported way to get a `cairn`
 whose version cannot disagree with the code in it, because **the version is the
 git revision** and is never written down by hand.
 
-🔴 **`lib/` MUST STAY BESIDE THE CLIENT SCRIPT, AND THE PACKAGE IS BUILT THAT
-WAY ON PURPOSE.** `cairn` finds its modules with
+🔴 **THERE ARE NOW TWO CLIENTS, AND EVERY CLAIM BELOW SAYS WHICH ONE IT IS
+ABOUT.** `cairn` (`packages.cairn`, and still `packages.default`) is the Python
+client and the ORACLE; `cmd/cairn` (`packages.cairn-go`) is the Go port. The Go
+client is a SECOND artefact during P2, not a replacement: nothing in `apps` or
+`packages.default` points at it, because swapping them changes what
+`nix run github:…/cairn` executes for every existing consumer — a cutover, not a
+build. **The Python client, its `lib/` and its packaging are not deleted here**;
+the plan retires Python at P8, after the gate below has held over real use.
+
+🔴 **`lib/` MUST STAY BESIDE THE *PYTHON* CLIENT SCRIPT, AND `packages.cairn` IS
+BUILT THAT WAY ON PURPOSE.** `cairn` finds its modules with
 `Path(__file__).resolve().parent / "lib"`. `.resolve()` follows symlinks, so
 what matters is the directory holding the REAL file — the package therefore
 installs the script and `lib/` together under `libexec` and puts a wrapper in
@@ -309,12 +477,32 @@ therefore dies too. `checks.client-resolves-its-lib` earns its place on the
 other side: it runs a real subcommand to completion against a real cache root,
 which is behaviour the install check does not exercise.
 
+🔴 **NONE OF THAT PARAGRAPH APPLIES TO THE GO CLIENT, AND SAYING SO IS THE POINT
+RATHER THAN LEAVING IT TO BE INFERRED.** A single binary has no sibling module
+directory, no import path, and no install check about one — so the two hazards
+the paragraph above exists for (a lost `lib/`, a second resolution mechanism
+shadowing the stated one) cannot exist there. What `packages.cairn-go` has
+instead is a `gitMinimal` on its wrapper's `PATH`, for exactly the reason
+`packages.cairn` has one: `internal/client/reposcope.go` invokes `git` by BARE
+NAME to derive a repo's scope, so a package that did not carry its own answer
+would make `cairn recall` with no `--scope` fail differently on two machines.
+⚠ **Do not read the `lib/` rule as retired.** It governs the client that is
+still shipped and still the oracle; it stops governing anything on the day
+`packages.cairn` does, which is P8.
+
 ⚠ **`checks.client-resolves-its-lib` runs in a nix sandbox, and a sandbox pins
 dimensions.** Its HOME has no cache root, which is exactly why it did not
 notice that `cairn doctor` crashed on any host that HAD one
 (`AttributeError: 'NoneType' object has no attribute 'iterdir'`, zero stdout,
 exit 1, whenever `CAIRN_MIRROR_ROOT` was unset — the default). Ask what your
 sandbox cannot have before reading its green as coverage.
+
+⚠ **AND `checks.go-client-declares-its-verbs` HAS THE SAME SHAPE OF BLINDNESS,
+NAMED HERE BECAUSE IT IS NEW.** It has no store, no token, no network and no
+HOME with a cache root, so it exercises the two LEDGERS and nothing about
+reading or writing — the `AttributeError` above is exactly the class of defect it
+cannot see. The parity gate is what measures behaviour, and it needs a running
+pod that a nix sandbox is the wrong place for.
 
 🔴 **THERE ARE TWO WAYS TO BUILD THE POD AND THEY MUST NOT DIVERGE.**
 `server/Dockerfile` is what is deployed today; `packages.server-image` is the

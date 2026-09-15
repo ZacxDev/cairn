@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -141,6 +142,27 @@ func TestBOTHCeilingsFireAndTheyMeasureDIFFERENTThings(t *testing.T) {
 		t.Fatalf("a small honest archive must install: %v", err)
 	}
 
+	// 🔴 `sum`, NOT `max`, AND THIS IS THE ONLY CASE WHERE THE TWO ANSWERS DIFFER. A `max`-based
+	// ceiling passes a 1000 × 250 MB archive, and every other case here cannot tell them apart —
+	// the mutant survived until this row existed. The limits are parameters for exactly this
+	// reason: three 1024-byte members SUM to 3072 and MAX to 1024, so a 2048-byte ceiling
+	// separates the two without a 256 MB fixture.
+	sumFail := checkCeilings(bytesBomb, 2048, MaxMembers)
+	var sumErr *StoreCorrupt
+	if !errors.As(sumFail, &sumErr) ||
+		!strings.Contains(sumErr.Reason, "archive unpacks to 3072 bytes") {
+		t.Fatalf("the byte ceiling must SUM the declared sizes: %#v", sumFail)
+	}
+	// …and a ceiling above the sum but below nothing else must pass, which is what makes the row
+	// above about the arithmetic rather than about the ceiling always firing.
+	if err := checkCeilings(bytesBomb, 4096, MaxMembers); err != nil {
+		t.Fatalf("a ceiling above the SUM must pass: %v", err)
+	}
+	// ⚠ THAT THE PRODUCTION CALL SITE PASSES THE PRODUCTION CONSTANTS IS ASSERTED BY THE MEMBER
+	// CEILING BELOW, WHICH GOES THROUGH `InstallSnapshot` AND NAMES `MaxMembers` IN ITS MESSAGE. A
+	// second assertion for the byte ceiling would need a 256 MB fixture to reach it, so the claim
+	// is carried by the one ceiling that is cheap to reach through the real entry point.
+
 	// The MEMBER ceiling, reached with zero-length members — the shape a byte ceiling is blind to.
 	inodeBomb := gzTar(t, func(tw *tar.Writer) {
 		for i := 0; i <= MaxMembers; i++ {
@@ -191,6 +213,39 @@ func TestTheSERVERSOwnCountIsChecked(t *testing.T) {
 	// missing header an outage.
 	if _, err := InstallSnapshot(body, filepath.Join(t.TempDir(), "c"), http.Header{}); err != nil {
 		t.Fatalf("an absent header must not refuse: %v", err)
+	}
+}
+
+func TestTheInstalledFilesCARRYTheMembersOwnMtimeToTheNANOSECOND(t *testing.T) {
+	// 🔴 A MEASURED DEFECT, AND EXACTLY THE FAILURE MODE THIS PHASE EXISTS TO PREVENT. The reader
+	// orders its index by entry mtime, so a cache whose files all carry the EXTRACTION time is
+	// ordered by TAR ORDER — a different listing with a different featured entry, no error and no
+	// missing entry, which reads as a stale cache. The parity gate caught it; this keeps the kill
+	// in the same tier as the code.
+	//
+	// 🔴 SUB-SECOND PRECISION IS THE HALF THAT MATTERS, because the FRACTION is what decides the
+	// tie-break for two entries written in the same second. The ustar mtime field is whole seconds
+	// and the snapshot writer emits PAX, so the two members below share a second and differ only
+	// in the fraction — a port that restored `header.ModTime.Unix()` would pass a whole-second
+	// assertion and reorder this pair.
+	early := time.Unix(946684800, 250_000_000)
+	late := time.Unix(946684800, 750_000_000)
+	body := gzTar(t, func(tw *tar.Writer) {
+		regular(tw, "alpha/second.md", []byte("x"), late)
+		regular(tw, "alpha/first.md", []byte("y"), early)
+	})
+	cache := filepath.Join(t.TempDir(), "cache")
+	if _, err := InstallSnapshot(body, cache, http.Header{}); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]time.Time{"alpha/first.md": early, "alpha/second.md": late} {
+		info, err := os.Stat(filepath.Join(cache, filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.ModTime(); !got.Equal(want) {
+			t.Errorf("%s: mtime %v, want %v (to the nanosecond)", name, got.UnixNano(), want.UnixNano())
+		}
 	}
 }
 
@@ -247,6 +302,46 @@ func TestTheStampIsWrittenWithEveryFieldAReaderNeeds(t *testing.T) {
 	fields = StampFields(lines)
 	if fields["revision"] != "unknown" || fields["snapshot"] != "UNSTAMPED" {
 		t.Fatalf("an absent header must produce a NAMED sentinel, not an empty value: %v", fields)
+	}
+}
+
+func TestANEmptyStampIsABSENTAndNotAStampWithNoFields(t *testing.T) {
+	// 🔴 "THE STORE IS STAMPED" MUST NOT BE SATISFIABLE BY A ZERO-BYTE FILE. A mutant that
+	// returned an empty slice with no reason SURVIVED until this row existed, and what it produces
+	// is the worst shape available: `doctor` grades `reader-resolution` OK ("carries a sync stamp")
+	// and `cache-stamp` OK with `(the stamp is empty)`, so a store that cannot date itself reports
+	// a clean bill of health. That is the exact silent zero the stamp exists to prevent.
+	cache := t.TempDir()
+	for _, tc := range []struct{ name, body string }{
+		{"a zero-byte stamp", ""},
+		{"a stamp of blank lines", "\n\n   \n"},
+	} {
+		if err := os.WriteFile(filepath.Join(cache, SyncStamp), []byte(tc.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		lines, reason := ReadStamp(cache)
+		if lines != nil {
+			t.Errorf("%s reported %d line(s) as a STAMP", tc.name, len(lines))
+		}
+		if !strings.Contains(reason, "is empty") {
+			t.Errorf("%s: the reason must say so, got %q", tc.name, reason)
+		}
+	}
+	// The positive control: one real field IS a stamp, so the rows above are about emptiness and
+	// not about a reader that never returns anything.
+	if err := os.WriteFile(filepath.Join(cache, SyncStamp),
+		[]byte("synced=946684800\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if lines, reason := ReadStamp(cache); len(lines) != 1 || reason != "" {
+		t.Fatalf("a one-field stamp must be a stamp: %v %q", lines, reason)
+	}
+	// An ABSENT file is a THIRD answer, and its reason names the file rather than the emptiness.
+	if err := os.Remove(filepath.Join(cache, SyncStamp)); err != nil {
+		t.Fatal(err)
+	}
+	if lines, reason := ReadStamp(cache); lines != nil || !strings.Contains(reason, "no `.sync-stamp` in") {
+		t.Fatalf("an absent stamp: %v %q", lines, reason)
 	}
 }
 
@@ -350,6 +445,71 @@ func TestTheWriteTablesMapEveryStatusTheServerCanEmit(t *testing.T) {
 	}
 	if unknown.Status != "http-418" {
 		t.Fatalf("an absent token is named from the code: %q", unknown.Status)
+	}
+}
+
+func TestANY2xxIsSuccessAndTheWriteRefusalsCarryTheServersToken(t *testing.T) {
+	// 🔴 `create` ANSWERS **201**, AND A `!= 200` TEST WAS A MEASURED DEFECT: `urllib`'s
+	// `HTTPErrorProcessor` raises only for a code OUTSIDE 200–299, so the oracle prints the created
+	// entry and exits 0 while this client fell through the unrecognised-code arm and reported
+	// `unrecognised HTTP 201 … treating the write as NOT LANDED` at exit 6 — a SUCCESSFUL create
+	// reported as a refusal, whose documented remedy is to change a request that already landed.
+	// The parity gate found it; this is the kill in the same tier as the code.
+	var status int
+	var token string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token != "" {
+			w.Header().Set("X-Store-Status", token)
+		}
+		w.Header().Set("ETag", `"abc1234567890abc"`)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte("body\n"))
+	}))
+	defer server.Close()
+	cfg := Config{URL: server.URL, Token: "t"}
+
+	for _, ok := range []int{200, 201, 202, 299} {
+		status, token = ok, ""
+		headers, body, err := SendWrite(cfg, "PUT", "/x", nil, 5, nil)
+		if err != nil {
+			t.Fatalf("HTTP %d must be a SUCCESS: %v", ok, err)
+		}
+		if headers.Get("ETag") == "" || string(body) == "" {
+			t.Fatalf("HTTP %d: the headers and body must reach the caller", ok)
+		}
+	}
+	// ⚠ 204 IS DELIBERATELY NOT IN THAT LIST, AND THE REASON IS THE HARNESS, NOT THE CODE.
+	// `net/http` refuses to send a body with a 204, so the row would assert a body the SERVER
+	// never wrote — a test failing for a reason that has nothing to do with the classification.
+	// It is still a success here, which is the narrower claim this row makes.
+	status, token = 204, ""
+	if _, _, err := SendWrite(cfg, "PUT", "/x", nil, 5, nil); err != nil {
+		t.Fatalf("HTTP 204 must be a SUCCESS: %v", err)
+	}
+	// 🔴 AND THE TOKEN IS READ OFF THE REFUSAL, because it is the only place on the wire where
+	// `precondition-failed` and `already-exists` differ — one 412, two opposite remedies.
+	status, token = 412, "already-exists"
+	_, _, err := SendWrite(cfg, "PUT", "/x", nil, 5, nil)
+	var refused *WriteRefused
+	if !errors.As(err, &refused) || refused.ExitCode != ExitWriteExists ||
+		refused.Status != "already-exists" {
+		t.Fatalf("412 + already-exists: %#v", err)
+	}
+	status, token = 412, "precondition-failed"
+	_, _, err = SendWrite(cfg, "PUT", "/x", nil, 5, nil)
+	if !errors.As(err, &refused) || refused.ExitCode != ExitWritePrecondition {
+		t.Fatalf("412 + precondition-failed: %#v", err)
+	}
+	// The body becomes the one-line detail, truncated rather than dropped.
+	if !strings.Contains(refused.Detail, "body") {
+		t.Fatalf("the server's own body must reach the caller: %q", refused.Detail)
+	}
+	// A 3xx is NOT a success: it is outside 200–299 on both clients, and an unmapped code is a
+	// refusal that SAYS the code was unrecognised rather than a pass.
+	status, token = 302, ""
+	_, _, err = SendWrite(cfg, "PUT", "/x", nil, 5, nil)
+	if !errors.As(err, &refused) || !strings.Contains(refused.Detail, "unrecognised HTTP 302") {
+		t.Fatalf("a 302 must not be read as success: %#v", err)
 	}
 }
 

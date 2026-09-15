@@ -201,6 +201,16 @@ func visibilityCheck(in Inputs) Check {
 	where := map[string][]string{}
 	var order []string
 	var unread []string
+	// ⚠ THIS GUARD IS EQUIVALENT IN GO AND WAS NOT IN PYTHON, AND THE DIFFERENCE IS THE WHOLE
+	// INCIDENT. There, the unwidened signature handed `_describe` a `None` and `doctor` died with
+	// `AttributeError: 'NoneType' object has no attribute 'iterdir'`. Here an empty path reaches
+	// `os.ReadDir("")`, which fails ENOENT, and the `absent` re-check then stats `""` — also ENOENT
+	// — so it contributes nothing and lands in neither `where` nor `unread`, which is the benign
+	// answer. A mutant deleting the condition therefore SURVIVED. It stays anyway: the equivalence
+	// rests on `Stat("")` returning ENOENT rather than on anything this code states, and the
+	// NOT-OBSERVABLE-versus-absent distinction is not a property to bet on a libc detail. The
+	// `frozen-mirror` check above branches on the same condition and is NOT equivalent — its three
+	// answers are observably different.
 	roots := [][2]string{{"cache", in.CacheRoot}}
 	if in.MirrorRoot != "" {
 		roots = append(roots, [2]string{"mirror", in.MirrorRoot})

@@ -568,6 +568,17 @@ CASES: list[dict] = [
     _recall("digest-focus-miss", "a window that was READ and matched NOTHING — a DIFFERENT sentence from a window that was never read", scope="alpha-notes", focus_paths=["claudedocs/handoff-alpha.md", "apps/nothing-here/values.yaml"], focus_source="claudedocs/handoff-alpha.md"),
     _recall("digest-focus-ambiguous", "an ambiguous ref contributes to NO subsystem rather than blinding the window, so this falls back", scope="alpha-notes", focus_paths=["claudedocs/handoff-alpha.md", "svc/shared-alias/main.go"], focus_source="claudedocs/handoff-alpha.md"),
     _recall("digest-focus-tie", "two entries each named ONCE: the tie-break is the fallback's own mtime signal, not a third rule", scope="alpha-notes", focus_paths=["a/gadget-one/x.md", "b/gadget-two/y.md"], focus_source="claudedocs/handoff-alpha.md"),
+    # 🔴 TWO MATCHED ENTRIES WITH *DIFFERENT* PATH COUNTS, WHICH THE ROWS ABOVE DO NOT HAVE. Each
+    # of those resolves exactly ONE entry, so the ranking's PRIMARY key — path count, descending —
+    # is unreachable from them: a mutant that sorted ascending, or that dropped the count key
+    # entirely, survived every one. Here `gadget-one` is named TWICE and `gadget-two` once, and
+    # `gadget-two` is the NEWER file — so the count and the mtime tie-break disagree, and only the
+    # count's direction decides the answer.
+    _recall("digest-focus-count-beats-mtime", "the ranking's PRIMARY key: two matched entries whose path COUNTS differ, where the newer file has FEWER paths", scope="alpha-notes", focus_paths=["a/gadget-one/1.md", "b/gadget-one/2.md", "c/gadget-two/1.md"], focus_source="claudedocs/handoff-alpha.md"),
+    # 🔴 AND THE LAST RESORT: equal counts AND equal mtimes, so the REF decides. `tied-notes` holds
+    # two entries tied to the NANOSECOND, which is the only place in this world where the third key
+    # is reachable at all.
+    _recall("digest-focus-ref-is-the-last-resort", "equal path counts AND an mtime tie, so the ref breaks it — reachable only in the nanosecond-tied scope", scope="tied-notes", focus_paths=["a/tied-alpha/1.md", "b/tied-zulu/1.md"], focus_source="claudedocs/handoff-alpha.md"),
     _recall("digest-focus-truncated", "FOUR paths on one entry: the basis shows three and appends `…`, and the count is the full one", scope="alpha-notes", focus_paths=["a/gadget-one/1.md", "b/gadget-one/2.md", "c/gadget-one/3.md", "d/gadget-one/4.md"], focus_source="claudedocs/handoff-alpha.md"),
     # ⚠ AND ONE WITH NO SOURCE, which is the `the supplied path window` arm. It is not
     # reachable from `cairn` — `focus.Window` sets paths and source together — so this row

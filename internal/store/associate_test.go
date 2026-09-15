@@ -206,3 +206,69 @@ func TestTheOutputOrderIsCanonicalRefAndNotArrivalOrder(t *testing.T) {
 		t.Fatalf("considered: %v", assoc.ConsideredPaths)
 	}
 }
+
+func TestARepeatedPathCountsONCE(t *testing.T) {
+	// 🔴 THE DEDUP IS A RANKING FACT, NOT HYGIENE, AND A MUTANT DELETING IT SURVIVED UNTIL THIS
+	// ROW EXISTED. `PathCount` is the selector's PRIMARY key, so a window that quoted one path
+	// twice would rank its entry above one named by two DIFFERENT paths — a pick decided by a
+	// duplicate.
+	//
+	// ⚠ IT IS UNREACHABLE FROM `cairn` TODAY, and that is why it went unmeasured: the window is
+	// built by `client.Focus`, which dedupes its tokens and prepends the source once. The oracle
+	// dedupes here anyway, this port does too, and the behaviour is now pinned rather than left
+	// resting on a caller's discipline.
+	ix := testIndex(t)
+	assoc, err := AssociatePaths([]string{
+		"a/widget-cfg/1", "a/widget-cfg/1", "b/ledger-svc/1",
+	}, ix, "alpha-notes", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(assoc.ConsideredPaths, []string{"a/widget-cfg/1", "b/ledger-svc/1"}) {
+		t.Fatalf("considered: %v", assoc.ConsideredPaths)
+	}
+	for _, m := range assoc.Matched {
+		if m.PathCount() != 1 {
+			t.Fatalf("%s has PathCount %d — a repeated path counted twice and would win the "+
+				"ranking on a duplicate", m.Entry.Ref(), m.PathCount())
+		}
+	}
+	// The positive control: two DISTINCT paths on one entry really do count twice, so the
+	// assertion above is about the duplicate and not about a counter stuck at 1.
+	assoc, err = AssociatePaths([]string{"a/widget-cfg/1", "b/widget-cfg/2"}, ix, "alpha-notes", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assoc.Matched) != 1 || assoc.Matched[0].PathCount() != 2 {
+		t.Fatalf("two distinct paths must count twice: %#v", assoc.Matched)
+	}
+
+	// 🔴 ONE PATH THAT NAMES THE SAME ENTRY TWICE, WHICH IS THE ONLY INPUT THAT REACHES THE
+	// PER-ENTRY DEDUP AT ALL. A mutant removing it SURVIVED every row above, because the INPUT
+	// dedup catches a repeated path string first — so the assertion that was supposed to cover the
+	// ranking key was never executed. `apps/widget-cfg/Widget_Config.yaml` resolves `widget-cfg`
+	// TWICE from one path: once from the DIRECTORY component through the filename tier, and once
+	// from the filename's STEM through the ALIAS tier.
+	//
+	// ⚠ THE OBVIOUS FIXTURE DOES NOT WORK, AND THAT IS WORTH RECORDING.
+	// `apps/widget-cfg/widget-cfg.yaml` yields the pair `("widget-cfg", "widget-cfg")` from BOTH
+	// the directory and the stem, and `PathRefs` collapses identical pairs — so it reaches the
+	// resolver once and proves nothing. The two pairs have to be textually different.
+	assoc, err = AssociatePaths(
+		[]string{"apps/widget-cfg/Widget_Config.yaml", "b/ledger-svc/1"}, ix, "alpha-notes", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range assoc.Matched {
+		if m.PathCount() != 1 {
+			t.Fatalf("%s has PathCount %d from ONE path — the per-entry dedup is gone, and a "+
+				"path naming an entry twice now outranks two paths naming it once",
+				m.Entry.Ref(), m.PathCount())
+		}
+		// …and the EVIDENCE keeps both pairs, because it is evidence: the dedup is about the
+		// ranking count, not about hiding which components matched.
+		if m.Entry.Ref() == "widget-cfg" && len(m.Evidence) != 2 {
+			t.Fatalf("the evidence must keep BOTH matching components, got %d", len(m.Evidence))
+		}
+	}
+}

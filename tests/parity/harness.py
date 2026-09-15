@@ -481,7 +481,8 @@ def free_port() -> int:
     return port
 
 
-def start_oracle(store: Path, token_file: Path, log: Path, port: int) -> subprocess.Popen:
+def start_oracle(store: Path, token_file: Path, log: Path, port: int,
+                 break_pod: bool = False) -> subprocess.Popen:
     env = dict(os.environ)
     env.update({
         # The limiter answers the SAME uniform 401 a bad token does — that is the design — so
@@ -501,7 +502,11 @@ def start_oracle(store: Path, token_file: Path, log: Path, port: int) -> subproc
         # so the set names an address the harness cannot be: TEST-NET-1, reserved by RFC 5737
         # for documentation and assigned to nobody. An untrusted peer's client IP is its own
         # socket address, which is what the limiter then keys on.
-        "SUBSYSTEM_STORE_TRUSTED_PROXIES": "192.0.2.1/32",
+        # 🔴 `--break-pod` PUTS THE LOOPBACK BACK IN THE TRUSTED SET, WHICH IS THE INCIDENT. It
+        # exists as a CONTROL and nothing else: with it, every direct request is refused
+        # `401 status=no-client-ip`, both clients fail identically, every row would compare equal
+        # — and the pre-flight has to refuse to vouch instead of reporting that as a green.
+        "SUBSYSTEM_STORE_TRUSTED_PROXIES": "127.0.0.1/32" if break_pod else "192.0.2.1/32",
         "CAIRN_HOST": PARITY_HOST,
     })
     handle = log.open("wb")
@@ -605,6 +610,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", default=None,
                         help="run a comma-separated subset of case ids, in declaration order")
     parser.add_argument("--keep", action="store_true", help="keep the world for inspection")
+    parser.add_argument("--break-pod", action="store_true",
+                        help="the NEGATIVE CONTROL ON THE PRE-FLIGHT: configure the pod to refuse "
+                             "every direct request, and refuse to vouch instead of reporting a "
+                             "green over two identical failures")
     parser.add_argument("--self-test", action="store_true",
                         help="the NEGATIVE CONTROL: sabotage the Go side of three rows and "
                              "refuse unless the differ reports each one")
@@ -646,7 +655,7 @@ def main(argv: list[str] | None = None) -> int:
         hostile_server, hostile_port = hostile.start()
         port = free_port()
         log = work / "oracle.log"
-        proc = start_oracle(store, token_file, log, port)
+        proc = start_oracle(store, token_file, log, port, break_pod=args.break_pod)
         try:
             wait_for_health(port, proc, log)
 

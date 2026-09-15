@@ -617,6 +617,12 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"the `…` truncation of a basis naming more than three paths", "c/gadget-one/3.md …"},
 		{"a window with no named source", "resolved via the supplied path window"},
 		{"NO window at all, which is the pod's own case", "(no handoff doc to read a path window from)"},
+		// The ranking's three keys, each reachable only from its own row: the PRIMARY key needs
+		// two matched entries with DIFFERENT counts (every other focus row resolves exactly one
+		// entry, so a mutant that sorted ascending survived all of them), and the LAST resort
+		// needs equal counts AND an mtime tie.
+		{"path COUNT beating the mtime signal", "2 of 3 quoted path(s) name it: a/gadget-one/1.md, b/gadget-one/2.md"},
+		{"the REF as the last resort, on a nanosecond mtime tie", "name it: a/tied-alpha/1.md"},
 	} {
 		if !strings.Contains(rendered, row.marker) {
 			t.Errorf("no fixture case renders %s (looked for %q). The fixture's whole value "+
