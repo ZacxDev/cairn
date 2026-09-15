@@ -352,18 +352,25 @@ func containsString(items []string, want string) bool {
 // 🔴 AND THE CONFIG COMES FROM THE ROUTED INSTANCE, NOT FROM THE DEFAULT ONE. Printing the right
 // alias while sending to the wrong store is the shape of bug a message check cannot see.
 //
-// 🔴 THE CACHE IS RETURNED TOO, BECAUSE `put` DERIVES A PRECONDITION FROM IT. Returning only
-// `(alias, config)` let `Put` resolve the route AFTER it had already synced and globbed
-// `opts.Cache` — the DEFAULT instance's root — so a routed write computed its `If-Match` from
-// the wrong store's bytes and then sent it to the right one. The benign outcome is rc 2
-// ("cannot derive a revision"); the dangerous one is a ref that exists on BOTH stores, where
-// the precondition is well-formed, wrong, and printed as "derived … from the live snapshot".
+// 🔴 THE CACHE IS RESOLVED FOR EVERY WRITE, AND ITS TWO CALLERS HERE **DISCARD** IT — that is
+// deliberate, not an oversight, so do not "simplify" this to `(alias, config)`. `CacheRootFor`
+// can FAIL (an unresolvable HOME), and the oracle's `cmd_append`/`cmd_create` reach that failure
+// too because `_instance_for` calls `_instance_cache` unconditionally. Dropping the value would
+// drop the error check with it and make the two clients disagree on that host.
+//
+// ⚠ `put` no longer comes through here at all — it calls `writeRoute` and loads the credentials
+// LATE, for the reason written there. The cache-ordering hazard this comment used to carry (a
+// routed write deriving its `If-Match` from `opts.Cache`, i.e. the DEFAULT instance's root) is
+// recorded at `Put`'s own call site, where the ordering it constrains now lives.
+// ⚠ `cacheRoot` RATHER THAN `cache`, AND THE NAME IS LOAD-BEARING FOR A REASON OUTSIDE THE CODE:
+// `tests/routing_mutants.py` anchors its mutants on exact source lines and asserts each anchor
+// occurs EXACTLY ONCE. Spelling this destructuring identically to `Put`'s made the battery REFUSE
+// — correctly, because an anchor matching twice cannot be attributed — so the two differ by one
+// name. That refusal is the harness working; do not resolve it by loosening the anchor. (And do
+// not restate the anchor text in a comment: a comment that quotes it can become the second
+// match.)
 func writeInstance(opts Options, scope string) (string, Config, string, error) {
-	routing, err := Discover(nil)
-	if err != nil {
-		return "", Config{}, "", err
-	}
-	alias, err := routing.AliasFor(scope)
+	alias, cacheRoot, err := writeRoute(opts, scope)
 	if err != nil {
 		return "", Config{}, "", err
 	}
@@ -371,11 +378,39 @@ func writeInstance(opts Options, scope string) (string, Config, string, error) {
 	if err != nil {
 		return "", Config{}, "", err
 	}
+	return alias, cfg, cacheRoot, nil
+}
+
+// writeRoute is the ROUTE half of `writeInstance` — `(alias, cache)`, with NO credential load.
+//
+// 🔴 IT EXISTS BECAUSE *WHEN* THE CREDENTIALS ARE LOADED IS AN OBSERVABLE, AND THE TWO CLIENTS
+// DISAGREED ABOUT IT. The oracle's `cmd_put` calls `resolve_state` and only then `load_config`,
+// so a routed instance whose config file is INCOMPLETE surfaces inside the state resolver, as a
+// non-live state, and `put` refuses with its own sentence naming the cache it could not refresh.
+// This port loaded the config EAGERLY in `writeInstance`, so the same host produced the same exit
+// code (7) with different BYTES: the error escaped to `cli.go`'s write-unreachable arm — "the
+// write did NOT happen — config incomplete: … Re-run when the store is reachable." Exit codes
+// agreed, which is why every gate stayed green, and `append` is byte-identical on the same input
+// because the oracle loads the config eagerly THERE too. So the divergence is not "Go is eager";
+// it is "Go was eager on the ONE verb where the oracle is lazy".
+//
+// ⚠ `Append` and `Create` keep using `writeInstance`, deliberately: both need the credentials
+// before anything else can happen, and both oracle verbs load them at the same point. Splitting
+// the helper rather than reordering it is what keeps those two unmoved.
+func writeRoute(opts Options, scope string) (string, string, error) {
+	routing, err := Discover(nil)
+	if err != nil {
+		return "", "", err
+	}
+	alias, err := routing.AliasFor(scope)
+	if err != nil {
+		return "", "", err
+	}
 	cache, err := instanceCache(opts, alias)
 	if err != nil {
-		return "", Config{}, "", err
+		return "", "", err
 	}
-	return alias, cfg, cache, nil
+	return alias, cache, nil
 }
 
 // Append appends ONE dated bullet — `POST /api/v1/entry/<scope>/<ref>/bullets`.
@@ -456,7 +491,14 @@ func Put(env Env, opts Options) (int, error) {
 	// (`cmd_put` -> `_instance_for`) and syncs the routed cache; this is the port following.
 	// ⚠ It stays BELOW the `--file` read: "cannot read --file" is rc 2 and must not be
 	// preceded by a routing refusal or a network round trip.
-	alias, cfg, cache, err := writeInstance(opts, scope)
+	//
+	// 🔴 `writeRoute`, NOT `writeInstance` — THE CREDENTIALS ARE LOADED BELOW, AFTER THE
+	// REVISION. That ordering is the oracle's (`cmd_put` resolves the route, resolves the
+	// STATE, then calls `load_config`), and loading them here instead produced a measured byte
+	// divergence on a routed instance whose config is incomplete: `ResolveState` reports that
+	// as a non-live state and `put` refuses in its own words, where an eager load escapes to
+	// `cli.go` and refuses in `cli.go`'s. Same exit code, different sentence — see `writeRoute`.
+	alias, cache, err := writeRoute(opts, scope)
 	if err != nil {
 		return 0, err
 	}
@@ -500,6 +542,12 @@ func Put(env Env, opts Options) (int, error) {
 		sum := sha256.Sum256(data)
 		revision = hex.EncodeToString(sum[:])[:16]
 		fmt.Fprintf(env.Stderr, "cairn: derived If-Match %s from the live snapshot\n", revision)
+	}
+	// 🔴 HERE, NOT ABOVE — the oracle's `cmd_put` loads the config on this line too, and the
+	// position is the whole content of the fix above.
+	cfg, err := LoadConfigFor(alias)
+	if err != nil {
+		return 0, err
 	}
 	path := fmt.Sprintf("/api/v1/entry/%s/%s", quoteAll(scope), quoteAll(opts.Ref))
 	headers, body, err := SendWrite(cfg, "PUT", path, payload, opts.Timeout,

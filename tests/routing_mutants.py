@@ -367,11 +367,23 @@ MUTANTS: list[Mutant] = [
     Mutant(
         id="py-editor-lock-file-refuses-again",
         target="lib/cairn_instances.py",
-        old='        if path.name.startswith("."):',
+        old='        if path.name.startswith(".#"):',
         new="        if False:",
         why="Emacs' `.#secondary.env` reaches the hard alias refusal again, so EVERY verb on "
             "that host exits 11 while one buffer is open.",
         kills="test_an_EDITOR_LOCK_FILE_does_not_take_every_verb_to_exit_11",
+    ),
+    Mutant(
+        id="py-dotfile-skip-widened-to-EVERY-dotfile",
+        target="lib/cairn_instances.py",
+        old='        if path.name.startswith(".#"):',
+        new='        if path.name.startswith("."):',
+        why="THE SHIPPED DEFECT, restored exactly, and it is the OPPOSITE DIRECTION from the row "
+            "above: the skip swallows `instances/.env` — the dotted name an operator is most "
+            "likely to write there — so a complete, valid instance config is ignored at exit 0 "
+            "with no message anywhere. Both rows are needed because each one alone is satisfied "
+            "by a predicate that is wrong in the other direction.",
+        kills="test_a_DOTTED_file_that_is_not_an_editor_lock_is_STILL_an_ERROR",
     ),
 
     # --- findings 1 and 2, in the Go port ------------------------------------
@@ -410,12 +422,25 @@ MUTANTS: list[Mutant] = [
     Mutant(
         id="go-put-uses-the-default-cache",
         target="internal/client/verbs.go",
-        old="\talias, cfg, cache, err := writeInstance(opts, scope)",
-        new="\talias, cfg, _, err := writeInstance(opts, scope)\n\tcache := opts.Cache",
+        old="\talias, cache, err := writeRoute(opts, scope)",
+        new="\talias, _, err := writeRoute(opts, scope)\n\tcache := opts.Cache",
         why="finding 2's other half: the routed instance's snapshot is unpacked into the "
             "DEFAULT instance's cache root, so the two stores interleave and `.sync-stamp` "
             "dates whichever synced last.",
         kills="TestAPutDerivesItsPreconditionFromTheROUTEDStore",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-put-loads-its-credentials-EAGERLY",
+        target="internal/client/verbs.go",
+        old="\talias, cache, err := writeRoute(opts, scope)",
+        new="\talias, _, cache, err := writeInstance(opts, scope)",
+        why="THE SHIPPED DIVERGENCE, restored at its site: `put` loads the routed credentials "
+            "before `ResolveState` instead of after, so an incomplete routed config escapes to "
+            "`cli.go` and is refused in ITS sentence rather than in `put`'s. ⚠ The exit code is "
+            "7 either way — the mutant is invisible to every exit-code comparison, which is why "
+            "the killing test asserts `runErr == nil` and the sentence, not the code alone.",
+        kills="TestAPutLoadsTheROUTEDCredentialsLAZILY",
         go_package="./internal/client/",
     ),
 
@@ -432,11 +457,23 @@ MUTANTS: list[Mutant] = [
     Mutant(
         id="go-editor-lock-file-refuses-again",
         target="internal/client/instances.go",
-        old='\t\tif strings.HasPrefix(entry.Name(), ".") {',
+        old='\t\tif strings.HasPrefix(entry.Name(), ".#") {',
         new="\t\tif false {",
         why="the Go client refuses every verb at 11 while an editor lock file sits beside an "
             "instance config.",
         kills="TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-dotfile-skip-widened-to-EVERY-dotfile",
+        target="internal/client/instances.go",
+        old='\t\tif strings.HasPrefix(entry.Name(), ".#") {',
+        new='\t\tif strings.HasPrefix(entry.Name(), ".") {',
+        why="the shipped defect in the port, and the OPPOSITE DIRECTION from the row above: the "
+            "skip swallows `instances/.env`, so a complete, valid instance config is ignored at "
+            "exit 0 with no message. Both clients carry the same narrowed predicate and both "
+            "need both directions pinned, or one of them drifts.",
+        kills="TestADottedFileThatIsNotAnEditorLockIsStillAnError",
         go_package="./internal/client/",
     ),
     Mutant(

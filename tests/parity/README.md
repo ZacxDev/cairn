@@ -47,7 +47,7 @@ the trees are compared as the *reader* sees them (`float(sec) + 1e-9*nsec`, whic
 *pins* it, because a rendered order can agree by accident of three files landing in the right
 sequence while every timestamp is wrong.
 
-## What this gate found — nine divergences in six findings
+## What this gate found — ten divergences in seven findings
 
 🔴 **Relocated here from `AGENTS.md`, which is loaded into every session in this repository
 and was 41.6 KB when this moved.** None of the below is decision input before acting; it is
@@ -93,6 +93,45 @@ streams the compressed body to `io.Discard` **under a limit** — decompressing 
 inspect it would make a decompression bomb a MEMORY bomb before either ceiling is consulted,
 because the ceilings read headers a truncated stream never reaches.
 
+**A seventh came out of asking what region the gate does not COVER rather than what it does not
+send, and it is the sharpest of the seven** — the two `<MULTICFG>` rows were both
+`routes --check`, i.e. the GRADER, so the routed **WRITE** path this phase exists to ship had
+**zero cross-client byte comparison at a non-default alias**. A live divergence sat in that gap.
+On a two-instance host with `routes.json = {"myscope":"secondary"}` and
+`instances/secondary.env` present but missing `SUBSYSTEM_STORE_TOKEN`,
+`cairn put --scope myscope --ref x --file f` gave:
+
+```
+oracle  rc 7  🔴 cairn: refusing to PUT — could not refresh the cache … (config incomplete: …). … Pass --if-match explicitly if you already hold it.
+Go      rc 7  🔴 cairn: the write did NOT happen — config incomplete: … Re-run when the store is reachable.
+```
+
+**The exit codes agree and the bytes do not**, which is why no gate could see it: the oracle's
+`cmd_put` loads the credentials *after* `resolve_state`, so a missing one surfaces as a non-live
+STATE and `put` refuses in its own words; the port loaded them eagerly in `writeInstance`, so the
+error escaped to `cli.go`'s write-unreachable arm and refused in ITS words. ⚠ **Not "Go is
+eager"** — `append` is byte-identical on the same input, because the oracle loads them eagerly
+*there* too. The divergence was one verb wide. `writeRoute` is the split that closes it (the route
+without the credentials, for the one verb that needs them late), pinned by
+`TestAPutLoadsTheROUTEDCredentialsLAZILY`, whose killing mutant restores the eager load and is
+invisible to any exit-code comparison. The region itself is now covered by
+`put-routed-to-a-NON-DEFAULT-instance`, a full stdout/stderr/exit row over a scope that exists on
+the SECOND pod only — so a client that reached the default instance for the alias, the
+credentials, the cache or the `If-Match` hits a pod whose token does not carry that scope at all.
+⚠ **THE DIVERGENCE PRE-DATES THE ROUND-2 AUDIT IN A DIFFERENT SHAPE, MEASURED AT THE COMMIT
+BEFORE THE `routes --check` FIX** — and the earlier shape is the more interesting one, because
+the port printed the ORACLE's sentence and still said something else:
+
+```
+oracle       🔴 … could not refresh the cache … (config incomplete: SUBSYSTEM_STORE_TOKEN not set (looked in …/instances/secondary.env …)). …
+go @ada0157  🔴 … could not refresh the cache … (http://127.0.0.1:1 unreachable: dial tcp …: connect: connection refused). …
+```
+
+That is the *default* instance's URL inside the *routed* instance's refusal — the misroute, not
+the eager load — so the two fixes reshaped one region rather than one being the cause of the
+other. **What this round closed is the byte difference and the coverage hole**; the region was
+never byte-identical at any commit on this branch until now.
+
 ## Declared differences — the residuals, named rather than normalised away
 
 | # | difference | why it is not closed |
@@ -104,7 +143,7 @@ because the ceilings read headers a truncated stream never reaches.
 | 5 | **A `SyntaxError` in the reader's own modules.** On the oracle a present-but-unparseable `lib/cairn_doctor.py` takes every verb down at exit 1; the Go client has no such failure mode. | It is a property of loading Python at runtime and cannot exist in a single binary. The oracle's own comment says widening its `except ImportError` is *not* the obvious fix. |
 | 6 | **`ReadStamp` has no "is not text" arm.** The oracle distinguishes an unreadable stamp from one that is not valid UTF-8, because `read_text` raises; Go's `ReadFile` returns bytes and cannot fail on encoding. | The stamp is written by this program and is ASCII, so the arm is unreachable in practice. Re-validating the bytes to manufacture the distinction would be inventing a check the oracle only has by accident of its API. |
 | 7 | **The Go client's own ledger flags, `-verbs` and `-exit-codes`.** Measured on both binaries: each exits **0** with its table on **stdout** on the Go client, and **2** with argparse's `usage:` block on **stderr** on the oracle. This is the same family as the four `--help`/argument-shape divergences above — the Go client *succeeding* where the oracle refuses — and no row covers it, because the flags were added **for** the gate's sibling ledger (`tests/test_go_client_ledgers.py`) and the gate is therefore structurally blind to them. | **Not closable while both clients ship, and mirroring it into the oracle is the mistake this repo already paid for and deleted.** The Python-side ledgers read the argparse parser (`testlib.capability_ledger`) and the `cairn` script's AST directly, so a printed table on the oracle would have no reader — which is residual finding 3 above (`CAIRN_CACHE_ROOT`) exactly: a second mechanism reaching one value leaves the first silently dead. What IS gated is that the set cannot move unnoticed: `test_the_GO_ONLY_ledger_flags_are_exactly_the_declared_set` compares THREE operands, two of them discovered — the `switch argv[0]` dispatch in `cmd/cairn/main.go` read as source, its own declared tuple, and what both binaries actually do when handed each probe — and fails if a third Go-only flag appears, if a declared one stops diverging, or if the dispatch moves out of the file the discovery greps. ⚠ Its first cut built the probe set out of the declaration, so shrinking the tuple shrank what was measured and the mutant SURVIVED; that is why the probes come from the source. 🔴 **Closing condition, owned by P8:** the day the oracle is deleted there is nothing left to diverge from, so this row and that guard are deleted with it — but the CLI contract *widens* at that moment, because a single-dash token that used to be refused at exit 2 starts answering 0 on stdout. P8 must therefore make one decision, not just a deletion: either document `-verbs`/`-exit-codes` as public surface in `README.md`'s verb table, or move them behind an undocumented gate the ledger tests still reach. The deletion is mechanical; that decision is not, which is why it is written down here. |
-| 8 | 🔴 **The Go client routes WRITES and does not route READS.** `append`/`put`/`create` resolve a scope through `Routing.AliasFor`, load the routed instance's own config and print `instance=<alias>` — they had to, because that field is on stdout and every write row compares it byte for byte. `recall`/`search`/`validate`/`ls-entries`/`sync`/`doctor` do not: on a host with **more than one instance** they REFUSE at exit 11 naming the verb, rather than reading the default store. | Routing a read needs the caveat's multi-instance clause inside `internal/report`, which is the renderer the **pod** shares and which has no instance context at all — and `sync`/`ls-entries`/`doctor` would each have to walk every instance. Both are P2-sized changes to a package whose whole claim is that pod and CLI run ONE renderer, so they are not smuggled in beside a client-side feature. The refusal is the narrowing that keeps the half-port from being a *silent* wrong answer: a Go client that read the default instance on a multi-instance host would answer confidently out of a store nobody chose. **No parity row reaches the REFUSAL** — and the reason is now narrower than it was. This sentence used to read "every row is single-instance", which stopped being true when `routes-multi-instance-check` and `routes-multi-instance-refuses-an-explicit-cache` landed: the gate DOES stand up a second instance against a second pod now. What those rows exercise is `routes`, which is deliberately not behind this guard — it is the verb an operator runs *while standing up* the second instance, so refusing there would disable the grading tool at the one moment it is the tool for. No row runs a READ verb on a multi-instance host, so the refusal is still declared here and asserted by `TestTheUnportedReadGuardFiresOnlyWithMoreThanOneInstance`. **Closing condition:** `internal/report` takes an instance-aware caveat with a red-at-baseline differential fixture, the read verbs take an alias, a multi-instance parity row **over a read verb** exists, and `RefuseUnportedMultiInstance` is deleted with this table row. Until then, a multi-instance host runs the Python client — which is what `packages.cairn` still is. |
+| 8 | 🔴 **The Go client routes WRITES and does not route READS.** `append`/`put`/`create` resolve a scope through `Routing.AliasFor`, load the routed instance's own config and print `instance=<alias>` — they had to, because that field is on stdout and every write row compares it byte for byte. `recall`/`search`/`validate`/`ls-entries`/`sync`/`doctor` do not: on a host with **more than one instance** they REFUSE at exit 11 naming the verb, rather than reading the default store. | Routing a read needs the caveat's multi-instance clause inside `internal/report`, which is the renderer the **pod** shares and which has no instance context at all — and `sync`/`ls-entries`/`doctor` would each have to walk every instance. Both are P2-sized changes to a package whose whole claim is that pod and CLI run ONE renderer, so they are not smuggled in beside a client-side feature. The refusal is the narrowing that keeps the half-port from being a *silent* wrong answer: a Go client that read the default instance on a multi-instance host would answer confidently out of a store nobody chose. **No parity row reaches the REFUSAL** — and the reason is now narrower than it was. This sentence used to read "every row is single-instance", which stopped being true when `routes-multi-instance-check` and `routes-multi-instance-refuses-an-explicit-cache` landed: the gate DOES stand up a second instance against a second pod now. Those two rows exercise `routes`, which is deliberately not behind this guard — it is the verb an operator runs *while standing up* the second instance, so refusing there would disable the grading tool at the one moment it is the tool for — and `put-routed-to-a-NON-DEFAULT-instance` exercises a WRITE there, which is not behind it either, for the reason this row's first sentence gives. No row runs a READ verb on a multi-instance host, so the refusal is still declared here and asserted by `TestTheUnportedReadGuardFiresOnlyWithMoreThanOneInstance`. **Closing condition:** `internal/report` takes an instance-aware caveat with a red-at-baseline differential fixture, the read verbs take an alias, a multi-instance parity row **over a read verb** exists, and `RefuseUnportedMultiInstance` is deleted with this table row. Until then, a multi-instance host runs the Python client — which is what `packages.cairn` still is. |
 
 ## Argument-shape rows
 

@@ -147,11 +147,32 @@ anyone editing that path:
   `GET /api/v1/recall/<scope>`); promoting it back is gated on probing the ROUTED
   instance per table entry, identically in both clients, with a parity row.
 - 🔴 **NAME RULES ARE SEPARATE FROM TYPE RULES IN `instances/`.** A file whose name
-  begins with `.` is skipped rather than refused. Emacs' lock file for
+  begins with **`.#`** is skipped rather than refused. Emacs' lock file for
   `secondary.env` is `.#secondary.env` — it ends in `.env`, its stem is not a
   usable alias, and it is a dangling symlink — so it reached the hard
   `RoutingConfigError` and took **every** verb on that host to exit 11 while one
   buffer was open. The refusal's stated intent ("a file the operator wrote and
-  would otherwise get no message about") is untouched: a non-dotted file that
+  would otherwise get no message about") is untouched: any other file that
   cannot be an alias is still an error.
+  🔴 **`.#`, AND THE FIRST CUT WAS `.` — WHICH WAS WIDER THAN ITS OWN STATED
+  RATIONALE AND OPENED THE HOLE THE REFUSAL EXISTS FOR.** `instances/.env` is a
+  dotted name, so it was skipped; its stem is the EMPTY string, so it is exactly
+  the file the refusal would otherwise name. Measured with a complete, valid
+  `instances/.env` on both clients: **before, `instances: personal` at exit 0
+  with no message at all; after, exit 11 naming the file.** Parity held in both
+  directions, so no gate could see it — the two clients agreed on being wrong.
+  `.#` is the only in-suffix name a TOOL writes: a vim swapfile is
+  `.secondary.env.swp` and an Emacs autosave is `#secondary.env#`, and both fail
+  the `.env` suffix test before the name test is reached. So every other dotted
+  name is one a human could have chosen, and stays an error. ⚠ **The `internal/snapshot`
+  and `doctor` scanners skip EVERY dotfile, and that asymmetry is correct rather
+  than drift**: there is no operator-wrote-this refusal on those paths to leave a
+  dotted name silently unread, so a wide skip costs nothing there and costs the
+  whole refusal here. Do not "unify" them. ⚠ Both arms are
+  pinned in both languages — the skip arm alone passes while the hole is open —
+  by `test_an_EDITOR_LOCK_FILE_does_not_take_every_verb_to_exit_11` /
+  `test_a_DOTTED_file_that_is_not_an_editor_lock_is_STILL_an_ERROR` and
+  `TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11` /
+  `TestADottedFileThatIsNotAnEditorLockIsStillAnError`, with a mutant per
+  direction per client in `tests/routing_mutants.py`.
 

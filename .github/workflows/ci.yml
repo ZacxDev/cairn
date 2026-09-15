@@ -98,7 +98,11 @@ jobs:
           #     | sed 's/\[.*//' | sort > names-<ref>.txt
           #   comm -23 names-base.txt names-head.txt    # removed — must all be renames
           #   comm -13 names-base.txt names-head.txt    # added
-          # Measured that way for THIS change: base 1860, head 1923, 63 added, 0 removed.
+          # Measured that way for THIS change: base 1860, head 1924, 64 added, 0 removed.
+          # The 64th arrived in the round-2 audit fixes: the dotted-file skip's OTHER arm
+          # (`instances/.env` must still REFUSE), which the skip-arm test alone left open.
+          # Re-measured at that point rather than carried forward — a self-reported count
+          # goes stale in the direction that makes the floor look explained.
           #
           # 1832 was the P2 branch: 1819 at `1e593a8` plus the ten in
           # `test_parity_harness.py` (the coverage ledger over the parity gate's own case
@@ -361,16 +365,19 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 97 PASS lines measured on the multi-instance branch: 96 cases plus
-          # `cache-mtime-parity`. It was 91 (90 cases) at `871e6ff`; the six new rows are the
+          # 98 PASS lines measured on the multi-instance branch: 97 cases plus
+          # `cache-mtime-parity`. It was 91 (90 cases) at `871e6ff`; the seven new rows are the
           # `routes` verb, which the verb ledger requires a case for, `exit 11`, which the
-          # exit-code ledger requires a row to reach, and TWO MULTI-INSTANCE rows that stand up
+          # exit-code ledger requires a row to reach, TWO MULTI-INSTANCE rows that stand up
           # a second pod — the shape every other row is blind to by construction, and the one
-          # that catches a client reading every instance from the DEFAULT instance's config.
+          # that catches a client reading every instance from the DEFAULT instance's config —
+          # and, from the round-2 audit, a routed `put` at a NON-DEFAULT alias: until it landed
+          # both `<MULTICFG>` rows were `routes --check`, so the routed WRITE path this branch
+          # exists to ship had no cross-client byte comparison at all.
           # ⚠ THE FLOOR IS NOT REDUNDANT WITH "ZERO FAILURES". A run that compared nothing has
           # zero failures too; the floor is what tells a green gate from an absent one.
-          if [ "$passes" -lt 97 ]; then
-            echo "REFUSING: $passes passes, and 97 were measured — the gate got smaller"
+          if [ "$passes" -lt 98 ]; then
+            echo "REFUSING: $passes passes, and 98 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then

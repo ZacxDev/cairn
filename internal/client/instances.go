@@ -594,17 +594,26 @@ func Discover(env envLookup) (Routing, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), InstanceSuffix) {
 			continue
 		}
-		// 🔴 A DOTFILE IS NOT A FILE THE OPERATOR WROTE, AND THE REFUSAL BELOW TOOK EVERY
-		// VERB TO EXIT 11 WHILE ONE WAS OPEN. Emacs' lock file for `secondary.env` is
-		// `.#secondary.env`: it ends in `.env`, its stem `.#secondary` is not a usable
-		// alias, and it is a DANGLING SYMLINK, so `IsDir()` is false and it reached the
-		// hard error — meaning every `cairn` invocation on that host refused to run until
-		// the buffer was closed. `internal/snapshot` already learned this exact lesson one
-		// suffix over (`.#entry.md` 503'd the whole store); the rule there is the rule
-		// here — **name rules are separate from type rules** — and the intent the refusal
-		// serves, "a file the operator wrote and would otherwise get no message about", is
-		// untouched by skipping names a human did not choose.
-		if strings.HasPrefix(entry.Name(), ".") {
+		// 🔴 AN EDITOR LOCK FILE IS NOT A FILE THE OPERATOR WROTE, AND THE REFUSAL BELOW
+		// TOOK EVERY VERB TO EXIT 11 WHILE ONE WAS OPEN. Emacs' lock file for
+		// `secondary.env` is `.#secondary.env`: it ends in `.env`, its stem `.#secondary`
+		// is not a usable alias, and it is a DANGLING SYMLINK, so `IsDir()` is false and it
+		// reached the hard error — meaning every `cairn` invocation on that host refused to
+		// run until the buffer was closed. `internal/snapshot` already learned this exact
+		// lesson one suffix over (`.#entry.md` 503'd the whole store); the rule there is the
+		// rule here — **name rules are separate from type rules**.
+		//
+		// 🔴 `.#`, NOT `.` — AND THE WIDER PREDICATE WAS SHIPPED AND MEASURED WRONG.
+		// Skipping every dotted name also skipped `instances/.env`, whose stem is the EMPTY
+		// string: an operator who wrote that file got `instances: personal` at exit 0 and no
+		// message anywhere, which is precisely the outcome the refusal below exists to
+		// prevent. `.#` is the only in-suffix name a TOOL writes (a vim swapfile is
+		// `.secondary.env.swp` and an Emacs autosave is `#secondary.env#` — both fail the
+		// `.env` suffix test above and never reach here), so every other dotted name is one
+		// a human could have chosen and stays an ERROR. The refusal's stated intent — "a
+		// file the operator wrote and would otherwise get no message about" — is what picks
+		// the boundary, and the `.` version did not honour it.
+		if strings.HasPrefix(entry.Name(), ".#") {
 			continue
 		}
 		alias := strings.TrimSuffix(entry.Name(), InstanceSuffix)

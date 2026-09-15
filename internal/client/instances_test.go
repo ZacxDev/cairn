@@ -729,6 +729,83 @@ func TestAPutDerivesItsPreconditionFromTheROUTEDStore(t *testing.T) {
 	}
 }
 
+// TestAPutLoadsTheROUTEDCredentialsLAZILY pins WHEN the credentials are read, not whose.
+//
+// 🔴 A BYTE DIVERGENCE THAT EVERY EXISTING GATE WAS BLIND TO, BECAUSE THE EXIT CODES AGREE.
+// On a routed instance whose config file is INCOMPLETE, the oracle's `cmd_put` reaches
+// `resolve_state` first, which reports the missing credential as a non-live state, and `put`
+// refuses in its OWN words — "refusing to PUT — could not refresh the cache … (config
+// incomplete: …)". This port loaded the config eagerly in `writeInstance`, so the error escaped
+// to `cli.go`'s write-unreachable arm and refused in ITS words — "the write did NOT happen —
+// config incomplete: … Re-run when the store is reachable." Both are rc 7, so no exit-code
+// comparison could see it, and the only `<MULTICFG>` parity rows were `routes --check`.
+//
+// ⚠ AND IT IS NOT "GO IS EAGER" — `append` is byte-identical on this same input, because the
+// oracle loads the config eagerly there too. The divergence was one verb wide, which is why the
+// fix splits `writeInstance` rather than reordering it.
+//
+// ⚠ THE `runErr == nil` ASSERTION IS THE LOAD-BEARING ONE. An escaping error is how the eager
+// version fails, and it arrives as `(0, err)` — a code this test would otherwise never compare.
+func TestAPutLoadsTheROUTEDCredentialsLAZILY(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, key := range []string{"SUBSYSTEM_STORE_URL", "SUBSYSTEM_STORE_TOKEN", ConfigEnv, RoutesEnv} {
+		t.Setenv(key, "")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no request may reach any pod: the routed instance has no token, so this "+
+			"write must refuse before the network (%s %s)", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+
+	configDir := filepath.Join(home, ".config", "subsystem-store")
+	if err := os.MkdirAll(filepath.Join(configDir, InstanceDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The DEFAULT instance is complete; only the ROUTED one is missing its token. A host where
+	// BOTH are broken cannot tell "it read the routed config" from "it read the default one".
+	if err := os.WriteFile(filepath.Join(configDir, "env"),
+		[]byte("SUBSYSTEM_STORE_URL="+srv.URL+"\nSUBSYSTEM_STORE_TOKEN=t-default\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, InstanceDirName, "secondary"+InstanceSuffix),
+		[]byte("SUBSYSTEM_STORE_URL="+srv.URL+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeRoutesIn(t, home, `{"shared-scope": "secondary"}`)
+
+	payload := filepath.Join(t.TempDir(), "new.md")
+	if err := os.WriteFile(payload, []byte("replacement\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	code, runErr := Put(Env{Stdout: &stdout, Stderr: stderr}, Options{
+		Cache: DefaultCacheRoot(), Timeout: 5,
+		Scope: "shared-scope", Ref: "thing", File: payload,
+	})
+	text, _ := os.ReadFile(stderr.Name())
+	if runErr != nil {
+		t.Fatalf("the config error ESCAPED instead of being reported by `put`: %v\n"+
+			"that is the eager load, and `cli.go` renders it in a different sentence than the "+
+			"oracle's", runErr)
+	}
+	if code != ExitWriteUnreachable {
+		t.Fatalf("code %d, want %d (a write that could not refresh its cache)",
+			code, ExitWriteUnreachable)
+	}
+	if !strings.Contains(string(text), "refusing to PUT — could not refresh the cache") {
+		t.Fatalf("`put` must refuse in ITS OWN words, which is what the oracle prints:\n%s", text)
+	}
+	if !strings.Contains(string(text), "config incomplete") {
+		t.Fatalf("the refusal must carry the state resolver's detail, which is where the "+
+			"missing credential is named:\n%s", text)
+	}
+}
+
 // TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11 is finding 6.
 //
 // 🔴 EVERY VERB, NOT JUST `routes`. `Discover` runs on the routing path of every write and on
@@ -745,10 +822,10 @@ func TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Two shapes, because one is what Emacs actually creates and the other is the one a test
-	// is tempted to write instead.
+	// Two shapes, because the skip must not depend on the file's TYPE: what Emacs actually
+	// creates (a dangling symlink) and a regular file with the same `.#` name shape.
 	lock := filepath.Join(instances, ".#secondary"+InstanceSuffix)
-	if err := os.Symlink("zach@host.12345:1700000000", lock); err != nil {
+	if err := os.Symlink("an-editor@a-host.12345:946684800", lock); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(lock); err == nil {
@@ -765,14 +842,14 @@ func TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plain := filepath.Join(instances, ".#vim-style"+InstanceSuffix)
-	if err := os.WriteFile(plain, nil, 0o600); err != nil {
+	regular := filepath.Join(instances, ".#vim-style"+InstanceSuffix)
+	if err := os.WriteFile(regular, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Discover(nil); err != nil {
-		t.Fatalf("a plain dotfile must not refuse either: %v", err)
+		t.Fatalf("a regular `.#` file must not refuse either: %v", err)
 	}
-	if err := os.Remove(plain); err != nil {
+	if err := os.Remove(regular); err != nil {
 		t.Fatal(err)
 	}
 
@@ -784,6 +861,48 @@ func TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11(t *testing.T) {
 	}
 	if _, err := Discover(nil); err == nil {
 		t.Fatal("a file the operator wrote that cannot be an alias is still an ERROR")
+	}
+}
+
+// TestADottedFileThatIsNotAnEditorLockIsStillAnError is the skip's OTHER arm.
+//
+// 🔴 A ONE-SIDED TEST PASSES WHILE THE HOLE IS OPEN. The first cut of the narrowing above
+// skipped every name beginning with `.`, which silently swallowed `instances/.env` — the dotted
+// name an operator is MOST likely to write there, and whose stem is the empty string. Measured
+// on that predicate: a complete, valid `instances/.env` produced `instances: personal` at exit 0
+// with no message on either client, the exact outcome the `Upper.env` refusal exists to forbid.
+// So the skip arm and this arm together are the predicate; either alone is a direction.
+//
+// ⚠ `.env` IS THE LOAD-BEARING CASE. The other two are here so the guard pins `.#` rather than
+// "an empty stem": a non-empty dotted stem that is also an unusable alias must refuse too.
+func TestADottedFileThatIsNotAnEditorLockIsStillAnError(t *testing.T) {
+	dir := configuredHost(t, t.TempDir())
+	instances := filepath.Join(dir, InstanceDirName)
+	if err := os.MkdirAll(instances, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{".env", ".Upper.env", ".hidden.env"} {
+		probe := filepath.Join(instances, name)
+		body := "SUBSYSTEM_STORE_URL=http://127.0.0.1:1\nSUBSYSTEM_STORE_TOKEN=synthetic\n"
+		if err := os.WriteFile(probe, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Discover(nil)
+		if err == nil {
+			t.Fatalf("`instances/%s` was SKIPPED: an operator who wrote it gets no message "+
+				"anywhere, which is the hole the `.` predicate opened", name)
+		}
+		if !strings.Contains(err.Error(), "does not name a usable instance alias") {
+			t.Fatalf("`instances/%s` refused for the WRONG reason — this test would be green "+
+				"off another guard's error: %v", name, err)
+		}
+		if !strings.Contains(err.Error(), name) {
+			t.Fatalf("the refusal must name the FILE the operator wrote, not just the rule: %v",
+				err)
+		}
+		if err := os.Remove(probe); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

@@ -607,6 +607,30 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "both directions",
              ["routes", "--check", "--no-sync"], env={"CAIRN_ROUTES": "<ROUTES>"},
              wipe_cache=True),
+
+        # --- a routed WRITE at a non-default alias -----------------------------
+        # 🔴 THE REGION THAT HAD ZERO BYTE COMPARISON, AND IT IS THE ONE THIS WORK EXISTS TO
+        # SHIP. Both `<MULTICFG>` rows above are `routes --check` — the GRADER — so the routed
+        # WRITE path was covered only by each client's own unit tests, which cannot compare
+        # bytes across the two. A live divergence was measured in exactly that gap (`put`
+        # against a routed instance with an incomplete config: same exit code, different
+        # sentence, because the oracle loads the credentials lazily and the port did not).
+        #
+        # ⚠ IT GOES LAST ON PURPOSE. It is the only row that WRITES to the second pod, and the
+        # `routes --check` rows above read that pod's scope set; `restore_store` on the second
+        # store makes the order irrelevant, and this placement means nothing depends on that
+        # being true.
+        Case("put-routed-to-a-NON-DEFAULT-instance",
+             "🔴 THE ROUTED WRITE, COMPARED BYTE FOR BYTE. `gamma-notes` lives on the SECOND "
+             "pod and only there, so every step has to be the routed one: the table resolves "
+             "the alias, the ROUTED credentials are loaded, the ROUTED cache is synced, the "
+             "`If-Match` is derived from the SECOND store's bytes and echoed on stderr, and "
+             "`instance=secondary` is printed. A client that used the default instance for any "
+             "one of those hits pod 1, whose token does not carry `gamma-notes` at all — so "
+             "this row moves rather than merely reporting a different revision",
+             ["put", "--scope", "gamma-notes", "--ref", "gauge-api", "--file", "<PUTFILE>"],
+             no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
     ]
 
 
@@ -852,6 +876,14 @@ def main(argv: list[str] | None = None) -> int:
         # it puts a real date in a repository whose fixtures are deliberately year-2000.
         os.utime(second_store / "gamma-notes" / "gauge-api.md",
                  ns=(W.EPOCH_NS + 9, W.EPOCH_NS + 9))
+        # 🔴 THE SECOND STORE GETS A PRISTINE COPY TOO, FOR THE REASON `restore_store`'s
+        # docstring already gives: a WRITE row runs the two clients in sequence, so without a
+        # restore between them the Go client sees the oracle's write. The routed `put` row
+        # below derives its `If-Match` from the bytes it finds, so the two arms would derive
+        # DIFFERENT preconditions and the harness would report a divergence that is its own
+        # doing. Nothing needed this while every `<MULTICFG>` row was a `routes --check`.
+        second_pristine = work / "store-second-pristine"
+        shutil.copytree(second_store, second_pristine, copy_function=shutil.copy2)
         second_tokens = work / "tokens-second"
         second_tokens.write_text(
             W.TOKEN_ROW.rstrip("\n").replace(
@@ -868,15 +900,38 @@ def main(argv: list[str] | None = None) -> int:
         multi_routes = multi_dir / "routes.json"  # instance comes from the environment
 
         closed = free_port()  # bound and released, so a connect to it is REFUSED
-        hostile_server, hostile_port = hostile.start()
         port = free_port()
         second_port = free_port()
         log = work / "oracle.log"
         second_log = work / "oracle-second.log"
-        proc = start_oracle(store, token_file, log, port, break_pod=args.break_pod)
-        second_proc = start_oracle(second_store, second_tokens, second_log, second_port,
-                                   break_pod=args.break_pod)
+
+        # 🔴 EVERY LONG-LIVED HANDLE IS STARTED *INSIDE* THE `try`, AND THIS IS A MEASURED
+        # LEAK RATHER THAN A TIDINESS RULE. The starts used to sit ABOVE the `try` whose
+        # `finally` reaps them, so anything that raised between the first start and the `try`
+        # — a second `start_oracle` that could not bind, a `hostile.start()` that failed —
+        # left the handles already created running with nothing to reap them. Measured: four
+        # orphaned `server/server.py` processes survived one round of this harness and had to
+        # be resolved and killed by PID afterwards. The window grew from one handle to three
+        # as the multi-instance rows were added, which is the shape to watch: a new handle is
+        # cheap to add and its reaper is easy to forget.
+        #
+        # 🔴 AND THE NAMES ARE BOUND TO `None` FIRST, because `finally` runs on the way out of
+        # a `try` the interpreter entered — including when the raise happened on the FIRST
+        # line of it. Without these three bindings the reaper would itself raise
+        # `UnboundLocalError`, which replaces the original exception and loses the reason.
+        hostile_server = None
+        proc = None
+        second_proc = None
         try:
+            hostile_server, hostile_port = hostile.start()
+            proc = start_oracle(store, token_file, log, port, break_pod=args.break_pod)
+            second_proc = start_oracle(second_store, second_tokens, second_log, second_port,
+                                       break_pod=args.break_pod)
+            # 🔴 PRINTED, SO "THEY WERE REAPED" IS CHECKABLE INSTEAD OF ASSERTED. A reader who
+            # suspects a leak needs the PIDs this run owns; a `pgrep -f server/server.py`
+            # sweep cannot tell this run's pods from a sibling run's — or from the shell
+            # doing the sweeping.
+            print(f"PODS pids={proc.pid},{second_proc.pid}")
             wait_for_health(port, proc, log)
             wait_for_health(second_port, second_proc, second_log)
             (multi_dir / "instances" / "secondary.env").write_text(
@@ -953,18 +1008,29 @@ def main(argv: list[str] | None = None) -> int:
                     for a in case.argv
                 ]
                 cwd = repo if case.in_repo else work
-                shared = ["--cache", str(cache)] if argv_case else []
-                if case.no_cache_flag:
-                    # 🔴 AND THE DERIVED ROOTS ARE WIPED FIRST. Without `--cache` both clients
-                    # resolve `$HOME/.cache/subsystem-store[-<alias>]`, and the oracle runs
-                    # first: a root left behind by the previous client would let the second one
-                    # answer from a cache the first one wrote, which is not a comparison.
-                    shared = []
-                    for root in (home / ".cache").glob("subsystem-store*"):
-                        shutil.rmtree(root, ignore_errors=True)
+                # A `no_cache_flag` row passes NO `--cache`, so both clients resolve their own
+                # per-alias roots; `once()` wipes those per client.
+                shared = ([] if (case.no_cache_flag or not argv_case)
+                          else ["--cache", str(cache)])
 
                 def once(cmd: list[str]) -> Outcome:
+                    # 🔴 THE DERIVED ROOTS ARE WIPED PER CLIENT, INSIDE HERE — AND THE COMMENT
+                    # THAT USED TO SIT OUTSIDE CLAIMED ISOLATION THIS WIPE DID NOT DELIVER.
+                    # Without `--cache` both clients resolve
+                    # `$HOME/.cache/subsystem-store[-<alias>]`. The wipe ran ONCE per case,
+                    # above both `once()` calls, so the ORACLE populated those roots and the Go
+                    # client then ran against them — the exact state the comment said it
+                    # prevented. It was harmless only because both rows fetch live and
+                    # `install_snapshot` replaces the root wholesale, i.e. the safety came from
+                    # a different function's behaviour; a `no_cache_flag` row combined with
+                    # `--no-sync` would have compared the Go client against the oracle's cache
+                    # and reported PASS. Per-client is the structural fix, and it is the same
+                    # reason `restore_store` below is per-client rather than per-case.
+                    if case.no_cache_flag:
+                        for root in (home / ".cache").glob("subsystem-store*"):
+                            shutil.rmtree(root, ignore_errors=True)
                     restore_store(pristine, store)
+                    restore_store(second_pristine, second_store)
                     if case.presync:
                         run_client([sys.executable, str(ROOT / "cairn"), "--cache", str(cache),
                                     "sync"], work, base_env)
@@ -1169,14 +1235,20 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             return 1 if (failures or (dead and dead_is_fatal)) else 0
         finally:
-            hostile_server.shutdown()
-            hostile_server.server_close()
+            if hostile_server is not None:
+                hostile_server.shutdown()
+                hostile_server.server_close()
             for handle in (proc, second_proc):
+                # 🔴 `None` MEANS THE START NEVER HAPPENED, which is exactly the case the
+                # bindings above exist for — skip it rather than letting the reaper raise.
+                if handle is None:
+                    continue
                 handle.terminate()
                 try:
                     handle.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     handle.kill()
+                    handle.wait(timeout=10)
             if log.exists() and os.environ.get("PARITY_SHOW_SERVER_LOG"):
                 print("--- oracle log ---")
                 print(log.read_text(errors="replace"))

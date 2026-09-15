@@ -824,9 +824,9 @@ class TestDiscoveryAndTheTableFile:
         refusal above and EVERY `cairn` invocation on that host exited 11 while
         the buffer was open.
 
-        Two cases, because one of them is the realistic shape and the other is
-        the one a test is tempted to write: a dangling symlink (what Emacs
-        actually creates) and a plain file."""
+        Two cases, because the skip must not depend on the file's TYPE: a
+        dangling symlink (what Emacs actually creates) and a regular file with
+        the same `.#` name shape."""
         cfg = tmp_path / "config" / "env"
         cfg.parent.mkdir(parents=True)
         instances = cfg.parent / "instances"
@@ -834,17 +834,17 @@ class TestDiscoveryAndTheTableFile:
         (instances / f"{SECOND_ALIAS}.env").write_text("")
 
         lock = instances / f".#{SECOND_ALIAS}.env"
-        lock.symlink_to("zach@host.12345:1700000000")  # dangling, as Emacs writes it
+        lock.symlink_to("an-editor@a-host.12345:946684800")  # dangling, as Emacs writes it
         assert not lock.exists(), "the fixture must be a DANGLING link, as Emacs writes it"
         routing = ci.discover({"SUBSYSTEM_STORE_CONFIG": str(cfg)})
         assert routing.aliases == (rs.DEFAULT_ALIAS, SECOND_ALIAS), routing.aliases
         lock.unlink()
 
-        plain = instances / ".#vim-style.env"
-        plain.write_text("")
+        regular = instances / ".#vim-style.env"
+        regular.write_text("")
         routing = ci.discover({"SUBSYSTEM_STORE_CONFIG": str(cfg)})
         assert routing.aliases == (rs.DEFAULT_ALIAS, SECOND_ALIAS), routing.aliases
-        plain.unlink()
+        regular.unlink()
 
         # 🔴 THE CONTROL: a NON-dotted file the operator really did write is
         # still an ERROR. Without it this test is satisfied by deleting the
@@ -852,6 +852,41 @@ class TestDiscoveryAndTheTableFile:
         (instances / "Upper.env").write_text("")
         with pytest.raises(ci.RoutingConfigError):
             ci.discover({"SUBSYSTEM_STORE_CONFIG": str(cfg)})
+
+    def test_a_DOTTED_file_that_is_not_an_editor_lock_is_STILL_an_ERROR(self, tmp_path):
+        """🔴 THE SKIP'S OTHER ARM, AND THE ONE A ONE-SIDED TEST LEAVES OPEN.
+
+        The first cut of the narrowing above skipped every name beginning with
+        `.`, which silently swallowed `instances/.env` — the dotted name an
+        operator is MOST likely to write there, and whose stem is the empty
+        string. Measured on that predicate: a complete, valid `instances/.env`
+        produced `instances: personal` at exit 0 with no message on either
+        client, which is exactly the outcome
+        `test_a_file_that_cannot_be_an_alias_is_an_ERROR_not_a_skip` exists to
+        forbid. The skip arm alone PASSES while that hole is open, so this arm
+        is what makes the pair a predicate rather than a direction.
+
+        ⚠ `.env` IS THE LOAD-BEARING CASE, and the others are here so the guard
+        pins `.#` rather than "an empty stem": a non-empty dotted stem that is
+        also an unusable alias must refuse too."""
+        cfg = tmp_path / "config" / "env"
+        cfg.parent.mkdir(parents=True)
+        instances = cfg.parent / "instances"
+        instances.mkdir()
+        for name in (".env", ".Upper.env", ".hidden.env"):
+            probe = instances / name
+            probe.write_text(
+                "SUBSYSTEM_STORE_URL=http://127.0.0.1:1\n"
+                "SUBSYSTEM_STORE_TOKEN=synthetic\n"
+            )
+            with pytest.raises(ci.RoutingConfigError) as exc:
+                ci.discover({"SUBSYSTEM_STORE_CONFIG": str(cfg)})
+            assert "does not name a usable instance alias" in str(exc.value)
+            assert name in str(exc.value), (
+                f"the refusal must name the FILE the operator wrote, not just the "
+                f"rule: {exc.value}"
+            )
+            probe.unlink()
 
     def test_an_instances_file_may_NOT_claim_the_default_alias(self, tmp_path):
         cfg = tmp_path / "config" / "env"
