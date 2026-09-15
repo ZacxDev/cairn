@@ -43,6 +43,9 @@ func (e Env) host() string {
 // — exit non-zero, naming the host. A `sync` that exited 0 on an outage is how a timer reports
 // success forever while the cache silently ages out.
 func Sync(env Env, opts Options) (int, error) {
+	if code, stop := RefuseUnportedMultiInstance(env, "sync"); stop {
+		return code, nil
+	}
 	// 🔴 `scope=""`, ALWAYS. `--scope` used to be threaded through here, which REPLACED THE
 	// SHARED CACHE with a one-scope copy: measured, a scoped run took the cache from 305
 	// entries to 2, after which an offline recall of any other scope printed "the store has
@@ -66,6 +69,9 @@ func Sync(env Env, opts Options) (int, error) {
 
 // LsEntries prints one `<scope>/<entry>.md` per line.
 func LsEntries(env Env, opts Options) (int, error) {
+	if code, stop := RefuseUnportedMultiInstance(env, "ls-entries"); stop {
+		return code, nil
+	}
 	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout)
 	if err != nil {
 		return 0, err
@@ -86,6 +92,9 @@ func LsEntries(env Env, opts Options) (int, error) {
 // derivation, the banner and the exit passthrough are identical and three of them rendered
 // differently when they were separate.
 func Report(env Env, opts Options, isSearch bool) (int, error) {
+	if code, stop := RefuseUnportedMultiInstance(env, "recall/search"); stop {
+		return code, nil
+	}
 	// 🔴 SYNC THE WHOLE STORE, NEVER `scope=opts.Scope`. A scope-filtered cache makes the
 	// reader answer `scope-absent` for every scope that was simply not fetched —
 	// indistinguishable, in the output, from a scope the store has never held.
@@ -228,6 +237,9 @@ func emptyState(state State) State {
 // which was a second implementation of the same predicate — exactly the shape that lets a file
 // validate clean and then fail to render.
 func Validate(env Env, opts Options) (int, error) {
+	if code, stop := RefuseUnportedMultiInstance(env, "validate"); stop {
+		return code, nil
+	}
 	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout)
 	if err != nil {
 		return 0, err
@@ -324,6 +336,30 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
+// writeInstance is `(alias, config)` for a write, or an `*UnroutedScope` that never guesses.
+//
+// 🔴 A WRITE NAMES ITS INSTANCE UNCONDITIONALLY, UNLIKE A READ'S LABEL. "Where did that bullet
+// go" is a question about a DURABLE record, asked later, by someone who no longer has the
+// terminal — so the alias is printed at one instance and at many, and the oracle does the same.
+//
+// 🔴 AND THE CONFIG COMES FROM THE ROUTED INSTANCE, NOT FROM THE DEFAULT ONE. Printing the right
+// alias while sending to the wrong store is the shape of bug a message check cannot see.
+func writeInstance(scope string) (string, Config, error) {
+	routing, err := Discover(nil)
+	if err != nil {
+		return "", Config{}, err
+	}
+	alias, err := routing.AliasFor(scope)
+	if err != nil {
+		return "", Config{}, err
+	}
+	cfg, err := LoadConfigFor(alias)
+	if err != nil {
+		return "", Config{}, err
+	}
+	return alias, cfg, nil
+}
+
 // Append appends ONE dated bullet — `POST /api/v1/entry/<scope>/<ref>/bullets`.
 //
 // 🔴 DO NOT DATE-PREFIX `--text`. The server prepends `- <date>: ` itself; the first production
@@ -349,7 +385,7 @@ func Append(env Env, opts Options) (int, error) {
 			runes, write.BulletTextMax, runes-write.BulletTextMax)
 		return ExitUsage, nil
 	}
-	cfg, err := LoadConfig()
+	alias, cfg, err := writeInstance(scope)
 	if err != nil {
 		return 0, err
 	}
@@ -366,8 +402,8 @@ func Append(env Env, opts Options) (int, error) {
 	// by CONTENT HASH, so a re-POST after a timeout is idempotent — which is the property that
 	// makes a retry safe. But a caller told nothing would read "appended" into a run that wrote
 	// nothing. Saying which of the two happened is the whole difference.
-	fmt.Fprintf(env.Stdout, "cairn: %s scope=%s ref=%s revision=%s\n",
-		headerOr(headers, "X-Store-Status", "unknown"), scope, opts.Ref,
+	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s scope=%s ref=%s revision=%s\n",
+		headerOr(headers, "X-Store-Status", "unknown"), alias, scope, opts.Ref,
 		etagOr(headers, "unknown"))
 	fmt.Fprint(env.Stdout, store.DecodeReplace(body))
 	return ExitOK, nil
@@ -436,7 +472,7 @@ func Put(env Env, opts Options) (int, error) {
 		revision = hex.EncodeToString(sum[:])[:16]
 		fmt.Fprintf(env.Stderr, "cairn: derived If-Match %s from the live snapshot\n", revision)
 	}
-	cfg, err := LoadConfig()
+	alias, cfg, err := writeInstance(scope)
 	if err != nil {
 		return 0, err
 	}
@@ -446,8 +482,9 @@ func Put(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fmt.Fprintf(env.Stdout, "cairn: %s scope=%s ref=%s revision=%s\n",
-		headerOr(headers, "X-Store-Status", "unknown"), scope, opts.Ref, etagOr(headers, "unknown"))
+	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s scope=%s ref=%s revision=%s\n",
+		headerOr(headers, "X-Store-Status", "unknown"), alias, scope, opts.Ref,
+		etagOr(headers, "unknown"))
 	fmt.Fprint(env.Stdout, store.DecodeReplace(body))
 	return ExitOK, nil
 }
@@ -475,7 +512,7 @@ func Create(env Env, opts Options) (int, error) {
 		fmt.Fprintf(env.Stderr, "cairn: cannot read --file %s: %s\n", opts.File, pyOSError(readErr))
 		return ExitUsage, nil
 	}
-	cfg, err := LoadConfig()
+	alias, cfg, err := writeInstance(scope)
 	if err != nil {
 		return 0, err
 	}
@@ -485,8 +522,9 @@ func Create(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fmt.Fprintf(env.Stdout, "cairn: %s scope=%s ref=%s revision=%s\n",
-		headerOr(headers, "X-Store-Status", "unknown"), scope, opts.Ref, etagOr(headers, "unknown"))
+	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s scope=%s ref=%s revision=%s\n",
+		headerOr(headers, "X-Store-Status", "unknown"), alias, scope, opts.Ref,
+		etagOr(headers, "unknown"))
 	fmt.Fprint(env.Stdout, store.DecodeReplace(body))
 	return ExitOK, nil
 }

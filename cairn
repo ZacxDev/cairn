@@ -73,12 +73,19 @@ OPERATOR supplies (`~/.config/subsystem-store/routes.json`, or `$CAIRN_ROUTES`)
 — never by anything checked in here, because this program knows how to route
 and nothing about who routes where.
 
-🔴 AN UNREGISTERED SCOPE REFUSES AT EXIT 11, NAMING THE SCOPE. It never falls
-back to an instance. A default would silently recreate the failure this whole
-tool exists to close — a write landing in a store nobody reads — and that one is
-found days later, by accident, if at all. With ONE instance configured there is
-no second place a scope could go, so nothing routes, nothing is labelled, and
-every byte of output is what it was before any of this existed.
+🔴 AN UNREGISTERED SCOPE REFUSES AT EXIT 11, NAMING THE SCOPE, ONCE THERE IS
+MORE THAN ONE INSTANCE. It never falls back to one of several. A default would
+silently recreate the failure this whole tool exists to close — a write landing
+in a store nobody reads — and that one is found days later, by accident, if at
+all. With ONE instance configured there is no second place a scope could go, so
+nothing is labelled and every byte of output is what it was before any of this
+existed — a routing TABLE being present does not change that, because a table
+says where scopes live and not how many stores this host can reach.
+
+🔴 ONE EXCEPTION AT EVERY INSTANCE COUNT: a table entry naming an alias this
+host has no config for REFUSES. That entry is a statement that the scope lives
+somewhere this machine cannot reach, so resolving it to the sole instance would
+be the misroute in its purest form. See `cairn_instances.Routing.alias_for`.
 """
 
 from __future__ import annotations
@@ -316,12 +323,28 @@ def load_config(path: Path | None = None, *, instance: str | None = None) -> tup
 
 # --- INSTANCES AND ROUTING --------------------------------------------------
 #
-# 🔴 EVERY INSTANCE-AWARE BEHAVIOUR ASKS `Routing.active`, AND NOTHING ELSE.
-# Labelling a banner, labelling a write, `doctor`'s per-instance sections, the
-# search fan-out and the caveat's extra clause are five sites that must agree
-# about whether this host is routing; five copies of "len(instances) > 1" would
-# be five chances to disagree, and the symptom of disagreeing is output that
-# names an instance the next line does not.
+# 🔴 TWO PREDICATES, NOT ONE, AND KNOWING WHICH YOU WANT IS THE WHOLE TRAP.
+#
+#   * `Routing.multi_instance` — "is there more than one PLACE on this host?".
+#     Every site that LABELS output asks this and nothing else: the banner
+#     label, the write label, `doctor`'s per-instance sections, `ls-entries`'
+#     prefix, the search fan-out and the caveat's extra clause. Six copies of
+#     `len(instances) > 1` would be six chances to disagree, and the symptom of
+#     disagreeing is output that names an instance the next line does not.
+#   * `Routing.alias_for` — "WHERE does this scope live?". It consults the
+#     routing TABLE first, so a one-instance host with a table still refuses a
+#     scope routed to an alias it has no config for.
+#
+# 🔴 THEY WERE ONE BOOLEAN AND THAT WAS A DEFECT, recorded here because the
+# collapse is the obvious simplification and it is wrong in both directions.
+# `active = routes is not None or len(instances) > 1` made a table's PRESENCE
+# switch labelling on, so the first operator to write a table on a one-instance
+# host got "with more than one instance configured …" on every recall — false on
+# that host — and every scope not yet in the table refused at exit 11. Deleting
+# the `routes is not None` disjunct fixes those and opens a SILENT MISROUTE: a
+# table entry naming an unconfigured alias would then resolve to the sole
+# instance. The three-row table in `cairn_instances.Routing.alias_for` is the
+# measurement; do not re-collapse these.
 
 
 def _routing() -> "cairn_instances.Routing":
@@ -352,14 +375,21 @@ def _instance_cache(args: argparse.Namespace, alias: str) -> Path:
 def _instance_for(args: argparse.Namespace, scope: str) -> tuple[str, str | None, Path]:
     """`(alias, label, cache)` for a scope. Raises `UnroutedScope` — never guesses.
 
-    `label` is the alias when this host is routing and `None` when it is not.
-    🔴 THAT `None` IS THE COMPATIBILITY GUARANTEE, not a formatting nicety: it is
-    what keeps a one-instance host's output byte-for-byte what it was, so the
-    routing machinery can ship and be proven inert before any data moves.
+    `label` is the alias when this host has MORE THAN ONE INSTANCE and `None`
+    when it has one. 🔴 THAT `None` IS THE COMPATIBILITY GUARANTEE, not a
+    formatting nicety: it is what keeps a one-instance host's output
+    byte-for-byte what it was, so the routing machinery can ship and be proven
+    inert before any data moves.
+
+    🔴 AND IT IS GATED ON THE INSTANCE COUNT, NEVER ON THE TABLE. A one-instance
+    host that has written a routing table is still a host with one place an
+    answer can come from, so it is still unlabelled — while `alias_for` above
+    has already consulted that table and may have refused. The two questions are
+    separate; see the header comment.
     """
     routing = _routing()
     alias = routing.alias_for(scope)
-    return alias, (alias if routing.active else None), _instance_cache(args, alias)
+    return alias, (alias if routing.multi_instance else None), _instance_cache(args, alias)
 
 
 def _repo_scope(args: argparse.Namespace) -> str:
@@ -377,7 +407,7 @@ def _repo_scope(args: argparse.Namespace) -> str:
 
 
 def _default_instance(args: argparse.Namespace) -> tuple[str, str | None, Path]:
-    """The default instance, LABELLED when this host is routing.
+    """The default instance, LABELLED when this host has more than one.
 
     Used where there is no scope to route. The label still appears, because
     "which of my instances did that read" is exactly as pressing when the
@@ -385,7 +415,7 @@ def _default_instance(args: argparse.Namespace) -> tuple[str, str | None, Path]:
     """
     routing = _routing()
     alias = _read_store.DEFAULT_ALIAS
-    return alias, (alias if routing.active else None), _instance_cache(args, alias)
+    return alias, (alias if routing.multi_instance else None), _instance_cache(args, alias)
 
 
 def _refuse_shared_cache(
@@ -924,7 +954,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return refusal
     worst = EXIT_OK
     for instance in routing.instances:
-        label = instance.alias if routing.active else None
+        label = instance.alias if routing.multi_instance else None
         state, detail, hint = resolve_state(
             _instance_cache(args, instance.alias),
             no_sync=False,
@@ -954,7 +984,7 @@ def cmd_ls_entries(args: argparse.Namespace) -> int:
         return refusal
     worst = EXIT_OK
     for instance in routing.instances:
-        label = instance.alias if routing.active else None
+        label = instance.alias if routing.multi_instance else None
         cache = _instance_cache(args, instance.alias)
         state, detail, hint = resolve_state(
             cache,
@@ -979,7 +1009,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
     # the routing table about this repo's scope here would refuse a fleet-wide
     # search because the scope the caller did not name is unregistered, which is
     # a refusal about a question nobody asked.
-    if search is not None and getattr(args, "all_scopes", False) and routing.active:
+    if search is not None and getattr(args, "all_scopes", False) and routing.multi_instance:
         return _search_every_instance(args, routing, search)
 
     # 🔴 THE SCOPE IS DERIVED BEFORE THE SYNC, BECAUSE IT DECIDES WHICH STORE TO
@@ -1824,7 +1854,7 @@ def _doctor_instance(args, doctor, routing, instance) -> list:
         token_reason=token_reason,
         identity_remedy=IDENTITY_REMEDY,
     )
-    if not routing.active:
+    if not routing.multi_instance:
         return checks
     return [
         type(check)(f"{instance.alias}/{check.name}", check.state, check.detail)
@@ -1931,7 +1961,8 @@ def cmd_routes(args: argparse.Namespace) -> int:
 
     🔴 IT GRADES IN BOTH DIRECTIONS. A scope with no entry refuses its next
     write — loud. An entry naming a scope that exists nowhere is the silent one:
-    it reads as coverage and survives a rename. See `cairn_instances.check_routes`.
+    it reads as coverage and survives a rename. See `Routing.check`, which asks
+    `Routing.alias_for` for the third direction rather than re-deriving it.
     """
     routing = _routing()
     print(f"instances: {', '.join(routing.aliases)}")
@@ -1939,13 +1970,13 @@ def cmd_routes(args: argparse.Namespace) -> int:
         print(
             "routes: NONE configured — every scope resolves to "
             f"`{_read_store.DEFAULT_ALIAS}`"
-            if not routing.active
+            if not routing.multi_instance
             else "routes: NONE configured, and this host has more than one "
                  "instance, so EVERY scope refuses until a table exists"
         )
         if not args.check:
             return EXIT_OK
-        return EXIT_OK if not routing.active else EXIT_UNROUTED
+        return EXIT_OK if not routing.multi_instance else EXIT_UNROUTED
     print(f"routes: {routing.routes_source}")
     for scope in sorted(routing.routes):
         print(f"  {scope} -> {routing.routes[scope]}")
@@ -1961,14 +1992,22 @@ def cmd_routes(args: argparse.Namespace) -> int:
     # deleted elsewhere reads as "the table names a scope that does not exist".
     # An instance that cannot be refreshed is therefore named, and the check
     # REFUSES rather than grading against what happens to be on this disk.
+    #
+    # 🔴 AND THE BANNER IS LABELLED ONLY WHEN THERE IS MORE THAN ONE INSTANCE,
+    # like every other read in this file. This loop used to pass the alias
+    # unconditionally, which made `routes --check` the ONE command that printed
+    # `cairn[personal]:` on a host with a single store — found by diffing this
+    # verb against its Go port rather than by any test, because no test asserted
+    # the banner here at all.
     scopes: set[str] = set()
     for instance in routing.instances:
+        label = instance.alias if routing.multi_instance else None
         cache = _instance_cache(args, instance.alias)
         state, detail, hint = resolve_state(
             cache, no_sync=args.no_sync, scope=None, timeout=_store_timeout(args),
             instance=instance.alias,
         )
-        print(banner(state, detail, instance.alias), file=sys.stderr)
+        print(banner(state, detail, label), file=sys.stderr)
         if hint is not None or state != STATE_LIVE:
             print(
                 f"🔴 cairn: REFUSING to grade the table — instance "
@@ -1980,9 +2019,7 @@ def cmd_routes(args: argparse.Namespace) -> int:
             )
             return EXIT_UNROUTED
         scopes.update(p.name for p in cache.iterdir() if p.is_dir())
-    problems = cairn_instances.check_routes(
-        routing.routes, scopes=scopes, aliases=routing.aliases
-    )
+    problems = routing.check(scopes)
     for problem in problems:
         print(f"🔴 cairn: {problem}", file=sys.stderr)
     print(

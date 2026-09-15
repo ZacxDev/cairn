@@ -17,13 +17,33 @@ scope so the remedy is a single line in the table.
 
 🔴 ONE INSTANCE IS NOT ROUTING, AND THAT IS THE WHOLE COMPATIBILITY STORY.
 With a single configured instance there is no second place a scope could go,
-so `alias_for` answers with it and NOTHING about the single-instance client
-changes — no label, no table, no refusal. Routing turns on when a second
-instance appears OR when a routing table is configured, which are exactly the
-two states in which "where did that go?" has more than one answer. The
-alternative — refusing until a table exists — would break every existing
-deployment on upgrade in exchange for a guarantee nobody needs while there is
-one store.
+so an unregistered scope answers with it and NOTHING about the single-instance
+client changes — no label, no table, no refusal. The alternative — refusing
+until a table exists — would break every existing deployment on upgrade in
+exchange for a guarantee nobody needs while there is one store.
+
+🔴 AND "IS THIS HOST ROUTING?" IS NOT ONE QUESTION, WHICH IS THE CORRECTION
+THIS MODULE CARRIES. It used to be, and the single boolean was
+`routes is not None or len(instances) > 1` — table presence counted as routing.
+That is wrong in both directions on a ONE-instance host that has a table, which
+is the state an operator reaches the moment they write one:
+
+    case (ONE instance configured)          | what must happen
+    ----------------------------------------|------------------------------------
+    no table at all                         | resolve to the sole instance
+    a table, and the scope is NOT in it     | resolve to the sole instance
+    a table entry naming an UNCONFIGURED    | REFUSE — the table names where the
+      alias                                 | scope lives and this host cannot
+                                            | reach it
+
+Rows 2 and 3 need OPPOSITE answers from the same configuration, so no single
+`active` flag can decide both: with the old predicate row 2 refused (a scope
+nobody had added to the table yet became unreadable), and simply deleting the
+`routes is not None` disjunct makes row 3 resolve to the sole instance — a
+SILENT MISROUTE, a write landing in a store nobody decided on, which is worse
+than the refusal it replaces. So there are two predicates: `multi_instance`
+decides what is LABELLED, and `alias_for` consults the TABLE FIRST and falls
+back to the sole instance only when the table said nothing at all.
 
 🔴 THE DEFAULT INSTANCE IS THE EXISTING CONFIG FILE, UNMOVED. `~/.config/
 subsystem-store/env` keeps its name, its contents and its environment-variable
@@ -43,7 +63,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -60,12 +79,12 @@ __all__ = [
     "Routing",
     "RoutingConfigError",
     "UnroutedScope",
-    "check_routes",
     "config_path",
     "discover",
     "instance_dir",
     "load_routes",
     "routes_file",
+    "routing_for",
 ]
 
 #: The environment variable naming the DEFAULT instance's config file. It
@@ -219,15 +238,30 @@ class Routing:
         return tuple(i.alias for i in self.instances)
 
     @property
-    def active(self) -> bool:
-        """Is there more than one answer to "where did that go?".
+    def multi_instance(self) -> bool:
+        """Is there more than one PLACE on this host an answer could come from?
 
-        🔴 THE ONE PREDICATE. Every instance-aware behaviour in the client —
-        labelling a banner, labelling a write, per-instance `doctor` sections,
-        the search fan-out, the caveat's extra clause — asks THIS, so they
-        cannot drift into disagreeing about whether this host is routing.
+        🔴 THE LABELLING PREDICATE, AND IT IS DELIBERATELY NOT THE ROUTING ONE.
+        Every place the client says WHICH instance it read — the banner label,
+        `doctor`'s per-instance rows, `ls-entries`' prefix, the `--all-scopes`
+        fan-out, the caveat's extra clause — asks THIS, so they cannot drift
+        into disagreeing about whether this host has more than one store.
+
+        🔴 IT ASKS THE INSTANCE COUNT AND NOT THE TABLE, AND THAT IS THE FIX.
+        The predicate used to be `routes is not None or len(instances) > 1`, so
+        writing a routing table on a ONE-instance host switched every label on:
+        each recall then asserted "with more than one instance configured, an
+        absence here is also explainable by the scope living on another
+        instance" — a sentence that is FALSE on that host, printed on every
+        call, which is precisely the always-false caveat the caveat rewrite
+        exists to eliminate. A table is a statement about where scopes live,
+        not about how many stores this machine can reach.
+
+        ⚠ IT IS NOT THE ROUTING DECISION EITHER — see `alias_for`, which
+        consults the table whatever this returns. A one-instance host with a
+        table still REFUSES a scope routed to an alias it has no config for.
         """
-        return self.routes is not None or len(self.instances) > 1
+        return len(self.instances) > 1
 
     def get(self, alias: str) -> Instance:
         for instance in self.instances:
@@ -241,17 +275,54 @@ class Routing:
     def alias_for(self, scope: str) -> str:
         """The instance `scope` belongs to, or raise. NEVER a guess.
 
-        Three refusals, each reachable by an input no earlier one rejects:
-          1. instances but no table  -> nothing can decide
-          2. a table without `scope` -> the table decided nothing about it
-          3. a table naming an alias this host has no config for
+        🔴 THE TABLE IS CONSULTED FIRST, WHATEVER `multi_instance` SAYS, AND THE
+        ORDER IS THE WHOLE POINT. Three cases share one configuration — a
+        one-instance host with a table — and two of them must answer
+        DIFFERENTLY, so a single "is this host routing" boolean cannot decide
+        them. Measured, on a host with ONE instance configured:
+
+            table state for this scope   | today  | `active = len(instances)>1`
+            -----------------------------|--------|----------------------------
+            (1) no table at all          | sole   | sole
+            (2) table, scope ABSENT      | sole   | sole
+            (3) table -> UNCONFIGURED    | REFUSE | sole  <- SILENT MISROUTE
+                alias                    |        |
+
+        Row 3 is a table explicitly routing a scope to an alias this host has no
+        config for. Resolving it to the sole instance is a write landing in a
+        store nobody decided on — the exact failure the refusal exists to
+        prevent — so it refuses at ONE instance and at many. Rows 1 and 2 are
+        the opposite: the table said nothing about this scope, and with one
+        instance there is exactly one answer to "where did that go?", which is
+        the same reasoning the no-table case has always used.
+
+        The refusals, each reachable by an input no earlier one rejects:
+          1. a table naming an alias this host has no config for  (any count)
+          2. two or more instances and no table -> nothing can decide
+          3. two or more instances and a table without `scope`
 
         🔴 THE COMPARISON IS EXACT. The table's keys are scope names exactly as
         `entry_shape.derive_scope` produces them. A case or spelling mismatch
-        therefore REFUSES rather than resolving to something adjacent, which is
-        the safe direction for a value that decides where a write lands.
+        therefore falls through to the rows above rather than resolving to
+        something adjacent, which is the safe direction for a value that decides
+        where a write lands.
         """
-        if not self.active:
+        alias = None if self.routes is None else self.routes.get(scope)
+        if alias is not None:
+            if alias not in self.aliases:
+                raise UnroutedScope(
+                    scope,
+                    f"the routing table `{self.routes_source}` routes scope "
+                    f"`{scope}` to instance `{alias}`, which is not configured on "
+                    f"this host (configured: {', '.join(self.aliases)}). REFUSING "
+                    f"rather than falling back: the table names where this scope "
+                    f"lives, and this host cannot reach it. Add "
+                    f"`{instance_dir()}/{alias}{INSTANCE_SUFFIX}`.",
+                )
+            return alias
+        # The table decided NOTHING about this scope — it has no entry, or there
+        # is no table. With one instance that has exactly one answer.
+        if not self.multi_instance:
             return DEFAULT_ALIAS
         if self.routes is None:
             raise UnroutedScope(
@@ -263,28 +334,84 @@ class Routing:
                 f"Write a scope->alias table to "
                 f"`{routes_file()[0]}`, or set ${ROUTES_ENV} to one.",
             )
-        alias = self.routes.get(scope)
-        if alias is None:
-            raise UnroutedScope(
-                scope,
-                f"scope `{scope}` is not in the routing table "
-                f"`{self.routes_source}`. REFUSING rather than defaulting to an "
-                f"instance: an unregistered scope is a scope nobody decided about, "
-                f"and guessing is how a write lands in a store nobody reads. Add "
-                f"`\"{scope}\": \"<alias>\"` to that table (configured instances: "
-                f"{', '.join(self.aliases)}).",
+        raise UnroutedScope(
+            scope,
+            f"scope `{scope}` is not in the routing table "
+            f"`{self.routes_source}`. REFUSING rather than defaulting to an "
+            f"instance: an unregistered scope is a scope nobody decided about, "
+            f"and guessing is how a write lands in a store nobody reads. Add "
+            f"`\"{scope}\": \"<alias>\"` to that table (configured instances: "
+            f"{', '.join(self.aliases)}).",
+        )
+
+    def check(self, scopes: Mapping[str, str] | set[str] | tuple[str, ...] | list[str]
+              ) -> tuple[str, ...]:
+        """Grade this host's routing table against reality, IN BOTH DIRECTIONS.
+
+        🔴 BOTH DIRECTIONS, BECAUSE EACH MISSES A DIFFERENT DEFECT. A scope with
+        no entry is a scope whose next write REFUSES — annoying but loud. An
+        entry naming a scope that does not exist is the silent one: it reads as
+        coverage, survives the scope being renamed or retired, and is exactly
+        what a table accumulates when it is edited by hand. A one-way check
+        would report a clean table over either.
+
+        A third direction is graded here too because it is the same class: an
+        entry naming an alias no instance provides. 🔴 IT IS NOT RE-DERIVED — it
+        ASKS `alias_for`, which already owns that refusal. This method used to
+        recompute `alias not in aliases` from the same two inputs, so the rule
+        had two implementations and the second one could have drifted without
+        any test noticing; one rule, one place.
+
+        Returns the problems, one string each, in a stable order. An empty tuple
+        is the only clean result — callers must not read a truthy/falsy bare
+        return, which is why this returns strings rather than a bool.
+        """
+        if self.routes is None:
+            raise RoutingConfigError(
+                "there is no routing table on this host to grade. A caller that "
+                "reached here read an absent table as an empty one, which would "
+                "report every scope as unrouted."
             )
-        if alias not in self.aliases:
-            raise UnroutedScope(
-                scope,
-                f"the routing table `{self.routes_source}` routes scope `{scope}` "
-                f"to instance `{alias}`, which is not configured on this host "
-                f"(configured: {', '.join(self.aliases)}). REFUSING rather than "
-                f"falling back: the table names where this scope lives, and this "
-                f"host cannot reach it. Add `{instance_dir()}/{alias}"
-                f"{INSTANCE_SUFFIX}`.",
+        scope_set = set(scopes)
+        problems: list[str] = []
+        # 🔴 DIRECTION ONE ASKS THE RESOLVER, IT DOES NOT SUBTRACT KEY SETS. The
+        # finding this raises is "a write to it will REFUSE", which is a claim
+        # about what `alias_for` does — and on a ONE-instance host it does not
+        # refuse: an unnamed scope resolves to the sole instance. Grading by the
+        # table's keys alone printed that refusal warning on every unnamed scope
+        # of every one-instance host, which is a confident statement about
+        # behaviour that will not happen.
+        for scope in sorted(scope_set - set(self.routes)):
+            try:
+                self.alias_for(scope)
+            except UnroutedScope:
+                problems.append(
+                    f"scope `{scope}` exists but the routing table does not name "
+                    f"it — a write to it will REFUSE"
+                )
+        # ⚠ DIRECTION TWO IS NOT A RESOLVER QUESTION, DELIBERATELY. `alias_for`
+        # resolves a stale entry perfectly well — it names a configured alias —
+        # so asking it here would grade this direction clean. The defect is that
+        # the scope does not EXIST, which only the scope set can see.
+        for scope in sorted(set(self.routes) - scope_set):
+            problems.append(
+                f"the routing table names scope `{scope}`, which exists on no "
+                f"configured instance — a stale entry reads as coverage"
             )
-        return alias
+        for scope in sorted(self.routes):
+            try:
+                self.alias_for(scope)
+            except UnroutedScope:
+                # 🔴 THE ONLY REFUSAL `alias_for` CAN RAISE FOR A SCOPE THE TABLE
+                # NAMES is the unconfigured-alias one: the other two arms are
+                # reached only when the table said nothing about the scope, and
+                # this loop iterates the table's own keys. The short line here is
+                # the FINDING's wording; the PREDICATE is `alias_for`'s.
+                problems.append(
+                    f"the routing table routes `{scope}` to instance "
+                    f"`{self.routes[scope]}`, which is not configured on this host"
+                )
+        return tuple(problems)
 
 
 def discover(env: Mapping[str, str] | None = None) -> Routing:
@@ -350,48 +477,23 @@ def discover(env: Mapping[str, str] | None = None) -> Routing:
     return Routing(instances=tuple(instances), routes=routes, routes_source=source)
 
 
-def check_routes(
+def routing_for(
     routes: Mapping[str, str],
-    *,
-    scopes: Mapping[str, str] | set[str] | tuple[str, ...] | list[str],
     aliases: tuple[str, ...] | set[str] | list[str],
-) -> tuple[str, ...]:
-    """Grade a routing table against reality, IN BOTH DIRECTIONS.
+) -> Routing:
+    """A `Routing` over an alias list and a table, with no filesystem involved.
 
-    🔴 BOTH DIRECTIONS, BECAUSE EACH MISSES A DIFFERENT DEFECT. A scope with no
-    entry is a scope whose next write REFUSES — annoying but loud. An entry
-    naming a scope that does not exist is the silent one: it reads as coverage,
-    survives the scope being renamed or retired, and is exactly what a table
-    accumulates when it is edited by hand. A one-way check would report a clean
-    table over either.
-
-    A third direction is graded here too because it is the same class: an entry
-    naming an alias no instance provides. That one refuses at USE time with a
-    message about the table; catching it here turns a future refusal into a
-    present, fixable finding.
-
-    Returns the problems, one string each, in a stable order. An empty tuple is
-    the only clean result — callers must not read a truthy/falsy bare return,
-    which is why this returns strings rather than a bool.
+    🔴 IT EXISTS SO THE GRADER AND THE RESOLVER CANNOT BE TESTED SEPARATELY.
+    `Routing.check` asks `Routing.alias_for` for the unconfigured-alias
+    direction, so a test that wanted to grade a table without discovering a host
+    would otherwise have had to re-implement one of them. The config paths are
+    the placeholders they are because nothing on either path reads them: an
+    `Instance` carries an alias and the file its credentials come from, and
+    routing never opens that file.
     """
-    scope_set = set(scopes)
-    alias_set = set(aliases)
-    problems: list[str] = []
-    for scope in sorted(scope_set - set(routes)):
-        problems.append(
-            f"scope `{scope}` exists but the routing table does not name it — "
-            f"a write to it will REFUSE"
-        )
-    for scope in sorted(set(routes) - scope_set):
-        problems.append(
-            f"the routing table names scope `{scope}`, which exists on no "
-            f"configured instance — a stale entry reads as coverage"
-        )
-    for scope in sorted(routes):
-        alias = routes[scope]
-        if alias not in alias_set:
-            problems.append(
-                f"the routing table routes `{scope}` to instance `{alias}`, "
-                f"which is not configured on this host"
-            )
-    return tuple(problems)
+    return Routing(
+        instances=tuple(Instance(alias=a, config_path=Path(os.devnull))
+                        for a in sorted(set(aliases))),
+        routes=dict(routes),
+        routes_source=None,
+    )

@@ -549,6 +549,35 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "🔴 `doctor` MUST REFUSE `--scope`. It asks about this host and this credential, "
              "and a `--scope` here would invite the filtered-cache mistake",
              ["doctor", "--scope", "alpha-notes"], compare=COMPARE_EXIT),
+
+        # --- `routes`: the scope→instance table --------------------------------
+        # 🔴 THESE ROWS ARE WHAT KEEPS A NEW VERB AND A NEW EXIT CODE FROM BEING DECLARED ON ONE
+        # CLIENT ONLY. The verb ledger in `test_parity_harness.py` requires every CLI verb to
+        # appear in a case, and the exit-code ledger requires every documented code to be named
+        # by one; a `routes` that existed in Python alone would leave both green while the two
+        # clients disagreed about what the tool can do.
+        Case("routes-none-configured",
+             "the ordinary host: ONE instance, no table, so every scope resolves to `personal` "
+             "and nothing is labelled. The full text is compared — this row is the one that "
+             "would catch a Go port that labelled a single-instance banner",
+             ["routes"]),
+        Case("routes-table-printed",
+             "a table present on a ONE-instance host. It prints, sorted, and STILL labels "
+             "nothing: a table says where scopes live, not how many stores this host can reach",
+             ["routes"], env={"CAIRN_ROUTES": "<ROUTES>"}),
+        Case("routes-check-finds-a-stale-entry",
+             "🔴 exit 11, AND IT IS THE ONLY ROW THAT REACHES THAT CODE. The table names a scope "
+             "that exists on no instance — the silent direction, which reads as coverage and "
+             "survives a rename. Both clients refresh live, enumerate the cache, grade in both "
+             "directions and print the same findings on stderr",
+             ["routes", "--check"], env={"CAIRN_ROUTES": "<ROUTES>"}),
+        Case("routes-check-refuses-a-STALE-cache",
+             "🔴 exit 11 FOR A DIFFERENT REASON, AND THE DISTINCTION IS THE POINT: `--no-sync` "
+             "with no cache means the scope set would be a fact about this disk rather than "
+             "about the table, so the check REFUSES to grade rather than inventing findings in "
+             "both directions",
+             ["routes", "--check", "--no-sync"], env={"CAIRN_ROUTES": "<ROUTES>"},
+             wipe_cache=True),
     ]
 
 
@@ -734,6 +763,21 @@ def main(argv: list[str] | None = None) -> int:
             "## What it is\n\nreplaced by the parity harness.\n\n"
             "## Pointers\n\n- `apps/gauge-api/values.yaml`\n\n"
             "## Nuance / work-history\n\n- 2000-01-04: replaced.\n", encoding="utf-8")
+        # The scope→instance table the `routes` rows point `$CAIRN_ROUTES` at.
+        #
+        # 🔴 IT NAMES A SCOPE THE STORE DOES NOT HOLD, DELIBERATELY. `routes --check` grades in
+        # both directions and the STALE one is the direction that is silent in real life: an
+        # entry for a scope that has been renamed or retired reads as coverage forever. That
+        # finding is what takes the `--check` row to exit 11 on both clients.
+        #
+        # ⚠ IT IS WRITTEN ONCE, BESIDE THE WORLD, AND NOT INTO `$HOME`. Both clients resolve the
+        # table from `$CAIRN_ROUTES` when it is set and from the config directory otherwise, so
+        # putting it here keeps every OTHER row's "no table at all" state intact — which is the
+        # state that proves the routing machinery inert on a one-instance host.
+        routes_table = work / "routes.json"
+        routes_table.write_text(
+            '{"alpha-notes": "personal", "beta-notes": "personal", '
+            '"retired-scope": "personal"}\n', encoding="utf-8")
         new_file = work / "created.md"
         new_file.write_text(
             "---\nservice: fresh-entry\nscope: beta-notes\n---\n\n"
@@ -805,7 +849,8 @@ def main(argv: list[str] | None = None) -> int:
                 env = dict(base_env)
                 for key, value in case.env.items():
                     env[key] = (value
-                                .replace("<MIRROR>", str(mirror)))
+                                .replace("<MIRROR>", str(mirror))
+                                .replace("<ROUTES>", str(routes_table)))
                 argv_case = [
                     a.replace("<PUTFILE>", str(put_file))
                      .replace("<NEWFILE>", str(new_file))

@@ -175,7 +175,19 @@ func classifyInstallFailure(storeURL string, err error) error {
 // reader locally against a cache DROPS the server's provenance banner, and the reader's "none
 // omitted" is a truthful claim about whatever bytes it was pointed at — so the client states,
 // in the output itself, which of four states produced it.
-func Banner(state, detail string) string {
+func Banner(state, detail string) string { return BannerNamed(state, detail, "") }
+
+// BannerNamed is the state line with an INSTANCE label, and `instance == ""` is the
+// single-instance host — which renders exactly what this client has always rendered.
+//
+// 🔴 ONE SPELLING OF THE MARKER LADDER, BECAUSE A SECOND ONE WOULD DRIFT. The label is the only
+// difference between the two forms; duplicating the `🔴`/`⚠` decision beside it would put the
+// state vocabulary in two places, and the symptom of those disagreeing is a line that calls the
+// same state by two names on one screen.
+//
+// ⚠ IT IS GATED ON THE INSTANCE COUNT BY ITS CALLERS, NEVER ON A ROUTING TABLE'S PRESENCE. A
+// host that has merely written a table still has one place an answer can come from.
+func BannerNamed(state, detail, instance string) string {
 	marker := ""
 	switch state {
 	case StateNoCache:
@@ -183,7 +195,11 @@ func Banner(state, detail string) string {
 	case StateCached:
 		marker = "⚠"
 	}
-	line := marker + " cairn: " + state + " — " + detail
+	name := "cairn"
+	if instance != "" {
+		name = "cairn[" + instance + "]"
+	}
+	line := marker + " " + name + ": " + state + " — " + detail
 	return trimSpaceBothEnds(line)
 }
 

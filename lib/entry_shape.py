@@ -172,11 +172,24 @@ BULLET_TEXT_MAX = 2000
 #: conclusion. The second half — rewrite THIS constant — is what the code
 #: measured wrong, and the reason is worth keeping because it is not obvious:
 #:
-#:   * this sentence is BYTE-MIRRORED into the Go port (`internal/hostid`) and
-#:     into two generated corpora — the reader fixture the Go renderer is
-#:     compared against, and the HTTP conformance goldens. Changing it
-#:     unconditionally is a four-place change across two languages, and two of
-#:     those places are regenerate-and-diff gates;
+#:   * this sentence is BYTE-MIRRORED across the tree, and the count is bigger
+#:     than it looks. Enumerated over `git ls-files` at `38b358d`: **25 files,
+#:     92 occurrences** — the Go port (`internal/hostid/hostid.go`), the reader
+#:     fixture the Go renderer is compared against
+#:     (`internal/report/testdata/reader_fixtures.json`, 64 of those
+#:     occurrences), **20 of the 98** `tests/conformance/golden/*.json` (24),
+#:     this file, `server/README.md` and `tests/test_subsystem_recall.py`. Two
+#:     of those are regenerate-and-diff gates and one is prose in an operator
+#:     README, which no gate covers at all.
+#:
+#:     ⚠ THIS COMMENT SAID "a four-place change" AND THAT WAS WRONG BY 2×, in
+#:     the direction that makes the change look cheap: it counted the four
+#:     mirror KINDS and read as a count of SITES. Re-derive rather than trusting
+#:     the number — it moves whenever a golden is regenerated:
+#:         git ls-files | xargs grep -c 'PER-HOST CACHE' 2>/dev/null | grep -v ':0$'
+#:     (use a real `grep` binary; a `.gitignore`-aware wrapper is blind to
+#:     generated trees, and `git ls-files` is what makes the population the
+#:     TRACKED one rather than whatever is on disk);
 #:   * and it would change the bytes of every SINGLE-instance recall, on every
 #:     host, to warn about a second instance that does not exist there.
 #:

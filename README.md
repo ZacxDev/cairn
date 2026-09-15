@@ -48,13 +48,18 @@ decided by a table **you** supply — `~/.config/subsystem-store/routes.json`, o
 `$CAIRN_ROUTES`, a flat JSON object of `"scope": "alias"` — because this program
 knows how to route and nothing about who routes where.
 
-🔴 **An unregistered scope refuses at exit 11, naming the scope.** It never
-falls back to an instance: a write that lands in a store nobody reads is found
-days later, if at all, and a refusal costs one error message. `cairn routes
---check` grades the table in both directions — a scope with no entry, and an
-entry naming a scope or an alias that does not exist. With one instance
-configured nothing routes, nothing is labelled, and every byte of output is what
-it was before any of this existed.
+🔴 **With more than one instance, an unregistered scope refuses at exit 11,
+naming the scope.** It never falls back to an instance: a write that lands in a
+store nobody reads is found days later, if at all, and a refusal costs one error
+message. `cairn routes --check` grades the table in both directions — a scope
+with no entry, and an entry naming a scope or an alias that does not exist.
+
+With **one** instance configured nothing is labelled and every byte of output is
+what it was before any of this existed — including when a table is already
+present, which is the normal state while you are writing one. The single
+exception, at any instance count: a table entry naming an alias this host has no
+config for still refuses, because that entry says where the scope lives and this
+machine cannot reach it.
 
 **Reads never lie about why nothing was printed.** A report states which of
 `live` / `cached (stale <age>)` / `scope-empty` produced it — all exit 0 —

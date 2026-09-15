@@ -82,6 +82,11 @@ func Verbs() []Verb {
 		{Name: "create", Writes: true,
 			Help:  "create a NEW entry that does not exist yet (refuses to overwrite)",
 			Flags: []string{"--scope", "--repo", "--ref", "--file"}, Run: Create},
+		// 🔴 `routes` TAKES NO `--scope`. It is a statement about the TABLE and every
+		// instance in it, not about one scope, and a `--scope` here would invite the reading
+		// that it grades a single row.
+		{Name: "routes", Help: "print the scope->instance table, and grade it against reality",
+			Flags: []string{"--check", "--no-sync"}, Run: Routes},
 	}
 }
 
@@ -192,6 +197,7 @@ func exitLegendText() string {
 	b.WriteString("   7  the write did NOT happen and a retry is the right response\n")
 	b.WriteString("   8  the precondition failed: re-sync, re-derive, re-apply\n")
 	b.WriteString("   9  `create` only: the entry ALREADY EXISTS; nothing was written\n")
+	b.WriteString("  11  no instance could be decided for this scope; add a line to the table\n")
 	b.WriteString("\n`doctor` has its own set, which it prints on every run:\n")
 	for _, row := range doctor.ExitLegend {
 		fmt.Fprintf(&b, "  %2d  %s\n", row.Code, row.Why)
@@ -290,6 +296,7 @@ func Parse(argv []string) (Verb, Options, error) {
 				return Verb{}, opts, err
 			}
 			opts.Cache = expandUser(v)
+			opts.CacheExplicit = true
 		case "--timeout":
 			v, err := take()
 			if err != nil {
@@ -402,8 +409,12 @@ func Parse(argv []string) (Verb, Options, error) {
 			continue
 		}
 		seen[name] = struct{}{}
+		// 🔴 THE BOOLEAN SET IS SPELLED ONCE, HERE AND IN THE SWITCH BELOW, AND A FLAG ADDED
+		// TO ONLY ONE OF THEM IS SILENT: missing from this list, `--check` consumes the next
+		// token as its value; missing from the switch, it parses and sets nothing. Both leave
+		// a well-formed command line doing the wrong thing at exit 0.
 		needsValue := name != "--no-sync" && name != "--list" && name != "--all-scopes" &&
-			name != "--json"
+			name != "--json" && name != "--check"
 		if !needsValue {
 			if hasValue {
 				return verb, opts, usagef("cairn: %s takes no value", name)
@@ -417,6 +428,8 @@ func Parse(argv []string) (Verb, Options, error) {
 				opts.AllScopes = true
 			case "--json":
 				opts.JSON = true
+			case "--check":
+				opts.Check = true
 			}
 			i++
 			continue
@@ -536,6 +549,23 @@ func Run(env Env, argv []string) int {
 		return code
 	}
 
+	var unrouted *UnroutedScope
+	if errors.As(runErr, &unrouted) {
+		// 🔴 NEITHER A READ CODE NOR A WRITE CODE. No store was chosen, so a caller told 3
+		// would read "the store was unreachable" and a caller told 7 would read "the write
+		// failed" — both statements about a store this run never picked.
+		fmt.Fprintf(env.Stderr, "🔴 cairn: REFUSING — %s\n", unrouted.Detail)
+		return ExitUnrouted
+	}
+	var badConfig *RoutingConfigError
+	if errors.As(runErr, &badConfig) {
+		// 🔴 THE SAME CODE AS AN UNROUTED SCOPE, DELIBERATELY. Both mean "this client could
+		// not decide which instance to use and did nothing"; the remedy for both is a file
+		// the operator owns. A second code would ask every consumer to learn a distinction
+		// neither of them can act on differently.
+		fmt.Fprintf(env.Stderr, "🔴 cairn: REFUSING — %s\n", badConfig.Detail)
+		return ExitUnrouted
+	}
 	var refused *WriteRefused
 	if errors.As(runErr, &refused) {
 		// 🔴 THE STORE ANSWERED, AND THE ANSWER IS NO. Printed with the server's own
@@ -581,6 +611,9 @@ func Run(env Env, argv []string) int {
 
 // Doctor is the one call for every fact a reader otherwise assembles by hand.
 func Doctor(env Env, opts Options) (int, error) {
+	if code, stop := RefuseUnportedMultiInstance(env, "doctor"); stop {
+		return code, nil
+	}
 	resolved := ResolveReadStore("")
 
 	// 🔴 THE CONFIG LOAD HAPPENS EVEN UNDER `--no-sync`, AND THAT IS A FIX. It is a local file

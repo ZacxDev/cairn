@@ -223,6 +223,15 @@ class TestAnUnregisteredScopeRefuses:
         assert proc.returncode == 11, (proc.returncode, proc.stdout, proc.stderr)
         assert DEFAULT_SCOPE in proc.stderr
         assert "routing table" in proc.stderr
+        # 🔴 AND IT IS THE *NO TABLE* REFUSAL, NOT THE *NOT IN THE TABLE* ONE.
+        # Found by a surviving mutant: deleting the `routes is None` arm let this
+        # case fall through to the missing-entry refusal, which exits 11 and
+        # contains both strings above — so the assertions passed while the
+        # message told the operator to add a line to a file named `None`. The
+        # two remedies are different (CREATE a table vs EDIT one), so the two
+        # messages have to be distinguishable.
+        assert "Write a scope->alias table to" in proc.stderr, proc.stderr
+        assert "is not in the routing table" not in proc.stderr, proc.stderr
 
     def test_a_route_to_an_UNCONFIGURED_alias_refuses(self, world):
         world.add_instance()
@@ -299,6 +308,102 @@ class TestOneInstanceBehavesAsBefore:
 
 
 # =============================================================================
+# ONE INSTANCE *PLUS A TABLE* — the configuration `active` got wrong both ways.
+# =============================================================================
+
+
+class TestOneInstanceWithATablePresent:
+    """🔴 THE THREE ROWS THAT SHARE ONE CONFIGURATION AND NEED DIFFERENT ANSWERS.
+
+    A host with ONE instance and a routing table is what every operator reaches
+    the moment they write their first table — the table has to exist before a
+    second instance does, because the second instance is what it is written FOR.
+    `Routing.active` was `routes is not None or len(instances) > 1`, so a table's
+    PRESENCE switched routing on, and that is wrong in two directions at once:
+
+        row                                  | active=…|or  | len>1 only | correct
+        -------------------------------------|---------|----|------------|--------
+        (1) no table                          | sole   | sole       | sole
+        (2) table, scope ABSENT               | REFUSE | sole       | sole
+        (3) table -> UNCONFIGURED alias       | REFUSE | sole       | REFUSE
+
+    Column 2 is the shipped defect (row 2 refuses, and every recall claims "more
+    than one instance configured" on a host that has one). Column 3 is the
+    obvious fix and it opens a SILENT MISROUTE at row 3. Each row below is
+    reachable by an input the others do not reject, so none of them is a
+    restatement of another.
+    """
+
+    def test_row1_NO_table_resolves_to_the_sole_instance(self, world):
+        proc = world.run("recall", "--scope", DEFAULT_SCOPE)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert "thing-alpha" in proc.stdout, proc.stdout
+
+    def test_row2_a_table_that_does_NOT_name_the_scope_still_resolves(self, world):
+        """🔴 THE SHIPPED DEFECT, IN THE FORM AN OPERATOR MEETS IT. The table
+        names some other scope; this one is simply not in it yet. With one
+        instance there is exactly one answer to `where did that go?`, which is
+        the same reasoning the no-table row has always used."""
+        world.write_routes({"some-other-scope": rs.DEFAULT_ALIAS})
+        proc = world.run("recall", "--scope", DEFAULT_SCOPE)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert "thing-alpha" in proc.stdout, proc.stdout
+
+    def test_row3_a_table_naming_an_UNCONFIGURED_alias_still_REFUSES(self, world):
+        """🔴 THE ROW THAT MUST NOT FOLLOW ROW 2. The table says this scope lives
+        on `no-such-instance`; resolving it to the sole instance would be a read
+        — and then a WRITE — landing in a store nobody decided on."""
+        world.write_routes({DEFAULT_SCOPE: "no-such-instance"})
+        proc = world.run("recall", "--scope", DEFAULT_SCOPE)
+        assert proc.returncode == 11, (proc.returncode, proc.stdout, proc.stderr)
+        assert "no-such-instance" in proc.stderr, proc.stderr
+        assert "subsystem-recall:" not in proc.stdout, proc.stdout
+
+    def test_row3_also_refuses_a_WRITE_and_writes_nothing(self, world):
+        """The same row through the path where a misroute is durable."""
+        world.write_routes({DEFAULT_SCOPE: "no-such-instance"})
+        before = (world.first.root / DEFAULT_SCOPE / "thing-alpha.md").read_text()
+        proc = world.run("append", "--scope", DEFAULT_SCOPE, "--ref", "thing-alpha",
+                         "--text", "a misrouted bullet", "--session", "s-1")
+        assert proc.returncode == 11, (proc.returncode, proc.stdout, proc.stderr)
+        after = (world.first.root / DEFAULT_SCOPE / "thing-alpha.md").read_text()
+        assert after == before, "the refusal still wrote to the sole instance"
+
+    def test_a_table_on_ONE_instance_LABELS_NOTHING(self, world):
+        """🔴 THE OTHER HALF OF THE DEFECT, AND THE ONE NOBODY WOULD HAVE SEEN AS
+        A BUG. With `active` keyed on the table, every recall on a one-instance
+        host with a table asserted `with more than one instance configured …` —
+        false on that host, on every call."""
+        world.write_routes({DEFAULT_SCOPE: rs.DEFAULT_ALIAS})
+        proc = world.run("recall", "--scope", DEFAULT_SCOPE)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert "cairn[" not in proc.stdout, proc.stdout
+        assert "another instance" not in proc.stdout, proc.stdout
+        assert "more than one" not in proc.stdout, proc.stdout
+        # The control: the SAME table with a second instance configured DOES
+        # label, so the assertions above pin the instance count rather than a
+        # feature that stopped working.
+        world.add_instance()
+        world.write_routes({DEFAULT_SCOPE: rs.DEFAULT_ALIAS, SECOND_SCOPE: SECOND_ALIAS})
+        proc = world.run("recall", "--scope", DEFAULT_SCOPE)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert f"cairn[{rs.DEFAULT_ALIAS}]" in proc.stdout, proc.stdout
+        assert "another instance" in proc.stdout, proc.stdout
+
+    def test_TWO_instances_keep_the_FULL_refusal_semantics(self, world):
+        """The ≥2-instance column, unchanged: rows 2 and 3 both refuse there."""
+        world.add_instance()
+        world.write_routes({"some-other-scope": rs.DEFAULT_ALIAS})
+        absent = world.run("recall", "--scope", DEFAULT_SCOPE)
+        assert absent.returncode == 11, (absent.returncode, absent.stderr)
+        assert DEFAULT_SCOPE in absent.stderr
+        world.write_routes({DEFAULT_SCOPE: "no-such-instance"})
+        unconfigured = world.run("recall", "--scope", DEFAULT_SCOPE)
+        assert unconfigured.returncode == 11, (unconfigured.returncode, unconfigured.stderr)
+        assert "no-such-instance" in unconfigured.stderr
+
+
+# =============================================================================
 # THE CAVEAT. (f) of the closing conditions.
 # =============================================================================
 
@@ -345,40 +450,76 @@ class TestTheTableIsGradedBothWays:
 
     ALIASES = (rs.DEFAULT_ALIAS, SECOND_ALIAS)
 
+    def _check(self, table, scopes, aliases=None):
+        return ci.routing_for(table, aliases or self.ALIASES).check(scopes)
+
     def test_a_scope_with_NO_entry_is_a_problem(self):
-        problems = ci.check_routes(
-            {DEFAULT_SCOPE: rs.DEFAULT_ALIAS},
-            scopes={DEFAULT_SCOPE, SECOND_SCOPE},
-            aliases=self.ALIASES,
+        problems = self._check(
+            {DEFAULT_SCOPE: rs.DEFAULT_ALIAS}, {DEFAULT_SCOPE, SECOND_SCOPE}
         )
         assert len(problems) == 1, problems
         assert SECOND_SCOPE in problems[0]
         assert "REFUSE" in problems[0]
 
     def test_an_entry_naming_NO_scope_is_a_problem(self):
-        problems = ci.check_routes(
+        problems = self._check(
             {DEFAULT_SCOPE: rs.DEFAULT_ALIAS, "retired-scope": SECOND_ALIAS},
-            scopes={DEFAULT_SCOPE},
-            aliases=self.ALIASES,
+            {DEFAULT_SCOPE},
         )
         assert len(problems) == 1, problems
         assert "retired-scope" in problems[0]
 
     def test_an_entry_naming_an_UNCONFIGURED_alias_is_a_problem(self):
-        problems = ci.check_routes(
-            {DEFAULT_SCOPE: "ghost"}, scopes={DEFAULT_SCOPE}, aliases=self.ALIASES
+        problems = self._check({DEFAULT_SCOPE: "ghost"}, {DEFAULT_SCOPE})
+        assert len(problems) == 1, problems
+        assert "ghost" in problems[0]
+
+    def test_an_UNCONFIGURED_alias_is_a_problem_at_ONE_instance_TOO(self):
+        """🔴 THE ONE-INSTANCE ROW OF THE THREE-ROW TABLE, GRADED. A host with a
+        single instance still cannot reach an alias it has no config for, so the
+        finding survives — and it is the direction `Routing.check` now asks
+        `alias_for` for rather than re-deriving."""
+        problems = self._check(
+            {DEFAULT_SCOPE: "ghost"}, {DEFAULT_SCOPE}, aliases=(rs.DEFAULT_ALIAS,)
         )
         assert len(problems) == 1, problems
         assert "ghost" in problems[0]
 
+    def test_an_UNNAMED_scope_is_NOT_a_problem_at_ONE_instance(self):
+        """🔴 THE FINDING'S OWN CLAIM IS THE THING BEING GRADED, and on a
+        one-instance host it is FALSE. `a write to it will REFUSE` is a
+        prediction about `alias_for`, which resolves an unnamed scope to the sole
+        instance — so grading this direction by subtracting key sets printed a
+        confident warning about behaviour that does not happen."""
+        assert self._check(
+            {DEFAULT_SCOPE: rs.DEFAULT_ALIAS},
+            {DEFAULT_SCOPE, SECOND_SCOPE},
+            aliases=(rs.DEFAULT_ALIAS,),
+        ) == ()
+        # …and the SAME table over TWO instances still reports it, so the line
+        # above is a statement about the instance count and not about the check
+        # having been disabled.
+        assert len(self._check(
+            {DEFAULT_SCOPE: rs.DEFAULT_ALIAS}, {DEFAULT_SCOPE, SECOND_SCOPE}
+        )) == 1
+
     def test_a_table_that_agrees_with_reality_has_NO_problems(self):
         """The control. Without it every assertion above is satisfiable by a
         function that returns a problem for everything."""
-        assert ci.check_routes(
+        assert self._check(
             {DEFAULT_SCOPE: rs.DEFAULT_ALIAS, SECOND_SCOPE: SECOND_ALIAS},
-            scopes={DEFAULT_SCOPE, SECOND_SCOPE},
-            aliases=self.ALIASES,
+            {DEFAULT_SCOPE, SECOND_SCOPE},
         ) == ()
+
+    def test_grading_a_host_with_NO_TABLE_refuses_rather_than_reporting_clean(self):
+        """🔴 AN ABSENT TABLE READ AS AN EMPTY ONE WOULD REPORT EVERY SCOPE AS
+        UNROUTED — findings about a table nobody wrote."""
+        routing = ci.Routing(
+            instances=(ci.Instance(alias=rs.DEFAULT_ALIAS, config_path=Path(os.devnull)),),
+            routes=None, routes_source=None,
+        )
+        with pytest.raises(ci.RoutingConfigError):
+            routing.check({DEFAULT_SCOPE})
 
     def test_the_CLI_grades_the_table_and_exits_NONZERO_on_a_stale_entry(self, world):
         world.add_instance()
@@ -556,7 +697,7 @@ class TestDiscoveryAndTheTableFile:
         would report 'nothing configured' on a host that is configured."""
         routing = ci.discover({"SUBSYSTEM_STORE_CONFIG": str(tmp_path / "nope" / "env")})
         assert routing.aliases == (rs.DEFAULT_ALIAS,)
-        assert routing.active is False
+        assert routing.multi_instance is False
         assert routing.alias_for("anything") == rs.DEFAULT_ALIAS
 
     def test_a_file_that_cannot_be_an_alias_is_an_ERROR_not_a_skip(self, tmp_path):

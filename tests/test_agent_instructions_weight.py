@@ -95,6 +95,8 @@ EVICTION_TARGETS = {
     "tests/conformance/README.md": "P1: the two SERVERS, the HTTP corpus, the renderer's "
                                    "differential fixture, their mutation rounds",
     "server/README.md": "operating the pod: seeding, rotation, byte-identity, limits",
+    "lib/README.md": "the Python reader: multi-instance routing, the cache layout, "
+                     "and what binds anyone editing a routing path",
     "README.md": "what the project IS, for a human arriving at the repo",
     "claudedocs/plan-cairn-control-plane.md": "the phase plan and the decision record",
 }
