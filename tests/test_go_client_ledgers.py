@@ -22,6 +22,7 @@ it.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -68,6 +69,117 @@ def _lines(binary: str, flag: str) -> list[str]:
         f"anything"
     )
     return out
+
+
+#: The Go-only global flags, declared here so the SET can be gated. 🔴 THEY ARE A RESIDUAL
+#: DIFFERENCE FROM THE ORACLE, not a shared contract: each exits 0 with a table on stdout on the
+#: Go client and 2 with argparse's `usage:` on stderr on the Python one. Residual row 7 in
+#: `tests/parity/README.md` declares that and says why mirroring them into the oracle would be
+#: wrong (the Python ledgers read the parser and the AST, so a printed table there has no reader).
+GO_ONLY_LEDGER_FLAGS = ("-verbs", "-exit-codes")
+
+#: The one place the Go client dispatches them, read as SOURCE rather than trusted. 🔴 THIS IS THE
+#: THIRD OPERAND AND IT IS WHAT MAKES THE COMPARISON HONEST — see the docstring below: a first cut
+#: of this guard built its probe set out of `GO_ONLY_LEDGER_FLAGS`, so shrinking the tuple shrank
+#: what was measured and the mutant SURVIVED. Same instrument as `tests/test_cairn_doctor.py`
+#: walking the `cairn` script's AST: discover the operand, never restate it.
+GO_CLIENT_MAIN = ROOT / "cmd" / "cairn" / "main.go"
+
+
+def _ledger_flags_from_source() -> set[str]:
+    text = GO_CLIENT_MAIN.read_text(encoding="utf-8")
+    # The dispatch must still BE here, or a relocation would silently empty this set.
+    assert "switch argv[0] {" in text, (
+        f"{GO_CLIENT_MAIN} no longer contains the `switch argv[0]` ledger-flag dispatch. If it "
+        f"moved, this discovery now returns nothing and the comparison below goes vacuous — point "
+        f"GO_CLIENT_MAIN at wherever it went."
+    )
+    found = set(re.findall(r'case "(-[A-Za-z0-9-]+)":', text))
+    assert found, (
+        f"no single-dash `case` literal found in {GO_CLIENT_MAIN}; the discovery is broken, and an "
+        f"empty set compares equal to an empty declaration"
+    )
+    return found
+
+
+def test_the_GO_ONLY_ledger_flags_are_exactly_the_declared_set(go_client):
+    """🔴 THE PARITY GATE IS STRUCTURALLY BLIND TO THESE FLAGS, BECAUSE THEY WERE ADDED *FOR* THIS
+    FILE. So the divergence they create is gated here, as a RELATIONSHIP between the two clients
+    rather than a property of either.
+
+    Two directions, and the second is the one that matters:
+
+      * each declared flag must STILL diverge as row 7 describes — if the oracle started answering
+        0 the row would be stale, and if the Go client started refusing, the two ledger tests below
+        would be reading nothing;
+      * **no THIRD Go-only flag may appear undeclared.** That is the walkable half: the residual is
+        prose, and prose does not notice a `-routes`-shaped flag added next year. At cutover every
+        such token changes the CLI contract in the dangerous direction — a single-dash argument that
+        used to be refused at exit 2 starts answering 0 with output on stdout — so the set is
+        pinned, not the wording.
+
+    🔴 THREE OPERANDS, TWO OF THEM DISCOVERED, BECAUSE THE FIRST CUT OF THIS GUARD SURVIVED ITS OWN
+    MUTATION. That version built its probe set out of `GO_ONLY_LEDGER_FLAGS`, so shrinking the tuple
+    to one flag shrank what was measured and the guard stayed GREEN — a gate that measures less to
+    say more. The probe set is therefore built from the DISPATCH IN THE GO SOURCE, and the three
+    must agree: what `cmd/cairn/main.go` dispatches, what this file declares, and what the two
+    binaries actually do when handed each token.
+
+    ⚠ THE LIMIT, STATED: a future Go-only flag dispatched somewhere OTHER than that switch is
+    invisible to the source half. `_ledger_flags_from_source` refuses if the switch is not where it
+    expects it, which converts that from a silent hole into a red test naming the file.
+
+    ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE. The divergence was measured, not caught: no defect
+    ever added a third flag. Watched red four ways — a declaration of one, a declaration of three, a
+    probe set that no longer reaches the flags, and the dispatch relocated out of `main.go`.
+    """
+    oracle = str(ROOT / "cairn")
+    from_source = _ledger_flags_from_source()
+    assert from_source == set(GO_ONLY_LEDGER_FLAGS), (
+        f"the Go client's ledger-flag dispatch and this file's declaration disagree.\n"
+        f"  dispatched in {GO_CLIENT_MAIN.relative_to(ROOT)}: {sorted(from_source)}\n"
+        f"  declared here:                    {sorted(GO_ONLY_LEDGER_FLAGS)}\n"
+        f"A flag in the source but not here is an undeclared widening of the CLI contract at "
+        f"cutover; one here but not in the source means the declaration is stale."
+    )
+    # The probe set comes from the SOURCE, never from the declaration, plus every plausible spelling
+    # of a future ledger flag: one per verb name (the `-routes`-shaped mistake) and the words such a
+    # flag tends to be called.
+    probes = from_source | {"-h"}
+    probes |= {f"-{row.split()[0]}" for row in _lines(go_client, "-verbs")}
+    probes |= {"-routes", "-version", "-json", "-cache", "-help", "-ledger", "-codes", "-verb"}
+
+    diverging, broken = set(), []
+    for probe in sorted(probes):
+        go = subprocess.run([go_client, probe], capture_output=True, text=True)
+        py = subprocess.run([sys.executable, oracle, probe], capture_output=True, text=True,
+                            cwd=str(ROOT))
+        if go.returncode == 0 and py.returncode != 0:
+            diverging.add(probe)
+            if not go.stdout.strip():
+                broken.append(
+                    f"{probe}: the Go client exits 0 with an EMPTY stdout, which is the `--help` "
+                    f"defect this repository already paid for once"
+                )
+    # The positive control on the probe loop: a harness that could not observe a divergence at all
+    # would report an empty set, and an empty set compares equal to an empty declaration.
+    assert diverging, (
+        "no probe diverged, which cannot be right while `-verbs` is a Go-only flag — the probe "
+        "loop is measuring nothing and the comparison below would be vacuous"
+    )
+    assert not broken, "\n  ".join(broken)
+    assert diverging == set(GO_ONLY_LEDGER_FLAGS), (
+        f"the Go-only flag set MOVED.\n"
+        f"  measured diverging (Go exits 0, oracle does not): {sorted(diverging)}\n"
+        f"  declared:                                         {sorted(GO_ONLY_LEDGER_FLAGS)}\n"
+        f"  undeclared:  {sorted(diverging - set(GO_ONLY_LEDGER_FLAGS))}\n"
+        f"  declared but no longer diverging: "
+        f"{sorted(set(GO_ONLY_LEDGER_FLAGS) - diverging)}\n"
+        f"An UNDECLARED one widens the CLI contract at cutover — a single-dash token that used to "
+        f"exit 2 starts exiting 0 with output on stdout — so declare it as a residual in "
+        f"tests/parity/README.md and add it here, or stop accepting it. One that stopped diverging "
+        f"means residual row 7 is stale, or that the two ledger tests below are reading nothing."
+    )
 
 
 def test_the_go_client_declares_EXACTLY_the_pythons_verb_set(go_client):

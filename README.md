@@ -101,16 +101,23 @@ comparing. `AGENTS.md` states that order and the reasons for it.
 
 Rewriting the server alone would have left **two renderers in two languages that must agree
 byte-for-byte forever**, with drift arriving as "a different order that reads as a stale
-cache" — no error, no missing entry. So the client is ported too, onto the SAME
-`internal/report` the pod runs: one renderer, three consumers (pod, CLI, a future UI). That
-makes byte-identity a property of there being one implementation rather than a discipline two
-are held to.
+cache" — no error, no missing entry. That premise entails deleting the *Python renderer*; it
+does not on its own entail a full CLI port, which a Python CLI over a small Go renderer would
+also have satisfied. What carries the full port is the next reason: **a single binary, one
+language, and Python retirable at P8**. Both land on the same `internal/report`: one renderer,
+three consumers (pod, CLI, a future UI), which makes byte-identity a property of there being one
+implementation rather than a discipline two are held to — ⚠ **from P8, not from today**, because
+the Python renderer ships as `packages.default` until the oracle is deleted.
 
 `cairn` stays the oracle and `packages.default` still builds it. The gate is
 [`tests/parity/`](tests/parity/README.md): both clients, one pod, one store, one cache root,
-identical argv — and a byte diff of stdout, stderr and the exit code. **90 cases, 91 PASS, 0
-failures** across all nine verbs, every output-shaping flag, every documented exit code, `--help`
-in four spellings, and argparse's option-versus-value rules.
+identical argv. **90 cases, 91 PASS, 0 failures** across all nine verbs, every output-shaping
+flag, every documented exit code, `--help` in four spellings, and argparse's option-versus-value
+rules. ⚠ **That is not 90 byte diffs, and the split says which rows are load-bearing:** 59 rows
+diff stdout, stderr *and* the exit code; 23 compare the exit code only; 8 compare the exit code
+plus "both sides put something on stdout" — so **31 of the 90 never compare output text**, every
+one of them because argparse's wording is not worth reproducing in Go. The residual table says
+which, per row.
 
 ⚠ **A green gate is not evidence until its controls have been watched to work.** This one's
 first full run reported 72 PASS / 0 FAIL while every request was refused and no cache was ever

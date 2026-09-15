@@ -52,6 +52,14 @@ What survives extraction, and what does not:
 
 State the **claim and its scope**, not the anecdote.
 
+🔴 **AND THIS FILE HAS A BYTE BUDGET, ENFORCED RATHER THAN REQUESTED.** `CLAUDE.md` imports it, so
+every session pays both before doing anything — and it went 10,617 → 41,598 B across four merges in
+one session, which is what the prose rule above achieves on its own.
+`tests/test_agent_instructions_weight.py` owns the ceiling and the working margin and prints WHAT to
+evict and WHERE on failure. Never satisfy it by deleting a claim or narrowing a rule: history goes
+to `tests/parity/README.md` or `tests/conformance/README.md`, which are read on demand and therefore
+free.
+
 ## Evidence rules
 
 These are the house style, and they are why the guards here are worth trusting:
@@ -314,97 +322,61 @@ python3 tests/parity/harness.py --self-test   # prove the differ can go RED
 python3 tests/parity/harness.py --break-pod   # prove the PRE-FLIGHT refuses to vouch
 ```
 
-`cmd/cairn` is the Go client. It exists for ONE reason: rewriting the server alone left **two
-renderers in two languages that must agree byte-for-byte forever**, with drift arriving as "a
-different order that reads as a stale cache" — no error, no missing entry. `internal/report`
-is the one renderer; the pod reaches it through `report.Reader` and the CLI calls
-`Recall`/`Search`/`RenderText`/`ExitFor` directly. **One renderer, three consumers** (pod, CLI,
-a future UI) is the deliverable, not a second client.
+`cmd/cairn` is the Go client; `internal/report` is the one renderer, reached through
+`report.Reader` by the pod and by direct `Recall`/`Search`/`RenderText`/`ExitFor` calls by the CLI.
 
-**Measured on this tree: 90 cases, 91 PASS, 0 failures, 0 dead normalizations** — all nine
-verbs, every output-shaping flag, every documented exit code, `--help` in four spellings, the
-argument-shape rules below, and `cache-mtime-parity` on top.
+🔴 **THE PREMISE, AT THE SCOPE IT ACTUALLY CARRIES.** Rewriting the server alone left **two
+renderers in two languages that must agree byte-for-byte forever**, drift arriving as "a different
+order that reads as a stale cache" — no error, no missing entry. That is true, and it entails
+**deleting the PYTHON RENDERER**; it does **not** entail a full CLI port, which a Python CLI over a
+small Go renderer would also have satisfied. What carries the port is the reason to state instead:
+**a single binary, one language, and Python RETIRABLE at P8**. ⚠ And **"one renderer" is a P8
+property, not a P2 one** — the Python renderer ships as `packages.default` until the oracle is
+deleted, so until then the gate below IS the comparison rather than the absence of one.
 
-🔴 **THE FIRST FULL RUN OF THAT GATE REPORTED 72 PASS / 0 FAIL AND MEASURED NOTHING.**
-`SUBSYSTEM_STORE_TRUSTED_PROXIES=127.0.0.1/32`, copied from the conformance runner where it is
-correct, told the server the loopback peer was a PROXY — so every DIRECT request was refused
-`401 status=no-client-ip`, no cache was ever written, and every report rendered
-`store-unreachable`. **Two clients failing identically compare equal.** It was found by reading
-the pod's audit log, not by the green. Three controls now stand against it and they are three
-different claims, so read all three:
+**Measured on this tree: 90 cases, 91 PASS, 0 failures, 0 dead normalizations** — all nine verbs,
+every output-shaping flag, every documented exit code, `--help` in four spellings, the
+argument-shape rules below, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 90 BYTE DIFFS:
+59 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8 compare the exit
+code plus "both sides put something on stdout" — so 31 of 90 never compare output text.** Declared
+per row and in the residual table; it is the HEADLINE that reads wider than the gate, so know which
+rows are load-bearing before trusting one.
 
-| control | proves | refuses with |
-|---|---|---|
-| `PREFLIGHT status=… declared-entries=…` | the POD answers a non-empty snapshot for this token | exit **2** — "could not vouch", not "failed" |
-| `CONTENT-FLOOR live-banner=… rendered-digest=…` | the CLIENTS reached a live fetch and a rendered digest | exit 2 |
-| `--self-test` → `sabotaged=4 caught=4` | the differ goes red on stdout, on stderr, on the exit code **AND** on `exit+stdout` | exit 2 |
+🔴 **ITS FIRST FULL RUN REPORTED 72 PASS / 0 FAIL AND MEASURED NOTHING** — a
+`SUBSYSTEM_STORE_TRUSTED_PROXIES` value copied from the conformance runner made the pod refuse every
+direct request, so both clients rendered `store-unreachable` and **two clients failing identically
+compare equal**. Three controls now stand against that, they are three different claims, and each
+refuses with exit **2** ("could not vouch", never "failed"): `PREFLIGHT` (the POD answers a
+non-empty snapshot for this token), `CONTENT-FLOOR` (the CLIENTS reached a live fetch and a rendered
+digest), and `--self-test` → `sabotaged=4 caught=4` (the differ goes red on stdout, on stderr, on
+the exit code **and** on `exit+stdout`). `--break-pod` is the negative control on the first. Read
+all three; a green without them is a green about nothing.
 
-`--break-pod` is the negative control on the first of those: it reconfigures the pod into
-exactly the state above and the harness must answer 2, not 91 PASS. ⚠ **Four sabotage rows,
-not one**, because a `compare="exit"` row is STRUCTURALLY blind to stdout and stderr — one
-control over "something went red" would vouch for a differ that had lost most of its
-comparisons. 🔴 **And one of them REPLACES the Go argv rather than appending to it**: both
-clients handle `--help` before anything else, so no extra argument changes either answer and an
-append-only mechanism had NO control over the `exit+stdout` mode at all.
+📄 **READ ON DEMAND RATHER THAN HERE, all in `tests/parity/README.md`:** what the gate FOUND
+(nine divergences in six findings), the MUTATION BATTERY over P2 (61 mutants, 58 killed, 3 labelled
+EQUIVALENT at the code), and the **P8 RETIREMENT LEDGER** — every file, guard and row that exists
+only while the Python oracle does. Those are records of rounds, not decision input before acting,
+and they were moved out of this file when it had quadrupled in one session; a survivor's authority
+is the label beside the code it labels. This file states the retirement condition for the `lib/`
+rule and for nothing else, which is what the ledger is for — and the ledger is a list of DECISIONS,
+not a delete script.
 
-🔴 **THE GATE FOUND THREE DEFECTS NO EXISTING TEST OR GOLDEN COULD SEE, and each is worth
-knowing because each is a class rather than a typo:**
+🔴 **SEVEN RESIDUALS ARE DECLARED IN `tests/parity/README.md` RATHER THAN NORMALISED AWAY, AND
+THE RULING IS THE SAME EVERY TIME: declare it, never mirror it into the oracle.** Two are traps:
 
-1. **`create` answers `201`.** `urllib`'s `HTTPErrorProcessor` raises only OUTSIDE 200–299, so
-   a `resp.StatusCode != 200` test reported a SUCCESSFUL create as `unrecognised HTTP 201 …
-   treating the write as NOT LANDED` at exit 6 — whose documented remedy is to change a request
-   that already landed. No conformance golden the client replays carries that status, and every
-   write test written against `append` passes on a 200.
-2. **The installer dropped every member's MTIME.** The reader orders its index by entry mtime,
-   so the cache was ordered by TAR ORDER: a different listing with a different featured entry.
-   Precisely the silent reordering this phase exists to prevent.
-3. **A `CAIRN_CACHE_ROOT` override the port invented.** `doctor` resolves the READER's store
-   through that function and NOT through `--cache`, so the two clients reported different
-   `reader-resolution` roots on every doctor row. Deleted rather than mirrored into Python: a
-   second mechanism reaching one value is the shape that leaves the first silently dead.
+- **the sub-microsecond mtime** is **measured unable to matter** — both sides collapse to the same
+  `float64`, which is what the index order is decided on, and `cache-mtime-parity` pins the doubles
+  equal AND the raw delta under one ULP. Do not "fix" it, and do not read it as unmeasured.
+- **`cairn -verbs` / `cairn -exit-codes`** exit **0** with a table on stdout on the Go client and
+  **2** with argparse's `usage:` on the oracle — the Go client *succeeding* where the oracle
+  refuses, which is the dangerous direction. Declared rather than closed because a printed table on
+  the oracle would be a second mechanism reaching a value the Python ledgers already read from the
+  parser and the AST. 🔴 **At cutover it WIDENS the CLI contract** — a single-dash token that
+  used to be refused starts answering 0 — so P8 owns a decision there, not just a deletion.
 
-**A fourth was found by asking what the gate does NOT send: `--help`.** Every other row asserts
-something a caller asked the tool to DO; `--help` is how a human finds out what it can do, and
-there was no row for it. The Go client exited **2 with an empty stdout** for `--help`, `-h`,
-`recall --help` and `doctor --help` where the oracle exits **0** with its help text — on the
-single most common invocation there is. Four rows now cover it, under a THIRD comparison mode
-that asserts the exit code AND that both sides put something on stdout, because a client that
-printed nothing and exited 0 would pass an exit-only row while telling the reader nothing.
-
-**And following that finding one step further found four more, all in the same dangerous
-direction — the Go client SUCCEEDING where the oracle refuses.** If `-h` is special, what happens
-when it is a VALUE? Measured: `append --text -h` exited 0 printing help (oracle: 2), so a caller
-scripting `--text "$MSG"` whose message began with `-` would have read exit 0 as "the bullet
-landed"; `recall --limit -h` the same; `recall --scope -weird` exited 3 having taken `-weird` as a
-scope. The rule is argparse's and both halves are measured: a token beginning with `-` is an
-OPTION unless it matches `_negative_number_matcher` (so `--limit -1` IS a value and reaches the
-reader's own option ladder), a bare `-` is a positional, `--` ends the flags (so `search -- -h`
-searches for the literal `-h` rather than printing help), and **`--help` WINS over an unknown
-flag** — in either order and at BOTH levels, because argparse collects unrecognised arguments and
-reports them after parsing while `-h` fires the moment it is consumed. That last one needs the
-refusal DEFERRED in two separate loops; a fix applied to one leaves the other wrong, and there is
-a row for it.
-
-A sixth came out of the Go unit battery: a truncated gzip stream and an HTML error page
-surface as the SAME `io.ErrUnexpectedEOF` out of `tar.Next`, so classifying on the error VALUE
-called `<html>nope</html>` a truncated tar where the oracle says `did not return an archive`.
-`gzipLayerError` records WHICH LAYER failed at the point it is known, and `validateGzipLayer`
-streams the compressed body to `io.Discard` **under a limit** — decompressing into memory to
-inspect it would make a decompression bomb a MEMORY bomb before either ceiling is consulted,
-because the ceilings read headers a truncated stream never reaches.
-
-🔴 **SIX RESIDUAL DIFFERENCES ARE DECLARED IN `tests/parity/README.md` RATHER THAN NORMALISED
-AWAY, and the one worth repeating here is the mtime.** The oracle's `tarfile` carries a PAX
-mtime as a Python **float** and `os.utime` writes it back, losing sub-microsecond precision
-Go's exact decimal parse keeps (measured: `…236263` vs `…236300`, 37 ns). It is **measured
-unable to matter**: both collapse to the same `float64`, which is the value
-`report.pyMtime` computes and the index order is decided on, because one ULP is 238 ns at the
-current epoch — 119/238/238/477 ns at four magnitudes (2000, now, 2038, 2100). The gate asserts
-the doubles are identical **and** that the raw delta stays under that bound, so a change that
-widened it fails there rather than reordering an index. The other five: argparse's usage text
-(exit code compared, text not), `urllib`-vs-`net/http` failure tails, a reader error's exit
-route (3 by contract on Go, 1 by traceback on the oracle), a `SyntaxError` in a runtime-loaded
-module (impossible in a binary), and `ReadStamp`'s missing "is not text" arm.
+The other five: argparse's usage text (exit code compared, text not), `urllib`-vs-`net/http` failure
+tails, a reader error's exit route (3 by contract on Go, 1 by traceback on the oracle), and two
+oracle-only failure modes a single binary cannot have.
 
 🔴 **THE GO CLIENT CARRIES TWO LEDGERS OF ITS OWN, BECAUSE THE PYTHON-SIDE GATES ARE BLIND TO A
 COMPILED PROGRAM.** `capability_ledger.cli_verbs_from_parser` asks the PYTHON argparse parser
@@ -429,45 +401,6 @@ changes a contract the command PRINTS to remove a collision that was never a def
 line here: concurrency (both clients take the same `flock`, but nothing runs them at the same
 instant), real network failures beyond a connect refusal, a narrowed credential (the SERVER's
 narrowing is the corpus's claim), and the `doctor` states no healthy world reaches.
-
-## 🔴 THE MUTATION BATTERY OVER P2: 61 MUTANTS, 58 KILLED, 3 LABELLED EQUIVALENT AT THE CODE
-
-Round 1 killed 44 of 51, and its findings are why there was a round 2 — **every one of them was a
-hole in a guard rather than a defect in the code**, which is the useful direction. Rounds 3 and 4
-added ten mutants over the `--help` and argument-shape paths that earlier rounds had no code to
-mutate, and round 4 is CLEAN: the three survivors below are labelled equivalent, which is not a
-finding, so the ladder ends there.
-
-- **a `-run` filter that excluded the killing test.** `-run EMPTYDetail` matches nothing against
-  `TestACheckWithAnEmptyDetailIsREFUSEDAtConstruction`, so deleting `Check`'s empty-detail
-  refusal was scored SURVIVED while the guard was live. The harness was wrong, not the code.
-- **an unreachable assertion inside a live guard.** A mutant removing the per-entry path dedup
-  survived, because the INPUT dedup's assertion ran first and short-circuited the `PathCount`
-  one. Isolating the mutation needed a path that names one entry TWICE — and the obvious fixture
-  (`apps/widget-cfg/widget-cfg.yaml`) does NOT work, because `PathRefs` collapses the identical
-  `("widget-cfg", "widget-cfg")` pair the directory and the stem both produce. It takes
-  `apps/widget-cfg/Widget_Config.yaml`: the filename tier from the directory, the ALIAS tier
-  from the stem.
-- **an empty stamp read as a stamp.** A zero-byte `.sync-stamp` reported STAMPED with no
-  fields, which makes `doctor` grade `reader-resolution` OK and `cache-stamp` OK with
-  `(the stamp is empty)` — a store that cannot date itself reporting a clean bill of health.
-- **a refusal message that mangled itself.** Backticks inside a double-quoted `echo` in
-  `checks.go-client-declares-its-verbs` are a command substitution: the failure printed
-  `writes: command not found` and lost the word it was about, on the one path nobody reads until
-  something is already broken. Found by running that check's OWN negative control.
-- **the ranking's primary key and last resort, unreachable.** Every `digest-focus-*` row
-  resolved exactly ONE entry, so a comparator sorted ascending — or with the count key deleted
-  entirely — survived. Two fixtures now make both observable.
-
-The three survivors are labelled EQUIVALENT at the code with the reasoning, not left for a
-sweep to re-derive: `report`'s `byRef` filter (`Matched` can only hold entries of the scope
-`read` already covers, and a failed read aborts the report rather than producing a partial one),
-`sort.SliceStable` over that total order (refs are unique within a scope, so stability is
-unobservable — the same label `ListingOrder` carries), and `doctor`'s `MirrorRoot != ""`
-condition in the visibility check (an empty path reaches `os.ReadDir("")`, fails ENOENT, and the
-`absent` re-check stats `""` to the same answer — so it degrades to the benign branch **by
-accident of a libc detail**, which is not a property to bet the NOT-OBSERVABLE-versus-absent
-distinction on; the `frozen-mirror` check branches on the same condition and is NOT equivalent).
 
 ## Installing and building with nix
 

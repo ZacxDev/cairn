@@ -16,7 +16,6 @@ list; they pin the property so that one cannot pass unseen.
 """
 from __future__ import annotations
 
-import ast
 import re
 import sys
 from pathlib import Path
@@ -234,21 +233,56 @@ def test_the_harness_declares_what_it_cannot_see():
     # One row per declared difference, numbered. A table that lost its rows would still contain
     # the heading.
     rows = re.findall(r"^\| \d+ \|", readme, re.MULTILINE)
-    assert len(rows) >= 5, (
+    assert len(rows) >= 7, (
         f"the declared-difference table has {len(rows)} row(s). Every residual the gate does not "
-        f"close has to be written down; six were measured when this was written."
+        f"close has to be written down; SEVEN are measured on this tree — the seventh is the Go "
+        f"client's `-verbs`/`-exit-codes` ledger flags, which exit 0 where the oracle exits 2."
+    )
+    # 🔴 AND THE P8 LEDGER, WHICH IS THE ONE SECTION THAT EXISTS FOR A READER WHO HAS NOT ARRIVED
+    # YET. Everything in this repository that exists only while the Python oracle does is listed
+    # there; `AGENTS.md` names the retirement condition for the `lib/` rule and for nothing else,
+    # so without this section P8 starts by rediscovering the set. A guard on the HEADING only,
+    # deliberately: pinning its rows would fail on every honest addition to it.
+    assert "P8 retirement ledger" in readme, (
+        "the P8 retirement ledger is gone from tests/parity/README.md. It is the only written "
+        "record of what `tests/parity/`, `internal/store/pyoserror.go`'s CPython spelling, the "
+        "cross-client ledger tests and the 31 narrower rows are FOR — and all of them look like "
+        "dead weight to whoever retires the oracle."
     )
 
 
-def test_the_harness_module_has_no_syntax_error_and_declares_cases():
-    """The instrument's own positive control: it parses, and it declares a non-trivial case set.
+def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
+    """🔴 NOT EVERY GUARD ABOVE GOES RED ON AN EMPTY CASE LIST — MEASURED, WHICH IS WHY THIS FLOOR
+    IS NOT REDUNDANT WITH THEM.
 
-    A zero here would make every assertion above pass vacuously, which is the failure mode the
-    harness itself exists to guard against one layer up.
+    The previous version of this test claimed "a zero here would make EVERY assertion above pass
+    vacuously". That was wrong in both directions and the control was run rather than reasoned
+    about: with `harness.cases()` forced to `[]`, the verb ledger, the flag ledger and the
+    sabotage-row check all go RED on their own, while `test_every_exit_only_row_states_WHY_it_is_
+    narrower` and `test_the_case_ids_are_unique` pass VACUOUSLY — an empty list has no thin `why`
+    and no duplicate id. So the floor covers those two, and nothing else in this file does.
+
+    ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below 91
+    PASS lines, but that job needs a Go toolchain and a running pod; a developer running
+    `pytest tests` reaches this one and not that one.
+
+    The AST half of the old test is deleted as genuinely redundant: `harness` is imported at module
+    scope (line 30) and the `cases` fixture calls `harness.cases(1)`, so a syntax error or a
+    missing `cases` function already fails all ten tests in this file, more loudly.
+
+    ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
-    tree = ast.parse((HARNESS_DIR / "harness.py").read_text(encoding="utf-8"))
-    assert any(isinstance(node, ast.FunctionDef) and node.name == "cases" for node in tree.body)
-    assert len(harness.cases(1)) >= 50, (
-        f"the parity gate declares only {len(harness.cases(1))} cases; 72 were measured when it "
-        f"was written, across nine verbs and every documented exit code"
+    declared = len(harness.cases(1))
+    # 90 measured on this tree. The floor is the repository's own formula for a collected-count
+    # floor — `m - min(50, max(1, m / 20))` for a measured `m`, which `.github/workflows/ci.yml`
+    # owns and justifies: close enough that a real narrowing cannot hide under it, loose enough
+    # that adding or dropping a handful of rows in a PR does not make it permanently red. The
+    # previous floor was 50 against 90, which could not see a 44% narrowing — the same blindness
+    # that comment describes one layer up.
+    floor = 85
+    assert declared >= floor, (
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (90 were "
+        f"measured on this tree, across nine verbs and every documented exit code). Two guards in "
+        f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
+        f"narrowed list, so a shrinking case set gets quieter, not louder."
     )
