@@ -500,6 +500,7 @@
           ls-entries reads
           put writes
           recall reads
+          routes reads
           search reads
           sync reads
           validate reads

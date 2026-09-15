@@ -42,14 +42,23 @@ func (e Env) host() string {
 // REFRESH, so "I did not reach the store" is a failed operation no matter how good the cache is
 // — exit non-zero, naming the host. A `sync` that exited 0 on an outage is how a timer reports
 // success forever while the cache silently ages out.
+//
+// 🔴 THE FOUR READ VERBS BELOW PASS `DefaultAlias` EXPLICITLY, AND THAT IS A CLAIM RATHER
+// THAN A PLACEHOLDER. Each is guarded by `RefuseUnportedMultiInstance`, so the only host that
+// reaches them has exactly one instance and `personal` is the only answer. Spelling it out is
+// what makes a future caller that drops the guard — or adds a fifth read verb — write down
+// which store it means, instead of inheriting the default from a function that hid it.
 func Sync(env Env, opts Options) (int, error) {
+	if code, stop := RefuseUnportedMultiInstance(env, "sync"); stop {
+		return code, nil
+	}
 	// 🔴 `scope=""`, ALWAYS. `--scope` used to be threaded through here, which REPLACED THE
 	// SHARED CACHE with a one-scope copy: measured, a scoped run took the cache from 305
 	// entries to 2, after which an offline recall of any other scope printed "the store has
 	// no 'other-scope/' directory" at exit 0 — a claim about the STORE derived from a
 	// filtered cache. The server keeps `?scope=`; it is a legitimate API capability that may
 	// not narrow THIS cache.
-	state, err := ResolveState(opts.Cache, false, "", opts.Timeout)
+	state, err := ResolveState(opts.Cache, false, "", opts.Timeout, DefaultAlias)
 	if err != nil {
 		return 0, err
 	}
@@ -66,7 +75,10 @@ func Sync(env Env, opts Options) (int, error) {
 
 // LsEntries prints one `<scope>/<entry>.md` per line.
 func LsEntries(env Env, opts Options) (int, error) {
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout)
+	if code, stop := RefuseUnportedMultiInstance(env, "ls-entries"); stop {
+		return code, nil
+	}
+	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
 	if err != nil {
 		return 0, err
 	}
@@ -86,10 +98,13 @@ func LsEntries(env Env, opts Options) (int, error) {
 // derivation, the banner and the exit passthrough are identical and three of them rendered
 // differently when they were separate.
 func Report(env Env, opts Options, isSearch bool) (int, error) {
+	if code, stop := RefuseUnportedMultiInstance(env, "recall/search"); stop {
+		return code, nil
+	}
 	// 🔴 SYNC THE WHOLE STORE, NEVER `scope=opts.Scope`. A scope-filtered cache makes the
 	// reader answer `scope-absent` for every scope that was simply not fetched —
 	// indistinguishable, in the output, from a scope the store has never held.
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout)
+	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
 	if err != nil {
 		return 0, err
 	}
@@ -228,7 +243,10 @@ func emptyState(state State) State {
 // which was a second implementation of the same predicate — exactly the shape that lets a file
 // validate clean and then fail to render.
 func Validate(env Env, opts Options) (int, error) {
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout)
+	if code, stop := RefuseUnportedMultiInstance(env, "validate"); stop {
+		return code, nil
+	}
+	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
 	if err != nil {
 		return 0, err
 	}
@@ -324,6 +342,77 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
+// writeInstance is `(alias, config, cache)` for a write, or an `*UnroutedScope` that never
+// guesses. It is the Go spelling of the oracle's `_instance_for`.
+//
+// 🔴 A WRITE NAMES ITS INSTANCE UNCONDITIONALLY, UNLIKE A READ'S LABEL. "Where did that bullet
+// go" is a question about a DURABLE record, asked later, by someone who no longer has the
+// terminal — so the alias is printed at one instance and at many, and the oracle does the same.
+//
+// 🔴 AND THE CONFIG COMES FROM THE ROUTED INSTANCE, NOT FROM THE DEFAULT ONE. Printing the right
+// alias while sending to the wrong store is the shape of bug a message check cannot see.
+//
+// 🔴 THE CACHE IS RESOLVED FOR EVERY WRITE, AND ITS TWO CALLERS HERE **DISCARD** IT — that is
+// deliberate, not an oversight, so do not "simplify" this to `(alias, config)`. `CacheRootFor`
+// can FAIL (an unresolvable HOME), and the oracle's `cmd_append`/`cmd_create` reach that failure
+// too because `_instance_for` calls `_instance_cache` unconditionally. Dropping the value would
+// drop the error check with it and make the two clients disagree on that host.
+//
+// ⚠ `put` no longer comes through here at all — it calls `writeRoute` and loads the credentials
+// LATE, for the reason written there. The cache-ordering hazard this comment used to carry (a
+// routed write deriving its `If-Match` from `opts.Cache`, i.e. the DEFAULT instance's root) is
+// recorded at `Put`'s own call site, where the ordering it constrains now lives.
+// ⚠ `cacheRoot` RATHER THAN `cache`, AND THE NAME IS LOAD-BEARING FOR A REASON OUTSIDE THE CODE:
+// `tests/routing_mutants.py` anchors its mutants on exact source lines and asserts each anchor
+// occurs EXACTLY ONCE. Spelling this destructuring identically to `Put`'s made the battery REFUSE
+// — correctly, because an anchor matching twice cannot be attributed — so the two differ by one
+// name. That refusal is the harness working; do not resolve it by loosening the anchor. (And do
+// not restate the anchor text in a comment: a comment that quotes it can become the second
+// match.)
+func writeInstance(opts Options, scope string) (string, Config, string, error) {
+	alias, cacheRoot, err := writeRoute(opts, scope)
+	if err != nil {
+		return "", Config{}, "", err
+	}
+	cfg, err := LoadConfigFor(alias)
+	if err != nil {
+		return "", Config{}, "", err
+	}
+	return alias, cfg, cacheRoot, nil
+}
+
+// writeRoute is the ROUTE half of `writeInstance` — `(alias, cache)`, with NO credential load.
+//
+// 🔴 IT EXISTS BECAUSE *WHEN* THE CREDENTIALS ARE LOADED IS AN OBSERVABLE, AND THE TWO CLIENTS
+// DISAGREED ABOUT IT. The oracle's `cmd_put` calls `resolve_state` and only then `load_config`,
+// so a routed instance whose config file is INCOMPLETE surfaces inside the state resolver, as a
+// non-live state, and `put` refuses with its own sentence naming the cache it could not refresh.
+// This port loaded the config EAGERLY in `writeInstance`, so the same host produced the same exit
+// code (7) with different BYTES: the error escaped to `cli.go`'s write-unreachable arm — "the
+// write did NOT happen — config incomplete: … Re-run when the store is reachable." Exit codes
+// agreed, which is why every gate stayed green, and `append` is byte-identical on the same input
+// because the oracle loads the config eagerly THERE too. So the divergence is not "Go is eager";
+// it is "Go was eager on the ONE verb where the oracle is lazy".
+//
+// ⚠ `Append` and `Create` keep using `writeInstance`, deliberately: both need the credentials
+// before anything else can happen, and both oracle verbs load them at the same point. Splitting
+// the helper rather than reordering it is what keeps those two unmoved.
+func writeRoute(opts Options, scope string) (string, string, error) {
+	routing, err := Discover(nil)
+	if err != nil {
+		return "", "", err
+	}
+	alias, err := routing.AliasFor(scope)
+	if err != nil {
+		return "", "", err
+	}
+	cache, err := instanceCache(opts, alias)
+	if err != nil {
+		return "", "", err
+	}
+	return alias, cache, nil
+}
+
 // Append appends ONE dated bullet — `POST /api/v1/entry/<scope>/<ref>/bullets`.
 //
 // 🔴 DO NOT DATE-PREFIX `--text`. The server prepends `- <date>: ` itself; the first production
@@ -349,7 +438,7 @@ func Append(env Env, opts Options) (int, error) {
 			runes, write.BulletTextMax, runes-write.BulletTextMax)
 		return ExitUsage, nil
 	}
-	cfg, err := LoadConfig()
+	alias, cfg, _, err := writeInstance(opts, scope)
 	if err != nil {
 		return 0, err
 	}
@@ -366,8 +455,8 @@ func Append(env Env, opts Options) (int, error) {
 	// by CONTENT HASH, so a re-POST after a timeout is idempotent — which is the property that
 	// makes a retry safe. But a caller told nothing would read "appended" into a run that wrote
 	// nothing. Saying which of the two happened is the whole difference.
-	fmt.Fprintf(env.Stdout, "cairn: %s scope=%s ref=%s revision=%s\n",
-		headerOr(headers, "X-Store-Status", "unknown"), scope, opts.Ref,
+	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s scope=%s ref=%s revision=%s\n",
+		headerOr(headers, "X-Store-Status", "unknown"), alias, scope, opts.Ref,
 		etagOr(headers, "unknown"))
 	fmt.Fprint(env.Stdout, store.DecodeReplace(body))
 	return ExitOK, nil
@@ -395,8 +484,26 @@ func Put(env Env, opts Options) (int, error) {
 		return ExitUsage, nil
 	}
 	revision := opts.IfMatch
+	// 🔴 THE ROUTE IS RESOLVED BEFORE THE REVISION IS DERIVED, AND THE ORDER IS THE WHOLE
+	// POINT. The precondition is `sha256(<the ROUTED store's bytes>)`, so a sync and a glob
+	// against the DEFAULT instance's cache — which is what `opts.Cache` is — computes it from
+	// a store this write is not addressing. The oracle resolves the route first
+	// (`cmd_put` -> `_instance_for`) and syncs the routed cache; this is the port following.
+	// ⚠ It stays BELOW the `--file` read: "cannot read --file" is rc 2 and must not be
+	// preceded by a routing refusal or a network round trip.
+	//
+	// 🔴 `writeRoute`, NOT `writeInstance` — THE CREDENTIALS ARE LOADED BELOW, AFTER THE
+	// REVISION. That ordering is the oracle's (`cmd_put` resolves the route, resolves the
+	// STATE, then calls `load_config`), and loading them here instead produced a measured byte
+	// divergence on a routed instance whose config is incomplete: `ResolveState` reports that
+	// as a non-live state and `put` refuses in its own words, where an eager load escapes to
+	// `cli.go` and refuses in `cli.go`'s. Same exit code, different sentence — see `writeRoute`.
+	alias, cache, err := writeRoute(opts, scope)
+	if err != nil {
+		return 0, err
+	}
 	if revision == "" {
-		state, err := ResolveState(opts.Cache, false, "", opts.Timeout)
+		state, err := ResolveState(cache, false, "", opts.Timeout, alias)
 		if err != nil {
 			return 0, err
 		}
@@ -416,10 +523,10 @@ func Put(env Env, opts Options) (int, error) {
 				"explicitly if you already hold it.\n", state.Detail)
 			return ExitWriteUnreachable, nil
 		}
-		matches, _ := filepath.Glob(filepath.Join(opts.Cache, scope, opts.Ref+".md"))
+		matches, _ := filepath.Glob(filepath.Join(cache, scope, opts.Ref+".md"))
 		sort.Strings(matches)
 		if len(matches) == 0 {
-			matches, _ = filepath.Glob(filepath.Join(opts.Cache, scope, opts.Ref+".*.md"))
+			matches, _ = filepath.Glob(filepath.Join(cache, scope, opts.Ref+".*.md"))
 			sort.Strings(matches)
 		}
 		if len(matches) != 1 {
@@ -436,7 +543,9 @@ func Put(env Env, opts Options) (int, error) {
 		revision = hex.EncodeToString(sum[:])[:16]
 		fmt.Fprintf(env.Stderr, "cairn: derived If-Match %s from the live snapshot\n", revision)
 	}
-	cfg, err := LoadConfig()
+	// 🔴 HERE, NOT ABOVE — the oracle's `cmd_put` loads the config on this line too, and the
+	// position is the whole content of the fix above.
+	cfg, err := LoadConfigFor(alias)
 	if err != nil {
 		return 0, err
 	}
@@ -446,8 +555,9 @@ func Put(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fmt.Fprintf(env.Stdout, "cairn: %s scope=%s ref=%s revision=%s\n",
-		headerOr(headers, "X-Store-Status", "unknown"), scope, opts.Ref, etagOr(headers, "unknown"))
+	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s scope=%s ref=%s revision=%s\n",
+		headerOr(headers, "X-Store-Status", "unknown"), alias, scope, opts.Ref,
+		etagOr(headers, "unknown"))
 	fmt.Fprint(env.Stdout, store.DecodeReplace(body))
 	return ExitOK, nil
 }
@@ -475,7 +585,7 @@ func Create(env Env, opts Options) (int, error) {
 		fmt.Fprintf(env.Stderr, "cairn: cannot read --file %s: %s\n", opts.File, pyOSError(readErr))
 		return ExitUsage, nil
 	}
-	cfg, err := LoadConfig()
+	alias, cfg, _, err := writeInstance(opts, scope)
 	if err != nil {
 		return 0, err
 	}
@@ -485,8 +595,9 @@ func Create(env Env, opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fmt.Fprintf(env.Stdout, "cairn: %s scope=%s ref=%s revision=%s\n",
-		headerOr(headers, "X-Store-Status", "unknown"), scope, opts.Ref, etagOr(headers, "unknown"))
+	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s scope=%s ref=%s revision=%s\n",
+		headerOr(headers, "X-Store-Status", "unknown"), alias, scope, opts.Ref,
+		etagOr(headers, "unknown"))
 	fmt.Fprint(env.Stdout, store.DecodeReplace(body))
 	return ExitOK, nil
 }

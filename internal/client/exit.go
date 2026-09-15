@@ -65,6 +65,22 @@ const (
 	// forever. They are told apart by `X-Store-Status`, which is the only place on the
 	// wire the difference exists.
 	ExitWriteExists = 9
+
+	// ExitUnrouted — this client could not decide WHICH INSTANCE a scope belongs to, so it
+	// did nothing. Either the routing table does not name the scope, or it names an alias
+	// this host has no config for.
+	//
+	// 🔴 ITS OWN CODE, AND A READ/WRITE-NEUTRAL ONE: the refusal happens BEFORE either path,
+	// so collapsing it into 3 ("nothing was displayed") or 7 ("the write did not happen")
+	// would tell a caller the store was unreachable when the store was never chosen. The
+	// remedy is a line in a table, not a retry.
+	//
+	// 🔴 11, NOT 10, AND THE GAP IS NOT AN OVERSIGHT. 10 is `doctor`'s "a check could not
+	// LOOK", and `TestTheGoClientsExitCodesKeepTheSharedSetAt0And9` pins the intersection of
+	// the two code sets at exactly {0, 9}. A routing code at 10 would put a third number in
+	// it, and a caller branching on 10 could no longer tell "diagnostics were blind" from
+	// "nobody said where this scope lives".
+	ExitUnrouted = 11
 )
 
 // ExitCodes is the client's own code set, as data, so a test can DISCOVER it instead of
@@ -85,6 +101,7 @@ func ExitCodes() map[string]int {
 		"EXIT_WRITE_UNREACHABLE":     ExitWriteUnreachable,
 		"EXIT_WRITE_PRECONDITION":    ExitWritePrecondition,
 		"EXIT_WRITE_EXISTS":          ExitWriteExists,
+		"EXIT_UNROUTED":              ExitUnrouted,
 	}
 }
 

@@ -9,8 +9,15 @@ import (
 // Options is one parsed invocation. Every verb reads the same struct so a flag cannot mean two
 // things depending on which subcommand consumed it.
 type Options struct {
-	Cache   string
-	Timeout int
+	Cache string
+	// CacheExplicit records that `--cache` was GIVEN, not merely defaulted.
+	//
+	// 🔴 THE DEFAULT AND AN EXPLICIT VALUE EQUAL TO IT ARE DIFFERENT FACTS, and comparing the
+	// value against the default cannot tell them apart. With more than one instance the
+	// default must be resolved PER INSTANCE while an explicit `--cache` pins one directory,
+	// so the difference decides whether a fan-out is allowed at all.
+	CacheExplicit bool
+	Timeout       int
 
 	Scope  string
 	Repo   string
@@ -34,6 +41,8 @@ type Options struct {
 	AllScopes bool
 
 	JSON bool
+	// Check is `routes --check`: grade the table rather than only printing it.
+	Check bool
 
 	Text    string
 	Session string

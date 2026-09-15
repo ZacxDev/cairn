@@ -35,6 +35,41 @@ in it.
 | append one dated, attributed bullet | `cairn append --scope S --ref R --text '…' --session ID` |
 | replace a whole entry behind `If-Match` | `cairn put --scope S --ref R --file F` |
 | create a new entry (refuses to overwrite) | `cairn create --scope S --ref R --file F` |
+| the scope→instance table, graded | `cairn routes` (`--check`) |
+
+**One instance, or several.** The client is configured by
+`~/.config/subsystem-store/env` — `SUBSYSTEM_STORE_URL` and
+`SUBSYSTEM_STORE_TOKEN`, environment variables of the same name winning — and
+that instance is called `personal`. A second instance is an **additive** file at
+`~/.config/subsystem-store/instances/<alias>.env` with its own cache root
+(`~/.cache/subsystem-store-<alias>`) and its own sync stamp; the default
+instance's cache root does not move. Which instance a scope belongs to is
+decided by a table **you** supply — `~/.config/subsystem-store/routes.json`, or
+`$CAIRN_ROUTES`, a flat JSON object of `"scope": "alias"` — because this program
+knows how to route and nothing about who routes where.
+
+🔴 **With more than one instance, an unregistered scope refuses at exit 11,
+naming the scope.** It never falls back to an instance: a write that lands in a
+store nobody reads is found days later, if at all, and a refusal costs one error
+message. `cairn routes --check` grades the table in both directions — a scope
+with no entry, and an entry naming an alias that does not exist. A table entry
+naming a scope that holds **no entries** prints as a ⚠ note and does *not* fail
+the check: a snapshot ships entry files rather than directories, so a stale entry
+and one pre-registered before its first write look identical from here, and
+failing on it would break the very thing the table is for.
+
+With **one** instance configured, every READ prints what it always did —
+including when a table is already present, which is the normal state while you
+are writing one. Two exceptions, at any instance count, and neither is an
+accident:
+
+- **the write verbs name their instance unconditionally.** `append`, `put` and
+  `create` print `instance=personal` even on a one-store host, because "where did
+  that bullet go" is a question about a durable record, asked later, by someone
+  who no longer has the terminal. ⚠ If you parse `cairn: appended scope=… ref=…`
+  positionally, that field is new — it sits between the status and `scope=`.
+- **a table entry naming an alias this host has no config for still refuses**,
+  because that entry says where the scope lives and this machine cannot reach it.
 
 **Reads never lie about why nothing was printed.** A report states which of
 `live` / `cached (stale <age>)` / `scope-empty` produced it — all exit 0 —

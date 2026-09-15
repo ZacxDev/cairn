@@ -538,15 +538,22 @@ func TestEveryWriteCodeIsDisjointFromEveryReadCode(t *testing.T) {
 	for _, name := range []string{
 		"EXIT_OK", "EXIT_USAGE", "EXIT_UNREACHABLE_NO_CACHE", "EXIT_REFRESH_FAILED",
 		"EXIT_CORRUPT", "EXIT_WRITE_REFUSED", "EXIT_WRITE_UNREACHABLE",
-		"EXIT_WRITE_PRECONDITION", "EXIT_WRITE_EXISTS",
+		"EXIT_WRITE_PRECONDITION", "EXIT_WRITE_EXISTS", "EXIT_UNROUTED",
 	} {
 		if _, present := all[name]; !present {
 			t.Errorf("%s is not in ExitCodes(), so `-exit-codes` cannot report it and the "+
 				"shared-set ledger is blind to it", name)
 		}
 	}
-	if len(all) != 9 {
-		t.Fatalf("ExitCodes() has %d rows; nine constants are documented", len(all))
+	// 🔴 `EXIT_UNROUTED` IS NEITHER A READ CODE NOR A WRITE CODE, which is why it is absent
+	// from both maps above rather than being filed under one of them. The refusal happens
+	// BEFORE either path — no store was chosen — so a caller that read it as 3 would be told
+	// the store was unreachable and a caller that read it as 7 would be told a write failed.
+	if ExitUnrouted == ExitUnreachableNoCache || ExitUnrouted == ExitWriteUnreachable {
+		t.Errorf("EXIT_UNROUTED collides with a read or write code at %d", ExitUnrouted)
+	}
+	if len(all) != 10 {
+		t.Fatalf("ExitCodes() has %d rows; ten constants are documented", len(all))
 	}
 }
 

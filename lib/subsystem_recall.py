@@ -319,13 +319,20 @@ import subsystem_read_store as _read_store  # noqa: E402
 # `scripts/subsystem-audit.py` returns.
 from subsystem_read_store import EXIT_UNSTAMPED_READ_STORE  # noqa: E402,F401
 from entry_shape import (  # noqa: E402
-    STORE_IS_PER_HOST,
     StoreMissingError,
     TouchError,
     scope_for_repo,
+    store_caveat,
     store_host,
     store_host_line,
 )
+# 🔴 `store_caveat`, NOT `STORE_IS_PER_HOST`. The constant was imported here and
+# interpolated directly; it is now reached through the function that decides
+# whether the sentence needs its multi-instance clause, so this module has ONE
+# way to say "what does an absence here mean" and it is the writer's. Importing
+# the constant as well would leave a second, always-single-instance spelling
+# beside it — which is exactly the shape that goes stale on the day somebody
+# adds a clause to one of them.
 # 🔴 THE PER-HOST HEADER IS THE WRITER'S SPELLING, IMPORTED, NOT RE-TYPED — and
 # `store_host` rather than `host_identity.this_host` for the same reason. The
 # reader and the writer describe the SAME directory; two spellings of "whose disk
@@ -1949,7 +1956,12 @@ def _render_listing(report: RecallReport) -> list[str]:
     return out
 
 
-def render_text(report: RecallReport, *, extra_header: Sequence[str] = ()) -> str:
+def render_text(
+    report: RecallReport,
+    *,
+    extra_header: Sequence[str] = (),
+    instance: str | None = None,
+) -> str:
     """The agent-facing recall block.
 
     Deterministic in the REPORT with ONE exception: `store_host_line` reads THIS
@@ -1960,11 +1972,16 @@ def render_text(report: RecallReport, *, extra_header: Sequence[str] = ()) -> st
     `store:`/`store host:` lines instead of somewhere else on the page. It is a
     keyword with an empty default because the subsystem-store POD calls this
     function with a report only, and its `/data` has no stamp to print.
+
+    `instance` is the alias of the cairn instance this report was read from, and
+    it is `None` — the single-instance case — for the pod and for every host
+    configured with one instance. Passing it adds a clause to the caveat saying
+    which instance was consulted; see `entry_shape.store_caveat`.
     """
     out: list[str] = [
         f"subsystem-recall: status={report.status} scope={report.scope}",
         f"  store: {report.store_root}",
-        store_host_line(),
+        store_host_line(instance=instance),
         *extra_header,
         f"  caveat: {report.caveat}",
     ]
@@ -1998,7 +2015,7 @@ def render_text(report: RecallReport, *, extra_header: Sequence[str] = ()) -> st
         # of the disk that was read. Post-cutover the caches converge via the pod
         # — but only when each syncs, so a read still sees one disk at one time.
         out.append(
-            f"  NOT A FACT ABOUT THE FLEET — {STORE_IS_PER_HOST}. The other host syncs "
+            f"  NOT A FACT ABOUT THE FLEET — {store_caveat(instance)}. The other host syncs "
             f"the SAME hosted store through its own cache, and may already hold "
             f"`{report.scope}/` where this one has not synced it yet."
         )
@@ -2864,19 +2881,29 @@ def search(
     )
 
 
-def render_search(report: SearchReport, *, extra_header: Sequence[str] = ()) -> str:
+def render_search(
+    report: SearchReport,
+    *,
+    extra_header: Sequence[str] = (),
+    instance: str | None = None,
+) -> str:
     """The agent-facing search block. Deterministic: same report in, same bytes out.
 
     `extra_header` — same contract as `render_text`'s: the CLI's read-store stamp
     belongs in the header block, and a search is a read like any other, so it
     carries its own freshness too.
+
+    `instance` is the alias of the cairn instance this report was read from, and
+    it is `None` — the single-instance case — for the pod and for every host
+    configured with one instance. Passing it adds a clause to the caveat saying
+    which instance was consulted; see `entry_shape.store_caveat`.
     """
     ctx = "bullet" if report.context == CONTEXT_BULLET else f"±{report.context} raw lines"
     out: list[str] = [
         f"subsystem-recall: status={report.status} scope={report.scope} "
         f"query={report.query!r} threshold={report.threshold:.2f} context={ctx}",
         f"  store: {report.store_root}",
-        store_host_line(),
+        store_host_line(instance=instance),
         *extra_header,
         f"  caveat: {report.caveat}",
     ]
@@ -2901,7 +2928,7 @@ def render_search(report: SearchReport, *, extra_header: Sequence[str] = ()) -> 
             f"'no matches': nothing was searched, so nothing can be concluded from it."
         )
         out.append(
-            f"  NOT A FACT ABOUT THE FLEET — {STORE_IS_PER_HOST}. The other host syncs "
+            f"  NOT A FACT ABOUT THE FLEET — {store_caveat(instance)}. The other host syncs "
             f"the SAME hosted store through its own cache, and may already hold "
             f"`{report.scope}/` where this one has not synced it yet."
         )

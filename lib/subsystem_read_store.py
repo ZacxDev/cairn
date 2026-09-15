@@ -40,12 +40,16 @@ disagree with the writer the first time either moved.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
+    "DEFAULT_ALIAS",
     "DEFAULT_CACHE_ROOT",
+    "cache_root_for",
+    "valid_alias",
     "SYNC_STAMP",
     "STAMP_PREFIX",
     "ReadStore",
@@ -60,6 +64,74 @@ __all__ = [
 
 #: The synced read-through cache `cairn sync` installs. THE one definition.
 DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "subsystem-store"
+
+#: The alias of the instance `DEFAULT_CACHE_ROOT` belongs to, and the one whose
+#: config file is the long-standing `~/.config/subsystem-store/env`.
+#:
+#: 🔴 A WIRE FACT, NOT A LABEL. It names a config file, a cache directory and a
+#: routing-table value, so moving it strands a cache and silently unroutes every
+#: scope a table sent here.
+DEFAULT_ALIAS = "personal"
+
+#: What an alias may be SPELLED. An alias becomes a directory name under the
+#: cache root, so this is the guard between a routing table (an input, possibly
+#: hand-edited) and a path: `..`, `/`, a leading dot and an absolute path are all
+#: refused here rather than at the filesystem, where the failure would be a
+#: cache written somewhere nobody looks.
+_ALIAS = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def valid_alias(alias: str) -> bool:
+    """Is `alias` usable as an instance name AND as a path segment?
+
+    🔴 THE SECOND HALF IS THE POINT. `cache_root_for` interpolates this into a
+    filesystem path, so an alias of `..` would put a cache one directory above
+    the root — and a routing table is an INPUT, possibly hand-edited, so the
+    check belongs between the table and the filesystem rather than at the
+    filesystem.
+
+    🔴 `DEFAULT_ALIAS` IS VALID HERE AND RESERVED SOMEWHERE ELSE, and confusing
+    the two broke this once: a table routing a scope to `personal` — the
+    ordinary case, the whole reason the default instance has a name — was
+    refused as a malformed alias. What is reserved is a FILE in `instances/`
+    claiming the default alias, because then one alias would have two sources;
+    that is `cairn_instances.discover`'s rule, not this one.
+    """
+    return bool(_ALIAS.match(alias))
+
+
+def cache_root_for(alias: str) -> Path:
+    """The cache root for ONE instance. A FUNCTION, because there are now N.
+
+    🔴 THE DEFAULT INSTANCE KEEPS `DEFAULT_CACHE_ROOT` EXACTLY, AND THAT IS A
+    COMPATIBILITY GUARANTEE, NOT AN ACCIDENT OF THE FORMULA. Every existing host
+    has a populated cache at that path, and the path is PRINTED — it is the
+    `store:` line of every recall. Moving it would orphan the cache (a silent
+    full re-sync, and `--no-sync` reporting no cache at all on a host that has
+    one) and change the bytes of every report, which is precisely what the
+    single-instance client must not do.
+
+    🔴 A SIBLING DIRECTORY, NOT A CHILD, AND THE CHILD LAYOUT IS A TRAP. Putting
+    instance caches UNDER the default root would make each alias look exactly
+    like a SCOPE to every reader that enumerates `<root>/<dir>` — `doctor`'s
+    scope list, the visibility check, the reader's `known_scopes`. The names
+    would then be reported as scopes that exist and hold no entries.
+
+    Reads `DEFAULT_CACHE_ROOT` at CALL time through `read_store_root`, so a test
+    that repoints the module global moves every instance's cache together rather
+    than one of them.
+    """
+    root = read_store_root()
+    if alias == DEFAULT_ALIAS:
+        return root
+    if not valid_alias(alias):
+        raise ValueError(
+            f"`{alias}` is not a usable instance alias: an alias becomes a "
+            f"directory name beside the cache root, so it is lowercase letters, "
+            f"digits and hyphens only, and `{DEFAULT_ALIAS}` names the default "
+            f"instance's own cache."
+        )
+    return root.parent / f"{root.name}-{alias}"
 
 #: The snapshot stamp `cairn sync` writes into the cache root. THE one definition.
 SYNC_STAMP = ".sync-stamp"

@@ -76,6 +76,33 @@ jobs:
           # `test_go_client_ledgers.py` (the Go-ONLY ledger-flag set, residual 7's gate).
           # `test_parity_harness.py` is net zero there: its stale self-reported-count test
           # was rewritten rather than added to or deleted.
+          # 🔴 1923 MEASURED ON THE MULTI-INSTANCE BRANCH: 1860 at `0497140` plus 63 —
+          # SIXTY-TWO in `test_cairn_instances.py` and ONE in
+          # `test_subsystem_read_store.py`. The line here used to read "the sixty in
+          # `test_cairn_instances.py`" against a file that collected fifty-nine, and it
+          # omitted the second file entirely: a self-reported per-file count goes stale
+          # in the direction that makes the floor look explained. Re-derive it:
+          #   python3 -m pytest tests -p no:randomly --collect-only -q | grep :: \
+          #     | sed 's/\[.*//' | awk -F:: '{print $1}' | sort | uniq -c
+          #
+          # 🔴 AND A COUNT IS NOT A LEDGER — DIFF THE NAMES, NOT THE TOTAL. This floor is
+          # structurally blind to a change that deletes two tests and adds three, which
+          # is exactly what happened while this branch was being written: a scripted edit
+          # swallowed `test_the_CLI_grades_the_table_and_exits_NONZERO_on_a_missing_entry`
+          # and `test_a_CORRECT_table_passes_the_CLI_check` along with the test it meant
+          # to replace, and the total still cleared the floor by 50. Before raising this
+          # number, collect the NAMES on the base ref and on HEAD (one worktree each, so
+          # the two listings are of different trees) and require every removal to be a
+          # rename you can point at:
+          #   python3 -m pytest tests -p no:randomly --collect-only -q | grep :: \
+          #     | sed 's/\[.*//' | sort > names-<ref>.txt
+          #   comm -23 names-base.txt names-head.txt    # removed — must all be renames
+          #   comm -13 names-base.txt names-head.txt    # added
+          # Measured that way for THIS change: base 1860, head 1924, 64 added, 0 removed.
+          # The 64th arrived in the round-2 audit fixes: the dotted-file skip's OTHER arm
+          # (`instances/.env` must still REFUSE), which the skip-arm test alone left open.
+          # Re-measured at that point rather than carried forward — a self-reported count
+          # goes stale in the direction that makes the floor look explained.
           #
           # 1832 was the P2 branch: 1819 at `1e593a8` plus the ten in
           # `test_parity_harness.py` (the coverage ledger over the parity gate's own case
@@ -107,7 +134,7 @@ jobs:
           # THIS NUMBER: they are a different runner in a different job, and
           # folding them in would make one floor answer two questions. Nor is the
           # PARITY gate: it is its own job with its own floor, for the same reason.
-          FLOOR = 1810
+          FLOOR = 1873
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -340,11 +367,19 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 91 PASS lines measured on the P2 branch: 90 cases plus `cache-mtime-parity`.
+          # 98 PASS lines measured on the multi-instance branch: 97 cases plus
+          # `cache-mtime-parity`. It was 91 (90 cases) at `871e6ff`; the seven new rows are the
+          # `routes` verb, which the verb ledger requires a case for, `exit 11`, which the
+          # exit-code ledger requires a row to reach, TWO MULTI-INSTANCE rows that stand up
+          # a second pod — the shape every other row is blind to by construction, and the one
+          # that catches a client reading every instance from the DEFAULT instance's config —
+          # and, from the round-2 audit, a routed `put` at a NON-DEFAULT alias: until it landed
+          # both `<MULTICFG>` rows were `routes --check`, so the routed WRITE path this branch
+          # exists to ship had no cross-client byte comparison at all.
           # ⚠ THE FLOOR IS NOT REDUNDANT WITH "ZERO FAILURES". A run that compared nothing has
           # zero failures too; the floor is what tells a green gate from an absent one.
-          if [ "$passes" -lt 91 ]; then
-            echo "REFUSING: $passes passes, and 91 were measured — the gate got smaller"
+          if [ "$passes" -lt 98 ]; then
+            echo "REFUSING: $passes passes, and 98 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
