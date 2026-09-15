@@ -68,12 +68,14 @@ runbook (seeding, byte-identity verification, rotation, rate limiting), is
 
 | path | what |
 |---|---|
-| `cairn` | the client CLI |
-| `lib/` | the reader: cache resolution, recall rendering, scope/ref resolution, doctor |
+| `cairn` | the Python client CLI, and the ORACLE the Go one is measured against |
+| `lib/` | the Python reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
-| `cmd/`, `internal/` | the Go port of the server — passes the corpus, not deployed |
-| `tests/` | the suites, plus `leakscan.py` and the HTTP conformance corpus |
-| `flake.nix` | the packaged client, the server image, the Go server, and the checks |
+| `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, not deployed |
+| `cmd/cairn`, `internal/client` | the Go port of the CLIENT — byte-identical to the Python one |
+| `internal/report` | the ONE renderer, shared by the pod and the CLI |
+| `tests/` | the suites, plus `leakscan.py`, the HTTP conformance corpus and the client parity gate |
+| `flake.nix` | both clients, the server image, the Go server, and the checks |
 
 ## The Go port, and why two servers are alive
 
@@ -95,6 +97,26 @@ differential fixture — the oracle's rendered bytes over 50 report shapes no co
 reaches — and the next step in the sequence is running both servers over ONE store and
 comparing. `AGENTS.md` states that order and the reasons for it.
 
+## …and why two CLIENTS are alive
+
+Rewriting the server alone would have left **two renderers in two languages that must agree
+byte-for-byte forever**, with drift arriving as "a different order that reads as a stale
+cache" — no error, no missing entry. So the client is ported too, onto the SAME
+`internal/report` the pod runs: one renderer, three consumers (pod, CLI, a future UI). That
+makes byte-identity a property of there being one implementation rather than a discipline two
+are held to.
+
+`cairn` stays the oracle and `packages.default` still builds it. The gate is
+[`tests/parity/`](tests/parity/README.md): both clients, one pod, one store, one cache root,
+identical argv — and a byte diff of stdout, stderr and the exit code. **77 cases, 78 PASS, 0
+failures** across all nine verbs, every output-shaping flag and every documented exit code.
+
+⚠ **A green gate is not evidence until its controls have been watched to work.** This one's
+first full run reported 72 PASS / 0 FAIL while every request was refused and no cache was ever
+written — two clients failing identically compare equal. It now refuses to vouch unless a
+pre-flight fetch succeeds and some row renders a real digest, and `--self-test` proves the
+differ can go red on stdout, on stderr and on the exit code separately.
+
 ## Development
 
 ```bash
@@ -102,6 +124,8 @@ pytest tests/                         # the Python suite
 go vet ./... && go test ./...         # the Go port's own guards
 tests/conformance/run_go.sh           # the corpus against the Go server
 python3 tests/conformance/suite.py run  # …and against the oracle: must stay at 0 failures
+python3 tests/parity/harness.py       # both CLIENTS over one cache root: the P2 gate
+python3 tests/parity/harness.py --self-test  # prove the differ can go RED
 python3 tests/reader_fixtures.py generate  # re-record the renderer's bytes FROM the oracle
 python3 tests/leakscan.py             # the leak gate — runs in CI on every commit
 python3 tests/leakscan.py --self-test # prove the gate is an instrument

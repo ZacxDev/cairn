@@ -3,8 +3,16 @@
 The next phase turns cairn from *a store with a static allowlist* into *a multi-user
 product with a UI*. This doc records the decisions that were taken deliberately, what
 each one costs, and the order that makes the risky part safe. It is a plan, not a
-measurement: nothing here has been built or verified, and every claim about today's
-behaviour was read off the code at `3c316ff` and is cited so it can be re-checked.
+measurement: nothing here had been built or verified WHEN IT WAS WRITTEN, and every claim
+about today's behaviour was read off the code at `3c316ff` and is cited so it can be
+re-checked.
+
+⚠ **THAT SENTENCE IS NO LONGER TRUE OF THE WHOLE DOCUMENT, AND LEAVING IT UNQUALIFIED WOULD
+MAKE THIS PLAN READ AS A GREENFIELD ONE.** P0, P1 and P2 have shipped; `AGENTS.md` is the
+authority on what is built, what is measured, and what the measurements do NOT cover — in
+particular that the SERVER dual-run (P1's last step) is still outstanding even though P2's
+client parity gate is green. Read status there, not here. Everything below is the DECISION
+record and is unchanged.
 
 ## What exists today, measured at `3c316ff`
 
