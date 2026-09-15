@@ -228,14 +228,27 @@ func serviceIn(scope string) string {
 // reason nobody wrote down.
 //
 // 🔴 AND IT WAS RUN AGAINST THE **OLD** MECHANISM, WHICH IS WHAT MAKES IT A DIFFERENTIAL
-// CLAIM RATHER THAN A DESCRIPTION OF WHAT THE NEW CODE HAPPENS TO DO. This file's ledger
-// and harness reference nothing from `internal/control`, so they compile and run against
-// the token-file server at `3c8707c` — measured there: all 60 cells agree and the allow
-// count is the same 24. A ledger that only ever ran against the code it was written
-// beside would be indistinguishable from one derived from that code, which this
-// repository's rules name explicitly. ⚠ It is therefore NOT regression coverage for the
-// contract — nothing was broken — but it IS the seam guard for the MECHANISM: four rows
-// of `tests/control_mutants.py` are killed by this test and by nothing else.
+// CLAIM RATHER THAN A DESCRIPTION OF WHAT THE NEW CODE HAPPENS TO DO. Measured at
+// `3c8707c`, the token-file server: all 60 cells agree and the allow count is the same
+// 24. A ledger that only ever ran against the code it was written beside would be
+// indistinguishable from one derived from that code, which this repository's rules name
+// explicitly.
+//
+// ⚠ **REPRODUCING THAT TAKES AN EXTRACTION, AND AN EARLIER DRAFT OF THIS COMMENT SAID
+// OTHERWISE.** It claimed "this file references nothing from `internal/control`, so it
+// compiles there". The LEDGER and its HARNESS reference nothing from it — that is the
+// load-bearing half and it is true — but the FILE also holds tests that DO
+// (`mustAuthorize`, the two `Source` doubles, the out-of-band-scope case), and
+// `internal/control/tokenfile` does not exist at `3c8707c` at all. So the file as
+// committed fails to BUILD there, and a reader checking the claim as it was written
+// would have read that build failure as the claim being false. The reproduction is:
+// copy this file's first ~358 lines (through `sortedKeys`) into a checkout of
+// `3c8707c`, drop the `control`, `tokenfile`, `context` and `store` imports that only
+// the removed tests needed, and run this one test.
+//
+// ⚠ It is therefore NOT regression coverage for the contract — nothing was broken — but
+// it IS the seam guard for the MECHANISM: four rows of `tests/control_mutants.py` are
+// killed by this test and by nothing else.
 func TestTheServedAuthorizationMatrixIsExactlyThis(t *testing.T) {
 	// The world, declared here so the ledger below can be checked against it rather
 	// than against itself.
