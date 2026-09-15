@@ -33,6 +33,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +50,8 @@ import (
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/authz"
+	"github.com/ZacxDev/cairn/internal/control"
+	"github.com/ZacxDev/cairn/internal/control/tokenfile"
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/snapshot"
@@ -100,6 +103,16 @@ const (
 // one. Mutating a shared slice in place would expose a window in which the table is
 // neither, and an emptied one rejects a credential that is valid in BOTH files —
 // which reads to the client as a spurious 401 during every reload.
+//
+// 🔴 THE TOKEN TABLE IS NO LONGER WHAT AUTHORISES A REQUEST — `authority` IS.
+// `authz.LoadTokens` still parses the file (it is the deployed secret and every guard
+// in its ladder still runs), but the table it produces is now an INPUT to
+// `tokenfile.Source`, which projects it into a `control.Model`; `authenticate` resolves
+// a bearer token against that materialized model and gets back a `control.Principal`
+// and its `control.Authorization`. The point of the indirection is that there is one
+// authorization model with one predicate, reached identically whether the authority
+// behind it is a file today or a control plane tomorrow — see
+// `internal/control/tokenfile`.
 type Server struct {
 	StoreRoot      string
 	TrustedProxies []netip.Prefix
@@ -121,6 +134,15 @@ type Server struct {
 	Now func() time.Time
 
 	tokens atomic.Pointer[[]authz.TokenRecord]
+
+	// authority is the materialized control plane this server authorises from.
+	//
+	// 🔴 IT IS READ ON EVERY REQUEST AND CONTACTS NOTHING. `control.Cache` holds a
+	// Model and hands it to `control.Authenticate`; the authority behind it is only
+	// ever touched by a refresh. That is the property `internal/control/cache.go`
+	// exists for, and it is what makes an authorization decision survive an outage
+	// of whatever is behind the seam.
+	authority *control.Cache
 
 	readRoutes  map[string]readRoute
 	writeRoutes map[writeKey]writeRoute
@@ -152,7 +174,20 @@ func New(storeRoot string, tokens []authz.TokenRecord, trustedProxies []netip.Pr
 		Limiter:        limiter,
 		Renderer:       report.Reader{},
 	}
-	s.SetTokens(tokens)
+	// 🔴 THE CACHE IS BUILT BEFORE THE FIRST `SetTokens`, BECAUSE `SetTokens` IS WHAT
+	// MATERIALIZES IT. The token table is the authority's INPUT, so publishing a table
+	// and materializing from it are one operation with one order; splitting them would
+	// leave a window in which the server holds credentials it cannot authenticate.
+	s.authority = control.NewCache(tokenfile.Source{
+		StoreRoot: storeRoot,
+		Records:   s.Tokens,
+	}, control.CacheOptions{MaxAge: AuthorityMaxAge})
+	if err := s.SetTokens(tokens); err != nil {
+		// A server that came up authorising nobody looks healthy and serves nothing,
+		// which is the failure mode every guard in the token ladder refuses at STARTUP
+		// rather than at the first request.
+		return nil, fmt.Errorf("authority: %w", err)
+	}
 	s.readRoutes = map[string]readRoute{
 		"recall":   {arity: 2, handler: s.recall},
 		"search":   {arity: 2, handler: s.search},
@@ -195,14 +230,56 @@ func (s *Server) checkLedger() error {
 	return nil
 }
 
-// SetTokens swaps the token table. ONE rebind of ONE immutable value.
-func (s *Server) SetTokens(tokens []authz.TokenRecord) {
+// SetTokens swaps the token table AND re-materializes the authority from it. ONE
+// rebind of ONE immutable value, then one refresh.
+//
+// 🔴 THE REFRESH IS NOT OPTIONAL AND IS NOT DEFERRED TO A TIMER. A token reload is a
+// change notification about the authority's own input: the operator who edited the
+// secret and sent SIGHUP is doing it to revoke somebody, and a revocation that waits
+// for the next tick is a revocation the operator believes landed. `control.Cache`
+// reports its lag honestly for the things it cannot control; this is not one of them.
+//
+// 🔴 IT RETURNS AN ERROR RATHER THAN SWALLOWING ONE, AND THE TABLE IS PUBLISHED
+// FIRST. If the projection fails, the cache keeps serving its last-known-good model
+// (see `Cache.Refresh`), so the previously-loaded identities keep authenticating —
+// the same fallback the reload path already promises for a file that does not parse.
+// The caller is told so it can say so; a silently refused refresh would leave the
+// operator believing an edit took effect.
+func (s *Server) SetTokens(tokens []authz.TokenRecord) error {
 	frozen := make([]authz.TokenRecord, len(tokens))
 	copy(frozen, tokens)
 	s.tokens.Store(&frozen)
+	return s.authority.Refresh(context.Background())
 }
 
-// Tokens is the table currently authorising requests.
+// AuthorityMaxAge is the staleness BOUND the served authority declares.
+//
+// ⚠ IT BOUNDS THE REPORT, NOT THE READS — see `control.CacheOptions.MaxAge`. What it
+// is measuring here is narrow, and saying so is the point: the token table refreshes
+// on every reload, so the only thing that can age is the SCOPE ENUMERATION the
+// adapter reads off the filesystem (`tokenfile.Divergence`). A bound of zero would
+// render `bound=none`, which a reader cannot tell from "the bound was met".
+const AuthorityMaxAge = 2 * time.Minute
+
+// AuthorityRefreshInterval is the schedule a caller running the cache should use. It
+// is BELOW AuthorityMaxAge because `control.Cache.Run` refuses a schedule that cannot
+// keep the bound it declares, and a bound nothing keeps is worse than no bound.
+const AuthorityRefreshInterval = 30 * time.Second
+
+// Authority is the materialized control plane this server authorises from.
+//
+// Exposed so `cmd/cairn-server` can run its refresh loop and so a status surface can
+// render `Staleness()`. It is NOT a second place to decide visibility: the only
+// methods a caller has any business with here are the ones that report or refresh.
+func (s *Server) Authority() *control.Cache { return s.authority }
+
+// Tokens is the token table the authority is currently projected FROM.
+//
+// ⚠ IT IS NOT WHAT AUTHORISES A REQUEST, AND THE PREVIOUS SENTENCE HERE SAID IT WAS.
+// `authority` is. This is the table's own value, read by `tokenfile.Source` on every
+// refresh and by the reload path, which prints its fingerprints so an operator can tell
+// which credentials are live — the one question this answers that the authority cannot,
+// because a `control.Model` holds digests and never a token.
 func (s *Server) Tokens() []authz.TokenRecord {
 	if p := s.tokens.Load(); p != nil {
 		return *p
@@ -220,13 +297,17 @@ func (s *Server) now() time.Time {
 // request is the per-request state. It is a VALUE PER REQUEST rather than fields on
 // the server, which removes by construction the class of bug the oracle needs four
 // explicit resets to avoid: a keep-alive connection carrying the previous request's
-// fingerprint, path or allowlist into this request's audit line.
+// fingerprint, path or scope set into this request's audit line.
 //
-// 🔴 `visible` DEFAULTS TO THE EMPTY SET, NEVER TO UNRESTRICTED, AND THE ZERO VALUE
-// IS WHAT MAKES THAT TRUE. `store.ScopeSet{}` is "nothing is visible"; unrestricted
-// is reachable only by calling `store.Unrestricted()`, which only a legacy token
-// record does. A route reached without a successful authorization — today impossible,
-// tomorrow one refactor away — therefore sees nothing rather than everything.
+// 🔴 `visible` AND `writable` DEFAULT TO THE EMPTY SET, NEVER TO UNRESTRICTED, AND THE
+// ZERO VALUE IS WHAT MAKES THAT TRUE — AT BOTH LEVELS NOW. `store.ScopeSet{}` is
+// "nothing is visible" and `store.Unrestricted()` is reachable only by asking for it;
+// one level up, a zero `control.Authorization` has an empty scope map, so `Allows`
+// answers false for every scope and every verb and `VisibleScopes` folds an empty list.
+// A route reached without a successful authorization — today impossible, tomorrow one
+// refactor away — therefore sees nothing rather than everything, and there is no
+// longer any value anywhere in this path that means "everything".
+// `TestTheZeroRequestSeesNothingAtBothLevels` pins the whole chain.
 type request struct {
 	srv       *Server
 	w         http.ResponseWriter
@@ -236,17 +317,31 @@ type request struct {
 	tokenFP   string
 	identity  string
 	peerState string
+	// visible is the READ set and `writable` is the WRITE set — the SAME predicate
+	// asked with two verbs, never two predicates.
+	//
+	// 🔴 THE WRITE PATH NARROWS WITH THE WRITE SET, WHICH IS WHY THIS IS TWO FIELDS
+	// AND NOT ONE. On the token file they are equal by construction (a mapped row
+	// confers read and write over one allowlist), so nothing observable moves today;
+	// they stop being equal the moment a grant confers `read` without `write`, and at
+	// that point a write to a readable-but-not-writable scope must answer what an
+	// ABSENT scope answers. Deriving the write path's narrowing from the read set
+	// would answer `ref-unknown` there instead — a different observable for a
+	// different reason, which is the refused-versus-absent property leaking.
 	visible   store.ScopeSet
+	writable  store.ScopeSet
 	responded bool
 
-	// matchedRecord is the credential this request authenticated with.
+	// principal and auth are who this request is and what it may do.
 	//
-	// 🔴 ONE MATCH, THREE FACTS. The fingerprint, the identity and the scope
-	// allowlist all come off THIS record, so no route can be authenticated against
-	// one credential and authorised against another. The write path reads
-	// `IsLegacy()` off it rather than re-deriving "was that a bare row" from the
-	// identity string, which would be a second spelling of the same question.
-	matchedRecord authz.TokenRecord
+	// 🔴 ONE MATCH, THREE FACTS. The fingerprint, the identity and BOTH scope sets
+	// come out of the SAME `control.Authenticate` call, so no route can be
+	// authenticated against one credential and authorised against another. The write
+	// path asks `auth` whether this principal holds the write verb ANYWHERE rather
+	// than re-deriving "was that a bare row" from an identity string, which would be
+	// a second spelling of a question the model already answers.
+	principal control.Principal
+	auth      control.Authorization
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -395,24 +490,35 @@ func (rq *request) handleWrite() {
 	}
 
 	if haveRoute {
-		record := rq.matchedRecord
-		if record.IsLegacy() {
-			// 🔴 A LEGACY (BARE, UNMAPPED) TOKEN MAY NOT WRITE, AND THIS IS THE
-			// DELIBERATE COST OF THE MIGRATION RATHER THAN AN OVERSIGHT. Every
-			// appended bullet records an ACTOR and a SESSION; a bare row's identity is
-			// the constant `legacy`, which names no holder, so there is no actor to
-			// derive and the guarantee cannot be met. Attributing to `legacy` would
-			// put a word in the store that reads like a person and is not one. READS
-			// from a legacy token are unchanged.
+		if !rq.mayWriteAnywhere() {
+			// 🔴 A PRINCIPAL THAT HOLDS THE WRITE VERB NOWHERE MAY NOT WRITE, AND THIS
+			// IS THE DELIBERATE COST OF THE MIGRATION RATHER THAN AN OVERSIGHT. Every
+			// appended bullet records an ACTOR and a SESSION; the token file's bare row
+			// carries the constant identity `legacy`, which names no holder, so there is
+			// no actor to derive and the guarantee cannot be met. Attributing to
+			// `legacy` would put a word in the store that reads like a person and is not
+			// one. READS from such a credential are unchanged.
 			//
-			// It is answered to an AUTHENTICATED caller, so it may say what it did
-			// wrong; it discriminates nothing about the store, because a legacy row is
-			// UNRESTRICTED and this answer is the same for every scope, existing or
-			// not.
+			// 🔴 THE QUESTION IS "WRITE ANYWHERE", NOT "WRITE HERE", AND THE DIFFERENCE
+			// IS THE WHOLE SHAPE OF THIS REFUSAL. A principal that may write SOMEWHERE
+			// and aims at a scope it may not write is answered by the narrowing below —
+			// a 404, indistinguishable from a scope that never existed — because
+			// answering 403 there would tell an authenticated caller that a scope it
+			// cannot reach EXISTS. A principal that may write NOWHERE is a different
+			// fact: it is about the credential, it names no scope, and the answer is
+			// identical for every target, existing or not. `internal/control` is what
+			// makes that a predicate over the authority rather than a re-reading of the
+			// row's shape (`IsLegacy`) from an identity string.
+			//
+			// ⚠ THE SENTENCE BELOW IS TOKEN-FILE LANGUAGE AND IS PINNED BY THE
+			// CONFORMANCE CORPUS, so it stays exactly as it is until the corpus moves.
+			// When the token file is retired the remedy it names will be wrong before
+			// the condition it describes is — the condition is "no write verb", which
+			// survives, and the remedy is "add a row", which does not.
 			//
 			// 🔴 ORDER: ROUTE FIRST, THEN THIS REFUSAL. The refusal is about the
 			// OPERATION, not about the verb — refusing before the route lookup would
-			// answer 403 to a legacy caller's `POST /api/v1/snapshot`, which is a
+			// answer 403 to such a caller's `POST /api/v1/snapshot`, which is a
 			// wrong-method.
 			rq.audit(403, "legacy-cannot-write")
 			rq.respond(403, []byte(
@@ -445,6 +551,18 @@ func (rq *request) handleWrite() {
 	rq.audit(405, "method-not-allowed")
 	rq.respond(405, []byte("read-only\n"), "text/plain; charset=utf-8",
 		map[string]string{"Allow": "GET, HEAD"})
+}
+
+// mayWriteAnywhere asks THE PREDICATE whether this principal holds the write verb over
+// any scope at all.
+//
+// 🔴 IT IS `control.Authorization`'s OWN ANSWER, NOT A FACT RE-DERIVED FROM THE
+// CREDENTIAL. `ScopeIDs(VerbWrite)` reads the same `byScope` map `Allows` reads, so the
+// write-capability question and the per-scope question cannot come to disagree — which
+// is exactly what happened with the two spellings this replaced, where "may this write"
+// was answered from the row's shape and "may this see" from its allowlist.
+func (rq *request) mayWriteAnywhere() bool {
+	return len(rq.auth.ScopeIDs(control.VerbWrite)) > 0
 }
 
 func matchesTail(parts []string, route writeRoute) bool {
@@ -480,16 +598,42 @@ func (rq *request) checkPathComponents(parts []string) bool {
 
 // --- authentication and metering ------------------------------------------------
 
+// authenticate resolves the bearer credential to EXACTLY ONE principal, ONCE.
+//
+// 🔴 THE HEADER IS PARSED HERE AND THE AUTHORITY IS ASKED ONCE. `authz.PresentedToken`
+// is transport — it turns an `Authorization` header into the one string there is to
+// compare, so a caller cannot branch on WHY a credential was absent — and
+// `control.Cache.Authenticate` is the authority. Every fact this request carries about
+// its caller is assigned from that one return, so there is no second lookup keyed on
+// something else that could consult a wider table than the one that authenticated.
+//
+// ⚠ AN EMPTY PRESENTED TOKEN IS REFUSED BY `control.Authenticate` ITSELF rather than
+// by a guard here, which matters: an empty string hashes to a perfectly valid digest,
+// and a model that ever held it would authenticate every request with no header at
+// all.
 func (rq *request) authenticate() bool {
-	record, err := authz.Authorize(rq.r.Header.Get("Authorization"), rq.srv.Tokens())
+	// Extracted ONCE. The fingerprint below is derived from the same string that was
+	// authenticated, so the audit line cannot name a credential other than the one the
+	// authority matched.
+	presented := authz.PresentedToken(rq.r.Header.Get("Authorization"))
+	principal, auth, err := rq.srv.authority.Authenticate(presented)
 	if err != nil {
 		rq.refuse(rq.countFailure())
 		return false
 	}
-	rq.matchedRecord = record
-	rq.tokenFP = record.Fingerprint()
-	rq.identity = record.Identity
-	rq.visible = record.VisibleScopes()
+	rq.principal = principal
+	rq.auth = auth
+	// 🔴 THE FINGERPRINT STAYS `authz.TokenID`, NOT THE CREDENTIAL ID, AND THAT IS A
+	// CONTRACT RATHER THAN A CONVENIENCE. The documented rotation procedure is "read
+	// the fingerprints the startup line prints, then grep the audit stream for the one
+	// that should have stopped appearing" — both halves are the same 12-hex-character
+	// digest of the token, so re-spelling either would silently break every saved
+	// query an operator has. The control plane's own `CredentialID` is carried on the
+	// principal for when there is a UI to show it.
+	rq.tokenFP = authz.TokenID(presented)
+	rq.identity = principal.Display
+	rq.visible = auth.VisibleScopes(control.VerbRead)
+	rq.writable = auth.VisibleScopes(control.VerbWrite)
 	return true
 }
 
@@ -1243,10 +1387,10 @@ func (s *Server) replaceEntry(rq *request, scope, ref string, body []byte, ifMat
 //
 // 🔴 THE SCOPE CHECK IS EXPLICIT HERE AND CANNOT REUSE resolveWritable. That helper
 // answers "which EXISTING entry does this address", and on a create there is none: its
-// unknown-scope arm cannot tell a scope outside the caller's allowlist (404, and it
+// unknown-scope arm cannot tell a scope outside the caller's authority (404, and it
 // must stay 404) from a scope the caller MAY write that simply has no directory yet,
-// which is the genuine first-entry case this verb exists for. So the allowlist is
-// consulted directly, through the same one place every other narrowing site uses.
+// which is the genuine first-entry case this verb exists for. So the WRITE set is
+// consulted directly, through the same one predicate every other narrowing site uses.
 //
 // 🔴 THE FILENAME IS DERIVED FROM THE REF, NOT TAKEN FROM THE BODY. A caller could
 // otherwise name one file in the URL and another in `service:`, and the loader would
@@ -1258,7 +1402,7 @@ func (s *Server) replaceEntry(rq *request, scope, ref string, body []byte, ifMat
 // class rather than a decision made here: it excludes `.`, so a kind-qualified ref
 // cannot reach any write route at all.
 func (s *Server) createEntry(rq *request, scope, ref string, body []byte) error {
-	if !rq.visible.Allows(scope) {
+	if !rq.writable.Allows(scope) {
 		// Indistinguishable from "that scope has never existed" — the same answer
 		// resolveWritable gives, for the same reason.
 		rq.notFound("scope-unknown")
@@ -1270,12 +1414,15 @@ func (s *Server) createEntry(rq *request, scope, ref string, body []byte) error 
 		// A component that is a valid path segment but normalizes away entirely
 		// (`___`, `--`). It names no scope and no entry, and it is a caller error with a
 		// defined remedy, so it is SAID rather than 404'd. The asymmetry with the append
-		// route — where the same shape is a 404, because the allowlist answers first —
+		// route — where the same shape is a 404, because the write set answers first —
 		// is real and is recorded rather than smoothed over.
 		return &badRequestError{message: "the scope and the ref must each normalize to a non-empty slug"}
 	}
 	filename := foldedRef + ".md"
-	index, err := store.LoadStore(s.StoreRoot, "written", rq.visible)
+	// The WRITE set, for the reason `resolveWritable` states: this load is part of a
+	// write, so it must narrow with the verb the write needs. Anything else would be
+	// this route's own second answer to "what may this caller reach".
+	index, err := store.LoadStore(s.StoreRoot, "written", rq.writable)
 	if err != nil {
 		// 🔴 THE STORE WAS NOT READ, so we do not know whether the ref is taken. "I
 		// could not look" is never a 404 and never a create.
@@ -1287,7 +1434,7 @@ func (s *Server) createEntry(rq *request, scope, ref string, body []byte) error 
 	switch {
 	case resolveErr == nil:
 	case errors.As(resolveErr, &unknownScope):
-		// 🔴 THE ONE PLACE THIS IS NOT AN ERROR. The allowlist already said yes above,
+		// 🔴 THE ONE PLACE THIS IS NOT AN ERROR. The write set already said yes above,
 		// so an unknown scope here means the directory does not exist yet — a scope's
 		// first entry, which is how the store gained every scope it has.
 		existing = nil
@@ -1365,7 +1512,7 @@ func (rq *request) unprocessable(message string) {
 // notFound is 🔴 ONE 404 FOR EVERY WAY A WRITE TARGET CAN FAIL TO RESOLVE, and the
 // uniformity is the enumeration property applied to writes.
 //
-// A scope OUTSIDE the caller's allowlist, a scope that has never existed, a ref that
+// A scope outside the caller's WRITE authority, a scope that has never existed, a ref that
 // resolves to nothing and an entry the loader could not parse all answer these exact
 // bytes with these exact headers. The read path closes this at the INDEX — a refused
 // scope is simply not in it, so asking for it raises the same unknown-scope error a
@@ -1383,11 +1530,19 @@ func (rq *request) notFound(status string) {
 // resolveWritable is the entry a write targets. `ok` false means the request has
 // already been answered.
 //
-// It loads through the SAME function both report routes use, with the SAME allowlist,
-// so there is exactly one place that decides what a caller may see and it cannot come
+// It loads through the SAME function both report routes use, from the SAME predicate,
+// so there is exactly one place that decides what a caller may reach and it cannot come
 // to disagree with itself.
+//
+// 🔴 IT NARROWS WITH THE **WRITE** SET, AND THAT IS THE POINT OF THERE BEING TWO.
+// `rq.visible` is `Allows(scope, read)` folded to names and `rq.writable` is
+// `Allows(scope, write)` folded the same way — one predicate, one verb apart. Loading
+// the index with the read set would make a scope this caller may read but not write
+// resolvable HERE and refused later by something else, which is a second visibility
+// decision. Narrowing at the loader instead means the entry is simply not in the index,
+// and the answer is the unknown-scope 404 an absent scope gets.
 func (s *Server) resolveWritable(rq *request, scope, ref string) (*store.Entry, bool, error) {
-	index, err := store.LoadStore(s.StoreRoot, "written", rq.visible)
+	index, err := store.LoadStore(s.StoreRoot, "written", rq.writable)
 	if err != nil {
 		// 🔴 THE STORE WAS NOT READ. Never a 404 — "I could not look" and "it is not
 		// there" are the four-state rule's two states and a write must not conflate them

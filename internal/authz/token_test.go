@@ -368,96 +368,18 @@ func TestTheCrossRowGuards(t *testing.T) {
 	})
 }
 
-func TestTheAllowlistAsymmetry(t *testing.T) {
-	// 🔴 UNRESTRICTED AND EMPTY ARE OPPOSITES, AND ONLY A LEGACY ROW CAN REACH
-	// UNRESTRICTED. Both are "falsy" shapes, which is why the type answers the question
-	// with a named field instead of with emptiness.
-	legacy := LegacyRecord(aToken('a'))
-	if !legacy.VisibleScopes().Unrestricted {
-		t.Fatal("a bare row is UNRESTRICTED — that is the migration, not a courtesy")
-	}
-	if !legacy.VisibleScopes().Allows("anything-at-all") {
-		t.Fatal("an unrestricted principal sees every scope")
-	}
-
-	mapped := TokenRecord{Token: aToken('b'), Identity: "reader", Scopes: []string{"alpha"}}
-	if mapped.VisibleScopes().Unrestricted {
-		t.Fatal("a mapped row must never resolve to unrestricted")
-	}
-	if !mapped.VisibleScopes().Allows("Alpha") {
-		t.Fatal("the comparison FOLDS both sides: a scope directory spelled " +
-			"`Alpha` must match an allowlist naming `alpha`, or the caller's own " +
-			"scope is silently emptied")
-	}
-	if mapped.VisibleScopes().Allows("beta") {
-		t.Fatal("a mapped row sees only what it names")
-	}
-
-	// A record with NO scopes and no legacy flag — the shape a refactor produces by
-	// forgetting to set a field — must see NOTHING, never everything.
-	forgotten := TokenRecord{Token: aToken('c'), Identity: "reader"}
-	if forgotten.VisibleScopes().Unrestricted {
-		t.Fatal("a record with no allowlist and no legacy mark must be the EMPTY set: " +
-			"an empty allowlist is the OPPOSITE of unrestricted, and this is the " +
-			"fail-closed direction the whole design rests on")
-	}
-	if forgotten.VisibleScopes().Allows("alpha") {
-		t.Fatal("the empty set allows nothing")
-	}
-}
-
-func TestAuthorizeReturnsTheMatchedRecord(t *testing.T) {
-	a, b := aToken('a'), aToken('b')
-	table := []TokenRecord{
-		LegacyRecord(a),
-		{Token: b, Identity: "reader", Scopes: []string{"alpha"}},
-	}
-	// 🔴 ONE MATCH, THREE FACTS — the fingerprint, the identity and the allowlist all
-	// come off the SAME record. A check that returned only a fingerprint would force
-	// the scope lookup to be a second search keyed on something else.
-	record, err := Authorize("Bearer "+b, table)
-	if err != nil {
-		t.Fatalf("a configured credential must authenticate: %v", err)
-	}
-	if record.Identity != "reader" || record.Fingerprint() != TokenID(b) {
-		t.Fatalf("the record must be the one that matched, got %+v", record)
-	}
-	if record.VisibleScopes().Unrestricted {
-		t.Fatal("the mapped record's allowlist must not be the legacy one")
-	}
-
-	for _, header := range []string{
-		"",
-		"Bearer",
-		"Basic " + b,
-		"Bearer " + aToken('c'),
-		b, // the bare credential with no scheme
-	} {
-		if _, err := Authorize(header, table); err == nil {
-			t.Fatalf("a malformed or wrong credential must be refused: %q", header)
-		}
-	}
-
-	// The scheme is case-insensitive per RFC 9110; the credential is not.
-	if _, err := Authorize("bearer "+b, table); err != nil {
-		t.Fatalf("the scheme is case-insensitive: %v", err)
-	}
-
-	// ⚠ ONE PROPERTY OF `Authorize` IS **NOT** PINNED BY ANYTHING HERE, AND IT IS
-	// RECORDED RATHER THAN LEFT AS AN UNEXPLAINED SURVIVOR: the absence of an early
-	// exit. The loop runs to the end whether or not it has already matched, so the
-	// response time does not encode WHICH configured token was presented — during an
-	// overlap rotation "you used the old one" is precisely the fact an attacker wants.
-	// MEASURED: adding a `break` after the match SURVIVES every assertion in this file,
-	// and it must, because the property is a TIMING one and no functional assertion can
-	// observe it. The oracle has the same limitation and resolves it by asserting on the
-	// CALL through a mock; doing that here would mean injecting a comparator seam into
-	// the one function that must not grow one. So the guard is the code comment and this
-	// paragraph, and the honest form is to say so instead of counting it as covered.
-	if _, err := Authorize("Bearer "+strings.ToUpper(b), table); err == nil {
-		t.Fatal("the credential is NOT case-folded")
-	}
-}
+// 🔴 THREE GUARDS THAT USED TO LIVE HERE HAVE MOVED, AND THIS NOTE IS WHY RATHER THAN
+// A GAP. `TestTheAllowlistAsymmetry`, `TestAuthorizeReturnsTheMatchedRecord` and
+// `TestAOneCharacterCredentialCannotAuthorize` exercised `Authorize` and
+// `TokenRecord.VisibleScopes`, which this package no longer has: a row's authority is
+// now computed by `internal/control/tokenfile` and a credential is matched by
+// `control.Authenticate`. The PROPERTIES did not move — unrestricted and empty are
+// opposites, one match yields the identity and the authority together, and no prefix of
+// a credential authenticates — they are asserted in
+// `internal/control/tokenfile/source_test.go` against the mechanism that now decides
+// them. Deleting a test whose subject is gone and re-asserting its claim where the
+// subject lives is the honest version; keeping the old function alive so its test could
+// stay green would have left two authenticators in the tree.
 
 // 🔴 THE SHAPE THAT SERVED THE WHOLE STORE ON A CREDENTIAL THE ORACLE REFUSES TO LOAD.
 // 43 × `0xFF`, mode 0600. The oracle will not start on it ('utf-8' codec can't decode
@@ -625,21 +547,5 @@ func TestGuardTenQuotesTheORACLESHelperNameAndNotTheGoOne(t *testing.T) {
 	}
 	if strings.Contains(got, aToken('b')) {
 		t.Fatalf("guard 10 echoed the credential it refused: %s", got)
-	}
-}
-
-func TestAOneCharacterCredentialCannotAuthorize(t *testing.T) {
-	// 🔴 THE PYTHON ORIGINAL REFUSES A BARE STRING LOUDLY BECAUSE ITERATING ONE YIELDS
-	// CHARACTERS, so a single character of a token would have authorized. Go's type
-	// system makes that spelling impossible — a `string` is not a `[]TokenRecord` — so
-	// this is an INVARIANT GUARD rather than regression coverage, and it is labelled as
-	// one. What it pins is that the property survives the port: no prefix of a
-	// configured credential authenticates.
-	token := aToken('a')
-	table := []TokenRecord{LegacyRecord(token)}
-	for n := 1; n < len(token); n++ {
-		if _, err := Authorize("Bearer "+token[:n], table); err == nil {
-			t.Fatalf("a %d-character prefix of the credential authorized", n)
-		}
 	}
 }

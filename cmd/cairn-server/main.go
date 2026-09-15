@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/api"
 	"github.com/ZacxDev/cairn/internal/authz"
+	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/netid"
 )
 
@@ -137,6 +139,27 @@ func main() {
 	// believing it was replaced.
 	installReload(srv, resolvedTokenFile, env)
 
+	// 🔴 THE AUTHORITY'S TIMER, AND WHAT IT IS ACTUALLY FOR. The token table refreshes
+	// on every reload, so the credentials and their allowlists are never older than the
+	// last SIGHUP. What ages without one is the SCOPE ENUMERATION the token-file
+	// adapter reads off the filesystem: a scope directory created OUT OF BAND —
+	// `server/seed.sh` seeds through `kubectl exec … tar -xf -` — is not visible to a
+	// bare (unrestricted) row until the next materialization, because the control plane
+	// has no unrestricted principal to answer with. See `tokenfile.Divergence`. The
+	// timer bounds that window; `Staleness` reports it.
+	//
+	// ⚠ SIGHUP IS DELIBERATELY NOT ONE OF THESE TRIGGERS. The reload path above already
+	// re-materializes as part of publishing the new table, and a second registration
+	// would refresh twice for one signal — `control.RefreshTriggers` documents that two
+	// `signal.Notify` channels BOTH receive it, so this would be an extra refresh, not
+	// a missed one. One trigger, one place.
+	go func() {
+		if err := srv.Authority().Run(context.Background(),
+			control.RefreshTriggers{Interval: api.AuthorityRefreshInterval}); err != nil {
+			fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: authority refresh loop stopped: "+err.Error()))
+		}
+	}()
+
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()))
@@ -206,7 +229,19 @@ func installReload(srv *api.Server, tokenFile string, env map[string]string) {
 					reloadRefused, err.Error(), len(previous), tokenIDs(previous))))
 				continue
 			}
-			srv.SetTokens(records)
+			// 🔴 THE RE-MATERIALIZATION IS PART OF THE RELOAD, AND ITS FAILURE IS
+			// REPORTED AS A REFUSAL RATHER THAN AS A SUCCESS WITH A FOOTNOTE. The file
+			// parsed; the authority did not rebuild from it, so the table the operator
+			// just edited is NOT what is authorising requests. The previous model keeps
+			// serving (see `control.Cache.Refresh`), which is the same fallback a
+			// refused parse gets — so the line says the same thing, and the operator's
+			// one signal that `kill -HUP` did anything stays honest.
+			if err := srv.SetTokens(records); err != nil {
+				fmt.Println(reloadSafe(fmt.Sprintf(
+					"subsystem-store-api: %s — the token source parsed but the authority did not rebuild from it (%s). NOTHING CHANGED: still serving the %d previously loaded identities [%s]. Fix it and send SIGHUP again",
+					reloadRefused, err.Error(), len(previous), tokenIDs(previous))))
+				continue
+			}
 			fmt.Println(reloadSafe(fmt.Sprintf(
 				"subsystem-store-api: %s %d identities [%s] (was %d [%s])",
 				reloadLoaded, len(records), tokenIDs(records), len(previous), tokenIDs(previous))))

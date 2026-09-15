@@ -1,16 +1,25 @@
-// Package authz resolves a request's credential to ONE principal and to what
-// that principal may SEE.
+// Package authz reads and validates the static TOKEN FILE: the deployed secret, its
+// guard ladder, and the bearer header it is presented in.
 //
-// 🔴 THE TOKEN AND ITS AUTHORITY ARE ONE OBJECT ON PURPOSE. The alternative — a
-// token list beside a `map[token]scopes` — is two structures that a route can
-// consult one of. Every consumer is handed the record the match produced, so
-// "which token was this" and "what may it see" cannot be answered from different
-// places and disagree.
+// 🔴 IT NO LONGER AUTHORISES A REQUEST, AND THE PREVIOUS SENTENCE HERE SAID IT DID.
+// `internal/control` holds the authorization model and `control.Authenticate` is the
+// only function that resolves a credential to a principal; what this package produces
+// is the INPUT to `internal/control/tokenfile`, which projects the table into a
+// `control.Model`. `Authorize`, `ErrRejected` and `TokenRecord.VisibleScopes` were
+// deleted rather than left beside the new path — a second authenticator over a second
+// spelling of "what may this see" is the two-structures-one-fact shape this file's own
+// comments spend most of their length refusing, and it does not stop being that shape
+// because one of the two is only reachable from a test.
+//
+// 🔴 WHAT IS STILL TRUE, AND IS THE WHOLE VALUE HERE: A ROW IS ONE OBJECT. The token,
+// its identity and its allowlist come out of one parse, so nothing downstream can
+// answer "which token was this" and "what may it see" from two structures that
+// disagree. The adapter carries that property forward by building every grant for a
+// row out of the SAME record.
 package authz
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -94,11 +103,18 @@ var SafePathComponent = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // and applied with `fullmatch`; the CLASS is the part a caller can act on.
 var SafePathComponentPattern = strings.TrimSuffix(strings.TrimPrefix(SafePathComponent.String(), "^"), "$")
 
-// TokenRecord is one credential and what it is allowed to SEE.
+// TokenRecord is one parsed row of the token file.
 //
-// `Scopes` is meaningful only through `VisibleScopes()`: an UNRESTRICTED record is
-// reachable ONLY from a legacy bare-token row, and an EMPTY allowlist is its
-// OPPOSITE — nothing is visible.
+// 🔴 IT IS NO LONGER A VISIBILITY ANSWER, IT IS THE INPUT TO ONE.
+// `internal/control/tokenfile` turns each record into grants — `read,write` over the
+// named scopes for a mapped row, `read` over every scope for a bare one — and
+// `control.Authorization` is what every narrowing site then consults.
+//
+// ⚠ THE ASYMMETRY THIS TYPE EXISTS FOR SURVIVES THAT MOVE, and it is worth restating
+// because it is the reason `legacy` is a bool: an UNRESTRICTED row is reachable ONLY
+// from a bare token line, and an EMPTY allowlist is its OPPOSITE — nothing is visible.
+// A record with neither (the shape a refactor produces by forgetting to set a field)
+// must confer NOTHING, and it does: the adapter emits no grant for it.
 type TokenRecord struct {
 	Token    string
 	Identity string
@@ -116,19 +132,15 @@ type TokenRecord struct {
 // Fingerprint is what the audit log carries. Never the token.
 func (r TokenRecord) Fingerprint() string { return TokenID(r.Token) }
 
-// IsLegacy answers whether this record came from a bare row — and therefore
-// whether it is unrestricted and forbidden to write.
+// IsLegacy answers whether this record came from a bare row.
+//
+// 🔴 IT HAS EXACTLY ONE CONSUMER — `internal/control/tokenfile`, which reads it to
+// decide the VERBS a row's grants carry (`read` for a bare row, `read,write` for a
+// mapped one). The serving path does not call it, and that is the point of the move:
+// "may this write" is now a question about a principal's authority, answered by the
+// same predicate that answers "may this see", instead of a second question answered
+// from the shape of the row.
 func (r TokenRecord) IsLegacy() bool { return r.legacy }
-
-// VisibleScopes is the ONE conversion from a credential to the set every narrowing
-// site consults. A legacy record is Unrestricted; every other record is the folded
-// set of its allowlist, and nothing else can produce Unrestricted.
-func (r TokenRecord) VisibleScopes() store.ScopeSet {
-	if r.legacy {
-		return store.Unrestricted()
-	}
-	return store.VisibleScopeSet(r.Scopes)
-}
 
 // LegacyRecord is the record a bare token line means. ONE PLACE, and it is the same
 // rule for the parser and for a programmatic caller, so the meaning of a bare token
@@ -626,49 +638,6 @@ func PresentedToken(header string) string {
 	// silently truncated, exactly as a one-split does.
 	rest := strings.TrimPrefix(pytext.StripWhitespace(header), fields[0])
 	return pytext.StripWhitespace(rest)
-}
-
-// ErrRejected is the ONE authentication failure this package produces. It carries
-// nothing: the response body is a constant, and a reason that reaches the wire is
-// an enumeration API.
-type ErrRejected struct{}
-
-func (ErrRejected) Error() string { return "unauthorized" }
-
-// Authorize is a constant-time bearer check against a token SET. It returns the
-// RECORD that matched.
-//
-// 🔴 THE RECORD, NOT THE FINGERPRINT. The caller needs two facts about a request —
-// who it is, for the audit line, and what it may SEE, for every route — and they
-// must come out of the SAME match. Returning only a fingerprint forces the scope
-// lookup to be a second search keyed on something else, which is the shape that
-// ends up consulting a stale or wider table than the one that authenticated.
-//
-// 🔴 `subtle.ConstantTimeCompare`, NOT `==`. A public endpoint makes a
-// byte-at-a-time timing oracle practically exploitable, and the difference is
-// invisible in every functional test.
-//
-// 🔴 NO EARLY EXIT. The loop runs to the end whether or not it has already matched,
-// so the response time does not encode WHICH token was presented — a break on the
-// first hit would make "you used the old one" measurable from outside, and during an
-// overlap window that is precisely the fact an attacker wants.
-//
-// ⚠ `ConstantTimeCompare` RETURNS 0 FOR UNEQUAL LENGTHS WITHOUT COMPARING, so the
-// length of the configured token is observable. That is true of the Python
-// `hmac.compare_digest` this ports as well (it is documented to leak length), and
-// the token length is a constant of the deployment rather than a secret.
-func Authorize(header string, expected []TokenRecord) (TokenRecord, error) {
-	got := []byte(PresentedToken(header))
-	var matched *TokenRecord
-	for i := range expected {
-		if subtle.ConstantTimeCompare(got, []byte(expected[i].Token)) == 1 {
-			matched = &expected[i]
-		}
-	}
-	if matched == nil {
-		return TokenRecord{}, ErrRejected{}
-	}
-	return *matched, nil
 }
 
 func dedupe(items []string) []string {

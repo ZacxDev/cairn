@@ -93,7 +93,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
-| `internal/control` | P3a: principals, projects, grants, credentials — LIBRARY ONLY, no route reads it; 📄 its own README |
+| `internal/control` | P3: principals, grants, credentials, the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file projected into it); 📄 its own README |
 | `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
 | `flake.nix` | both clients, the server image, the Go server, and the checks over all of them |
 
