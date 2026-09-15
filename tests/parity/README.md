@@ -56,6 +56,22 @@ sequence while every timestamp is wrong.
 | 5 | **A `SyntaxError` in the reader's own modules.** On the oracle a present-but-unparseable `lib/cairn_doctor.py` takes every verb down at exit 1; the Go client has no such failure mode. | It is a property of loading Python at runtime and cannot exist in a single binary. The oracle's own comment says widening its `except ImportError` is *not* the obvious fix. |
 | 6 | **`ReadStamp` has no "is not text" arm.** The oracle distinguishes an unreadable stamp from one that is not valid UTF-8, because `read_text` raises; Go's `ReadFile` returns bytes and cannot fail on encoding. | The stamp is written by this program and is ASCII, so the arm is unreachable in practice. Re-validating the bytes to manufacture the distinction would be inventing a check the oracle only has by accident of its API. |
 
+## Argument-shape rows
+
+🔴 **Following the `--help` finding one step further found four more divergences, all in the
+dangerous direction — the Go client SUCCEEDING where the oracle refuses.** If `-h` is special, what
+happens when it is a VALUE? The rule is argparse's, and both halves are measured:
+
+| shape | ruling | row |
+|---|---|---|
+| `--text -h`, `--limit -h`, `--scope -weird`, `--scope --repo .` | **exit 2** — a token beginning with `-` is an OPTION, not a value | `argv-help-in-a-VALUE-position`, `argv-option-shaped-value`, `argv-flag-as-a-value` |
+| `--limit -1` | a **value** — argparse's `_negative_number_matcher`, so it reaches the reader's own option ladder and is refused there with the READER's message (full text compared) | `argv-negative-number-IS-a-value` |
+| `search -- -h` | `--` ends the flags: the query is the literal `-h` (full text compared) | `argv-terminator-passes-a-dash-token` |
+| `search --scope S -h` | **help** — a standalone `-h` anywhere is help, which is the opposite ruling from the value position, and the pair is what makes the rule observable | `argv-h-in-a-POSITIONAL-position` |
+| `--bogus --help` in either order, and `--bogus-global --help` | **help wins** — argparse COLLECTS unrecognised arguments and reports them after parsing, while `-h` fires the moment it is consumed. Needs the refusal DEFERRED in two separate loops; a fix applied to one leaves the other wrong | three `argv-help-beats-an-unknown-*` rows |
+
+`append --text=-h` is how a caller passes a literal `-h` as a value, on **both** clients.
+
 ## What the gate structurally cannot see
 
 - **Concurrency.** Both clients take the same `flock` around the cache swap, which is why they can

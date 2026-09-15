@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -198,6 +199,29 @@ func exitLegendText() string {
 	return b.String()
 }
 
+// negativeNumber is argparse's own `_negative_number_matcher`, transcribed.
+//
+// 🔴 IT IS WHY `--limit -1` IS A VALUE AND `--limit -h` IS AN ERROR, and both halves were
+// measured against the oracle rather than guessed. argparse treats a token beginning with `-` as
+// an OPTION unless it looks like a negative number and the parser declares no `-<digit>` options
+// — this parser declares none, so the matcher alone decides.
+var negativeNumber = regexp.MustCompile(`^-\d+$|^-\d*\.\d+$`)
+
+// looksLikeOption is "argparse would refuse to consume this as a value".
+//
+// 🔴 FOUR DIVERGENCES LIVED HERE, ALL IN THE DANGEROUS DIRECTION — the Go client SUCCEEDED where
+// the oracle refuses. Measured: `append --text -h` exited 0 printing help where the oracle exits
+// 2; so did `recall --limit -h`; `recall --scope -weird` exited 3 having taken `-weird` as a
+// scope where the oracle exits 2. A caller scripting `cairn append --text "$MSG"` whose message
+// happened to start with `-` would have read exit 0 as "the bullet landed".
+//
+// ⚠ `-` ALONE IS NOT AN OPTION. argparse treats a bare `-` as a positional, and so does this.
+func looksLikeOption(token string) bool {
+	return strings.HasPrefix(token, "-") && token != "-" && !negativeNumber.MatchString(token)
+}
+
+func isHelpFlag(token string) bool { return token == "--help" || token == "-h" }
+
 // usageError is a command line this client refuses. 🔴 IT IS EXIT 2, WHICH IS THE ONE PART OF THE
 // USAGE CONTRACT BOTH CLIENTS SHARE. The MESSAGE is not: the Python client's usage text is
 // argparse's, and reproducing argparse's wording, its `usage:` line and its `--help` layout in Go
@@ -225,28 +249,35 @@ func Parse(argv []string) (Verb, Options, error) {
 		Repo:    ".",
 		Mode:    report.DefaultMode,
 	}
-	// 🔴 `--help` AND `-h` ARE CHECKED BEFORE ANYTHING ELSE, ANYWHERE IN THE ARGUMENT LIST,
-	// because that is where argparse handles them and because a `--help` that lost a race with a
-	// usage error would exit 2 for asking a question. Both spellings, both positions: `cairn -h`
-	// looked like an unknown SUBCOMMAND to an earlier draft and `cairn recall --help` looked like a
-	// flag `recall` does not take — both exited 2 with NOTHING on stdout where the oracle exits 0
-	// with its help text. Measured at four points before the fix: `--help`, `-h`, `recall --help`,
-	// `doctor --help`.
-	for _, arg := range argv {
-		if arg == "--help" || arg == "-h" {
-			return Verb{}, opts, ErrHelpRequested
-		}
-	}
+	// 🔴 `--help` AND `-h` ARE RECOGNISED IN A *FLAG POSITION* AND NOWHERE ELSE, and the first
+	// version of this scanned the WHOLE argument list — which made `cairn append --text -h` print
+	// help and exit 0 where the oracle exits 2, and made `cairn search --scope s -- -h` print help
+	// where the oracle passes `-h` through as the QUERY. Both spellings and both positions are
+	// honoured (`cairn -h` looked like an unknown SUBCOMMAND to an earlier draft, `cairn recall
+	// --help` like a flag `recall` does not take), but a token being CONSUMED AS A VALUE, or
+	// sitting after a `--` terminator, is not a flag.
 	i := 0
+	// `deferred` holds a refusal that must not pre-empt a `--help` appearing later. See the
+	// `default` arm below for the measurement.
+	var deferred error
 	// Global flags, BEFORE the verb — which is also argparse's rule for a parser with
 	// subparsers, so this is a shared constraint rather than a simplification.
 	for i < len(argv) && strings.HasPrefix(argv[i], "--") {
+		if isHelpFlag(argv[i]) {
+			return Verb{}, opts, ErrHelpRequested
+		}
+		if argv[i] == "--" {
+			i++
+			break
+		}
 		name, value, hasValue := strings.Cut(argv[i], "=")
 		take := func() (string, error) {
 			if hasValue {
 				return value, nil
 			}
-			if i+1 >= len(argv) {
+			// 🔴 A VALUE THAT LOOKS LIKE AN OPTION IS AN ERROR, NOT A VALUE. See
+			// `looksLikeOption` for the four measured divergences this closes.
+			if i+1 >= len(argv) || looksLikeOption(argv[i+1]) {
 				return "", usagef("cairn: %s expects a value", name)
 			}
 			i++
@@ -277,13 +308,29 @@ func Parse(argv []string) (Verb, Options, error) {
 			// value still reaches `UnboundedTimeoutReason`, which refuses it outright.
 			opts.Timeout = n
 		default:
-			return Verb{}, opts, usagef("cairn: unrecognised global option %q", name)
+			// 🔴 DEFERRED, NOT RETURNED, BECAUSE `--help` WINS OVER AN UNKNOWN FLAG ON THE
+			// ORACLE — measured in both orders and at both levels: `--bogus-global --help`,
+			// `recall --bogus-flag --help` and `recall --help --bogus-flag` all exit 0 with the
+			// help text there. argparse collects unrecognised arguments and reports them AFTER
+			// parsing, while `-h` fires the moment it is consumed. Returning here made the
+			// first of those exit 2.
+			if deferred == nil {
+				deferred = usagef("cairn: unrecognised global option %q", name)
+			}
 		}
 		i++
+	}
+	if deferred != nil {
+		return Verb{}, opts, deferred
 	}
 	if i >= len(argv) {
 		return Verb{}, opts, usagef("cairn: a subcommand is required (one of: %s)",
 			strings.Join(verbNames(), ", "))
+	}
+	if isHelpFlag(argv[i]) {
+		// `cairn -h`: a short flag in the VERB position, which an earlier draft reported as an
+		// unknown subcommand.
+		return Verb{}, opts, ErrHelpRequested
 	}
 	verbName := argv[i]
 	i++
@@ -309,17 +356,50 @@ func Parse(argv []string) (Verb, Options, error) {
 		positionalsWanted = 1
 	}
 	var positionals []string
+	// 🔴 `--` ENDS THE FLAGS, AND THE ORACLE HONOURS IT. Measured: `search --scope s -- -h` passes
+	// `-h` through as the QUERY there, where a port that kept scanning for help printed help
+	// instead — so a caller searching for a literal `-h` got documentation.
+	afterTerminator := false
 	for i < len(argv) {
 		arg := argv[i]
+		if afterTerminator {
+			positionals = append(positionals, arg)
+			i++
+			continue
+		}
+		if arg == "--" {
+			afterTerminator = true
+			i++
+			continue
+		}
+		if isHelpFlag(arg) {
+			return verb, opts, ErrHelpRequested
+		}
 		if !strings.HasPrefix(arg, "--") {
+			if looksLikeOption(arg) {
+				if deferred == nil {
+					deferred = usagef("cairn: %s does not accept %q (accepts: %s)",
+						verb.Name, arg, strings.Join(verb.Flags, ", "))
+				}
+				i++
+				continue
+			}
 			positionals = append(positionals, arg)
 			i++
 			continue
 		}
 		name, value, hasValue := strings.Cut(arg, "=")
 		if _, ok := accepted[name]; !ok {
-			return verb, opts, usagef("cairn: %s does not accept %q (accepts: %s)",
-				verb.Name, name, strings.Join(verb.Flags, ", "))
+			// Deferred for the same reason as the global arm above: `--help` wins.
+			if deferred == nil {
+				deferred = usagef("cairn: %s does not accept %q (accepts: %s)",
+					verb.Name, name, strings.Join(verb.Flags, ", "))
+			}
+			// 🔴 THE UNKNOWN FLAG IS SKIPPED WITHOUT CONSUMING A FOLLOWING VALUE, which is
+			// argparse's shape too — it collects `--bogus X` as TWO unrecognised arguments.
+			// Consuming one would swallow a later `--help` that happened to follow.
+			i++
+			continue
 		}
 		seen[name] = struct{}{}
 		needsValue := name != "--no-sync" && name != "--list" && name != "--all-scopes" &&
@@ -342,7 +422,9 @@ func Parse(argv []string) (Verb, Options, error) {
 			continue
 		}
 		if !hasValue {
-			if i+1 >= len(argv) {
+			// The same rule as the global loop's: a value that looks like an option is an
+			// error. `--text=-h` is how a caller passes such a value, on BOTH clients.
+			if i+1 >= len(argv) || looksLikeOption(argv[i+1]) {
 				return verb, opts, usagef("cairn: %s expects a value", name)
 			}
 			i++
@@ -379,6 +461,12 @@ func Parse(argv []string) (Verb, Options, error) {
 			opts.IfMatch = value
 		}
 		i++
+	}
+	// 🔴 A DEFERRED REFUSAL OUTRANKS THE REQUIRED-FLAG AND POSITIONAL CHECKS, because it is the
+	// one argparse reports: an unrecognised argument is named before "the following arguments are
+	// required", and reporting the second would send the caller to fix the wrong thing.
+	if deferred != nil {
+		return verb, opts, deferred
 	}
 	for _, need := range requiredFlags[verb.Name] {
 		if _, ok := seen[need]; !ok {

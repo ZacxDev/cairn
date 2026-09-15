@@ -880,6 +880,65 @@ func TestTheParserAcceptsBothFlagSpellingsAndRefusesTheRest(t *testing.T) {
 	}
 }
 
+func TestATokenThatLooksLikeAnOptionIsNOTConsumedAsAValue(t *testing.T) {
+	// 🔴 FOUR DIVERGENCES LIVED HERE AND ALL FOUR WENT THE DANGEROUS WAY — this client SUCCEEDED
+	// where the oracle refuses. Measured against it before the fix: `append --text -h` exited 0
+	// printing help (oracle: 2), `recall --limit -h` the same, and `recall --scope -weird` exited 3
+	// having taken `-weird` as a scope (oracle: 2). A caller scripting `cairn append --text "$MSG"`
+	// whose message began with `-` would have read exit 0 as "the bullet landed".
+	for _, argv := range [][]string{
+		{"append", "--scope", "s", "--ref", "r", "--text", "-h", "--session", "x"},
+		{"recall", "--limit", "-h"},
+		{"recall", "--scope", "-weird"},
+		{"recall", "--scope", "--repo", "."},
+		{"--cache", "--timeout", "5", "recall"},
+	} {
+		t.Run(strings.Join(argv, " "), func(t *testing.T) {
+			_, _, err := Parse(argv)
+			var usage *usageError
+			if !errors.As(err, &usage) || !strings.Contains(err.Error(), "expects a value") {
+				t.Fatalf("got %#v, want a usageError naming the flag", err)
+			}
+		})
+	}
+
+	// 🔴 THE OTHER HALF, AND IT IS WHAT KEEPS THE RULE FROM BEING "refuse every dash". argparse
+	// consumes a negative NUMBER as a value, because the parser declares no `-<digit>` options —
+	// so `--limit -1` must REACH the reader's option ladder rather than being refused here.
+	for _, argv := range [][]string{
+		{"recall", "--limit", "-1"},
+		{"recall", "--page", "-2"},
+		{"append", "--scope", "s", "--ref", "r", "--text", "-1.5", "--session", "x"},
+		// A bare `-` is a positional to argparse, not an option.
+		{"search", "--scope", "s", "-"},
+		// …and the `=` form carries ANY value, which is how a caller passes a literal `-h`.
+		{"append", "--scope", "s", "--ref", "r", "--text=-h", "--session", "x"},
+	} {
+		t.Run("value: "+strings.Join(argv, " "), func(t *testing.T) {
+			if _, _, err := Parse(argv); err != nil {
+				t.Fatalf("a negative number, a bare dash and an `=` value must all be "+
+					"consumed: %v", err)
+			}
+		})
+	}
+
+	// 🔴 AND `--` ENDS THE FLAGS, WHICH THE ORACLE HONOURS: `search -- -h` searches for the
+	// LITERAL `-h`. A port that kept scanning for help printed documentation instead, so a caller
+	// searching for `-h` got the wrong answer at exit 0.
+	_, opts, err := Parse([]string{"search", "--scope", "s", "--", "-h"})
+	if err != nil {
+		t.Fatalf("`--` must end the flags: %v", err)
+	}
+	if opts.Query != "-h" {
+		t.Fatalf("the query after `--` is %q, want %q", opts.Query, "-h")
+	}
+	// An unknown SHORT flag is still a refusal, not a positional — otherwise `search -x` would
+	// become a query.
+	if _, _, err := Parse([]string{"search", "--scope", "s", "-x"}); err == nil {
+		t.Fatal("an unknown short flag must be refused, not taken as the query")
+	}
+}
+
 func TestHELPIsAnANSWEROnStdoutAtExitZero(t *testing.T) {
 	// 🔴 A MEASURED DIVERGENCE ON THE MOST COMMON INVOCATION THERE IS. Before `ErrHelpRequested`
 	// existed, all four spellings below exited **2 with an empty stdout** where the oracle exits
@@ -902,7 +961,14 @@ func TestHELPIsAnANSWEROnStdoutAtExitZero(t *testing.T) {
 		{[]string{"doctor", "--help"}, "usage: cairn doctor", "subcommands:"},
 		// `--help` wins over an otherwise-fatal command line: asking a question is not an error.
 		{[]string{"append", "--help"}, "usage: cairn append", "subcommands:"},
+		// 🔴 `--help` WINS OVER AN UNKNOWN FLAG, IN EITHER ORDER AND AT BOTH LEVELS. argparse
+		// COLLECTS unrecognised arguments and reports them AFTER parsing, while `-h` fires the
+		// moment it is consumed — measured: all three of these exit 0 with help on the oracle,
+		// where a port that returned on the unknown flag exited 2. The third row is the one that
+		// catches a deferral added to only one of the two loops.
 		{[]string{"recall", "--bogus-flag", "--help"}, "usage: cairn recall", ""},
+		{[]string{"recall", "--help", "--bogus-flag"}, "usage: cairn recall", ""},
+		{[]string{"--bogus-global", "--help"}, "subcommands:", ""},
 	} {
 		t.Run(strings.Join(tc.argv, " "), func(t *testing.T) {
 			var stdout strings.Builder

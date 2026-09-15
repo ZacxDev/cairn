@@ -321,9 +321,9 @@ is the one renderer; the pod reaches it through `report.Reader` and the CLI call
 `Recall`/`Search`/`RenderText`/`ExitFor` directly. **One renderer, three consumers** (pod, CLI,
 a future UI) is the deliverable, not a second client.
 
-**Measured on this tree: 81 cases, 82 PASS, 0 failures, 0 dead normalizations** — all nine
-verbs, every output-shaping flag, every documented exit code, `--help` in four spellings, and
-`cache-mtime-parity` on top.
+**Measured on this tree: 90 cases, 91 PASS, 0 failures, 0 dead normalizations** — all nine
+verbs, every output-shaping flag, every documented exit code, `--help` in four spellings, the
+argument-shape rules below, and `cache-mtime-parity` on top.
 
 🔴 **THE FIRST FULL RUN OF THAT GATE REPORTED 72 PASS / 0 FAIL AND MEASURED NOTHING.**
 `SUBSYSTEM_STORE_TRUSTED_PROXIES=127.0.0.1/32`, copied from the conformance runner where it is
@@ -340,7 +340,7 @@ different claims, so read all three:
 | `--self-test` → `sabotaged=4 caught=4` | the differ goes red on stdout, on stderr, on the exit code **AND** on `exit+stdout` | exit 2 |
 
 `--break-pod` is the negative control on the first of those: it reconfigures the pod into
-exactly the state above and the harness must answer 2, not 82 PASS. ⚠ **Four sabotage rows,
+exactly the state above and the harness must answer 2, not 91 PASS. ⚠ **Four sabotage rows,
 not one**, because a `compare="exit"` row is STRUCTURALLY blind to stdout and stderr — one
 control over "something went red" would vouch for a differ that had lost most of its
 comparisons. 🔴 **And one of them REPLACES the Go argv rather than appending to it**: both
@@ -371,7 +371,21 @@ single most common invocation there is. Four rows now cover it, under a THIRD co
 that asserts the exit code AND that both sides put something on stdout, because a client that
 printed nothing and exited 0 would pass an exit-only row while telling the reader nothing.
 
-A fifth came out of the Go unit battery: a truncated gzip stream and an HTML error page
+**And following that finding one step further found four more, all in the same dangerous
+direction — the Go client SUCCEEDING where the oracle refuses.** If `-h` is special, what happens
+when it is a VALUE? Measured: `append --text -h` exited 0 printing help (oracle: 2), so a caller
+scripting `--text "$MSG"` whose message began with `-` would have read exit 0 as "the bullet
+landed"; `recall --limit -h` the same; `recall --scope -weird` exited 3 having taken `-weird` as a
+scope. The rule is argparse's and both halves are measured: a token beginning with `-` is an
+OPTION unless it matches `_negative_number_matcher` (so `--limit -1` IS a value and reaches the
+reader's own option ladder), a bare `-` is a positional, `--` ends the flags (so `search -- -h`
+searches for the literal `-h` rather than printing help), and **`--help` WINS over an unknown
+flag** — in either order and at BOTH levels, because argparse collects unrecognised arguments and
+reports them after parsing while `-h` fires the moment it is consumed. That last one needs the
+refusal DEFERRED in two separate loops; a fix applied to one leaves the other wrong, and there is
+a row for it.
+
+A sixth came out of the Go unit battery: a truncated gzip stream and an HTML error page
 surface as the SAME `io.ErrUnexpectedEOF` out of `tar.Next`, so classifying on the error VALUE
 called `<html>nope</html>` a truncated tar where the oracle says `did not return an archive`.
 `gzipLayerError` records WHICH LAYER failed at the point it is known, and `validateGzipLayer`
@@ -416,12 +430,13 @@ line here: concurrency (both clients take the same `flock`, but nothing runs the
 instant), real network failures beyond a connect refusal, a narrowed credential (the SERVER's
 narrowing is the corpus's claim), and the `doctor` states no healthy world reaches.
 
-## 🔴 THE MUTATION BATTERY OVER P2: 55 MUTANTS, 52 KILLED, 3 LABELLED EQUIVALENT AT THE CODE
+## 🔴 THE MUTATION BATTERY OVER P2: 61 MUTANTS, 58 KILLED, 3 LABELLED EQUIVALENT AT THE CODE
 
 Round 1 killed 44 of 51, and its findings are why there was a round 2 — **every one of them was a
-hole in a guard rather than a defect in the code**, which is the useful direction. Round 3 added
-four mutants over the `--help` path that round 2 had no code to mutate, and it is CLEAN: the three
-survivors below are labelled equivalent, which is not a finding, so the ladder ends there.
+hole in a guard rather than a defect in the code**, which is the useful direction. Rounds 3 and 4
+added ten mutants over the `--help` and argument-shape paths that earlier rounds had no code to
+mutate, and round 4 is CLEAN: the three survivors below are labelled equivalent, which is not a
+finding, so the ladder ends there.
 
 - **a `-run` filter that excluded the killing test.** `-run EMPTYDetail` matches nothing against
   `TestACheckWithAnEmptyDetailIsREFUSEDAtConstruction`, so deleting `Check`'s empty-detail

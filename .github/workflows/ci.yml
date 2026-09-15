@@ -286,11 +286,11 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 82 PASS lines measured on the P2 branch: 81 cases plus `cache-mtime-parity`.
+          # 91 PASS lines measured on the P2 branch: 90 cases plus `cache-mtime-parity`.
           # ⚠ THE FLOOR IS NOT REDUNDANT WITH "ZERO FAILURES". A run that compared nothing has
           # zero failures too; the floor is what tells a green gate from an absent one.
-          if [ "$passes" -lt 82 ]; then
-            echo "REFUSING: $passes passes, and 82 were measured — the gate got smaller"
+          if [ "$passes" -lt 91 ]; then
+            echo "REFUSING: $passes passes, and 91 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then

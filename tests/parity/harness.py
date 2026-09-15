@@ -466,6 +466,58 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "run — so a reader never has to find a skill to learn what a number meant",
              ["doctor", "--help"], compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
 
+        # --- ARGUMENT-SHAPE ROWS: a token that looks like an option -------------
+        # 🔴 FOUR DIVERGENCES LIVED HERE AND ALL FOUR WENT THE DANGEROUS WAY — the Go client
+        # SUCCEEDED where the oracle refuses. They were found by following the `--help` finding
+        # one step further: if `-h` is special, what happens when it is a VALUE?
+        Case("argv-help-in-a-VALUE-position",
+             "🔴 `append --text -h` is exit 2 ON BOTH. It exited 0 printing help here, so a "
+             "caller scripting `--text \"$MSG\"` whose message began with `-` would have read "
+             "exit 0 as `the bullet landed`. Text excluded: argparse's `expected one argument`",
+             ["append", "--scope", "alpha-notes", "--ref", "widget-cfg", "--text", "-h",
+              "--session", "s"], compare=COMPARE_EXIT),
+        Case("argv-option-shaped-value",
+             "`--scope -weird` is exit 2, not a scope named `-weird`. Text excluded for the same "
+             "reason: the refusal is argparse's on the oracle",
+             ["recall", "--scope", "-weird"], compare=COMPARE_EXIT),
+        Case("argv-flag-as-a-value",
+             "`--scope --repo .` is exit 2 rather than a scope named `--repo`. Text excluded",
+             ["recall", "--scope", "--repo", "."], compare=COMPARE_EXIT),
+        Case("argv-negative-number-IS-a-value",
+             "🔴 THE OTHER HALF, AND IT IS THE ONE THAT KEEPS THE RULE FROM BEING `refuse every "
+             "dash`. argparse consumes a negative NUMBER as a value, so `--limit -1` reaches the "
+             "reader's option ladder and is refused there with the READER's own message — which "
+             "is why this row compares the full text",
+             ["recall", "--scope", "alpha-notes", "--limit", "-1"]),
+        Case("argv-terminator-passes-a-dash-token",
+             "🔴 `--` ENDS THE FLAGS AND THE ORACLE HONOURS IT: `search -- -h` searches for the "
+             "literal `-h`. A port that kept scanning for help printed documentation instead, so "
+             "a caller searching for `-h` got the wrong answer at exit 0",
+             ["search", "--scope", "alpha-notes", "--", "-h"]),
+        Case("argv-h-in-a-POSITIONAL-position",
+             "`search --scope S -h` is HELP on both, because argparse handles a standalone `-h` "
+             "wherever it appears — the opposite ruling from the value position above, and the "
+             "pair is what makes the rule observable",
+             ["search", "--scope", "alpha-notes", "-h"],
+             compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
+
+        # 🔴 AND `--help` WINS OVER AN UNKNOWN FLAG, IN EITHER ORDER AND AT BOTH LEVELS. argparse
+        # COLLECTS unrecognised arguments and reports them AFTER parsing, while `-h` fires the
+        # moment it is consumed — so a port that refused on the unknown flag exited 2 where the
+        # oracle exits 0 with its help text. Measured in all three shapes below.
+        Case("argv-help-beats-an-unknown-flag",
+             "`recall --bogus-flag --help` is exit 0 with help. A port that returned on the "
+             "unknown flag pre-empted it, which is the wrong ruling and the wrong stream",
+             ["recall", "--bogus-flag", "--help"], compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
+        Case("argv-help-beats-an-unknown-flag-in-either-order",
+             "`recall --help --bogus-flag` — the same answer, reached by the other path, which is "
+             "what tells a deferral from a lucky ordering",
+             ["recall", "--help", "--bogus-flag"], compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
+        Case("argv-help-beats-an-unknown-GLOBAL-flag",
+             "`--bogus-global --help` is exit 0 with help too: the deferral is needed in the "
+             "GLOBAL loop as well, and a fix applied to one loop leaves the other wrong",
+             ["--bogus-global", "--help"], compare=COMPARE_EXIT_AND_STDOUT_NONEMPTY),
+
         # --- the usage surface -------------------------------------------------
         # 🔴 `compare="exit"` ON EVERY ROW BELOW, AND THE REASON IS THE SAME ONE EACH TIME: the
         # Python client's refusal text is argparse's. The CODE is the part of the usage contract

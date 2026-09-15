@@ -108,8 +108,9 @@ are held to.
 
 `cairn` stays the oracle and `packages.default` still builds it. The gate is
 [`tests/parity/`](tests/parity/README.md): both clients, one pod, one store, one cache root,
-identical argv — and a byte diff of stdout, stderr and the exit code. **77 cases, 78 PASS, 0
-failures** across all nine verbs, every output-shaping flag and every documented exit code.
+identical argv — and a byte diff of stdout, stderr and the exit code. **90 cases, 91 PASS, 0
+failures** across all nine verbs, every output-shaping flag, every documented exit code, `--help`
+in four spellings, and argparse's option-versus-value rules.
 
 ⚠ **A green gate is not evidence until its controls have been watched to work.** This one's
 first full run reported 72 PASS / 0 FAIL while every request was refused and no cache was ever
