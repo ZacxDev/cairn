@@ -120,14 +120,56 @@ func ReapOrphans(cache string) int {
 // `mode="r"` does; hardcoding `r:gz` would refuse an uncompressed archive, which is what a
 // byte-identity harness replaying a recorded body is most likely to hand it.
 func openArchive(body []byte) (*tar.Reader, error) {
-	if len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b {
+	if isGzip(body) {
 		zr, err := gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
-			return nil, err
+			return nil, gzipLayerError{err}
 		}
 		return tar.NewReader(zr), nil
 	}
 	return tar.NewReader(bytes.NewReader(body)), nil
+}
+
+func isGzip(body []byte) bool {
+	return len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b
+}
+
+// gzipLayerError marks a failure in the COMPRESSION layer rather than in the archive.
+//
+// 🔴 THE TWO LAYERS GET DIFFERENT SENTENCES, AND THE ORACLE IS WHY. `tarfile.open(mode="r")`
+// raises `EOFError`/`zlib.error` when the DECOMPRESSOR runs out — which the client reports as
+// `sent a truncated archive` — and `tarfile.ReadError` when the bytes are not an archive at all,
+// which it reports as `did not return an archive`. Go surfaces both as a bare
+// `io.ErrUnexpectedEOF` out of `tar.Next`, so a client that classified on the error VALUE reported
+// an HTML error page as a truncated tar. Measured: `<html>nope</html>` answered
+// `sent a truncated archive: unexpected EOF` where the oracle says `did not return an archive`.
+// The layer is therefore recorded at the point it is known.
+type gzipLayerError struct{ err error }
+
+func (e gzipLayerError) Error() string { return e.err.Error() }
+func (e gzipLayerError) Unwrap() error { return e.err }
+
+// validateGzipLayer streams the whole compressed body to nowhere, purely to learn whether the
+// COMPRESSION layer is complete.
+//
+// 🔴 TO `io.Discard`, WITH A LIMIT, BECAUSE THE ALTERNATIVES ARE BOTH WRONG. Decompressing into
+// memory to inspect it would make a decompression bomb a memory bomb BEFORE either ceiling is
+// consulted — the ceilings read headers, which a truncated stream never reaches. Not validating at
+// all is what produced the misclassification above. The limit is the byte ceiling plus one, so a
+// bomb stops being read here and is refused by `checkCeilings`, which owns the MESSAGE.
+func validateGzipLayer(body []byte) error {
+	if !isGzip(body) {
+		return nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		return gzipLayerError{err}
+	}
+	defer zr.Close()
+	if _, err := io.Copy(io.Discard, io.LimitReader(zr, MaxUnpackedBytes+1)); err != nil {
+		return gzipLayerError{err}
+	}
+	return nil
 }
 
 // checkCeilings is the FIRST of two passes: headers only, no body read.
@@ -202,6 +244,11 @@ func InstallSnapshot(body []byte, cache string, headers http.Header) (int, error
 		}
 	}()
 
+	// The compression layer FIRST, so a truncated stream is classified as one rather than as an
+	// archive that is not an archive. See `gzipLayerError`.
+	if err := validateGzipLayer(body); err != nil {
+		return 0, err
+	}
 	if err := checkCeilings(body); err != nil {
 		return 0, err
 	}

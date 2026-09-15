@@ -1,11 +1,8 @@
 package client
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -152,14 +149,13 @@ func classifyInstallFailure(storeURL string, err error) error {
 	if errors.As(err, &corruptErr) {
 		return err // a REFUSAL, never degraded — see ResolveState.
 	}
-	switch {
-	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF),
-		errors.Is(err, gzip.ErrChecksum):
+	// 🔴 THE LAYER, NOT THE ERROR VALUE. Go surfaces a truncated gzip stream and an HTML error
+	// page as the SAME `io.ErrUnexpectedEOF` out of `tar.Next`, so classifying on the value
+	// reported `<html>…` as a truncated tar where the oracle says `did not return an archive`.
+	// `gzipLayerError` records which layer failed at the point that is known.
+	var gzipErr gzipLayerError
+	if errors.As(err, &gzipErr) {
 		return unreachable("%s sent a truncated archive: %s", storeURL, err)
-	case errors.Is(err, gzip.ErrHeader), errors.Is(err, tar.ErrHeader):
-		// 🔴 A 200 THAT IS NOT A TAR. Realistic in production precisely because this
-		// host's edge answers 200 with HTML for some clients (see the User-Agent note).
-		return unreachable("%s did not return an archive: %s", storeURL, err)
 	}
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) || errors.Is(err, fs.ErrPermission) || errors.Is(err, fs.ErrExist) {
