@@ -13,23 +13,31 @@ const (
 	deadToken  = "cairn-test-dead0-0000000000000000000000000000000"
 )
 
-func withCredentials(t *testing.T, extra ...Event) Model {
-	t.Helper()
-	events := append(worldEvents(),
-		Event{Kind: EventCredentialIssued, At: at(40), CredentialID: "crd_carol",
+// credentialEvents is the credential half of the fixture world, returned as EVENTS so
+// that a test needing a real journal (`cache_test.go`) seeds the SAME world this one
+// replays in memory. Two spellings of one fixture would let the cache's tests and the
+// resolver's tests drift into disagreeing about who carol is.
+func credentialEvents() []Event {
+	return []Event{
+		{Kind: EventCredentialIssued, At: at(40), CredentialID: "crd_carol",
 			SubjectKind: KindUser, SubjectID: uCarol,
 			TokenHash: HashToken(carolToken), Label: "carol laptop"},
 		// A PROJECT principal — the service-account case. Its authority is the
 		// project's own grants, which is `grt_2` and nothing else: a project is not
 		// a member of itself, so it gets no role verbs over its own scopes.
-		Event{Kind: EventCredentialIssued, At: at(41), CredentialID: "crd_atlas",
+		{Kind: EventCredentialIssued, At: at(41), CredentialID: "crd_atlas",
 			SubjectKind: KindProject, SubjectID: pAtlas,
 			TokenHash: HashToken(atlasToken), Label: "atlas ci"},
-		Event{Kind: EventCredentialIssued, At: at(42), CredentialID: "crd_dead",
+		{Kind: EventCredentialIssued, At: at(42), CredentialID: "crd_dead",
 			SubjectKind: KindUser, SubjectID: uDave,
 			TokenHash: HashToken(deadToken), Label: "rotated out"},
-		Event{Kind: EventCredentialRevoked, At: at(43), CredentialID: "crd_dead"},
-	)
+		{Kind: EventCredentialRevoked, At: at(43), CredentialID: "crd_dead"},
+	}
+}
+
+func withCredentials(t *testing.T, extra ...Event) Model {
+	t.Helper()
+	events := append(worldEvents(), credentialEvents()...)
 	events = append(events, extra...)
 	m, err := Replay(events)
 	if err != nil {
