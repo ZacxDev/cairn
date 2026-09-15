@@ -49,14 +49,27 @@ Replication happens over this API; those tests are untouched.
 Manifests: `homelab-talos` → `clusters/homelab/apps/subsystem-store/`.
 
 🔴 **THERE IS NOW A SECOND IMPLEMENTATION, AND `server.py` IS THE ORACLE.**
-`cmd/cairn-server` (Go, stdlib only) is a port of everything in this document except
-the two report-rendering routes; it is **not deployed by anything** and nothing in this
-runbook targets it. Its purpose is to be MEASURED against this file: the HTTP contract
-below is recorded as generated golden fixtures in `tests/conformance/`, and the corpus
-is replayed against both servers. Until that corpus is green for the port, and until
-`verify-byte-identity.sh` has compared the two over one store, every procedure here is
-about `server.py`. See `AGENTS.md` → "TWO SERVERS ARE ALIVE" for the sequence and for
-what the corpus currently does and does not cover.
+`cmd/cairn-server` (Go, stdlib only) is a port of **everything in this document**; it is
+**not deployed by anything** and nothing in this runbook targets it. Its purpose is to be
+MEASURED against this file, by two instruments that make different claims:
+
+- `tests/conformance/` — the HTTP contract below, recorded as generated golden fixtures and
+  replayed against both servers. Green for both.
+- `tests/dualrun/` — **both servers over ONE store**, every route, scope, entry and
+  principal, with the snapshot's *uncompressed* tar compared byte for byte. Also green, and
+  it found a divergence the corpus structurally could not see (the audit record's timestamp
+  spelling).
+
+⚠ **`verify-byte-identity.sh` IS NEITHER OF THOSE, AND AN EARLIER VERSION OF THIS PARAGRAPH
+SAID IT WAS.** It compared "until `verify-byte-identity.sh` has compared the two over one
+store" — that script compares **the pod against this host's local CLI**, which is ONE reader
+over TWO stores. `tests/dualrun/` is TWO servers over ONE store. The two scripts share a
+method (per-scope render, then entry set, then each entry's own single-ref render) and answer
+different questions; neither substitutes for the other.
+
+**Every procedure below is still about `server.py`**, which is what is deployed. See
+`AGENTS.md` → "TWO SERVERS ARE ALIVE" for the sequence, and `tests/dualrun/README.md` for
+what the byte-identity gate cannot see.
 
 ## Endpoints
 

@@ -74,7 +74,7 @@ runbook (seeding, byte-identity verification, rotation, rate limiting), is
 | `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, not deployed |
 | `cmd/cairn`, `internal/client` | the Go port of the CLIENT — byte-identical to the Python one |
 | `internal/report` | the ONE renderer, shared by the pod and the CLI |
-| `tests/` | the suites, plus `leakscan.py`, the HTTP conformance corpus and the client parity gate |
+| `tests/` | the suites, plus `leakscan.py`, the HTTP conformance corpus, the server dual-run gate and the client parity gate |
 | `flake.nix` | both clients, the server image, the Go server, and the checks |
 
 ## The Go port, and why two servers are alive
@@ -94,8 +94,17 @@ failures of every kind.
 ⚠ **A green corpus is not a finished port, and the numbers above are not the byte-identity
 gate.** The corpus pins the bytes it was told to send, so `internal/report` carries its own
 differential fixture — the oracle's rendered bytes over 50 report shapes no corpus row
-reaches — and the next step in the sequence is running both servers over ONE store and
-comparing. `AGENTS.md` states that order and the reasons for it.
+reaches — and the byte-identity comparison is a separate instrument.
+
+That instrument is [`tests/dualrun/`](tests/dualrun/README.md): both servers over **one**
+store, every route, every scope, every entry, three principals, and the snapshot's
+**uncompressed** tar compared byte for byte (gzip identity between `compress/flate` and zlib
+is measured unattainable, so the envelope is a declared difference). Measured **612 targets /
+2,492 comparisons / 0 differences** on a real store and **361 / 1,489 / 0** on a generated
+one. It found one divergence nothing else could see — the audit record's timestamp spelling —
+and its own controls are a pre-flight that refuses to vouch, seven mutants of which seven are
+killed, and a positive control that watches the comparison count move with the store.
+`AGENTS.md` states the sequence and the reasons for it.
 
 ## …and why two CLIENTS are alive
 

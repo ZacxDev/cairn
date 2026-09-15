@@ -75,6 +75,23 @@ const (
 	// bounds what an authenticated caller can make the process hold in memory per
 	// in-flight request.
 	maxBodyBytes = 1 << 20
+
+	// auditTimeLayout is the audit record's `ts=` spelling, and it is NOT `time.RFC3339`.
+	//
+	// 🔴 A NUMERIC ZONE, BECAUSE THE ORACLE EMITS ONE AND THIS STREAM IS READ BY MACHINE.
+	// `datetime.now(timezone.utc).isoformat(timespec="seconds")` writes `+00:00`;
+	// `time.RFC3339` is `Z07:00`, which collapses UTC to a bare `Z`. Both are valid RFC
+	// 3339 and no correct parser can tell them apart — but the audit log is not parsed only
+	// by correct parsers. It is grepped, and the documented token-rotation procedure is
+	// "read the fingerprints, then grep this stream for the one that should have stopped
+	// appearing", so a cutover that silently re-spelled the timestamp would change the
+	// shape of every line an operator's saved query matches.
+	//
+	// ⚠ MEASURED, NOT REASONED: this was `time.RFC3339` and the dual-run gate's audit arm
+	// is what found it — 47 of 47 lines differing in that one field while every byte on the
+	// wire agreed, which is why no existing gate could see it. `tests/conformance/README.md`
+	// names the audit log under what the corpus cannot reach.
+	auditTimeLayout = "2006-01-02T15:04:05-07:00"
 )
 
 // Server is the wired handler. Its token table is swapped atomically so a SIGHUP
@@ -825,7 +842,7 @@ func (rq *request) audit(result int, status string) {
 		auth = "ok"
 	}
 	line := "store-api audit " +
-		"ts=" + rq.srv.now().UTC().Format(time.RFC3339) + " " +
+		"ts=" + rq.srv.now().UTC().Format(auditTimeLayout) + " " +
 		"ip=" + auditField(ip, 256) + " " +
 		"peer=" + rq.peerState + " " +
 		"method=" + auditField(rq.r.Method, 16) + " " +

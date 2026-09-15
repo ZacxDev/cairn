@@ -86,7 +86,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
-| `tests/` | the suites, plus `leakscan.py`, `conformance/` (P1's gate) and `parity/` (P2's) |
+| `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
 | `flake.nix` | both clients, the server image, the Go server, and the checks over all of them |
 
 ## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
@@ -97,16 +97,17 @@ the difference MEASURED. The sequence is fixed — the Go server passes the corp
 both run over one store and byte-identity is compared, then the client is ported, then
 Python is retired.
 
-🔴 **STEPS ONE AND THREE ARE DONE; STEP TWO IS STILL NOT, AND IT IS NOT IMPLIED BY THE
-OTHER TWO.** The corpus is green for both server implementations (step 1) and the Go
-client is byte-identical to the Python one over `tests/parity/` (step 3) — but **no
-dual-run of the two SERVERS over one store has been made**, which is the comparison
-`server/verify-byte-identity.sh` exists for. Step 3 landing out of order is deliberate:
-it closes the two-renderer window, and it says nothing about the servers agreeing on a
-live store. Do not declare a step done early, and do not switch the deployed image on
-the strength of a green corpus plus a green parity gate — the sentence here once read
-"while the corpus is partial", which a green corpus would have satisfied while leaving
-every remaining step untouched.
+✅ **ALL THREE STEPS ARE DONE, AND STEP TWO IS `tests/dualrun/`.** Both servers run over
+ONE store; every route, scope, entry and principal is compared — **measured 612 targets /
+2,492 comparisons / 0 differences on a real store and 361 / 1,489 / 0 on a generated one**,
+uncompressed tar included. It found one divergence no other gate could see (the audit
+record's `ts=` spelling) and carries four refusals plus 7 mutants, 7 killed.
+📄 **`tests/dualrun/README.md`**: the arms, the licences, the battery, and what it CANNOT
+see. 🔴 Step 3 landed out of order deliberately and never implied this one — do not declare
+a step done early; the sentence here once read "while the corpus is partial", which a green
+corpus would have satisfied while leaving every step untouched. ⚠ This licenses the image
+cutover's PRECONDITION, not the cutover: **diff the two images** for what the agreement test
+cannot read — this gate reads neither image.
 
 🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP
 IDENTITY IS UNATTAINABLE — MEASURED, NOT ASSUMED.** `/api/v1/snapshot` ships
@@ -142,8 +143,8 @@ relations, 4 rows skipped** as oracle-specific; the oracle answers **0 failures,
 skipped**. At P1a the split was 94 PASS and 22 failing cases — every one of them a
 `/api/v1/recall/{scope}` or `/api/v1/search/{scope}` **rendering** case, which is what
 P1b closed. 🔴 **A GREEN CORPUS IS THE START OF THE BYTE-IDENTITY QUESTION, NOT THE END
-OF IT** — see the two paragraphs below, and note that the next step in the sequence is
-running both servers over ONE store and comparing, which the corpus does not do.
+OF IT** — it replays a declared list against a declared world; `tests/dualrun/` is what
+compares the two servers over a store nobody wrote a fixture for.
 
 ```bash
 go vet ./... && go test ./...            # the port's own guards
