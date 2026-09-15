@@ -21,14 +21,14 @@ AFTER it fired:
     #743  tree_hash   in scripts/tests/test_handoff_doc.py
     #780  _manifest   in scripts/tests/test_analyze_service_index_restore_verify.py
 
-🔴 A THIRD WAS ALREADY WAITING. Measured 2026-08-24 across `scripts/`: EIGHT
+🔴 A THIRD WAS ALREADY WAITING. Measured across `scripts/`: EIGHT
 modules define such a helper (`tree_hash` / `_tree_hash` / `_manifest` /
 `_fingerprint`) over git-repo fixtures, and only THREE pinned maintenance off.
 `claude/RULES.md`: "a predicate open-coded at N sites is typically wrong at N-1
 of them in the same direction, and unifying them is what makes the disagreement
 audible." Unifying them is this module.
 
-🔴 RE-MEASURED 2026-08-26: NINE modules, and the last unpinned one had already
+🔴 RE-MEASURED: NINE modules, and the last unpinned one had already
 fired. `test_hermetic_git.py::EXPECTED_MEMBERS` is the live ledger — read the
 count THERE, not the sentence above, which is a dated observation and not a
 claim about today. The ninth hole was `test_analyze_service_index_commit.py`'s
@@ -49,7 +49,7 @@ never walks `objects/` — widen its `extra_files` the way
 the class with nothing to notice.
 
 🔴 THE STAKES CHANGED, WHICH IS WHY THIS IS NOT COSMETIC. Both Tekton tiers
-(`devrc-pytests` AND `devrc-nodetests`) are required on `main` with
+(`alpha-pytests` AND `alpha-nodetests`) are required on `main` with
 `enforce_admins: true`. A flake in any one of these modules therefore blocks
 EVERY open PR, for everyone, with no admin override — and `claude/RULES.md` is
 explicit that a gate which fails for reasons unrelated to the code is how people

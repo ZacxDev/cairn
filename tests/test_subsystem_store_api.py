@@ -2,7 +2,7 @@
 
 WHAT IS BEING PROTECTED
 -----------------------
-`claudedocs/proposal-subsystem-store-homelab.md` phase 1: build the pod, seed
+`claudedocs/proposal-subsystem-store.md` phase 1: build the pod, seed
 `/data` from the local store, serve a READ-ONLY API cluster-internally, and prove
 the remote digest is byte-identical to the local one. The local store stays
 authoritative and untouched.
@@ -34,7 +34,7 @@ WHAT IS EXERCISED IN BOTH DIRECTIONS, IN-BAND
   * `TestSeedIsNonDestructive` — the tree hasher is shown to CHANGE when the
     source is deliberately modified, before its "unchanged" verdict is believed.
 
-🔴 NO TEST HERE READS THE REAL STORE. `~/.claude/analyze-service-index/` is
+🔴 NO TEST HERE READS THE REAL STORE. `~/.claude/<mirror-root>/` is
 client-confidential and not re-derivable by re-running recon, and this repo is
 PUBLIC. (Was "has no off-machine backup" — false; daily age-encrypted bundles go
 to MinIO. The reason no test reads the live store is confidentiality, not
@@ -111,7 +111,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # only to the latency of a genuine failure. Same spelling, opposite meaning; a
 # single shared constant across both would be wrong.
 #
-# Why 60 and not 15: measured 2026-08-29, the devrc Tekton gate was failing
+# Why 60 and not 15: measured, the alpha-toolkit Tekton gate was failing
 # ~60% of runs REPO-WIDE (6 of 10 in one window, on unrelated branches) with
 # `TimeoutError` out of `socket.py` — a localhost round-trip that lost the
 # scheduler for >15 s while 12 pipelineruns shared the node and this suite ran
@@ -122,20 +122,20 @@ ROOT = Path(__file__).resolve().parents[1]
 # 🔴 This is the SYMPTOM fix. The cause is a 10-minute parallel suite competing
 # with a saturated cluster, which belongs to Tekton capacity, not to this file.
 #
-# 🔴 AND 60 DID NOT HOLD — it recurred 2026-08-31, so do not read the paragraph
+# 🔴 AND 60 DID NOT HOLD — it recurred later, so do not read the paragraph
 # above as closed. What is new is that the contention is now NAMED and can be
 # reproduced ON THE DEV HOST in ~70 s; see `scripts/ci-repro/`. Two corrections
 # to the framing above, both measured:
 #
-#   * IT IS DISK LATENCY, NOT CPU. On run `devrc-ci-86zxj` (sha 5de43017) this
+#   * IT IS DISK LATENCY, NOT CPU. On run `alpha-ci-run2` (sha 5de43017) this
 #     suite's own classifier printed `MECHANISM = SERVER_BLOCKED_IN_FSYNC …
 #     accept loop parked=True`. `server.py:_replace_bytes` fsyncs the file
 #     (:2012) and the parent dir (_fsync_dir, :1961) INSIDE the request, before
 #     the response is written, and fsync blocks in uninterruptible sleep.
-#     devrc-ci is pinned to ONE node (talos-xr6-r7p). 🔴 The contention set is
-#     the 7 devrc-ci runs, NOT the 12 overlapping pipelineruns: gitops-validate
-#     is pinned to talos-uvh-gtj and the one auditloop run was on
-#     talos-deu-s2q. 🔴 And the stalling fsync lands on NEITHER named volume —
+#     alpha-ci is pinned to ONE node (node-a). 🔴 The contention set is
+#     the 7 alpha-ci runs, NOT the 12 overlapping pipelineruns: manifest-validate
+#     is pinned to node-b and the one epsilon-loop run was on
+#     node-c. 🔴 And the stalling fsync lands on NEITHER named volume —
 #     not `nix-store-cache` (/nix) nor the per-run `source` PVC
 #     (/workspace/source), but the step container's EPHEMERAL layer under /tmp,
 #     where the gate sets no TMPDIR and mounts nothing.
@@ -146,7 +146,7 @@ ROOT = Path(__file__).resolve().parents[1]
 #     not read this as "requests are the wrong lever"; read it as "they cap
 #     concurrency, they do not speed up fsync". `computeResources: null` is a
 #     platform-wide default — EVERY taskrun in that namespace declares none,
-#     at every reading; the absolute count drifts — not a devrc oversight.
+#     at every reading; the absolute count drifts — not a alpha-toolkit oversight.
 #   * SEED/ORDERING IS NOT THE MECHANISM — but mind what proves that. The
 #     REPRODUCER (`scripts/ci-repro/`) shows fsync latency SUFFICES: delaying a
 #     single fsync past this bound reproduces the exact failure, on the
@@ -307,7 +307,7 @@ def _entry(
 #
 # `server.py:_replace_bytes` fsyncs the FILE and then the parent DIRECTORY *inside
 # the request, before the response is written*, and fsync blocks in uninterruptible
-# sleep. Under disk contention on the single node `devrc-ci` is pinned to, one such
+# sleep. Under disk contention on the single node `alpha-ci` is pinned to, one such
 # fsync can exceed `HANG_TIMEOUT` and the gate reports a code failure for an I/O
 # stall — on PRs whose diff cannot reach this file at all. Full mechanism, and the
 # on-demand reproducer, in `scripts/ci-repro/README.md`.
@@ -318,7 +318,7 @@ def _entry(
 # long an fsync takes. On tmpfs there is no backing device to contend for, so the
 # stall cannot occur by construction.
 #
-# Measured 2026-09-01 on this host, `_replace_bytes`'s exact sequence (mkstemp →
+# Measured on this host, `_replace_bytes`'s exact sequence (mkstemp →
 # write → fsync file → replace → fsync dir), reporting MAX because HANG_TIMEOUT is
 # breached by a single worst-case call and a mean would hide it:
 #
@@ -474,15 +474,15 @@ def running(
 # so `fsync` reached from inside `_replace_bytes` reports as FSYNC and not as the
 # entry lock it is holding on the way in.
 #
-# 🔴 KNOWN DEFECT, MEASURED 2026-09-01, NOT FIXED HERE — THE SCAN MATCHES THE
+# 🔴 KNOWN DEFECT, MEASURED, NOT FIXED HERE — THE SCAN MATCHES THE
 # CHECKOUT PATH, BECAUSE `traceback.format_stack` RENDERS EACH FRAME'S FILENAME.
 # These are substring tokens matched against the whole rendered stack, so a clone
 # or worktree whose PATH contains one of them misclassifies EVERY hang, confidently
 # and wrongly — which is worse than no verdict. Reproduced by accident: a worktree
-# named `devrc-fsync` (named after the flake being fixed, which is the likely case)
+# named `cairn-fsync` (named after the flake being fixed, which is the likely case)
 # turned `test_a_stall_on_the_ENTRY_LOCK_reads_DIFFERENTLY` red with
 # `MECHANISM = SERVER_BLOCKED_IN_FSYNC`, while the identical tree at
-# `devrc-storetmp` passed. `flock`, `_EntryLock` and `_audit_lock` are exposed the
+# `cairn-storetmp` passed. `flock`, `_EntryLock` and `_audit_lock` are exposed the
 # same way.
 # ⚠ The first attempt to CONFIRM that was itself wrong and read as a refutation:
 # after `git worktree move`, a stale `__pycache__` kept the old `co_filename`
@@ -857,7 +857,7 @@ def drain_output(proc) -> Drained:
     History, and why this is a function rather than a fourth copy: #544 found the
     race, measured it at 3/20 red locally plus two consecutive reds in the nix
     sandbox, and fixed ONE site inline. The other two kept the defect and one of
-    them duly failed in CI at 2026-08-23T00:37Z (`devrc-ci-jxf5j`) with
+    them duly failed in CI (`alpha-ci-run1`) with
     `IndexError: list index out of range` — an empty list indexed at [-1], on a
     tree whose only change was to an unrelated test. That is the open-coded
     predicate from claude/RULES.md: wrong at N-1 sites, and re-fixed one site at
@@ -2539,8 +2539,8 @@ class TestScopeRevision:
 # 8b. The snapshot stamp — every report dates the COPY it is serving.
 #
 # 🔴 REGRESSION, NOT AN INVARIANT GUARD. Measured on the live public endpoint
-# 2026-08-20, four days after cutover: an authed GET returned 200 with
-# `ALL 5 entries in devrc/, none omitted` while the source held 9, and one
+# Four days after cutover: an authed GET returned 200 with
+# `ALL 5 entries in alpha-toolkit/, none omitted` while the source held 9, and one
 # served entry was a 40-day-old copy of a file edited that morning. Every
 # existing check passed — reachability, auth, client-IP chain, firewall — because
 # none of them compares the served bytes to the source. The defect was that a
@@ -3962,15 +3962,15 @@ def token_file(tmp_path: Path) -> Path:
 # `subsystem_recall` orders its INDEX newest-first by entry-file mtime, and the
 # transport (`seed.sh`: `rsync -a --delete` into a stage, then `tar` into the
 # pod) does not carry mtime. So two stores holding IDENTICAL BYTES render their
-# index in a different order — measured against the live pod on 2026-09-01,
+# index in a different order — measured against the live pod,
 # `scopes=5 pass=1 fail=4`, the `cli` scope's only unaccounted difference being
 # one row's POSITION.
 #
 # ⚠ THAT RUN USED TO BE SUMMARISED AS "every scope with more than two entries
-# failed", WHICH IS WRONG. Re-measured 2026-09-01, entries as `subsystem_recall`
-# INDEXES them: cli=5, devrc=26, datapacket-talos=49, homelab-infra=0,
+# failed", WHICH IS WRONG. Re-measured, entries as `subsystem_recall`
+# INDEXES them: cli=5, alpha-toolkit=26, beta-cluster=49, gamma-infra=0,
 # storage-resolver=1. No two-entry scope appears in that run at all, so the data
-# could not support a two-entry boundary; and `homelab-infra` FAILED on a SET
+# could not support a two-entry boundary; and `gamma-infra` FAILED on a SET
 # difference, not on order (0 indexed entries means `status=scope-empty` with no
 # INDEX block, which ordering cannot make differ by 102 lines). The boundary
 # that holds is the arithmetic one this fixture argues for itself, below.
@@ -4164,14 +4164,14 @@ _EXPECTED_EVIDENCE_BLOCK = """
     most-recent fallback). The transport does not preserve mtime — `seed.sh`
     `rsync`s into a stage and `tar`s that into the pod — so two stores holding
     byte-identical entries render their index in a DIFFERENT ORDER and feature a
-    DIFFERENT entry. MEASURED 2026-09-01 against the live pod, store
-    `~/.claude/analyze-service-index`, over a `kubectl port-forward`:
+    DIFFERENT entry. MEASURED against the live pod, store
+    `~/.claude/<mirror-root>`, over a `kubectl port-forward`:
 
-    FAIL scope=devrc            raw-diff-lines=45   accounted-for=6
+    FAIL scope=alpha-toolkit    raw-diff-lines=45   accounted-for=6
     FAIL scope=cli              raw-diff-lines=8    accounted-for=6
     PASS scope=storage-resolver (1 entry)
-    FAIL scope=homelab-infra    raw-diff-lines=108  accounted-for=6
-    FAIL scope=datapacket-talos raw-diff-lines=336  accounted-for=6
+    FAIL scope=gamma-infra      raw-diff-lines=108  accounted-for=6
+    FAIL scope=beta-cluster     raw-diff-lines=336  accounted-for=6
 
     The `cli` scope is the clean isolation — its index ROWS were identical and the
     only unaccounted difference was one row's POSITION. `claude/RULES.md`: a
@@ -4180,10 +4180,10 @@ _EXPECTED_EVIDENCE_BLOCK = """
     🔴 TWO READINGS OF THAT RUN WERE WRONG, AND THIS IS THE CORRECTION.
     The `storage-resolver` line above said `(2 entries)` and the paragraph
     concluded "every passing scope had 2 entries; every failing one had more".
-    RE-MEASURED 2026-09-01 on this host, same store, counting entries as
+    RE-MEASURED on this host, same store, counting entries as
     `subsystem_recall` INDEXES them rather than as files on disk:
 
-    cli=5  devrc=26  datapacket-talos=49  homelab-infra=0  storage-resolver=1
+    cli=5  alpha-toolkit=26  beta-cluster=49  gamma-infra=0  storage-resolver=1
 
     `storage-resolver/` holds `backblaze.md` plus a `README.md`, and a README in a
     scope is correctly NOT indexed — so it is a ONE-entry scope. NO TWO-ENTRY
@@ -4193,11 +4193,11 @@ _EXPECTED_EVIDENCE_BLOCK = """
     The boundary that does hold is ARITHMETIC, not measured: a ONE-entry index has
     exactly one possible order and cannot diverge; TWO OR MORE is where the order
     can differ. That is the same argument the ordering fixture in
-    `scripts/tests/test_subsystem_store_api.py` makes for itself when it chooses
+    `tests/test_subsystem_store_api.py` makes for itself when it chooses
     FOUR refs — two entries admit only two orders, so a two-entry fixture is one
     coin-flip away from asserting nothing.
 
-    And `homelab-infra` was NOT an ordering failure. It holds ZERO indexed entries
+    And `gamma-infra` was NOT an ordering failure. It holds ZERO indexed entries
     on this host (one `README.md`), so its local render is `status=scope-empty`
     with no INDEX block at all — 102 unaccounted lines that ordering structurally
     cannot produce. That FAIL was a SET difference, the lagging read-through cache
@@ -4293,7 +4293,7 @@ def _normalise_for_scan(text: str) -> str:
 # is derived rather than a hand-written list of sites.
 _SCAN_EXEMPT = ("tests/test_subsystem_store_api.py",)
 # ⚠ THE SUFFIX LIST IS NARROWER THAN "EVERY TRACKED TEXT FILE", SO SAY SO.
-# Measured 2026-09-02: 952 of 1261 tracked files match these suffixes; 309 do
+# Measured: 952 of 1261 tracked files match these suffixes; 309 do
 # not, including 29 `.nix`. Zero of the unscanned files match a needle today
 # and no site the claim was ever copied to is in the gap — but the docstrings
 # below say "with one of these suffixes", not "every text file", because a
@@ -4373,7 +4373,7 @@ def _unmarked_retractions(
 # phase3.md` — and it is the doc `/resume` OPENS for this work, so it is the
 # one copy a resuming session actually reads. It asserted the retracted
 # boundary in three separate places, one of which ("every PASS had ≤2 entries;
-# every FAIL had more") is flatly false on that very run: `homelab-infra`
+# every FAIL had more") is flatly false on that very run: `gamma-infra`
 # indexes ZERO entries and FAILED.
 #
 # A hand-maintained ledger of sites is the same shape as the bug it was
@@ -4483,7 +4483,7 @@ class TestByteIdentityVerifier:
         differ. The reader orders its INDEX newest-first by mtime and picks the
         digest's one featured BODY the same way, and the transport does not
         carry mtime — so the old whole-scope `cmp` reported a difference for a
-        store that was identical. MEASURED against the live pod on 2026-09-01:
+        store that was identical. MEASURED against the live pod:
         `scopes=5 pass=1 fail=4`.
 
         ⚠ THAT PASS WAS NOT "the only two-entry scope" — see the fixture header
@@ -4560,7 +4560,7 @@ class TestByteIdentityVerifier:
 
         ⚠ WHAT A FAILURE HERE MEANS DEPENDS ON WHEN IT RAN. After the phase-1
         cutover the pod is canonical and each host's store is a read-through
-        cache that may legitimately lag — measured 2026-09-01, scope `devrc` at
+        cache that may legitimately lag — measured, scope `alpha-toolkit` at
         26 entries locally against 29 on the pod, with nothing wrong. This arm
         is an ACCEPTANCE check immediately after a seed/push, which is where
         `cairn-cutover.py` P4 runs it. It is deliberately not weakened to
@@ -4762,8 +4762,8 @@ class TestByteIdentityVerifier:
         refusal greps BOTH renders, so the larger store is the one that trips
         it. This docstring used to say "51 entries of headroom" from the LOCAL
         count — the non-binding side, and wrong in the unsafe direction.
-        Measured on both sides 2026-09-02 over the live store ingress,
-        `LISTING_PAGE_SIZE` = 100: `datapacket-talos` indexes 49 locally and
+        Measured on both sides over the live store ingress,
+        `LISTING_PAGE_SIZE` = 100: `beta-cluster` indexes 49 locally and
         **51 on the pod**, so the headroom is 100 - 51 = **49 entries**, in an
         append-mostly store pruned by hand. When it crosses, this refusal fails
         the cutover's acceptance gate with the store unfrozen.
@@ -4974,7 +4974,7 @@ class TestByteIdentityVerifier:
         and it is not that: scopes are enumerated from the LOCAL store, so a
         scope the pod holds and this host does not is never requested, never
         compared and never counted. No arm can see one — the set arm compares
-        entries WITHIN a shared scope. Measured 2026-09-02: local 16 scopes /
+        entries WITHIN a shared scope. Measured: local 16 scopes /
         141 entries, pod 23 / 189, so 7 pod-only scopes holding 48 entries —
         25% of the served store — are outside every run's reach.
 
@@ -5926,7 +5926,7 @@ class TestPhaseOneScope:
     # side, and the tail is the only thing that stops `POST entry/a/b/anything`
     # from dispatching as an append.
     #
-    # ⚠ `PUT entry` MOVED FROM `_replace_entry` TO `_put_entry` (2026-09-03) and
+    # ⚠ `PUT entry` MOVED FROM `_replace_entry` TO `_put_entry` and
     # the route set did NOT grow. That is the point of the rename: PUT now
     # carries TWO operations — replace behind `If-Match`, CREATE behind
     # `If-None-Match: *` — and `_put_entry` is the arbitration between them.
@@ -6089,7 +6089,7 @@ class TestPhaseOneScope:
         """🔴 THE DOCKERFILE ENUMERATES ITS `COPY`s, AND THE LIST ROTTED SILENTLY.
 
         `subsystem_touch` gained `from git_mainline import …` in #677
-        (2026-08-21). The Dockerfile's hand-written list was not updated, so
+        (in an earlier change). The Dockerfile's hand-written list was not updated, so
         every image built after that commit contained code that could not
         import — while the RUNNING pod stayed healthy, because its image
         predates the change. The defect was therefore invisible from production
@@ -8661,7 +8661,7 @@ class TestAuditLogCannotBeForged:
 def _smuggling_verdict(responses: "list[bytes]", what: str) -> str:
     """Say WHICH WAY a smuggling count was wrong — 0 and 2 are opposite bugs.
 
-    🔴 The same mis-description devrc#1165 was about, in the sibling family.
+    🔴 The same mis-description alpha-toolkit#1165 was about, in the sibling family.
     "a GET body was re-parsed as a request" is a sentence about `2`, asserted by
     a predicate that also fails at `0` — and `0` is what an empty read produces.
     A reader that returned nothing would have accused the server of smuggling.
@@ -9944,7 +9944,7 @@ class TestTrustedProxyOverTheRealProcess:
             # the client's return and read the corpse's stdout, so a slow handler
             # lost the line and `[...][-1]` raised `IndexError: list index out of
             # range` — an index into an empty list, not a useful assertion.
-            # MEASURED 2026-08-23T00:37Z on `devrc-ci-jxf5j`, in the nix sandbox, on a
+            # MEASURED on `alpha-ci-run1`, in the nix sandbox, on a
             # tree whose only change was to an unrelated test, while the same
             # commit passed a local `nix build`.
             out = drain_output(proc)
@@ -15294,7 +15294,7 @@ class TestPUTCreatesANewEntry:
     `POST .../bullets` and `PUT` with `If-Match` both resolve an EXISTING ref, so
     a brand-new entry could only be made by `seed.sh` or by a host writing into
     its own local tree — and once reads moved to the pod cache, a locally-created
-    entry was invisible to every reader on every host. Measured 2026-09-02: five
+    entry was invisible to every reader on every host. Measured: five
     whole entries, one machine.
 
     Every assertion here is on the BYTES on disk and on the exact wire tokens, in
@@ -17431,7 +17431,7 @@ class TestTheWriteRoutesDoNotCarryTheREADHeaders:
             "-o jsonpath='{.data.token}' | base64 -d | awk 'NF>=3"
         ) in text, "the preflight no longer decrypts the live Secret it must read"
         assert (
-            "NOT against `clusters/homelab/apps/subsystem-store/secrets.enc.yaml`, "
+            "NOT against `clusters/gamma/apps/subsystem-store/secrets.enc.yaml`, "
             "which step 1 below names and which is sops CIPHERTEXT, not a token "
             "file.**"
         ) in text, "the README no longer warns off the encrypted operand"
@@ -17523,7 +17523,7 @@ def _raw_exchange(
     "nothing trailed the first response". (That helper now delegates HERE for
     its reading, so there is one reader rather than two that drift.)
 
-    🔴 TWO BOUNDS, AND COLLAPSING THEM INTO ONE IS THE FLAKE (devrc#1165).
+    🔴 TWO BOUNDS, AND COLLAPSING THEM INTO ONE IS THE FLAKE (alpha-toolkit#1165).
     This helper used to `settimeout(3.0)` and read until that expired, treating
     the timeout as "the server has finished talking". Under the disk contention
     PR #1181 measured, a response that takes longer than 3 s to start is
@@ -17603,7 +17603,7 @@ def _one_response(raw: bytes, what: str, *, saw_eof: "bool | None" = None) -> "l
     """Assert `raw` holds EXACTLY ONE response, saying WHICH WAY it was wrong.
 
     🔴 THE MESSAGE MUST DISCRIMINATE 0 FROM 2, BECAUSE THOSE ARE OPPOSITE BUGS
-    WITH OPPOSITE FIXES (devrc#1165). Every site here used to be spelled
+    WITH OPPOSITE FIXES (alpha-toolkit#1165). Every site here used to be spelled
 
         assert len(answers) == 1, "a SECOND complete response followed ..."
 
@@ -17650,13 +17650,13 @@ def _request(host: str, method: str, target: str, body: bytes | None = None) -> 
 
 
 class TestTheRawReaderWaitsForTheAnswerItWasPromised:
-    """🔴 THE REGRESSION GUARD FOR devrc#1165 — RED AT THE PARENT COMMIT.
+    """🔴 THE REGRESSION GUARD FOR alpha-toolkit#1165 — RED AT THE PARENT COMMIT.
 
     Unlike almost everything else in this file, these are NOT invariant guards.
     There was a real defect: `_raw_exchange` read with a single 3 s
     `settimeout` and treated its expiry as "the server has finished talking",
     so a server slower than 3 s returned an EMPTY buffer with no exception
-    anywhere. `tekton/devrc-pytests` failed four times on it, on three
+    anywhere. `tekton/alpha-pytests` failed four times on it, on three
     different test names, and every report named a SECOND response that did not
     exist.
 
@@ -19171,7 +19171,7 @@ _AUDITS_AFTER_RESPONDING = frozenset({"_backstop"})
 # `_respond(...)`/`_unauthorized()` they describe. A census, so DELETING a call
 # site is as loud as reordering one — a route that stops auditing is the failure
 # this whole section is about, and an offender list of zero cannot see it.
-# 33 -> 42 on 2026-09-03, when `PUT` grew its create half. The nine NEW pairs are
+# 33 -> 42, when `PUT` grew its create half. The nine NEW pairs are
 # all in `_put_entry`/`_create_entry`/`_entry_exists`: the both-preconditions 400,
 # the non-`*` `If-None-Match` 400, the empty-slug 400, the ambiguous-ref 400, the
 # `already-exists` 412, the `entry-shape` 422, two `store-unreachable` 503s and
@@ -19560,7 +19560,7 @@ class TestTheListenBacklogIsDeepEnoughForThisServersOwnConcurrency:
 class TestAHungRoundTripSAYSWhichSideBlocked:
     """🔴 THE INSTRUMENT, NOT A FIX — and the distinction is the whole point.
 
-    `test_a_FORGED_actor_in_the_body_is_DISCARDED` failed in CI (`devrc-ci-ddrxx`,
+    `test_a_FORGED_actor_in_the_body_is_DISCARDED` failed in CI (`alpha-ci-run4`,
     revision `857fc3f5`) with a bare `TimeoutError` out of `socket.py:720` and
     nothing else. Nothing in that traceback says whether the server was blocked,
     and if so on what — which is why the investigation in
@@ -19795,7 +19795,7 @@ class TestTheStoreIsSitedOffTheContendedDisk:
         # refused: the guard is the FILESYSTEM TYPE, never the path's spelling.
         # This is the case that makes `/dev/shm` being conventionally-tmpfs safe
         # to rely on — we do not rely on it.
-        monkeypatch.setenv("DEVRC_TEST_TMPFS", str(tmp_path))
+        monkeypatch.setenv("CAIRN_TEST_TMPFS", str(tmp_path))
         got = store_siting.tmpfs_dir()
         assert got != tmp_path, (
             "a disk-backed directory was accepted as tmpfs — the type check is "
@@ -19808,7 +19808,7 @@ class TestTheStoreIsSitedOffTheContendedDisk:
         # The CI sandbox may have no usable tmpfs at all. That must degrade to
         # current behaviour, never fail the suite.
         missing = tmp_path / "definitely-not-here"
-        monkeypatch.setenv("DEVRC_TEST_TMPFS", str(missing))
+        monkeypatch.setenv("CAIRN_TEST_TMPFS", str(missing))
         got = store_siting.tmpfs_dir()
         assert got is None or store_siting.mount_fstype(got) == "tmpfs"
 

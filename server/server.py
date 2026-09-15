@@ -3,7 +3,7 @@
 
 WHAT THIS IS, AND WHAT IT DELIBERATELY IS NOT
 ---------------------------------------------
-`claudedocs/proposal-subsystem-store-homelab.md` §1: "the pod is the existing
+`claudedocs/proposal-subsystem-store.md` §1: "the pod is the existing
 code, unmodified, pointed at a PVC". This module is the thin part. It imports
 `subsystem_recall` and returns `render_text()` / `render_search()` verbatim.
 
@@ -19,7 +19,7 @@ the CLI's stdout.
 ⚠ THE BODY IS NOT PATH-INDEPENDENT, AND IT IS NOT ORDER-INDEPENDENT EITHER.
 `render_text` prints `  store: <root>` and `  host: <id>`; the pod serves from
 `/data` under a pod identity while the workbench reads
-`~/.claude/analyze-service-index` under its own, so remote and local bytes
+`~/.claude/<mirror-root>` under its own, so remote and local bytes
 CANNOT be identical on those two lines. The server also prepends the `SNAPSHOT`
 block, which the local CLI correctly does not emit. And the INDEX is ordered
 newest-first by entry-file MTIME — metadata the transport does not carry — so
@@ -2784,13 +2784,13 @@ def snapshot_freshness(store_root: str | Path) -> tuple[str, str]:
     🔴 WHY THIS EXISTS, AND IT IS NOT A NICETY. This server does not serve the
     authoritative store — it serves a COPY pushed into a PVC by `seed.sh`, and
     NOTHING syncs that copy continuously (no CronJob, no timer; measured
-    2026-08-20). Yet every report it renders opens with a line of the form
+    directly). Yet every report it renders opens with a line of the form
     "ALL N entries in `<scope>/`, none omitted" — a COMPLETENESS assertion, and
     a truthful one *about the bytes on this disk*. Off-mesh there is no way to
     tell that disk from the source.
 
-    That combination was measured live on 2026-08-20, four days after cutover:
-    the public endpoint answered 200 with `ALL 5 entries in devrc/, none
+    That combination was measured, four days after cutover:
+    the public endpoint answered 200 with `ALL 5 entries in alpha-toolkit/, none
     omitted` while the source held **9**, and one served entry was a 40-day-old
     version of a file edited that morning. Nothing in the payload, the headers
     or the status was wrong; nothing in it was current either. `claude/RULES.md`

@@ -5,12 +5,12 @@ WHY THIS FILE EXISTS
 Four repo-wide scanners each carried their own hand-written skip set, and
 `claude/RULES.md` -> "One rule, one place" predicted the outcome exactly: the
 predicate was wrong at N-1 of the N sites, in the same direction. Measured
-2026-08-20, before this module existed:
+before this module existed:
 
     scripts/testlib/public_ip_scan.py            9 entries, HAS .pytest_cache
     scripts/testlib/client_host_scan.py          9 entries, HAS .pytest_cache
     the shared-detector ledger in scripts/tests  7 entries, MISSING it
-    scripts/tests/test_clawgate_predicate_...py  6 entries, MISSING it
+    a second open-coded set in scripts/tests    6 entries, MISSING it
 
 The two shared copies had learned about `.pytest_cache`; the two open-coded
 copies in `scripts/tests/` had not. So an ORDINARY `pytest` run -- one that
@@ -20,13 +20,13 @@ tree that ledger walks, and the ledger went red on an artefact the developer
 never wrote. That is the permanently-red-gate failure `claude/RULES.md` names: a
 gate nobody can keep green trains everyone to click through it.
 
-Not hypothetical and not latent: the operator's own `~/workspace/devrc` checkout
+Not hypothetical and not latent: the operator's own `~/workspace/alpha-toolkit` checkout
 was RED on that test at the moment this module was written, from a
 `.pytest_cache` last touched by a routine run.
 
 (Deliberately NOT spelling that ledger's module name here. It hunts for its own
 trigger token repo-wide, so naming it would make this file one of its findings
--- the same self-reference trap `test_clawgate_predicate_single_source.py` and
+-- the same self-reference trap the second single-source test above and
 `shebang_scan.py` document.)
 
 WHY THERE IS A BASE PLUS PER-SITE ADDITIONS, AND NOT ONE UNION

@@ -16,7 +16,7 @@ the client reports the store UNREACHABLE, and the gate reads
     assert 7 == 0
 
 which is a sentence about the write CODE for what was an I/O stall. Measured
-2026-09-02 on `devrc-ci-jfg67`, and reproduced on the dev host with the store on
+on `alpha-ci-run3`, and reproduced on the dev host with the store on
 **tmpfs** — so this is a latency dependency, not a filesystem one, and siting the
 store off the contended disk (`testlib.store_siting`) shrinks the probability
 without removing it.
@@ -26,7 +26,7 @@ without removing it.
 it matches its tokens against `traceback.format_stack`, which RENDERS EACH FRAME'S
 FILENAME, so a checkout whose PATH contains a token misclassifies every hang —
 confidently and wrongly, which is worse than no verdict. It was reproduced there by
-accident: a worktree named `devrc-fsync` turned an entry-lock stall into
+accident: a worktree named `cairn-fsync` turned an entry-lock stall into
 `SERVER_BLOCKED_IN_FSYNC`. This module classifies on the frame's SOURCE LINE and
 FUNCTION NAME and never on its path, and
 `test_hang_mechanism.py::test_a_checkout_PATH_containing_a_token_does_not_decide_the

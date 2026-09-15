@@ -16,8 +16,8 @@ a local cache and runs the **unmodified** reader against it. Nothing in
 
 🔴 WHY A STATE LINE IS PRINTED BEFORE EVERY REPORT, AND WHY IT IS NOT OPTIONAL.
 The server prepends a provenance banner to every response for a measured reason
-(`server.py::snapshot_freshness`): on 2026-08-20 the public endpoint answered
-`ALL 5 entries in devrc/, none omitted` while the source held 9, and one served
+(`server.py::snapshot_freshness`): the public endpoint answered
+`ALL 5 entries in alpha-toolkit/, none omitted` while the source held 9, and one served
 entry was a 40-day-old copy of a file edited that morning. Nothing was wrong;
 nothing was current either. Running the reader locally against a cache would
 DROP that banner and reintroduce exactly that confusion, because the reader's
@@ -52,12 +52,12 @@ every read code precisely so a caller cannot read "nothing was displayed" as "th
 bullet landed". The pod is the authority; this cache has none. See the WRITE PATH
 block below the readers.
 
-🔴 `create` IS THE VERB THAT MAKES A NEW ENTRY, AND IT DID NOT EXIST UNTIL
-2026-09-03. `append` and `put` both resolve an EXISTING ref, so the store had no
+🔴 `create` IS THE VERB THAT MAKES A NEW ENTRY, AND IT WAS ADDED LATE.
+`append` and `put` both resolve an EXISTING ref, so the store had no
 create primitive at all and the write protocol told sessions to write a
-brand-new entry into the local `~/.claude/analyze-service-index/` tree. That was
+brand-new entry into the local `~/.claude/<mirror-root>/` tree. That was
 correct while that tree WAS the store; after the read path moved to the pod
-cache it meant the entry was dark to every reader. Measured 2026-09-02: five
+cache it meant the entry was dark to every reader. Measured: five
 whole entries existed only on one host. `create` sends `If-None-Match: *`, so it
 creates only if absent and REFUSES (exit 9) rather than overwriting.
 
@@ -264,7 +264,7 @@ def _apply_standard_headers(req: "urllib.request.Request", token: str) -> None:
     """The two headers EVERY request to this host must carry, in ONE place.
 
     🔴 A User-Agent IS REQUIRED, and urllib's default is actively refused.
-    MEASURED 2026-08-25 against the live host, same token, same path, three
+    MEASURED against the live host, same token, same path, three
     requests differing ONLY in this header:
         curl's default UA    -> 200
         `Python-urllib/3.12` -> 403      <-- urllib's default
@@ -1273,9 +1273,9 @@ def cmd_create(args: argparse.Namespace) -> int:
     🔴 WHY THIS VERB EXISTS, since `append` and `put` already write. Neither can
     make an entry that is not there: both resolve an EXISTING ref and 404 when it
     is absent. So the protocol told a session to write a brand-new entry into
-    `~/.claude/analyze-service-index/` directly — which was true and safe while
+    `~/.claude/<mirror-root>/` directly — which was true and safe while
     that tree WAS the store, and became content loss the moment reads moved to
-    the pod cache: measured 2026-09-02, five whole entries existed only on one
+    the pod cache: measured, five whole entries existed only on one
     host and were dark to every reader. This is the verb that closes it.
 
     🔴 NO `--if-match`, AND NO SYNC. `put` derives a precondition from a LIVE

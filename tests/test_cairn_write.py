@@ -252,7 +252,7 @@ def why_the_write_failed(proc: subprocess.CompletedProcess, live=None) -> str:
         assert 7 == 0
 
     for an I/O stall — a sentence about this client's code, describing the disk.
-    Measured in CI on `devrc-ci-jfg67` (2026-09-02) and reproduced on the dev host
+    Measured in CI on `alpha-ci-run3` and reproduced on the dev host
     by stalling `os.fsync` past the bound. A gate that reports a code failure for an
     I/O stall trains everyone to click through, which is the actual cost.
 
@@ -887,9 +887,8 @@ def _new_entry_file(tmp_path: Path, service: str = NEW_SERVICE,
 class TestCreateMakesAnEntryThatDidNotExist:
     """🔴 THE VERB THAT CLOSES THE STRANDING. `append` and `put` both resolve an
     EXISTING ref, so before `create` the only route to a new entry was a local
-    write into `~/.claude/analyze-service-index/` — which, once reads moved to
-    the pod cache, put the content on one host and in front of nobody. Measured
-    2026-09-02: five whole entries.
+    write into `~/.claude/<mirror-root>/` — which, once reads moved to
+    the pod cache, put the content on one host and in front of nobody. Measured: five whole entries.
 
     Every test pins a CODE and a SENTENCE, and the landing tests assert the
     FILE, exactly as `TestAppendLands` does — an exit code cannot tell a write
@@ -1115,7 +1114,7 @@ class TestExitCodesDoNotOverlap:
         # bounded by where one method happens to sit in the file.
         emitted = {int(m) for m in _re.findall(r"self\._respond\(\s*(\d{3})", server_src)}
         emitted |= {int(m) for m in _re.findall(r"self\.send_response\(\s*(\d{3})", server_src)}
-        # 🔴 `201` JOINED THIS SET ON 2026-09-03 BECAUSE IT IS A SUCCESS, NOT
+        # 🔴 `201` JOINED THIS SET WHEN `create` LANDED, BECAUSE IT IS A SUCCESS, NOT
         # BECAUSE IT WAS INCONVENIENT. `PUT … If-None-Match: *` answers
         # `201 created`; `urlopen` returns any 2xx rather than raising, so it
         # never reaches `_classify` and mapping it to a WRITE-FAILED exit code

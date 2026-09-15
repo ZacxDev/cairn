@@ -1,17 +1,17 @@
 # The subsystem-store API pod. Phase 1.
 #
-# 🔴 BUILT FROM devrc, NOT FROM homelab-talos, AND THAT IS THE WHOLE POINT.
-# The proposal's premise is "the pod is the existing code, unmodified"
-# (claudedocs/proposal-subsystem-store-homelab.md §1). `subsystem_recall.py`
+# 🔴 BUILT FROM THE CODE REPO, NOT FROM THE GITOPS MANIFEST REPO, AND THAT IS
+# THE WHOLE POINT. The proposal's premise is "the pod is the existing code,
+# unmodified" (claudedocs/proposal-subsystem-store.md §1). `subsystem_recall.py`
 # and its two dependencies live HERE, are gated by this repo's own suite
 # (`tests/test_subsystem_{recall,resolver}.py`, thousands of
-# assertions), and are what the workbench CLI runs. Vendoring a copy into
-# homelab-talos would create a second tree that passes its own tests while
+# assertions), and are what the workbench CLI runs. Vendoring a copy into the
+# manifest repo would create a second tree that passes its own tests while
 # drifting from the CLI — which is exactly the disagreement between local and
 # remote output this design exists to make impossible.
 #
-# homelab-talos therefore holds MANIFESTS ONLY, plus a pinned image tag — the
-# same split `clusters/homelab/apps/mailbox` already uses for mail-receiver.
+# The manifest repo therefore holds MANIFESTS ONLY, plus a pinned image tag —
+# the same split every other app in that cluster already uses.
 #
 # Build context is the REPO ROOT (the modules are under lib/), so:
 #     docker build -f server/Dockerfile -t <tag> .
@@ -58,8 +58,8 @@ ENV HOME=/home/nonroot \
 
 RUN mkdir -p /home/nonroot /data && chown -R 65532:65532 /home/nonroot /data
 
-# 65532 matches the clawgate precedent's runAsUser, so the same fsGroup story
-# applies to the PVC.
+# 65532 matches the runAsUser of a sibling pod already running in the same
+# cluster, so the same fsGroup story applies to the PVC.
 USER 65532:65532
 
 EXPOSE 8102

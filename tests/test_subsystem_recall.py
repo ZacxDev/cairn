@@ -26,7 +26,7 @@ hashes a synthetic store tree either side of every mode AND every failure path. 
 grep for `open(..., "w")` would be the "spelled rather than structural" guard
 `claude/RULES.md` warns about.
 
-🔴 NO TEST HERE READS THE REAL STORE. `~/.claude/analyze-service-index/` is
+🔴 NO TEST HERE READS THE REAL STORE. `~/.claude/<mirror-root>/` is
 curated, client-confidential, not re-derivable by re-running recon, and rewritten
 by an hourly autocommit while other sessions write to it. (Was "has no
 off-machine backup" — false; daily age-encrypted bundles go to MinIO. Irrelevant
@@ -58,10 +58,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "lib" / "subsystem_recall.py"
 # The body that must ROUTE to the sidecar is the one that carries the protocol,
-# which since 2026-08-24 is the `subsystem-index` skill rather than /handoff.
+# which is now the `subsystem-index` skill rather than /handoff.
 # The on-demand evidence sidecar. Step 4's IMPERATIVES stay in HANDOFF_DOC; the
 # measured rationale behind them lives here and costs nothing until it is read.
-# 🔴 MOVED 2026-08-24 with the protocol it explains. `/handoff` step 4 became the
+# 🔴 MOVED WITH THE PROTOCOL IT EXPLAINS. `/handoff` step 4 became the
 # `subsystem-index` skill, and this reference doc is that skill's evidence file —
 # it was never about writing handoffs. The name is unchanged so its `§N` pointers
 # still resolve.
@@ -456,7 +456,7 @@ class TestSurfacesOnlyTheThreeSections:
     def test_what_it_is_IS_surfaced_in_a_body(self, store: Path) -> None:
         """🔴 THE DEFECT THIS CLASS WAS RENAMED FOR. It used to assert the
         opposite — `## What it is` was excluded as "durable boilerplate" — and
-        measured on 2026-08-20 the exclusion meant no BRIEFING path printed the
+        measured: the exclusion meant no BRIEFING path printed the
         one section that says what a service IS: not `--ref`, not the digest, not
         `service_recon`'s `index:` block. (`search` did, and still does — see
         `test_search_covers_WHAT_IT_IS_like_every_other_section` — but only for an
@@ -763,8 +763,7 @@ class TestWhatItIsIsBodyOnlyNotPerEntry:
         """Stated rather than left implicit: `--mode full --limit N` DOES pay N
         copies. That mode already prints N whole entries on purpose, and across
         the live store `## What it is` is the smallest of the three sections
-        (26 KB vs `## Pointers` 49 KB vs `## Nuance` 235 KB, measured
-        2026-08-20)."""
+        (26 KB vs `## Pointers` 49 KB vs `## Nuance` 235 KB, measured on the live store)."""
         store = self._scope_of_size(tmp_path, 5)
         text = rc.render_text(rc.recall(store, SCOPE, mode="full", limit=5))
         assert text.count("### ") == 5
@@ -2731,7 +2730,7 @@ class TestFocusWindow:
         assert "apps/widget-01/x.yaml" not in w.paths
 
     def test_the_uppercase_family_is_only_a_FALLBACK(self, tmp_path: Path) -> None:
-        """Same order `scripts/resume-state.sh` resolves in, so step 3 and step 4
+        """Same order the resume flow's own resolver resolves in, so step 3 and step 4
         of /resume cannot end up pointed at different initiatives."""
         repo = _make_repo(tmp_path, "SESSION-HANDOFF.md", "caps `apps/widget-02/x.yaml`\n")
         assert rc.focus_window(repo).source == "claudedocs/SESSION-HANDOFF.md"
@@ -2755,9 +2754,9 @@ class TestFocusWindow:
             (".claude/skills/resume/SKILL.md", True),
             ("nix/i3/config", True),
             ("/etc/nixos/configuration.nix", False),  # absolute
-            ("~/workspace/devrc/flake.nix", False),  # home-relative
+            ("~/workspace/alpha-toolkit/flake.nix", False),  # home-relative
             ("../outside/thing.yaml", False),  # escapes the repo root
-            ("$DEVRC/scripts/ship.sh", False),  # a shell variable
+            ("$PROJECT_ROOT/scripts/ship.sh", False),  # a shell variable
             ("https://example.invalid/a/b", False),  # a URL
             ("git@github.invalid:o/r.git", False),  # a host
             ("README.md", False),  # no separator: not a path
@@ -2774,7 +2773,7 @@ class TestFocusWindow:
         assert rc.focus_paths_from_text("see `tests/fixtures/`") == ("tests/fixtures",)
 
     def test_bare_prose_is_NOT_harvested(self, tmp_path: Path) -> None:
-        """🔴 `scripts/resume-state.sh` learned this with branch tokens: reaching
+        """🔴 The resume flow's own resolver learned this with branch tokens: reaching
         into unquoted prose mints tokens out of ordinary English, and a fabricated
         fact is worse than the silence it replaced."""
         assert rc.focus_paths_from_text("we touched lib/thing.py today") == ()
@@ -3319,7 +3318,7 @@ class TestNoRealStoreIsRead:
     """🔴 No test here may touch a REAL store — and since the Cairn cutover
     there are TWO of them.
 
-    This class guarded `~/.claude/analyze-service-index/` alone, which was the
+    This class guarded `~/.claude/<mirror-root>/` alone, which was the
     whole hazard while that was the only store a default could land on. The
     reader's default is now the synced cache at `~/.cache/subsystem-store`, so a
     guard scoped to the mirror would leave the live cache — same disk, same
@@ -3690,7 +3689,7 @@ class TestMutationKillMatrix:
 
     def test_kills_the_what_it_is_INCLUSION(self, tmp_path: Path) -> None:
         """🔴 THE RED HALF OF THE FIX, PERMANENTLY. Drop `WHAT_HEADING` back out
-        of `SURFACED_HEADINGS` — the exact pre-2026-08-20 source — and the recall
+        of `SURFACED_HEADINGS` — the exact pre-fix source — and the recall
         block silently stops answering "what IS this thing", which is the defect
         the change exists to close. Invisible to any test that only checks the
         other two sections are present, which is how it survived for months.
@@ -4483,7 +4482,7 @@ class TestMutationKillMatrix:
 # diff shown to the human CONTAINED the defect while being structurally
 # incapable of revealing it.
 #
-# Every fixture here is SYNTHETIC. `devrc` is PUBLIC and real entries are
+# Every fixture here is SYNTHETIC. `alpha-toolkit` is PUBLIC and real entries are
 # client-confidential: no real name, host, path or scope appears below.
 
 WRAPPED_ALIASES = (
@@ -5061,7 +5060,7 @@ class TestReadEntryOpenCountIsNotFixtureCollapsed:
 #
 #   §2.4  2 bullets in the live store attempted an openness marker and missed
 #         the grammar, against 8 that declare `OPEN:` and parse (re-measured
-#         2026-08-19 over 53 entries / 323 nuance bullets; the proposal's
+#         over 53 entries / 323 nuance bullets; the proposal's
 #         "2 of 10 textual `OPEN:`" denominator did NOT reproduce — a raw grep
 #         returns 11 — but its near-miss count of 2 did).
 #         A near-miss was byte-identical to no marker on the read surface, so
@@ -5309,7 +5308,7 @@ class TestAMissingSurfacedSectionReachesTheIndexRow:
 
 class TestTheCommonCaseRowIsUnchanged:
     """🔴 THE INDEX PRINTS FOR EVERY ENTRY ON EVERY READ. Measured over the live
-    store on 2026-08-19: of 53 entries, 1 would carry a near-miss badge, 0 an
+    store: of 53 entries, 1 would carry a near-miss badge, 0 an
     unverifiable badge and 0 a missing-section badge. So 52 rows must render
     byte-identically to what they rendered before this change, or three rare
     signals have taxed the common case forever to describe them.
@@ -5606,8 +5605,8 @@ class TestTheSearchReportCaveat:
 # THE READER COVERS ONE HOST'S STORE, AND MUST SAY WHICH
 # =============================================================================
 #
-# 🔴 SAME DEFECT AS THE WRITER'S, SAME MEASUREMENT (2026-08-27, PRE-CUTOVER):
-# the store under `~/.claude/analyze-service-index/` was PER-HOST with no
+# 🔴 SAME DEFECT AS THE WRITER'S, SAME MEASUREMENT (PRE-CUTOVER):
+# the store under `~/.claude/<mirror-root>/` was PER-HOST with no
 # replication — workbench 115 entries / 14 scopes, laptop 33 / 11, exactly ONE
 # entry name in common across the four scopes both machines have, seven scopes
 # only on the laptop and ten only on the workbench. `scope-absent` therefore
@@ -5699,7 +5698,7 @@ class TestTheRecallCoversOneHostsStore:
         """🔴 THE REGRESSION GUARD on the reader. `scope-absent` is the status
         `/resume` reports as an ordinary non-finding; stating it of "the store"
         turns one machine's gap into a claim that nobody has ever recorded the
-        repo. Measured false 2026-08-27."""
+        repo. Measured false pre-cutover."""
         report = rc.recall(store, "never-indexed")
         assert report.status == "scope-absent", "the fixture must reach the branch"
         lines = [_norm(ln) for ln in rc.render_text(report).splitlines()]

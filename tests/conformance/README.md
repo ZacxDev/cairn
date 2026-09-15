@@ -383,3 +383,31 @@ A reassuring zero is indistinguishable from a harness wired to nothing.
   `requests=`, `assertions=` and `failures=`, and every case gets its own
   `PASS`/`FAIL` line to be counted. `0 failures` over 0 requests is the failure
   mode being guarded against.
+
+## The mutation battery over P1 — 56 mutants, 52 killed, 4 labelled equivalent
+
+Moved out of `AGENTS.md`, which every session pays for before it has been told
+anything: this is a record of rounds, not decision input before acting, and a
+survivor's authority is the label beside the code it labels. The four survivors are
+labelled EQUIVALENT at the code, with the reasoning, because three of them corrected
+a comment that was wrong.
+
+🔴 **THE MUTATION BATTERY: 56 mutants over two targets, 52 KILLED, 4 SURVIVED — and every
+survivor is LABELLED EQUIVALENT AT THE CODE, with the reasoning, because three of them
+corrected a comment that was wrong.**
+
+**46 over the RENDERER**, in three rounds: round 1 killed 24 of 40 and its 13 survivors are
+what built the fixture above; round 2 killed 40 of 46; round 3 killed 43 of 46 and is clean.
+The three correct survivors: `sort.SliceStable` → `sort.Slice` (the comparator is a total
+order); `1e-9*nsec` → `nsec/1e9` (**measured bit-identical at every realistic mtime
+magnitude** — the ULP of the sum dwarfs the difference, and the old comment claimed the
+hazard was reachable); and disabling `difflib`'s extension loops (**with an empty junk set
+the DP has already found the longest contiguous run, so neither loop can advance** — the old
+comment said two of the four "can run", which is two more than can).
+
+**10 over `store.ScopeRevision` AND THE WARNING SINK**, the two surfaces P1b added with one
+branch of coverage each: 9 killed by the guard's own test, 1 labelled equivalent. That round
+also found a defect in the new code — `readGitText` stripped the WHOLE file where the oracle
+reads `packed-refs` unstripped, which removed the last line's trailing whitespace and made
+the per-field strip unreachable from a fixture whose matching row came last.
+

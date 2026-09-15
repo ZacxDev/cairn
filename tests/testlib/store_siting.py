@@ -4,12 +4,12 @@
 
 `server.py:_replace_bytes` fsyncs the file and then the parent directory INSIDE the
 request, before the response is written, and fsync blocks in uninterruptible sleep.
-Under disk contention on the single node `devrc-ci` is pinned to, one fsync exceeds
+Under disk contention on the single node `alpha-ci` is pinned to, one fsync exceeds
 the client's `HANG_TIMEOUT` and the gate reports a CODE failure for an I/O stall — on
 PRs whose diff cannot reach the test at all. Mechanism and reproducer:
 `scripts/ci-repro/README.md`.
 
-devrc#1211 fixed that by siting the store on tmpfs, where there is no backing device
+alpha-toolkit#1211 fixed that by siting the store on tmpfs, where there is no backing device
 to contend for — but it fixed `test_subsystem_store_api.py` ONLY. The very next PR
 gated after it merged went red on `TestAppendLands` in `test_cairn_write.py`, which
 open-codes its own disk-backed `store(tmp_path)` against the same `build_server`. A
@@ -17,7 +17,7 @@ predicate copied per call site is wrong at every site it was not copied to; this
 module is the single place, and `test_store_siting_ledger.py` is what stops the set
 of call sites drifting again.
 
-Measured 2026-09-01, replaying `_replace_bytes`'s sequence (mkstemp → write → fsync
+Measured, replaying `_replace_bytes`'s sequence (mkstemp → write → fsync
 file → `os.replace` → fsync dir), reporting MAX because the bound is breached by a
 single worst-case call and a mean would hide it:
 
@@ -47,7 +47,7 @@ free-space floor above rather than closed by it:
     `_check_store_budget`, which walks the real tree at teardown; a CONCURRENT writer
     filling the mount is not, and cannot be from in here.
   * a run killed by SIGKILL (a gate timeout, `panic: test timed out`) skips the
-    `finally`, so `/dev/shm/devrc-store-*` survives; on a persistent container
+    `finally`, so `/dev/shm/cairn-store-*` survives; on a persistent container
     `/dev/shm` repeated kills accumulate toward the first case. Nothing reaps them.
 Say which of these you have ruled out before restating the guarantee.
 """
@@ -63,7 +63,7 @@ from pathlib import Path
 # Consulted in order. The env var exists so a test can point the siting at a
 # directory it controls — including a deliberately disk-backed one, which is how
 # the rejection path is exercised.
-_CANDIDATE_ENV = "DEVRC_TEST_TMPFS"
+_CANDIDATE_ENV = "CAIRN_TEST_TMPFS"
 _DEFAULT_CANDIDATE = "/dev/shm"
 
 # The mounts table, as a SEAM. It is a module attribute rather than a literal
@@ -96,7 +96,7 @@ _PAGE_BYTES = 4096
 # raises when it exceeds the budget. That cannot be fooled by a spelling, a nesting or a
 # refactor, because it is not reading the source at all.
 #
-# Measured 2026-09-02 by `store_root` itself over a full run of the three ledgered files
+# Measured by `store_root` itself over a full run of the three ledgered files
 # (`scripts/tests/test_{subsystem_store_api,cairn_write,cairn_cli}.py`): **448 stores**
 # walked, largest 1,253,376 B / 306 entries, second largest 176,128 B / 43 entries. The
 # peak is `test_cairn_cli.py`'s concurrency fixture — `_populate_source_store`'s 3 seed
@@ -279,7 +279,7 @@ def tmpfs_dir() -> Path | None:
             stat = os.statvfs(path)
             if stat.f_bavail * stat.f_frsize < _MIN_FREE_BYTES:
                 continue
-            probe = path / f".devrc-tmpfs-probe-{os.getpid()}"
+            probe = path / f".cairn-tmpfs-probe-{os.getpid()}"
             probe.write_bytes(b"probe")
             probe.unlink()
         except OSError:
@@ -392,7 +392,7 @@ def store_root(tmp_path: Path, name: str = "store") -> Generator[Path]:
     holder: Path | None = None
     if base is not None:
         try:
-            holder = Path(tempfile.mkdtemp(prefix="devrc-store-", dir=str(base)))
+            holder = Path(tempfile.mkdtemp(prefix="cairn-store-", dir=str(base)))
         except OSError:
             # The candidate passed every check above and still would not give us a
             # directory (it filled between the probe and here, hit a quota, or went

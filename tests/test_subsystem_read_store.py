@@ -3,13 +3,13 @@
 
 🔴 WHAT THIS FILE GUARDS, IN ONE SENTENCE. The Cairn cutover made a hosted pod
 the canonical datastore, FROZE the per-host mirror at
-`~/.claude/analyze-service-index` (entry files `0444`, nothing refreshes it) and
+`~/.claude/<mirror-root>` (entry files `0444`, nothing refreshes it) and
 introduced a synced cache at `~/.cache/subsystem-store`. Nobody repointed the
 READ path, so both prescribed read surfaces — `subsystem_recall.py`'s CLI (what
 `/resume` step 4 runs) and `service_recon.py`'s recon (what `/analyze-service`
-runs) — went on reading the frozen copy. MEASURED 2026-09-02 on the workbench:
-the frozen mirror served **26** `devrc/` entries and the cache **29**, and the
-frozen one printed "ALL 26 entries in `devrc/`, none omitted" with no staleness
+runs) — went on reading the frozen copy. MEASURED on the workbench:
+the frozen mirror served **26** `alpha-toolkit/` entries and the cache **29**, and the
+frozen one printed "ALL 26 entries in `alpha-toolkit/`, none omitted" with no staleness
 stamp anywhere in the output. A completeness claim, about a store that had
 stopped moving, with nothing in the render able to say so.
 
@@ -55,7 +55,7 @@ SCOPE = "workbench-cfg"
 STAMP_LINES = (
     "synced=1788363567",
     "revision=r-fixture-9",
-    "snapshot=seeded=2026-09-01T20:38:36Z staged_entries=49 newest=2026-09-02T15:38:28Z",
+    "snapshot=seeded=2000-01-01T20:38:36Z staged_entries=49 newest=2000-01-02T15:38:28Z",
     "entries=201",
     "coverage=ALL",
 )
@@ -934,8 +934,8 @@ class TestThePodContractIsUnchanged:
         exercised: a served status (0) and an unreadable one (3).
         """
         repointed(tmp_path / "never-synced")  # does not exist: unstamped by any reading
-        assert rc._exit_for("recalled", "devrc/", []) == 0
-        assert rc._exit_for("scope-unreadable", "devrc/", []) == 3
+        assert rc._exit_for("recalled", "alpha-toolkit/", []) == 0
+        assert rc._exit_for("scope-unreadable", "alpha-toolkit/", []) == 3
 
     def test_the_pod_and_cairn_use_the_library_not_the_cli(self) -> None:
         """The claim this whole exemption rests on, pinned rather than recalled.
@@ -977,7 +977,7 @@ class TestThePodContractIsUnchanged:
 #
 # 🔴 #1233 REPOINTED TWO OF THREE. `subsystem_recall`'s CLI and `service_recon`
 # were fixed; `scripts/subsystem-audit.py` kept its own
-# `DEFAULT_STORE_ROOT = ~/.claude/analyze-service-index` and defaulted `--store`
+# `DEFAULT_STORE_ROOT = ~/.claude/<mirror-root>` and defaulted `--store`
 # to it. It was left out deliberately — it is the tool `prune-index` computes
 # DELETIONS from, so repointing it has its own blast radius — and that is also
 # exactly why it is the worst one to leave: a stale mirror is missing entries the
