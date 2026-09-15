@@ -551,3 +551,34 @@ func TestAScopeCreatedAfterMaterializationIsInvisibleUntilTheNextRefresh(t *test
 		t.Fatalf("answer two must be `yes` after the refresh, got %v", read)
 	}
 }
+
+// TestARecordWithNoIdentityIsREFUSEDRatherThanProjected states a behaviour change that
+// is unreachable from a token FILE and reachable from a programmatic caller.
+//
+// 🔴 A ROW WHOSE HOLDER CANNOT BE NAMED MUST NOT AUTHENTICATE, AND THE REFUSAL IS THE
+// WHOLE PROJECTION RATHER THAN THE ROW. `Principal.Display` is what the audit line's
+// `identity=` field and every written bullet's ACTOR carry, so a principal with no name
+// is a credential whose use cannot be attributed — the same condition the bare row's
+// write refusal exists for, one level worse. `apply` refuses a `project-created` with an
+// empty name and `Replay` fails whole, so `api.New` refuses to START.
+//
+// ⚠ IT IS UNREACHABLE FROM THE DEPLOYED SHAPE, and saying so is half the point.
+// `authz.ParseTokenRow` gives every row an identity — `legacy` for a bare one, a
+// validated non-empty string for a mapped one — so no token file can produce this. What
+// can is a `TokenRecord` built in code, which is what the api tests do. The direction is
+// the safe one (refuse to serve rather than serve an unattributable credential) and it
+// is louder than the old behaviour, which was an empty `identity=` field in the audit
+// stream and a bullet attributed to nobody.
+func TestARecordWithNoIdentityIsREFUSEDRatherThanProjected(t *testing.T) {
+	root := storeWith(t, "alpha-notes")
+	_, err := sourceOver(root,
+		authz.TokenRecord{Token: aToken('a'), Scopes: []string{"alpha-notes"}},
+	).Model(context.Background())
+	if err == nil {
+		t.Fatal("a record with no identity must not project into a principal: its use " +
+			"could not be attributed in the audit line or in a written bullet")
+	}
+	if !strings.Contains(err.Error(), "token-file authority") {
+		t.Fatalf("the refusal must name where it came from, got: %v", err)
+	}
+}
