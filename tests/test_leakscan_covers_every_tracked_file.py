@@ -188,21 +188,62 @@ def test_the_denied_identifier_SET_cannot_shrink_unnoticed():
     because the negative controls are built on it — lose it and every
     `denied-identifier` control in `--self-test` passes against nothing.
     """
-    assert len(leakscan.DENIED_IDENTIFIER_DIGESTS) == 15, (
+    assert len(leakscan.DENIED_IDENTIFIER_DIGESTS) == 16, (
         f"the denied-identifier set holds "
-        f"{len(leakscan.DENIED_IDENTIFIER_DIGESTS)} digests, not 15. Adding a "
+        f"{len(leakscan.DENIED_IDENTIFIER_DIGESTS)} digests, not 16. Adding a "
         f"name is expected — raise this number in the same commit and say what "
         f"it is for. REMOVING one un-gates a real project, repository, cluster "
         f"or host name, and there is no other check that would notice."
     )
-    assert (
-        hashlib.sha256(leakscan.DENY_CANARY.encode()).hexdigest()
-        in leakscan.DENIED_IDENTIFIER_DIGESTS
-    ), (
-        f"`DENY_CANARY` ({leakscan.DENY_CANARY!r}) is not in the digest set, so "
-        f"every `denied-identifier` negative control in `--self-test` is "
-        f"asserting against a rule that cannot match it"
-    )
+    for name, attr in (
+        (leakscan.DENY_CANARY, "DENY_CANARY"),
+        (leakscan.DENY_CANARY_WORD, "DENY_CANARY_WORD"),
+    ):
+        assert (
+            hashlib.sha256(name.encode()).hexdigest()
+            in leakscan.DENIED_IDENTIFIER_DIGESTS
+        ), (
+            f"`{attr}` ({name!r}) is not in the digest set, so every control and "
+            f"documented example built on it is asserting against a rule that "
+            f"cannot match it"
+        )
+
+
+def test_the_documented_matching_examples_are_TRUE_of_the_code():
+    """🔴 THE COMMENT ABOVE `DENIED_IDENTIFIER_DIGESTS` IS THE ONLY DOCUMENTATION
+    OF THE MATCHING RULE, SO A WRONG EXAMPLE THERE IS WORSE THAN NO EXAMPLE.
+
+    The digests cannot be read, so a reader learns what this rule matches from
+    that table and nowhere else. Every row of it is asserted here, in the same
+    order, against the real `denied_identifiers` — including the two `clean`
+    rows, because an illustration of NARROWNESS that is secretly a false
+    positive would teach the opposite of the truth.
+
+    ⚠ The `scoped-…` row is a declared LIMIT, not a triumph: a denied entry in
+    the TAIL of a compound is never reached, because the walk is over prefixes.
+    It is asserted so that widening the walk one day turns this test red and
+    forces the comment to be corrected with it, rather than leaving the file
+    documenting a narrowness it no longer has.
+    """
+    word, compound = leakscan.DENY_CANARY_WORD, leakscan.DENY_CANARY
+    fires = [
+        (f"{word}-ci-jx5fq", word),
+        (f"{word.upper()}_TEST_TMPFS", word),
+        (f"clusters/{word}/apps/x", word),
+        (f"{compound}-ci-jx5fq", compound),
+    ]
+    for sample, expected in fires:
+        assert expected in leakscan.denied_identifiers(sample), (
+            f"the documented table says {sample!r} FIRES on {expected!r}, and it "
+            f"does not. Fix the code or fix the comment — a reader has nothing "
+            f"else to go on."
+        )
+    for sample in (f"{word}s", f"{compound}d", f"scoped-{word}"):
+        assert leakscan.denied_identifiers(sample) == [], (
+            f"the documented table says {sample!r} is clean, and it is not: "
+            f"{leakscan.denied_identifiers(sample)}. Either the rule stopped "
+            f"being narrow or the comment is now wrong about it."
+        )
 
 
 def test_leakscans_OWN_CONTROLS_are_gated_by_THIS_job_too():

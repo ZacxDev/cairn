@@ -90,20 +90,24 @@ jobs:
           # skip, which is where the claim belongs. A skip nobody counts is indistinguishable
           # from a pass.
           #
-          # 1859 was measured after the name/date scrub: 1856 plus the three in
+          # 1860 was measured after the name/date scrub: 1856 plus the four in
           # `test_leakscan_covers_every_tracked_file.py` that gate the two rules
           # `leakscan.py` grew for the two AGENTS.md bullets that had no gate — the
           # denied-identifier DIGEST SET's size (it can only be un-gated by deleting a
           # digest, and nothing else would notice), `self_test()`'s verdict read in THIS
-          # tier as well as the `leakscan` job's, and an end-to-end refusal proving both
-          # new rules are reachable through `main()` and not merely through `scan_text`.
+          # tier as well as the `leakscan` job's, an end-to-end refusal proving both new
+          # rules are reachable through `main()` and not merely through `scan_text`, and
+          # the one that pins the DOCUMENTED matching examples as behaviour. That last
+          # one exists because the digests cannot be read, so the comment above them is
+          # the only documentation of the matching rule and a wrong example there is
+          # worse than none.
           #
           # Raise as the suite grows — `m - min(50, max(1, m/20))` for the m you
           # measured; never lower without saying why. ⚠ THE GO TESTS ARE NOT IN
           # THIS NUMBER: they are a different runner in a different job, and
           # folding them in would make one floor answer two questions. Nor is the
           # PARITY gate: it is its own job with its own floor, for the same reason.
-          FLOOR = 1809
+          FLOOR = 1810
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

@@ -100,14 +100,43 @@ _PRIVATE_IP = re.compile(
 # shrink unnoticed. Adding a name is a one-line digest; removing one has to be
 # argued for in a diff.
 #
-# ⚠ MATCHING IS EXACT OVER `-`/`_` PREFIXES, NEVER SUBSTRING. `vetr` must not
-# fire on `verify`; `devrc-ci-jxf5j` and `DEVRC_TEST_TMPFS` must both fire on
-# the `devrc` entry. So each identifier-shaped token on the line is lowercased,
-# `_` is folded to `-`, and every leading segment run is hashed: `a-b-c` offers
-# `a`, `a-b`, `a-b-c`. A denied first segment therefore catches every compound
-# built on it, and a denied compound catches only itself.
+# ⚠ MATCHING IS EXACT OVER `-`/`_` PREFIXES, NEVER SUBSTRING — AND THE EXAMPLES
+# BELOW USE THE SYNTHETIC SENTINELS, BECAUSE THE FIRST DRAFT OF THIS PARAGRAPH
+# ILLUSTRATED THE RULE WITH TWO REAL ENTRIES AND ONE OF THEIR REAL COMPOUNDS.
+# Three lines under "a set you could audit from here would be a set you could
+# read from here", it handed back two members of the set in clear text, and a
+# grep for either over the public repo still hit. The digests protect the set;
+# an illustration that spells it undoes them. Sentinels only, from here on.
+#
+# Each identifier-shaped token on the line is lowercased, `_` is folded to `-`,
+# and every leading segment run is hashed: `a-b-c` offers `a`, `a-b`, `a-b-c`.
+# Taking BOTH sentinels as denied entries — `canarytoken` (one word) and
+# `redacted-canary-scope` (a compound) — and every row below is asserted in
+# `test_the_documented_matching_examples_are_TRUE_of_the_code`:
+#
+#   canarytoken-ci-jx5fq              FIRES  a one-word entry catches every
+#                                            compound built on it
+#   CANARYTOKEN_TEST_TMPFS            FIRES  an env var folds `_`→`-` and case,
+#                                            reaching the same entry
+#   clusters/canarytoken/apps/x       FIRES  a path segment is its own token
+#   redacted-canary-scope-ci-jx5fq    FIRES  a compound entry catches its own
+#                                            extensions
+#   canarytokens                      clean  a longer WORD that merely starts
+#                                            with the entry: one token, one
+#                                            candidate, and it is not the entry
+#   redacted-canary-scoped            clean  the entry is a literal SUBSTRING
+#                                            here, and a substring is not a
+#                                            segment run
+#   scoped-canarytoken                clean  ⚠ a PREFIX walk, so an entry in the
+#                                            TAIL is never reached. A real
+#                                            limit, not a bug — matching at any
+#                                            position starts matching English
+#
+# A denied first segment therefore catches every compound built on it, and a
+# denied compound catches only itself and its own extensions.
 # --------------------------------------------------------------------------
 DENIED_IDENTIFIER_DIGESTS = frozenset({
+    "0c3fa6e66c0b74955492996c5aeeb47189804ce63a2a25addc4867ed3af4d1e6",
     "1ac8ca4c444febcb84f6de0da68d3ed09124e9466a7d70e9b4d0137c71d1f10a",
     "338c052d380d56e4abd5da474847046b5d6a1c8ad67cc6ccd5d6b045cde6e8ef",
     "3c3e5b7f6bc16e849f457ed07d5cc060c103a0b7d49caad0fb99a37957f35301",
@@ -125,12 +154,20 @@ DENIED_IDENTIFIER_DIGESTS = frozenset({
     "f55e9ac512ce8de1b70bca77f709d8a7df592e7f25a0b9773646e6b3014c0bcf",
 })
 
-#: The sentinel whose digest IS in the set above, so the negative control can
-#: exercise the real path without naming a real deployment. Its SHAPE is what
-#: the matcher sees — a lowercase hyphenated identifier compound — and that is
-#: the part a realistic control has to get right; its CONTENT is synthetic
-#: because realistic content here would be the leak this rule prevents.
+#: TWO sentinels whose digests ARE in the set above, so the controls — and the
+#: documented examples — can exercise the real path without naming a real
+#: deployment. Their SHAPE is what the matcher sees, and that is the part a
+#: realistic control has to get right; their CONTENT is synthetic because
+#: realistic content here would be the leak this rule prevents.
+#:
+#: 🔴 THERE ARE TWO BECAUSE THE SET HOLDS TWO KINDS OF ENTRY AND THEY BEHAVE
+#: DIFFERENTLY. A ONE-WORD entry fires on every compound built on it; a COMPOUND
+#: entry fires only on itself and its extensions. One sentinel could only ever
+#: demonstrate one of those, and the paragraph above would have had to ASSERT
+#: the other — which is how a comment ends up documenting a rule the code does
+#: not have. Both are exercised by a negative control below.
 DENY_CANARY = "redacted-canary-scope"
+DENY_CANARY_WORD = "canarytoken"
 
 _IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)*")
 
@@ -228,6 +265,30 @@ RULES: list[tuple[str, str, str]] = [
         # A host in a domain the origin deployment actually serves. Publishing a
         # reachable endpoint next to this repo's own notes on its weaknesses
         # turns ordinary security documentation into a roadmap for one host.
+        #
+        # 🔴 DO NOT "FIX" THIS INTO DIGESTS THE WAY `DENIED_IDENTIFIER_DIGESTS`
+        # IS. That is the obvious next thought after reading the set above, and
+        # it would silently narrow a SECURITY rule into a weaker one. Two
+        # reasons, and the first is fatal on its own:
+        #
+        #   * this rule matches an UNBOUNDED set — every host under these
+        #     registrable domains, including subdomains nobody has thought of.
+        #     Its own negative control is a host that appears nowhere in this
+        #     repo. A digest set can only recognise strings enumerated in
+        #     advance, so digesting it would convert "any host in this domain"
+        #     into "these exact hosts" and quietly stop catching the new one,
+        #     which is the only kind this rule exists to catch.
+        #   * the registrable domains are PUBLIC — resolvable in public DNS and
+        #     already in certificate-transparency logs — and this repo's own
+        #     `LICENSE`, `go.mod` and `README.md` name its owner anyway. The
+        #     digest set protects identifiers that exist ONLY inside a private
+        #     deployment, where publishing the name IS the disclosure. Naming a
+        #     public domain here discloses nothing new; it prevents a
+        #     disclosure.
+        #
+        # So the plaintext is load-bearing: a pattern must contain what it
+        # matches, and here what it matches is a domain suffix rather than a
+        # name. That asymmetry is the whole difference between the two rules.
         r"\b[a-z0-9-]+\.(?:zacx\.dev|homelab\.lan|civitai\.com|civitaic\.com)\b",
         "a reachable hostname belonging to a real deployment",
     ),
@@ -444,10 +505,16 @@ NEGATIVE_CONTROLS = [
     # fixture-scope tuple, which is where the real ones lived.
     ("denied-identifier",
      f'for scope in ("alpha-notes", "{DENY_CANARY}", "wide-reader"):'),
-    # …and as a path segment and a compound SUFFIX, because the prefix walk is
-    # the part most likely to be broken by a "tidy-up".
-    ("denied-identifier", f"    store = tmp_path / \"{DENY_CANARY}-ci-jxf5j\""),
+    # …and as a path segment and a compound EXTENSION, because the prefix walk
+    # is the part most likely to be broken by a "tidy-up".
+    ("denied-identifier", f"    store = tmp_path / \"{DENY_CANARY}-ci-jx5fq\""),
     ("denied-identifier", f"# manifests live at clusters/{DENY_CANARY}/apps/store/"),
+    # 🔴 THE ONE-WORD SENTINEL GETS ITS OWN CONTROLS. Adding a digest nothing
+    # exercises is a declaration, not coverage: the set would grow by one and no
+    # test would notice if the entry were wrong. These are the two shapes a
+    # one-word entry has to catch that a compound entry cannot demonstrate.
+    ("denied-identifier", f"    for scope in (\"{DENY_CANARY_WORD}-ci-jx5fq\", \"alpha-notes\"):"),
+    ("denied-identifier", f"        monkeypatch.setenv(\"{DENY_CANARY_WORD.upper()}_TEST_TMPFS\", str(tmp_path))"),
     # The dated-incident controls ARE realistic content — a date is not a
     # secret, and these are the exact three shapes removed from this tree.
     ("dated-incident",
@@ -483,10 +550,17 @@ ALLOWED_CONTROLS = [
     # trailing comment and the run reported a FALSE POSITIVE on its own
     # narrowness control. That red was the rule refusing a real name in a real
     # file, which is the negative control the digest set cannot carry in
-    # plaintext; it is recorded here rather than re-created.
-    ('    assert sr.normalize_ref("verify") == "verify"  # a substring, not a segment',
-     "a word that CONTAINS a denied identifier's letters — matching is over "
-     "whole `-`/`_` segments, never substrings"),
+    # plaintext; it is recorded here rather than re-created. The sentinels
+    # below say the same thing without spelling an answer.
+    (f'    assert normalize_ref("{DENY_CANARY_WORD}s") == "{DENY_CANARY_WORD}s"',
+     "a longer WORD that merely STARTS with a one-word denied entry: one token, "
+     "one candidate, and it is not the entry"),
+    (f'    scope = tmp_path / "{DENY_CANARY}d"   # one letter longer',
+     "a token in which a denied COMPOUND is a literal substring — a substring "
+     "is not a segment run"),
+    (f'    legacy = "scoped-{DENY_CANARY_WORD}"',
+     "a denied entry in the TAIL of a compound. The walk is over PREFIXES, so "
+     "this is a declared LIMIT of the rule rather than a false negative to fix"),
     ('nix run github:ZacxDev/cairn -- doctor',
      "the repository's OWN public URL: the owner handle is not denied, and "
      "denying it would red every import path in the tree"),
