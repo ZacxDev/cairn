@@ -243,8 +243,21 @@ def mutated_server(dest: Path, mutation: Mutation) -> Path:
     # a failure still attributes to the one edited module.
     target.write_text(SERVER_PY.read_text(encoding="utf-8"), encoding="utf-8")
     lib = dest / "lib"
-    if lib.exists():
-        shutil.rmtree(lib, ignore_errors=True)
+    # ⚠ THE SYMLINK CASE IS HANDLED FIRST, AND THE HAZARD IS A CRASH RATHER THAN A FALSE
+    # SURVIVED — SAYING WHICH, BECAUSE THE FIRST DRAFT OF THIS COMMENT CLAIMED THE WORSE ONE.
+    # `shutil.rmtree` refuses a symbolic link, and under `ignore_errors=True` it refuses
+    # SILENTLY; MEASURED on this interpreter, `copytree` then raises `FileExistsError:
+    # [Errno 17] File exists` on the surviving link. That is LOUD, so it could not have
+    # produced a wrong verdict — it would have aborted `--self-test` with a traceback.
+    # Unreachable today in any case: every mutation gets its own `dest`. Kept because a
+    # control path that crashes on a reachable arrangement is a control nobody runs, and
+    # because the reading this replaces — `rmtree` walking THROUGH the link into the real
+    # `lib/` — is the one that would have edited the operator's source tree. It does not;
+    # `sweep6` confirmed the real `lib/` untouched and the copy mutated.
+    if lib.is_symlink():
+        lib.unlink()
+    elif lib.exists():
+        shutil.rmtree(lib)
     shutil.copytree(LIB, lib)
     module = lib / mutation.target
     if not module.is_file():
