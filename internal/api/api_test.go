@@ -20,7 +20,6 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/netid"
-	"github.com/ZacxDev/cairn/internal/store"
 	"github.com/ZacxDev/cairn/internal/write"
 )
 
@@ -1404,20 +1403,8 @@ func TestEveryRefusalClosesItsConnectionAndA200DoesNot(t *testing.T) {
 	}
 }
 
-func TestVisibleScopesDefaultsToTheEmptySet(t *testing.T) {
-	// 🔴 AN INVARIANT GUARD, LABELLED AS ONE: no bug ever set this field wrong, because
-	// the per-request value's ZERO VALUE is the empty set and unrestricted is reachable
-	// only by asking for it. What it pins is that the property survives a refactor — the
-	// day a route runs before authorization, it must see NOTHING rather than everything.
-	var zero store.ScopeSet
-	if zero.Unrestricted {
-		t.Fatal("the zero ScopeSet must not be unrestricted")
-	}
-	if zero.Allows("alpha-notes") {
-		t.Fatal("the zero ScopeSet must allow nothing")
-	}
-	rq := &request{}
-	if rq.visible.Unrestricted || rq.visible.Allows("alpha-notes") {
-		t.Fatal("a request that has not authenticated must see nothing")
-	}
-}
+// ⚠ `TestVisibleScopesDefaultsToTheEmptySet` USED TO BE HERE AND HAS BEEN WIDENED
+// RATHER THAN DELETED. It asserted one zero value (`store.ScopeSet{}`); the request now
+// carries TWO scope sets and a `control.Authorization`, and the fail-closed claim has to
+// hold at every level of that chain or it holds nowhere.
+// `TestTheZeroRequestSeesNothingAtBothLevels` in `authority_test.go` is what it became.

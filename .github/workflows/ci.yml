@@ -188,19 +188,23 @@ jobs:
           set -o pipefail
           go test ./... | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
-          # TWELVE packages carry tests, measured on the P3a branch: api, authz, client,
-          # control, doctor, hostid, netid, pytext, report, snapshot, store, write. It was
-          # NINE at P1b; `client` and `doctor` arrived with the Go CLIENT and `control`
-          # with P3a. The floor is ONE BELOW that, so deleting a package's tests fails here
+          # FOURTEEN packages carry tests, measured on this branch: api, authz, client,
+          # cmd/cairn-server, control, control/tokenfile, doctor, hostid, netid, pytext,
+          # report, snapshot, store, write. It was NINE at P1b; `client` and `doctor`
+          # arrived with the Go CLIENT, `control` with P3a, `control/tokenfile` with the
+          # control-plane wiring, and `cmd/cairn-server` with the gate on the authority
+          # refresh loop — which is the only thing bounding the token-file adapter's
+          # declared divergence and had no test of any kind before it.
+          # The floor is ONE BELOW that, so deleting a package's tests fails here
           # while adding a package does not — the same shape as the Python collected-test
           # floor, and for the same reason: `go test` over a package with no test files
           # exits 0, so the exit code alone cannot tell a green suite from an absent one.
           #
-          # 🔴 MOVE THIS NUMBER WITH THE PACKAGE COUNT. A floor left at 10 while twelve
+          # 🔴 MOVE THIS NUMBER WITH THE PACKAGE COUNT. A floor left at 12 while fourteen
           # packages carry tests does not fail late — it stops failing at all for the FIRST
-          # deletion, which is the only one anybody would notice.
+          # TWO deletions, which are the only ones anybody would notice.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 11 ]; then
+          if [ "$ok" -lt 13 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
@@ -212,11 +216,14 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. ~80s on one developer host (46 mutants; four of the cache rows are killed by
-      # a TIMEOUT rather than by an assertion, which is what the extra minute buys), and it
-      # is what stops the rows bit-rotting into patterns that match
-      # nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (46 mutants, each on the test that names it)
+      # kill. ~3min on one developer host (62 mutants over FOUR packages — the model, the
+      # token-file projection, the server that authorises from it and `cmd/cairn-server`,
+      # because a mutant in one is killed by a guard in another and the refresh loop that
+      # bounds the adapter's declared divergence exists only in the program; four of the
+      # cache rows are killed by a TIMEOUT rather than by an assertion, which is what the
+      # extra minute buys), and it is what stops the rows bit-rotting into patterns that
+      # match nothing and score SURVIVED without ever running.
+      - name: prove every authz guard can go RED (62 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT

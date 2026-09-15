@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/api"
 	"github.com/ZacxDev/cairn/internal/authz"
+	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/netid"
 )
 
@@ -56,6 +58,26 @@ const (
 	reloadLoaded  = reloadPrefix + "LOADED"
 	reloadRefused = reloadPrefix + "REFUSED"
 )
+
+// refreshInterval is `api.AuthorityRefreshInterval`, and it is a VAR rather than a
+// const for exactly one reason — stated here because a test hook inside a deployed
+// program is a cost that has to be earned.
+//
+// 🔴 THE LOOP BELOW IS THE ONLY MECHANISM BOUNDING THE DIVERGENCE `tokenfile` DECLARES
+// IN ITS PACKAGE DOC, AND ITS ONLY OBSERVABLE IS A SCOPE THAT APPEARS. There is no
+// counter, no log line per refresh and no route reporting the epoch (deliberately —
+// see `internal/control/README.md`), so the one way to watch the loop work is to
+// create a directory out of band and wait for a read to answer. At 30 seconds that is 30
+// seconds in every `go test ./...` and 30 minutes across the mutation battery, which
+// is how a gate ends up not existing at all: `main_test.go` re-executes THIS binary as
+// the server with a short interval instead, so deleting the goroutine is a RED test
+// rather than a comment nobody checks.
+//
+// Nothing in the serving path writes it: no flag, no environment variable, and
+// `main_test.go` is the only assignment in the package. An operator cannot reach it,
+// which is the difference between this and widening the pod's configuration surface
+// for a test's convenience.
+var refreshInterval = api.AuthorityRefreshInterval
 
 func main() {
 	store := flag.String("store", envOr("SUBSYSTEM_STORE_ROOT", defaultStore), "store root")
@@ -137,6 +159,34 @@ func main() {
 	// believing it was replaced.
 	installReload(srv, resolvedTokenFile, env)
 
+	// 🔴 THE AUTHORITY'S TIMER, AND WHAT IT IS ACTUALLY FOR. The token table refreshes
+	// on every reload, so the credentials and their allowlists are never older than the
+	// last SIGHUP. What ages without one is the SCOPE ENUMERATION the token-file
+	// adapter reads off the filesystem: a scope directory created OUT OF BAND —
+	// `server/seed.sh` seeds through `kubectl exec … tar -xf -` — is not visible to a
+	// bare (unrestricted) row until the next materialization, because the control plane
+	// has no unrestricted principal to answer with. See the divergence declared in
+	// `tokenfile`'s package doc. The timer bounds that window; `Staleness` reports it.
+	//
+	// ⚠ SIGHUP IS DELIBERATELY NOT ONE OF THESE TRIGGERS. The reload path above already
+	// re-materializes as part of publishing the new table, and a second registration
+	// would refresh twice for one signal — `control.RefreshTriggers` documents that two
+	// `signal.Notify` channels BOTH receive it, so this would be an extra refresh, not
+	// a missed one. One trigger, one place.
+	//
+	// 🔴 AND IT IS GATED FROM OUTSIDE THIS PROCESS, BECAUSE NOTHING INSIDE IT CAN BE.
+	// `TestTheBinarysOwnTimerIsWhatClosesTheDivergence` runs this binary, creates a
+	// scope directory behind its back, sends no signal and calls no refresh, and
+	// requires the read to start answering. Deleting this goroutine — or emptying its
+	// trigger set — is that test going red, which is the only claim that could not be
+	// made while the loop lived in a package with no test files at all.
+	go func() {
+		if err := srv.Authority().Run(context.Background(),
+			control.RefreshTriggers{Interval: refreshInterval}); err != nil {
+			fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: authority refresh loop stopped: "+err.Error()))
+		}
+	}()
+
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()))
@@ -206,7 +256,19 @@ func installReload(srv *api.Server, tokenFile string, env map[string]string) {
 					reloadRefused, err.Error(), len(previous), tokenIDs(previous))))
 				continue
 			}
-			srv.SetTokens(records)
+			// 🔴 THE RE-MATERIALIZATION IS PART OF THE RELOAD, AND ITS FAILURE IS
+			// REPORTED AS A REFUSAL RATHER THAN AS A SUCCESS WITH A FOOTNOTE. The file
+			// parsed; the authority did not rebuild from it, so the table the operator
+			// just edited is NOT what is authorising requests. The previous model keeps
+			// serving (see `control.Cache.Refresh`), which is the same fallback a
+			// refused parse gets — so the line says the same thing, and the operator's
+			// one signal that `kill -HUP` did anything stays honest.
+			if err := srv.SetTokens(records); err != nil {
+				fmt.Println(reloadSafe(fmt.Sprintf(
+					"subsystem-store-api: %s — the token source parsed but the authority did not rebuild from it (%s). NOTHING CHANGED: still serving the %d previously loaded identities [%s]. Fix it and send SIGHUP again",
+					reloadRefused, err.Error(), len(previous), tokenIDs(previous))))
+				continue
+			}
 			fmt.Println(reloadSafe(fmt.Sprintf(
 				"subsystem-store-api: %s %d identities [%s] (was %d [%s])",
 				reloadLoaded, len(records), tokenIDs(records), len(previous), tokenIDs(previous))))

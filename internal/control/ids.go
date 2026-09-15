@@ -46,6 +46,34 @@ func NewID(prefix string) (ID, error) {
 	return ID(prefix + "_" + idAlphabet.EncodeToString(buf)), nil
 }
 
+// DerivedID mints an id that is a pure function of `key`.
+//
+// 🔴 IT EXISTS FOR ADAPTERS OVER AN AUTHORITY THAT HAS NO ID COLUMN, AND FOR
+// NOTHING ELSE. `internal/control/tokenfile` projects a flat token file — which
+// carries identities and scope NAMES and no ids at all — into this model, and it
+// re-projects on every refresh. A random `NewID` there would mint a different id
+// for the same row every time the cache refreshed, so a `Scope` would stop being
+// the same scope across a SIGHUP and every grant naming it would have to be
+// re-derived in lockstep. A derived id is the same id for the same input, which is
+// what makes "re-materialize" a no-op rather than a rename.
+//
+// ⚠ AND IT IS NOT AN IMMUTABLE ID, WHICH IS THE WHOLE POINT OF `Scope.ID`. An id
+// derived from a name MOVES when the name moves, so an adapter using this has no
+// rename reconciliation and cannot have one. That is honest for a token file (which
+// has no way to say "this is the same scope under a new name") and it is exactly
+// what a real authority must NOT do — a stored id is what survives a rename. Do not
+// reach for this when the backend can hold an id of its own.
+//
+// ⚠ NOT A SECRET, AND NOT CLAIMED TO BE. `NewID` uses `crypto/rand` because an
+// unguessable handle denies enumeration; a digest of a name is guessable by anybody
+// who can guess the name. An adapter using this is declaring that its names are
+// already the identifiers callers address, which is true of the token file's
+// scopes — they are the directory names in the URL.
+func DerivedID(prefix, key string) ID {
+	sum := sha256.Sum256([]byte(prefix + "\x00" + key))
+	return ID(prefix + "_" + idAlphabet.EncodeToString(sum[:idEntropyBytes]))
+}
+
 // MustPrefix answers whether an id carries the expected prefix.
 //
 // Callers that accept an id off the wire should use it: it is a cheap, total check

@@ -45,7 +45,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PKG = "./internal/control/"
+
+#: 🔴 FOUR PACKAGES, NOT ONE, BECAUSE THE GUARDS THIS BATTERY EXERCISES NOW SPAN A
+#: SEAM. `internal/control` is the model and its predicate; `internal/control/tokenfile`
+#: is the projection of the token file into that model; `internal/api` is the server that
+#: authorises from it. A mutant in the projection is killed by a guard in the server and
+#: vice versa — so a battery scoped to one package would score those SURVIVED while the
+#: suite that catches them was never run. `./internal/control/...` would cover the first
+#: two in one word; it is spelled out so that adding a sub-package is a deliberate act
+#: rather than something the pattern absorbs silently.
+#:
+#: 🔴 AND `cmd/cairn-server` IS THE FOURTH BECAUSE OF WHAT LIVES ONLY THERE. The refresh
+#: loop that bounds the divergence `tokenfile` declares is started by `main` and by
+#: nothing else — measured: deleting it left `go build`, `go vet` and all thirteen
+#: `internal/...` test packages green, and this battery never ran the package at all.
+#: A mitigation with no gate is a mitigation nobody can be told has stopped working.
+PKGS = (
+    "./internal/control/",
+    "./internal/control/tokenfile/",
+    "./internal/api/",
+    "./cmd/cairn-server/",
+)
 
 
 class MutationError(AssertionError):
@@ -581,6 +601,221 @@ MUTANTS: tuple[Mutant, ...] = (
         "value before the error will believe. A write that failed against a dead "
         "authority would report itself immediately in force.",
     ),
+    # ---- the token-file projection: where the legacy unrestricted row becomes -----
+    # ---- explicit grants, and where the enumeration that replaces the sentinel ----
+    # ---- is built. -----------------------------------------------------------------
+    Mutant(
+        name="legacy-row-gains-write",
+        path="internal/control/tokenfile/source.go",
+        old="\t\t\tVerbs: control.NewVerbSet(control.VerbRead),",
+        new="\t\t\tVerbs: control.NewVerbSet(control.VerbRead, control.VerbWrite),",
+        killer="TestALegacyRowReachesEveryScopeAndMayWriteNone",
+        extra_killers=("TestTheServedAuthorizationMatrixIsExactlyThis",),
+        why="one word added to the grant a bare row gets. The server's write refusal is "
+        "DERIVED from the absence of that verb, so this silently hands the store's "
+        "write verbs to a credential that names no actor — the one thing the refusal "
+        "exists to prevent, and it reads like a typo rather than like a change.",
+    ),
+    Mutant(
+        name="mapped-row-loses-write",
+        path="internal/control/tokenfile/source.go",
+        old="\t\t\tVerbs: control.NewVerbSet(control.VerbRead, control.VerbWrite),",
+        new="\t\t\tVerbs: control.NewVerbSet(control.VerbRead),",
+        killer="TestAMappedRowReachesAScopeThatHasNoDirectoryYet",
+        extra_killers=("TestTheServedAuthorizationMatrixIsExactlyThis",),
+        why="the mirror of the row above, and the direction a cautious author would "
+        "actually take. It fails CLOSED, so nothing looks broken until somebody's "
+        "`cairn append` starts answering 404 for a scope they own.",
+    ),
+    Mutant(
+        name="enumeration-forgets-the-store",
+        path="internal/control/tokenfile/source.go",
+        old="\tfor _, dir := range s.storeDirs() {",
+        new="\tfor _, dir := range []string(nil) {",
+        killer="TestALegacyRowReachesEveryScopeAndMayWriteNone",
+        extra_killers=("TestTheServedAuthorizationMatrixIsExactlyThis",),
+        why="the enumeration built from the token file alone. It is the whole reason "
+        "this adapter reads a directory at all, and it is INVISIBLE TO THE "
+        "CONFORMANCE CORPUS — measured: the corpus stays at 116 PASS / 0 failures "
+        "with this applied, because every scope in its world is named by a mapped "
+        "row. The guards below are the only thing standing on it.",
+    ),
+    Mutant(
+        name="enumeration-forgets-the-allowlist",
+        path="internal/control/tokenfile/source.go",
+        old="\t\tfor _, scope := range r.Scopes {",
+        # `r.Scopes[:0]` rather than a nil literal: the latter leaves the range
+        # variable `r` unused, and a mutant that does not COMPILE dies at the build
+        # rather than at a guard. Measured — the first draft of this row did exactly
+        # that and was reported DID NOT BUILD.
+        new="\t\tfor _, scope := range r.Scopes[:0] {",
+        killer="TestAMappedRowReachesAScopeThatHasNoDirectoryYet",
+        why="the other half of the union, dropped. A store whose every scope already "
+        "has a directory hides it completely — the only observable is a mapped row "
+        "losing the ability to create its FIRST entry in a scope, which is how the "
+        "store gained every scope it has.",
+    ),
+    Mutant(
+        name="the-enumeration-and-the-grant-fold-DIFFERENTLY",
+        path="internal/control/tokenfile/source.go",
+        # 🔴 THE HAZARD IS A SPLIT, NOT AN ABSENCE, AND THIS ROW WAS WRONG ABOUT THAT
+        # UNTIL IT WAS RUN. Its first draft replaced `foldScope`'s whole body and
+        # SURVIVED, because `store.ScopeSet` folds BOTH sides of every comparison — so
+        # an enumeration recorded in raw form is still reachable under its folded name.
+        # What is not survivable is the two sites disagreeing: `scopeNames` records the
+        # scope and `grantsFor` derives the grant's object id, and if one folds and the
+        # other does not, the grant names a scope the model does not hold, `apply`
+        # refuses it, `Replay` fails whole and the pod authenticates NOBODY.
+        old="\t\tif folded := foldScope(raw); folded != \"\" {",
+        new="\t\tif folded := raw; folded != \"\" {",
+        killer="TestTwoDirectoriesThatFoldTogetherDoNotTakeTheAuthorityDown",
+        why="one of the two folding sites reverted to the raw name — the shape an edit takes when somebody inlines a helper at the site they happen to be reading. It is not a narrowing and not a widening: it is a projection that cannot be built at all, and the failure lands on the credential table rather than on one scope.",
+    ),
+    Mutant(
+        name="two-bare-rows-mint-two-principals",
+        path="internal/control/tokenfile/source.go",
+        old="\t\tif !seen[identity] {",
+        new="\t\tif true {",
+        killer="TestTwoBareRowsAreOnePrincipalWithTwoCredentials",
+        why="one project per ROW instead of per identity. `authz.LoadTokens` exempts "
+        "`legacy` from its duplicate-identity guard precisely so two bare rows can "
+        "coexist during a rotation, so this breaks on the one file shape the "
+        "rotation procedure prescribes — and it breaks by taking the whole authority "
+        "down, not by narrowing it.",
+    ),
+    Mutant(
+        name="derived-id-ignores-its-key",
+        path="internal/control/ids.go",
+        old="\tsum := sha256.Sum256([]byte(prefix + \"\\x00\" + key))",
+        new="\tsum := sha256.Sum256([]byte(prefix))",
+        killer="TestALegacyRowReachesEveryScopeAndMayWriteNone",
+        extra_killers=(
+            "TestTheProjectionIsAPureFunctionOfItsInputs",
+            "TestTheServedAuthorizationMatrixIsExactlyThis",
+        ),
+        why="a derivation that is deterministic and carries no information. Every id of "
+        "one prefix collides, so the second scope is refused at replay. It is the "
+        "shape an author reaches for when 'make it stable' is the only requirement "
+        "they remember.",
+    ),
+    Mutant(
+        name="projection-loses-its-order",
+        path="internal/control/tokenfile/source.go",
+        old="\tsort.Strings(out)\n\treturn out",
+        # Sorting a zero-length slice rather than deleting the call: deleting it
+        # leaves the `sort` import unused and the tree does not build, which proves
+        # nothing about the ordering guard.
+        new="\tsort.Strings(out[:0])\n\treturn out",
+        killer="TestTheProjectionIsAPureFunctionOfItsInputs",
+        why="map range order reaching the journal. Nothing about the AUTHORITY changes "
+        "— the same ids, the same grants, the same epoch — so a comparison of those "
+        "would score it EQUIVALENT. What moves is the event ORDER, which is why the "
+        "guard compares the serialized journal instead.",
+    ),
+    # ---- the server: where the predicate is asked --------------------------------
+    Mutant(
+        name="write-gate-accepts-everybody",
+        path="internal/api/server.go",
+        old="\treturn len(rq.auth.ScopeIDs(control.VerbWrite)) > 0",
+        new="\treturn len(rq.auth.ScopeIDs(control.VerbWrite)) >= 0",
+        killer="TestTheServedAuthorizationMatrixIsExactlyThis",
+        extra_killers=("TestALegacyTokenMayNotWriteButMayStillRead",),
+        why="one character. `>= 0` is always true for a length, so the write-route "
+        "refusal is gone while the expression still reads like a check — the "
+        "classic off-by-one written in the direction that fails OPEN.",
+    ),
+    Mutant(
+        name="write-path-narrows-with-the-read-set",
+        path="internal/api/server.go",
+        # 🔴 ANCHORED ON THE FUNCTION SIGNATURE, BECAUSE THE LINE ALONE OCCURS TWICE.
+        # `createEntry` loads with the same set for the same reason, and a pattern
+        # matching both would mutate code this row does not name — which the harness
+        # refuses as an occurrence-count error rather than scoring.
+        old="func (s *Server) resolveWritable(rq *request, scope, ref string) (*store.Entry, bool, error) {\n\tindex, err := store.LoadStore(s.StoreRoot, \"written\", rq.writable)",
+        new="func (s *Server) resolveWritable(rq *request, scope, ref string) (*store.Entry, bool, error) {\n\tindex, err := store.LoadStore(s.StoreRoot, \"written\", rq.visible)",
+        killer="TestTheWritePathNarrowsWithTheWriteVERB",
+        why="the two sets swapped at the loader. It is INVISIBLE to every principal the "
+        "token file can produce, because a mapped row's read and write sets are "
+        "equal by construction — which is exactly why the guard builds a principal "
+        "the token file cannot spell. A branch no test can reach is not a guard.",
+    ),
+    Mutant(
+        name="create-narrows-with-the-read-set",
+        path="internal/api/server.go",
+        old="\tif !rq.writable.Allows(scope) {",
+        new="\tif !rq.visible.Allows(scope) {",
+        killer="TestTheWritePathNarrowsWithTheWriteVERB",
+        why="the same swap on the CREATE half, which consults the set directly rather "
+        "than through the loader. Two sites, two mutants: a fix applied to one of "
+        "them is the one-rule-two-places failure this repository keeps paying for.",
+    ),
+    Mutant(
+        name="read-set-uses-the-write-verb",
+        path="internal/api/server.go",
+        old="\trq.visible = auth.VisibleScopes(control.VerbRead)",
+        new="\trq.visible = auth.VisibleScopes(control.VerbWrite)",
+        killer="TestTheServedAuthorizationMatrixIsExactlyThis",
+        why="one word in the line that builds the READ set. A bare row holds the write "
+        "verb nowhere, so it would read nothing at all — a total read outage for the "
+        "unrestricted credential, produced by a verb name.",
+    ),
+    Mutant(
+        name="the-audit-identity-becomes-an-opaque-id",
+        path="internal/api/server.go",
+        old="\trq.identity = principal.Display",
+        new="\trq.identity = string(principal.ID)",
+        killer="TestTheAuditRecordIsTheORACLESSPELLINGFieldForField",
+        extra_killers=("TestAppendAttributesFromTheTokenAndDiscardsABodyActor",),
+        why="the principal's id where its display name belongs. Both are strings off "
+        "the same object, and the id is arguably the MORE correct identifier — but "
+        "it is what the audit line and every written bullet's actor carry, so this "
+        "re-spells a machine-read stream and puts an opaque handle in the store.",
+    ),
+    Mutant(
+        name="a-reload-does-not-rematerialize",
+        path="internal/api/server.go",
+        # `context.Background()` is kept in the expression so the import stays used;
+        # discarding the RESULT is the whole mutation, and it is the narrowest form
+        # of "the reload published a table and rebuilt nothing".
+        old="\treturn s.authority.Refresh(context.Background())",
+        new="\t_ = context.Background()\n\treturn nil",
+        killer="TestTheAuthorityReMaterializesOnAReloadAndSaysSoWhenItCannot",
+        why="publishing the table without rebuilding the authority from it. The reload "
+        "line says LOADED, the operator walks away, and the credential they removed "
+        "keeps authenticating until the next timer tick — a revocation that did not "
+        "happen, reported as one that did.",
+    ),
+    Mutant(
+        name="the-hot-path-refreshes",
+        path="internal/api/server.go",
+        old="\tprincipal, auth, err := rq.srv.authority.Authenticate(presented)",
+        new="\t_ = rq.srv.authority.Refresh(rq.r.Context())\n\tprincipal, auth, err := rq.srv.authority.Authenticate(presented)",
+        killer="TestTheHotPathDoesNotContactTheAuthority",
+        why="a refresh on every request — the 'just make it fresh' fix. It reads as an "
+        "improvement and it deletes the property the whole cache exists for: an "
+        "outage of the authority would stop every read, which is the promise cairn "
+        "makes about an offline orient-me.",
+    ),
+    # ---- the program: the only thing that bounds the declared divergence ----------
+    Mutant(
+        name="the-refresh-loop-has-no-triggers",
+        path="cmd/cairn-server/main.go",
+        # 🔴 EMPTYING THE TRIGGER SET RATHER THAN DELETING THE GOROUTINE, AND THAT IS
+        # NOT A WEAKER MUTATION — it is the one that COMPILES. Deleting the block
+        # leaves `context` and `internal/control` imported and unused, so the tree does
+        # not build and the mutant dies at the build, which proves nothing about any
+        # guard. Both edits produce the same behaviour: a loop that waits on nothing.
+        old="control.RefreshTriggers{Interval: refreshInterval}",
+        new="control.RefreshTriggers{}",
+        killer="TestTheBinarysOwnTimerIsWhatClosesTheDivergence",
+        why="the timer removed from the only loop that re-materializes the authority "
+        "without an operator. The divergence `tokenfile` declares is DECLARED rather "
+        "than closed, "
+        "and the declaration rests entirely on the window being bounded — so this "
+        "turns a bounded, reported lag into a permanent one, with every existing "
+        "gate green: a bare row simply never sees a scope that `server/seed.sh` "
+        "pushed, and nothing anywhere says so.",
+    ),
 )
 
 
@@ -621,7 +856,7 @@ def run_tests(tree: Path) -> tuple[bool, set[str], str]:
     which is reported as its own outcome rather than silently scored as a kill.
     """
     proc = subprocess.run(
-        ["go", "test", "-count=1", "-v", PKG],
+        ["go", "test", "-count=1", "-v", *PKGS],
         cwd=tree,
         capture_output=True,
         text=True,
