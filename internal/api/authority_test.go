@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"net/netip"
 	"os"
@@ -443,11 +444,20 @@ func TestAPrincipalThatMayWriteSomewhereIsNOTForbiddenOnAScopeItMayNot(t *testin
 
 // TestTheWriteVerbIsWhatTheWriteRouteASKS is the mutation-visible half of the refusal.
 //
-// 🔴 IT DRIVES THE PREDICATE, NOT THE TOKEN SHAPE. A principal is constructed whose
-// grants carry `read` and not `write` over the scope it names — a shape the token file
-// cannot spell at all — and the write route must refuse it exactly as it refuses a bare
-// row. That is what distinguishes "the server asks `control` for the write verb" from
-// "the server still asks whether the row was bare and the adapter happens to agree".
+// 🔴 IT DRIVES THE PREDICATE, NOT THE TOKEN SHAPE. It takes a MAPPED row's authority —
+// one that holds `write`, asserted first so nothing below can pass vacuously — and
+// narrows it to the empty (non-nil) set, a shape no token file can spell; the exact
+// expression the dispatcher branches on, `mayWriteAnywhere`, must then be false. That is
+// what distinguishes "the server asks `control` for the write verb" from "the server
+// still asks whether the row was bare and the adapter happens to agree".
+//
+// ⚠ IT DOES NOT DRIVE A WRITE ROUTE, AND THIS DOCSTRING SAID IT DID. It read "a principal
+// is constructed whose grants carry `read` and not `write` over the scope it names … and
+// the write route must refuse it exactly as it refuses a bare row" — no such principal is
+// built here and no request is issued. The claim was not wrong about the CODE, only about
+// which test makes it: `TestTheWritePathNarrowsWithTheWriteVERB` drives the route with a
+// read-without-write authority. A docstring that reads as coverage while providing none
+// is worse than none, because it stops the next reader looking for the test that does.
 func TestTheWriteVerbIsWhatTheWriteRouteASKS(t *testing.T) {
 	h := newMatrixHarness(t)
 	_, auth, err := h.srv.Authority().Authenticate(matrixWideToken)
@@ -523,9 +533,10 @@ func TestTheAuthorityReMaterializesOnAReloadAndSaysSoWhenItCannot(t *testing.T) 
 // unrestricted value; an enumeration is a claim about a moment, so a directory created
 // out of band (`server/seed.sh` seeds through `kubectl exec … tar -xf -`) is not
 // visible to a bare row until the next materialization. The window is bounded by the
-// refresh schedule and reported by `Staleness`, which is the same trade the plan's §D
-// already accepted for revocation — but it IS a behaviour change from the sentinel, and
-// this is the measurement of it rather than the argument for it.
+// refresh schedule and — this used to say "and reported by `Staleness`" — SILENT: nothing
+// outside the tests calls `Staleness()`. Bounded and silent is the honest pair. It IS a
+// behaviour change from the sentinel, and this is the measurement of it rather than the
+// argument for it.
 func TestAScopeCreatedOutOfBandReachesABareRowAfterARefresh(t *testing.T) {
 	h := newMatrixHarness(t)
 	target := "/api/v1/recall/epsilon-notes"
@@ -571,6 +582,150 @@ func TestAScopeCreatedOutOfBandReachesABareRowAfterARefresh(t *testing.T) {
 	// would silently break, and no test over a populated fixture would see it.
 	if !mustAuthorize(t, h, matrixWideToken).VisibleScopes(control.VerbWrite).Allows("alpha-notes") {
 		t.Fatal("precondition: a mapped row may write what it names")
+	}
+}
+
+// TestATransientStoreOutageIsNotBAKEDIntoTheAuthority is the regression for the defect
+// the cache introduced and the sentinel could not have.
+//
+// 🔴 THE FAILURE IT PINS IS AT STEP THREE, NOT AT STEP TWO. While the root is unreadable
+// every read answers `503 store-unreachable` on BOTH mechanisms and nothing is wrong. What
+// was wrong is what happened AFTER: `storeDirs` swallowed the root read failure, so the
+// refresh that ran during the outage SUCCEEDED with an empty enumeration, `Cache.refresh`
+// committed it, `materializedAt` moved and the status said `fresh`. The store then came
+// back, the pod was healthy, `/healthz` was green — and a bare row asking for a scope that
+// exists on disk got `200 scope-absent` until the next tick. On the deployed shape, where
+// the principals are bare rows, that is not one scope: `storeDirs` IS the whole
+// enumeration there, so it is all of them.
+//
+// 🔴 THE PRE-CHANGE MECHANISM IS THE BAR, AND IT IS STATED AS A MEASUREMENT. At the
+// commit before the pod authorised from `control`, a bare row resolved through
+// `store.Unrestricted()` EVALUATED PER REQUEST, so the same three steps answered
+// `200 recalled` / `503 store-unreachable` / `200 recalled` with no window at all. This
+// test requires the same three answers.
+//
+// ⚠ AND STEP FOUR IS THE POSITIVE CONTROL, not a fourth claim: a refresh over the
+// recovered root must still produce a working world, so step three passing cannot mean
+// "the cache stopped refreshing".
+func TestATransientStoreOutageIsNotBAKEDIntoTheAuthority(t *testing.T) {
+	h := newMatrixHarness(t)
+	ctx := context.Background()
+	target := "/api/v1/recall/gamma-notes" // reachable by the BARE row alone.
+
+	status := func() string {
+		return h.do(t, "GET", target, matrixBareToken, nil, "").headers.Get("X-Store-Status")
+	}
+
+	if got := status(); got != "recalled" {
+		t.Fatalf("step 1, healthy: the bare row must read gamma-notes, got %q", got)
+	}
+
+	// Step 2: the root stops enumerating, and a refresh runs inside the outage — which
+	// on the deployed binary is the 30-second timer, not an operator doing anything.
+	//
+	// 🔴 THE OUTAGE IS A RENAME, NOT A `chmod 0000`, AND THE DIFFERENCE IS A DIMENSION
+	// THIS SUITE RUNS ON TWO POINTS OF. `go test` here runs as an ordinary user and
+	// `packages.cairn-server`'s `checkPhase` runs in a nix sandbox — and a build that
+	// happens to run as uid 0 READS A 0000 DIRECTORY PERFECTLY WELL, which would make the
+	// outage never happen and this test pass for the wrong reason, silently, in exactly
+	// the tier nobody watches. A path that is not there is not there for anybody.
+	away := h.root + ".away"
+	if err := os.Rename(h.root, away); err != nil {
+		t.Fatal(err)
+	}
+	// Restored before any assertion can abort the test, so a failure cannot leave the
+	// store somewhere `t.TempDir`'s cleanup does not look.
+	restored := false
+	restore := func() {
+		if !restored {
+			restored = true
+			if err := os.Rename(away, h.root); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Cleanup(restore)
+
+	outageErr := h.srv.Authority().Refresh(ctx)
+	outage := h.srv.Authority().Staleness()
+	if got := status(); got != "store-unreachable" {
+		restore()
+		t.Fatalf("step 2, unreadable: every read answers 503 through such a root on BOTH "+
+			"mechanisms, got %q", got)
+	}
+
+	// Step 3: the store is readable again and NOTHING has refreshed since. This is the
+	// whole finding, and it is asserted BEFORE the two mechanism checks below so that the
+	// guard's first failure is the SERVED observable rather than an internal one — a
+	// regression test whose red line is about `Refresh`'s return value would still be red
+	// if the served answer were fine.
+	restore()
+	if got := status(); got != "recalled" {
+		t.Fatalf("step 3, after recovery and BEFORE the next refresh: the bare row must read "+
+			"gamma-notes. Got %q — which is a healthy pod, a readable store, and the scope "+
+			"gone, for as long as the refresh interval", got)
+	}
+
+	// The mechanism behind step 3, checked after it: the refresh did not merely produce
+	// the right answer, it REFUSED, which is what leaves the previous model in place.
+	if outageErr == nil {
+		t.Fatalf("step 2: the refresh must REFUSE rather than commit an empty enumeration; "+
+			"it returned nil and reported %s", outage)
+	}
+	if outage.Status != control.CacheDegraded {
+		t.Fatalf("step 2: a cache serving last-known-good with the authority unreachable is "+
+			"`degraded`, got %q (%s)", outage.Status, outage)
+	}
+
+	// Step 4, the positive control: the cache is still a cache.
+	if err := h.srv.Authority().Refresh(ctx); err != nil {
+		t.Fatalf("step 4: a refresh over the recovered root must succeed: %v", err)
+	}
+	if got := h.srv.Authority().Staleness().Status; got != control.CacheFresh {
+		t.Fatalf("step 4: the status must return to `fresh`, got %q", got)
+	}
+	if got := status(); got != "recalled" {
+		t.Fatalf("step 4: and the read must still answer, got %q", got)
+	}
+}
+
+// TestAColdStartOverAnUnreadableStoreRootREFUSES pins the other half of the decision.
+//
+// 🔴 A RUNNING CACHE HAS A LAST-KNOWN-GOOD AND A COLD ONE DOES NOT, SO THE TWO CASES GET
+// DIFFERENT ANSWERS AND BOTH ARE DELIBERATE. With a model already materialized, refusing
+// the projection PRESERVES the credential table — every row keeps the authority it had.
+// With none, the only two answers are "serve an enumeration known to be wrong" and "do
+// not come up", and this picks the second: nothing is lost, because every read route
+// answers 503 through such a root anyway, and the alternative moves the window of
+// `TestATransientStoreOutageIsNotBAKEDIntoTheAuthority` to startup rather than removing
+// it — which is exactly where an unmounted volume puts it.
+//
+// ⚠ IT IS A DIVERGENCE FROM THE ORACLE, which starts and answers 503. Declared at
+// `tokenfile.Source.Model` with its closing condition.
+func TestAColdStartOverAnUnreadableStoreRootREFUSES(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "no-such-store")
+
+	_, err := New(missing, []authz.TokenRecord{authz.LegacyRecord(matrixBareToken)},
+		[]netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		netid.NewRateLimiter(1000000, time.Minute, 15*time.Minute))
+	if err == nil {
+		t.Fatal("a server built over a root that cannot be enumerated must not come up: " +
+			"it would authorise every bare row over NOTHING while reporting itself fresh")
+	}
+	// 🔴 CLASSIFIABLE, NOT MERELY NON-NIL. `cmd/cairn-server` branches on this to name
+	// the volume instead of printing a projection's vocabulary at an operator.
+	if !errors.Is(err, tokenfile.ErrStoreRootUnreadable) {
+		t.Fatalf("the refusal must be classifiable as ErrStoreRootUnreadable, got %v", err)
+	}
+
+	// The positive control on the whole assertion: the SAME call over a root that does
+	// exist comes up. Without it, "New returned an error" is indistinguishable from a
+	// constructor that refuses everything.
+	if _, err := New(root, []authz.TokenRecord{authz.LegacyRecord(matrixBareToken)},
+		[]netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		netid.NewRateLimiter(1000000, time.Minute, 15*time.Minute)); err != nil {
+		t.Fatalf("control: an EMPTY but readable root must still come up: %v", err)
 	}
 }
 

@@ -49,11 +49,20 @@
 // per request, so a directory that appeared one millisecond ago is readable by the next
 // request. Here the scope set is a snapshot, so it is readable after the next refresh.
 //
-// ⚠ IT IS BOUNDED AND REPORTED, NOT SILENT, WHICH IS THE SAME TRADE THE PLAN'S §D
-// ALREADY ACCEPTED FOR REVOCATION: `control.Cache` refreshes on a timer and on every
-// token reload, and `Staleness` renders the epoch and its age. A mapped row is
-// UNAFFECTED — its allowlist is in the file, so a scope it names is covered whether or
-// not the directory exists.
+// ⚠ IT IS BOUNDED. IT IS NOT REPORTED, AND THIS LINE CLAIMED IT WAS. `control.Cache`
+// refreshes on a timer and on every token reload, so the window is bounded by
+// `api.AuthorityRefreshInterval`; `Cache.Staleness()` renders the epoch and its age as a
+// value, and **no deployed program calls it** — `git grep 'Staleness()'` finds its own
+// definition, two comments and `_test.go` files, and nothing that runs in the pod. So the
+// correct sentence is BOUNDED AND SILENT: an operator inside the
+// window has no way to see it, and an operator inside a `degraded` or `stale` window has
+// no way to see that either. The surface is deferred because the one place to print it is
+// the startup banner, which `tests/dualrun/harness.py` compares between the two servers —
+// a Go-only field there moves a gate in the same change that most needs it.
+// **CLOSING CONDITION:** a render (a `doctor` section, a status route, or a banner field
+// declared in `wire.NORMALIZATIONS`) that a `tests/dualrun/` run exits 0 with. A mapped
+// row is UNAFFECTED by the divergence itself — its allowlist is in the file, so a scope it
+// names is covered whether or not the directory exists.
 //
 // ⚠ AND IT IS NARROWER THAN "A NEW SCOPE", because the two ways a scope appears do not
 // both reach it. A scope created THROUGH THIS SERVER (`PUT` with `If-None-Match: *`,
@@ -89,9 +98,11 @@ package tokenfile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/authz"
@@ -168,6 +179,19 @@ func (s Source) now() time.Time {
 // way to change it that the file itself would not know about.
 var _ control.Source = Source{}
 
+// ErrStoreRootUnreadable is the projection refusing to describe a world it could not
+// enumerate.
+//
+// 🔴 IT IS EXPORTED SO A CALLER CAN CLASSIFY THE REFUSAL, NOT SO ONE CAN RECOVER FROM
+// IT. `errors.Is` against this is how `cmd/cairn-server` tells "the store volume is not
+// mounted" from "the token file synthesizes an inconsistent world" in the one message an
+// operator reads at startup. Nothing branches on it to keep serving, and the two places
+// this error travels through treat it as they treat every other one:
+// `control.Cache.refresh` keeps its last-known-good model, and `api.New` — whose first
+// `SetTokens` is the materialization — refuses to build a server. Only the message at the
+// top of `main` reads the sentinel.
+var ErrStoreRootUnreadable = errors.New("the store root cannot be enumerated")
+
 // Model synthesizes the world the current token table describes.
 //
 // 🔴 IT IS A PURE FUNCTION OF (records, scope names) APART FROM THE CLOCK. The same
@@ -176,16 +200,47 @@ var _ control.Source = Source{}
 // makes re-materializing a no-op instead of a rename, and it is what lets a test
 // assert that two refreshes agree.
 //
-// 🔴 AN UNREADABLE STORE ROOT IS NOT AN ERROR, AND THAT IS A DELIBERATE MATCH TO
-// TODAY'S BEHAVIOUR RATHER THAN LENIENCE. The server serves a missing or unreadable
-// store root by ANSWERING 503 `store-unreachable` on every read route — `LoadStore`
-// stats the root and `snapshot.Build` reads it, both before any narrowing is
-// consulted — so a principal's visible set cannot be observed through a root nobody
-// can read. Refusing to build a Model here would instead stop the pod
-// authenticating anybody, converting an unreadable store into an unreadable
-// CREDENTIAL TABLE, which is strictly worse and is not what the token path does.
-// Mapped rows keep their allowlists either way, because those are written in the
-// file.
+// 🔴 AN UNREADABLE STORE ROOT IS AN ERROR, AND THE ARGUMENT THAT IT SHOULD NOT BE WAS
+// TRUE AT ONE INSTANT AND FALSE ACROSS TIME. This comment used to say: every read route
+// answers 503 `store-unreachable` through an unreadable root — `LoadStore` stats the root
+// and `snapshot.Build` reads it, both before any narrowing is consulted — so a
+// principal's visible set cannot be observed through a root nobody can read, and
+// refusing to project would convert an unreadable store into an unreadable CREDENTIAL
+// TABLE, which is strictly worse. Every clause of that is still true AT THE INSTANT OF
+// THE FAILURE. What it missed is that the projection is CACHED: a Model built from an
+// empty enumeration is committed by `control.Cache.refresh`, `materializedAt` moves, the
+// status reports `fresh`, and that world is then served THROUGH A ROOT THAT IS READABLE
+// AGAIN until the next refresh. Measured end-to-end: a bare row reading a scope that
+// exists on disk answered `200 scope-absent` after recovery — a healthy pod, a readable
+// store, and every scope gone.
+//
+// 🔴 SO THE ARGUMENT KEEPS ITS FORCE EXACTLY WHERE IT APPLIES, WHICH IS A CACHE THAT HAS
+// ALREADY MATERIALIZED. There the refusal is what PRESERVES the credential table:
+// `Cache.refresh` keeps its last-known-good model on any error, so every row goes on
+// authenticating with the authority it had, and `Staleness` moves to `degraded`. The
+// unreadable-store-becomes-unreadable-credential-table failure is what the cache
+// prevents, and it needs this function to fail rather than to succeed with a lie.
+//
+// 🔴 AND THE COLD START IS A DECISION RATHER THAN A CONSEQUENCE: IT REFUSES. A cache with
+// no last-known-good has nothing to keep, so the only two answers are "serve an
+// enumeration known to be wrong" and "do not come up". `api.New` returns an error
+// wrapping this one, `cmd/cairn-server` exits 78 (EX_CONFIG) naming the root, and the pod
+// crash-loops until
+// the volume is there. That loses nothing served, and "nothing" is checked rather than
+// assumed: every read route answers 503 through such a root, and a write cannot land
+// either, because `internal/write` creates a scope directory with `os.Mkdir` and NOT
+// `MkdirAll` — so it fails on the absent parent rather than inventing a store. Refusing
+// also removes the window rather than moving it to startup, which is where an unmounted
+// volume actually puts it.
+//
+// ⚠ IT IS A DIVERGENCE FROM `server/server.py`, DECLARED RATHER THAN HIDDEN. The oracle
+// starts over an unreadable root and answers 503 on every read; this binary does not
+// start. Nothing else moves: after a materialization, the served answers are the oracle's
+// for a root that is readable and 503 for one that is not. **CLOSING CONDITION,** and it
+// is the same one the divergence above carries: it closes when scopes stop being
+// discovered from the filesystem at all, because the store root is then not an input to
+// the authority and an unreadable one is a read-path 503 again. It does NOT close by
+// making this function lenient.
 func (s Source) Model(ctx context.Context) (control.Model, error) {
 	events, err := s.Events(ctx)
 	if err != nil {
@@ -193,12 +248,14 @@ func (s Source) Model(ctx context.Context) (control.Model, error) {
 	}
 	m, err := control.Replay(events)
 	if err != nil {
-		// 🔴 REPORTED, NEVER PARTIALLY APPLIED. `Replay` fails whole; the cache above
+		// 🔴 RETURNED, NEVER PARTIALLY APPLIED. `Replay` fails whole; the cache above
 		// keeps its last-known-good model, so a token file that somehow synthesizes an
 		// inconsistent world leaves the previously-serving authority in place rather
-		// than emptying it. The only shapes that can reach here are refused by
+		// than emptying it. The only shapes that can reach THIS branch are refused by
 		// `authz.LoadTokens` upstream (two rows sharing one token, an identity claimed
-		// twice), which is why this wraps rather than recovers.
+		// twice), which is why this wraps rather than recovers. ⚠ "Returned" rather than
+		// "reported": the error reaches `Staleness.LastError`, which no deployed program
+		// renders — see the package doc.
 		return control.Model{}, fmt.Errorf("token-file authority: %w", err)
 	}
 	return m, nil
@@ -229,7 +286,11 @@ func (s Source) Events(_ context.Context) ([]control.Event, error) {
 		},
 	}
 
-	for _, name := range s.scopeNames(records) {
+	names, err := s.scopeNames(records)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
 		events = append(events, control.Event{
 			Kind: control.EventScopeCreated, At: at,
 			ScopeID: scopeID(name), DisplayName: name, ProjectID: scopesProject,
@@ -242,12 +303,37 @@ func (s Source) Events(_ context.Context) ([]control.Event, error) {
 	// try to create the same project twice and fail the replay. The credential is
 	// per row; the authority is per identity, which is the shape the file already
 	// has.
-	seen := map[string]bool{}
+	//
+	// 🔴 AND THE DEDUPE IS KEYED ON THE AUTHORITY, NOT ON THE IDENTITY ALONE, BECAUSE
+	// THE JUSTIFICATION ABOVE IS STRUCTURAL AND THE OLD KEY ONLY SPELLED IT. `seen[identity]`
+	// makes the rows after the first CONTRIBUTE NOTHING BUT A CREDENTIAL: a mapped row
+	// named `legacy` ahead of a real bare row collapsed both into the mapped row's
+	// grants, and the bare row then GAINED `write` on one scope and LOST `read` on
+	// another — a wrong authority produced by a projection that reported success. What
+	// stops that today is `authz.LoadTokens` guards 8 and 12, in a DIFFERENT package;
+	// a guard in another package being the only thing between this and a wrong authority
+	// is the shape this repository refuses. So the key is `authorityKey`, and two records
+	// that share an identity while describing different authorities are REFUSED here.
+	//
+	// ⚠ REFUSED RATHER THAN SPLIT, and that is forced rather than chosen: the principal
+	// id is derived from the identity, so minting a second principal for the second
+	// authority would emit `project-created` twice for ONE id and `Replay` would fail
+	// whole anyway — with a message about a duplicate project instead of about the token
+	// file. Failing here names the actual input.
+	seen := map[string]string{}
 	for _, r := range records {
 		identity := r.Identity
 		principal := control.DerivedID(control.PrefixProject, "principal\x00"+identity)
-		if !seen[identity] {
-			seen[identity] = true
+		key := authorityKey(r)
+		if prior, minted := seen[identity]; minted {
+			if prior != key {
+				return nil, fmt.Errorf(
+					"token-file authority: two rows share the identity %q and describe DIFFERENT authorities (%q, then %q); "+
+						"one identity is one principal here, so the later row would contribute only a credential and silently "+
+						"inherit the earlier row's grants", identity, prior, key)
+			}
+		} else {
+			seen[identity] = key
 			events = append(events, control.Event{
 				Kind: control.EventProjectCreated, At: at, ProjectID: principal,
 				Name: identity, UserID: operator,
@@ -262,6 +348,32 @@ func (s Source) Events(_ context.Context) ([]control.Event, error) {
 		})
 	}
 	return events, nil
+}
+
+// authorityKey is what two rows sharing an identity must AGREE on.
+//
+// 🔴 IT IS DERIVED FROM THE SAME TWO FACTS `grantsFor` BRANCHES ON — `IsLegacy()` and the
+// FOLDED scope list — so "the key says these rows are interchangeable" and "these rows
+// would produce the same grants" cannot come apart. Keying on the raw `Scopes` slice
+// instead would make `Alpha_Notes` and `alpha-notes` look like different authorities
+// while `grantsFor` folds them into one, which is a refusal of a file that is fine.
+//
+// The scopes are SORTED, because a rotation that reorders one row's allowlist is the
+// same authority and must not be refused, and joined on NUL, which no scope name can
+// contain: `store.NormalizeRef` cannot produce one, so two lists cannot be spelled into
+// the same key.
+func authorityKey(r authz.TokenRecord) string {
+	if r.IsLegacy() {
+		return "legacy"
+	}
+	folded := make([]string, 0, len(r.Scopes))
+	for _, raw := range r.Scopes {
+		if name := foldScope(raw); name != "" {
+			folded = append(folded, name)
+		}
+	}
+	sort.Strings(folded)
+	return "mapped\x00" + strings.Join(folded, "\x00")
 }
 
 // grantsFor is the ONE place a token row's authority becomes grants.
@@ -330,7 +442,7 @@ func (s Source) grantsFor(at time.Time, r authz.TokenRecord, principal, scopesPr
 // ⚠ THE LOAD-BEARING PART IS THAT THIS FOLDS THE SAME WAY `grantsFor` DOES, NOT THAT IT
 // FOLDS AT ALL. See `foldScope`: a mutation sweep measured which half of that sentence
 // is the hazard, and this comment used to name the wrong one.
-func (s Source) scopeNames(records []authz.TokenRecord) []string {
+func (s Source) scopeNames(records []authz.TokenRecord) ([]string, error) {
 	names := map[string]struct{}{}
 	add := func(raw string) {
 		if folded := foldScope(raw); folded != "" {
@@ -342,7 +454,11 @@ func (s Source) scopeNames(records []authz.TokenRecord) []string {
 			add(scope)
 		}
 	}
-	for _, dir := range s.storeDirs() {
+	dirs, err := s.storeDirs()
+	if err != nil {
+		return nil, err
+	}
+	for _, dir := range dirs {
 		add(dir)
 	}
 	out := make([]string, 0, len(names))
@@ -354,7 +470,7 @@ func (s Source) scopeNames(records []authz.TokenRecord) []string {
 	// deliberately randomised; a projection whose epoch moved on every refresh would
 	// make `Staleness` unreadable.
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // storeDirs lists the store root the way `store.LoadIndex` does.
@@ -366,17 +482,31 @@ func (s Source) scopeNames(records []authz.TokenRecord) []string {
 // Enumerating the snapshot's rule instead would silently take a dot-named scope away
 // from a bare row that can read it today.
 //
-// ⚠ A STAT THAT FAILS IS SKIPPED, AND THE SKIP CANNOT BE OBSERVED. `LoadIndex`
-// returns an error for any errno outside `pathlib`'s ignored four, which the route
-// answers `503 store-unreachable` — before visibility is consulted. So a scope this
-// function could not classify is a scope no route will render either way.
-func (s Source) storeDirs() []string {
+// 🔴 THE ROOT READ AND THE PER-CHILD STAT FAIL DIFFERENTLY, AND THE COMMENT HERE USED TO
+// COVER ONLY THE SECOND. A failed `Stat` on one child drops ONE candidate that no route
+// could render anyway; a failed `ReadDir` on the ROOT drops EVERY candidate, and on the
+// deployed shape — where the principals are bare rows and the allowlist half of the union
+// contributes nothing — that is the whole enumeration. It is an error, and `Model`'s
+// comment is where the cost of that is argued.
+//
+// ⚠ A STAT THAT FAILS IS STILL SKIPPED, AND THE SKIP STILL CANNOT BE OBSERVED.
+// `LoadIndex` returns an error for any errno outside `pathlib`'s ignored four, which the
+// route answers `503 store-unreachable` — before visibility is consulted. So a scope this
+// function could not classify is a scope no route will render either way. That argument
+// is about ONE name and does not widen to the root, which is the confusion the paragraph
+// above exists to end.
+//
+// ⚠ AN EMPTY `StoreRoot` IS NOT AN UNREADABLE ONE. It says no root was configured, which
+// no deployed path can reach — `cmd/cairn-server`'s flag defaults to `/data` — and it is
+// kept separable so that "nobody told us where the store is" cannot be read back as "the
+// store would not open".
+func (s Source) storeDirs() ([]string, error) {
 	if s.StoreRoot == "" {
-		return nil
+		return nil, nil
 	}
 	dirents, err := os.ReadDir(s.StoreRoot)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("token-file authority: %w: %w", ErrStoreRootUnreadable, err)
 	}
 	var out []string
 	for _, d := range dirents {
@@ -386,7 +516,7 @@ func (s Source) storeDirs() []string {
 		}
 		out = append(out, d.Name())
 	}
-	return out
+	return out, nil
 }
 
 // foldScope is the ONE fold from a raw name — a directory, or a word in an allowlist —

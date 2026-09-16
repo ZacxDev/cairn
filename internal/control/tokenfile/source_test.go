@@ -2,6 +2,7 @@ package tokenfile
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -408,27 +409,136 @@ func TestTwoBareRowsAreOnePrincipalWithTwoCredentials(t *testing.T) {
 	}
 }
 
-// TestAnUnreadableStoreRootStillAuthenticatesEveryRow pins the deliberate leniency.
+// TestTwoRowsSharingAnIdentityWithDIFFERENTAuthoritiesAreRefused is the other half of
+// the dedupe, and it exists because the justification above was SPELLED rather than
+// structural.
 //
-// 🔴 AN UNREADABLE STORE MUST NOT BECOME AN UNREADABLE CREDENTIAL TABLE. Every read
-// route answers 503 `store-unreachable` when the root cannot be read — before any
-// narrowing is consulted — so a principal's visible set is not observable through one.
-// Refusing to project would instead stop the pod authenticating ANYBODY, which is a
-// strictly wider outage than the one that is actually happening.
-func TestAnUnreadableStoreRootStillAuthenticatesEveryRow(t *testing.T) {
+// 🔴 THE COMMENT ON `seen` CITED `IsLegacy()` AND THE CODE NEVER ASKED. Keyed on the
+// identity string alone, every row after the first contributes ONLY a credential: a
+// mapped row that happens to be named `legacy`, placed ahead of a real bare row,
+// collapsed both into the mapped row's grants — the bare row GAINING `write` on the
+// scope the mapped row named and LOSING `read` on every scope it did not. A wrong
+// authority, produced by a projection that reported success.
+//
+// 🔴 UNREACHABLE FROM A TOKEN FILE TODAY, AND THAT IS THE REASON TO GATE IT RATHER THAN
+// A REASON NOT TO. `authz.LoadTokens` guards 8 and 12 are the only thing standing between
+// this input and a wrong authority, and they are in a DIFFERENT PACKAGE — the exact shape
+// this repository refuses to leave resting on a guard nobody here can see. A record built
+// programmatically (this test, a migration, a future `Source`) reaches it directly.
+//
+// ⚠ REFUSED RATHER THAN SPLIT. The principal id is derived from the identity, so a second
+// principal for the second authority would emit `project-created` twice for one id and
+// `Replay` would fail whole anyway — with a message about a duplicate project rather than
+// about the token file. This one names the input.
+func TestTwoRowsSharingAnIdentityWithDIFFERENTAuthoritiesAreRefused(t *testing.T) {
+	root := storeWith(t, "alpha-notes", "beta-notes")
+	bare, trap := aToken('a'), aToken('b')
+
+	// The collapse, in the order that makes it dangerous: the MAPPED row is first, so it
+	// is the one that mints the principal and its grants.
+	_, err := sourceOver(root,
+		authz.TokenRecord{Token: trap, Identity: authz.LegacyIdentity, Scopes: []string{"alpha-notes"}},
+		authz.LegacyRecord(bare),
+	).Model(context.Background())
+	if err == nil {
+		t.Fatal("two rows sharing an identity while describing different authorities must " +
+			"be refused: the second row would silently inherit the first row's grants")
+	}
+	if !strings.Contains(err.Error(), "DIFFERENT authorities") {
+		t.Fatalf("the refusal must name what is wrong with the FILE, got %v", err)
+	}
+
+	// 🔴 THE POSITIVE CONTROL, AND IT IS WHAT KEEPS THE GUARD FROM BEING A BAN ON SHARED
+	// IDENTITIES. The rotation shape — two rows, one identity, the SAME authority — must
+	// still project, including when one row's allowlist is written in a different order
+	// and a spelling that folds. A guard that refused those would take rotation away.
+	same := aToken('c')
+	if _, err := sourceOver(root,
+		authz.TokenRecord{Token: trap, Identity: "reader", Scopes: []string{"alpha-notes", "beta-notes"}},
+		authz.TokenRecord{Token: same, Identity: "reader", Scopes: []string{"Beta_Notes", "alpha-notes"}},
+	).Model(context.Background()); err != nil {
+		t.Fatalf("an overlap rotation of ONE mapped holder must still project: %v", err)
+	}
+	if _, err := sourceOver(root, authz.LegacyRecord(bare), authz.LegacyRecord(same)).
+		Model(context.Background()); err != nil {
+		t.Fatalf("…and so must two bare rows: %v", err)
+	}
+}
+
+// TestAnUnreadableStoreRootIsRefusedAndTheCacheIsWhatKeepsTheCredentialTable replaces a
+// test that pinned the OPPOSITE, and the replacement is the point rather than the
+// deletion.
+//
+// 🔴 THE OLD TEST WAS CALLED `TestAnUnreadableStoreRootStillAuthenticatesEveryRow` AND
+// ITS REASONING WAS TRUE AT ONE INSTANT. It read: an unreadable store must not become an
+// unreadable credential table, because every read route answers 503 `store-unreachable`
+// through such a root — before any narrowing is consulted — so a principal's visible set
+// is not observable through one, and refusing to project would be a strictly wider
+// outage. Every clause of that still holds AT THE MOMENT OF THE FAILURE. What it missed
+// is that the projection is CACHED: `control.Cache.refresh` commits the empty
+// enumeration, moves `materializedAt`, reports `fresh`, and then serves that world
+// through a root that IS readable again. The leniency was not bounded by the outage.
+//
+// 🔴 SO THE PROPERTY IT WANTED IS ASSERTED WHERE IT IS ACTUALLY TRUE — ONE LAYER UP.
+// Half two below is the old test's claim, measured through a materialized `control.Cache`
+// rather than through a single projection: the root goes away, the refresh refuses, and
+// every row goes on authenticating with the authority it had. The refusal is what BUYS
+// that. A projection that succeeded with an empty world would have replaced it.
+func TestAnUnreadableStoreRootIsRefusedAndTheCacheIsWhatKeepsTheCredentialTable(t *testing.T) {
 	bare, mapped := aToken('a'), aToken('b')
-	src := sourceOver(filepath.Join(t.TempDir(), "no-such-store"),
+	root := storeWith(t, "alpha-notes", "beta-notes")
+	src := sourceOver(root,
 		authz.LegacyRecord(bare),
 		authz.TokenRecord{Token: mapped, Identity: "reader", Scopes: []string{"alpha-notes"}})
-	m := modelOf(t, src)
 
-	if _, _, err := control.Authenticate(m, bare); err != nil {
-		t.Fatalf("the bare row must still authenticate: %v", err)
+	// Half one: the projection REFUSES, and the refusal is classifiable.
+	gone := sourceOver(filepath.Join(t.TempDir(), "no-such-store"), authz.LegacyRecord(bare))
+	_, err := gone.Model(context.Background())
+	if err == nil {
+		t.Fatal("a root that cannot be enumerated must not project to an empty world: " +
+			"the empty world gets committed and outlives the outage")
+	}
+	if !errors.Is(err, ErrStoreRootUnreadable) {
+		t.Fatalf("the refusal must be classifiable as ErrStoreRootUnreadable, got %v", err)
+	}
+
+	// Half two: a cache that HAS materialized keeps every credential through the outage.
+	c := control.NewCache(src, control.CacheOptions{MaxAge: time.Minute})
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("precondition: the healthy projection must materialize: %v", err)
+	}
+	if _, read, _ := authorityOf(t, c.Model(), bare); !equal(read, []string{"alpha-notes", "beta-notes"}) {
+		t.Fatalf("precondition: the bare row reads the whole store, got %v", read)
+	}
+
+	// 🔴 A RENAME RATHER THAN A `chmod 0000`: a test process running as uid 0 — which is
+	// what a sandboxed build may be — reads a 0000 directory perfectly well, and the
+	// outage would then never happen while the test still passed.
+	away := root + ".away"
+	if err := os.Rename(root, away); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Rename(away, root) })
+	if err := c.Refresh(context.Background()); err == nil {
+		t.Fatal("the refresh must refuse while the root is unreadable")
+	}
+
+	// 🔴 THE CREDENTIAL TABLE IS INTACT — the claim the deleted test was making, and the
+	// one the cache actually provides. Both rows authenticate, with the authority they
+	// had before the outage, and the status says `degraded` rather than `fresh`.
+	if _, _, err := control.Authenticate(c.Model(), bare); err != nil {
+		t.Fatalf("the bare row must still authenticate through the outage: %v", err)
+	}
+	if _, read, _ := authorityOf(t, c.Model(), bare); !equal(read, []string{"alpha-notes", "beta-notes"}) {
+		t.Fatalf("…and keeps the scopes it had, got %v", read)
 	}
 	// 🔴 AND THE MAPPED ROW KEEPS ITS ALLOWLIST, because that is written in the FILE
 	// rather than discovered on the disk.
-	if _, read, _ := authorityOf(t, m, mapped); !equal(read, []string{"alpha-notes"}) {
+	if _, read, _ := authorityOf(t, c.Model(), mapped); !equal(read, []string{"alpha-notes"}) {
 		t.Fatalf("a mapped row's authority does not depend on the store root, got %v", read)
+	}
+	if got := c.Staleness().Status; got != control.CacheDegraded {
+		t.Fatalf("the outage must be visible in the status as `degraded`, got %q", got)
 	}
 }
 

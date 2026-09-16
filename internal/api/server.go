@@ -258,8 +258,18 @@ func (s *Server) SetTokens(tokens []authz.TokenRecord) error {
 // is measuring here is narrow, and saying so is the point: the token table refreshes
 // on every reload, so the only thing that can age is the SCOPE ENUMERATION the
 // adapter reads off the filesystem (the divergence declared in `tokenfile`'s package
-// doc). A bound of zero would render `bound=none`, which a reader cannot tell from
-// "the bound was met".
+// doc).
+//
+// 🔴 AND TODAY IT BOUNDS A REPORT NOBODY READS, WHICH MAKES *EVERY* VALUE OF THIS
+// CONSTANT UNOBSERVABLE — INCLUDING THE ONE THIS PARAGRAPH USED TO ARGUE AGAINST. It
+// ended "a bound of zero would render `bound=none`, which a reader cannot tell from 'the
+// bound was met'", and that describes a render no deployed program performs:
+// `control.Cache.Staleness()` has no caller outside the tests, so `bound=2m0s` and
+// `bound=none` are equally invisible. The constant is still the right value — it is what
+// `control.Cache.Run` checks `AuthorityRefreshInterval` against, and that check is
+// enforced whether or not anything prints — but the reason to prefer it over zero is
+// about the day the surface exists, not about today. The closing condition for that
+// surface is in `tokenfile`'s package doc.
 const AuthorityMaxAge = 2 * time.Minute
 
 // AuthorityRefreshInterval is the schedule a caller running the cache should use. It
@@ -269,9 +279,14 @@ const AuthorityRefreshInterval = 30 * time.Second
 
 // Authority is the materialized control plane this server authorises from.
 //
-// Exposed so `cmd/cairn-server` can run its refresh loop and so a status surface can
-// render `Staleness()`. It is NOT a second place to decide visibility: the only
-// methods a caller has any business with here are the ones that report or refresh.
+// Exposed so `cmd/cairn-server` can run its refresh loop. It is NOT a second place to
+// decide visibility: the only methods a caller has any business with here are the ones
+// that report or refresh.
+//
+// ⚠ THE SECOND REASON THIS USED TO GIVE — "so a status surface can render
+// `Staleness()`" — DESCRIBES NO CALLER. Nothing outside the tests calls `Staleness()`,
+// so the refresh loop is the whole of what this accessor is for today. Stated rather
+// than trimmed, because the sentence read as if the surface existed.
 func (s *Server) Authority() *control.Cache { return s.authority }
 
 // Tokens is the token table the authority is currently projected FROM.

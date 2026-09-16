@@ -155,17 +155,24 @@ and it is bought with one honest cost, stated in the code and repeated here:
 🔴 **A REVOCATION IS NOT EFFECTIVE UNTIL THE CACHE REFRESHES.** No arrangement of this
 design makes that false, because a cache that asked the authority whether it was stale
 would be making exactly the call the outage is supposed to survive. So the lag is
-**bounded** by the schedule, **reported** by `Staleness`, and **bypassable** by
+**bounded** by the schedule, **reportABLE** by `Staleness`, and **bypassable** by
 `ApplyNow`.
 
-### The four design calls
+⚠ **"REPORTABLE" IS NOT "REPORTED", AND THIS SENTENCE SAID THE SECOND ONE.** `Cache.Staleness()` has **no caller outside the tests** — not
+`cmd/cairn-server`, not `internal/doctor`, not any route — so the lag, and a `degraded` or
+`stale` authority with it, is currently **bounded and silent**. The value is built,
+rendered and pinned; nothing prints it. Why it is deferred, and the closing condition for
+it, are one section down under *What piece (a) structurally cannot see*.
+
+### The five design calls
 
 | decision | what was chosen | why |
 |---|---|---|
+| how two concurrent publishers order their COMMITS | **a generation stamp — never the epoch** | `src.Model` runs outside the lock on purpose, and the deployed binary now has TWO independent triggers (the timer in `Run`, SIGHUP through `api.Server.SetTokens`), so their reads overlap. Without an order the slow one wins: the operator revokes a row, SIGHUP publishes and commits, the timer — which entered `src.Model` first holding the old table — commits on top, and the revoked credential authenticates again while the status says `fresh`. 🔴 The order **cannot** come from `Model.Epoch`: the epoch is an event COUNT, so a revocation makes it go DOWN (measured, 7 → 5), and an "ignore a lower epoch" guard would reject exactly the smaller, newer world. A discarded attempt is counted as `Superseded` — a third outcome, not a failure. `ApplyNow` takes its generation **after** `Append` rather than before, so a refresh whose read straddles the write cannot overwrite the one path that promises the revocation is in force on return. |
 | what the bound does | **bounds the REPORT, not the reads** | refusing to serve past `MaxAge` converts an authority outage into a total read outage, at the moment the operator can least fix it. An exceeded bound is LOUD and still serving. The one thing it must never be is silent. |
 | who installs the signal handler | **the caller does; the cache receives a channel** | `signal.Notify` is process-global state, and a library that calls it takes away the program's decision to have a handler at all — which on an ordinary process is the difference between a SIGHUP that reloads and one that terminates. `cmd/cairn-server` already owns that call for the token file. |
 | what `Effect` is derived from | **the two EPOCHS, never the call site** | a deferred write that a concurrent refresh has already picked up IS in force. Labelling it by its code path would have the UI say "effective within 60s" about something that already happened. The invariant is structural — `EffectImmediate` exactly when `ServingEpoch >= WrittenEpoch` — so a caller can check the label against the numbers beside it. |
-| where the staleness lives | **a VALUE with a `String()`, not a log line** | a log line is read by whoever happens to be tailing. A value can be rendered into a status surface, compared in a test, and asserted on. `TestTheStalenessRendersExactly` pins the **whole normalised line** for six states, because a guard on a few words is walkable by rewording. |
+| where the staleness lives | **a VALUE with a `String()`, not a log line** | a log line is read by whoever happens to be tailing. A value can be rendered into a status surface, compared in a test, and asserted on. `TestTheStalenessRendersExactly` pins the **whole normalised line** for SEVEN states, because a guard on a few words is walkable by rewording. ⚠ The seventh exists because six of them read `superseded=0`, which pins the spelling and measures nothing; it forces the interleaving and reads the number. |
 
 ⚠ **`Staleness.LastError` IS A FIELD AND IS DELIBERATELY NOT IN `String()`.** The text
 comes from the authority — an OS error naming a path, a journal parse failure quoting a
@@ -209,7 +216,15 @@ last-known-good keeps answering:
   double. ⚠ What is still not done is the SURFACE that prints `Staleness`: no `doctor`
   output and no startup banner carries the epoch. That is deliberate — the banner is a
   string `tests/dualrun/harness.py` compares between the two servers, so a Go-only field
-  there moves a gate in the same change that most needs it.
+  there moves a gate in the same change that most needs it. 🔴 **THIS IS THE ONE TRUE
+  SENTENCE ABOUT REPORTING IN THIS FILE, AND TWO OTHERS USED TO CONTRADICT IT** (the
+  revocation paragraph above, and the divergence section below) by writing **reported**
+  where only **reportable** is earned. **CLOSING CONDITION,** so this is checkable rather
+  than aspirational: a render — a `doctor` section, a status route, or a banner field
+  declared in `wire.NORMALIZATIONS` — that a `tests/dualrun/` run exits 0 with. ⚠ And the
+  cost of leaving it open GREW rather than stayed flat: a store root that will not
+  enumerate is now a refusal, so `degraded` is a state a healthy-looking pod can sit in,
+  and it is exactly the state an operator cannot see.
 - **Two processes.** Every trigger is measured in one process. Two pods over one journal
   refresh independently and can serve different epochs at the same instant.
 - **A real clock.** Every staleness assertion runs on an injected clock. A stepped or
@@ -368,6 +383,9 @@ What it synthesizes, and why each shape was picked:
 | how the write refusal is asked | "does this principal hold `write` ANYWHERE" | the server's 403 is about the CREDENTIAL and names no scope, so it must not be a per-scope question — a per-scope 403 would tell an authenticated caller that a scope it cannot reach exists. A principal that may write somewhere and aims at a scope it may not gets the not-found answer instead. Both halves are in the served matrix. |
 | a row with NO identity | the whole projection is **refused**, so the pod does not start | `Principal.Display` is what the audit line and every written bullet's ACTOR carry, so a principal with no name is a credential whose use cannot be attributed. ⚠ Unreachable from a token FILE — `ParseTokenRow` gives every row an identity — and reachable from a programmatic `TokenRecord`. It is LOUDER than the old behaviour, which was an empty `identity=` field and a bullet attributed to nobody. |
 | where scope names come from | the UNION of the store's directories and the mapped rows' allowlists | neither alone is enough. Directories are the only record of what a bare row may read; allowlists are the only record of a scope with **no directory yet**, which is the first-entry create that is how the store gained every scope it has. |
+| a store root that will not ENUMERATE | the whole projection is **refused** | it used to be swallowed, on the true-at-one-instant grounds that every read route answers 503 through such a root anyway. The projection is CACHED, so the empty world it produced was committed, `materializedAt` moved, the status said `fresh`, and it was served **through a root that was readable again** — measured as `200 scope-absent` for a scope that exists on disk. On the deployed shape the principals are bare rows, so `storeDirs` IS the whole enumeration and it is not one scope, it is all of them. Refusing keeps the last-known-good instead, which is what preserves the credential table the old argument was protecting. |
+| a COLD start over such a root | `api.New` fails and `cmd/cairn-server` exits **78** | a cache with no last-known-good has nothing to keep, so the only two answers are "serve an enumeration known to be wrong" and "do not come up". Nothing served is lost, and that is checked rather than assumed: every read route answers 503 through that root, and a write cannot land either, because `internal/write` creates a scope directory with `os.Mkdir` and not `MkdirAll`, so it fails on the absent parent. The alternative moves the window to startup rather than removing it, which is exactly where an unmounted volume puts it. ⚠ A divergence from `server/server.py`, which starts and answers 503; declared at `tokenfile.Source.Model` with the same closing condition as the divergence below. |
+| two rows sharing one IDENTITY | interchangeable only if they describe the **same authority**; otherwise **refused** | the dedupe is keyed on `authorityKey` — `IsLegacy()` plus the folded, sorted allowlist — which is derived from the same two facts `grantsFor` branches on. Keyed on the identity STRING alone, every row after the first contributed only a credential: a mapped row named `legacy` ahead of a real bare row gave that bare row `write` on one scope and took `read` away on another. ⚠ Unreachable from a token FILE (`authz.LoadTokens` guards 8 and 12) — which is a guard in a DIFFERENT package being the only thing between this and a wrong authority, and therefore a reason to gate it here rather than not to. |
 
 ### 🔴 The divergence, measured rather than reasoned about
 
@@ -404,8 +422,10 @@ runs the binary, creates a directory behind its back, sends nothing, and require
 read to start answering.
 
 The window is **bounded** (`api.AuthorityRefreshInterval`, 30s, under
-`api.AuthorityMaxAge`, 2m) and **reported** (`Cache.Staleness`), which is the same trade
-the plan's §D already accepted for revocation. 🔴 **CLOSING CONDITION, stated so it is
+`api.AuthorityMaxAge`, 2m) and **NOT reported** — `Cache.Staleness` renders it as a value
+and no deployed program calls that method, so the sentence here used to be wrong in the
+reassuring direction. Bounded and silent is the honest pair; the closing condition for the
+surface is in *What piece (a) structurally cannot see*. 🔴 **CLOSING CONDITION, stated so it is
 checkable rather than aspirational:** it closes when scopes stop being discovered from the
 filesystem at all — when a scope exists because a `scope-created` event says so, which is
 what piece (d) and P4 build. At that point `tokenfile.storeDirs` has no reason to exist
@@ -424,10 +444,14 @@ adapter, and it must **not** be closed by reintroducing an unrestricted principa
   because a comment is a claim too.** It used to read "nothing yet *reports* it".
   `Cache.Staleness()` is now a renderable value with the epoch, its age, the declared
   bound and whether the bound was exceeded, and `cache.go`'s section above is what it
-  was replaced by. ⚠ What is **not** closed is the surface that PRINTS it: nothing in
-  `cmd/cairn-server` or `internal/doctor` constructs a `control.Store` yet, so the value
-  exists and no deployed program renders it. That is piece (b)'s wiring, and calling
-  this row done would be declaring a step early.
+  was replaced by. ⚠ What is **not** closed is the surface that PRINTS it: `internal/api`
+  holds the cache and exposes it, and NOTHING calls `Staleness()` outside the tests — not
+  `cmd/cairn-server`, not `internal/doctor`, not a route — so the value exists and no
+  deployed program renders it. ⚠ **AND THAT WAS PIECE (b)'s WIRING, WHICH LANDED WITHOUT
+  IT**: the sentence here read "nothing constructs a `control.Store` yet", which stopped
+  being the obstacle the moment `api.Server` built a `Cache`. The obstacle is the one named
+  under *What piece (a) structurally cannot see* — the banner is a dualrun-compared string
+  — and the closing condition is stated there.
 - ✅ **The token file — CLOSED by piece (b), and the bullet is kept because a comment is
   a claim too.** It used to read "migrating the existing static credentials into grants is
   not done". `internal/control/tokenfile` is that reconciliation, and the section above

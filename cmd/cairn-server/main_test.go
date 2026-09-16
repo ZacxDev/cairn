@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -134,9 +137,233 @@ func TestTheBinarysOwnTimerIsWhatClosesTheDivergence(t *testing.T) {
 	}
 }
 
+// TestARefusedReloadDoesNotClaimNothingChanged is the gate on the one line an operator
+// reads after `kill -HUP`.
+//
+// 🔴 THE LINE USED TO SAY "NOTHING CHANGED" AND THE TABLE HAD ALREADY BEEN SWAPPED.
+// `api.Server.SetTokens` publishes the new table BEFORE refreshing — deliberately, so
+// that the next refresh reads the new one — so on a refresh failure the AUTHORITY is
+// unchanged while the INPUT is not. Two things followed that the old wording got exactly
+// backwards: an operator told nothing changed will re-edit the file against a copy the
+// pod no longer holds, and "send SIGHUP again" described a step that is not required,
+// because the timer re-projects the new table on its own.
+//
+// 🔴 AND THE BRANCH IS REACHABLE NOW, WHICH IT WAS NOT WHEN THE WORDING WAS WRITTEN. A
+// refused parse is the OTHER branch; making `SetTokens` itself fail needs the projection
+// to fail over a file that parses, and the store root going unreadable between startup
+// and the signal does exactly that — which is also this test's second job, since it is
+// the running-cache half of the store-root refusal measured through the real binary.
+func TestARefusedReloadDoesNotClaimNothingChanged(t *testing.T) {
+	srv := startServer(t)
+	if got := srv.status(t, "alpha-notes"); got != "recalled" {
+		t.Fatalf("precondition: the seeded scope must read, got %q\n%s", got, srv.log(t))
+	}
+
+	// The token file gains a second, MAPPED row — a real edit, so "the table was
+	// swapped" is a claim with observable content: the new fingerprint appears in the
+	// line and the old one is still named as what is serving.
+	second := strings.Repeat("d", authz.MinTokenChars)
+	if err := os.WriteFile(srv.tokenFile,
+		[]byte(testToken+"\n"+second+" reader alpha-notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// And the store root stops enumerating, so the projection refuses while the file
+	// parses perfectly.
+	//
+	// 🔴 A RENAME RATHER THAN A `chmod 0000`, because this package's tests run at TWO
+	// points — an ordinary `go test` and `packages.cairn-server`'s sandboxed
+	// `checkPhase` — and a build running as uid 0 reads a 0000 directory perfectly well.
+	// The outage would then never happen and this test would pass for the wrong reason in
+	// the tier nobody watches.
+	away := srv.root + ".away"
+	if err := os.Rename(srv.root, away); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Rename(away, srv.root) })
+
+	if err := srv.proc.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(20 * time.Second)
+	var line string
+	for time.Now().Before(deadline) {
+		for _, candidate := range strings.Split(srv.log(t), "\n") {
+			if strings.Contains(candidate, reloadRefused) {
+				line = candidate
+			}
+		}
+		if line != "" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if line == "" {
+		t.Fatalf("a reload whose projection failed must print a REFUSED verdict\n%s", srv.log(t))
+	}
+
+	// 🔴 THE ASSERTION IS ON WHAT THE LINE CLAIMS, AND THE FIRST CLAUSE IS A BAN. A
+	// rewording that reintroduces "NOTHING CHANGED" is the defect returning.
+	if strings.Contains(line, "NOTHING CHANGED") {
+		t.Errorf("the refusal claims nothing changed while the table HAS been swapped: %q", line)
+	}
+	for _, want := range []string{
+		"THE TABLE IS ALREADY SWAPPED",
+		authz.TokenID(second),    // the new row IS published…
+		authz.TokenID(testToken), // …and the old one is what is still authorising
+		"no further signal",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the refusal must contain %q, got %q", want, line)
+		}
+	}
+
+	// 🔴 AND THE AUTHORITY REALLY IS UNCHANGED — the claim the line makes, measured
+	// rather than taken from the line. The original credential still authenticates and
+	// reads the scope it always could, once the root is readable again and BEFORE any
+	// refresh the test asks for.
+	if err := os.Rename(away, srv.root); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.status(t, "alpha-notes"); got != "recalled" {
+		t.Fatalf("the previously loaded identity must keep serving through a refused "+
+			"reload, got %q\n%s", got, srv.log(t))
+	}
+}
+
+// TestTheBinaryREFUSESToStartOverAStoreRootItCannotEnumerate is the deployed half of the
+// cold-start decision.
+//
+// 🔴 THE LIBRARY TEST PROVES `api.New` RETURNS AN ERROR; THIS PROVES THE PROGRAM ACTS ON
+// IT. Those are different claims: `main` could log the refusal and serve anyway, or exit
+// 1, or exit 0 — and an operator reading a CrashLoopBackOff needs the exit code and the
+// sentence that names the VOLUME, not a projection's vocabulary. The failure this rules
+// out is a pod that comes up healthy over an unmounted store, authorises every bare row
+// over an empty enumeration, and keeps serving it for a whole refresh interval after the
+// volume appears.
+//
+// ⚠ 78 IS EX_CONFIG AND IS ALREADY THIS PROGRAM'S CODE FOR "CAME UP MISCONFIGURED IS
+// WORSE THAN DID NOT COME UP" — the same one a weak token or an unset proxy allowlist
+// gets. It is asserted as a literal here and NOT read from `exitConfig`, so that
+// renumbering the constant is a red test rather than a silently renumbered contract.
+func TestTheBinaryREFUSESToStartOverAStoreRootItCannotEnumerate(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(testToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 🔴 UNDER A DEADLINE, BECAUSE THE REGRESSION'S SHAPE IS "THE CHILD SERVES FOREVER".
+	// A plain `CombinedOutput` on a server that came up does not return, so the defect
+	// this test exists to catch would HANG the suite rather than fail it — and a test
+	// that hangs is read as infrastructure, not as a finding.
+	run := func(store string) (int, string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		child := exec.CommandContext(ctx, self,
+			"-store", store,
+			"-host", "127.0.0.1",
+			"-port", strconv.Itoa(freePort(t)),
+			"-token-file", tokenFile)
+		child.Env = []string{
+			runServerEnv + "=1",
+			testRefreshEnv + "=" + testRefreshPeriod.String(),
+			"SUBSYSTEM_STORE_TRUSTED_PROXIES=192.0.2.0/24",
+		}
+		out, _ := child.CombinedOutput()
+		if ctx.Err() != nil {
+			t.Fatalf("the child did not exit within 20s — it CAME UP over %s, which is the "+
+				"defect:\n%s", store, out)
+		}
+		if child.ProcessState == nil {
+			t.Fatalf("the child never ran: %s", out)
+		}
+		return child.ProcessState.ExitCode(), string(out)
+	}
+
+	missing := filepath.Join(t.TempDir(), "no-such-store")
+	code, out := run(missing)
+	if code != 78 {
+		t.Fatalf("a store root that cannot be enumerated must exit 78 (EX_CONFIG), got %d\n%s",
+			code, out)
+	}
+	// The message is the operator's whole signal, so it has to name the root it could
+	// not read and say what it did about it.
+	for _, want := range []string{missing, "Refusing to start"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the refusal must contain %q, got:\n%s", want, out)
+		}
+	}
+
+	// 🔴 THE POSITIVE CONTROL, AND IT IS NOT OPTIONAL. Exit 78 is what this program does
+	// for several misconfigurations, so "the child exited 78" is indistinguishable from a
+	// child that would exit 78 over ANY store — including the one the rest of this file
+	// starts successfully. A readable, EMPTY root must come up.
+	//
+	// It is killed rather than waited on: on success this child serves forever.
+	readable := t.TempDir()
+	child := exec.Command(self,
+		"-store", readable,
+		"-host", "127.0.0.1",
+		"-port", strconv.Itoa(freePort(t)),
+		"-token-file", tokenFile)
+	child.Env = []string{
+		runServerEnv + "=1",
+		testRefreshEnv + "=" + testRefreshPeriod.String(),
+		"SUBSYSTEM_STORE_TRUSTED_PROXIES=192.0.2.0/24",
+	}
+	// 🔴 A LOCKED BUFFER, NOT A BARE `strings.Builder`. `exec` copies the child's pipes
+	// from its OWN goroutines, so a Builder handed to `Cmd.Stdout` is written there and
+	// read here — which `-race` reported as a genuine data race in the first version of
+	// this test, twice in one `-count=2` run. The existing `startServer` avoids it by
+	// writing to a FILE; this one needs the text while the child may still be running.
+	log := &lockedBuffer{}
+	child.Stdout, child.Stderr = log, log
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+	}()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(log.String(), "listening on") {
+			return
+		}
+		if child.ProcessState != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("control: an EMPTY but readable store root must still come up, and this one "+
+		"did not:\n%s", log.String())
+}
+
 // ---------------------------------------------------------------------------
 // the harness
 // ---------------------------------------------------------------------------
+
+// lockedBuffer is a `strings.Builder` that a test may read while `os/exec` writes.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
 
 // testToken is a synthetic credential at the real floor, built rather than written out:
 // a 43-character literal in this repository is a leak-scanner finding regardless of
@@ -144,9 +371,11 @@ func TestTheBinarysOwnTimerIsWhatClosesTheDivergence(t *testing.T) {
 var testToken = strings.Repeat("c", authz.MinTokenChars)
 
 type serverProcess struct {
-	root    string
-	url     string
-	logPath string
+	root      string
+	url       string
+	logPath   string
+	tokenFile string
+	proc      *os.Process
 }
 
 // startServer runs THIS BINARY as `cairn-server` over a fresh store and token file.
@@ -205,7 +434,13 @@ func startServer(t *testing.T) *serverProcess {
 		_, _ = child.Process.Wait()
 	})
 
-	s := &serverProcess{root: root, url: "http://127.0.0.1:" + strconv.Itoa(port), logPath: logPath}
+	s := &serverProcess{
+		root:      root,
+		url:       "http://127.0.0.1:" + strconv.Itoa(port),
+		logPath:   logPath,
+		tokenFile: tokenFile,
+		proc:      child.Process,
+	}
 	s.waitUntilServing(t)
 	return s
 }

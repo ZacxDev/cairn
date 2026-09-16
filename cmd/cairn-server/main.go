@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -26,6 +27,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/api"
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
+	"github.com/ZacxDev/cairn/internal/control/tokenfile"
 	"github.com/ZacxDev/cairn/internal/netid"
 )
 
@@ -138,8 +140,24 @@ func main() {
 		os.Exit(exitConfig)
 	}
 
+	// 🔴 A STORE ROOT THAT WILL NOT ENUMERATE IS A REFUSAL TO START, AND THE MESSAGE SAYS
+	// SO IN THE OPERATOR'S TERMS RATHER THAN THE PROJECTION'S. `api.New` materializes the
+	// authority, and the token-file adapter reads the store root to learn which scopes
+	// exist — so an unmounted volume surfaces here as a projection failure whose text is
+	// about a control plane the operator has never heard of. `tokenfile.ErrStoreRootUnreadable`
+	// is exported so this line can name the volume instead. The decision to refuse rather
+	// than come up serving an enumeration known to be empty is argued at
+	// `tokenfile.Source.Model`; 78 is EX_CONFIG, which this program already uses for
+	// "came up misconfigured is worse than did not come up".
 	srv, err := api.New(*store, tokens, trusted, netid.NewRateLimiter(maxFailures, window, lockout))
 	if err != nil {
+		if errors.Is(err, tokenfile.ErrStoreRootUnreadable) {
+			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+				"subsystem-store-api: the store root %s cannot be enumerated (%s), so the authority cannot say which "+
+					"scopes exist and every read would answer 503 anyway. Refusing to start; mount the volume and restart",
+				*store, err.Error())))
+			os.Exit(exitConfig)
+		}
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()))
 		os.Exit(exitConfig)
 	}
@@ -166,7 +184,15 @@ func main() {
 	// `server/seed.sh` seeds through `kubectl exec … tar -xf -` — is not visible to a
 	// bare (unrestricted) row until the next materialization, because the control plane
 	// has no unrestricted principal to answer with. See the divergence declared in
-	// `tokenfile`'s package doc. The timer bounds that window; `Staleness` reports it.
+	// `tokenfile`'s package doc.
+	//
+	// ⚠ THE TIMER BOUNDS THAT WINDOW. NOTHING REPORTS IT, AND THIS SENTENCE CLAIMED
+	// `Staleness` DID. `control.Cache.Staleness()` is a renderable value with no caller
+	// outside the tests — this program does not print it, `internal/doctor` does not read
+	// it, and no route carries it — so the window, and a `degraded`/`stale` authority
+	// with it, is bounded and SILENT. The surface is deferred because the one place to
+	// print it is the startup banner below, which `tests/dualrun/harness.py` compares
+	// between the two servers; the closing condition is in `tokenfile`'s package doc.
 	//
 	// ⚠ SIGHUP IS DELIBERATELY NOT ONE OF THESE TRIGGERS. The reload path above already
 	// re-materializes as part of publishing the new table, and a second registration
@@ -261,12 +287,28 @@ func installReload(srv *api.Server, tokenFile string, env map[string]string) {
 			// parsed; the authority did not rebuild from it, so the table the operator
 			// just edited is NOT what is authorising requests. The previous model keeps
 			// serving (see `control.Cache.Refresh`), which is the same fallback a
-			// refused parse gets — so the line says the same thing, and the operator's
-			// one signal that `kill -HUP` did anything stays honest.
+			// refused parse gets.
+			//
+			// 🔴 BUT THE LINE MUST NOT SAY "NOTHING CHANGED", AND IT DID. `SetTokens`
+			// PUBLISHES THE TABLE BEFORE REFRESHING — deliberately, so the next refresh
+			// reads the new one — so on this branch the table HAS been swapped and only
+			// the projection is stale. Two things follow that "nothing changed" gets
+			// exactly backwards: the authority is unchanged (true) while the input is
+			// not (false), and the next TIMER tick re-projects the new table with no
+			// operator action at all, so "send SIGHUP again" described a step that is
+			// not required. Both halves are stated instead, because an operator who
+			// believes nothing changed will re-edit the file against a copy that is no
+			// longer what the pod holds.
 			if err := srv.SetTokens(records); err != nil {
 				fmt.Println(reloadSafe(fmt.Sprintf(
-					"subsystem-store-api: %s — the token source parsed but the authority did not rebuild from it (%s). NOTHING CHANGED: still serving the %d previously loaded identities [%s]. Fix it and send SIGHUP again",
-					reloadRefused, err.Error(), len(previous), tokenIDs(previous))))
+					"subsystem-store-api: %s — the token source parsed but the authority did not rebuild from it (%s). "+
+						"THE TABLE IS ALREADY SWAPPED: the %d new identities [%s] are published, and the next refresh (within %s) "+
+						"re-projects from them with no further signal — and fails the same way until the cause is fixed. "+
+						"The AUTHORITY is unchanged: it keeps serving the %d previously loaded identities [%s]. "+
+						"Fix the cause; SIGHUP only to retry without waiting",
+					reloadRefused, err.Error(),
+					len(records), tokenIDs(records), refreshInterval,
+					len(previous), tokenIDs(previous))))
 				continue
 			}
 			fmt.Println(reloadSafe(fmt.Sprintf(

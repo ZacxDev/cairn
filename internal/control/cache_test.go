@@ -74,6 +74,77 @@ func (s *switchedStore) Append(ctx context.Context, events ...Event) (Model, err
 func (s *switchedStore) unplug()        { s.mu.Lock(); s.down = true; s.mu.Unlock() }
 func (s *switchedStore) readCount() int { s.mu.Lock(); defer s.mu.Unlock(); return s.reads }
 
+// gatedSource answers a DIFFERENT Model per call and holds each call INSIDE `Model`
+// until the test releases it by hand.
+//
+// 🔴 IT EXISTS BECAUSE THE DEFECT IT MEASURES IS A LOGICAL RACE, NOT A DATA RACE, SO
+// `-race` IS STRUCTURALLY BLIND TO IT. Two refreshes that read the authority in one
+// order and commit in the other are perfectly synchronised and perfectly wrong; nothing
+// about the memory model is violated. `switchedStore.hold` blocks ONE call for the hung
+// authority test, which cannot express "call one waits while call two runs to
+// completion" — this can, and the interleaving it forces is deterministic rather than
+// hopeful, because call N+1 cannot start until call N is already parked inside `Model`.
+type gatedSource struct {
+	mu      sync.Mutex
+	next    int
+	answers []Model
+	entered []chan struct{}
+	release []chan struct{}
+}
+
+func newGatedSource(answers ...Model) *gatedSource {
+	g := &gatedSource{answers: answers}
+	for range answers {
+		g.entered = append(g.entered, make(chan struct{}))
+		g.release = append(g.release, make(chan struct{}))
+	}
+	return g
+}
+
+func (g *gatedSource) Model(context.Context) (Model, error) {
+	g.mu.Lock()
+	i := g.next
+	g.next++
+	g.mu.Unlock()
+	close(g.entered[i])
+	<-g.release[i]
+	return g.answers[i], nil
+}
+
+// gatedWriter is a `gatedSource` whose WRITE half can be parked too.
+//
+// 🔴 PARKING `Append` IS WHAT MAKES THE GENERATION'S POSITION OBSERVABLE. `ApplyNow`
+// takes its stamp AFTER `Append` returns rather than before, and the only interleaving
+// that can tell those two apart is a refresh that starts while the write is in flight:
+// stamped before, the refresh gets the HIGHER generation and undoes the write; stamped
+// after, the write does. A double that could only park `Model` would score that choice
+// EQUIVALENT.
+type gatedWriter struct {
+	*gatedSource
+	appended       Model
+	inAppend       chan struct{}
+	releaseAppend  chan struct{}
+	appendAttempts int
+}
+
+func newGatedWriter(appended Model, answers ...Model) *gatedWriter {
+	return &gatedWriter{
+		gatedSource:   newGatedSource(answers...),
+		appended:      appended,
+		inAppend:      make(chan struct{}),
+		releaseAppend: make(chan struct{}),
+	}
+}
+
+func (g *gatedWriter) Append(context.Context, ...Event) (Model, error) {
+	g.mu.Lock()
+	g.appendAttempts++
+	g.mu.Unlock()
+	close(g.inAppend)
+	<-g.releaseAppend
+	return g.appended, nil
+}
+
 // readOnlySource has no Append at all — the compile-time shape a plain `Source`
 // backend has, and the one `ErrAuthorityReadOnly` exists for.
 type readOnlySource struct{ m Model }
@@ -366,6 +437,209 @@ func TestAnUnmaterializedCacheAuthorisesNobodyAndSaysSo(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Two triggers, one cache
+// ---------------------------------------------------------------------------
+
+// TestTwoConcurrentRefreshesCommitInSTARTOrderNotCompletionOrder is the revocation that
+// came back.
+//
+// 🔴 THE SCENARIO IS THE DEPLOYED ONE, AND THIS PR IS WHAT MAKES IT REACHABLE. There are
+// now two independent callers of `refresh` in one process — the timer in `Run` and SIGHUP
+// through `api.Server.SetTokens` — and `src.Model` is called OUTSIDE the lock on purpose,
+// so their reads overlap. The operator deletes a compromised row and sends SIGHUP. The
+// timer had already entered `src.Model` and is holding the PRE-revocation table; SIGHUP
+// reads the new one, commits, and returns. Then the timer resumes and assigns its stale
+// model on top. The revoked credential authenticates again and `Staleness` says `fresh`.
+//
+// 🔴 AND THE FIXTURE IS BUILT SO THAT AN "IGNORE A LOWER EPOCH" GUARD WOULD FAIL IT
+// RATHER THAN PASS IT. `Model.Epoch` is the event count of a projection, so removing a
+// credential makes it go DOWN — asserted as a precondition below. A cache that ordered
+// commits by epoch would reject exactly the smaller, newer world it exists to publish.
+// The ordering therefore comes from a generation taken BEFORE the `src` call.
+//
+// ⚠ `-race` IS GREEN ON THE DEFECT AND ALWAYS WAS. Nothing here is a data race: the
+// assignment is under the lock, the read is under the lock, and the result is wrong
+// anyway. This is what a logical race needs instead — a forced interleaving.
+func TestTwoConcurrentRefreshesCommitInSTARTOrderNotCompletionOrder(t *testing.T) {
+	ctx := context.Background()
+
+	// The world before the revocation, and the world after it. `crd_carol` is the
+	// compromised row the operator deletes; everything else is untouched.
+	before := withCredentials(t)
+	var kept []Event
+	for _, e := range append(worldEvents(), credentialEvents()...) {
+		if e.CredentialID == "crd_carol" {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	after, err := Replay(kept)
+	if err != nil {
+		t.Fatalf("replaying the post-revocation world: %v", err)
+	}
+
+	// Preconditions, so nothing below can pass vacuously.
+	if after.Epoch >= before.Epoch {
+		t.Fatalf("precondition: a revocation must make the epoch go DOWN for this fixture "+
+			"to say anything about epoch-ordering; got %d then %d", before.Epoch, after.Epoch)
+	}
+	if _, _, err := Authenticate(before, carolToken); err != nil {
+		t.Fatalf("precondition: carol's credential must be live in the OLD world: %v", err)
+	}
+	if _, _, err := Authenticate(after, carolToken); err == nil {
+		t.Fatal("precondition: carol's credential must be gone from the NEW world")
+	}
+
+	src := newGatedSource(before, after)
+	clock := at(100)
+	c := NewCache(src, CacheOptions{MaxAge: time.Minute, Now: func() time.Time { return clock }})
+
+	// The TIMER starts first and is parked inside `src.Model` holding the old world.
+	slow := make(chan error, 1)
+	go func() { slow <- c.refresh(ctx, RefreshTimer) }()
+	<-src.entered[0]
+
+	// SIGHUP starts second and runs to completion.
+	fast := make(chan error, 1)
+	go func() { fast <- c.refresh(ctx, RefreshSignal) }()
+	<-src.entered[1]
+	close(src.release[1])
+	if err := <-fast; err != nil {
+		t.Fatalf("the SIGHUP refresh must succeed: %v", err)
+	}
+	if _, _, err := c.Authenticate(carolToken); err == nil {
+		t.Fatal("precondition: the revocation must be in force once SIGHUP has committed")
+	}
+
+	// And now the timer resumes. This is the whole finding.
+	close(src.release[0])
+	if err := <-slow; err != nil {
+		t.Fatalf("a superseded refresh is not a failure: %v", err)
+	}
+	if _, _, err := c.Authenticate(carolToken); err == nil {
+		t.Fatal("THE FINDING: a refresh that STARTED before the revocation and finished " +
+			"after it republished the pre-revocation world. The revoked credential " +
+			"authenticates again and the status still says `fresh`")
+	}
+
+	s := c.Staleness()
+	if s.Epoch != after.Epoch {
+		t.Errorf("the serving epoch is %d, want the post-revocation %d", s.Epoch, after.Epoch)
+	}
+	// 🔴 THE DISCARD IS COUNTED, WHICH IS WHAT KEEPS THIS GUARD FROM BEING SATISFIABLE BY
+	// A CACHE THAT SIMPLY STOPPED REFRESHING. One attempt materialized, one was
+	// superseded, none failed — three different outcomes and three different counters.
+	if s.Superseded != 1 || s.Refreshes != 1 || s.Failures != 0 {
+		t.Errorf("superseded=%d refreshes=%d failures=%d, want 1/1/0 (%s)",
+			s.Superseded, s.Refreshes, s.Failures, s)
+	}
+	if s.Status != CacheFresh || s.Failing {
+		t.Errorf("a superseded refresh is not a failure: status=%q failing=%v", s.Status, s.Failing)
+	}
+	// The trigger names the last ATTEMPT, not the last COMMIT — the timer did attempt,
+	// and a report that hid it would be hiding the very thing that raced.
+	if s.LastTrigger != RefreshTimer {
+		t.Errorf("trigger=%q, want %q", s.LastTrigger, RefreshTimer)
+	}
+}
+
+// TestAConcurrentRefreshCannotUNDOApplyNow is the write half of the same ordering rule.
+//
+// 🔴 `ApplyNow`'s ONLY PROMISE IS ABOUT THIS PROCESS, AND A CONCURRENT REFRESH CAN TAKE
+// IT AWAY. `Append` runs outside the lock exactly as `src.Model` does, so a timer refresh
+// that read the authority BEFORE the write landed can commit afterwards and republish the
+// pre-write world — while `ApplyNow` has already returned `EffectImmediate`, which a UI
+// renders as "revoked" with no qualifier. That is the one failure the synchronous path
+// exists to rule out.
+//
+// 🔴 THE INTERLEAVING IS THE ONE THAT DISTINGUISHES *WHERE* THE STAMP IS TAKEN, not
+// merely whether one exists. The refresh starts while `Append` is in flight, so its read
+// is genuinely ambiguous — it may have seen either side of the write. Stamped BEFORE
+// `Append`, the write's generation is lower than the refresh's and the refresh wins,
+// which is the defect. Stamped AFTER, the write's generation is higher and the ambiguous
+// read is the one that is dropped. Both a missing stamp and a mis-placed one fail here.
+func TestAConcurrentRefreshCannotUNDOApplyNow(t *testing.T) {
+	ctx := context.Background()
+
+	before := withCredentials(t)
+	var kept []Event
+	for _, e := range append(worldEvents(), credentialEvents()...) {
+		if e.CredentialID == "crd_carol" {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	after, err := Replay(kept)
+	if err != nil {
+		t.Fatalf("replaying the post-revocation world: %v", err)
+	}
+
+	// Two `before` answers: one for the materialization, one for the refresh that races
+	// the write. The authority's own answer to the WRITE is `after`.
+	src := newGatedWriter(after, before, before)
+	clock := at(100)
+	c := NewCache(src, CacheOptions{MaxAge: time.Minute, Now: func() time.Time { return clock }})
+
+	close(src.release[0])
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatalf("materializing: %v", err)
+	}
+	if _, _, err := c.Authenticate(carolToken); err != nil {
+		t.Fatalf("precondition: carol must authenticate before the revocation: %v", err)
+	}
+
+	// The revoke-now, parked inside `Append`.
+	result := make(chan WriteResult, 1)
+	go func() {
+		r, err := c.ApplyNow(ctx, Event{
+			Kind: EventCredentialRevoked, At: at(101), CredentialID: "crd_carol",
+		})
+		if err != nil {
+			t.Errorf("ApplyNow: %v", err)
+		}
+		result <- r
+	}()
+	<-src.inAppend
+
+	// The timer refresh, entering `src.Model` while the write is in flight and reading
+	// the PRE-revocation world.
+	slow := make(chan error, 1)
+	go func() { slow <- c.refresh(ctx, RefreshTimer) }()
+	<-src.entered[1]
+
+	close(src.releaseAppend)
+	r := <-result
+	if r.Effect != EffectImmediate {
+		t.Fatalf("precondition: ApplyNow must report the revocation in force, got %s", r)
+	}
+	if _, _, err := c.Authenticate(carolToken); err == nil {
+		t.Fatal("precondition: the revocation must be in force as ApplyNow returns")
+	}
+
+	close(src.release[1])
+	if err := <-slow; err != nil {
+		t.Fatalf("a superseded refresh is not a failure: %v", err)
+	}
+
+	if _, _, err := c.Authenticate(carolToken); err == nil {
+		t.Fatalf("THE FINDING: a refresh that raced the write UNDID it. ApplyNow returned "+
+			"%s and the revoked credential authenticates again", r)
+	}
+	s := c.Staleness()
+	if s.Epoch != after.Epoch {
+		t.Errorf("the serving epoch is %d, want the written %d", s.Epoch, after.Epoch)
+	}
+	if s.Superseded != 1 {
+		t.Errorf("superseded=%d, want 1 — the racing refresh must be counted, not silent (%s)",
+			s.Superseded, s)
+	}
+	// The positive control on the double: the write really did reach the authority once.
+	if src.appendAttempts != 1 {
+		t.Errorf("the authority saw %d appends, want exactly 1", src.appendAttempts)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // The report
 // ---------------------------------------------------------------------------
 
@@ -389,7 +663,7 @@ func TestTheStalenessRendersExactly(t *testing.T) {
 
 	t.Run("unmaterialized", func(t *testing.T) {
 		c, _ := build(time.Minute)
-		want := "authz-cache: status=unmaterialized epoch=n/a age=n/a bound=1m0s materialized=never trigger=never refreshes=0 failures=0 failing=false"
+		want := "authz-cache: status=unmaterialized epoch=n/a age=n/a bound=1m0s materialized=never trigger=never refreshes=0 failures=0 superseded=0 failing=false"
 		if got := c.Staleness().String(); got != want {
 			t.Errorf("got  %q\nwant %q", got, want)
 		}
@@ -401,7 +675,7 @@ func TestTheStalenessRendersExactly(t *testing.T) {
 			t.Fatal(err)
 		}
 		*clock = at(100).Add(30 * time.Second)
-		want := "authz-cache: status=fresh epoch=7 age=30s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=0 failing=false"
+		want := "authz-cache: status=fresh epoch=7 age=30s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=0 superseded=0 failing=false"
 		if got := c.Staleness().String(); got != want {
 			t.Errorf("got  %q\nwant %q", got, want)
 		}
@@ -416,7 +690,7 @@ func TestTheStalenessRendersExactly(t *testing.T) {
 			t.Fatal(err)
 		}
 		*clock = at(101)
-		want := "authz-cache: status=fresh epoch=7 age=1m0s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=0 failing=false"
+		want := "authz-cache: status=fresh epoch=7 age=1m0s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=0 superseded=0 failing=false"
 		if got := c.Staleness().String(); got != want {
 			t.Errorf("got  %q\nwant %q", got, want)
 		}
@@ -428,7 +702,7 @@ func TestTheStalenessRendersExactly(t *testing.T) {
 			t.Fatal(err)
 		}
 		*clock = at(101).Add(time.Second)
-		want := "authz-cache: status=stale epoch=7 age=1m1s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=0 failing=false"
+		want := "authz-cache: status=stale epoch=7 age=1m1s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=0 superseded=0 failing=false"
 		if got := c.Staleness().String(); got != want {
 			t.Errorf("got  %q\nwant %q", got, want)
 		}
@@ -443,7 +717,7 @@ func TestTheStalenessRendersExactly(t *testing.T) {
 			t.Fatal(err)
 		}
 		*clock = at(200)
-		want := "authz-cache: status=fresh epoch=7 age=1h40m0s bound=none materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=0 failing=false"
+		want := "authz-cache: status=fresh epoch=7 age=1h40m0s bound=none materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=0 superseded=0 failing=false"
 		if got := c.Staleness().String(); got != want {
 			t.Errorf("got  %q\nwant %q", got, want)
 		}
@@ -463,7 +737,7 @@ func TestTheStalenessRendersExactly(t *testing.T) {
 		s := c.Staleness()
 		// The epoch here is the fixture journal's length, which is fixture data.
 		want := "authz-cache: status=degraded epoch=" + itoa(uint64(len(cacheWorld()))) +
-			" age=10s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=1 failing=true"
+			" age=10s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=explicit refreshes=1 failures=1 superseded=0 failing=true"
 		if got := s.String(); got != want {
 			t.Errorf("got  %q\nwant %q", got, want)
 		}
@@ -471,6 +745,41 @@ func TestTheStalenessRendersExactly(t *testing.T) {
 		// operator stream can forge a line boundary; the boolean carries the fact.
 		if s.LastError == nil {
 			t.Errorf("LastError is nil on a degraded cache — the text must still be reachable")
+		}
+	})
+
+	// 🔴 THE SEVENTH STATE, AND WITHOUT IT `superseded=` IS A KEY NO EXPECTATION IN THIS
+	// TEST EVER SEES NON-ZERO. Six literals reading `superseded=0` pin the spelling and
+	// measure nothing about the counter; this one forces the interleaving and reads the
+	// number. The epochs are hand-built and go DOWN — 7 then 5 — which is the shape a
+	// revocation has and the reason the ordering cannot come from the epoch.
+	t.Run("a superseded refresh is counted, not failed", func(t *testing.T) {
+		older, newer := NewModel(), NewModel()
+		older.Epoch, older.At = 7, at(50)
+		newer.Epoch, newer.At = 5, at(50)
+
+		g := newGatedSource(older, newer)
+		clock := at(100)
+		c := NewCache(g, CacheOptions{MaxAge: time.Minute, Now: func() time.Time { return clock }})
+
+		slow := make(chan error, 1)
+		go func() { slow <- c.refresh(ctx, RefreshTimer) }()
+		<-g.entered[0]
+		fast := make(chan error, 1)
+		go func() { fast <- c.refresh(ctx, RefreshSignal) }()
+		<-g.entered[1]
+		close(g.release[1])
+		if err := <-fast; err != nil {
+			t.Fatal(err)
+		}
+		close(g.release[0])
+		if err := <-slow; err != nil {
+			t.Fatal(err)
+		}
+
+		want := "authz-cache: status=fresh epoch=5 age=0s bound=1m0s materialized=2000-01-01T01:40:00Z trigger=timer refreshes=1 failures=0 superseded=1 failing=false"
+		if got := c.Staleness().String(); got != want {
+			t.Errorf("got  %q\nwant %q", got, want)
 		}
 	})
 }
