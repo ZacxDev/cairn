@@ -39,14 +39,23 @@ cannot happen unseen. It was watched red by appending bytes until each of the tw
 thresholds fired with its own message, and each threshold's message names only itself so
 a red is attributable to one of them.
 
-⚠ AND IT IS A CEILING ON TODAY'S FILE, NOT AN ENDORSEMENT OF IT. At the commit that
-added this module the sum is 36,594 B, still 3.4x the pre-P2 10,617 — because the P2
-relocation was the scope of that change and the SERVER section (measured 15,864 B, 44%
-of `AGENTS.md`) was left alone, even though `tests/conformance/README.md` already carries
-much of it (the U+FFFD/surrogate-pair defects, the "byte-diff the two archives" lesson,
-the gzip-identity ruling and the 13-of-40 renderer survivors). `_largest_sections()` is
-what points the next person at it: the playbook names the real mass, measured at failure
-time, rather than a number somebody wrote down.
+⚠ AND IT IS A CEILING ON TODAY'S FILE, NOT AN ENDORSEMENT OF IT. At the commit that added
+this module the sum was 36,594 B, still 3.4x the pre-P2 10,617 — because the P2 relocation
+was the scope of that change and the SERVER section (measured 15,864 B, 44% of
+`AGENTS.md`) was left alone. 🔴 THAT SECTION HAS SINCE BEEN EVICTED and this paragraph is
+updated rather than left standing: at `752415d` it was 15,031 B, 41% of the file, and it
+now stands at 9,071 B, with P1's measured record in `tests/conformance/README.md` and the
+gzip/DEFLATE measurement in `tests/dualrun/README.md`. The sum went 36,708 -> 30,748 B
+without a claim being deleted — much of it was a DELETE, not a move, because
+`tests/conformance/README.md` already carried the U+FFFD/surrogate-pair defects, the
+"byte-diff the two archives" lesson and the 13-of-40 renderer survivors, and
+`tests/dualrun/README.md` already carried the dualrun figures and the `ts=` finding.
+
+⚠ WHICH IS THE GENERAL LESSON, AND IT IS WHY THE PLAYBOOK SAYS "DIFF BEFORE YOU PASTE":
+an always-loaded file drifts into re-stating what an on-demand file already says, so the
+cheapest eviction is usually not a move at all. `_largest_sections()` is what points the
+next person at the mass: the playbook names it measured at failure time, rather than a
+number somebody wrote down.
 """
 from __future__ import annotations
 
@@ -63,25 +72,49 @@ CLAUDE_MD = ROOT / "CLAUDE.md"
 
 #: Hard ceiling on the SUM of the two, in bytes.
 #:
-#: 🔴 THE NUMBER IS DERIVED, NOT CHOSEN. Measured after the P2 history was relocated to
-#: `tests/parity/README.md`: `AGENTS.md` 36,327 B + `CLAUDE.md` 267 B = 36,594 B. The
-#: ceiling is that plus 1,106 B of slack — ~3%, the same proportion the precedent named in
-#: this module's docstring runs at (1,329 B over a 41,121 B file) — and it is deliberately
-#: NOT room bought in advance: it is a bit over one large paragraph's worth, so the next
-#: real addition pays ceiling too and this does not become a habit.
+#: 🔴 THE NUMBER IS DERIVED, NOT CHOSEN. Measured after the P1 SERVER history was relocated
+#: to `tests/conformance/README.md` and `tests/dualrun/README.md`: `AGENTS.md` 30,481 B +
+#: `CLAUDE.md` 267 B = 30,748 B. The ceiling is that plus 1,102 B of slack.
 #:
-#: ⚠ NAME THE BASE WHEN YOU RAISE THIS, and say what eviction was attempted first. A
-#: bump with no attempted eviction is how a ceiling becomes decoration.
-MAX_BYTES = 37_700
+#: ⚠ THE SLACK HAS TWO DERIVATIONS AND THEY ONLY AGREED BY COINCIDENCE AT THE OLD BASE.
+#: The previous ceiling (37,700 = 36,594 + 1,106) was justified BOTH as "~3%, the same
+#: proportion the precedent in the docstring runs at" AND as "a bit over one large
+#: paragraph's worth". At a 30,748 B base those give 922 B and ~1,100 B, so the choice had
+#: to be made rather than inherited: the PARAGRAPH rule is the binding one, because the
+#: reason it is stated for — "deliberately NOT room bought in advance, so the next real
+#: addition pays ceiling too and this does not become a habit" — is about edit sizes, and
+#: nothing about this file's cost scales with its own size. 1,102 B is ~1.2x the
+#: re-measured 90th-percentile block (910 B, see `MIN_HEADROOM_BYTES`).
+#:
+#: ⚠ SO THE WORKING MARGIN IS DELIBERATELY NARROW — 202 B, not thousands. That is the
+#: design and not an oversight: the next addition of any size trips the headroom warning
+#: and has to evict something, which is the whole mechanism. A lower ceiling bought no
+#: comfort; it bought the same margin against a file 5,960 B smaller.
+#:
+#: ⚠ NAME THE BASE WHEN YOU MOVE THIS IN EITHER DIRECTION, and — raising — say what
+#: eviction was attempted first. A bump with no attempted eviction is how a ceiling becomes
+#: decoration; a LOWER ceiling with no named base is the same failure wearing a rosette.
+MAX_BYTES = 31_850
 
 #: Required free margin below the ceiling, so "you are one paragraph from breaking it"
 #: arrives as a signal rather than as a surprise on the commit that breaks it.
 #:
 #: Sized in units of a REAL edit, measured rather than guessed: splitting `AGENTS.md` on
-#: blank lines gives 56 blocks of >=200 B, whose mean is 602 B, median 573 B and 90th
-#: percentile 919 B. One full large block is therefore ~900 B. A margin below that would
-#: fire at the same moment as the ceiling and deliver exactly the surprise it exists to
-#: prevent.
+#: blank lines gives blocks of >=200 B, and one full large block is ~900 B. A margin below
+#: that would fire at the same moment as the ceiling and deliver exactly the surprise it
+#: exists to prevent.
+#:
+#: ⚠ RE-DERIVED AFTER THE SERVER EVICTION, BY THE SAME METHOD, AND IT DID NOT MOVE — which
+#: is the point of saying so rather than leaving the number unexamined. `AGENTS.md` lost
+#: 5,960 B and 8 blocks, and the distribution of what is LEFT barely shifted, because a
+#: relocation removes whole paragraphs rather than shortening them:
+#:
+#:     before (36,441 B):  n=56  mean 613  median 586  p90 977  max 1,692
+#:     after  (30,481 B):  n=48  mean 598  median 541  p90 910  max 1,692
+#:
+#: 910 is within 1.1% of 900, so the constant stands. (The figures the original comment
+#: named — n=56, mean 602, median 573, p90 919 — were measured at 36,327 B, before later
+#: additions; the count reproduces exactly and the moments drifted with the file.)
 MIN_HEADROOM_BYTES = 900
 
 #: Where history goes. 🔴 EACH IS A FILE THAT IS READ ON DEMAND, which is the whole
@@ -159,8 +192,14 @@ def _eviction_playbook() -> str:
 {biggest}
 
     Mechanics:
-      1. Move the prose into the destination file, under its own `##` heading,
-         saying WHY it moved (so the next reader does not move it back).
+      0. 🔴 DIFF BEFORE YOU PASTE. The destination is read on demand, which is
+         the whole mechanism — duplicating a claim INTO it makes the eviction
+         look done while costing the same bytes to anyone who opens it. Grep
+         the destination for the claim first: an always-loaded file drifts into
+         re-stating what an on-demand file already says, so the cheapest
+         eviction is usually a DELETE-AND-POINT, not a move.
+      1. Move what is genuinely absent into the destination file, under its own
+         `##` heading, saying WHY it moved (so nobody moves it back).
       2. Leave ONE line in AGENTS.md naming what moved and where — a pointer,
          not a summary; a summary is the same bytes with less information.
       3. Re-run this file. The ceiling and the margin live in
