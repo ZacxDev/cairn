@@ -83,19 +83,29 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## Defects (batched)
 Fix as one round; closing one buys room for one rank.
-- ✅ **CLOSED this session: the `AGENTS.md` byte-budget defect** (#32). The server section
-  relocated and `MAX_BYTES` was **lowered** 37,700 → 31,850, which was the closing
-  condition as written. ⚠ Margin is 202 B, not comfort: the ceiling was lowered to keep the
-  SAME design margin against a smaller file, deliberately, so the next addition still pays
-  ceiling.
+- 🔴 **AN IN-REPO AGENT WORKTREE MAKES LOCAL `leakscan` UNABLE TO VOUCH — exit 2, not a
+  finding, and not a pass either.** Measured at `911e49d`: with a subagent worktree at
+  `.claude/worktrees/agent-*/`, `tests/leakscan.py` exits **2** with
+  `COULD NOT READ .claude/worktrees/agent-…/: [Errno 21] Is a directory` on **stderr**,
+  having printed every control PASS on stdout and nothing else. Mechanism: the scanner
+  enumerates with `git ls-files --cached --others` — deliberately, so an unstaged new file
+  cannot hide — `.claude/` is untracked and **not** in `.gitignore`, and git reports a
+  linked worktree as a single DIRECTORY entry, which `open()` refuses. Control: 276
+  enumerated paths with `.claude/`, 275 without; the delta is exactly that one entry.
+  ⚠ **CI is unaffected** (fresh checkout, no worktrees) — this is a LOCAL blind spot, and
+  the dangerous half is that the failure is on stderr while stdout still ends in a wall of
+  `PASS` lines, so a piped read looks clean. 🔴 **And `$?` after `python3 tests/leakscan.py
+  | tail` is TAIL's status, not the scanner's** — capture the rc before the pipe.
+  **Closing condition:** `leakscan` skips a directory entry *and names it in its summary*
+  (a subtree it did not scan is exactly what its exit-2 contract is for), rather than
+  either refusing or silently ignoring it — plus a negative control proving the skip is
+  reported. Gitignoring `.claude/` is the wrong fix: it would hide any project config that
+  genuinely belongs in the scan.
 - **Audit round-3 residue on #31, filed rather than fixed** (all scaffolding, no payload
   consequence): `internal/control/README.md`'s "current at every commit from X to Y" range
   is charitable rather than exact; the new cache test's re-entrancy precondition is stated
   in the battery harness but not beside `clock()`; and the deleted EQUIVALENT label carried
   a second wrong claim (severity, not only reachability) that the retraction does not name.
-- **`claudedocs/handoff-cairn-control-plane.md`'s own verify block was stale** for most of
-  this session — scoped to `5c02f2b`, quoting `28 / 27 killed` and `1860 passed`. Fixed in
-  this update; the general shape is that a verify block pinned to a sha rots silently.
 - **Three files are not `gofmt`-clean** on `main` (`internal/client/exit.go`,
   `internal/client/options.go`, `internal/doctor/doctor_test.go`) — alignment only, arrived
   with the #24 merge, and **nothing in CI greps `gofmt`**.
@@ -110,6 +120,10 @@ Fix as one round; closing one buys room for one rank.
 - **`server/seed.sh:110`** has the `( cd "$1" && … )` shape that made
   `tests/conformance/run_go.sh` unrunnable — a bare `cd <relative>` **prints** the
   directory when it resolves through `CDPATH`. The other scripts use `CDPATH= cd --`.
+- ✅ **CLOSED this session: the `AGENTS.md` byte-budget defect** (#32). The server section
+  relocated and `MAX_BYTES` was **lowered** 37,700 → 31,850, which was the closing
+  condition as written. ⚠ Margin is 202 B, not comfort: the ceiling was lowered to keep the
+  SAME design margin against a smaller file, deliberately.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **A green corpus is not a green port.** The conformance split was 94/22/0/4 *before*
