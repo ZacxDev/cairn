@@ -243,11 +243,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 72 mutants, over FOUR packages
+python3 tests/control_mutants.py          # 93 mutants, over FIVE packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 72 mutants, 71 killed, 1 labelled EQUIVALENT at the code,
+**Measured on this tree: 93 mutants, 91 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, positive control GREEN.**
 
 ⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
@@ -258,13 +258,14 @@ survivor did not exist while that survivor was the round's most important findin
 `python3 tests/control_mutants.py` prints the `SUMMARY` line these are copied from, and
 the survivor paragraph below must name exactly the mutants that actually survived.
 
-🔴 **IT RUNS OVER FOUR PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** `internal/control`
-is the model and its predicate, `internal/control/tokenfile` is the projection, and
-`internal/api` is the server that authorises from it — and a mutant in the projection is
-killed by a guard in the server and vice versa. A battery scoped to one package would have
-scored every one of those SURVIVED while the suite that catches them was never run.
+🔴 **IT RUNS OVER FIVE PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** `internal/control`
+is the model and its predicate, `internal/control/tokenfile` is the projection,
+`internal/identity` is P4's authenticator and its two new backends, and `internal/api` is
+the server that authorises from all of them — and a mutant in one is killed by a guard in
+another. A battery scoped to one package would have scored every one of those SURVIVED
+while the suite that catches them was never run.
 
-🔴 **AND `cmd/cairn-server` IS THE FOURTH, BECAUSE THE TIMER THAT BOUNDS THE DIVERGENCE
+🔴 **AND `cmd/cairn-server` IS THE FIFTH, BECAUSE THE TIMER THAT BOUNDS THE DIVERGENCE
 LIVES ONLY THERE.** Measured before it was added: deleting the refresh goroutine from
 `main` — and the two imports it alone needed — left `go build ./...` clean, `go vet ./...`
 clean and all thirteen `internal/...` test packages green, with this battery not running
@@ -284,7 +285,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 72 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 93 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -304,12 +305,15 @@ the wrong guard proves the suite can fail and proves nothing about the guard it 
 to exercise. A kill by anything other than the row's named test is reported as
 MISATTRIBUTED, which is a finding rather than a pass.
 
-The one survivor is `constant-time-compare-becomes-equality` — replacing
-`subtle.ConstantTimeCompare` with `==`. String equality and a constant-time compare agree
-on every input, so no behavioural test can distinguish them and none should be written to
-try; the property at stake is a timing one, defended by the comment beside the call. It
-is listed here so a reader finding it SURVIVED does not read that as "the comparison does
-not matter".
+The two survivors are `constant-time-compare-becomes-equality` and P4's
+`the-proxy-secret-is-compared-with-equality` — replacing `subtle.ConstantTimeCompare` with
+string equality, in `control.EqualHash` and in the trusted-header backend's shared-secret
+check. String equality and a constant-time compare agree on every input, so no behavioural
+test can distinguish them and none should be written to try; the property at stake is a
+timing one, defended by the comment beside each call. They are listed here so a reader
+finding them SURVIVED does not read that as "the comparison does not matter" — and there
+are two rather than one because they are two different secrets at two different call
+sites, not one guard counted twice.
 
 🔴 **THERE WAS BRIEFLY A SECOND SURVIVOR, AND ITS LABEL WAS FALSE.**
 `the-write-ignores-a-newer-commit` — deleting the `mine >= c.committed` clause from
@@ -323,6 +327,37 @@ HEAD, **24 / 24 / 0** with the mutant. `TestAWriteDoesNotCommitOverAnAttemptThat
 is the killer and the label is gone. **A label that reads as coverage while providing none
 is worse than no label** — it forecloses the test that would close the gap, and this one
 was sitting inside the battery built to refuse exactly that shape.
+
+### What P4's twenty-one rows found
+
+🔴 **THREE EXISTING ROWS WENT STALE BECAUSE P4 MOVED THE LINES THEY NAME, AND THE BATTERY
+IS WHAT SAID SO RATHER THAN A REVIEWER.** `read-set-uses-the-write-verb`,
+`the-audit-identity-becomes-an-opaque-id` and `the-hot-path-refreshes` all matched text in
+`internal/api/server.go` that the identity seam re-spelled — the first two because the
+assignments now read the `identity.Identity` the authenticator returned, the third because
+the authority call moved into `identity.MachineToken`. Each was reported as a **HARNESS
+ERROR**, not as a SURVIVED row, which is the whole point of the occurrence-count assertion:
+a drifted pattern that scored SURVIVED would have read as a coverage gap and sent the next
+reader hunting a guard that is fine. `the-hot-path-refreshes` could not simply follow its
+line, because `identity.TokenAuthority` deliberately offers only `Authenticate` and cannot
+refresh; it now mutates the server's own call into the authenticator, where the cache is
+still in scope.
+
+🔴 **AND TWO NEW ROWS DID NOT COMPILE IN THEIR FIRST DRAFT — THE ONE OUTCOME THAT PROVES
+NOTHING.** Removing `subtle.ConstantTimeCompare` left `crypto/subtle` unused; renaming
+`envBool`'s `default:` arm to a case nothing matches left a function that returns nothing.
+Both now keep every identifier referenced, which is the same lesson
+`the-refresh-loop-has-no-triggers` records one section up.
+
+⚠ **TWO MORE FIXTURES SAT EXACTLY ON THEIR OWN GUARD'S BOUNDARY, AND BOTH SURVIVED A
+FULLY GREEN TEST.** `exp-is-not-required` survived because a zero `numericDate` renders as
+1970, so the expiry COMPARISON refuses a token with no `exp` anyway and "it was refused"
+could not tell the two apart — the test now reads the message and requires it to name the
+absent claim. `a-failed-fetch-resets-the-reported-age` survived because the key-set fixture
+used a FIXED clock, making `now` equal to the instant of the last successful fetch, so
+moving `fetchedAt` on a failure changed nothing observable — the fixture now steps a minute
+per reading. Both are the shape this file already records for
+`effective-by-measured-from-now`, found twice more in one round.
 
 🔴 **TWO ROWS OF THE BATTERY WERE WRONG IN THEIR FIRST DRAFT, AND THE BATTERY IS WHAT
 SAID SO.** Recorded because both are the shape this whole file is about:

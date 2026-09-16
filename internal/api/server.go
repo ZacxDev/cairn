@@ -52,6 +52,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
+	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/snapshot"
@@ -144,6 +145,25 @@ type Server struct {
 	// of whatever is behind the seam.
 	authority *control.Cache
 
+	// authenticator is HOW a request becomes a principal. P4's seam.
+	//
+	// 🔴 IT IS NOT A SECOND PLACE TO DECIDE VISIBILITY, AND THE DISTINCTION IS THE
+	// WHOLE POINT OF THE SEAM. An `identity.Authenticator` answers WHO, and the
+	// `control.Authorization` it returns comes out of the same model read — it is
+	// `control.Resolve`'s answer, carried, never recomputed here. Nothing below this
+	// field branches on which backend produced a principal; a route cannot, because
+	// `identity.Identity` carries no discriminator to branch on.
+	//
+	// 🔴 AN `atomic.Pointer` FOR THE SAME REASON `tokens` IS ONE: a caller that installs
+	// a chain does it before serving, but "before serving" is a convention and a rebind
+	// of one immutable value is a guarantee. A reader resolves the pointer and gets one
+	// whole authenticator, never a half-written interface value.
+	//
+	// ⚠ THE DEFAULT IS MACHINE-TOKEN-ONLY, AND THAT IS WHAT MAKES P4 BYTE-IDENTICAL FOR
+	// AN EXISTING DEPLOYMENT. `New` installs `identity.MachineToken` over this same
+	// `authority`, which performs exactly the two calls this method used to make inline.
+	authenticator atomic.Pointer[identity.Authenticator]
+
 	readRoutes  map[string]readRoute
 	writeRoutes map[writeKey]writeRoute
 }
@@ -187,6 +207,19 @@ func New(storeRoot string, tokens []authz.TokenRecord, trustedProxies []netip.Pr
 		// which is the failure mode every guard in the token ladder refuses at STARTUP
 		// rather than at the first request.
 		return nil, fmt.Errorf("authority: %w", err)
+	}
+	// 🔴 THE DEFAULT AUTHENTICATOR IS THE MACHINE-TOKEN BACKEND AND NOTHING ELSE, WHICH
+	// IS WHAT MAKES "A DEPLOYMENT WITH NO SUPABASE AND NO PROXY CONFIG BEHAVES
+	// BYTE-IDENTICALLY" A PROPERTY RATHER THAN A PROMISE. In particular the
+	// trusted-header backend is NEVER reachable from here: it exists only if a caller
+	// constructs one and installs it, which `identity.NewTrustedHeader` refuses to let
+	// them do without an explicit proxy-fronted declaration and a source check.
+	machine, err := identity.NewMachineToken(s.AuthorityView())
+	if err != nil {
+		return nil, fmt.Errorf("authenticator: %w", err)
+	}
+	if err := s.UseAuthenticator(machine); err != nil {
+		return nil, err
 	}
 	s.readRoutes = map[string]readRoute{
 		"recall":   {arity: 2, handler: s.recall},
@@ -289,6 +322,62 @@ const AuthorityRefreshInterval = 30 * time.Second
 // than trimmed, because the sentence read as if the surface existed.
 func (s *Server) Authority() *control.Cache { return s.authority }
 
+// AuthorityView is a LIVE view of this server's authority, for identity backends.
+//
+// 🔴 IT RESOLVES `srv.authority` AT CALL TIME RATHER THAN CAPTURING IT, AND THAT IS A
+// FIX FOR A DEFECT THIS CHANGE INTRODUCED AND AN EXISTING GUARD CAUGHT. An
+// `identity.MachineToken` built with the cache POINTER holds a SECOND reference to it, so
+// anything that replaces `srv.authority` — which
+// `TestTheWritePathNarrowsWithTheWriteVERB` does, and which a `main` reconfiguring the
+// authority would do — leaves the refresh loop maintaining one cache while every
+// authentication reads another. There is nothing observable in that state except
+// credentials resolved against a world nobody is keeping current.
+//
+// 🔴 SO IT IS EXPORTED, AND `cmd/cairn-server` MUST PASS *THIS* TO
+// `identity.FromEnvironment` RATHER THAN `Authority()`. Handing the backends the cache
+// directly is the same defect one call site out, and it is the easier mistake to make
+// because `Authority()` is right there and satisfies both interfaces.
+//
+// ⚠ IT IS ALSO WHY `Server` STILL HOLDS `authority` DIRECTLY INSTEAD OF ONLY AN
+// AUTHENTICATOR. The refresh loop and the reload path need the cache itself, and the
+// authenticator interface deliberately cannot hand it back.
+type AuthorityView struct{ srv *Server }
+
+// Authenticate satisfies `identity.TokenAuthority`.
+func (a AuthorityView) Authenticate(token string) (control.Principal, control.Authorization, error) {
+	return a.srv.authority.Authenticate(token)
+}
+
+// Model satisfies `identity.ModelSource`.
+func (a AuthorityView) Model() control.Model { return a.srv.authority.Model() }
+
+// AuthorityView hands out the live view above. See its comment for why a caller must
+// not pass `Authority()` to an identity backend instead.
+func (s *Server) AuthorityView() AuthorityView { return AuthorityView{s} }
+
+// UseAuthenticator installs the authenticator this server resolves requests with.
+//
+// 🔴 IT REFUSES `nil` RATHER THAN ACCEPTING IT AS "GO BACK TO THE DEFAULT". A server
+// with no authenticator would have to either panic on the first request or fall back
+// to something, and a fallback reachable by passing nothing is a fallback somebody
+// reaches by accident. `New` installs the default explicitly; this replaces it
+// explicitly.
+//
+// ⚠ IT IS FOR WIRING, NOT FOR HOT-SWAPPING. The store is atomic so a rebind is one
+// whole value rather than a torn one, but nothing here coordinates with in-flight
+// requests: a request that has already resolved the pointer finishes against the
+// authenticator it read. That is correct for the one thing this is for — `main`
+// installing a chain between `New` and `Serve` — and it is not a revocation mechanism.
+// Revocation is `control.Cache`'s, and it is the same for every backend because they
+// all authorise from the same materialized model.
+func (s *Server) UseAuthenticator(a identity.Authenticator) error {
+	if a == nil {
+		return errors.New("authenticator is nil: a server that cannot resolve a request to a principal would authenticate nobody while looking healthy")
+	}
+	s.authenticator.Store(&a)
+	return nil
+}
+
 // Tokens is the token table the authority is currently projected FROM.
 //
 // ⚠ IT IS NOT WHAT AUTHORISES A REQUEST, AND THE PREVIOUS SENTENCE HERE SAID IT WAS.
@@ -347,6 +436,18 @@ type request struct {
 	visible   store.ScopeSet
 	writable  store.ScopeSet
 	responded bool
+
+	// authenticated is whether a backend resolved this request to a principal.
+	//
+	// 🔴 IT IS A FIELD BECAUSE THE AUDIT LINE'S `auth=` USED TO BE DERIVED FROM
+	// `tokenFP != ""`, AND THAT DERIVATION STOPS BEING EQUIVALENT AT P4. It was correct
+	// while every credential was a bearer token: `authz.TokenID` of a non-empty token is
+	// a non-empty digest, and an empty token is refused before the fingerprint is taken.
+	// A browser session has no token this pod minted, so its fingerprint is empty by
+	// design (see `identity.Identity.Fingerprint`) — and the old derivation would have
+	// written `auth=fail` on a fully authenticated, fully authorised 200. One fact, one
+	// field, rather than a second spelling of it that is right for one backend.
+	authenticated bool
 
 	// principal and auth are who this request is and what it may do.
 	//
@@ -628,17 +729,35 @@ func (rq *request) checkPathComponents(parts []string) bool {
 // and a model that ever held it would authenticate every request with no header at
 // all.
 func (rq *request) authenticate() bool {
-	// Extracted ONCE. The fingerprint below is derived from the same string that was
-	// authenticated, so the audit line cannot name a credential other than the one the
-	// authority matched.
-	presented := authz.PresentedToken(rq.r.Header.Get("Authorization"))
-	principal, auth, err := rq.srv.authority.Authenticate(presented)
+	held := rq.srv.authenticator.Load()
+	if held == nil {
+		// Unreachable through `New`, which installs the machine-token backend before it
+		// returns and refuses to build a server if it cannot. Refused rather than
+		// dereferenced so that a future construction path which forgets produces a
+		// uniform 401 instead of a panic the backstop turns into a 500.
+		rq.refuse(rq.countFailure())
+		return false
+	}
+	who, err := (*held).Authenticate(rq.r)
 	if err != nil {
 		rq.refuse(rq.countFailure())
 		return false
 	}
-	rq.principal = principal
-	rq.auth = auth
+	if !who.Valid() {
+		// 🔴 THE SERVER REFUSES AN IDENTITY NAMING NOBODY, AND THIS IS THE SECOND OF THE
+		// TWO CHECKS `identity.Identity.Valid` DESCRIBES — NOT A DUPLICATE OF THE FIRST.
+		// `identity.Chain` refuses to propagate such a value; this refuses to SERVE one,
+		// and a server wired with a single backend rather than a chain never passes
+		// through the first. Without it a backend returning `Identity{}, nil` would be
+		// audited as an authenticated request with `identity=-` and would reach every
+		// route — seeing nothing, because a zero `control.Authorization` permits
+		// nothing, but seen by every guard that asks whether authentication succeeded.
+		rq.refuse(rq.countFailure())
+		return false
+	}
+	rq.principal = who.Principal
+	rq.auth = who.Auth
+	rq.authenticated = true
 	// 🔴 THE FINGERPRINT STAYS `authz.TokenID`, NOT THE CREDENTIAL ID, AND THAT IS A
 	// CONTRACT RATHER THAN A CONVENIENCE. The documented rotation procedure is "read
 	// the fingerprints the startup line prints, then grep the audit stream for the one
@@ -646,10 +765,14 @@ func (rq *request) authenticate() bool {
 	// digest of the token, so re-spelling either would silently break every saved
 	// query an operator has. The control plane's own `CredentialID` is carried on the
 	// principal for when there is a UI to show it.
-	rq.tokenFP = authz.TokenID(presented)
-	rq.identity = principal.Display
-	rq.visible = auth.VisibleScopes(control.VerbRead)
-	rq.writable = auth.VisibleScopes(control.VerbWrite)
+	//
+	// ⚠ IT IS EMPTY FOR A BACKEND THAT AUTHENTICATES WITHOUT A TOKEN THIS POD MINTED,
+	// and the audit line renders that as `-`. See `identity.Identity.Fingerprint` for
+	// why synthesizing one would be worse than an honest absence.
+	rq.tokenFP = who.Fingerprint
+	rq.identity = who.Principal.Display
+	rq.visible = who.Auth.VisibleScopes(control.VerbRead)
+	rq.writable = who.Auth.VisibleScopes(control.VerbWrite)
 	return true
 }
 
@@ -997,8 +1120,11 @@ func (rq *request) audit(result int, status string) {
 	if identity == "" {
 		identity = "-"
 	}
+	// Derived from whether a principal was resolved, NOT from whether a fingerprint was
+	// taken. See `request.authenticated`: the two agree for every token-authenticated
+	// request and diverge for a session, where the fingerprint is empty by design.
 	auth := "fail"
-	if rq.tokenFP != "" {
+	if rq.authenticated {
 		auth = "ok"
 	}
 	line := "store-api audit " +
