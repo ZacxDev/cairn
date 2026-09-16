@@ -229,10 +229,15 @@
         #     Running phase: installPhase
         #
         # — a GREEN check phase that ran ZERO tests, because every test in this
-        # module lives under `internal/` and `subPackages` had scoped the test
-        # walk to the one directory that has none. That is the reassuring zero
-        # this repository keeps finding, arriving through a build option whose
+        # module LIVED under `internal/` at the time and `subPackages` had scoped
+        # the test walk to the one directory that had none. That is the reassuring
+        # zero this repository keeps finding, arriving through a build option whose
         # only documented job is to narrow what gets INSTALLED.
+        #
+        # ⚠ `cmd/cairn-server` HAS TESTS NOW, and that makes the trap WORSE rather
+        # than better: the same narrowing would today run one package and report a
+        # plausible-looking PASS line, so the tell that made it visible — the
+        # `[no test files]` line quoted above — is gone.
         #
         # `go vet` is here too: it is the cheapest check that reads the code
         # rather than running it, and a printf-shaped mistake in a refusal

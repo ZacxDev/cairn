@@ -28,8 +28,15 @@ import (
 // IT: A REVOCATION IS NOT EFFECTIVE UNTIL THE CACHE REFRESHES. No arrangement of this
 // design makes that false — a cache that asked the authority whether it was stale
 // would be making exactly the call the outage is supposed to survive. So the lag is
-// BOUNDED by the refresh schedule, REPORTED by `Staleness` as a value rather than a
+// BOUNDED by the refresh schedule, REPORTABLE by `Staleness` as a value rather than a
 // log line, and BYPASSABLE by `ApplyNow` for the one case that cannot wait.
+//
+// ⚠ AND "REPORTABLE" IS THE WORD THIS SENTENCE EARNS TODAY. `Staleness()` has no caller
+// outside the tests — this repository's own `cmd/cairn-server` does not print it and
+// `internal/doctor` does not read it — so the lag is bounded and SILENT, which is a
+// weaker claim than the one three files here used to make. The value is built, pinned by
+// `TestTheStalenessRendersExactly` and reachable; nothing renders it. The reason and the
+// closing condition are in `internal/control/README.md`.
 //
 // ⚠ WHAT A `Cache` IS NOT: a second place that decides visibility. It holds a Model
 // and hands it to `Authenticate`/`Resolve`, which remain the only functions that
@@ -55,6 +62,14 @@ type Cache struct {
 	lastErr        error
 	refreshes      uint64
 	failures       uint64
+	superseded     uint64
+
+	// started counts every attempt that may publish a model — a refresh OR a write —
+	// and is the generation stamp; committed is the generation of the model currently
+	// published. One counter for both, because the ordering they need is between each
+	// other. See `refresh` for why the ordering cannot come from the epoch.
+	started   uint64
+	committed uint64
 }
 
 // CacheOptions configures a Cache.
@@ -142,7 +157,40 @@ const (
 // facts stay distinguishable.
 func (c *Cache) Refresh(ctx context.Context) error { return c.refresh(ctx, RefreshExplicit) }
 
+// 🔴 TWO CONCURRENT REFRESHES COMMIT IN START ORDER, NOT IN COMPLETION ORDER, AND THAT
+// IS WHAT `started`/`committed` BUY. There are two independent callers in the deployed
+// binary — the timer in `Run` and SIGHUP through `SetTokens` — and `src.Model` is called
+// OUTSIDE the lock deliberately, so their reads overlap. Without an ordering rule the
+// slow one wins: the operator deletes a compromised row and sends SIGHUP, SIGHUP
+// publishes the new table and commits, and a timer refresh that entered `src.Model`
+// FIRST — holding the pre-revocation table — then commits on top. The revoked credential
+// authenticates again and `Staleness` says `fresh`.
+//
+// 🔴 THE ORDER CANNOT COME FROM `Model.Epoch`, AND AN "IGNORE A LOWER EPOCH" GUARD IS THE
+// WRONG FIX RATHER THAN A CRUDER ONE. The epoch is the event count of a projection, so a
+// REVOCATION MAKES IT GO DOWN, and a guard keyed on it would reject exactly the new,
+// smaller world it exists to protect. Measured on the token-file adapter at two points,
+// over a store root that stays perfectly readable — deleting one mapped row from a
+// two-row table takes the projection 10 → 7, and from a four-row table 17 → 13; the
+// row's credential, its grants and any scope only it named leave with it.
+// `tokenfile.TestARevocationMakesTheEpochGoDOWN` is where those numbers are pinned. The
+// generation is taken BEFORE the `src` call, which is the only clock that orders the two
+// reads.
+//
+// ⚠ AN EARLIER DRAFT CITED "7 → 5 when a store root stopped enumerating". The arithmetic
+// was right and the claim is unchanged, but a root that stops enumerating now ERRORS
+// rather than projecting a smaller world, so the citation named a scenario the reader
+// cannot reproduce — and a shrinking enumeration is not a revocation, which is the claim
+// it was attached to.
+//
+// ⚠ A SUPERSEDED REFRESH IS AN ATTEMPT THAT SUCCEEDED AND WAS DISCARDED, and all three
+// words are recorded separately: `lastAttempt`/`lastTrigger` move (it was tried, by that
+// trigger), `lastErr` clears (it did not fail), `refreshes` does NOT move (nothing was
+// materialized, and `refreshes` moves with `materializedAt` everywhere else), and
+// `superseded` counts it so the discard is a number rather than an absence.
 func (c *Cache) refresh(ctx context.Context, why RefreshReason) error {
+	mine := c.begin()
+
 	// Outside the lock. See the `mu` comment: a hung authority must not block reads.
 	m, err := c.src.Model(ctx)
 	now := c.clock()
@@ -156,12 +204,31 @@ func (c *Cache) refresh(ctx context.Context, why RefreshReason) error {
 		c.lastErr = err
 		return err
 	}
+	if mine < c.committed {
+		c.superseded++
+		c.lastErr = nil
+		return nil
+	}
 	c.model = m
+	c.committed = mine
 	c.materialized = true
 	c.materializedAt = now
 	c.refreshes++
 	c.lastErr = nil
 	return nil
+}
+
+// begin issues the generation stamp for one attempt that may publish a model.
+//
+// It takes the lock and gives it straight back, so the lock is never held across a call
+// to `src` — the property `mu`'s comment exists for. WHERE each caller puts this call is
+// the whole design: `refresh` stamps BEFORE its read, `write` stamps AFTER its append,
+// and each of those two comments says why.
+func (c *Cache) begin() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.started++
+	return c.started
 }
 
 // Model is the materialized world. The hot path's only read.
@@ -252,9 +319,16 @@ type Staleness struct {
 	LastAttempt time.Time
 	// LastTrigger is what woke that attempt. `never` before the first one.
 	LastTrigger RefreshReason
-	// Refreshes and Failures count successful and failed attempts since start.
+	// Refreshes and Failures count MATERIALIZED and failed attempts since start.
 	Refreshes uint64
 	Failures  uint64
+	// Superseded counts attempts that read the authority successfully and were then
+	// DISCARDED because a later-started attempt had already published. A third
+	// outcome, not a kind of failure: the authority answered, and a newer world was
+	// already serving. A non-zero value here with a zero `Failures` is two publishers
+	// racing — a timer against a SIGHUP, or either against an `ApplyNow` — which is
+	// expected and is why it is counted rather than logged.
+	Superseded uint64
 }
 
 // Staleness reports the epoch and its age at this instant.
@@ -275,6 +349,7 @@ func (c *Cache) stalenessLocked(now time.Time) Staleness {
 		LastTrigger:  c.lastTrigger,
 		Refreshes:    c.refreshes,
 		Failures:     c.failures,
+		Superseded:   c.superseded,
 	}
 	if s.LastTrigger == "" {
 		s.LastTrigger = RefreshNever
@@ -342,6 +417,8 @@ func (s Staleness) String() string {
 	b.WriteString(strconv.FormatUint(s.Refreshes, 10))
 	b.WriteString(" failures=")
 	b.WriteString(strconv.FormatUint(s.Failures, 10))
+	b.WriteString(" superseded=")
+	b.WriteString(strconv.FormatUint(s.Superseded, 10))
 	b.WriteString(" failing=")
 	b.WriteString(strconv.FormatBool(s.Failing))
 	return b.String()
@@ -398,7 +475,8 @@ var ErrRefreshCannotKeepBound = errors.New("control: the refresh interval cannot
 // the failure would be reported once, by a goroutine nobody is watching, and the age
 // would then grow forever with the mechanism that could fix it already dead. The error
 // is recorded in `Staleness` (`Failing`, `Failures`, `LastError`), which is the
-// reporting surface this piece exists to provide.
+// reporting surface this piece exists to provide — and which, today, nothing outside the
+// tests reads. See the type comment: recorded is not rendered.
 //
 // ⚠ A NIL CHANNEL IN A `select` IS NEVER READY, which is how `Signals` and `OnChange`
 // are disabled. That is a Go property rather than a trick, and it is stated because a
@@ -538,22 +616,47 @@ func (c *Cache) write(ctx context.Context, materialize bool, events []Event) (Wr
 	// here was speculatively applied. The asymmetry is the design: reads survive an
 	// outage, writes do not, and a write that appeared to succeed against a dead
 	// authority is a revocation the operator believes landed.
+	//
+	// 🔴 AND THE GENERATION IS STAMPED ON THE LINE *AFTER* THIS CALL RATHER THAN BEFORE
+	// IT — THE ONE PLACE `write` DIFFERS FROM `refresh`, AND THE TWO STATEMENTS ARE KEPT
+	// ADJACENT SO THE ORDER IS ONE EDIT AWAY FROM BEING WRONG AND ONE EDIT AWAY FROM
+	// BEING TESTED. `Append` runs outside the lock, so a concurrent refresh can land on
+	// either side of it. A refresh that started BEFORE the stamp may have read the
+	// authority on either side of the write, so its answer is ambiguous and `next` — the
+	// state the authority itself returned for this append — is preferred; a refresh that
+	// starts AFTER the stamp is known to see the write, so it is allowed to win.
+	// Stamping first would invert that and let an ambiguous read overwrite the one path
+	// whose entire promise is "this revocation is in force when I return".
+	// `TestAConcurrentRefreshCannotUNDOApplyNow` parks a refresh inside `Append` to make
+	// the difference observable.
 	next, err := w.Append(ctx, events...)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("control cache: %w", err)
 	}
+	mine := c.begin()
 
 	now := c.clock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if materialize {
+	// 🔴 AND THE `mine >= c.committed` HALF IS THE WRITE LOSING, WHICH IS ALSO REACHABLE.
+	// A third attempt can call `begin` after the stamp above and commit before this lock
+	// is taken — its read is known to include the append, so it may include MORE, and the
+	// write must not publish over it. `TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt`
+	// forces that interleaving from inside `c.clock()`, which sits between the two
+	// statements. ⚠ It was labelled an unreachable EQUIVALENT mutant for one round on the
+	// grounds that the statements were adjacent and no gate could open the window; they
+	// are not adjacent, and `Now` is a caller-injected hook.
+	if materialize && mine >= c.committed {
 		c.model = next
+		c.committed = mine
 		c.materialized = true
 		c.materializedAt = now
 		c.refreshes++
 		c.lastErr = nil
 		c.lastAttempt = now
 		c.lastTrigger = RefreshWrite
+	} else if materialize {
+		c.superseded++
 	}
 
 	serving := c.model.Epoch

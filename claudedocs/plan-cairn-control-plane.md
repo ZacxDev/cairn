@@ -243,3 +243,30 @@ sharing — grants stop at the scope for now.
 - Whether credentials are per-user or per-project service accounts, or both.
 - What a scope with `project_id NULL` means: personal, or implicitly a solo project.
 - Whether the legacy bare-token row survives the rewrite or is dropped at P8.
+
+**The first four were settled before P3a was written; the answers and their reasons are
+the table in `internal/control/README.md` ("What the plan left open, and what was
+settled"). The fifth is settled here, because P3b piece (b) would otherwise have settled
+it de facto by shipping code.**
+
+🔴 **THE LEGACY BARE-TOKEN ROW SURVIVES THE REWRITE.** `internal/control/tokenfile`
+projects a bare row into a project principal holding `read` on the scopes project, so
+the unrestricted credential keeps working through the new authorization predicate rather
+than being dropped at the point the predicate arrived.
+
+The reason is that dropping it is **not a code change**. The deployed pod's only
+principals are bare rows — `server/README.md`'s rotation procedure shows the live table
+as `token reload: LOADED 2 identities [<new>:legacy,<old>:legacy]` — so retiring the
+shape means editing the secret to give every holder an explicit allowlist, and doing it
+in step with a pod that is serving. That is a coordinated cutover against a live deployment, and this
+phase's whole claim is that the mechanism underneath the served contract was replaced
+while the contract did not move.
+
+⚠ **It is SURVIVES-FOR-NOW, not survives-forever, and P8 inherits the question.** The
+adapter reproduces the bare row's authority with a measured divergence (a scope
+directory created out of band is invisible to it until the next refresh — see
+`internal/control/README.md`), which is a cost that exists only while an unrestricted
+principal does. P8 already owns retiring the Python oracle and a widening of the CLI
+contract; retiring the bare row belongs with those, where a coordinated cutover is
+already on the table, and it must not be done by reintroducing an unrestricted principal
+in the model.

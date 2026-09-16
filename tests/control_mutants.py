@@ -45,7 +45,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PKG = "./internal/control/"
+
+#: 🔴 FOUR PACKAGES, NOT ONE, BECAUSE THE GUARDS THIS BATTERY EXERCISES NOW SPAN A
+#: SEAM. `internal/control` is the model and its predicate; `internal/control/tokenfile`
+#: is the projection of the token file into that model; `internal/api` is the server that
+#: authorises from it. A mutant in the projection is killed by a guard in the server and
+#: vice versa — so a battery scoped to one package would score those SURVIVED while the
+#: suite that catches them was never run. `./internal/control/...` would cover the first
+#: two in one word; it is spelled out so that adding a sub-package is a deliberate act
+#: rather than something the pattern absorbs silently.
+#:
+#: 🔴 AND `cmd/cairn-server` IS THE FOURTH BECAUSE OF WHAT LIVES ONLY THERE. The refresh
+#: loop that bounds the divergence `tokenfile` declares is started by `main` and by
+#: nothing else — measured: deleting it left `go build`, `go vet` and all thirteen
+#: `internal/...` test packages green, and this battery never ran the package at all.
+#: A mitigation with no gate is a mitigation nobody can be told has stopped working.
+PKGS = (
+    "./internal/control/",
+    "./internal/control/tokenfile/",
+    "./internal/api/",
+    "./cmd/cairn-server/",
+)
 
 
 class MutationError(AssertionError):
@@ -523,9 +543,16 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="synchronous-revoke-is-not-synchronous",
         path="internal/control/cache.go",
-        old="\tif materialize {\n\t\tc.model = next",
-        new="\tif false {\n\t\tc.model = next",
+        # ⚠ THE CONDITION GAINED A SECOND OPERAND (`mine >= c.committed`) WHEN THE
+        # GENERATION ORDERING LANDED, AND THIS PATTERN WENT STALE — reported as a
+        # HARNESS ERROR rather than as a SURVIVED mutant, which is the whole reason
+        # the occurrence count is asserted. Only `materialize` is replaced: mutating
+        # the whole condition would remove the ordering guard at the same time and
+        # the mutant would die for the wrong reason.
+        old="\tif materialize && mine >= c.committed {",
+        new="\tif false && mine >= c.committed {",
         killer="TestASynchronousRevokeIsInForceBeforeItReturns",
+        extra_killers=("TestAConcurrentRefreshCannotUNDOApplyNow",),
         why="`ApplyNow` silently degrading to `Apply`. The caller is told the revocation "
         "is in force and it is not — the UI then says 'revoked' with no qualifier about "
         "a grant this cache will keep honouring until the next tick.",
@@ -581,6 +608,389 @@ MUTANTS: tuple[Mutant, ...] = (
         "value before the error will believe. A write that failed against a dead "
         "authority would report itself immediately in force.",
     ),
+    # ---- the token-file projection: where the legacy unrestricted row becomes -----
+    # ---- explicit grants, and where the enumeration that replaces the sentinel ----
+    # ---- is built. -----------------------------------------------------------------
+    Mutant(
+        name="legacy-row-gains-write",
+        path="internal/control/tokenfile/source.go",
+        old="\t\t\tVerbs: control.NewVerbSet(control.VerbRead),",
+        new="\t\t\tVerbs: control.NewVerbSet(control.VerbRead, control.VerbWrite),",
+        killer="TestALegacyRowReachesEveryScopeAndMayWriteNone",
+        extra_killers=("TestTheServedAuthorizationMatrixIsExactlyThis",),
+        why="one word added to the grant a bare row gets. The server's write refusal is "
+        "DERIVED from the absence of that verb, so this silently hands the store's "
+        "write verbs to a credential that names no actor — the one thing the refusal "
+        "exists to prevent, and it reads like a typo rather than like a change.",
+    ),
+    Mutant(
+        name="mapped-row-loses-write",
+        path="internal/control/tokenfile/source.go",
+        old="\t\t\tVerbs: control.NewVerbSet(control.VerbRead, control.VerbWrite),",
+        new="\t\t\tVerbs: control.NewVerbSet(control.VerbRead),",
+        killer="TestAMappedRowReachesAScopeThatHasNoDirectoryYet",
+        extra_killers=("TestTheServedAuthorizationMatrixIsExactlyThis",),
+        why="the mirror of the row above, and the direction a cautious author would "
+        "actually take. It fails CLOSED, so nothing looks broken until somebody's "
+        "`cairn append` starts answering 404 for a scope they own.",
+    ),
+    Mutant(
+        name="enumeration-forgets-the-store",
+        path="internal/control/tokenfile/source.go",
+        old="\tfor _, dir := range dirs {",
+        # `dirs[:0]` rather than a nil literal: `dirs` is now a local the root read
+        # fills, and a nil literal leaves it unused — a mutant that does not COMPILE
+        # dies at the build rather than at a guard.
+        new="\tfor _, dir := range dirs[:0] {",
+        killer="TestALegacyRowReachesEveryScopeAndMayWriteNone",
+        extra_killers=("TestTheServedAuthorizationMatrixIsExactlyThis",),
+        why="the enumeration built from the token file alone. It is the whole reason "
+        "this adapter reads a directory at all, and it is INVISIBLE TO THE "
+        "CONFORMANCE CORPUS — measured: the corpus stays at 116 PASS / 0 failures "
+        "with this applied, because every scope in its world is named by a mapped "
+        "row. The guards below are the only thing standing on it.",
+    ),
+    Mutant(
+        name="enumeration-forgets-the-allowlist",
+        path="internal/control/tokenfile/source.go",
+        old="\t\tfor _, scope := range r.Scopes {",
+        # `r.Scopes[:0]` rather than a nil literal: the latter leaves the range
+        # variable `r` unused, and a mutant that does not COMPILE dies at the build
+        # rather than at a guard. Measured — the first draft of this row did exactly
+        # that and was reported DID NOT BUILD.
+        new="\t\tfor _, scope := range r.Scopes[:0] {",
+        killer="TestAMappedRowReachesAScopeThatHasNoDirectoryYet",
+        why="the other half of the union, dropped. A store whose every scope already "
+        "has a directory hides it completely — the only observable is a mapped row "
+        "losing the ability to create its FIRST entry in a scope, which is how the "
+        "store gained every scope it has.",
+    ),
+    Mutant(
+        name="the-enumeration-and-the-grant-fold-DIFFERENTLY",
+        path="internal/control/tokenfile/source.go",
+        # 🔴 THE HAZARD IS A SPLIT, NOT AN ABSENCE, AND THIS ROW WAS WRONG ABOUT THAT
+        # UNTIL IT WAS RUN. Its first draft replaced `foldScope`'s whole body and
+        # SURVIVED, because `store.ScopeSet` folds BOTH sides of every comparison — so
+        # an enumeration recorded in raw form is still reachable under its folded name.
+        # What is not survivable is the two sites disagreeing: `scopeNames` records the
+        # scope and `grantsFor` derives the grant's object id, and if one folds and the
+        # other does not, the grant names a scope the model does not hold, `apply`
+        # refuses it, `Replay` fails whole and the pod authenticates NOBODY.
+        old="\t\tif folded := foldScope(raw); folded != \"\" {",
+        new="\t\tif folded := raw; folded != \"\" {",
+        killer="TestTwoDirectoriesThatFoldTogetherDoNotTakeTheAuthorityDown",
+        why="one of the two folding sites reverted to the raw name — the shape an edit takes when somebody inlines a helper at the site they happen to be reading. It is not a narrowing and not a widening: it is a projection that cannot be built at all, and the failure lands on the credential table rather than on one scope.",
+    ),
+    Mutant(
+        name="two-bare-rows-mint-two-principals",
+        path="internal/control/tokenfile/source.go",
+        old="\t\tif prior, minted := seen[identity]; minted {",
+        new="\t\tif prior, minted := seen[identity]; false && minted {",
+        killer="TestTwoBareRowsAreOnePrincipalWithTwoCredentials",
+        why="one project per ROW instead of per identity. `authz.LoadTokens` exempts "
+        "`legacy` from its duplicate-identity guard precisely so two bare rows can "
+        "coexist during a rotation, so this breaks on the one file shape the "
+        "rotation procedure prescribes — and it breaks by taking the whole authority "
+        "down, not by narrowing it.",
+    ),
+    # ---- the projection's two REFUSALS, added in the round-1 fix -------------------
+    Mutant(
+        name="an-unreadable-store-root-is-swallowed",
+        path="internal/control/tokenfile/source.go",
+        old='\t\treturn nil, fmt.Errorf("token-file authority: %w: %w", ErrStoreRootUnreadable, err)',
+        new="\t\treturn nil, nil",
+        killer="TestAnUnreadableStoreRootIsRefusedAndTheCacheIsWhatKeepsTheCredentialTable",
+        extra_killers=(
+            "TestATransientStoreOutageIsNotBAKEDIntoTheAuthority",
+            "TestAColdStartOverAnUnreadableStoreRootREFUSES",
+            "TestARefusedReloadDoesNotClaimNothingChanged",
+            "TestTheBinaryREFUSESToStartOverAStoreRootItCannotEnumerate",
+        ),
+        why="the leniency this function shipped with, and the argument for it was TRUE at "
+        "the instant of the failure: every read route answers 503 through an unreadable "
+        "root, so a principal's visible set is not observable through one. What it missed "
+        "is that the projection is CACHED — the empty world gets committed, the status "
+        "says `fresh`, and it is served through a root that is readable again. On the "
+        "deployed shape the principals are bare rows, so this is not one scope, it is all "
+        "of them.",
+    ),
+    Mutant(
+        name="the-dedupe-ignores-the-authority",
+        path="internal/control/tokenfile/source.go",
+        old="\t\t\tif prior != key {",
+        new="\t\t\tif prior != key && false {",
+        killer="TestTwoRowsSharingAnIdentityWithDIFFERENTAuthoritiesAreRefused",
+        why="the dedupe keyed on the identity STRING alone, which is exactly what this "
+        "code did while its comment cited `IsLegacy()`. Every row after the first then "
+        "contributes only a credential: a mapped row named `legacy` ahead of a real bare "
+        "row gives that bare row `write` on a scope and takes `read` away on another. A "
+        "wrong authority from a projection that reports success.",
+    ),
+    Mutant(
+        name="the-authority-key-is-order-sensitive",
+        path="internal/control/tokenfile/source.go",
+        # `sort.Strings(folded[:0])` rather than deleting the call: `sort` is imported for
+        # `scopeNames` too, so deleting it here would still build — but sorting an empty
+        # slice is the narrowest edit that removes the ordering claim and nothing else.
+        old="\tsort.Strings(folded)",
+        new="\tsort.Strings(folded[:0])",
+        killer="TestTwoRowsSharingAnIdentityWithDIFFERENTAuthoritiesAreRefused",
+        why="the sort dropped from the key, which turns a rotation into a refusal: two "
+        "rows for one holder whose allowlists are written in different orders describe "
+        "the SAME authority and would be rejected. It is the direction that breaks a file "
+        "that is fine, which is why the guard above needs a positive control at all.",
+    ),
+    Mutant(
+        name="derived-id-ignores-its-key",
+        path="internal/control/ids.go",
+        old="\tsum := sha256.Sum256([]byte(prefix + \"\\x00\" + key))",
+        new="\tsum := sha256.Sum256([]byte(prefix))",
+        killer="TestALegacyRowReachesEveryScopeAndMayWriteNone",
+        extra_killers=(
+            "TestTheProjectionIsAPureFunctionOfItsInputs",
+            "TestTheServedAuthorizationMatrixIsExactlyThis",
+        ),
+        why="a derivation that is deterministic and carries no information. Every id of "
+        "one prefix collides, so the second scope is refused at replay. It is the "
+        "shape an author reaches for when 'make it stable' is the only requirement "
+        "they remember.",
+    ),
+    Mutant(
+        name="projection-loses-its-order",
+        path="internal/control/tokenfile/source.go",
+        old="\tsort.Strings(out)\n\treturn out, nil",
+        # Sorting a zero-length slice rather than deleting the call: deleting it
+        # leaves the `sort` import unused and the tree does not build, which proves
+        # nothing about the ordering guard.
+        new="\tsort.Strings(out[:0])\n\treturn out, nil",
+        killer="TestTheProjectionIsAPureFunctionOfItsInputs",
+        why="map range order reaching the journal. Nothing about the AUTHORITY changes "
+        "— the same ids, the same grants, the same epoch — so a comparison of those "
+        "would score it EQUIVALENT. What moves is the event ORDER, which is why the "
+        "guard compares the serialized journal instead.",
+    ),
+    # ---- the ordering between two concurrent refreshes, added in the round-1 fix ---
+    Mutant(
+        name="a-superseded-refresh-commits-anyway",
+        path="internal/control/cache.go",
+        old="\tif mine < c.committed {",
+        new="\tif mine < c.committed && false {",
+        killer="TestTwoConcurrentRefreshesCommitInSTARTOrderNotCompletionOrder",
+        extra_killers=("TestTheStalenessRendersExactly", "TestAConcurrentRefreshCannotUNDOApplyNow"),
+        why="the unconditional assignment this function shipped with. Two triggers now "
+        "exist in one process — the timer and SIGHUP — so a refresh that read the "
+        "pre-revocation table can commit after the one that read the new one. The revoked "
+        "credential authenticates again and the status says `fresh`, which is the exact "
+        "failure the whole cache is trusted not to have.",
+    ),
+    Mutant(
+        name="the-refresh-generation-is-taken-AFTER-the-authority-read",
+        path="internal/control/cache.go",
+        old=(
+            "\tmine := c.begin()\n\n"
+            "\t// Outside the lock. See the `mu` comment: a hung authority must not block reads.\n"
+            "\tm, err := c.src.Model(ctx)"
+        ),
+        new=(
+            "\t// Outside the lock. See the `mu` comment: a hung authority must not block reads.\n"
+            "\tm, err := c.src.Model(ctx)\n"
+            "\tmine := c.begin()"
+        ),
+        killer="TestTwoConcurrentRefreshesCommitInSTARTOrderNotCompletionOrder",
+        why="the stamp moved to where it reads more naturally — beside the value it "
+        "orders. It compiles, it is monotone, and it orders COMPLETIONS instead of "
+        "STARTS, which is the defect with a counter bolted on: the slow refresh now gets "
+        "the higher generation and wins.",
+    ),
+    Mutant(
+        name="the-write-does-not-publish-its-generation",
+        path="internal/control/cache.go",
+        old="\t\tc.model = next\n\t\tc.committed = mine",
+        new="\t\tc.model = next\n\t\t_ = mine",
+        killer="TestAConcurrentRefreshCannotUNDOApplyNow",
+        why="`ApplyNow` materializing without recording that it did. A refresh already in "
+        "flight then commits on top and republishes the pre-write world, while the call "
+        "has already returned `EffectImmediate` — which a UI renders as 'revoked' with no "
+        "qualifier. The one failure the synchronous path exists to rule out.",
+    ),
+    Mutant(
+        name="the-write-stamps-BEFORE-the-append",
+        path="internal/control/cache.go",
+        # 🔴 A MOVE, NOT AN INSERTION, AND THE FIRST DRAFT OF THIS ROW WAS AN INSERTION
+        # AND SURVIVED. Adding a second `c.begin()` before the call burns a generation and
+        # changes NOTHING about which stamp `mine` holds, so the ordering was still right
+        # and the mutant scored SURVIVED — a false finding that reads as a coverage gap.
+        # The two statements are adjacent in the source precisely so that the real edit is
+        # one contiguous replacement.
+        old=(
+            "\tnext, err := w.Append(ctx, events...)\n"
+            "\tif err != nil {\n"
+            '\t\treturn WriteResult{}, fmt.Errorf("control cache: %w", err)\n'
+            "\t}\n"
+            "\tmine := c.begin()"
+        ),
+        new=(
+            "\tmine := c.begin()\n"
+            "\tnext, err := w.Append(ctx, events...)\n"
+            "\tif err != nil {\n"
+            '\t\treturn WriteResult{}, fmt.Errorf("control cache: %w", err)\n'
+            "\t}"
+        ),
+        killer="TestAConcurrentRefreshCannotUNDOApplyNow",
+        why="the stamp taken where a reader expects it — at the top of the operation, "
+        "symmetrically with `refresh`. A refresh that starts while `Append` is in flight "
+        "then holds the HIGHER generation, so an ambiguous read (it may have seen either "
+        "side of the write) overwrites the authority's own answer for the write.",
+    ),
+    Mutant(
+        name="the-write-ignores-a-newer-commit",
+        path="internal/control/cache.go",
+        old="\tif materialize && mine >= c.committed {",
+        new="\tif materialize {",
+        killer="TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt",
+        why="the write committing over a refresh that started AFTER its append returned "
+        "— a read that is known to include the write and may include more. "
+        "🔴 THIS ROW CARRIED `equivalent=True` FOR ONE ROUND ON A REASON THAT WAS FALSE: "
+        "it said the interleaving needed a window 'between two adjacent statements that "
+        "no gate can open from outside'. The statements are NOT adjacent — "
+        "`now := c.clock()` sits between `c.begin()` and `c.mu.Lock()`, and `clock` is a "
+        "caller-injected hook (`CacheOptions.Now`). The killer parks a whole refresh "
+        "inside that hook, which is the same technique the round already used for "
+        "`Append`, one hook over. A label that reads as coverage while providing none is "
+        "worse than no label, and this one was sitting inside the battery built to "
+        "refuse that shape.",
+    ),
+    # ---- the server: where the predicate is asked --------------------------------
+    Mutant(
+        name="write-gate-accepts-everybody",
+        path="internal/api/server.go",
+        old="\treturn len(rq.auth.ScopeIDs(control.VerbWrite)) > 0",
+        new="\treturn len(rq.auth.ScopeIDs(control.VerbWrite)) >= 0",
+        killer="TestTheServedAuthorizationMatrixIsExactlyThis",
+        extra_killers=("TestALegacyTokenMayNotWriteButMayStillRead",),
+        why="one character. `>= 0` is always true for a length, so the write-route "
+        "refusal is gone while the expression still reads like a check — the "
+        "classic off-by-one written in the direction that fails OPEN.",
+    ),
+    Mutant(
+        name="write-path-narrows-with-the-read-set",
+        path="internal/api/server.go",
+        # 🔴 ANCHORED ON THE FUNCTION SIGNATURE, BECAUSE THE LINE ALONE OCCURS TWICE.
+        # `createEntry` loads with the same set for the same reason, and a pattern
+        # matching both would mutate code this row does not name — which the harness
+        # refuses as an occurrence-count error rather than scoring.
+        old="func (s *Server) resolveWritable(rq *request, scope, ref string) (*store.Entry, bool, error) {\n\tindex, err := store.LoadStore(s.StoreRoot, \"written\", rq.writable)",
+        new="func (s *Server) resolveWritable(rq *request, scope, ref string) (*store.Entry, bool, error) {\n\tindex, err := store.LoadStore(s.StoreRoot, \"written\", rq.visible)",
+        killer="TestTheWritePathNarrowsWithTheWriteVERB",
+        why="the two sets swapped at the loader. It is INVISIBLE to every principal the "
+        "token file can produce, because a mapped row's read and write sets are "
+        "equal by construction — which is exactly why the guard builds a principal "
+        "the token file cannot spell. A branch no test can reach is not a guard.",
+    ),
+    Mutant(
+        name="create-narrows-with-the-read-set",
+        path="internal/api/server.go",
+        old="\tif !rq.writable.Allows(scope) {",
+        new="\tif !rq.visible.Allows(scope) {",
+        killer="TestTheWritePathNarrowsWithTheWriteVERB",
+        why="the same swap on the CREATE half, which consults the set directly rather "
+        "than through the loader. Two sites, two mutants: a fix applied to one of "
+        "them is the one-rule-two-places failure this repository keeps paying for.",
+    ),
+    Mutant(
+        name="read-set-uses-the-write-verb",
+        path="internal/api/server.go",
+        old="\trq.visible = auth.VisibleScopes(control.VerbRead)",
+        new="\trq.visible = auth.VisibleScopes(control.VerbWrite)",
+        killer="TestTheServedAuthorizationMatrixIsExactlyThis",
+        why="one word in the line that builds the READ set. A bare row holds the write "
+        "verb nowhere, so it would read nothing at all — a total read outage for the "
+        "unrestricted credential, produced by a verb name.",
+    ),
+    Mutant(
+        name="the-audit-identity-becomes-an-opaque-id",
+        path="internal/api/server.go",
+        old="\trq.identity = principal.Display",
+        new="\trq.identity = string(principal.ID)",
+        killer="TestTheAuditRecordIsTheORACLESSPELLINGFieldForField",
+        extra_killers=("TestAppendAttributesFromTheTokenAndDiscardsABodyActor",),
+        why="the principal's id where its display name belongs. Both are strings off "
+        "the same object, and the id is arguably the MORE correct identifier — but "
+        "it is what the audit line and every written bullet's actor carry, so this "
+        "re-spells a machine-read stream and puts an opaque handle in the store.",
+    ),
+    Mutant(
+        name="a-reload-does-not-rematerialize",
+        path="internal/api/server.go",
+        # `context.Background()` is kept in the expression so the import stays used;
+        # discarding the RESULT is the whole mutation, and it is the narrowest form
+        # of "the reload published a table and rebuilt nothing".
+        old="\treturn s.authority.Refresh(context.Background())",
+        new="\t_ = context.Background()\n\treturn nil",
+        killer="TestTheAuthorityReMaterializesOnAReloadAndSaysSoWhenItCannot",
+        why="publishing the table without rebuilding the authority from it. The reload "
+        "line says LOADED, the operator walks away, and the credential they removed "
+        "keeps authenticating until the next timer tick — a revocation that did not "
+        "happen, reported as one that did.",
+    ),
+    Mutant(
+        name="the-hot-path-refreshes",
+        path="internal/api/server.go",
+        old="\tprincipal, auth, err := rq.srv.authority.Authenticate(presented)",
+        new="\t_ = rq.srv.authority.Refresh(rq.r.Context())\n\tprincipal, auth, err := rq.srv.authority.Authenticate(presented)",
+        killer="TestTheHotPathDoesNotContactTheAuthority",
+        why="a refresh on every request — the 'just make it fresh' fix. It reads as an "
+        "improvement and it deletes the property the whole cache exists for: an "
+        "outage of the authority would stop every read, which is the promise cairn "
+        "makes about an offline orient-me.",
+    ),
+    # ---- the program: the only thing that bounds the declared divergence ----------
+    Mutant(
+        name="the-cold-start-refusal-loses-its-operator-message",
+        path="cmd/cairn-server/main.go",
+        old="\t\tif errors.Is(err, tokenfile.ErrStoreRootUnreadable) {",
+        new="\t\tif errors.Is(err, tokenfile.ErrStoreRootUnreadable) && false {",
+        killer="TestTheBinaryREFUSESToStartOverAStoreRootItCannotEnumerate",
+        why="the classification dropped, leaving the generic branch. The exit code is "
+        "still 78, so nothing about the pod's lifecycle changes — what changes is that "
+        "the only sentence the operator gets is the projection's own vocabulary about a "
+        "control plane, rather than the name of the volume that is not mounted and the "
+        "fact that the server refused to start over it.",
+    ),
+    Mutant(
+        name="a-refused-reload-claims-nothing-changed",
+        path="cmd/cairn-server/main.go",
+        old='"THE TABLE IS ALREADY SWAPPED: the %d new identities [%s] are published, and the next refresh (within %s) "+',
+        new='"NOTHING CHANGED: the %d new identities [%s] are published, and the next refresh (within %s) "+',
+        killer="TestARefusedReloadDoesNotClaimNothingChanged",
+        why="the wording this line shipped with, and it is false about the TABLE: "
+        "`SetTokens` publishes before it refreshes, so on this branch the swap has "
+        "already happened and only the projection is stale. An operator told nothing "
+        "changed re-edits the file against a copy the pod no longer holds — and the old "
+        "line also said `send SIGHUP again`, which describes a step the timer makes "
+        "unnecessary. 🔴 THE ARTIFACT UNDER TEST IS PROSE, so the guard bans the phrase "
+        "rather than asserting a synonym: a reword that reintroduces it is the defect.",
+    ),
+
+    Mutant(
+        name="the-refresh-loop-has-no-triggers",
+        path="cmd/cairn-server/main.go",
+        # 🔴 EMPTYING THE TRIGGER SET RATHER THAN DELETING THE GOROUTINE, AND THAT IS
+        # NOT A WEAKER MUTATION — it is the one that COMPILES. Deleting the block
+        # leaves `context` and `internal/control` imported and unused, so the tree does
+        # not build and the mutant dies at the build, which proves nothing about any
+        # guard. Both edits produce the same behaviour: a loop that waits on nothing.
+        old="control.RefreshTriggers{Interval: refreshInterval}",
+        new="control.RefreshTriggers{}",
+        killer="TestTheBinarysOwnTimerIsWhatClosesTheDivergence",
+        why="the timer removed from the only loop that re-materializes the authority "
+        "without an operator. The divergence `tokenfile` declares is DECLARED rather "
+        "than closed, "
+        "and the declaration rests entirely on the window being bounded — so this "
+        "turns a bounded, reported lag into a permanent one, with every existing "
+        "gate green: a bare row simply never sees a scope that `server/seed.sh` "
+        "pushed, and nothing anywhere says so.",
+    ),
 )
 
 
@@ -621,7 +1031,15 @@ def run_tests(tree: Path) -> tuple[bool, set[str], str]:
     which is reported as its own outcome rather than silently scored as a kill.
     """
     proc = subprocess.run(
-        ["go", "test", "-count=1", "-v", PKG],
+        # 🔴 `-timeout=2m`, NOT THE 10m DEFAULT, BECAUSE A MUTANT CAN DEADLOCK RATHER
+        # THAN FAIL. `TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt` re-enters
+        # `Cache.refresh` from inside `CacheOptions.Now`, which is only safe because
+        # `clock()` is read OUTSIDE `c.mu` at all three of its call sites. A mutation
+        # that moves any one of them below `c.mu.Lock()` deadlocks on a non-reentrant
+        # `sync.Mutex` — the mutant is still KILLED, but at the default it costs ten
+        # minutes of wall clock per occurrence instead of two, in a battery this job
+        # runs on every push. The shortest real package here finishes in seconds.
+        ["go", "test", "-count=1", "-timeout=2m", "-v", *PKGS],
         cwd=tree,
         capture_output=True,
         text=True,
