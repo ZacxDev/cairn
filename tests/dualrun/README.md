@@ -43,13 +43,28 @@ byte for byte on every request. That was the open question this gate was built t
 
 ## 🔴 Byte-identity here means the *uncompressed* tar
 
-Scoped deliberately, and the scoping is **measured rather than chosen** — `AGENTS.md` holds
-the measurement. `/api/v1/snapshot` ships `tarfile.open(mode="w:gz")` on the oracle and
-`compress/gzip` in Go, and the two cannot be made equal at any setting, for two independent
-reasons: Go hardcodes the 10-byte gzip header's OS field to `0xff` with no API to change it
-(CPython writes `0x03`), and the DEFLATE stream differs in **length** as well as content
-because `compress/flate` and zlib make different match and block choices. Both are permitted
-freedoms of the format.
+Scoped deliberately, and the scoping is **measured rather than chosen**. The measurement was
+relocated here from `AGENTS.md` at `752415d` — it is a record of what was measured, and
+`AGENTS.md` is paid for by every session before it has been told anything, so it keeps the
+imperative ("the gate is scoped to the uncompressed tar; do not add a gate on the gzip
+bytes") and this file keeps the evidence.
+
+`/api/v1/snapshot` ships `tarfile.open(mode="w:gz")` output on the oracle and
+`compress/gzip` output in Go, and the two cannot be made equal at any setting. Two
+independent reasons, so closing one does not help:
+
+- **the 10-byte gzip header.** Go's `compress/gzip` hardcodes the OS byte to `0xff`
+  (unknown) with no API to change it; CPython writes `0x03` (Unix). At level 9 the XFL
+  bytes agree (`02`) and the OS bytes still differ.
+- **the DEFLATE stream itself**, which differs in LENGTH and not merely in content —
+  512 bytes from Go against 511 from zlib at level 9 on one 20,480-byte tar.
+  `compress/flate` and zlib make different match and block choices; that is a permitted
+  freedom of the format, not a defect in either.
+
+The tar *inside* the gzip IS achievable, and was achieved: after the header fixes in
+`internal/snapshot/paxtar.go`, the Go writer's archive was byte-identical to CPython's
+`PAX_FORMAT` output over a member list carrying a whole second, `.25`, `.5` on an even
+second, `.5` on an odd one, `.75`, a non-ASCII name and a name over 100 bytes.
 
 So the gzip envelope — and `Content-Length` on that one route, which counts the gzip bytes —
 is a declared difference, and **the tar inside it is compared byte for byte, in archive
