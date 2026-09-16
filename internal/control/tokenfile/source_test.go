@@ -377,6 +377,58 @@ func TestTheProjectionIsAPureFunctionOfItsInputs(t *testing.T) {
 	}
 }
 
+// TestARevocationMakesTheEpochGoDOWN pins the two numbers `control/cache.go` and
+// `internal/control/README.md` cite for "the order cannot come from the epoch".
+//
+// ⚠ IT IS AN INVARIANT GUARD, NOT A REGRESSION TEST, AND IT IS LABELLED SO RATHER THAN
+// COUNTED AS COVERAGE — no defect here was ever observed growing the epoch on a
+// revocation. What it defends is a CITATION: the comments quote measured numbers, and a
+// quoted number nobody pins goes stale in the next round that edits the file for some
+// other reason. That is how the previous citation died — "7 → 5 when a store root stopped
+// enumerating" stopped being reproducible the moment an unreadable root became an error,
+// and the prose kept saying it.
+//
+// 🔴 TWO TABLE SIZES, BECAUSE ONE MEASUREMENT IS NOT A GENERAL CLAIM. The delta is not a
+// constant — a deleted row takes its credential, its grants and any scope only it named
+// with it — so the direction is asserted at both points and the exact pair the prose
+// quotes is asserted as well.
+func TestARevocationMakesTheEpochGoDOWN(t *testing.T) {
+	keep, doomed := aToken('a'), aToken('b')
+	third, fourth := aToken('c'), aToken('d')
+	// The root is READABLE throughout: this is a revocation, not an enumeration outage.
+	root := storeWith(t, "alpha-notes", "beta-notes")
+
+	epochOf := func(records ...authz.TokenRecord) uint64 {
+		t.Helper()
+		return modelOf(t, sourceOver(root, records...)).Epoch
+	}
+
+	two := epochOf(
+		authz.LegacyRecord(keep),
+		authz.TokenRecord{Token: doomed, Identity: "compromised", Scopes: []string{"alpha-notes"}})
+	one := epochOf(authz.LegacyRecord(keep))
+	four := epochOf(
+		authz.LegacyRecord(keep),
+		authz.TokenRecord{Token: doomed, Identity: "compromised", Scopes: []string{"alpha-notes"}},
+		authz.TokenRecord{Token: third, Identity: "three", Scopes: []string{"beta-notes"}},
+		authz.TokenRecord{Token: fourth, Identity: "four", Scopes: []string{"alpha-notes", "beta-notes"}})
+	three := epochOf(
+		authz.LegacyRecord(keep),
+		authz.TokenRecord{Token: doomed, Identity: "compromised", Scopes: []string{"alpha-notes"}},
+		authz.TokenRecord{Token: third, Identity: "three", Scopes: []string{"beta-notes"}})
+
+	if one >= two || three >= four {
+		t.Fatalf("deleting a row must make the epoch go DOWN at both points; got %d→%d and %d→%d",
+			two, one, four, three)
+	}
+	if two != 10 || one != 7 || four != 17 || three != 13 {
+		t.Errorf("the epochs are %d→%d and %d→%d, want 10→7 and 17→13. Those numbers are "+
+			"QUOTED in `control/cache.go`'s ordering comment and in "+
+			"`internal/control/README.md`'s design-calls table; move all three together "+
+			"or the prose is a stale claim", two, one, four, three)
+	}
+}
+
 // TestTwoBareRowsAreOnePrincipalWithTwoCredentials is the rotation shape.
 //
 // 🔴 `authz.LoadTokens` GUARD 12 EXEMPTS `legacy` BECAUSE TWO BARE ROWS ARE AN OVERLAP

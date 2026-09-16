@@ -847,21 +847,18 @@ MUTANTS: tuple[Mutant, ...] = (
         path="internal/control/cache.go",
         old="\tif materialize && mine >= c.committed {",
         new="\tif materialize {",
-        killer="",
+        killer="TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt",
         why="the write committing over a refresh that started AFTER its append returned "
-        "— a read that is known to include the write and may include more.",
-        equivalent=True,
-        equivalent_reason=(
-            "SURVIVES because no test in this repository builds the interleaving that "
-            "reaches it, and this label says that rather than claiming behavioural "
-            "identity. Reaching it needs a THIRD concurrent attempt that calls `begin()` "
-            "after the write's stamp and commits before the write takes the lock — a "
-            "window between two adjacent statements that no gate can open from outside. "
-            "The clause is kept rather than deleted because its absence prefers an OLDER "
-            "world over a newer one; that is a bounded staleness rather than a revocation "
-            "coming back, but it is still the wrong direction and it costs one operand. "
-            "Recorded so a reader finding this SURVIVED does not read it as dead code."
-        ),
+        "— a read that is known to include the write and may include more. "
+        "🔴 THIS ROW CARRIED `equivalent=True` FOR ONE ROUND ON A REASON THAT WAS FALSE: "
+        "it said the interleaving needed a window 'between two adjacent statements that "
+        "no gate can open from outside'. The statements are NOT adjacent — "
+        "`now := c.clock()` sits between `c.begin()` and `c.mu.Lock()`, and `clock` is a "
+        "caller-injected hook (`CacheOptions.Now`). The killer parks a whole refresh "
+        "inside that hook, which is the same technique the round already used for "
+        "`Append`, one hook over. A label that reads as coverage while providing none is "
+        "worse than no label, and this one was sitting inside the battery built to "
+        "refuse that shape.",
     ),
     # ---- the server: where the predicate is asked --------------------------------
     Mutant(

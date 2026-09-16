@@ -146,8 +146,14 @@ const ScopesProjectName = "token-file scopes"
 // `Source` that consulted the file alone would leave every legacy row authorised
 // over nothing.
 type Source struct {
-	// StoreRoot is the directory whose subdirectories are scopes. An unreadable
-	// root is not an error here — see `Model`.
+	// StoreRoot is the directory whose subdirectories are scopes.
+	//
+	// 🔴 AN UNREADABLE ROOT IS AN ERROR — `Model` refuses, `ErrStoreRootUnreadable`
+	// classifies it, and a cache that has already materialized keeps its last-known-good
+	// credential table. This comment asserted the OPPOSITE for one round after the
+	// behaviour changed, and pointed at the very function that contradicts it; the
+	// argument for swallowing it, and why it is true at one instant and false across
+	// time, is written out at `Model`.
 	StoreRoot string
 
 	// Records returns the token table currently in force. It is a FUNCTION rather
@@ -220,6 +226,34 @@ var ErrStoreRootUnreadable = errors.New("the store root cannot be enumerated")
 // authenticating with the authority it had, and `Staleness` moves to `degraded`. The
 // unreadable-store-becomes-unreadable-credential-table failure is what the cache
 // prevents, and it needs this function to fail rather than to succeed with a lie.
+//
+// 🔴 AND THE OTHER HALF OF THAT TRADE, DECLARED RATHER THAN LEFT FOR THE NEXT READER:
+// THE SAME REFUSAL PRESERVES A CREDENTIAL THE OPERATOR IS DELETING. "Keeps the table it
+// had" and "cannot revoke" are one mechanism, not two. Measured at both ends over one
+// probe — a materialized cache, the store root renamed away, the compromised row removed
+// from the table, then the SIGHUP path (`api.Server.SetTokens` publishes the table and
+// calls `Refresh`):
+//
+//	at fb7e788: the reload SUCCEEDS and the revoked credential stops authenticating.
+//	at ca632e3: the reload REFUSES (`the store root cannot be enumerated`) and the
+//	            revoked credential STILL AUTHENTICATES — across that reload and a second
+//	            refresh attempt inside the same outage. It stops only once the root is
+//	            readable again.
+//
+// ⚠ THE WINDOW IS THE OUTAGE, NOT THE REFRESH INTERVAL. Every other lag this package
+// declares is bounded by `api.AuthorityRefreshInterval`; this one is bounded by however
+// long the volume stays unmountable, because every attempt inside it fails the same way.
+// And SIGHUP is the ONLY revocation path in the deployed binary: `Source` has no write
+// half, so `Cache.ApplyNow` over this authority returns `ErrAuthorityReadOnly` and the
+// "revoke now" bypass does not exist here.
+//
+// It is recorded as 🟡 rather than 🔴 because it is not silent. `cmd/cairn-server`'s
+// refused-reload line says the table IS already swapped, names the new fingerprints,
+// says the AUTHORITY is unchanged, and names the fingerprints still serving — so the
+// operator is told, in the one message they are reading, that the revocation has not
+// landed. What is missing is a surface that says so WITHOUT a SIGHUP — the
+// `Staleness`-is-reportable-but-unreported gap the package doc records, whose closing
+// condition covers this too.
 //
 // 🔴 AND THE COLD START IS A DECISION RATHER THAN A CONSEQUENCE: IT REFUSES. A cache with
 // no last-known-good has nothing to keep, so the only two answers are "serve an

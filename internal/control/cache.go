@@ -168,10 +168,20 @@ func (c *Cache) Refresh(ctx context.Context) error { return c.refresh(ctx, Refre
 //
 // 🔴 THE ORDER CANNOT COME FROM `Model.Epoch`, AND AN "IGNORE A LOWER EPOCH" GUARD IS THE
 // WRONG FIX RATHER THAN A CRUDER ONE. The epoch is the event count of a projection, so a
-// REVOCATION MAKES IT GO DOWN — measured on the token-file adapter, 7 → 5 when a store
-// root stopped enumerating — and a guard keyed on it would reject exactly the new, smaller
-// world it exists to protect. The generation is taken BEFORE the `src` call, which is the
-// only clock that orders the two reads.
+// REVOCATION MAKES IT GO DOWN, and a guard keyed on it would reject exactly the new,
+// smaller world it exists to protect. Measured on the token-file adapter at two points,
+// over a store root that stays perfectly readable — deleting one mapped row from a
+// two-row table takes the projection 10 → 7, and from a four-row table 17 → 13; the
+// row's credential, its grants and any scope only it named leave with it.
+// `tokenfile.TestARevocationMakesTheEpochGoDOWN` is where those numbers are pinned. The
+// generation is taken BEFORE the `src` call, which is the only clock that orders the two
+// reads.
+//
+// ⚠ AN EARLIER DRAFT CITED "7 → 5 when a store root stopped enumerating". The arithmetic
+// was right and the claim is unchanged, but a root that stops enumerating now ERRORS
+// rather than projecting a smaller world, so the citation named a scenario the reader
+// cannot reproduce — and a shrinking enumeration is not a revocation, which is the claim
+// it was attached to.
 //
 // ⚠ A SUPERSEDED REFRESH IS AN ATTEMPT THAT SUCCEEDED AND WAS DISCARDED, and all three
 // words are recorded separately: `lastAttempt`/`lastTrigger` move (it was tried, by that
@@ -628,6 +638,14 @@ func (c *Cache) write(ctx context.Context, materialize bool, events []Event) (Wr
 	now := c.clock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// 🔴 AND THE `mine >= c.committed` HALF IS THE WRITE LOSING, WHICH IS ALSO REACHABLE.
+	// A third attempt can call `begin` after the stamp above and commit before this lock
+	// is taken — its read is known to include the append, so it may include MORE, and the
+	// write must not publish over it. `TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt`
+	// forces that interleaving from inside `c.clock()`, which sits between the two
+	// statements. ⚠ It was labelled an unreachable EQUIVALENT mutant for one round on the
+	// grounds that the statements were adjacent and no gate could open the window; they
+	// are not adjacent, and `Now` is a caller-injected hook.
 	if materialize && mine >= c.committed {
 		c.model = next
 		c.committed = mine

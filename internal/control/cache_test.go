@@ -639,16 +639,196 @@ func TestAConcurrentRefreshCannotUNDOApplyNow(t *testing.T) {
 	}
 }
 
+// TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt is the third arm of the
+// ordering rule: `write`'s own `mine >= c.committed` clause, which decides what happens
+// when the write is the LOSER rather than the winner.
+//
+// 🔴 THE CLAUSE WAS LABELLED EQUIVALENT ON A REASON THAT WAS FALSE, AND THAT IS WHY
+// THIS TEST EXISTS RATHER THAN A SHORTER ONE. `tests/control_mutants.py` carried
+// `the-write-ignores-a-newer-commit` as a survivor whose label said the interleaving
+// needed "a window between two adjacent statements that no gate can open from outside".
+// The statements are not adjacent: `now := c.clock()` sits between `c.begin()` and
+// `c.mu.Lock()`, and `clock` is a CALLER-INJECTED hook (`CacheOptions.Now`). A label that
+// reads as coverage while providing none forecloses the very test that closes the gap —
+// the exact shape the battery exists to refuse, sitting inside the battery.
+//
+// 🔴 THE INTERLEAVING IS FORCED FROM THE CLOCK AND IS THEREFORE FULLY SYNCHRONOUS. No
+// goroutine, no channel, no timing: the hook fires exactly once, on the `c.clock()` call
+// `write` makes after taking its generation, and runs a whole refresh — `begin`, the
+// authority read, the commit — inside it. That third attempt's generation is HIGHER than
+// the write's, so it is known to have read the authority after the append returned, and
+// the write must not publish over it.
+//
+// 🔴 AND THE THIRD WORLD'S EPOCH IS LOWER THAN THE WRITTEN ONE, SO NO "HIGHER EPOCH
+// WINS" RULE CAN PASS THIS. The epoch is an event count and a revocation makes it go
+// down; the ordering has to come from the generation or from nothing.
+func TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt(t *testing.T) {
+	ctx := context.Background()
+
+	// Three worlds off one journal, each one credential smaller than the last.
+	without := func(ids ...string) Model {
+		t.Helper()
+		drop := map[string]bool{}
+		for _, id := range ids {
+			drop[id] = true
+		}
+		var kept []Event
+		for _, e := range cacheWorld() {
+			if drop[string(e.CredentialID)] {
+				continue
+			}
+			kept = append(kept, e)
+		}
+		m, err := Replay(kept)
+		if err != nil {
+			t.Fatalf("replaying the world without %v: %v", ids, err)
+		}
+		return m
+	}
+	before := withCredentials(t)
+	after := without("crd_carol")              // what the WRITE's append returns
+	third := without("crd_carol", "crd_atlas") // what the third attempt reads
+
+	// Preconditions, so nothing below can pass vacuously.
+	if !(third.Epoch < after.Epoch && after.Epoch < before.Epoch) {
+		t.Fatalf("precondition: each revocation must make the epoch go DOWN, so that "+
+			"ordering by epoch cannot produce the right answer here; got %d, %d, %d",
+			before.Epoch, after.Epoch, third.Epoch)
+	}
+	for _, p := range []struct {
+		world Model
+		name  string
+		token string
+		live  bool
+	}{
+		{before, "before", carolToken, true}, {before, "before", atlasToken, true},
+		{after, "after", carolToken, false}, {after, "after", atlasToken, true},
+		{third, "third", carolToken, false}, {third, "third", atlasToken, false},
+	} {
+		_, _, err := Authenticate(p.world, p.token)
+		if (err == nil) != p.live {
+			t.Fatalf("precondition: in the %q world that credential must be live=%v, got err=%v",
+				p.name, p.live, err)
+		}
+	}
+
+	// Every gate is pre-opened: the forcing happens in the clock, not in a goroutine.
+	src := newGatedWriter(after, before, third)
+	close(src.release[0])
+	close(src.release[1])
+	close(src.releaseAppend)
+
+	clock := at(100)
+	var c *Cache
+	var hookMu sync.Mutex
+	armed := false
+	c = NewCache(src, CacheOptions{MaxAge: time.Minute, Now: func() time.Time {
+		hookMu.Lock()
+		fire := armed
+		armed = false // the nested refresh reads the clock too; it must not re-enter
+		hookMu.Unlock()
+		if fire {
+			// THE THIRD ATTEMPT. It calls `begin` after the write's stamp and commits
+			// before the write reaches the lock — the window the EQUIVALENT label said
+			// could not be opened from outside.
+			if err := c.refresh(ctx, RefreshTimer); err != nil {
+				t.Errorf("the third attempt must succeed: %v", err)
+			}
+		}
+		return clock
+	}})
+
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatalf("materializing: %v", err)
+	}
+	if _, _, err := c.Authenticate(atlasToken); err != nil {
+		t.Fatalf("precondition: the atlas credential must authenticate before any of this: %v", err)
+	}
+
+	hookMu.Lock()
+	armed = true
+	hookMu.Unlock()
+	r, err := c.ApplyNow(ctx, Event{
+		Kind: EventCredentialRevoked, At: at(101), CredentialID: "crd_carol",
+	})
+	if err != nil {
+		t.Fatalf("ApplyNow: %v", err)
+	}
+	hookMu.Lock()
+	stillArmed := armed
+	hookMu.Unlock()
+	if stillArmed {
+		t.Fatal("the hook never fired, so the interleaving was never built and every " +
+			"assertion below would be about an ordinary uncontested write")
+	}
+
+	// THE FINDING THE CLAUSE PREVENTS. Without it the write republishes `after`, which
+	// is a world the authority has already moved on from, and the atlas credential the
+	// third attempt removed comes back.
+	if _, _, err := c.Authenticate(atlasToken); err == nil {
+		t.Errorf("THE FINDING: the write committed over an attempt that STARTED after it. "+
+			"The third attempt's world had the atlas credential removed and it "+
+			"authenticates again (%s)", c.Staleness())
+	}
+	if _, _, err := c.Authenticate(carolToken); err == nil {
+		t.Errorf("the revocation this write performed must be in force whichever of the "+
+			"two worlds is serving (%s)", c.Staleness())
+	}
+
+	s := c.Staleness()
+	if s.Epoch != third.Epoch {
+		t.Errorf("the serving epoch is %d, want the third attempt's %d (the written world "+
+			"is %d)", s.Epoch, third.Epoch, after.Epoch)
+	}
+	// Three outcomes, three counters: the materialization and the third attempt each
+	// published, the write was discarded, nothing failed.
+	if s.Superseded != 1 || s.Refreshes != 2 || s.Failures != 0 {
+		t.Errorf("superseded=%d refreshes=%d failures=%d, want 1/2/0 (%s)",
+			s.Superseded, s.Refreshes, s.Failures, s)
+	}
+	// The discarded write must not stamp the report either: `lastTrigger` and
+	// `lastAttempt` move with the model, and the model here is the third attempt's.
+	if s.LastTrigger != RefreshTimer {
+		t.Errorf("trigger=%q, want %q — a write that published nothing must not claim the "+
+			"last attempt", s.LastTrigger, RefreshTimer)
+	}
+	if src.appendAttempts != 1 {
+		t.Errorf("the authority saw %d appends, want exactly 1", src.appendAttempts)
+	}
+	// ⚠ THE EFFECT IS `deferred` AND THAT IS THE INVARIANT RATHER THAN A DEFECT, worth
+	// pinning because it is the surprising direction. `Effect` is derived from the two
+	// epochs — `EffectImmediate` exactly when `ServingEpoch >= WrittenEpoch` — and the
+	// serving world here is SMALLER than the written one while genuinely containing the
+	// write. So a revocation that IS in force reports itself deferred. That is the
+	// conservative half of the trade: a UI says "effective by <time>" about something
+	// that already happened, which is the direction that cannot mislead an operator into
+	// believing a revocation landed when it has not.
+	if r.Effect != EffectDeferred {
+		t.Errorf("effect=%s, want %s: the invariant is structural — `immediate` exactly "+
+			"when serving >= written, and here serving-epoch=%d written-epoch=%d",
+			r.Effect, EffectDeferred, r.ServingEpoch, r.WrittenEpoch)
+	}
+	if r.ServingEpoch != third.Epoch || r.WrittenEpoch != after.Epoch {
+		t.Errorf("serving-epoch=%d written-epoch=%d, want %d and %d",
+			r.ServingEpoch, r.WrittenEpoch, third.Epoch, after.Epoch)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // The report
 // ---------------------------------------------------------------------------
 
-// TestTheStalenessRendersExactly pins the WHOLE normalised line for six states.
+// TestTheStalenessRendersExactly pins the WHOLE normalised line for SEVEN states.
 //
 // 🔴 THE EXPECTATIONS ARE LITERAL AND THE FIXTURE IS HAND-BUILT, so nothing here is
 // derived from the code under test: the source answers a Model with a spelled-out
 // epoch of 7 and the clock is moved by hand. A guard on a few words would be walkable
 // by rewording; this is the whole string.
+//
+// ⚠ THE SEVENTH SUBTEST IS THE ONE THAT MEASURES `superseded=`. The other six read it as
+// `0`, which pins the spelling and nothing else; the seventh forces the interleaving and
+// reads the number. Count the subtests before editing this sentence — it said "six" for a
+// round after the seventh was added.
 func TestTheStalenessRendersExactly(t *testing.T) {
 	ctx := context.Background()
 	m := NewModel()

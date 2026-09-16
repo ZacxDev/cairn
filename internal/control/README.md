@@ -168,7 +168,7 @@ it, are one section down under *What piece (a) structurally cannot see*.
 
 | decision | what was chosen | why |
 |---|---|---|
-| how two concurrent publishers order their COMMITS | **a generation stamp — never the epoch** | `src.Model` runs outside the lock on purpose, and the deployed binary now has TWO independent triggers (the timer in `Run`, SIGHUP through `api.Server.SetTokens`), so their reads overlap. Without an order the slow one wins: the operator revokes a row, SIGHUP publishes and commits, the timer — which entered `src.Model` first holding the old table — commits on top, and the revoked credential authenticates again while the status says `fresh`. 🔴 The order **cannot** come from `Model.Epoch`: the epoch is an event COUNT, so a revocation makes it go DOWN (measured, 7 → 5), and an "ignore a lower epoch" guard would reject exactly the smaller, newer world. A discarded attempt is counted as `Superseded` — a third outcome, not a failure. `ApplyNow` takes its generation **after** `Append` rather than before, so a refresh whose read straddles the write cannot overwrite the one path that promises the revocation is in force on return. |
+| how two concurrent publishers order their COMMITS | **a generation stamp — never the epoch** | `src.Model` runs outside the lock on purpose, and the deployed binary now has TWO independent triggers (the timer in `Run`, SIGHUP through `api.Server.SetTokens`), so their reads overlap. Without an order the slow one wins: the operator revokes a row, SIGHUP publishes and commits, the timer — which entered `src.Model` first holding the old table — commits on top, and the revoked credential authenticates again while the status says `fresh`. 🔴 The order **cannot** come from `Model.Epoch`: the epoch is an event COUNT, so a revocation makes it go DOWN (measured on the token-file adapter at two points, over a store root that stays readable: deleting one mapped row takes a two-row table 10 → 7 and a four-row table 17 → 13, pinned by `tokenfile.TestARevocationMakesTheEpochGoDOWN`), and an "ignore a lower epoch" guard would reject exactly the smaller, newer world. ⚠ An earlier draft cited "7 → 5 when a store root stopped enumerating" — right arithmetic, unreproducible scenario, since such a root now errors rather than projecting a smaller world, and a shrinking enumeration is not a revocation anyway. A discarded attempt is counted as `Superseded` — a third outcome, not a failure. `ApplyNow` takes its generation **after** `Append` rather than before, so a refresh whose read straddles the write cannot overwrite the one path that promises the revocation is in force on return — and the mirror clause, `mine >= c.committed`, keeps it from committing over a THIRD attempt that started later still (`TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt`, which forces that interleaving from inside the injected clock). |
 | what the bound does | **bounds the REPORT, not the reads** | refusing to serve past `MaxAge` converts an authority outage into a total read outage, at the moment the operator can least fix it. An exceeded bound is LOUD and still serving. The one thing it must never be is silent. |
 | who installs the signal handler | **the caller does; the cache receives a channel** | `signal.Notify` is process-global state, and a library that calls it takes away the program's decision to have a handler at all — which on an ordinary process is the difference between a SIGHUP that reloads and one that terminates. `cmd/cairn-server` already owns that call for the token file. |
 | what `Effect` is derived from | **the two EPOCHS, never the call site** | a deferred write that a concurrent refresh has already picked up IS in force. Labelling it by its code path would have the UI say "effective within 60s" about something that already happened. The invariant is structural — `EffectImmediate` exactly when `ServingEpoch >= WrittenEpoch` — so a caller can check the label against the numbers beside it. |
@@ -243,12 +243,20 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 62 mutants, over FOUR packages
+python3 tests/control_mutants.py          # 72 mutants, over FOUR packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 62 mutants, 61 killed, 1 labelled EQUIVALENT at the code,
+**Measured on this tree: 72 mutants, 71 killed, 1 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, positive control GREEN.**
+
+⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
+`bcfaa19` to `8fb98d2` and went stale at `ca632e3`, a round that added ten mutants and
+edited forty-four lines of this file without re-reading its own headline — so it said
+`62 / 61 / 1` over a tree measuring `72 / 70 / 2`, and the file read as if the second
+survivor did not exist while that survivor was the round's most important finding.
+`python3 tests/control_mutants.py` prints the `SUMMARY` line these are copied from, and
+the survivor paragraph below must name exactly the mutants that actually survived.
 
 🔴 **IT RUNS OVER FOUR PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** `internal/control`
 is the model and its predicate, `internal/control/tokenfile` is the projection, and
@@ -272,10 +280,13 @@ at the **same** pinned instant, which makes the two expressions identical — th
 would have SURVIVED a fully green test that appeared to assert the deadline. The fixture
 now moves its clock 20s between the two, and the test says why.
 
-🔴 **IT RUNS IN CI, IN THE `go` JOB, RATHER THAN BEING A NUMBER IN THIS FILE.** **2m46s
-on one developer host, against 2m01s for the same battery at 61 mutants over three
-packages** — both measured back to back on that host, which is what makes the ~45s the
-fourth package costs a delta rather than an impression. (It costs that much because a
+🔴 **IT RUNS IN CI, IN THE `go` JOB, RATHER THAN BEING A NUMBER IN THIS FILE.** The one
+timing figure here is a DELTA measured back to back on a single host and is not a current
+runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
+61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
+fourth package costs a measurement rather than an impression. ⚠ The battery is 72 mutants
+now, so neither number describes what a run takes today, and a run on a loaded box is
+several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
 binary to rebuild. An earlier `~80s` here was measured on a different host and is
 superseded rather than contradicted — the two were never comparable.) Four of the cache
@@ -299,6 +310,19 @@ on every input, so no behavioural test can distinguish them and none should be w
 try; the property at stake is a timing one, defended by the comment beside the call. It
 is listed here so a reader finding it SURVIVED does not read that as "the comparison does
 not matter".
+
+🔴 **THERE WAS BRIEFLY A SECOND SURVIVOR, AND ITS LABEL WAS FALSE.**
+`the-write-ignores-a-newer-commit` — deleting the `mine >= c.committed` clause from
+`Cache.write` — was labelled EQUIVALENT on the grounds that reaching it needed a window
+"between two adjacent statements that no gate can open from outside". The statements are
+not adjacent: `now := c.clock()` sits between `c.begin()` and `c.mu.Lock()`, and `clock`
+is a caller-injected hook (`CacheOptions.Now`). Parking a whole refresh inside that hook —
+the same technique `TestAConcurrentRefreshCannotUNDOApplyNow` uses on `Append`, one hook
+over — kills it: serving epoch **23** against the written **24** with `superseded=1` at
+HEAD, **24 / 24 / 0** with the mutant. `TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt`
+is the killer and the label is gone. **A label that reads as coverage while providing none
+is worse than no label** — it forecloses the test that would close the gap, and this one
+was sitting inside the battery built to refuse exactly that shape.
 
 🔴 **TWO ROWS OF THE BATTERY WERE WRONG IN THEIR FIRST DRAFT, AND THE BATTERY IS WHAT
 SAID SO.** Recorded because both are the shape this whole file is about:
@@ -383,7 +407,7 @@ What it synthesizes, and why each shape was picked:
 | how the write refusal is asked | "does this principal hold `write` ANYWHERE" | the server's 403 is about the CREDENTIAL and names no scope, so it must not be a per-scope question — a per-scope 403 would tell an authenticated caller that a scope it cannot reach exists. A principal that may write somewhere and aims at a scope it may not gets the not-found answer instead. Both halves are in the served matrix. |
 | a row with NO identity | the whole projection is **refused**, so the pod does not start | `Principal.Display` is what the audit line and every written bullet's ACTOR carry, so a principal with no name is a credential whose use cannot be attributed. ⚠ Unreachable from a token FILE — `ParseTokenRow` gives every row an identity — and reachable from a programmatic `TokenRecord`. It is LOUDER than the old behaviour, which was an empty `identity=` field and a bullet attributed to nobody. |
 | where scope names come from | the UNION of the store's directories and the mapped rows' allowlists | neither alone is enough. Directories are the only record of what a bare row may read; allowlists are the only record of a scope with **no directory yet**, which is the first-entry create that is how the store gained every scope it has. |
-| a store root that will not ENUMERATE | the whole projection is **refused** | it used to be swallowed, on the true-at-one-instant grounds that every read route answers 503 through such a root anyway. The projection is CACHED, so the empty world it produced was committed, `materializedAt` moved, the status said `fresh`, and it was served **through a root that was readable again** — measured as `200 scope-absent` for a scope that exists on disk. On the deployed shape the principals are bare rows, so `storeDirs` IS the whole enumeration and it is not one scope, it is all of them. Refusing keeps the last-known-good instead, which is what preserves the credential table the old argument was protecting. |
+| a store root that will not ENUMERATE | the whole projection is **refused** | it used to be swallowed, on the true-at-one-instant grounds that every read route answers 503 through such a root anyway. The projection is CACHED, so the empty world it produced was committed, `materializedAt` moved, the status said `fresh`, and it was served **through a root that was readable again** — measured as `200 scope-absent` for a scope that exists on disk. On the deployed shape the principals are bare rows, so `storeDirs` IS the whole enumeration and it is not one scope, it is all of them. Refusing keeps the last-known-good instead, which is what preserves the credential table the old argument was protecting. 🔴 **AND THE SAME MECHANISM PRESERVES A CREDENTIAL THE OPERATOR IS DELETING** — measured at both ends over one probe: at `fb7e788` a SIGHUP reload through a renamed-away root SUCCEEDS and the revoked row stops authenticating; at `ca632e3` the reload REFUSES and the revoked row still authenticates, across that reload and a second attempt inside the same outage, until the root is readable again. The window is the OUTAGE, not the 30s refresh interval, and SIGHUP is the only revocation path the pod has — `Source` has no write half, so `ApplyNow` returns `ErrAuthorityReadOnly` here. It is not silent: the refused-reload line names the fingerprints still serving and says the authority is unchanged. Declared at `tokenfile.Source.Model`. |
 | a COLD start over such a root | `api.New` fails and `cmd/cairn-server` exits **78** | a cache with no last-known-good has nothing to keep, so the only two answers are "serve an enumeration known to be wrong" and "do not come up". Nothing served is lost, and that is checked rather than assumed: every read route answers 503 through that root, and a write cannot land either, because `internal/write` creates a scope directory with `os.Mkdir` and not `MkdirAll`, so it fails on the absent parent. The alternative moves the window to startup rather than removing it, which is exactly where an unmounted volume puts it. ⚠ A divergence from `server/server.py`, which starts and answers 503; declared at `tokenfile.Source.Model` with the same closing condition as the divergence below. |
 | two rows sharing one IDENTITY | interchangeable only if they describe the **same authority**; otherwise **refused** | the dedupe is keyed on `authorityKey` — `IsLegacy()` plus the folded, sorted allowlist — which is derived from the same two facts `grantsFor` branches on. Keyed on the identity STRING alone, every row after the first contributed only a credential: a mapped row named `legacy` ahead of a real bare row gave that bare row `write` on one scope and took `read` away on another. ⚠ Unreachable from a token FILE (`authz.LoadTokens` guards 8 and 12) — which is a guard in a DIFFERENT package being the only thing between this and a wrong authority, and therefore a reason to gate it here rather than not to. |
 
