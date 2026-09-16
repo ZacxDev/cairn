@@ -23,113 +23,118 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `feat/control-plane-data-model` @ `5c02f2b`, pushed. **PR
-  [#29](https://github.com/ZacxDev/cairn/pull/29) OPEN, CI IN FLIGHT at handoff time** —
-  `leakscan` green, the other five jobs still running. 🔴 Nobody has read a green `go`,
-  `tests`, `parity`, `dualrun` or `nix` job on this branch; check before merging.
-  `mergeable=MERGEABLE` against `main`.
-- Other open PR is still **another session's** #24 (`feat/client-multi-instance-routing`)
-  — not this effort's, and see the merged-tree gotcha below.
-- **DONE this session — P3a, the control plane's data model and its one predicate:**
-  - `internal/control/` (10 files, ~3,900 lines with tests): `model.go` (users,
-    projects, memberships, immutable scope ids, append-only grants, credentials),
-    `verbset.go`, `journal.go` (11 event kinds, replay), `ids.go`, `resolve.go`
-    (`Resolve`, `Authenticate`, `Narrow`), `filestore.go` (the `Store` seam +
-    the file backend), `README.md`.
-  - `tests/control_mutants.py` — 28 mutants, wired into the `go` CI job (~30s).
-  - `.github/workflows/ci.yml` — the `go test` `ok` floor moves **10 → 11** (twelve
-    packages carry tests now; a floor left at 10 stops failing for the FIRST deletion).
-- **The four deferred decisions in `plan-cairn-control-plane.md` §"Deferred decisions"
-  are SETTLED by the operator** (recorded with their reasons in
-  `internal/control/README.md`): three verbs `read`/`write`/`admin`; a project is BOTH a
-  grant subject and a credential principal; **no NULL project** (signup mints a solo
-  one); the authority sits behind a `Store` interface with a file backend first.
-- **NOT DONE — the rest of P3, and it is the bulk of the wiring.** `internal/control` is
-  a LIBRARY: no route consults it, and `authz.TokenRecord` + the token file still
-  authorise the pod. The four remaining pieces are listed in rank 1 below and in
-  `internal/control/README.md` §"What is left of P3".
-- **Deploy/verify status: unchanged — nothing deployed.** `packages.default` is still
-  the Python client. The Go server has still never run against the real pod.
-- Gates measured on `5c02f2b`: 1,860 python tests · go vet + `go test ./...` **12/12
-  packages ok** · corpus **116 PASS / 0 failures / 4 oracle-specific skips** (Go) and
-  **99 requests / 433 assertions / 0 failures / 0 skipped** (oracle) · leakscan **0
-  findings / 259 files** with both controls PASS · control battery **28 mutants /
-  27 killed / 1 EQUIVALENT / 0 misattributed**, positive control GREEN ·
-  `nix build .#cairn-server-go` builds (its `go test ./...` runs in the derivation).
-  🔴 `parity` and `dualrun` were NOT run locally — they need a live pod, and this change
-  touches no serving path. CI is the only reading of them on this branch.
-- Measured on the **MERGED tree** (this branch + `origin/feat/client-multi-instance-routing`):
-  1,923 python tests · 12/12 Go packages · leakscan 0/267 · battery 28/27/1 ·
-  `test_agent_instructions_weight.py` green with **1,031 B headroom**.
+- Branch `main` @ `57daa58`, clean, up to date with origin. **No open PRs.** Four merged
+  this session: **#29** (P3a), **#30** (P3b-a), **#31** (P3b-b), **#32** (the AGENTS.md
+  eviction). The shared-queue claim `cairn-control-plane-1` is **RELEASED** — rank 1 is
+  done and the queue is empty for this doc.
+- ✅ **RANK 1 (P3 — the data model and authorization) IS DONE, and the arc's FIRST
+  closing-condition clause is SATISFIED on `main`**: `TestTheAuthorizationMatrixIsExactlyThis`
+  (the model, 5 principals × 4 scopes × 3 verbs, 32/60 allow) and
+  `TestTheServedAuthorizationMatrixIsExactlyThis` (the SERVED seam, 3 × 4 × 5 over real
+  HTTP, 24/60 allow) both green. The other clauses — the PWA share flow, identity through
+  both backends, `packages.default` the Go client — are untouched, so **the arc is OPEN**.
+- **What landed, by piece:**
+  - **P3a** (#29 `bcfaa19`) — `internal/control`: the model, an append-only event journal,
+    and `Resolve`, the ONE predicate. Library only.
+  - **P3b-a** (#30 `3c8707c`) — `internal/control/cache.go`: the materialized cache, its
+    epoch, `Staleness`, and a synchronous revoke that reports which effect it had.
+  - **P3b-b** (#31 `752415d`) — `internal/api` authorises from `internal/control`;
+    `internal/control/tokenfile` projects the token file into a `control.Source`.
+    🔴 **Piece (c), the migration, is ABSORBED into this** — the adapter IS the migration,
+    which is why the conformance corpus could stay byte-for-byte unmoved and mean
+    something.
+  - **The AGENTS.md eviction** (#32 `57daa58`) — the server section relocated to
+    `tests/conformance/README.md` + `tests/dualrun/README.md`; the defect's own closing
+    condition (`MAX_BYTES` *lowered*) satisfied.
+- 🔴 **DECISION (operator, this session): PIECE (d) IS DEFERRED UNTIL AFTER THE CUTOVER**,
+  and it is folded into that rank rather than standing as its own. Reason: the snapshot tar
+  ships exactly `<scope>/*.md` at depth 2 with dotfiles skipped (verified in
+  `internal/snapshot/snapshot.go` and the oracle), so there is no free place to put a scope
+  id — every route costs either a new public endpoint on BOTH servers, a licensed
+  difference in a gate whose whole value is having none, or a change to the byte-identity
+  tar. All three mean teaching the Python oracle a trick P8 deletes. After the cutover
+  there is ONE implementation and none of that applies. The cost accepted: a renamed scope
+  re-downloads, which is correct and merely wasteful.
+- 🔴 **DECISION (operator, this session): the legacy bare-token row SURVIVES the rewrite**
+  — the plan's FIFTH deferred decision, which #31 was settling silently until a round-0
+  audit caught it. Recorded in the plan doc and `internal/control/README.md` with its
+  reason: the deployed pod's only principals are bare rows, so dropping it now is a
+  coordinated cutover against a live deployment. P8 inherits the retirement question.
+- 🔴 **DECISION (operator, this session): a cold start over an unreadable store root
+  REFUSES** (exit 78, naming the volume) rather than coming up and serving 503s as the
+  oracle does. Declared as a divergence with a closing condition.
+- **Deploy/verify status: unchanged — nothing deployed.** `flake.nix:446` is still
+  `default = mkCairn pkgs`, the Python client. The Go server has still never run against
+  the real pod.
+- **Gates on `main` @ `57daa58`:** 1,927 python tests · `go vet` + `go test ./...` **14
+  packages ok** · control battery **72 mutants / 71 killed / 1 EQUIVALENT / 0
+  misattributed / 0 harness-errors**, positive control GREEN · corpus **116 PASS / 0
+  failures / 4 oracle-specific skips** (Go) and **99 requests / 433 assertions / 0
+  failures / 0 skipped** (oracle) · leakscan **0 findings / 274 files**, both controls PASS
+  · `AGENTS.md`+`CLAUDE.md` **30,748 B against a 30,950 B working budget — 202 B margin**.
 
 ## Next steps (ranked)
-1. **P3 — the REST of the control plane.** P3a (the model, the journal, `Resolve`,
-   `Authenticate`, `Narrow`, the `Store` seam) is PR #29. Four pieces remain, in
-   dependency order: **(a)** the materialized pod-side cache — refresh on change, on a
-   timer and on `SIGHUP`, with the epoch and its age reported in `doctor` and the status
-   surface; **(b)** wiring `control.Principal` into `internal/api` in place of
-   `authz.TokenRecord`, keeping the conformance corpus green; **(c)** the migration from
-   the token file, which is where the legacy **unrestricted** bare row has to become
-   explicit grants against a model that has no unrestricted principal by construction;
-   **(d)** immutable scope ids shipped in the snapshot, and the client renaming its local
-   directory when it sees a known id at a new name. Repo `cairn`; `internal/control`,
-   `internal/api`, `internal/snapshot`, `internal/client`.
-   forcing: user — the operator specified per-scope sharing, projects and invites directly.
-2. **P4 — identity as an interface, two backends.** Supabase JWT verified locally against
+1. **P4 — identity as an interface, two backends.** Supabase JWT verified locally against
    cached JWKS, and trusted-header/forward-auth for a proxy-fronted instance.
    🔴 The trusted-header backend must **refuse to start** unless explicitly configured as
    proxy-fronted with a source check — otherwise anyone reaching the pod directly is
-   anyone. Needs P3's principals to resolve to, which now exist (`control.Principal`).
-   🔴 **AND IT INHERITS THE STDLIB-ONLY DECISION** — see the gotcha below; do not start
-   writing a Postgres backend before settling it.
+   anyone. `control.Principal` now exists for it to resolve to.
+   🔴 **AND IT INHERITS THE STDLIB-ONLY DECISION.** `go.mod` has no `require` block and
+   `flake.nix` passes `vendorHash = null`, so every Postgres driver and every embedded SQL
+   engine is a BUILD FAILURE. The plan's decision 1 (authz state in Postgres) cannot be
+   implemented without first deciding what happens to stdlib-only. Settle that BEFORE
+   writing a second `control.Store` backend, not halfway through.
    forcing: user — "identity via supabase (github and google)", plus a named second
    instance that will front it with an oauth proxy.
-3. **P5 — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
+2. **P5 — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
    entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share
    dialog must state that unsharing cannot recall a replica — every client holds a full
    local copy, so revoking stops future syncs and deletes nothing already on disk
    elsewhere. Pin the whole normalised string, not keywords.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
-4. **P7 — conditional snapshot sync.** `GET /api/v1/snapshot` ships a full tar with no
-   ETag/304 — verified at `0497140`: `_snapshot` contains zero ETag/304 handling — so
-   every sync is O(store) per client. 🔴 Now that P3a exists this stops being a scale
-   item: with many principals a mis-keyed cache cross-serves another tenant's tar, so key
-   it on **principal + epoch** — and `control.Authorization` already carries `Epoch`.
+3. **P7 — conditional snapshot sync.** `GET /api/v1/snapshot` ships a full tar with no
+   ETag/304, so every sync is O(store) per client. 🔴 With P3 landed this is correctness,
+   not scale: with many principals a mis-keyed cache cross-serves another tenant's tar, so
+   key it on **principal + epoch** — and `control.Authorization` already carries `Epoch`.
    forcing: none
-5. **The cutover decision** — `packages.default` → the Go client, and the deployed image
-   → the Go server. Backed by P1's dual-run rather than a leap. 🔴 `AGENTS.md` says
-   to diff the two images for what the agreement test cannot read before swapping;
-   that instruction now has an instrument behind it.
+4. **The cutover, and P3(d) immediately after it.** `packages.default` → the Go client and
+   the deployed image → the Go server; 🔴 `AGENTS.md` says to diff the two images for what
+   the agreement test cannot read first, and that instruction now has an instrument behind
+   it. **Then P3(d)** — immutable scope ids shipped to the client and client-side rename
+   reconciliation — which is deferred to here by operator decision because before the
+   cutover it costs a new endpoint on a component being retired (see `State now`).
    forcing: none
-6. **P8 — retire the Python oracle.** Gated on 5 having held in real use. The retirement
-   ledger in `tests/parity/README.md` lists what dies with it (`tests/parity/`,
-   `tests/dualrun/` ≈2,900 lines, `internal/store/pyoserror.go`, the `dualrun` job).
+5. **P8 — retire the Python oracle.** Gated on 4 having held in real use. The retirement
+   ledger in `tests/parity/README.md` lists what dies with it; the legacy-bare-row
+   retirement question is now explicitly P8's.
    forcing: none
 
 ## Defects (batched)
 Fix as one round; closing one buys room for one rank.
-- 🔴 **`AGENTS.md` IS 584 B FROM ITS WORKING CEILING AND THE NEXT LINE ANYBODY ADDS
-  TRIPS IT.** 36,216 B + `CLAUDE.md` 267 B = 36,483 B against a 36,800 B working budget
-  (`MAX_BYTES` 37,700 − `MIN_HEADROOM_BYTES` 900). This session hit it TWICE while adding
-  a five-line pointer and had to delete the pointer to land. The eviction that resolves it
-  already has a closing condition: the ~15.9 KB server section relocates to
-  `tests/conformance/README.md`, where it is largely duplicated, and `MAX_BYTES` is
-  **lowered**. That is the one item on this list worth doing before any other work touches
-  that file.
+- ✅ **CLOSED this session: the `AGENTS.md` byte-budget defect** (#32). The server section
+  relocated and `MAX_BYTES` was **lowered** 37,700 → 31,850, which was the closing
+  condition as written. ⚠ Margin is 202 B, not comfort: the ceiling was lowered to keep the
+  SAME design margin against a smaller file, deliberately, so the next addition still pays
+  ceiling.
+- **Audit round-3 residue on #31, filed rather than fixed** (all scaffolding, no payload
+  consequence): `internal/control/README.md`'s "current at every commit from X to Y" range
+  is charitable rather than exact; the new cache test's re-entrancy precondition is stated
+  in the battery harness but not beside `clock()`; and the deleted EQUIVALENT label carried
+  a second wrong claim (severity, not only reachability) that the retraction does not name.
+- **`claudedocs/handoff-cairn-control-plane.md`'s own verify block was stale** for most of
+  this session — scoped to `5c02f2b`, quoting `28 / 27 killed` and `1860 passed`. Fixed in
+  this update; the general shape is that a verify block pinned to a sha rots silently.
+- **Three files are not `gofmt`-clean** on `main` (`internal/client/exit.go`,
+  `internal/client/options.go`, `internal/doctor/doctor_test.go`) — alignment only, arrived
+  with the #24 merge, and **nothing in CI greps `gofmt`**.
 - **PR #15's six findings, still open on `main`** (recorded at
   https://github.com/ZacxDev/cairn/pull/15 when the operator chose to merge with them
-  open; each re-checked present at `0497140`): `lib/cairn_doctor.py` claims "2,016
-  bytes" for a value that is HOME-length dependent (measured 1,812/2,100/2,604) and
-  claims a point "would INVERT" where it exits 1, not 120; `cairn:337` cites
-  `server.py:422` for `sole_header`, which is at `server/server.py:1409`;
-  `claudedocs/handoff-agents-migration.md` still asserts the observable set "is
-  0/1/2/9/10" where a later commit of that same PR made it non-exhaustive; the ledger's
-  vacuity-control prose names the wrong guard.
-- **Go/oracle divergences deferred with closing conditions in code**: `NaN`/`Infinity`
-  (needs a second JSON tokenizer), the `text`-field surrogate message (needs a
-  surrogate-preserving decoder), the `actor`-key 400-vs-200 residual, and `?page=<21
-  digits>` (Python `int` is arbitrary precision, `strconv.Atoi` is not — oracle 200, Go
-  400; recorded in `AGENTS.md`).
+  open): `lib/cairn_doctor.py` claims "2,016 bytes" for a HOME-length-dependent value;
+  `cairn:337` cites `server.py:422` for `sole_header`, which is at `server/server.py:1409`;
+  and the ledger's vacuity-control prose names the wrong guard.
+- **Go/oracle divergences deferred with closing conditions in code**: `NaN`/`Infinity`,
+  the `text`-field surrogate message, the `actor`-key 400-vs-200 residual, and
+  `?page=<21 digits>`.
 - **`server/seed.sh:110`** has the `( cd "$1" && … )` shape that made
   `tests/conformance/run_go.sh` unrunnable — a bare `cd <relative>` **prints** the
   directory when it resolves through `CDPATH`. The other scripts use `CDPATH= cd --`.
@@ -260,27 +265,91 @@ Fix as one round; closing one buys room for one rank.
   not fail late; it stops failing for the FIRST deletion, which is the only one anybody
   would notice.
 
+- 🔴 **A STACKED PR PLUS A SQUASH MERGE PRODUCES A CONFLICT THAT LOOKS LIKE A REBASE
+  PROBLEM AND IS NOT.** #30 was stacked on #29. Squash-merging #29 created a NEW commit, so
+  #30's branch still carried #29's originals as non-ancestors of `main`; retargeting #30 to
+  `main` turned it **CONFLICTING**, 19 files / 5,826 additions, re-proposing all of P3a onto
+  a `main` that already had it. The fix is `git rebase --onto main <parent-tip>`, which
+  drops exactly the squashed commits. 🔴 **And the base MOVED, so the whole gate set has to
+  be re-run before force-pushing** — a pre-rebase green is a measurement of a different
+  tree.
+- 🔴 **`isolation: "worktree"` BRANCHES FROM THE DEFAULT BRANCH, NOT YOUR CHECKED-OUT ONE.**
+  Measured twice: an agent dispatched to build on an unmerged branch got a worktree of
+  `main` and correctly refused rather than recreating the missing package. **Always give a
+  dispatched agent a base check it can fail** ("`ls <path>`; if missing, STOP"), and the
+  recovery command.
+- 🔴 **AN `until`-LOOP CI WATCHER THAT COUNTS *INCOMPLETE* CHECKS REPORTS GREEN ON AN EMPTY
+  ROLLUP.** Zero incomplete checks is also what "no checks exist yet" looks like — the state
+  right after a push, while GitHub clears the rollup. It returned `checks: []`,
+  `mergeable: UNKNOWN`, exit 0. **Require a minimum check COUNT as well as completion, and
+  print the count**, so the reading carries its own proof it measured something.
+- 🔴 **`pathlib.read_text()` COUNTS CHARACTERS; THE BYTE BUDGET IS BYTES.** `AGENTS.md`
+  carries 153 non-ASCII characters (🔴 ⚠ —) costing 343 bytes, so a section table built with
+  `read_text()` under-reports by ~1%. An audit diagnosed the resulting mismatch as a STALE
+  MEASUREMENT (two different commits) when it was one read in the wrong unit — a wrong
+  diagnosis outlives a wrong number. Use `read_bytes()` or `wc -c`.
+- 🔴 **THE MUTATION BATTERY'S OWN ROWS ARE AS WRONG-ABLE AS THE CODE, AND FOUR WERE.** Across
+  three rounds: a row naming a killer that NEVER RUNS (the named test reached the function by
+  a different path); two patterns that failed to apply so the mutant died at the BUILD rather
+  than at a guard; and an `EQUIVALENT` label whose stated reason — "a window between two
+  adjacent statements no gate can open from outside" — was FALSE, because a caller-injected
+  `clock()` sat between them. That last one is the worst shape: a label that reads as
+  coverage while providing none, forecloses the test that would close the gap, and sits
+  inside the battery built to refuse exactly that.
+- 🔴 **A NUMBER QUOTED IN PROSE AND DERIVABLE FROM CODE HAS NO GATE, AND PROSE REMEDIES DO
+  NOT WORK.** The battery's headline went stale TWICE while the file carried a
+  `⚠ RE-DERIVE THESE` instruction. `tests/test_control_mutant_count_is_pinned.py` now pins
+  it at three README anchors AND the CI step **name** (the string a reader sees in the
+  Actions UI, which carried a stale number for a whole round after the comment above it was
+  fixed). ⚠ It pins the COUNT only — the kill/survivor split is the outcome of a RUN.
+- 🔴 **A PROSE GUARD MUST NOT RED ON CORRECT PROSE, AND TWO DRAFTS OF THAT PIN DID.** Draft 1
+  matched every `N mutants` including the README's legitimate HISTORICAL timing comparison;
+  draft 2 exempted `at N mutants` with a literal space, and the README wraps that exact
+  phrase across a line break. A guard that reds on a sentence nobody should change trains
+  its reader to edit the sentence. Both drafts are recorded in the file.
+- 🔴 **THE ORCHESTRATOR'S OWN BRIEF IS AN UNATTRIBUTED REQUIREMENT, AND ROUND 0 IS WHERE
+  THAT SURFACES.** Measured on #31: **7 of 12 requirements unattributed**, and the adapter
+  design — which shaped the whole PR — traced to a dispatch brief, not to the operator, whose
+  actual ask names "(b) wiring" and "(c) the migration" as two SEPARATE pieces. The verdict
+  was still keep the adapter, but for three different reasons than the one recorded, and the
+  recorded one was measurably FALSE (the conformance corpus cannot gate unrestricted-ness:
+  its world has four scopes and `wide-reader`'s allowlist names all four).
+- 🔴 **A DECLARED DIVERGENCE'S MITIGATION IS A CLAIM TOO.** #31 declared an out-of-band-scope
+  window as "bounded and REPORTED" — and `Cache.Staleness()` had **no non-test caller
+  anywhere in the tree**. Bounded: true. Reported: false, at nine sites including the README,
+  which contradicted itself within one file.
+- **A fix round's likeliest next finding is a sentence it wrote to explain itself.** Round 1's
+  fixes created three of round 2's seven findings; round 2's created two of round 3's five.
+  Every one was a number or a claim written while fixing something else.
+- 🔴 **`grep -c` EXITS 1 WHEN THE COUNT IS ZERO**, so a verification that ends on it inverts
+  its own status — a clean result reads as failure and a dirty one as success. Put the
+  count-to-zero check anywhere but last, or branch on the number.
+- **Own what you spawn, and the next round is who finds out.** This session leaked a
+  `cairn-server.test` that held a loopback port for **13h47m** (found by a later audit, whose
+  cwd filter correctly said "not mine") and **566 MB** of battery temp trees under `/tmp`.
+  Both cleared. Resolve a PID and check `/proc/<pid>/cwd` before killing — and note the
+  battery's `TemporaryDirectory` does NOT survive a crashed run.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
-python3 tests/leakscan.py && python3 tests/leakscan.py --self-test   # 0 findings / 259 files, controls PASS
-uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly # 1860 passed
-go vet ./... && go test ./...                                        # 12 packages ok
-python3 tests/control_mutants.py                                     # 28 / 27 killed / 1 EQUIVALENT / 0 misattributed
-python3 tests/control_mutants.py --show                              # every edit, without running it
-python3 tests/conformance/suite.py run                               # oracle: failures=0 skipped=0
+python3 tests/leakscan.py && python3 tests/leakscan.py --self-test   # 0 findings / 274 files, controls PASS
+uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly # 1927 passed
+go vet ./... && go test ./...                                        # 14 packages ok
+python3 tests/control_mutants.py                                     # 72 / 71 killed / 1 EQUIVALENT / 0 misattributed
+python3 tests/control_mutants.py --show                              # every mutation, without running it
+python3 tests/conformance/suite.py run                               # oracle: 99 requests / 433 assertions / 0 / 0
 bash tests/conformance/run_go.sh                                     # Go: 116 PASS / 0 failures / 4 skips
-python3 tests/parity/harness.py                                      # 90 cases / 91 passes / 0
+python3 tests/parity/harness.py                                      # 97 cases / 98 passes / 0
 python3 tests/parity/harness.py --break-pod                          # MUST exit 2 — could not vouch
 python3 tests/dualrun/harness.py                                     # 361 / 1489 / 0
 python3 tests/dualrun/harness.py --break-both                        # MUST exit 2 — could not vouch
-python3 tests/dualrun/harness.py --store ~/.claude/analyze-service-index   # 612 / 2492 / 0; reads only the summary
 ```
 🔴 The two `--break-*` runs are the point: a gate that cannot refuse has not been read.
-🔴 The `--store` command prints **real scope names** per target — never paste its full
-output into a transcript, a PR or a CI log. Read the `SUMMARY` line only.
-🔴 **Before merging ANY branch alongside another open PR, build the MERGED tree and run
-the gate there** — `git worktree add <tmp> -b tmp/merged <yours>` → `git merge
-origin/<theirs>` → run `pytest tests -q`, `go test ./...` and
-`tests/test_agent_instructions_weight.py` in it. A clean `git merge` and a green
-`mergeable` are not evidence; this session measured a red merged tree behind both.
+🔴 `parity` and `dualrun` need a LIVE POD; CI runs both. Say so rather than implying you ran
+them.
+🔴 **Before merging alongside another open PR, BUILD THE MERGED TREE and run the gate
+there** — `git worktree add <tmp> -b tmp/merged <yours>` → `git merge origin/<theirs>` →
+run `pytest tests -q`, `go test ./...` and `tests/test_agent_instructions_weight.py` in it.
+A clean `git merge` and a green `mergeable` are not evidence; this session measured a RED
+merged tree behind both.
