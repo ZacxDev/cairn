@@ -414,6 +414,7 @@ Known remaining differences, measured on the built images (26 layers,
 | `/etc`, `/usr` | present | **absent** |
 | `WorkingDir` | `/` | `/app` |
 | shell / `tar` / `find` / `cut` | from `python:3.12-slim` | busybox 1.37.0 |
+| `python3` on `PATH` | **present** | **absent** — `Cmd` names it by store path |
 | `bash`, `apt-get` | **present** | absent |
 | `wget`, `nc`, `httpd`, `telnetd` | **absent** | **present** (busybox applets) |
 | size | smaller | larger |

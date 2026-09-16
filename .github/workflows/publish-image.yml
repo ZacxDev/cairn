@@ -1,0 +1,301 @@
+# Publish the server image to a PUBLIC registry, so a cluster that holds no
+# credential for this repository can pull it.
+#
+# 🔴 WHY THIS EXISTS, AND WHAT WAS ACTUALLY MEASURED. `ci.yml`'s `nix` job builds
+# `packages.server-image` and asserts nothing further — its own comment says so:
+# "This asserts it BUILDS; that it RUNS is not asserted here". Nothing in this
+# repository has ever PUBLISHED it. Measured on `main` before this file existed:
+# every publish-shaped token in `ci.yml` — `docker/login`, `docker/build-push`,
+# `registry`, `ghcr`, `skopeo`, `nix copy`, `docker push`, `crane`,
+# `packages: write` — returned ZERO, against a positive control of 1 for
+# `server-image`; and a paginated enumeration of the owner's container packages
+# returned 20 names, none of them this one. The only publish path that existed
+# was `server/build-push.sh`, which is run BY HAND, requires the operator to name
+# a registry (`CAIRN_REGISTRY`, no default), and in practice targets a LAN-only
+# host that a second cluster cannot resolve, let alone reach.
+#
+# 🔴 A SEPARATE WORKFLOW, NOT A JOB IN `ci.yml`, AND THAT IS THE FORK-PR GUARD.
+# "PRs must not publish" can be written as an `if:` on a job, and an `if:` is one
+# edit away from being wrong. Here the trigger set simply has no pull-request
+# member: there is no event a fork can raise that reaches this file, so the
+# property is structural rather than conditional.
+# `tests/test_publish_workflow.py` pins the trigger set by EQUALITY — adding any
+# trigger, whatever it is called, turns that test red — because the hazard is the
+# class (`pull_request`, `pull_request_target`, `workflow_run` on a
+# PR-triggered workflow), not the one spelling somebody thought to ban.
+#
+# 🔴 THE TAG IS IMMUTABLE AND THERE IS NO `latest`. `server/build-push.sh` states
+# the reason and it is this repository's own position: "A `:latest` default is how
+# a mutable tag gets clobbered by a concurrent build and a pod silently restarts
+# on somebody else's code." The consuming design says both clusters pull the SAME
+# tag; a tag whose contents can change under a running deployment does not satisfy
+# that sentence, it only looks like it does. So: `sha-<40-hex commit sha>` always,
+# plus a bare semver on a version tag push. Both are derivable from a rev, which
+# is what "the same tag" needs in order to be checkable.
+name: publish-image
+
+on:
+  push:
+    branches: [main]
+    # A push filter carrying BOTH `branches` and `tags` matches on EITHER, so a
+    # version tag publishes without also having to land on `main` a second time.
+    tags: ["*"]
+  # Present so an operator can re-publish a revision without an empty commit —
+  # e.g. after the one-time visibility flip described in `server/README.md`.
+  # It is a WRITE trigger that only a collaborator can fire, which is why it is
+  # in the pinned set and `pull_request` is not.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  # Two runs on the same ref would compute the same immutable tag and push
+  # byte-identical content, so a race here cannot clobber anything. Serialised
+  # anyway, and NOT cancelled: a cancelled publish leaves a half-known state,
+  # which is worse than a duplicated one.
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # 🔴 FULL HISTORY, DELIBERATELY. `flake.nix` derives the image's own tag
+      # from `self.shortRev` and falls back to the string `"unknown"` when it
+      # cannot resolve one. A shallow checkout is exactly the condition under
+      # which that fallback fires, and it fires SILENTLY — the build succeeds and
+      # ships an artefact labelled `unknown`, which is the mislabelling that
+      # comment was written to prevent. `fetch-depth: 0` removes the question.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # 🔴 THE TAGS ARE COMPUTED IN ONE PLACE AND PRINTED, because every later
+      # step and every consumer reads them, and a tag nobody can see in the log
+      # is a tag nobody can check a deployment against.
+      #
+      # The owner is lower-cased because a registry path component must be, and
+      # this repository's owner is not: `ZacxDev` is a 404 as a ghcr namespace.
+      # Derived rather than hardcoded so a fork publishes into ITS own namespace
+      # instead of failing against one it cannot write.
+      - name: derive the image reference and its immutable tag
+        id: ref
+        run: |
+          set -euo pipefail
+          owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          image="ghcr.io/$owner/cairn-store"
+          # The 40-hex commit sha, not the short one. Both are derivable from a
+          # rev; only the full one cannot collide, and a registry tag is the
+          # thing a cluster pins for months.
+          sha_tag="sha-${{ github.sha }}"
+          printf 'image=%s\n' "$image"      >> "$GITHUB_OUTPUT"
+          printf 'sha_tag=%s\n' "$sha_tag"  >> "$GITHUB_OUTPUT"
+
+          version_tag=""
+          case "${{ github.ref }}" in
+            refs/tags/*)
+              raw="${GITHUB_REF#refs/tags/}"
+              # A leading `v` is stripped so the published tag matches the
+              # convention the deployed image already uses (`…:0.8.1`) and the
+              # argument `server/build-push.sh` takes (`0.8.0`). Both spellings
+              # of the git tag therefore land on one registry tag.
+              version_tag="${raw#v}"
+              ;;
+          esac
+          printf 'version_tag=%s\n' "$version_tag" >> "$GITHUB_OUTPUT"
+
+          echo "image        = $image"
+          echo "sha tag      = $sha_tag"
+          echo "version tag  = ${version_tag:-<none: not a tag push>}"
+
+      # 🔴 ONE BUILD, AND IT IS THE FLAKE'S. A second `docker build` here would
+      # be a THIRD way to produce this pod, and the premise of
+      # `tests/test_flake_image_matches_dockerfile.py` is that there are two and
+      # they are pinned against each other. Publishing the nix output keeps the
+      # published artefact inside that pin.
+      - name: build the server image from the flake
+        id: build
+        run: |
+          set -euo pipefail
+          out=$(nix build .#packages.x86_64-linux.server-image \
+                  --no-link --print-out-paths --print-build-logs)
+          printf 'archive=%s\n' "$out" >> "$GITHUB_OUTPUT"
+          echo "archive = $out"
+          ls -l "$out"
+
+      # 🔴 THE CONTROL THAT MATTERS MOST HERE, AND IT IS STRICTER THAN THE ONE IN
+      # `server/build-push.sh` FOR A REASON: that script pushes to whatever
+      # registry the operator names, usually a private one. This pushes to a
+      # PUBLIC one. A store entry baked into a layer is a private note published
+      # to the internet — the exact class the leak gate exists to stop, one step
+      # past the leak gate's reach, because the leak gate reads the TREE and this
+      # reads the ARTEFACT.
+      #
+      # 🔴 AND IT IS A PAIR. "`/data` holds 0 files" is also what an image with no
+      # filesystem at all would report, and a reassuring zero is indistinguishable
+      # from a probe wired to nothing. The second command is the positive half:
+      # the code IS in the image and imports, so the zero above was measured
+      # against a real root.
+      - name: control — /data is EMPTY in the image, and the code is really there
+        run: |
+          set -euo pipefail
+          loaded=$(docker load -i "${{ steps.build.outputs.archive }}" \
+                   | sed -n 's/^Loaded image: //p')
+          echo "loaded = $loaded"
+          test -n "$loaded"
+
+          leaked=$(docker run --rm --entrypoint /bin/busybox "$loaded" \
+                     sh -c 'ls -A /data | wc -l')
+          if [ "$leaked" != "0" ]; then
+            echo "REFUSING TO PUBLISH: /data in the image holds $leaked entr(y|ies)."
+            echo "  This image is about to become PUBLIC. Store content must arrive"
+            echo "  at runtime on a volume and must never be in a layer."
+            docker run --rm --entrypoint /bin/busybox "$loaded" sh -c 'ls -A /data'
+            exit 1
+          fi
+          echo "control: /data holds $leaked files (must be 0) — OK"
+
+          # 🔴 THE INTERPRETER IS READ OUT OF THE IMAGE'S OWN `Cmd`, NOT SPELLED
+          # `python3`. It is NOT on this image's `PATH` — measured: `PATH=/bin`
+          # and `/bin` is busybox alone, so `command -v python3` returns nothing.
+          # `server/build-push.sh` gets away with the bare name because the
+          # Dockerfile image is `python:3.12-slim` and inherits one; the flake
+          # image names an absolute store path in `Cmd` instead. A control
+          # written the other way would fail here for a reason that has nothing
+          # to do with what it claims to measure.
+          py=$(docker inspect -f '{{index .Config.Cmd 0}}' "$loaded")
+          echo "interpreter (from the image's own Cmd) = $py"
+          docker run --rm --entrypoint "$py" "$loaded" -c \
+            'import sys; sys.path.insert(0, "/app/lib"); import subsystem_recall as r; print("positive control: subsystem_recall imported,", len(r.RECALL_MODES), "modes")'
+
+          # …and the image RUNS: with no token source it must refuse for a NAMED
+          # configuration reason and exit non-zero, which is a different claim
+          # from "the container was created". A container that started and sat
+          # there would satisfy a naive smoke test and tell you nothing.
+          set +e
+          startup=$(docker run --rm "$loaded" 2>&1)
+          rc=$?
+          set -e
+          echo "no-config start: rc=$rc"
+          echo "$startup"
+          if [ "$rc" -eq 0 ]; then
+            echo "REFUSING TO PUBLISH: the server exited 0 with no token source."
+            echo "  It is supposed to refuse. A 0 here means the entrypoint is not"
+            echo "  running the server at all."
+            exit 1
+          fi
+          case "$startup" in
+            *"subsystem-store-api:"*) ;;
+            *) echo "REFUSING TO PUBLISH: the refusal did not come from the server"
+               exit 1 ;;
+          esac
+          echo "control: the image runs and refuses by name — OK"
+
+      # 🔴 skopeo IS TAKEN FROM THE FLAKE'S OWN PINNED nixpkgs, NOT FROM THE
+      # RUNNER IMAGE. GitHub's ubuntu image happens to ship one today; a job whose
+      # verdict depends on what a runner image happens to contain is a job whose
+      # verdict cannot be reproduced by running the same lines locally, and runner
+      # images change without telling anybody. `--inputs-from .` resolves
+      # `nixpkgs#` through `flake.lock`, so this is the same nixpkgs everything
+      # else here is built from.
+      - name: pin skopeo to the flake's nixpkgs
+        id: skopeo
+        run: |
+          set -euo pipefail
+          out=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths)
+          printf 'bin=%s/bin/skopeo\n' "$out" >> "$GITHUB_OUTPUT"
+          "$out/bin/skopeo" --version
+
+      # `GITHUB_TOKEN`, not a stored secret. The token is scoped to this
+      # repository and expires with the run, so there is nothing here for a
+      # future contributor to leak or rotate.
+      - name: log in to ghcr
+        run: |
+          set -euo pipefail
+          printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
+            | ${{ steps.skopeo.outputs.bin }} login ghcr.io \
+                -u '${{ github.actor }}' --password-stdin
+
+      # 🔴 `docker-archive:` READS THE GZIPPED TAR THE FLAKE PRODUCES DIRECTLY —
+      # measured, not assumed: `dockerTools.buildLayeredImage` defaults to a gzip
+      # compressor and skopeo detects it. No decompression step, and in
+      # particular no change to the derivation's `compressor`, which would move
+      # the artefact that `test_flake_image_matches_dockerfile.py` is pinned to.
+      - name: push the immutable sha tag
+        run: |
+          set -euo pipefail
+          ${{ steps.skopeo.outputs.bin }} copy --all \
+            "docker-archive:${{ steps.build.outputs.archive }}" \
+            "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}"
+
+      - name: push the version tag, on a tag push only
+        if: steps.ref.outputs.version_tag != ''
+        run: |
+          set -euo pipefail
+          ${{ steps.skopeo.outputs.bin }} copy --all \
+            "docker-archive:${{ steps.build.outputs.archive }}" \
+            "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version_tag }}"
+
+      # 🔴 THE ONLY CHECK THAT ANSWERS THE QUESTION THIS WORKFLOW EXISTS FOR, AND
+      # A GREEN PUSH DOES NOT ANSWER IT. A ghcr package is PRIVATE on first
+      # publish. A private image and a working one are indistinguishable from
+      # inside this job — the push succeeded either way — and the difference only
+      # surfaces as `ImagePullBackOff` in somebody else's cluster, hours later,
+      # with nothing pointing back here.
+      #
+      # `--no-creds` is the point: it is the same read an unauthenticated cluster
+      # makes. The run is still logged in from two steps ago, so without that flag
+      # this would pass on THIS job's credentials and prove nothing at all.
+      - name: PROVE the published image is pullable with NO credentials
+        run: |
+          set -euo pipefail
+          ref='${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}'
+          skopeo='${{ steps.skopeo.outputs.bin }}'
+
+          # The negative control FIRST, so a pass below is a measurement rather
+          # than a claim: if an inspect of a tag that cannot exist also succeeds,
+          # this instrument is answering something other than the question.
+          set +e
+          $skopeo inspect --no-creds \
+            "docker://${{ steps.ref.outputs.image }}:sha-0000000000000000000000000000000000000000" \
+            >/dev/null 2>&1
+          control_rc=$?
+          set -e
+          if [ "$control_rc" -eq 0 ]; then
+            echo "REFUSING: an anonymous inspect of a tag that does not exist SUCCEEDED."
+            echo "  This check cannot distinguish a public image from anything."
+            exit 1
+          fi
+          echo "negative control: absent tag refused anonymously (rc=$control_rc) — OK"
+
+          set +e
+          out=$($skopeo inspect --no-creds "docker://$ref" 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "$out"
+            echo
+            echo "REFUSING: $ref was PUSHED but cannot be pulled without credentials."
+            echo "  A ghcr package is PRIVATE on first publish and GitHub exposes no"
+            echo "  REST route to change that. It is a ONE-TIME manual step, per package:"
+            echo
+            echo "    https://github.com/users/${{ github.repository_owner }}/packages/container/cairn-store/settings"
+            echo "    -> Danger Zone -> Change visibility -> Public"
+            echo
+            echo "  Until then no cluster outside this repository can pull this image,"
+            echo "  which is the entire reason this workflow exists."
+            exit 1
+          fi
+          echo "$out" | head -20
+          digest=$(printf '%s' "$out" | sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' | head -1)
+          echo
+          echo "ANONYMOUS PULL OK: $ref"
+          echo "digest: $digest"
+          echo "pin this in a deployment: $ref"
