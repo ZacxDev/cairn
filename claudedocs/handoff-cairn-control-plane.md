@@ -23,107 +23,114 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ `83c6ba4`, clean, up to date with origin. **Five PRs merged this
-  session** — #29 (P3a), #30 (P3b-a), #31 (P3b-b), #32 (the AGENTS.md eviction), #33 (the
-  previous handoff update).
-- 🔴 **P4 IS IN FLIGHT RIGHT NOW.** A subagent is building it on a worktree branch
-  `feat/identity-interface`; **no PR exists yet** at the time of writing. If you are
-  resuming and rank 1 looks unstarted, check `gh pr list --repo ZacxDev/cairn --state open`
-  and `git ls-remote --heads origin 'feat/identity-*'` before doing anything — the work may
-  have landed, may have been abandoned mid-flight, or may never have reached a push. The
-  claim `cairn-control-plane-1` is **HELD** for it.
-- ✅ **RANK 1 OF THE PREVIOUS LIST (P3) IS DONE** and the arc's first closing-condition
-  clause is satisfied on `main`: the model matrix (`internal/control`, 5×4×3, 32/60 allow)
-  and the SERVED matrix (`internal/api`, 3×4×5 over real HTTP, 24/60 allow) are both green.
-  The remaining clauses — the PWA share flow, identity through both backends,
-  `packages.default` the Go client — are untouched, so **the arc is OPEN**.
-- **Deploy/verify status: unchanged — nothing deployed.** `flake.nix:446` is still
-  `default = mkCairn pkgs`, the Python client. The Go server has still never run against
-  the real pod.
-- **Gates on `main` @ `83c6ba4`:** 1,927 python tests · `go vet` + `go test ./...` **14
-  packages ok** · control battery **72 / 71 killed / 1 EQUIVALENT / 0 misattributed**,
-  positive control GREEN · corpus **116 PASS / 0 / 4 skips** (Go) and **99 requests / 433
-  assertions / 0 / 0** (oracle) · leakscan **0 findings / 274 files** · `AGENTS.md` +
-  `CLAUDE.md` **30,748 B against a 30,950 B working budget — 202 B margin**.
+- Branch `main` @ `0d9d3fa`, clean. **Seven PRs merged this session** — #29 (P3a), #30
+  (P3b-a), #31 (P3b-b), #32 (the AGENTS.md eviction), #33 and #34 (handoff updates); #36
+  is **another session's** ghcr publish work, merged while ours was open.
+- 🔴 **RANK 1 (P4, identity) IS IN FLIGHT AS PR #35 @ `7ac810e`, NOT MERGED.** `leakscan`,
+  `parity`, `dualrun`, `nix` green; **`tests` and `go` were still running at handoff
+  time** and the previous head went RED on `tests`, so **do not assume**. Claim
+  `cairn-control-plane-1` is HELD. Round 0 of the audit ladder is DONE; **round 1 (the
+  nine correctness axes) has NOT been run.**
+- **What #35 contains:** `internal/identity` — an `Authenticator` interface over three
+  backends (`MachineToken`, a verbatim move of the old token path; `SupabaseJWT`,
+  JWKS-only; `TrustedHeader`, for a proxy-fronted instance), all resolving to one
+  `control.Principal` with authentication and authorization from the same match.
+- 🔴 **DECISION (operator, this session): the Supabase project uses ASYMMETRIC keys, so
+  the legacy HS256 path is DELETED.** Retired: `AlgHS256`, `keyOct`, `staticSecret`,
+  `resolverPair`, `MinHS256SecretBytes`, `ErrSupabaseWeakSecret`, both `_JWT_SECRET*`
+  env vars, `SupabaseConfig.Secret`, the HMAC signer, the weak-secret construction rung.
+  ⚠ **The HS256 *refusal* is KEPT and is now unconditional** — deleting support without
+  the check is how algorithm-confusion returns.
+- 🔴 **DECISION (operator, this session): `MAX_BYTES` raised 31,850 → 32,500**, base
+  named (30,999 B measured merged content) — see the Gotcha below for why.
+- **Deploy/verify status: unchanged — nothing deployed.** `flake.nix` default is still the
+  Python client; the Go server has never run against the real pod; **neither new identity
+  backend has ever run anywhere.**
+- **Gates measured on `#35 @ 7ac810e`** (locally, by the orchestrator): `go vet` clean ·
+  `go test ./...` **15 packages ok** · conformance **99/433/0/0** (oracle) and **116 PASS
+  / 415 / 0 / 4** (Go), exactly unmoved · battery **96 / 94 killed / 2 EQUIVALENT / 0
+  misattributed** · leakscan **rc 0**, clean · weight gate green on branch AND merged tree.
 
 ## Next steps (ranked)
-1. **P4 — identity as an interface, two backends.** 🔴 **IN FLIGHT — verify before
-   starting.** `Authenticator` over three backends (MachineToken, which already exists in
-   substance; SupabaseJWT verified locally against cached JWKS; TrustedHeader for a
-   proxy-fronted instance), all resolving to one `control.Principal`.
-   🔴 The trusted-header backend must **refuse to start** unless explicitly configured as
-   proxy-fronted with a source check — a mistake there is a total authentication bypass,
-   not a bug.
-   ✅ **MEASURED BUILDABLE STDLIB-ONLY**, which is why it is not blocked on the Postgres
-   decision below: JWKS fetch is `net/http`, JWK parsing `encoding/json` + `math/big`,
-   RS256/ES256 `crypto/rsa` / `crypto/ecdsa`, HS256 `crypto/hmac`, the token
-   `encoding/base64`. **Identity is a SEPARATE seam from the authority store** — the
-   dispatched work is scoped out of `control.Store` entirely.
+1. **P4 — identity. 🔴 IN FLIGHT as `ZacxDev/cairn#35` @ `7ac810e`; VERIFY BEFORE
+   TOUCHING.** Confirm `tests` and `go` are green, then **run round 1 of the audit ladder**
+   — the nine correctness axes, dispatched BLIND. Round 0 is done (`requirements: 25,
+   unattributed: 11, deletion candidates: 3`) and produced the HS256 deletion. Files:
+   `internal/identity/`, `internal/api/server.go`, `cmd/cairn-server/main.go`.
    forcing: user — "identity via supabase (github and google)", plus a named second
    instance that will front it with an oauth proxy.
 2. **P5 — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
    entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share
-   dialog must state that unsharing cannot recall a replica — every client holds a full
-   local copy, so revoking stops future syncs and deletes nothing already on disk
-   elsewhere. Pin the whole normalised string, not keywords.
+   dialog must state that unsharing cannot recall a replica. Pin the whole normalised
+   string, not keywords. 🔴 **P5 IS ALSO WHAT MAKES P4 REACHABLE** — see the Defect below:
+   both new backends are inert until something creates a `control.User`.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
-3. **P7 — conditional snapshot sync.** `GET /api/v1/snapshot` ships a full tar with no
-   ETag/304, so every sync is O(store) per client. 🔴 With P3 landed this is correctness,
-   not scale: with many principals a mis-keyed cache cross-serves another tenant's tar, so
-   key it on **principal + epoch** — `control.Authorization` already carries `Epoch`.
+3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no
+   ETag/304. 🔴 With P3 landed this is correctness, not scale: with many principals a
+   mis-keyed cache cross-serves another tenant's tar, so key it on **principal + epoch** —
+   `control.Authorization` already carries `Epoch`.
    forcing: none
 4. **The cutover, and P3(d) immediately after it.** `packages.default` → the Go client and
-   the deployed image → the Go server; 🔴 diff the two images first for what the agreement
-   test cannot read. **Then P3(d)** — immutable scope ids shipped to the client and
-   client-side rename reconciliation — deferred to here by operator decision.
+   the deployed image → the Go server; 🔴 diff the two images first. **Then P3(d)** —
+   immutable scope ids and client-side rename reconciliation — deferred here by operator
+   decision.
    forcing: none
-5. **P8 — retire the Python oracle.** Gated on 4 having held in real use. The retirement
-   ledger is in `tests/parity/README.md`; the legacy-bare-row retirement question is P8's.
+5. **P8 — retire the Python oracle.** Gated on 4 having held in real use.
    forcing: none
 
 ## Defects (batched)
 Fix as one round; closing one buys room for one rank.
+- 🔴 **BOTH NEW IDENTITY BACKENDS ARE STRUCTURALLY INERT IN EVERY DEPLOYMENT THAT CAN
+  EXIST TODAY.** Verified from the code, all three legs: no binary constructs a
+  `control.FileStore`, so `tokenfile.Source` is the only authority; it synthesizes exactly
+  one user (`Provider = "cairn-token-file"`, `Subject = "operator"`), while `SupabaseJWT`
+  defaults to provider `"supabase"` — so `UserByProviderSubject` can **never** match; and
+  `tokenfile` emits **zero** `EventMemberSet` with all three grant sites using
+  `SubjectKind: KindProject`, so even a `TrustedHeader` pointed at `cairn-token-file`
+  authenticates someone who resolves to an **empty `Authorization`**. The trap: an operator
+  follows the README, gets a pod that fetches JWKS, starts clean, passes its health check
+  — and refuses **every** sign-in. **Closing condition:** a user-creation path (P5/P6) over
+  a journal-backed `control.Store`. 🔴 Do NOT close it by creating users on the fly; that
+  is self-serve signup (P6) and would be a silent authorization decision.
 - 🔴 **AN IN-REPO AGENT WORKTREE MAKES LOCAL `leakscan` UNABLE TO VOUCH — exit 2, not a
-  finding, and not a pass either.** Measured at `911e49d`: with a subagent worktree at
-  `.claude/worktrees/agent-*/`, `tests/leakscan.py` exits **2** with
-  `COULD NOT READ .claude/worktrees/agent-…/: [Errno 21] Is a directory` on **stderr**,
-  having printed every control PASS on stdout and nothing else. Mechanism: the scanner
-  enumerates with `git ls-files --cached --others` — deliberately, so an unstaged new file
-  cannot hide — `.claude/` is untracked and **not** in `.gitignore`, and git reports a
-  linked worktree as a single DIRECTORY entry, which `open()` refuses. Control: 276
-  enumerated paths with `.claude/`, 275 without; the delta is exactly that one entry.
-  ⚠ **CI is unaffected** (fresh checkout, no worktrees) — this is a LOCAL blind spot, and
-  the dangerous half is that the failure is on stderr while stdout still ends in a wall of
-  `PASS` lines, so a piped read looks clean. 🔴 **And `$?` after `python3 tests/leakscan.py
-  | tail` is TAIL's status, not the scanner's** — capture the rc before the pipe.
-  **Closing condition:** `leakscan` skips a directory entry *and names it in its summary*
-  (a subtree it did not scan is exactly what its exit-2 contract is for), rather than
-  either refusing or silently ignoring it — plus a negative control proving the skip is
-  reported. Gitignoring `.claude/` is the wrong fix: it would hide any project config that
-  genuinely belongs in the scan.
-- **Audit round-3 residue on #31, filed rather than fixed** (all scaffolding, no payload
-  consequence): `internal/control/README.md`'s "current at every commit from X to Y" range
-  is charitable rather than exact; the new cache test's re-entrancy precondition is stated
-  in the battery harness but not beside `clock()`; and the deleted EQUIVALENT label carried
-  a second wrong claim (severity, not only reachability) that the retraction does not name.
+  finding and not a pass.** With a subagent worktree at `.claude/worktrees/agent-*/`,
+  `tests/leakscan.py` exits **2** with `COULD NOT READ …: [Errno 21] Is a directory` on
+  **stderr**, having printed every control PASS on stdout. Mechanism: it enumerates with
+  `git ls-files --cached --others` (deliberately — an unstaged file must not hide),
+  `.claude/` is untracked and NOT gitignored, and git reports a linked worktree as one
+  DIRECTORY entry. Control: 276 enumerated paths with `.claude/`, 275 without. ⚠ CI is
+  unaffected (fresh checkout). **Closing condition:** `leakscan` skips a directory entry
+  *and names it in its summary*, plus a negative control proving the skip is reported.
+  Gitignoring `.claude/` is the wrong fix — it would hide project config that belongs in
+  the scan.
+- **Audit round-3 residue on #31** (scaffolding, no payload consequence): the README's
+  "current at every commit from X to Y" range is charitable rather than exact; the cache
+  test's re-entrancy precondition is stated in the battery harness but not beside
+  `clock()`; the deleted EQUIVALENT label carried a second wrong claim (severity, not only
+  reachability) that the retraction does not name.
+- **`retiredEnv` is a behaviour change nobody asked for**: a stale
+  `CAIRN_SUPABASE_JWT_SECRET` now exits 78. Introduced because dropping a name from
+  `supabaseEnv` **inverts** the partial-configuration rule (`anySet` only counts names in
+  a ledger, so the variable would be silently discarded by a healthy pod). Judged correct
+  and kept; recorded because it is new refusal surface.
 - **Three files are not `gofmt`-clean** on `main` (`internal/client/exit.go`,
-  `internal/client/options.go`, `internal/doctor/doctor_test.go`) — alignment only, arrived
-  with the #24 merge, and **nothing in CI greps `gofmt`**.
-- **PR #15's six findings, still open on `main`** (recorded at
-  https://github.com/ZacxDev/cairn/pull/15 when the operator chose to merge with them
-  open): `lib/cairn_doctor.py` claims "2,016 bytes" for a HOME-length-dependent value;
-  `cairn:337` cites `server.py:422` for `sole_header`, which is at `server/server.py:1409`;
-  and the ledger's vacuity-control prose names the wrong guard.
-- **Go/oracle divergences deferred with closing conditions in code**: `NaN`/`Infinity`,
-  the `text`-field surrogate message, the `actor`-key 400-vs-200 residual, and
-  `?page=<21 digits>`.
-- **`server/seed.sh:110`** has the `( cd "$1" && … )` shape that made
-  `tests/conformance/run_go.sh` unrunnable — a bare `cd <relative>` **prints** the
-  directory when it resolves through `CDPATH`. The other scripts use `CDPATH= cd --`.
-- ✅ **CLOSED this session: the `AGENTS.md` byte-budget defect** (#32). The server section
-  relocated and `MAX_BYTES` was **lowered** 37,700 → 31,850, which was the closing
-  condition as written. ⚠ Margin is 202 B, not comfort: the ceiling was lowered to keep the
-  SAME design margin against a smaller file, deliberately.
+  `internal/client/options.go`, `internal/doctor/doctor_test.go`) — **nothing in CI greps
+  `gofmt`**.
+- **PR #15's six findings, still open on `main`**; **Go/oracle divergences deferred with
+  closing conditions in code** (`NaN`/`Infinity`, the surrogate message, the `actor`-key
+  residual, `?page=<21 digits>`); **`server/seed.sh:110`**'s `( cd "$1" && … )` shape.
+- ✅ **CLOSED, THEN PARTLY RE-OPENED: the `AGENTS.md` byte-budget defect.** #32 satisfied
+  the written closing condition exactly — the P1 server history relocated (5,960 B) and
+  `MAX_BYTES` **lowered** 37,700 → 31,850. ⚠ **It then failed within hours**, and the
+  record is kept whole rather than replaced because the failure is the useful half: two
+  concurrent one-row additions (84 B + 166 B) consumed the 202 B margin and reddened the
+  merged tree, so #35 raised the ceiling to **32,500** with the base named. The defect is
+  closed in the sense that the eviction was done and is not to be re-litigated; what
+  remains open is the **structural** half — `Installing and building with nix` (8,321 B)
+  and the server section's remains (9,071 B) are still evictable, and this file's design
+  is that history leaves rather than the ceiling rising. **Closing condition for the
+  remainder:** the next contributor who needs bytes evicts one of those two rather than
+  moving the number a third time.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **A green corpus is not a green port.** The conformance split was 94/22/0/4 *before*
@@ -335,25 +342,94 @@ Fix as one round; closing one buys room for one rank.
   remain. Reporting "not addressed" alone would have hidden that a third of the condition
   is now permanently met, and reporting "addressed" would have been false.
 
+- 🔴 **A BYTE-BUDGET GATE OVER A SHARED FILE MAKES EVERY CONCURRENT PR A SEMANTIC
+  CONFLICT, AND THE MARGIN WAS SIZED IN THE WRONG UNIT.** Two branches each added exactly
+  one layout row within hours — 84 B and 166 B — each green alone, **merge 49 B over**.
+  The only reordering that fit deleted the word "BYPASS" from the one row describing an
+  auth-bypass surface: the gate degrading the content it exists to protect. The 202 B
+  margin was derived for ONE edit ("a bit over one large paragraph"); a repo with
+  concurrent PRs does not present one edit. `MAX_BYTES` → **32,500** = 30,999 measured
+  merged + 900 `MIN_HEADROOM` + **601 usable** (~four index rows at the observed ~150 B).
+  🔴 **The raised gate was watched still firing** — +601 green, +602 headroom red, +1501
+  headroom red, +1502 both red. ⚠ **If you land here again the answer is probably NOT a
+  third number**: `Installing and building with nix` (8,321 B) and the remains of the
+  server section (9,071 B) are still evictable, and this file's design is that history
+  leaves rather than the ceiling rising.
+- 🔴 **AN `until`-LOOP CI WATCHER THAT COUNTS *INCOMPLETE* CHECKS REPORTS GREEN ON AN
+  EMPTY ROLLUP.** Zero incomplete checks is also what "no checks exist yet" looks like —
+  the state right after a push while GitHub clears the rollup. Measured: it returned
+  `checks: []`, `mergeable: UNKNOWN`, **exit 0**, and I reported that as green. **Require
+  a minimum check COUNT as well as completion, and print the count** so the reading
+  carries its own proof it measured something.
+- 🔴 **`$?` AFTER A PIPE IS THE LAST COMMAND'S STATUS.** `python3 tests/leakscan.py | tail`
+  returns `tail`'s 0 for a scanner that exited **2**. Combined with the worktree defect
+  above — failure on stderr, stdout ending in a wall of `PASS` — a piped read looks clean.
+  Capture the rc before any pipe, and read stderr.
+- 🔴 **AN ABSENT OPERAND REPORTS SAME, NOT MISSING** — my own check hit this: a
+  `grep -rn <pattern> <dir>` over a directory that did not exist returned nothing, and I
+  nearly read that as "the symbols were cleanly deleted". Prove the operand exists first.
+- 🔴 **I ASSERTED A SECURITY CLAIM THAT WAS FALSE, AND THE AGENT REFUTED IT BY
+  MEASUREMENT.** I briefed that deleting HS256 support *and* its check would reintroduce
+  algorithm-confusion. It probed the actual refusals under the mutant: both paths still
+  fail closed (via `accepts` and `algKeyType`). Reproduced — with the named guard removed
+  the forgery is still **refused**, just anonymously. My claim was true of a *careless*
+  deletion leaving `AlgHS256` in the key-type table, not of this one. **The guard is kept
+  for the reason that IS measurable: it NAMES the refusal**, so a future one-line
+  re-addition of HS256 support cannot silently re-open the hole, and the test asserts the
+  *sentinel* rather than "an error" — which is why removing it goes red on behaviour that
+  is still safe.
+- **Round 0 earns its place on a big PR.** On #35 it produced a real deletion (a whole
+  attack class retired rather than audited), corrected my attribution (both new backends
+  are the OPERATOR's ask, cited from this doc — not an orchestrator requirement), found
+  three of its own deletion candidates load-bearing on inspection, and **declined to fetch
+  the PR branch** because that writes refs into a git dir shared with the caller's
+  checkout. Its ledger: `requirements: 25 (unattributed: 11) · deletion candidates: 3`.
+- **Deleting a symbol can INVERT a ledger.** Dropping a name from `supabaseEnv` does not
+  merely stop reading it: `anySet` counts only names in the ledger, so the variable becomes
+  **silently discarded by a healthy pod** — the opposite of the partial-configuration
+  rule's intent. A "retired" ledger that refuses is the fix.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
-python3 tests/leakscan.py && python3 tests/leakscan.py --self-test   # 0 findings / 274 files, controls PASS
-uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly # 1927 passed
-go vet ./... && go test ./...                                        # 14 packages ok
-python3 tests/control_mutants.py                                     # 72 / 71 killed / 1 EQUIVALENT / 0 misattributed
-python3 tests/conformance/suite.py run                               # oracle: 99 requests / 433 assertions / 0 / 0
-bash tests/conformance/run_go.sh                                     # Go: 116 PASS / 0 failures / 4 skips
-python3 tests/parity/harness.py                                      # 97 cases / 98 passes / 0
-python3 tests/parity/harness.py --break-pod                          # MUST exit 2 — could not vouch
-python3 tests/dualrun/harness.py                                     # 361 / 1489 / 0
-python3 tests/dualrun/harness.py --break-both                        # MUST exit 2 — could not vouch
+python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
+python3 tests/leakscan.py --self-test; echo "rc=$?"
+uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
+go vet ./... && go test ./...
+python3 tests/control_mutants.py             # positive control GREEN, misattributed=0
+python3 tests/conformance/suite.py run       # oracle: 99 requests / 433 assertions / 0 / 0
+bash tests/conformance/run_go.sh             # Go: 116 PASS / 0 failures / 4 skips
+python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
+python3 tests/dualrun/harness.py --break-both # MUST exit 2 — could not vouch
 ```
-🔴 The two `--break-*` runs are the point: a gate that cannot refuse has not been read.
 🔴 `parity` and `dualrun` need a LIVE POD; CI runs both. Say so rather than implying you
 ran them.
+🔴 **`leakscan` exits 2 if an agent worktree exists under `.claude/worktrees/`** — remove
+them first, or its clean run is unearned.
 🔴 **Before merging alongside another open PR, BUILD THE MERGED TREE and run the gate
-there.** A clean `git merge` and a green `mergeable` are not evidence; this session
-measured a RED merged tree behind both.
-🔴 **P4 is IN FLIGHT** — before touching rank 1, run
-`gh pr list --repo ZacxDev/cairn --state open` and `claim-work --check cairn-control-plane-1`.
+there.** Measured twice this session, both on `AGENTS.md`'s byte budget: a clean
+`git merge` and a green `mergeable` are not evidence.
+🔴 **Reading CI: require SIX checks present AND all COMPLETED** before believing a
+verdict — an empty rollup satisfies "nothing incomplete".
+## Open investigations — live diagnosis state
+
+### PR #35's `tests` job was RED on the previous head; the fix is pushed but unconfirmed
+- as-of: 2026-09-16
+- **Symptom + exact repro:** `gh run view <run> --repo ZacxDev/cairn --log-failed` on the
+  run for head `1dd2815` ends `assert 851 >= 900` → `1 failed, 1937 passed`. The failing
+  test is `tests/test_agent_instructions_weight.py::test_the_session_instructions_keep_WORKING_HEADROOM`.
+- **Observed (with values):** the branch alone measured `AGENTS.md`+`CLAUDE.md` = **30,915 B,
+  headroom 935** — green. The **merged** tree measured **30,999 B, headroom 851** — red by
+  49. `git diff 83c6ba4 origin/main -- AGENTS.md` shows `main` gained one 84-byte row
+  (`| \`python3\` on \`PATH\` | ... |`, from #36); our branch gained one 166-byte layout row.
+  Each green alone; the merge is 49 B over.
+- **Ruled out:** a defect in either row — both are single, minimal, correct index rows.
+  `via: measurement` (diffed each side's AGENTS.md against the common base `83c6ba4`).
+- **Ruled out:** trimming our row to fit. Three candidates measured; the best that fits
+  (108 B) **drops the word "BYPASS" from the one row describing an auth-bypass surface**
+  and leaves 9 B of slack. `via: measurement`
+- **Leading hypothesis:** resolved, not hypothetical — the 202 B margin was derived for
+  ONE edit and the unit is CONCURRENT edits. `MAX_BYTES` raised to 32,500 in `7ac810e`.
+- **Next probe:** `gh pr view 35 --repo ZacxDev/cairn --json statusCheckRollup` — require
+  **six** checks present AND all COMPLETED before reading the verdict (see the watcher
+  Gotcha below), then confirm `tests` is SUCCESS on `7ac810e`.
