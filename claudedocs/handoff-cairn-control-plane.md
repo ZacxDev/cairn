@@ -23,67 +23,42 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ `57daa58`, clean, up to date with origin. **No open PRs.** Four merged
-  this session: **#29** (P3a), **#30** (P3b-a), **#31** (P3b-b), **#32** (the AGENTS.md
-  eviction). The shared-queue claim `cairn-control-plane-1` is **RELEASED** — rank 1 is
-  done and the queue is empty for this doc.
-- ✅ **RANK 1 (P3 — the data model and authorization) IS DONE, and the arc's FIRST
-  closing-condition clause is SATISFIED on `main`**: `TestTheAuthorizationMatrixIsExactlyThis`
-  (the model, 5 principals × 4 scopes × 3 verbs, 32/60 allow) and
-  `TestTheServedAuthorizationMatrixIsExactlyThis` (the SERVED seam, 3 × 4 × 5 over real
-  HTTP, 24/60 allow) both green. The other clauses — the PWA share flow, identity through
-  both backends, `packages.default` the Go client — are untouched, so **the arc is OPEN**.
-- **What landed, by piece:**
-  - **P3a** (#29 `bcfaa19`) — `internal/control`: the model, an append-only event journal,
-    and `Resolve`, the ONE predicate. Library only.
-  - **P3b-a** (#30 `3c8707c`) — `internal/control/cache.go`: the materialized cache, its
-    epoch, `Staleness`, and a synchronous revoke that reports which effect it had.
-  - **P3b-b** (#31 `752415d`) — `internal/api` authorises from `internal/control`;
-    `internal/control/tokenfile` projects the token file into a `control.Source`.
-    🔴 **Piece (c), the migration, is ABSORBED into this** — the adapter IS the migration,
-    which is why the conformance corpus could stay byte-for-byte unmoved and mean
-    something.
-  - **The AGENTS.md eviction** (#32 `57daa58`) — the server section relocated to
-    `tests/conformance/README.md` + `tests/dualrun/README.md`; the defect's own closing
-    condition (`MAX_BYTES` *lowered*) satisfied.
-- 🔴 **DECISION (operator, this session): PIECE (d) IS DEFERRED UNTIL AFTER THE CUTOVER**,
-  and it is folded into that rank rather than standing as its own. Reason: the snapshot tar
-  ships exactly `<scope>/*.md` at depth 2 with dotfiles skipped (verified in
-  `internal/snapshot/snapshot.go` and the oracle), so there is no free place to put a scope
-  id — every route costs either a new public endpoint on BOTH servers, a licensed
-  difference in a gate whose whole value is having none, or a change to the byte-identity
-  tar. All three mean teaching the Python oracle a trick P8 deletes. After the cutover
-  there is ONE implementation and none of that applies. The cost accepted: a renamed scope
-  re-downloads, which is correct and merely wasteful.
-- 🔴 **DECISION (operator, this session): the legacy bare-token row SURVIVES the rewrite**
-  — the plan's FIFTH deferred decision, which #31 was settling silently until a round-0
-  audit caught it. Recorded in the plan doc and `internal/control/README.md` with its
-  reason: the deployed pod's only principals are bare rows, so dropping it now is a
-  coordinated cutover against a live deployment. P8 inherits the retirement question.
-- 🔴 **DECISION (operator, this session): a cold start over an unreadable store root
-  REFUSES** (exit 78, naming the volume) rather than coming up and serving 503s as the
-  oracle does. Declared as a divergence with a closing condition.
+- Branch `main` @ `83c6ba4`, clean, up to date with origin. **Five PRs merged this
+  session** — #29 (P3a), #30 (P3b-a), #31 (P3b-b), #32 (the AGENTS.md eviction), #33 (the
+  previous handoff update).
+- 🔴 **P4 IS IN FLIGHT RIGHT NOW.** A subagent is building it on a worktree branch
+  `feat/identity-interface`; **no PR exists yet** at the time of writing. If you are
+  resuming and rank 1 looks unstarted, check `gh pr list --repo ZacxDev/cairn --state open`
+  and `git ls-remote --heads origin 'feat/identity-*'` before doing anything — the work may
+  have landed, may have been abandoned mid-flight, or may never have reached a push. The
+  claim `cairn-control-plane-1` is **HELD** for it.
+- ✅ **RANK 1 OF THE PREVIOUS LIST (P3) IS DONE** and the arc's first closing-condition
+  clause is satisfied on `main`: the model matrix (`internal/control`, 5×4×3, 32/60 allow)
+  and the SERVED matrix (`internal/api`, 3×4×5 over real HTTP, 24/60 allow) are both green.
+  The remaining clauses — the PWA share flow, identity through both backends,
+  `packages.default` the Go client — are untouched, so **the arc is OPEN**.
 - **Deploy/verify status: unchanged — nothing deployed.** `flake.nix:446` is still
   `default = mkCairn pkgs`, the Python client. The Go server has still never run against
   the real pod.
-- **Gates on `main` @ `57daa58`:** 1,927 python tests · `go vet` + `go test ./...` **14
-  packages ok** · control battery **72 mutants / 71 killed / 1 EQUIVALENT / 0
-  misattributed / 0 harness-errors**, positive control GREEN · corpus **116 PASS / 0
-  failures / 4 oracle-specific skips** (Go) and **99 requests / 433 assertions / 0
-  failures / 0 skipped** (oracle) · leakscan **0 findings / 274 files**, both controls PASS
-  · `AGENTS.md`+`CLAUDE.md` **30,748 B against a 30,950 B working budget — 202 B margin**.
+- **Gates on `main` @ `83c6ba4`:** 1,927 python tests · `go vet` + `go test ./...` **14
+  packages ok** · control battery **72 / 71 killed / 1 EQUIVALENT / 0 misattributed**,
+  positive control GREEN · corpus **116 PASS / 0 / 4 skips** (Go) and **99 requests / 433
+  assertions / 0 / 0** (oracle) · leakscan **0 findings / 274 files** · `AGENTS.md` +
+  `CLAUDE.md` **30,748 B against a 30,950 B working budget — 202 B margin**.
 
 ## Next steps (ranked)
-1. **P4 — identity as an interface, two backends.** Supabase JWT verified locally against
-   cached JWKS, and trusted-header/forward-auth for a proxy-fronted instance.
+1. **P4 — identity as an interface, two backends.** 🔴 **IN FLIGHT — verify before
+   starting.** `Authenticator` over three backends (MachineToken, which already exists in
+   substance; SupabaseJWT verified locally against cached JWKS; TrustedHeader for a
+   proxy-fronted instance), all resolving to one `control.Principal`.
    🔴 The trusted-header backend must **refuse to start** unless explicitly configured as
-   proxy-fronted with a source check — otherwise anyone reaching the pod directly is
-   anyone. `control.Principal` now exists for it to resolve to.
-   🔴 **AND IT INHERITS THE STDLIB-ONLY DECISION.** `go.mod` has no `require` block and
-   `flake.nix` passes `vendorHash = null`, so every Postgres driver and every embedded SQL
-   engine is a BUILD FAILURE. The plan's decision 1 (authz state in Postgres) cannot be
-   implemented without first deciding what happens to stdlib-only. Settle that BEFORE
-   writing a second `control.Store` backend, not halfway through.
+   proxy-fronted with a source check — a mistake there is a total authentication bypass,
+   not a bug.
+   ✅ **MEASURED BUILDABLE STDLIB-ONLY**, which is why it is not blocked on the Postgres
+   decision below: JWKS fetch is `net/http`, JWK parsing `encoding/json` + `math/big`,
+   RS256/ES256 `crypto/rsa` / `crypto/ecdsa`, HS256 `crypto/hmac`, the token
+   `encoding/base64`. **Identity is a SEPARATE seam from the authority store** — the
+   dispatched work is scoped out of `control.Store` entirely.
    forcing: user — "identity via supabase (github and google)", plus a named second
    instance that will front it with an oauth proxy.
 2. **P5 — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
@@ -95,18 +70,15 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 3. **P7 — conditional snapshot sync.** `GET /api/v1/snapshot` ships a full tar with no
    ETag/304, so every sync is O(store) per client. 🔴 With P3 landed this is correctness,
    not scale: with many principals a mis-keyed cache cross-serves another tenant's tar, so
-   key it on **principal + epoch** — and `control.Authorization` already carries `Epoch`.
+   key it on **principal + epoch** — `control.Authorization` already carries `Epoch`.
    forcing: none
 4. **The cutover, and P3(d) immediately after it.** `packages.default` → the Go client and
-   the deployed image → the Go server; 🔴 `AGENTS.md` says to diff the two images for what
-   the agreement test cannot read first, and that instruction now has an instrument behind
-   it. **Then P3(d)** — immutable scope ids shipped to the client and client-side rename
-   reconciliation — which is deferred to here by operator decision because before the
-   cutover it costs a new endpoint on a component being retired (see `State now`).
+   the deployed image → the Go server; 🔴 diff the two images first for what the agreement
+   test cannot read. **Then P3(d)** — immutable scope ids shipped to the client and
+   client-side rename reconciliation — deferred to here by operator decision.
    forcing: none
 5. **P8 — retire the Python oracle.** Gated on 4 having held in real use. The retirement
-   ledger in `tests/parity/README.md` lists what dies with it; the legacy-bare-row
-   retirement question is now explicitly P8's.
+   ledger is in `tests/parity/README.md`; the legacy-bare-row retirement question is P8's.
    forcing: none
 
 ## Defects (batched)
@@ -330,6 +302,25 @@ Fix as one round; closing one buys room for one rank.
   Both cleared. Resolve a PID and check `/proc/<pid>/cwd` before killing — and note the
   battery's `TemporaryDirectory` does NOT survive a crashed run.
 
+- 🔴 **THE STDLIB-ONLY QUESTION IS NARROWER THAN THE HANDOFF PREVIOUSLY IMPLIED, AND THE
+  DISTINCTION UNBLOCKED P4.** The previous update said "P4 inherits the stdlib-only
+  decision", which reads as *P4 is blocked*. It is not. What is blocked is replacing
+  `tokenfile.Source` with a **Postgres-backed `control.Store`** — the plan's decision 1.
+  **Identity is a different seam**: verifying a Supabase JWT needs no driver, and every
+  primitive it does need is in the standard library (checked before dispatching, not
+  assumed). The general shape: *"X inherits decision D"* is worth splitting into which
+  PART of X needs D, because the unsplit sentence stops work that could proceed.
+- 🔴 **`handoff_doc.py` RUNS GIT FROM INSIDE PYTHON, SO NO PreToolUse HOOK SEES ITS
+  COMMIT.** This repo forbids committing to `main`; the `bash-guard` hook that enforces
+  that for a shell `git commit` is structurally blind here. **Check
+  `git branch --show-current` yourself before `--confirm --push`** — the tool will
+  cheerfully commit the handoff onto whatever branch the checkout is standing on, and on
+  this repo that would be a rule violation with no warning.
+- ⚠ **An arc's closing condition can be PARTLY satisfied, and saying which clause is what
+  makes that useful.** Clause 1 (the authz matrix) is green on `main`; three clauses
+  remain. Reporting "not addressed" alone would have hidden that a third of the condition
+  is now permanently met, and reporting "addressed" would have been false.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
@@ -337,7 +328,6 @@ python3 tests/leakscan.py && python3 tests/leakscan.py --self-test   # 0 finding
 uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly # 1927 passed
 go vet ./... && go test ./...                                        # 14 packages ok
 python3 tests/control_mutants.py                                     # 72 / 71 killed / 1 EQUIVALENT / 0 misattributed
-python3 tests/control_mutants.py --show                              # every mutation, without running it
 python3 tests/conformance/suite.py run                               # oracle: 99 requests / 433 assertions / 0 / 0
 bash tests/conformance/run_go.sh                                     # Go: 116 PASS / 0 failures / 4 skips
 python3 tests/parity/harness.py                                      # 97 cases / 98 passes / 0
@@ -346,10 +336,10 @@ python3 tests/dualrun/harness.py                                     # 361 / 148
 python3 tests/dualrun/harness.py --break-both                        # MUST exit 2 — could not vouch
 ```
 🔴 The two `--break-*` runs are the point: a gate that cannot refuse has not been read.
-🔴 `parity` and `dualrun` need a LIVE POD; CI runs both. Say so rather than implying you ran
-them.
+🔴 `parity` and `dualrun` need a LIVE POD; CI runs both. Say so rather than implying you
+ran them.
 🔴 **Before merging alongside another open PR, BUILD THE MERGED TREE and run the gate
-there** — `git worktree add <tmp> -b tmp/merged <yours>` → `git merge origin/<theirs>` →
-run `pytest tests -q`, `go test ./...` and `tests/test_agent_instructions_weight.py` in it.
-A clean `git merge` and a green `mergeable` are not evidence; this session measured a RED
-merged tree behind both.
+there.** A clean `git merge` and a green `mergeable` are not evidence; this session
+measured a RED merged tree behind both.
+🔴 **P4 is IN FLIGHT** — before touching rank 1, run
+`gh pr list --repo ZacxDev/cairn --state open` and `claim-work --check cairn-control-plane-1`.
