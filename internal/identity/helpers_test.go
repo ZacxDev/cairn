@@ -20,7 +20,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -103,12 +102,17 @@ var testUserID = control.DerivedID(control.PrefixUser, "rowan")
 // --- signing ------------------------------------------------------------------------
 
 // signer mints tokens for one key. The tests hold one per algorithm.
+//
+// ⚠ THERE IS NO HMAC SIGNER, AND ITS ABSENCE IS NOT A COVERAGE GAP. A GENUINE HS256
+// token cannot exist against this build — no deployment can configure a shared secret —
+// so a signer that minted one would only ever be used to assert a refusal that
+// `forgeHS256` already produces, from the attacker's side, with the deployment's OWN
+// PUBLIC KEY as the secret. That is the case worth having.
 type signer struct {
-	alg     Alg
-	kid     string
-	rsa     *rsa.PrivateKey
-	ec      *ecdsa.PrivateKey
-	hmacKey []byte
+	alg Alg
+	kid string
+	rsa *rsa.PrivateKey
+	ec  *ecdsa.PrivateKey
 }
 
 func newRSASigner(t *testing.T, kid string, bits int) *signer {
@@ -127,10 +131,6 @@ func newECSigner(t *testing.T, kid string) *signer {
 		t.Fatalf("generating an EC key: %v", err)
 	}
 	return &signer{alg: AlgES256, kid: kid, ec: key}
-}
-
-func newHMACSigner(secret []byte) *signer {
-	return &signer{alg: AlgHS256, hmacKey: secret}
 }
 
 // claimSet is the payload a test mints. A map rather than `Claims` so a test can omit a
@@ -191,10 +191,6 @@ func (s *signer) rawSign(t *testing.T, input []byte) []byte {
 		r.FillBytes(out[:32])
 		sv.FillBytes(out[32:])
 		return out
-	case AlgHS256:
-		mac := hmac.New(sha256.New, s.hmacKey)
-		mac.Write(input)
-		return mac.Sum(nil)
 	default:
 		t.Fatalf("no signer for %s", s.alg)
 		return nil
@@ -227,9 +223,18 @@ func (s *signer) publicJWK(t *testing.T) map[string]any {
 	}
 }
 
-// rsaPublicDER is the signer's public key in the form an attacker would use as an HMAC
-// secret in the algorithm-confusion attack: the exact bytes the JWKS publishes.
+// rsaModulusBytes and ecPublicBytes are the signer's public key in the form an attacker
+// would use as an HMAC secret in the algorithm-confusion attack: the exact bytes the
+// JWKS publishes, taken from the same fields `publicJWK` base64s.
 func (s *signer) rsaModulusBytes() []byte { return s.rsa.N.Bytes() }
+
+func (s *signer) ecPublicBytes() []byte {
+	x := make([]byte, 32)
+	y := make([]byte, 32)
+	s.ec.X.FillBytes(x)
+	s.ec.Y.FillBytes(y)
+	return append(x, y...)
+}
 
 func encodeJSON(t *testing.T, value any) string {
 	t.Helper()

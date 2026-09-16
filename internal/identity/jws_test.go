@@ -73,71 +73,160 @@ func TestACorrectAsymmetricTokenVerifies(t *testing.T) {
 // forged with random bytes would pass against a verifier that has the hole, because the
 // HMAC would not match anyway — measuring the wrong thing while looking identical.
 //
-// 🔴 TWO DEPLOYMENTS, BECAUSE ONE OF THEM DOES NOT REACH THE GUARD THIS TEST IS ABOUT —
-// MEASURED, NOT ASSUMED. The first draft had only the JWKS-only arm. It passed, and it
-// passed for the WRONG REASON: `accepts` refuses HS256 before any key is resolved, so
-// the key/algorithm rule never executed. Proven by opening the hole on purpose — the
-// type check in `KeySet.key` replaced by `if false`, and `verifySignature`'s HS256 arm
-// taught to take an RSA modulus as its secret — after which that arm STILL PASSED. The
-// mixed arm is the one that reaches the resolver, and it is also the realistic
-// deployment: a Supabase project mid-migration from the legacy symmetric secret to
-// asymmetric keys accepts both, which is exactly when this attack is available.
+// 🔴 ONE RULE WITH ONE ARM, AND THAT IS WHAT THE SYMMETRIC DELETION BOUGHT. This test
+// used to need TWO deployments because the JWKS-only one did not reach the guard: with
+// HS256 absent from `Algs`, `accepts` refused before any key resolved, so the arm passed
+// for the wrong reason — proven at the time by opening the hole on purpose and watching
+// that arm STAY GREEN. The second arm had to be a "mixed" deployment carrying a legacy
+// symmetric secret, which is a configuration this build can no longer express.
+// `symmetricAlg` runs AHEAD of `accepts`, so every arm below reaches it.
+//
+// 🔴 EACH ARM ASSERTS `ErrTokenAlgSymmetric`, NOT MERELY "AN ERROR HAPPENED", BECAUSE
+// THE TOKEN IS REFUSED FOUR TIMES OVER AND ONLY ONE OF THOSE IS THE GUARD. Remove
+// `symmetricAlg`'s call site and `accepts` refuses the same token with a bare
+// `ErrTokenAlg` — a test that accepted any refusal would stay green and measure nothing,
+// which is the vacuous shape the two-arm version above was. Watched to fail: with the
+// `if symmetricAlg(alg)` block deleted, every arm here goes red naming this sentinel.
 func TestTheAlgorithmConfusionForgeryIsREFUSED(t *testing.T) {
 	rsaSigner := newRSASigner(t, "rsa-1", 2048)
+	ecSigner := newECSigner(t, "ec-1")
+	keys := keySetOver(t, rsaSigner, ecSigner)
 
-	// The attacker's material: the published modulus, verbatim.
-	stolen := rsaSigner.rsaModulusBytes()
-	if len(stolen) == 0 {
-		t.Fatal("precondition: the fixture published no modulus, so this arm forges nothing")
-	}
-	forged := forgeHS256(t, map[string]any{"alg": "HS256", "kid": "rsa-1", "typ": "JWT"},
-		defaultClaims(), stolen)
-	// PRECONDITION, so this cannot pass vacuously: the forgery is well-formed and its
-	// HMAC is correct for the key the attacker used. If a verifier ever DID treat the
-	// public key as an HMAC secret, this exact string would verify.
-	if !hmacMatches(t, forged, stolen) {
-		t.Fatal("precondition: the forged token's HMAC does not match its own key, so refusing it proves nothing")
+	// 🔴 THE POSITIVE CONTROL FOR THE WHOLE TABLE. Without it, a `Verify` that refused
+	// everything — a broken fixture, an unmaterialized key set, a wrong issuer — would
+	// satisfy every assertion below while measuring nothing about the guard.
+	live := VerifyOptions{Algs: []Alg{AlgRS256, AlgES256}, Issuer: testIssuer,
+		Audience: testAudience, Keys: keys, Now: fixedNow}
+	for _, s := range []*signer{rsaSigner, ecSigner} {
+		if _, err := Verify(s.sign(t, defaultClaims(), nil), live); err != nil {
+			t.Fatalf("precondition: a genuine %s token must verify against this deployment: %v", s.alg, err)
+		}
 	}
 
-	keys := keySetOver(t, rsaSigner)
-	legacy := []byte("a-synthetic-symmetric-secret-of-sufficient-length")
+	// 🔴 THE ATTACKER'S MATERIAL IS THE DEPLOYMENT'S OWN PUBLISHED KEY, VERBATIM — NOT A
+	// PLACEHOLDER. A forgery signed with random bytes would be refused by a verifier
+	// that HAS the hole, because the HMAC would not match either: it measures the wrong
+	// thing while looking identical. These are the exact bytes `publicJWK` puts in the
+	// document anybody can fetch.
+	stolen := map[string][]byte{
+		"rsa-1": rsaSigner.rsaModulusBytes(),
+		"ec-1":  ecSigner.ecPublicBytes(),
+	}
+	for kid, material := range stolen {
+		if len(material) == 0 {
+			t.Fatalf("precondition: the %s fixture published no key material, so nothing is forged with it", kid)
+		}
+	}
 
 	for _, arm := range []struct {
 		name string
-		opts VerifyOptions
-		// reachesResolver says whether `accepts` lets HS256 through, so the refusal has
-		// to come from the key resolver rather than from the algorithm allowlist.
-		reachesResolver bool
+		kid  string
+		alg  string
+		// algs is the deployment's configured set. Empty means the asymmetric pair.
+		algs []Alg
 	}{
 		{
-			name: "a JWKS-only deployment — refused by the ALLOWLIST, before any key is resolved",
-			opts: VerifyOptions{Algs: []Alg{AlgRS256, AlgES256}, Issuer: testIssuer,
-				Audience: testAudience, Keys: resolverPair{keys: keys}, Now: fixedNow},
+			name: "the RSA public modulus as the HMAC secret — the classic forgery",
+			kid:  "rsa-1", alg: "HS256",
 		},
 		{
-			name: "a MIXED deployment — HS256 is accepted, so the RESOLVER is what must refuse",
-			opts: VerifyOptions{Algs: []Alg{AlgRS256, AlgES256, AlgHS256}, Issuer: testIssuer,
-				Audience: testAudience, Keys: resolverPair{keys: keys, secret: staticSecret(legacy)},
-				Now: fixedNow},
-			reachesResolver: true,
+			// A second point on the "which key did the provider publish" dimension: an
+			// EC project's public point is equally public, and equally usable as a
+			// secret.
+			name: "the EC public point as the HMAC secret",
+			kid:  "ec-1", alg: "HS256",
+		},
+		{
+			// 🔴 THE ARM THAT PROVES THE GUARD IS NOT `accepts` WEARING A NEW NAME. This
+			// deployment EXPLICITLY accepts HS256 — the state a future one-line edit
+			// re-adding a symmetric algorithm to `algKeyType` would produce — so
+			// `accepts` says yes and the refusal must come from somewhere else.
+			name: "a deployment that EXPLICITLY accepts HS256, which `accepts` would let through",
+			kid:  "rsa-1", alg: "HS256",
+			algs: []Alg{AlgRS256, AlgES256, Alg("HS256")},
+		},
+		{
+			// The prefix rule, at two more registered MAC algorithms and at a
+			// re-spelling. A guard written as `alg == "HS256"` passes the three arms
+			// above and fails these.
+			name: "HS384", kid: "rsa-1", alg: "HS384",
+			algs: []Alg{AlgRS256, AlgES256, Alg("HS384")},
+		},
+		{
+			name: "HS512", kid: "rsa-1", alg: "HS512",
+			algs: []Alg{AlgRS256, AlgES256, Alg("HS512")},
+		},
+		{
+			name: "a lower-case re-spelling", kid: "rsa-1", alg: "hs256",
+			algs: []Alg{AlgRS256, AlgES256, Alg("hs256")},
 		},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
-			if arm.reachesResolver {
-				// The rung's own precondition: in THIS configuration a genuine HS256
-				// token verifies, so the allowlist is not what refuses the forgery.
-				if _, err := Verify(newHMACSigner(legacy).sign(t, defaultClaims(), nil), arm.opts); err != nil {
-					t.Fatalf("precondition: this deployment accepts HS256, so a genuine one must verify: %v", err)
-				}
+			secret := stolen[arm.kid]
+			forged := forgeHS256(t, map[string]any{"alg": arm.alg, "kid": arm.kid, "typ": "JWT"},
+				defaultClaims(), secret)
+			// THE ARM'S OWN PRECONDITION: the forgery is well-formed and its HMAC is
+			// correct for the key the attacker used. If a verifier ever DID treat the
+			// published key as an HMAC secret, this exact string would verify.
+			if !hmacMatches(t, forged, secret) {
+				t.Fatal("precondition: the forged token's HMAC does not match its own key, so refusing it proves nothing")
 			}
-			_, err := Verify(forged, arm.opts)
+
+			opts := live
+			if len(arm.algs) != 0 {
+				opts.Algs = arm.algs
+			}
+			_, err := Verify(forged, opts)
 			if err == nil {
-				t.Fatal("ALGORITHM CONFUSION: a token whose header says HS256, signed with the PUBLIC RSA key as the HMAC secret, verified. Anybody who can fetch the JWKS can now be any user in this control plane")
+				t.Fatalf("ALGORITHM CONFUSION: a token whose header says %s, signed with this deployment's own PUBLIC key as the HMAC secret, verified. Anybody who can fetch the JWKS can now be any user in this control plane", arm.alg)
 			}
-			if !errors.Is(err, ErrTokenAlg) && !errors.Is(err, ErrTokenSignature) {
-				t.Fatalf("refused, but for the wrong reason: %v", err)
+			// 🔴 THE SPECIFIC SENTINEL. `accepts`, `KeySet.key` and `hashFor` each
+			// refuse this token too, all with a bare ErrTokenAlg; accepting any of
+			// those here would make the guard's removal invisible.
+			if !errors.Is(err, ErrTokenAlgSymmetric) {
+				t.Fatalf("refused, but NOT by the unconditional symmetric-algorithm guard — so that guard is either gone or unreachable.\n  got:  %v\n  want: %v", err, ErrTokenAlgSymmetric)
+			}
+			// And the narrowing relationship, so a caller classifying on the wider
+			// sentinel did not silently stop matching.
+			if !errors.Is(err, ErrTokenAlg) {
+				t.Fatalf("ErrTokenAlgSymmetric must remain a narrowing of ErrTokenAlg, got %v", err)
 			}
 		})
+	}
+}
+
+// TestNoConfiguredAlgorithmIsSymmetric is the STRUCTURAL half, and it is a different
+// claim from the table above.
+//
+// The table asserts what happens to one token. This asserts a property of the build: the
+// tables every verification path reads name no shared-secret algorithm, so there is no
+// key type, no digest and no primitive for one. It fails when somebody adds one back —
+// which is the edit `symmetricAlg` exists to survive, and this is what makes that edit
+// LOUD rather than merely ineffective.
+func TestNoConfiguredAlgorithmIsSymmetric(t *testing.T) {
+	for alg := range algKeyType {
+		if symmetricAlg(alg) {
+			t.Fatalf("algKeyType names %q, a shared-secret algorithm. `symmetricAlg` still refuses it in Verify, so no token verifies — but the table now claims a key type this build must never resolve", alg)
+		}
+	}
+	for alg := range hashFor {
+		if symmetricAlg(alg) {
+			t.Fatalf("hashFor names %q, a shared-secret algorithm", alg)
+		}
+	}
+	// The set a deployment actually gets, discovered from the constructor rather than
+	// restated — a restatement is the second spelling this test exists to refuse.
+	backend, err := NewSupabaseJWT(goodSupabaseConfig(t, keySetOver(t, newRSASigner(t, "rsa-1", 2048))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.verify.Algs) == 0 {
+		t.Fatal("the constructor configured an EMPTY algorithm set, which accepts nothing — every assertion below would pass vacuously")
+	}
+	for _, alg := range backend.verify.Algs {
+		if symmetricAlg(alg) {
+			t.Fatalf("NewSupabaseJWT configured %q for a deployment", alg)
+		}
 	}
 }
 
@@ -160,30 +249,13 @@ func keySetOver(t *testing.T, signers ...*signer) *KeySet {
 	return set
 }
 
-// TestAnHS256DEPLOYMENTStillRefusesAnAsymmetricToken is the mirror image, and it is a
-// separate claim.
-//
-// A deployment configured with only a legacy symmetric secret must not verify an RS256
-// or ES256 token: there is no public key to check it against, and the dangerous
-// implementation is one that reaches for the symmetric secret anyway.
-func TestAnHS256DEPLOYMENTStillRefusesAnAsymmetricToken(t *testing.T) {
-	secret := []byte("a-synthetic-symmetric-secret-of-sufficient-length")
-	opts := VerifyOptions{
-		Algs: []Alg{AlgHS256}, Issuer: testIssuer, Audience: testAudience,
-		Keys: staticSecret(secret), Now: fixedNow,
-	}
-	// Positive control: the symmetric token this deployment IS configured for verifies.
-	if _, err := Verify(newHMACSigner(secret).sign(t, defaultClaims(), nil), opts); err != nil {
-		t.Fatalf("precondition: the configured HS256 token must verify, got %v", err)
-	}
-
-	rsaSigner := newRSASigner(t, "rsa-1", 2048)
-	if _, err := Verify(rsaSigner.sign(t, defaultClaims(), nil), opts); err == nil {
-		t.Fatal("an RS256 token verified against a deployment that has no public key at all")
-	} else if !errors.Is(err, ErrTokenAlg) {
-		t.Fatalf("refused for the wrong reason: %v", err)
-	}
-}
+// ⚠ `TestAnHS256DEPLOYMENTStillRefusesAnAsymmetricToken` WAS DELETED HERE, NOT LOST.
+// It asserted that a deployment configured with ONLY a legacy symmetric secret refuses
+// an RS256 token. No such deployment can be built any more — `SupabaseConfig` has no
+// secret field and `NewSupabaseJWT` refuses without a JWKS — so the test described a
+// world rather than this one. The claim it actually protected, that a key is never
+// handed to a primitive it does not belong to, is `KeySet.key`'s `algKeyType` lookup and
+// `verifySignature`'s type assertions, both still measured.
 
 // TestEveryTokenSHAPERefusalIsReachable walks the parse/header ladder.
 //

@@ -138,9 +138,15 @@ const DefaultProxySecretHeader = "X-Cairn-Proxy-Secret"
 
 // MinProxySecretBytes is the floor on the shared secret.
 //
-// 32 bytes, for the same reason `MinHS256SecretBytes` is 32: below the width of the
-// digest it is compared through, the secret is the weakest part. A shared secret that
-// grants full impersonation of every user is not the place to accept a memorable one.
+// 32 bytes: the output width of SHA-256, which is the digest it is compared through.
+// Below that width the secret is the weakest part of the construction, and a shared
+// secret that grants full impersonation of every user is not the place to accept a
+// memorable one.
+//
+// ⚠ THIS USED TO SAY "for the same reason `MinHS256SecretBytes` is 32". That constant
+// was the floor on the LEGACY symmetric JWT secret and went with it; the reasoning was
+// never borrowed, so it is stated here rather than pointed at. This is now the only
+// secret-length floor in the package.
 const MinProxySecretBytes = 32
 
 // The construction refusals. Six sentinels, one per rung, because a test that watches

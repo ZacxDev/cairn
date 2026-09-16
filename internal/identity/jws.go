@@ -3,7 +3,6 @@ package identity
 import (
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
@@ -16,18 +15,23 @@ import (
 	"time"
 )
 
-// Alg is a JWS signature algorithm this build can verify. The set is CLOSED.
+// Alg is a JWS signature algorithm this build can verify. The set is CLOSED, and every
+// member of it verifies with a PUBLIC key.
 //
-// 🔴 THREE, AND `none` IS NOT AMONG THEM BY CONSTRUCTION RATHER THAN BY A CHECK. The
-// classic JWT forgery is a token whose header says `alg: none` and whose signature is
-// empty; the second classic one is `alg: HS256` against a deployment that verifies with
-// an RSA PUBLIC key, where the public key — which the attacker has, because it is
-// public — becomes the HMAC secret. Both are defeated by the same rule, stated once:
-// **the verifier's configuration decides which algorithms are acceptable and which KEY
+// 🔴 TWO, AND NEITHER `none` NOR ANY SHARED-SECRET ALGORITHM IS AMONG THEM. The classic
+// JWT forgery is a token whose header says `alg: none` and whose signature is empty; the
+// second classic one is `alg: HS256` against a deployment that verifies with an RSA
+// PUBLIC key, where the public key — which the attacker has, because it is public —
+// becomes the HMAC secret. Both are defeated by the same rule, stated once: **the
+// verifier's configuration decides which algorithms are acceptable and which KEY
 // verifies them; the token's own header only SELECTS from that set and can never widen
-// it.** `KeySet.key` and `staticSecret.key` are where that rule is enforced,
-// `verifySignature` re-asserts it at the primitive, and `algKeyType` is the table all
-// three read.
+// it.** `KeySet.key` is where that rule is enforced, `verifySignature` re-asserts it at
+// the primitive, and `algKeyType` is the table both read.
+//
+// 🔴 AND SINCE THE SYMMETRIC PATH WAS DELETED THE HMAC REFUSAL IS UNCONDITIONAL RATHER
+// THAN DEPLOYMENT-DEPENDENT — see `symmetricAlg` and `ErrTokenAlgSymmetric`. It used to
+// depend on what the deployment had configured, which is why it took a "mixed
+// deployment" fixture to reach it at all.
 type Alg string
 
 const (
@@ -36,19 +40,19 @@ const (
 	// AlgES256 is ECDSA on P-256 with SHA-256. Supabase's asymmetric EC option, and
 	// the default for a new project.
 	AlgES256 Alg = "ES256"
-	// AlgHS256 is HMAC-SHA-256. Supabase's LEGACY symmetric option, where the JWT
-	// secret is a project setting rather than a published key.
-	AlgHS256 Alg = "HS256"
 )
 
 // keyType is what kind of key an algorithm needs. It is what stops a token's header
 // from choosing its own verification primitive.
+//
+// ⚠ THERE IS NO `oct` MEMBER, AND ITS ABSENCE IS THE POINT. A `keyType` naming a shared
+// secret would be a slot for a symmetric algorithm to be added back into `algKeyType` by
+// a one-line edit — which is the edit `symmetricAlg` exists to survive.
 type keyType string
 
 const (
 	keyRSA keyType = "RSA"
 	keyEC  keyType = "EC"
-	keyOct keyType = "oct"
 )
 
 // algKeyType is THE table. An algorithm absent from it is an algorithm this build
@@ -61,7 +65,6 @@ const (
 var algKeyType = map[Alg]keyType{
 	AlgRS256: keyRSA,
 	AlgES256: keyEC,
-	AlgHS256: keyOct,
 }
 
 // hashFor is the digest each algorithm signs over. Separate from `algKeyType` because
@@ -70,7 +73,6 @@ var algKeyType = map[Alg]keyType{
 var hashFor = map[Alg]crypto.Hash{
 	AlgRS256: crypto.SHA256,
 	AlgES256: crypto.SHA256,
-	AlgHS256: crypto.SHA256,
 }
 
 // Valid answers whether this build can verify alg at all.
@@ -193,7 +195,8 @@ type VerifyOptions struct {
 	// its revocation.
 	Leeway time.Duration
 	// MaxAge, when non-zero, additionally refuses a token whose `iat` is older than it,
-	// regardless of `exp`. Zero means `exp` alone bounds the session.
+	// regardless of `exp`. Zero means `exp` alone bounds the session. A NEGATIVE value
+	// is refused at construction rather than read as zero — see `ErrSupabaseMaxAge`.
 	MaxAge time.Duration
 	// Now is the clock. nil means `time.Now().UTC()`.
 	Now func() time.Time
@@ -205,13 +208,13 @@ type VerifyOptions struct {
 // enough that "expired but still accepted" is a window an operator can reason about.
 const MaxLeeway = 2 * time.Minute
 
-// keyResolver is what `VerifyOptions.Keys` needs. `KeySet` implements it for the
-// asymmetric case and `staticSecret` for the symmetric one.
+// keyResolver is what `VerifyOptions.Keys` needs. `KeySet` is the only implementation:
+// every algorithm this build verifies takes a public key out of a published document.
 //
 // 🔴 IT TAKES THE ALGORITHM AS WELL AS THE KID, WHICH IS WHAT MAKES THE CONFUSION
 // ATTACK IMPOSSIBLE AT THE SEAM RATHER THAN AT THE CALLER. A resolver that answered
 // "here is the key for kid X" would hand an RSA public key to whatever primitive the
-// token asked for. Answering "here is the key for kid X *as an HS256 key*" lets the
+// token asked for. Answering "here is the key for kid X *as an ES256 key*" lets the
 // resolver say no.
 type keyResolver interface {
 	key(kid string, alg Alg) (any, error)
@@ -222,6 +225,17 @@ var (
 	ErrTokenMalformed = errors.New("identity: not a compact JWS")
 	// ErrTokenAlg is an algorithm this deployment does not accept.
 	ErrTokenAlg = errors.New("identity: unacceptable JWS algorithm")
+	// ErrTokenAlgSymmetric is the algorithm-confusion refusal, and it is a NARROWING of
+	// ErrTokenAlg rather than a sibling: `errors.Is(err, ErrTokenAlg)` still holds, so
+	// no existing classifier moved when it was added.
+	//
+	// 🔴 IT EXISTS SO THE REFUSAL HAS A NAME A TEST CAN ASSERT ON. Deleting the guard
+	// leaves the token refused anyway — see `symmetricAlg` for the measured fallbacks —
+	// but refused with a DIFFERENT error, so a mutant that removes it dies against this
+	// sentinel instead of surviving behind anonymous refusals that happen to agree.
+	// That is the whole reason it is a second sentinel and not a second message.
+	ErrTokenAlgSymmetric = fmt.Errorf(
+		"%w: a shared-secret (HMAC) algorithm, which this verifier never accepts from any deployment", ErrTokenAlg)
 	// ErrTokenSignature is a signature that does not verify.
 	ErrTokenSignature = errors.New("identity: JWS signature does not verify")
 	// ErrTokenClaims is a signature that verifies over claims this deployment refuses.
@@ -244,15 +258,22 @@ const maxTokenBytes = 8 << 10
 // REJECTS, and it is ordered CHEAPEST-REFUSAL-FIRST so that an unauthenticated caller
 // cannot make this pod do expensive work:
 //
-//  1. size cap                — before any decoding
+//  1. size cap                 — before any decoding
 //  2. three dot-separated parts — a five-part token is JWE, not JWS
-//  3. the header decodes       — and `crit` is refused, see below
-//  4. `alg` is in the CONFIGURED set — never merely "known"
-//  5. a key exists for (kid, alg) — the resolver enforces key/alg agreement
-//  6. the SIGNATURE verifies   — nothing below this line trusts the payload
-//  7. the claims are acceptable
+//  3. the header decodes        — and `crit` is refused, see below
+//  4. `alg` is NOT a shared-secret algorithm — unconditional, ahead of the allowlist
+//  5. `alg` is in the CONFIGURED set — never merely "known"
+//  6. a key exists for (kid, alg)  — the resolver enforces key/alg agreement
+//  7. the SIGNATURE verifies    — nothing below this line trusts the payload
+//  8. the claims are acceptable
 //
-// 🔴 STEP 6 BEFORE STEP 7, ALWAYS. Reading `iss` or `exp` from an unverified payload and
+// 🔴 STEP 4 IS AHEAD OF STEP 5 BECAUSE THAT IS THE ONLY PLACE IT IS REACHABLE. Behind
+// the allowlist it could never run: no configuration this package can build puts an
+// HMAC algorithm in `Algs`, so `accepts` would refuse first and the guard would be an
+// unreachable branch with a live-looking message. Ahead of it, every HS* token in
+// existence reaches it.
+//
+// 🔴 STEP 7 BEFORE STEP 8, ALWAYS. Reading `iss` or `exp` from an unverified payload and
 // refusing on it would be a decision made on attacker-controlled bytes; worse, it makes
 // the refusal reason depend on content that was never authenticated, which is an
 // oracle. The claims check exists, and it runs on verified bytes only.
@@ -288,6 +309,10 @@ func Verify(token string, opts VerifyOptions) (Claims, error) {
 	}
 
 	alg := Alg(header.Alg)
+	// 🔴 THE ALGORITHM-CONFUSION REFUSAL, AND IT IS UNCONDITIONAL. See `symmetricAlg`.
+	if symmetricAlg(alg) {
+		return Claims{}, fmt.Errorf("%w: %q", ErrTokenAlgSymmetric, header.Alg)
+	}
 	if !accepts(opts.Algs, alg) {
 		// Covers `none`, every algorithm this build cannot verify, and every algorithm
 		// it can verify but this deployment did not configure — one refusal, because
@@ -328,6 +353,58 @@ func Verify(token string, opts VerifyOptions) (Claims, error) {
 	return claims, nil
 }
 
+// symmetricAlg reports whether alg is a shared-secret (HMAC) JWS algorithm.
+//
+// 🔴 THIS IS THE ALGORITHM-CONFUSION RULE, AND IT IS NOW UNCONDITIONAL RATHER THAN
+// DEPLOYMENT-DEPENDENT. The attack: every verification key this build holds is PUBLIC —
+// it comes out of a JWKS document anybody can fetch. An attacker takes those bytes, uses
+// them as an HMAC-SHA-256 secret, mints a token whose header says `alg: HS256` carrying
+// the real key's `kid`, and presents it. A verifier that lets the token's header choose
+// the primitive computes an HMAC under a "secret" the attacker also has, and it matches.
+//
+// 🔴 THE SUPPORT IS GONE AND THE CHECK IS NOT, AND THAT IS THE WHOLE RULING. Deleting
+// both would have been the tempting simplification: with no `AlgHS256`, no `keyOct` and
+// no symmetric resolver, nothing can put an HMAC algorithm in `VerifyOptions.Algs`.
+// The check stays because the closed tables are a property of TODAY's tables, and
+// re-adding a symmetric algorithm to `algKeyType` is a one-line edit that this file's
+// own comment warns is easy to get wrong. This guard is what makes that edit insufficient
+// to reopen the hole: it refuses ahead of the allowlist, so the re-added algorithm would
+// still never reach a key.
+//
+// ⚠ AND THE HONEST SCOPE, BECAUSE THE OPPOSITE CLAIM IS THE ONE A READER WILL ASSUME:
+// this guard is the FIRST refusal an HS* token meets, NOT the only one, and it is not
+// what stands between this deployment and the forgery today. MEASURED by deleting the
+// call site below and reading what answers instead — two refusals, each in a different
+// configuration, both `ErrTokenAlg` and both fail-closed:
+//
+//	an ordinary deployment           → `accepts`: nothing puts HS256 in `Algs`
+//	  identity: unacceptable JWS algorithm: "HS256"
+//	one that explicitly accepts HS256 → `KeySet.key`'s `algKeyType` lookup, which is
+//	  two-valued and has no entry for it — the same text, from the resolver
+//
+// `hashFor`'s lookup in `verifySignature` is a THIRD backstop of the same shape and
+// NEITHER configuration reaches it, because the resolver refuses first — so it is named
+// here as a belt nobody has watched work, not as a measured refusal.
+//
+// What the guard buys is a refusal with its OWN NAME, `ErrTokenAlgSymmetric`, which a
+// test can assert and a mutant cannot survive behind two anonymous refusals that happen
+// to agree — watched: every arm of `TestTheAlgorithmConfusionForgeryIsREFUSED` goes red
+// when this call site is deleted. The same trade, in the same words, as the ECDSA
+// signature-length check further down.
+//
+// 🔴 A PREFIX RULE, NOT A SPELLING. RFC 7518 §3.1 registers exactly HS256/HS384/HS512 as
+// the MAC family and `HS` is the prefix all of them carry, so this covers a symmetric
+// algorithm nobody has written down here yet — which a set literal naming `"HS256"`
+// would not. Folded to upper case because a guard walkable by re-spelling is not a guard;
+// `alg` is case-sensitive in RFC 7515, so `hs256` would be refused by the allowlist
+// anyway, and refusing it HERE costs nothing and closes the question.
+//
+// ⚠ IT WILL OVER-REFUSE ANY FUTURE ASYMMETRIC ALGORITHM NAMED `HS…`. There is none in
+// the JWA registry, and over-refusing is the safe direction.
+func symmetricAlg(alg Alg) bool {
+	return strings.HasPrefix(strings.ToUpper(string(alg)), "HS")
+}
+
 // accepts answers whether alg is in the configured set. An EMPTY set accepts nothing,
 // which is the fail-closed reading of "nobody configured this".
 func accepts(algs []Alg, alg Alg) bool {
@@ -360,6 +437,13 @@ func decodeSegment(segment string) ([]byte, error) {
 // here are a SECOND check of the same rule — kept because the two live in different
 // files and a future resolver is exactly the kind of thing that gets replaced. A failed
 // assertion here is a refusal, never a panic.
+//
+// ⚠ THERE IS NO HMAC ARM, AND `crypto/hmac` IS NOT IMPORTED. A shared-secret algorithm
+// cannot reach here: `symmetricAlg` refuses it in `Verify`, `accepts` refuses it again,
+// and the resolver has no key to hand back — so the `hashFor` miss at the top of this
+// function is a backstop nothing has been observed to reach. The arm's absence is
+// load-bearing rather than incidental: the arm that existed took `verifyKey.([]byte)`,
+// which is the exact shape an RSA modulus would arrive in.
 func verifySignature(alg Alg, verifyKey any, signingInput, signature []byte) error {
 	hash, known := hashFor[alg]
 	if !known {
@@ -409,22 +493,6 @@ func verifySignature(alg Alg, verifyKey any, signingInput, signature []byte) err
 		}
 		return nil
 
-	case AlgHS256:
-		secret, ok := verifyKey.([]byte)
-		if !ok {
-			return fmt.Errorf("%w: %s needs a symmetric secret", ErrTokenAlg, alg)
-		}
-		mac := hmac.New(sha256.New, secret)
-		mac.Write(signingInput)
-		// 🔴 `hmac.Equal`, NOT `bytes.Equal`. It is constant-time, and the comparison is
-		// against a value derived from a secret — the same rule `control.EqualHash`
-		// states for a token digest, which is reachable here from an unauthenticated
-		// caller in a tight loop.
-		if !hmac.Equal(mac.Sum(nil), signature) {
-			return fmt.Errorf("%w: %s", ErrTokenSignature, alg)
-		}
-		return nil
-
 	default:
 		// Unreachable: `accepts` has already refused anything outside the configured
 		// set, and the configured set is validated against `algKeyType`. Refusing
@@ -438,7 +506,7 @@ func verifySignature(alg Alg, verifyKey any, signingInput, signature []byte) err
 //
 // ⚠ IT HANDLES EXACTLY WHAT `hashFor` DECLARES, WHICH TODAY IS SHA-256 ALONE. The
 // first draft carried SHA-384 and SHA-512 arms as well, and they were unreachable:
-// `hashFor` maps all three supported algorithms to SHA-256, so nothing could ever
+// `hashFor` maps both supported algorithms to SHA-256, so nothing could ever
 // select them. Unreachable arms in a crypto path are worse than absent ones — they read
 // as coverage of algorithms this build does not actually verify. A default that returns
 // nil rather than hashing with something else keeps the direction safe: every

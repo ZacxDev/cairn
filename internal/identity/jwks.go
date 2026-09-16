@@ -280,12 +280,14 @@ func (k *KeySet) Run(ctx context.Context) error {
 
 // key resolves a kid and an algorithm to a verification key. THE HOT PATH. No network.
 //
-// 🔴 THE ALGORITHM IS CHECKED AGAINST THE KEY'S TYPE HERE, WHICH IS WHERE THE ALGORITHM
-// CONFUSION ATTACK DIES. A token header saying `alg: HS256` with the `kid` of an RSA
-// key gets a refusal, not the RSA public key as an HMAC secret. And a JWKS `oct` key is
-// never returned at all: `parseJWKS` drops it, so a provider (or an attacker who can
-// serve that document) cannot publish a symmetric key and have this pod verify tokens
-// with a secret the whole world can read.
+// 🔴 THE ALGORITHM IS CHECKED AGAINST THE KEY'S TYPE HERE, AND IT IS THE SECOND OF THE
+// TWO PLACES THE ALGORITHM-CONFUSION ATTACK DIES. `symmetricAlg` refuses an `alg: HS256`
+// header in `Verify` before any resolution happens; if that ever stopped being true, the
+// `algKeyType` lookup below is two-valued and a shared-secret algorithm has no entry, so
+// this returns `ErrTokenAlg` rather than handing out an RSA public key as an HMAC
+// secret. And a JWKS `oct` key is never returned at all: `parseJWKS` drops it, so a
+// provider (or an attacker who can serve that document) cannot publish a symmetric key
+// and have this pod verify tokens with a secret the whole world can read.
 func (k *KeySet) key(kid string, alg Alg) (any, error) {
 	want, known := algKeyType[alg]
 	if !known {
@@ -414,8 +416,8 @@ type jwkDocument struct {
 // 🔴 AND AN `oct` KEY IS SKIPPED RATHER THAN PARSED, WHICH IS A SECURITY RULE AND NOT A
 // COVERAGE GAP. A symmetric key in a PUBLISHED key set is a secret everybody has; a
 // verifier that accepted one would verify tokens minted by anyone who read the document.
-// HS256 is supported here only from an explicitly configured secret — see
-// `staticSecret`.
+// This build verifies no shared-secret algorithm from ANY source — see `symmetricAlg` —
+// so the skip is now belt to that braces rather than the only thing standing there.
 func parseJWKS(body []byte) (map[string]jwkKey, error) {
 	var doc jwksDocument
 	if err := json.Unmarshal(body, &doc); err != nil {
@@ -531,58 +533,9 @@ func (d jwkDocument) parse() (jwkKey, error) {
 	}
 }
 
-// staticSecret is the HS256 resolver: one configured secret, no key set, no network.
-//
-// 🔴 IT IS NOT A `KeySet` AND MUST NOT BECOME ONE. A symmetric secret is a secret this
-// deployment and the provider share; a key SET is a public document. Reaching the
-// symmetric case through the same type that fetches a public document is how an `oct`
-// entry in that document becomes a verification key, which is the attack `parseJWKS`
-// drops the entry to prevent.
-type staticSecret []byte
-
-// MinHS256SecretBytes is the floor on a symmetric JWT secret.
-//
-// 32 bytes: the output width of SHA-256, which is the point below which the HMAC key is
-// the weakest part of the construction. Supabase's own generated legacy secret is far
-// longer; this refuses a hand-typed one.
-const MinHS256SecretBytes = 32
-
-func (s staticSecret) key(_ string, alg Alg) (any, error) {
-	if alg != AlgHS256 {
-		// The symmetric resolver answers for HS256 and nothing else. Handing these
-		// bytes to an RSA or ECDSA verifier would be the confusion attack with the
-		// operands swapped.
-		return nil, fmt.Errorf("%w: a symmetric secret cannot verify %s", ErrTokenAlg, alg)
-	}
-	if len(s) < MinHS256SecretBytes {
-		// Unreachable through `NewSupabaseJWT`, which refuses a short secret at
-		// construction. Refusing here too keeps the floor structural rather than a
-		// property of one constructor.
-		return nil, fmt.Errorf("%w: the configured secret is %d bytes, floor is %d", ErrNoKey, len(s), MinHS256SecretBytes)
-	}
-	return []byte(s), nil
-}
-
-// resolverPair lets a deployment carry both an asymmetric key set and a legacy
-// symmetric secret, which is exactly the state a Supabase project is in mid-migration.
-//
-// 🔴 THE ALGORITHM PICKS THE RESOLVER, AND THE PICK IS TOTAL. HS256 goes to the secret,
-// everything else to the key set; there is no arm where a token chooses which resolver
-// answers, because that choice is what the confusion attack needs.
-type resolverPair struct {
-	keys   *KeySet
-	secret staticSecret
-}
-
-func (p resolverPair) key(kid string, alg Alg) (any, error) {
-	if alg == AlgHS256 {
-		if len(p.secret) == 0 {
-			return nil, fmt.Errorf("%w: no symmetric secret is configured", ErrNoKey)
-		}
-		return p.secret.key(kid, alg)
-	}
-	if p.keys == nil {
-		return nil, fmt.Errorf("%w: no key set is configured", ErrNoKey)
-	}
-	return p.keys.key(kid, alg)
-}
+// ⚠ THERE IS DELIBERATELY NO SECOND `keyResolver` IN THIS FILE. A `staticSecret` type
+// (one configured HMAC secret, no key set, no network) and a `resolverPair` that routed
+// HS256 to it lived here while this build still verified Supabase's LEGACY symmetric
+// tokens. Both are deleted: a deployment's keys now come from a published JWKS and from
+// nowhere else, which is what makes `symmetricAlg`'s refusal one rule with one arm
+// rather than a property of how a particular deployment was configured.

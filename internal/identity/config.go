@@ -1,8 +1,10 @@
 package identity
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -13,11 +15,11 @@ import (
 // with no existing holder is inventing a migration nobody needs.
 const (
 	// EnvSupabaseJWKSURL is the JWKS endpoint — `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json`.
+	//
+	// ⚠ IT IS THE ONLY WAY TO GIVE THIS BACKEND A KEY. The two variables that named the
+	// LEGACY symmetric secret are deleted, not deprecated: this build verifies no
+	// shared-secret algorithm. Setting one of them now REFUSES — see `retiredEnv`.
 	EnvSupabaseJWKSURL = "CAIRN_SUPABASE_JWKS_URL"
-	// EnvSupabaseSecret is the LEGACY symmetric JWT secret, inline.
-	EnvSupabaseSecret = "CAIRN_SUPABASE_JWT_SECRET"
-	// EnvSupabaseSecretFile is the same secret, read from a file.
-	EnvSupabaseSecretFile = "CAIRN_SUPABASE_JWT_SECRET_FILE"
 	// EnvSupabaseIssuer is the required `iss`.
 	EnvSupabaseIssuer = "CAIRN_SUPABASE_ISSUER"
 	// EnvSupabaseAudience is the required `aud`. Defaults to DefaultSupabaseAudience.
@@ -28,6 +30,19 @@ const (
 	EnvSupabaseRequireRole = "CAIRN_SUPABASE_REQUIRE_ROLE"
 	// EnvSupabaseLeeway is the clock-skew allowance, as a Go duration.
 	EnvSupabaseLeeway = "CAIRN_SUPABASE_LEEWAY"
+	// EnvSupabaseMaxAge additionally refuses a token whose `iat` is older than this,
+	// regardless of `exp`. A Go duration; empty or `0` leaves `exp` alone bounding the
+	// session, and a NEGATIVE value is refused rather than read as zero.
+	//
+	// ⚠ IT EXISTS BECAUSE THE FIELD DID AND NOTHING COULD REACH IT. `SupabaseConfig.MaxAge`
+	// and `checkClaims`'s two `MaxAge` branches shipped with no variable at all, so the
+	// only caller that could set them was a test — the same shape this package deleted
+	// `EmailHeader` for. The ruling differed because the shapes differ: `EmailHeader`
+	// was a decoded claim with NO READER, dead on both ends, while these are live,
+	// tested refusals whose only defect was that no deployment could arm them. Wiring
+	// one variable is cheaper than deleting a working bound, and `EnvSupabaseLeeway` is
+	// the sibling it now reads exactly like.
+	EnvSupabaseMaxAge = "CAIRN_SUPABASE_MAX_AGE"
 
 	// EnvProxyFronted is the explicit declaration. See `TrustedHeaderConfig.ProxyFronted`.
 	EnvProxyFronted = "CAIRN_TRUSTED_HEADER_PROXY_FRONTED"
@@ -74,14 +89,38 @@ const DefaultSupabaseAudience = "authenticated"
 // constants above, failing when the set GROWS as well as when it shrinks.
 var supabaseEnv = []string{
 	EnvSupabaseJWKSURL,
-	EnvSupabaseSecret,
-	EnvSupabaseSecretFile,
 	EnvSupabaseIssuer,
 	EnvSupabaseAudience,
 	EnvSupabaseProvider,
 	EnvSupabaseRequireRole,
 	EnvSupabaseLeeway,
+	EnvSupabaseMaxAge,
 }
+
+// retiredEnv names variables this build once read and no longer does, with what to do
+// instead. Setting one is a REFUSAL.
+//
+// 🔴 A DELETED SETTING MUST BE LOUD, NOT IGNORED, AND THAT IS THE SAME RULE `supabaseEnv`
+// SERVES ONE DIRECTION OVER. The ledgers above ask "did anybody touch any of these" so a
+// half-configured backend cannot come up quietly; a name DROPPED from a ledger inverts
+// that — an operator's manifest still carries it, `anySet` no longer counts it, and the
+// pod comes up healthy having silently discarded a line the operator wrote. These two
+// named the LEGACY symmetric JWT secret, which this build no longer verifies with at
+// all; an operator migrating a project is exactly who still has one set.
+//
+// ⚠ THEY ARE NOT IN `supabaseEnv` AND MUST NEVER BE. A name here can only REFUSE — it
+// cannot arm a backend, which is the distinction that keeps it from being a second
+// spelling of a live setting.
+const retiredSymmetricSecret = "the legacy symmetric (HS256) JWT secret, which this build no longer verifies with at all. Use " +
+	EnvSupabaseJWKSURL + " — a Supabase project's asymmetric signing keys"
+
+var retiredEnv = map[string]string{
+	"CAIRN_SUPABASE_JWT_SECRET":      retiredSymmetricSecret,
+	"CAIRN_SUPABASE_JWT_SECRET_FILE": retiredSymmetricSecret,
+}
+
+// ErrRetiredSetting is the refusal a retired variable earns.
+var ErrRetiredSetting = errors.New("identity: a setting this build no longer reads is set")
 
 var proxyEnv = []string{
 	EnvProxyFronted,
@@ -102,12 +141,22 @@ var proxyEnv = []string{
 // the same code path. Both new backends are opt-in, and the trusted-header one is opt-in
 // twice.
 //
-// `machine` is always first in the returned chain. `keys` is the key set to refresh, or
-// nil when no asymmetric verification is configured.
+// `machine` is always first in the returned chain. The second return is the Supabase
+// backend whose key set the caller must refresh, or nil when no Supabase variable was
+// set at all — it is never a backend with nothing to refresh, because rung 3 of
+// `NewSupabaseJWT` refuses one.
 func FromEnvironment(env map[string]string, authority interface {
 	TokenAuthority
 	ModelSource
 }) (Chain, *SupabaseJWT, error) {
+	// 🔴 BEFORE `anySet`, AND UNCONDITIONALLY. A retired name arms nothing, so checking
+	// it inside a backend's own branch would only fire for deployments that had ALSO
+	// set a live variable — which is precisely the deployment that gets a loud refusal
+	// anyway. The silent case is the one where a retired name is all that is set.
+	if err := refuseRetiredSettings(env); err != nil {
+		return nil, nil, err
+	}
+
 	machine, err := NewMachineToken(authority)
 	if err != nil {
 		return nil, nil, err
@@ -136,6 +185,27 @@ func FromEnvironment(env map[string]string, authority interface {
 	return chain, supabase, nil
 }
 
+// refuseRetiredSettings refuses a deployment that still sets a variable this build
+// dropped. Sorted so the message is stable when more than one is set.
+func refuseRetiredSettings(env map[string]string) error {
+	names := make([]string, 0, len(retiredEnv))
+	for name := range retiredEnv {
+		if strings.TrimSpace(env[name]) != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	reasons := make([]string, 0, len(names))
+	for _, name := range names {
+		reasons = append(reasons, name+" was "+retiredEnv[name])
+	}
+	return fmt.Errorf("%w: %s. Remove it rather than leaving it set — a value nothing reads looks like configuration",
+		ErrRetiredSetting, strings.Join(reasons, "; "))
+}
+
 func anySet(env map[string]string, names []string) bool {
 	for _, name := range names {
 		if strings.TrimSpace(env[name]) != "" {
@@ -146,12 +216,8 @@ func anySet(env map[string]string, names []string) bool {
 }
 
 func supabaseFromEnv(env map[string]string, authority ModelSource) (*SupabaseJWT, error) {
-	secret, err := secretFrom(env, EnvSupabaseSecret, EnvSupabaseSecretFile)
-	if err != nil {
-		return nil, err
-	}
-
 	var keys *KeySet
+	var err error
 	if url := strings.TrimSpace(env[EnvSupabaseJWKSURL]); url != "" {
 		keys, err = NewKeySet(JWKSOptions{URL: url})
 		if err != nil {
@@ -164,24 +230,43 @@ func supabaseFromEnv(env map[string]string, authority ModelSource) (*SupabaseJWT
 		audience = DefaultSupabaseAudience
 	}
 
-	var leeway time.Duration
-	if raw := strings.TrimSpace(env[EnvSupabaseLeeway]); raw != "" {
-		leeway, err = time.ParseDuration(raw)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %q is not a duration (%v)", EnvSupabaseLeeway, raw, err)
-		}
+	leeway, err := envDuration(env, EnvSupabaseLeeway)
+	if err != nil {
+		return nil, err
+	}
+	maxAge, err := envDuration(env, EnvSupabaseMaxAge)
+	if err != nil {
+		return nil, err
 	}
 
 	return NewSupabaseJWT(SupabaseConfig{
 		Authority:   authority,
 		Keys:        keys,
-		Secret:      secret,
 		Issuer:      strings.TrimSpace(env[EnvSupabaseIssuer]),
 		Audience:    audience,
 		Provider:    strings.TrimSpace(env[EnvSupabaseProvider]),
 		RequireRole: strings.TrimSpace(env[EnvSupabaseRequireRole]),
 		Leeway:      leeway,
+		MaxAge:      maxAge,
 	})
+}
+
+// envDuration reads a Go duration setting. Empty means the zero value.
+//
+// ⚠ ONE READER FOR BOTH DURATIONS, BECAUSE TWO WOULD BE TWO CHANCES TO GET THE SAME
+// PARSE WRONG — the one-rule-one-place ruling `secretFrom` already carries. An
+// unparseable value is an error and never the zero: the operator who typed `10min`
+// believes a bound is armed, and `time.ParseDuration` refuses that spelling.
+func envDuration(env map[string]string, name string) (time.Duration, error) {
+	raw := strings.TrimSpace(env[name])
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a duration (%v)", name, raw, err)
+	}
+	return d, nil
 }
 
 func trustedHeaderFromEnv(env map[string]string, authority ModelSource) (*TrustedHeader, error) {

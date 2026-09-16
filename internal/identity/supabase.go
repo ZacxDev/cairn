@@ -44,7 +44,11 @@ const DefaultSupabaseProvider = "supabase"
 type SupabaseJWT struct {
 	authority ModelSource
 	verify    VerifyOptions
-	provider  string
+	// keys is the same `*KeySet` `verify.Keys` holds, kept in its concrete type so the
+	// refresh methods need no type assertion. `NewSupabaseJWT` guarantees it is
+	// non-nil: a Supabase backend with nothing to verify against does not get built.
+	keys     *KeySet
+	provider string
 	// requireRole, when non-empty, additionally refuses a token whose `role` claim is
 	// not it. Supabase issues `anon` to a session that has not signed in.
 	requireRole string
@@ -57,11 +61,9 @@ type SupabaseConfig struct {
 	// Authority is the materialized control plane the subject is resolved against.
 	// Required.
 	Authority ModelSource
-	// Keys is the cached JWKS for the asymmetric algorithms. Required unless Secret
-	// is set.
+	// Keys is the cached JWKS. Required, and the ONLY source of a verification key:
+	// this build verifies no shared-secret algorithm, from any source.
 	Keys *KeySet
-	// Secret is the LEGACY symmetric JWT secret. Required unless Keys is set.
-	Secret []byte
 	// Issuer must equal the token's `iss` exactly. Required — for Supabase this is
 	// `https://<project-ref>.supabase.co/auth/v1`.
 	Issuer string
@@ -76,7 +78,8 @@ type SupabaseConfig struct {
 	RequireRole string
 	// Leeway absorbs clock skew. Bounded by MaxLeeway.
 	Leeway time.Duration
-	// MaxAge, when non-zero, refuses a token whose `iat` is older than it.
+	// MaxAge, when non-zero, refuses a token whose `iat` is older than it, regardless
+	// of `exp`. A negative value is refused rather than read as zero.
 	MaxAge time.Duration
 	// Now is the clock. nil means `time.Now().UTC()`.
 	Now func() time.Time
@@ -91,20 +94,41 @@ var (
 	// ErrSupabaseNoAudience refuses a verifier with no audience to require.
 	ErrSupabaseNoAudience = errors.New("identity: no Supabase audience configured — without one, a token minted for a DIFFERENT application at the same issuer would verify here")
 	// ErrSupabaseNoKeys refuses a verifier with nothing to verify against.
-	ErrSupabaseNoKeys = errors.New("identity: neither a JWKS nor a symmetric secret is configured, so no token could ever verify")
-	// ErrSupabaseWeakSecret refuses a symmetric secret below the floor.
-	ErrSupabaseWeakSecret = errors.New("identity: the symmetric JWT secret is below the length floor")
+	ErrSupabaseNoKeys = errors.New("identity: no JWKS is configured, so no token could ever verify")
 	// ErrSupabaseLeeway refuses a clock-skew allowance wide enough to matter.
 	ErrSupabaseLeeway = errors.New("identity: the clock-skew leeway is outside its bound")
+	// ErrSupabaseMaxAge refuses a NEGATIVE maximum token age.
+	//
+	// 🔴 REFUSED RATHER THAN READ AS ZERO, BECAUSE ZERO MEANS "OFF". `checkClaims` tests
+	// `opts.MaxAge > 0`, so a negative value silently disables a bound the operator
+	// configured — the exact shape `envBool` refuses one file over, and the shape this
+	// repository refuses everywhere else.
+	ErrSupabaseMaxAge = errors.New("identity: the maximum token age is negative")
 )
 
 // NewSupabaseJWT builds the Supabase backend, or refuses.
 //
-// 🔴 THE GUARD ORDER IS THE POINT AND EACH RUNG IS REACHABLE. A guard that can only be
-// hit by input an earlier guard already rejects has never run — so the ladder goes from
-// the fields with no default (issuer, audience) through "is there any key at all" to
-// "is the key you gave strong enough", and each of this package's tests reaches its rung
-// with a configuration the ones above it accept.
+// 🔴 THE GUARD ORDER IS THE POINT AND EVERY RUNG IS REACHABLE BY A CONFIGURATION EVERY
+// RUNG ABOVE IT ACCEPTS. Five rungs, re-derived when the symmetric path was deleted:
+//
+//	0  ErrNoAuthority        no control plane to resolve a subject against
+//	1  ErrSupabaseNoIssuer   everything else complete, no `iss` to require
+//	2  ErrSupabaseNoAudience issuer set, no `aud` to require
+//	3  ErrSupabaseNoKeys     issuer and audience set, nothing to verify against
+//	4  ErrSupabaseLeeway     a skew allowance outside [0, MaxLeeway]
+//	5  ErrSupabaseMaxAge     a NEGATIVE maximum token age, which would read as "off"
+//
+// 🔴 AND A SIXTH RUNG WAS DELETED RATHER THAN LEFT STANDING. `ErrSupabaseWeakSecret`
+// asked whether a configured symmetric secret cleared a length floor; rung 3 used to ask
+// only whether there was "any key at all", which is what made the floor reachable —
+// *two rungs, two questions*. With no `Secret` field there is no second question, and a
+// rung no configuration can reach is an unreachable guard with a live-looking message,
+// which this repository names as a defect rather than as spare safety.
+//
+// ⚠ `ErrSupabaseMaxAge` IS NOT THAT RUNG RENAMED. It is reachable — `MaxAge: -time.Second`
+// clears every rung above it — and it exists because P4's round 0 found
+// `SupabaseConfig.MaxAge` had no environment variable at all; wiring one made a negative
+// value something an operator can now type.
 func NewSupabaseJWT(cfg SupabaseConfig) (*SupabaseJWT, error) {
 	if cfg.Authority == nil {
 		return nil, ErrNoAuthority
@@ -115,28 +139,29 @@ func NewSupabaseJWT(cfg SupabaseConfig) (*SupabaseJWT, error) {
 	if cfg.Audience == "" {
 		return nil, ErrSupabaseNoAudience
 	}
-	if cfg.Keys == nil && len(cfg.Secret) == 0 {
+	if cfg.Keys == nil {
 		return nil, ErrSupabaseNoKeys
-	}
-	if len(cfg.Secret) > 0 && len(cfg.Secret) < MinHS256SecretBytes {
-		return nil, fmt.Errorf("%w: %d bytes, floor is %d", ErrSupabaseWeakSecret, len(cfg.Secret), MinHS256SecretBytes)
 	}
 	if cfg.Leeway < 0 || cfg.Leeway > MaxLeeway {
 		return nil, fmt.Errorf("%w: %s is outside [0, %s]", ErrSupabaseLeeway, cfg.Leeway, MaxLeeway)
 	}
+	if cfg.MaxAge < 0 {
+		return nil, fmt.Errorf("%w: %s. Zero means the check is off; a negative value would be read as zero and silently disable a bound you configured", ErrSupabaseMaxAge, cfg.MaxAge)
+	}
 
-	// 🔴 THE ACCEPTED ALGORITHM SET IS DERIVED FROM WHAT IS CONFIGURED, NEVER FROM WHAT
-	// THE BUILD CAN DO. A deployment with only a JWKS must not accept HS256, because
-	// there is no secret to verify one against and an accepted-but-unverifiable
-	// algorithm is an invitation to find the resolver's soft edge. A deployment with
-	// only a legacy secret must not accept RS256/ES256 for the mirror reason.
-	var algs []Alg
-	if cfg.Keys != nil {
-		algs = append(algs, AlgRS256, AlgES256)
-	}
-	if len(cfg.Secret) > 0 {
-		algs = append(algs, AlgHS256)
-	}
+	// 🔴 THE ACCEPTED ALGORITHM SET IS THE ASYMMETRIC PAIR, UNCONDITIONALLY, AND THE
+	// CONDITION THAT USED TO GUARD IT WAS DELETED WITH THE THING IT DISTINGUISHED. It
+	// read `if cfg.Keys != nil` beside an `if len(cfg.Secret) > 0` that appended
+	// `AlgHS256` — a set derived from what the deployment configured rather than from
+	// what the build can do. Rung 3 above now guarantees `cfg.Keys != nil`, so the
+	// surviving condition can no longer be false, and a branch that cannot be false is
+	// the same unreachable shape as a rung that cannot fire.
+	//
+	// The rule it enforced has not gone anywhere; it moved and got STRONGER. A
+	// shared-secret algorithm is refused by `symmetricAlg` in `Verify` for every
+	// deployment, rather than by this list for the deployments that happened not to
+	// configure a secret.
+	algs := []Alg{AlgRS256, AlgES256}
 
 	provider := cfg.Provider
 	if provider == "" {
@@ -148,11 +173,12 @@ func NewSupabaseJWT(cfg SupabaseConfig) (*SupabaseJWT, error) {
 			Algs:     algs,
 			Issuer:   cfg.Issuer,
 			Audience: cfg.Audience,
-			Keys:     resolverPair{keys: cfg.Keys, secret: staticSecret(cfg.Secret)},
+			Keys:     cfg.Keys,
 			Leeway:   cfg.Leeway,
 			MaxAge:   cfg.MaxAge,
 			Now:      cfg.Now,
 		},
+		keys:        cfg.Keys,
 		provider:    provider,
 		requireRole: cfg.RequireRole,
 	}, nil
@@ -211,39 +237,22 @@ func (s *SupabaseJWT) Authenticate(r *http.Request) (Identity, error) {
 	}, nil
 }
 
-// RefreshKeys materializes the key set, if there is one.
+// RefreshKeys materializes the key set.
 //
 // Exposed so `cmd/cairn-server` can fetch once at startup and shout about a failure,
 // rather than discovering at the first sign-in that the provider was unreachable when
 // the pod came up.
-func (s *SupabaseJWT) RefreshKeys(ctx context.Context) error {
-	if keys := s.keySet(); keys != nil {
-		return keys.Refresh(ctx)
-	}
-	return nil
-}
+//
+// ⚠ THE NIL CHECK THESE THREE METHODS CARRIED IS GONE, AND ITS ABSENCE IS DELIBERATE.
+// It answered "this deployment is symmetric-only, so there is nothing to refresh" — a
+// state that no longer exists, because rung 3 of `NewSupabaseJWT` refuses a backend with
+// no key set. A caller holding a nil `*SupabaseJWT` (which is what `FromEnvironment`
+// returns when no Supabase variable was set) must still not call these; that was true
+// before the change too, since the old body dereferenced `s` just as this one does.
+func (s *SupabaseJWT) RefreshKeys(ctx context.Context) error { return s.keys.Refresh(ctx) }
 
-// RunKeyRefresh keeps the key set current until ctx is done. Returns nil immediately
-// when the deployment is symmetric-only and there is nothing to refresh.
-func (s *SupabaseJWT) RunKeyRefresh(ctx context.Context) error {
-	if keys := s.keySet(); keys != nil {
-		return keys.Run(ctx)
-	}
-	return nil
-}
+// RunKeyRefresh keeps the key set current until ctx is done.
+func (s *SupabaseJWT) RunKeyRefresh(ctx context.Context) error { return s.keys.Run(ctx) }
 
-// KeyStatus reports the cached key set's age, or the zero value when there is none.
-func (s *SupabaseJWT) KeyStatus() KeySetStatus {
-	if keys := s.keySet(); keys != nil {
-		return keys.Status()
-	}
-	return KeySetStatus{}
-}
-
-func (s *SupabaseJWT) keySet() *KeySet {
-	pair, ok := s.verify.Keys.(resolverPair)
-	if !ok {
-		return nil
-	}
-	return pair.keys
-}
+// KeyStatus reports the cached key set's age.
+func (s *SupabaseJWT) KeyStatus() KeySetStatus { return s.keys.Status() }

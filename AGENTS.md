@@ -94,7 +94,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
-| `internal/identity` | P4: ONE `Authenticator` — machine token · Supabase JWT · trusted header (🔴 an auth BYPASS if the pod is reached DIRECTLY; never default, refuses to start). 📄 README |
+| `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |
 | `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
 | `flake.nix` | both clients, the server image, the Go server, and the checks over all of them |
 

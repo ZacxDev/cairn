@@ -164,29 +164,61 @@ mTLS is available.
 
 ## The JWT verifier, stdlib-only
 
-RS256, ES256 and HS256. `crypto/rsa`, `crypto/ecdsa`, `crypto/hmac`, `crypto/ecdh` for
+**RS256 and ES256 — asymmetric only.** `crypto/rsa`, `crypto/ecdsa`, `crypto/ecdh` for
 point validation, `encoding/json` + `math/big` for JWK parsing, `net/http` for the JWKS
 fetch. No dependency was needed; `go.mod` still has no `require` block.
+
+🔴 **HS256 SUPPORT WAS DELETED AND THE HS256 *REFUSAL* WAS STRENGTHENED, WHICH ARE TWO
+CHANGES AND NOT ONE.** The first draft of this package also verified Supabase's LEGACY
+symmetric option, from a secret an operator configured. That path is gone: no `AlgHS256`,
+no `keyOct`, no `staticSecret`, no `resolverPair`, no `SupabaseConfig.Secret`, no
+`CAIRN_SUPABASE_JWT_SECRET`. **Deleting the check along with the support would have been
+the wrong simplification** — it is the whole of the algorithm-confusion attack — so
+`symmetricAlg` refuses any `HS*` algorithm in `Verify`, ahead of the deployment's
+allowlist, with its own sentinel `ErrTokenAlgSymmetric`.
 
 🔴 **THE TOKEN'S HEADER SELECTS FROM THE CONFIGURED SET AND CAN NEVER WIDEN IT.** The
 classic forgery is `alg: none`; the second classic one is `alg: HS256` against a deployment
 that verifies with an RSA public key, where the public key — which the attacker has,
-because it is public — becomes the HMAC secret. Both die on one rule, enforced in three
-places: `accepts` (the deployment's allowlist), the key resolver (`KeySet.key` and
-`resolverPair`, which route HS256 to a configured secret and never to the key set), and
-`verifySignature`'s own type assertions.
+because it is public — becomes the HMAC secret. Both die on one rule, and the HMAC half is
+now **unconditional rather than deployment-dependent**: one rule, one arm.
 
-🔴 **AND THE TEST FOR IT HAS TWO ARMS BECAUSE ONE OF THEM DOES NOT REACH THE GUARD —
-MEASURED, NOT ASSUMED.** The first draft of `TestTheAlgorithmConfusionForgeryIsREFUSED`
-tested a JWKS-only deployment. It passed, and it passed for the wrong reason: `accepts`
-refuses HS256 before any key is resolved, so the key/algorithm rule never executed. Proven
-by opening the hole on purpose — `KeySet.key`'s type check replaced by `if false`, and
-`verifySignature`'s HS256 arm taught to take an RSA modulus as its secret — after which
-that arm **still passed**. The second arm is a **mixed** deployment (a JWKS *and* a legacy
-symmetric secret), which is both the configuration that reaches the resolver and the
-realistic one: a Supabase project mid-migration accepts both, which is exactly when the
-attack is available. With the hole open, the mixed arm goes red and the JWKS-only arm stays
-green.
+🔴 **BE HONEST ABOUT WHAT THE NEW GUARD BUYS, BECAUSE THE OVER-CLAIM IS THE TEMPTING
+ONE.** It is the FIRST refusal an `HS*` token meets, not the only one. Measured by
+deleting its call site and reading what answers instead — two refusals, both `ErrTokenAlg`,
+both fail-closed:
+
+| the deployment | what refuses with the guard gone |
+|---|---|
+| ordinary (JWKS only) | `accepts` — nothing puts `HS256` in `Algs` |
+| one that explicitly accepts `HS256` | `KeySet.key`'s `algKeyType` lookup, two-valued, no entry |
+
+`hashFor`'s lookup in `verifySignature` is a third backstop of the same shape that neither
+configuration reaches, because the resolver refuses first. So what the guard buys is a
+refusal with its **own name** — which a test can assert, and which makes a one-line
+re-addition of a symmetric algorithm to `algKeyType` insufficient to reopen the hole.
+`tests/control_mutants.py` carries `the-symmetric-algorithm-refusal-is-removed` for
+exactly that: without the sentinel it would be an EQUIVALENT mutant, and reading it as one
+is the mistake the row's `why` exists to prevent.
+
+🔴 **AND THE TEST NO LONGER NEEDS TWO DEPLOYMENTS, WHICH IS THE OTHER THING THE DELETION
+BOUGHT.** The old `TestTheAlgorithmConfusionForgeryIsREFUSED` had a JWKS-only arm that
+**passed for the wrong reason** — `accepts` refused HS256 before any key resolved, so the
+key/algorithm rule never executed, proven at the time by opening the hole on purpose and
+watching that arm stay green. It needed a second, **mixed** arm (a JWKS *and* a legacy
+symmetric secret) to reach the guard at all, and that configuration can no longer be
+built. Today every arm reaches the guard, because the guard runs before the allowlist.
+Six arms, each forging with the deployment's **own published key** as the HMAC secret,
+each asserting `ErrTokenAlgSymmetric`: the RSA modulus, the EC public point, a deployment
+that explicitly accepts `HS256`, `HS384`, `HS512`, and a lower-case re-spelling. Watched
+to fail: with the `if symmetricAlg(alg)` block deleted, all six go red naming the
+sentinel. The last three are there because the rule is a **prefix** rule, not a spelling —
+a guard written `alg == "HS256"` passes the first three and fails those.
+
+`TestNoConfiguredAlgorithmIsSymmetric` is the structural half and a different claim: no
+entry in `algKeyType`, none in `hashFor`, and nothing `NewSupabaseJWT` configures, is a
+shared-secret algorithm. It is what makes re-adding one LOUD rather than merely
+ineffective.
 
 Other rules worth naming:
 
@@ -200,7 +232,11 @@ Other rules worth naming:
 - **Leeway is bounded by `MaxLeeway` (2m) and refused rather than clamped** — a generous
   skew allowance is how a revoked session outlives its revocation.
 - **An `oct` key in a published JWKS is dropped**, never parsed: a symmetric key in a
-  public document is a secret everybody has.
+  public document is a secret everybody has. Belt to `symmetricAlg`'s braces now, rather
+  than the only thing standing there.
+- **A maximum token age is bounded but optional**, and a NEGATIVE one is refused at
+  construction rather than read as zero — `checkClaims` tests `MaxAge > 0`, so zero means
+  OFF and a negative value would silently disable a bound the operator configured.
 - **A duplicate `kid` refuses the whole document**, because last-wins would make "which key
   verifies this token" depend on Go's randomised map order.
 - **A token with no `kid` is refused when more than one key could verify it.** Trying every
@@ -257,7 +293,60 @@ Other rules:
   rule nobody reads makes a rotation that updated the wrong one appear to work;
 - **prefer the `_FILE` form**: an environment variable is readable from
   `/proc/<pid>/environ`, inherited by every child, and printed by any `env` that reaches a
-  log. The pod already mounts its bearer token as a file.
+  log. The pod already mounts its bearer token as a file;
+- 🔴 **a RETIRED setting is a refusal, not an ignored line.** `CAIRN_SUPABASE_JWT_SECRET`
+  and `CAIRN_SUPABASE_JWT_SECRET_FILE` named the legacy symmetric secret and this build no
+  longer reads them. Dropping a name from a ledger inverts the rule above: `anySet` only
+  counts names that are *in* a ledger, so a dropped one is invisible to it by
+  construction, and an operator whose manifest still carries it would get a pod that comes
+  up healthy having silently discarded the line they wrote. `retiredEnv` refuses instead,
+  naming the variable and what to use — and it is deliberately **not** in `supabaseEnv`,
+  because a name there would also *arm* the backend it was dropped from. A ledger test
+  pins that the two sets do not overlap and that each retired name actually reaches the
+  refusal.
+
+## 🔴 BOTH NEW BACKENDS ARE INERT IN EVERY DEPLOYMENT THAT CAN EXIST TODAY
+
+Not "untested" — **cannot authenticate anybody, in any configuration**, until a user-creation
+path exists. Say it here rather than leave it to be discovered, because everything above is
+about refusing the wrong people and this is about refusing *all* of them.
+
+Read from the code, three facts that compose:
+
+1. **`tokenfile.Source` is the only authority any binary wires.** Nothing constructs a
+   `control.FileStore` outside its own tests, so the journal every deployed pod resolves
+   against is the one `tokenfile` projects from the token file.
+2. **It synthesizes exactly one user**, with `Provider = "cairn-token-file"` and
+   `Subject = "operator"`. `SupabaseJWT` resolves against provider `"supabase"` by default,
+   so `Model.UserByProviderSubject` **can never match** and every verified session gets the
+   uniform 401 that `TestAVerifiedTokenForAnUnknownUserIsRefusedRatherThanProvisioned`
+   pins.
+3. **Even naming that user does not help.** `tokenfile` emits no `EventMemberSet` at all
+   and every one of its grant sites uses `SubjectKind: control.KindProject`, so the
+   `operator` user is the subject of no grant and no membership. A `TrustedHeader` pointed
+   at provider `cairn-token-file` asserting subject `operator` therefore authenticates
+   somebody who resolves to an **empty `Authorization`** — a 200 that permits nothing.
+
+The concrete trap: an operator follows this README, sets `CAIRN_SUPABASE_JWKS_URL` and
+`CAIRN_SUPABASE_ISSUER`, gets a pod that fetches the JWKS, starts clean, satisfies the
+partial-configuration ledger and passes its health check — and refuses **every** sign-in.
+That is precisely the failure `config.go`'s ledger exists to prevent, arriving by a route
+the ledger structurally cannot see: it asks *"did you configure it"*, never *"can it ever
+resolve anybody"*.
+
+🔴 **DO NOT CLOSE THIS BY HAVING A BACKEND CREATE USERS ON THE FLY.** That is self-serve
+signup, it is P6, and doing it in an `Authenticator` would be an authorization decision
+taken silently — the rule `SupabaseJWT`'s own doc comment states.
+
+**PRECONDITION:** a user-creation path (P5 or P6) over a journal-backed `control.Store`,
+so a real `control.User` row exists with the provider and subject an IdP actually asserts.
+Until then these backends are code that is correct and unreachable.
+
+⚠ **The HS256 deletion did not change any of this**, checked rather than assumed: it moves
+only what `Verify` will accept as a signature. `SupabaseJWT.Authenticate` reaches
+`model.UserByProviderSubject` *after* verification, and neither that call nor
+`DefaultSupabaseProvider` nor anything in `internal/control/tokenfile` was touched. A
+deployment that could resolve nobody before can resolve nobody now, for the same reason.
 
 ## What this package structurally CANNOT see
 
@@ -269,7 +358,9 @@ Other rules:
   client-certificate rung reads `r.TLS.VerifiedChains`, which a test sets directly; that
   the field is populated only by a correctly-configured `tls.Config` is a property of
   `crypto/tls`, relied on rather than measured here.
-- **A deployed instance of either backend.** `packages.server-image` does not carry P4
+- **A deployed instance of either backend** — and that line used to be the whole story
+  here, which read as "untested" when the truth is the section above: no deployment that
+  can exist today resolves anybody through them. `packages.server-image` does not carry P4
   configuration and nothing has run it. Everything below `api.New`'s default is exercised
   in-process.
 - **Concurrency.** `KeySet` takes an `RWMutex` and is exercised under `-race`, but nothing

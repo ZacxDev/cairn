@@ -30,8 +30,22 @@ func goodSupabaseConfig(t *testing.T, keys *KeySet) SupabaseConfig {
 // its own sentinel.
 func TestEverySupabaseConstructionRefusalIsReachable(t *testing.T) {
 	keys := keySetOver(t, newRSASigner(t, "rsa-1", 2048))
-	if _, err := NewSupabaseJWT(goodSupabaseConfig(t, keys)); err != nil {
+	built, err := NewSupabaseJWT(goodSupabaseConfig(t, keys))
+	if err != nil {
 		t.Fatalf("precondition: a complete configuration must build, got %v", err)
+	}
+	// 🔴 THE KEY SET IS HELD TWICE AND THE TWO MUST BE ONE OBJECT. `verify.Keys` is the
+	// resolver `Verify` reads; `keys` is the same pointer in its concrete type, so the
+	// refresh methods need no assertion that could fail. Two fields set from one
+	// expression cannot disagree today — this pins that they still cannot, because the
+	// divergence would be silent and its shape is a pod refreshing one key set while
+	// verifying against another. The same defect `the-machine-token-backend-captures-the-authority`
+	// records one package over, at a different seam.
+	if built.keys != keys {
+		t.Fatal("the concrete key set is not the one the config named")
+	}
+	if built.verify.Keys != keyResolver(keys) {
+		t.Fatal("verify.Keys and keys are two different objects — a refresh would maintain one while Verify read the other")
 	}
 
 	for _, arm := range []struct {
@@ -42,16 +56,16 @@ func TestEverySupabaseConstructionRefusalIsReachable(t *testing.T) {
 		{"no authority", func(c *SupabaseConfig) { c.Authority = nil }, ErrNoAuthority},
 		{"no issuer", func(c *SupabaseConfig) { c.Issuer = "" }, ErrSupabaseNoIssuer},
 		{"no audience", func(c *SupabaseConfig) { c.Audience = "" }, ErrSupabaseNoAudience},
-		{"neither a key set nor a secret", func(c *SupabaseConfig) { c.Keys = nil }, ErrSupabaseNoKeys},
-		{
-			// Reachable only because the rung above counts a present-but-short secret as
-			// "something to verify with". Two rungs, two questions.
-			"a symmetric secret below the floor",
-			func(c *SupabaseConfig) { c.Keys = nil; c.Secret = []byte("short") },
-			ErrSupabaseWeakSecret,
-		},
+		{"nothing to verify against", func(c *SupabaseConfig) { c.Keys = nil }, ErrSupabaseNoKeys},
 		{"a leeway wider than MaxLeeway", func(c *SupabaseConfig) { c.Leeway = MaxLeeway + time.Second }, ErrSupabaseLeeway},
 		{"a negative leeway", func(c *SupabaseConfig) { c.Leeway = -time.Second }, ErrSupabaseLeeway},
+		{
+			// A negative MaxAge would be read as zero by `checkClaims`, which means OFF
+			// — a configured bound silently not enforced.
+			"a negative maximum token age",
+			func(c *SupabaseConfig) { c.MaxAge = -time.Second },
+			ErrSupabaseMaxAge,
+		},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			cfg := goodSupabaseConfig(t, keys)

@@ -115,7 +115,7 @@ func TestAnIdentityProviderOutageDoesNotStopAnAlreadyIssuedSession(t *testing.T)
 
 	opts := VerifyOptions{
 		Algs: []Alg{AlgRS256, AlgES256}, Issuer: testIssuer, Audience: testAudience,
-		Keys: resolverPair{keys: set}, Now: fixedNow,
+		Keys: set, Now: fixedNow,
 	}
 	token := s.sign(t, defaultClaims(), nil)
 
@@ -388,7 +388,7 @@ func TestATokenWithNoKidIsRefusedWhenTheSetIsAmbiguous(t *testing.T) {
 	set := keySetOver(t, one)
 	one.kid = ""
 	opts := VerifyOptions{Algs: []Alg{AlgRS256, AlgES256}, Issuer: testIssuer,
-		Audience: testAudience, Keys: resolverPair{keys: set}, Now: fixedNow}
+		Audience: testAudience, Keys: set, Now: fixedNow}
 	if _, err := Verify(one.sign(t, defaultClaims(), nil), opts); err != nil {
 		t.Fatalf("with exactly one candidate key, a token without a kid must verify: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestATokenWithNoKidIsRefusedWhenTheSetIsAmbiguous(t *testing.T) {
 	one.kid = "rsa-1"
 	ambiguous := keySetOver(t, one, two)
 	one.kid = ""
-	opts.Keys = resolverPair{keys: ambiguous}
+	opts.Keys = ambiguous
 	if _, err := Verify(one.sign(t, defaultClaims(), nil), opts); !errors.Is(err, ErrNoKey) {
 		t.Fatalf("with two candidate keys, a token without a kid must be refused, got %v", err)
 	}

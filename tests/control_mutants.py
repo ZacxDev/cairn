@@ -1106,7 +1106,26 @@ MUTANTS: tuple[Mutant, ...] = (
         "and `control.User`'s own comment is the record of why the key is "
         "provider+subject.",
     ),
-    # ---- the JWT verifier: the claims that bound a session ------------------------
+    # ---- the JWT verifier: algorithm confusion, and the claims that bound a session --
+    Mutant(
+        name="the-symmetric-algorithm-refusal-is-removed",
+        path="internal/identity/jws.go",
+        old="\tif symmetricAlg(alg) {",
+        new="\tif false {",
+        killer="TestTheAlgorithmConfusionForgeryIsREFUSED",
+        why="the algorithm-confusion forgery, and the row that reads as EQUIVALENT until "
+        "you look. `alg: HS256` signed with the deployment's own PUBLIC key as the HMAC "
+        "secret is still refused with this gone — measured: an ordinary deployment gets "
+        "`accepts` (nothing puts HS256 in `Algs`) and one that explicitly accepts HS256 "
+        "gets `KeySet.key`'s two-valued `algKeyType` lookup, both `ErrTokenAlg`, both "
+        "fail-closed. What dies with the guard is the refusal's NAME: the token stops "
+        "being refused BECAUSE it is symmetric and starts being refused because nobody "
+        "configured it, which is a property of today's tables rather than a rule. That "
+        "distinction is the whole reason `ErrTokenAlgSymmetric` is a second sentinel "
+        "narrowing `ErrTokenAlg` rather than a second message — and it is what makes a "
+        "one-line re-addition of a symmetric algorithm to `algKeyType` insufficient to "
+        "reopen the hole. Six arms go red, each naming this sentinel.",
+    ),
     Mutant(
         name="exp-is-not-required",
         path="internal/identity/jws.go",
@@ -1143,6 +1162,19 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestEverySupabaseConstructionRefusalIsReachable",
         why="a generous skew allowance is how a revoked session outlives its revocation, "
         "and the value that produces it is one an operator types once and never rereads.",
+    ),
+    Mutant(
+        name="a-negative-max-token-age-is-read-as-OFF",
+        path="internal/identity/supabase.go",
+        old="\tif cfg.MaxAge < 0 {",
+        new="\tif false {",
+        killer="TestEverySupabaseConstructionRefusalIsReachable",
+        extra_killers=("TestAPartiallyConfiguredBackendRefusesToStart",),
+        why="`checkClaims` tests `opts.MaxAge > 0`, so a negative duration is read as "
+        "ZERO and zero means the check is OFF. An operator who wrote "
+        "`CAIRN_SUPABASE_MAX_AGE=-1h` — a sign typo, or a value templated from a "
+        "subtraction — gets a bound they configured and nothing enforcing it, which is "
+        "the shape `envBool` refuses one file over for the same reason.",
     ),
     Mutant(
         name="crit-extensions-are-ignored",
@@ -1251,6 +1283,26 @@ MUTANTS: tuple[Mutant, ...] = (
         "The edit replaces the `default:` arm with a case nothing matches, which is the "
         "shape that COMPILES — deleting the arm leaves `fmt` unused in a function that "
         "must still return, and a mutant that dies at the build proves nothing.",
+    ),
+    Mutant(
+        name="a-retired-setting-is-silently-ignored",
+        path="internal/identity/config.go",
+        old="\tif len(names) == 0 {",
+        new="\tif len(names) >= 0 {",
+        killer="TestAPartiallyConfiguredBackendRefusesToStart",
+        extra_killers=("TestTheEnvironmentLedgersNameEveryVariableEachBackendReads",),
+        why="the INVERSE of `a-partial-proxy-configuration-is-silently-off`, and the "
+        "failure mode a deletion introduces rather than one a half-finished "
+        "configuration does. `anySet` only counts names that are in a ledger, so a "
+        "variable DROPPED from one is invisible to it by construction: an operator whose "
+        "manifest still carries `CAIRN_SUPABASE_JWT_SECRET` gets a pod that comes up "
+        "healthy having silently discarded the line they wrote. "
+        "⚠ THE EDIT IS THE EARLY RETURN, NOT THE `TrimSpace` TEST INSIDE THE LOOP, AND "
+        "THE FIRST DRAFT WAS THE LATTER — which is character-for-character identical to "
+        "`anySet`'s own line, so the harness matched TWICE and reported a HARNESS ERROR "
+        "rather than a result. Mutating the call site is no better: "
+        "`if err := refuseRetiredSettings(env); false {` leaves `err` declared and "
+        "unused, and a mutant that dies at the build proves nothing.",
     ),
     Mutant(
         name="a-secret-may-come-from-two-sources",
