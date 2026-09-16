@@ -40,6 +40,23 @@ jobs:
       - name: install
         run: python3 -m pip install --upgrade pip pytest
 
+      # 🔴 THE PUBLISH WORKFLOW'S GUARDS, PROVED TO GO RED BEFORE THE SUITE IS
+      # BELIEVED. `tests/test_publish_workflow.py` pins three properties of
+      # `.github/workflows/publish-image.yml` that no green run can show — that
+      # no pull-request event reaches a job holding `packages: write`, that every
+      # published tag is immutable, and that the anonymous-pull check is actually
+      # anonymous — and it pins them with regular expressions over a file whose
+      # own comments contain every string those expressions look for. That is the
+      # easiest kind of guard to write so that it can never fail, and one of them
+      # WAS: the `fetch-depth` guard matched the sentence explaining the setting
+      # rather than the setting, and survived a mutant that flipped the real
+      # value. Eight mutants, each required to be killed by the test that NAMES
+      # its property; a kill by any other test is reported MISATTRIBUTED. It runs
+      # BEFORE the suite because a suite green over an inert guard is the thing
+      # it exists to rule out, and it takes about four seconds.
+      - name: prove every publish-workflow guard can go RED (8 mutants)
+        run: python3 tests/publish_workflow_mutants.py
+
       # 🔴 READ THE COLLECTED COUNT, NOT JUST THE EXIT CODE. pytest can collect
       # ZERO tests and exit 0 — an empty suite is indistinguishable from a green
       # one if you only look at the status. The floor makes that impossible.
@@ -134,7 +151,19 @@ jobs:
           # THIS NUMBER: they are a different runner in a different job, and
           # folding them in would make one floor answer two questions. Nor is the
           # PARITY gate: it is its own job with its own floor, for the same reason.
-          FLOOR = 1873
+          # 🔴 1938 MEASURED ON THE PUBLISH-IMAGE BRANCH: 1927 at `83c6ba4` plus the
+          # ELEVEN in `test_publish_workflow.py` — the guards over
+          # `.github/workflows/publish-image.yml` (the trigger-set equality that keeps
+          # a pull request away from `packages: write`, the two-member immutable-tag
+          # ledger, the `--no-creds` requirement on every anonymous-pull check, the
+          # full-sha tag, the negative control, the non-shallow checkout, the
+          # no-third-build-path rule) plus the three controls that make those
+          # measurements rather than claims: the extractors find something, they can
+          # SEE a planted hazard, and an empty file does not read as agreement.
+          #
+          # Measured as the comment above requires — names on the base ref and on HEAD,
+          # one worktree each: base 1927, head 1938, 11 added, 0 removed.
+          FLOOR = 1888
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)

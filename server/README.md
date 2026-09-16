@@ -42,7 +42,7 @@ Replication happens over this API; those tests are untouched.
 |---|---|
 | `server.py` | the HTTP layer. Imports `subsystem_recall`, returns `render_text`/`render_search` verbatim |
 | `Dockerfile` | image, built from the **repo root** as context (the modules live in `lib/`) |
-| `build-push.sh` | build + push to Harbor. Refuses to push if `/data` in the image is non-empty |
+| `build-push.sh` | build + push to a registry the operator names. Refuses to push if `/data` in the image is non-empty. The CI publish (`.github/workflows/publish-image.yml`) is the other route — see *Where the image comes from* |
 | `seed.sh` | `rsync` the local store into a stage, optionally `tar`-push it into the pod. Never writes to the source |
 | `verify-byte-identity.sh` | the phase-1 acceptance comparator, per scope: the `mode=list` render (index rows as a **sorted set**), the entry **set** by `comm`, then **each entry's** own single-ref render |
 
@@ -399,10 +399,64 @@ behaviour. **END OF RESIDUAL LEDGER.**
 **no** kind check, so it still hangs on a fifo. Unguarded by ruling, not by
 oversight: it is CLI-only and nothing in `server.py` imports `subsystem_touch`.
 
+## Where the image comes from
+
+There are two ways to get one, and they answer different questions.
+
+| | `server/build-push.sh` | `.github/workflows/publish-image.yml` |
+|---|---|---|
+| runs | by hand, on an operator's machine | on every push to `main`, and on every tag |
+| builds | `server/Dockerfile` via `docker build` | `packages.server-image` via `nix build` |
+| pushes to | whatever `$CAIRN_REGISTRY` names — no default | `ghcr.io/<owner>/cairn-store`, public |
+| tag | an argument you supply | `sha-<40-hex commit sha>`; plus a bare semver on a tag push |
+| who can pull it | whoever can reach that registry | anyone, with no credential |
+
+🔴 **The two builds are pinned against each other** by
+`tests/test_flake_image_matches_dockerfile.py` — env, port, uid and entrypoint
+are stated in both files and neither can move alone. Do not add a third way to
+produce this pod: a third statement of the runtime contract would be outside that
+pin, and it would be the one that actually ships.
+
+⚠ **They are not interchangeable in one respect.** The Dockerfile image is
+`python:3.12-slim` and has `python3` on its `PATH`; the flake image's `PATH` is
+`/bin` and holds busybox alone, with the interpreter named as an absolute store
+path in `Cmd`. So `docker run <image> python3 …` works against one and not the
+other. Read the interpreter out of the image when you need it:
+`docker inspect -f '{{index .Config.Cmd 0}}' <image>`.
+
+⚠ **x86_64 only.** The workflow publishes `packages.x86_64-linux.server-image`.
+The flake also builds `aarch64-linux`, but cross-building it on the runner would
+need emulation, so an arm64 node cannot pull the published tag today.
+
+### Pulling it from a second cluster
+
+```bash
+# the published reference — the tag is the commit, so it cannot move
+skopeo inspect --no-creds docker://ghcr.io/<owner>/cairn-store:sha-<40-hex sha>
+```
+
+🔴 **A ghcr package is PRIVATE on first publish, and GitHub exposes no REST route
+to change that.** The workflow's last step is an anonymous `skopeo inspect
+--no-creds` against the tag it just pushed, so a private package fails the run
+loudly instead of surfacing as `ImagePullBackOff` in somebody else's cluster
+hours later. It is a **one-time manual step, per package**:
+
+> `https://github.com/users/<owner>/packages/container/cairn-store/settings`
+> → Danger Zone → Change visibility → Public
+
+After that every later publish inherits the package's visibility and the step
+stays green on its own.
+
+🔴 **There is no `latest` and there will not be one.** `build-push.sh` states the
+reason in its own header — *"a `:latest` default is how a mutable tag gets
+clobbered by a concurrent build and a pod silently restarts on somebody else's
+code"* — and a consumer asked to pin "the same tag" as another cluster needs one
+whose contents cannot change underneath it.
+
 ## Operating it
 
 ```bash
-# build + push (immutable tag, no default)
+# build + push to a registry YOU name (immutable tag, no default)
 server/build-push.sh 0.1.0
 
 # seed the pod from the local store (source is read-only)
