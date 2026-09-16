@@ -111,24 +111,6 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## Defects (batched)
 Fix as one round; closing one buys room for one rank.
-- 🔴 **P4's two new backends are INERT in every deployment that can exist today** — not
-  untested, *unable to authenticate anybody*. Verified from the code on
-  `feat/identity-interface`: `tokenfile.Source` is the only authority any binary wires (no
-  binary constructs a `control.FileStore`); it synthesizes one user at provider
-  `cairn-token-file` / subject `operator`, so `SupabaseJWT`'s default provider `supabase`
-  can never match `UserByProviderSubject`; and it emits **zero** `EventMemberSet` with all
-  three grant sites at `SubjectKind: control.KindProject`, so even a `TrustedHeader` aimed
-  at that provider and subject resolves to an **empty `Authorization`**. An operator who
-  follows `internal/identity/README.md` gets a pod that fetches its JWKS, starts clean,
-  satisfies the partial-configuration ledger, passes its health check — and refuses every
-  sign-in. 🔴 **Do NOT close it by having a backend create users on the fly**; that is
-  self-serve signup and it is P6's, with quotas and abuse handling attached. Written up in
-  `internal/identity/README.md` under "BOTH NEW BACKENDS ARE INERT…".
-  **Closing condition:** a user-creation path over a journal-backed `control.Store` lands
-  (P5 or P6), AND a test in `internal/identity` authenticates a Supabase or trusted-header
-  session end-to-end against an authority built that way, asserting a NON-EMPTY
-  `Authorization` — the empty one is what a green would otherwise be. Mechanical: that
-  test exists and `go test ./internal/identity/` passes with it.
 - ✅ **CLOSED this session: the `AGENTS.md` byte-budget defect** (#32). The server section
   relocated and `MAX_BYTES` was **lowered** 37,700 → 31,850, which was the closing
   condition as written. ⚠ Margin is 202 B, not comfort: the ceiling was lowered to keep the
@@ -150,6 +132,24 @@ Fix as one round; closing one buys room for one rank.
   open): `lib/cairn_doctor.py` claims "2,016 bytes" for a HOME-length-dependent value;
   `cairn:337` cites `server.py:422` for `sole_header`, which is at `server/server.py:1409`;
   and the ledger's vacuity-control prose names the wrong guard.
+- 🔴 **P4's two new backends are INERT in every deployment that can exist today** — not
+  untested, *unable to authenticate anybody*. Verified from the code on
+  `feat/identity-interface`: `tokenfile.Source` is the only authority any binary wires (no
+  binary constructs a `control.FileStore`); it synthesizes one user at provider
+  `cairn-token-file` / subject `operator`, so `SupabaseJWT`'s default provider `supabase`
+  can never match `UserByProviderSubject`; and it emits **zero** `EventMemberSet` with all
+  three grant sites at `SubjectKind: control.KindProject`, so even a `TrustedHeader` aimed
+  at that provider and subject resolves to an **empty `Authorization`**. An operator who
+  follows `internal/identity/README.md` gets a pod that fetches its JWKS, starts clean,
+  satisfies the partial-configuration ledger, passes its health check — and refuses every
+  sign-in. 🔴 **Do NOT close it by having a backend create users on the fly**; that is
+  self-serve signup and it is P6's, with quotas and abuse handling attached. Written up in
+  `internal/identity/README.md` under "BOTH NEW BACKENDS ARE INERT…".
+  **Closing condition:** a user-creation path over a journal-backed `control.Store` lands
+  (P5 or P6), AND a test in `internal/identity` authenticates a Supabase or trusted-header
+  session end-to-end against an authority built that way, asserting a NON-EMPTY
+  `Authorization` — the empty one is what a green would otherwise be. Mechanical: that
+  test exists and `go test ./internal/identity/` passes with it.
 - **Go/oracle divergences deferred with closing conditions in code**: `NaN`/`Infinity`,
   the `text`-field surrogate message, the `actor`-key 400-vs-200 residual, and
   `?page=<21 digits>`.
