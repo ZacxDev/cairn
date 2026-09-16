@@ -1031,7 +1031,15 @@ def run_tests(tree: Path) -> tuple[bool, set[str], str]:
     which is reported as its own outcome rather than silently scored as a kill.
     """
     proc = subprocess.run(
-        ["go", "test", "-count=1", "-v", *PKGS],
+        # 🔴 `-timeout=2m`, NOT THE 10m DEFAULT, BECAUSE A MUTANT CAN DEADLOCK RATHER
+        # THAN FAIL. `TestAWriteDoesNotCommitOverAnAttemptThatSTARTEDAfterIt` re-enters
+        # `Cache.refresh` from inside `CacheOptions.Now`, which is only safe because
+        # `clock()` is read OUTSIDE `c.mu` at all three of its call sites. A mutation
+        # that moves any one of them below `c.mu.Lock()` deadlocks on a non-reentrant
+        # `sync.Mutex` — the mutant is still KILLED, but at the default it costs ten
+        # minutes of wall clock per occurrence instead of two, in a battery this job
+        # runs on every push. The shortest real package here finishes in seconds.
+        ["go", "test", "-count=1", "-timeout=2m", "-v", *PKGS],
         cwd=tree,
         capture_output=True,
         text=True,
