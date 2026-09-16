@@ -69,10 +69,6 @@ func TestACorrectAsymmetricTokenVerifies(t *testing.T) {
 // the primitive computes HMAC over the signing input with a "secret" the attacker also
 // has, and the signature matches. Every claim in the token is then whatever they wrote.
 //
-// 🔴 AND THE ARM IS BUILT FROM THE REAL PUBLIC KEY, NOT A PLACEHOLDER. A test that
-// forged with random bytes would pass against a verifier that has the hole, because the
-// HMAC would not match anyway — measuring the wrong thing while looking identical.
-//
 // 🔴 ONE RULE WITH ONE ARM, AND THAT IS WHAT THE SYMMETRIC DELETION BOUGHT. This test
 // used to need TWO deployments because the JWKS-only one did not reach the guard: with
 // HS256 absent from `Algs`, `accepts` refused before any key resolved, so the arm passed
@@ -82,11 +78,12 @@ func TestACorrectAsymmetricTokenVerifies(t *testing.T) {
 // `symmetricAlg` runs AHEAD of `accepts`, so every arm below reaches it.
 //
 // 🔴 EACH ARM ASSERTS `ErrTokenAlgSymmetric`, NOT MERELY "AN ERROR HAPPENED", BECAUSE
-// THE TOKEN IS REFUSED FOUR TIMES OVER AND ONLY ONE OF THOSE IS THE GUARD. Remove
-// `symmetricAlg`'s call site and `accepts` refuses the same token with a bare
-// `ErrTokenAlg` — a test that accepted any refusal would stay green and measure nothing,
-// which is the vacuous shape the two-arm version above was. Watched to fail: with the
-// `if symmetricAlg(alg)` block deleted, every arm here goes red naming this sentinel.
+// THE TOKEN IS REFUSED MORE THAN ONCE AND ONLY ONE OF THOSE REFUSALS IS THE GUARD.
+// Measured with the call site deleted: `accepts` refuses the first two arms and
+// `KeySet.key`'s `algKeyType` lookup refuses the rest, both with a bare `ErrTokenAlg`.
+// A test that accepted any refusal would stay green and measure nothing — the vacuous
+// shape the two-arm version above was. Watched to fail: with the `if symmetricAlg(alg)`
+// block deleted, all six arms go red naming this sentinel.
 func TestTheAlgorithmConfusionForgeryIsREFUSED(t *testing.T) {
 	rsaSigner := newRSASigner(t, "rsa-1", 2048)
 	ecSigner := newECSigner(t, "ec-1")
@@ -180,9 +177,9 @@ func TestTheAlgorithmConfusionForgeryIsREFUSED(t *testing.T) {
 			if err == nil {
 				t.Fatalf("ALGORITHM CONFUSION: a token whose header says %s, signed with this deployment's own PUBLIC key as the HMAC secret, verified. Anybody who can fetch the JWKS can now be any user in this control plane", arm.alg)
 			}
-			// 🔴 THE SPECIFIC SENTINEL. `accepts`, `KeySet.key` and `hashFor` each
-			// refuse this token too, all with a bare ErrTokenAlg; accepting any of
-			// those here would make the guard's removal invisible.
+			// 🔴 THE SPECIFIC SENTINEL. `accepts` and `KeySet.key` refuse this token
+			// too, both with a bare ErrTokenAlg; accepting either here would make the
+			// guard's removal invisible.
 			if !errors.Is(err, ErrTokenAlgSymmetric) {
 				t.Fatalf("refused, but NOT by the unconditional symmetric-algorithm guard — so that guard is either gone or unreachable.\n  got:  %v\n  want: %v", err, ErrTokenAlgSymmetric)
 			}
