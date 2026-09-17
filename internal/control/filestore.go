@@ -112,11 +112,22 @@ func (s *FileStore) now() time.Time {
 // the cached projection afterwards.
 //
 // ⚠ THE CACHE IS PROCESS-LOCAL AND IS INVALIDATED ONLY BY THIS PROCESS'S OWN
-// APPENDS. A journal written by a DIFFERENT process is not noticed. That is correct
-// for the deployed shape — one pod owns the file — and it is the precise reason
-// `Reload` exists and is wired to SIGHUP: an operator editing the journal out of
-// band has a defined way to make the process see it, which is the same muscle
-// memory the token file already trained.
+// APPENDS. A journal written by a DIFFERENT process is not noticed, which is the
+// precise reason `Reload` exists.
+//
+// 🔴 AND THE DEPLOYED SHAPE HAS TWO PROCESSES, SO THE POD DOES NOT READ THROUGH THIS
+// METHOD AT ALL — THIS COMMENT SAID OTHERWISE AND WAS WRONG IN THE DIRECTION THAT
+// MATTERS. It read "correct for the deployed shape — one pod owns the file — and …
+// `Reload` … is wired to SIGHUP", and at the time NO binary constructed a `FileStore`,
+// so nothing was wired to anything. What is true now: `cairn-server -create-user`
+// appends from a SEPARATE process (`kubectl exec`), so the pod builds its `control.Cache`
+// over `ReloadingSource`, whose `Model` calls `Reload` on every refresh. SIGHUP is a
+// trigger for that cache as well as the timer — the muscle memory the token file
+// trained — but it is no longer the only thing that closes the window, and it never
+// was the thing that did.
+//
+// A caller that genuinely owns the file — the provisioning command, which appends and
+// then exits — still reads through here, and for it the cached projection is correct.
 func (s *FileStore) Model(ctx context.Context) (Model, error) {
 	s.mu.RLock()
 	if s.loaded {

@@ -21,7 +21,7 @@ import (
 // that makes "a deployment with no Supabase and no proxy config behaves byte-identically
 // to today" a property rather than a promise.
 func TestNothingConfiguredIsMachineTokenOnly(t *testing.T) {
-	chain, supabase, err := FromEnvironment(map[string]string{}, newTestAuthority(t))
+	chain, supabase, err := FromEnvironment(map[string]string{}, newTestAuthority(t), nil)
 	if err != nil {
 		t.Fatalf("an empty environment must yield the default chain: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestNothingConfiguredIsMachineTokenOnly(t *testing.T) {
 	// trigger is this package's own ledgers, not "some environment exists".
 	chain, _, err = FromEnvironment(map[string]string{
 		"SUBSYSTEM_STORE_ROOT": "/data", "PATH": "/bin", "HOME": "/root",
-	}, newTestAuthority(t))
+	}, newTestAuthority(t), nil)
 	if err != nil || len(chain) != 1 {
 		t.Fatalf("unrelated variables changed the chain: %v / %d", err, len(chain))
 	}
@@ -148,7 +148,7 @@ func TestAPartiallyConfiguredBackendRefusesToStart(t *testing.T) {
 		},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
-			_, _, err := FromEnvironment(arm.env, newTestAuthority(t))
+			_, _, err := FromEnvironment(arm.env, newTestAuthority(t), nil)
 			if err == nil {
 				t.Fatal("a partial configuration came up quietly rather than refusing")
 			}
@@ -188,7 +188,7 @@ func TestAFullyConfiguredEnvironmentBuildsTheWholeChain(t *testing.T) {
 		EnvProxySecret:        string(testProxySecret),
 		EnvProxyProvider:      testProvider,
 		EnvProxyPeers:         "192.0.2.10/32",
-	}, newTestAuthority(t))
+	}, newTestAuthority(t), nil)
 	if err != nil {
 		t.Fatalf("a complete configuration must build: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestAnUnrecognisedBooleanIsAnErrorRatherThanFalse(t *testing.T) {
 		EnvProxySubjectHeader: "X-Forwarded-User",
 		EnvProxySecret:        string(testProxySecret),
 		EnvProxyProvider:      testProvider,
-	}, newTestAuthority(t))
+	}, newTestAuthority(t), nil)
 	if err == nil {
 		t.Fatal("a misspelled boolean was read as `no`, silently disabling the backend the operator configured")
 	}
@@ -347,7 +347,7 @@ func TestAnEmptySecretFileBlamesItselfRatherThanTheSourceCheck(t *testing.T) {
 		EnvProxySubjectHeader: "X-Forwarded-User",
 		EnvProxyProvider:      testProvider,
 		EnvProxySecretFile:    empty,
-	}, newTestAuthority(t))
+	}, newTestAuthority(t), nil)
 	if err == nil {
 		t.Fatal("an empty secret file came up quietly through FromEnvironment")
 	}
@@ -374,7 +374,7 @@ func TestAnEmptySecretFileBlamesItselfRatherThanTheSourceCheck(t *testing.T) {
 // policy is what answers, is `TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt`.
 func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 	// The measured case first, by itself, so the arm that reproduced the defect is named.
-	_, _, err := FromEnvironment(map[string]string{EnvProxySecret: "   "}, newTestAuthority(t))
+	_, _, err := FromEnvironment(map[string]string{EnvProxySecret: "   "}, newTestAuthority(t), nil)
 	if !errors.Is(err, ErrBlankSetting) {
 		t.Fatalf("a whitespace-only shared secret was read as unset.\n  got:  %v\n  want: %v", err, ErrBlankSetting)
 	}
@@ -388,7 +388,7 @@ func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 	for _, name := range everyName {
 		t.Run("blank/"+name, func(t *testing.T) {
 			for _, blank := range []string{" ", "\t", "\n", "\r\n", " \t \n "} {
-				_, _, err := FromEnvironment(map[string]string{name: blank}, newTestAuthority(t))
+				_, _, err := FromEnvironment(map[string]string{name: blank}, newTestAuthority(t), nil)
 				if !errors.Is(err, ErrBlankSetting) {
 					t.Fatalf("%s=%q was read as unset: %v", name, blank, err)
 				}
@@ -403,7 +403,7 @@ func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 	// ABSENT VARIABLE MUST BEHAVE EXACTLY AS IT DID. "Nothing set is machine-token only" is
 	// this package's whole compatibility claim, and a blank check that fired on an absent
 	// name would refuse every deployment that exists today.
-	chain, supabase, err := FromEnvironment(map[string]string{}, newTestAuthority(t))
+	chain, supabase, err := FromEnvironment(map[string]string{}, newTestAuthority(t), nil)
 	if err != nil || len(chain) != 1 || supabase != nil {
 		t.Fatalf("an empty environment stopped being machine-token only: %v / %d / %v", err, len(chain), supabase)
 	}
@@ -414,7 +414,7 @@ func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 	// it is not made here.
 	for _, name := range everyName {
 		t.Run("empty/"+name, func(t *testing.T) {
-			chain, _, err := FromEnvironment(map[string]string{name: ""}, newTestAuthority(t))
+			chain, _, err := FromEnvironment(map[string]string{name: ""}, newTestAuthority(t), nil)
 			if err != nil {
 				t.Fatalf("%s set to the empty string became a refusal — that is a behaviour change "+
 					"this guard deliberately does not make: %v", name, err)
@@ -429,7 +429,7 @@ func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 	// whitespace is not this package's business, and a guard that refused it would be
 	// refusing on "some environment exists" — the trigger `TestNothingConfiguredIsMachineTokenOnly`
 	// already names as the wrong one.
-	chain, _, err = FromEnvironment(map[string]string{"SUBSYSTEM_STORE_ROOT": "   ", "PATH": " "}, newTestAuthority(t))
+	chain, _, err = FromEnvironment(map[string]string{"SUBSYSTEM_STORE_ROOT": "   ", "PATH": " "}, newTestAuthority(t), nil)
 	if err != nil || len(chain) != 1 {
 		t.Fatalf("an unrelated whitespace-only variable was refused: %v / %d", err, len(chain))
 	}
@@ -550,7 +550,7 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 	} {
 		covered = append(covered, arm.blank)
 		t.Run(arm.name, func(t *testing.T) {
-			chain, supabase, err := FromEnvironment(arm.env, newTestAuthority(t))
+			chain, supabase, err := FromEnvironment(arm.env, newTestAuthority(t), nil)
 			if err != nil {
 				t.Fatalf("a blank OPTIONAL setting beside an armed backend was refused, which is a "+
 					"deployment that worked before the guard existed:\n  %v", err)
@@ -569,7 +569,7 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 					absent[k] = v
 				}
 			}
-			chainAbsent, supabaseAbsent, errAbsent := FromEnvironment(absent, newTestAuthority(t))
+			chainAbsent, supabaseAbsent, errAbsent := FromEnvironment(absent, newTestAuthority(t), nil)
 			if errAbsent != nil || len(chainAbsent) != len(chain) {
 				t.Fatalf("the same environment WITHOUT %s behaved differently: %v / %d", arm.blank, errAbsent, len(chainAbsent))
 			}
@@ -594,7 +594,7 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 	// blank secret, so the trusted-header backend IS silently off and the refusal's own
 	// sentence is true for it. A narrowing that asked "is any backend armed" would accept
 	// this, which is the measured defect back again one ledger over.
-	_, _, err := FromEnvironment(with(armedSupabase(), EnvProxySecret, "   "), newTestAuthority(t))
+	_, _, err := FromEnvironment(with(armedSupabase(), EnvProxySecret, "   "), newTestAuthority(t), nil)
 	if !errors.Is(err, ErrBlankSetting) {
 		t.Fatalf("a blank proxy secret beside an armed SUPABASE backend was accepted — the trusted-header "+
 			"backend is silently off.\n  got:  %v\n  want: %v", err, ErrBlankSetting)
@@ -942,7 +942,7 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 				if present {
 					env[arm.setting] = value
 				}
-				return FromEnvironment(env, newTestAuthority(t))
+				return FromEnvironment(env, newTestAuthority(t), nil)
 			}
 
 			// 1. THE POSITIVE CONTROL ON THE PROBE — the value an operator writes.
@@ -1035,7 +1035,7 @@ func TestARetiredSettingHoldingOnlyWhitespaceIsStillRefused(t *testing.T) {
 	}
 	for name := range retiredEnv {
 		for _, blank := range []string{" ", "   ", "\t", "\n", "\r\n", " \t \n "} {
-			_, _, err := FromEnvironment(map[string]string{name: blank}, newTestAuthority(t))
+			_, _, err := FromEnvironment(map[string]string{name: blank}, newTestAuthority(t), nil)
 			if !errors.Is(err, ErrRetiredSetting) {
 				t.Fatalf("%s=%q was silently discarded rather than refused.\n  got:  %v\n  want: %v",
 					name, blank, err, ErrRetiredSetting)
@@ -1049,7 +1049,7 @@ func TestARetiredSettingHoldingOnlyWhitespaceIsStillRefused(t *testing.T) {
 		// present with the EMPTY string carries no value to discard, and a manifest that
 		// emits every variable with an empty default is the shape that would be refused
 		// by widening this any further.
-		chain, _, err := FromEnvironment(map[string]string{name: ""}, newTestAuthority(t))
+		chain, _, err := FromEnvironment(map[string]string{name: ""}, newTestAuthority(t), nil)
 		if err != nil {
 			t.Fatalf("%s set to the EMPTY string became a refusal — a wider change than the "+
 				"discard measured above: %v", name, err)
@@ -1188,7 +1188,7 @@ func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 		}
 		// Each retired name must actually reach the refusal: a map entry nothing reads
 		// is the decorative shape this file's ledgers exist to refuse.
-		_, _, err := FromEnvironment(map[string]string{name: "x"}, newTestAuthority(t))
+		_, _, err := FromEnvironment(map[string]string{name: "x"}, newTestAuthority(t), nil)
 		if !errors.Is(err, ErrRetiredSetting) {
 			t.Fatalf("%s is listed as retired and setting it did not refuse: %v", name, err)
 		}
@@ -1204,7 +1204,7 @@ func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 	// decorative.
 	for _, name := range known {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := FromEnvironment(map[string]string{name: "x"}, newTestAuthority(t)); err == nil {
+			if _, _, err := FromEnvironment(map[string]string{name: "x"}, newTestAuthority(t), nil); err == nil {
 				t.Fatalf("%s set alone was IGNORED — the backend it belongs to is silently off", name)
 			}
 		})
@@ -1589,7 +1589,7 @@ func TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt(t *testing.T) {
 				// unusable peer entry); only THIS sentinel is the wrong answer.
 				control := armedEnv()
 				control[s.name] = "zzz-not-blank"
-				if _, _, err := FromEnvironment(control, newTestAuthority(t)); errors.Is(err, ErrBlankSetting) {
+				if _, _, err := FromEnvironment(control, newTestAuthority(t), nil); errors.Is(err, ErrBlankSetting) {
 					t.Fatalf("%s=%q was called blank, so the refusals below are not attributable to "+
 						"blankness: %v", s.name, "zzz-not-blank", err)
 				}
@@ -1599,7 +1599,7 @@ func TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt(t *testing.T) {
 					// A. BESIDE AN ARMED BACKEND — the setting's own declared policy.
 					env := armedEnv()
 					env[s.name] = blank
-					_, _, err := FromEnvironment(env, newTestAuthority(t))
+					_, _, err := FromEnvironment(env, newTestAuthority(t), nil)
 					armedCases++
 					switch s.policy {
 					case refuseBlank:
@@ -1654,7 +1654,7 @@ func TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt(t *testing.T) {
 					// B. ALONE — nothing armed the ledger, so the backend really would be
 					// silently off and EVERY policy refuses. This is the half the
 					// per-setting policy deliberately does not reach.
-					_, _, err = FromEnvironment(map[string]string{s.name: blank}, newTestAuthority(t))
+					_, _, err = FromEnvironment(map[string]string{s.name: blank}, newTestAuthority(t), nil)
 					unarmedCases++
 					if !errors.Is(err, ErrBlankSetting) {
 						t.Fatalf("%s=%q set ALONE was not refused as blank. Nothing else arms the %s ledger, "+
@@ -1798,7 +1798,7 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.
 
 	// The whitespace is INSIDE the value and must survive byte for byte, padding included.
 	padded := "  " + string(testProxySecret) + " \t "
-	chain, _, err := FromEnvironment(armed(padded), newTestAuthority(t))
+	chain, _, err := FromEnvironment(armed(padded), newTestAuthority(t), nil)
 	if err != nil {
 		t.Fatalf("a secret with edge whitespace was refused: %v", err)
 	}
@@ -1812,7 +1812,7 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.
 	// too, so the arm is about the padding rather than about a reader that echoes its
 	// input. `padded` and this value are distinct strings, so a reader hardwired to either
 	// fails one of the two.
-	chain, _, err = FromEnvironment(armed(string(testProxySecret)), newTestAuthority(t))
+	chain, _, err = FromEnvironment(armed(string(testProxySecret)), newTestAuthority(t), nil)
 	if err != nil {
 		t.Fatalf("an ordinary secret was refused: %v", err)
 	}
@@ -1844,7 +1844,7 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.
 		string(testProxySecret[:8]) + "\u200b" + string(testProxySecret[8:]),
 		"  " + string(testProxySecret) + "\u00a0\u200b ",
 	} {
-		chain, _, err := FromEnvironment(armed(secret), newTestAuthority(t))
+		chain, _, err := FromEnvironment(armed(secret), newTestAuthority(t), nil)
 		if err != nil {
 			t.Fatalf("a secret carrying real content plus an invisible rune was refused, which is a "+
 				"deployment that worked before the content test was widened.\n  secret: %q\n  got: %v",
@@ -1869,7 +1869,7 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.
 	for _, n := range []int{1, 2, MinProxySecretBytes - 1, MinProxySecretBytes, MinProxySecretBytes + 8, 200} {
 		for _, r := range []string{" ", "\t", "\n", "\u00a0", "\u200b", "\u2060", "\ufeff"} {
 			secret := strings.Repeat(r, n)
-			_, _, err := FromEnvironment(armed(secret), newTestAuthority(t))
+			_, _, err := FromEnvironment(armed(secret), newTestAuthority(t), nil)
 			if !errors.Is(err, ErrBlankSetting) {
 				t.Fatalf("a secret of %d %+q was not refused as blank — the length floor is a LENGTH test "+
 					"and cannot say this is not a secret.\n  got: %v", n, r, err)
@@ -1940,7 +1940,7 @@ func TestAZeroWidthSecretCannotBecomeASourceCheckAStrangerCanClear(t *testing.T)
 	}
 
 	// 1. THE PROBE CAN REPORT REFUSED — a real secret admits nobody who guesses.
-	chain, _, err := FromEnvironment(armedBySecretAlone(string(testProxySecret)), newTestAuthority(t))
+	chain, _, err := FromEnvironment(armedBySecretAlone(string(testProxySecret)), newTestAuthority(t), nil)
 	if err != nil {
 		t.Fatalf("precondition: a deployment armed by a real shared secret alone must build: %v", err)
 	}
@@ -1959,7 +1959,7 @@ func TestAZeroWidthSecretCannotBecomeASourceCheckAStrangerCanClear(t *testing.T)
 	// is the reassuring-zero control: without it, "no guess got in" above is what a probe
 	// wired to nothing also reports.
 	guessable := strings.Repeat("a", MinProxySecretBytes)
-	chain, _, err = FromEnvironment(armedBySecretAlone(guessable), newTestAuthority(t))
+	chain, _, err = FromEnvironment(armedBySecretAlone(guessable), newTestAuthority(t), nil)
 	if err != nil {
 		t.Fatalf("precondition: a low-entropy but non-blank secret must still build — the fix is a "+
 			"CONTENT test, not an entropy test: %v", err)
@@ -1971,7 +1971,7 @@ func TestAZeroWidthSecretCannotBecomeASourceCheckAStrangerCanClear(t *testing.T)
 
 	// 3. THE HAZARD. Either the line is refused by name, or no stranger can clear the rung.
 	for _, secret := range guesses {
-		chain, _, err := FromEnvironment(armedBySecretAlone(secret), newTestAuthority(t))
+		chain, _, err := FromEnvironment(armedBySecretAlone(secret), newTestAuthority(t), nil)
 		if err != nil {
 			if !errors.Is(err, ErrBlankSetting) {
 				t.Fatalf("%s=%+q was refused by some OTHER guard, which is a refusal this test "+
@@ -2022,7 +2022,7 @@ func TestEveryBlankSettingIsNamedInOneRefusal(t *testing.T) {
 		EnvSupabaseMaxAge:         "\t",
 		EnvProxyRequireClientCert: "\n",
 	}
-	_, _, err := FromEnvironment(env, newTestAuthority(t))
+	_, _, err := FromEnvironment(env, newTestAuthority(t), nil)
 	if !errors.Is(err, ErrBlankSetting) {
 		t.Fatalf("three blank settings beside two armed backends were not refused: %v", err)
 	}
@@ -2052,7 +2052,7 @@ func TestEveryBlankSettingIsNamedInOneRefusal(t *testing.T) {
 	// (see its comment) because a sort was the shape every test passed with deleted.
 	first := err.Error()
 	for i := 0; i < 8; i++ {
-		_, _, again := FromEnvironment(env, newTestAuthority(t))
+		_, _, again := FromEnvironment(env, newTestAuthority(t), nil)
 		if again.Error() != first {
 			t.Fatalf("the refusal is not stable across runs — map iteration order reaches the message:\n  %s\n  %s",
 				first, again.Error())
@@ -2102,7 +2102,7 @@ func TestThePeerListIsSplitTheSameWayItsBlankTestSplitsIt(t *testing.T) {
 		" 192.0.2.10/32 , 198.51.100.0/24 ",
 	} {
 		t.Run(strconv.Quote(spelling), func(t *testing.T) {
-			chain, _, err := FromEnvironment(armed(spelling), newTestAuthority(t))
+			chain, _, err := FromEnvironment(armed(spelling), newTestAuthority(t), nil)
 			if err != nil {
 				t.Fatalf("a two-entry peer list written as %q was refused: %v", spelling, err)
 			}

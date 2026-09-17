@@ -248,6 +248,25 @@ func carriesContent(r rune) bool {
 	return unicode.IsGraphic(r) && !unicode.IsSpace(r)
 }
 
+// ValueReducesToNothing is the content limb of `reducesToNothing`, exported for a setting
+// that is read OUTSIDE this package.
+//
+// 🔴 EXPORTED RATHER THAN RE-SPELLED, BECAUSE THIS FILE'S WHOLE HISTORY IS ONE PREDICATE
+// OPEN-CODED AT N SITES AND WRONG AT N−1 OF THEM. `cmd/cairn-server` reads
+// `CAIRN_CONTROL_JOURNAL`, which does not belong to a backend ledger (a ledger's `armed`
+// question is "is this BACKEND half-configured", and a journal path is not a backend —
+// and the gate requires a ledger to hold at least two settings, which would mean
+// inventing a second one). It still has to answer "what does a value that reduces to
+// nothing mean", and answering it with a fresh `strings.TrimSpace` there would reproduce
+// the measured bypass this predicate exists for: 32 zero-width runes are not whitespace,
+// and `TrimSpace` calls them content.
+//
+// ⚠ IT IS THE CONTENT LIMB ONLY. The LIST half of `reducesToNothing` is per-setting — it
+// needs that setting's own split function — and a caller with no declared split gets
+// exactly what `setting{fields: nil}` gets. A path is not a list, so there is nothing
+// here for the second limb to say.
+func ValueReducesToNothing(raw string) bool { return setting{}.reducesToNothing(raw) }
+
 // value is what the reader gets for a raw string this setting does NOT reduce to nothing.
 func (s setting) value(raw string) string {
 	if s.keepWhitespace {
@@ -667,10 +686,26 @@ func refuseBlanks(faults []blankFault) error {
 // ledger — it is never a backend with nothing to refresh, because rung 3 of
 // `NewSupabaseJWT` refuses one, and never nil while a Supabase variable holds a real value,
 // because such a value is exactly what arms the ledger.
+//
+// 🔴 `sessions` IS THE AUTHORITY THE *SESSION* BACKENDS RESOLVE AGAINST, AND nil MEANS
+// "THE SAME ONE THE MACHINE TOKEN USES", WHICH IS EXACTLY TODAY'S WIRING. It exists
+// because the two kinds of principal come from two different places: a machine token is a
+// row in the file `authority` projects, while a Supabase or proxy session is a USER that
+// only a journal-backed `control.Store` can hold. Until this parameter existed the
+// session backends had no choice but to resolve against the token-file projection, which
+// mints one synthetic user at provider `cairn-token-file` and grants only project
+// subjects — so a Supabase deployment's `UserByProviderSubject` could never match, and a
+// trusted-header deployment aimed at that one pair resolved to an EMPTY `Authorization`.
+// Both backends were inert in every deployment that could exist.
+//
+// 🔴 AND A `sessions` NOBODY READS IS A REFUSAL, NOT A NO-OP. See
+// `ErrSessionAuthorityUnread`: a journal configured with no session backend to resolve
+// against it authorises nobody through it, and that is the "came up healthy and answers
+// nothing" shape every ledger in this file exists to refuse.
 func FromEnvironment(env map[string]string, authority interface {
 	TokenAuthority
 	ModelSource
-}) (Chain, *SupabaseJWT, error) {
+}, sessions ModelSource) (Chain, *SupabaseJWT, error) {
 	// 🔴 BEFORE EVERYTHING, AND UNCONDITIONALLY. A retired name arms nothing, so checking
 	// it inside a backend's own branch would only fire for deployments that had ALSO
 	// set a live variable — which is precisely the deployment that gets a loud refusal
@@ -695,9 +730,18 @@ func FromEnvironment(env map[string]string, authority interface {
 		return nil, nil, err
 	}
 
+	// 🔴 THE FALLBACK IS HERE, ONCE, RATHER THAN AT EACH CONSTRUCTOR. Both session
+	// backends must resolve against the SAME authority — one of them reading the journal
+	// while the other read the token-file projection would mean a user who can sign in
+	// through the proxy and not through the IdP, with no error anywhere to say why.
+	sessionAuthority := sessions
+	if sessionAuthority == nil {
+		sessionAuthority = authority
+	}
+
 	var supabase *SupabaseJWT
 	if supabaseArmed {
-		supabase, err = supabaseFromEnv(supabaseValues, authority)
+		supabase, err = supabaseFromEnv(supabaseValues, sessionAuthority)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -705,10 +749,19 @@ func FromEnvironment(env map[string]string, authority interface {
 
 	var trusted *TrustedHeader
 	if proxyArmed {
-		trusted, err = trustedHeaderFromEnv(proxyValues, authority)
+		trusted, err = trustedHeaderFromEnv(proxyValues, sessionAuthority)
 		if err != nil {
 			return nil, nil, err
 		}
+	}
+
+	// 🔴 AFTER THE CONSTRUCTORS, SO THE QUESTION IS "DID A SESSION BACKEND GET BUILT"
+	// RATHER THAN "DID A LEDGER LOOK ARMED". The two differ on the configuration that
+	// arms a ledger and then fails its own construction: that path already refuses above,
+	// and asking the armed flags here instead would make this refusal shadow the specific
+	// one an operator needs.
+	if sessions != nil && supabase == nil && trusted == nil {
+		return nil, nil, ErrSessionAuthorityUnread
 	}
 
 	chain, err := Backends(machine, supabase, trusted)
@@ -717,6 +770,26 @@ func FromEnvironment(env map[string]string, authority interface {
 	}
 	return chain, supabase, nil
 }
+
+// ErrSessionAuthorityUnread refuses a session authority that no backend resolves against.
+//
+// 🔴 A CONFIGURATION THAT DOES NOTHING IS THE SAME HAZARD AS A HALF-CONFIGURED BACKEND,
+// WHICH IS WHAT EVERY LEDGER IN THIS FILE REFUSES. An operator who points a deployment at
+// a control journal has provisioned users into it and expects them to be able to sign in;
+// with no Supabase and no trusted-header backend configured, nothing reads that journal,
+// every session is refused by the machine-token backend alone, and the pod comes up
+// healthy. The failure is indistinguishable from the journal being empty or the users
+// being wrong, so the answer is a startup refusal rather than a log line.
+//
+// ⚠ IT NAMES NO ENVIRONMENT VARIABLE, DELIBERATELY. The variable that supplies the
+// authority is read by the caller — this package is handed a `ModelSource`, not a path —
+// so the text an operator needs ("unset X, or configure a session backend") can only be
+// written by the caller. `cmd/cairn-server` matches this sentinel with `errors.Is` and
+// says it, the same way it already does for `tokenfile.ErrStoreRootUnreadable`.
+var ErrSessionAuthorityUnread = errors.New(
+	"identity: a session authority was configured and no session backend resolves against it — " +
+		"with neither the Supabase nor the trusted-header backend configured, nothing reads it, " +
+		"every browser sign-in is refused, and the pod comes up looking healthy")
 
 // reader hands a constructor the values `resolveLedger` already produced, and remembers
 // the first fault.

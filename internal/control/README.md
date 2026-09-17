@@ -243,11 +243,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 96 mutants, over FIVE packages
+python3 tests/control_mutants.py          # 105 mutants, over FIVE packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 96 mutants, 94 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 105 mutants, 103 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, positive control GREEN.**
 
 ⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
@@ -296,7 +296,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 96 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 105 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -502,6 +502,52 @@ what piece (d) and P4 build. At that point `tokenfile.storeDirs` has no reason t
 and the enumeration is complete by construction. It does **not** close by widening the
 adapter, and it must **not** be closed by reintroducing an unrestricted principal.
 
+## The user-creation path — P5's first slice
+
+`ProvisionUser` (`provision.go`) is the first thing in this repository that WRITES to a
+journal-backed authority. One batch: `user-created`, `project-created`, `member-set` at
+`RoleOwner`, and one `scope-created` per requested scope. `cairn-server -create-user` is
+its only caller.
+
+🔴 **IT CLOSES A DEFECT THAT WAS MEASURED, NOT ANTICIPATED.** P4 shipped three identity
+backends and a durable `Store`, and nothing that could put a user into one: enumerated at
+`229c142` over every non-test `.go` file under `cmd/` and `internal/`, `OpenFileStore` had
+no caller but its own definition (positive control: the same sweep hits in
+`filestore_test.go` and `cache_test.go`). So the only authority any binary wired was the
+token-file projection, whose single synthetic user sits at provider `cairn-token-file`,
+holds no membership, and is the subject of no grant. Measured live at that commit: a
+trusted-header backend aimed at exactly that pair **authenticated** — `Identity.Valid()`
+true, principal `user:usr_… (cairn-token-file:operator)` — with **zero** readable scopes.
+Both session backends were inert in every deployment that could exist.
+
+**Three rules the path carries, each with its own reason:**
+
+1. **Membership is what confers authority, and the batch must contain it.** `Resolve`
+   reads memberships and grants; `Project.OwnerUserID` is a record of who made the
+   project and is not consulted. A batch with the user and the project and no `member-set`
+   passes every structural check and resolves to an empty authorization — the exact state
+   above. `membership-omitted-from-the-provisioning-batch` is the mutant.
+2. **One user per (provider, subject) pair**, enforced in `apply` rather than at this
+   path, because the rule has to hold for every writer. `UserByProviderSubject` returns
+   the first match over a Go map, so a duplicated pair makes "who is this session" answer
+   a different user id — with a different authorization — on different requests in one
+   process, with nothing erroring.
+3. **A scope display name must be free across the WHOLE journal**, which is wider than
+   `apply`'s within-a-project rule and is a guard at this path only. Authorization is
+   keyed on ids; the READER is not — `VisibleScopes` hands out names and the store root's
+   directories are narrowed by them, so two scope records sharing a display name resolve
+   to one directory and each project's members read the other's entries. The guard cannot
+   be an invariant here: `scope-renamed`, `scope-moved` and a hand-edited journal all
+   reach the same collision and none of them passes through this function. It closes when
+   a scope's bytes are addressed by id rather than by display name.
+
+⚠ **AND THE POD READS THE JOURNAL THROUGH `ReloadingSource`, BECAUSE THE WRITER IS A
+DIFFERENT PROCESS.** `FileStore.Model` serves a process-local projection invalidated only
+by that value's own appends — correct for a single owner and wrong for this shape, where
+`kubectl exec … cairn-server -create-user` writes and the server reads. Handed a bare
+`FileStore` the pod would materialize once at startup and never see a provisioned user:
+the journal correct, the command successful, the sign-in still refused.
+
 ## What this package structurally cannot see
 
 - **A second authority.** Everything above is measured against a `FileStore` or a test
@@ -529,6 +575,10 @@ adapter, and it must **not** be closed by reintroducing an unrestricted principa
   events to a durable journal: the projection is rebuilt on every refresh and nothing has
   appended it to a `FileStore`. `Source.Events` is exported so that conversion, when it
   happens, is the same function rather than a second description of the same world.
+  ⚠ P5's first slice did NOT change this. It writes a journal for SESSIONS, beside the
+  token-file projection rather than over it, and the machine-token backend still
+  authorises from the projection — so the two authorities coexist and the migration of the
+  existing credentials is still owed.
 
 ## One question the code answers narrowly, and the caller may want to answer wider
 

@@ -41,7 +41,49 @@ const (
 	// that came up with a weak token or an unset proxy allowlist is worse than one
 	// that did not come up at all, because it looks healthy.
 	exitConfig = 78
+
+	// exitDataErr is sysexits.h EX_DATAERR: the OPERATOR'S REQUEST was refused, and the
+	// pod's configuration is fine.
+	//
+	// 🔴 A SECOND CODE RATHER THAN REUSING 78, BECAUSE THE TWO CALL FOR DIFFERENT
+	// ACTIONS. `-create-user` reaches here when the journal declined the batch — the
+	// (provider, subject) pair is taken, a scope name is taken, a required field is
+	// empty — and the fix is to change the arguments. 78 says "this deployment is
+	// misconfigured" and sends an operator to the manifest. Collapsing them would make a
+	// typo in a subject indistinguishable, to anything reading exit codes, from a missing
+	// journal path.
+	exitDataErr = 65
 )
+
+// EnvControlJournal is the path to the append-only control journal this pod resolves
+// browser/proxy SESSIONS against.
+//
+// 🔴 UNSET MEANS "NO JOURNAL AUTHORITY", WHICH IS EXACTLY TODAY'S BEHAVIOUR AND IS THE
+// WHOLE COMPATIBILITY CLAIM. A deployment that does not set this wires
+// `tokenfile.Source` and nothing else, and `identity.FromEnvironment` resolves its
+// session backends against the same projection it always did. Nothing about the serving
+// path changes; there is no new route, and the machine-token backend is untouched.
+//
+// 🔴 A VALUE THAT REDUCES TO NOTHING IS REFUSED RATHER THAN READ AS UNSET, AND THAT IS
+// THE `refuseBlank` POLICY `internal/identity/config.go` DECLARES FOR THE SETTINGS WHOSE
+// BLANK SILENTLY DISABLES WHAT THE OPERATOR WROTE DOWN. This is one of them: an operator
+// who wrote the line meant the pod to read a journal, and a blank read as "not set"
+// gives them a pod that starts, fetches its JWKS, passes its health check and refuses
+// every sign-in — which is the precise defect this whole change closes, re-entered
+// through a whitespace typo. The blank test is
+// `identity.ValueReducesToNothing`, the one predicate, rather than a second
+// `strings.TrimSpace` here: 32 zero-width runes are not whitespace and it has already
+// cost this repository a live bypass at a different setting.
+//
+// ⚠ IT IS NOT IN AN `internal/identity` LEDGER, AND THE REASON IS WHAT THAT MACHINERY
+// ASKS. A ledger's `armed` flag answers "is this BACKEND half-configured, so refuse
+// rather than come up silently off"; a journal path configures no backend — it supplies
+// the authority the backends resolve against — and the gate over that machinery requires
+// a ledger to carry at least two settings, so putting it there would mean inventing a
+// second setting to satisfy a test. What the ledger would have bought instead is bought
+// directly: the blank policy is declared above, the predicate is shared, and
+// `TestABlankControlJournalIsRefusedRatherThanReadAsUnset` is the gate.
+const EnvControlJournal = "CAIRN_CONTROL_JOURNAL"
 
 // The two reload verdicts, AS CONSTANTS, BECAUSE THE OPERATOR'S ONLY SIGNAL THAT A
 // `kill -HUP` DID ANYTHING IS THIS LINE.
@@ -97,13 +139,28 @@ func main() {
 			"suite discovers the oracle's routes from its source by AST and has no "+
 			"equivalent here, so it reads this instead. It is an output of the DISPATCH "+
 			"TABLES, never a restatement of them")
+	create := registerCreateUserFlags()
 	flag.Parse()
 
+	// 🔴 TWO MODES AT ONCE IS A REFUSAL, NOT A PRECEDENCE. Checking `-routes` first and
+	// returning would make `-routes -create-user` print the ledger and silently NOT create
+	// the user — exit 0, plausible output, and an operator who believes a person now has
+	// access. There is no reading of that command line worth guessing at.
+	if *routes && *create.enabled {
+		fmt.Fprintln(os.Stderr, reloadSafe(
+			"subsystem-store-api: -routes and -create-user are both set. One prints a ledger and "+
+				"exits, the other writes to the control journal and exits; running either silently "+
+				"while ignoring the other is how an operator concludes a user was created"))
+		os.Exit(exitConfig)
+	}
 	if *routes {
 		for _, route := range api.DeclaredRoutes() {
 			fmt.Println(route)
 		}
 		return
+	}
+	if *create.enabled {
+		os.Exit(runCreateUser(environ(), create, os.Stdout, os.Stderr))
 	}
 
 	env := environ()
@@ -178,8 +235,35 @@ func main() {
 	// refuses without a source check on top of that. A pod that is reachable directly
 	// and has this backend armed is an authentication bypass for every user in the
 	// control plane, which is why arming it takes two deliberate settings and not one.
-	identities, supabase, err := identity.FromEnvironment(env, srv.AuthorityView())
+	//
+	// 🔴 AND THE SESSION BACKENDS RESOLVE AGAINST A DIFFERENT AUTHORITY WHEN ONE IS
+	// CONFIGURED, WHICH IS WHAT MAKES THEM ABLE TO AUTHENTICATE ANYBODY AT ALL. Until
+	// `CAIRN_CONTROL_JOURNAL` existed the only authority any binary wired was the
+	// token-file projection, which holds one synthetic user at provider
+	// `cairn-token-file` and grants only project subjects — so `SupabaseJWT` (default
+	// provider `supabase`) could never match `UserByProviderSubject`, and a
+	// `TrustedHeader` aimed at that one pair resolved to an EMPTY `Authorization`. A
+	// deployment could follow `internal/identity/README.md` exactly, come up clean, pass
+	// its health check and refuse every sign-in. `openSessionAuthority` returns a nil
+	// `identity.ModelSource` when the setting is absent, which is byte-for-byte today's
+	// wiring.
+	sessions, err := openSessionAuthority(context.Background(), env, warn)
 	if err != nil {
+		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: control journal: "+err.Error()))
+		os.Exit(exitConfig)
+	}
+	identities, supabase, err := identity.FromEnvironment(env, srv.AuthorityView(), sessions)
+	if err != nil {
+		if errors.Is(err, identity.ErrSessionAuthorityUnread) {
+			// The sentinel carries no variable name — it cannot, the package is handed a
+			// `ModelSource` — so the line an operator has to edit is named here. Same
+			// shape as the `tokenfile.ErrStoreRootUnreadable` arm above.
+			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+				"subsystem-store-api: identity: %s. Either configure a session backend (a "+
+					"$CAIRN_SUPABASE_* or $CAIRN_TRUSTED_HEADER_* set) or unset $%s",
+				err.Error(), EnvControlJournal)))
+			os.Exit(exitConfig)
+		}
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: "+err.Error()))
 		os.Exit(exitConfig)
 	}
@@ -299,6 +383,25 @@ func main() {
 	}
 }
 
+// sighupChannel registers a NEW channel for SIGHUP and hands it back.
+//
+// 🔴 A SECOND REGISTRATION DOES NOT TAKE THE SIGNAL AWAY FROM THE FIRST, AND THAT IS
+// MEASURED RATHER THAN ASSUMED. `control.RefreshTriggers`' comment records
+// `TestTwoNotifyChannelsBothReceiveOneSIGHUP`: two `signal.Notify` channels on one signal
+// BOTH receive it, so the token reload and the control-journal refresh are not competing
+// for one `kill -HUP 1`. The opposite belief ("the token reload will swallow it") is the
+// plausible one, and holding it would make one of the two triggers silently dead in the
+// only program that has both.
+//
+// ⚠ BUFFERED, BECAUSE `signal.Notify` DROPS ON A FULL CHANNEL rather than blocking the
+// signal delivery. One slot is the right size for a reload: a second HUP arriving while
+// the first is being serviced asks for the same thing.
+func sighupChannel() <-chan os.Signal {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP)
+	return signals
+}
+
 // installReload makes `kill -HUP <pid>` re-read the token file.
 //
 // 🔴 A PARSE FAILURE HERE MUST NOT TAKE THE SERVER DOWN, AND THAT IS THE WHOLE
@@ -313,9 +416,12 @@ func main() {
 // only way to keep two implementations of that predicate in step is to have one. A
 // reload path with its own parser is the shape where the migration guards silently stop
 // applying to the only file anybody edits after day one.
+//
+// ⚠ IT IS NO LONGER THE ONLY SIGHUP CONSUMER IN THIS PROGRAM. `openSessionAuthority`
+// registers a second channel for the control-journal cache; see `sighupChannel` for why
+// that does not take the signal away from this one.
 func installReload(srv *api.Server, tokenFile string, env map[string]string) {
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGHUP)
+	signals := sighupChannel()
 	go func() {
 		for range signals {
 			previous := srv.Tokens()

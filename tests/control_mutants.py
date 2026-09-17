@@ -1376,6 +1376,128 @@ MUTANTS: tuple[Mutant, ...] = (
         why="two sources for one secret means 'which is live' depends on a precedence "
         "nobody reads, and a rotation that updated the other appears to work.",
     ),
+    # ---- P5a: the user-creation path, and the authority the SESSIONS resolve against --
+    #
+    # 🔴 THESE NINE EXIST BECAUSE P4 SHIPPED THREE BACKENDS AND NO WAY TO PUT A USER IN
+    # FRONT OF THEM. Every row above was green through a period in which no deployment
+    # that could exist authenticated anybody through a session backend: the only authority
+    # any binary wired was the token-file projection, whose one synthetic user sits at
+    # provider `cairn-token-file` and holds no membership. Measured at `229c142`: a
+    # trusted-header backend aimed at that exact pair authenticated, `Valid()` returned
+    # true, and the authorization carried ZERO readable scopes. So the rows here mutate
+    # the WIRING and the batch CONTENT — the two places where "it authenticated" and "it
+    # can do something" come apart.
+    Mutant(
+        name="session-backends-resolve-against-the-token-file-authority-again",
+        path="internal/identity/config.go",
+        old="\tsessionAuthority := sessions\n\tif sessionAuthority == nil {",
+        new="\tsessionAuthority := authority\n\tif sessionAuthority == nil {",
+        killer="TestAnOperatorProvisionedSupabaseSessionAuthenticatesWithRealAuthority",
+        extra_killers=("TestAnOperatorProvisionedTrustedHeaderSessionAuthenticatesWithRealAuthority",),
+        why="the parameter ignored, which is exactly the state this slice found the "
+        "repository in. Nothing fails to build, no backend is missing, the chain has the "
+        "right length — and every browser sign-in is refused because the session backends "
+        "are looking a provider-named subject up in a projection that has none.",
+    ),
+    Mutant(
+        name="a-journal-nobody-reads-comes-up-quietly",
+        path="internal/identity/config.go",
+        old="\tif sessions != nil && supabase == nil && trusted == nil {",
+        new="\tif false {",
+        killer="TestASessionAuthorityNobodyReadsRefusesToStart",
+        why="the partial-configuration refusal deleted one level up from the ledgers. An "
+        "operator who provisioned users and forgot the Supabase block gets a pod that "
+        "comes up healthy with nothing reading the journal — indistinguishable, from "
+        "outside, from an empty journal or a wrong subject.",
+    ),
+    Mutant(
+        name="duplicate-provider-subject-accepted",
+        path="internal/control/journal.go",
+        old="\t\tfor id, u := range m.Users {\n\t\t\tif u.Provider == e.Provider && u.Subject == e.Subject {",
+        new="\t\tfor id, u := range m.Users {\n\t\t\tif false {\n\t\t\t\t_ = id\n\t\t\t\t_ = u",
+        killer="TestTwoUsersCannotShareOneProviderSubjectPair",
+        why="the uniqueness rule on the natural key every identity backend looks a "
+        "session up by. `UserByProviderSubject` returns the FIRST match over a Go map, so "
+        "two rows make 'who is this session' answer a different user id — with a different "
+        "authorization — on different requests in one process. Nothing errors.",
+    ),
+    Mutant(
+        name="scope-name-collision-across-projects-accepted",
+        path="internal/control/provision.go",
+        # The narrowest edit that still COMPILES: the check is called with the wrong
+        # operand rather than deleted, because deleting the call leaves `current` unused
+        # and the mutant would die at the build.
+        old="\tif err := checkScopeNamesAreFree(current, req.ScopeNames); err != nil {",
+        new="\tif err := checkScopeNamesAreFree(current, nil); err != nil {",
+        killer="TestAScopeNameAlreadyInTheJournalIsRefused",
+        why="the guard that is WIDER than the model's own rule, so it looks redundant "
+        "beside `apply`'s within-a-project uniqueness and reads as a candidate for "
+        "deletion. It is not: the reader narrows the store root's DIRECTORIES by display "
+        "name, so two scope records sharing one name resolve to one directory and each "
+        "project's members read the other's entries.",
+    ),
+    Mutant(
+        name="membership-omitted-from-the-provisioning-batch",
+        path="internal/control/provision.go",
+        old="\t\t{\n\t\t\tKind: EventMemberSet, At: at, Actor: req.Actor,\n\t\t\tProjectID: projectID, UserID: userID, Role: RoleOwner,\n\t\t},\n\t}",
+        new="\t}",
+        killer="TestProvisioningAUserYieldsAnAuthorityThatAuthorisesThem",
+        why="the user is created, the project is created, the project NAMES them as its "
+        "owner — and `Resolve` reads membership, not `Project.OwnerUserID`. Every "
+        "structural check passes and the authorization is empty, which is the precise "
+        "state this whole slice exists to leave behind.",
+    ),
+    Mutant(
+        name="reloading-source-serves-the-process-local-cache",
+        path="internal/control/provision.go",
+        old="func (r ReloadingSource) Model(ctx context.Context) (Model, error) { return r.Store.Reload(ctx) }",
+        new="func (r ReloadingSource) Model(ctx context.Context) (Model, error) { return r.Store.Model(ctx) }",
+        killer="TestAReloadingSourceSeesAWriteFromAnotherProcessAndAPlainFileStoreDoesNot",
+        extra_killers=("TestAnUnreadableJournalLeavesTheReloadingSourceServingLastKnownGood",),
+        why="`Model` is the obvious method to call on a store and it is the wrong one "
+        "here. `FileStore` caches per value and invalidates only on its OWN appends, so a "
+        "pod reading through this would materialize the journal once at startup and never "
+        "see a user created by `cairn-server -create-user` in another process.",
+    ),
+    Mutant(
+        name="unconfigured-deployment-gets-a-TYPED-nil-session-authority",
+        path="cmd/cairn-server/createuser.go",
+        old="\tif journal == \"\" {\n\t\treturn nil, nil\n\t}\n\tstore, err := control.OpenFileStore(journal)",
+        new="\tif journal == \"\" {\n\t\tvar typed *control.Cache\n\t\treturn typed, nil\n\t}\n\tstore, err := control.OpenFileStore(journal)",
+        killer="TestNoControlJournalMeansNoSessionAuthorityAtAll",
+        extra_killers=(
+            "TestARefusedReloadDoesNotClaimNothingChanged",
+            "TestTheBinaryREFUSESToStartOverAStoreRootItCannotEnumerate",
+            "TestTheBinarysOwnTimerIsWhatClosesTheDivergence",
+        ),
+        why="a typed nil in an interface is NOT nil, and that is the Go trap most likely "
+        "to be written here by somebody tidying the two return paths into one. It turns "
+        "every existing deployment — which configures no session backend — into "
+        "`ErrSessionAuthorityUnread` and a refusal to start: a live pod's auth path broken "
+        "by a feature it does not use. The three extra killers are the server-lifecycle "
+        "tests, which is what that break looks like from outside.",
+    ),
+    Mutant(
+        name="blank-control-journal-test-narrowed-to-TrimSpace",
+        path="cmd/cairn-server/createuser.go",
+        old="\tif identity.ValueReducesToNothing(raw) {",
+        new="\tif strings.TrimSpace(raw) == \"\" {",
+        killer="TestABlankControlJournalIsRefusedRatherThanReadAsUnset",
+        why="the local spelling of the blank test, which is why the predicate is exported "
+        "from `internal/identity` rather than re-written here. `TrimSpace` uses "
+        "`unicode.White_Space`, which does NOT hold the zero-width runes — the measured "
+        "bypass that cost this repository a live shared secret at a different setting.",
+    ),
+    Mutant(
+        name="main-never-dispatches-create-user",
+        path="cmd/cairn-server/main.go",
+        old="\tif *create.enabled {\n\t\tos.Exit(runCreateUser(environ(), create, os.Stdout, os.Stderr))\n\t}",
+        new="\tif false {\n\t\tos.Exit(runCreateUser(environ(), create, os.Stdout, os.Stderr))\n\t}",
+        killer="TestTheBinaryActuallyDispatchesCreateUser",
+        why="the mode unreachable while every in-process test of it stays green, because "
+        "those call `runCreateUser` directly. The same shape as the refresh-loop row: a "
+        "capability that exists in a function nobody routes to.",
+    ),
 )
 
 

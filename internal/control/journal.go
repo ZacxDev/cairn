@@ -207,6 +207,27 @@ func (m *Model) apply(e Event) error {
 		if _, exists := m.Users[e.UserID]; exists {
 			return fmt.Errorf("user %s already exists", e.UserID)
 		}
+		// 🔴 TWO USER ROWS FOR ONE (provider, subject) IS AN AMBIGUITY THE
+		// AUTHENTICATOR WOULD RESOLVE BY MAP ORDER. `UserByProviderSubject` scans
+		// `m.Users` and returns the first match, and Go randomises map range order —
+		// so a duplicated pair makes "who is this session" answer a DIFFERENT user id
+		// on different requests inside one process, with a different authorization
+		// each time. That is the same class as the credential-digest collision refused
+		// below, and it is refused here for the same reason: there is no defined
+		// precedence, so the journal declines to store the ambiguity rather than
+		// letting the authenticator pick.
+		//
+		// ⚠ IT IS A UNIQUENESS RULE ON THE NATURAL KEY, WHICH `Event.validate` CANNOT
+		// EXPRESS. `validate` sees one event and asks only whether its own fields are
+		// present; whether the pair is already taken is a question about the model, so
+		// it belongs here beside the other consistency checks.
+		for id, u := range m.Users {
+			if u.Provider == e.Provider && u.Subject == e.Subject {
+				return fmt.Errorf(
+					"user %s carries the same (provider, subject) pair as %s — the identity backends look a session up by exactly that pair, and two rows holding it make the answer depend on map iteration order",
+					e.UserID, id)
+			}
+		}
 		m.Users[e.UserID] = User{
 			ID: e.UserID, Provider: e.Provider, Subject: e.Subject,
 			Email: e.Email, CreatedAt: e.At,
