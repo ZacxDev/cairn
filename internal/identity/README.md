@@ -289,6 +289,22 @@ Other rules:
 
 - **an unrecognised boolean is an ERROR, never `false`** —
   `CAIRN_TRUSTED_HEADER_PROXY_FRONTED=treu` must not silently mean "not proxy-fronted";
+- 🔴 **and a value that is PRESENT but holds only whitespace is the same error, because it
+  was the same hazard in a spelling that was accepted.** Measured: with a complete
+  trusted-header configuration carrying both a shared secret and
+  `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT`, the value `treu` was refused and `"  "`
+  returned no error and a backend with the requirement OFF — mTLS unenforced, pod healthy,
+  nothing logged. `envSetting` is the one predicate every reader whose zero is PERMISSIVE
+  goes through: the client-certificate requirement, `CAIRN_SUPABASE_REQUIRE_ROLE`,
+  `CAIRN_TRUSTED_HEADER_PEERS`, `CAIRN_SUPABASE_MAX_AGE` and the secret's `_FILE` path — the
+  last found by reading that sentence against the code rather than by the audit that named
+  the first four. `CAIRN_TRUSTED_HEADER_PROXY_FRONTED` and `CAIRN_SUPABASE_LEEWAY` are
+  refused too, because they share a reader rather than because their zero is permissive — a
+  blank line is a typo either way. ⚠ **An ABSENT name and a name holding the EMPTY string
+  are unchanged**:
+  the first is how a deployment says "not using this", and the second is the manifest shape
+  that emits every variable with an empty default. Only the whitespace-only spelling moved,
+  and it moved to a refusal with `os.Exit(78)` behind it;
 - **a secret has exactly one source** — inline or a file, never both, because a precedence
   rule nobody reads makes a rotation that updated the wrong one appear to work;
 - **prefer the `_FILE` form**: an environment variable is readable from

@@ -235,11 +235,15 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 96 mutants over FIVE packages — the model, the token-file projection,
-      # P4's identity backends, the server that authorises from all of them and
-      # `cmd/cairn-server`, because a mutant in one is killed by a guard in another and the
-      # refresh loop that bounds the adapter's declared divergence exists only in the
-      # program. Four of the cache rows are killed
+      # kill. 96 mutants over FIVE packages, in `PKGS` order: `internal/control`,
+      # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
+      # `cmd/cairn-server` — the model, the token-file projection, P4's identity backends,
+      # the server that authorises from all of them and the program, because a mutant in
+      # one is killed by a guard in another and the refresh loop that bounds the adapter's
+      # declared divergence exists only in `main`. That enumeration is pinned to `PKGS` as
+      # a whole string by `tests/test_control_mutant_count_is_pinned.py` — membership and
+      # order, not just the count, because a swap that kept the count left it stale.
+      # Four of the cache rows are killed
       # by a TIMEOUT rather than by an assertion, which is what the bulk of the wall time
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that

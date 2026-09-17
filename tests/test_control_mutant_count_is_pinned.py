@@ -203,6 +203,31 @@ ORDINAL_WORDS = {
 }
 
 
+# The package whose ORDINAL one anchor states. Its POSITION in `PKGS`, never the size of
+# the set.
+CMD_SERVER = "./cmd/cairn-server/"
+
+
+def _ordinal_position(packages: tuple[str, ...]) -> int:
+    """Where `cmd/cairn-server` sits in `PKGS`, one-based.
+
+    🔴 DERIVED FROM THE INDEX, BECAUSE `len(PKGS)` IS A DIFFERENT QUANTITY THAT HAPPENS TO
+    AGREE TODAY. The README says "`cmd/cairn-server` IS THE FIFTH", which is a claim about
+    POSITION; it is true only because that entry is currently last. Measured on the draft
+    that derived it from the count: appending a SIXTH package made the anchor demand
+    "`cmd/cairn-server` IS THE SIXTH" while the package was still the fifth, and the failure
+    message told the reader to "re-derive from `PKGS` rather than editing it to match the
+    prose" — an instruction to write a falsehood into the README. A guard that demands a
+    false sentence is worse than no guard: the reader obeys it.
+    """
+    assert CMD_SERVER in packages, (
+        f"{CMD_SERVER} is not in PKGS, so the ordinal anchor is about a package the battery "
+        "does not run over. Either the entry was renamed — update this constant and the "
+        "prose together — or it was dropped, in which case the anchor must go too."
+    )
+    return packages.index(CMD_SERVER) + 1
+
+
 def _spell(table: dict[int, str], n: int, what: str) -> str:
     word = table.get(n)
     assert word, (
@@ -239,6 +264,17 @@ PRESENT_TENSE_PACKAGE_ANCHORS = (
 # is not in the text BEFORE it; a pattern requiring it there matches nothing and exempts
 # nothing. That red was this sweep's own positive control arriving by accident — it proves
 # the sweep can see a package count it disagrees with.
+#
+# ⚠ THE DISCRIMINATOR IS A PHRASING, AND A PHRASING IS WALKABLE BOTH WAYS — THE SAME TRADE
+# THE MUTANT SWEEP ABOVE DECLARES, STATED HERE BECAUSE THIS SWEEP DID NOT AND THAT WAS THE
+# GAP. A NEW present-tense claim written as "at 99 mutants over nine packages" evades this
+# sweep; and a correct new HISTORICAL sentence phrased any other way reds on it — measured,
+# "The battery ran over four packages before …" fails. Neither is a defect to fix by
+# widening the regex: a looser exemption (any past-tense verb, say) is a larger hole than
+# the one it closes, and `at N mutants over …` is the form this repository already uses for
+# history in both axes. What was missing was saying so, and telling the writer which
+# phrasing to reach for — which the failure message now does, so the guard cannot train its
+# reader to edit a correct sentence without offering an alternative.
 HISTORICAL_PACKAGES = re.compile(r"\bat\s+\d+\s+mutants\s+$")
 
 # ⚠ `over N packages`, NOT `N packages`, AND THAT NARROWNESS IS LOAD-BEARING. The same
@@ -271,7 +307,9 @@ def test_the_present_tense_package_claims_match_the_battery(
 ) -> None:
     n = len(packages)
     word = _spell(NUMBER_WORDS, n, "a cardinal")
-    ordinal = _spell(ORDINAL_WORDS, n, "an ordinal")
+    # 🔴 TWO DIFFERENT QUANTITIES, AND CONFLATING THEM IS WHAT THIS LINE EXISTS TO STOP.
+    # The cardinal is `len(PKGS)`; the ordinal is where ONE package sits in it.
+    ordinal = _spell(ORDINAL_WORDS, _ordinal_position(packages), "an ordinal")
 
     missing = []
     for path, anchor in PRESENT_TENSE_PACKAGE_ANCHORS:
@@ -283,8 +321,68 @@ def test_the_present_tense_package_claims_match_the_battery(
         + "\n  ".join(missing)
         + "\n"
         "Either `PKGS` moved and the prose did not, or an anchor was reworded/deleted. "
-        "Re-derive from `tests/control_mutants.py`'s `PKGS` rather than editing it to "
-        "match the prose."
+        "Re-derive from `tests/control_mutants.py`'s `PKGS`: the CARDINAL from `len(PKGS)`, "
+        f"and the ORDINAL for `cmd/cairn-server` from its POSITION in `PKGS` "
+        f"(index {packages.index(CMD_SERVER)} + 1 = {_ordinal_position(packages)}) — the two "
+        "are different quantities and agree only while that entry is last."
+    )
+
+
+def _flatten(text: str) -> str:
+    """The file with comment markers and line wrapping normalised away.
+
+    Both documents wrap the enumeration and one of them is a YAML comment, so a literal
+    substring search would be a test about where the lines happen to break.
+    """
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^\s*#+\s?", " ", text))
+
+
+def _enumeration(packages: tuple[str, ...]) -> str:
+    """The package set as the documents must spell it, derived rather than transcribed."""
+    return ", ".join(f"`{p.removeprefix('./').removesuffix('/')}`" for p in packages)
+
+
+def test_the_documents_enumerate_the_same_packages_in_the_same_order(
+    packages: tuple[str, ...],
+) -> None:
+    """🔴 A COUNT IS NOT A SET, AND PINNING ONLY THE COUNT LEFT A SWAP INVISIBLE.
+
+    Measured on the tree that had only the count pinned: replacing `./internal/api/` with
+    `./internal/report/` in `PKGS` — five entries either way — left all six assertions in
+    this file GREEN while `internal/control/README.md` still named `internal/api` by path
+    and `.github/workflows/ci.yml` still called it "the server that authorises from all of
+    them". The battery's own header called the tuple "the only place the set is ENUMERATED",
+    which was false on that same tree; this is the pin that makes the weaker, true sentence
+    — the only place it is DECIDED — worth writing.
+
+    ⚠ THE CI COMMENT GAINED THE PATHS TO BE PINNABLE, AND THAT IS PART OF THE FIX RATHER
+    THAN A TIDY-UP. Its five members were a prose description apiece; a description is not a
+    set, so nothing could compare it to `PKGS` and a swap could not be seen there at all.
+
+    ⚠ IT PINS THE WHOLE NORMALISED STRING, WHICH MEANS A COSMETIC REWORD OF THE
+    ENUMERATION FAILS. That is the trade, taken deliberately: a guard on WORDS is walkable
+    by rewording, and the enumeration is the one sentence here whose exact content is the
+    claim. Reflowing it is free; renaming a package in prose is not.
+    """
+    wanted = _enumeration(packages)
+    # A POSITIVE CONTROL on this file's third instrument, in the shape the two above use:
+    # a `packages` that half-imported would make `wanted` a string every document trivially
+    # contains, and the assertion below would pass while measuring nothing.
+    assert wanted.count("`") == 2 * len(packages) and len(packages) > 1, (
+        f"the derived enumeration is not a list of package paths: {wanted!r}"
+    )
+
+    missing = [
+        str(path.relative_to(REPO_ROOT))
+        for path in (README, CI)
+        if wanted not in _flatten(path.read_text(encoding="utf-8"))
+    ]
+    assert not missing, (
+        f"these do not enumerate `PKGS` — membership and order — as\n  {wanted}\n"
+        + "\n  ".join(missing)
+        + "\nA package was added, removed, renamed or reordered in "
+        "`tests/control_mutants.py` and the prose did not follow. Re-derive from `PKGS`; "
+        "the count alone is not enough, which is why this assertion exists beside it."
     )
 
 
@@ -304,5 +402,11 @@ def test_no_document_states_a_different_package_count(packages: tuple[str, ...])
             stale.append(f"{path.relative_to(REPO_ROOT)}: {match.group(0)!r}")
     assert not stale, (
         f"these state a package count other than {word.upper()} ({n}) outside a "
-        f"historical `at N mutants over …` phrasing:\n  " + "\n  ".join(stale)
+        f"historical `at N mutants over …` phrasing:\n  "
+        + "\n  ".join(stale)
+        + "\nIf the number is STALE, re-derive it from `PKGS`. If the sentence is a correct "
+        "measurement of an OLDER battery, it is this sweep's phrasing rule you hit and not "
+        "an error in the prose: write it as `… at <N> mutants over <word> packages …`, which "
+        "is the form the exemption recognises and the form the rest of both documents "
+        "already use for history."
     )

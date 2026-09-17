@@ -258,12 +258,23 @@ survivor did not exist while that survivor was the round's most important findin
 `python3 tests/control_mutants.py` prints the `SUMMARY` line these are copied from, and
 the survivor paragraph below must name exactly the mutants that actually survived.
 
-🔴 **IT RUNS OVER FIVE PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** `internal/control`
-is the model and its predicate, `internal/control/tokenfile` is the projection,
-`internal/identity` is P4's authenticator and its two new backends, and `internal/api` is
-the server that authorises from all of them — and a mutant in one is killed by a guard in
+🔴 **IT RUNS OVER FIVE PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
+order: `internal/control`, `internal/control/tokenfile`, `internal/identity`,
+`internal/api`, `cmd/cairn-server`. `internal/control` is the model and its predicate,
+`internal/control/tokenfile` is the projection, `internal/identity` is P4's authenticator
+and its two new backends, `internal/api` is the server that authorises from all of them,
+and `cmd/cairn-server` is the program — and a mutant in one is killed by a guard in
 another. A battery scoped to one package would have scored every one of those SURVIVED
 while the suite that catches them was never run.
+
+⚠ **THAT LIST IS PINNED TO `PKGS` AS A WHOLE STRING, MEMBERSHIP AND ORDER, NOT AS A COUNT.**
+`tests/test_control_mutant_count_is_pinned.py` derives it from the tuple and requires it
+here and in `.github/workflows/ci.yml`. Until it did, swapping `./internal/api/` for
+`./internal/report/` in `PKGS` — five entries either way — left all six pins GREEN while
+this file still named `internal/api` by path and the CI comment still described it in prose
+as "the server that authorises from all of them". The CI comment gained the paths in the
+same change, because a prose description is not a set anything can compare. Reflow the list
+freely; changing a NAME in it without moving `PKGS` is a red test.
 
 🔴 **AND `cmd/cairn-server` IS THE FIFTH, BECAUSE THE TIMER THAT BOUNDS THE DIVERGENCE
 LIVES ONLY THERE.** Measured before it was added: deleting the refresh goroutine from

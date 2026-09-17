@@ -51,9 +51,23 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: above a tuple of FIVE. Read out of the history: it was written "THREE" over three
 #: entries, updated to "FOUR" when the fourth landed, and then the fifth landed and the
 #: header did not move — one missed update out of two chances. A count kept beside the
-#: thing it counts is a second spelling of the same fact and drifts silently, so the tuple
-#: below is the only place the set is ENUMERATED and every entry carries its own reason
-#: inline. Count them there if you need a number.
+#: thing it counts is a second spelling of the same fact and drifts silently, so no total is
+#: written here and every entry below carries its own reason inline. Count them there if you
+#: need a number.
+#:
+#: 🔴 THE TUPLE IS NOT THE ONLY PLACE THE SET IS ENUMERATED — IT IS THE ONLY PLACE IT IS
+#: DECIDED, AND TWO DRAFTS OF THIS HEADER CLAIMED THE STRONGER THING. It read "the only place
+#: the set is stated", then "the only place the set is ENUMERATED"; both were false on their
+#: own tree, because `internal/control/README.md` spelled the package PATHS out in prose and
+#: `.github/workflows/ci.yml` described the same five members a sentence at a time. The second
+#: draft's reword was measured: swapping `./internal/api/` for `./internal/report/` here — the
+#: COUNT unchanged — left all six assertions in `tests/test_control_mutant_count_is_pinned.py`
+#: GREEN while the README still named `internal/api` by path and the CI comment still called it
+#: "the server that authorises from all of them", because the only thing pinned was
+#: `len(PKGS)`. That file now pins the
+#: ENUMERATION itself, membership and order, as one normalised string in both documents. So the
+#: uniqueness sentence is gone rather than reworded a third time, and what replaces it is
+#: enforced: edit the tuple and the two documents go red until they follow.
 #:
 #: 🔴 IT IS NOT THE ONLY PLACE THE COUNT IS STATED, AND SAYING SO WAS THE ROUND AFTER'S
 #: FINDING. Deleting the stale copy from this header fixed the copy a `PKGS` edit would

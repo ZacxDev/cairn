@@ -175,6 +175,13 @@ func FromEnvironment(env map[string]string, authority interface {
 	// own branch could therefore never reach the deployment that has only that. It asks
 	// `anySet` ITSELF, once per ledger — the question is "is THIS backend armed by
 	// anything else", which is what bounds the refusal to the silently-off case.
+	//
+	// ⚠ IT IS HALF THE ANSWER, AND `envSetting` IS THE OTHER HALF — SAY SO HERE, BECAUSE
+	// THE TWO ARE EASY TO READ AS ONE. This one covers the ledger NOTHING armed, which is
+	// the only case a constructor never runs for. Where a ledger IS armed the constructors
+	// do run, every value passes through a reader, and `envSetting` refuses the same
+	// spelling there — so the whitespace-only case is closed on both sides of the branch
+	// rather than only on the side the ledgers can see.
 	if err := refuseBlankSettings(env); err != nil {
 		return nil, nil, err
 	}
@@ -242,9 +249,12 @@ func refuseRetiredSettings(env map[string]string) error {
 		ErrRetiredSetting, strings.Join(reasons, "; "))
 }
 
-// ErrBlankSetting is the refusal a ledger variable earns by holding only whitespace while
-// nothing else in that ledger arms its backend. Beside an armed backend it is an unset
-// optional and no error at all — see `refuseBlankSettings` for why the scope is that.
+// ErrBlankSetting is the refusal a setting earns by being PRESENT and holding only
+// whitespace. Two guards return it and they cover different halves of one hazard:
+// `refuseBlankSettings` for a ledger nothing else armed, where no constructor runs and no
+// reader is reached; `envSetting` for every value a reader does reach, armed ledger
+// included. An ABSENT name and a name holding the EMPTY string are outside both — see
+// `envSetting` for why the scope is drawn there.
 var ErrBlankSetting = errors.New("identity: a setting is present and holds only whitespace")
 
 // refuseBlankSettings refuses a whitespace-only value in a ledger NOTHING ELSE ARMED.
@@ -267,15 +277,28 @@ var ErrBlankSetting = errors.New("identity: a setting is present and holds only 
 // arm that keeps this per-LEDGER: an armed Supabase backend does not license a blank proxy
 // secret, because the trusted-header backend is still the one silently off.
 //
-// ⚠ "AN UNSET OPTIONAL" IS WHAT THE `strings.TrimSpace(env[…])` READERS MAKE OF IT, AND
-// `secretFrom` IS THE EXCEPTION — SAY SO RATHER THAN LET THE SENTENCE READ WIDER THAN IT
-// IS. `envBool`, `envDuration` and every direct field read trim, so a blank value there is
-// the zero. `secretFrom` does NOT trim its inline form, so a whitespace
-// `CAIRN_TRUSTED_HEADER_SECRET` beside an armed backend reaches `NewTrustedHeader` as three
-// bytes — measured, on this tree and at `7ac810e` alike, it is refused by the 32-byte
-// length floor rather than read as unset. Refused either way, by a NARROWER guard naming
-// the real problem; the behaviour is identical on both sides of this change, which is what
-// "exactly as before" is being claimed about.
+// ⚠ "AN UNSET OPTIONAL" IS NOW WHAT ONLY *SOME* READERS MAKE OF IT, AND THIS PARAGRAPH
+// USED TO SAY OTHERWISE. It read "`envBool`, `envDuration` and every direct field read
+// trim, so a blank value there is the zero" — true of the code then, and the measured
+// defect: with a COMPLETE armed trusted-header configuration,
+// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="  "` produced a nil error and a backend with
+// `requireCert` FALSE, so mTLS was not enforced while `envBool` refused `treu` three lines
+// away — the same hazard in two spellings, refused in one. The readers that reach
+// `envSetting` now refuse the whitespace-only spelling themselves, and this guard is
+// unchanged: it still skips an armed ledger, because its own sentence is about a backend
+// being silently OFF and that sentence is false there. The SEVEN setting READERS still on
+// the bare `strings.TrimSpace(env[…])` shape — `anySet`'s own use of it is the ledger scan
+// rather than a reader, so it is not one of them — do turn a blank value into the zero, and
+// `envSetting`'s
+// comment enumerates them with what each zero is — a documented default, or a constructor
+// refusal naming the missing field. Never a check switched off; that was the discriminator.
+//
+// ⚠ AND `secretFrom` IS THE THIRD SHAPE, WITH ITS TWO FORMS ON OPPOSITE SIDES. It does NOT
+// trim its inline form, so a whitespace `CAIRN_TRUSTED_HEADER_SECRET` beside an armed
+// backend reaches `NewTrustedHeader` as three bytes — measured, on this tree and at
+// `7ac810e` alike, it is refused by the 32-byte length floor rather than read as unset.
+// Refused either way, by a NARROWER guard naming the real problem. The FILE form had no such
+// floor behind it and is read through `envSetting` now; the measurement is beside the call.
 //
 // ⚠ PRESENT-AND-WHITESPACE ONLY, AND TWO FURTHER CASES ARE DELIBERATELY LEFT ALONE ON TOP
 // OF THE ARMED-LEDGER ONE ABOVE. An ABSENT name is how a deployment says "I am not using this
@@ -311,6 +334,70 @@ func refuseBlankSettings(env map[string]string) error {
 		ErrBlankSetting, strings.Join(names, ", "))
 }
 
+// envSetting reads one setting, trimmed, and REFUSES a value that is present and holds
+// only whitespace.
+//
+// 🔴 ONE PREDICATE IN ONE PLACE, AND THE HAZARD IT CLOSES IS `envBool`'S OWN IN A DIFFERENT
+// SPELLING. `envBool` refuses `treu` because "a typo that silently disables a security
+// setting leaves the operator believing it is on" — and it used to accept `"  "`, which is
+// that sentence exactly. Measured at `d5880f3` with a complete, armed trusted-header
+// configuration (shared secret AND client-certificate requirement):
+// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="yes"` gave `requireCert` true;
+// `…="treu"` was refused; `…="  "` returned a NIL error and `requireCert` FALSE — mTLS not
+// enforced, pod healthy, nothing logged. The same shape reached
+// `CAIRN_SUPABASE_REQUIRE_ROLE` (no role required), `CAIRN_TRUSTED_HEADER_PEERS` (no peer
+// allowlist) and `CAIRN_SUPABASE_MAX_AGE` (no `iat` bound): settings whose ZERO IS
+// PERMISSIVE, which is what makes a value read as unset a security decision nobody made.
+//
+// 🔴 AND A FIFTH WAS FOUND BY READING THIS COMMENT AGAINST THE CODE RATHER THAN BY THE
+// AUDIT THAT NAMED THE OTHER FOUR. `CAIRN_TRUSTED_HEADER_SECRET_FILE="  "` beside
+// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT=yes` built a backend with a ZERO-length secret
+// and authenticated a request that carried the certificate and no shared-secret header —
+// defence in depth reduced to one rung, silently. `secretFrom` reads it through here now.
+//
+// 🔴 IT IS A FUNCTION RATHER THAN FIVE COPIES BECAUSE A PREDICATE OPEN-CODED AT N SITES IS
+// TYPICALLY WRONG AT N−1 OF THEM, IN THE SAME DIRECTION — and the fifth site above is that
+// claim arriving on schedule. The callers are `envBool` (proxy-fronted,
+// require-client-cert), `envDuration` (leeway, max-age), `secretFrom` (the secret PATH, not
+// the inline form) and the direct reads for the required role and the peer list. Leeway and
+// proxy-fronted come along because they share a reader, not because their zero is permissive
+// — a blank line is a typo in every case, and the refusal says nothing that is false for
+// them. What does NOT route through here is the other shape, and it was measured rather
+// than assumed — all seven of it. Blank REFUSES by name at the constructor: the issuer, the
+// JWKS URL, the subject header, the trusted-header provider. Blank becomes a documented
+// DEFAULT: the audience (`authenticated`), the Supabase provider (`supabase`), the secret
+// header (`X-Cairn-Proxy-Secret`). Neither group has a permissive zero, which is why they
+// stay on a bare `strings.TrimSpace` and why `TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset`
+// still has arms.
+//
+// ⚠ TWO CASES ARE DELIBERATELY LEFT ALONE, AND THEY ARE THE ONES `refuseBlankSettings`
+// ALREADY DECIDED. An ABSENT name is how a deployment says "I am not using this" — refusing
+// it would refuse the machine-token-only deployment this package's whole compatibility
+// claim rests on. A name present with the EMPTY string is left alone too: a manifest that
+// emits every variable with an empty default is a common shape, and refusing it is a wider
+// change than the defect above. ONLY the whitespace-only spelling moves.
+//
+// ⚠ AND IT FIRES BESIDE AN ARMED BACKEND, WHERE `refuseBlankSettings` DELIBERATELY DOES
+// NOT — THAT IS NOT THAT NARROWING REVERTED. The narrowing exists because the LEDGER-level
+// refusal's own sentence ("the backend it belongs to would be silently OFF") is false when
+// something else armed the ledger, and a false message crash-looped a deployment that
+// worked. This refusal makes no claim about a backend being off; it says the line reads as
+// unset, which is true in both worlds.
+func envSetting(env map[string]string, name string) (string, error) {
+	raw, present := env[name]
+	if !present || raw == "" {
+		return "", nil
+	}
+	if trimmed := strings.TrimSpace(raw); trimmed != "" {
+		return trimmed, nil
+	}
+	return "", fmt.Errorf(
+		"%w: %s=%q. Give it a value or delete the line — trimmed to nothing it is read as UNSET, "+
+			"which is a different configuration from the one written here, and where the unset value "+
+			"turns a check OFF that is a security setting silently disabled",
+		ErrBlankSetting, name, raw)
+}
+
 func anySet(env map[string]string, names []string) bool {
 	for _, name := range names {
 		if strings.TrimSpace(env[name]) != "" {
@@ -343,6 +430,13 @@ func supabaseFromEnv(env map[string]string, authority ModelSource) (*SupabaseJWT
 	if err != nil {
 		return nil, err
 	}
+	// 🔴 `envSetting`, NOT A BARE `TrimSpace`: THE ZERO HERE IS "NO ROLE IS REQUIRED".
+	// A whitespace-only value would turn the role check off for a deployment that wrote
+	// one down — see `envSetting`, which states the measurement.
+	requireRole, err := envSetting(env, EnvSupabaseRequireRole)
+	if err != nil {
+		return nil, err
+	}
 
 	return NewSupabaseJWT(SupabaseConfig{
 		Authority:   authority,
@@ -350,20 +444,26 @@ func supabaseFromEnv(env map[string]string, authority ModelSource) (*SupabaseJWT
 		Issuer:      strings.TrimSpace(env[EnvSupabaseIssuer]),
 		Audience:    audience,
 		Provider:    strings.TrimSpace(env[EnvSupabaseProvider]),
-		RequireRole: strings.TrimSpace(env[EnvSupabaseRequireRole]),
+		RequireRole: requireRole,
 		Leeway:      leeway,
 		MaxAge:      maxAge,
 	})
 }
 
-// envDuration reads a Go duration setting. Empty means the zero value.
+// envDuration reads a Go duration setting. ABSENT, or present with the empty string,
+// means the zero value; present and whitespace-only is a refusal, via `envSetting`.
 //
 // ⚠ ONE READER FOR BOTH DURATIONS, BECAUSE TWO WOULD BE TWO CHANCES TO GET THE SAME
 // PARSE WRONG — the one-rule-one-place ruling `secretFrom` already carries. An
 // unparseable value is an error and never the zero: the operator who typed `10min`
-// believes a bound is armed, and `time.ParseDuration` refuses that spelling.
+// believes a bound is armed, and `time.ParseDuration` refuses that spelling. A
+// whitespace-only value is the same claim in the spelling `ParseDuration` never sees,
+// which is why the blank test is in `envSetting` above it rather than here.
 func envDuration(env map[string]string, name string) (time.Duration, error) {
-	raw := strings.TrimSpace(env[name])
+	raw, err := envSetting(env, name)
+	if err != nil {
+		return 0, err
+	}
 	if raw == "" {
 		return 0, nil
 	}
@@ -387,9 +487,17 @@ func trustedHeaderFromEnv(env map[string]string, authority ModelSource) (*Truste
 	if err != nil {
 		return nil, err
 	}
+	// 🔴 `envSetting`, NOT A BARE `TrimSpace`: THE ZERO HERE IS "NO PEER ALLOWLIST". The
+	// split below is over whitespace as well as commas, so a whitespace-only value yields
+	// an EMPTY field set rather than a bad one — indistinguishable from unset, and the
+	// operator who wrote a narrowing down gets every peer. See `envSetting`.
+	rawPeers, err := envSetting(env, EnvProxyPeers)
+	if err != nil {
+		return nil, err
+	}
 	var peers []string
-	if raw := strings.TrimSpace(env[EnvProxyPeers]); raw != "" {
-		peers = strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
+	if rawPeers != "" {
+		peers = strings.FieldsFunc(rawPeers, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
 	}
 	return NewTrustedHeader(TrustedHeaderConfig{
 		ProxyFronted:      fronted,
@@ -410,9 +518,19 @@ func trustedHeaderFromEnv(env map[string]string, authority ModelSource) (*Truste
 // backend is armed, and a setting that reads a typo as its own default is how a
 // deployment ends up in a state nobody chose. `strconv.ParseBool` would accept `t`/`T`
 // and reject `yes`, which is the opposite of what an operator writing YAML types, so the
-// accepted spellings are enumerated here.
+// accepted spellings are enumerated below.
+//
+// ⚠ THE ACCEPTED SET IS `1 t true y yes on` AND `0 f false n no off`, CASE-INSENSITIVELY,
+// PLUS THE ABSENT AND EMPTY-STRING SPELLINGS OF "NOT SET", WHICH READ AS `false`. A
+// WHITESPACE-ONLY value is NOT in that set and does not reach the switch: `envSetting`
+// refuses it one call up, because "reads as its own default" was exactly as true of `"  "`
+// as of `treu` while only one of the two was refused. The `""` case below is therefore the
+// absent and empty-string spellings only.
 func envBool(env map[string]string, name string) (bool, error) {
-	raw := strings.TrimSpace(env[name])
+	raw, err := envSetting(env, name)
+	if err != nil {
+		return false, err
+	}
 	switch strings.ToLower(raw) {
 	case "":
 		return false, nil
@@ -454,7 +572,20 @@ func envBool(env map[string]string, name string) (bool, error) {
 // mis-blame one step further in, where the file exists and is empty.
 func secretFrom(env map[string]string, inline, fromFile string) ([]byte, error) {
 	direct := env[inline]
-	path := strings.TrimSpace(env[fromFile])
+	// 🔴 `envSetting` ON THE PATH, AND THE INLINE FORM DELIBERATELY NOT — THE TWO ARE
+	// ALREADY IN DIFFERENT PLACES AND ONLY ONE OF THEM WAS SAFE. Measured on this tree
+	// while checking the sentence above: with `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT=yes`
+	// arming the backend, `CAIRN_TRUSTED_HEADER_SECRET_FILE="  "` built quietly with a
+	// ZERO-length secret — and a request carrying a verified client certificate and NO
+	// shared-secret header AUTHENTICATED, where the same request against the real path is
+	// refused with "the shared-secret header is absent or duplicated". Defence in depth
+	// silently reduced to one rung, by whitespace, for a deployment that wrote both down.
+	// The INLINE form needs nothing: it is not trimmed, so `"  "` arrives as two bytes and
+	// the 32-byte floor refuses it by name — measured in the same run.
+	path, err := envSetting(env, fromFile)
+	if err != nil {
+		return nil, err
+	}
 	if direct != "" && path != "" {
 		return nil, fmt.Errorf(
 			"%s and %s are both set: one secret, one source. Which is live would depend on a precedence rule nobody reads, and a rotation that updated the other would appear to work",

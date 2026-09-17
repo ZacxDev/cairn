@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -12,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestNothingConfiguredIsMachineTokenONLY is the compatibility claim, and it is the one
@@ -443,6 +446,19 @@ func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 // ⚠ THE LAST ARM IS THE ONE THAT KEEPS THE NARROWING PER-LEDGER RATHER THAN GLOBAL. A fix
 // that asked "is ANY backend armed" would pass every arm above it and re-open the measured
 // defect for a deployment that runs Supabase and typed a blank proxy secret.
+//
+// 🔴 AND ITS ARMS ARE NOW THE SETTINGS WHOSE ZERO IS A DEFAULT, BECAUSE THE ROUND AFTER
+// FOUND THE OTHER HALF OF THE SAME HAZARD AND THE OLD ARMS WERE PINNING IT OPEN. The three
+// it carried — the peer list, the client-certificate flag and the required role — all have
+// a PERMISSIVE zero, so "accepted as unset" meant a security check silently off: measured,
+// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="  "` beside a complete armed configuration
+// gave a nil error and `requireCert` FALSE. `envSetting` refuses those in the reader now,
+// and `TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms` is where they moved.
+// What remains here is the half round 2 was right about: a setting whose blank value
+// becomes a documented DEFAULT — the secret header, the audience, the provider — where the
+// ledger-level refusal's own sentence ("the backend it belongs to would be silently OFF")
+// is false and refusing crash-looped a deployment that worked. Both halves are live at
+// once, and neither is the other's revert.
 func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 	// A complete configuration for each backend, with nothing blank in it. `NewKeySet`
 	// constructs from the URL and does not fetch, so no server is needed here.
@@ -475,35 +491,42 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 		atDefault func(t *testing.T, chain Chain, supabase *SupabaseJWT)
 	}{
 		{
-			name:  "a blank peer list beside an armed trusted-header backend",
-			env:   with(armedProxy(), EnvProxyPeers, "  "),
-			blank: EnvProxyPeers,
+			name:  "a blank secret header beside an armed trusted-header backend",
+			env:   with(armedProxy(), EnvProxySecretHeader, "  "),
+			blank: EnvProxySecretHeader,
 			atDefault: func(t *testing.T, chain Chain, _ *SupabaseJWT) {
-				if got := trustedHeaderIn(t, chain); len(got.peers) != 0 {
-					t.Fatalf("a blank peer list became %d peer(s): %v", len(got.peers), got.peers)
+				if got := trustedHeaderIn(t, chain).secretHeader; got != DefaultProxySecretHeader {
+					t.Fatalf("a blank secret header became %q, want the default %q", got, DefaultProxySecretHeader)
 				}
 			},
 		},
 		{
-			name:  "a blank client-certificate flag beside an armed trusted-header backend",
-			env:   with(armedProxy(), EnvProxyRequireClientCert, "  "),
-			blank: EnvProxyRequireClientCert,
-			atDefault: func(t *testing.T, chain Chain, _ *SupabaseJWT) {
-				if trustedHeaderIn(t, chain).requireCert {
-					t.Fatal("a blank client-certificate flag read as TRUE")
-				}
-			},
-		},
-		{
-			name:  "a blank required role beside an armed Supabase backend",
-			env:   with(armedSupabase(), EnvSupabaseRequireRole, " "),
-			blank: EnvSupabaseRequireRole,
+			name:  "a blank audience beside an armed Supabase backend",
+			env:   with(armedSupabase(), EnvSupabaseAudience, " "),
+			blank: EnvSupabaseAudience,
 			atDefault: func(t *testing.T, _ Chain, supabase *SupabaseJWT) {
 				if supabase == nil {
 					t.Fatal("the Supabase backend was not built")
 				}
-				if supabase.requireRole != "" {
-					t.Fatalf("a blank required role became %q", supabase.requireRole)
+				// 🔴 THE DEFAULT, NOT THE EMPTY STRING, AND THAT IS WHY THIS ARM BELONGS
+				// HERE RATHER THAN IN THE REFUSING TEST. An empty audience is refused by
+				// `ErrSupabaseNoAudience`; a blank one reaches the SAME check `authenticated`
+				// arms, so nothing is switched off.
+				if got := supabase.verify.Audience; got != DefaultSupabaseAudience {
+					t.Fatalf("a blank audience became %q, want the default %q", got, DefaultSupabaseAudience)
+				}
+			},
+		},
+		{
+			name:  "a blank provider beside an armed Supabase backend",
+			env:   with(armedSupabase(), EnvSupabaseProvider, " \t "),
+			blank: EnvSupabaseProvider,
+			atDefault: func(t *testing.T, _ Chain, supabase *SupabaseJWT) {
+				if supabase == nil {
+					t.Fatal("the Supabase backend was not built")
+				}
+				if got := supabase.provider; got != DefaultSupabaseProvider {
+					t.Fatalf("a blank provider became %q, want the default %q", got, DefaultSupabaseProvider)
 				}
 			},
 		},
@@ -547,6 +570,260 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), EnvProxySecret) {
 		t.Fatalf("the refusal must name the offending variable: %v", err)
+	}
+}
+
+// TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms.
+//
+// 🔴 `envBool` REFUSED `treu` AND ACCEPTED `"  "` — THE SAME HAZARD IN TWO SPELLINGS, AND
+// ONLY ONE OF THEM REFUSED. Measured at `d5880f3` with a complete, armed trusted-header
+// configuration carrying BOTH a shared secret and a client-certificate requirement:
+// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="yes"` gave a backend that enforced mTLS,
+// `…="treu"` was refused naming the variable, and `…="  "` returned a NIL error and a
+// backend with `requireCert` FALSE — mTLS not enforced, pod healthy, nothing logged. Five
+// settings share that shape, and all five have a PERMISSIVE zero: the client-certificate
+// requirement, the required role, the peer allowlist, the maximum token age and the shared
+// secret's FILE path. The fifth was not in the audit that named the other four; it turned up
+// by reading the fix's own comment against the code, which is the arm to distrust first.
+//
+// 🔴 EACH ARM ASSERTS THE BEHAVIOUR, NOT THAT "AN ERROR HAPPENED", BECAUSE AN ERROR TEST
+// PASSES FOR THE WRONG REASON. The hazard is not "a blank value is accepted" — it is a
+// backend that ADMITS a request the configuration says it must refuse. So every arm carries
+// a two-sided probe over a real `Authenticate` call: a request the armed check must REFUSE
+// and one it must ACCEPT. A probe with only the refusing half would report "enforced" for a
+// backend that refuses everything.
+//
+// 🔴 AND THE PROBE ITSELF IS CONTROLLED IN BOTH DIRECTIONS BEFORE IT IS BELIEVED. Step 1
+// builds with the real value and requires ENFORCED — without it the arm passes against a
+// probe wired to nothing. Step 2 builds with the setting ABSENT and requires NOT ENFORCED —
+// without it the arm passes against a probe hardwired to "enforced", which is the reassuring
+// zero this repository refuses to read. Only then does step 3 ask what a blank value does.
+//
+// ⚠ STEP 3 ACCEPTS EITHER OUTCOME THAT IS SAFE, WHICH IS WHY IT PINS THE HAZARD RATHER THAN
+// THIS PARTICULAR FIX: a refusal that NAMES the variable, or a backend whose check is on.
+// What it refuses is the measured one — built, quiet, and the check off.
+func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) {
+	signer := newRSASigner(t, "rsa-1", 2048)
+	idp := newJWKSServer(t, jwksDocumentOf(t, signer.publicJWK(t)))
+	secretPath := filepath.Join(t.TempDir(), "proxy-secret")
+	if err := os.WriteFile(secretPath, append(append([]byte{}, testProxySecret...), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A complete configuration for each backend, with the setting under test ABSENT.
+	armedProxy := func() map[string]string {
+		return map[string]string{
+			EnvProxyFronted:       "yes",
+			EnvProxySubjectHeader: testSubjectHeader,
+			EnvProxySecret:        string(testProxySecret),
+			EnvProxyProvider:      testProvider,
+		}
+	}
+	// 🔴 A SECOND PROXY BASE, ARMED BY THE *CERTIFICATE* RUNG, BECAUSE THE SECRET ARM
+	// CANNOT USE THE ONE ABOVE. `armedProxy` supplies the secret inline, so a blank
+	// `…_SECRET_FILE` beside it is refused as two sources for one secret — an answer about
+	// a different guard. Here the backend is armed by `RequireClientCert`, which is the
+	// defence-in-depth deployment the measurement came from: both rungs configured, one of
+	// them written as whitespace.
+	armedProxyByCert := func() map[string]string {
+		return map[string]string{
+			EnvProxyFronted:           "yes",
+			EnvProxySubjectHeader:     testSubjectHeader,
+			EnvProxyProvider:          testProvider,
+			EnvProxyRequireClientCert: "yes",
+		}
+	}
+	armedSupabase := func() map[string]string {
+		return map[string]string{
+			EnvSupabaseIssuer:   testIssuer,
+			EnvSupabaseJWKSURL:  idp.url(),
+			EnvSupabaseProvider: testProvider,
+		}
+	}
+
+	// proxyAdmits runs one real request at the trusted-header backend the environment
+	// built. `nil` means the backend accepted it.
+	proxyAdmits := func(t *testing.T, chain Chain, remoteAddr string, certVerified, secretPresented bool) error {
+		t.Helper()
+		headers := map[string]string{testSubjectHeader: testSubject}
+		if secretPresented {
+			headers[DefaultProxySecretHeader] = string(testProxySecret)
+		}
+		r := proxyRequest(t, headers, remoteAddr)
+		if certVerified {
+			r.TLS = &tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{{}}}}
+		}
+		_, err := trustedHeaderIn(t, chain).Authenticate(r)
+		return err
+	}
+
+	// supabaseAdmits mints a token this world would otherwise accept, varying only the
+	// claim the arm is about. The keys are fetched here because `FromEnvironment` hands
+	// back an unmaterialized set on purpose.
+	supabaseAdmits := func(t *testing.T, supabase *SupabaseJWT, role string, age time.Duration) error {
+		t.Helper()
+		if supabase == nil {
+			t.Fatal("the Supabase backend was not built, so this probe measures nothing")
+		}
+		if err := supabase.RefreshKeys(t.Context()); err != nil {
+			t.Fatalf("materializing the fixture key set: %v", err)
+		}
+		// Real wall-clock claims: `supabaseFromEnv` sets no `Now`, so the verifier runs
+		// against `time.Now` rather than the year-2000 fixture clock.
+		now := time.Now()
+		_, err := supabase.Authenticate(bearer(t, signer.sign(t, claimSet{
+			"iss":  testIssuer,
+			"aud":  testAudience,
+			"sub":  testSubject,
+			"exp":  now.Add(time.Hour).Unix(),
+			"iat":  now.Add(-age).Unix(),
+			"role": role,
+		}, nil)))
+		return err
+	}
+
+	for _, arm := range []struct {
+		setting string
+		// on is the value an operator writes to turn the check ON.
+		on string
+		// armed is the rest of the deployment, with `setting` absent.
+		armed func() map[string]string
+		// disabled says, in the operator's words, what the permissive zero means.
+		disabled string
+		// enforced runs the two-sided probe and reports whether the check is ON. It
+		// fails the test outright when NEITHER side behaves, which is a broken probe
+		// rather than an answer about the setting.
+		enforced func(t *testing.T, chain Chain, supabase *SupabaseJWT) bool
+	}{
+		{
+			setting:  EnvProxyRequireClientCert,
+			on:       "yes",
+			armed:    armedProxy,
+			disabled: "mTLS is not enforced: a plaintext request carrying the shared secret authenticates",
+			enforced: func(t *testing.T, chain Chain, _ *SupabaseJWT) bool {
+				if err := proxyAdmits(t, chain, "192.0.2.10:1", true, true); err != nil {
+					t.Fatalf("a request with a VERIFIED client certificate was refused, so this probe "+
+						"cannot tell the requirement from a backend that refuses everything: %v", err)
+				}
+				return proxyAdmits(t, chain, "192.0.2.10:1", false, true) != nil
+			},
+		},
+		{
+			setting:  EnvProxyPeers,
+			on:       "192.0.2.10/32",
+			armed:    armedProxy,
+			disabled: "there is no peer allowlist: any address may present the identity header",
+			enforced: func(t *testing.T, chain Chain, _ *SupabaseJWT) bool {
+				if err := proxyAdmits(t, chain, "192.0.2.10:1", false, true); err != nil {
+					t.Fatalf("the ALLOWED peer was refused, so this probe cannot tell an allowlist "+
+						"from a backend that refuses everything: %v", err)
+				}
+				return proxyAdmits(t, chain, "198.51.100.7:1", false, true) != nil
+			},
+		},
+		{
+			// 🔴 THE FIFTH, AND IT WAS NOT IN THE AUDIT — IT CAME OUT OF READING THE FIX'S
+			// OWN COMMENT AGAINST THE CODE. The secret file's path was the last bare
+			// `strings.TrimSpace`, and beside an armed client-certificate requirement its
+			// blank spelling produced a ZERO-length secret: measured at `d5880f3`, a request
+			// carrying a verified certificate and NO shared-secret header authenticated,
+			// where the same request against the real path is refused by name. Defence in
+			// depth reduced to one rung, by whitespace, in a deployment that configured both.
+			setting: EnvProxySecretFile,
+			on:      secretPath,
+			armed:   armedProxyByCert,
+			disabled: "the shared-secret rung is gone: a verified certificate ALONE authenticates, " +
+				"though the deployment configured both",
+			enforced: func(t *testing.T, chain Chain, _ *SupabaseJWT) bool {
+				if err := proxyAdmits(t, chain, "192.0.2.10:1", true, true); err != nil {
+					t.Fatalf("a request carrying BOTH rungs was refused, so this probe cannot tell a "+
+						"live shared secret from a backend that refuses everything: %v", err)
+				}
+				return proxyAdmits(t, chain, "192.0.2.10:1", true, false) != nil
+			},
+		},
+		{
+			setting:  EnvSupabaseRequireRole,
+			on:       "authenticated",
+			armed:    armedSupabase,
+			disabled: "no role is required: an `anon` session authenticates",
+			enforced: func(t *testing.T, _ Chain, supabase *SupabaseJWT) bool {
+				if err := supabaseAdmits(t, supabase, "authenticated", time.Minute); err != nil {
+					t.Fatalf("the REQUIRED role was refused, so this probe cannot tell a role check "+
+						"from a backend that refuses everything: %v", err)
+				}
+				return supabaseAdmits(t, supabase, "anon", time.Minute) != nil
+			},
+		},
+		{
+			setting:  EnvSupabaseMaxAge,
+			on:       "5m",
+			armed:    armedSupabase,
+			disabled: "`iat` is unbounded: a session minted hours ago still authenticates",
+			enforced: func(t *testing.T, _ Chain, supabase *SupabaseJWT) bool {
+				if err := supabaseAdmits(t, supabase, "authenticated", 10*time.Second); err != nil {
+					t.Fatalf("a FRESH token was refused, so this probe cannot tell a maximum age "+
+						"from a backend that refuses everything: %v", err)
+				}
+				return supabaseAdmits(t, supabase, "authenticated", time.Hour) != nil
+			},
+		},
+	} {
+		t.Run(arm.setting, func(t *testing.T) {
+			build := func(t *testing.T, value string, present bool) (Chain, *SupabaseJWT, error) {
+				t.Helper()
+				env := arm.armed()
+				if present {
+					env[arm.setting] = value
+				}
+				return FromEnvironment(env, newTestAuthority(t))
+			}
+
+			// 1. THE POSITIVE CONTROL ON THE PROBE — the value an operator writes.
+			chain, supabase, err := build(t, arm.on, true)
+			if err != nil {
+				t.Fatalf("precondition: %s=%q must build, or every assertion below is about "+
+					"nothing: %v", arm.setting, arm.on, err)
+			}
+			if !arm.enforced(t, chain, supabase) {
+				t.Fatalf("precondition: %s=%q did not arm the check, so the probe is not measuring "+
+					"the setting this arm is about", arm.setting, arm.on)
+			}
+
+			// 2. THE NEGATIVE CONTROL ON THE PROBE — the setting genuinely absent. Its
+			// zero is PERMISSIVE, which is the whole reason this arm exists, so a probe
+			// that still reports ENFORCED here is wired to something other than the check.
+			chain, supabase, err = build(t, "", false)
+			if err != nil {
+				t.Fatalf("precondition: the deployment without %s must build: %v", arm.setting, err)
+			}
+			if arm.enforced(t, chain, supabase) {
+				t.Fatalf("the probe reports %s ENFORCED while it is UNSET — it cannot observe the "+
+					"check going off, so step 3 below would pass for the wrong reason", arm.setting)
+			}
+
+			// 3. THE HAZARD. Present, whitespace only, beside a backend that IS armed.
+			for _, blank := range []string{" ", "  ", "\t", "\n", " \t \n "} {
+				chain, supabase, err = build(t, blank, true)
+				if err != nil {
+					if !errors.Is(err, ErrBlankSetting) {
+						t.Fatalf("%s=%q was refused by some OTHER guard, which is a refusal this "+
+							"arm cannot attribute: %v", arm.setting, blank, err)
+					}
+					if !strings.Contains(err.Error(), arm.setting) {
+						t.Fatalf("%s=%q was refused without naming the variable, so the operator "+
+							"cannot find the line: %v", arm.setting, blank, err)
+					}
+					continue
+				}
+				if !arm.enforced(t, chain, supabase) {
+					t.Fatalf("%s=%q built quietly with the check OFF — %s. A typo that silently "+
+						"disables a security setting leaves the operator believing it is on, which is "+
+						"the sentence `envBool` refuses `treu` for three lines away",
+						arm.setting, blank, arm.disabled)
+				}
+			}
+		})
 	}
 }
 
