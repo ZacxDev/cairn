@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // The environment this package reads. New names use the `CAIRN_` prefix, per
@@ -171,13 +172,15 @@ type setting struct {
 	// one. Only the shared secret sets it: interior and edge whitespace may legitimately
 	// be part of a secret, so trimming would silently change it.
 	//
-	// ⚠ IT DOES NOT WIDEN WHAT COUNTS AS BLANK. A secret that is ENTIRELY whitespace
-	// still reduces to nothing — see `reducesToNothing`, and see `MinProxySecretBytes`
-	// for why the length floor is not that check.
+	// ⚠ IT DOES NOT WIDEN WHAT COUNTS AS BLANK. A secret with no CONTENT in it still
+	// reduces to nothing — entirely whitespace, and also entirely zero-width, which is
+	// the spelling that outlived the first version of this sentence. See
+	// `reducesToNothing` for what "content" is and what it still lets through, and
+	// `MinProxySecretBytes` for why the length floor is not that check.
 	keepWhitespace bool
 
 	// fields, when non-nil, says this setting's value is a LIST and gives the split the
-	// reader uses. It is what lets a value that is not whitespace still reduce to
+	// reader uses. It is what lets a value that DOES carry content still reduce to
 	// nothing — `CAIRN_TRUSTED_HEADER_PEERS=","`.
 	fields func(string) []string
 }
@@ -186,10 +189,46 @@ type setting struct {
 //
 // 🔴 A PREDICATE OPEN-CODED AT N SITES IS TYPICALLY WRONG AT N−1 OF THEM, IN THE SAME
 // DIRECTION, AND THIS FILE PRODUCED SIX INSTANCES OF THE RESULTING HAZARD IN AS MANY
-// ROUNDS. The two spellings the sites disagreed about are both here: whitespace-only (which
-// `strings.TrimSpace` sees) and separator-only (which it does not).
+// ROUNDS. Three spellings of "nothing" the sites disagreed about are all here: whitespace-only
+// (which `strings.TrimSpace` sees), ZERO-WIDTH-only (which it does not) and separator-only
+// (which it does not either).
 //
-// 🔴 THE LIST HALF IS AN EXTENSION, NEVER A REPLACEMENT — the whitespace test runs first
+// 🔴 THE FIRST LIMB IS A CONTENT TEST, NOT A WHITESPACE TEST, AND IT REPLACED
+// `strings.TrimSpace(raw) == ""` BECAUSE THAT COVERED ONE SPELLING OF INVISIBILITY AND
+// NOT THE OTHER. `strings.TrimSpace` uses `unicode.IsSpace`, whose set is `White_Space`:
+// it holds NBSP (U+00A0) and every `Zs` separator, and it does NOT hold the zero-width
+// runes, which are `Cf`. Measured at `02fad01` with a complete armed trusted-header
+// configuration (`PROXY_FRONTED=yes`, a subject header, a provider, no client-certificate
+// requirement, so the shared secret was the only source check):
+// `CAIRN_TRUSTED_HEADER_SECRET` set to 32 × U+200B, 32 × U+2060 or 32 × U+FEFF each BUILT
+// and was held as a 96-byte LIVE shared secret — a caller sending the same run of
+// zero-width runes plus a subject header authenticated as any user in this control plane —
+// while 32 × U+00A0 and 32 × U+0020 were refused: one rung, two spellings of nothing,
+// and only one of them refused.
+//
+// ⚠ WHAT THE LIMB TESTS, STATED AS THE PREDICATE RATHER THAN AS A GUARANTEE: the value
+// holds at least one rune that is GRAPHIC and is not a SPACE. `unicode.IsGraphic` is
+// `L|M|N|P|S|Zs`, so removing `Zs` by `!unicode.IsSpace` leaves "a rune that could carry
+// content". `unicode.IsPrint` would do here too — measured over all 0x110000 code points,
+// `IsGraphic(r) && !IsSpace(r)` and `IsPrint(r) && !IsSpace(r)` agree on every one of them,
+// because every `Zs` rune is in `White_Space` — so the choice is a naming one and
+// `IsGraphic` is the one that says what is meant. It is a strict WIDENING: also measured
+// over all 0x110000, every rune `TrimSpace` called blank is still blank here, and 963,042
+// more are too (controls, `Cf`, surrogates, private use, and the unassigned).
+//
+// 🔴 AND IT IS NOT A COMPLETENESS CLAIM — A FURTHER SPELLING IS OPEN, NAMED HERE RATHER
+// THAN IMPLIED CLOSED. A rune can be graphic by category and still render as blank width:
+// U+2800 BRAILLE PATTERN BLANK (`So`), U+3164 HANGUL FILLER, U+115F, U+FFA0 (`Lo`), and a
+// lone combining mark such as U+0301 (`Mn`). A value made entirely of those passes this
+// limb, so `SECRET` = 32 × U+2800 is still accepted as a live 96-byte secret. Closing it
+// needs a rendered-width judgement this package has no source for, and the fix would be a
+// new limb rather than a wider version of this one; it is recorded, not fixed. Two smaller
+// scope notes, both measured: invalid UTF-8 counts as CONTENT (the bytes decode to
+// U+FFFD, which is `So`), so a binary secret is not refused; and a value that mixes
+// content with zero-width runes is content — `"s3cret\u200bmore"` is accepted byte for
+// byte, which `TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused` pins.
+//
+// 🔴 THE LIST HALF IS AN EXTENSION, NEVER A REPLACEMENT — the content test above runs first
 // for every setting, so no spelling gets WEAKER by declaring a split. Measured at
 // `70636bd` with a complete armed trusted-header configuration: `PEERS=","`, `",,"`,
 // `", ,"`, `" , "` and `"\t,\n"` all BUILT with zero peers, so `Authenticate`'s
@@ -197,10 +236,16 @@ type setting struct {
 // while `PEERS="  "` was refused. The guard covered the whitespace spelling of the hazard
 // and not the separator spelling of the same one.
 func (s setting) reducesToNothing(raw string) bool {
-	if strings.TrimSpace(raw) == "" {
+	if !strings.ContainsFunc(raw, carriesContent) {
 		return true
 	}
 	return s.fields != nil && len(s.fields(raw)) == 0
+}
+
+// carriesContent is the rune test `reducesToNothing`'s first limb is built from: graphic,
+// and not a space. Its scope, and the spelling it does NOT close, are stated there.
+func carriesContent(r rune) bool {
+	return unicode.IsGraphic(r) && !unicode.IsSpace(r)
 }
 
 // value is what the reader gets for a raw string this setting does NOT reduce to nothing.
@@ -336,12 +381,15 @@ var proxyEnv = ledger{
 			// 🔴 `keepWhitespace`, AND `refuseBlank` ON TOP OF IT — THE TWO ARE NOT IN
 			// TENSION AND THE PAIR IS WHAT CLOSES A MEASURED BYPASS. Interior and edge
 			// whitespace may be part of a secret, so the value is not trimmed. A secret
-			// that is ENTIRELY whitespace is not a secret, and `NewTrustedHeader`'s floor
+			// with no CONTENT in it is not a secret, and `NewTrustedHeader`'s floor
 			// cannot say so because it is a LENGTH test: measured at `70636bd` with the
 			// backend armed by `RequireClientCert`, 2 spaces and 31 spaces were refused by
 			// the floor while 32 spaces and 40 spaces BUILT and were accepted as a live
 			// shared secret — so a caller sending the same run of spaces plus a subject
-			// header authenticated as any user in the control plane.
+			// header authenticated as any user in the control plane. ⚠ "No content" is
+			// wider than "whitespace" and this comment said the narrower word for a
+			// round: 32 ZERO-WIDTH runes BUILT at `02fad01` with the same consequence.
+			// `reducesToNothing` holds the predicate and the spelling still open.
 			name:           EnvProxySecret,
 			policy:         refuseBlank,
 			unset:          "the shared-secret rung is gone — whatever else is armed authenticates alone",
@@ -821,9 +869,9 @@ func parseDuration(name, raw string) (time.Duration, error) {
 // and every `echo` adds one, and a secret that differs from the proxy's by an invisible
 // byte fails with a refusal that says nothing about why. Interior whitespace is left
 // alone: it may be part of the secret. That is also why `EnvProxySecret` declares
-// `keepWhitespace` — and why it declares `refuseBlank` beside it, because a secret that is
-// ENTIRELY whitespace is not a secret and the length floor is a LENGTH test, not a content
-// one.
+// `keepWhitespace` — and why it declares `refuseBlank` beside it, because a secret with no
+// CONTENT in it is not a secret and the length floor is a LENGTH test, not a content one.
+// `reducesToNothing` is what "content" means here; it is wider than whitespace.
 //
 // 🔴 AND A FILE THAT YIELDS ZERO BYTES IS A REFUSAL HERE, BECAUSE THE CONSTRUCTOR CANNOT
 // TELL IT FROM "NO SECRET CONFIGURED" AND BLAMES THE WRONG SETTING. A file holding only

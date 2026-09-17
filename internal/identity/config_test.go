@@ -747,6 +747,34 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 		return err
 	}
 
+	// degenerateSecrets are the spellings of "nothing" that the inline secret's own shape
+	// admits: long enough to clear `MinProxySecretBytes`, and empty of anything a reader
+	// could see.
+	//
+	// 🔴 ONE SLICE, TWO READERS, BECAUSE THE TWO COPIES THIS REPLACES COULD DISAGREE AND
+	// THE DISAGREEMENT WOULD READ AS A PASS. The list is what the arm SETS as the value
+	// and what the probe GUESSES at the wire, and a spelling added to only the first is
+	// asked "is the rung off" rather than "can a stranger clear it" — the weaker of the
+	// two questions, silently.
+	//
+	// 🔴 THE ZERO-WIDTH ROWS ARE THE `02fad01` MEASUREMENT AND THE NBSP/SPACE ROWS ARE ITS
+	// CONTROLS. `strings.TrimSpace` uses `unicode.IsSpace`, which holds U+00A0 and not the
+	// `Cf` zero-width runes, so at `02fad01` a `SECRET` of 32 × U+200B, 32 × U+2060 or
+	// 32 × U+FEFF each BUILT and was held as a 96-byte live shared secret while 32 × U+00A0
+	// and 32 × U+0020 were refused. The controls must refuse BEFORE and AFTER the widening;
+	// they are not regressions in waiting, they are what says the limb only got wider.
+	degenerateSecrets := []string{
+		strings.Repeat(" ", MinProxySecretBytes),
+		strings.Repeat(" ", MinProxySecretBytes+8),
+		strings.Repeat("\t", MinProxySecretBytes),
+		strings.Repeat("\u00a0", MinProxySecretBytes),
+		strings.Repeat("\u200b", MinProxySecretBytes),
+		strings.Repeat("\u2060", MinProxySecretBytes),
+		strings.Repeat("\ufeff", MinProxySecretBytes),
+		strings.Repeat("\u200b", MinProxySecretBytes+8),
+		"\u200b\u2060\ufeff" + strings.Repeat("\u200b", MinProxySecretBytes),
+	}
+
 	// probed records which settings this test actually exercised, and is checked against
 	// the POLICY DATA at the end rather than against a number in the docstring.
 	var probed []string
@@ -835,15 +863,22 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 			// sending the same run of spaces plus a subject header authenticated as any
 			// user in this control plane. The fix is a separate "a secret that is entirely
 			// whitespace is not a secret" refusal, NOT a trim.
-			setting:  EnvProxySecret,
-			on:       string(testProxySecret),
-			armed:    armedProxyByCert,
-			disabled: "the shared-secret rung is gone: a verified certificate ALONE authenticates",
-			degenerate: []string{
-				strings.Repeat(" ", MinProxySecretBytes),
-				strings.Repeat(" ", MinProxySecretBytes+8),
-				strings.Repeat("\t", MinProxySecretBytes),
-			},
+			//
+			// 🔴 AND THE EIGHTH, WHICH IS THE SEVENTH IN A SPELLING `unicode.IsSpace`
+			// DOES NOT HOLD. The fix for the 32-space secret was a content test — and
+			// `strings.TrimSpace` is a content test only for `White_Space`, which holds
+			// NBSP and every `Zs` separator and none of the `Cf` zero-width runes.
+			// Measured at `02fad01` with the backend armed by the SECRET ALONE (no
+			// client-certificate requirement, so this rung was the only source check):
+			// 32 × U+200B, 32 × U+2060 and 32 × U+FEFF each BUILT and were held as a
+			// 96-byte live shared secret, while 32 × U+00A0 and 32 × U+0020 were refused.
+			// A caller who knows nothing about the deployment sends the same run of
+			// zero-width runes plus a subject header and authenticates as any user here.
+			setting:    EnvProxySecret,
+			on:         string(testProxySecret),
+			armed:      armedProxyByCert,
+			disabled:   "the shared-secret rung is gone: a verified certificate ALONE authenticates",
+			degenerate: degenerateSecrets,
 			enforced: func(t *testing.T, chain Chain, _ *SupabaseJWT) bool {
 				th := trustedHeaderIn(t, chain)
 				// The positive control: whatever secret the backend HOLDS authenticates.
@@ -856,14 +891,15 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 						"nothing: %v", err)
 				}
 				// 🔴 THE HAZARD, AND IT IS A GUESS RATHER THAN AN ABSENCE. A caller who
-				// knows nothing about this deployment sends a run of spaces. If that
-				// authenticates, the shared-secret rung is decorative — and the length
-				// floor cannot say so, because it is a LENGTH test.
-				for _, guess := range []string{
-					strings.Repeat(" ", MinProxySecretBytes),
-					strings.Repeat(" ", MinProxySecretBytes+8),
-					strings.Repeat("\t", MinProxySecretBytes),
-				} {
+				// knows nothing about this deployment sends a run of invisible runes. If
+				// that authenticates, the shared-secret rung is decorative — and the
+				// length floor cannot say so, because it is a LENGTH test.
+				//
+				// 🔴 THE GUESSES ARE `degenerateSecrets`, THE SAME SLICE THE ARM SETS AS
+				// THE VALUE, BECAUSE TWO COPIES CAN DISAGREE AND THE DISAGREEMENT READS AS
+				// A PASS. A spelling added only to the value side is asked "is the rung
+				// off" and never "can a stranger clear it".
+				for _, guess := range degenerateSecrets {
 					if proxyAdmitsSecret(t, th, "192.0.2.10:1", true, guess) == nil {
 						return false
 					}
@@ -1730,7 +1766,7 @@ func settingFor(t *testing.T, name string) setting {
 	return setting{}
 }
 
-// TestTheInlineSecretKeepsItsWhitespaceAndAnAllWhitespaceOneIsRefused pins the two halves
+// TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused pins the two halves
 // of `EnvProxySecret`'s declaration, which pull in opposite directions and are both
 // load-bearing.
 //
@@ -1745,7 +1781,12 @@ func settingFor(t *testing.T, name string) setting {
 // ⚠ THE LENGTH FLOOR IS NOT THIS CHECK AND CANNOT BE. `NewTrustedHeader` tests
 // `len(cfg.Secret) < MinProxySecretBytes` — a LENGTH test — so it refused 31 spaces and
 // accepted 32. The arm below is the content test the floor is not.
-func TestTheInlineSecretKeepsItsWhitespaceAndAnAllWhitespaceOneIsRefused(t *testing.T) {
+//
+// ⚠ IT WAS `…AndAnAllWhitespaceOneIsRefused` UNTIL THE CONTENT TEST WIDENED PAST
+// WHITESPACE, and the name moved with the body rather than staying the narrower claim:
+// the refusal arms now walk the zero-width runes as well, and one arm pins that a value
+// MIXING content with them survives byte for byte.
+func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.T) {
 	armed := func(secret string) map[string]string {
 		return map[string]string{
 			EnvProxyFronted:       "yes",
@@ -1779,18 +1820,176 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnAllWhitespaceOneIsRefused(t *test
 		t.Fatalf("an unpadded secret was altered: %q", got)
 	}
 
-	// …and a secret that is ENTIRELY whitespace is refused, at every length — including
-	// the ones the floor lets through.
+	// 🔴 A SECRET WITH REAL CONTENT AND AN EMBEDDED INVISIBLE RUNE IS A LEGITIMATE SECRET,
+	// AND THIS IS THE REGRESSION RISK OF THE WIDENED CONTENT TEST RATHER THAN A CURIOSITY.
+	// `reducesToNothing` asks whether ANY rune carries content, so one letter is enough to
+	// make the whole value content — and `keepWhitespace` then has to deliver it byte for
+	// byte, the same promise the padded arm above pins for spaces. A predicate that STRIPPED
+	// the invisible runes instead of merely not counting them would pass every refusal arm
+	// in this test and silently change the secret, which is the trim this setting exists to
+	// refuse.
+	//
+	// ⚠ IT IS NOT REGRESSION COVERAGE AND IS LABELLED SO RATHER THAN COUNTED AS SOME.
+	// Measured: this arm passes at `02fad01` too — the widening changed nothing about a
+	// value that carries content, which is the point. What it is, is a guard on the FIX's
+	// DIRECTION, and it is killable rather than vacuous: with `setting.value` mutated to
+	// strip the non-space non-content runes — the plausible wrong fix, "drop the invisible
+	// junk, keep real whitespace" — this arm fails with its own message above while the
+	// padded arm before it stays green. The wider mutant that stripped whitespace too died
+	// on the padded arm instead and proved nothing about this one.
+	for _, secret := range []string{
+		string(testProxySecret) + "\u200b",
+		"\u200b" + string(testProxySecret),
+		"\u2060" + string(testProxySecret) + "\ufeff",
+		string(testProxySecret[:8]) + "\u200b" + string(testProxySecret[8:]),
+		"  " + string(testProxySecret) + "\u00a0\u200b ",
+	} {
+		chain, _, err := FromEnvironment(armed(secret), newTestAuthority(t))
+		if err != nil {
+			t.Fatalf("a secret carrying real content plus an invisible rune was refused, which is a "+
+				"deployment that worked before the content test was widened.\n  secret: %q\n  got: %v",
+				secret, err)
+		}
+		if got := string(trustedHeaderIn(t, chain).secret); got != secret {
+			t.Fatalf("the secret was altered on the way in.\n  got:  %q\n  want: %q\n"+
+				"Stripping an invisible rune is a trim, and the proxy that holds the real secret stops matching.",
+				got, secret)
+		}
+	}
+
+	// …and a secret that is ENTIRELY invisible is refused, at every length — including the
+	// ones the floor lets through.
+	//
+	// 🔴 THE ROWS SPLIT INTO A MEASUREMENT AND ITS CONTROLS, AND BOTH HALVES ARE THE POINT.
+	// U+0020, U+0009, U+000A and U+00A0 are in `unicode.IsSpace`, so `strings.TrimSpace`
+	// already refused them and they must keep refusing — they say the predicate only got
+	// WIDER. U+200B, U+2060 and U+FEFF are `Cf` and are in nothing `TrimSpace` reads:
+	// measured at `02fad01`, a secret of 32 of any of them BUILT and was held as a 96-byte
+	// live shared secret.
 	for _, n := range []int{1, 2, MinProxySecretBytes - 1, MinProxySecretBytes, MinProxySecretBytes + 8, 200} {
-		for _, r := range []string{" ", "\t", "\n"} {
+		for _, r := range []string{" ", "\t", "\n", "\u00a0", "\u200b", "\u2060", "\ufeff"} {
 			secret := strings.Repeat(r, n)
 			_, _, err := FromEnvironment(armed(secret), newTestAuthority(t))
 			if !errors.Is(err, ErrBlankSetting) {
-				t.Fatalf("a secret of %d %q was not refused as blank — the length floor is a LENGTH test "+
+				t.Fatalf("a secret of %d %+q was not refused as blank — the length floor is a LENGTH test "+
 					"and cannot say this is not a secret.\n  got: %v", n, r, err)
 			}
 			if !strings.Contains(err.Error(), EnvProxySecret) {
 				t.Fatalf("the refusal does not name the variable: %v", err)
+			}
+		}
+	}
+}
+
+// TestAZeroWidthSecretCannotBecomeASourceCheckASTRANGERCanClear.
+//
+// 🔴 THIS IS THE HAZARD AT ITS FULL WIDTH, WHICH THE ARM IN
+// `TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms` STRUCTURALLY CANNOT
+// REACH. That test's arms need the deployment to build with the setting under test ABSENT
+// — it is how the negative control on the probe is taken — so the secret arm is armed by
+// `REQUIRE_CLIENT_CERT` and every request in it carries a verified certificate. The
+// measured configuration had NO certificate requirement: the shared secret was the only
+// source check, so clearing it is the whole of the authentication.
+//
+// Measured at `02fad01` with `PROXY_FRONTED=yes`, a subject header, a provider and
+// `CAIRN_TRUSTED_HEADER_SECRET` set to 32 × U+200B, 32 × U+2060 or 32 × U+FEFF: each BUILT
+// and held a 96-byte live shared secret, and a caller presenting the same run of
+// zero-width runes plus a subject header — no certificate, no knowledge of the deployment
+// — authenticated as the user that subject resolves to. 32 × U+00A0 and 32 × U+0020 were
+// refused, which is what made the gap a spelling rather than a missing guard.
+//
+// 🔴 THE PROBE IS CONTROLLED IN BOTH DIRECTIONS BEFORE THE DEGENERATE CASE IS ASKED, AND
+// THE CONTROLS ARE TWO DIFFERENT CLAIMS. `admitted` must be able to report REFUSED — a
+// real secret refuses every guess in the set — and it must be able to report ADMITTED,
+// which is taken against a deployment whose secret genuinely IS guessable
+// (`MinProxySecretBytes` × "a"). Without the second, "no guess authenticated" is
+// indistinguishable from a probe wired to nothing; that control also states the honest
+// limit of the fix, which is a CONTENT test and not an entropy one.
+func TestAZeroWidthSecretCannotBecomeASourceCheckAStrangerCanClear(t *testing.T) {
+	// No `REQUIRE_CLIENT_CERT` and no `PEERS`: the shared secret is the only thing
+	// standing between a socket and an identity.
+	armedBySecretAlone := func(secret string) map[string]string {
+		return map[string]string{
+			EnvProxyFronted:       "yes",
+			EnvProxySubjectHeader: testSubjectHeader,
+			EnvProxyProvider:      testProvider,
+			EnvProxySecret:        secret,
+		}
+	}
+
+	// admitted is one real request from a caller who knows nothing: a subject header, a
+	// guess at the shared secret, no TLS state at all. `true` means it authenticated.
+	admitted := func(t *testing.T, th *TrustedHeader, guess string) bool {
+		t.Helper()
+		_, err := th.Authenticate(proxyRequest(t, map[string]string{
+			testSubjectHeader:        testSubject,
+			DefaultProxySecretHeader: guess,
+		}, "203.0.113.99:1"))
+		return err == nil
+	}
+
+	// The guesses a stranger makes, and the same set the refusal arms below are built
+	// from — one slice, so a spelling cannot be asked one question and not the other.
+	guesses := []string{
+		strings.Repeat(" ", MinProxySecretBytes),
+		strings.Repeat("\t", MinProxySecretBytes),
+		strings.Repeat("\u00a0", MinProxySecretBytes),
+		strings.Repeat("\u200b", MinProxySecretBytes),
+		strings.Repeat("\u2060", MinProxySecretBytes),
+		strings.Repeat("\ufeff", MinProxySecretBytes),
+	}
+
+	// 1. THE PROBE CAN REPORT REFUSED — a real secret admits nobody who guesses.
+	chain, _, err := FromEnvironment(armedBySecretAlone(string(testProxySecret)), newTestAuthority(t))
+	if err != nil {
+		t.Fatalf("precondition: a deployment armed by a real shared secret alone must build: %v", err)
+	}
+	live := trustedHeaderIn(t, chain)
+	if !admitted(t, live, string(testProxySecret)) {
+		t.Fatal("precondition: the real secret did not authenticate, so this probe measures nothing")
+	}
+	for _, guess := range guesses {
+		if admitted(t, live, guess) {
+			t.Fatalf("precondition: %+q authenticated against a REAL secret, so the probe cannot "+
+				"tell a live source check from one anybody can clear", guess)
+		}
+	}
+
+	// 2. THE PROBE CAN REPORT ADMITTED — against a secret that really is guessable. This
+	// is the reassuring-zero control: without it, "no guess got in" above is what a probe
+	// wired to nothing also reports.
+	guessable := strings.Repeat("a", MinProxySecretBytes)
+	chain, _, err = FromEnvironment(armedBySecretAlone(guessable), newTestAuthority(t))
+	if err != nil {
+		t.Fatalf("precondition: a low-entropy but non-blank secret must still build — the fix is a "+
+			"CONTENT test, not an entropy test: %v", err)
+	}
+	if !admitted(t, trustedHeaderIn(t, chain), guessable) {
+		t.Fatal("the probe reports REFUSED for a caller who guessed the secret exactly — it cannot " +
+			"observe a stranger getting in, so step 3 below would pass for the wrong reason")
+	}
+
+	// 3. THE HAZARD. Either the line is refused by name, or no stranger can clear the rung.
+	for _, secret := range guesses {
+		chain, _, err := FromEnvironment(armedBySecretAlone(secret), newTestAuthority(t))
+		if err != nil {
+			if !errors.Is(err, ErrBlankSetting) {
+				t.Fatalf("%s=%+q was refused by some OTHER guard, which is a refusal this test "+
+					"cannot attribute: %v", EnvProxySecret, secret, err)
+			}
+			if !strings.Contains(err.Error(), EnvProxySecret) {
+				t.Fatalf("%s=%+q was refused without naming the variable: %v", EnvProxySecret, secret, err)
+			}
+			continue
+		}
+		th := trustedHeaderIn(t, chain)
+		for _, guess := range guesses {
+			if admitted(t, th, guess) {
+				t.Fatalf("%s=%+q BUILT as a %d-byte live shared secret, and a caller who knows "+
+					"nothing about this deployment authenticated as %q by sending %+q plus a subject "+
+					"header — no certificate, no allowlist, nothing. The only source check this "+
+					"deployment has is one a stranger can clear.",
+					EnvProxySecret, secret, len(th.secret), testSubject, guess)
 			}
 		}
 	}

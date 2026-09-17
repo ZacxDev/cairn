@@ -322,13 +322,24 @@ without deciding its policy is red there, not a silent default.
 
 🔴 **"REDUCES TO NOTHING" IS ONE PREDICATE AND IT IS WIDER THAN WHITESPACE.** That is the
 whole bug class: a guard can be SPELLED rather than STRUCTURAL. `treu` was refused while
-`"  "` was accepted; then `"  "` was refused while `","` was accepted. So
-`setting.reducesToNothing` runs the whitespace test for every setting *and*, where the
-setting declares a split, asks whether the value yields any fields at all. Measured at
-`70636bd` beside a complete armed trusted-header backend: `CAIRN_TRUSTED_HEADER_PEERS`
-set to `","`, `",,"`, `", ,"`, `" , "` or `"\t,\n"` **built with zero peers**, so
-`Authenticate`'s `if len(t.peers) > 0` never ran and any address could present the identity
-header — while `"  "` was refused.
+`"  "` was accepted; then `"  "` was refused while `","` was accepted; then `","` was
+refused while a run of **zero-width** runes was accepted. So `setting.reducesToNothing`
+runs a CONTENT test for every setting — is there a rune in here that is graphic and is not
+a space — *and*, where the setting declares a split, asks whether the value yields any
+fields at all. Measured at `70636bd` beside a complete armed trusted-header backend:
+`CAIRN_TRUSTED_HEADER_PEERS` set to `","`, `",,"`, `", ,"`, `" , "` or `"\t,\n"` **built
+with zero peers**, so `Authenticate`'s `if len(t.peers) > 0` never ran and any address
+could present the identity header — while `"  "` was refused.
+
+🔴 **AND THE CONTENT TEST IS NOT A COMPLETENESS CLAIM — ONE SPELLING IS OPEN AND NAMED
+RATHER THAN IMPLIED CLOSED.** `strings.TrimSpace` reads `unicode.IsSpace`, whose set holds
+U+00A0 and every `Zs` separator and none of the `Cf` zero-width runes, which is why the
+whitespace spelling of this hazard was closed a round before the invisible one. The content
+test closes both. What it does **not** close is a rune that is graphic by CATEGORY and
+still renders blank — U+2800 BRAILLE PATTERN BLANK, U+3164 HANGUL FILLER, a lone combining
+mark: measured on this tree, `CAIRN_TRUSTED_HEADER_SECRET` set to 32 × U+2800 is still
+accepted as a live 96-byte secret. Closing that needs a rendered-width judgement this
+package has no source for; `setting.reducesToNothing` carries the note beside the code.
 
 🔴 **AND THE INLINE SECRET IS THE MIRROR CASE: NOT TRIMMED, BUT NOT ALLOWED TO BE
 NOTHING.** Interior and edge whitespace may legitimately be part of a secret, so
@@ -339,6 +350,19 @@ string. What stood behind that was `NewTrustedHeader`'s `len(cfg.Secret) < MinPr
 as a live shared secret, 40 spaces built. A caller sending the same run of spaces plus a
 subject header authenticated as any user here. The fix is the `refuseBlank` policy beside
 `keepWhitespace`, **not** a trim — a trim would silently corrupt a padded secret.
+
+🔴 **AND THE SAME SECRET, ONE SPELLING OVER, WAS LIVE FOR ANOTHER ROUND.** Measured at
+`02fad01` with the backend armed by the **secret alone** — no client-certificate
+requirement, so the shared secret was the only source check — `CAIRN_TRUSTED_HEADER_SECRET`
+set to 32 × U+200B, 32 × U+2060 or 32 × U+FEFF each **BUILT** and held a 96-byte live
+shared secret, and a caller presenting the same run of zero-width runes plus a subject
+header authenticated as the user that subject resolves to. 32 × U+00A0 and 32 × U+0020 were
+refused, which is what made it a spelling rather than a missing guard.
+`TestAZeroWidthSecretCannotBecomeASourceCheckAStrangerCanClear` is the behavioural evidence,
+and it asserts that a **stranger** cannot clear the rung rather than that the rung is on —
+a probe that presents the fixture's own secret reports "enforced" for a backend anybody can
+walk into. A value that mixes content with invisible runes stays a legitimate secret and
+arrives **byte for byte**, which is the regression the widening risked.
 
 Other rules:
 
