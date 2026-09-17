@@ -23,46 +23,69 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ `0d9d3fa`, clean. **Seven PRs merged this session** — #29 (P3a), #30
-  (P3b-a), #31 (P3b-b), #32 (the AGENTS.md eviction), #33 and #34 (handoff updates); #36
-  is **another session's** ghcr publish work, merged while ours was open.
-- 🔴 **RANK 1 (P4, identity) IS IN FLIGHT AS PR #35 @ `7ac810e`, NOT MERGED.** `leakscan`,
-  `parity`, `dualrun`, `nix` green; **`tests` and `go` were still running at handoff
-  time** and the previous head went RED on `tests`, so **do not assume**. Claim
-  `cairn-control-plane-1` is HELD. Round 0 of the audit ladder is DONE; **round 1 (the
-  nine correctness axes) has NOT been run.**
+- Branch `main` @ `0d9d3fa`, clean. The base clone sits on `docs/handoff-p4-ceiling` (PR #37,
+  `claudedocs/` only — no interaction with the byte gate).
+- 🔴 **RANK 1 (P4, identity) IS STILL PR #35 @ `7ac810e`, OPEN AND NOT MERGED.** Claim
+  `cairn-control-plane-1` is HELD (rc 12, this session).
 - **What #35 contains:** `internal/identity` — an `Authenticator` interface over three
   backends (`MachineToken`, a verbatim move of the old token path; `SupabaseJWT`,
   JWKS-only; `TrustedHeader`, for a proxy-fronted instance), all resolving to one
   `control.Principal` with authentication and authorization from the same match.
-- 🔴 **DECISION (operator, this session): the Supabase project uses ASYMMETRIC keys, so
+- 🔴 **DECISION (operator, carried forward): the Supabase project uses ASYMMETRIC keys, so
   the legacy HS256 path is DELETED.** Retired: `AlgHS256`, `keyOct`, `staticSecret`,
   `resolverPair`, `MinHS256SecretBytes`, `ErrSupabaseWeakSecret`, both `_JWT_SECRET*`
   env vars, `SupabaseConfig.Secret`, the HMAC signer, the weak-secret construction rung.
   ⚠ **The HS256 *refusal* is KEPT and is now unconditional** — deleting support without
-  the check is how algorithm-confusion returns.
-- 🔴 **DECISION (operator, this session): `MAX_BYTES` raised 31,850 → 32,500**, base
-  named (30,999 B measured merged content) — see the Gotcha below for why.
+  the check is how algorithm-confusion returns. Round 1 re-measured the guard: deleting
+  the `symmetricAlg` call site turns **6/6** subtests red, each naming
+  `ErrTokenAlgSymmetric`, and **no arm reports algorithm confusion** — confirming the
+  guard's honest scope is "it NAMES the refusal", not "it is the only refusal".
+- 🔴 **DECISION (operator, carried forward): `MAX_BYTES` raised 31,850 → 32,500**, base
+  named (30,999 B measured merged content) — the Gotcha below carries the reasoning, and
+  the boundary set has now been re-watched firing on the merged tree.
+- ✅ **CI IS CONFIRMED GREEN, AND THE READING CARRIES ITS OWN PROOF.** All **six** checks
+  present AND `COMPLETED`/`SUCCESS` — `leakscan`, `tests`, `go`, `parity`, `dualrun`, `nix` —
+  on run `35163448166`, whose `headSha` was read back and equals `7ac810e`. The previous
+  head's RED `tests` (`assert 851 >= 900` at `1dd2815`) is **resolved**, not merely rerun.
+- ✅ **THE MERGED TREE WAS BUILT AND MEASURED, because `7ac810e` does NOT contain
+  `origin/main` (`0d9d3fa`).** In a throwaway worktree, `main` merged with the PR:
+  `AGENTS.md`+`CLAUDE.md` = **30,999 B** (`wc -c`) ⇒ headroom **1,501** against
+  `MIN_HEADROOM 900`; `pytest tests` **1938 passed / 0 failed**; `go vet` clean;
+  `go test ./...` **15 `ok`** counted from the result lines; `leakscan` **rc 0** (captured
+  before any pipe, stderr read separately) over **293 files**; `--self-test` rc 0.
+- ✅ **ROUND 1 OF THE AUDIT LADDER IS DONE — dispatched BLIND, five findings, NO 🔴.**
+  Three 🟡: a ledger guard that restates the constants it says it *discovers* (so it cannot
+  fail when the set GROWS, proven by adding a real setting and watching `go test ./...` stay
+  green); `anySet`'s `TrimSpace` silently disabling a backend whose value is whitespace; and
+  `internal/identity/README.md:366` claiming `KeySet` "is exercised under `-race`" when
+  **nothing in the repo runs `-race`**. Two 🟢: an empty secret *file* mis-blamed on the wrong
+  setting, and `JWKSOptions.Interval`'s doc contradicting its constructor. All five
+  re-verified at source by the orchestrator rather than accepted.
+- 🔴 **DECISION (operator, this session), on the two findings that had a choice:** add
+  **`-race` to the `go` CI job** (measured free today: rc 0, 15 ok, zero races) rather than
+  deleting the README claim; and **refuse a whitespace-only ledger value** with a sentinel
+  naming the variable, rather than making `anySet` presence-keyed.
+- 🔴 **THE FIX ROUND IS IN FLIGHT** in a worktree on `feat/identity-interface` at `7ac810e`;
+  at the time of writing it had pushed nothing. **ROUND 2 (the delta re-audit against
+  `7ac810e`) IS STILL OWED** — round 1 was not clean, so the ladder continues.
 - **Deploy/verify status: unchanged — nothing deployed.** `flake.nix` default is still the
   Python client; the Go server has never run against the real pod; **neither new identity
-  backend has ever run anywhere.**
-- **Gates measured on `#35 @ 7ac810e`** (locally, by the orchestrator): `go vet` clean ·
-  `go test ./...` **15 packages ok** · conformance **99/433/0/0** (oracle) and **116 PASS
-  / 415 / 0 / 4** (Go), exactly unmoved · battery **96 / 94 killed / 2 EQUIVALENT / 0
-  misattributed** · leakscan **rc 0**, clean · weight gate green on branch AND merged tree.
+  backend has ever run anywhere**, and the Defect below says why that is structural.
 
 ## Next steps (ranked)
-1. **P4 — identity. 🔴 IN FLIGHT as `ZacxDev/cairn#35` @ `7ac810e`; VERIFY BEFORE
-   TOUCHING.** Confirm `tests` and `go` are green, then **run round 1 of the audit ladder**
-   — the nine correctness axes, dispatched BLIND. Round 0 is done (`requirements: 25,
-   unattributed: 11, deletion candidates: 3`) and produced the HS256 deletion. Files:
-   `internal/identity/`, `internal/api/server.go`, `cmd/cairn-server/main.go`.
+1. **P4 — identity. 🔴 IN FLIGHT as `ZacxDev/cairn#35` @ `7ac810e`.** CI and the merged tree
+   are both confirmed green; round 1 is done. What remains: land the five fixes, **re-run the
+   full gate set on the MERGED tree again** (the base moved once already — a pre-fix green is
+   a measurement of a different tree), then **round 2 as a delta re-audit against `7ac810e`**,
+   framed as *what was claimed fixed* and never *why it is correct*. The ladder ends on the
+   first round that finds nothing — not on a "safe to merge" verdict, which round 1 already
+   returned while reporting five real defects.
    forcing: user — "identity via supabase (github and google)", plus a named second
    instance that will front it with an oauth proxy.
 2. **P5 — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
    entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share
    dialog must state that unsharing cannot recall a replica. Pin the whole normalised
-   string, not keywords. 🔴 **P5 IS ALSO WHAT MAKES P4 REACHABLE** — see the Defect below:
+   string, not keywords. 🔴 **P5 IS ALSO WHAT MAKES P4 REACHABLE** — see the Defect:
    both new backends are inert until something creates a `control.User`.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
 3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no
@@ -389,6 +412,55 @@ Fix as one round; closing one buys room for one rank.
   **silently discarded by a healthy pod** — the opposite of the partial-configuration
   rule's intent. A "retired" ledger that refuses is the fix.
 
+- 🔴 **A RAISED CEILING MUST BE WATCHED FIRING AT THE TREE YOU WILL ACTUALLY MERGE, NOT THE
+  BRANCH.** The `MAX_BYTES` 32,500 boundary set was originally measured on the branch. Re-run
+  on the **merged** tree it reproduces exactly — `+601` green, `+602` headroom red, `+1501`
+  headroom red, `+1502` both red — which is what makes the merged green *earned* rather than
+  asserted. The general shape: a gate's negative control is a claim about the tree it ran on,
+  and the tree that decides the merge is a different one.
+- 🔴 **TWO TEST COUNTS THAT DISAGREE ARE USUALLY TWO TREES, NOT A DEFECT — AND THE CI FLOOR
+  MOVED WITH THEM.** An auditor reported `1927 collected` at the PR head; the orchestrator
+  measured `1938` on the merged tree. Neither is wrong: the PR adds **0** Python test
+  functions and `main` added **11** since `83c6ba4`. ⚠ The `FLOOR` constant differs the same
+  way — **1,873 at the PR head, 1,888 on `origin/main`** — and the PR does not touch that
+  line, so the merged tree inherits `main`'s 1,888 and clears it at 1,938. **Name the tree
+  beside any suite count in this repo**, or the next reader reads a discrepancy as a
+  regression.
+- 🔴 **`pgrep -f` MATCHED MY OWN SHELL WHILE I WAS SWEEPING FOR LEAKED PROCESSES — the exact
+  documented trap, live.** A sweep for `cairn-server.test|control_mutants` returned one hit,
+  and the hit was the sweeping command's own `zsh -c` line quoting the pattern. Read as a
+  leak it would have sent me hunting a process that did not exist; read as a hit to `kill` it
+  would have killed the shell. **Resolve PIDs, skip `$$`, and confirm each via
+  `/proc/<pid>/cmdline` and `/proc/<pid>/cwd` before believing OR killing anything.** The
+  real answer was zero.
+- 🔴 **BASE-CLONE DRIFT HAPPENS ON FEATURE BRANCHES TOO, NOT JUST `main`.** The local
+  `feat/identity-interface` was a stale leftover at `58ee284`, **four commits behind**
+  `origin`, checked out in no worktree, while the PR head was `7ac810e`. A `worktree add` on
+  it silently produces a tree missing the last four commits — including the ceiling raise —
+  and every gate run there measures the wrong tree. `git merge --ff-only` is the safe sync
+  precisely because it cannot conflict or autostash: it advanced (nothing was ahead), and had
+  the branch diverged it would have REFUSED rather than guessed.
+- ⚠ **THE AUDIT BRIEF AND THIS REPO'S OWN GOTCHA DISAGREE ABOUT `isolation: "worktree"`, AND
+  THE REPO IS RIGHT.** `audit-dispatch.py`'s WHERE TO WORK section says to dispatch with that
+  flag because the PR lives in the cwd's repo — true, but incomplete: the flag branches from
+  the DEFAULT branch, so for an UNMERGED branch it hands back a tree of `main`. Both audit and
+  fix agents were given a hand-built detached/branch worktree at the PR head plus **a base
+  check they could fail** (`rev-parse HEAD` must equal the head sha; `ls` the package). Do
+  this for every dispatch against an open PR here.
+- 🔴 **THE REPO'S OWN NAMED FAILURE SHAPE TURNED UP INSIDE THE PACKAGE BUILT TO REFUSE IT.**
+  `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` carries the comment *"Every
+  `Env*` constant this package exports, discovered rather than restated. Restating them would
+  be the second spelling this test exists to refuse"* — directly above a hand-written literal
+  restating all fifteen — and a 🔴 docstring claiming it *"fails when the set GROWS"*. It
+  cannot: a constant absent from **both** ledgers is in neither side of the comparison. This
+  is "a guard's DESCRIPTION claims coverage while the body inspects one side", and the place
+  it hid was the guard written to close exactly that class one level up. **Reading as coverage
+  while providing none is worse than none — it stops anyone looking.**
+- **A blind round 1 is worth its cost even on a PR whose CI is fully green.** All six checks,
+  a green corpus over 415 assertions, a 96-mutant battery at 94 killed and a clean merged tree
+  did not surface any of the five findings — three of which are claims a future reader would
+  rely on and be wrong. Green gates and honest prose are independent properties.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
@@ -433,3 +505,49 @@ verdict — an empty rollup satisfies "nothing incomplete".
 - **Next probe:** `gh pr view 35 --repo ZacxDev/cairn --json statusCheckRollup` — require
   **six** checks present AND all COMPLETED before reading the verdict (see the watcher
   Gotcha below), then confirm `tests` is SUCCESS on `7ac810e`.
+
+### ✅ RESOLVED — PR #35's `tests` job, and the merged-tree byte budget
+- as-of: 2026-09-16
+- **Resolution:** both halves are closed by measurement, and this supersedes the block above
+  titled "PR #35's `tests` job was RED on the previous head; the fix is pushed but unconfirmed".
+- **Observed (with values):** six checks present and all `COMPLETED`/`SUCCESS` on run
+  `35163448166`; that run's `headSha` read back as `7ac810e8a49bcca6b9b4871cddc3a7abb7b1cb51`,
+  so the rollup is about the tree we care about. On the locally-built merged tree:
+  30,999 B, headroom 1,501, 1938 pytest passes, 15 Go `ok` lines, leakscan rc 0 over 293 files.
+- **Ruled out:** that the raised ceiling is a gate that no longer fires. Re-measured the
+  negative control **on the merged tree** rather than the branch: `+601` green · `+602`
+  headroom RED · `+1501` headroom RED · `+1502` both RED. `via: measurement`
+- **Ruled out:** that the auditor's `1927 collected` contradicted the orchestrator's `1938`.
+  The PR adds **zero** Python test functions; `main` added **11** since the merge base
+  `83c6ba4`; 1927 + 11 = 1938. Both readings are correct and describe different trees.
+  `via: measurement`
+- **Next probe:** none for this block — it is closed. The live question has moved to the fix
+  round and round 2, below.
+
+### The round-1 fix round, and the round-2 delta that must follow it
+- as-of: 2026-09-16
+- **Symptom + exact repro:** not a defect — an unfinished ladder. Round 1 returned five
+  findings, so by the stop rule another round is owed; a ladder that stops on findings has
+  shipped the finding.
+- **Observed (with values):** round 1 ledger — five findings (3 🟡, 2 🟢), zero 🔴, verdict
+  "safe to merge" **which is explicitly not the stop signal**. Each finding re-verified at
+  source by the orchestrator: the `config_test.go` comment claiming "discovered rather than
+  restated" sits directly above a hand-written 15-element literal; `anySet` is
+  `strings.TrimSpace(env[name]) != ""`; `jwks.go:89` says "Zero disables the timer" while
+  `:144` maps zero to `DefaultJWKSInterval`. Tree-wide enumeration for `-race`
+  (`find … -print0 | xargs -0 grep`, **not** the `.gitignore`-blind `grep -r`) returned five
+  hits, **none of them a runner**.
+- **Ruled out:** that the fix agent could safely use `isolation: "worktree"`. On this repo
+  that flag branches from the DEFAULT branch, so it would hand back a tree of `main` with no
+  `internal/identity` at all. The worktree was built by hand at the PR head instead.
+  `via: code` — the flag's documented behaviour, already measured twice on this repo.
+- **Leading hypothesis:** round 2's likeliest finding is a **sentence the fix round wrote to
+  explain itself**, not code — the shape this ladder has hit repeatedly. The named trap here
+  is the `-race` sentence: `internal/control/cache_test.go:81` and `:460` already record that
+  `-race` is structurally blind to, and green on, a real defect in this tree, so a fix-round
+  sentence implying `-race` covers concurrency correctness would be a fresh false claim
+  inside the section whose job is honest inventory.
+- **Next probe:** once the fix round pushes, re-run the full gate set on a freshly-built
+  MERGED tree, then dispatch round 2 with
+  `python3 ~/workspace/devrc/scripts/audit-dispatch.py 35 --round 2` and **read its stderr**
+  for the "newest claims block says round=N" line before dispatching.
