@@ -52,8 +52,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: entries, updated to "FOUR" when the fourth landed, and then the fifth landed and the
 #: header did not move — one missed update out of two chances. A count kept beside the
 #: thing it counts is a second spelling of the same fact and drifts silently, so the tuple
-#: below is the only place the set is stated and every entry carries its own reason
+#: below is the only place the set is ENUMERATED and every entry carries its own reason
 #: inline. Count them there if you need a number.
+#:
+#: 🔴 IT IS NOT THE ONLY PLACE THE COUNT IS STATED, AND SAYING SO WAS THE ROUND AFTER'S
+#: FINDING. Deleting the stale copy from this header fixed the copy a `PKGS` edit would
+#: have had in its own diff and left the ones a `PKGS` editor never opens:
+#: `internal/control/README.md` and `.github/workflows/ci.yml` both spell it out, and
+#: appending a sixth entry here left `tests/test_control_mutant_count_is_pinned.py` at
+#: 3 passed — its whole content then — with every one of them still reading FIVE.
+#: They are pinned to `len(PKGS)` by `tests/test_control_mutant_count_is_pinned.py` now,
+#: which is the same treatment the mutant count already has — so a `PKGS` edit that leaves
+#: prose stale is a red test rather than an instruction nobody reads.
 #:
 #: The seam itself, which is the reason a battery scoped to ONE package would be wrong: a
 #: mutant in the token-file projection is killed by a guard in the server and vice versa,
@@ -1292,9 +1302,9 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-retired-setting-is-silently-ignored",
         path="internal/identity/config.go",
-        old='\t\tif strings.TrimSpace(env[name]) != "" {\n\t\t\tnames = append(names, name)\n'
+        old='\t\tif value, present := env[name]; present && value != "" {\n\t\t\tnames = append(names, name)\n'
         '\t\t}\n\t}\n\tif len(names) == 0 {',
-        new='\t\tif strings.TrimSpace(env[name]) != "" {\n\t\t\tnames = append(names, name)\n'
+        new='\t\tif value, present := env[name]; present && value != "" {\n\t\t\tnames = append(names, name)\n'
         '\t\t}\n\t}\n\tif len(names) >= 0 {',
         killer="TestAPartiallyConfiguredBackendRefusesToStart",
         extra_killers=("TestTheEnvironmentLedgersNameEveryVariableEachBackendReads",),
@@ -1314,10 +1324,18 @@ MUTANTS: tuple[Mutant, ...] = (
         "== 0 {` alone was the anchor until `refuseBlankSettings` landed in the same file "
         "with a character-for-character identical early return, and the harness reported "
         "the same HARNESS ERROR a second time. The anchor is therefore the whole "
-        "collect-then-return BLOCK, whose `strings.TrimSpace(env[name]) != \"\"` line is "
-        "what distinguishes this function from its sibling. The general lesson the two "
-        "sightings agree on: in a file of small guards written to one shape, no SINGLE "
-        "line is a stable anchor — take enough of the block to name the function.",
+        "collect-then-return BLOCK, whose membership test is what distinguishes this "
+        "function from its sibling. The general lesson the two sightings agree on: in a "
+        "file of small guards written to one shape, no SINGLE line is a stable anchor — "
+        "take enough of the block to name the function. "
+        "🔴 THIRD SIGHTING, AND IT BROKE THE OTHER WAY: THE DISTINGUISHING LINE ITSELF "
+        "MOVED. It was `strings.TrimSpace(env[name]) != \"\"` until the round that made a "
+        "retired name holding only whitespace REFUSE instead of being discarded, which "
+        "replaced it with `value, present := env[name]; present && value != \"\"` — so the "
+        "anchor matched zero times and the harness reported an error a third time. A "
+        "fixed anchor cannot be made drift-proof by choosing a better line; what it can "
+        "be is LOUD, which it was. Widest reading: any edit to this function is an edit "
+        "to this row.",
     ),
     Mutant(
         name="a-secret-may-come-from-two-sources",

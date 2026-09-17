@@ -372,9 +372,15 @@ deployment that could resolve nobody before can resolve nobody now, for the same
   a LOGICAL race: `internal/control/cache_test.go` records one that is green under `-race`
   and wrong anyway, two refreshes perfectly synchronised and committing in the wrong order.
   ⚠ This line used to claim the package "is exercised under `-race`" while **no gate in this
-  repository ran it**: enumerated tree-wide at the PR head, `-race` appeared in four files
-  and all four were prose — `.github/workflows/ci.yml` and both `flake.nix` check phases ran
-  it plain. It had been run BY HAND at least once and it earned its keep doing so
+  repository ran it**: enumerated tree-wide at `7ac810e`, the literal `-race` appeared in four
+  files, of which one — `tests/test_subsystem_store_api.py` — is the substring inside
+  "port-race retry" rather than the flag at all, so **three** carried it and all three were
+  prose; `.github/workflows/ci.yml` and both `flake.nix` check phases ran `go test ./...`
+  plain. ⚠ Re-enumerated at `372601d`, the commit that added the gate, it is **five** files
+  and one of them RUNS it — so both counts are pinned to a REF rather than to "the PR head",
+  which is a moving target and is how this number went stale inside its own pull request.
+  `flake.nix` still holds no `-race` at all. It had been run BY HAND at least once and it
+  earned its keep doing so
   (`cmd/cairn-server/main_test.go` records a genuine data race it caught, twice in one
   `-count=2` run), which is the argument for gating it rather than deleting the sentence.
   The sentence is now true because the CI job changed, not because it was softened; the
