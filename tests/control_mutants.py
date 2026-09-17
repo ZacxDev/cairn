@@ -46,33 +46,38 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: 🔴 FOUR PACKAGES, NOT ONE, BECAUSE THE GUARDS THIS BATTERY EXERCISES NOW SPAN A
-#: SEAM. `internal/control` is the model and its predicate; `internal/control/tokenfile`
-#: is the projection of the token file into that model; `internal/api` is the server that
-#: authorises from it. A mutant in the projection is killed by a guard in the server and
-#: vice versa — so a battery scoped to one package would score those SURVIVED while the
-#: suite that catches them was never run. `./internal/control/...` would cover the first
-#: two in one word; it is spelled out so that adding a sub-package is a deliberate act
-#: rather than something the pattern absorbs silently.
+#: 🔴 MORE THAN ONE PACKAGE, BECAUSE THE GUARDS THIS BATTERY EXERCISES SPAN A SEAM — AND
+#: NO TOTAL IS WRITTEN DOWN HERE ON PURPOSE. This header opened "FOUR PACKAGES, NOT ONE"
+#: above a tuple of FIVE. Read out of the history: it was written "THREE" over three
+#: entries, updated to "FOUR" when the fourth landed, and then the fifth landed and the
+#: header did not move — one missed update out of two chances. A count kept beside the
+#: thing it counts is a second spelling of the same fact and drifts silently, so the tuple
+#: below is the only place the set is stated and every entry carries its own reason
+#: inline. Count them there if you need a number.
 #:
-#: 🔴 AND `cmd/cairn-server` IS THE FOURTH BECAUSE OF WHAT LIVES ONLY THERE. The refresh
-#: loop that bounds the divergence `tokenfile` declares is started by `main` and by
-#: nothing else — measured: deleting it left `go build`, `go vet` and all thirteen
-#: `internal/...` test packages green, and this battery never ran the package at all.
-#: A mitigation with no gate is a mitigation nobody can be told has stopped working.
-#:
-#: 🔴 AND `internal/identity` IS THE FIFTH, BECAUSE P4's SEAM SPANS IT IN BOTH
-#: DIRECTIONS. The backends resolve a principal out of `internal/control`'s model and
-#: hand it to `internal/api`, so a mutant in the model's user lookup is killed by a guard
-#: in the identity package, and a mutant in the identity package's chain is killed by a
-#: guard in the server. A battery scoped to either side alone would score those SURVIVED
-#: while the suite that catches them was never run — the same reason the token-file
-#: projection and the server are both here.
+#: The seam itself, which is the reason a battery scoped to ONE package would be wrong: a
+#: mutant in the token-file projection is killed by a guard in the server and vice versa,
+#: and a mutant in the identity backends is killed by a guard in the model — so scoping to
+#: either side alone scores those SURVIVED while the suite that catches them was never run.
+#: A SURVIVED mutant that only means "the killing test did not run" is a false finding that
+#: reads as a coverage gap and sends the next reader to write a test that already exists.
 PKGS = (
+    # The model and the ONE authz predicate everything above authorises from.
     "./internal/control/",
+    # The projection of the token file into that model. `./internal/control/...` would
+    # cover this and the line above in one word; it is spelled out so that adding a
+    # sub-package is a deliberate act rather than something a pattern absorbs silently.
     "./internal/control/tokenfile/",
+    # P4's backends, which resolve a principal out of the model and hand it to the server
+    # — so this package sits on BOTH sides of the seam described above.
     "./internal/identity/",
+    # The server that authorises from the model.
     "./internal/api/",
+    # 🔴 HERE BECAUSE OF WHAT LIVES ONLY IN `main`. The refresh loop that bounds the
+    # divergence `tokenfile` declares is started here and nowhere else — measured:
+    # deleting it left `go build`, `go vet` and every `internal/...` test package green,
+    # and this battery never ran the package at all. A mitigation with no gate is a
+    # mitigation nobody can be told has stopped working.
     "./cmd/cairn-server/",
 )
 
@@ -1287,8 +1292,10 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-retired-setting-is-silently-ignored",
         path="internal/identity/config.go",
-        old="\tif len(names) == 0 {",
-        new="\tif len(names) >= 0 {",
+        old='\t\tif strings.TrimSpace(env[name]) != "" {\n\t\t\tnames = append(names, name)\n'
+        '\t\t}\n\t}\n\tif len(names) == 0 {',
+        new='\t\tif strings.TrimSpace(env[name]) != "" {\n\t\t\tnames = append(names, name)\n'
+        '\t\t}\n\t}\n\tif len(names) >= 0 {',
         killer="TestAPartiallyConfiguredBackendRefusesToStart",
         extra_killers=("TestTheEnvironmentLedgersNameEveryVariableEachBackendReads",),
         why="the INVERSE of `a-partial-proxy-configuration-is-silently-off`, and the "
@@ -1302,7 +1309,15 @@ MUTANTS: tuple[Mutant, ...] = (
         "`anySet`'s own line, so the harness matched TWICE and reported a HARNESS ERROR "
         "rather than a result. Mutating the call site is no better: "
         "`if err := refuseRetiredSettings(env); false {` leaves `err` declared and "
-        "unused, and a mutant that dies at the build proves nothing.",
+        "unused, and a mutant that dies at the build proves nothing. "
+        "🔴 AND THE EARLY RETURN IS NOT UNIQUE EITHER — IT HAPPENED AGAIN. `if len(names) "
+        "== 0 {` alone was the anchor until `refuseBlankSettings` landed in the same file "
+        "with a character-for-character identical early return, and the harness reported "
+        "the same HARNESS ERROR a second time. The anchor is therefore the whole "
+        "collect-then-return BLOCK, whose `strings.TrimSpace(env[name]) != \"\"` line is "
+        "what distinguishes this function from its sibling. The general lesson the two "
+        "sightings agree on: in a file of small guards written to one shape, no SINGLE "
+        "line is a stable anchor — take enough of the block to name the function.",
     ),
     Mutant(
         name="a-secret-may-come-from-two-sources",

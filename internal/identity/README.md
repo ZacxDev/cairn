@@ -363,9 +363,22 @@ deployment that could resolve nobody before can resolve nobody now, for the same
   can exist today resolves anybody through them. `packages.server-image` does not carry P4
   configuration and nothing has run it. Everything below `api.New`'s default is exercised
   in-process.
-- **Concurrency.** `KeySet` takes an `RWMutex` and is exercised under `-race`, but nothing
-  runs a refresh and a verification at the same instant deliberately, so the lock's
-  correctness is reasoned about rather than measured — the same honest limit
+- **Concurrency.** `KeySet` takes an `RWMutex`, and CI's `go` job runs `go test -race ./...`,
+  so an unsynchronised access on an interleaving one of these tests happens to produce would
+  be reported. 🔴 **That is the whole of what `-race` establishes here, and it is narrower
+  than it reads.** The detector sees a DATA race on an interleaving a test actually creates,
+  and **no test in this package creates deliberate refresh-vs-verify contention** — so the
+  interleaving that would matter is one it never observes. It is also structurally blind to
+  a LOGICAL race: `internal/control/cache_test.go` records one that is green under `-race`
+  and wrong anyway, two refreshes perfectly synchronised and committing in the wrong order.
+  ⚠ This line used to claim the package "is exercised under `-race`" while **no gate in this
+  repository ran it**: enumerated tree-wide at the PR head, `-race` appeared in four files
+  and all four were prose — `.github/workflows/ci.yml` and both `flake.nix` check phases ran
+  it plain. It had been run BY HAND at least once and it earned its keep doing so
+  (`cmd/cairn-server/main_test.go` records a genuine data race it caught, twice in one
+  `-count=2` run), which is the argument for gating it rather than deleting the sentence.
+  The sentence is now true because the CI job changed, not because it was softened; the
+  lock's correctness is still reasoned about rather than measured, the same honest limit
   `internal/control/README.md` records for `control.Cache`.
 - **Whether the chain's ORDER matters under a real mixed deployment.** The order is pinned
   structurally (`TestBackendsOrdersTheChainMachineTokenFirstAndTrustedHeaderLast`) and no

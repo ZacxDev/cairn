@@ -86,7 +86,12 @@ const DefaultSupabaseAudience = "authenticated"
 // ⚠ EACH LIST MUST NAME EVERY VARIABLE ITS BACKEND READS. One left out is one that can
 // be set alone without arming the check — which is the same defect one level down.
 // `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` pins both against the
-// constants above, failing when the set GROWS as well as when it shrinks.
+// `Env*` constants it reads out of this package's own source BY AST, so a constant added
+// without a ledger entry is a RED test rather than a hope. ⚠ That last clause used to be
+// written as a property and was
+// measured FALSE: the test compared the ledgers against a hand-written list of the same
+// fifteen names, so a sixteenth constant absent from the list and from both ledgers was
+// in neither side of the comparison and the whole suite stayed green with it live.
 var supabaseEnv = []string{
 	EnvSupabaseJWKSURL,
 	EnvSupabaseIssuer,
@@ -157,6 +162,13 @@ func FromEnvironment(env map[string]string, authority interface {
 		return nil, nil, err
 	}
 
+	// 🔴 ALSO BEFORE `anySet`, AND FOR THE MIRROR-IMAGE REASON. `anySet` TRIMS, so a
+	// whitespace-only value arms nothing at all; a check inside a backend's own branch
+	// could therefore never reach the deployment that has only that.
+	if err := refuseBlankSettings(env); err != nil {
+		return nil, nil, err
+	}
+
 	machine, err := NewMachineToken(authority)
 	if err != nil {
 		return nil, nil, err
@@ -204,6 +216,46 @@ func refuseRetiredSettings(env map[string]string) error {
 	}
 	return fmt.Errorf("%w: %s. Remove it rather than leaving it set — a value nothing reads looks like configuration",
 		ErrRetiredSetting, strings.Join(reasons, "; "))
+}
+
+// ErrBlankSetting is the refusal a ledger variable earns by holding only whitespace.
+var ErrBlankSetting = errors.New("identity: a setting is present and holds only whitespace")
+
+// refuseBlankSettings refuses a ledger variable whose value is whitespace and nothing else.
+//
+// 🔴 A WHITESPACE-ONLY VALUE IS INDISTINGUISHABLE FROM AN ABSENT ONE TO `anySet`, SO THE
+// BACKEND THE OPERATOR CONFIGURED IS SILENTLY OFF — the same defect `supabaseEnv`'s comment
+// describes one level up, in the one spelling the ledgers cannot see. Measured before this
+// guard existed: `FromEnvironment({CAIRN_TRUSTED_HEADER_SECRET: "   "}, …)` returned a nil
+// error and a ONE-backend chain, so the pod came up healthy, passed its health check, and
+// logged nothing about the trusted-header backend it was not running.
+//
+// ⚠ PRESENT-AND-WHITESPACE ONLY, AND THE TWO CASES IT DELIBERATELY LEAVES ALONE ARE THE
+// POINT OF THE SCOPE. An ABSENT name is how a deployment says "I am not using this
+// backend" — refusing it would refuse every deployment, including the machine-token-only
+// one this package's whole compatibility claim rests on. A name present with the EMPTY
+// string is left alone too: it carries no value to mistake for one, and a manifest that
+// emits every variable with an empty default is a common enough shape that refusing it
+// would be a second, wider change than the defect measured above.
+func refuseBlankSettings(env map[string]string) error {
+	ledgers := append(append([]string{}, supabaseEnv...), proxyEnv...)
+	names := make([]string, 0, len(ledgers))
+	for _, name := range ledgers {
+		value, present := env[name]
+		if !present || value == "" {
+			continue
+		}
+		if strings.TrimSpace(value) == "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	return fmt.Errorf("%w: %s. Give it a value or delete the line — the value is trimmed to nothing, "+
+		"so the backend it belongs to would be silently OFF while the manifest says it is on",
+		ErrBlankSetting, strings.Join(names, ", "))
 }
 
 func anySet(env map[string]string, names []string) bool {
@@ -339,6 +391,14 @@ func envBool(env map[string]string, name string) (bool, error) {
 // and every `echo` adds one, and a secret that differs from the proxy's by an invisible
 // byte fails with a refusal that says nothing about why. Interior whitespace is left
 // alone: it may be part of the secret.
+//
+// 🔴 AND A FILE THAT YIELDS ZERO BYTES IS A REFUSAL HERE, BECAUSE THE CONSTRUCTOR CANNOT
+// TELL IT FROM "NO SECRET CONFIGURED" AND BLAMES THE WRONG SETTING. A file holding only
+// the newline an editor added strips to nothing, returns a zero-length slice, and reaches
+// `NewTrustedHeader`'s `len(cfg.Secret) == 0` rung — so the operator is told there is no
+// source check at all and to configure the very secret they did configure, in a crash
+// loop. The MISSING-file case was already closed for exactly this reason; this is the same
+// mis-blame one step further in, where the file exists and is empty.
 func secretFrom(env map[string]string, inline, fromFile string) ([]byte, error) {
 	direct := env[inline]
 	path := strings.TrimSpace(env[fromFile])
@@ -357,5 +417,13 @@ func secretFrom(env map[string]string, inline, fromFile string) ([]byte, error) 
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", fromFile, err)
 	}
-	return []byte(strings.TrimRight(string(body), "\r\n")), nil
+	secret := strings.TrimRight(string(body), "\r\n")
+	if secret == "" {
+		return nil, fmt.Errorf(
+			"%s: %s is empty, or holds only the newline an editor added. That is not the same as no secret "+
+				"configured: read as one, the refusal you would get names the source check rather than this file, "+
+				"and tells you to configure the secret you already did",
+			fromFile, path)
+	}
+	return []byte(secret), nil
 }

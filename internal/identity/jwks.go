@@ -86,8 +86,13 @@ type JWKSOptions struct {
 	// Client is the HTTP client used for the fetch. nil means a client with the
 	// timeouts below.
 	Client *http.Client
-	// Interval is the refresh schedule `Run` keeps. Zero disables the timer, which
-	// leaves `Refresh` as the only way the set is ever built.
+	// Interval is the refresh schedule `Run` keeps. Zero means DefaultJWKSInterval —
+	// `NewKeySet` substitutes it, so there is NO way to turn the timer off from here.
+	//
+	// ⚠ THIS SENTENCE USED TO SAY THE OPPOSITE ("zero disables the timer, which leaves
+	// `Refresh` as the only way the set is ever built"), and the constructor has always
+	// substituted. The code is the safe side of the disagreement and is left alone: a
+	// zero reaching `time.NewTicker` panics, and nothing has asked for a no-timer mode.
 	Interval time.Duration
 	// Now is the clock. nil means `time.Now().UTC()`.
 	Now func() time.Time

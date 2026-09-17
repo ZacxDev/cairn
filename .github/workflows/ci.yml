@@ -183,10 +183,28 @@ jobs:
       # here: the flake's own check phase was measured running ZERO tests while
       # reporting green, because a `subPackages` narrowing had scoped the test
       # walk to the one directory that has none. The floor makes that impossible.
-      - name: go test, with an `ok` floor
+      #
+      # 🔴 AND `-race` IS ON THE SAME INVOCATION RATHER THAN A SECOND STEP, SO THE `ok`
+      # FLOOR BELOW COVERS THE RUN THAT ACTUALLY HAPPENED. A separate race step would
+      # leave the floor enforced on the plain run and the race run ungated — a test walk
+      # that narrowed under `-race` would then report nothing. Measured cost on one
+      # machine, cold build cache (which is what this job has: `cache: false` above):
+      # 14 s plain -> 22 s with `-race`, 15 `ok` lines either way, zero races. The
+      # detector needs cgo and a C toolchain — measured: `CGO_ENABLED=0 go test -race`
+      # refuses with "go: -race requires cgo". `ubuntu-latest` (Ubuntu 24.04) carries
+      # `gcc`, `g++`, `make` and `binutils` as VITAL apt packages in the runner-images
+      # manifest, and `actions/setup-go` neither sets nor unsets `CGO_ENABLED`, so Go's
+      # default of 1 applies. ⚠ That half is read from those manifests rather than from a
+      # run on a runner; the first green run of this step is what settles it.
+      #
+      # ⚠ AND IT ESTABLISHES FAR LESS THAN "THE CONCURRENCY IS CORRECT". `-race` detects
+      # a DATA race, and only on an interleaving some test actually produces. It is green
+      # on a LOGICAL race — `internal/control/cache_test.go` carries one it cannot see,
+      # two refreshes perfectly synchronised and committing in the wrong order.
+      - name: go test, under `-race`, with an `ok` floor
         run: |
           set -o pipefail
-          go test ./... | tee /tmp/go-test.txt
+          go test -race ./... | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
           # FIFTEEN packages carry tests, measured on this branch: api, authz, client,
           # cmd/cairn-server, control, control/tokenfile, doctor, hostid, identity, netid,

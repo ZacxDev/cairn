@@ -270,6 +270,35 @@ func TestAKeySetThatHasNeverFetchedVerifiesNothing(t *testing.T) {
 	}
 }
 
+// TestAZeroIntervalIsTheDEFAULTRatherThanNoTimer.
+//
+// ⚠ AN INVARIANT GUARD, LABELLED AS ONE — it is NOT regression coverage. The constructor
+// has always substituted `DefaultJWKSInterval`; what was wrong was `JWKSOptions.Interval`'s
+// own sentence, which said zero DISABLED the timer. No behaviour changed, so there is no
+// pre-change code this can be watched red against. It exists so the sentence and the
+// constructor cannot drift apart again silently, and because a zero reaching
+// `time.NewTicker` would panic rather than mean anything.
+func TestAZeroIntervalIsTheDefaultRatherThanNoTimer(t *testing.T) {
+	set, err := NewKeySet(JWKSOptions{URL: "https://notes-idp.example.test/jwks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.interval != DefaultJWKSInterval {
+		t.Fatalf("a zero Interval became %v, want DefaultJWKSInterval (%v) — `Run` would call time.NewTicker with it",
+			set.interval, DefaultJWKSInterval)
+	}
+	// The other direction, without which the assertion above is satisfied by a
+	// constructor that ignores the field entirely and always writes the default.
+	chosen := 97 * time.Second
+	set, err = NewKeySet(JWKSOptions{URL: "https://notes-idp.example.test/jwks", Interval: chosen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.interval != chosen {
+		t.Fatalf("an explicit Interval of %v was discarded, got %v", chosen, set.interval)
+	}
+}
+
 // TestEveryJWKSURLRefusalIsReachable.
 //
 // 🔴 THE PLAINTEXT ARM IS THE ONE THAT MATTERS. The keys fetched from this endpoint

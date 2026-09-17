@@ -2,10 +2,14 @@ package identity
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -273,6 +277,154 @@ func TestASecretHasExactlyOneSource(t *testing.T) {
 	}
 }
 
+// TestAnEmptySecretFileBlamesITSELFRatherThanTheSourceCheck.
+//
+// 🔴 THE MISSING-FILE CASE WAS CLOSED AND THE EMPTY-FILE CASE WAS NOT, WHICH IS THE SAME
+// MIS-BLAME ONE STEP FURTHER IN. A file holding only the newline an editor added strips to
+// nothing; the zero-length slice reaches `NewTrustedHeader`'s "is there any source check at
+// all" rung, and the operator is told to configure the secret they did configure, in a
+// crash loop with nothing naming the file.
+func TestAnEmptySecretFileBlamesItselfRatherThanTheSourceCheck(t *testing.T) {
+	dir := t.TempDir()
+	for _, arm := range []struct{ name, body string }{
+		{"a file holding only the newline an editor added", "\n"},
+		{"a file holding a CRLF", "\r\n"},
+		{"a zero-byte file", ""},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			path := filepath.Join(dir, strings.ReplaceAll(arm.name, " ", "-"))
+			if err := os.WriteFile(path, []byte(arm.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := secretFrom(map[string]string{EnvProxySecretFile: path}, EnvProxySecret, EnvProxySecretFile)
+			if err == nil {
+				t.Fatal("an empty secret file was read as no secret at all, which blames the source check")
+			}
+			// 🔴 THIS GUARD'S OWN MESSAGE, NOT ANY REFUSAL. The variable AND the path: a
+			// refusal that names neither is the crash loop this test exists to end, and
+			// `ErrTrustedHeaderNoSourceCheck` would satisfy a bare `err != nil`.
+			for _, want := range []string{EnvProxySecretFile, path, "is empty"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("the refusal does not contain %q, so it does not point at the file:\n  %v", want, err)
+				}
+			}
+		})
+	}
+
+	// 🔴 THE POSITIVE CONTROL. Without it every arm above is satisfied by a `secretFrom`
+	// that refuses every file, and the whole file form would be dead while reading green.
+	good := filepath.Join(dir, "real")
+	if err := os.WriteFile(good, append(append([]byte{}, testProxySecret...), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := secretFrom(map[string]string{EnvProxySecretFile: good}, EnvProxySecret, EnvProxySecretFile)
+	if err != nil || string(got) != string(testProxySecret) {
+		t.Fatalf("a real secret file stopped working: %q / %v", got, err)
+	}
+
+	// …and the whole way through `FromEnvironment`, because `secretFrom` is a package
+	// function and the operator meets this through an environment.
+	//
+	// 🔴 THE ENVIRONMENT HERE IS OTHERWISE COMPLETE, AND THAT IS WHAT MAKES
+	// `ErrTrustedHeaderNoSourceCheck` THE MIS-BLAME TO ASSERT AGAINST. Measured while
+	// building this test: with the secret FILE as the only proxy variable set, the
+	// unfixed code refused with `ErrTrustedHeaderNotDeclared` instead — an earlier rung,
+	// a different wrong answer, and an arm that would have satisfied a
+	// `!errors.Is(…, ErrTrustedHeaderNoSourceCheck)` assertion for the wrong reason. Every
+	// rung above "is there any source check" is therefore satisfied below, so the ONLY
+	// thing left for the constructor to complain about is the secret.
+	empty := filepath.Join(dir, "empty-through-fromenvironment")
+	if err := os.WriteFile(empty, []byte("\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = FromEnvironment(map[string]string{
+		EnvProxyFronted:       "yes",
+		EnvProxySubjectHeader: "X-Forwarded-User",
+		EnvProxyProvider:      testProvider,
+		EnvProxySecretFile:    empty,
+	}, newTestAuthority(t))
+	if err == nil {
+		t.Fatal("an empty secret file came up quietly through FromEnvironment")
+	}
+	if errors.Is(err, ErrTrustedHeaderNoSourceCheck) {
+		t.Fatalf("the WRONG guard fired — the operator is told to configure the secret they configured: %v", err)
+	}
+	if !strings.Contains(err.Error(), EnvProxySecretFile) {
+		t.Fatalf("the refusal does not name the variable that is wrong: %v", err)
+	}
+}
+
+// TestAWhitespaceOnlyValueIsREFUSEDRatherThanReadAsUnset.
+//
+// 🔴 `anySet` TRIMS, SO A WHITESPACE-ONLY VALUE ARMS NOTHING AND THE BACKEND THE OPERATOR
+// CONFIGURED IS SILENTLY OFF. Measured before the guard: `FromEnvironment` with
+// `CAIRN_TRUSTED_HEADER_SECRET` set to three spaces returned a nil error and a ONE-backend
+// chain — a pod that starts, passes its health check, and logs nothing about the backend it
+// is not running. That is the defect the ledgers exist to close, in the one spelling they
+// cannot see.
+func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
+	// The measured case first, by itself, so the arm that reproduced the defect is named.
+	_, _, err := FromEnvironment(map[string]string{EnvProxySecret: "   "}, newTestAuthority(t))
+	if !errors.Is(err, ErrBlankSetting) {
+		t.Fatalf("a whitespace-only shared secret was read as unset.\n  got:  %v\n  want: %v", err, ErrBlankSetting)
+	}
+	if !strings.Contains(err.Error(), EnvProxySecret) {
+		t.Fatalf("the refusal must name the offending variable, so the operator knows which line to fix: %v", err)
+	}
+
+	// EVERY ledger name and several spellings of blank, because the guard's sentence is
+	// about the LEDGERS rather than about one variable.
+	ledgers := append(append([]string{}, supabaseEnv...), proxyEnv...)
+	for _, name := range ledgers {
+		t.Run("blank/"+name, func(t *testing.T) {
+			for _, blank := range []string{" ", "\t", "\n", "\r\n", " \t \n "} {
+				_, _, err := FromEnvironment(map[string]string{name: blank}, newTestAuthority(t))
+				if !errors.Is(err, ErrBlankSetting) {
+					t.Fatalf("%s=%q was read as unset: %v", name, blank, err)
+				}
+				if !strings.Contains(err.Error(), name) {
+					t.Fatalf("the refusal for %s=%q does not name it: %v", name, blank, err)
+				}
+			}
+		})
+	}
+
+	// 🔴 THE HALF THAT IS THE REGRESSION RISK, AND IT IS THE ONE TO CHECK HARDEST: AN
+	// ABSENT VARIABLE MUST BEHAVE EXACTLY AS IT DID. "Nothing set is machine-token only" is
+	// this package's whole compatibility claim, and a blank check that fired on an absent
+	// name would refuse every deployment that exists today.
+	chain, supabase, err := FromEnvironment(map[string]string{}, newTestAuthority(t))
+	if err != nil || len(chain) != 1 || supabase != nil {
+		t.Fatalf("an empty environment stopped being machine-token only: %v / %d / %v", err, len(chain), supabase)
+	}
+
+	// …and present-with-the-EMPTY-string is unchanged too, which is the scope line in
+	// `refuseBlankSettings` rather than an accident. A manifest that emits every variable
+	// with an empty default is a common shape; refusing it is a wider change than the
+	// defect above, and it is not made here.
+	for _, name := range ledgers {
+		t.Run("empty/"+name, func(t *testing.T) {
+			chain, _, err := FromEnvironment(map[string]string{name: ""}, newTestAuthority(t))
+			if err != nil {
+				t.Fatalf("%s set to the empty string became a refusal — that is a behaviour change "+
+					"this guard deliberately does not make: %v", name, err)
+			}
+			if len(chain) != 1 {
+				t.Fatalf("%s set to the empty string armed a backend, got %d", name, len(chain))
+			}
+		})
+	}
+
+	// 🔴 AND THE GUARD IS SCOPED TO THE LEDGERS. An unrelated variable that happens to hold
+	// whitespace is not this package's business, and a guard that refused it would be
+	// refusing on "some environment exists" — the trigger `TestNothingConfiguredIsMachineTokenOnly`
+	// already names as the wrong one.
+	chain, _, err = FromEnvironment(map[string]string{"SUBSYSTEM_STORE_ROOT": "   ", "PATH": " "}, newTestAuthority(t))
+	if err != nil || len(chain) != 1 {
+		t.Fatalf("an unrelated whitespace-only variable was refused: %v / %d", err, len(chain))
+	}
+}
+
 // TestTheEnvironmentLedgersNameEveryVariableEachBackendReads is a LEDGER over the
 // package's own constants.
 //
@@ -280,6 +432,11 @@ func TestASecretHasExactlyOneSource(t *testing.T) {
 // THE PARTIAL-CONFIGURATION CHECK — which is the same defect the check exists to close,
 // one level up. It fails when the set GROWS as well as when it shrinks, so adding a
 // setting without deciding which backend owns it is a red test rather than a silent gap.
+//
+// 🔴 THE "GROWS" HALF IS A CLAIM ABOUT `envConstantsFromSource`, AND IT IS ONLY TRUE
+// BECAUSE THAT SIDE OF THE COMPARISON IS DERIVED FROM THE SOURCE. Both sides of a
+// comparison written by the same hand move together, which is a test that reads as
+// coverage and provides none — see the note on `known` below for the measurement.
 func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 	declared := map[string]bool{}
 	for _, name := range append(append([]string{}, supabaseEnv...), proxyEnv...) {
@@ -289,14 +446,16 @@ func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 		declared[name] = true
 	}
 
-	// Every `Env*` constant this package exports, discovered rather than restated.
-	// Restating them would be the second spelling this test exists to refuse.
-	known := []string{
-		EnvSupabaseJWKSURL, EnvSupabaseIssuer, EnvSupabaseAudience, EnvSupabaseProvider,
-		EnvSupabaseRequireRole, EnvSupabaseLeeway, EnvSupabaseMaxAge,
-		EnvProxyFronted, EnvProxySubjectHeader, EnvProxySecret, EnvProxySecretFile,
-		EnvProxySecretHeader, EnvProxyRequireClientCert, EnvProxyPeers, EnvProxyProvider,
-	}
+	// Every `Env*` constant this package exports, read out of the package's own SOURCE.
+	//
+	// ⚠ THIS LINE USED TO BE A HAND-WRITTEN LIST UNDER A COMMENT CLAIMING IT WAS
+	// "discovered rather than restated", AND THAT IS THE DEFECT, NOT A STYLE POINT. The
+	// list named the same fifteen constants the ledgers do, so a SIXTEENTH constant
+	// absent from the list and from both ledgers was in neither side of the comparison:
+	// measured on this package, an exported `Env*` that `supabaseFromEnv` actually read,
+	// in neither ledger, left `go test ./...` fully green. A restated list can only ever
+	// catch the set SHRINKING, which is the half the docstring above does not claim.
+	known := envConstantsFromSource(t)
 	sort.Strings(known)
 	inLedgers := make([]string, 0, len(declared))
 	for name := range declared {
@@ -341,4 +500,111 @@ func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 			}
 		})
 	}
+}
+
+// envConstantsFromSource reads every exported `Env*` constant out of THIS PACKAGE'S OWN
+// SOURCE, by AST, and returns their values.
+//
+// 🔴 IT IS A DERIVATION AND NOT A SECOND SPELLING, WHICH IS THE ONLY REASON THE LEDGER
+// TEST ABOVE CAN FAIL WHEN THE SET *GROWS*. A hand-written list is written by whoever
+// adds the constant, in the same edit, so it moves with the thing it is supposed to
+// pin — and the comparison is then between two copies of one decision. This repository
+// already answers that shape the same way twice: `tests/test_cairn_doctor.py` walks the
+// `cairn` script's AST for its exit codes, and `capability_ledger.cli_verbs_from_parser`
+// asks argparse rather than restating the verbs.
+//
+// ⚠ EVERY NON-TEST FILE IN THE PACKAGE DIRECTORY, NOT JUST `config.go` — because the
+// sentence above says "every `Env*` constant this package exports" and a reader scoped to
+// one file would make that sentence wider than the code under it. All fifteen live in
+// `config.go` today; a sixteenth added in `supabase.go` is exactly the edit this must not
+// miss. The working directory of a Go test binary is its own package directory, so `"."`
+// is the package.
+//
+// ⚠ AN `Env*` CONSTANT WHOSE VALUE IS NOT A PLAIN STRING LITERAL IS A `t.Fatal`, NEVER A
+// SKIP. Skipping it would make the derivation silently narrower than its own description,
+// which is the defect this function was written to remove.
+func envConstantsFromSource(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("cannot read the package directory, so nothing here is derived from anything: %v", err)
+	}
+	fset := token.NewFileSet()
+	var values []string
+	var files int
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		files++
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, ident := range value.Names {
+					if !strings.HasPrefix(ident.Name, "Env") {
+						continue
+					}
+					if i >= len(value.Values) {
+						t.Fatalf("%s: %s is an Env* constant with no value of its own (an iota or a repeated "+
+							"const line), so this ledger cannot read what variable it names", name, ident.Name)
+					}
+					lit, ok := value.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						t.Fatalf("%s: %s is an Env* constant whose value is not a plain string literal, so this "+
+							"ledger cannot read it — and a ledger that silently skips a constant is the defect "+
+							"it exists to close", name, ident.Name)
+					}
+					unquoted, err := strconv.Unquote(lit.Value)
+					if err != nil {
+						t.Fatalf("%s: %s: %v", name, ident.Name, err)
+					}
+					values = append(values, unquoted)
+				}
+			}
+		}
+	}
+
+	// 🔴 THE POSITIVE CONTROL, BECAUSE A DERIVATION THAT MATCHES NOTHING MAKES THE
+	// COMPARISON ABOVE VACUOUS RATHER THAN RED. An AST walk that finds no constant — a
+	// renamed prefix, a moved file, a working directory that is not the package — returns
+	// an empty slice, and two empty sets compare EQUAL. A reassuring zero is
+	// indistinguishable from a reader wired to nothing, so it is asserted non-zero here
+	// and keyed on a string only a successful literal resolution can produce.
+	if files == 0 {
+		t.Fatal("no non-test .go file was parsed at all, so the `Env*` set below is derived from nothing")
+	}
+	if len(values) == 0 {
+		t.Fatalf("parsed %d non-test file(s) and found no Env* constant — the walk matched nothing, which "+
+			"would make the ledger comparison pass against an empty set", files)
+	}
+	// ⚠ NO TOTAL IS ASSERTED, DELIBERATELY. A count written down beside the thing it
+	// counts is the hand-maintained number this whole function exists to delete, and the
+	// `reflect.DeepEqual` against the ledgers is already the exact-membership check. What
+	// is pinned instead is a VALUE: reading names but not values, or resolving a literal
+	// wrongly, both produce a set that does not contain this one.
+	const canary = "CAIRN_SUPABASE_JWKS_URL"
+	found := false
+	for _, v := range values {
+		if v == canary {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("the derived set does not contain %q, so the walk is reading something other than the "+
+			"`Env*` constants' values. Got: %v", canary, values)
+	}
+	return values
 }
