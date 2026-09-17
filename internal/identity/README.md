@@ -285,26 +285,77 @@ check, and quietly authenticates nobody through a backend they believe is live. 
 pins them against the exported constants **and** proves every one of them, set alone,
 reaches a refusal.
 
+### 🔴 EVERY SETTING DECLARES ITS BLANK POLICY, AS DATA
+
+**Round after round found one more setting whose blank or degenerate value silently
+disabled the check it configures — each time in a place the previous round's prose said was
+covered.** Seven measured instances over six settings by the time this pass ran; the last
+two, `CAIRN_TRUSTED_HEADER_PEERS=","` and a 32-space inline secret, were live at `70636bd`
+beside a comment saying the class was closed. The diagnosis was structural rather than a run
+of bad luck:
+*"is this setting set?"* had **six different answers in one file**, and which one a setting
+got was decided by which reader it happened to be plumbed through. The organising principle
+the comments claimed — "does this setting's zero turn a check off" — existed **nowhere in
+the data**: the ledgers were `[]string`, so nothing linked a name to a policy.
+
+So each ledger entry is a `setting` that carries its own policy, and **one** resolver
+(`setting.resolve`) consults it:
+
+| policy | a value that reduces to nothing means |
+|---|---|
+| `refuseBlank` | a MISCONFIGURATION — refuse, naming the variable and what unset would have meant |
+| `defaultsTo` | genuinely "not set", and unset is a documented default that leaves the same check armed |
+| `refusedByConstructor` | "not set", and a named construction rung already refuses that — `setting.refusedBy` names which |
+| `policyUndeclared` | the ZERO VALUE, and never a decision — a refusal at runtime and a RED test |
+
+⚠ **WHICH SETTING HAS WHICH POLICY IS NOT WRITTEN DOWN HERE, AND THAT IS THE POINT RATHER
+THAN AN OMISSION.** A membership list in prose is precisely the hand-maintained ~50-line
+enumeration this pass deleted, and it went wrong in every round that touched it. Read it off
+the ledgers in `config.go`, where each entry states its own policy beside its own name and a
+test asserts the reader obeys it. Nothing here restates a count either.
+
+`TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt` is the gate, and it pins a
+relationship rather than one side: every entry carries a policy, an `unset` sentence and —
+for `refusedByConstructor` — the rung it lands on; **and** a real `FromEnvironment` obeys
+each of those, over spellings derived from the setting's own declaration. Adding a setting
+without deciding its policy is red there, not a silent default.
+
+🔴 **"REDUCES TO NOTHING" IS ONE PREDICATE AND IT IS WIDER THAN WHITESPACE.** That is the
+whole bug class: a guard can be SPELLED rather than STRUCTURAL. `treu` was refused while
+`"  "` was accepted; then `"  "` was refused while `","` was accepted. So
+`setting.reducesToNothing` runs the whitespace test for every setting *and*, where the
+setting declares a split, asks whether the value yields any fields at all. Measured at
+`70636bd` beside a complete armed trusted-header backend: `CAIRN_TRUSTED_HEADER_PEERS`
+set to `","`, `",,"`, `", ,"`, `" , "` or `"\t,\n"` **built with zero peers**, so
+`Authenticate`'s `if len(t.peers) > 0` never ran and any address could present the identity
+header — while `"  "` was refused.
+
+🔴 **AND THE INLINE SECRET IS THE MIRROR CASE: NOT TRIMMED, BUT NOT ALLOWED TO BE
+NOTHING.** Interior and edge whitespace may legitimately be part of a secret, so
+`CAIRN_TRUSTED_HEADER_SECRET` declares `keepWhitespace` and its resolved value is the raw
+string. What stood behind that was `NewTrustedHeader`'s `len(cfg.Secret) < MinProxySecretBytes`
+— a **LENGTH** test, not a content one. Measured at `70636bd` with the backend armed by
+`REQUIRE_CLIENT_CERT`: 2 spaces refused, 31 spaces refused, **32 spaces BUILT** and accepted
+as a live shared secret, 40 spaces built. A caller sending the same run of spaces plus a
+subject header authenticated as any user here. The fix is the `refuseBlank` policy beside
+`keepWhitespace`, **not** a trim — a trim would silently corrupt a padded secret.
+
 Other rules:
 
 - **an unrecognised boolean is an ERROR, never `false`** —
   `CAIRN_TRUSTED_HEADER_PROXY_FRONTED=treu` must not silently mean "not proxy-fronted";
-- 🔴 **and a value that is PRESENT but holds only whitespace is the same error, because it
-  was the same hazard in a spelling that was accepted.** Measured: with a complete
-  trusted-header configuration carrying both a shared secret and
-  `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT`, the value `treu` was refused and `"  "`
-  returned no error and a backend with the requirement OFF — mTLS unenforced, pod healthy,
-  nothing logged. `envSetting` is the one predicate every reader whose zero is PERMISSIVE
-  goes through: the client-certificate requirement, `CAIRN_SUPABASE_REQUIRE_ROLE`,
-  `CAIRN_TRUSTED_HEADER_PEERS`, `CAIRN_SUPABASE_MAX_AGE` and the secret's `_FILE` path — the
-  last found by reading that sentence against the code rather than by the audit that named
-  the first four. `CAIRN_TRUSTED_HEADER_PROXY_FRONTED` and `CAIRN_SUPABASE_LEEWAY` are
-  refused too, because they share a reader rather than because their zero is permissive — a
-  blank line is a typo either way. ⚠ **An ABSENT name and a name holding the EMPTY string
-  are unchanged**:
-  the first is how a deployment says "not using this", and the second is the manifest shape
-  that emits every variable with an empty default. Only the whitespace-only spelling moved,
-  and it moved to a refusal with `os.Exit(78)` behind it;
+- ⚠ **an ABSENT name and a name holding the EMPTY string are outside all of it.** The first
+  is how a deployment says "not using this"; the second is the manifest shape that emits
+  every variable with an empty default. `touched` draws that line once, for the retired
+  ledger and the live ones alike;
+- 🔴 **a blank in a ledger NOTHING ELSE ARMED is refused whatever its policy**, because
+  there the backend really would be silently off and that sentence is true for every
+  setting. Where something else armed the ledger the sentence is false — a version that
+  refused unconditionally crash-looped a complete trusted-header deployment with
+  `os.Exit(78)` — and the setting's own policy answers instead;
+- 🔴 **every offending line is named in ONE refusal.** Three blank settings used to cost
+  three crash-loop/redeploy cycles, because the reader-level refusal returned on the first
+  one while the ledger-level one beside it batched;
 - **a secret has exactly one source** — inline or a file, never both, because a precedence
   rule nobody reads makes a rotation that updated the wrong one appear to work;
 - **prefer the `_FILE` form**: an environment variable is readable from
@@ -312,8 +363,8 @@ Other rules:
   log. The pod already mounts its bearer token as a file;
 - 🔴 **a RETIRED setting is a refusal, not an ignored line.** `CAIRN_SUPABASE_JWT_SECRET`
   and `CAIRN_SUPABASE_JWT_SECRET_FILE` named the legacy symmetric secret and this build no
-  longer reads them. Dropping a name from a ledger inverts the rule above: `anySet` only
-  counts names that are *in* a ledger, so a dropped one is invisible to it by
+  longer reads them. Dropping a name from a ledger inverts the rule above: the arming scan
+  only counts names that are *in* a ledger, so a dropped one is invisible to it by
   construction, and an operator whose manifest still carries it would get a pod that comes
   up healthy having silently discarded the line they wrote. `retiredEnv` refuses instead,
   naming the variable and what to use — and it is deliberately **not** in `supabaseEnv`,

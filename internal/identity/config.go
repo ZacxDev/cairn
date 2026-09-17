@@ -56,7 +56,7 @@ const (
 	EnvProxySecretHeader = "CAIRN_TRUSTED_HEADER_SECRET_HEADER"
 	// EnvProxyRequireClientCert demands a verified TLS client certificate.
 	EnvProxyRequireClientCert = "CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT"
-	// EnvProxyPeers narrows which peer addresses may present the header.
+	// EnvProxyPeers narrows which peer addresses may present the identity header.
 	EnvProxyPeers = "CAIRN_TRUSTED_HEADER_PEERS"
 	// EnvProxyProvider is the `control.User.Provider` a subject resolves against.
 	EnvProxyProvider = "CAIRN_TRUSTED_HEADER_PROVIDER"
@@ -73,24 +73,162 @@ const (
 // reading. `ErrSupabaseNoAudience` still stands behind the programmatic constructor.
 const DefaultSupabaseAudience = "authenticated"
 
-// supabaseEnv and proxyEnv are the LEDGERS of which variables belong to which backend.
+// ============================================================================
+// The declared blank policy: what a value that REDUCES TO NOTHING means, as DATA.
+// ============================================================================
+
+// blankPolicy is what this package does with a setting that is PRESENT and whose value
+// reduces to nothing.
+//
+// 🔴 IT IS DATA BECAUSE THE PROSE VERSION KEPT BEING WRONG, AND THAT IS MEASURED RATHER
+// THAN STYLISTIC. Round after round of this file found one more setting whose blank or
+// degenerate value silently disabled the check it configures, each time in a place the
+// previous round's comment said was covered — seven measured instances over six settings by
+// the time this pass ran, the last two of them (`PEERS=","` and a 32-space inline secret)
+// live at `70636bd` beside a comment that said the class was closed. ⚠ The count of ROUNDS
+// is deliberately not stated: it is not derivable from this tree, and the instances are.
+// The reason is structural: "is this setting set?" had SIX different answers in one file — `refuseRetiredSettings`'s
+// `present && value != ""`, the same predicate open-coded again in the ledger sweep,
+// `envSetting` as a function, a bare `strings.TrimSpace(env[…])` at seven reader sites,
+// `secretFrom`'s untrimmed inline read, and `anySet` — and which one a setting got was
+// decided by WHICH READER IT HAPPENED TO BE PLUMBED THROUGH. The organising principle the
+// comments claimed, "does this setting's zero turn a check off", existed nowhere in the
+// data: the ledgers were `[]string`, so nothing linked a name to a policy, and the policy
+// lived in a hand-maintained comment with no gate.
+//
+// 🔴 THE ZERO VALUE IS `policyUndeclared` ON PURPOSE. A `setting` literal that forgets to
+// say what its blank means does NOT quietly get the permissive one — it gets a policy the
+// resolver refuses at runtime and
+// `TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt` fails on. Adding a setting
+// without deciding is a RED test, which is the whole point of the pass: without it this is
+// the same problem rewritten.
+type blankPolicy int
+
+const (
+	// policyUndeclared is the zero value and is never a decision. See above.
+	policyUndeclared blankPolicy = iota
+
+	// refuseBlank: a value that reduces to nothing is a MISCONFIGURATION. Refuse,
+	// naming the variable and what unset would have meant.
+	//
+	// This is the policy for every setting whose unset value is PERMISSIVE — where
+	// reading the line as "not set" turns a check off that the operator wrote down —
+	// and for the two whose unset value is not permissive but for which a blank line
+	// is a typo all the same (`EnvProxyFronted`, `EnvSupabaseLeeway`). The refusal
+	// says nothing that is false for either group.
+	refuseBlank
+
+	// defaultsTo: a value that reduces to nothing is genuinely "not set", and unset is
+	// a DOCUMENTED DEFAULT that leaves the same check armed. Accepted, and the reader
+	// produces the empty string so the constructor applies its default.
+	defaultsTo
+
+	// refusedByConstructor: a value that reduces to nothing is "not set", and the
+	// constructor refuses THAT by name — so a second refusal here would be the second
+	// copy of one decision, and it would disagree with the EMPTY-string spelling of the
+	// identical configuration, which reaches the same rung. `setting.refusedBy` names
+	// the rung, and the gate asserts a blank value actually reaches it.
+	refusedByConstructor
+)
+
+func (p blankPolicy) String() string {
+	switch p {
+	case refuseBlank:
+		return "refuseBlank"
+	case defaultsTo:
+		return "defaultsTo"
+	case refusedByConstructor:
+		return "refusedByConstructor"
+	default:
+		return "policyUndeclared"
+	}
+}
+
+// setting is one environment variable and everything this package decides about it.
+//
+// ⚠ EVERY FIELD IS READ BY THE ONE RESOLVER OR BY THE GATE — none of it is documentation
+// that nothing checks, which is the shape the ~50-line enumeration comment this type
+// replaces had become.
+type setting struct {
+	// name is the environment variable.
+	name string
+
+	// policy is what a value that reduces to nothing means. See `blankPolicy`.
+	policy blankPolicy
+
+	// unset says, in the operator's words, what this package does when the setting is
+	// NOT set. For `refuseBlank` it is the hazard the refusal quotes back; for the
+	// other two it is the benign outcome that makes accepting a blank correct.
+	unset string
+
+	// refusedBy is the construction rung a `refusedByConstructor` setting's unset value
+	// reaches, and it is nil for every other policy. The gate asserts both halves, and
+	// asserts that a blank value beside an ARMED ledger really does land on this error
+	// rather than on some other refusal that would satisfy a bare `err != nil`.
+	refusedBy error
+
+	// keepWhitespace makes the resolved value the RAW string rather than the trimmed
+	// one. Only the shared secret sets it: interior and edge whitespace may legitimately
+	// be part of a secret, so trimming would silently change it.
+	//
+	// ⚠ IT DOES NOT WIDEN WHAT COUNTS AS BLANK. A secret that is ENTIRELY whitespace
+	// still reduces to nothing — see `reducesToNothing`, and see `MinProxySecretBytes`
+	// for why the length floor is not that check.
+	keepWhitespace bool
+
+	// fields, when non-nil, says this setting's value is a LIST and gives the split the
+	// reader uses. It is what lets a value that is not whitespace still reduce to
+	// nothing — `CAIRN_TRUSTED_HEADER_PEERS=","`.
+	fields func(string) []string
+}
+
+// reducesToNothing is THE predicate. One place, for every caller, for every setting.
+//
+// 🔴 A PREDICATE OPEN-CODED AT N SITES IS TYPICALLY WRONG AT N−1 OF THEM, IN THE SAME
+// DIRECTION, AND THIS FILE PRODUCED SIX INSTANCES OF THE RESULTING HAZARD IN AS MANY
+// ROUNDS. The two spellings the sites disagreed about are both here: whitespace-only (which
+// `strings.TrimSpace` sees) and separator-only (which it does not).
+//
+// 🔴 THE LIST HALF IS AN EXTENSION, NEVER A REPLACEMENT — the whitespace test runs first
+// for every setting, so no spelling gets WEAKER by declaring a split. Measured at
+// `70636bd` with a complete armed trusted-header configuration: `PEERS=","`, `",,"`,
+// `", ,"`, `" , "` and `"\t,\n"` all BUILT with zero peers, so `Authenticate`'s
+// `if len(t.peers) > 0` never ran and any address could present the identity header —
+// while `PEERS="  "` was refused. The guard covered the whitespace spelling of the hazard
+// and not the separator spelling of the same one.
+func (s setting) reducesToNothing(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return true
+	}
+	return s.fields != nil && len(s.fields(raw)) == 0
+}
+
+// value is what the reader gets for a raw string this setting does NOT reduce to nothing.
+func (s setting) value(raw string) string {
+	if s.keepWhitespace {
+		return raw
+	}
+	return strings.TrimSpace(raw)
+}
+
+// ledger is one backend's settings, and the name to use when telling an operator which
+// backend a line belongs to.
 //
 // 🔴 A PARTIALLY-CONFIGURED BACKEND MUST REFUSE TO START, NOT SILENTLY BE OFF, AND THESE
-// LISTS ARE HOW THAT QUESTION IS ASKED. "Build the backend if the required fields are
-// present" reads sensibly and is the dangerous version: an operator who sets the subject
-// header and forgets the shared secret gets a pod that comes up, passes its health check
-// and quietly authenticates nobody through a backend they believe is live. So the trigger
-// is "did anybody touch ANY of these", and the answer to a broken configuration is
-// `os.Exit(78)` in the crash loop where an operator will see it.
+// ARE HOW THAT QUESTION IS ASKED. "Build the backend if the required fields are present"
+// reads sensibly and is the dangerous version: an operator who sets the subject header and
+// forgets the shared secret gets a pod that comes up, passes its health check and quietly
+// authenticates nobody through a backend they believe is live. So the trigger is "did
+// anybody touch ANY of these", and the answer to a broken configuration is `os.Exit(78)`
+// in the crash loop where an operator will see it.
 //
-// ⚠ EACH LIST MUST NAME EVERY VARIABLE ITS BACKEND READS. One left out is one that can
-// be set alone without arming the check — which is the same defect one level down; one in
-// the WRONG list arms the wrong backend and leaves the right one unarmed by the only
-// variable that should arm it. `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads`
-// pins BOTH of those, and from two derivations rather than one: the union of the ledgers
-// against every `Env*` declaration in this package's own source, and each list separately
-// against the `Env*` names its OWN constructor references — `supabaseEnv` against
-// `supabaseFromEnv`, `proxyEnv` against `trustedHeaderFromEnv` — both read BY AST.
+// ⚠ EACH LEDGER MUST NAME EVERY VARIABLE ITS BACKEND READS. One left out is one that can
+// be set alone without arming the check — the same defect one level down; one in the WRONG
+// ledger arms the wrong backend and leaves the right one unarmed by the only variable that
+// should arm it. `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` pins BOTH,
+// and from two derivations rather than one: the union of the ledgers against every `Env*`
+// declaration in this package's own source, and each ledger separately against the `Env*`
+// names its OWN constructor references — both read BY AST.
 //
 // ⚠ EACH HALF OF THAT WAS MEASURED FALSE ONCE, IN THE SAME SHAPE: A SENTENCE ABOUT A
 // RELATIONSHIP OVER A TEST THAT INSPECTED ONE SIDE. First, the "every declaration" side
@@ -100,28 +238,167 @@ const DefaultSupabaseAudience = "authenticated"
 // name in the wrong ledger is in the union either way, and moving `EnvProxyPeers` from
 // `proxyEnv` into `supabaseEnv` left the test green. Read it as a worked example of the
 // class rather than as two closed bugs.
-var supabaseEnv = []string{
-	EnvSupabaseJWKSURL,
-	EnvSupabaseIssuer,
-	EnvSupabaseAudience,
-	EnvSupabaseProvider,
-	EnvSupabaseRequireRole,
-	EnvSupabaseLeeway,
-	EnvSupabaseMaxAge,
+type ledger struct {
+	// backend is what an operator calls this thing.
+	backend string
+	// settings is every variable the backend reads, each with its declared policy.
+	settings []setting
 }
+
+// peerFields is the split `EnvProxyPeers` is read with — commas OR whitespace, so an
+// operator may write either and `netid.TrustedNetwork` sees one entry per element.
+//
+// 🔴 IT IS ONE FUNCTION BECAUSE THE SETTING'S BLANK TEST AND ITS READER MUST NOT BE ABLE
+// TO DISAGREE. When they were two expressions, `reducesToNothing`'s ancestor tested
+// whitespace and the reader split on separators, so a value that yielded no fields passed
+// the first and produced an empty allowlist at the second.
+func peerFields(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+}
+
+var supabaseEnv = ledger{
+	backend: "Supabase",
+	settings: []setting{
+		{
+			name:      EnvSupabaseJWKSURL,
+			policy:    refusedByConstructor,
+			unset:     "there is no key set, so no token could ever verify",
+			refusedBy: ErrSupabaseNoKeys,
+		},
+		{
+			name:      EnvSupabaseIssuer,
+			policy:    refusedByConstructor,
+			unset:     "there is no `iss` to require",
+			refusedBy: ErrSupabaseNoIssuer,
+		},
+		{
+			name:   EnvSupabaseAudience,
+			policy: defaultsTo,
+			unset:  "the audience is `" + DefaultSupabaseAudience + "`, which is what Supabase issues — the check stays armed",
+		},
+		{
+			name:   EnvSupabaseProvider,
+			policy: defaultsTo,
+			unset:  "the provider namespace is `" + DefaultSupabaseProvider + "` — a subject still resolves against exactly one provider",
+		},
+		{
+			// A PERMISSIVE zero: measured, a blank here left the role check off for a
+			// deployment that wrote one down, and an `anon` session authenticated.
+			name:   EnvSupabaseRequireRole,
+			policy: refuseBlank,
+			unset:  "no role is required — an `anon` session authenticates",
+		},
+		{
+			// NOT a permissive zero — the zero is the STRICTEST leeway there is. It
+			// refuses because a blank line is a typo all the same, and the refusal's
+			// sentence ("read as unset") is true for it. It shares a policy with its
+			// sibling rather than a reader.
+			name:   EnvSupabaseLeeway,
+			policy: refuseBlank,
+			unset:  "there is no clock-skew allowance at all",
+		},
+		{
+			name:   EnvSupabaseMaxAge,
+			policy: refuseBlank,
+			unset:  "`iat` is unbounded — a session minted hours ago still authenticates",
+		},
+	},
+}
+
+var proxyEnv = ledger{
+	backend: "trusted-header",
+	settings: []setting{
+		{
+			// ⚠ `refusedByConstructor` WOULD ALSO HAVE BEEN DEFENSIBLE HERE, AND SAYING WHY
+			// IT WAS NOT TAKEN IS THE POINT RATHER THAN LEAVING THE CHOICE TO BE RE-ARGUED.
+			// Unset does not turn a check off: it makes `NewTrustedHeader` refuse by name,
+			// with `ErrTrustedHeaderNotDeclared` — which is the `refusedByConstructor`
+			// shape, and the cost of not using it is that `FRONTED=""` and `FRONTED="  "`
+			// land on different refusals. `refuseBlank` is taken anyway because
+			// `ErrTrustedHeaderNotDeclared` does not NAME this variable, and this is the one
+			// setting whose whole purpose is to be a sentence an operator had to write; an
+			// operator who wrote it as whitespace should be told THAT, not told the
+			// deployment was never declared. The refusal for `treu` makes the same trade for
+			// the same reason, one function over.
+			name:   EnvProxyFronted,
+			policy: refuseBlank,
+			unset:  "this deployment is not declared proxy-fronted, so the backend refuses to exist at all",
+		},
+		{
+			name:      EnvProxySubjectHeader,
+			policy:    refusedByConstructor,
+			unset:     "there is no header to read an identity from",
+			refusedBy: ErrTrustedHeaderNoSubjectHeader,
+		},
+		{
+			// 🔴 `keepWhitespace`, AND `refuseBlank` ON TOP OF IT — THE TWO ARE NOT IN
+			// TENSION AND THE PAIR IS WHAT CLOSES A MEASURED BYPASS. Interior and edge
+			// whitespace may be part of a secret, so the value is not trimmed. A secret
+			// that is ENTIRELY whitespace is not a secret, and `NewTrustedHeader`'s floor
+			// cannot say so because it is a LENGTH test: measured at `70636bd` with the
+			// backend armed by `RequireClientCert`, 2 spaces and 31 spaces were refused by
+			// the floor while 32 spaces and 40 spaces BUILT and were accepted as a live
+			// shared secret — so a caller sending the same run of spaces plus a subject
+			// header authenticated as any user in the control plane.
+			name:           EnvProxySecret,
+			policy:         refuseBlank,
+			unset:          "the shared-secret rung is gone — whatever else is armed authenticates alone",
+			keepWhitespace: true,
+		},
+		{
+			// A PERMISSIVE zero, and the one found by reading a fix's own comment against
+			// the code rather than by the audit that named its siblings: measured, a blank
+			// path beside `REQUIRE_CLIENT_CERT=yes` built a backend with a ZERO-length
+			// secret, and a request carrying the certificate and NO shared-secret header
+			// authenticated — defence in depth silently reduced to one rung.
+			name:   EnvProxySecretFile,
+			policy: refuseBlank,
+			unset:  "the shared-secret rung is gone — whatever else is armed authenticates alone",
+		},
+		{
+			name:   EnvProxySecretHeader,
+			policy: defaultsTo,
+			unset:  "the secret is read from `" + DefaultProxySecretHeader + "` — the same check, at the documented header",
+		},
+		{
+			name:   EnvProxyRequireClientCert,
+			policy: refuseBlank,
+			unset:  "mTLS is not enforced — a plaintext request carrying the shared secret authenticates",
+		},
+		{
+			// 🔴 THE LIST. Its zero is permissive AND its degenerate spellings are not
+			// whitespace — see `reducesToNothing` for the measurement.
+			name:   EnvProxyPeers,
+			policy: refuseBlank,
+			unset:  "there is no peer allowlist — any address may present the identity header",
+			fields: peerFields,
+		},
+		{
+			name:      EnvProxyProvider,
+			policy:    refusedByConstructor,
+			unset:     "there is no provider namespace, so a subject could not be resolved to a user",
+			refusedBy: ErrTrustedHeaderNoProvider,
+		},
+	},
+}
+
+// ledgers is every ledger, in the order refusals are collected and therefore reported.
+func ledgers() []ledger { return []ledger{supabaseEnv, proxyEnv} }
 
 // retiredEnv names variables this build once read and no longer does, with what to do
 // instead. Setting one is a REFUSAL.
 //
-// 🔴 A DELETED SETTING MUST BE LOUD, NOT IGNORED, AND THAT IS THE SAME RULE `supabaseEnv`
-// SERVES ONE DIRECTION OVER. The ledgers above ask "did anybody touch any of these" so a
-// half-configured backend cannot come up quietly; a name DROPPED from a ledger inverts
-// that — an operator's manifest still carries it, `anySet` no longer counts it, and the
-// pod comes up healthy having silently discarded a line the operator wrote. These two
-// named the LEGACY symmetric JWT secret, which this build no longer verifies with at
-// all; an operator migrating a project is exactly who still has one set.
+// 🔴 A DELETED SETTING MUST BE LOUD, NOT IGNORED, AND THAT IS THE SAME RULE THE LEDGERS
+// SERVE ONE DIRECTION OVER. They ask "did anybody touch any of these" so a half-configured
+// backend cannot come up quietly; a name DROPPED from a ledger inverts that — an operator's
+// manifest still carries it, nothing counts it, and the pod comes up healthy having
+// silently discarded a line the operator wrote. These two named the LEGACY symmetric JWT
+// secret, which this build no longer verifies with at all; an operator migrating a project
+// is exactly who still has one set.
 //
-// ⚠ THEY ARE NOT IN `supabaseEnv` AND MUST NEVER BE. A name here can only REFUSE — it
+// ⚠ THEY ARE NOT IN A LIVE LEDGER AND MUST NEVER BE. A name here can only REFUSE — it
 // cannot arm a backend, which is the distinction that keeps it from being a second
 // spelling of a live setting.
 const retiredSymmetricSecret = "the legacy symmetric (HS256) JWT secret, which this build no longer verifies with at all. Use " +
@@ -135,105 +412,60 @@ var retiredEnv = map[string]string{
 // ErrRetiredSetting is the refusal a retired variable earns.
 var ErrRetiredSetting = errors.New("identity: a setting this build no longer reads is set")
 
-var proxyEnv = []string{
-	EnvProxyFronted,
-	EnvProxySubjectHeader,
-	EnvProxySecret,
-	EnvProxySecretFile,
-	EnvProxySecretHeader,
-	EnvProxyRequireClientCert,
-	EnvProxyPeers,
-	EnvProxyProvider,
-}
+// ErrBlankSetting is the refusal a setting earns by being PRESENT and holding a value
+// that reduces to nothing. `setting.resolve` is the only place that returns it.
+var ErrBlankSetting = errors.New("identity: a setting is present and holds a value that reduces to nothing")
 
-// FromEnvironment builds the backends a deployment's environment asks for.
+// ErrUndeclaredSetting is the FAIL-CLOSED default for a reader that asks for a variable no
+// ledger declares a policy for.
 //
-// 🔴 NOTHING SET MEANS MACHINE-TOKEN ONLY, AND THAT IS THE WHOLE COMPATIBILITY CLAIM.
-// A deployment with no Supabase variables and no proxy variables gets exactly the chain
-// `api.New` builds by itself, so its behaviour is not merely similar to today's — it is
-// the same code path. Both new backends are opt-in, and the trusted-header one is opt-in
-// twice.
+// ⚠ IT IS NOT A GUARD AND IS NOT COUNTED AS COVERAGE. While
+// `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` is green no constructor can
+// reach it through `FromEnvironment`, because that test pins each constructor's `Env*`
+// references against its own ledger by AST. What it is instead is the answer to "what
+// happens if it ever is reached", and the answer is a refusal rather than the empty string
+// — which would be this whole file's defect resolved silently in the permissive direction.
+// `TestAReaderCannotSilentlyGetAnUndeclaredSetting` reaches it directly.
 //
-// `machine` is always first in the returned chain. The second return is the Supabase
-// backend whose key set the caller must refresh, or nil when no Supabase variable was
-// set at all — it is never a backend with nothing to refresh, because rung 3 of
-// `NewSupabaseJWT` refuses one.
-func FromEnvironment(env map[string]string, authority interface {
-	TokenAuthority
-	ModelSource
-}) (Chain, *SupabaseJWT, error) {
-	// 🔴 BEFORE `anySet`, AND UNCONDITIONALLY. A retired name arms nothing, so checking
-	// it inside a backend's own branch would only fire for deployments that had ALSO
-	// set a live variable — which is precisely the deployment that gets a loud refusal
-	// anyway. The silent case is the one where a retired name is all that is set.
-	if err := refuseRetiredSettings(env); err != nil {
-		return nil, nil, err
-	}
+// ⚠ AND THE ONE SHAPE THAT AST PIN CANNOT SEE, STATED RATHER THAN LEFT TO BE FOUND: a
+// reader that spelled the variable as a STRING LITERAL (`r.get("CAIRN_…")`) rather than
+// through its `Env*` constant. `envNamesReadBy` walks IDENTIFIERS, so a literal is invisible
+// to it — and this refusal is then the only thing between that and a silent empty string.
+var ErrUndeclaredSetting = errors.New("identity: a reader asked for a setting no ledger declares a policy for")
 
-	// 🔴 ALSO BEFORE THE `anySet` BRANCHES, AND FOR THE MIRROR-IMAGE REASON. `anySet`
-	// TRIMS, so a whitespace-only value arms nothing at all; a check inside a backend's
-	// own branch could therefore never reach the deployment that has only that. It asks
-	// `anySet` ITSELF, once per ledger — the question is "is THIS backend armed by
-	// anything else", which is what bounds the refusal to the silently-off case.
-	//
-	// ⚠ IT IS HALF THE ANSWER, AND `envSetting` IS THE OTHER HALF — SAY SO HERE, BECAUSE
-	// THE TWO ARE EASY TO READ AS ONE. This one covers the ledger NOTHING armed, which is
-	// the only case a constructor never runs for. Where a ledger IS armed the constructors
-	// do run, every value passes through a reader, and `envSetting` refuses the same
-	// spelling there — so the whitespace-only case is closed on both sides of the branch
-	// rather than only on the side the ledgers can see.
-	if err := refuseBlankSettings(env); err != nil {
-		return nil, nil, err
-	}
-
-	machine, err := NewMachineToken(authority)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var supabase *SupabaseJWT
-	if anySet(env, supabaseEnv) {
-		supabase, err = supabaseFromEnv(env, authority)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	var trusted *TrustedHeader
-	if anySet(env, proxyEnv) {
-		trusted, err = trustedHeaderFromEnv(env, authority)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	chain, err := Backends(machine, supabase, trusted)
-	if err != nil {
-		return nil, nil, err
-	}
-	return chain, supabase, nil
+// touched reports whether an operator WROTE this variable down, and hands back what they
+// wrote. Absent, and present-with-the-EMPTY-string, are both "not written".
+//
+// 🔴 ONE PREDICATE, THREE CALLERS, AND THAT IS THE POINT RATHER THAN TIDINESS.
+// `refuseRetiredSettings` and the ledger sweep open-coded `present && value != ""`
+// separately; they agreed, and nothing gated them agreeing.
+//
+// ⚠ THE EMPTY STRING IS DELIBERATELY OUTSIDE. A manifest that emits every variable with an
+// empty default is a common shape, and refusing it would be a wider change than any defect
+// measured here — so `X=""` is "not using this" everywhere in this file, and `X="  "` is
+// not.
+func touched(env map[string]string, name string) (string, bool) {
+	value, present := env[name]
+	return value, present && value != ""
 }
 
 // refuseRetiredSettings refuses a deployment that still sets a variable this build
 // dropped. Sorted so the message is stable when more than one is set.
 //
-// 🔴 PRESENT AND NON-EMPTY, NOT `TrimSpace(…) != ""`, WHICH IS WHAT MAKES THIS THE MIRROR
-// IMAGE `FromEnvironment` CALLS IT. Trimming before the test discards exactly the value
-// `refuseBlankSettings` was written to stop being discarded: measured, `CAIRN_SUPABASE_JWT_SECRET`
+// 🔴 `touched`, NOT `TrimSpace(…) != ""`. Trimming before the test discards exactly the
+// value the blank policy exists to stop being discarded: measured, `CAIRN_SUPABASE_JWT_SECRET`
 // set to three spaces returned a nil error and a machine-token-only chain, so a line the
 // operator wrote vanished with no log — the silent ignoring `retiredEnv`'s own comment
-// refuses one paragraph up. The EMPTY string is left alone for the same reason it is there:
-// it carries no value to discard, and a manifest emitting every variable with an empty
-// default is a shape this package deliberately does not refuse.
+// refuses one paragraph up.
 //
-// ⚠ AND THE PER-LEDGER NARROWING IN `refuseBlankSettings` HAS NO ANALOGUE HERE. That
-// narrowing asks whether the backend a blank value belongs to is armed by something else;
-// a retired name belongs to no backend and can never arm one, so there is no case in which
-// a value here is anything but a line to delete.
+// ⚠ AND THE ARMED/UNARMED DISTINCTION IN `setting.resolve` HAS NO ANALOGUE HERE. That
+// distinction asks whether the backend a value belongs to is armed by something else; a
+// retired name belongs to no backend and can never arm one, so there is no case in which a
+// value here is anything but a line to delete.
 func refuseRetiredSettings(env map[string]string) error {
 	names := make([]string, 0, len(retiredEnv))
 	for name := range retiredEnv {
-		if value, present := env[name]; present && value != "" {
+		if _, ok := touched(env, name); ok {
 			names = append(names, name)
 		}
 	}
@@ -249,269 +481,279 @@ func refuseRetiredSettings(env map[string]string) error {
 		ErrRetiredSetting, strings.Join(reasons, "; "))
 }
 
-// ErrBlankSetting is the refusal a setting earns by being PRESENT and holding only
-// whitespace. Two guards return it and they cover different halves of one hazard:
-// `refuseBlankSettings` for a ledger nothing else armed, where no constructor runs and no
-// reader is reached; `envSetting` for every value a reader does reach, armed ledger
-// included. An ABSENT name and a name holding the EMPTY string are outside both — see
-// `envSetting` for why the scope is drawn there.
-var ErrBlankSetting = errors.New("identity: a setting is present and holds only whitespace")
-
-// refuseBlankSettings refuses a whitespace-only value in a ledger NOTHING ELSE ARMED.
+// blankFault is one refused line, carried rather than returned so that EVERY offending
+// line reaches the operator in one message.
 //
-// 🔴 A WHITESPACE-ONLY VALUE IS INDISTINGUISHABLE FROM AN ABSENT ONE TO `anySet`, SO THE
-// BACKEND THE OPERATOR CONFIGURED IS SILENTLY OFF — the same defect `supabaseEnv`'s comment
-// describes one level up, in the one spelling the ledgers cannot see. Measured before this
-// guard existed: `FromEnvironment({CAIRN_TRUSTED_HEADER_SECRET: "   "}, …)` returned a nil
-// error and a ONE-backend chain, so the pod came up healthy, passed its health check, and
-// logged nothing about the trusted-header backend it was not running.
-//
-// 🔴 AND THE SILENT-OFF CASE IS THE WHOLE OF IT, WHICH IS WHY THE LEDGERS ARE ASKED ONE AT
-// A TIME RATHER THAN AS A UNION. Where a ledger holds something that DOES arm its backend,
-// a blank sibling is not a backend silently off — it is an unset optional, and the
-// refusal's own sentence would be false for that input. Measured on the first version of
-// this guard, which walked the union unconditionally: a COMPLETE trusted-header
-// configuration carrying `CAIRN_TRUSTED_HEADER_PEERS="  "` beside it was refused, and
-// `main.go` turned that into `os.Exit(78)` — a crash loop for a deployment that had worked.
-// `TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset` pins both halves, including the
-// arm that keeps this per-LEDGER: an armed Supabase backend does not license a blank proxy
-// secret, because the trusted-header backend is still the one silently off.
-//
-// ⚠ "AN UNSET OPTIONAL" IS NOW WHAT ONLY *SOME* READERS MAKE OF IT, AND THIS PARAGRAPH
-// USED TO SAY OTHERWISE. It read "`envBool`, `envDuration` and every direct field read
-// trim, so a blank value there is the zero" — true of the code then, and the measured
-// defect: with a COMPLETE armed trusted-header configuration,
-// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="  "` produced a nil error and a backend with
-// `requireCert` FALSE, so mTLS was not enforced while `envBool` refused `treu` three lines
-// away — the same hazard in two spellings, refused in one. The readers that reach
-// `envSetting` now refuse the whitespace-only spelling themselves, and this guard is
-// unchanged: it still skips an armed ledger, because its own sentence is about a backend
-// being silently OFF and that sentence is false there. The SEVEN setting READERS still on
-// the bare `strings.TrimSpace(env[…])` shape — `anySet`'s own use of it is the ledger scan
-// rather than a reader, so it is not one of them — do turn a blank value into the zero, and
-// `envSetting`'s
-// comment enumerates them with what each zero is — a documented default, or a constructor
-// refusal naming the missing field. Never a check switched off; that was the discriminator.
-//
-// ⚠ AND `secretFrom` IS THE THIRD SHAPE, WITH ITS TWO FORMS ON OPPOSITE SIDES. It does NOT
-// trim its inline form, so a whitespace `CAIRN_TRUSTED_HEADER_SECRET` beside an armed
-// backend reaches `NewTrustedHeader` as three bytes — measured, on this tree and at
-// `7ac810e` alike, it is refused by the 32-byte length floor rather than read as unset.
-// Refused either way, by a NARROWER guard naming the real problem. The FILE form had no such
-// floor behind it and is read through `envSetting` now; the measurement is beside the call.
-//
-// ⚠ PRESENT-AND-WHITESPACE ONLY, AND TWO FURTHER CASES ARE DELIBERATELY LEFT ALONE ON TOP
-// OF THE ARMED-LEDGER ONE ABOVE. An ABSENT name is how a deployment says "I am not using this
-// backend" — refusing it would refuse every deployment, including the machine-token-only
-// one this package's whole compatibility claim rests on. A name present with the EMPTY
-// string is left alone too: it carries no value to mistake for one, and a manifest that
-// emits every variable with an empty default is a common enough shape that refusing it
-// would be a second, wider change than the defect measured above.
-func refuseBlankSettings(env map[string]string) error {
-	var names []string
-	for _, ledger := range [][]string{supabaseEnv, proxyEnv} {
-		if anySet(env, ledger) {
-			// This backend is armed by something else in its own ledger, so nothing
-			// here is silently off and a blank value is an unset optional.
-			continue
-		}
-		for _, name := range ledger {
-			value, present := env[name]
-			if !present || value == "" {
-				continue
-			}
-			if strings.TrimSpace(value) == "" {
-				names = append(names, name)
-			}
-		}
-	}
-	if len(names) == 0 {
-		return nil
-	}
-	sort.Strings(names)
-	return fmt.Errorf("%w: %s. Give it a value or delete the line — the value is trimmed to nothing, "+
-		"so the backend it belongs to would be silently OFF while the manifest says it is on",
-		ErrBlankSetting, strings.Join(names, ", "))
+// 🔴 BATCHED, BECAUSE THREE BLANK SETTINGS USED TO COST THREE CRASH-LOOP CYCLES. The
+// reader-level refusal this replaces returned on the first one it met, so an operator
+// fixed one line, redeployed, and met the next. The ledger-level one already batched; the
+// two disagreeing about that was itself a symptom of there being two.
+type blankFault struct {
+	// name is the variable, and it is always in the rendered message: an operator
+	// reading an `os.Exit(78)` crash loop needs the line to edit.
+	name string
+	// raw is what they wrote, quoted, because whitespace is invisible otherwise.
+	raw string
+	// because is the consequence, in the operator's words.
+	because string
 }
 
-// envSetting reads one setting, trimmed, and REFUSES a value that is present and holds
-// only whitespace.
+// resolve applies ONE setting's declared policy.
 //
-// 🔴 ONE PREDICATE IN ONE PLACE, AND THE HAZARD IT CLOSES IS `envBool`'S OWN IN A DIFFERENT
-// SPELLING. `envBool` refuses `treu` because "a typo that silently disables a security
-// setting leaves the operator believing it is on" — and it used to accept `"  "`, which is
-// that sentence exactly. Measured at `d5880f3` with a complete, armed trusted-header
-// configuration (shared secret AND client-certificate requirement):
-// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="yes"` gave `requireCert` true;
-// `…="treu"` was refused; `…="  "` returned a NIL error and `requireCert` FALSE — mTLS not
-// enforced, pod healthy, nothing logged. The same shape reached
-// `CAIRN_SUPABASE_REQUIRE_ROLE` (no role required), `CAIRN_TRUSTED_HEADER_PEERS` (no peer
-// allowlist) and `CAIRN_SUPABASE_MAX_AGE` (no `iat` bound): settings whose ZERO IS
-// PERMISSIVE, which is what makes a value read as unset a security decision nobody made.
+// 🔴 THIS IS THE ONE READER. Every value a backend is built from comes through here, and
+// `armed` is the only thing outside the setting's own declaration that changes the answer.
+// (`refuseRetiredSettings` reaches the environment too, but it asks only whether a name was
+// WRITTEN — through the same `touched` — and never takes a value from one.)
 //
-// 🔴 AND A FIFTH WAS FOUND BY READING THIS COMMENT AGAINST THE CODE RATHER THAN BY THE
-// AUDIT THAT NAMED THE OTHER FOUR. `CAIRN_TRUSTED_HEADER_SECRET_FILE="  "` beside
-// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT=yes` built a backend with a ZERO-length secret
-// and authenticated a request that carried the certificate and no shared-secret header —
-// defence in depth reduced to one rung, silently. `secretFrom` reads it through here now.
-//
-// 🔴 IT IS A FUNCTION RATHER THAN FIVE COPIES BECAUSE A PREDICATE OPEN-CODED AT N SITES IS
-// TYPICALLY WRONG AT N−1 OF THEM, IN THE SAME DIRECTION — and the fifth site above is that
-// claim arriving on schedule. The callers are `envBool` (proxy-fronted,
-// require-client-cert), `envDuration` (leeway, max-age), `secretFrom` (the secret PATH, not
-// the inline form) and the direct reads for the required role and the peer list. Leeway and
-// proxy-fronted come along because they share a reader, not because their zero is permissive
-// — a blank line is a typo in every case, and the refusal says nothing that is false for
-// them. What does NOT route through here is the other shape, and it was measured rather
-// than assumed — all seven of it. Blank REFUSES by name at the constructor: the issuer, the
-// JWKS URL, the subject header, the trusted-header provider. Blank becomes a documented
-// DEFAULT: the audience (`authenticated`), the Supabase provider (`supabase`), the secret
-// header (`X-Cairn-Proxy-Secret`). Neither group has a permissive zero, which is why they
-// stay on a bare `strings.TrimSpace` and why `TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset`
-// still has arms.
-//
-// ⚠ TWO CASES ARE DELIBERATELY LEFT ALONE, AND THEY ARE THE ONES `refuseBlankSettings`
-// ALREADY DECIDED. An ABSENT name is how a deployment says "I am not using this" — refusing
-// it would refuse the machine-token-only deployment this package's whole compatibility
-// claim rests on. A name present with the EMPTY string is left alone too: a manifest that
-// emits every variable with an empty default is a common shape, and refusing it is a wider
-// change than the defect above. ONLY the whitespace-only spelling moves.
-//
-// ⚠ AND IT FIRES BESIDE AN ARMED BACKEND, WHERE `refuseBlankSettings` DELIBERATELY DOES
-// NOT — THAT IS NOT THAT NARROWING REVERTED. The narrowing exists because the LEDGER-level
-// refusal's own sentence ("the backend it belongs to would be silently OFF") is false when
-// something else armed the ledger, and a false message crash-looped a deployment that
-// worked. This refusal makes no claim about a backend being off; it says the line reads as
-// unset, which is true in both worlds.
-func envSetting(env map[string]string, name string) (string, error) {
-	raw, present := env[name]
-	if !present || raw == "" {
+// 🔴 `armed` IS WHAT MAKES "MISCONFIGURATION OR UNSET OPTIONAL?" ANSWERABLE, AND IT IS
+// ANSWERED PER SETTING RATHER THAN GLOBALLY. When NOTHING else in the ledger holds a value
+// the backend is silently OFF, and a blank line is a line into a backend that is not
+// running — true for every policy, so every policy refuses there. When something else DID
+// arm the ledger that sentence is false, and the answer is the setting's own: measured, a
+// version that refused unconditionally crash-looped a COMPLETE trusted-header deployment
+// that carried one blank optional beside it, with a message that was false for that input.
+func (s setting) resolve(env map[string]string, armed bool) (string, *blankFault) {
+	raw, ok := touched(env, s.name)
+	if !ok {
 		return "", nil
 	}
-	if trimmed := strings.TrimSpace(raw); trimmed != "" {
-		return trimmed, nil
+	if !s.reducesToNothing(raw) {
+		return s.value(raw), nil
 	}
-	return "", fmt.Errorf(
-		"%w: %s=%q. Give it a value or delete the line — trimmed to nothing it is read as UNSET, "+
-			"which is a different configuration from the one written here, and where the unset value "+
-			"turns a check OFF that is a security setting silently disabled",
-		ErrBlankSetting, name, raw)
+	if !armed {
+		return "", &blankFault{name: s.name, raw: raw,
+			because: "nothing else in the " + ledgerOf(s.name) + " ledger holds a value, so that backend would be silently OFF while the manifest says it is on"}
+	}
+	switch s.policy {
+	case defaultsTo, refusedByConstructor:
+		// Accepted as UNSET. `s.unset` says what that means, and for
+		// `refusedByConstructor` the rung in `s.refusedBy` is where it lands.
+		return "", nil
+	case refuseBlank:
+		return "", &blankFault{name: s.name, raw: raw,
+			because: "it is read as UNSET, and unset means: " + s.unset}
+	default:
+		// 🔴 FAIL CLOSED ON `policyUndeclared`. The zero value of `blankPolicy` is not a
+		// decision, and a setting that forgot to make one must not inherit the permissive
+		// answer. Reachable: `TestAnUndeclaredPolicyRefusesRatherThanDefaulting`.
+		return "", &blankFault{name: s.name, raw: raw,
+			because: "this setting declares no blank policy (" + s.policy.String() + "), so nothing here can say whether that is a misconfiguration"}
+	}
 }
 
-func anySet(env map[string]string, names []string) bool {
-	for _, name := range names {
-		if strings.TrimSpace(env[name]) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func supabaseFromEnv(env map[string]string, authority ModelSource) (*SupabaseJWT, error) {
-	var keys *KeySet
-	var err error
-	if url := strings.TrimSpace(env[EnvSupabaseJWKSURL]); url != "" {
-		keys, err = NewKeySet(JWKSOptions{URL: url})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	audience := strings.TrimSpace(env[EnvSupabaseAudience])
-	if audience == "" {
-		audience = DefaultSupabaseAudience
-	}
-
-	leeway, err := envDuration(env, EnvSupabaseLeeway)
-	if err != nil {
-		return nil, err
-	}
-	maxAge, err := envDuration(env, EnvSupabaseMaxAge)
-	if err != nil {
-		return nil, err
-	}
-	// 🔴 `envSetting`, NOT A BARE `TrimSpace`: THE ZERO HERE IS "NO ROLE IS REQUIRED".
-	// A whitespace-only value would turn the role check off for a deployment that wrote
-	// one down — see `envSetting`, which states the measurement.
-	requireRole, err := envSetting(env, EnvSupabaseRequireRole)
-	if err != nil {
-		return nil, err
-	}
-
-	return NewSupabaseJWT(SupabaseConfig{
-		Authority:   authority,
-		Keys:        keys,
-		Issuer:      strings.TrimSpace(env[EnvSupabaseIssuer]),
-		Audience:    audience,
-		Provider:    strings.TrimSpace(env[EnvSupabaseProvider]),
-		RequireRole: requireRole,
-		Leeway:      leeway,
-		MaxAge:      maxAge,
-	})
-}
-
-// envDuration reads a Go duration setting. ABSENT, or present with the empty string,
-// means the zero value; present and whitespace-only is a refusal, via `envSetting`.
+// ledgerOf names the backend a variable belongs to, for the refusal above.
 //
-// ⚠ ONE READER FOR BOTH DURATIONS, BECAUSE TWO WOULD BE TWO CHANCES TO GET THE SAME
-// PARSE WRONG — the one-rule-one-place ruling `secretFrom` already carries. An
-// unparseable value is an error and never the zero: the operator who typed `10min`
-// believes a bound is armed, and `time.ParseDuration` refuses that spelling. A
-// whitespace-only value is the same claim in the spelling `ParseDuration` never sees,
-// which is why the blank test is in `envSetting` above it rather than here.
-func envDuration(env map[string]string, name string) (time.Duration, error) {
-	raw, err := envSetting(env, name)
-	if err != nil {
-		return 0, err
+// ⚠ THE FALLBACK IS FOR A SETTING NO LEDGER HOLDS, WHICH IS A TEST FIXTURE RATHER THAN A
+// DEPLOYMENT. `FromEnvironment` only ever resolves settings it took OUT of a ledger, so the
+// loop always finds one there; a synthetic `setting` constructed in a test does not, and a
+// generic word is a better answer than an empty one.
+func ledgerOf(name string) string {
+	for _, l := range ledgers() {
+		for _, s := range l.settings {
+			if s.name == name {
+				return l.backend
+			}
+		}
 	}
+	return "identity"
+}
+
+// resolveLedger resolves every setting in one ledger, and reports whether anything armed
+// the backend.
+//
+// ⚠ TWO PASSES, AND THE ORDER IS LOAD-BEARING. `armed` must be known before any policy is
+// applied, because it is what decides whether "the backend would be silently off" is a
+// true sentence — and a single pass would answer it differently depending on the order the
+// ledger happens to list its settings in.
+func resolveLedger(env map[string]string, l ledger) (map[string]string, bool, []blankFault) {
+	armed := false
+	for _, s := range l.settings {
+		if raw, ok := touched(env, s.name); ok && !s.reducesToNothing(raw) {
+			armed = true
+		}
+	}
+	values := make(map[string]string, len(l.settings))
+	var faults []blankFault
+	for _, s := range l.settings {
+		value, fault := s.resolve(env, armed)
+		values[s.name] = value
+		if fault != nil {
+			faults = append(faults, *fault)
+		}
+	}
+	return values, armed, faults
+}
+
+// refuseBlanks renders every refused line as ONE error.
+//
+// ⚠ IT DOES NOT SORT, AND THAT IS A DELETION RATHER THAN AN OVERSIGHT. `refuseRetiredSettings`
+// sorts because it walks a MAP and would otherwise print a different message each restart;
+// this walks the ledgers' own SLICES, in declaration order, so the message is already
+// deterministic — and declaration order groups the lines by backend, which is more use to an
+// operator than alphabetical. Measured: with the `sort.Slice` call deleted, the WHOLE
+// package suite stayed green — an unpinnable line, which is what a sort over an
+// already-ordered slice is. `TestEveryBlankSettingIsNamedInOneRefusal`'s repeat loop is what
+// pins the determinism the sort was standing in for.
+func refuseBlanks(faults []blankFault) error {
+	if len(faults) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(faults))
+	for _, f := range faults {
+		parts = append(parts, fmt.Sprintf("%s=%q — %s", f.name, f.raw, f.because))
+	}
+	return fmt.Errorf("%w: %s. Give each a value or delete the line: the configuration written here is not the one this pod would run",
+		ErrBlankSetting, strings.Join(parts, "; "))
+}
+
+// FromEnvironment builds the backends a deployment's environment asks for.
+//
+// 🔴 NOTHING SET MEANS MACHINE-TOKEN ONLY, AND THAT IS THE WHOLE COMPATIBILITY CLAIM.
+// A deployment with no Supabase variables and no proxy variables gets exactly the chain
+// `api.New` builds by itself, so its behaviour is not merely similar to today's — it is
+// the same code path. Both new backends are opt-in, and the trusted-header one is opt-in
+// twice.
+//
+// `machine` is always first in the returned chain. The second return is the Supabase
+// backend whose key set the caller must refresh, or nil when nothing ARMED the Supabase
+// ledger — it is never a backend with nothing to refresh, because rung 3 of
+// `NewSupabaseJWT` refuses one, and never nil while a Supabase variable holds a real value,
+// because such a value is exactly what arms the ledger.
+func FromEnvironment(env map[string]string, authority interface {
+	TokenAuthority
+	ModelSource
+}) (Chain, *SupabaseJWT, error) {
+	// 🔴 BEFORE EVERYTHING, AND UNCONDITIONALLY. A retired name arms nothing, so checking
+	// it inside a backend's own branch would only fire for deployments that had ALSO
+	// set a live variable — which is precisely the deployment that gets a loud refusal
+	// anyway. The silent case is the one where a retired name is all that is set.
+	if err := refuseRetiredSettings(env); err != nil {
+		return nil, nil, err
+	}
+
+	// 🔴 EVERY SETTING IS RESOLVED BEFORE ANY BACKEND IS BUILT, AND THE REFUSALS ARE ONE
+	// MESSAGE. Resolving inside the constructors would put the policy behind the "is this
+	// ledger armed" branch — so a blank in a ledger nothing armed would never reach a
+	// reader at all, which is the hole the ledger sweep existed to patch and the reason
+	// there were two blank predicates to disagree.
+	supabaseValues, supabaseArmed, faults := resolveLedger(env, supabaseEnv)
+	proxyValues, proxyArmed, proxyFaults := resolveLedger(env, proxyEnv)
+	if err := refuseBlanks(append(faults, proxyFaults...)); err != nil {
+		return nil, nil, err
+	}
+
+	machine, err := NewMachineToken(authority)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var supabase *SupabaseJWT
+	if supabaseArmed {
+		supabase, err = supabaseFromEnv(supabaseValues, authority)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	var trusted *TrustedHeader
+	if proxyArmed {
+		trusted, err = trustedHeaderFromEnv(proxyValues, authority)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	chain, err := Backends(machine, supabase, trusted)
+	if err != nil {
+		return nil, nil, err
+	}
+	return chain, supabase, nil
+}
+
+// reader hands a constructor the values `resolveLedger` already produced, and remembers
+// the first fault.
+//
+// ⚠ THE CONSTRUCTORS NO LONGER RECEIVE THE ENVIRONMENT AT ALL, AND THAT IS THE POINT OF
+// THE SIGNATURE CHANGE. A bare `strings.TrimSpace(env[…])` inside a constructor was the
+// fourth of the six answers to "is this setting set?", at seven sites; with `env` out of
+// scope there it is not a thing the code can express. That is SCOPE, not a type —
+// `resolved`-as-a-named-map would not have been a compile error, because Go assigns freely
+// between a named map type and its unnamed underlying one.
+//
+// ⚠ AND IT REMEMBERS THE FIRST FAULT RATHER THAN BATCHING, WHICH IS NARROWER THAN THE
+// BLANK REFUSAL ABOVE AND DELIBERATELY SO. Every blank line in the whole environment is
+// named in ONE message, because `resolveLedger` runs over both ledgers before any
+// constructor does. A PARSE failure (`10min` is not a duration, `treu` is not a boolean)
+// stops at the first: a constructor that carried on past one would be building a backend
+// out of values it has already been told are wrong.
+type reader struct {
+	values map[string]string
+	err    error
+}
+
+// get returns one resolved value. A name no ledger declares is a FAULT rather than the
+// empty string — see `ErrUndeclaredSetting`.
+func (r *reader) get(name string) string {
+	value, ok := r.values[name]
+	if !ok {
+		if r.err == nil {
+			r.err = fmt.Errorf("%w: %s", ErrUndeclaredSetting, name)
+		}
+		return ""
+	}
+	return value
+}
+
+// list splits a resolved value with the SAME function the setting's blank test used.
+//
+// ⚠ THE TRAILING FAULT IS AN INVARIANT GUARD, LABELLED AS ONE. A setting read as a list
+// that declares no split cannot exist while the gate is green — the only caller is
+// `EnvProxyPeers`, which declares `peerFields` — and the point of the arm is that the
+// answer would be a refusal rather than an EMPTY allowlist, which is the exact hazard
+// `reducesToNothing`'s list half closes one level up.
+func (r *reader) list(name string) []string {
+	raw := r.get(name)
 	if raw == "" {
-		return 0, nil
+		return nil
 	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %q is not a duration (%v)", name, raw, err)
+	for _, l := range ledgers() {
+		for _, s := range l.settings {
+			if s.name == name && s.fields != nil {
+				return s.fields(raw)
+			}
+		}
 	}
-	return d, nil
+	if r.err == nil {
+		r.err = fmt.Errorf("%w: %s is read as a list and declares no split", ErrUndeclaredSetting, name)
+	}
+	return nil
 }
 
-func trustedHeaderFromEnv(env map[string]string, authority ModelSource) (*TrustedHeader, error) {
-	fronted, err := envBool(env, EnvProxyFronted)
-	if err != nil {
-		return nil, err
+func (r *reader) boolean(name string) bool {
+	value, err := parseBool(name, r.get(name))
+	if err != nil && r.err == nil {
+		r.err = err
 	}
-	requireCert, err := envBool(env, EnvProxyRequireClientCert)
-	if err != nil {
-		return nil, err
-	}
-	secret, err := secretFrom(env, EnvProxySecret, EnvProxySecretFile)
-	if err != nil {
-		return nil, err
-	}
-	// 🔴 `envSetting`, NOT A BARE `TrimSpace`: THE ZERO HERE IS "NO PEER ALLOWLIST". The
-	// split below is over whitespace as well as commas, so a whitespace-only value yields
-	// an EMPTY field set rather than a bad one — indistinguishable from unset, and the
-	// operator who wrote a narrowing down gets every peer. See `envSetting`.
-	rawPeers, err := envSetting(env, EnvProxyPeers)
-	if err != nil {
-		return nil, err
-	}
-	var peers []string
-	if rawPeers != "" {
-		peers = strings.FieldsFunc(rawPeers, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
-	}
-	return NewTrustedHeader(TrustedHeaderConfig{
-		ProxyFronted:      fronted,
-		SubjectHeader:     strings.TrimSpace(env[EnvProxySubjectHeader]),
-		SecretHeader:      strings.TrimSpace(env[EnvProxySecretHeader]),
-		Secret:            secret,
-		RequireClientCert: requireCert,
-		ProxyPeers:        peers,
-		Provider:          strings.TrimSpace(env[EnvProxyProvider]),
-		Authority:         authority,
-	})
+	return value
 }
 
-// envBool reads a boolean setting.
+func (r *reader) duration(name string) time.Duration {
+	value, err := parseDuration(name, r.get(name))
+	if err != nil && r.err == nil {
+		r.err = err
+	}
+	return value
+}
+
+func (r *reader) secret(inlineName, fileName string) []byte {
+	value, err := secretFrom(inlineName, r.get(inlineName), fileName, r.get(fileName))
+	if err != nil && r.err == nil {
+		r.err = err
+	}
+	return value
+}
+
+// parseBool reads a boolean setting from a value the policy above already resolved.
 //
 // 🔴 AN UNRECOGNISED VALUE IS AN ERROR, NEVER `false`. `CAIRN_TRUSTED_HEADER_PROXY_FRONTED=treu`
 // must not silently mean "not proxy-fronted": an operator who typed it believes the
@@ -521,16 +763,11 @@ func trustedHeaderFromEnv(env map[string]string, authority ModelSource) (*Truste
 // accepted spellings are enumerated below.
 //
 // ⚠ THE ACCEPTED SET IS `1 t true y yes on` AND `0 f false n no off`, CASE-INSENSITIVELY,
-// PLUS THE ABSENT AND EMPTY-STRING SPELLINGS OF "NOT SET", WHICH READ AS `false`. A
-// WHITESPACE-ONLY value is NOT in that set and does not reach the switch: `envSetting`
-// refuses it one call up, because "reads as its own default" was exactly as true of `"  "`
-// as of `treu` while only one of the two was refused. The `""` case below is therefore the
-// absent and empty-string spellings only.
-func envBool(env map[string]string, name string) (bool, error) {
-	raw, err := envSetting(env, name)
-	if err != nil {
-		return false, err
-	}
+// PLUS THE EMPTY STRING, WHICH IS WHAT "NOT SET" RESOLVES TO. A WHITESPACE-ONLY value is
+// NOT in that set and never arrives here: `EnvProxyFronted` and `EnvProxyRequireClientCert`
+// both declare `refuseBlank`, because "reads as its own default" was exactly as true of
+// `"  "` as of `treu` while only one of the two was refused.
+func parseBool(name, raw string) (bool, error) {
 	switch strings.ToLower(raw) {
 	case "":
 		return false, nil
@@ -545,7 +782,29 @@ func envBool(env map[string]string, name string) (bool, error) {
 	}
 }
 
-// secretFrom reads a secret from an inline variable or from a file.
+// parseDuration reads a Go duration setting from a resolved value. The empty string —
+// "not set" — is the zero.
+//
+// ⚠ ONE PARSER FOR BOTH DURATIONS, BECAUSE TWO WOULD BE TWO CHANCES TO GET THE SAME PARSE
+// WRONG — the one-rule-one-place ruling this file now applies to the blank test as well.
+// An unparseable value is an error and never the zero: the operator who typed `10min`
+// believes a bound is armed, and `time.ParseDuration` refuses that spelling. A
+// whitespace-only value is the same claim in the spelling `ParseDuration` never sees, and
+// it is refused by the declared policy before it gets here.
+func parseDuration(name, raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a duration (%v)", name, raw, err)
+	}
+	return d, nil
+}
+
+// secretFrom reads a secret from an inline variable or from a file. Both values are
+// already resolved: `EnvProxySecret` keeps its whitespace and `EnvProxySecretFile` does
+// not, and neither can be a value that reduces to nothing.
 //
 // 🔴 BOTH SET IS A REFUSAL, NOT A PRECEDENCE RULE. Two sources for one secret means the
 // answer to "which one is live" depends on a precedence nobody reads, and a rotation that
@@ -561,7 +820,10 @@ func envBool(env map[string]string, name string) (bool, error) {
 // ⚠ A TRAILING NEWLINE IS STRIPPED FROM THE FILE FORM AND FROM NOTHING ELSE. Every editor
 // and every `echo` adds one, and a secret that differs from the proxy's by an invisible
 // byte fails with a refusal that says nothing about why. Interior whitespace is left
-// alone: it may be part of the secret.
+// alone: it may be part of the secret. That is also why `EnvProxySecret` declares
+// `keepWhitespace` — and why it declares `refuseBlank` beside it, because a secret that is
+// ENTIRELY whitespace is not a secret and the length floor is a LENGTH test, not a content
+// one.
 //
 // 🔴 AND A FILE THAT YIELDS ZERO BYTES IS A REFUSAL HERE, BECAUSE THE CONSTRUCTOR CANNOT
 // TELL IT FROM "NO SECRET CONFIGURED" AND BLAMES THE WRONG SETTING. A file holding only
@@ -570,26 +832,11 @@ func envBool(env map[string]string, name string) (bool, error) {
 // source check at all and to configure the very secret they did configure, in a crash
 // loop. The MISSING-file case was already closed for exactly this reason; this is the same
 // mis-blame one step further in, where the file exists and is empty.
-func secretFrom(env map[string]string, inline, fromFile string) ([]byte, error) {
-	direct := env[inline]
-	// 🔴 `envSetting` ON THE PATH, AND THE INLINE FORM DELIBERATELY NOT — THE TWO ARE
-	// ALREADY IN DIFFERENT PLACES AND ONLY ONE OF THEM WAS SAFE. Measured on this tree
-	// while checking the sentence above: with `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT=yes`
-	// arming the backend, `CAIRN_TRUSTED_HEADER_SECRET_FILE="  "` built quietly with a
-	// ZERO-length secret — and a request carrying a verified client certificate and NO
-	// shared-secret header AUTHENTICATED, where the same request against the real path is
-	// refused with "the shared-secret header is absent or duplicated". Defence in depth
-	// silently reduced to one rung, by whitespace, for a deployment that wrote both down.
-	// The INLINE form needs nothing: it is not trimmed, so `"  "` arrives as two bytes and
-	// the 32-byte floor refuses it by name — measured in the same run.
-	path, err := envSetting(env, fromFile)
-	if err != nil {
-		return nil, err
-	}
+func secretFrom(inlineName, direct, fileName, path string) ([]byte, error) {
 	if direct != "" && path != "" {
 		return nil, fmt.Errorf(
 			"%s and %s are both set: one secret, one source. Which is live would depend on a precedence rule nobody reads, and a rotation that updated the other would appear to work",
-			inline, fromFile)
+			inlineName, fileName)
 	}
 	if direct != "" {
 		return []byte(direct), nil
@@ -599,7 +846,7 @@ func secretFrom(env map[string]string, inline, fromFile string) ([]byte, error) 
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", fromFile, err)
+		return nil, fmt.Errorf("%s: %w", fileName, err)
 	}
 	secret := strings.TrimRight(string(body), "\r\n")
 	if secret == "" {
@@ -607,7 +854,67 @@ func secretFrom(env map[string]string, inline, fromFile string) ([]byte, error) 
 			"%s: %s is empty, or holds only the newline an editor added. That is not the same as no secret "+
 				"configured: read as one, the refusal you would get names the source check rather than this file, "+
 				"and tells you to configure the secret you already did",
-			fromFile, path)
+			fileName, path)
 	}
 	return []byte(secret), nil
+}
+
+// supabaseFromEnv builds the Supabase backend from values the policy has already resolved.
+//
+// ⚠ EVERY `Env*` NAME IT REFERENCES MUST BE IN `supabaseEnv`, AND THE REVERSE, PINNED BY
+// AST — see `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads`. That is also
+// what keeps `reader.get` from ever reaching `ErrUndeclaredSetting` here.
+func supabaseFromEnv(values map[string]string, authority ModelSource) (*SupabaseJWT, error) {
+	r := &reader{values: values}
+
+	var keys *KeySet
+	if url := r.get(EnvSupabaseJWKSURL); url != "" {
+		var err error
+		keys, err = NewKeySet(JWKSOptions{URL: url})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// The documented default. `EnvSupabaseAudience` declares `defaultsTo`, so a blank
+	// value arrives here as the empty string and lands on exactly this line.
+	audience := r.get(EnvSupabaseAudience)
+	if audience == "" {
+		audience = DefaultSupabaseAudience
+	}
+
+	cfg := SupabaseConfig{
+		Authority:   authority,
+		Keys:        keys,
+		Issuer:      r.get(EnvSupabaseIssuer),
+		Audience:    audience,
+		Provider:    r.get(EnvSupabaseProvider),
+		RequireRole: r.get(EnvSupabaseRequireRole),
+		Leeway:      r.duration(EnvSupabaseLeeway),
+		MaxAge:      r.duration(EnvSupabaseMaxAge),
+	}
+	if r.err != nil {
+		return nil, r.err
+	}
+	return NewSupabaseJWT(cfg)
+}
+
+// trustedHeaderFromEnv builds the trusted-header backend from resolved values. Same AST
+// ledger claim as `supabaseFromEnv`.
+func trustedHeaderFromEnv(values map[string]string, authority ModelSource) (*TrustedHeader, error) {
+	r := &reader{values: values}
+	cfg := TrustedHeaderConfig{
+		ProxyFronted:      r.boolean(EnvProxyFronted),
+		SubjectHeader:     r.get(EnvProxySubjectHeader),
+		SecretHeader:      r.get(EnvProxySecretHeader),
+		Secret:            r.secret(EnvProxySecret, EnvProxySecretFile),
+		RequireClientCert: r.boolean(EnvProxyRequireClientCert),
+		ProxyPeers:        r.list(EnvProxyPeers),
+		Provider:          r.get(EnvProxyProvider),
+		Authority:         authority,
+	}
+	if r.err != nil {
+		return nil, r.err
+	}
+	return NewTrustedHeader(cfg)
 }

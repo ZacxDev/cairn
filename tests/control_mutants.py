@@ -1203,7 +1203,7 @@ MUTANTS: tuple[Mutant, ...] = (
         "ZERO and zero means the check is OFF. An operator who wrote "
         "`CAIRN_SUPABASE_MAX_AGE=-1h` — a sign typo, or a value templated from a "
         "subtraction — gets a bound they configured and nothing enforcing it, which is "
-        "the shape `envBool` refuses one file over for the same reason.",
+        "the shape `parseBool` refuses one file over for the same reason.",
     ),
     Mutant(
         name="crit-extensions-are-ignored",
@@ -1287,8 +1287,13 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-partial-proxy-configuration-is-silently-off",
         path="internal/identity/config.go",
-        old="\tif anySet(env, proxyEnv) {",
-        new="\tif false {",
+        old="\tif proxyArmed {",
+        # 🔴 `false && proxyArmed`, NOT `false` — `proxyArmed` COMES OUT OF A `:=` WITH
+        # SIBLINGS, so a mutant that stops referencing it leaves it declared and unused and
+        # the tree does not build. A mutant that dies at the build is the one outcome that
+        # proves nothing; the `an-unrecognised-boolean-reads-as-false` row below records the
+        # same shape for `parseBool`'s `default` arm.
+        new="\tif false && proxyArmed {",
         killer="TestAPartiallyConfiguredBackendRefusesToStart",
         why="the trigger becomes 'the required fields are present' rather than 'anybody "
         "touched any of these'. An operator who set the subject header and forgot the "
@@ -1301,7 +1306,7 @@ MUTANTS: tuple[Mutant, ...] = (
         # 🔴 THE WHOLE `default` ARM, REPLACED BY ONE THAT RETURNS NO ERROR — and it
         # keeps `fmt`, `name` and `raw` referenced for the reason the row above records.
         # The first draft deleted the arm by renaming it to a case nothing matches, which
-        # left `envBool` with a path that returns nothing: the tree did not build, and a
+        # left the reader with a path that returns nothing: the tree did not build, and a
         # mutant that dies at the build is the one outcome that proves nothing.
         old='\tdefault:\n\t\treturn false, fmt.Errorf(\n\t\t\t"%s: %q is not a boolean. Write yes or no — an unrecognised value is refused rather than read as `no`, because a typo that silently disables a security setting leaves the operator believing it is on",\n\t\t\tname, raw)',
         new='\tdefault:\n\t\t_ = fmt.Sprintf("%s %s", name, raw)\n\t\treturn false, nil',
@@ -1311,14 +1316,18 @@ MUTANTS: tuple[Mutant, ...] = (
         "typo as its own default is how a deployment ends up in a state nobody chose. "
         "The edit replaces the `default:` arm with a case nothing matches, which is the "
         "shape that COMPILES — deleting the arm leaves `fmt` unused in a function that "
-        "must still return, and a mutant that dies at the build proves nothing.",
+        "must still return, and a mutant that dies at the build proves nothing. "
+        "⚠ THE READER WAS CALLED `envBool` WHEN THIS ROW WAS WRITTEN and is `parseBool` now "
+        "— it takes a value the declared blank policy already resolved rather than the "
+        "environment. The `default:` arm and its message are byte-identical across that "
+        "rename, which is why the anchor survived it.",
     ),
     Mutant(
         name="a-retired-setting-is-silently-ignored",
         path="internal/identity/config.go",
-        old='\t\tif value, present := env[name]; present && value != "" {\n\t\t\tnames = append(names, name)\n'
+        old='\t\tif _, ok := touched(env, name); ok {\n\t\t\tnames = append(names, name)\n'
         '\t\t}\n\t}\n\tif len(names) == 0 {',
-        new='\t\tif value, present := env[name]; present && value != "" {\n\t\t\tnames = append(names, name)\n'
+        new='\t\tif _, ok := touched(env, name); ok {\n\t\t\tnames = append(names, name)\n'
         '\t\t}\n\t}\n\tif len(names) >= 0 {',
         killer="TestAPartiallyConfiguredBackendRefusesToStart",
         extra_killers=("TestTheEnvironmentLedgersNameEveryVariableEachBackendReads",),
@@ -1349,7 +1358,14 @@ MUTANTS: tuple[Mutant, ...] = (
         "anchor matched zero times and the harness reported an error a third time. A "
         "fixed anchor cannot be made drift-proof by choosing a better line; what it can "
         "be is LOUD, which it was. Widest reading: any edit to this function is an edit "
-        "to this row.",
+        "to this row. "
+        "🔴 FOURTH SIGHTING, AND THE DISTINGUISHING LINE MOVED AGAIN — this time because "
+        "the predicate it spelled was CONSOLIDATED. `present && value != \"\"` was "
+        "open-coded here and again in the blank sweep; the design pass that gave every "
+        "setting a declared blank policy replaced both with one `touched` call, so the "
+        "anchor matched zero times a fourth time. The tell is the same and the lesson is "
+        "one level up from \"pick a better line\": an anchor spells an EXPRESSION, and "
+        "consolidating a duplicated predicate deletes expressions by design.",
     ),
     Mutant(
         name="a-secret-may-come-from-two-sources",

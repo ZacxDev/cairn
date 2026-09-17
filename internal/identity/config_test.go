@@ -121,10 +121,10 @@ func TestAPartiallyConfiguredBackendRefusesToStart(t *testing.T) {
 		},
 		{
 			// 🔴 THE RETIRED SETTING, AND IT IS THE *ONLY* ARM HERE THAT NEEDS NOTHING
-			// ELSE SET. Every other row must touch a live variable to arm `anySet`; a
-			// name dropped from a ledger is invisible to `anySet` by construction, so
-			// if this refusal did not exist the pod would come up healthy having
-			// silently discarded the line.
+			// ELSE SET. Every other row must touch a live variable to ARM its ledger;
+			// a name dropped from a ledger is invisible to the arming scan by
+			// construction, so if this refusal did not exist the pod would come up
+			// healthy having silently discarded the line.
 			name: "the retired legacy symmetric secret, set ALONE",
 			env:  map[string]string{"CAIRN_SUPABASE_JWT_SECRET": "whatever-the-operator-still-has-in-their-manifest"},
 			want: ErrRetiredSetting,
@@ -231,13 +231,19 @@ func TestAnUnrecognisedBooleanIsAnErrorRatherThanFalse(t *testing.T) {
 	}
 
 	// Every accepted spelling, both ways, so the table is not "anything but `yes` fails".
+	//
+	// ⚠ `parseBool` TAKES A RESOLVED VALUE RATHER THAN AN ENVIRONMENT, WHICH IS WHY THE
+	// NAME HERE IS SYNTHETIC. The blank spellings are not in either list because they
+	// never reach this function: the declared policy refuses them upstream, and
+	// `TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt` is what pins that. The
+	// empty string IS in the `no` list, because that is what "not set" resolves to.
 	for _, yes := range []string{"1", "t", "true", "y", "yes", "on", "YES", "True"} {
-		if got, err := envBool(map[string]string{"X": yes}, "X"); err != nil || !got {
+		if got, err := parseBool("X", yes); err != nil || !got {
 			t.Fatalf("%q must read as true, got %v / %v", yes, got, err)
 		}
 	}
 	for _, no := range []string{"", "0", "f", "false", "n", "no", "off", "NO"} {
-		if got, err := envBool(map[string]string{"X": no}, "X"); err != nil || got {
+		if got, err := parseBool("X", no); err != nil || got {
 			t.Fatalf("%q must read as false, got %v / %v", no, got, err)
 		}
 	}
@@ -256,7 +262,7 @@ func TestASecretHasExactlyOneSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := secretFrom(map[string]string{EnvProxySecretFile: path}, EnvProxySecret, EnvProxySecretFile)
+	got, err := secretFrom(EnvProxySecret, "", EnvProxySecretFile, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,18 +270,14 @@ func TestASecretHasExactlyOneSource(t *testing.T) {
 		t.Fatalf("the file form read %q, want %q with the trailing newline stripped", got, testProxySecret)
 	}
 
-	_, err = secretFrom(map[string]string{
-		EnvProxySecret:     string(testProxySecret),
-		EnvProxySecretFile: path,
-	}, EnvProxySecret, EnvProxySecretFile)
+	_, err = secretFrom(EnvProxySecret, string(testProxySecret), EnvProxySecretFile, path)
 	if err == nil {
 		t.Fatal("both an inline secret and a secret file were accepted")
 	}
 
 	// A file that does not exist is a refusal, not an empty secret — which would fall
 	// through to "no source check configured" and blame the wrong setting.
-	if _, err := secretFrom(map[string]string{EnvProxySecretFile: filepath.Join(dir, "absent")},
-		EnvProxySecret, EnvProxySecretFile); err == nil {
+	if _, err := secretFrom(EnvProxySecret, "", EnvProxySecretFile, filepath.Join(dir, "absent")); err == nil {
 		t.Fatal("an unreadable secret file was read as no secret at all")
 	}
 }
@@ -299,7 +301,7 @@ func TestAnEmptySecretFileBlamesItselfRatherThanTheSourceCheck(t *testing.T) {
 			if err := os.WriteFile(path, []byte(arm.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err := secretFrom(map[string]string{EnvProxySecretFile: path}, EnvProxySecret, EnvProxySecretFile)
+			_, err := secretFrom(EnvProxySecret, "", EnvProxySecretFile, path)
 			if err == nil {
 				t.Fatal("an empty secret file was read as no secret at all, which blames the source check")
 			}
@@ -320,7 +322,7 @@ func TestAnEmptySecretFileBlamesItselfRatherThanTheSourceCheck(t *testing.T) {
 	if err := os.WriteFile(good, append(append([]byte{}, testProxySecret...), '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := secretFrom(map[string]string{EnvProxySecretFile: good}, EnvProxySecret, EnvProxySecretFile)
+	got, err := secretFrom(EnvProxySecret, "", EnvProxySecretFile, good)
 	if err != nil || string(got) != string(testProxySecret) {
 		t.Fatalf("a real secret file stopped working: %q / %v", got, err)
 	}
@@ -359,12 +361,17 @@ func TestAnEmptySecretFileBlamesItselfRatherThanTheSourceCheck(t *testing.T) {
 
 // TestAWhitespaceOnlyValueIsREFUSEDRatherThanReadAsUnset.
 //
-// 🔴 `anySet` TRIMS, SO A WHITESPACE-ONLY VALUE ARMS NOTHING AND THE BACKEND THE OPERATOR
-// CONFIGURED IS SILENTLY OFF. Measured before the guard: `FromEnvironment` with
+// 🔴 A VALUE THAT REDUCES TO NOTHING ARMS NOTHING, SO THE BACKEND THE OPERATOR CONFIGURED
+// IS SILENTLY OFF. Measured before the guard: `FromEnvironment` with
 // `CAIRN_TRUSTED_HEADER_SECRET` set to three spaces returned a nil error and a ONE-backend
 // chain — a pod that starts, passes its health check, and logs nothing about the backend it
 // is not running. That is the defect the ledgers exist to close, in the one spelling they
 // cannot see.
+//
+// ⚠ IT IS THE *UNARMED* HALF, AND `setting.resolve` DRAWS THE LINE. Every name below is set
+// ALONE, so nothing else arms its ledger and every policy refuses — which is why this test
+// does not need to know what any individual setting's policy is. The ARMED half, where the
+// policy is what answers, is `TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt`.
 func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 	// The measured case first, by itself, so the arm that reproduced the defect is named.
 	_, _, err := FromEnvironment(map[string]string{EnvProxySecret: "   "}, newTestAuthority(t))
@@ -377,8 +384,8 @@ func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 
 	// EVERY ledger name and several spellings of blank, because the guard's sentence is
 	// about the LEDGERS rather than about one variable.
-	ledgers := append(append([]string{}, supabaseEnv...), proxyEnv...)
-	for _, name := range ledgers {
+	everyName := everySettingName()
+	for _, name := range everyName {
 		t.Run("blank/"+name, func(t *testing.T) {
 			for _, blank := range []string{" ", "\t", "\n", "\r\n", " \t \n "} {
 				_, _, err := FromEnvironment(map[string]string{name: blank}, newTestAuthority(t))
@@ -401,11 +408,11 @@ func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 		t.Fatalf("an empty environment stopped being machine-token only: %v / %d / %v", err, len(chain), supabase)
 	}
 
-	// …and present-with-the-EMPTY-string is unchanged too, which is the scope line in
-	// `refuseBlankSettings` rather than an accident. A manifest that emits every variable
-	// with an empty default is a common shape; refusing it is a wider change than the
-	// defect above, and it is not made here.
-	for _, name := range ledgers {
+	// …and present-with-the-EMPTY-string is unchanged too, which is `touched`'s own scope
+	// line rather than an accident. A manifest that emits every variable with an empty
+	// default is a common shape; refusing it is a wider change than the defect above, and
+	// it is not made here.
+	for _, name := range everyName {
 		t.Run("empty/"+name, func(t *testing.T) {
 			chain, _, err := FromEnvironment(map[string]string{name: ""}, newTestAuthority(t))
 			if err != nil {
@@ -428,37 +435,42 @@ func TestAWhitespaceOnlyValueIsRefusedRatherThanReadAsUnset(t *testing.T) {
 	}
 }
 
-// TestABlankSettingBesideAnARMEDBackendIsAcceptedAsUnset is the REGRESSION guard on the
-// scope of `refuseBlankSettings`, and it is not an invariant guard: the refusal whose
-// absence it pins landed on this branch and refused environments that had been accepted
-// one commit earlier.
+// TestABlankSettingBesideAnARMEDBackendIsAcceptedAsUnset pins the `defaultsTo` policy BY
+// VALUE, and it is not an invariant guard: a refusal that landed on this branch refused
+// environments that had been accepted one commit earlier, and this is what caught it.
 //
-// 🔴 THE REFUSAL'S OWN SENTENCE IS WHAT BOUNDS IT — "the backend it belongs to would be
-// silently OFF" — AND THAT IS FALSE WHENEVER SOMETHING ELSE IN THE SAME LEDGER ARMED IT.
-// Measured on the first version of the guard, which walked `supabaseEnv ∪ proxyEnv`
-// unconditionally: a COMPLETE trusted-header configuration carrying
-// `CAIRN_TRUSTED_HEADER_PEERS="  "` beside it was refused with `ErrBlankSetting`, so
-// `main.go` exited 78 in a crash loop — for a value that setting's OWN reader
-// (`strings.TrimSpace(env[EnvProxyPeers])`) turns into the empty default, and for a backend
-// that was demonstrably ON. All three accept-arms below were accepted at `7ac810e`, the
-// commit before the guard existed: measured, nil error and a TWO-backend chain for each.
+// 🔴 "IT BUILT" IS NOT "THE BLANK REACHED THE DOCUMENTED DEFAULT", WHICH IS THE WHOLE
+// REASON THIS TEST EXISTS BESIDE THE GATE.
+// `TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt` asks every `defaultsTo`
+// setting for `err == nil` and cannot ask for more, because the field each default lands in
+// differs per setting. Here each arm reads the field. `pinnedDefaultSettings` is the
+// relationship between the two tests, and BOTH ends assert it: the gate checks that set
+// against the settings whose policy is `defaultsTo`, and the loop below checks it against
+// the arms it actually runs.
 //
-// ⚠ THE LAST ARM IS THE ONE THAT KEEPS THE NARROWING PER-LEDGER RATHER THAN GLOBAL. A fix
-// that asked "is ANY backend armed" would pass every arm above it and re-open the measured
-// defect for a deployment that runs Supabase and typed a blank proxy secret.
+// 🔴 WHY THE POLICY IS `defaultsTo` FOR THE ARMS BELOW AND `refuseBlank` FOR THE REST.
+// Measured on a version of the ledger sweep that walked `supabaseEnv ∪ proxyEnv`
+// unconditionally: a COMPLETE trusted-header configuration carrying a blank optional beside
+// it was refused, and `main.go` turned that into `os.Exit(78)` — a crash loop for a
+// deployment that had worked, under a message ("the backend it belongs to would be silently
+// OFF") that was FALSE for that input. The arms below are the settings for which it stays
+// false: their unset value is a documented default that leaves the very same check armed,
+// so nothing is switched off and nothing is silently anything. Their number is not written
+// down here — `pinnedDefaultSettings` is compared against the policy data at both ends, so
+// the set is pinned and a count would only be a third copy of it.
 //
-// 🔴 AND ITS ARMS ARE NOW THE SETTINGS WHOSE ZERO IS A DEFAULT, BECAUSE THE ROUND AFTER
-// FOUND THE OTHER HALF OF THE SAME HAZARD AND THE OLD ARMS WERE PINNING IT OPEN. The three
-// it carried — the peer list, the client-certificate flag and the required role — all have
-// a PERMISSIVE zero, so "accepted as unset" meant a security check silently off: measured,
-// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="  "` beside a complete armed configuration
-// gave a nil error and `requireCert` FALSE. `envSetting` refuses those in the reader now,
-// and `TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms` is where they moved.
-// What remains here is the half round 2 was right about: a setting whose blank value
-// becomes a documented DEFAULT — the secret header, the audience, the provider — where the
-// ledger-level refusal's own sentence ("the backend it belongs to would be silently OFF")
-// is false and refusing crash-looped a deployment that worked. Both halves are live at
-// once, and neither is the other's revert.
+// ⚠ THAT RULING DOES NOT EXTEND TO THE SETTINGS IT WAS ORIGINALLY MEASURED ON. The case
+// that produced the crash loop was `CAIRN_TRUSTED_HEADER_PEERS="  "`, and the peer list's
+// unset value is PERMISSIVE — every address may present the identity header — so it
+// declares `refuseBlank` and is refused beside an armed backend today. The refusal is a
+// different one, whose sentence is true there. Do not read the history above as a claim
+// about what `PEERS="  "` does now; `TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms`
+// is where that is measured.
+//
+// ⚠ THE LAST ARM KEEPS THE ARMED/UNARMED QUESTION PER-LEDGER RATHER THAN GLOBAL. A version
+// that asked "is ANY backend armed" would pass every arm above it and accept a blank proxy
+// secret in a deployment that runs Supabase — where the trusted-header backend really is
+// the one silently off.
 func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 	// A complete configuration for each backend, with nothing blank in it. `NewKeySet`
 	// constructs from the URL and does not fetch, so no server is needed here.
@@ -480,6 +492,11 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 		base[name] = value
 		return base
 	}
+
+	// covered records which setting each arm is about, and is compared against
+	// `pinnedDefaultSettings` at the end. See this test's docstring: the gate holds the
+	// other end of that comparison, so neither list can drift alone.
+	var covered []string
 
 	for _, arm := range []struct {
 		name  string
@@ -531,6 +548,7 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 			},
 		},
 	} {
+		covered = append(covered, arm.blank)
 		t.Run(arm.name, func(t *testing.T) {
 			chain, supabase, err := FromEnvironment(arm.env, newTestAuthority(t))
 			if err != nil {
@@ -559,6 +577,19 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 		})
 	}
 
+	// 🔴 THE COVERAGE HALF. Every setting whose policy is `defaultsTo` must have an arm
+	// above, and every arm above must be such a setting — the gate asserts
+	// `pinnedDefaultSettings` against the policy data, and this asserts it against the arms
+	// that actually ran. Without both ends a fourth `defaultsTo` setting would be accepted
+	// on `err == nil` alone, which is not "the blank reached the documented default".
+	sort.Strings(covered)
+	wantCovered := append([]string{}, pinnedDefaultSettings...)
+	sort.Strings(wantCovered)
+	if !reflect.DeepEqual(covered, wantCovered) {
+		t.Fatalf("the arms that ran and the settings whose default is pinned by value disagree.\n"+
+			"  ran:    %v\n  pinned: %v", covered, wantCovered)
+	}
+
 	// 🔴 THE PER-LEDGER HALF. Supabase is armed; the proxy ledger holds nothing but a
 	// blank secret, so the trusted-header backend IS silently off and the refusal's own
 	// sentence is true for it. A narrowing that asked "is any backend armed" would accept
@@ -575,16 +606,29 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 
 // TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms.
 //
-// 🔴 `envBool` REFUSED `treu` AND ACCEPTED `"  "` — THE SAME HAZARD IN TWO SPELLINGS, AND
-// ONLY ONE OF THEM REFUSED. Measured at `d5880f3` with a complete, armed trusted-header
-// configuration carrying BOTH a shared secret and a client-certificate requirement:
-// `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="yes"` gave a backend that enforced mTLS,
-// `…="treu"` was refused naming the variable, and `…="  "` returned a NIL error and a
-// backend with `requireCert` FALSE — mTLS not enforced, pod healthy, nothing logged. Five
-// settings share that shape, and all five have a PERMISSIVE zero: the client-certificate
-// requirement, the required role, the peer allowlist, the maximum token age and the shared
-// secret's FILE path. The fifth was not in the audit that named the other four; it turned up
-// by reading the fix's own comment against the code, which is the arm to distrust first.
+// 🔴 THE BOOLEAN READER REFUSED `treu` AND ACCEPTED `"  "` — THE SAME HAZARD IN TWO
+// SPELLINGS, AND ONLY ONE OF THEM REFUSED. Measured at `d5880f3` with a complete, armed
+// trusted-header configuration carrying BOTH a shared secret and a client-certificate
+// requirement: `CAIRN_TRUSTED_HEADER_REQUIRE_CLIENT_CERT="yes"` gave a backend that enforced
+// mTLS, `…="treu"` was refused naming the variable, and `…="  "` returned a NIL error and a
+// backend with `requireCert` FALSE — mTLS not enforced, pod healthy, nothing logged.
+//
+// 🔴 EVERY ARM HERE IS A SETTING WHOSE `refuseBlank` POLICY THIS TEST IS THE BEHAVIOURAL
+// EVIDENCE FOR, AND THE COUNT IS NOT WRITTEN DOWN — `arms`, `settingsProbed` and the
+// `refuseBlank` membership assertion at the end derive it. A count restated in prose beside
+// the thing it counts is the hand-maintained number this design pass deleted, and it was
+// wrong twice in this very docstring's ancestors.
+//
+// ⚠ THREE OF THE ARMS WERE NOT IN ANY AUDIT, THEY SPLIT TWO WAYS, AND THE LESSON IS ONE:
+// A GUARD CAN BE SPELLED RATHER THAN STRUCTURAL. The secret FILE path turned up by reading
+// a fix's own comment against the code. The peer list and the inline secret — two, not one —
+// turned up by asking what "reduces to nothing" means for a value with a SHAPE: a list that
+// splits to no fields, a run of spaces long enough to clear a length floor. Both were live
+// AFTER the whitespace spelling of each had been closed, which is the whole point.
+// `arm.degenerate` is where that question lives now.
+//
+// ⚠ AND THIS PARAGRAPH SAID "TWO" WHILE NAMING THREE UNTIL IT WAS READ BACK AGAINST ITSELF,
+// in the very pass whose finding is that this file's prose keeps being the next defect.
 //
 // 🔴 EACH ARM ASSERTS THE BEHAVIOUR, NOT THAT "AN ERROR HAPPENED", BECAUSE AN ERROR TEST
 // PASSES FOR THE WRONG REASON. The hazard is not "a blank value is accepted" — it is a
@@ -682,6 +726,31 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 		return err
 	}
 
+	// proxyAdmitsSecret is `proxyAdmits` with the shared-secret header set to an EXPLICIT
+	// value rather than to the fixture's.
+	//
+	// 🔴 IT EXISTS BECAUSE THE INLINE SECRET'S HAZARD IS NOT "THE RUNG IS OFF" BUT "THE
+	// RUNG IS SATISFIABLE BY A CALLER WHO KNOWS NOTHING". A probe that always presents the
+	// fixture secret reports the rung ENFORCED for a backend whose configured secret is a
+	// run of spaces — correctly, and uselessly: the rung is on, and anybody can clear it.
+	// Asking whether a GUESS authenticates is what makes the difference observable.
+	proxyAdmitsSecret := func(t *testing.T, th *TrustedHeader, remoteAddr string, certVerified bool, secret string) error {
+		t.Helper()
+		r := proxyRequest(t, map[string]string{
+			testSubjectHeader:        testSubject,
+			DefaultProxySecretHeader: secret,
+		}, remoteAddr)
+		if certVerified {
+			r.TLS = &tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{{}}}}
+		}
+		_, err := th.Authenticate(r)
+		return err
+	}
+
+	// probed records which settings this test actually exercised, and is checked against
+	// the POLICY DATA at the end rather than against a number in the docstring.
+	var probed []string
+
 	for _, arm := range []struct {
 		setting string
 		// on is the value an operator writes to turn the check ON.
@@ -690,6 +759,10 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 		armed func() map[string]string
 		// disabled says, in the operator's words, what the permissive zero means.
 		disabled string
+		// degenerate holds the spellings of "nothing" that are NOT whitespace and that
+		// only this setting's own shape admits — a separator-only list, a run of spaces
+		// long enough to clear a length floor. Empty for a setting with no such shape.
+		degenerate []string
 		// enforced runs the two-sided probe and reports whether the check is ON. It
 		// fails the test outright when NEITHER side behaves, which is a broken probe
 		// rather than an answer about the setting.
@@ -709,10 +782,19 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 			},
 		},
 		{
-			setting:  EnvProxyPeers,
-			on:       "192.0.2.10/32",
-			armed:    armedProxy,
-			disabled: "there is no peer allowlist: any address may present the identity header",
+			// 🔴 THE SIXTH, AND IT WAS LIVE BESIDE A GUARD WRITTEN FOR IT. `PEERS` is
+			// split by `FieldsFunc` over commas AND whitespace, so a SEPARATOR-only value
+			// yields an empty field set exactly as a whitespace-only one does — and the
+			// comment directly above the split named that mechanism while the guard tested
+			// only `strings.TrimSpace`. Measured at `70636bd` beside a complete armed
+			// trusted-header backend: `","`, `",,"`, `", ,"`, `" , "` and `"\t,\n"` all
+			// BUILT with `len(peers) == 0`, so `Authenticate`'s `if len(t.peers) > 0`
+			// never ran and 203.0.113.99 authenticated — while `"  "` was refused.
+			setting:    EnvProxyPeers,
+			on:         "192.0.2.10/32",
+			armed:      armedProxy,
+			disabled:   "there is no peer allowlist: any address may present the identity header",
+			degenerate: []string{",", ",,", ", ,", " , ", "\t,\n", " ,\t, "},
 			enforced: func(t *testing.T, chain Chain, _ *SupabaseJWT) bool {
 				if err := proxyAdmits(t, chain, "192.0.2.10:1", false, true); err != nil {
 					t.Fatalf("the ALLOWED peer was refused, so this probe cannot tell an allowlist "+
@@ -743,6 +825,53 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 			},
 		},
 		{
+			// 🔴 THE SEVENTH, AND ITS EXEMPTION WAS BOUNDED AT 31 BYTES. The inline secret
+			// is deliberately NOT trimmed — interior and edge whitespace may be part of a
+			// secret — and the only thing standing behind that was `NewTrustedHeader`'s
+			// `len(cfg.Secret) < MinProxySecretBytes`, which is a LENGTH test and not a
+			// content one. Measured at `70636bd` with the backend armed by
+			// `REQUIRE_CLIENT_CERT`: 2 spaces REFUSED, 31 spaces REFUSED, **32 spaces
+			// BUILT** and accepted as a live shared secret, 40 spaces BUILT — so a caller
+			// sending the same run of spaces plus a subject header authenticated as any
+			// user in this control plane. The fix is a separate "a secret that is entirely
+			// whitespace is not a secret" refusal, NOT a trim.
+			setting:  EnvProxySecret,
+			on:       string(testProxySecret),
+			armed:    armedProxyByCert,
+			disabled: "the shared-secret rung is gone: a verified certificate ALONE authenticates",
+			degenerate: []string{
+				strings.Repeat(" ", MinProxySecretBytes),
+				strings.Repeat(" ", MinProxySecretBytes+8),
+				strings.Repeat("\t", MinProxySecretBytes),
+			},
+			enforced: func(t *testing.T, chain Chain, _ *SupabaseJWT) bool {
+				th := trustedHeaderIn(t, chain)
+				// The positive control: whatever secret the backend HOLDS authenticates.
+				// Without it the loop below cannot tell a live shared secret from a
+				// backend that refuses everything. When the setting is absent the
+				// backend holds none and the block is skipped, which is what makes the
+				// negative control below observable.
+				if err := proxyAdmitsSecret(t, th, "192.0.2.10:1", true, string(th.secret)); err != nil {
+					t.Fatalf("the secret this backend HOLDS did not authenticate, so this probe measures "+
+						"nothing: %v", err)
+				}
+				// 🔴 THE HAZARD, AND IT IS A GUESS RATHER THAN AN ABSENCE. A caller who
+				// knows nothing about this deployment sends a run of spaces. If that
+				// authenticates, the shared-secret rung is decorative — and the length
+				// floor cannot say so, because it is a LENGTH test.
+				for _, guess := range []string{
+					strings.Repeat(" ", MinProxySecretBytes),
+					strings.Repeat(" ", MinProxySecretBytes+8),
+					strings.Repeat("\t", MinProxySecretBytes),
+				} {
+					if proxyAdmitsSecret(t, th, "192.0.2.10:1", true, guess) == nil {
+						return false
+					}
+				}
+				return true
+			},
+		},
+		{
 			setting:  EnvSupabaseRequireRole,
 			on:       "authenticated",
 			armed:    armedSupabase,
@@ -769,6 +898,7 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 			},
 		},
 	} {
+		probed = append(probed, arm.setting)
 		t.Run(arm.setting, func(t *testing.T) {
 			build := func(t *testing.T, value string, present bool) (Chain, *SupabaseJWT, error) {
 				t.Helper()
@@ -802,8 +932,16 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 					"check going off, so step 3 below would pass for the wrong reason", arm.setting)
 			}
 
-			// 3. THE HAZARD. Present, whitespace only, beside a backend that IS armed.
-			for _, blank := range []string{" ", "  ", "\t", "\n", " \t \n "} {
+			// 3. THE HAZARD. Present, reducing to nothing, beside a backend that IS armed.
+			//
+			// 🔴 `arm.degenerate` IS WHY THE LIST IS NOT JUST WHITESPACE, AND IT IS THE
+			// WHOLE BUG CLASS IN ONE FIELD. A guard can be SPELLED rather than
+			// STRUCTURAL: this ladder refused `treu` while accepting `"  "`, then refused
+			// `"  "` while accepting `","`. Every arm whose value has a shape of its own —
+			// a list to split, a length floor to clear — declares the spellings of
+			// "nothing" that shape admits, so the probe asks about the STATE (the check is
+			// off) rather than about a word.
+			for _, blank := range append([]string{" ", "  ", "\t", "\n", " \t \n "}, arm.degenerate...) {
 				chain, supabase, err = build(t, blank, true)
 				if err != nil {
 					if !errors.Is(err, ErrBlankSetting) {
@@ -819,12 +957,27 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 				if !arm.enforced(t, chain, supabase) {
 					t.Fatalf("%s=%q built quietly with the check OFF — %s. A typo that silently "+
 						"disables a security setting leaves the operator believing it is on, which is "+
-						"the sentence `envBool` refuses `treu` for three lines away",
+						"the sentence `parseBool` refuses `treu` for",
 						arm.setting, blank, arm.disabled)
 				}
 			}
 		})
 	}
+
+	// 🔴 EVERY SETTING PROBED ABOVE DECLARES `refuseBlank`, AND THAT IS ASSERTED RATHER
+	// THAN ASSUMED. This test is the behavioural evidence for that policy; an arm here for
+	// a setting whose declared policy is `defaultsTo` would be asserting the OPPOSITE of
+	// what the data says, and the two would disagree silently.
+	if len(probed) == 0 {
+		t.Fatal("no arm ran, so every assertion above is about nothing")
+	}
+	for _, name := range probed {
+		if got := settingFor(t, name).policy; got != refuseBlank {
+			t.Fatalf("%s is probed here as a setting whose blank must be REFUSED, and it declares %s",
+				name, got)
+		}
+	}
+	t.Logf("%d settings probed, all declaring refuseBlank: %v", len(probed), probed)
 }
 
 // TestARetiredSettingHoldingOnlyWhitespaceIsStillREFUSED.
@@ -914,7 +1067,7 @@ func trustedHeaderIn(t *testing.T, chain Chain) *TrustedHeader {
 // backend's own constructor actually references, read out of the source by AST.
 func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 	declared := map[string]bool{}
-	for _, name := range append(append([]string{}, supabaseEnv...), proxyEnv...) {
+	for _, name := range everySettingName() {
 		if declared[name] {
 			t.Fatalf("%s appears in a ledger twice", name)
 		}
@@ -963,8 +1116,8 @@ func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 		ledger      []string
 		ledgerName  string
 	}{
-		{"supabaseFromEnv", supabaseEnv, "supabaseEnv"},
-		{"trustedHeaderFromEnv", proxyEnv, "proxyEnv"},
+		{"supabaseFromEnv", ledgerNames(supabaseEnv), "supabaseEnv"},
+		{"trustedHeaderFromEnv", ledgerNames(proxyEnv), "proxyEnv"},
 	} {
 		t.Run(backend.ledgerName, func(t *testing.T) {
 			reads := make([]string, 0, len(decls))
@@ -990,7 +1143,7 @@ func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 
 	// 🔴 AND THE RETIRED NAMES ARE NOT IN EITHER LEDGER, WHICH IS A RELATIONSHIP BETWEEN
 	// TWO SETS RATHER THAN A PROPERTY OF ONE. A retired name may only REFUSE; a name in
-	// both places would arm `anySet` too, making it a live setting that also errors —
+	// both places would ARM its ledger too, making it a live setting that also errors —
 	// a state with no coherent reading. Failing here when the sets overlap is what keeps
 	// `retiredEnv`'s own comment true.
 	for name := range retiredEnv {
@@ -1159,8 +1312,8 @@ func envDeclarationsFromSource(t *testing.T) map[string]string {
 // comparison a relationship rather than a property of one side.
 //
 // ⚠ A NAME REFERENCED ANYWHERE IN THE BODY COUNTS, INCLUDING AS AN ARGUMENT TO A HELPER.
-// `envDuration(env, EnvSupabaseLeeway)` and `secretFrom(env, EnvProxySecret, …)` read the
-// variable exactly as `env[EnvSupabaseIssuer]` does, and a walk that only looked at index
+// `r.duration(EnvSupabaseLeeway)` and `r.secret(EnvProxySecret, …)` read the variable
+// exactly as `r.get(EnvSupabaseIssuer)` does, and a walk that only looked at index
 // expressions would call them unread — which reads as a ledger entry nothing needs and
 // invites deleting a live one.
 //
@@ -1205,4 +1358,570 @@ func envNamesReadBy(t *testing.T, function string) []string {
 			"compares equal to an empty ledger", function)
 	}
 	return names
+}
+
+// ============================================================================
+// The declared blank policy: the gate that makes an unpoliced setting RED.
+// ============================================================================
+
+// ledgerNames returns one ledger's variable names, in declaration order.
+func ledgerNames(l ledger) []string {
+	names := make([]string, 0, len(l.settings))
+	for _, s := range l.settings {
+		names = append(names, s.name)
+	}
+	return names
+}
+
+// everySettingName returns every variable both ledgers declare.
+func everySettingName() []string {
+	var names []string
+	for _, l := range ledgers() {
+		names = append(names, ledgerNames(l)...)
+	}
+	return names
+}
+
+// pinnedDefaultSettings is the `defaultsTo` set whose default is pinned BY VALUE, in
+// `TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset`.
+//
+// 🔴 IT IS A RELATIONSHIP BETWEEN TWO TESTS, AND BOTH ENDS ASSERT IT. The gate below
+// checks that it names exactly the settings whose policy is `defaultsTo`; the value test
+// checks that it names exactly the arms it runs. Either alone is a list that moves with
+// the thing it is supposed to pin — a fourth `defaultsTo` setting added with no arm would
+// be accepted by a gate that only asked "did it build", and "it built" is not "the blank
+// reached the documented default".
+var pinnedDefaultSettings = []string{EnvSupabaseAudience, EnvSupabaseProvider, EnvProxySecretHeader}
+
+// armedLedgerBases is a COMPLETE configuration for each backend, used by the gate to
+// build "this setting blank, beside a backend that is demonstrably armed".
+//
+// ⚠ EVERY BASE MUST HOLD AT LEAST TWO SETTINGS, because the gate removes the one under
+// test and then requires what is left to still arm the ledger. The gate asserts that
+// rather than assuming it.
+func armedLedgerBases() map[string]map[string]string {
+	return map[string]map[string]string{
+		supabaseEnv.backend: {
+			EnvSupabaseIssuer:  testIssuer,
+			EnvSupabaseJWKSURL: "https://notes-idp.example.test/jwks",
+		},
+		proxyEnv.backend: {
+			EnvProxyFronted:       "yes",
+			EnvProxySubjectHeader: testSubjectHeader,
+			EnvProxySecret:        string(testProxySecret),
+			EnvProxyProvider:      testProvider,
+		},
+	}
+}
+
+// TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt is THE gate this design pass
+// exists to add.
+//
+// 🔴 WITHOUT IT THE PASS IS THE SAME PROBLEM REWRITTEN. Round after round found one more
+// setting whose blank or degenerate value silently disabled the check it configures, each
+// time in a place the previous round's PROSE said was covered — seven measured instances
+// over six settings by the time this pass ran, and no round count is stated because that is
+// not derivable from this tree while the instances are. The policy is data now; this is
+// what stops the data being decorative. Adding a setting
+// tomorrow without deciding its policy is red here, twice: the zero value of `blankPolicy`
+// is `policyUndeclared`, and the behavioural half below has no answer to assert for it.
+//
+// 🔴 IT PINS THE RELATIONSHIP, NOT ONE SIDE OF IT. The structural half says every setting
+// carries a policy; the behavioural half says the ONE resolver actually obeys that policy,
+// through a real `FromEnvironment`. A structural check alone is the shape this package has
+// already watched read as coverage and provide none.
+func TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt(t *testing.T) {
+	// ---- structural -------------------------------------------------------------
+	//
+	// ⚠ "EVERY `Env*` CONSTANT IS IN A LEDGER" IS NOT RESTATED HERE, DELIBERATELY.
+	// `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` derives that from the
+	// package's own AST, in both directions, and a second spelling of it would be the
+	// duplicated predicate this whole pass is about. What is asserted here is the half
+	// that test cannot see: what each ledger ENTRY declares.
+	seen := map[string]bool{}
+	byPolicy := map[blankPolicy][]string{}
+	for _, l := range ledgers() {
+		if strings.TrimSpace(l.backend) == "" {
+			t.Fatalf("a ledger declares no backend name, so a refusal cannot say which backend a line belongs to: %+v", l)
+		}
+		if len(l.settings) < 2 {
+			t.Fatalf("the %s ledger holds %d settings; the armed-base construction below removes one and "+
+				"requires the rest to still arm the backend", l.backend, len(l.settings))
+		}
+		for _, s := range l.settings {
+			if s.name == "" {
+				t.Fatalf("the %s ledger holds a setting with no name", l.backend)
+			}
+			if seen[s.name] {
+				t.Fatalf("%s is declared in more than one ledger", s.name)
+			}
+			seen[s.name] = true
+			if s.policy == policyUndeclared {
+				t.Fatalf("%s declares no blank policy. Decide what a value that reduces to nothing means "+
+					"for it — refuseBlank if reading the line as UNSET turns a check off, defaultsTo if "+
+					"unset is a documented default that leaves the check armed, refusedByConstructor if a "+
+					"construction rung already refuses it by name.", s.name)
+			}
+			if strings.TrimSpace(s.unset) == "" {
+				t.Fatalf("%s declares the %s policy and no `unset` sentence. The refusal quotes it back to "+
+					"the operator, so a blank one produces a message that says nothing.", s.name, s.policy)
+			}
+			switch s.policy {
+			case refusedByConstructor:
+				if s.refusedBy == nil {
+					t.Fatalf("%s declares refusedByConstructor and names no rung. Without it nothing checks "+
+						"that the blank value reaches a refusal at all, and `err != nil` would be satisfied "+
+						"by any other guard firing first.", s.name)
+				}
+			default:
+				if s.refusedBy != nil {
+					t.Fatalf("%s declares the %s policy AND a construction rung. `refusedBy` is read only for "+
+						"refusedByConstructor, so this one is documentation nothing checks.", s.name, s.policy)
+				}
+			}
+			byPolicy[s.policy] = append(byPolicy[s.policy], s.name)
+		}
+	}
+	// Every policy is populated, so none of the arms below is vacuous.
+	for _, p := range []blankPolicy{refuseBlank, defaultsTo, refusedByConstructor} {
+		if len(byPolicy[p]) == 0 {
+			t.Fatalf("no setting declares %s, so that arm of the resolver is unreachable and the arm of "+
+				"this test that asserts it measures nothing", p)
+		}
+	}
+	// …and the `defaultsTo` set is exactly the one whose default is pinned by VALUE.
+	gotDefaults := append([]string{}, byPolicy[defaultsTo]...)
+	wantDefaults := append([]string{}, pinnedDefaultSettings...)
+	sort.Strings(gotDefaults)
+	sort.Strings(wantDefaults)
+	if !reflect.DeepEqual(gotDefaults, wantDefaults) {
+		t.Fatalf("the defaultsTo settings and the ones whose default is pinned by VALUE disagree.\n"+
+			"  policy=defaultsTo: %v\n  pinned by value:   %v\n"+
+			"A defaultsTo setting with no value arm is accepted on `err == nil` alone, which is not "+
+			"\"the blank reached the documented default\".", gotDefaults, wantDefaults)
+	}
+
+	// ---- behavioural ------------------------------------------------------------
+	//
+	// 🔴 THE SPELLINGS ARE DERIVED FROM THE SETTING'S OWN DECLARATION, NOT LISTED PER
+	// SETTING. A hand-written per-setting list is written by whoever adds the setting, in
+	// the same edit, so it moves with the thing it pins — and it is how the separator
+	// spelling of `PEERS` stayed open beside a guard written for the whitespace one. A
+	// setting that declares a split gets the separator spellings automatically.
+	blankSpellings := func(s setting) []string {
+		spellings := []string{" ", "  ", "\t", "\n", "\r\n", " \t \n ",
+			// Long enough to clear a length floor: a floor is a LENGTH test, and 32
+			// spaces cleared `MinProxySecretBytes` while being no secret at all.
+			strings.Repeat(" ", MinProxySecretBytes), strings.Repeat(" ", MinProxySecretBytes+8)}
+		if s.fields != nil {
+			spellings = append(spellings, ",", ",,", ", ,", " , ", "\t,\n", " ,\t, ")
+		}
+		return spellings
+	}
+
+	armedCases, unarmedCases, controlCases := 0, 0, 0
+	for _, l := range ledgers() {
+		base := armedLedgerBases()[l.backend]
+		if base == nil {
+			t.Fatalf("no armed base for the %s ledger, so every behavioural assertion for it would be "+
+				"about an UNARMED ledger — a different question", l.backend)
+		}
+		for _, s := range l.settings {
+			t.Run(s.name+"/"+s.policy.String(), func(t *testing.T) {
+				armedEnv := func() map[string]string {
+					env := map[string]string{}
+					for k, v := range base {
+						if k != s.name {
+							env[k] = v
+						}
+					}
+					return env
+				}
+				// PRECONDITION: what is left after removing the setting under test still
+				// arms the ledger. Without it every "beside an armed backend" assertion
+				// below is silently about an unarmed one, which has a different answer.
+				if _, armed, _ := resolveLedger(armedEnv(), l); !armed {
+					t.Fatalf("removing %s from the %s base leaves the ledger UNARMED, so nothing below is "+
+						"the question it claims to ask", s.name, l.backend)
+				}
+
+				// 🔴 THE POSITIVE CONTROL, AND IT RUNS FIRST. A value that plainly does
+				// not reduce to nothing must never produce `ErrBlankSetting` — without it
+				// every refusal below is satisfied by a `FromEnvironment` that refuses
+				// this setting unconditionally, and the arms would be measuring nothing.
+				// Other refusals are expected and fine here (an unparseable duration, an
+				// unusable peer entry); only THIS sentinel is the wrong answer.
+				control := armedEnv()
+				control[s.name] = "zzz-not-blank"
+				if _, _, err := FromEnvironment(control, newTestAuthority(t)); errors.Is(err, ErrBlankSetting) {
+					t.Fatalf("%s=%q was called blank, so the refusals below are not attributable to "+
+						"blankness: %v", s.name, "zzz-not-blank", err)
+				}
+				controlCases++
+
+				for _, blank := range blankSpellings(s) {
+					// A. BESIDE AN ARMED BACKEND — the setting's own declared policy.
+					env := armedEnv()
+					env[s.name] = blank
+					_, _, err := FromEnvironment(env, newTestAuthority(t))
+					armedCases++
+					switch s.policy {
+					case refuseBlank:
+						if !errors.Is(err, ErrBlankSetting) {
+							t.Fatalf("%s=%q declares refuseBlank and was NOT refused as blank — unset means: "+
+								"%s.\n  got: %v", s.name, blank, s.unset, err)
+						}
+						if !strings.Contains(err.Error(), s.name) {
+							t.Fatalf("%s=%q was refused without naming the variable, so the operator cannot "+
+								"find the line: %v", s.name, blank, err)
+						}
+						// …and it quotes the CONSEQUENCE back. Without this the `unset`
+						// field is documentation nothing reads: the structural half only
+						// asks that it is non-empty, and a resolver that stopped
+						// interpolating it would leave every message saying "read as
+						// UNSET" and nothing about what unset costs.
+						if !strings.Contains(err.Error(), s.unset) {
+							t.Fatalf("%s=%q was refused without saying what unset MEANS (%q), so the operator "+
+								"is told to fix a line and not why: %v", s.name, blank, s.unset, err)
+						}
+					case defaultsTo:
+						if err != nil {
+							t.Fatalf("%s=%q declares defaultsTo — unset means: %s — and was refused beside an "+
+								"ARMED backend. That is a deployment that worked: %v", s.name, blank, s.unset, err)
+						}
+					case refusedByConstructor:
+						if err == nil {
+							t.Fatalf("%s=%q declares refusedByConstructor and the deployment came up quietly. "+
+								"Unset means: %s", s.name, blank, s.unset)
+						}
+						if errors.Is(err, ErrBlankSetting) {
+							t.Fatalf("%s=%q was refused as BLANK, but it declares refusedByConstructor — so "+
+								"the empty-string spelling of the same configuration gets a different refusal "+
+								"than the whitespace one: %v", s.name, blank, err)
+						}
+						if !errors.Is(err, s.refusedBy) {
+							t.Fatalf("%s=%q reached the WRONG rung. Declaring refusedByConstructor is a claim "+
+								"about WHICH refusal, and `err != nil` is satisfied by any of them.\n  got:  %v\n  want: %v",
+								s.name, blank, err, s.refusedBy)
+						}
+					default:
+						// Unreachable while the structural half above is green — it
+						// `t.Fatal`s on `policyUndeclared` before this loop runs. It is
+						// here so the switch is TOTAL: a policy added to the enum and not
+						// to this switch would otherwise be asserted about by nothing,
+						// which is the silent-default shape the enum's zero value exists
+						// to refuse.
+						t.Fatalf("%s declares the policy %s, which this gate asserts nothing about",
+							s.name, s.policy)
+					}
+
+					// B. ALONE — nothing armed the ledger, so the backend really would be
+					// silently off and EVERY policy refuses. This is the half the
+					// per-setting policy deliberately does not reach.
+					_, _, err = FromEnvironment(map[string]string{s.name: blank}, newTestAuthority(t))
+					unarmedCases++
+					if !errors.Is(err, ErrBlankSetting) {
+						t.Fatalf("%s=%q set ALONE was not refused as blank. Nothing else arms the %s ledger, "+
+							"so that backend is silently OFF while the manifest says it is on.\n  got: %v",
+							s.name, blank, l.backend, err)
+					}
+					for _, want := range []string{s.name, "silently OFF"} {
+						if !strings.Contains(err.Error(), want) {
+							t.Fatalf("the refusal for %s=%q alone does not contain %q: %v", s.name, blank, want, err)
+						}
+					}
+				}
+			})
+		}
+	}
+
+	// 🔴 THE COUNTS, BECAUSE A REASSURING ZERO IS INDISTINGUISHABLE FROM A LOOP WIRED TO
+	// NOTHING. A `t.Run` whose body never ran leaves this test green with every assertion
+	// above unexecuted; these are non-zero only if it did.
+	if armedCases == 0 || unarmedCases == 0 || controlCases == 0 {
+		t.Fatalf("the behavioural half ran nothing: armed=%d unarmed=%d control=%d",
+			armedCases, unarmedCases, controlCases)
+	}
+	if controlCases != len(everySettingName()) {
+		t.Fatalf("the positive control ran %d times for %d settings — some setting was skipped",
+			controlCases, len(everySettingName()))
+	}
+	t.Logf("armed=%d unarmed=%d control=%d over %d settings",
+		armedCases, unarmedCases, controlCases, len(everySettingName()))
+}
+
+// TestAnUndeclaredPolicyRefusesRatherThanDefaulting is the NEGATIVE CONTROL on the
+// resolver's policy switch, and it is the reason the zero value of `blankPolicy` is not a
+// decision.
+//
+// 🔴 THE HAZARD IS A `setting` LITERAL THAT FORGETS TO SAY. Go would give it the zero
+// value silently, and if that zero were `defaultsTo` the new setting would inherit exactly
+// the permissive answer every round of this file kept finding. The gate above catches it in
+// the ledger; this catches it in the resolver, for a setting the gate never sees.
+func TestAnUndeclaredPolicyRefusesRatherThanDefaulting(t *testing.T) {
+	forgot := setting{name: "CAIRN_SYNTHETIC_FORGOT_TO_DECIDE", unset: "nobody said"}
+	if forgot.policy != policyUndeclared {
+		t.Fatalf("the zero value of blankPolicy is %s, so a setting that declares nothing inherits a "+
+			"DECISION nobody made", forgot.policy)
+	}
+	env := map[string]string{forgot.name: "  "}
+	// Armed, so the unarmed branch cannot be what answers: this is the policy switch.
+	value, fault := forgot.resolve(env, true)
+	if fault == nil {
+		t.Fatalf("a setting with no declared policy resolved %q quietly to %q", "  ", value)
+	}
+	if !strings.Contains(fault.because, "declares no blank policy") {
+		t.Fatalf("the refusal does not say WHY, so a maintainer meeting it cannot act: %+v", fault)
+	}
+
+	// The positive control on this probe: the same value, with a policy declared, is NOT
+	// this refusal. Without it the arm above passes against a `resolve` that faults on
+	// everything.
+	decided := setting{name: forgot.name, policy: defaultsTo, unset: "the documented default"}
+	if _, fault := decided.resolve(env, true); fault != nil {
+		t.Fatalf("a DECLARED defaultsTo setting was refused, so the arm above is not about the missing "+
+			"policy: %+v", fault)
+	}
+}
+
+// TestAReaderCannotSilentlyGetAnUndeclaredSetting reaches `ErrUndeclaredSetting`.
+//
+// ⚠ IT IS AN INVARIANT GUARD, LABELLED AS ONE. No bug ever violated it: while
+// `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` is green, no constructor
+// can ask for a name its ledger does not declare. What it pins is the DIRECTION of the
+// answer if that ever changes — a refusal rather than the empty string, which would be
+// this file's whole defect resolved silently in the permissive direction.
+func TestAReaderCannotSilentlyGetAnUndeclaredSetting(t *testing.T) {
+	r := &reader{values: map[string]string{EnvProxyPeers: "192.0.2.10/32"}}
+
+	// The positive control first: a DECLARED name comes back, so the arm below is about
+	// the undeclared one rather than about a reader wired to nothing.
+	if got := r.get(EnvProxyPeers); got != "192.0.2.10/32" {
+		t.Fatalf("a declared name did not come back: %q", got)
+	}
+	if r.err != nil {
+		t.Fatalf("reading a declared name recorded a fault: %v", r.err)
+	}
+
+	if got := r.get("CAIRN_SYNTHETIC_NEVER_DECLARED"); got != "" {
+		t.Fatalf("an undeclared name returned %q", got)
+	}
+	if !errors.Is(r.err, ErrUndeclaredSetting) {
+		t.Fatalf("an undeclared name was read as the empty string rather than refused: %v", r.err)
+	}
+	if !strings.Contains(r.err.Error(), "CAIRN_SYNTHETIC_NEVER_DECLARED") {
+		t.Fatalf("the fault does not name the setting: %v", r.err)
+	}
+}
+
+// settingFor returns the ledger entry for one variable, and fails when no ledger declares
+// it — a helper that returned the zero `setting` would make every policy assertion a fact
+// about `policyUndeclared` rather than about the setting.
+func settingFor(t *testing.T, name string) setting {
+	t.Helper()
+	for _, l := range ledgers() {
+		for _, s := range l.settings {
+			if s.name == name {
+				return s
+			}
+		}
+	}
+	t.Fatalf("no ledger declares %s, so nothing here can say what its blank means", name)
+	return setting{}
+}
+
+// TestTheInlineSecretKeepsItsWhitespaceAndAnAllWhitespaceOneIsRefused pins the two halves
+// of `EnvProxySecret`'s declaration, which pull in opposite directions and are both
+// load-bearing.
+//
+// 🔴 THE FIX FOR THE MEASURED BYPASS IS NOT A TRIM, AND THIS IS WHAT STOPS SOMEBODY
+// APPLYING ONE. `secretFrom`'s own comment says interior and edge whitespace may
+// legitimately be part of a secret, so the resolved value is the RAW string
+// (`keepWhitespace`); a secret that is ENTIRELY whitespace is not a secret, so the setting
+// also declares `refuseBlank`. Trimming would satisfy the second half by silently
+// corrupting the first — a proxy configured with a padded secret would stop matching, with
+// a refusal that says nothing about why.
+//
+// ⚠ THE LENGTH FLOOR IS NOT THIS CHECK AND CANNOT BE. `NewTrustedHeader` tests
+// `len(cfg.Secret) < MinProxySecretBytes` — a LENGTH test — so it refused 31 spaces and
+// accepted 32. The arm below is the content test the floor is not.
+func TestTheInlineSecretKeepsItsWhitespaceAndAnAllWhitespaceOneIsRefused(t *testing.T) {
+	armed := func(secret string) map[string]string {
+		return map[string]string{
+			EnvProxyFronted:       "yes",
+			EnvProxySubjectHeader: testSubjectHeader,
+			EnvProxyProvider:      testProvider,
+			EnvProxySecret:        secret,
+		}
+	}
+
+	// The whitespace is INSIDE the value and must survive byte for byte, padding included.
+	padded := "  " + string(testProxySecret) + " \t "
+	chain, _, err := FromEnvironment(armed(padded), newTestAuthority(t))
+	if err != nil {
+		t.Fatalf("a secret with edge whitespace was refused: %v", err)
+	}
+	if got := string(trustedHeaderIn(t, chain).secret); got != padded {
+		t.Fatalf("the inline secret was altered on the way in.\n  got:  %q\n  want: %q\n"+
+			"Trimming it silently changes the secret, and the proxy that holds the real one stops matching.",
+			got, padded)
+	}
+
+	// The positive control on the comparison above: an UNPADDED secret arrives unchanged
+	// too, so the arm is about the padding rather than about a reader that echoes its
+	// input. `padded` and this value are distinct strings, so a reader hardwired to either
+	// fails one of the two.
+	chain, _, err = FromEnvironment(armed(string(testProxySecret)), newTestAuthority(t))
+	if err != nil {
+		t.Fatalf("an ordinary secret was refused: %v", err)
+	}
+	if got := string(trustedHeaderIn(t, chain).secret); got != string(testProxySecret) {
+		t.Fatalf("an unpadded secret was altered: %q", got)
+	}
+
+	// …and a secret that is ENTIRELY whitespace is refused, at every length — including
+	// the ones the floor lets through.
+	for _, n := range []int{1, 2, MinProxySecretBytes - 1, MinProxySecretBytes, MinProxySecretBytes + 8, 200} {
+		for _, r := range []string{" ", "\t", "\n"} {
+			secret := strings.Repeat(r, n)
+			_, _, err := FromEnvironment(armed(secret), newTestAuthority(t))
+			if !errors.Is(err, ErrBlankSetting) {
+				t.Fatalf("a secret of %d %q was not refused as blank — the length floor is a LENGTH test "+
+					"and cannot say this is not a secret.\n  got: %v", n, r, err)
+			}
+			if !strings.Contains(err.Error(), EnvProxySecret) {
+				t.Fatalf("the refusal does not name the variable: %v", err)
+			}
+		}
+	}
+}
+
+// TestEveryBlankSettingIsNamedInONERefusal.
+//
+// 🔴 THREE BLANK LINES USED TO COST THREE CRASH-LOOP CYCLES. The reader-level refusal this
+// design replaced returned on the FIRST offending value it met, so an operator fixed one
+// line, redeployed, waited for the rollout and met the next — while the ledger-level one
+// beside it already batched. The two disagreeing about that was itself a symptom of there
+// being two predicates; there is one now, and it collects.
+//
+// ⚠ ACROSS BOTH LEDGERS, NOT WITHIN ONE. A deployment that runs Supabase and a proxy can
+// have a blank in each, and refusing them one ledger at a time is the same redeploy cycle
+// with a different boundary.
+func TestEveryBlankSettingIsNamedInOneRefusal(t *testing.T) {
+	env := map[string]string{
+		// Both backends ARMED, so each blank below is answered by its own declared policy
+		// rather than by the "this backend is silently off" branch.
+		EnvSupabaseIssuer:     testIssuer,
+		EnvSupabaseJWKSURL:    "https://notes-idp.example.test/jwks",
+		EnvProxyFronted:       "yes",
+		EnvProxySubjectHeader: testSubjectHeader,
+		EnvProxySecret:        string(testProxySecret),
+		EnvProxyProvider:      testProvider,
+
+		// Three offenders, in two ledgers, in three spellings of nothing.
+		EnvSupabaseRequireRole:    "  ",
+		EnvSupabaseMaxAge:         "\t",
+		EnvProxyRequireClientCert: "\n",
+	}
+	_, _, err := FromEnvironment(env, newTestAuthority(t))
+	if !errors.Is(err, ErrBlankSetting) {
+		t.Fatalf("three blank settings beside two armed backends were not refused: %v", err)
+	}
+	for _, name := range []string{EnvSupabaseRequireRole, EnvSupabaseMaxAge, EnvProxyRequireClientCert} {
+		if !strings.Contains(err.Error(), name) {
+			t.Fatalf("the refusal names fewer than all three offenders — %s is missing, so fixing the "+
+				"ones it does name costs another redeploy to find this one:\n  %v", name, err)
+		}
+	}
+
+	// 🔴 THE CONTROL ON "ALL THREE": A SETTING THAT IS FINE MUST NOT BE NAMED. Without it
+	// this test passes against a refusal that lists every variable it knows about, which
+	// names all three for the wrong reason and tells the operator to edit working lines.
+	for _, name := range []string{EnvSupabaseIssuer, EnvProxySubjectHeader, EnvProxyProvider, EnvProxyPeers} {
+		if strings.Contains(err.Error(), name) {
+			t.Fatalf("%s holds no blank value and is named in the refusal anyway:\n  %v", name, err)
+		}
+	}
+
+	// …and the order is STABLE, so a crash loop does not print a different message each
+	// restart and read as a moving target.
+	//
+	// ⚠ IT IS AN INVARIANT GUARD, LABELLED AS ONE. No bug ever violated it: `resolveLedger`
+	// walks the ledgers' own slices, so the order is deterministic by construction. What it
+	// pins is that it STAYS that way — a future collector that walked a map would be
+	// nondeterministic here and nowhere else, and `refuseBlanks` deliberately does not sort
+	// (see its comment) because a sort was the shape every test passed with deleted.
+	first := err.Error()
+	for i := 0; i < 8; i++ {
+		_, _, again := FromEnvironment(env, newTestAuthority(t))
+		if again.Error() != first {
+			t.Fatalf("the refusal is not stable across runs — map iteration order reaches the message:\n  %s\n  %s",
+				first, again.Error())
+		}
+	}
+}
+
+// TestThePeerListIsSplitTheSameWayItsBLANKTestSplitsIt.
+//
+// 🔴 ONE SPLIT, TWO READERS, AND WHEN THEY WERE TWO EXPRESSIONS THE SEPARATOR SPELLING OF
+// "NOTHING" WALKED STRAIGHT THROUGH. `setting.reducesToNothing` asks whether the value
+// yields any fields; `reader.list` produces the fields. Both call `setting.fields`, so they
+// cannot disagree — and this test is what makes that a property rather than a line of
+// prose: a reader that split differently (on commas ALONE, say) is green against a
+// one-entry list and red here.
+//
+// ⚠ THE SPELLINGS ARE THE ONES AN OPERATOR WRITING YAML ACTUALLY TYPES. A block scalar
+// gives newlines, a flow list gives `, ` with a space, and a hand-edited line gives a bare
+// space — all four must reach `netid.TrustedNetwork` as two entries, not one.
+func TestThePeerListIsSplitTheSameWayItsBlankTestSplitsIt(t *testing.T) {
+	armed := func(peers string) map[string]string {
+		return map[string]string{
+			EnvProxyFronted:       "yes",
+			EnvProxySubjectHeader: testSubjectHeader,
+			EnvProxySecret:        string(testProxySecret),
+			EnvProxyProvider:      testProvider,
+			EnvProxyPeers:         peers,
+		}
+	}
+	admits := func(t *testing.T, chain Chain, remoteAddr string) error {
+		t.Helper()
+		return func() error {
+			_, err := trustedHeaderIn(t, chain).Authenticate(proxyRequest(t, map[string]string{
+				testSubjectHeader:        testSubject,
+				DefaultProxySecretHeader: string(testProxySecret),
+			}, remoteAddr))
+			return err
+		}()
+	}
+
+	for _, spelling := range []string{
+		"192.0.2.10/32,198.51.100.0/24",
+		"192.0.2.10/32, 198.51.100.0/24",
+		"192.0.2.10/32 198.51.100.0/24",
+		"192.0.2.10/32\n198.51.100.0/24",
+		"192.0.2.10/32\t198.51.100.0/24",
+		" 192.0.2.10/32 , 198.51.100.0/24 ",
+	} {
+		t.Run(strconv.Quote(spelling), func(t *testing.T) {
+			chain, _, err := FromEnvironment(armed(spelling), newTestAuthority(t))
+			if err != nil {
+				t.Fatalf("a two-entry peer list written as %q was refused: %v", spelling, err)
+			}
+			if got := len(trustedHeaderIn(t, chain).peers); got != 2 {
+				t.Fatalf("%q produced %d peers, want 2 — the reader is not splitting the way the "+
+					"setting's own blank test does", spelling, got)
+			}
+			// BEHAVIOUR, not just a count: both entries are live, and something outside
+			// them is refused. Without the third arm a backend with an allowlist that
+			// admits everybody passes the two above.
+			for _, allowed := range []string{"192.0.2.10:1", "198.51.100.7:1"} {
+				if err := admits(t, chain, allowed); err != nil {
+					t.Fatalf("%s is inside %q and was refused: %v", allowed, spelling, err)
+				}
+			}
+			if err := admits(t, chain, "203.0.113.99:1"); err == nil {
+				t.Fatalf("203.0.113.99 is outside %q and authenticated anyway", spelling)
+			}
+		})
+	}
 }

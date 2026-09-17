@@ -101,7 +101,7 @@ var (
 	//
 	// 🔴 REFUSED RATHER THAN READ AS ZERO, BECAUSE ZERO MEANS "OFF". `checkClaims` tests
 	// `opts.MaxAge > 0`, so a negative value silently disables a bound the operator
-	// configured — the exact shape `envBool` refuses one file over, and the shape this
+	// configured — the exact shape `parseBool` refuses one file over, and the shape this
 	// repository refuses everywhere else.
 	ErrSupabaseMaxAge = errors.New("identity: the maximum token age is negative")
 )
