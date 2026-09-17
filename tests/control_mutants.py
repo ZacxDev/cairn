@@ -46,24 +46,62 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: 🔴 FOUR PACKAGES, NOT ONE, BECAUSE THE GUARDS THIS BATTERY EXERCISES NOW SPAN A
-#: SEAM. `internal/control` is the model and its predicate; `internal/control/tokenfile`
-#: is the projection of the token file into that model; `internal/api` is the server that
-#: authorises from it. A mutant in the projection is killed by a guard in the server and
-#: vice versa — so a battery scoped to one package would score those SURVIVED while the
-#: suite that catches them was never run. `./internal/control/...` would cover the first
-#: two in one word; it is spelled out so that adding a sub-package is a deliberate act
-#: rather than something the pattern absorbs silently.
+#: 🔴 MORE THAN ONE PACKAGE, BECAUSE THE GUARDS THIS BATTERY EXERCISES SPAN A SEAM — AND
+#: NO TOTAL IS WRITTEN DOWN HERE ON PURPOSE. This header opened "FOUR PACKAGES, NOT ONE"
+#: above a tuple of FIVE. Read out of the history: it was written "THREE" over three
+#: entries, updated to "FOUR" when the fourth landed, and then the fifth landed and the
+#: header did not move — one missed update out of two chances. A count kept beside the
+#: thing it counts is a second spelling of the same fact and drifts silently, so no total is
+#: written here and every entry below carries its own reason inline. Count them there if you
+#: need a number.
 #:
-#: 🔴 AND `cmd/cairn-server` IS THE FOURTH BECAUSE OF WHAT LIVES ONLY THERE. The refresh
-#: loop that bounds the divergence `tokenfile` declares is started by `main` and by
-#: nothing else — measured: deleting it left `go build`, `go vet` and all thirteen
-#: `internal/...` test packages green, and this battery never ran the package at all.
-#: A mitigation with no gate is a mitigation nobody can be told has stopped working.
+#: 🔴 THE TUPLE IS NOT THE ONLY PLACE THE SET IS ENUMERATED — IT IS THE ONLY PLACE IT IS
+#: DECIDED, AND TWO DRAFTS OF THIS HEADER CLAIMED THE STRONGER THING. It read "the only place
+#: the set is stated", then "the only place the set is ENUMERATED"; both were false on their
+#: own tree, because `internal/control/README.md` spelled the package PATHS out in prose and
+#: `.github/workflows/ci.yml` described the same five members a sentence at a time. The second
+#: draft's reword was measured: swapping `./internal/api/` for `./internal/report/` here — the
+#: COUNT unchanged — left all six assertions in `tests/test_control_mutant_count_is_pinned.py`
+#: GREEN while the README still named `internal/api` by path and the CI comment still called it
+#: "the server that authorises from all of them", because the only thing pinned was
+#: `len(PKGS)`. That file now pins the
+#: ENUMERATION itself, membership and order, as one normalised string in both documents. So the
+#: uniqueness sentence is gone rather than reworded a third time, and what replaces it is
+#: enforced: edit the tuple and the two documents go red until they follow.
+#:
+#: 🔴 IT IS NOT THE ONLY PLACE THE COUNT IS STATED, AND SAYING SO WAS THE ROUND AFTER'S
+#: FINDING. Deleting the stale copy from this header fixed the copy a `PKGS` edit would
+#: have had in its own diff and left the ones a `PKGS` editor never opens:
+#: `internal/control/README.md` and `.github/workflows/ci.yml` both spell it out, and
+#: appending a sixth entry here left `tests/test_control_mutant_count_is_pinned.py` at
+#: 3 passed — its whole content then — with every one of them still reading FIVE.
+#: They are pinned to `len(PKGS)` by `tests/test_control_mutant_count_is_pinned.py` now,
+#: which is the same treatment the mutant count already has — so a `PKGS` edit that leaves
+#: prose stale is a red test rather than an instruction nobody reads.
+#:
+#: The seam itself, which is the reason a battery scoped to ONE package would be wrong: a
+#: mutant in the token-file projection is killed by a guard in the server and vice versa,
+#: and a mutant in the identity backends is killed by a guard in the model — so scoping to
+#: either side alone scores those SURVIVED while the suite that catches them was never run.
+#: A SURVIVED mutant that only means "the killing test did not run" is a false finding that
+#: reads as a coverage gap and sends the next reader to write a test that already exists.
 PKGS = (
+    # The model and the ONE authz predicate everything above authorises from.
     "./internal/control/",
+    # The projection of the token file into that model. `./internal/control/...` would
+    # cover this and the line above in one word; it is spelled out so that adding a
+    # sub-package is a deliberate act rather than something a pattern absorbs silently.
     "./internal/control/tokenfile/",
+    # P4's backends, which resolve a principal out of the model and hand it to the server
+    # — so this package sits on BOTH sides of the seam described above.
+    "./internal/identity/",
+    # The server that authorises from the model.
     "./internal/api/",
+    # 🔴 HERE BECAUSE OF WHAT LIVES ONLY IN `main`. The refresh loop that bounds the
+    # divergence `tokenfile` declares is started here and nowhere else — measured:
+    # deleting it left `go build`, `go vet` and every `internal/...` test package green,
+    # and this battery never ran the package at all. A mitigation with no gate is a
+    # mitigation nobody can be told has stopped working.
     "./cmd/cairn-server/",
 )
 
@@ -900,8 +938,12 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="read-set-uses-the-write-verb",
         path="internal/api/server.go",
-        old="\trq.visible = auth.VisibleScopes(control.VerbRead)",
-        new="\trq.visible = auth.VisibleScopes(control.VerbWrite)",
+        # ⚠ RE-DERIVED AT P4: the assignment now reads the `identity.Identity` the
+        # authenticator returned rather than a local `auth`. Same line, same claim, new
+        # spelling — and the battery is what said so, by reporting a HARNESS ERROR rather
+        # than scoring the row SURVIVED against a pattern that matched nothing.
+        old="\trq.visible = who.Auth.VisibleScopes(control.VerbRead)",
+        new="\trq.visible = who.Auth.VisibleScopes(control.VerbWrite)",
         killer="TestTheServedAuthorizationMatrixIsExactlyThis",
         why="one word in the line that builds the READ set. A bare row holds the write "
         "verb nowhere, so it would read nothing at all — a total read outage for the "
@@ -910,8 +952,9 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="the-audit-identity-becomes-an-opaque-id",
         path="internal/api/server.go",
-        old="\trq.identity = principal.Display",
-        new="\trq.identity = string(principal.ID)",
+        # ⚠ RE-DERIVED AT P4, for the reason the row above records.
+        old="\trq.identity = who.Principal.Display",
+        new="\trq.identity = string(who.Principal.ID)",
         killer="TestTheAuditRecordIsTheORACLESSPELLINGFieldForField",
         extra_killers=("TestAppendAttributesFromTheTokenAndDiscardsABodyActor",),
         why="the principal's id where its display name belongs. Both are strings off "
@@ -936,8 +979,14 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="the-hot-path-refreshes",
         path="internal/api/server.go",
-        old="\tprincipal, auth, err := rq.srv.authority.Authenticate(presented)",
-        new="\t_ = rq.srv.authority.Refresh(rq.r.Context())\n\tprincipal, auth, err := rq.srv.authority.Authenticate(presented)",
+        # ⚠ RE-DERIVED AT P4. The authority call moved into
+        # `identity.MachineToken.Authenticate`, which reaches it through the
+        # `TokenAuthority` interface and so CANNOT refresh — the interface deliberately
+        # offers only `Authenticate`. The mutation therefore lands one level out, on the
+        # server's own call into the authenticator, where `rq.srv.authority` is still in
+        # scope. Same edit, same claim: a refresh on every request.
+        old="\twho, err := (*held).Authenticate(rq.r)",
+        new="\t_ = rq.srv.authority.Refresh(rq.r.Context())\n\twho, err := (*held).Authenticate(rq.r)",
         killer="TestTheHotPathDoesNotContactTheAuthority",
         why="a refresh on every request — the 'just make it fresh' fix. It reads as an "
         "improvement and it deletes the property the whole cache exists for: an "
@@ -990,6 +1039,342 @@ MUTANTS: tuple[Mutant, ...] = (
         "turns a bounded, reported lag into a permanent one, with every existing "
         "gate green: a bare row simply never sees a scope that `server/seed.sh` "
         "pushed, and nothing anywhere says so.",
+    ),
+    # ---- P4: the identity interface, and the two new backends ---------------------
+    #
+    # 🔴 THE TRUSTED-HEADER ROWS ARE THE MOST IMPORTANT IN THIS FILE. A defect there is
+    # not a leaked scope, it is impersonation of any user in the control plane, on every
+    # route, with the writes attributed to them. Each row below is a configuration
+    # somebody could plausibly write while believing the backend was safe.
+    Mutant(
+        name="proxy-fronted-declaration-not-required",
+        path="internal/identity/trustedheader.go",
+        old="\tif !cfg.ProxyFronted {",
+        new="\tif false {",
+        killer="TestEveryTrustedHeaderConstructionRefusalIsReachable",
+        why="the flag inferred from 'a header name was configured' rather than demanded. "
+        "That is the accident the flag exists to prevent: a config fragment copied "
+        "without the one sentence asserting a fact about the network, and a pod that is "
+        "reachable directly now honours an identity header from anybody.",
+    ),
+    Mutant(
+        name="trusted-header-needs-no-source-check",
+        path="internal/identity/trustedheader.go",
+        old="\tif len(cfg.Secret) == 0 && !cfg.RequireClientCert {",
+        new="\tif false {",
+        killer="TestEveryTrustedHeaderConstructionRefusalIsReachable",
+        why="the single most dangerous edit in this repository: proxy-fronted declared, a "
+        "header named, and NOTHING proving the request came from the proxy. Anybody who "
+        "can open a socket to the pod sets the header and becomes any user.",
+    ),
+    Mutant(
+        name="a-peer-allowlist-counts-as-a-source-check",
+        path="internal/identity/trustedheader.go",
+        # 🔴 THE REALISTIC WRONG BELIEF, NOT A TEXTBOOK MUTATION. "I restricted it to the
+        # proxy's address, so it is safe" is what somebody actually writes. The plan says
+        # shared secret OR mTLS for a reason: an address proves only that something
+        # occupying it sent the request, which is a NetworkPolicy question.
+        old="\tif len(cfg.Secret) == 0 && !cfg.RequireClientCert {",
+        new="\tif len(cfg.Secret) == 0 && !cfg.RequireClientCert && len(cfg.ProxyPeers) == 0 {",
+        killer="TestEveryTrustedHeaderConstructionRefusalIsReachable",
+        why="a peer allowlist accepted in place of a source check — 'safe because of "
+        "where it happens to be deployed', which is the reasoning this repository "
+        "refuses at the path-component guard too.",
+    ),
+    Mutant(
+        name="the-subject-header-may-arrive-twice",
+        path="internal/identity/trustedheader.go",
+        old="\tif len(subjects) != 1 {",
+        new="\tif len(subjects) < 1 {",
+        killer="TestAnAttackerReachingThePodDirectlyGetsNothing",
+        why="a proxy that APPENDS rather than overwrites lets a caller smuggle a second "
+        "identity past it; taking the first or the last value matches on whichever copy "
+        "happens to be right. `netid.ClientIP` makes the identical ruling.",
+    ),
+    Mutant(
+        name="the-secret-header-may-arrive-twice",
+        path="internal/identity/trustedheader.go",
+        old="\t\tif len(values) != 1 {",
+        new="\t\tif len(values) < 1 {",
+        killer="TestAnAttackerReachingThePodDirectlyGetsNothing",
+        why="the same smuggling shape one header over: a caller appends a guess beside "
+        "the real secret and one of them matches.",
+    ),
+    Mutant(
+        name="the-proxy-secret-is-compared-with-equality",
+        path="internal/identity/trustedheader.go",
+        # 🔴 THE EDIT KEEPS `crypto/subtle` REFERENCED, AND THAT IS NOT COSMETIC. The
+        # first draft replaced the call outright, which left the import unused so the
+        # tree did not build — and a mutant that dies at the BUILD proves nothing about
+        # any guard. `ConstantTimeEq(0, 0)` is 1, so the disjunct is always false and the
+        # behaviour is exactly the string comparison this row is about.
+        old="\t\tif subtle.ConstantTimeCompare([]byte(values[0]), t.secret) != 1 {",
+        new="\t\tif subtle.ConstantTimeEq(0, 0) == 0 || string(values[0]) != string(t.secret) {",
+        killer="",
+        why="string equality in place of a constant-time compare, against a secret that "
+        "grants impersonation of every user and is reachable by anyone who can address "
+        "the pod.",
+        equivalent=True,
+        equivalent_reason=(
+            "String equality and a constant-time compare agree on every input, so no "
+            "behavioural test can distinguish them and none should be written to try — "
+            "the property at stake is a TIMING one. It is listed so a reader finding it "
+            "SURVIVED does not read that as 'the comparison does not matter'. The same "
+            "label, for the same reason, as `constant-time-compare-becomes-equality` one "
+            "package over."
+        ),
+    ),
+    Mutant(
+        name="the-user-lookup-ignores-the-provider",
+        path="internal/control/resolve.go",
+        old="\t\tif u.Provider == provider && u.Subject == subject {",
+        new="\t\tif u.Subject == subject {",
+        killer="TestTheProviderNamespaceIsPartOfTheLookup",
+        why="a subject matched across identity-provider namespaces. Two IdPs can issue "
+        "the same subject string, so this lets one provider's user become another's — "
+        "and `control.User`'s own comment is the record of why the key is "
+        "provider+subject.",
+    ),
+    # ---- the JWT verifier: algorithm confusion, and the claims that bound a session --
+    Mutant(
+        name="the-symmetric-algorithm-refusal-is-removed",
+        path="internal/identity/jws.go",
+        old="\tif symmetricAlg(alg) {",
+        new="\tif false {",
+        killer="TestTheAlgorithmConfusionForgeryIsREFUSED",
+        why="the algorithm-confusion forgery, and the row that reads as EQUIVALENT until "
+        "you look. `alg: HS256` signed with the deployment's own PUBLIC key as the HMAC "
+        "secret is still refused with this gone — measured: an ordinary deployment gets "
+        "`accepts` (nothing puts HS256 in `Algs`) and one that explicitly accepts HS256 "
+        "gets `KeySet.key`'s two-valued `algKeyType` lookup, both `ErrTokenAlg`, both "
+        "fail-closed. What dies with the guard is the refusal's NAME: the token stops "
+        "being refused BECAUSE it is symmetric and starts being refused because nobody "
+        "configured it, which is a property of today's tables rather than a rule. That "
+        "distinction is the whole reason `ErrTokenAlgSymmetric` is a second sentinel "
+        "narrowing `ErrTokenAlg` rather than a second message — and it is what makes a "
+        "one-line re-addition of a symmetric algorithm to `algKeyType` insufficient to "
+        "reopen the hole. Six arms go red, each naming this sentinel.",
+    ),
+    Mutant(
+        name="exp-is-not-required",
+        path="internal/identity/jws.go",
+        old="\tif !c.Expiry.Present {",
+        new="\tif false {",
+        killer="TestEveryCLAIMRefusalIsReachable",
+        why="a token with no `exp` never expires, so a session leaked once is a "
+        "credential forever that nothing short of rotating the signing key can revoke. "
+        "Every other claim rule here is a narrowing; this one is what makes it a session.",
+    ),
+    Mutant(
+        name="the-issuer-is-not-checked",
+        path="internal/identity/jws.go",
+        old="\tif c.Issuer != opts.Issuer {",
+        new="\tif false {",
+        killer="TestEveryCLAIMRefusalIsReachable",
+        why="any issuer whose key happened to reach the key set could then mint sessions "
+        "here.",
+    ),
+    Mutant(
+        name="the-audience-is-not-checked",
+        path="internal/identity/jws.go",
+        old="\tif !c.Audience.has(opts.Audience) {",
+        new="\tif false {",
+        killer="TestEveryCLAIMRefusalIsReachable",
+        why="a token minted for a DIFFERENT application at the same issuer verifies here "
+        "— the cross-application replay the `aud` claim exists for.",
+    ),
+    Mutant(
+        name="the-clock-skew-allowance-is-unbounded",
+        path="internal/identity/supabase.go",
+        old="\tif cfg.Leeway < 0 || cfg.Leeway > MaxLeeway {",
+        new="\tif false {",
+        killer="TestEverySupabaseConstructionRefusalIsReachable",
+        why="a generous skew allowance is how a revoked session outlives its revocation, "
+        "and the value that produces it is one an operator types once and never rereads.",
+    ),
+    Mutant(
+        name="a-negative-max-token-age-is-read-as-OFF",
+        path="internal/identity/supabase.go",
+        old="\tif cfg.MaxAge < 0 {",
+        new="\tif false {",
+        killer="TestEverySupabaseConstructionRefusalIsReachable",
+        extra_killers=("TestAPartiallyConfiguredBackendRefusesToStart",),
+        why="`checkClaims` tests `opts.MaxAge > 0`, so a negative duration is read as "
+        "ZERO and zero means the check is OFF. An operator who wrote "
+        "`CAIRN_SUPABASE_MAX_AGE=-1h` — a sign typo, or a value templated from a "
+        "subtraction — gets a bound they configured and nothing enforcing it, which is "
+        "the shape `parseBool` refuses one file over for the same reason.",
+    ),
+    Mutant(
+        name="crit-extensions-are-ignored",
+        path="internal/identity/jws.go",
+        old="\tif len(header.Crit) != 0 {",
+        new="\tif false {",
+        killer="TestEveryTokenSHAPERefusalIsReachable",
+        why="RFC 7515 4.1.11 requires a recipient to REJECT a token naming extensions it "
+        "does not implement. Ignoring the field accepts a token whose issuer believes an "
+        "extension was enforced.",
+    ),
+    # ---- the cached key set: the outage promise and its honesty -------------------
+    Mutant(
+        name="an-empty-jwks-document-is-adopted",
+        path="internal/identity/jwks.go",
+        old="\tif len(out) == 0 {",
+        new="\tif false {",
+        killer="TestAJWKSDocumentThatYieldsNoUsableKeyDoesNotReplaceAGoodOne",
+        why="a provider answering 200 with a page that is not a JWKS replaces the good "
+        "key set with an empty one — which refuses every session while reporting itself "
+        "freshly fetched. The identical defect `tokenfile.Source` already shipped one "
+        "layer down with an unreadable store root.",
+    ),
+    Mutant(
+        name="a-failed-fetch-resets-the-reported-age",
+        path="internal/identity/jwks.go",
+        old="\t\tk.failures++\n\t\tk.lastErr = err\n\t\treturn err",
+        new="\t\tk.failures++\n\t\tk.lastErr = err\n\t\tk.fetchedAt = now\n\t\treturn err",
+        killer="TestAnIdentityProviderOutageDoesNotStopAnAlreadyIssuedSession",
+        why="advancing the timestamp on a FAILED attempt makes a key set whose provider "
+        "has been dead for a week report itself seconds old — a staleness report that is "
+        "most wrong exactly when it is most needed. `control.Cache.Refresh` carries the "
+        "same rule and the same reasoning.",
+    ),
+    # ---- the chain and the seam into the server -----------------------------------
+    Mutant(
+        name="the-chain-propagates-an-identity-naming-nobody",
+        path="internal/identity/identity.go",
+        old="\t\tif !got.Valid() {",
+        new="\t\tif false {",
+        killer="TestABackendThatNamesNobodyIsRefusedRatherThanPropagated",
+        why="a backend returning `Identity{}, nil` has said yes without naming anybody. "
+        "No scope leaks — a zero Authorization permits nothing — but the request is "
+        "audited as authenticated and satisfies every guard that asks whether "
+        "authentication succeeded.",
+    ),
+    Mutant(
+        name="the-server-serves-an-identity-naming-nobody",
+        path="internal/api/server.go",
+        old="\tif !who.Valid() {",
+        new="\tif false {",
+        killer="TestTheServerRefusesAnIdentityNamingNobody",
+        why="the SECOND of the two validity checks, and not a duplicate of the first: a "
+        "server wired with a single backend rather than a chain never passes through the "
+        "chain's check at all, so without this the zero identity reaches every route.",
+    ),
+    Mutant(
+        name="the-audit-auth-field-is-derived-from-the-fingerprint",
+        path="internal/api/server.go",
+        old='\tauth := "fail"\n\tif rq.authenticated {',
+        new='\tauth := "fail"\n\tif rq.tokenFP != "" {',
+        killer="TestASessionWithNoTokenFingerprintIsAuditedAsAuthenticated",
+        why="the pre-P4 derivation, which was correct while every credential was a bearer "
+        "token and stops being correct the moment one is not. A browser session is then "
+        "logged `auth=fail` on a fully authorised 200, so an operator grepping for failed "
+        "authentications finds every successful sign-in.",
+    ),
+    Mutant(
+        name="the-machine-token-backend-captures-the-authority",
+        path="internal/api/server.go",
+        old="identity.NewMachineToken(s.AuthorityView())",
+        new="identity.NewMachineToken(s.authority)",
+        killer="TestTheAuthorityIsNotHeldTwice",
+        why="a SECOND holder of one cache. Anything that replaces the server's authority "
+        "leaves the refresh loop maintaining one and every authentication reading "
+        "another, with nothing observable except credentials resolved against a world "
+        "nobody is keeping current. This is the defect P4's first draft shipped; an "
+        "existing guard caught it.",
+    ),
+    # ---- the environment: a partial configuration must REFUSE ---------------------
+    Mutant(
+        name="a-partial-proxy-configuration-is-silently-off",
+        path="internal/identity/config.go",
+        old="\tif proxyArmed {",
+        # 🔴 `false && proxyArmed`, NOT `false` — `proxyArmed` COMES OUT OF A `:=` WITH
+        # SIBLINGS, so a mutant that stops referencing it leaves it declared and unused and
+        # the tree does not build. A mutant that dies at the build is the one outcome that
+        # proves nothing; the `an-unrecognised-boolean-reads-as-false` row below records the
+        # same shape for `parseBool`'s `default` arm.
+        new="\tif false && proxyArmed {",
+        killer="TestAPartiallyConfiguredBackendRefusesToStart",
+        why="the trigger becomes 'the required fields are present' rather than 'anybody "
+        "touched any of these'. An operator who set the subject header and forgot the "
+        "secret then gets a pod that comes up healthy with a backend they believe is "
+        "live and that authenticates nobody.",
+    ),
+    Mutant(
+        name="an-unrecognised-boolean-reads-as-false",
+        path="internal/identity/config.go",
+        # 🔴 THE WHOLE `default` ARM, REPLACED BY ONE THAT RETURNS NO ERROR — and it
+        # keeps `fmt`, `name` and `raw` referenced for the reason the row above records.
+        # The first draft deleted the arm by renaming it to a case nothing matches, which
+        # left the reader with a path that returns nothing: the tree did not build, and a
+        # mutant that dies at the build is the one outcome that proves nothing.
+        old='\tdefault:\n\t\treturn false, fmt.Errorf(\n\t\t\t"%s: %q is not a boolean. Write yes or no — an unrecognised value is refused rather than read as `no`, because a typo that silently disables a security setting leaves the operator believing it is on",\n\t\t\tname, raw)',
+        new='\tdefault:\n\t\t_ = fmt.Sprintf("%s %s", name, raw)\n\t\treturn false, nil',
+        killer="TestAnUnrecognisedBooleanIsAnErrorRatherThanFalse",
+        why="`CAIRN_TRUSTED_HEADER_PROXY_FRONTED=treu` read as 'not proxy-fronted'. The "
+        "operator who typed it believes the backend is armed, and a setting that reads a "
+        "typo as its own default is how a deployment ends up in a state nobody chose. "
+        "The edit replaces the `default:` arm with a case nothing matches, which is the "
+        "shape that COMPILES — deleting the arm leaves `fmt` unused in a function that "
+        "must still return, and a mutant that dies at the build proves nothing. "
+        "⚠ THE READER WAS CALLED `envBool` WHEN THIS ROW WAS WRITTEN and is `parseBool` now "
+        "— it takes a value the declared blank policy already resolved rather than the "
+        "environment. The `default:` arm and its message are byte-identical across that "
+        "rename, which is why the anchor survived it.",
+    ),
+    Mutant(
+        name="a-retired-setting-is-silently-ignored",
+        path="internal/identity/config.go",
+        old='\t\tif _, ok := touched(env, name); ok {\n\t\t\tnames = append(names, name)\n'
+        '\t\t}\n\t}\n\tif len(names) == 0 {',
+        new='\t\tif _, ok := touched(env, name); ok {\n\t\t\tnames = append(names, name)\n'
+        '\t\t}\n\t}\n\tif len(names) >= 0 {',
+        killer="TestAPartiallyConfiguredBackendRefusesToStart",
+        extra_killers=("TestTheEnvironmentLedgersNameEveryVariableEachBackendReads",),
+        why="the INVERSE of `a-partial-proxy-configuration-is-silently-off`, and the "
+        "failure mode a deletion introduces rather than one a half-finished "
+        "configuration does. `anySet` only counts names that are in a ledger, so a "
+        "variable DROPPED from one is invisible to it by construction: an operator whose "
+        "manifest still carries `CAIRN_SUPABASE_JWT_SECRET` gets a pod that comes up "
+        "healthy having silently discarded the line they wrote. "
+        "⚠ THE EDIT IS THE EARLY RETURN, NOT THE `TrimSpace` TEST INSIDE THE LOOP, AND "
+        "THE FIRST DRAFT WAS THE LATTER — which is character-for-character identical to "
+        "`anySet`'s own line, so the harness matched TWICE and reported a HARNESS ERROR "
+        "rather than a result. Mutating the call site is no better: "
+        "`if err := refuseRetiredSettings(env); false {` leaves `err` declared and "
+        "unused, and a mutant that dies at the build proves nothing. "
+        "🔴 AND THE EARLY RETURN IS NOT UNIQUE EITHER — IT HAPPENED AGAIN. `if len(names) "
+        "== 0 {` alone was the anchor until `refuseBlankSettings` landed in the same file "
+        "with a character-for-character identical early return, and the harness reported "
+        "the same HARNESS ERROR a second time. The anchor is therefore the whole "
+        "collect-then-return BLOCK, whose membership test is what distinguishes this "
+        "function from its sibling. The general lesson the two sightings agree on: in a "
+        "file of small guards written to one shape, no SINGLE line is a stable anchor — "
+        "take enough of the block to name the function. "
+        "🔴 THIRD SIGHTING, AND IT BROKE THE OTHER WAY: THE DISTINGUISHING LINE ITSELF "
+        "MOVED. It was `strings.TrimSpace(env[name]) != \"\"` until the round that made a "
+        "retired name holding only whitespace REFUSE instead of being discarded, which "
+        "replaced it with `value, present := env[name]; present && value != \"\"` — so the "
+        "anchor matched zero times and the harness reported an error a third time. A "
+        "fixed anchor cannot be made drift-proof by choosing a better line; what it can "
+        "be is LOUD, which it was. Widest reading: any edit to this function is an edit "
+        "to this row. "
+        "🔴 FOURTH SIGHTING, AND THE DISTINGUISHING LINE MOVED AGAIN — this time because "
+        "the predicate it spelled was CONSOLIDATED. `present && value != \"\"` was "
+        "open-coded here and again in the blank sweep; the design pass that gave every "
+        "setting a declared blank policy replaced both with one `touched` call, so the "
+        "anchor matched zero times a fourth time. The tell is the same and the lesson is "
+        "one level up from \"pick a better line\": an anchor spells an EXPRESSION, and "
+        "consolidating a duplicated predicate deletes expressions by design.",
+    ),
+    Mutant(
+        name="a-secret-may-come-from-two-sources",
+        path="internal/identity/config.go",
+        old='\tif direct != "" && path != "" {',
+        new="\tif false {",
+        killer="TestASecretHasExactlyOneSource",
+        why="two sources for one secret means 'which is live' depends on a precedence "
+        "nobody reads, and a rotation that updated the other appears to work.",
     ),
 )
 

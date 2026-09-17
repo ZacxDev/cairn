@@ -86,15 +86,51 @@ CLAUDE_MD = ROOT / "CLAUDE.md"
 #: nothing about this file's cost scales with its own size. 1,102 B is ~1.2x the
 #: re-measured 90th-percentile block (910 B, see `MIN_HEADROOM_BYTES`).
 #:
-#: ⚠ SO THE WORKING MARGIN IS DELIBERATELY NARROW — 202 B, not thousands. That is the
-#: design and not an oversight: the next addition of any size trips the headroom warning
-#: and has to evict something, which is the whole mechanism. A lower ceiling bought no
-#: comfort; it bought the same margin against a file 5,960 B smaller.
+#: ⚠ THAT PARAGRAPH IS THE DERIVATION OF THE **PREVIOUS** CEILING (31,850) AND IS KEPT
+#: BECAUSE THE REASONING SURVIVES, NOT BECAUSE THE NUMBER DOES. It concluded with a
+#: working margin of 202 B, called that "deliberately narrow… the whole mechanism", and
+#: it was wrong about the unit — see the RAISED block below, which measured two concurrent
+#: branches consuming 251 B of it within hours. The paragraph rule still binds; what
+#: changed is that the margin is now sized in CONCURRENT edits rather than one.
 #:
 #: ⚠ NAME THE BASE WHEN YOU MOVE THIS IN EITHER DIRECTION, and — raising — say what
 #: eviction was attempted first. A bump with no attempted eviction is how a ceiling becomes
 #: decoration; a LOWER ceiling with no named base is the same failure wearing a rosette.
-MAX_BYTES = 31_850
+#:
+#: 🔴 RAISED 31,850 -> 32,500, AND THE ⚠ ABOVE IS WHY THIS PARAGRAPH EXISTS RATHER THAN A
+#: BARE NUMBER. The base: the measured MERGED content of this branch and its base branch,
+#: **30,999 B**. The eviction attempted first: it was not attempted, it was DONE — the P1
+#: server history moved to `tests/conformance/README.md` and `tests/dualrun/README.md`,
+#: 5,960 B, and that same change LOWERED this ceiling 37,700 -> 31,850.
+#:
+#: 🔴 WHAT THE 202 B MARGIN GOT WRONG, MEASURED RATHER THAN ARGUED. The narrow margin
+#: above was derived for ONE EDIT — "a bit over one large paragraph" — and a repository
+#: with concurrent pull requests does not present one edit. Within hours of that ceiling
+#: landing, two SEPARATE branches each added exactly one MARKDOWN TABLE ROW: 84 B on one
+#: (a row in the two-images comparison table), 167 B on the other (a row in the layout
+#: table). Each was green alone. **Their merge was 49 B over**, and the only way to fit
+#: was to delete the word "BYPASS" from the one row describing an authentication-bypass
+#: surface — the gate degrading the content it exists to protect.
+#: A single-edit margin is the wrong model; the unit is CONCURRENT edits.
+#:
+#: ⚠ RE-DERIVED, BECAUSE THE SECOND NUMBER WAS WRITTEN AS 166 AND IS 167 — which made the
+#: arithmetic in this block not close, and "49 B over" is the load-bearing half of it. The
+#: derivation, from `git cat-file -s <rev>:<path>`: base `57daa58` `AGENTS.md` 30,481 B;
+#: `origin/main` 30,565 (+84); the P4 branch 30,648 (+167 NET, two commits); their merged
+#: tree 30,732, plus `CLAUDE.md` 267 = **30,999 B**, which is the base named above. The old
+#: usable ceiling was 31,850 − 900 = 30,950, so 30,999 − 30,950 = 49. With 166 it would be
+#: 48, and the "250 B" a few paragraphs up was the same off-by-one. Both are corrected.
+#:
+#: So the slack is sized from that observation: 30,999 + 900 (`MIN_HEADROOM_BYTES`, which
+#: must stay free) + **601 B usable** — about four index rows at the observed ~150 B each,
+#: against two seen in flight at once. It is still not room bought in advance: four rows
+#: is one busy day, and the next eviction is `Installing and building with nix` (8,321 B)
+#: or what remains of the server section (9,071 B).
+#:
+#: ⚠ IF YOU ARE HERE AGAIN, THE ANSWER IS PROBABLY NOT A THIRD NUMBER. Two sections above
+#: are still evictable and this file's whole design is that history leaves rather than the
+#: ceiling rising. Raising it twice in a row is the shape the ⚠ above warns about.
+MAX_BYTES = 32_500
 
 #: Required free margin below the ceiling, so "you are one paragraph from breaking it"
 #: arrives as a signal rather than as a surprise on the commit that breaks it.

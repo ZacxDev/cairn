@@ -28,6 +28,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
+	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
 )
 
@@ -160,6 +161,55 @@ func main() {
 		}
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+err.Error()))
 		os.Exit(exitConfig)
+	}
+
+	// 🔴 IDENTITY IS CONFIGURED BEFORE THE LISTENER ACCEPTS, AND A BROKEN CONFIGURATION
+	// EXITS 78 RATHER THAN DISABLING A BACKEND. `identity.FromEnvironment` builds the
+	// machine-token backend always and each of the other two only if its environment
+	// was touched at all — so a deployment that sets nothing gets exactly the chain
+	// `api.New` already installed, and a deployment that sets HALF of one gets a crash
+	// loop naming what is missing. The dangerous alternative is the one that reads
+	// sensibly: "build it if the required fields are present" gives an operator who
+	// forgot the shared secret a pod that comes up healthy with a backend they believe
+	// is live and that authenticates nobody.
+	//
+	// 🔴 AND THE TRUSTED-HEADER BACKEND IS NEVER REACHED BY DEFAULT. It requires an
+	// explicit `CAIRN_TRUSTED_HEADER_PROXY_FRONTED`, and `identity.NewTrustedHeader`
+	// refuses without a source check on top of that. A pod that is reachable directly
+	// and has this backend armed is an authentication bypass for every user in the
+	// control plane, which is why arming it takes two deliberate settings and not one.
+	identities, supabase, err := identity.FromEnvironment(env, srv.AuthorityView())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: "+err.Error()))
+		os.Exit(exitConfig)
+	}
+	if err := srv.UseAuthenticator(identities); err != nil {
+		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: "+err.Error()))
+		os.Exit(exitConfig)
+	}
+	if supabase != nil {
+		// 🔴 THE FIRST FETCH IS AT STARTUP AND ITS FAILURE IS FATAL, WHERE EVERY LATER
+		// ONE IS NOT. The asymmetry is the same one `control.Cache` draws between a cold
+		// start and an outage: a key set that has never fetched can verify nothing, so a
+		// pod that came up that way would refuse every sign-in while looking healthy —
+		// and the operator's only signal would be users reporting 401s. After one
+		// success there is last-known-good to serve, and a provider outage must not stop
+		// reads for sessions already issued.
+		//
+		// ⚠ THE DEADLINE IS THE FETCH'S OWN. `NewKeySet` gives its client a timeout, so
+		// an unreachable provider fails here in seconds rather than hanging a pod that
+		// would otherwise have started.
+		if err := supabase.RefreshKeys(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+				"subsystem-store-api: identity: the Supabase key set could not be fetched at startup (%s), so no session could be verified and every sign-in would be refused. Refusing to start",
+				err.Error())))
+			os.Exit(exitConfig)
+		}
+		go func() {
+			if err := supabase.RunKeyRefresh(context.Background()); err != nil {
+				fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: the JWKS refresh loop stopped: "+err.Error()))
+			}
+		}()
 	}
 
 	// 🔴 INSTALLED BEFORE THE LISTENER ACCEPTS, because the window between the first
