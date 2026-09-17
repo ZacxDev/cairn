@@ -271,19 +271,78 @@ func Authenticate(m Model, token string) (Principal, Authorization, error) {
 		return Principal{}, Authorization{}, ErrNoCredential{}
 	}
 
-	p := Principal{
-		Kind:         matched.PrincipalKind,
-		ID:           matched.PrincipalID,
-		Display:      displayOf(m, matched.PrincipalKind, matched.PrincipalID),
-		CredentialID: matched.ID,
-	}
-	if p.Display == "" {
+	p, known := m.PrincipalFor(matched.PrincipalKind, matched.PrincipalID)
+	if !known {
 		// The credential names a principal the model no longer holds. That is not
 		// an authenticated request: resolving it would produce an Authorization
 		// with no owner, and the safe answer to "who is this" is nobody.
 		return Principal{}, Authorization{}, ErrNoCredential{}
 	}
+	p.CredentialID = matched.ID
 	return p, Narrow(Resolve(m, p), matched.NarrowedScopes), nil
+}
+
+// PrincipalFor builds the Principal for an entity the model holds, or reports that
+// it holds none.
+//
+// 🔴 ONE CONSTRUCTOR, BECAUSE P4 ADDED A SECOND CALLER AND A SECOND SPELLING WOULD
+// HAVE BEEN A SECOND ANSWER TO "WHO IS THIS". Until identity became an interface,
+// `Authenticate` was the only path that turned an entity id into a Principal and it
+// built one inline. `internal/identity`'s JWT and trusted-header backends resolve a
+// principal with NO credential behind it, so they need the same construction — and
+// the field that matters is `Display`, which the audit line's `identity=` and every
+// written bullet's ACTOR carry. Two functions filling that field would be two
+// answers to what a bullet says about who wrote it.
+//
+// 🔴 `false` MEANS THE MODEL HOLDS NO SUCH ENTITY, AND EVERY CALLER MUST REFUSE ON
+// IT. `displayOf` returns the empty string for an unknown id, and a Principal with
+// no display is a credential whose use cannot be attributed. The boolean is returned
+// rather than left for the caller to re-derive from `Display == ""`, because that
+// re-derivation is the shape this repository's rules name: one predicate, two
+// spellings, wrong at one of them.
+func (m Model) PrincipalFor(kind Kind, id ID) (Principal, bool) {
+	display := displayOf(m, kind, id)
+	if display == "" {
+		return Principal{}, false
+	}
+	return Principal{Kind: kind, ID: id, Display: display}, true
+}
+
+// UserByProviderSubject resolves an identity provider's own (provider, subject) pair
+// to the user this control plane holds for it.
+//
+// 🔴 `Provider`+`Subject` IS THE NATURAL KEY AND `Email` IS NOT — the rule `User`'s
+// own comment states, asked here rather than restated by each identity backend. An
+// email is mutable at the provider and is reused across providers, so a lookup keyed
+// on it merges two people who share an address at two IdPs. Both the Supabase JWT
+// backend and the trusted-header backend ask exactly this question, which is why it
+// is one function and not two.
+//
+// 🔴 AND A MISS IS A REFUSAL, NEVER A CREATION. An IdP that vouches for somebody this
+// control plane has never heard of has authenticated a stranger, not provisioned an
+// account; just-in-time provisioning is signup, it is P6, and doing it here would make
+// every read route a user-creation endpoint for anyone with an account at the IdP.
+//
+// ⚠ IT IS A LINEAR SCAN, AND THAT IS A DELIBERATE NON-OPTIMISATION RATHER THAN AN
+// OVERSIGHT. `Resolve` already sorts every grant in the model on every authentication,
+// so a scan over users is not a new complexity class here; adding a third index to
+// `Model` would have to be maintained by `apply`, which is where the two membership
+// indexes already cost a `clone` that is one nesting level deep. Revisit it when the
+// model is big enough to measure, with the measurement in hand.
+func (m Model) UserByProviderSubject(provider, subject string) (User, bool) {
+	if provider == "" || subject == "" {
+		// Not a lookup that can succeed: a user row with an empty provider or subject
+		// cannot be created (`apply` refuses one), so an empty probe here would be
+		// asking whether the model holds something it cannot hold. Refusing keeps the
+		// caller from reading "no match" as "the IdP sent nothing and that was fine".
+		return User{}, false
+	}
+	for _, u := range m.Users {
+		if u.Provider == provider && u.Subject == subject {
+			return u, true
+		}
+	}
+	return User{}, false
 }
 
 // Narrow applies a credential's scope restriction.

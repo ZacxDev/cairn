@@ -137,23 +137,41 @@ Fix as one round; closing one buys room for one rank.
   a ledger, so the variable would be silently discarded by a healthy pod). Judged correct
   and kept; recorded because it is new refusal surface.
 - **Three files are not `gofmt`-clean** on `main` (`internal/client/exit.go`,
-  `internal/client/options.go`, `internal/doctor/doctor_test.go`) — **nothing in CI greps
-  `gofmt`**.
-- **PR #15's six findings, still open on `main`**; **Go/oracle divergences deferred with
-  closing conditions in code** (`NaN`/`Infinity`, the surrogate message, the `actor`-key
-  residual, `?page=<21 digits>`); **`server/seed.sh:110`**'s `( cd "$1" && … )` shape.
-- ✅ **CLOSED, THEN PARTLY RE-OPENED: the `AGENTS.md` byte-budget defect.** #32 satisfied
-  the written closing condition exactly — the P1 server history relocated (5,960 B) and
-  `MAX_BYTES` **lowered** 37,700 → 31,850. ⚠ **It then failed within hours**, and the
-  record is kept whole rather than replaced because the failure is the useful half: two
-  concurrent one-row additions (84 B + 166 B) consumed the 202 B margin and reddened the
-  merged tree, so #35 raised the ceiling to **32,500** with the base named. The defect is
-  closed in the sense that the eviction was done and is not to be re-litigated; what
-  remains open is the **structural** half — `Installing and building with nix` (8,321 B)
-  and the server section's remains (9,071 B) are still evictable, and this file's design
-  is that history leaves rather than the ceiling rising. **Closing condition for the
-  remainder:** the next contributor who needs bytes evicts one of those two rather than
-  moving the number a third time.
+  `internal/client/options.go`, `internal/doctor/doctor_test.go`) — alignment only, arrived
+  with the #24 merge, and **nothing in CI greps `gofmt`**.
+- **PR #15's six findings, still open on `main`** (recorded at
+  https://github.com/ZacxDev/cairn/pull/15 when the operator chose to merge with them
+  open): `lib/cairn_doctor.py` claims "2,016 bytes" for a HOME-length-dependent value;
+  `cairn:337` cites `server.py:422` for `sole_header`, which is at `server/server.py:1409`;
+  and the ledger's vacuity-control prose names the wrong guard.
+- 🔴 **P4's two new backends are INERT in every deployment that can exist today** — not
+  untested, *unable to authenticate anybody*. Verified from the code on
+  `feat/identity-interface`: `tokenfile.Source` is the only authority any binary wires (no
+  binary constructs a `control.FileStore`); it synthesizes one user at provider
+  `cairn-token-file` / subject `operator`, so `SupabaseJWT`'s default provider `supabase`
+  can never match `UserByProviderSubject`; and it emits **zero** `EventMemberSet` with all
+  three grant sites at `SubjectKind: control.KindProject`, so even a `TrustedHeader` aimed
+  at that provider and subject resolves to an **empty `Authorization`**. An operator who
+  follows `internal/identity/README.md` gets a pod that fetches its JWKS, starts clean,
+  satisfies the partial-configuration ledger, passes its health check — and refuses every
+  sign-in. 🔴 **Do NOT close it by having a backend create users on the fly**; that is
+  self-serve signup and it is P6's, with quotas and abuse handling attached. Written up in
+  `internal/identity/README.md` under "BOTH NEW BACKENDS ARE INERT…".
+  **Closing condition:** a user-creation path over a journal-backed `control.Store` lands
+  (P5 or P6), AND a test in `internal/identity` authenticates a Supabase or trusted-header
+  session end-to-end against an authority built that way, asserting a NON-EMPTY
+  `Authorization` — the empty one is what a green would otherwise be. Mechanical: that
+  test exists and `go test ./internal/identity/` passes with it.
+- **Go/oracle divergences deferred with closing conditions in code**: `NaN`/`Infinity`,
+  the `text`-field surrogate message, the `actor`-key 400-vs-200 residual, and
+  `?page=<21 digits>`.
+- **`server/seed.sh:110`** has the `( cd "$1" && … )` shape that made
+  `tests/conformance/run_go.sh` unrunnable — a bare `cd <relative>` **prints** the
+  directory when it resolves through `CDPATH`. The other scripts use `CDPATH= cd --`.
+- ✅ **CLOSED this session: the `AGENTS.md` byte-budget defect** (#32). The server section
+  relocated and `MAX_BYTES` was **lowered** 37,700 → 31,850, which was the closing
+  condition as written. ⚠ Margin is 202 B, not comfort: the ceiling was lowered to keep the
+  SAME design margin against a smaller file, deliberately.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **A green corpus is not a green port.** The conformance split was 94/22/0/4 *before*
