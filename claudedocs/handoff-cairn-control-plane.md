@@ -549,5 +549,6 @@ verdict — an empty rollup satisfies "nothing incomplete".
   inside the section whose job is honest inventory.
 - **Next probe:** once the fix round pushes, re-run the full gate set on a freshly-built
   MERGED tree, then dispatch round 2 with
-  `python3 ~/workspace/devrc/scripts/audit-dispatch.py 35 --round 2` and **read its stderr**
+  the `/audit-pr` skill's own brief assembler (`audit-dispatch.py 35 --round 2`, whose path
+  this doc deliberately does not name) and **read its stderr**
   for the "newest claims block says round=N" line before dispatching.
