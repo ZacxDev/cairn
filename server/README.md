@@ -462,24 +462,27 @@ one):
 
 🔴 **NEITHER IMAGE'S TOOL SURFACE IS A SUBSET OF THE OTHER'S, and the row that
 matters is the `wget`/`nc`/`httpd`/`telnetd` one** — not the size row. busybox
-ships **402** applets at `/bin` (with `/sbin` a SYMLINK to it, so one directory,
-not two), which puts **six network servers** — `httpd`, `telnetd`, `ftpd`,
-`tftpd`, `dnsd` and `inetd` — and a set of network clients — `wget`, `nc`,
-`telnet`, `ftpget`, `ftpput`, `tftp`, `nslookup`, `ping`, `traceroute`,
-`nbd-client`, `udhcpc`, `ntpd`, `rdate`, and notably **`ssl_client`** — into a
-pod that mounts a credential at `/run/secrets/subsystem-store/token`, none of
-which the deployed image has.
+ships its applets at `/bin` (with `/sbin` a SYMLINK to it, so one directory, not
+two), and that set includes network **servers**, network **clients**, and
+notably **`ssl_client`**, in a pod that mounts a credential at
+`/run/secrets/subsystem-store/token` — none of which the deployed image has.
 
-⚠ **THREE EARLIER DRAFTS OF THAT SENTENCE UNDERCOUNTED, each in the direction of
-the previous fix**: "two egress clients", then "an HTTP server, a telnet server",
-then "four network servers" (`httpd`, `telnetd`, `ftpd`, `tftpd` — missing `dnsd`
-and `inetd`). The instruction that accompanied the third draft — *enumerate from
-`busybox --list` on the built image rather than from this paragraph* — was the
-right instruction and the paragraph was still wrong; the count above is the
-fourth, taken by running `busybox --list` on the applet set the image ships.
-**Do the enumeration yourself before quoting it.** A reader told to "revisit the
-trade with the threat model in front of you" needs the real set, and `ssl_client`
-is the one that matters for a token.
+🔴 **THIS PARAGRAPH DELIBERATELY DOES NOT SAY HOW MANY, AND THE ABSENCE IS THE
+RECORD. FOUR SUCCESSIVE DRAFTS GAVE A COUNT AND ALL FOUR WERE UNDERCOUNTS**, each
+one in the direction of the previous fix: "two egress clients", then "an HTTP
+server, a telnet server", then "four network servers" (`httpd`, `telnetd`,
+`ftpd`, `tftpd`), then "six" (adding `dnsd` and `inetd`) — which still omitted
+`fakeidentd`, `udhcpd`, `lpd`, `dhcprelay`, and `tcpsvd`/`udpsvd`, the last two
+of which bind an arbitrary port and exec anything. The last two drafts were wrong
+*while telling the reader to enumerate*, which is the whole reason the number is
+gone rather than corrected a fifth time: a count in prose is read INSTEAD of the
+enumeration it asks for, and "servers" has no crisp boundary anyway (`ntpd`,
+`rdate` and `zcip` sit on it).
+
+**So: enumerate. `busybox --list` on the applet set the built image ships, and
+count for the question you are actually asking.** Do not write a fifth number
+here. A reader told to "revisit the trade with the threat model in front of you"
+needs the real set, and `ssl_client` is the one that matters for a token.
 
 Against that: the pod runs as uid 65532, no applet is setuid, and the deployed
 image ships `bash`, `apt-get` and **8 setuid binaries including `su` and

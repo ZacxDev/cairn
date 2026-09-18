@@ -96,7 +96,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
 | `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |
 | `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
-| `flake.nix` | both clients (**default = the GO one**), BOTH pod images, and the checks over them |
+| `flake.nix` | both clients (**`default` is still the PYTHON one**), BOTH pod images, and the checks |
 
 ## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
 
@@ -243,8 +243,8 @@ order that reads as a stale cache" — no error, no missing entry. That is true,
 **deleting the PYTHON RENDERER**; it does **not** entail a full CLI port, which a Python CLI over a
 small Go renderer would also have satisfied. What carries the port is the reason to state instead:
 **a single binary, one language, and Python RETIRABLE at P8**. ⚠ And **"one renderer" is a P8
-property, not a P2 one** — the Python renderer still ships as `packages.cairn` after the cutover,
-so until P8 the gate below IS the comparison rather than the absence of one.
+property, not a P2 one** — the Python renderer ships as `packages.default` until the oracle is
+deleted, so until then the gate below IS the comparison rather than the absence of one.
 
 **Measured on this tree: 97 cases, 98 PASS, 0 failures, 0 dead normalizations** — all nine verbs,
 every output-shaping flag, every documented exit code, `--help` in four spellings, the
@@ -284,9 +284,9 @@ THE RULING IS THE SAME EVERY TIME: declare it, never mirror it into the oracle.*
   **2** with argparse's `usage:` on the oracle — the Go client *succeeding* where the oracle
   refuses, which is the dangerous direction. Declared rather than closed because a printed table on
   the oracle would be a second mechanism reaching a value the Python ledgers already read from the
-  parser and the AST. 🔴 **THE CUTOVER HAS LANDED, SO THIS IS NOW A LIVE WIDENING OF THE CLI
-  CONTRACT, NOT A PENDING ONE**: `nix run github:…/cairn -verbs` used to be REFUSED and now answers
-  0. Intended and declared; `#cairn` is the unchanged path. P8 owns the deletion, not this.
+  parser and the AST. 🔴 **IT WIDENS THE CLI CONTRACT WHEN `packages.default` FLIPS — NOT AT P8**,
+  which is the correction residual 7 carries: a single-dash token refused today starts answering 0
+  the moment the default moves. P8 owns the DECISION (public surface, or gated), not the moment.
 
 The other five: argparse's usage text (exit code compared, text not), `urllib`-vs-`net/http` failure
 tails, a reader error's exit route (3 by contract on Go, 1 by traceback on the oracle), and two
@@ -323,9 +323,9 @@ Binding rules: **`lib/README.md`**. Read it before editing any routing path.
 ## Installing and building with nix
 
 ```bash
-nix run   github:ZacxDev/cairn -- doctor       # the DEFAULT client — the GO one — uninstalled
-nix build github:ZacxDev/cairn#cairn           # the PYTHON client, still the oracle
-nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name
+nix run   github:ZacxDev/cairn -- doctor       # the DEFAULT client — the PYTHON one — uninstalled
+nix build github:ZacxDev/cairn#cairn           # the PYTHON client, the oracle and the default
+nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name — NOT the default
 nix build github:ZacxDev/cairn#server-image    # the PYTHON pod image, as a loadable tarball
 nix build github:ZacxDev/cairn#server-image-go # the GO pod image — published by nothing
 ```
@@ -335,12 +335,20 @@ whose version cannot disagree with the code in it, because **the version is the
 git revision** and is never written down by hand.
 
 🔴 **THERE ARE NOW TWO CLIENTS, AND EVERY CLAIM BELOW SAYS WHICH ONE IT IS
-ABOUT.** `cmd/cairn` (`packages.cairn-go`) is the Go port and it is **`packages.default`
-and `apps.default`** — the cutover has landed, so `nix run github:…/cairn` executes the
-Go client for every consumer who does not name one. `cairn` (`packages.cairn`,
-`apps.cairn`) is the Python client and STILL THE ORACLE: neither it, its `lib/`, nor its
-packaging is deleted here, and P8 is what retires them. ⚠ **The cutover WIDENED the CLI
-contract** — see the `-verbs` residual above; that is declared, not a defect.
+ABOUT.** `cairn` (`packages.cairn`, and still `packages.default`/`apps.default`) is the
+Python client and the ORACLE; `cmd/cairn` (`packages.cairn-go`) is the Go port. The Go
+client is a SECOND artefact during P2, not a replacement: nothing in `apps` or
+`packages.default` points at it, because swapping them changes what
+`nix run github:…/cairn` executes for every existing consumer — a cutover, not a
+build. **The Python client, its `lib/` and its packaging are not deleted here**;
+the plan retires Python at P8, after the gate below has held over real use.
+
+🔴 **AND THE FLIP IS HELD ON A MEASUREMENT, NOT ONLY ON CAUTION.** On a host with more
+than one instance configured the Go client REFUSES every read verb at exit 11
+(`RefuseUnportedMultiInstance`), so the `nix run … -- doctor` line above would refuse
+there. The guard is correct; the flip waits on `tests/parity/README.md` residual 8's
+closing condition, and carries residual 7's contract widening. **Both are the flip's,
+not P8's.**
 
 🔴 **`lib/` MUST STAY BESIDE THE *PYTHON* CLIENT SCRIPT, AND `packages.cairn` IS
 BUILT THAT WAY ON PURPOSE.** `cairn` finds its modules with
@@ -410,13 +418,15 @@ pins that — but the general lesson stands: **before swapping the deployed
 image, diff the two for what the test cannot read.**
 
 📄 **THE MEASURED DIFFERENCES ARE IN `server/README.md`, NOT HERE** — the layer
-table, the busybox applet enumeration (402 applets, **six** network servers and
-`ssl_client` beside a mounted credential), the setuid counts, and why that trade
-is RECORDED RATHER THAN FIXED. **THREE successive drafts of that count were
-wrong, each in the direction of the previous fix, and the third was wrong while
-telling the reader to enumerate**: `busybox --list` on the built image, never a
-paragraph. Neither image's tool surface is a subset of the other's, and nothing
-about it is settled.
+table, the busybox applet surface (network **servers** and **clients**, including
+`ssl_client`, beside a mounted credential), the setuid counts, and why that trade
+is RECORDED RATHER THAN FIXED. 🔴 **THIS SENTENCE NO LONGER CARRIES A COUNT, AND
+THE DELETION IS THE POINT: FOUR SUCCESSIVE DRAFTS GAVE ONE AND ALL FOUR WERE
+UNDERCOUNTS**, each in the direction of the previous fix, the last two while
+telling the reader to enumerate. **The set is whatever `busybox --list` on the
+built image says — read it there, and do not supply a fifth number here.**
+Neither image's tool surface is a subset of the other's, and nothing about it is
+settled.
 
 🔴 **AND THERE IS A THIRD IMAGE: `packages.server-image-go`, WHICH IS A THIRD
 BUILD AND NOT A THIRD STATEMENT OF THE CONTRACT.** It wraps `cmd/cairn-server`

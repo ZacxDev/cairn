@@ -86,6 +86,21 @@
       # need one, and both documented procedures name absolute paths (`tar -xf -` into
       # `/data`, `kill -HUP 1`). If a procedure ever needs `~`, it goes in `serverEnv`
       # and both pods get it — which is the point of the subtraction.
+      #
+      # ⚠ KEEPING `HOME` AND DROPPING ONLY THE TWO `PYTHON*` KNOBS WAS PROPOSED IN REVIEW
+      # AND DECLINED; RECORDED SO IT IS NOT RE-LITIGATED FROM SCRATCH. The proposal's cost
+      # argument is real — this comment, and a standing obligation to re-run `go list -deps`
+      # whenever the server's imports change. Three things decided it the other way.
+      # (1) The failure mode of a WRONG drop is LOUD, not silent: `os.UserHomeDir` returns
+      #     an explicit "$HOME is not defined" error. The silent-drift class the subtraction
+      #     exists to prevent is the OTHER direction — a variable that never reaches the Go
+      #     pod at all — and that one is closed structurally by `removeAttrs`.
+      # (2) Keeping it is MORE derivation, not less: `mkServerImage` creates and chowns
+      #     `/home/nonroot` in `fakeRootCommands` precisely because it sets `HOME`. A `HOME`
+      #     naming a directory the image does not contain is false in two ways instead of
+      #     one, so "keep" means restoring that mkdir here too.
+      # (3) The image's `Env` IS the deploy contract, and the next operator debugging a
+      #     buffering or home-directory question reads it as one.
       serverEnvPythonOnly = [ "HOME" "PYTHONDONTWRITEBYTECODE" "PYTHONUNBUFFERED" ];
       serverEnvGo = builtins.removeAttrs serverEnv serverEnvPythonOnly;
 
@@ -321,15 +336,24 @@
         };
       };
 
-      # 🔴 THE GO CLIENT IS `packages.default` AND `apps.default` — THE CUTOVER HAS LANDED.
-      # ⚠ THIS COMMENT USED TO SAY THE OPPOSITE ("`apps.default` stays pointed at" the
-      # Python client) and is rewritten rather than deleted, because the reasoning survives
-      # and only the state changed: moving the default changes what
-      # `nix run github:…/cairn` executes for every existing consumer, so it is a CUTOVER
-      # and not a build, and it was taken deliberately after the parity gate held.
-      # `packages.cairn`/`apps.cairn` still build the Python client, which is still the
-      # oracle; P8 deletes it. See the `packages` attrset below for the CLI-contract
-      # widening this cutover carries.
+      # 🔴 THE GO CLIENT IS A SECOND ARTEFACT DURING P2, NOT A REPLACEMENT. `packages.cairn`
+      # stays the Python client and `apps.default` stays pointed at it: swapping them changes
+      # what `nix run github:…/cairn` executes for every existing consumer, which is a
+      # CUTOVER and not a build. The plan puts the cutover after the parity gate has held
+      # over real use and the deletion of Python at P8.
+      #
+      # ⚠ A DRAFT OF THIS BRANCH TOOK THE FLIP AND IT WAS REVERTED, RECORDED HERE SO NOBODY
+      # RE-DERIVES IT FROM THE PARITY GATE ALONE. The gate was green and the reasoning was
+      # "the gate held, so the default can move" — which reads the gate wider than it is.
+      # MEASURED on a host with more than one instance configured, with the Go client built
+      # from this branch: `cairn ls-entries --scope <x>` and `cairn doctor` each exit **11**
+      # and print a REFUSAL, because every read verb is behind `RefuseUnportedMultiInstance`
+      # (`tests/parity/README.md` residual 8). `nix run github:ZacxDev/cairn -- doctor` is the
+      # quickstart this repository's own README recommends, so the flip would have made the
+      # documented first command refuse on such a host. The guard is CORRECT and stays; the
+      # FLIP is what waits. Closing condition: residual 8's — read routing in
+      # `internal/report`, a multi-instance parity row over a read verb, and the guard
+      # deleted with the row. See `packages.default` below.
       #
       # 🔴 `gitMinimal` ON THE WRAPPER'S PATH, FOR THE SAME REASON THE PYTHON PACKAGE HAS IT.
       # The client invokes `git` by BARE NAME to derive a repo's scope
@@ -576,20 +600,20 @@
       packages = forAll (pkgs:
         {
           cairn = mkCairn pkgs;
-          # 🔴 `default` IS THE GO CLIENT — THIS IS THE CUTOVER, AND IT CHANGES WHAT
-          # `nix run github:ZacxDev/cairn` EXECUTES FOR EVERY EXISTING CONSUMER. It is
-          # deliberate, and it is not a no-op: the parity gate declares residuals, and
-          # ONE of them WIDENS the CLI contract in the direction that matters — `cairn
-          # -verbs` and `cairn -exit-codes` exit 0 with a table on stdout here where the
-          # Python oracle exits 2 with argparse's `usage:`, so a single-dash token that
-          # used to be REFUSED now answers 0. `tests/parity/README.md` carries the
-          # residual table; this line is where the decision was taken.
+          # 🔴 `default` STAYS THE PYTHON CLIENT. The Go server AND the Go client are
+          # SECOND artefacts during the dual-run, not replacements for anything: making
+          # either the default would change what `nix run github:…/cairn` executes
+          # for every existing consumer, which is a cutover and not a build.
           #
-          # `packages.cairn` keeps pointing at the Python client and is NOT deleted:
-          # it is still the parity oracle, and P8 is what retires it. `nix run
-          # github:…/cairn#cairn` is the unchanged path for anyone who needs the old
-          # behaviour while the two are alive.
-          default = mkGoClient pkgs;
+          # 🔴 AND THE FLIP IS BLOCKED ON A MEASUREMENT, NOT ONLY ON CAUTION — see the
+          # ⚠ above `mkGoClient`. On a host with more than one instance configured the
+          # Go client REFUSES every read verb at exit 11, so `nix run github:…/cairn --
+          # doctor` — the quickstart — would refuse there. The flip also WIDENS the CLI
+          # contract: `cairn -verbs`/`-exit-codes` exit 0 with a table here where the
+          # oracle's argparse exits 2 with `usage:`, so a single-dash token that is
+          # refused today would start answering 0. Both belong to the flip, not to P8;
+          # `tests/parity/README.md` residuals 7 and 8 carry them.
+          default = mkCairn pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
         }
@@ -603,24 +627,26 @@
           server-image-go = mkGoServerImage pkgs;
         });
 
-      # 🔴 `apps.default` MOVES WITH `packages.default`, AND LEAVING IT BEHIND WOULD BE
-      # WORSE THAN NOT CUTTING OVER AT ALL. `nix run github:…/cairn` resolves
-      # `apps.default` FIRST and only falls back to `packages.default`'s `mainProgram`,
-      # so flipping the package alone would leave `nix run` on Python while
-      # `nix profile install` and every flake input got Go — one name, two clients,
-      # differing by which command the consumer happened to use.
+      # 🔴 `apps.default` MOVES WITH `packages.default` OR NOT AT ALL — AND TODAY THAT
+      # MEANS NEITHER MOVES. `nix run github:…/cairn` resolves `apps.default` FIRST and
+      # only falls back to `packages.default`'s `mainProgram`, so flipping one alone
+      # would leave `nix run` on one client while `nix profile install` and every flake
+      # input got the other — one name, two clients, differing by which command the
+      # consumer happened to use. Both are the Python client here.
+      #
+      # ⚠ THERE IS NO `apps.cairn-go`, DELIBERATELY. `nix run .#cairn-go` already
+      # resolves through `packages.cairn-go`'s `mainProgram = "cairn"` — measured, not
+      # assumed — so an entry here would be a third name for one binary with nothing to
+      # buy. `apps.cairn` predates the Go port and is left alone rather than deleted in
+      # a change about the default.
       apps = forAll (pkgs: {
         cairn = {
           type = "app";
           program = "${nixpkgs.lib.getExe (mkCairn pkgs)}";
         };
-        cairn-go = {
-          type = "app";
-          program = "${nixpkgs.lib.getExe (mkGoClient pkgs)}";
-        };
         default = {
           type = "app";
-          program = "${nixpkgs.lib.getExe (mkGoClient pkgs)}";
+          program = "${nixpkgs.lib.getExe (mkCairn pkgs)}";
         };
       });
 

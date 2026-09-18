@@ -23,6 +23,21 @@ a file they did not touch. The direction of failure matters: a derived Go env ga
 the variable its Deployment already sets. So the DERIVATION is asserted structurally, and
 the values are asserted on top of it.
 
+🔴 AND THE FIRST DEFECT THIS MODULE EVER HAD WAS ITS OWN. Its first version computed the
+env as a MODEL — `serverEnv` minus `serverEnvPythonOnly`, read from the `let` block — and
+never looked at what `mkGoServerImage` hands to `buildLayeredImage`. Three hand-written
+mutants therefore SURVIVED it whole — 13 tests, 47 assertions, nothing red: an `Env` built
+from `serverEnv`
+(CPython's knobs in a pod with no interpreter), an `Env` built from a wrong-store literal,
+and a `serverEnvGo` carrying a second `removeAttrs` that dropped `SUBSYSTEM_STORE_TOKEN_FILE`
+(a pod reading a compiled-in token path instead of the mounted one). Each shipped a pod
+under an env no assertion here read. The model's stated reason was not WRONG — a parser
+that read the `Env` argument INSTEAD would be satisfied by a literal — it was INCOMPLETE,
+which is this repository's named worst case: a description claiming a relationship over a
+body that inspects one side, inside the module written against exactly that. The fix is
+both halves: `go_env()`'s model, plus `SERVER_ENV_GO_FORM` and
+`test_the_image_Env_IS_serverEnvGo_and_not_a_lookalike` pinning the seam.
+
 ⚠ THESE ARE INVARIANT GUARDS, NOT REGRESSION COVERAGE, WITH ONE EXCEPTION NAMED BELOW.
 No defect ever shipped from `mkGoServerImage`; it did not exist before the commit that
 added this file. What they pin is that a class of defect THIS REPOSITORY HAS ALREADY
@@ -81,6 +96,18 @@ DEPLOY_CONTRACT = (
     "SUBSYSTEM_STORE_TOKEN_FILE",
 )
 
+#: The ONLY expression `go_env()` below is a valid model of, whitespace-normalised.
+#:
+#: 🔴 A WHOLE STRING RATHER THAN A WORD SEARCH, BECAUSE THE ARTEFACT UNDER TEST IS AN
+#: EXPRESSION AND A WORD IS WALKABLE BY WRITING A DIFFERENT EXPRESSION CONTAINING IT.
+#: `removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ]) serverEnvPythonOnly`
+#: names both `serverEnv` and `serverEnvPythonOnly`, satisfies every other assertion in
+#: this module, and ships a pod that looks for its bearer token at a compiled-in default.
+#: ⚠ The cost is that a genuine change of shape fails here first. That is the point: it
+#: also invalidates `go_env()`, and the two must move together or the model silently stops
+#: describing what runs.
+SERVER_ENV_GO_FORM = "builtins.removeAttrs serverEnv serverEnvPythonOnly"
+
 
 # ---------------------------------------------------------------------------
 # Extractors for the two bindings this file adds. Pure functions of text, so the
@@ -113,12 +140,25 @@ def flake_binding(text: str, name: str) -> str | None:
 
 
 def go_env(text: str) -> dict[str, str] | None:
-    """The env the Go image ships, computed the way `flake.nix` computes it.
+    """A MODEL of the env the Go image ships: `serverEnv` minus `serverEnvPythonOnly`.
 
-    `serverEnv` minus `serverEnvPythonOnly`. Deliberately NOT parsed out of
-    `mkGoServerImage`'s own `Env` argument: that argument is supposed to be the
-    derivation and nothing else, and a parser that read it directly would be just as
-    happy with a literal — which is the defect this module is about.
+    🔴 IT IS A MODEL, NOT A READING OF THE IMAGE, AND EVERY VALUE ASSERTION BUILT ON IT
+    INHERITS THAT. Deliberately NOT parsed out of `mkGoServerImage`'s own `Env` argument,
+    because a parser that read that argument INSTEAD would be just as happy with a
+    literal — which is the defect this module is about.
+
+    ⚠ THAT REASON IS TRUE AND IT USED TO BE THE WHOLE DOCSTRING, WHICH MADE THIS FILE THE
+    THING IT WARNS ABOUT: a description claiming a relationship over a body that inspects
+    ONE SIDE. Three mutants SURVIVED this module whole while it read that way — `Env` built
+    from `serverEnv` (shipping CPython's knobs), `Env` built from a wrong-store literal,
+    and a `serverEnvGo` carrying a SECOND `removeAttrs` that dropped the token path — each
+    of them a pod that serves under an env this function never looks at.
+
+    The fix is BOTH, not a swap: this model stays, and two assertions pin the SEAM it
+    cannot see — `test_the_image_Env_IS_serverEnvGo_and_not_a_lookalike` (the image uses
+    the binding) and the exact-form assertion in
+    `test_the_go_env_is_DERIVED_from_serverEnv_rather_than_restated` (the binding computes
+    what this function computes). Read the three together; any one alone is walkable.
     """
     base = flake_attrset(text, "serverEnv")
     drop = flake_string_list(text, "serverEnvPythonOnly")
@@ -213,10 +253,23 @@ class TestTheGoImageRunsUnderTheSameContract:
         pod would get it, the Go pod would not, and nothing here would notice until a pod
         came up missing env its Deployment sets.
 
-        Two things are asserted, because either alone is walkable: that the binding names
-        `serverEnv` (so it cannot be a standalone literal) and that it names the
-        removal list (so it cannot be `serverEnv` renamed, which would ship CPython's
-        knobs in a Go image).
+        Three things are asserted, because none alone is enough: that the binding names
+        `serverEnv` (so it cannot be a standalone literal), that it names the removal
+        list (so it cannot be `serverEnv` renamed, which would ship CPython's knobs in a
+        Go image), and — last, because it is the catch-all — that the whole expression is
+        EXACTLY the one subtraction `go_env()` models.
+
+        🔴 THE EXACT-FORM ASSERTION IS A SEAM GUARD AND IT CLOSED A MEASURED SURVIVOR.
+        The two name searches are satisfied by
+        `removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ]) serverEnvPythonOnly`
+        — both names are present — and so is every value assertion in this module, because
+        `go_env()` computes the subtraction it models rather than the one the source
+        performs. That mutant ships a pod reading a compiled-in token path instead of the
+        mounted one. A search for a WORD is walkable by writing a different expression
+        containing the word, so the whole normalised string is pinned instead. It costs a
+        deliberate edit here whenever the derivation genuinely changes shape — which is
+        the price of the guard being machine-readable, and `go_env()` has to move with it
+        anyway or the model stops matching what runs.
         """
         binding = flake_binding(flake, "serverEnvGo")
         assert binding is not None, "no `serverEnvGo` binding — see the controls"
@@ -228,15 +281,70 @@ class TestTheGoImageRunsUnderTheSameContract:
             f"`serverEnvGo` is {binding!r} — it does not subtract `serverEnvPythonOnly`, "
             f"so what the Go image drops is decided somewhere this guard cannot read"
         )
+        assert re.sub(r"\s+", " ", binding).strip() == SERVER_ENV_GO_FORM, (
+            f"`serverEnvGo` is {binding!r}, and the only form this module's `go_env()` "
+            f"model is valid for is {SERVER_ENV_GO_FORM!r}. A second `removeAttrs`, an "
+            f"`//` override or any other extra term changes what the pod actually gets "
+            f"while every value assertion here keeps comparing the model — which is how "
+            f"a mutant that dropped SUBSYSTEM_STORE_TOKEN_FILE survived this module whole. "
+            f"If the derivation genuinely changes shape, change `go_env()` and this "
+            f"string together."
+        )
+
+    def test_the_image_Env_IS_serverEnvGo_and_not_a_lookalike(self, flake):
+        """🔴 THE SEAM: THE IMAGE HAS TO USE THE BINDING THIS MODULE MODELS.
+
+        Every value assertion in this file reads `go_env()`, which computes `serverEnv`
+        minus `serverEnvPythonOnly` from the `let` block. Nothing above looks at what
+        `mkGoServerImage` actually hands to `buildLayeredImage`. So `Env = … (serverEnv //
+        {…})` — the derivation ignoring `serverEnvGo` and shipping CPython's knobs and a
+        `HOME` to a pod with no interpreter — passed `test_the_go_env_carries_NO_
+        interpreter_variable` by construction, as did `Env = … ({ SUBSYSTEM_STORE_ROOT =
+        "/wrong"; } // {…})`, a pod serving the wrong store.
+
+        ⚠ AND THIS DOES NOT REPLACE `go_env()`, IT COMPLETES IT. Parsing the `Env`
+        argument INSTEAD of modelling the derivation would be satisfied by a literal
+        attrset holding today's values — the defect the model exists to catch. One
+        assertion each way is what makes the pair a claim about the relationship.
+
+        ⚠ AN INVARIANT GUARD. Neither mutant ever shipped; both were written by hand
+        against this module and watched to SURVIVE it before this assertion existed.
+        """
+        env_arg = flake_image_arg(flake, "Env", GO_MAKER)
+        assert env_arg is not None, f"no `Env` argument inside `{GO_MAKER}`'s block"
+        assert re.search(r"\bserverEnvGo\b", env_arg), (
+            f"the Go image's `Env` is {env_arg!r} — it does not name `serverEnvGo`, so "
+            f"every value assertion in this module is about a binding the image does not "
+            f"use. `serverEnv` here ships CPython's knobs and a `HOME` nothing reads; a "
+            f"literal here ships whatever it happens to say."
+        )
+        # `\b` does not fire between `serverEnv` and `Go`, so this matches the BARE name
+        # only — it is not a second reading of the assertion above.
+        assert not re.search(r"\bserverEnv\b", env_arg), (
+            f"the Go image's `Env` is {env_arg!r} — it reaches `serverEnv` directly "
+            f"beside `serverEnvGo`, which puts the Python-only names back into a pod "
+            f"that contains no interpreter"
+        )
 
     def test_the_removal_list_drops_NOTHING_the_deployment_names(self, flake):
-        """🔴 THE ONE WAY THE SUBTRACTION CAN BE WRONG, AND IT IS THE DANGEROUS ONE.
+        """🔴 THE SUBTRACTION CAN SUBTRACT TOO MUCH, AND THIS IS THE DANGEROUS DIRECTION.
 
         A derivation that subtracts too much is still a derivation: adding
         `SUBSYSTEM_STORE_TOKEN_FILE` to the list satisfies every structural assertion
         above and ships a pod that looks for its bearer token at the compiled-in default
         instead of the mounted path. So the list is checked against what a Deployment
         actually sets, in the direction that matters.
+
+        ⚠ THIS DOCSTRING USED TO OPEN "🔴 THE ONE WAY THE SUBTRACTION CAN BE WRONG", AND
+        THAT WAS FALSE — it is corrected rather than deleted, because the false version is
+        the finding. There is a SECOND way, and this test cannot see it: the subtraction
+        can be written to drop a name the LIST does not contain
+        (`removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ])
+        serverEnvPythonOnly`), which reads the list this test checks and is still wrong.
+        That one is closed by `SERVER_ENV_GO_FORM` in
+        `test_the_go_env_is_DERIVED_from_serverEnv_rather_than_restated`. A guard whose
+        description claims a relationship its body does not cover is worse than no guard —
+        it stops the next person looking — which is exactly what happened here.
         """
         drop = flake_string_list(flake, "serverEnvPythonOnly")
         assert drop, "no `serverEnvPythonOnly` entries — see the controls"
