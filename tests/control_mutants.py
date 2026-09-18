@@ -1378,7 +1378,7 @@ MUTANTS: tuple[Mutant, ...] = (
     ),
     # ---- P5a: the user-creation path, and the authority the SESSIONS resolve against --
     #
-    # 🔴 THESE NINE EXIST BECAUSE P4 SHIPPED THREE BACKENDS AND NO WAY TO PUT A USER IN
+    # 🔴 THESE ELEVEN EXIST BECAUSE P4 SHIPPED THREE BACKENDS AND NO WAY TO PUT A USER IN
     # FRONT OF THEM. Every row above was green through a period in which no deployment
     # that could exist authenticated anybody through a session backend: the only authority
     # any binary wired was the token-file projection, whose one synthetic user sits at
@@ -1387,17 +1387,48 @@ MUTANTS: tuple[Mutant, ...] = (
     # true, and the authorization carried ZERO readable scopes. So the rows here mutate
     # the WIRING and the batch CONTENT — the two places where "it authenticated" and "it
     # can do something" come apart.
+    # 🔴 TWO ROWS, ONE PER BACKEND, BECAUSE "THE SESSION BACKENDS RESOLVE AGAINST THE
+    # CONFIGURED AUTHORITY" IS A CLAIM ABOUT A SET. There used to be one row here, over a
+    # shared `sessionAuthority` local that both constructors read; that local is gone —
+    # it existed only to hold the fallback to `authority`, which is now a refusal — so the
+    # parameter is passed at two sites and a mutant at one leaves the other asserted by
+    # nothing.
     Mutant(
-        name="session-backends-resolve-against-the-token-file-authority-again",
+        name="the-supabase-backend-resolves-against-the-token-file-authority-again",
         path="internal/identity/config.go",
-        old="\tsessionAuthority := sessions\n\tif sessionAuthority == nil {",
-        new="\tsessionAuthority := authority\n\tif sessionAuthority == nil {",
+        old="\t\tsupabase, err = supabaseFromEnv(supabaseValues, sessions)",
+        new="\t\tsupabase, err = supabaseFromEnv(supabaseValues, authority)",
         killer="TestAnOperatorProvisionedSupabaseSessionAuthenticatesWithRealAuthority",
-        extra_killers=("TestAnOperatorProvisionedTrustedHeaderSessionAuthenticatesWithRealAuthority",),
         why="the parameter ignored, which is exactly the state this slice found the "
         "repository in. Nothing fails to build, no backend is missing, the chain has the "
-        "right length — and every browser sign-in is refused because the session backends "
-        "are looking a provider-named subject up in a projection that has none.",
+        "right length — and a browser sign-in resolves a provider-named subject in a "
+        "projection that has none, or worse, in a DIFFERENT world's user of the same name.",
+    ),
+    Mutant(
+        name="the-trusted-header-backend-resolves-against-the-token-file-authority-again",
+        path="internal/identity/config.go",
+        old="\t\ttrusted, err = trustedHeaderFromEnv(proxyValues, sessions)",
+        new="\t\ttrusted, err = trustedHeaderFromEnv(proxyValues, authority)",
+        killer="TestAnOperatorProvisionedTrustedHeaderSessionAuthenticatesWithRealAuthority",
+        why="the same defect one backend over, and the one whose blast radius "
+        "`TrustedHeader`'s own comment calls the most dangerous thing in P4. A proxy that "
+        "has already established an identity hands it to a resolver looking in the wrong "
+        "world; the request authenticates and reads somebody else's authorization or none.",
+    ),
+    Mutant(
+        name="a-session-backend-with-no-authority-comes-up-quietly",
+        path="internal/identity/config.go",
+        old="\tif (supabaseArmed || proxyArmed) && sessions == nil {",
+        new="\tif false {",
+        killer="TestASessionBackendWithNoSessionAuthorityRefusesToStart",
+        why="the MIRROR of the row below, and the direction the defect was measured in. "
+        "Without it an armed session backend with no `$CAIRN_CONTROL_JOURNAL` falls back "
+        "to the token-file projection: the pod starts, the JWT verifies, `Valid()` is "
+        "true, an audit line names a principal — and the authorization is EMPTY. "
+        "Measured at `e11c3a7`, where this guard did not exist: err=nil, a two-backend "
+        "chain, and a sign-in that authenticates into nothing. It is the strictly worse "
+        "of the two directions, because the loud one refuses everybody and this one "
+        "refuses nobody.",
     ),
     Mutant(
         name="a-journal-nobody-reads-comes-up-quietly",
@@ -1448,16 +1479,21 @@ MUTANTS: tuple[Mutant, ...] = (
         "state this whole slice exists to leave behind.",
     ),
     Mutant(
-        name="reloading-source-serves-the-process-local-cache",
-        path="internal/control/provision.go",
-        old="func (r ReloadingSource) Model(ctx context.Context) (Model, error) { return r.Store.Reload(ctx) }",
-        new="func (r ReloadingSource) Model(ctx context.Context) (Model, error) { return r.Store.Model(ctx) }",
-        killer="TestAReloadingSourceSeesAWriteFromAnotherProcessAndAPlainFileStoreDoesNot",
-        extra_killers=("TestAnUnreadableJournalLeavesTheReloadingSourceServingLastKnownGood",),
-        why="`Model` is the obvious method to call on a store and it is the wrong one "
-        "here. `FileStore` caches per value and invalidates only on its OWN appends, so a "
-        "pod reading through this would materialize the journal once at startup and never "
-        "see a user created by `cairn-server -create-user` in another process.",
+        name="filestore-model-serves-the-process-local-cache-again",
+        path="internal/control/filestore.go",
+        old="func (s *FileStore) Model(ctx context.Context) (Model, error) {\n\treturn s.Reload(ctx)\n}",
+        new="func (s *FileStore) Model(ctx context.Context) (Model, error) {\n"
+        "\ts.mu.RLock()\n\tif s.loaded {\n\t\tm := s.cached\n\t\ts.mu.RUnlock()\n\t\treturn m, nil\n\t}\n"
+        "\ts.mu.RUnlock()\n\treturn s.Reload(ctx)\n}",
+        killer="TestAFileStoreSeesAWriteFromAnotherProcessThroughItsOrdinaryReadPath",
+        extra_killers=("TestAnUnreadableJournalLeavesTheFileStoreServingLastKnownGood",),
+        why="the short-circuit this method shipped with, restored verbatim. It served a "
+        "process-local projection invalidated only by THIS VALUE's appends, so a pod "
+        "reading through it would materialize the journal once at startup and never see a "
+        "user created by `cairn-server -create-user` in another process — the journal "
+        "correct, the command successful, the sign-in still refused. ⚠ It is the ONE "
+        "mutant here that is not a one-expression edit: the guard IS the branch, so the "
+        "narrowest thing that can be wrong is its presence. `--show` prints it in full.",
     ),
     Mutant(
         name="unconfigured-deployment-gets-a-TYPED-nil-session-authority",

@@ -276,76 +276,70 @@ func TestARefusedProvisioningLeavesNeitherBytesNorState(t *testing.T) {
 	}
 }
 
-// TestAReloadingSourceSeesAWriteFromANOTHERProcessAndAPlainFileStoreDoesNot.
+// TestAFileStoreSeesAWriteFromANOTHERProcessThroughItsOrdinaryReadPath.
 //
-// 🔴 TWO POINTS, BECAUSE THE CLAIM IS A DIFFERENCE BETWEEN TWO READ PATHS AND EITHER ONE
-// ALONE WOULD BE UNFALSIFIABLE. `ReloadingSource` exists only because `FileStore.Model`
-// serves a process-local projection invalidated by this process's own appends — so a test
-// that only asserted the reloading half would pass identically if `FileStore` had no cache
-// at all, and would say nothing about the hazard. The two `FileStore` values over one path
-// stand in for the pod and the `-create-user` process.
+// 🔴 THE POINT IS THE ORDINARY METHOD, NOT A SECOND ONE. The hazard this pins is the
+// process-local projection `FileStore.Model` used to serve: it was invalidated only by
+// THIS VALUE'S own appends, so a pod reading through it would materialize the journal once
+// at startup and never see a user `cairn-server -create-user` wrote from another process —
+// the journal correct, the command successful, the sign-in still refused. The fix was to
+// delete the short-circuit rather than to route around it through a wrapper type, so the
+// assertion is on `Model` itself: the spelling every caller reaches for is the safe one.
 //
 // ⚠ IT IS TWO VALUES IN ONE PROCESS, NOT TWO PROCESSES, AND THAT IS THE LIMIT OF WHAT IT
-// MEASURES. What makes the substitution faithful is that `FileStore`'s cache is per-VALUE:
-// `cached`/`loaded` are its own fields and nothing shares them. What it does NOT exercise
-// is the `flock` between two real processes, which `filestore_test.go` covers separately.
-func TestAReloadingSourceSeesAWriteFromAnotherProcessAndAPlainFileStoreDoesNot(t *testing.T) {
+// MEASURES. What makes the substitution faithful is that `FileStore`'s state is per-VALUE:
+// `cached`/`loaded` are its own fields and nothing shares them, so a second value stands in
+// for a second process exactly. What it does NOT exercise is the `flock` between two real
+// processes, which `filestore_test.go` covers separately.
+func TestAFileStoreSeesAWriteFromAnotherProcessThroughItsOrdinaryReadPath(t *testing.T) {
 	writer, path := journalAt(t)
 	reader, err := OpenFileStore(path)
 	if err != nil {
 		t.Fatalf("opening the journal a second time: %v", err)
 	}
 
-	// Both readers materialize the EMPTY world first, which is what a pod starting before
-	// anybody provisions does.
+	// The reader materializes the EMPTY world first, which is what a pod starting before
+	// anybody provisions does — and it is what arms the cache the short-circuit used to
+	// serve. Without this read the test would pass against the OLD code too, because a
+	// `FileStore` that had never loaded fell through to `Reload` anyway.
 	if m, err := reader.Model(context.Background()); err != nil || len(m.Users) != 0 {
 		t.Fatalf("precondition: the reader must start over an empty journal: %v / %d users", err, len(m.Users))
-	}
-	fresh := ReloadingSource{Store: reader}
-	if m, err := fresh.Model(context.Background()); err != nil || len(m.Users) != 0 {
-		t.Fatalf("precondition: the reloading source must start over an empty journal: %v / %d users", err, len(m.Users))
 	}
 
 	if _, err := ProvisionUser(context.Background(), writer, aUser("quarry-notes")); err != nil {
 		t.Fatalf("provisioning through the other handle: %v", err)
 	}
 
-	// The hazard: the plain read path still answers the world it cached.
-	stale, err := reader.Model(context.Background())
+	current, err := reader.Model(context.Background())
 	if err != nil {
 		t.Fatalf("reading the model: %v", err)
 	}
-	if len(stale.Users) != 0 {
-		t.Fatalf("FileStore.Model noticed another handle's append (%d users) — this test's premise "+
-			"is that it does not, and `ReloadingSource` exists for no reason if it does", len(stale.Users))
-	}
-
-	// And the fix: the reloading source re-reads.
-	current, err := fresh.Model(context.Background())
-	if err != nil {
-		t.Fatalf("reloading: %v", err)
-	}
 	if len(current.Users) != 1 {
-		t.Fatalf("the reloading source holds %d users after another handle provisioned one — a pod "+
-			"reading through it would never see a user created by `-create-user`", len(current.Users))
+		t.Fatalf("FileStore.Model answered %d users after ANOTHER handle provisioned one. It is "+
+			"serving a process-local projection, so a pod reading through it would never see a "+
+			"user created by `cairn-server -create-user`", len(current.Users))
 	}
 	if _, held := current.UserByProviderSubject("notes-idp", "subject-0001"); !held {
 		t.Fatal("the reloaded world holds a user that is not the one provisioned")
 	}
 }
 
-// TestAnUnreadableJournalLeavesTheReloadingSourceServingLastKnownGood.
+// TestAnUnreadableJournalLeavesTheFileStoreServingLastKnownGood.
 //
-// The narrowing this type's comment claims: `Reload` returns last-known-good ALONGSIDE the
-// error, and `control.Cache` then discards the model and keeps serving. Asserted here at
-// the source rather than only at the cache, because the source is what the pod's authority
-// is built over and its error/model pair is the contract the cache depends on.
-func TestAnUnreadableJournalLeavesTheReloadingSourceServingLastKnownGood(t *testing.T) {
+// The narrowing `Reload`'s comment claims: it returns last-known-good ALONGSIDE the error,
+// and `control.Cache` then discards the model and keeps serving. Asserted here at the store
+// rather than only at the cache, because the store is what the pod's authority is built
+// over and its error/model pair is the contract the cache depends on.
+//
+// ⚠ IT IS WHAT KEEPS THE `cached`/`loaded` FIELDS ALIVE AFTER `Model`'s SHORT-CIRCUIT WAS
+// DELETED. Nothing reads them on the happy path any more; this is the branch that does, so
+// a round that removed them as "unused" is this test going red rather than a review catch.
+func TestAnUnreadableJournalLeavesTheFileStoreServingLastKnownGood(t *testing.T) {
 	store, path := journalAt(t)
 	if _, err := ProvisionUser(context.Background(), store, aUser("quarry-notes")); err != nil {
 		t.Fatalf("provisioning: %v", err)
 	}
-	src := ReloadingSource{Store: store}
+	src := store
 	if m, err := src.Model(context.Background()); err != nil || len(m.Users) != 1 {
 		t.Fatalf("precondition: one user must be readable: %v / %d", err, len(m.Users))
 	}

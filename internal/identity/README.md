@@ -292,11 +292,19 @@ ledgers' `armed` question ("is this BACKEND half-configured") has no answer for 
 gate over that machinery requires a ledger to carry at least two settings — putting it
 there would mean inventing a second setting to satisfy a test. It still declares a blank
 policy, and it is the `refuseBlank` one, for the reason every `refuseBlank` setting here
-has: read as unset it silently resolves sessions against an authority that holds no
-provider-named user, which is the whole failure the section at the bottom of this file
-records. The predicate is `identity.ValueReducesToNothing` — this file's own, exported, so
-there is no second spelling of "reduces to nothing" — and the gate is
+has: an operator who wrote the line meant this pod to read a journal, and a blank read as
+"not set" discards it. The predicate is `identity.ValueReducesToNothing` — this file's own,
+exported, so there is no second spelling of "reduces to nothing" — and the gate is
 `TestABlankControlJournalIsRefusedRatherThanReadAsUnset` in `cmd/cairn-server`.
+
+⚠ **AND THE CONSEQUENCE OF A BLANK IS A CRASH LOOP, NOT A SILENT ONE, WHICH IS A CHANGE
+FROM WHAT THIS PARAGRAPH USED TO SAY.** It read "read as unset it silently resolves
+sessions against an authority that holds no provider-named user" — true when the blank
+policy was written, and no longer: a session backend with no session authority is
+`ErrSessionBackendWithoutAuthority` and the pod refuses to start. The blank policy is kept
+anyway, and is now a better error rather than the only one: the operator is told their
+journal line reduces to nothing, instead of being told to set a variable they can see they
+already set.
 
 ### 🔴 EVERY SETTING DECLARES ITS BLANK POLICY, AS DATA
 
@@ -409,34 +417,49 @@ Other rules:
   pins that the two sets do not overlap and that each retired name actually reaches the
   refusal.
 
-## 🔴 BOTH NEW BACKENDS WERE INERT UNTIL P5's FIRST SLICE, AND THEY STILL ARE WITHOUT A CONTROL JOURNAL
+## 🔴 BOTH NEW BACKENDS WERE INERT UNTIL P5's FIRST SLICE, AND THAT STATE IS NOW A REFUSAL TO START
 
 **This section is kept rather than deleted**, because it is the measurement that says what
-the fix is for, and because the inert state is still one an operator can configure: it is
-what every deployment gets that does not set `CAIRN_CONTROL_JOURNAL`.
+the fix is for. What has changed is its *scope*: the inert state is no longer something an
+operator can configure. A session backend armed with no control journal does not come up
+inert — it does not come up at all.
 
 ### What changed
 
 `cmd/cairn-server` reads `$CAIRN_CONTROL_JOURNAL`, opens a `control.FileStore` at that
-path, materializes it into a `control.Cache` over `control.ReloadingSource`, and passes it
-to `identity.FromEnvironment` as the **session authority** — the third parameter, which the
+path, materializes it into a `control.Cache` over that store, and passes it to
+`identity.FromEnvironment` as the **session authority** — the third parameter, which the
 Supabase and trusted-header backends resolve against. `cairn-server -create-user` writes a
 user, a project, the owner membership and the scopes into that journal, in one batch. The
 machine-token backend is untouched and still resolves against the token-file projection.
 
-- **Unset means exactly today's wiring.** `FromEnvironment`'s `sessions` is nil, both
-  session backends fall back to `authority`, and the paragraphs below describe the result
-  in full. Pinned by `TestNoControlJournalMeansNoSessionAuthorityAtAll`.
+**The two directions are BOTH refusals, and the second one is the whole point.**
+
 - **Set, with no session backend configured, is a REFUSAL to start**
   (`ErrSessionAuthorityUnread`): a journal nobody reads is the "came up healthy and answers
   nothing" shape one level up from the partial-configuration ledgers.
+- 🔴 **A session backend with no session authority is also a REFUSAL to start**
+  (`ErrSessionBackendWithoutAuthority`), and this is the direction the defect was actually
+  measured in. The first version of this parameter refused only the direction above and
+  fell back to the token-file projection for this one — so the failure the whole slice
+  exists to close stayed configurable in production while a test asserted it was gone. It
+  is the strictly worse of the two: the sign-in **succeeds**, `Valid()` is true, an audit
+  line names a principal, and the authorization is empty. Measured at `e11c3a7`: an armed
+  backend with a nil session authority returned a nil error and a two-backend chain. The
+  sentinel names `$CAIRN_CONTROL_JOURNAL` because that is its one remedy; the gate is
+  `TestASessionBackendWithNoSessionAuthorityRefusesToStart`, red at that commit on both
+  backends.
+- **Nothing set is exactly today's wiring**, and that is what the refusal above asks the
+  ARMED flags rather than the parameter alone: no session backend and no session authority
+  is a machine-token-only chain, unchanged. Pinned by
+  `TestNoControlJournalMeansNoSessionAuthorityAtAll` and by that same test's last arm.
 - **The gate** is `TestAnOperatorProvisionedSupabaseSessionAuthenticatesWithRealAuthority`
   and its trusted-header twin: a user created through `control.ProvisionUser`, a real
   journal file, a session verified through `FromEnvironment`'s own chain, and an assertion
   on the **content** of the `Authorization` — every verb on the provisioned scope, the name
   present in the projection the reader narrows by, and a scope outside it unreachable.
 
-### The state that produced this section, which is still reachable by configuring nothing
+### The state that produced this section, which no `cmd/cairn-server` configuration now reaches
 
 Read from the code, three facts that compose:
 
@@ -459,10 +482,17 @@ Read from the code, three facts that compose:
 
 The concrete trap: an operator follows this README, sets `CAIRN_SUPABASE_JWKS_URL` and
 `CAIRN_SUPABASE_ISSUER`, gets a pod that fetches the JWKS, starts clean, satisfies the
-partial-configuration ledger and passes its health check — and refuses **every** sign-in.
-That is precisely the failure `config.go`'s ledger exists to prevent, arriving by a route
-the ledger structurally cannot see: it asks *"did you configure it"*, never *"can it ever
-resolve anybody"*.
+partial-configuration ledger and passes its health check — and every sign-in **succeeds
+and reads nothing**. That is precisely the failure `config.go`'s ledger exists to prevent,
+arriving by a route the ledger structurally cannot see: it asks *"did you configure it"*,
+never *"can it ever resolve anybody"*.
+
+🔴 **THAT EXACT COMMAND LINE IS NOW A STARTUP REFUSAL.** Those two variables with no
+`$CAIRN_CONTROL_JOURNAL` is `ErrSessionBackendWithoutAuthority`, above. Reaching the state
+described here takes a caller that hands `FromEnvironment` the token-file projection AS the
+session authority, deliberately — which nothing in `cmd/cairn-server` does, and which
+`TestTheSameConfigurationOverTheTokenFileProjectionAuthenticatesNobody` now has to spell
+out in order to measure it at all.
 
 ⚠ **MEASURED AT `229c142` RATHER THAN ARGUED, AND FACT 3 IS THE ONE WORTH READING TWICE.**
 A trusted-header backend configured with `CAIRN_TRUSTED_HEADER_PROVIDER=cairn-token-file`
@@ -478,10 +508,12 @@ is the opposite one: `control.ProvisionUser`, reached only by an operator runnin
 `cairn-server -create-user`, which is not an HTTP route and does not appear in
 `api.DeclaredRoutes()`.
 
-**WHAT REMAINS THE PRECONDITION FOR A DEPLOYMENT THAT SETS NOTHING:** a real `control.User`
-row with the provider and subject an IdP actually asserts. Configuring
-`CAIRN_CONTROL_JOURNAL` and provisioning is how that row comes to exist; without it these
-backends are still code that is correct and unreachable.
+**WHAT REMAINS THE PRECONDITION:** a real `control.User` row with the provider and subject
+an IdP actually asserts. Configuring `CAIRN_CONTROL_JOURNAL` and provisioning is how that
+row comes to exist. A deployment that sets nothing still reaches nobody through these
+backends — but it no longer reaches them *while looking configured*: arming one without the
+journal is refused at startup, so "correct and unreachable" is now a property of a
+deployment that never armed them rather than of one that did.
 
 ⚠ **The HS256 deletion did not change any of this**, checked rather than assumed: it moves
 only what `Verify` will accept as a signature. `SupabaseJWT.Authenticate` reaches

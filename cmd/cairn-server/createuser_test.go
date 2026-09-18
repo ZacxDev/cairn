@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
+	"github.com/ZacxDev/cairn/internal/identity"
 )
 
 // flagsFor builds the mode's flag values WITHOUT touching the process's global flag set.
@@ -35,11 +36,15 @@ func flagsFor(provider, subject, email, project, scopes string) *createUserFlags
 // TestABlankControlJournalIsRefusedRatherThanReadAsUnset is the gate on the declared blank
 // policy of the one setting this slice adds.
 //
-// 🔴 THE HAZARD IS THAT UNSET IS *PERMISSIVE IN THE SENSE THAT MATTERS*: it means "resolve
-// sessions against the token-file projection", which holds no user any identity provider
-// can name — so a blank read as unset gives the operator a pod that starts, fetches its
-// JWKS, passes its health check and refuses every sign-in. That is the defect this whole
-// change closes, re-entered through a whitespace typo.
+// 🔴 THE HAZARD IS THAT UNSET USED TO BE *PERMISSIVE IN THE SENSE THAT MATTERS*: it meant
+// "resolve sessions against the token-file projection", which holds no user any identity
+// provider can name, so a blank read as unset gave the operator a pod that started clean
+// and authenticated people into an empty world. `identity.ErrSessionBackendWithoutAuthority`
+// now refuses that at startup — so what this policy buys is the better MESSAGE, and the
+// refusal on the `-create-user` path, which arms no backend and therefore never reaches
+// that sentinel. A blank there without this guard is a user written to a journal at the
+// path `""`, which `OpenFileStore` rejects with a message about an empty path rather than
+// about the line the operator actually typed.
 //
 // 🔴 AND IT IS MEASURED AT TWO SPELLINGS OF "NOTHING", BECAUSE THIS REPOSITORY HAS ALREADY
 // PAID FOR ONE OF THEM PASSING. Whitespace is what `strings.TrimSpace` sees; zero-width
@@ -105,9 +110,16 @@ func TestABlankControlJournalIsRefusedRatherThanReadAsUnset(t *testing.T) {
 
 // TestCreateUserRefusesWithoutAJournalAndWritesOneWithIt walks the mode's exit codes.
 //
-// 🔴 THE THREE OUTCOMES ARE THREE DIFFERENT OPERATOR ACTIONS, WHICH IS WHY THEY ARE THREE
-// CODES AND NOT ONE. 78 = this deployment has no journal configured, go fix the manifest;
-// 65 = the journal refused this request, go fix the arguments; 0 = written.
+// 🔴 THERE ARE TWO, AND THE THIRD WAS DELETED RATHER THAN NARROWED. 78 = this command did
+// not act, 0 = written. A separate 65 ("the request was refused, the deployment is fine")
+// used to sit beside them and was returned for EVERY `ProvisionUser` error, including an
+// unreadable journal — a deployment fault wearing the request fault's code. See
+// `exitConfig`'s comment in `main.go`.
+//
+// ⚠ SO THE DISTINCTION THE CODES USED TO CLAIM IS ASSERTED ON STDERR INSTEAD, AND IT IS
+// ASSERTED — the two refusals below carry different text, and each arm checks its own. A
+// test that only compared exit codes would now pass with both messages identical, which is
+// exactly the collapse this rewrite must not smuggle in.
 func TestCreateUserRefusesWithoutAJournalAndWritesOneWithIt(t *testing.T) {
 	var out, errOut bytes.Buffer
 	good := flagsFor("supabase", "subject-0001", "rowan@notes.example.test", "quarry", "quarry-notes")
@@ -146,15 +158,31 @@ func TestCreateUserRefusesWithoutAJournalAndWritesOneWithIt(t *testing.T) {
 		t.Fatalf("the created line mentions a credential, and this path issues none: %q", line)
 	}
 
-	// 65: the journal refuses a second row for one (provider, subject) pair.
+	// 78 again, by the OTHER route: the journal refuses a second row for one
+	// (provider, subject) pair. Same code as "no journal configured" above, and the
+	// assertions below are what tell the two apart — which is the whole of what the
+	// deleted 65 was supposed to buy.
 	out.Reset()
 	errOut.Reset()
 	again := flagsFor("supabase", "subject-0001", "", "quarry-two", "quarry-other")
-	if code := runCreateUser(env, again, &out, &errOut); code != exitDataErr {
-		t.Fatalf("exit = %d re-creating one person, want %d", code, exitDataErr)
+	if code := runCreateUser(env, again, &out, &errOut); code != exitConfig {
+		t.Fatalf("exit = %d re-creating one person, want %d", code, exitConfig)
 	}
-	if !strings.Contains(errOut.String(), "refused") {
-		t.Fatalf("the refusal does not say it was refused: %q", errOut.String())
+	refusal := errOut.String()
+	if !strings.Contains(refusal, "-create-user refused") {
+		t.Fatalf("the refusal does not say it was refused: %q", refusal)
+	}
+	// 🔴 THE TWO 78s MUST NOT READ THE SAME, AND THIS IS THE ASSERTION THAT PINS IT. The
+	// journal's own message names the offending pair; the no-journal refusal names the
+	// variable to set. If those ever collapse into one wording, the exit code is all an
+	// operator has left and it no longer distinguishes anything.
+	if !strings.Contains(refusal, "provider, subject") {
+		t.Fatalf("the refusal does not name WHY the journal declined the batch, so it is "+
+			"indistinguishable from the no-journal refusal, which exits the same code: %q", refusal)
+	}
+	if strings.Contains(refusal, EnvControlJournal) {
+		t.Fatalf("a request refusal names the journal VARIABLE, which is the other 78's "+
+			"remedy and sends the operator to the manifest for a typo: %q", refusal)
 	}
 
 	// And the journal really holds exactly one user afterwards — the exit code alone is a
@@ -249,6 +277,38 @@ func TestNoControlJournalMeansNoSessionAuthorityAtAll(t *testing.T) {
 	}
 	if got := len(sessions.Model().Users); got != 0 {
 		t.Fatalf("the fresh journal projected %d users", got)
+	}
+}
+
+// TestTheSentinelNamesTheVariableThisProgramReads pins the one spelling of
+// `CAIRN_CONTROL_JOURNAL` that lives outside this package.
+//
+// 🔴 `identity.ErrSessionBackendWithoutAuthority` WRITES THE VARIABLE'S NAME INTO ITS OWN
+// MESSAGE, WHICH IS A SECOND COPY OF A FACT THIS PROGRAM OWNS. `internal/identity` cannot
+// import `cmd/cairn-server`, so the constant cannot be shared; what can be shared is a
+// failure when the two disagree. Rename `EnvControlJournal` without touching the sentinel
+// and an operator is told to set a variable no binary reads — advice that is worse than
+// none, because following it produces no change and no error.
+//
+// ⚠ IT IS A GUARD ON A SPELLING, WHICH IS EXACTLY THE SHAPE THAT IS USUALLY WALKABLE, AND
+// HERE THAT IS THE POINT RATHER THAN THE WEAKNESS: the hazard IS a spelling. The
+// relationship pinned is "the sentence an operator reads names the variable this program
+// looks up", and the substring check is that relationship stated at its own width.
+func TestTheSentinelNamesTheVariableThisProgramReads(t *testing.T) {
+	message := identity.ErrSessionBackendWithoutAuthority.Error()
+	if !strings.Contains(message, EnvControlJournal) {
+		t.Fatalf("the sentinel does not name $%s, so it sends an operator to a variable this "+
+			"program does not read:\n  %s", EnvControlJournal, message)
+	}
+	// The positive control: this assertion CAN fail. A name this program does not read
+	// must not be found in it — without this, the check above passes for a sentinel that
+	// mentions every plausible variable, and for a `strings.Contains` reading a constant
+	// that had become the empty string.
+	if EnvControlJournal == "" {
+		t.Fatal("EnvControlJournal is empty, so the assertion above is satisfied by any string at all")
+	}
+	if strings.Contains(message, "CAIRN_CONTROL_LEDGER") {
+		t.Fatalf("the sentinel names a variable nothing reads:\n  %s", message)
 	}
 }
 

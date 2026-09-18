@@ -75,6 +75,27 @@ func newTestAuthority(t *testing.T) *control.Cache {
 	return c
 }
 
+// newTestSessionAuthority is the SESSION authority a test whose environment ARMS a
+// session backend has to supply.
+//
+// 🔴 IT IS NOT A CONVENIENCE ALIAS: IT IS THE ARGUMENT `ErrSessionBackendWithoutAuthority`
+// MAKES MANDATORY, AND NAMING IT SEPARATELY IS WHAT STOPS A READER DELETING IT. An armed
+// Supabase or trusted-header ledger with a nil session authority is now a refusal to
+// start, because the fallback it replaced resolved those backends against the token-file
+// projection — a configuration that authenticates and then reads nothing. So every test
+// below that arms a ledger passes this, and every test that arms NOTHING passes nil,
+// which is the compatibility claim and must stay spelled that way.
+//
+// ⚠ IT IS THE SAME FIXTURE WORLD `newTestAuthority` BUILDS, DELIBERATELY. These tests are
+// about the LEDGERS and the CONSTRUCTORS, not about which world a session resolves in —
+// `journalsession_test.go` is where that is measured, over a real journal. Handing the
+// same world here means the ledger tests measure exactly what they measured before this
+// parameter existed.
+func newTestSessionAuthority(t *testing.T) ModelSource {
+	t.Helper()
+	return newTestAuthority(t)
+}
+
 // fixtureModel is the world itself, separate from the cache over it, so a test that
 // needs its own cache — one with a power switch under it — builds from the same world
 // rather than a second description of it.

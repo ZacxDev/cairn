@@ -702,6 +702,15 @@ func refuseBlanks(faults []blankFault) error {
 // `ErrSessionAuthorityUnread`: a journal configured with no session backend to resolve
 // against it authorises nobody through it, and that is the "came up healthy and answers
 // nothing" shape every ledger in this file exists to refuse.
+//
+// 🔴 AND SO IS THE MIRROR — A SESSION BACKEND WITH NO `sessions` — WHICH IS THE
+// DIRECTION THE ORIGINAL DEFECT WAS ACTUALLY MEASURED IN. See
+// `ErrSessionBackendWithoutAuthority`. The first draft of this parameter refused only
+// the first direction and silently fell back to `authority` for the second, which meant
+// the failure this whole slice exists to close — a pod that starts, authenticates a
+// session and hands it ZERO readable scopes — stayed configurable in production while a
+// test asserted it was gone. A nil `sessions` is now legal in exactly one configuration:
+// the one that arms no session backend at all, which is today's wiring.
 func FromEnvironment(env map[string]string, authority interface {
 	TokenAuthority
 	ModelSource
@@ -725,23 +734,39 @@ func FromEnvironment(env map[string]string, authority interface {
 		return nil, nil, err
 	}
 
+	// 🔴 BEFORE THE CONSTRUCTORS, BECAUSE THE FALLBACK THIS REPLACES RAN INSIDE THEM. An
+	// armed session backend with no session authority used to be built against
+	// `authority` — the token-file projection — and that is not a degraded mode, it is the
+	// defect: the backend authenticates, `Valid()` is true, and the authorization is
+	// EMPTY. Asking the ARMED flags rather than "did a backend get built" is what lets the
+	// refusal happen before a backend is constructed against the wrong authority at all,
+	// so there is no branch left that can reach `authority` from here.
+	//
+	// ⚠ IT TAKES PRECEDENCE OVER A CONSTRUCTOR'S OWN ERROR, WHICH IS A CHANGE AND IS THE
+	// COST OF THE LINE ABOVE. A deployment that both half-configures a ledger past the
+	// blank sweep — an unparseable duration, a too-short secret — and sets no journal now
+	// reads this message rather than the specific one. Both are startup refusals naming
+	// something the operator must fix, and the blank sweep (the half-configuration case
+	// that actually occurs) still runs first. `ErrSessionAuthorityUnread`, the mirror,
+	// stays AFTER the constructors for the reason stated there: it has no such conflict,
+	// because the configuration it refuses arms no ledger.
+	if (supabaseArmed || proxyArmed) && sessions == nil {
+		return nil, nil, ErrSessionBackendWithoutAuthority
+	}
+
 	machine, err := NewMachineToken(authority)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// 🔴 THE FALLBACK IS HERE, ONCE, RATHER THAN AT EACH CONSTRUCTOR. Both session
-	// backends must resolve against the SAME authority — one of them reading the journal
-	// while the other read the token-file projection would mean a user who can sign in
-	// through the proxy and not through the IdP, with no error anywhere to say why.
-	sessionAuthority := sessions
-	if sessionAuthority == nil {
-		sessionAuthority = authority
-	}
-
+	// Both session backends resolve against the SAME authority, and it is the one the
+	// caller supplied — one of them reading the journal while the other read the
+	// token-file projection would mean a user who can sign in through the proxy and not
+	// through the IdP, with no error anywhere to say why. The guard above is what makes
+	// `sessions` non-nil on every path that reaches these two lines.
 	var supabase *SupabaseJWT
 	if supabaseArmed {
-		supabase, err = supabaseFromEnv(supabaseValues, sessionAuthority)
+		supabase, err = supabaseFromEnv(supabaseValues, sessions)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -749,7 +774,7 @@ func FromEnvironment(env map[string]string, authority interface {
 
 	var trusted *TrustedHeader
 	if proxyArmed {
-		trusted, err = trustedHeaderFromEnv(proxyValues, sessionAuthority)
+		trusted, err = trustedHeaderFromEnv(proxyValues, sessions)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -790,6 +815,34 @@ var ErrSessionAuthorityUnread = errors.New(
 	"identity: a session authority was configured and no session backend resolves against it — " +
 		"with neither the Supabase nor the trusted-header backend configured, nothing reads it, " +
 		"every browser sign-in is refused, and the pod comes up looking healthy")
+
+// ErrSessionBackendWithoutAuthority refuses a session backend with no authority to
+// resolve against — the MIRROR of `ErrSessionAuthorityUnread`, and the direction the
+// defect was actually measured in.
+//
+// 🔴 IT IS THE STRICTLY WORSE OF THE TWO, WHICH IS WHY IT IS A REFUSAL RATHER THAN A
+// WARNING. `ErrSessionAuthorityUnread` describes a pod that refuses every sign-in, which
+// is loud: nobody gets in and somebody says so. This one describes a pod that ACCEPTS the
+// sign-in — the JWT verifies, the proxy header is trusted, `Identity.Valid()` is true,
+// the audit line names a principal — and hands it an authorization over nothing, because
+// the only authority available was the token-file projection, whose one synthetic user
+// sits at provider `cairn-token-file` with no membership and no grant. Every read then
+// answers exactly as if the scopes did not exist. Measured at `e11c3a7`: an armed backend
+// with a nil session authority built a two-backend chain and returned a nil error.
+//
+// 🔴 IT NAMES THE VARIABLE WHERE `ErrSessionAuthorityUnread` DELIBERATELY DOES NOT, AND
+// THE ASYMMETRY IS THE ADVICE, NOT AN INCONSISTENCY. That one has two possible remedies
+// and this package cannot tell which the operator wants (configure a backend, or unset a
+// path it has never been told the name of). This one has exactly one: supply the journal.
+// So the name is written here, where the sentence that needs it is — and
+// `cmd/cairn-server`'s `TestTheSentinelNamesTheVariableThisProgramReads` pins this string
+// against that program's `EnvControlJournal` constant, so the two spellings cannot drift.
+var ErrSessionBackendWithoutAuthority = errors.New(
+	"identity: a session backend is configured and no session authority was supplied — " +
+		"set $CAIRN_CONTROL_JOURNAL to the control journal this pod resolves sessions against. " +
+		"Without it the Supabase and trusted-header backends resolve against the token-file " +
+		"projection, which holds no user any identity provider can name, so a verified sign-in " +
+		"AUTHENTICATES and then reads nothing: the pod comes up healthy and every scope is empty")
 
 // reader hands a constructor the values `resolveLedger` already produced, and remembers
 // the first fault.

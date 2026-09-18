@@ -21,6 +21,46 @@ package identity
 // assert real authority — they were green through the whole period in which no deployment
 // could authenticate anybody. What was missing was a way for the environment to hand the
 // session backends an authority that holds users, which is the parameter under test here.
+//
+// # HOW TO RE-DERIVE THE RED, RATHER THAN TRUST THIS FILE'S CLAIM TO HAVE SEEN IT
+//
+// 🔴 THE FIRST ROUND'S "RED AT THE BASE" WAS TAKEN WITH SCRATCH FILES THAT WERE NEVER
+// COMMITTED, SO THE CLAIM WAS UNREPRODUCIBLE FROM THE REPOSITORY. That is the failure
+// this block exists to close: the steps are here, in the tree, keyed to exact commits and
+// exact edits, so a later reader re-runs them instead of believing a sentence.
+//
+// The two bases, and what each is the base FOR:
+//
+//   - `229c142` — the last commit before the user-creation path. `FromEnvironment` takes
+//     TWO parameters there, so these tests do not compile against it; the measurement that
+//     commit supports is the one `internal/control/README.md` records — no non-test file
+//     under `cmd/` or `internal/` constructs a `control.FileStore`, so the only authority
+//     any binary wires is `tokenfile.Source`, and a trusted-header backend aimed at its
+//     one synthetic pair authenticates with ZERO readable scopes. Reproduce it by
+//     enumerating `OpenFileStore` over that tree; `filestore_test.go` and `cache_test.go`
+//     are the positive control that the sweep can hit.
+//
+//   - `e11c3a7` — the user-creation path, with the session-authority parameter and
+//     `ErrSessionAuthorityUnread`, but WITHOUT the mirror refusal. That is the base for
+//     `TestASessionBackendWithNoSessionAuthorityRefusesToStart`: at that commit an armed
+//     session backend with a nil session authority returns err=nil and a two-backend
+//     chain. Measured red on BOTH of that test's arms.
+//
+// The mutations that reproduce each red on the CURRENT tree, which is the cheaper route
+// and the one the battery runs on every CI `go` job — `python3 tests/control_mutants.py
+// --show` prints them exactly:
+//
+//   - `a-session-backend-with-no-authority-comes-up-quietly` — `internal/identity/config.go`,
+//     `if (supabaseArmed || proxyArmed) && sessions == nil {` → `if false {`. Kills
+//     `TestASessionBackendWithNoSessionAuthorityRefusesToStart`.
+//   - `the-supabase-backend-resolves-against-the-token-file-authority-again` and its
+//     trusted-header twin — the `sessions` argument at each constructor call replaced by
+//     `authority`. Those two kill the two `…AuthenticatesWithRealAuthority` tests, which
+//     is the wiring half of the slice.
+//   - `membership-omitted-from-the-provisioning-batch` — `internal/control/provision.go`,
+//     the `EventMemberSet` element dropped from the batch. That is the one worth running
+//     by hand at least once: every structural check still passes and the authorization is
+//     empty, which is the exact state the whole slice exists to leave behind.
 
 import (
 	"context"
@@ -61,10 +101,9 @@ func provisionedJournal(t *testing.T, scopes ...string) (*control.Cache, control
 	if err != nil {
 		t.Fatalf("provisioning a user: %v", err)
 	}
-	// Read through `ReloadingSource`, which is what the pod uses, so the test exercises
-	// the same read path rather than a shorter one that happens to work.
-	cache := control.NewCache(control.ReloadingSource{Store: store},
-		control.CacheOptions{Now: fixedNow})
+	// Read through a `Cache` over the `FileStore` itself, which is what the pod does, so
+	// the test exercises the same read path rather than a shorter one that happens to work.
+	cache := control.NewCache(store, control.CacheOptions{Now: fixedNow})
 	if err := cache.Refresh(context.Background()); err != nil {
 		t.Fatalf("materializing the journal: %v", err)
 	}
@@ -211,6 +250,15 @@ func TestAnOperatorProvisionedTrustedHeaderSessionAuthenticatesWithRealAuthority
 // session for a subject no authority holds is refused. What earns it a place is that it is
 // the only assertion in this file that could distinguish "the journal wiring works" from
 // "the fixture would have worked either way".
+//
+// 🔴 AND IT NOW NAMES THE PROJECTION AS THE SESSION AUTHORITY EXPLICITLY, WHICH IS A
+// CHANGE IN WHAT THE TEST IS ABOUT. It used to pass `nil` and let `FromEnvironment` fall
+// back to the token authority — the same silent substitution a real deployment got. That
+// configuration is now a refusal to start (`ErrSessionBackendWithoutAuthority`, gated by
+// `TestASessionBackendWithNoSessionAuthorityRefusesToStart`), so reaching this state at
+// all takes an operator deliberately handing the projection over as a session authority,
+// which nothing in `cmd/cairn-server` does. The measurement is kept because it is what
+// the word "inert" rests on; what is gone is the wiring that produced it by accident.
 func TestTheSameConfigurationOverTheTokenFileProjectionAuthenticatesNobody(t *testing.T) {
 	signer := newRSASigner(t, "rsa-1", 2048)
 	idp := newJWKSServer(t, jwksDocumentOf(t, signer.publicJWK(t)))
@@ -229,9 +277,9 @@ func TestTheSameConfigurationOverTheTokenFileProjectionAuthenticatesNobody(t *te
 	chain, supabase, err := FromEnvironment(map[string]string{
 		EnvSupabaseIssuer:  testIssuer,
 		EnvSupabaseJWKSURL: idp.url(),
-	}, projection, nil)
+	}, projection, projection)
 	if err != nil {
-		t.Fatalf("the pre-slice wiring must still build: %v", err)
+		t.Fatalf("the projection named as its own session authority must still build: %v", err)
 	}
 	if err := supabase.RefreshKeys(t.Context()); err != nil {
 		t.Fatalf("the loopback JWKS must materialize: %v", err)
@@ -275,6 +323,82 @@ func TestASessionAuthorityNobodyReadsRefusesToStart(t *testing.T) {
 	chain, _, err := FromEnvironment(map[string]string{}, newTestAuthority(t), nil)
 	if err != nil || len(chain) != 1 {
 		t.Fatalf("no journal and nothing configured must stay machine-token-only: %v / %d", err, len(chain))
+	}
+}
+
+// TestASessionBackendWithNoSessionAuthorityRefusesToStart is the MIRROR of the test
+// above it, and it is the one that closes the direction the defect was measured in.
+//
+// 🔴 RED AT `e11c3a7`, GREEN AT HEAD, AND THE RED IS NOT A MISSING ERROR — IT IS A
+// SUCCESSFUL BUILD. Measured at that commit with the arm below: `err` was nil, a Supabase
+// backend was returned, and the chain had two members. The pod then starts, fetches its
+// JWKS, passes its health check, and resolves every verified session against the
+// token-file projection — which holds one synthetic user at provider `cairn-token-file`
+// and no membership. The session AUTHENTICATES (`Identity.Valid()` true, an audit line
+// naming a principal) and reads nothing. `ErrSessionAuthorityUnread` refused the opposite
+// arrangement — a journal with no backend — which is the arrangement that was never the
+// incident, so the closing condition was satisfied by a test while the failure stayed
+// configurable in production.
+//
+// ⚠ TO RE-DERIVE THE RED: check out `e11c3a7`, add this file's `wantsRefusal` arm, and
+// run it. It fails on the FIRST assertion — "a build that should have refused"; at that
+// commit `FromEnvironment` has no `ErrSessionBackendWithoutAuthority` at all, so the
+// compile is the first thing to go. Delete the two `errors.Is` lines and the arm still
+// fails on `err == nil`, which is the behavioural half and the one worth reading.
+func TestASessionBackendWithNoSessionAuthorityRefusesToStart(t *testing.T) {
+	// Both session backends, because the refusal is `supabaseArmed || proxyArmed` and one
+	// arm alone would leave the other operand asserted by nothing.
+	for _, arm := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{
+			name: "supabase",
+			env: map[string]string{
+				EnvSupabaseIssuer:  testIssuer,
+				EnvSupabaseJWKSURL: "https://notes-idp.example.test/jwks",
+			},
+		},
+		{
+			name: "trusted-header",
+			env: map[string]string{
+				EnvProxyFronted:       "yes",
+				EnvProxySubjectHeader: testSubjectHeader,
+				EnvProxySecret:        string(testProxySecret),
+				EnvProxyProvider:      testProvider,
+			},
+		},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			_, _, err := FromEnvironment(arm.env, newTestAuthority(t), nil)
+			if err == nil {
+				t.Fatal("an armed session backend with NO session authority built a chain. That pod " +
+					"starts, authenticates a verified session against the token-file projection, and " +
+					"hands it an EMPTY authorization — it comes up healthy and reads nothing")
+			}
+			if !errors.Is(err, ErrSessionBackendWithoutAuthority) {
+				t.Fatalf("the WRONG guard fired.\n  got:  %v\n  want: %v", err, ErrSessionBackendWithoutAuthority)
+			}
+
+			// The positive control: the SAME environment, with a session authority, builds.
+			// Without it the arm above is satisfied by a `FromEnvironment` that refuses
+			// this environment for any reason at all.
+			if _, _, err := FromEnvironment(arm.env, newTestAuthority(t), newTestSessionAuthority(t)); err != nil {
+				t.Fatalf("the same environment WITH a session authority must build: %v", err)
+			}
+		})
+	}
+
+	// 🔴 AND THE COMPATIBILITY CLAIM, ASSERTED BESIDE THE REFUSAL RATHER THAN ELSEWHERE.
+	// A guard written as `sessions == nil` alone — dropping the armed operands — would
+	// refuse every deployment that exists today. This is the arm that catches that, and it
+	// is the reason the refusal asks the ARMED flags rather than just the parameter.
+	chain, supabase, err := FromEnvironment(map[string]string{}, newTestAuthority(t), nil)
+	if err != nil {
+		t.Fatalf("no session backend and no session authority is today's wiring and must build: %v", err)
+	}
+	if len(chain) != 1 || supabase != nil {
+		t.Fatalf("machine-token-only expected, got a chain of %d and supabase=%v", len(chain), supabase != nil)
 	}
 }
 

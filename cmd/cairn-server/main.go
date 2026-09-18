@@ -42,17 +42,38 @@ const (
 	// that did not come up at all, because it looks healthy.
 	exitConfig = 78
 
-	// exitDataErr is sysexits.h EX_DATAERR: the OPERATOR'S REQUEST was refused, and the
-	// pod's configuration is fine.
+	// 🔴 THERE IS NO SECOND FAILURE CODE, AND THE ONE THAT WAS HERE WAS DELETED RATHER
+	// THAN NARROWED. `exitDataErr = 65` (sysexits.h EX_DATAERR) was defined as "the pod is
+	// configured correctly and the REQUEST was refused" — a typo in a `-subject`, a scope
+	// name already taken — so that an operator reading exit codes could tell that from a
+	// missing journal path. It did not do that: `runCreateUser` returned 65 for EVERY
+	// `control.ProvisionUser` error, including `reading the control journal`, which is an
+	// unreadable or corrupt journal and is this file's own definition of 78.
 	//
-	// 🔴 A SECOND CODE RATHER THAN REUSING 78, BECAUSE THE TWO CALL FOR DIFFERENT
-	// ACTIONS. `-create-user` reaches here when the journal declined the batch — the
-	// (provider, subject) pair is taken, a scope name is taken, a required field is
-	// empty — and the fix is to change the arguments. 78 says "this deployment is
-	// misconfigured" and sends an operator to the manifest. Collapsing them would make a
-	// typo in a subject indistinguishable, to anything reading exit codes, from a missing
-	// journal path.
-	exitDataErr = 65
+	// Making it honest needs a classifier `internal/control` does not have: `Append`
+	// returns a plain `fmt.Errorf` both for a batch the model refused (a request fault)
+	// and for a failed `write`/`flock`/`Sync` (a deployment fault), so narrowing means
+	// adding sentinels to the journal for the benefit of a code nothing reads.
+	//
+	// 🔴 AND NOTHING READS IT, MEASURED RATHER THAN ASSUMED — `AGENTS.md`'s `{0, 9}`
+	// OVERLAP RULE IS ABOUT A DIFFERENT PROGRAM AND DOES NOT APPLY. The printed
+	// exit-code contract belongs to the CLIENT: `cmd/cairn` registers an `exit-codes`
+	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
+	// five flags — `store`, `host`, `port`, `token-file`, `routes` — plus
+	// `-create-user`'s six, and no exit-code flag among them; measured at `e11c3a7` by
+	// reading every file under `cmd/cairn-server/` in that tree (positive control: the
+	// same sweep hits `-routes` in three of them). So this program declares its exit
+	// codes to nothing, and no runbook, test or script branches on 65. A distinction
+	// with no consumer, no gate and a known-wrong classification is worth less than the
+	// two true codes left: 0, and 78 for every refusal to act.
+	//
+	// ⚠ Do not re-run that sweep as a LITERAL search of this tree and expect zero: the
+	// sentence above names the flag, so the string is now in this file. The claim is
+	// about what the program REGISTERS, which is the list six lines up.
+	//
+	// What the operator needs is on stderr and always was — the journal's own message
+	// names the offending event and the field. **If something ever does branch on the
+	// difference**, bring the code back WITH the sentinels that make it true, not before.
 )
 
 // EnvControlJournal is the path to the append-only control journal this pod resolves
@@ -68,12 +89,19 @@ const (
 // THE `refuseBlank` POLICY `internal/identity/config.go` DECLARES FOR THE SETTINGS WHOSE
 // BLANK SILENTLY DISABLES WHAT THE OPERATOR WROTE DOWN. This is one of them: an operator
 // who wrote the line meant the pod to read a journal, and a blank read as "not set"
-// gives them a pod that starts, fetches its JWKS, passes its health check and refuses
-// every sign-in — which is the precise defect this whole change closes, re-entered
-// through a whitespace typo. The blank test is
-// `identity.ValueReducesToNothing`, the one predicate, rather than a second
-// `strings.TrimSpace` here: 32 zero-width runes are not whitespace and it has already
-// cost this repository a live bypass at a different setting.
+// discards it. The blank test is `identity.ValueReducesToNothing`, the one predicate,
+// rather than a second `strings.TrimSpace` here: 32 zero-width runes are not whitespace
+// and it has already cost this repository a live bypass at a different setting.
+//
+// ⚠ IT IS NO LONGER THE ONLY THING STANDING BETWEEN A TYPO AND A SILENT POD, AND THIS
+// COMMENT CLAIMED IT WAS. It said a blank "gives them a pod that starts, fetches its
+// JWKS, passes its health check and refuses every sign-in" — true when it was written and
+// false now: an armed session backend with no session authority is
+// `identity.ErrSessionBackendWithoutAuthority` and the pod refuses to start either way.
+// What the blank policy buys is the BETTER of the two messages — "your journal line
+// reduces to nothing" rather than "set the variable you can see you already set" — and
+// it is the only thing that refuses a blank on the `-create-user` path, which arms no
+// backend at all.
 //
 // ⚠ IT IS NOT IN AN `internal/identity` LEDGER, AND THE REASON IS WHAT THAT MACHINERY
 // ASKS. A ledger's `armed` flag answers "is this BACKEND half-configured, so refuse
@@ -264,6 +292,16 @@ func main() {
 				err.Error(), EnvControlJournal)))
 			os.Exit(exitConfig)
 		}
+		// 🔴 THE MIRROR SENTINEL GETS NO SECOND WORDING HERE, AND THAT IS THE DIFFERENCE
+		// BETWEEN THE TWO ARMS RATHER THAN AN OMISSION. `ErrSessionAuthorityUnread` has two
+		// remedies and `internal/identity` cannot name either, so this program supplies the
+		// sentence. `ErrSessionBackendWithoutAuthority` has exactly one — set the journal —
+		// and the sentinel already says so, including the variable's name; repeating it
+		// here would be a second description of one rule, and the one that drifts is always
+		// the copy. `TestTheSentinelNamesTheVariableThisProgramReads` is what keeps the
+		// spelling in that sentinel and `EnvControlJournal` from coming apart.
+		//
+		// It falls through to the generic arm below, which prints the sentinel and exits 78.
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: "+err.Error()))
 		os.Exit(exitConfig)
 	}
@@ -383,25 +421,6 @@ func main() {
 	}
 }
 
-// sighupChannel registers a NEW channel for SIGHUP and hands it back.
-//
-// 🔴 A SECOND REGISTRATION DOES NOT TAKE THE SIGNAL AWAY FROM THE FIRST, AND THAT IS
-// MEASURED RATHER THAN ASSUMED. `control.RefreshTriggers`' comment records
-// `TestTwoNotifyChannelsBothReceiveOneSIGHUP`: two `signal.Notify` channels on one signal
-// BOTH receive it, so the token reload and the control-journal refresh are not competing
-// for one `kill -HUP 1`. The opposite belief ("the token reload will swallow it") is the
-// plausible one, and holding it would make one of the two triggers silently dead in the
-// only program that has both.
-//
-// ⚠ BUFFERED, BECAUSE `signal.Notify` DROPS ON A FULL CHANNEL rather than blocking the
-// signal delivery. One slot is the right size for a reload: a second HUP arriving while
-// the first is being serviced asks for the same thing.
-func sighupChannel() <-chan os.Signal {
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGHUP)
-	return signals
-}
-
 // installReload makes `kill -HUP <pid>` re-read the token file.
 //
 // 🔴 A PARSE FAILURE HERE MUST NOT TAKE THE SERVER DOWN, AND THAT IS THE WHOLE
@@ -417,11 +436,17 @@ func sighupChannel() <-chan os.Signal {
 // reload path with its own parser is the shape where the migration guards silently stop
 // applying to the only file anybody edits after day one.
 //
-// ⚠ IT IS NO LONGER THE ONLY SIGHUP CONSUMER IN THIS PROGRAM. `openSessionAuthority`
-// registers a second channel for the control-journal cache; see `sighupChannel` for why
-// that does not take the signal away from this one.
+// ⚠ IT IS THE ONLY SIGHUP CONSUMER IN THIS PROGRAM, AND THAT IS A RULE RATHER THAN A
+// COINCIDENCE — see the authority timer above, which states it. A second
+// `signal.Notify` channel was added here for the control-journal cache and then removed:
+// it bought at most one refresh interval on a command a human runs by hand, and it put a
+// second answer beside the one the timer already gives.
 func installReload(srv *api.Server, tokenFile string, env map[string]string) {
-	signals := sighupChannel()
+	// BUFFERED, BECAUSE `signal.Notify` DROPS ON A FULL CHANNEL rather than blocking the
+	// signal delivery. One slot is the right size for a reload: a second HUP arriving
+	// while the first is being serviced asks for the same thing.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP)
 	go func() {
 		for range signals {
 			previous := srv.Tokens()

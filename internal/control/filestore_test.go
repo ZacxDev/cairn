@@ -70,6 +70,21 @@ func TestAnAppendedJournalSurvivesReopening(t *testing.T) {
 // The batch below is built so the partial application is OBSERVABLE: event 1 grants
 // alice admin on a beacon scope, and event 3 is rejected. If event 1 leaked into the
 // cache, alice's authority moves.
+//
+// 🔴 AND THE OBSERVABLE IS `lastKnownGood()`, NOT `Model()`, WHICH IS A CORRECTION RATHER
+// THAN A STYLE CHOICE — THIS TEST WENT VACUOUS FOR ITS OWN TWO MUTANTS AND THE BATTERY IS
+// WHAT CAUGHT IT. `FileStore.Model` used to serve the retained projection, so reading
+// through it saw the poisoned cache; `Model` is now `Reload`, so it re-reads the journal —
+// which the rejected batch never touched — and answers correctly whether or not the leak
+// happened. Measured: with `Model` as the observable,
+// `append-validates-against-the-live-cache` and `clone-is-shallow` both scored SURVIVED on
+// a fully green suite. The RETAINED model is what the hazard is about anyway: a poisoned
+// `cached` is what `lastKnownGood` serves the moment a later reload fails, so the served
+// authority would be WIDER than the file it claims to project with nothing recording it.
+//
+// ⚠ THE FRESH-REPLAY AND BYTE ASSERTIONS ARE KEPT BESIDE IT, because they are a DIFFERENT
+// claim — that the journal did not grow — and it is the one half that was never at risk
+// from this mistake. Two observables, two claims, neither standing in for the other.
 func TestARejectedBatchLeavesNeitherBytesNorState(t *testing.T) {
 	ctx := context.Background()
 	s := tempStore(t)
@@ -105,18 +120,27 @@ func TestARejectedBatchLeavesNeitherBytesNorState(t *testing.T) {
 		t.Fatal("a batch whose third event cannot replay was accepted")
 	}
 
+	// THE RETAINED MODEL: what `lastKnownGood` hands out the instant a reload fails, and
+	// the only place a leak from `Append` can still be seen.
+	retained := s.lastKnownGood()
+	if retained.Epoch != beforeEpoch {
+		t.Errorf("the RETAINED model's epoch moved from %d to %d on a REJECTED batch", beforeEpoch, retained.Epoch)
+	}
+	if got := verbsOrEmpty(Resolve(retained, user(uAlice)).VerbsOn(sBeaconNotes)); got != "" {
+		t.Errorf("alice gained %q on beacon-notes from a batch that was REJECTED — the first event of the batch leaked into the live cache, which is the shallow-copy defect this test exists for", got)
+	}
+	if _, leaked := retained.Users["usr_grace"]; leaked {
+		t.Error("the batch's second event leaked into the live cache")
+	}
+
+	// A SECOND, INDEPENDENT CLAIM: the journal itself. `Model` re-reads, so this is about
+	// the FILE and says nothing about the cache above.
 	after, err := s.Model(ctx)
 	if err != nil {
 		t.Fatalf("model after the rejected batch: %v", err)
 	}
 	if after.Epoch != beforeEpoch {
-		t.Errorf("epoch moved from %d to %d on a REJECTED batch", beforeEpoch, after.Epoch)
-	}
-	if got := verbsOrEmpty(Resolve(after, user(uAlice)).VerbsOn(sBeaconNotes)); got != "" {
-		t.Errorf("alice gained %q on beacon-notes from a batch that was REJECTED — the first event of the batch leaked into the live cache, which is the shallow-copy defect this test exists for", got)
-	}
-	if _, leaked := after.Users["usr_grace"]; leaked {
-		t.Error("the batch's second event leaked into the live cache")
+		t.Errorf("a fresh replay's epoch moved from %d to %d on a REJECTED batch", beforeEpoch, after.Epoch)
 	}
 	afterBytes, err := os.ReadFile(s.Path())
 	if err != nil {

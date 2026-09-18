@@ -234,8 +234,13 @@ last-known-good keeps answering:
   so `LastTrigger` identifies the mechanism. That they are independent is the `select`'s
   property, reasoned about rather than measured — with one exception that was worth
   measuring: `TestTwoNotifyChannelsBothReceiveOneSIGHUP`, because the plausible belief
-  ("the token reload will swallow it") would make this trigger silently dead in the only
-  program that has both.
+  ("the token reload will swallow it") would make a second registration silently dead.
+  ⚠ **No program has two registrations today.** `cmd/cairn-server` added one for the
+  control-journal cache in P5 and it was removed in the same review: it bought at most one
+  refresh interval on a command a human runs by hand, against the rule that program states
+  beside its authority timer — *one trigger, one place*. The measurement is kept because it
+  is what would be relied on if a second consumer is ever justified; it is not a
+  description of the current wiring.
 - **Anything about another replica, or about a copy already synced.** `ApplyNow`'s
   promise is about *this process's* cache. Revoking stops future syncs; it does not
   recall the files already on somebody's laptop.
@@ -243,11 +248,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 105 mutants, over FIVE packages
+python3 tests/control_mutants.py          # 107 mutants, over FIVE packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 105 mutants, 103 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 107 mutants, 105 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, positive control GREEN.**
 
 ⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
@@ -296,7 +301,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 105 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 107 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -325,6 +330,23 @@ timing one, defended by the comment beside each call. They are listed here so a 
 finding them SURVIVED does not read that as "the comparison does not matter" — and there
 are two rather than one because they are two different secrets at two different call
 sites, not one guard counted twice.
+
+🔴 **AND TWO MORE SURVIVED BRIEFLY, BECAUSE A PRODUCTION CHANGE MOVED THE OBSERVABLE OUT
+FROM UNDER A GUARD THAT WAS NOT EDITED.** `append-validates-against-the-live-cache` and
+`clone-is-shallow` both point at `TestARejectedBatchLeavesNeitherBytesNorState`, which read
+the poisoned state through `FileStore.Model`. Deleting `Model`'s cache short-circuit —
+correct, and unrelated to those guards — made `Model` re-read the journal, which the
+rejected batch never touched, so the test answered correctly whether or not the leak
+happened. Measured: **both scored SURVIVED on a fully green `go test ./...`**, and the
+suite gave no other signal at all. The observable is now `lastKnownGood()`, the retained
+model, which is what a poisoned cache would actually be served from the moment a reload
+fails; both mutants die on it with the guard's own message.
+
+⚠ **THE LESSON IS THE ONE THIS BATTERY EXISTS FOR, STATED IN THE DIRECTION THAT IS EASY TO
+MISS.** Nothing edited the guard, and nothing edited its mutants. A change three
+declarations away silently made the test read through a path where the defect is invisible
+— which a green suite cannot distinguish from a guard that works. **When a read path is
+changed, re-run the battery, not the suite.**
 
 🔴 **THERE WAS BRIEFLY A SECOND SURVIVOR, AND ITS LABEL WAS FALSE.**
 `the-write-ignores-a-newer-commit` — deleting the `mine >= c.committed` clause from
@@ -541,12 +563,33 @@ Both session backends were inert in every deployment that could exist.
    reach the same collision and none of them passes through this function. It closes when
    a scope's bytes are addressed by id rather than by display name.
 
-⚠ **AND THE POD READS THE JOURNAL THROUGH `ReloadingSource`, BECAUSE THE WRITER IS A
-DIFFERENT PROCESS.** `FileStore.Model` serves a process-local projection invalidated only
-by that value's own appends — correct for a single owner and wrong for this shape, where
-`kubectl exec … cairn-server -create-user` writes and the server reads. Handed a bare
-`FileStore` the pod would materialize once at startup and never see a provisioned user:
-the journal correct, the command successful, the sign-in still refused.
+⚠ **AND `FileStore.Model` RE-READS THE JOURNAL ON EVERY CALL, BECAUSE THE WRITER IS A
+DIFFERENT PROCESS.** It used to serve a process-local projection invalidated only by that
+value's own appends — correct for a single owner and wrong for this shape, where
+`kubectl exec … cairn-server -create-user` writes and the server reads. A pod reading
+through the short-circuit would materialize once at startup and never see a provisioned
+user: the journal correct, the command successful, the sign-in still refused.
+
+🔴 **THE FIX WAS TO DELETE THE SHORT-CIRCUIT, NOT TO ROUTE AROUND IT.** The first version
+added a one-line `ReloadingSource` wrapping the same `*FileStore` so that `Reload` could
+satisfy `Source`; the pod took the wrapper and every other caller took `Model`. That is two
+spellings of one read path with the unsafe one as the default, and it is the shape that
+regenerates the same bug at the next call site. `ReloadingSource` is gone; `Model` **is**
+`Reload`. The `cached`/`loaded` fields stay because `lastKnownGood` reads them, which is
+what keeps an unreadable journal degrading to a STALE authority rather than an empty one
+(`TestAnUnreadableJournalLeavesTheFileStoreServingLastKnownGood`).
+
+⚠ **AND THE SHORT-CIRCUIT SAVED NOTHING, MEASURED RATHER THAN ARGUED.** Its only
+beneficiary was a caller that owns the file and reads it more than once, and the only such
+caller is `ProvisionUser`, which reads once and appends once. Counted with
+`strace -e trace=openat` over a real `cairn-server -create-user`, at `e11c3a7` and again
+after the deletion: **4 opens of the journal either way** — the `OpenFileStore` create,
+the `Model` read, the `O_APPEND` write, and `Append`'s own re-read under the `flock`. The
+branch was never taken, because the `FileStore` value is fresh when `ProvisionUser` reaches
+it.
+
+⚠ **AND THE POD'S CACHE HAS ONE TRIGGER: THE TIMER.** A SIGHUP channel was registered for
+it and removed — see the trigger note above.
 
 ## What this package structurally cannot see
 

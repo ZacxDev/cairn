@@ -116,12 +116,18 @@ func runCreateUser(env map[string]string, f *createUserFlags, out, errOut io.Wri
 	}
 	made, err := control.ProvisionUser(context.Background(), store, req)
 	if err != nil {
-		// 🔴 65, NOT 78: the pod is configured correctly and the REQUEST was refused. The
-		// journal's own message names the event and the field, so it is passed through
-		// rather than re-worded — a second wording here would be a second description of
-		// a rule that lives in `internal/control`.
+		// 🔴 78, THE SAME CODE AS EVERY OTHER REFUSAL IN THIS PROGRAM, AND THE SECOND CODE
+		// THAT USED TO BE HERE IS GONE. It returned 65 ("the request was refused, the
+		// deployment is fine") for every error this call can produce — including
+		// `reading the control journal`, which is the opposite fault. See `exitConfig`'s
+		// comment for why it was deleted rather than narrowed.
+		//
+		// The journal's own message names the event and the field, so it is passed
+		// through rather than re-worded — a second wording here would be a second
+		// description of a rule that lives in `internal/control` — and it is what
+		// distinguishes a typo from a broken mount, on the stream an operator reads.
 		fmt.Fprintln(errOut, reloadSafe("subsystem-store-api: -create-user refused: "+err.Error()))
-		return exitDataErr
+		return exitConfig
 	}
 
 	// 🔴 THE IDS GO TO STDOUT AND THE CAVEATS TO STDERR, because the ids are what an
@@ -147,12 +153,17 @@ func runCreateUser(env map[string]string, f *createUserFlags, out, errOut io.Wri
 	}
 	// ⚠ THE RUNNING POD DOES NOT SEE THIS YET, AND THE LAG IS BOUNDED RATHER THAN
 	// INSTANT. This process wrote the file; the server materializes its authority from a
-	// `control.Cache` that re-reads the journal on its timer and on SIGHUP. Saying so is
-	// the difference between an operator who waits and one who concludes the command did
-	// nothing.
+	// `control.Cache` that re-reads the journal on its TIMER. Saying so is the difference
+	// between an operator who waits and one who concludes the command did nothing.
+	//
+	// 🔴 IT PROMISES THE TIMER AND NOTHING ELSE, AND THE CLAUSE THAT USED TO OFFER
+	// `kill -HUP 1` WAS DELETED WITH THE TRIGGER IT NAMED. A line advertising a mechanism
+	// the program no longer has is worse than no line: the operator sends the signal, it
+	// is received by the TOKEN reload (which re-reads a different file and says so), and
+	// they read that verdict as confirmation the journal was re-read. `openSessionAuthority`
+	// is where the trigger was and why it went.
 	fmt.Fprintln(errOut, reloadSafe(fmt.Sprintf(
-		"subsystem-store-api: the running server picks this up within %s, or immediately on "+
-			"`kill -HUP 1`", refreshInterval)))
+		"subsystem-store-api: the running server picks this up within %s", refreshInterval)))
 	return 0
 }
 
@@ -170,9 +181,8 @@ func controlJournalPath(env map[string]string) (string, error) {
 	}
 	if identity.ValueReducesToNothing(raw) {
 		return "", fmt.Errorf(
-			"%s=%q reduces to nothing. Read as UNSET it means: this pod resolves browser and "+
-				"proxy sessions against the token-file projection, which holds no user any identity "+
-				"provider can name — so every sign-in is refused while the pod looks healthy. Give it "+
+			"%s=%q reduces to nothing, so this pod has no control journal: a session backend "+
+				"would refuse to start, and `-create-user` has nowhere to write a user to. Give it "+
 				"a path or delete the line",
 			EnvControlJournal, raw)
 	}
@@ -219,10 +229,22 @@ func renderScopes(scopes []control.ProvisionedScope) string {
 // why the concrete type never leaves this function's `if`.
 //
 // 🔴 A CACHE, NOT THE `FileStore` ITSELF, FOR THE REASON `control.Cache` EXISTS: reads
-// must not touch the authority. And the cache's source is `control.ReloadingSource`,
-// because the writer is a different process — see that type's comment, which is the
-// difference between a pod that sees a provisioned user and one that materialized the
-// journal once at startup.
+// must not touch the authority. The `FileStore` goes in as the cache's `Source` directly —
+// `FileStore.Model` re-reads the journal on every call, which is what makes the pod see a
+// user `-create-user` wrote from another process. That used to take a second type
+// (`control.ReloadingSource`) wrapping the same store; it was deleted, because a read path
+// with two spellings is one where the wrong spelling is the default.
+//
+// 🔴 AND THAT CHANGES WHAT THE CACHE CAN DO, WHICH IS WORTH STATING RATHER THAN LEAVING TO
+// BE FOUND. `Cache.write` type-asserts its source to `control.Writer`; `ReloadingSource`
+// implemented only the read half, so the cache it fed refused `Apply`/`ApplyNow` with
+// `ErrAuthorityReadOnly`. A `*FileStore` is both halves, so that refusal is gone. The
+// narrowing survives by a different and stronger mechanism: this function's return type is
+// `identity.ModelSource` — an interface with ONE method — so the `*control.Cache` never
+// escapes as a concrete value and nothing in the serving path can reach a write at all.
+// ⚠ Widening that return type to `*control.Cache` would hand the pod a write path to the
+// control journal with no caller and no gate; if a reason to do it ever appears, the
+// read-only refusal has to come back with it.
 func openSessionAuthority(ctx context.Context, env map[string]string, warn func(string)) (identity.ModelSource, error) {
 	journal, err := controlJournalPath(env)
 	if err != nil {
@@ -235,8 +257,7 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 	if err != nil {
 		return nil, err
 	}
-	cache := control.NewCache(control.ReloadingSource{Store: store},
-		control.CacheOptions{MaxAge: api.AuthorityMaxAge})
+	cache := control.NewCache(store, control.CacheOptions{MaxAge: api.AuthorityMaxAge})
 	// 🔴 MATERIALIZED BEFORE THE LISTENER ACCEPTS, AND A FAILURE IS FATAL — the same
 	// asymmetry the Supabase key set draws between a cold start and an outage. A cache
 	// that has never materialized authorises NOBODY (`control.NewCache`'s comment), so a
@@ -261,21 +282,21 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 				"Provision with `cairn-server -create-user`",
 			journal))
 	}
-	// 🔴 THE TIMER *AND* SIGHUP, WHICH ARE DIFFERENT CLAIMS. The timer bounds how long an
-	// out-of-band write stays invisible with nobody asking; SIGHUP is how an operator who
-	// just ran `-create-user` stops waiting. `control.RefreshTriggers` records that two
-	// `signal.Notify` channels BOTH receive one SIGHUP — measured — so registering here
-	// does not take the signal away from the token reload.
+	// 🔴 THE TIMER, AND ONLY THE TIMER. A second `signal.Notify` channel was registered
+	// here so an operator who had just run `-create-user` did not have to wait; it was
+	// removed, and the reasoning is worth keeping because the feature reads as free.
+	// What it bought was bounded by `api.AuthorityRefreshInterval` — 30 seconds — and
+	// bounded from above as well, because `Cache.Run` refuses an interval larger than
+	// `MaxAge` (2 minutes). What it cost was the rule `main` states sixty lines above the
+	// authority timer: SIGHUP is deliberately not one of that loop's triggers, ONE
+	// TRIGGER, ONE PLACE. A mechanism that saves at most half a minute on a command a
+	// human types is not worth a second answer to "what makes this pod re-read".
 	//
-	// 🔴 REGISTERED HERE AND NOT INSIDE THE GOROUTINE, for the same reason `installReload`
-	// is installed before the listener accepts: a signal arriving before the goroutine is
-	// scheduled would be delivered to a channel nobody had registered yet, and a LOST
-	// reload is silent — the operator's `kill -HUP 1` exits 0 having done nothing.
-	signals := sighupChannel()
+	// ⚠ SO `-create-user` PROMISES THE INTERVAL AND NOTHING ELSE. Its closing line says
+	// so; if this ever grows a signal trigger again, that line moves with it.
 	go func() {
 		if err := cache.Run(ctx, control.RefreshTriggers{
 			Interval: refreshInterval,
-			Signals:  signals,
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			warn("subsystem-store-api: control journal refresh loop stopped: " + err.Error())
 		}

@@ -148,7 +148,7 @@ func TestAPartiallyConfiguredBackendRefusesToStart(t *testing.T) {
 		},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
-			_, _, err := FromEnvironment(arm.env, newTestAuthority(t), nil)
+			_, _, err := FromEnvironment(arm.env, newTestAuthority(t), newTestSessionAuthority(t))
 			if err == nil {
 				t.Fatal("a partial configuration came up quietly rather than refusing")
 			}
@@ -188,7 +188,7 @@ func TestAFullyConfiguredEnvironmentBuildsTheWholeChain(t *testing.T) {
 		EnvProxySecret:        string(testProxySecret),
 		EnvProxyProvider:      testProvider,
 		EnvProxyPeers:         "192.0.2.10/32",
-	}, newTestAuthority(t), nil)
+	}, newTestAuthority(t), newTestSessionAuthority(t))
 	if err != nil {
 		t.Fatalf("a complete configuration must build: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestAnUnrecognisedBooleanIsAnErrorRatherThanFalse(t *testing.T) {
 		EnvProxySubjectHeader: "X-Forwarded-User",
 		EnvProxySecret:        string(testProxySecret),
 		EnvProxyProvider:      testProvider,
-	}, newTestAuthority(t), nil)
+	}, newTestAuthority(t), newTestSessionAuthority(t))
 	if err == nil {
 		t.Fatal("a misspelled boolean was read as `no`, silently disabling the backend the operator configured")
 	}
@@ -347,7 +347,7 @@ func TestAnEmptySecretFileBlamesItselfRatherThanTheSourceCheck(t *testing.T) {
 		EnvProxySubjectHeader: "X-Forwarded-User",
 		EnvProxyProvider:      testProvider,
 		EnvProxySecretFile:    empty,
-	}, newTestAuthority(t), nil)
+	}, newTestAuthority(t), newTestSessionAuthority(t))
 	if err == nil {
 		t.Fatal("an empty secret file came up quietly through FromEnvironment")
 	}
@@ -550,7 +550,7 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 	} {
 		covered = append(covered, arm.blank)
 		t.Run(arm.name, func(t *testing.T) {
-			chain, supabase, err := FromEnvironment(arm.env, newTestAuthority(t), nil)
+			chain, supabase, err := FromEnvironment(arm.env, newTestAuthority(t), newTestSessionAuthority(t))
 			if err != nil {
 				t.Fatalf("a blank OPTIONAL setting beside an armed backend was refused, which is a "+
 					"deployment that worked before the guard existed:\n  %v", err)
@@ -569,7 +569,7 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 					absent[k] = v
 				}
 			}
-			chainAbsent, supabaseAbsent, errAbsent := FromEnvironment(absent, newTestAuthority(t), nil)
+			chainAbsent, supabaseAbsent, errAbsent := FromEnvironment(absent, newTestAuthority(t), newTestSessionAuthority(t))
 			if errAbsent != nil || len(chainAbsent) != len(chain) {
 				t.Fatalf("the same environment WITHOUT %s behaved differently: %v / %d", arm.blank, errAbsent, len(chainAbsent))
 			}
@@ -594,7 +594,7 @@ func TestABlankSettingBesideAnArmedBackendIsAcceptedAsUnset(t *testing.T) {
 	// blank secret, so the trusted-header backend IS silently off and the refusal's own
 	// sentence is true for it. A narrowing that asked "is any backend armed" would accept
 	// this, which is the measured defect back again one ledger over.
-	_, _, err := FromEnvironment(with(armedSupabase(), EnvProxySecret, "   "), newTestAuthority(t), nil)
+	_, _, err := FromEnvironment(with(armedSupabase(), EnvProxySecret, "   "), newTestAuthority(t), newTestSessionAuthority(t))
 	if !errors.Is(err, ErrBlankSetting) {
 		t.Fatalf("a blank proxy secret beside an armed SUPABASE backend was accepted — the trusted-header "+
 			"backend is silently off.\n  got:  %v\n  want: %v", err, ErrBlankSetting)
@@ -942,7 +942,7 @@ func TestABlankSecuritySettingCannotSilentlyDisableTheCheckItArms(t *testing.T) 
 				if present {
 					env[arm.setting] = value
 				}
-				return FromEnvironment(env, newTestAuthority(t), nil)
+				return FromEnvironment(env, newTestAuthority(t), newTestSessionAuthority(t))
 			}
 
 			// 1. THE POSITIVE CONTROL ON THE PROBE — the value an operator writes.
@@ -1589,7 +1589,7 @@ func TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt(t *testing.T) {
 				// unusable peer entry); only THIS sentinel is the wrong answer.
 				control := armedEnv()
 				control[s.name] = "zzz-not-blank"
-				if _, _, err := FromEnvironment(control, newTestAuthority(t), nil); errors.Is(err, ErrBlankSetting) {
+				if _, _, err := FromEnvironment(control, newTestAuthority(t), newTestSessionAuthority(t)); errors.Is(err, ErrBlankSetting) {
 					t.Fatalf("%s=%q was called blank, so the refusals below are not attributable to "+
 						"blankness: %v", s.name, "zzz-not-blank", err)
 				}
@@ -1599,7 +1599,7 @@ func TestEverySettingDeclaresItsBlankPolicyAndTheReaderObeysIt(t *testing.T) {
 					// A. BESIDE AN ARMED BACKEND — the setting's own declared policy.
 					env := armedEnv()
 					env[s.name] = blank
-					_, _, err := FromEnvironment(env, newTestAuthority(t), nil)
+					_, _, err := FromEnvironment(env, newTestAuthority(t), newTestSessionAuthority(t))
 					armedCases++
 					switch s.policy {
 					case refuseBlank:
@@ -1798,7 +1798,7 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.
 
 	// The whitespace is INSIDE the value and must survive byte for byte, padding included.
 	padded := "  " + string(testProxySecret) + " \t "
-	chain, _, err := FromEnvironment(armed(padded), newTestAuthority(t), nil)
+	chain, _, err := FromEnvironment(armed(padded), newTestAuthority(t), newTestSessionAuthority(t))
 	if err != nil {
 		t.Fatalf("a secret with edge whitespace was refused: %v", err)
 	}
@@ -1812,7 +1812,7 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.
 	// too, so the arm is about the padding rather than about a reader that echoes its
 	// input. `padded` and this value are distinct strings, so a reader hardwired to either
 	// fails one of the two.
-	chain, _, err = FromEnvironment(armed(string(testProxySecret)), newTestAuthority(t), nil)
+	chain, _, err = FromEnvironment(armed(string(testProxySecret)), newTestAuthority(t), newTestSessionAuthority(t))
 	if err != nil {
 		t.Fatalf("an ordinary secret was refused: %v", err)
 	}
@@ -1844,7 +1844,7 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.
 		string(testProxySecret[:8]) + "\u200b" + string(testProxySecret[8:]),
 		"  " + string(testProxySecret) + "\u00a0\u200b ",
 	} {
-		chain, _, err := FromEnvironment(armed(secret), newTestAuthority(t), nil)
+		chain, _, err := FromEnvironment(armed(secret), newTestAuthority(t), newTestSessionAuthority(t))
 		if err != nil {
 			t.Fatalf("a secret carrying real content plus an invisible rune was refused, which is a "+
 				"deployment that worked before the content test was widened.\n  secret: %q\n  got: %v",
@@ -1869,7 +1869,7 @@ func TestTheInlineSecretKeepsItsWhitespaceAndAnInvisibleOneIsRefused(t *testing.
 	for _, n := range []int{1, 2, MinProxySecretBytes - 1, MinProxySecretBytes, MinProxySecretBytes + 8, 200} {
 		for _, r := range []string{" ", "\t", "\n", "\u00a0", "\u200b", "\u2060", "\ufeff"} {
 			secret := strings.Repeat(r, n)
-			_, _, err := FromEnvironment(armed(secret), newTestAuthority(t), nil)
+			_, _, err := FromEnvironment(armed(secret), newTestAuthority(t), newTestSessionAuthority(t))
 			if !errors.Is(err, ErrBlankSetting) {
 				t.Fatalf("a secret of %d %+q was not refused as blank — the length floor is a LENGTH test "+
 					"and cannot say this is not a secret.\n  got: %v", n, r, err)
@@ -1940,7 +1940,7 @@ func TestAZeroWidthSecretCannotBecomeASourceCheckAStrangerCanClear(t *testing.T)
 	}
 
 	// 1. THE PROBE CAN REPORT REFUSED — a real secret admits nobody who guesses.
-	chain, _, err := FromEnvironment(armedBySecretAlone(string(testProxySecret)), newTestAuthority(t), nil)
+	chain, _, err := FromEnvironment(armedBySecretAlone(string(testProxySecret)), newTestAuthority(t), newTestSessionAuthority(t))
 	if err != nil {
 		t.Fatalf("precondition: a deployment armed by a real shared secret alone must build: %v", err)
 	}
@@ -1959,7 +1959,7 @@ func TestAZeroWidthSecretCannotBecomeASourceCheckAStrangerCanClear(t *testing.T)
 	// is the reassuring-zero control: without it, "no guess got in" above is what a probe
 	// wired to nothing also reports.
 	guessable := strings.Repeat("a", MinProxySecretBytes)
-	chain, _, err = FromEnvironment(armedBySecretAlone(guessable), newTestAuthority(t), nil)
+	chain, _, err = FromEnvironment(armedBySecretAlone(guessable), newTestAuthority(t), newTestSessionAuthority(t))
 	if err != nil {
 		t.Fatalf("precondition: a low-entropy but non-blank secret must still build — the fix is a "+
 			"CONTENT test, not an entropy test: %v", err)
@@ -1971,7 +1971,7 @@ func TestAZeroWidthSecretCannotBecomeASourceCheckAStrangerCanClear(t *testing.T)
 
 	// 3. THE HAZARD. Either the line is refused by name, or no stranger can clear the rung.
 	for _, secret := range guesses {
-		chain, _, err := FromEnvironment(armedBySecretAlone(secret), newTestAuthority(t), nil)
+		chain, _, err := FromEnvironment(armedBySecretAlone(secret), newTestAuthority(t), newTestSessionAuthority(t))
 		if err != nil {
 			if !errors.Is(err, ErrBlankSetting) {
 				t.Fatalf("%s=%+q was refused by some OTHER guard, which is a refusal this test "+
@@ -2022,7 +2022,7 @@ func TestEveryBlankSettingIsNamedInOneRefusal(t *testing.T) {
 		EnvSupabaseMaxAge:         "\t",
 		EnvProxyRequireClientCert: "\n",
 	}
-	_, _, err := FromEnvironment(env, newTestAuthority(t), nil)
+	_, _, err := FromEnvironment(env, newTestAuthority(t), newTestSessionAuthority(t))
 	if !errors.Is(err, ErrBlankSetting) {
 		t.Fatalf("three blank settings beside two armed backends were not refused: %v", err)
 	}
@@ -2052,7 +2052,7 @@ func TestEveryBlankSettingIsNamedInOneRefusal(t *testing.T) {
 	// (see its comment) because a sort was the shape every test passed with deleted.
 	first := err.Error()
 	for i := 0; i < 8; i++ {
-		_, _, again := FromEnvironment(env, newTestAuthority(t), nil)
+		_, _, again := FromEnvironment(env, newTestAuthority(t), newTestSessionAuthority(t))
 		if again.Error() != first {
 			t.Fatalf("the refusal is not stable across runs — map iteration order reaches the message:\n  %s\n  %s",
 				first, again.Error())
@@ -2102,7 +2102,7 @@ func TestThePeerListIsSplitTheSameWayItsBlankTestSplitsIt(t *testing.T) {
 		" 192.0.2.10/32 , 198.51.100.0/24 ",
 	} {
 		t.Run(strconv.Quote(spelling), func(t *testing.T) {
-			chain, _, err := FromEnvironment(armed(spelling), newTestAuthority(t), nil)
+			chain, _, err := FromEnvironment(armed(spelling), newTestAuthority(t), newTestSessionAuthority(t))
 			if err != nil {
 				t.Fatalf("a two-entry peer list written as %q was refused: %v", spelling, err)
 			}
