@@ -724,7 +724,8 @@ verdict — an empty rollup satisfies "nothing incomplete".
   `tests/test_cairn_doctor.py::TestTheCliWiring::test_a_no_sync_run_still_reads_the_LOCAL_config`,
   `IndexError` at `test_cairn_doctor.py:876`.
 - **Observed (with values):** `stat` gives `~/.config/subsystem-store/instances` mtime
-  **2026-09-17 22:00:43**, containing `civitai.env`; `routes.json` carries 25 top-level keys.
+  **2026-09-17 22:00:43**, containing one `<a real project>.env` file; `routes.json` carries
+  25 top-level keys.
   The green run finished **before** that write; the red runs came after. With that config
   present, `cmd_doctor` emits per-instance check names and the test's exact `"token"` lookup
   finds none.
