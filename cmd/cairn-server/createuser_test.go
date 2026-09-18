@@ -245,20 +245,40 @@ func TestCreateUserSaysSoWhenTheUserItCreatedCanReachNothing(t *testing.T) {
 // `ErrSessionAuthorityUnread`. That is the worst available outcome: a live pod's auth path
 // broken by a feature it does not use.
 //
-// 🔴 THE CONTEXT IS CANCELLED AND `warnings` IS UNDER A MUTEX, AND BOTH ARE FIXES RATHER
-// THAN STYLE. `openSessionAuthority` starts `Cache.Run` on a goroutine, so a
-// `context.Background()` here leaves a refresh loop running after this function returns —
-// and since this commit the loop's `OnRefresh` calls `warn` on the first FAILING refresh,
-// which `t.TempDir()`'s cleanup manufactures by deleting the journal as the test returns.
-// That write and the reads below are unsynchronised. Measured at `8c06ea1` with the
-// interval shortened to 2 ms and the journal torn mid-body: `WARNING: DATA RACE`, the
-// write from `openSessionAuthority.journalRefreshReporter` against this function's own
-// read; measured again with the interval left at the production
-// `api.AuthorityRefreshInterval`, the same race at ~35 s. `go test -race` is green today
-// only because this package finishes in ~3.5 s against a 30 s timer — a loaded runner,
-// `-count>1`, or one more slow test turns the `go` CI job red for a reason no diff
-// explains. The cancel bounds the loop's LIFETIME; the mutex is what makes the reads safe
-// while it is still alive, and neither alone is sufficient.
+// 🔴 THE CONTEXT IS CANCELLED AND `warnings` IS UNDER A MUTEX, AND NOT BECAUSE A RACE WAS
+// REPRODUCIBLE IN THE SHIPPED PRE-FIX SHAPE — IT WAS NOT. What the two do:
+// `openSessionAuthority` starts `Cache.Run` on a goroutine, so a `context.Background()`
+// here leaves a refresh loop running after this function returns, and that loop's
+// `OnRefresh` calls `warn` on the first FAILING refresh — which `t.TempDir()`'s cleanup
+// manufactures by deleting the journal as the test returns. The cancel bounds the loop's
+// LIFETIME; the mutex makes the reads safe while it is still alive.
+//
+// ⚠ WHY THE SHIPPED SHAPE DID NOT RACE, WHICH IS THE MEASURED HALF. `Cache.Model()` takes
+// `c.mu.RLock()` and `Cache.refresh()` takes `c.mu.Lock()`, and this test's own trailing
+// `sessions.Model()` call sits AFTER both `warnings` reads — so it establishes
+// happens-before from those reads to every later refresh, and therefore to every later
+// `warn` write. Measured on the pre-fix shape at `8c06ea1`, journal removed by
+// `t.TempDir()`'s cleanup, at TWO points on the interval: `ok`, no `DATA RACE`, both with
+// the interval compressed to 2 ms and with it left at the production
+// `api.AuthorityRefreshInterval` (30 s, given 45 s of post-cleanup life). Removing ONLY
+// the `sessions.Model()` call from that same tree turned BOTH red — at the 2 ms point the
+// reported pair is the `warn` write from `journalRefreshReporter` against this function's
+// own `len(warnings)` read.
+//
+// 🔴 SO IT IS KEPT FOR WHAT IT REMOVES, NOT FOR A RACE IT FIXED. WITHOUT it, this test's
+// safety rested on an incidental mutex edge inside an unrelated accessor: deleting the
+// `sessions.Model()` assertion as redundant would have reinstated the race — measured
+// above — with no diff to anything a reader would recognise as synchronisation. WITH the
+// cancel and the mutex that edge is no longer load-bearing, and that is the whole of the
+// improvement. The goroutine-leak half stands on its own: a test that leaks a refresh loop
+// into the rest of the package is a defect whether or not it races.
+//
+// ⚠ RETRACTED, RECORDED SO NOBODY RE-DERIVES IT. An earlier draft of this comment claimed
+// the same race recurs "at ~35 s" with the production interval, and that a loaded runner,
+// `-count>1` or one more slow test would turn the `go` CI job red for a reason no diff
+// explains. The 30 s measurement above refutes it: the timer's length does not change the
+// happens-before edge, and it is the edge that decides. NOTHING replaces that prediction —
+// there is no timing claim in this comment.
 func TestNoControlJournalMeansNoSessionAuthorityAtAll(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

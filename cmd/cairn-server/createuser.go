@@ -434,14 +434,15 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 //
 // ⚠ IT DOES NOT RENDER `Cache.Staleness()`, AND THAT IS A DELIBERATE OMISSION RATHER
 // THAN AN OVERSIGHT. The epoch being served and its age would belong in these lines, and
-// `Staleness()` is exactly that value — but comments in `internal/control`,
-// `internal/api`, `internal/control/tokenfile` and this program's own `main` state, as a
+// `Staleness()` is exactly that value — but comments spread across this tree state, as a
 // load-bearing claim, that it has **NO CALLER OUTSIDE THE TESTS**, and each of them
 // reasons from that to "bounded and SILENT" about a DIFFERENT window (the token-file scope
-// enumeration). Adding the first caller here would falsify all of them at once while
-// closing none of the thing they defer, which is a status SURFACE — a `doctor` section, a
-// route, or the startup banner `tests/dualrun/harness.py` compares. So this reports the
-// EVENT and the remedy, and the value stays where those comments say it is.
+// enumeration). WHICH comments is the PREDICATE below and never a list here: a list goes
+// stale exactly the way the tally it replaced did, and the one that stood here had already
+// lost `internal/identity`. Adding the first caller here would falsify all of them at once
+// while closing none of the thing they defer, which is a status SURFACE — a `doctor`
+// section, a route, or the startup banner `tests/dualrun/harness.py` compares. So this
+// reports the EVENT and the remedy, and the value stays where those comments say it is.
 //
 // ⚠ NO COUNT IS QUOTED, AND THE ABSENCE IS DELIBERATE. This sentence used to say "six
 // comments", which is a number in prose with no gate — the exact shape
