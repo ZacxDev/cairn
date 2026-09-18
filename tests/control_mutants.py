@@ -369,6 +369,11 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tnext := current.clone()",
         new="\tnext := current",
         killer="TestARejectedBatchLeavesNeitherBytesNorState",
+        # `TestARefusedProvisioningLeavesNeitherBytesNorState` now reads `lastKnownGood()`
+        # rather than `Model()` — `Model` is unconditionally `Reload`, so it re-read a file
+        # the refused batch never touched and its "…nor State" arm was vacuous. Repairing it
+        # made it a second, legitimate killer of this row, one layer up.
+        extra_killers=("TestARefusedProvisioningLeavesNeitherBytesNorState",),
         why="THE DEFECT THIS PACKAGE ACTUALLY SHIPPED WITH IN ITS FIRST DRAFT. A Model is "
         "six maps behind a struct header, so a struct copy shares every bucket and a "
         "rejected batch's earlier events stay applied to the served authority.",
@@ -379,6 +384,7 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tout := NewModel()\n\tout.Epoch = m.Epoch",
         new="\tout := m\n\tout.Epoch = m.Epoch",
         killer="TestARejectedBatchLeavesNeitherBytesNorState",
+        extra_killers=("TestARefusedProvisioningLeavesNeitherBytesNorState",),
         why="the same defect one level down, where the function is NAMED clone and so "
         "reads as if it cannot be wrong.",
     ),
@@ -529,7 +535,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="run-stops-on-a-failed-refresh",
         path="internal/control/cache.go",
-        old="\t\tcase <-tick:\n\t\t\t_ = c.refresh(ctx, RefreshTimer)",
+        old="\t\tcase <-tick:\n\t\t\treport(c.refresh(ctx, RefreshTimer))",
         new="\t\tcase <-tick:\n\t\t\tif err := c.refresh(ctx, RefreshTimer); err != nil {\n\t\t\t\treturn err\n\t\t\t}",
         killer="TestAFailedRefreshDoesNotStopTheLoop",
         why="propagating the error, which is what a reviewer asks for on sight of `_ =`. "
@@ -540,8 +546,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="timer-refresh-mislabelled",
         path="internal/control/cache.go",
-        old="_ = c.refresh(ctx, RefreshTimer)",
-        new="_ = c.refresh(ctx, RefreshExplicit)",
+        old="report(c.refresh(ctx, RefreshTimer))",
+        new="report(c.refresh(ctx, RefreshExplicit))",
         killer="TestTheTimerTriggerRefreshes",
         why="a copy-paste in the trigger label. `LastTrigger` is the ONLY thing that "
         "distinguishes three mechanisms producing one observable, so a wrong label makes "
@@ -550,7 +556,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="sighup-trigger-dropped",
         path="internal/control/cache.go",
-        old="\t\tcase <-tr.Signals:\n\t\t\t_ = c.refresh(ctx, RefreshSignal)",
+        old="\t\tcase <-tr.Signals:\n\t\t\treport(c.refresh(ctx, RefreshSignal))",
         new="\t\tcase <-tr.Signals:\n\t\t\tcontinue",
         killer="TestSIGHUPRefreshesTheCache",
         why="draining the signal without acting on it — which is indistinguishable from "
@@ -561,7 +567,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="change-trigger-dropped",
         path="internal/control/cache.go",
-        old="\t\tcase <-tr.OnChange:\n\t\t\t_ = c.refresh(ctx, RefreshChange)",
+        old="\t\tcase <-tr.OnChange:\n\t\t\treport(c.refresh(ctx, RefreshChange))",
         new="\t\tcase <-tr.OnChange:\n\t\t\tcontinue",
         killer="TestTheChangeTriggerRefreshes",
         why="the same drop on the notification path. Here the revocation lag silently "
@@ -1378,7 +1384,7 @@ MUTANTS: tuple[Mutant, ...] = (
     ),
     # ---- P5a: the user-creation path, and the authority the SESSIONS resolve against --
     #
-    # 🔴 THESE ELEVEN EXIST BECAUSE P4 SHIPPED THREE BACKENDS AND NO WAY TO PUT A USER IN
+    # 🔴 THESE THIRTEEN EXIST BECAUSE P4 SHIPPED THREE BACKENDS AND NO WAY TO PUT A USER IN
     # FRONT OF THEM. Every row above was green through a period in which no deployment
     # that could exist authenticated anybody through a session backend: the only authority
     # any binary wired was the token-file projection, whose one synthetic user sits at
@@ -1461,11 +1467,31 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tif err := checkScopeNamesAreFree(current, req.ScopeNames); err != nil {",
         new="\tif err := checkScopeNamesAreFree(current, nil); err != nil {",
         killer="TestAScopeNameAlreadyInTheJournalIsRefused",
+        extra_killers=("TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused",),
         why="the guard that is WIDER than the model's own rule, so it looks redundant "
         "beside `apply`'s within-a-project uniqueness and reads as a candidate for "
         "deletion. It is not: the reader narrows the store root's DIRECTORIES by display "
         "name, so two scope records sharing one name resolve to one directory and each "
         "project's members read the other's entries.",
+    ),
+    Mutant(
+        name="scope-name-collision-by-FOLD-accepted",
+        path="internal/control/provision.go",
+        # The narrowest expression that can be wrong: the COMPARISON, with both folds
+        # dropped — which is the guard exactly as it shipped one round earlier.
+        old="\t\t\tif store.NormalizeRef(sc.DisplayName) == folded {",
+        new="\t\t\tif sc.DisplayName == name {",
+        killer="TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused",
+        why="THE TENANCY BOUNDARY DEFEATED BY A CAPITAL LETTER, and the shipped state at "
+        "`18df63d`. What decides 'one directory' is `store.NormalizeRef`, applied on both "
+        "sides of `store.ScopeSet.Allows` and again on the write path — so `Quarry_Notes` "
+        "and `quarry-notes` are ONE directory to every reader and every writer, and a raw "
+        "`==` here is strictly narrower than the thing it protects. Measured: two "
+        "`-create-user` runs in different projects both succeeded, both owners held "
+        "`RoleOwner`, and the second read AND wrote the first's entries. There is no undo "
+        "— nothing emits `scope-renamed` and the journal is append-only. ⚠ The row above "
+        "does NOT cover this: it deletes the guard's operand, so a guard that is present "
+        "but too narrow survives it.",
     ),
     Mutant(
         name="membership-omitted-from-the-provisioning-batch",
@@ -1525,10 +1551,27 @@ MUTANTS: tuple[Mutant, ...] = (
         "bypass that cost this repository a live shared secret at a different setting.",
     ),
     Mutant(
+        name="the-journal-refresh-failure-is-never-reported",
+        path="cmd/cairn-server/createuser.go",
+        old="\t\tInterval:  refreshInterval,\n\t\tOnRefresh: journalRefreshReporter(journal, warn),",
+        new="\t\tInterval: refreshInterval,",
+        killer="TestTheRunningPodSAYSSoWhenItsControlJournalGoesBad",
+        why="the WIRING of the only signal a running pod gives about a control journal "
+        "that has stopped loading. `Cache.Run` discarded every refresh error and "
+        "`Cache.Staleness()` has no caller outside the tests, so before this field existed "
+        "the sequence was: an append hits ENOSPC and leaves a torn last line, the pod keeps "
+        "serving last-known-good (correctly), nothing is said anywhere, and the next restart "
+        "is a permanent refusal to start. ⚠ Its sibling "
+        "`TestABrokenControlJournalIsSaidONCEAndItsRecoverySaidONCE` calls "
+        "`journalRefreshReporter` DIRECTLY and stays GREEN under this mutant — the same "
+        "'a capability in a function nobody routes to' shape as the row below, which is "
+        "why this row exists rather than trusting that one.",
+    ),
+    Mutant(
         name="main-never-dispatches-create-user",
         path="cmd/cairn-server/main.go",
-        old="\tif *create.enabled {\n\t\tos.Exit(runCreateUser(environ(), create, os.Stdout, os.Stderr))\n\t}",
-        new="\tif false {\n\t\tos.Exit(runCreateUser(environ(), create, os.Stdout, os.Stderr))\n\t}",
+        old="\tif *create.enabled {\n\t\t// `*store` is passed",
+        new="\tif false {\n\t\t// `*store` is passed",
         killer="TestTheBinaryActuallyDispatchesCreateUser",
         why="the mode unreachable while every in-process test of it stays green, because "
         "those call `runCreateUser` directly. The same shape as the refresh-loop row: a "

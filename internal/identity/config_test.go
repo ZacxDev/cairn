@@ -1202,10 +1202,33 @@ func TestTheEnvironmentLedgersNameEveryVariableEachBackendReads(t *testing.T) {
 	// And the mechanical half: EVERY one of them, set alone, must reach a refusal rather
 	// than being ignored. This is what proves the ledger is load-bearing rather than
 	// decorative.
+	//
+	// 🔴 IT PASSES A SESSION AUTHORITY, AND IT ASSERTS THE REFUSAL IS NOT EITHER BLANKET
+	// SENTINEL — WITHOUT BOTH HALVES THIS LOOP OBSERVES NOTHING IT CLAIMS TO. It used to
+	// pass `nil`, and `ErrSessionBackendWithoutAuthority` runs BEFORE the constructors, so
+	// an armed ledger with no session authority is refused by that sentinel and never
+	// reaches its own backend at all. Measured on this tree: with `sessions=nil`, 15 of
+	// the 15 names below refused via the sentinel and 0 via their own ledger; with an
+	// authority, 0 via the sentinel and 15 via their own. A loop asserting only `err !=
+	// nil` therefore stayed green with every backend's arming deleted.
+	//
+	// ⚠ AND THE SECOND SENTINEL IS THE MIRROR TRAP, WHICH IS WHY IT IS NAMED HERE TOO.
+	// Supplying the authority makes `ErrSessionAuthorityUnread` reachable instead — it is
+	// what a configuration that arms NOTHING now produces — so a break that stops the
+	// constructors running would have swapped one blanket error for the other and left
+	// this loop green a second time. The assertion is on the refusal's PROVENANCE, not on
+	// its existence.
 	for _, name := range known {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := FromEnvironment(map[string]string{name: "x"}, newTestAuthority(t), nil); err == nil {
+			_, _, err := FromEnvironment(map[string]string{name: "x"}, newTestAuthority(t), newTestSessionAuthority(t))
+			if err == nil {
 				t.Fatalf("%s set alone was IGNORED — the backend it belongs to is silently off", name)
+			}
+			for _, blanket := range []error{ErrSessionBackendWithoutAuthority, ErrSessionAuthorityUnread} {
+				if errors.Is(err, blanket) {
+					t.Fatalf("%s set alone was refused by a BLANKET sentinel rather than by the backend "+
+						"it arms, so this loop is not observing the ledger at all:\n  %v", name, err)
+				}
 			}
 		})
 	}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/ZacxDev/cairn/internal/store"
 )
 
 // ProvisionUser is the OPERATOR-DRIVEN user-creation path: the first thing in this
@@ -159,8 +161,10 @@ type NewUser struct {
 	// ScopeNames are the scopes created in that project.
 	//
 	// 🔴 A SCOPE'S DISPLAY NAME IS THE DIRECTORY NAME ON DISK, WHICH IS WHY THEY ARE
-	// CHECKED AGAINST THE WHOLE JOURNAL AND NOT JUST THIS PROJECT. See
-	// `checkScopeNamesAreFree`.
+	// CHECKED AGAINST THE WHOLE JOURNAL AND NOT JUST THIS PROJECT — and checked by their
+	// `store.NormalizeRef`'d form, because that is the name the reader and the writer both
+	// resolve a directory by. The raw spelling is what gets STORED; it is never rewritten.
+	// See `checkScopeNamesAreFree`.
 	ScopeNames []string
 	// Actor is recorded as the `actor` of every event in the batch. Empty is accepted:
 	// `Event.validate` does not require it, and an operator running a command in a pod
@@ -194,7 +198,7 @@ type ProvisionedScope struct {
 var ErrScopeNameTaken = errors.New("control: that scope display name is already used in this journal")
 
 // checkScopeNamesAreFree refuses a display name any existing scope carries, ANYWHERE in
-// the journal.
+// the journal — compared by its FOLDED form, which is what decides "one directory".
 //
 // 🔴 IT IS WIDER THAN THE MODEL'S OWN RULE, AND THE REASON IS THE PROJECTION ONTO DISK.
 // `apply` refuses a duplicate scope name WITHIN a project and allows it across projects —
@@ -206,23 +210,57 @@ var ErrScopeNameTaken = errors.New("control: that scope display name is already 
 // ONE directory, and each project's members can read the other's entries. That is a
 // cross-tenant read, and it is invisible to every id-keyed check in this package.
 //
-// ⚠ SO THIS IS A GUARD AT ONE PATH, NOT AN INVARIANT, AND SAYING WHICH IS THE POINT. A
-// hand-edited journal, a `scope-renamed` or a `scope-moved` event can still produce the
-// collision; nothing here sees those. It is placed here rather than in `apply` because
-// `apply` states the MODEL's rule, and widening that rule would make the model assert a
-// property of a reader it deliberately knows nothing about — while covering only
-// `scope-created`, leaving a rule that reads as global and is not.
+// 🔴 IT COMPARES `store.NormalizeRef`'d FORMS ON BOTH SIDES, BECAUSE A RAW `==` IS
+// STRICTLY NARROWER THAN THE THING IT PROTECTS. The directory a name reaches is decided
+// by that fold — lowercase, non-slug runes to `-`, runs collapsed, trimmed — on both
+// sides of `store.ScopeSet.Allows` and again on the write path, where `createEntry` folds
+// the scope before it resolves a filename. So `Quarry_Notes` and `quarry-notes` are ONE
+// directory to every reader and every writer. Measured at `18df63d`, where the comparison
+// was raw: two `-create-user` runs in different projects both succeeded, both owners held
+// `RoleOwner`, and the second read AND wrote the first's entries. The RAW names are what
+// the refusal reports, because the operator typed one of them and the journal holds the
+// other; the folded form is printed beside them as the reason.
+//
+// ⚠ SO THIS IS A GUARD AT ONE PATH, NOT AN INVARIANT, AND SAYING WHICH IS THE POINT.
+// Everything it does NOT see, enumerated rather than gestured at — a guard's description
+// has to be as wide as its body:
+//
+//   - **Scope DIRECTORIES that already exist under the store root.** This reads
+//     `m.Scopes`, the JOURNAL's scopes. The machine-token world's scopes are not journal
+//     rows at all: `tokenfile.Source.storeDirs` enumerates the store root's
+//     subdirectories, and both worlds are narrowed against the one `s.StoreRoot`. On
+//     first use the journal is EMPTY, so this passes unconditionally while the store root
+//     may already hold every existing tenant's directory. That is the hole that is live
+//     in every deployment, and it is the one the other three are not. `cmd/cairn-server`
+//     — which knows the store root, where this package does not — warns about it at
+//     `-create-user`; see `warnScopesThatAlreadyExistOnDisk`. A warning rather than a
+//     refusal because an existing directory is ALSO the ordinary sequence (seed the
+//     store, then provision the person who owns it), and nothing on disk distinguishes
+//     the two.
+//   - A `scope-renamed` or `scope-moved` event, neither of which exists yet.
+//   - A hand-edited journal.
+//   - A CONCURRENT `-create-user`: `ProvisionUser` reads the model OUTSIDE the `flock`
+//     that `Append` takes, so two runs can each read a journal without the name and both
+//     pass here. `Append`'s own re-read under the lock is what still refuses the duplicate
+//     (provider, subject) pair, but it carries no rule about names across projects — that
+//     rule lives only here, and here is not under the lock.
+//
+// It is placed here rather than in `apply` because `apply` states the MODEL's rule, and
+// widening that rule would make the model assert a property of a reader it deliberately
+// knows nothing about — while covering only `scope-created`, leaving a rule that reads as
+// global and is not.
 //
 // **CLOSING CONDITION:** it stops being needed when a scope's bytes are addressed by its
 // id rather than by its display name, at which point two scopes may share a name and the
 // reader cannot confuse them.
 func checkScopeNamesAreFree(m Model, names []string) error {
 	for _, name := range names {
+		folded := store.NormalizeRef(name)
 		for _, sc := range m.Scopes {
-			if sc.DisplayName == name {
+			if store.NormalizeRef(sc.DisplayName) == folded {
 				return fmt.Errorf(
-					"%w: %q is scope %s in project %s. A display name is the DIRECTORY name a reader narrows on, so two scopes carrying it would resolve to one directory and each project's members could read the other's entries",
-					ErrScopeNameTaken, name, sc.ID, sc.ProjectID)
+					"%w: %q folds to %q, which is scope %s (%q) in project %s. A display name is the DIRECTORY name a reader narrows on, and it narrows on the FOLDED name — so two scopes whose names fold alike resolve to one directory and each project's members could read the other's entries",
+					ErrScopeNameTaken, name, folded, sc.ID, sc.DisplayName, sc.ProjectID)
 			}
 		}
 	}

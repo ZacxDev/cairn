@@ -164,6 +164,16 @@ would be making exactly the call the outage is supposed to survive. So the lag i
 rendered and pinned; nothing prints it. Why it is deferred, and the closing condition for
 it, are one section down under *What piece (a) structurally cannot see*.
 
+⚠ **ONE HALF OF THAT SILENCE IS NOW BROKEN, AND ONLY ONE — SAY WHICH.** `Run` used to
+DISCARD each refresh's error (`_ = c.refresh(…)`), so a failing authority was invisible
+until a restart. `RefreshTriggers.OnRefresh` is called after every refresh with that
+refresh's own result, nil on success, and `cmd/cairn-server` supplies one for the control
+journal that prints a line on each TRANSITION — it broke, it recovered. That reports
+**failure**, not **staleness**: a cache refreshing successfully against an authority
+nobody has written to is fresh by this signal and could still be `degraded` by
+`Staleness`. The deferred surface above is unchanged, and the reporter deliberately does
+not call `Staleness()` — see its comment for why, and for the condition that joins them.
+
 ### The five design calls
 
 | decision | what was chosen | why |
@@ -248,11 +258,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 107 mutants, over FIVE packages
+python3 tests/control_mutants.py          # 109 mutants, over FIVE packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 107 mutants, 105 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 109 mutants, 107 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, positive control GREEN.**
 
 ⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
@@ -301,7 +311,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 107 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 109 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -347,6 +357,22 @@ MISS.** Nothing edited the guard, and nothing edited its mutants. A change three
 declarations away silently made the test read through a path where the defect is invisible
 — which a green suite cannot distinguish from a guard that works. **When a read path is
 changed, re-run the battery, not the suite.**
+
+🔴 **FOUR TIMES IN ONE SLICE, WHICH MAKES IT A CLASS RATHER THAN AN INCIDENT — AND ONLY
+THE FIRST TWO HAD A MUTANT TO REPORT THEM.** The two above were caught because a battery row
+pointed at the affected test. The third was not: `provision_test.go`'s sibling
+`TestARefusedProvisioningLeavesNeitherBytesNorState` read its state arm through
+`FileStore.Model` too, and — being one layer up, with no row of its own — simply passed
+while asserting nothing about state. It now reads `lastKnownGood()` and is listed as an
+`extra_killers` on both rows. **And the fourth is in a different package entirely:**
+`internal/identity`'s `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` loops
+every ledger variable set alone and asserts each reaches a refusal. Putting
+`ErrSessionBackendWithoutAuthority` **before** the constructors moved that observable —
+measured: with a nil session authority, **15 of 15** variables refused via the new
+sentinel and **0** via their own ledger; with an authority supplied, **0** and **15**. The
+loop now supplies one and asserts the refusal's **provenance** rather than its existence.
+**The tell in all four is the same: a production change to a READ PATH, and a test nobody
+edited.** Ask what a test's observable is, not whether it is green.
 
 🔴 **THERE WAS BRIEFLY A SECOND SURVIVOR, AND ITS LABEL WAS FALSE.**
 `the-write-ignores-a-newer-commit` — deleting the `mine >= c.committed` clause from
@@ -554,14 +580,40 @@ Both session backends were inert in every deployment that could exist.
    the first match over a Go map, so a duplicated pair makes "who is this session" answer
    a different user id — with a different authorization — on different requests in one
    process, with nothing erroring.
-3. **A scope display name must be free across the WHOLE journal**, which is wider than
-   `apply`'s within-a-project rule and is a guard at this path only. Authorization is
-   keyed on ids; the READER is not — `VisibleScopes` hands out names and the store root's
-   directories are narrowed by them, so two scope records sharing a display name resolve
-   to one directory and each project's members read the other's entries. The guard cannot
-   be an invariant here: `scope-renamed`, `scope-moved` and a hand-edited journal all
-   reach the same collision and none of them passes through this function. It closes when
-   a scope's bytes are addressed by id rather than by display name.
+3. **A scope display name must be free across the WHOLE journal, compared by its FOLDED
+   form**, which is wider than `apply`'s within-a-project rule and is a guard at this path
+   only. Authorization is keyed on ids; the READER is not — `VisibleScopes` hands out
+   names and the store root's directories are narrowed by them, so two scope records
+   sharing a display name resolve to one directory and each project's members read the
+   other's entries.
+
+   🔴 **AND "SHARING A DISPLAY NAME" MEANS `store.NormalizeRef`-EQUAL, NOT
+   STRING-EQUAL — THE FIRST VERSION OF THIS GUARD COMPARED RAW AND WAS DEFEATED BY A
+   CAPITAL LETTER.** That fold is what decides the directory: it is applied on both sides
+   of `store.ScopeSet.Allows` and again on the write path, where `createEntry` folds the
+   scope before resolving a filename. So `Quarry_Notes` and `quarry-notes` are ONE
+   directory to every reader and every writer. Measured at `18df63d`: two `-create-user`
+   runs in different projects, both accepted, both owners at `RoleOwner`, and the second
+   read **and wrote** the first's entries — with no undo, because nothing emits
+   `scope-renamed` and the journal is append-only. `scope-name-collision-by-FOLD-accepted`
+   is the mutant, and it is a *second* row rather than a widening of
+   `scope-name-collision-across-projects-accepted`: that one deletes the guard's operand,
+   so a guard that is present and too NARROW survives it.
+
+   ⚠ **WHAT IT DOES NOT SEE, AND ONE ITEM IS LIVE IN EVERY DEPLOYMENT.** It iterates the
+   JOURNAL's scopes. The machine-token world's scopes are the **store root's
+   subdirectories** (`tokenfile.Source.storeDirs`), and both worlds are narrowed against
+   the one store root — so on first use, with an empty journal, this guard passes
+   unconditionally while the store root may already hold every existing tenant's
+   directory. `internal/control` holds no path and must not grow one;
+   `cmd/cairn-server`'s `warnScopesThatAlreadyExistOnDisk` is where that is seen, and it
+   **warns** rather than refuses because an existing directory is equally the hazard and
+   the ordinary sequence (seed the store, then provision its owner) and nothing on disk
+   distinguishes them. The other three blind spots — `scope-renamed`, `scope-moved`, a
+   hand-edited journal — reach the same collision without passing through this function,
+   and a fourth is the read of `s.Model(ctx)` happening **outside** the `flock` `Append`
+   takes, so two concurrent `-create-user` runs can both pass it. It closes when a scope's
+   bytes are addressed by id rather than by display name.
 
 ⚠ **AND `FileStore.Model` RE-READS THE JOURNAL ON EVERY CALL, BECAUSE THE WRITER IS A
 DIFFERENT PROCESS.** It used to serve a process-local projection invalidated only by that

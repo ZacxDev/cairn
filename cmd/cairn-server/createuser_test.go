@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,7 +128,7 @@ func TestCreateUserRefusesWithoutAJournalAndWritesOneWithIt(t *testing.T) {
 
 	// 78: no journal configured. Refused rather than defaulted to a path, because a
 	// default would write somewhere the running pod is not reading.
-	if code := runCreateUser(map[string]string{}, good, &out, &errOut); code != exitConfig {
+	if code := runCreateUser(map[string]string{}, "", good, &out, &errOut); code != exitConfig {
 		t.Fatalf("exit = %d with no journal configured, want %d", code, exitConfig)
 	}
 	if !strings.Contains(errOut.String(), EnvControlJournal) {
@@ -142,7 +144,7 @@ func TestCreateUserRefusesWithoutAJournalAndWritesOneWithIt(t *testing.T) {
 	// 0: written.
 	out.Reset()
 	errOut.Reset()
-	if code := runCreateUser(env, good, &out, &errOut); code != 0 {
+	if code := runCreateUser(env, "", good, &out, &errOut); code != 0 {
 		t.Fatalf("exit = %d, want 0. stderr: %s", code, errOut.String())
 	}
 	line := out.String()
@@ -165,7 +167,7 @@ func TestCreateUserRefusesWithoutAJournalAndWritesOneWithIt(t *testing.T) {
 	out.Reset()
 	errOut.Reset()
 	again := flagsFor("supabase", "subject-0001", "", "quarry-two", "quarry-other")
-	if code := runCreateUser(env, again, &out, &errOut); code != exitConfig {
+	if code := runCreateUser(env, "", again, &out, &errOut); code != exitConfig {
 		t.Fatalf("exit = %d re-creating one person, want %d", code, exitConfig)
 	}
 	refusal := errOut.String()
@@ -212,7 +214,7 @@ func TestCreateUserSaysSoWhenTheUserItCreatedCanReachNothing(t *testing.T) {
 	env := map[string]string{EnvControlJournal: journal}
 	var out, errOut bytes.Buffer
 
-	if code := runCreateUser(env, flagsFor("supabase", "s1", "", "quarry", ""), &out, &errOut); code != 0 {
+	if code := runCreateUser(env, "", flagsFor("supabase", "s1", "", "quarry", ""), &out, &errOut); code != 0 {
 		t.Fatalf("a user with no scopes must be created: %d / %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "scopes=none") {
@@ -226,7 +228,7 @@ func TestCreateUserSaysSoWhenTheUserItCreatedCanReachNothing(t *testing.T) {
 	// assertion above would be satisfied by a line printed unconditionally.
 	out.Reset()
 	errOut.Reset()
-	if code := runCreateUser(env, flagsFor("supabase", "s2", "", "quarry-two", "quarry-two-notes"), &out, &errOut); code != 0 {
+	if code := runCreateUser(env, "", flagsFor("supabase", "s2", "", "quarry-two", "quarry-two-notes"), &out, &errOut); code != 0 {
 		t.Fatalf("a user WITH a scope must be created: %d / %s", code, errOut.String())
 	}
 	if strings.Contains(errOut.String(), "can reach NOTHING") {
@@ -324,7 +326,7 @@ func TestASessionAuthorityOverAProvisionedJournalSeesTheUser(t *testing.T) {
 	journal := filepath.Join(t.TempDir(), "control.journal")
 	env := map[string]string{EnvControlJournal: journal}
 	var out, errOut bytes.Buffer
-	if code := runCreateUser(env, flagsFor("supabase", "subject-0001", "", "quarry", "quarry-notes"), &out, &errOut); code != 0 {
+	if code := runCreateUser(env, "", flagsFor("supabase", "subject-0001", "", "quarry", "quarry-notes"), &out, &errOut); code != 0 {
 		t.Fatalf("provisioning: %d / %s", code, errOut.String())
 	}
 
@@ -346,6 +348,219 @@ func TestASessionAuthorityOverAProvisionedJournalSeesTheUser(t *testing.T) {
 		t.Fatal("the provisioned user reaches no scope through the authority this program serves — " +
 			"an empty authorization is what every deployment produced before this slice")
 	}
+}
+
+// TestAScopeThatAlreadyExistsUnderTheStoreRootIsCalledOut.
+//
+// 🔴 THE HOLE IT COVERS IS THE ONE `checkScopeNamesAreFree` IS STRUCTURALLY BLIND TO, AND
+// IT IS LIVE IN EVERY DEPLOYMENT. That guard iterates the JOURNAL's scopes; the
+// machine-token world's scopes are the store root's SUBDIRECTORIES, and on first use the
+// journal is empty — so the guard passes unconditionally while the store root may already
+// hold every existing tenant's directory. Measured: a store root holding `tenant-a-notes/`
+// and a provisioning naming `tenant-a-notes` → accepted, read AND write allowed.
+//
+// ⚠ IT ASSERTS A WARNING AND AN EXIT CODE OF ZERO, NOT A REFUSAL, AND THAT IS THE
+// CONTRACT RATHER THAN A WEAK TEST. An existing directory is both the hazard and the
+// ordinary sequence, and nothing on disk tells them apart — see
+// `warnScopesThatAlreadyExistOnDisk`. A test asserting a refusal here would be asserting
+// an invariant this program does not have.
+func TestAScopeThatAlreadyExistsUnderTheStoreRootIsCalledOut(t *testing.T) {
+	root := t.TempDir()
+	// The pre-existing tenant, spelled the way a directory on disk is spelled, and a
+	// FILE beside it that must not be mistaken for a scope.
+	if err := os.MkdirAll(filepath.Join(root, "Tenant_A_Notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tenant-b-notes"), []byte("not a scope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(t.TempDir(), "control.journal")
+	env := map[string]string{EnvControlJournal: journal}
+
+	var out, errOut bytes.Buffer
+	// 🔴 THE REQUESTED NAME FOLDS ONTO THE DIRECTORY RATHER THAN EQUALLING IT. A warning
+	// built on a raw `==` would stay silent here, which is the same defect one layer up.
+	code := runCreateUser(env, root,
+		flagsFor("supabase", "subject-0001", "", "quarry", "tenant-a-notes,quarry-plans"), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 — this is a warning, not a refusal:\n%s", code, errOut.String())
+	}
+	warning := errOut.String()
+	for _, want := range []string{"tenant-a-notes", "Tenant_A_Notes", root, "no undo"} {
+		if !strings.Contains(warning, want) {
+			t.Fatalf("the warning does not carry %q — an operator cannot act on it:\n%s", want, warning)
+		}
+	}
+	// 🔴 THE NEGATIVE CONTROL, AND IT IS WHAT STOPS THIS BEING A WARNING ABOUT EVERY
+	// SCOPE. `quarry-plans` exists nowhere under the root and must not be named; neither
+	// must `tenant-b-notes`, which exists as a FILE and is not a scope directory.
+	for _, unwanted := range []string{"quarry-plans", "tenant-b-notes"} {
+		if strings.Contains(warning, "WARNING scope \""+unwanted+"\"") {
+			t.Fatalf("the warning names %q, which is not a directory under the store root:\n%s", unwanted, warning)
+		}
+	}
+
+	// 🔴 AND THE OTHER NEGATIVE CONTROL: with NO store root the command is silent about
+	// disk entirely, rather than warning on every name. Every other test in this file
+	// passes "" for that reason, so a warning that fired unconditionally would have been
+	// caught there too — this states it rather than relying on it.
+	out.Reset()
+	errOut.Reset()
+	if code := runCreateUser(map[string]string{EnvControlJournal: filepath.Join(t.TempDir(), "j")}, "",
+		flagsFor("supabase", "subject-0002", "", "quarry-two", "tenant-a-notes"), &out, &errOut); code != 0 {
+		t.Fatalf("exit = %d with no store root:\n%s", code, errOut.String())
+	}
+	if strings.Contains(errOut.String(), "already exists as") {
+		t.Fatalf("a command with no store root warned about disk anyway:\n%s", errOut.String())
+	}
+}
+
+// TestABrokenControlJournalIsSaidONCEAndItsRecoverySaidONCE.
+//
+// 🔴 THE STATE IT COVERS IS THE SILENT ONE, WHICH IS THE WORST OF THE THREE A BAD JOURNAL
+// HAS. `-create-user` exits 78 and names the line; a restarting pod refuses to start and
+// stays down; and between them a RUNNING pod keeps serving last-known-good with nothing
+// said anywhere, so a torn journal reaches the next restart as a surprise crash loop.
+// `control.Cache.Run` discarded every refresh error and `Staleness()` was read by nothing
+// outside the tests.
+//
+// 🔴 AND IT ASSERTS THE COUNT, NOT MERELY THAT SOMETHING WAS SAID. A line per failed
+// refresh is 2,880 a day at the 30 s interval for one broken file — a volume of identical
+// lines is how an operator learns to filter the stream, which is the same outcome as
+// silence. Two edges are what can be acted on. The second failure below is the arm that
+// fails if the edge detector is deleted.
+func TestABrokenControlJournalIsSaidONCEAndItsRecoverySaidONCE(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "control.journal")
+
+	var said []string
+	report := journalRefreshReporter(journal, func(line string) { said = append(said, line) })
+
+	broken := errors.New("control journal " + journal + ": line 3: unexpected end of JSON input")
+	// 🔴 THE SEQUENCE IS THE TEST. Two failures in a row must produce ONE line; two
+	// successes in a row must produce ONE line; and the journal breaking AGAIN after a
+	// recovery must be said again, because a latch that only ever fires once is
+	// indistinguishable from an edge detector over a single outage.
+	for _, e := range []error{broken, broken, broken, nil, nil, broken} {
+		report(e)
+	}
+	if len(said) != 3 {
+		t.Fatalf("expected 3 transition lines from 6 refreshes, got %d:\n%s", len(said), strings.Join(said, "\n"))
+	}
+	for _, want := range []string{journal, "no longer loads", "RESTART", "line 3"} {
+		if !strings.Contains(said[0], want) {
+			t.Fatalf("the failure line does not carry %q:\n%s", want, said[0])
+		}
+	}
+	if !strings.Contains(said[1], "loads again") {
+		t.Fatalf("the recovery line does not say so:\n%s", said[1])
+	}
+	if !strings.Contains(said[2], "no longer loads") {
+		t.Fatalf("the second failure was not reported as a failure:\n%s", said[2])
+	}
+
+	// 🔴 THE NEGATIVE CONTROL, AND WITHOUT IT A REPORTER THAT PRINTED ON EVERY CALL WOULD
+	// STILL FAIL THE COUNT ABOVE FOR THE WRONG REASON. A reporter that has never seen a
+	// failure must say NOTHING about a run of successes — that is the ordinary state of
+	// every pod in the fleet, and a line there would be noise on every refresh forever.
+	said = nil
+	quiet := journalRefreshReporter(journal, func(line string) { said = append(said, line) })
+	for range 5 {
+		quiet(nil)
+	}
+	if len(said) != 0 {
+		t.Fatalf("a healthy journal produced %d lines:\n%s", len(said), strings.Join(said, "\n"))
+	}
+}
+
+// TestTheRunningPodSAYSSoWhenItsControlJournalGoesBad is the WIRING, which the test above
+// is structurally blind to.
+//
+// 🔴 `TestABrokenControlJournalIsSaidONCEAndItsRecoverySaidONCE` CALLS
+// `journalRefreshReporter` DIRECTLY, SO IT WOULD PASS WITH THE `OnRefresh` FIELD DELETED
+// FROM `openSessionAuthority`. That is the same "a capability that exists in a function
+// nobody routes to" shape `main-never-dispatches-create-user` exists for, and it is the
+// criterion this battery uses to justify covering `cmd/cairn-server` at all: a mitigation
+// with no gate is a mitigation nobody can be told has stopped working. This drives the
+// real loop — `openSessionAuthority` builds the cache, starts `Cache.Run`, and the
+// journal is torn UNDER it.
+//
+// ⚠ IT SHORTENS `refreshInterval`, WHICH IS THE ONLY REASON IT IS FAST. The production
+// value is 30 s; the variable is a package `var` for exactly this, and it is restored.
+func TestTheRunningPodSAYSSoWhenItsControlJournalGoesBad(t *testing.T) {
+	saved := refreshInterval
+	refreshInterval = 5 * time.Millisecond
+	t.Cleanup(func() { refreshInterval = saved })
+
+	journal := filepath.Join(t.TempDir(), "control.journal")
+	env := map[string]string{EnvControlJournal: journal}
+	var out, errOut bytes.Buffer
+	if code := runCreateUser(env, "", flagsFor("supabase", "subject-0001", "", "quarry", "quarry-notes"), &out, &errOut); code != 0 {
+		t.Fatalf("provisioning a starting world: %d / %s", code, errOut.String())
+	}
+	healthy, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var lines []string
+	warn := func(line string) { mu.Lock(); lines = append(lines, line); mu.Unlock() }
+	saw := func(sub string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, l := range lines {
+			if strings.Contains(l, sub) {
+				return true
+			}
+		}
+		return false
+	}
+	dump := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Join(lines, "\n")
+	}
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			if cond() {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %s. Operator stream so far:\n%s", what, dump())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := openSessionAuthority(ctx, env, warn); err != nil {
+		t.Fatalf("opening the session authority: %v", err)
+	}
+
+	// 🔴 THE NEGATIVE CONTROL FIRST, AND IT IS WHAT MAKES THE LINE BELOW MEAN ANYTHING. A
+	// HEALTHY journal must stay silent across many refreshes; a reporter wired to print on
+	// every tick would satisfy the assertion after it while flooding a working pod.
+	time.Sleep(40 * refreshInterval)
+	if saw("no longer loads") || saw("loads again") {
+		t.Fatalf("a healthy journal produced transition lines:\n%s", dump())
+	}
+
+	// A TORN last line — the ENOSPC shape: `os.File.Write` reports a short write after the
+	// partial bytes are already appended, so the tail is half an event.
+	if err := os.WriteFile(journal, append(append([]byte{}, healthy...), []byte(`{"kind":"user-crea`)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("the failure to be reported", func() bool { return saw("no longer loads") })
+	if !saw("journal line") {
+		t.Fatalf("the reported line does not carry the journal's own parse error:\n%s", dump())
+	}
+
+	// …and the recovery, which is the half a failure-only hook could never express.
+	if err := os.WriteFile(journal, healthy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("the recovery to be reported", func() bool { return saw("loads again") })
 }
 
 // TestTheBinaryActuallyDispatchesCreateUser is the half the in-process tests cannot reach:

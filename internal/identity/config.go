@@ -742,14 +742,31 @@ func FromEnvironment(env map[string]string, authority interface {
 	// refusal happen before a backend is constructed against the wrong authority at all,
 	// so there is no branch left that can reach `authority` from here.
 	//
-	// ⚠ IT TAKES PRECEDENCE OVER A CONSTRUCTOR'S OWN ERROR, WHICH IS A CHANGE AND IS THE
-	// COST OF THE LINE ABOVE. A deployment that both half-configures a ledger past the
-	// blank sweep — an unparseable duration, a too-short secret — and sets no journal now
-	// reads this message rather than the specific one. Both are startup refusals naming
-	// something the operator must fix, and the blank sweep (the half-configuration case
-	// that actually occurs) still runs first. `ErrSessionAuthorityUnread`, the mirror,
-	// stays AFTER the constructors for the reason stated there: it has no such conflict,
-	// because the configuration it refuses arms no ledger.
+	// ⚠ IT TAKES PRECEDENCE OVER EVERY CONSTRUCTOR ERROR, AND THAT COST IS WIDER THAN AN
+	// EARLIER DRAFT OF THIS COMMENT CLAIMED. That draft said the cost was only "a
+	// deployment that both half-configures a ledger past the blank sweep — an unparseable
+	// duration, a too-short secret — and sets no journal", because "the blank sweep (the
+	// half-configuration case that actually occurs) still runs first". That is FALSE, and
+	// the error is in what the blank sweep sees: it refuses a setting written BLANK, not
+	// one left ABSENT. The ordinary half-configuration is an absent companion —
+	// `CAIRN_SUPABASE_JWKS_URL` set, `CAIRN_SUPABASE_ISSUER` never written — which arms
+	// the ledger, produces no blank fault, and lands HERE. Measured on this tree: with a
+	// nil `sessions`, all 15 ledger variables set alone reach this refusal and 0 reach
+	// their own backend's; with a session authority, 0 reach this one and 15 reach their
+	// own. So a deployment with no journal gets this message for ANY Supabase or
+	// trusted-header misconfiguration, specific or not.
+	//
+	// It stays first anyway, because the precedence is what deletes the fallback rather
+	// than documenting it: this refusal is asked of the ARMED FLAGS, so no branch is left
+	// that can construct a backend against `authority` at all. The generic message names
+	// the one variable that unblocks every case behind it, and the specific one is one
+	// restart away. ⚠ `internal/identity`'s own tests must therefore supply a session
+	// authority whenever they arm a ledger, or they observe this sentinel and nothing
+	// else — see `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads`, which was
+	// silently emptied by exactly that and now asserts the refusal's PROVENANCE.
+	// `ErrSessionAuthorityUnread`, the mirror, stays AFTER the constructors for the reason
+	// stated there: it has no such conflict, because the configuration it refuses arms no
+	// ledger.
 	if (supabaseArmed || proxyArmed) && sessions == nil {
 		return nil, nil, ErrSessionBackendWithoutAuthority
 	}

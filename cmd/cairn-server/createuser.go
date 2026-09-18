@@ -22,11 +22,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/api"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/store"
 )
 
 // createUserFlags is the mode's own flag set, registered by `main` before `flag.Parse`.
@@ -82,7 +84,7 @@ func registerCreateUserFlags() *createUserFlags {
 // already pays for the server path, and it is worth paying there because the thing under
 // test IS the process. Here the thing under test is a journal write, and an in-process
 // call lets a test read the journal back in the same function.
-func runCreateUser(env map[string]string, f *createUserFlags, out, errOut io.Writer) int {
+func runCreateUser(env map[string]string, storeRoot string, f *createUserFlags, out, errOut io.Writer) int {
 	journal, err := controlJournalPath(env)
 	if err != nil {
 		fmt.Fprintln(errOut, reloadSafe("subsystem-store-api: "+err.Error()))
@@ -114,6 +116,18 @@ func runCreateUser(env map[string]string, f *createUserFlags, out, errOut io.Wri
 		ProjectName: *f.project,
 		ScopeNames:  scopeNames(*f.scopes),
 	}
+	// 🔴 BEFORE THE WRITE, BECAUSE AFTERWARDS THERE IS NO UNDO. The journal is
+	// append-only and nothing emits `scope-renamed`, so a scope record that aliases
+	// somebody else's directory cannot be taken back — the operator's only remedy is to
+	// edit the journal by hand.
+	//
+	// ⚠ THE COST IS THAT A REFUSED PROVISIONING STILL PRINTS IT, and that is the
+	// direction to be wrong in: a warning about a scope that was not created is noise the
+	// operator can read past on the very next line (the refusal names itself), while a
+	// warning withheld until after a successful write is a warning about a thing that has
+	// already happened.
+	warnScopesThatAlreadyExistOnDisk(storeRoot, req.ScopeNames, errOut)
+
 	made, err := control.ProvisionUser(context.Background(), store, req)
 	if err != nil {
 		// 🔴 78, THE SAME CODE AS EVERY OTHER REFUSAL IN THIS PROGRAM, AND THE SECOND CODE
@@ -207,6 +221,69 @@ func scopeNames(raw string) []string {
 	return out
 }
 
+// warnScopesThatAlreadyExistOnDisk names every requested scope whose FOLDED display name
+// already exists as a directory under the store root.
+//
+// 🔴 IT CLOSES THE HALF OF `checkScopeNamesAreFree` THAT IS LIVE IN EVERY DEPLOYMENT, AND
+// IT IS THE ONLY PLACE THAT CAN. That guard iterates the JOURNAL's scopes; the
+// machine-token world's scopes are not journal rows at all — `tokenfile.Source.storeDirs`
+// enumerates the store root's subdirectories — and both worlds are narrowed against the
+// one store root. On first use the journal is empty, so the guard passes unconditionally
+// while the store root may already hold every existing tenant's directory. Measured: a
+// store root holding `tenant-a-notes/` and `ProvisionUser(…, ScopeNames: ["tenant-a-notes"])`
+// → accepted, read AND write allowed. `internal/control` cannot see this because it holds
+// no path and must not grow one; this program holds `-store`.
+//
+// 🔴 A WARNING RATHER THAN A REFUSAL, AND THE REASON IS THAT NOTHING ON DISK ANSWERS THE
+// QUESTION. An existing directory is the hazard (somebody else's tenant) AND the ordinary
+// sequence (seed the store, then provision the person who owns it) — the `-scopes` flag's
+// own help says creating the record does not create the directory, so an operator who
+// seeded first is doing the documented thing. A directory carries no owner, so a refusal
+// would reject both at the same rate and there is no override flag to escape it with.
+// Same shape, and the same ruling, as `openSessionAuthority`'s empty-journal warning.
+// ⚠ SO THIS IS NOT AN INVARIANT AND MUST NOT BE READ AS ONE. It closes the SIGNAL gap,
+// not the hazard. **Closing condition for the hazard itself:** a scope's bytes addressed
+// by its id rather than its display name — the same condition `checkScopeNamesAreFree`
+// states — at which point an existing directory cannot be aliased by a name at all.
+//
+// ⚠ AN UNREADABLE STORE ROOT IS SILENT HERE, DELIBERATELY. `-create-user` writes to the
+// journal and not to the store, so a store root this command cannot enumerate is not a
+// reason to refuse a write that does not touch it — and the SERVER refuses to start over
+// exactly that condition (`tokenfile.ErrStoreRootUnreadable`), which is where an operator
+// meets it. What is lost is this warning, and a warning that cannot be produced is the
+// same state as a store root with nothing in it: not vouched for either way.
+func warnScopesThatAlreadyExistOnDisk(storeRoot string, names []string, errOut io.Writer) {
+	if storeRoot == "" || len(names) == 0 {
+		return
+	}
+	dirents, err := os.ReadDir(storeRoot)
+	if err != nil {
+		return
+	}
+	// Folded directory name → the raw directory name, so the message can name what is
+	// actually on disk rather than the fold of it.
+	onDisk := make(map[string]string, len(dirents))
+	for _, d := range dirents {
+		if !d.IsDir() {
+			continue
+		}
+		onDisk[store.NormalizeRef(d.Name())] = d.Name()
+	}
+	for _, name := range names {
+		dir, exists := onDisk[store.NormalizeRef(name)]
+		if !exists {
+			continue
+		}
+		fmt.Fprintln(errOut, reloadSafe(fmt.Sprintf(
+			"subsystem-store-api: WARNING scope %q already exists as %s/%s. The journal holds no "+
+				"record of it — the store root is ALSO the machine-token world's scope list — so this "+
+				"is either the directory you seeded for this person or another tenant's, and nothing "+
+				"on disk says which. Creating it hands this user READ AND WRITE over whatever is in "+
+				"there, and the journal is append-only: there is no undo",
+			name, storeRoot, dir)))
+	}
+}
+
 func renderScopes(scopes []control.ProvisionedScope) string {
 	if len(scopes) == 0 {
 		return "none"
@@ -294,12 +371,75 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 	//
 	// ⚠ SO `-create-user` PROMISES THE INTERVAL AND NOTHING ELSE. Its closing line says
 	// so; if this ever grows a signal trigger again, that line moves with it.
+	// 🔴 BUILT ON THE CALLER'S GOROUTINE, NOT INSIDE THE ONE BELOW, AND THAT IS A RACE FIX
+	// RATHER THAN A STYLE PREFERENCE. `refreshInterval` is a package `var` that a test
+	// assigns (`main_test.go`, and the reporter's own gate), so reading it inside the
+	// spawned goroutine makes the read happen at whatever moment the scheduler starts it —
+	// concurrently with a later test's write. Measured by `go test -race`: a WRITE from
+	// one test against a READ from a refresh goroutine an EARLIER test had leaked (that
+	// one passes `context.Background()`, so its loop outlives it). Reading here makes the
+	// value sequential with every other access on this goroutine.
+	triggers := control.RefreshTriggers{
+		Interval:  refreshInterval,
+		OnRefresh: journalRefreshReporter(journal, warn),
+	}
 	go func() {
-		if err := cache.Run(ctx, control.RefreshTriggers{
-			Interval: refreshInterval,
-		}); err != nil && !errors.Is(err, context.Canceled) {
+		if err := cache.Run(ctx, triggers); err != nil && !errors.Is(err, context.Canceled) {
 			warn("subsystem-store-api: control journal refresh loop stopped: " + err.Error())
 		}
 	}()
 	return cache, nil
+}
+
+// journalRefreshReporter turns the refresh result this loop used to DISCARD into one
+// stderr line per TRANSITION.
+//
+// 🔴 THE GAP IT CLOSES IS THE SILENT ONE, AND SILENT IS THE WORST OF THE THREE STATES A
+// BAD JOURNAL HAS. `-create-user` exits 78 and names the line; a restarting pod refuses to
+// start and stays down; and BETWEEN those two the running pod keeps serving
+// last-known-good with nothing said anywhere. That is correct behaviour (an authority that
+// drops the rows it cannot parse revokes people at random) and it is also how a torn
+// journal — an append that hit ENOSPC, where `os.File.Write` reports a short write after
+// the partial bytes are already on disk — reaches a restart as a surprise crash loop.
+// `Cache.Staleness()` recorded all of it and nothing outside the tests read it.
+//
+// 🔴 PER TRANSITION, NOT PER REFRESH, AND THE ARITHMETIC IS WHY. The timer is 30 s, so a
+// line per failure is 2,880 a day for one broken file: a volume of identical lines is how
+// an operator learns to filter the stream this warning arrives on, which is the same
+// outcome as not warning. Two edges are what an operator can act on — it broke, and it is
+// fixed — and the RECOVERY edge is the half a failure-only hook cannot express.
+//
+// ⚠ IT DOES NOT RENDER `Cache.Staleness()`, AND THAT IS A DELIBERATE OMISSION RATHER
+// THAN AN OVERSIGHT. The epoch being served and its age would belong in these lines, and
+// `Staleness()` is exactly that value — but six comments across `internal/control`,
+// `internal/api`, `internal/control/tokenfile` and this program's own `main` currently
+// state, as a load-bearing claim, that it has NO CALLER OUTSIDE THE TESTS, and each of
+// them reasons from that to "bounded and SILENT" about a DIFFERENT window (the token-file
+// scope enumeration). Adding the first caller here would make all six false at once while
+// closing none of the thing they defer, which is a status SURFACE — a `doctor` section, a
+// route, or the startup banner `tests/dualrun/harness.py` compares. So this reports the
+// EVENT and the remedy, and the value stays where those comments say it is.
+// **Closing condition:** when that surface lands, this line renders `Staleness()` with it
+// and those six sentences move together.
+func journalRefreshReporter(journal string, warn func(string)) func(error) {
+	// Closed over rather than package state: two authorities in one process would
+	// otherwise share one edge detector and each silence the other's transitions.
+	failing := false
+	return func(err error) {
+		switch {
+		case err != nil && !failing:
+			failing = true
+			warn(fmt.Sprintf(
+				"subsystem-store-api: WARNING the control journal %s no longer loads, and this pod is now "+
+					"serving the LAST model it read successfully — sessions already resolvable stay "+
+					"resolvable, anything provisioned since is invisible, and a RESTART will refuse to "+
+					"come up until the file parses: %v",
+				journal, err))
+		case err == nil && failing:
+			failing = false
+			warn(fmt.Sprintf(
+				"subsystem-store-api: the control journal %s loads again; this pod is serving it",
+				journal))
+		}
+	}
 }

@@ -973,6 +973,76 @@ read outage rather than a rolling one — and before this existed, a typo in the
 secret turned that outage into an indefinite one, because the replacement
 exited 78 and stayed down.
 
+## The control journal — `$CAIRN_CONTROL_JOURNAL`
+
+Only the **Go** server reads this, and only when the variable is set. It names an
+append-only JSONL file holding the users, projects, memberships and scopes the
+**session** backends (Supabase JWT, trusted header) resolve against; the machine-token
+path above is untouched by it and keeps resolving against the token file.
+
+| | |
+|---|---|
+| set, with a session backend configured | the journal is materialized before the listener accepts, and re-read on a 30 s timer |
+| set, with **no** session backend configured | **refuses to start** — a journal nobody reads answers nothing while looking healthy |
+| a session backend configured with this **unset** | **refuses to start** — the backends would otherwise resolve against the token-file projection, which holds no user any identity provider can name, so a verified sign-in authenticates and then reads nothing |
+| unset, no session backend | exactly today's deployment, unchanged |
+| written by | `cairn-server -create-user` (see below), never by a route — nothing on a read path creates a user |
+| re-read by | the timer only. **Not** `SIGHUP`: that signal is the token file's, and it says so when it fires |
+
+🔴 **IT MUST SIT ON A PERSISTENT VOLUME.** The file IS the user database. An `emptyDir`
+— or a path under the image's own filesystem — loses every provisioned user on restart,
+and the pod then comes up, warns that the journal holds no users, and refuses every
+browser sign-in. `cairn-server -create-user` **creates the file if it is absent**, so a
+typo'd path does not fail: it silently starts a second, empty journal that the running
+pod is not reading.
+
+```sh
+# create a user, their project, the owner membership and their scopes, in one batch
+kubectl exec -n <ns> deploy/<name> -- cairn-server -create-user \
+  -provider supabase -subject <the IdP's own id> -email <display only> \
+  -project <project name> -scopes <name>,<name>
+```
+
+Exit **0** = written (the ids go to stdout); exit **78** = nothing was written, and the
+reason is on stderr.
+
+⚠ **A scope's display name is the DIRECTORY name under the store root**, and creating the
+record does **not** create the directory. Two scope records whose names fold alike —
+`Quarry_Notes` and `quarry-notes` are one directory — are refused across the whole
+journal. A name that already exists as a directory under `--store` is **warned about, not
+refused**: nothing on disk says whether it is the directory you seeded for this person or
+another tenant's, and the journal is append-only, so there is no undo. Read that warning
+before you re-run the command.
+
+### When the journal will not parse
+
+Fail-closed, in both directions, and the two directions look nothing alike:
+
+- **`-create-user`** exits 78 and passes the journal's own message through. A JSON parse
+  error names the LINE (`journal line 3: …`); a line that parses but will not replay names
+  the EVENT and the field instead. Nothing is written either way.
+- **A restarting pod refuses to start** and stays down. The refusal is deliberate: an
+  authority that silently drops the rows it cannot parse is one that revokes people at
+  random.
+- **A pod that is already up keeps serving**, on the last model it read successfully. The
+  refresh failure is reported on stderr — **once** when it starts failing and **once**
+  when it recovers, naming the journal and the parse error — so the state is visible
+  before the next restart turns it into a crash loop. (Per transition, not per refresh: at
+  the 30 s interval a line per failure is ~2,880 a day, which is how an operator learns to
+  filter the stream this arrives on.)
+
+The repair is by hand, and the journal is plain JSONL — one event per line:
+
+```sh
+kubectl exec -n <ns> deploy/<name> -- sh -c 'tail -c 2000 "$CAIRN_CONTROL_JOURNAL"'
+# a TORN last line is the expected damage: the volume filled mid-append, so the bytes
+# before the newline landed and the rest did not. Truncate the partial line; every
+# complete line before it replays.
+```
+
+Take a copy before editing. A line deleted from the middle is a user, a membership or a
+scope deleted with it, and replay is the only thing that decides what the pod believes.
+
 ## Rate limit, lockout and the client address
 
 | knob | default | env |

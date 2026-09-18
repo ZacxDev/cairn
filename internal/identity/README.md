@@ -453,6 +453,25 @@ machine-token backend is untouched and still resolves against the token-file pro
   ARMED flags rather than the parameter alone: no session backend and no session authority
   is a machine-token-only chain, unchanged. Pinned by
   `TestNoControlJournalMeansNoSessionAuthorityAtAll` and by that same test's last arm.
+
+🔴 **THE PRECEDENCE HAS A COST, IT IS WIDER THAN THE FIRST DRAFT OF `config.go` SAID, AND
+IT SILENTLY EMPTIED A PRE-EXISTING GATE IN THIS PACKAGE.** `ErrSessionBackendWithoutAuthority`
+runs **before** the constructors, so it shadows every backend-specific refusal for a
+deployment with no journal. The draft called that cost narrow — only a ledger
+half-configured "past the blank sweep" — on the grounds that the blank sweep catches the
+half-configuration that actually occurs. It does not: the sweep refuses a value written
+**blank**, not one left **absent**, and an absent companion (`CAIRN_SUPABASE_JWKS_URL` set,
+`CAIRN_SUPABASE_ISSUER` never written) is the ordinary shape. **Measured on this tree:**
+with a nil session authority, **15 of 15** ledger variables set alone are refused by this
+sentinel and **0** reach their own backend; with an authority supplied, **0** and **15**.
+`TestTheEnvironmentLedgersNameEveryVariableEachBackendReads`'s "the ledger is load-bearing
+rather than decorative" loop passed `nil` and therefore observed only the sentinel —
+proven by breaking both constructors out of the call path, which left the old loop
+**green** on all 15 and turns the repaired one **red** on all 15. It now supplies a
+session authority *and* asserts the refusal is neither blanket sentinel, because supplying
+one makes `ErrSessionAuthorityUnread` the replacement shadow. **Any test in this package
+that ARMS a ledger must pass `newTestSessionAuthority(t)`**, and one that asserts a
+specific refusal must say the refusal is the backend's own.
 - **The gate** is `TestAnOperatorProvisionedSupabaseSessionAuthenticatesWithRealAuthority`
   and its trusted-header twin: a user created through `control.ProvisionUser`, a real
   journal file, a session verified through `FromEnvironment`'s own chain, and an assertion

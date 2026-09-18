@@ -188,7 +188,11 @@ func main() {
 		return
 	}
 	if *create.enabled {
-		os.Exit(runCreateUser(environ(), create, os.Stdout, os.Stderr))
+		// `*store` is passed because this mode is the ONE place a scope display name is
+		// chosen, and the store root is the only thing that can say whether that name
+		// already reaches somebody else's directory. `internal/control` holds no path and
+		// must not grow one; see `warnScopesThatAlreadyExistOnDisk`.
+		os.Exit(runCreateUser(environ(), *store, create, os.Stdout, os.Stderr))
 	}
 
 	env := environ()

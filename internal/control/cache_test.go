@@ -1113,6 +1113,70 @@ func TestAFailedRefreshDoesNotStopTheLoop(t *testing.T) {
 	}
 }
 
+// TestARunningCacheREPORTSEveryRefreshResultToItsCaller.
+//
+// 🔴 THE HAZARD IS THE DISCARDED RETURN, AND `Staleness` BEING CORRECT DOES NOT CLOSE IT.
+// `Run` threw its refresh errors away and recorded them in `Staleness`, which nothing
+// outside this file read — so a control journal that stopped parsing left a pod serving
+// last-known-good, correctly and SILENTLY, until a restart turned it into a crash loop
+// with no signal in between. `RefreshTriggers.OnRefresh` is what a caller can render.
+//
+// ⚠ BOTH EDGES, BECAUSE A FAILURE-ONLY HOOK CANNOT SAY "IT RECOVERED" AND EVERY CONSUMER
+// WOULD THEN POLL `Staleness` FOR THE OTHER HALF — a second mechanism answering the
+// question this one exists for. The recovery arm below is the positive control on that.
+func TestARunningCacheREPORTSEveryRefreshResultToItsCaller(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c, src, _ := liveCache(t, time.Minute)
+	src.unplug()
+
+	var mu sync.Mutex
+	var seen []error
+	count := func(want bool) int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, e := range seen {
+			if (e != nil) == want {
+				n++
+			}
+		}
+		return n
+	}
+
+	go func() {
+		_ = c.Run(ctx, RefreshTriggers{
+			Interval: 2 * time.Millisecond,
+			OnRefresh: func(err error) {
+				mu.Lock()
+				seen = append(seen, err)
+				mu.Unlock()
+			},
+		})
+	}()
+
+	waitFor(t, "two REPORTED failures", func() bool { return count(true) >= 2 })
+	if count(false) != 0 {
+		t.Fatalf("a dead authority reported %d successes", count(false))
+	}
+	// 🔴 THE REPORTED VALUE IS THE AUTHORITY'S OWN ERROR, NOT A SENTINEL THE LOOP
+	// INVENTED. A hook handed `errors.New("refresh failed")` would satisfy every count
+	// above and tell an operator nothing about WHAT failed, which is the whole point of
+	// pushing it rather than leaving it in a counter.
+	mu.Lock()
+	first := seen[0]
+	mu.Unlock()
+	if !errors.Is(first, errAuthorityDown) {
+		t.Fatalf("the reported error is not the one the authority returned: %v", first)
+	}
+
+	src.mu.Lock()
+	src.down = false
+	src.mu.Unlock()
+
+	waitFor(t, "a REPORTED success once the authority came back", func() bool { return count(false) >= 1 })
+}
+
 // TestRunRefusesAScheduleThatCannotKeepTheBound, measured at TWO points around the
 // boundary: interval == bound is keepable and must be accepted; one nanosecond more is
 // not and must be refused. A bound nothing keeps is read as a promise.

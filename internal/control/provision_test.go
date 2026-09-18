@@ -3,11 +3,14 @@ package control
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ZacxDev/cairn/internal/store"
 )
 
 // provisionClock is the instant every event below carries. Year 2000, per the repo's
@@ -227,6 +230,93 @@ func TestAScopeNameAlreadyInTheJournalIsRefused(t *testing.T) {
 	}
 }
 
+// TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused.
+//
+// 🔴 THE GUARD MUST BE AS WIDE AS THE THING IT PROTECTS, AND A RAW `==` IS STRICTLY
+// NARROWER. What decides "one directory" is `store.NormalizeRef` — lowercase, non-slug
+// runes to `-`, runs collapsed, trimmed — and it is applied on BOTH sides of
+// `store.ScopeSet.Allows` and again on the write path (`Server.createEntry` folds the
+// scope before it resolves a filename). So `Quarry_Notes` and `quarry-notes` are ONE
+// directory to every reader and every writer, and a guard comparing the raw strings sees
+// two different names.
+//
+// Measured at `18df63d`, where `checkScopeNamesAreFree` compared raw: the second
+// provisioning was ACCEPTED, both owners held `RoleOwner`, and the second project's owner
+// could read AND write the first's entries. There is no undo — nothing emits
+// `scope-renamed` and the journal is append-only.
+func TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused(t *testing.T) {
+	// The premise, asserted rather than assumed: these two spellings ARE one directory.
+	// Without it this test is a claim about `NormalizeRef` that nothing here checks.
+	if store.NormalizeRef("Quarry_Notes") != store.NormalizeRef("quarry-notes") {
+		t.Fatalf("premise broken: %q and %q do not fold alike, so this test measures nothing",
+			store.NormalizeRef("Quarry_Notes"), store.NormalizeRef("quarry-notes"))
+	}
+
+	journal, path := journalAt(t)
+	if _, err := ProvisionUser(context.Background(), journal, aUser("quarry-notes")); err != nil {
+		t.Fatalf("the first provisioning must succeed: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the journal: %v", err)
+	}
+
+	// 🔴 A DISTINCT SUBJECT PER ARM, BECAUSE A SHARED ONE HIDES THE MEASUREMENT. At
+	// `18df63d` the first arm was ACCEPTED, which consumed the shared subject and made
+	// every later arm fail on the (provider, subject) uniqueness rule instead — a red for
+	// the wrong reason, reported as if this guard had fired.
+	for i, spelling := range []string{"Quarry_Notes", "QUARRY NOTES", "  quarry--notes  "} {
+		t.Run(spelling, func(t *testing.T) {
+			clash := aUser(spelling)
+			clash.Subject = fmt.Sprintf("subject-arm-%d", i)
+			_, err := ProvisionUser(context.Background(), journal, clash)
+			if !errors.Is(err, ErrScopeNameTaken) {
+				t.Fatalf("the WRONG guard fired for %q.\n  got:  %v\n  want: %v", spelling, err, ErrScopeNameTaken)
+			}
+			// 🔴 THE RAW NAME THE OPERATOR TYPED, AND THE NAME IT COLLIDED WITH, BOTH
+			// PRESENT. Reporting only the folded form would show an operator a string they
+			// never wrote, beside a scope whose own spelling is the other raw one.
+			for _, want := range []string{spelling, "quarry-notes", "prj_"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			after, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatalf("reading the journal: %v", readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("a refused provisioning changed the journal.\n  before: %q\n  after:  %q", before, after)
+			}
+		})
+	}
+
+	// 🔴 THE NEGATIVE CONTROL: an IDENTICAL spelling must still refuse. A fold applied to
+	// only one side, or a comparison inverted, would pass every arm above and lose the
+	// case the guard shipped with.
+	identical := aUser("quarry-notes")
+	identical.Subject = "subject-0003"
+	if _, err := ProvisionUser(context.Background(), journal, identical); !errors.Is(err, ErrScopeNameTaken) {
+		t.Fatalf("the exact name already held was accepted: %v", err)
+	}
+
+	// 🔴 AND THE POSITIVE CONTROL: a name that folds to something genuinely DIFFERENT is
+	// still accepted. Without it a guard that refused every second provisioning — folding
+	// both sides to a constant, say — would pass everything above.
+	distinct := aUser("Quarry_Plans")
+	distinct.Subject = "subject-0004"
+	made, err := ProvisionUser(context.Background(), journal, distinct)
+	if err != nil {
+		t.Fatalf("a scope name that folds to a FREE slug must be accepted: %v", err)
+	}
+	// The record keeps the operator's own spelling: folding is what the guard COMPARES,
+	// not what it stores, and the directory the reader opens is derived from the raw name
+	// by the same fold wherever it is needed.
+	if len(made.Scopes) != 1 || made.Scopes[0].Name != "Quarry_Plans" {
+		t.Fatalf("provisioning rewrote the display name it was given: %+v", made.Scopes)
+	}
+}
+
 // TestARefusedProvisioningLeavesNeitherBytesNorState covers the refusals that happen
 // INSIDE `Append` rather than before it — where the events are built, validated against a
 // clone, and the file is only written if every one of them replays.
@@ -258,10 +348,14 @@ func TestARefusedProvisioningLeavesNeitherBytesNorState(t *testing.T) {
 			if len(body) != 0 {
 				t.Fatalf("a refused provisioning wrote %d bytes: %q", len(body), body)
 			}
-			m, err := store.Model(context.Background())
-			if err != nil {
-				t.Fatalf("reading the model: %v", err)
-			}
+			// 🔴 `lastKnownGood()`, NOT `Model()`, AND THAT IS A CORRECTION RATHER THAN A
+			// STYLE CHOICE — the same one `TestARejectedBatchLeavesNeitherBytesNorState`
+			// carries one level down. `Model` is now unconditionally `Reload`, so it
+			// re-reads a file the refused batch never touched: the "…nor State" arm would
+			// assert bytes a second time and pass with the in-memory projection poisoned.
+			// `lastKnownGood()` is the RETAINED model — what the authority would serve if
+			// the next read failed — which is the value a partially-applied batch lands in.
+			m := store.lastKnownGood()
 			if len(m.Users) != 0 || len(m.Projects) != 0 || len(m.Scopes) != 0 {
 				t.Fatalf("a refused provisioning left state: %d users, %d projects, %d scopes",
 					len(m.Users), len(m.Projects), len(m.Scopes))
