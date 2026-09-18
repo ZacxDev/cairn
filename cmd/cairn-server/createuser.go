@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/api"
@@ -252,6 +253,20 @@ func scopeNames(raw string) []string {
 // exactly that condition (`tokenfile.ErrStoreRootUnreadable`), which is where an operator
 // meets it. What is lost is this warning, and a warning that cannot be produced is the
 // same state as a store root with nothing in it: not vouched for either way.
+//
+// 🔴 THE ENTRY IS STATTED, NOT ASKED — AND THAT IS THE SAME PREDICATE AS
+// `tokenfile.Source.storeDirs`, WHICH IS THE WHOLE POINT OF THE FUNCTION. This warning
+// claims to show the operator the world the READER will narrow on, so a predicate
+// narrower than the reader's makes it silent on exactly the entries that matter.
+// `os.ReadDir` yields `DirEntry` values whose `IsDir` reports the entry's OWN type and
+// does NOT follow a symlink; `storeDirs` calls `os.Stat`, which does. Measured at
+// `8c06ea1` over a root holding `tenant-a-notes -> <a directory>` and a plain
+// `tenant-c-notes`: `os.Stat`+`IsDir` saw both, `DirEntry.IsDir` saw only the plain one —
+// so a tar-seeded or migrated store got no warning at all and the operator provisioned
+// `RoleOwner` over another tenant's bytes with no undo. A stat ERROR (a dangling symlink,
+// a directory that cannot be traversed) is skipped rather than reported, for the reason
+// the paragraph above gives about the root itself: this command does not touch the store,
+// and an entry it cannot resolve is not vouched for either way.
 func warnScopesThatAlreadyExistOnDisk(storeRoot string, names []string, errOut io.Writer) {
 	if storeRoot == "" || len(names) == 0 {
 		return
@@ -264,7 +279,8 @@ func warnScopesThatAlreadyExistOnDisk(storeRoot string, names []string, errOut i
 	// actually on disk rather than the fold of it.
 	onDisk := make(map[string]string, len(dirents))
 	for _, d := range dirents {
-		if !d.IsDir() {
+		info, statErr := os.Stat(filepath.Join(storeRoot, d.Name()))
+		if statErr != nil || !info.IsDir() {
 			continue
 		}
 		onDisk[store.NormalizeRef(d.Name())] = d.Name()
@@ -376,9 +392,16 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 	// assigns (`main_test.go`, and the reporter's own gate), so reading it inside the
 	// spawned goroutine makes the read happen at whatever moment the scheduler starts it —
 	// concurrently with a later test's write. Measured by `go test -race`: a WRITE from
-	// one test against a READ from a refresh goroutine an EARLIER test had leaked (that
-	// one passes `context.Background()`, so its loop outlives it). Reading here makes the
-	// value sequential with every other access on this goroutine.
+	// one test against a READ from a refresh goroutine an EARLIER test had leaked by
+	// passing `context.Background()`. Reading here makes the value sequential with every
+	// other access on this goroutine.
+	//
+	// ⚠ THE LEAK THAT MADE IT OBSERVABLE IS CLOSED; THE REASON IS NOT. Every caller in
+	// `createuser_test.go` now cancels, so no test currently leaks a loop — but that is a
+	// property of the callers, not of this function, and `main`'s own context outlives
+	// everything by design. A loop that reads package state at an arbitrary later instant
+	// is unsafe whether or not a test happens to leak one today, which is why this stays
+	// where it is rather than moving into the goroutine as a "simplification".
 	triggers := control.RefreshTriggers{
 		Interval:  refreshInterval,
 		OnRefresh: journalRefreshReporter(journal, warn),
@@ -411,16 +434,25 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 //
 // ⚠ IT DOES NOT RENDER `Cache.Staleness()`, AND THAT IS A DELIBERATE OMISSION RATHER
 // THAN AN OVERSIGHT. The epoch being served and its age would belong in these lines, and
-// `Staleness()` is exactly that value — but six comments across `internal/control`,
-// `internal/api`, `internal/control/tokenfile` and this program's own `main` currently
-// state, as a load-bearing claim, that it has NO CALLER OUTSIDE THE TESTS, and each of
-// them reasons from that to "bounded and SILENT" about a DIFFERENT window (the token-file
-// scope enumeration). Adding the first caller here would make all six false at once while
+// `Staleness()` is exactly that value — but comments in `internal/control`,
+// `internal/api`, `internal/control/tokenfile` and this program's own `main` state, as a
+// load-bearing claim, that it has **NO CALLER OUTSIDE THE TESTS**, and each of them
+// reasons from that to "bounded and SILENT" about a DIFFERENT window (the token-file scope
+// enumeration). Adding the first caller here would falsify all of them at once while
 // closing none of the thing they defer, which is a status SURFACE — a `doctor` section, a
 // route, or the startup banner `tests/dualrun/harness.py` compares. So this reports the
 // EVENT and the remedy, and the value stays where those comments say it is.
+//
+// ⚠ NO COUNT IS QUOTED, AND THE ABSENCE IS DELIBERATE. This sentence used to say "six
+// comments", which is a number in prose with no gate — the exact shape
+// `tests/test_control_mutant_count_is_pinned.py` exists to refuse — and it went loose
+// within one commit, which moved two of them into the past tense. What is load-bearing is
+// the PREDICATE, not the population, and the predicate is mechanical:
+// `find . -name '*.go' ! -name '*_test.go' -print0 | xargs -0 grep -n 'Staleness()'`
+// returns only its own definition in `cache.go` and comments. Re-run that rather than
+// trusting a tally.
 // **Closing condition:** when that surface lands, this line renders `Staleness()` with it
-// and those six sentences move together.
+// and every one of those sentences moves with it.
 func journalRefreshReporter(journal string, warn func(string)) func(error) {
 	// Closed over rather than package state: two authorities in one process would
 	// otherwise share one edge detector and each silence the other's transitions.

@@ -258,12 +258,12 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 109 mutants, over FIVE packages
+python3 tests/control_mutants.py          # 110 mutants, over FIVE packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 109 mutants, 107 killed, 2 labelled EQUIVALENT at the code,
-0 misattributed, 0 harness errors, positive control GREEN.**
+**Measured on this tree: 110 mutants, 108 killed, 2 labelled EQUIVALENT at the code,
+0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
 
 ⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
 `bcfaa19` to `8fb98d2` and went stale at `ca632e3`, a round that added ten mutants and
@@ -311,7 +311,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 109 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 110 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -364,7 +364,18 @@ pointed at the affected test. The third was not: `provision_test.go`'s sibling
 `TestARefusedProvisioningLeavesNeitherBytesNorState` read its state arm through
 `FileStore.Model` too, and — being one layer up, with no row of its own — simply passed
 while asserting nothing about state. It now reads `lastKnownGood()` and is listed as an
-`extra_killers` on both rows. **And the fourth is in a different package entirely:**
+`extra_killers` on both rows.
+
+🔴 **AND THAT SENTENCE WAS ITSELF THE DEFECT IT DESCRIBES, FOR SEVERAL ROUNDS.** `extra_killers`
+was a field set on 23 rows (30 entries) and **read by nothing**: the verdict logic required only
+`m.killer in failing` and tolerated any other failing test regardless. So "is listed as an
+`extra_killers` on both rows" was offered here as the closure for a silently-emptied guard while
+being no gate at all — coverage claimed, none provided, inside the battery built to refuse exactly
+that. It is a real ledger now: every listed entry must be in that mutant's failing set, and a row
+whose list has gone stale is a **red** battery (`stale-extras=N` in the SUMMARY line) rather than a
+quieter kill. The remedy is per row and is a decision — either the guard moved out from under the
+mutant's observable, or the row's list was aspirational — and the failure message says so rather
+than inviting the entry to be deleted. **And the fourth is in a different package entirely:**
 `internal/identity`'s `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` loops
 every ledger variable set alone and asserts each reaches a refusal. Putting
 `ErrSessionBackendWithoutAuthority` **before** the constructors moved that observable —
@@ -614,6 +625,33 @@ Both session backends were inert in every deployment that could exist.
    and a fourth is the read of `s.Model(ctx)` happening **outside** the `flock` `Append`
    takes, so two concurrent `-create-user` runs can both pass it. It closes when a scope's
    bytes are addressed by id rather than by display name.
+
+   🔴 **THERE WAS A SIXTH AND THIS ENUMERATION — WRITTEN UNDER THE HEADING THAT A GUARD'S
+   DESCRIPTION HAS TO BE AS WIDE AS ITS BODY — OMITTED IT: THE REQUEST ITSELF.** The guard
+   compared each requested name against `m.Scopes` and against nothing else, so two names
+   inside ONE batch met only `apply`'s within-a-project rule, which is a **raw** `==`
+   (`Model.ScopeByNameIn`). Measured at `8c06ea1`:
+   `-create-user -project quarry -scopes "Quarry_Notes,quarry-notes"` was **accepted** —
+   two `scope-created` events, two scope ids, one directory, append-only, no undo. It is
+   closed: `checkScopeNamesAreFree` now folds within the request as well as against the
+   journal, `TestTwoScopeNamesInONEREQUESTThatFoldAlikeAreRefused` is the guard and
+   `within-ONE-request-a-FOLDED-duplicate-accepted` is the mutant. Its blast radius was
+   bounded — both records land in one project under one owner — and it would have become
+   an authorization defect the moment scope **sharing** lands, because a grant names a
+   scope **id** and granting one of a folded pair hands over the other's bytes while every
+   id-keyed check agrees the grant was honoured exactly.
+
+   ⚠ **AND CLOSING IT LEAVES A RESIDUAL, DECLARED RATHER THAN NORMALISED AWAY.** The fold
+   is in `checkScopeNamesAreFree`, not in `apply` — `Model.ScopeByNameIn` stays raw,
+   deliberately: it is a RESOLVER as well as a collision check (folding it would make
+   `ScopeByNameIn(p, "Quarry_Notes")` return the scope named `quarry-notes`, a second
+   silent name-resolution mechanism inside the model), it would put the reader's fold into
+   a model that must know nothing about the reader, and it would silently widen
+   `scope-renamed` and `scope-moved`, which nothing emits and no test pins. So a
+   `scope-created` appended by a writer that does not come through `ProvisionUser` is
+   still checked raw. `TestApplyRefusesTwoScopesWithONENameInONEProject` asserts both
+   halves of that — the raw refusal and the folded acceptance — so the residual cannot
+   drift silently.
 
 ⚠ **AND `FileStore.Model` RE-READS THE JOURNAL ON EVERY CALL, BECAUSE THE WRITER IS A
 DIFFERENT PROCESS.** It used to serve a process-local projection invalidated only by that

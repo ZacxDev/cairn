@@ -317,21 +317,174 @@ func TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused(t *testing.T) {
 	}
 }
 
+// TestTwoScopeNamesInONEREQUESTThatFoldAlikeAreRefused.
+//
+// 🔴 THE GUARD ABOVE IS A RELATIONSHIP BETWEEN THE REQUEST AND THE JOURNAL, AND THE
+// REQUEST IS ALSO A RELATIONSHIP WITH ITSELF. `checkScopeNamesAreFree` compared each
+// requested name against `m.Scopes` and against nothing else, while the only rule standing
+// between two names inside ONE batch was `apply`'s within-a-project check — a RAW `==`,
+// ninety lines below the comment declaring that what decides "one directory" is the FOLD.
+// Measured at `8c06ea1`: `-create-user -project quarry -scopes "Quarry_Notes,quarry-notes"`
+// was ACCEPTED — two `scope-created` events, two distinct scope ids, both folding to
+// `quarry-notes`, i.e. ONE directory. Append-only, so there is no undo.
+//
+// ⚠ ITS BLAST RADIUS TODAY IS BOUNDED AND IT IS STILL WORTH CLOSING, WHICH IS WORTH SAYING
+// PLAINLY RATHER THAN OVERSTATING. Both records land in one project under one owner, so
+// nobody reads across a tenancy boundary through it now. It becomes an authorization
+// defect the moment scope SHARING lands — the "later slice of P5" `ProvisionUser`'s own
+// comment defers — because a grant names a scope ID: granting scope A would hand over
+// scope B's bytes, the two being one directory, and every id-keyed check would agree the
+// grant was honoured exactly.
+func TestTwoScopeNamesInONEREQUESTThatFoldAlikeAreRefused(t *testing.T) {
+	// The premise, asserted rather than assumed — the same one the test above states.
+	if store.NormalizeRef("Quarry_Notes") != store.NormalizeRef("quarry-notes") {
+		t.Fatalf("premise broken: %q and %q do not fold alike, so this test measures nothing",
+			store.NormalizeRef("Quarry_Notes"), store.NormalizeRef("quarry-notes"))
+	}
+
+	for i, pair := range [][]string{
+		{"Quarry_Notes", "quarry-notes"},
+		// The other order, because a check that only ever looks backwards or only
+		// forwards passes one of these and not the other.
+		{"quarry-notes", "Quarry_Notes"},
+		// Not adjacent, and with a genuinely free name between them.
+		{"quarry-notes", "quarry-plans", "QUARRY NOTES"},
+		// The RAW duplicate, which `apply` also refuses — kept here so this guard is
+		// measured at the boundary its fold subsumes as well as past it.
+		{"quarry-notes", "quarry-notes"},
+	} {
+		t.Run(fmt.Sprintf("arm-%d", i), func(t *testing.T) {
+			journal, path := journalAt(t)
+			req := aUser(pair...)
+			req.Subject = fmt.Sprintf("subject-arm-%d", i)
+			_, err := ProvisionUser(context.Background(), journal, req)
+			if !errors.Is(err, ErrScopeNameTaken) {
+				t.Fatalf("%v was accepted, or refused by the WRONG guard.\n  got:  %v\n  want: %v",
+					pair, err, ErrScopeNameTaken)
+			}
+			// Both raw spellings and the fold they collide on, so an operator can see
+			// which two of the names they typed are the same directory.
+			for _, want := range []string{pair[0], pair[len(pair)-1], "quarry-notes"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			body, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatalf("reading the journal: %v", readErr)
+			}
+			if len(body) != 0 {
+				t.Fatalf("a refused provisioning wrote %d bytes: %q", len(body), body)
+			}
+		})
+	}
+
+	// 🔴 THE POSITIVE CONTROL, AND IT IS WHAT STOPS THIS BEING "REFUSE ANY REQUEST WITH
+	// MORE THAN ONE SCOPE". Three names that fold to three different slugs are accepted,
+	// and all three records survive with the operator's own spelling.
+	journal, _ := journalAt(t)
+	made, err := ProvisionUser(context.Background(), journal, aUser("Quarry_Notes", "quarry-plans", "QUARRY RUNBOOK"))
+	if err != nil {
+		t.Fatalf("three scope names that fold apart must be accepted: %v", err)
+	}
+	if len(made.Scopes) != 3 {
+		t.Fatalf("the accepted request created %d scopes, want 3: %+v", len(made.Scopes), made.Scopes)
+	}
+	for i, want := range []string{"Quarry_Notes", "quarry-plans", "QUARRY RUNBOOK"} {
+		if made.Scopes[i].Name != want {
+			t.Fatalf("scope %d is recorded as %q, want the operator's own spelling %q",
+				i, made.Scopes[i].Name, want)
+		}
+	}
+}
+
+// TestApplyRefusesTwoScopesWithONENameInONEProject is the MODEL's own rule, exercised
+// where the model can see it.
+//
+// 🔴 IT EXISTS BECAUSE `checkScopeNamesAreFree` NOW SUBSUMES THE OBSERVABLE THAT USED TO
+// REACH IT. `TestARefusedProvisioningLeavesNeitherBytesNorState`'s "two scopes with one
+// name in the SAME new project" arm was the ONLY coverage of `journal.go`'s
+// `ScopeByNameIn` clash check; folding within the request means that arm is now refused
+// BEFORE `Append` is called, so the model's rule would have been left with no test at all
+// — the shape where a change moves a guard's observable out from under it and a green
+// suite certifies nothing. This drives `Append` directly, which is the path every OTHER
+// writer takes.
+//
+// ⚠ AND IT PINS THE RULE AS RAW, WHICH IS A DECISION RATHER THAN AN OVERSIGHT. `apply`
+// compares display names with `==`; the FOLD is `checkScopeNamesAreFree`'s, deliberately,
+// because `apply` states the model's rule and the fold is a property of the READER the
+// model knows nothing about. So the second arm below — two names that fold alike in one
+// project, appended directly — is ACCEPTED here, and that residual is declared in
+// `internal/control/README.md` rather than closed by widening the model.
+func TestApplyRefusesTwoScopesWithONENameInONEProject(t *testing.T) {
+	journal, _ := journalAt(t)
+	made, err := ProvisionUser(context.Background(), journal, aUser("quarry-notes"))
+	if err != nil {
+		t.Fatalf("the starting world: %v", err)
+	}
+
+	dup := Event{
+		Kind: EventScopeCreated, At: provisionClock,
+		ScopeID: "scp_duplicate_name", DisplayName: "quarry-notes", ProjectID: made.Project,
+	}
+	if _, err := journal.Append(context.Background(), dup); err == nil {
+		t.Fatal("a second scope named `quarry-notes` in the same project was accepted — " +
+			"names are unique WITHIN a project so a caller holding a project can resolve " +
+			"one without ambiguity, and `Model.ScopeByNameIn` is what returns a single row")
+	} else if !strings.Contains(err.Error(), "already used by") {
+		t.Fatalf("the refusal did not come from `apply`'s within-a-project rule: %v", err)
+	}
+
+	// 🔴 THE POSITIVE CONTROL: a name that is FREE in this project is accepted by the same
+	// call, so the refusal above is about the name rather than about `Append` refusing a
+	// hand-built event.
+	free := Event{
+		Kind: EventScopeCreated, At: provisionClock,
+		ScopeID: "scp_free_name", DisplayName: "quarry-plans", ProjectID: made.Project,
+	}
+	if _, err := journal.Append(context.Background(), free); err != nil {
+		t.Fatalf("a free name in the same project must be accepted: %v", err)
+	}
+
+	// ⚠ THE DECLARED RESIDUAL, ASSERTED SO IT CANNOT DRIFT SILENTLY. `apply` is RAW, so a
+	// FOLDED duplicate appended by a writer that does not go through `ProvisionUser` is
+	// accepted. If this ever starts failing, the model has grown the reader's fold and
+	// `internal/control/README.md`'s residual moves with it.
+	folded := Event{
+		Kind: EventScopeCreated, At: provisionClock,
+		ScopeID: "scp_folded_name", DisplayName: "Quarry_Notes", ProjectID: made.Project,
+	}
+	if _, err := journal.Append(context.Background(), folded); err != nil {
+		t.Fatalf("`apply`'s rule is documented as RAW and this arm measured it as FOLDED: %v. "+
+			"If that is deliberate, the residual in `internal/control/README.md` and "+
+			"`checkScopeNamesAreFree`'s own comment have to move with it", err)
+	}
+}
+
 // TestARefusedProvisioningLeavesNeitherBytesNorState covers the refusals that happen
-// INSIDE `Append` rather than before it — where the events are built, validated against a
-// clone, and the file is only written if every one of them replays.
+// INSIDE `Append` — where the events are built, validated against a clone, and the file is
+// only written if every one of them replays — plus one that is now refused BEFORE it, kept
+// deliberately and labelled as such.
 func TestARefusedProvisioningLeavesNeitherBytesNorState(t *testing.T) {
 	store, path := journalAt(t)
 	for _, arm := range []struct {
 		name string
 		req  NewUser
 	}{
-		// Each of these is refused by `Event.validate` or `Model.apply`, which is where
-		// the rule lives — `ProvisionUser` deliberately re-validates nothing.
+		// The first three are refused by `Event.validate` or `Model.apply`, which is where
+		// those rules live — `ProvisionUser` re-validates none of them.
 		{"no provider", NewUser{Subject: "s", ProjectName: "p", At: provisionClock}},
 		{"no subject", NewUser{Provider: "notes-idp", ProjectName: "p", At: provisionClock}},
 		{"no project name", NewUser{Provider: "notes-idp", Subject: "s", At: provisionClock}},
 		{
+			// ⚠ THE ODD ONE OUT SINCE `checkScopeNamesAreFree` GREW ITS WITHIN-REQUEST
+			// HALF, AND THAT IS WORTH STATING RATHER THAN LEAVING THE READER TO INFER IT
+			// FROM A GREEN. This is refused BEFORE `Append`, not inside it: the fold
+			// subsumes the raw duplicate, so `apply`'s `ScopeByNameIn` clash check no
+			// longer sees this arm at all. It stays because "no bytes, no state" is the
+			// claim being made and it holds on either side of that line —
+			// `TestApplyRefusesTwoScopesWithONENameInONEProject` is what now pins the
+			// MODEL's rule, which this arm used to be the only coverage of.
 			"two scopes with one name in the SAME new project",
 			NewUser{Provider: "notes-idp", Subject: "s", ProjectName: "p",
 				ScopeNames: []string{"notes", "notes"}, At: provisionClock},

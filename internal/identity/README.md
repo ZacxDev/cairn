@@ -453,6 +453,11 @@ machine-token backend is untouched and still resolves against the token-file pro
   ARMED flags rather than the parameter alone: no session backend and no session authority
   is a machine-token-only chain, unchanged. Pinned by
   `TestNoControlJournalMeansNoSessionAuthorityAtAll` and by that same test's last arm.
+- **The gate** is `TestAnOperatorProvisionedSupabaseSessionAuthenticatesWithRealAuthority`
+  and its trusted-header twin: a user created through `control.ProvisionUser`, a real
+  journal file, a session verified through `FromEnvironment`'s own chain, and an assertion
+  on the **content** of the `Authorization` — every verb on the provisioned scope, the name
+  present in the projection the reader narrows by, and a scope outside it unreachable.
 
 🔴 **THE PRECEDENCE HAS A COST, IT IS WIDER THAN THE FIRST DRAFT OF `config.go` SAID, AND
 IT SILENTLY EMPTIED A PRE-EXISTING GATE IN THIS PACKAGE.** `ErrSessionBackendWithoutAuthority`
@@ -472,11 +477,6 @@ session authority *and* asserts the refusal is neither blanket sentinel, because
 one makes `ErrSessionAuthorityUnread` the replacement shadow. **Any test in this package
 that ARMS a ledger must pass `newTestSessionAuthority(t)`**, and one that asserts a
 specific refusal must say the refusal is the backend's own.
-- **The gate** is `TestAnOperatorProvisionedSupabaseSessionAuthenticatesWithRealAuthority`
-  and its trusted-header twin: a user created through `control.ProvisionUser`, a real
-  journal file, a session verified through `FromEnvironment`'s own chain, and an assertion
-  on the **content** of the `Authorization` — every verb on the provisioned scope, the name
-  present in the projection the reader narrows by, and a scope outside it unreachable.
 
 ### The state that produced this section, which no `cmd/cairn-server` configuration now reaches
 

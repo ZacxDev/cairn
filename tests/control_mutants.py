@@ -136,7 +136,35 @@ class Mutant:
     # label is the claim; the run is what checks it.
     equivalent: bool = False
     equivalent_reason: str = ""
+    # Other Go test functions that must ALSO fail for this mutant — a LEDGER, asserted.
+    #
+    # 🔴 IT WAS INERT FOR SEVERAL ROUNDS AND `internal/control/README.md` LEANED ON IT AS A
+    # GATE, WHICH IS THIS REPOSITORY'S SIGNATURE DEFECT INSIDE THE BATTERY BUILT TO REFUSE
+    # IT. The field was set on 23 rows (30 entries) and read by NOTHING: the verdict logic
+    # required only `m.killer in failing` and tolerated any other failing test regardless,
+    # so the README's "and is listed as an `extra_killers` on both rows" read as coverage
+    # and provided none. A listed killer that quietly stopped killing was a silent
+    # downgrade nobody could be told about.
+    #
+    # 🔴 SO IT IS NOW A DECLARED SET THAT MUST HOLD, AND THE DIRECTION MATTERS: every entry
+    # must be in `failing`, and a row whose list has gone stale is a RED battery rather
+    # than a quieter green. That is the same claim `killer` makes, one step wider — the
+    # difference is that `killer` is "this guard, and no other, is what noticed" while this
+    # is "these guards noticed too, and the day one of them stops is the day somebody has
+    # to look".
+    #
+    # ⚠ NOT VALID ON AN `equivalent` ROW, AND REFUSED AT LOAD RATHER THAN AT RUN. An
+    # equivalent mutant is expected to have NO failing test at all, so a listed extra there
+    # is a contradiction that could only ever report itself as a failure of the run.
     extra_killers: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if self.equivalent and self.extra_killers:
+            raise AssertionError(
+                f"{self.name}: an EQUIVALENT row lists extra_killers {self.extra_killers}. "
+                "An equivalent mutant is expected to leave the suite green, so those can "
+                "never fail — the row is claiming two incompatible things."
+            )
 
 
 MUTANTS: tuple[Mutant, ...] = (
@@ -494,7 +522,20 @@ MUTANTS: tuple[Mutant, ...] = (
             "\treturn c.model\n}"
         ),
         killer="TestTheHotPathNeverCallsTheAuthority",
-        extra_killers=("TestAKilledAuthorityKeepsServingAndTheAgeGrows",),
+        # 🔴 THIS LIST USED TO NAME `TestAKilledAuthorityKeepsServingAndTheAgeGrows`, AND
+        # THAT ENTRY WAS FALSE FROM THE DAY IT WAS WRITTEN — surfaced the moment
+        # `extra_killers` stopped being inert. That test `unplug()`s the source, so every
+        # `c.src.Model(ctx)` the mutant inserts returns an ERROR and the read-through falls
+        # straight back to `c.model`: its whole world is the one branch this edit does not
+        # change, so it is structurally incapable of seeing it. The reasoning was already
+        # written one row above, on `refresh-holds-the-lock-across-the-authority` — "no
+        # test that only kills the authority can see this" — and this list contradicted it.
+        # The GUARD did not move; the LIST was aspirational. Replaced with the two that
+        # were MEASURED red under this mutant on this tree.
+        extra_killers=(
+            "TestTheHotPathDoesNotContactTheAuthority",
+            "TestAScopeCreatedOutOfBandReachesABareRowAfterARefresh",
+        ),
         why="'read through, fall back on error' — which reads like a strictly better "
         "cache and is the single most likely thing a later contributor writes. It puts "
         "a call to the authority on every authorization decision, so an authority that "
@@ -1467,7 +1508,14 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tif err := checkScopeNamesAreFree(current, req.ScopeNames); err != nil {",
         new="\tif err := checkScopeNamesAreFree(current, nil); err != nil {",
         killer="TestAScopeNameAlreadyInTheJournalIsRefused",
-        extra_killers=("TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused",),
+        # ⚠ THE THIRD ENTRY IS THE WITHIN-REQUEST HALF, WHICH THIS EDIT ALSO DISABLES —
+        # `nil` removes the operand both halves read. It is listed because the ledger is
+        # asserted now: if this row's edit ever stops reaching that half, the battery says
+        # so rather than scoring a quieter kill.
+        extra_killers=(
+            "TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused",
+            "TestTwoScopeNamesInONEREQUESTThatFoldAlikeAreRefused",
+        ),
         why="the guard that is WIDER than the model's own rule, so it looks redundant "
         "beside `apply`'s within-a-project uniqueness and reads as a candidate for "
         "deletion. It is not: the reader narrows the store root's DIRECTORIES by display "
@@ -1492,6 +1540,26 @@ MUTANTS: tuple[Mutant, ...] = (
         "— nothing emits `scope-renamed` and the journal is append-only. ⚠ The row above "
         "does NOT cover this: it deletes the guard's operand, so a guard that is present "
         "but too narrow survives it.",
+    ),
+    Mutant(
+        name="within-ONE-request-a-FOLDED-duplicate-accepted",
+        path="internal/control/provision.go",
+        # The narrowest expression that can be wrong: the key the request's own claim is
+        # RECORDED under. Reading it back by `folded` while storing it by the RAW name is
+        # the same guard written raw, which is what the journal half already shipped once.
+        old="\t\tclaimed[folded] = name",
+        new="\t\tclaimed[name] = name",
+        killer="TestTwoScopeNamesInONEREQUESTThatFoldAlikeAreRefused",
+        why="the WITHIN-REQUEST half, defeated by a capital letter exactly as the journal "
+        "half was at `18df63d`. Measured at `8c06ea1`, before the half existed: "
+        "`-create-user -project quarry -scopes \"Quarry_Notes,quarry-notes\"` was ACCEPTED "
+        "— two `scope-created` events, two distinct scope ids, both folding to "
+        "`quarry-notes`, i.e. ONE directory, append-only and with no undo. ⚠ Neither row "
+        "above covers it: one deletes the operand both halves read, the other mutates the "
+        "comparison against `m.Scopes`, and a request is not in `m.Scopes`. Bounded today "
+        "(one project, one owner) and an authorization defect the moment SHARING lands, "
+        "because a grant names a scope ID and granting one of the pair hands over the "
+        "other's bytes while every id-keyed check agrees it was honoured exactly.",
     ),
     Mutant(
         name="membership-omitted-from-the-provisioning-batch",
@@ -1705,6 +1773,7 @@ def main() -> int:
         survived: list[Mutant] = []
         misattributed: list[tuple[Mutant, set[str]]] = []
         broken: list[tuple[Mutant, str]] = []
+        stale_extras: list[tuple[Mutant, list[str], set[str]]] = []
 
         for m in selected:
             work = Path(tmp) / f"m-{m.name}"
@@ -1729,7 +1798,15 @@ def main() -> int:
                 verdict = f"MISATTRIBUTED ({', '.join(sorted(failing))})"
                 misattributed.append((m, failing))
             else:
-                verdict = "killed"
+                # 🔴 THE `extra_killers` LEDGER IS CHECKED HERE, AND ONLY ON A KILL. The
+                # row has already been attributed to its named guard; what is left is the
+                # claim that the OTHER listed guards saw it too. A missing entry is a
+                # finding, not a verdict downgrade: the mutant WAS killed, and what has
+                # gone stale is the ledger's description of who noticed.
+                absent = [k for k in m.extra_killers if k not in failing]
+                verdict = "killed" if not absent else f"killed, STALE EXTRAS ({', '.join(sorted(absent))})"
+                if absent:
+                    stale_extras.append((m, absent, failing))
                 killed.append(m)
             print(f"  {m.name:<46} {verdict}")
 
@@ -1738,7 +1815,8 @@ def main() -> int:
     actual_survivors = {m.name for m in survived}
     print(
         f"SUMMARY mutants={len(selected)} killed={len(killed)} survived={len(survived)} "
-        f"misattributed={len(misattributed)} harness-errors={len(broken)}"
+        f"misattributed={len(misattributed)} harness-errors={len(broken)} "
+        f"stale-extras={len(stale_extras)}"
     )
 
     ok = True
@@ -1750,6 +1828,22 @@ def main() -> int:
             f"\n🔴 MISATTRIBUTED: {m.name} was killed by {sorted(failing)}, not by its named "
             f"guard {m.killer}. That proves the suite can fail and proves nothing about the "
             "guard this row exists for.",
+            file=sys.stderr,
+        )
+        ok = False
+
+    # 🔴 A LISTED EXTRA KILLER THAT DID NOT FAIL IS A FAILURE, NOT A NOTE. The whole point
+    # of making the field real is that a guard which quietly stopped noticing is exactly
+    # what a battery is for; reporting it without failing would be the inert field again,
+    # one layer up. The remedy is per row and is a DECISION: either the guard was moved out
+    # from under this mutant's observable — fix the guard — or the row's list was aspirational
+    # and must be narrowed, with the reason written down beside it.
+    for m, absent, failing in stale_extras:
+        print(
+            f"\n🔴 STALE extra_killers: {m.name} lists {sorted(absent)}, which did NOT fail. "
+            f"What actually failed: {sorted(failing)}. A listed killer that has stopped "
+            "killing reads as coverage and provides none — decide whether the GUARD moved "
+            "or the LIST was wrong, and say which in the row.",
             file=sys.stderr,
         )
         ok = False

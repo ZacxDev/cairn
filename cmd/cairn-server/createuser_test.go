@@ -244,11 +244,35 @@ func TestCreateUserSaysSoWhenTheUserItCreatedCanReachNothing(t *testing.T) {
 // existing deployment, which configures no session backend, refuse to start with
 // `ErrSessionAuthorityUnread`. That is the worst available outcome: a live pod's auth path
 // broken by a feature it does not use.
+//
+// 🔴 THE CONTEXT IS CANCELLED AND `warnings` IS UNDER A MUTEX, AND BOTH ARE FIXES RATHER
+// THAN STYLE. `openSessionAuthority` starts `Cache.Run` on a goroutine, so a
+// `context.Background()` here leaves a refresh loop running after this function returns —
+// and since this commit the loop's `OnRefresh` calls `warn` on the first FAILING refresh,
+// which `t.TempDir()`'s cleanup manufactures by deleting the journal as the test returns.
+// That write and the reads below are unsynchronised. Measured at `8c06ea1` with the
+// interval shortened to 2 ms and the journal torn mid-body: `WARNING: DATA RACE`, the
+// write from `openSessionAuthority.journalRefreshReporter` against this function's own
+// read; measured again with the interval left at the production
+// `api.AuthorityRefreshInterval`, the same race at ~35 s. `go test -race` is green today
+// only because this package finishes in ~3.5 s against a 30 s timer — a loaded runner,
+// `-count>1`, or one more slow test turns the `go` CI job red for a reason no diff
+// explains. The cancel bounds the loop's LIFETIME; the mutex is what makes the reads safe
+// while it is still alive, and neither alone is sufficient.
 func TestNoControlJournalMeansNoSessionAuthorityAtAll(t *testing.T) {
-	var warnings []string
-	warn := func(line string) { warnings = append(warnings, line) }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	sessions, err := openSessionAuthority(context.Background(), map[string]string{}, warn)
+	var mu sync.Mutex
+	var warnings []string
+	warn := func(line string) { mu.Lock(); defer mu.Unlock(); warnings = append(warnings, line) }
+	said := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), warnings...)
+	}
+
+	sessions, err := openSessionAuthority(ctx, map[string]string{}, warn)
 	if err != nil {
 		t.Fatalf("an unconfigured deployment must not fail: %v", err)
 	}
@@ -256,26 +280,26 @@ func TestNoControlJournalMeansNoSessionAuthorityAtAll(t *testing.T) {
 		t.Fatalf("an unconfigured deployment produced a session authority of type %T — every "+
 			"deployment that sets nothing new would then refuse to start", sessions)
 	}
-	if len(warnings) != 0 {
+	if lines := said(); len(lines) != 0 {
 		t.Fatalf("an unconfigured deployment emitted %d line(s) on the operator stream: %v. "+
 			"`tests/dualrun/harness.py` compares the two servers' streams line for line",
-			len(warnings), warnings)
+			len(lines), lines)
 	}
 
 	// The positive control on the same call: a CONFIGURED journal does produce one, and
 	// warns because it is empty. Without it the nil above is indistinguishable from a
 	// function that always returns nil.
 	journal := filepath.Join(t.TempDir(), "control.journal")
-	sessions, err = openSessionAuthority(context.Background(), map[string]string{EnvControlJournal: journal}, warn)
+	sessions, err = openSessionAuthority(ctx, map[string]string{EnvControlJournal: journal}, warn)
 	if err != nil {
 		t.Fatalf("a configured journal must open: %v", err)
 	}
 	if sessions == nil {
 		t.Fatal("a configured journal produced no session authority")
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "NO users") {
+	if lines := said(); len(lines) != 1 || !strings.Contains(lines[0], "NO users") {
 		t.Fatalf("an EMPTY journal did not announce itself: %v. `OpenFileStore` creates the file, "+
-			"so a typo'd path yields an authority that refuses every sign-in", warnings)
+			"so a typo'd path yields an authority that refuses every sign-in", lines)
 	}
 	if got := len(sessions.Model().Users); got != 0 {
 		t.Fatalf("the fresh journal projected %d users", got)
@@ -330,7 +354,16 @@ func TestASessionAuthorityOverAProvisionedJournalSeesTheUser(t *testing.T) {
 		t.Fatalf("provisioning: %d / %s", code, errOut.String())
 	}
 
-	sessions, err := openSessionAuthority(context.Background(), env, func(string) {})
+	// ⚠ CANCELLED FOR THE REASON `TestNoControlJournalMeansNoSessionAuthorityAtAll`
+	// STATES: `openSessionAuthority` starts `Cache.Run` on a goroutine, and a
+	// `context.Background()` here leaves that loop running for the rest of the process —
+	// reading a journal `t.TempDir()` has already deleted, against package state a later
+	// test writes. No shared slice here, so this arm is a leak rather than a race; it is
+	// closed anyway, because "harmless today" is decided by what the loop touches and
+	// that set grows.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sessions, err := openSessionAuthority(ctx, env, func(string) {})
 	if err != nil {
 		t.Fatalf("opening the session authority over the journal just written: %v", err)
 	}
@@ -412,6 +445,94 @@ func TestAScopeThatAlreadyExistsUnderTheStoreRootIsCalledOut(t *testing.T) {
 	}
 	if strings.Contains(errOut.String(), "already exists as") {
 		t.Fatalf("a command with no store root warned about disk anyway:\n%s", errOut.String())
+	}
+}
+
+// TestTheStoreRootWarningSeesADirectoryTHROUGHASymlinkLikeTheReaderDoes.
+//
+// 🔴 THE LEDGER ABOVE IS NARROWER THAN THE PREDICATE IT EXISTS TO MIRROR, WHICH IS WHY
+// THIS ROW IS SEPARATE. `TestAScopeThatAlreadyExistsUnderTheStoreRootIsCalledOut` plants a
+// directory and a regular FILE, so it reads as "directories yes, non-directories no" — but
+// the world it closes the gap on is `tokenfile.Source.storeDirs`, whose predicate is
+// `os.Stat` + `info.IsDir()`, i.e. "anything that STATS as a directory". `os.ReadDir`
+// hands back `DirEntry` values whose `IsDir` reports the entry's OWN type and does NOT
+// follow a symlink, so the two disagree on exactly the shape a tar-seeded or migrated
+// store produces.
+//
+// Measured at `8c06ea1`, over a store root holding `tenant-a-notes -> <dir>` and a plain
+// `tenant-c-notes`: `os.Stat`+`IsDir` saw `[tenant-a-notes tenant-c-notes]` and
+// `DirEntry.IsDir` saw `[tenant-c-notes]`. The reader therefore serves the symlinked
+// directory as a scope while this warning stays silent, and the operator provisions
+// `RoleOwner` — read AND write — over another tenant's bytes with no undo.
+//
+// ⚠ THE TWO NEGATIVE ARMS ARE WHAT STOP THE FIX BEING "WARN ABOUT EVERY ENTRY". A symlink
+// to a FILE stats as a file and is not a scope; a DANGLING symlink stats to an error and
+// must be skipped rather than propagated — `os.ReadDir` lists it, `os.Stat` fails on it,
+// and a warning path that treated a stat error as a hit would fire on every broken link
+// left behind by a half-finished migration.
+func TestTheStoreRootWarningSeesADirectoryTHROUGHASymlinkLikeTheReaderDoes(t *testing.T) {
+	root := t.TempDir()
+	// The real bytes live outside the store root, which is what a PV mount or a
+	// tar-seeded migration produces.
+	elsewhere := t.TempDir()
+	tenantA := filepath.Join(elsewhere, "tenant-a")
+	if err := os.MkdirAll(tenantA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plainFile := filepath.Join(elsewhere, "a-file")
+	if err := os.WriteFile(plainFile, []byte("not a scope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// symlink → directory: the reader sees a scope here, so the warning must too.
+	//
+	// ⚠ FATAL RATHER THAN A SKIP ON A FILESYSTEM WITHOUT SYMLINKS, DELIBERATELY. A skip
+	// nobody counts is a pass, and this is the only row that measures the predicate the
+	// reader actually uses — a silent skip would leave the whole finding unguarded on
+	// whatever host could not make the link.
+	if err := os.Symlink(tenantA, filepath.Join(root, "tenant-a-notes")); err != nil {
+		t.Fatalf("this filesystem cannot make a symlink (%v), so the one predicate this "+
+			"test exists to measure cannot be exercised here", err)
+	}
+	// symlink → regular file: not a scope on either side.
+	if err := os.Symlink(plainFile, filepath.Join(root, "tenant-b-notes")); err != nil {
+		t.Fatal(err)
+	}
+	// dangling symlink: `os.ReadDir` lists it, `os.Stat` fails on it.
+	if err := os.Symlink(filepath.Join(elsewhere, "gone"), filepath.Join(root, "tenant-d-notes")); err != nil {
+		t.Fatal(err)
+	}
+	// A plain directory, so a fix that only ever followed links would be caught too.
+	if err := os.MkdirAll(filepath.Join(root, "tenant-c-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	journal := filepath.Join(t.TempDir(), "control.journal")
+	env := map[string]string{EnvControlJournal: journal}
+	var out, errOut bytes.Buffer
+	code := runCreateUser(env, root, flagsFor("supabase", "subject-0001", "", "quarry",
+		"tenant-a-notes,tenant-b-notes,tenant-c-notes,tenant-d-notes"), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 — this is a warning, not a refusal, and a dangling "+
+			"symlink under the store root must not turn it into one:\n%s", code, errOut.String())
+	}
+	warning := errOut.String()
+
+	// The two that must be named: the symlinked directory and the plain one.
+	for _, want := range []string{"tenant-a-notes", "tenant-c-notes"} {
+		if !strings.Contains(warning, "WARNING scope \""+want+"\"") {
+			t.Fatalf("the warning does not name %q, which the READER resolves to a scope "+
+				"directory (`tokenfile.Source.storeDirs` stats the entry). An operator who "+
+				"is not told provisions read AND write over it, and the journal is "+
+				"append-only:\n%s", want, warning)
+		}
+	}
+	// The two that must not be: a symlink to a file, and a dangling one.
+	for _, unwanted := range []string{"tenant-b-notes", "tenant-d-notes"} {
+		if strings.Contains(warning, "WARNING scope \""+unwanted+"\"") {
+			t.Fatalf("the warning names %q, which does not stat as a directory — so this "+
+				"warns about entries that are not scopes, which is the same outcome as "+
+				"silence:\n%s", unwanted, warning)
+		}
 	}
 }
 

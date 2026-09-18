@@ -122,12 +122,18 @@ func ProvisionUser(ctx context.Context, s Store, req NewUser) (Provisioned, erro
 	}
 
 	// 🔴 NOTHING ELSE IS VALIDATED HERE, DELIBERATELY. A missing provider, a missing
-	// subject, an empty project name and a duplicate scope name WITHIN this request are
-	// all refused by `Event.validate` and `Model.apply`, which is where those rules
-	// already live and where they apply to every writer. A second copy of them in this
-	// function would be the one-rule-two-places shape that regenerates the same bug at
-	// the second site — and the batch refusal already names the offending event and
-	// field.
+	// subject and an empty project name are all refused by `Event.validate` and
+	// `Model.apply`, which is where those rules already live and where they apply to every
+	// writer. A second copy of them in this function would be the one-rule-two-places
+	// shape that regenerates the same bug at the second site — and the batch refusal
+	// already names the offending event and field.
+	//
+	// ⚠ A DUPLICATE SCOPE NAME WITHIN THIS REQUEST IS THE EXCEPTION, AND THIS SENTENCE
+	// USED TO GET IT WRONG. It listed that case here as "refused by `Event.validate` and
+	// `Model.apply`" — true only of a RAW duplicate, ninety lines below a comment
+	// declaring that what decides one directory is the FOLD. `checkScopeNamesAreFree`
+	// above owns both halves now, folded, and the raw case it subsumes is still pinned
+	// against `apply` directly by `TestApplyRefusesTwoScopesWithONENameInONEProject`.
 	after, err := s.Append(ctx, events...)
 	if err != nil {
 		return Provisioned{}, err
@@ -193,12 +199,31 @@ type ProvisionedScope struct {
 	ID   ID
 }
 
-// ErrScopeNameTaken refuses a scope display name that some other scope in the journal
-// already carries.
-var ErrScopeNameTaken = errors.New("control: that scope display name is already used in this journal")
+// ErrScopeNameTaken refuses a scope display name that is already claimed — by a scope
+// already in the journal, or by an EARLIER NAME IN THE SAME REQUEST.
+//
+// ⚠ THE WORDING LOST "IN THIS JOURNAL" WHEN THE SECOND CASE LANDED, AND THAT IS NOT
+// COSMETIC. A within-request collision is between two names the operator typed, neither of
+// which is in the journal at all; a sentinel asserting otherwise would have an operator
+// grepping a file that does not hold either spelling. The wrapped message is what names
+// the two names and the fold they collide on, in both cases.
+var ErrScopeNameTaken = errors.New("control: that scope display name is already taken")
 
 // checkScopeNamesAreFree refuses a display name any existing scope carries, ANYWHERE in
-// the journal — compared by its FOLDED form, which is what decides "one directory".
+// the journal, AND any display name a NAME EARLIER IN THE SAME REQUEST carries — both
+// compared by their FOLDED form, which is what decides "one directory".
+//
+// 🔴 THE TWO HALVES ARE TWO DIFFERENT CLAIMS AND THE SECOND WAS MISSING FOR A ROUND, WHICH
+// IS WHY IT IS IN THE FIRST SENTENCE RATHER THAN A FOOTNOTE. The journal half is a
+// relationship between the request and what is already recorded; the request is also a
+// relationship with itself, and nothing else in the batch path folds. `apply`'s
+// within-a-project rule is a RAW `==` (`Model.ScopeByNameIn`), so before this half existed
+// `-create-user -project quarry -scopes "Quarry_Notes,quarry-notes"` was ACCEPTED —
+// measured at `8c06ea1`: two `scope-created` events, two distinct scope ids, one
+// directory. Bounded today, because both records land in one project under one owner; an
+// authorization defect the moment SHARING lands, because a grant names a scope ID and
+// granting one of the pair hands over the other's bytes while every id-keyed check agrees
+// the grant was honoured exactly.
 //
 // 🔴 IT IS WIDER THAN THE MODEL'S OWN RULE, AND THE REASON IS THE PROJECTION ONTO DISK.
 // `apply` refuses a duplicate scope name WITHIN a project and allows it across projects —
@@ -244,16 +269,33 @@ var ErrScopeNameTaken = errors.New("control: that scope display name is already 
 //     pass here. `Append`'s own re-read under the lock is what still refuses the duplicate
 //     (provider, subject) pair, but it carries no rule about names across projects — that
 //     rule lives only here, and here is not under the lock.
+//   - **A `scope-created` appended by any writer that does not come through
+//     `ProvisionUser`.** The fold lives in THIS function, not in `apply`, so a direct
+//     `Store.Append` of two scopes whose names fold alike into one project is accepted —
+//     `apply`'s own rule is `Model.ScopeByNameIn`, a RAW `==`. Asserted, rather than left
+//     to be discovered, by `TestApplyRefusesTwoScopesWithONENameInONEProject`'s third arm.
 //
 // It is placed here rather than in `apply` because `apply` states the MODEL's rule, and
 // widening that rule would make the model assert a property of a reader it deliberately
 // knows nothing about — while covering only `scope-created`, leaving a rule that reads as
 // global and is not.
 //
+// ⚠ AND THAT RULING WAS RE-TAKEN WHEN THE WITHIN-REQUEST HALF LANDED, NOT INHERITED.
+// Folding `ScopeByNameIn` would have closed the same case one layer down and was rejected
+// for three reasons: it is a RESOLVER as well as a collision check, so folding it makes
+// `ScopeByNameIn(p, "Quarry_Notes")` return the scope named `quarry-notes` — a second,
+// silent name-resolution mechanism inside the model; it would put the reader's fold into
+// the model, which is exactly what the paragraph above refuses; and it would silently
+// widen `EventScopeRenamed` and `EventScopeMoved` (`journal.go`'s two other call sites),
+// events nothing emits yet and whose refusal semantics no test pins. The residual that
+// choice leaves is the bullet directly above it.
+//
 // **CLOSING CONDITION:** it stops being needed when a scope's bytes are addressed by its
 // id rather than by its display name, at which point two scopes may share a name and the
 // reader cannot confuse them.
 func checkScopeNamesAreFree(m Model, names []string) error {
+	// Folded name → the raw spelling that claimed it, for the WITHIN-REQUEST half below.
+	claimed := make(map[string]string, len(names))
 	for _, name := range names {
 		folded := store.NormalizeRef(name)
 		for _, sc := range m.Scopes {
@@ -263,6 +305,12 @@ func checkScopeNamesAreFree(m Model, names []string) error {
 					ErrScopeNameTaken, name, folded, sc.ID, sc.DisplayName, sc.ProjectID)
 			}
 		}
+		if earlier, twice := claimed[folded]; twice {
+			return fmt.Errorf(
+				"%w: %q and %q are both in this request and both fold to %q, so it asks for TWO scope records over ONE directory. The journal is append-only and nothing emits `scope-renamed`, so there is no undo",
+				ErrScopeNameTaken, earlier, name, folded)
+		}
+		claimed[folded] = name
 	}
 	return nil
 }

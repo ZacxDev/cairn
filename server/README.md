@@ -965,7 +965,7 @@ What a reload is and is not:
 | addition, and scope changes | yes, in both directions |
 | atomicity | the table is an immutable tuple, rebound in one assignment; a request in flight sees the whole old table or the whole new one |
 | the env fallback (`$SUBSYSTEM_STORE_TOKEN`) | reloads to the same value — a process's own environment does not change under it. The file is the thing SIGHUP exists to re-read |
-| `--store`, the proxy allowlist, the rate-limit knobs | **not** reloaded. Only the token table |
+| `-store`, the proxy allowlist, the rate-limit knobs | **not** reloaded. Only the token table |
 
 Why it matters here specifically: the deployment is single-replica (see the
 `other`-row note above), so "restart the pod to change a credential" is a hard
@@ -1009,7 +1009,8 @@ reason is on stderr.
 ⚠ **A scope's display name is the DIRECTORY name under the store root**, and creating the
 record does **not** create the directory. Two scope records whose names fold alike —
 `Quarry_Notes` and `quarry-notes` are one directory — are refused across the whole
-journal. A name that already exists as a directory under `--store` is **warned about, not
+journal, and refused within ONE `-scopes` list as well. A name that already exists as a
+directory under `-store` is **warned about, not
 refused**: nothing on disk says whether it is the directory you seeded for this person or
 another tenant's, and the journal is append-only, so there is no undo. Read that warning
 before you re-run the command.
