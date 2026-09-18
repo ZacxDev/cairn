@@ -151,9 +151,13 @@ also have satisfied. What carries the full port is the next reason: **a single b
 language, and Python retirable at P8**. Both land on the same `internal/report`: one renderer,
 three consumers (pod, CLI, a future UI), which makes byte-identity a property of there being one
 implementation rather than a discipline two are held to — ⚠ **from P8, not from today**, because
-the Python renderer ships as `packages.default` until the oracle is deleted.
+the Python renderer still ships as `packages.cairn` until the oracle is deleted.
 
-`cairn` stays the oracle and `packages.default` still builds it. The gate is
+`cairn` stays the oracle and `packages.cairn` still builds it — but the DEFAULT has cut over:
+`packages.default` and `apps.default` are the Go client, so `nix run github:ZacxDev/cairn`
+executes it. ⚠ **That widened the CLI contract, deliberately and declared:** `cairn -verbs` and
+`cairn -exit-codes` exit 0 with a table where the Python oracle's argparse exits 2 with
+`usage:`, so a single-dash token that used to be refused now answers 0. The gate is
 [`tests/parity/`](tests/parity/README.md): both clients, one pod, one store, one cache root,
 identical argv. **90 cases, 91 PASS, 0 failures** across all nine verbs, every output-shaping
 flag, every documented exit code, `--help` in four spellings, and argparse's option-versus-value

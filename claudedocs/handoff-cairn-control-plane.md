@@ -47,20 +47,35 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   had **not finished**. The fix agent's own run on `96be4ec` reported battery
   `110/108/2, misattributed=0, harness-errors=0, stale-extras=0`, conformance `99/415/0/4`,
   leakscan rc 0 / 298 files — **its numbers, not mine.** Re-run before believing them.
-- **Deploy/verify status: unchanged — NOTHING DEPLOYED.** `flake.nix` default is still the
-  Python client; the Go server has never run against the real pod.
+- **Deploy/verify status: STILL NOTHING DEPLOYED, but the BUILD half of rank 1 has landed on a
+  branch.** `packages.default`/`apps.default` are now the **Go client**, and
+  `packages.server-image-go` exists (there was no Go server image at all before). The Go server
+  has still never run against the real pod, and `publish-image.yml` still publishes
+  `packages.server-image`, the **Python** pod. See rank 1.
 
 ## Next steps (ranked)
-1. **THE CUTOVER, then P3(d).** `packages.default` → the Go client, and the deployed image →
-   the Go server. 🔴 **`AGENTS.md` states a precondition: DIFF THE TWO IMAGES FIRST.** The
-   known differences are not cosmetic — `packages.server-image` puts busybox's **four network
-   servers** (`httpd`, `telnetd`, `ftpd`, `tftpd`) and **`ssl_client`** into a pod that mounts
-   a credential at `/run/secrets/subsystem-store/token`; the deployed image instead ships
-   `bash`, `apt-get` and 8 setuid binaries. Neither is a subset of the other and `AGENTS.md`
-   says explicitly not to read that row as settled. 🔴 Moving `packages.default` changes what
-   `nix run github:…/cairn` executes for **every existing consumer** — a cutover, not a build.
-   Then **P3(d)** (immutable scope ids + client-side rename reconciliation), which is also the
-   closing condition for two residuals #38 declared.
+1. **THE CUTOVER — its BUILD half is IN FLIGHT on `feat/go-server-image-and-default-cutover`;
+   the DEPLOY half is untouched. Then P3(d).** What landed on that branch: `packages.default`
+   and `apps.default` → the Go client, and a new `packages.server-image-go` wrapping
+   `cmd/cairn-server` (**there was no Go server image before it**). What did NOT: nothing was
+   deployed, nothing was pushed to a registry, and `publish-image.yml` still publishes the
+   Python `packages.server-image`.
+   ⚠ **THE APPLET COUNT IN THIS ITEM WAS WRONG AND IS CORRECTED — it said FOUR network
+   servers.** Enumerated from `busybox --list` on the built image there are **six**: `httpd`,
+   `telnetd`, `ftpd`, `tftpd`, **`dnsd`** and **`inetd`**, plus `ssl_client` and a set of
+   network clients, in a pod that mounts a credential at
+   `/run/secrets/subsystem-store/token`; the deployed image instead ships `bash`, `apt-get`
+   and 8 setuid binaries. That is the fourth draft of this count and the third correction —
+   the measured record now lives in `server/README.md`, and the standing instruction is to
+   enumerate from the built image rather than from any paragraph. Neither image's tool surface
+   is a subset of the other's and nothing about that trade is settled.
+   🔴 **WHAT REMAINS AT RANK 1: the DEPLOY decision.** Diff the images with the threat model in
+   front of you, decide whether the pod runs the Go server, and decide whether
+   `publish-image.yml` publishes it. Moving `packages.default` already changed what
+   `nix run github:…/cairn` executes for **every existing consumer**, and it WIDENED the CLI
+   contract (`-verbs`/`-exit-codes` answer 0 where the oracle refused at 2) — declared, not a
+   defect. Then **P3(d)** (immutable scope ids + client-side rename reconciliation), which is
+   also the closing condition for two residuals #38 declared.
    forcing: user — operator promoted this above the rest of P5 this session, on the measurement
    that nothing in P5 is reachable until it lands.
 2. **P5 slice 1 — 🔴 IN FLIGHT as `ZacxDev/cairn#38` @ `96be4ec`.** Owed: **round 3** as a

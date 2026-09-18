@@ -58,6 +58,37 @@
       serverUid = 65532;
       serverPort = 8102;
 
+      # 🔴 THE GO POD'S ENV IS `serverEnv` MINUS A NAMED SET — A SUBTRACTION, NEVER
+      # A SECOND LITERAL. There are now THREE builds of a pod and only ONE statement
+      # of the contract: `serverEnv` above. Deriving the Go image's env from it means
+      # a variable added there reaches BOTH pods and cannot be forgotten on one.
+      # A second attrset holding copies of the three `SUBSYSTEM_STORE_*` values would
+      # invert that — the drift would be silent and in the direction that matters, a
+      # pod missing the env its Deployment already sets.
+      #
+      # WHY EACH NAME LEAVES, READ OUT OF THE CODE RATHER THAN ASSUMED:
+      #   * `PYTHONDONTWRITEBYTECODE` / `PYTHONUNBUFFERED` are CPython knobs. A Go
+      #     binary never reads either; carrying them would assert the image runs an
+      #     interpreter, which is the one thing this image is for NOT doing.
+      #   * `HOME` is in `serverEnv` because `lib/subsystem_read_store.py` evaluates
+      #     `Path.home()` at IMPORT time and it raises in a numeric-UID container.
+      #     MEASURED on the Go side rather than inferred, and stated as the METHOD
+      #     rather than a count that would rot: nothing in `go list -deps
+      #     ./cmd/cairn-server` calls `os.UserHomeDir` or reads `$HOME` — every such
+      #     call lives under `internal/client`, which the server does not import, and
+      #     `internal/hostid` reads only `CAIRN_HOST`/`ASIB_HOST`/`ACTIVITY_HOST`. Re-run
+      #     that pair before moving a name out of this list. So there is no
+      #     import-time home to resolve, and an env var nothing reads in an image
+      #     whose env IS the deploy contract is a claim about the pod that is false.
+      #
+      # ⚠ WHAT THIS DOES NOT CLAIM: that `$HOME` is unreachable in the container.
+      # `kubectl exec … -- sh` lands in a shell with no `HOME`. busybox `ash` does not
+      # need one, and both documented procedures name absolute paths (`tar -xf -` into
+      # `/data`, `kill -HUP 1`). If a procedure ever needs `~`, it goes in `serverEnv`
+      # and both pods get it — which is the point of the subtraction.
+      serverEnvPythonOnly = [ "HOME" "PYTHONDONTWRITEBYTECODE" "PYTHONUNBUFFERED" ];
+      serverEnvGo = builtins.removeAttrs serverEnv serverEnvPythonOnly;
+
       # 🔴 THE INTERPRETER IS PINNED TO THE ONE THE SUITE ACTUALLY RUNS UNDER.
       # `pkgs.python3` follows nixpkgs and was 3.14 here, while
       # `server/Dockerfile` is `python:3.12-slim` and CI pins `python-version:
@@ -99,6 +130,38 @@
       # same shape as the defect below it, one level up.
       serverPath = "/bin";
       serverTools = pkgs: [ pkgs.busybox ];
+
+      # 🔴 THE GO POD CARRIES `serverTools` PLUS CA ROOTS, AND THE EXTRA IS NOT
+      # DECORATION. `mkServerImage` ships no `/etc`, so a container built from it has
+      # NO CA bundle at any path Go's `crypto/x509` searches. That costs the Python pod
+      # nothing — it makes no outbound TLS connection — but `internal/identity/jwks.go`
+      # fetches a JWKS over `https` for the Supabase backend, and without roots that
+      # fetch fails certificate verification on an image that otherwise starts, passes
+      # health checks and serves. Same shape as the missing-`sh` defect `serverTools`
+      # exists for: four pinned values agreeing over a pod that cannot do its documented
+      # job.
+      #
+      # ⚠ SCOPE, STATED SO NOBODY READS THIS AS MORE THAN IT IS. The bundle's PRESENCE
+      # at the path `SSL_CERT_FILE` names is what is built and pinned here. A live JWKS
+      # fetch against a real issuer is NOT verified by anything in this repository — it
+      # needs a pod, a network and an issuer, none of which a nix build has.
+      #
+      # ⚠ AND IT IS GO-ONLY ON PURPOSE. Adding `cacert` to `serverTools` would change
+      # `packages.server-image`'s layer contents, which is the one thing
+      # `tests/test_flake_image_matches_dockerfile.py` is written against, for a pod
+      # that has no use for it.
+      goServerTools = pkgs: serverTools pkgs ++ [ pkgs.cacert ];
+
+      # 🔴 NAMED BY ABSOLUTE STORE PATH, AND `SSL_CERT_FILE` IS WHAT MAKES IT REACHABLE.
+      # Go's `crypto/x509` reads `$SSL_CERT_FILE` first and otherwise searches a list of
+      # system locations — `/etc/ssl/certs/ca-certificates.crt` and friends — none of
+      # which this image has, because it has no `/etc`. So shipping the closure without
+      # declaring the variable puts the bundle in the image and leaves it unreachable:
+      # the same end state as the `serverPath = "/nonexistent"` mutant, by another route.
+      # The store path rather than an `/etc/…` spelling for the same reason `Cmd` uses
+      # one: the file is present because `contents` carries the closure, not because
+      # anything arranged a filesystem layout around it.
+      goServerCaBundle = pkgs: "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
       # 🔴 AN ALLOWLIST, NOT AN EXCLUDE LIST, FOR THE SAME REASON
       # `server/Dockerfile.dockerignore` is one: a working tree of this repo
@@ -258,11 +321,15 @@
         };
       };
 
-      # 🔴 THE GO CLIENT IS A SECOND ARTEFACT DURING P2, NOT A REPLACEMENT. `packages.cairn`
-      # stays the Python client and `apps.default` stays pointed at it: swapping them changes
-      # what `nix run github:…/cairn` executes for every existing consumer, which is a
-      # CUTOVER and not a build. The plan puts the cutover after the parity gate has held
-      # over real use and the deletion of Python at P8.
+      # 🔴 THE GO CLIENT IS `packages.default` AND `apps.default` — THE CUTOVER HAS LANDED.
+      # ⚠ THIS COMMENT USED TO SAY THE OPPOSITE ("`apps.default` stays pointed at" the
+      # Python client) and is rewritten rather than deleted, because the reasoning survives
+      # and only the state changed: moving the default changes what
+      # `nix run github:…/cairn` executes for every existing consumer, so it is a CUTOVER
+      # and not a build, and it was taken deliberately after the parity gate held.
+      # `packages.cairn`/`apps.cairn` still build the Python client, which is still the
+      # oracle; P8 deletes it. See the `packages` attrset below for the CLI-contract
+      # widening this cutover carries.
       #
       # 🔴 `gitMinimal` ON THE WRAPPER'S PATH, FOR THE SAME REASON THE PYTHON PACKAGE HAS IT.
       # The client invokes `git` by BARE NAME to derive a repo's scope
@@ -438,31 +505,122 @@
             WorkingDir = "/app";
           };
         };
+
+      # 🔴 THE GO POD'S IMAGE. IT IS AN ADDITION, AND UNTIL THIS COMMIT THERE WAS NO
+      # GO SERVER IMAGE AT ALL — `packages.cairn-server-go` is a bare binary package,
+      # and `.github/workflows/publish-image.yml` publishes `packages.server-image`,
+      # which is the PYTHON pod. Nothing here changes either of those. The image this
+      # builds is not published, not deployed, and not referenced by any manifest.
+      #
+      # 🔴 A THIRD BUILD, NOT A THIRD STATEMENT OF THE CONTRACT, AND THAT DISTINCTION
+      # IS THE WHOLE DESIGN. `server/README.md` says "do not add a third way to produce
+      # this pod: a third statement of the runtime contract would be outside that pin,
+      # and it would be the one that actually ships". The hazard it names is a COPY.
+      # This derivation states nothing: uid, port, exposed port and every environment
+      # variable come from `serverUid`/`serverPort`/`serverEnvGo`, which are the same
+      # bindings `tests/test_flake_image_matches_dockerfile.py` pins against
+      # `server/Dockerfile`. `tests/test_flake_go_image_runtime_contract.py` is what
+      # closes the loop on this side, because being DERIVED is a property of today's
+      # source and a copy is one edit away.
+      #
+      # 🔴 IT CARRIES BUSYBOX AND DECLARES `PATH` FOR EXACTLY THE REASON `mkServerImage`
+      # DOES — see the 🔴 above `serverPath`. The operational procedures are the pod's,
+      # not the interpreter's: `server/seed.sh` pushes the store through
+      # `kubectl exec … -- tar -xf -` and runs its containment guard through `sh -c`,
+      # and `server/README.md`'s credential revocation is
+      # `kubectl exec … -- sh -c 'kill -HUP 1'`. Both survive the port —
+      # `cmd/cairn-server/main.go` installs a `SIGHUP` handler and logs a reload
+      # verdict — so an image without a shell would take away a revocation path that
+      # the binary itself still implements.
+      #
+      # ⚠ `Cmd` NAMES THE BINARY BY ABSOLUTE STORE PATH, like `mkServerImage` names its
+      # interpreter. `/bin/cairn-server` would also resolve, and that is the reason not
+      # to use it: the entrypoint would then depend on `contents` placing the package's
+      # `bin/` at the image root AND on `PATH`, so a change to either would turn a
+      # wiring mistake into a container that does not start.
+      #
+      # ⚠ `WorkingDir = "/"`, not `/app`: there is no `/app`. The Python pod's `/app` is
+      # where its SOURCE is copied, and a single binary has no source tree. `/` matches
+      # what `server/Dockerfile` leaves the Python pod at, and every path the server
+      # touches — the store, the token file — is absolute.
+      mkGoServerImage = pkgs:
+        let goServer = mkGoServer pkgs;
+        in
+        pkgs.dockerTools.buildLayeredImage {
+          name = "cairn-store-go";
+          tag = version;
+          contents = [ goServer ] ++ goServerTools pkgs;
+
+          # `/data` is where the PVC mounts; created and owned here so the image is
+          # runnable without a mount, which is what makes a smoke test of it possible.
+          # No `/home/nonroot`: this pod has no `HOME` — see `serverEnvPythonOnly`.
+          fakeRootCommands = ''
+            mkdir -p ./data
+            chown -R ${toString serverUid}:${toString serverUid} ./data
+          '';
+          enableFakechroot = true;
+
+          config = {
+            Cmd = [ "${pkgs.lib.getExe goServer}" ];
+            Env = pkgs.lib.mapAttrsToList (k: v: "${k}=${v}") (serverEnvGo // {
+              PATH = serverPath;
+              SSL_CERT_FILE = goServerCaBundle pkgs;
+            });
+            User = "${toString serverUid}:${toString serverUid}";
+            ExposedPorts = { "${toString serverPort}/tcp" = { }; };
+            WorkingDir = "/";
+          };
+        };
     in
     {
       packages = forAll (pkgs:
         {
           cairn = mkCairn pkgs;
-          default = mkCairn pkgs;
-          # 🔴 `default` STAYS THE PYTHON CLIENT. The Go server AND the Go client are
-          # SECOND artefacts during the dual-run, not replacements for anything: making
-          # either the default would change what `nix run github:…/cairn` executes
-          # for every existing consumer, which is a cutover and not a build.
+          # 🔴 `default` IS THE GO CLIENT — THIS IS THE CUTOVER, AND IT CHANGES WHAT
+          # `nix run github:ZacxDev/cairn` EXECUTES FOR EVERY EXISTING CONSUMER. It is
+          # deliberate, and it is not a no-op: the parity gate declares residuals, and
+          # ONE of them WIDENS the CLI contract in the direction that matters — `cairn
+          # -verbs` and `cairn -exit-codes` exit 0 with a table on stdout here where the
+          # Python oracle exits 2 with argparse's `usage:`, so a single-dash token that
+          # used to be REFUSED now answers 0. `tests/parity/README.md` carries the
+          # residual table; this line is where the decision was taken.
+          #
+          # `packages.cairn` keeps pointing at the Python client and is NOT deleted:
+          # it is still the parity oracle, and P8 is what retires it. `nix run
+          # github:…/cairn#cairn` is the unchanged path for anyone who needs the old
+          # behaviour while the two are alive.
+          default = mkGoClient pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
+          # 🔴 THE PYTHON POD KEEPS THE UNSUFFIXED NAME, and that is not inertia:
+          # `.github/workflows/publish-image.yml` builds `packages.server-image` by
+          # name, `server/README.md` documents it, and consumers pin it. Renaming it to
+          # make room for this one would change what gets PUBLISHED, which is a deploy
+          # decision and not a build. Nothing publishes `server-image-go`.
+          server-image-go = mkGoServerImage pkgs;
         });
 
+      # 🔴 `apps.default` MOVES WITH `packages.default`, AND LEAVING IT BEHIND WOULD BE
+      # WORSE THAN NOT CUTTING OVER AT ALL. `nix run github:…/cairn` resolves
+      # `apps.default` FIRST and only falls back to `packages.default`'s `mainProgram`,
+      # so flipping the package alone would leave `nix run` on Python while
+      # `nix profile install` and every flake input got Go — one name, two clients,
+      # differing by which command the consumer happened to use.
       apps = forAll (pkgs: {
         cairn = {
           type = "app";
           program = "${nixpkgs.lib.getExe (mkCairn pkgs)}";
         };
+        cairn-go = {
+          type = "app";
+          program = "${nixpkgs.lib.getExe (mkGoClient pkgs)}";
+        };
         default = {
           type = "app";
-          program = "${nixpkgs.lib.getExe (mkCairn pkgs)}";
+          program = "${nixpkgs.lib.getExe (mkGoClient pkgs)}";
         };
       });
 

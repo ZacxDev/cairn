@@ -413,9 +413,22 @@ There are two ways to get one, and they answer different questions.
 
 🔴 **The two builds are pinned against each other** by
 `tests/test_flake_image_matches_dockerfile.py` — env, port, uid and entrypoint
-are stated in both files and neither can move alone. Do not add a third way to
-produce this pod: a third statement of the runtime contract would be outside that
-pin, and it would be the one that actually ships.
+are stated in both files and neither can move alone. Do not add a third
+STATEMENT of the runtime contract: it would be outside that pin, and it would be
+the one that actually ships.
+
+⚠ **That sentence used to read "do not add a third WAY to produce this pod", and
+there is now a third build.** `packages.server-image-go` wraps the Go server.
+The hazard the sentence names is a COPY, and that image is not one: its uid,
+port, exposed port and every environment variable are derived from the same
+`serverUid`/`serverPort`/`serverEnv` bindings this pin reads — minus a named
+`serverEnvPythonOnly` set (CPython's two knobs, and a `HOME` that exists because
+`lib/subsystem_read_store.py` resolves `Path.home()` at import time; `go list
+-deps ./cmd/cairn-server` reaches no package that reads `$HOME`).
+`tests/test_flake_go_image_runtime_contract.py` is what keeps it derived, because
+"it is derived" is a property of today's source and a copy is one edit away.
+**Nothing publishes or deploys it**: `publish-image.yml` publishes
+`packages.server-image`, which is this Python pod.
 
 ⚠ **They are not interchangeable in one respect.** The Dockerfile image is
 `python:3.12-slim` and has `python3` on its `PATH`; the flake image's `PATH` is
@@ -427,6 +440,63 @@ other. Read the interpreter out of the image when you need it:
 ⚠ **x86_64 only.** The workflow publishes `packages.x86_64-linux.server-image`.
 The flake also builds `aarch64-linux`, but cross-building it on the runner would
 need emulation, so an arm64 node cannot pull the published tag today.
+
+### What the agreement test cannot read — the measured differences
+
+🔴 **THIS SECTION IS THE EVIDENCE BEHIND ONE LINE IN `AGENTS.md`: "before swapping
+the deployed image, diff the two for what the test cannot read."** It moved here
+because it is a record of measurements, and `AGENTS.md` is paid by every session
+whether or not it is relevant. What binds an edit stays there; the numbers are
+here. Measured on the built images (26 layers, 209,252,641 bytes for the flake
+one):
+
+| | `server/Dockerfile` | `packages.server-image` |
+|---|---|---|
+| `/etc`, `/usr` | present | **absent** |
+| `WorkingDir` | `/` | `/app` |
+| shell / `tar` / `find` / `cut` | from `python:3.12-slim` | busybox 1.37.0 |
+| `python3` on `PATH` | **present** | **absent** — `Cmd` names it by store path |
+| `bash`, `apt-get` | **present** | absent |
+| `wget`, `nc`, `httpd`, `telnetd` | **absent** | **present** (busybox applets) |
+| size | smaller | larger |
+
+🔴 **NEITHER IMAGE'S TOOL SURFACE IS A SUBSET OF THE OTHER'S, and the row that
+matters is the `wget`/`nc`/`httpd`/`telnetd` one** — not the size row. busybox
+ships **402** applets at `/bin` (with `/sbin` a SYMLINK to it, so one directory,
+not two), which puts **six network servers** — `httpd`, `telnetd`, `ftpd`,
+`tftpd`, `dnsd` and `inetd` — and a set of network clients — `wget`, `nc`,
+`telnet`, `ftpget`, `ftpput`, `tftp`, `nslookup`, `ping`, `traceroute`,
+`nbd-client`, `udhcpc`, `ntpd`, `rdate`, and notably **`ssl_client`** — into a
+pod that mounts a credential at `/run/secrets/subsystem-store/token`, none of
+which the deployed image has.
+
+⚠ **THREE EARLIER DRAFTS OF THAT SENTENCE UNDERCOUNTED, each in the direction of
+the previous fix**: "two egress clients", then "an HTTP server, a telnet server",
+then "four network servers" (`httpd`, `telnetd`, `ftpd`, `tftpd` — missing `dnsd`
+and `inetd`). The instruction that accompanied the third draft — *enumerate from
+`busybox --list` on the built image rather than from this paragraph* — was the
+right instruction and the paragraph was still wrong; the count above is the
+fourth, taken by running `busybox --list` on the applet set the image ships.
+**Do the enumeration yourself before quoting it.** A reader told to "revisit the
+trade with the threat model in front of you" needs the real set, and `ssl_client`
+is the one that matters for a token.
+
+Against that: the pod runs as uid 65532, no applet is setuid, and the deployed
+image ships `bash`, `apt-get` and **8 setuid binaries including `su` and
+`passwd`** — so neither is meaningfully "hardened" relative to the other. **This
+is recorded rather than fixed, deliberately** — trimming means
+`pkgs.busybox.override { extraConfig = "CONFIG_HTTPD n\n…"; }`, which rebuilds
+busybox from source with no cache hit, and the applets are not reachable without
+execution the attacker would already need. If this image is ever actually
+deployed, revisit that trade **then**, with the threat model in front of you; do
+not read this as settled.
+
+⚠ **`packages.server-image-go` INHERITS THE BUSYBOX ROW AND ADDS ONE.** It
+carries the same `serverTools` plus `pkgs.cacert`, so it has an `/etc/ssl/certs`
+where the Python flake image has no `/etc` at all — needed because
+`internal/identity/jwks.go` fetches a JWKS over https and Go's `crypto/x509` has
+no roots otherwise. The same trade applies to its applets and it has not been
+re-argued here.
 
 ### Pulling it from a second cluster
 

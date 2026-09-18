@@ -4,11 +4,15 @@
 // `internal/report`, so byte-identity between pod output and local output is a property of there
 // being one implementation rather than a discipline two implementations are held to.
 //
-// ⚠ THE PYTHON CLIENT IS STILL SHIPPED AND IS STILL THE ORACLE. `tests/parity/run.sh` runs both
-// against ONE cache root and diffs stdout, stderr and exit code per verb and per flag
-// combination. Until that gate has held over real use, `packages.cairn` stays the Python client
-// and this binary is `packages.cairn-go` beside it — swapping them is P2's LAST step, not its
-// first, and the plan puts the deletion of Python at P8.
+// ⚠ THE PYTHON CLIENT IS STILL SHIPPED AND IS STILL THE ORACLE, BUT IT IS NO LONGER THE
+// DEFAULT. `tests/parity/harness.py` runs both against ONE cache root and diffs stdout, stderr
+// and exit code per verb and per flag combination; that gate held, and this binary is now
+// `packages.default`/`apps.default` as well as `packages.cairn-go`. `packages.cairn` still
+// builds the Python client — the oracle the gate compares against — and P8 deletes it.
+//
+// ⚠ THE CUTOVER WIDENED THE CLI CONTRACT, DECLARED RATHER THAN FIXED: `-verbs` and
+// `-exit-codes` exit 0 with a table here where the oracle's argparse exits 2 with `usage:`,
+// so a single-dash token that `nix run github:…/cairn` used to refuse now answers 0.
 package main
 
 import (
