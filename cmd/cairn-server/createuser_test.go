@@ -260,10 +260,20 @@ func TestCreateUserSaysSoWhenTheUserItCreatedCanReachNothing(t *testing.T) {
 // `warn` write. Measured on the pre-fix shape at `8c06ea1`, journal removed by
 // `t.TempDir()`'s cleanup, at TWO points on the interval: `ok`, no `DATA RACE`, both with
 // the interval compressed to 2 ms and with it left at the production
-// `api.AuthorityRefreshInterval` (30 s, given 45 s of post-cleanup life). Removing ONLY
-// the `sessions.Model()` call from that same tree turned BOTH red — at the 2 ms point the
-// reported pair is the `warn` write from `journalRefreshReporter` against this function's
-// own `len(warnings)` read.
+// `api.AuthorityRefreshInterval` (30 s, given 45 s of post-cleanup life).
+//
+// Removing ONLY the `sessions.Model()` call from that same tree turns the 2 ms point RED,
+// and the reported pair is the `warn` write from `journalRefreshReporter` against this
+// function's own `len(warnings)` read. ⚠ **AT 30 s IT DOES NOT — so that row cannot
+// attribute its own green, and must not be read as the edge being demonstrated.** Two
+// independent runs DISAGREE on exactly that cell: one reported a race there, a later
+// six-point sweep (100 ms, 1 s, 5 s, 15 s, 30 s) found none at any point but 2 ms, with
+// the detector validated in both directions. The disagreement is recorded rather than
+// resolved because nothing here depends on it: the claim this comment needs is the
+// SHIPPED shape's green, which both runs agree on. What follows for a later editor is
+// that `-race` at the production interval was not observed to catch this pair — so it is
+// the 2 ms point, not a plain `go test -race`, that would catch a re-deletion of the
+// `sessions.Model()` assertion.
 //
 // 🔴 SO IT IS KEPT FOR WHAT IT REMOVES, NOT FOR A RACE IT FIXED. WITHOUT it, this test's
 // safety rested on an incidental mutex edge inside an unrelated accessor: deleting the
@@ -276,9 +286,11 @@ func TestCreateUserSaysSoWhenTheUserItCreatedCanReachNothing(t *testing.T) {
 // ⚠ RETRACTED, RECORDED SO NOBODY RE-DERIVES IT. An earlier draft of this comment claimed
 // the same race recurs "at ~35 s" with the production interval, and that a loaded runner,
 // `-count>1` or one more slow test would turn the `go` CI job red for a reason no diff
-// explains. The 30 s measurement above refutes it: the timer's length does not change the
-// happens-before edge, and it is the edge that decides. NOTHING replaces that prediction —
-// there is no timing claim in this comment.
+// explains. The 30 s measurement above refutes it on its own terms — the shipped shape is
+// green there, so there is no race for a loaded runner to expose. ⚠ It refutes the
+// PREDICTION; it does not on its own establish WHY, because at 30 s neither shape reports
+// a race (see above). NOTHING replaces that prediction — there is no timing claim in this
+// comment.
 func TestNoControlJournalMeansNoSessionAuthorityAtAll(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
