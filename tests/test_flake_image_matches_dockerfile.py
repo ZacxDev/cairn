@@ -37,23 +37,27 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "server" / "Dockerfile"
 FLAKE = ROOT / "flake.nix"
 
-#: The ONLY names `mkServerImage`'s `Env` argument may add on top of `serverEnv`.
+#: The ONLY `Env` expression `mkServerImage` may hand `buildLayeredImage`,
+#: whitespace-normalised.
 #:
-#: 🔴 AN EXACT SET, BECAUSE `//` IS THE ONE ROUTE INTO THE POD'S ENVIRONMENT THAT
-#: `flake_attrset(flake, "serverEnv")` CANNOT SEE. Every env assertion in this file
-#: compares the `serverEnv` BINDING against `server/Dockerfile`; the image's `Env`
-#: argument composes that binding with a literal, and `//` is right-biased, so a name
-#: written into the literal REPLACES the agreed value AFTER the agreement was checked.
-#: Measured, not assumed: `serverEnv // { PATH = serverPath; SUBSYSTEM_STORE_ROOT =
-#: "/wrong"; }` and the same with `SUBSYSTEM_STORE_TOKEN_FILE` each SURVIVED this module
-#: and its Go sibling together — 33 passed, 0 failed — while shipping the deployed pod
-#: at the wrong store, or reading its bearer token from a compiled-in path.
+#: 🔴 THE WHOLE STATEMENT, BECAUSE A KEY-SET READER OVER THE `//` OPERAND WAS MEASURED
+#: WALKABLE AT FOUR SPELLINGS. `test_the_env_sets_are_identical` compares the `serverEnv`
+#: BINDING against `server/Dockerfile`; the pod runs an EXPRESSION built from it, and
+#: everything that expression does afterwards reached the pod unread. `inherit (x) K;`
+#: and `${"K"} = "/wrong";` inside the operand carry no bare identifier before an `=`;
+#: `… ++ [ "K=/wrong" ]` appends to the resulting LIST and is not an operand at all; a
+#: mapper lambda can rewrite a value by key. Each shipped `SUBSYSTEM_STORE_ROOT=/wrong`
+#: to a pod that starts, health-checks and serves the wrong store — a duplicate name in
+#: the list resolves to the LAST entry — with both guard modules green. So this is the
+#: repo's stated remedy for a guard on WORDS: pin the whole normalised string. A
+#: cosmetic reformat fails here; that is the price, and it is the point.
 #:
-#: ⚠ The Go image's set is a DIFFERENT constant (`ENV_OVERRIDE_KEYS` in
-#: `tests/test_flake_go_image_runtime_contract.py`) and deliberately so: that image also
-#: declares `SSL_CERT_FILE`, and sharing one list would make each image's guard pass for
-#: a variable only the other one has a reason to set.
-PY_ENV_OVERRIDE_KEYS = ("PATH",)
+#: ⚠ The Go image's expression is a DIFFERENT constant (`GO_IMAGE_ENV_FORM` in
+#: `tests/test_flake_go_image_runtime_contract.py`), because the two images legitimately
+#: differ — sharing one would make each image's guard pass for the other's shape.
+PY_IMAGE_ENV_FORM = (
+    'pkgs.lib.mapAttrsToList (k: v: "${k}=${v}") (serverEnv // { PATH = serverPath; })'
+)
 
 
 # ---------------------------------------------------------------------------
@@ -229,88 +233,6 @@ def flake_image_arg(text: str, name: str, maker: str = "mkServerImage") -> str |
     return None
 
 
-# ---------------------------------------------------------------------------
-# The `//` reader. It lives HERE, beside the other shipped extractors, because BOTH
-# image makers compose their `Env` with `//` and both guard modules have to read the
-# same one — a second copy in the Go module would be the duplicated predicate this
-# repository already has a rule about, and the two copies would disagree about the
-# image nobody was looking at.
-# ---------------------------------------------------------------------------
-
-def nix_override_terms(expr: str) -> list[str]:
-    """Every RIGHT-hand operand of a `//` in one nix expression, as text.
-
-    `serverEnvGo // { A = …; } // extra` returns `['{ A = …; }', 'extra']`. An operand
-    that is a literal attrset is brace-matched so a nested `{ … }` cannot end it early;
-    anything else is returned verbatim, which is what lets the caller distinguish "an
-    attrset whose keys I can read" from "an expression I cannot" — the two are different
-    facts and a guard that collapsed them would pass an override it never parsed.
-
-    `#` comments are stripped first: a comment is the cheapest place to hide a `//`, and
-    this module already records a regex that read a value out of prose.
-    """
-    text = re.sub(r"#[^\n]*", "", expr)
-    terms: list[str] = []
-    i = 0
-    while True:
-        j = text.find("//", i)
-        if j == -1:
-            return terms
-        k = j + 2
-        while k < len(text) and text[k].isspace():
-            k += 1
-        if k < len(text) and text[k] == "{":
-            depth = 0
-            end = None
-            for e in range(k, len(text)):
-                if text[e] == "{":
-                    depth += 1
-                elif text[e] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end = e
-                        break
-            if end is None:            # unbalanced: report the rest and stop
-                terms.append(text[k:])
-                return terms
-            terms.append(text[k:end + 1])
-            i = end + 1
-        else:
-            nxt = text.find("//", k)
-            terms.append((text[k:] if nxt == -1 else text[k:nxt]).strip())
-            if nxt == -1:
-                return terms
-            i = nxt
-
-
-def nix_attrset_keys(term: str) -> list[str] | None:
-    """The TOP-LEVEL keys of a literal `{ K = …; … }`, or None if it is not a literal.
-
-    Depth-tracked rather than a flat `findall`, so a key inside a nested attrset or list
-    is not reported as one of this set's own — the whole point of the caller's exact-set
-    assertion is that the set it compares is the set the image actually gains.
-
-    ⚠ SCOPE: this is a fact about `flake.nix`, not a nix parser. A `{` inside a string
-    (`"${k}=${v}"`) would move the depth counter, which is why the caller hands it the
-    `//` OPERAND rather than the whole `Env` value — the operand carries no such string
-    today, and `TestTheExtractorsSeeSomething` pins that it still parses.
-    """
-    term = term.strip()
-    if not (term.startswith("{") and term.endswith("}")):
-        return None
-    keys: list[str] = []
-    depth = 0
-    for m in re.finditer(r"[{}()\[\]]|([A-Za-z_][\w'-]*)\s*=(?!=)", term[1:-1]):
-        if m.group(1) is not None:
-            if depth == 0:
-                keys.append(m.group(1))
-        elif m.group(0) in "([{":
-            depth += 1
-        else:
-            depth -= 1
-    return keys
-
-
 def flake_cmd_script(text: str, maker: str = "mkServerImage") -> str | None:
     """The `.py` script one maker's image `Cmd` runs.
 
@@ -406,35 +328,6 @@ class TestTheExtractorsSeeSomething:
             '      Cmd = [ "python3" ];\n    };\n'
         ) is None
 
-    def test_the_override_extractors_can_fail(self):
-        """🔴 THE `//` READER, DRIVEN OVER THE SHAPES THAT ACTUALLY GET WRITTEN.
-
-        Both image guards now assert an EXACT key set over whatever this returns, so a
-        reader that quietly returned `[]` would turn both of those assertions into
-        claims about nothing — and an empty override and an unparsed one are different
-        facts the callers branch on. Controlled here rather than in the Go module for
-        the reason the extractors themselves live here: one copy, one control.
-        """
-        # No override is an EMPTY list, not a failure — and a `//` inside a comment is
-        # not an override, which is the cheapest place to hide one.
-        assert nix_override_terms("serverEnv") == []
-        assert nix_override_terms("# a // in a comment\nserverEnv") == []
-        assert nix_override_terms("serverEnv // { A = x; }") == ["{ A = x; }"]
-        # `//` chains, and the LAST term wins — so two overrides must read as two.
-        assert nix_override_terms("e // { A = x; } // { B = y; }") == [
-            "{ A = x; }", "{ B = y; }"
-        ]
-        # A non-literal operand comes back verbatim, so `nix_attrset_keys` can REFUSE it
-        # rather than a guard silently reading no keys out of it and passing.
-        assert nix_override_terms("e // extraEnv") == ["extraEnv"]
-        assert nix_attrset_keys("extraEnv") is None
-        assert nix_attrset_keys("{ A = x; B = y; }") == ["A", "B"]
-        # 🔴 AND A KEY NESTED INSIDE THE OPERAND IS NOT ONE OF ITS OWN. The realistic
-        # negative control rather than a textbook one: `{ PATH = x; N = { ROOT = y; }; }`
-        # is exactly how an exact-set assertion gets walked by a flat `findall`, and the
-        # nested name is the one an override would hide a store path behind.
-        assert nix_attrset_keys("{ PATH = x; N = { ROOT = y; }; }") == ["PATH", "N"]
-
     def test_an_arguments_value_is_captured_WHOLE_not_truncated(self):
         """🔴 A TRUNCATED VALUE IS NOT A PARSE FAILURE, WHICH IS WHY IT NEEDS ITS OWN
         CONTROL. It returns a non-empty string, so "the argument was found" passes; only
@@ -504,64 +397,32 @@ class TestTheExtractorsSeeSomething:
 
 class TestTheTwoBuildsAgree:
 
-    def test_the_image_Env_OVERRIDE_adds_only_PATH(self, flake):
-        """🔴 THE AGREEMENT IS CHECKED ON THE BINDING; THE POD RUNS THE COMPOSITION.
+    def test_the_image_Env_is_EXACTLY_the_declared_expression(self, flake):
+        """🔴 THE AGREEMENT IS CHECKED ON THE BINDING; THE POD RUNS THE EXPRESSION.
 
         `test_the_env_sets_are_identical` compares `serverEnv` to `server/Dockerfile`'s
-        `ENV` block. The image does not ship `serverEnv` — it ships
-        `serverEnv // { PATH = serverPath; }`, and `//` is right-biased, so anything
-        written into that literal overrides the value the agreement test just approved.
-        Nothing else in either guard module reads it.
+        `ENV` block. The image does not ship `serverEnv` — it ships `PY_IMAGE_ENV_FORM`,
+        and every term of that expression after `serverEnv` is a value reaching the
+        DEPLOYED pod that nothing else in either guard module reads.
 
-        🔴 MEASURED, NOT ARGUED. `serverEnv // { PATH = serverPath;
-        SUBSYSTEM_STORE_ROOT = "/wrong"; }` and the same with a
-        `SUBSYSTEM_STORE_TOKEN_FILE` literal were each run against THIS module and its Go
-        sibling together: 33 passed, 0 failed, both times. That is the DEPLOYED pod
-        serving the wrong store, or reading its bearer token from a compiled-in path
-        while the secret is mounted where the manifest says — behind a green suite whose
-        headline claim is that the two builds agree.
-
-        ⚠ AN INVARIANT GUARD. No such override ever shipped; the mutants were written by
-        hand and watched to survive. It is the sibling of
-        `test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle`, which closes the same
-        hole on the Go image, and the two are separate because the two images legitimately
-        add different names.
+        🔴 REGRESSION COVERAGE, NOT AN INVARIANT GUARD, AND THAT LABEL WAS WRONG ONCE.
+        For the mutant that DELETES the override — `Env = … serverEnv;` — the matrix is
+        red at `d443e31`, GREEN at `19975d6` (this branch's own regression: the only
+        reader was an unscoped whole-file `PATH = serverPath` search, which the second
+        image's identical line satisfied), red again since. The mutants that ADD a name
+        are invariant guards; this one is not.
         """
         env_arg = flake_image_arg(flake, "Env")
         assert env_arg is not None, "no `Env` argument inside `mkServerImage`'s block"
-
-        terms = nix_override_terms(env_arg)
-        assert len(terms) == 1, (
-            f"the Python image's `Env` composes {len(terms)} `//` overrides onto "
-            f"`serverEnv`: {terms!r}. `//` is right-biased, so the LAST term outranks "
-            f"every earlier one and this module's env agreement describes none of them."
-        )
-        keys = nix_attrset_keys(terms[0])
-        assert keys is not None, (
-            f"the Python image's `Env` override is {terms[0]!r} — not a literal attrset, "
-            f"so what it adds to the deployed pod's environment is decided somewhere no "
-            f"guard here can read"
-        )
-        assert len(keys) == len(set(keys)), (
-            f"the Python image's `Env` override names {keys!r} with a repeat — nix takes "
-            f"the LAST, so the duplicate is what runs"
-        )
-        env = flake_attrset(flake, "serverEnv")
-        assert env, "no `serverEnv` parsed — see the controls"
-        clobbered = sorted(set(keys) & set(env))
-        assert not clobbered, (
-            f"the Python image's `Env` override sets {clobbered}, which `serverEnv` "
-            f"already defines. `//` is right-biased, so the literal WINS — and "
-            f"`test_the_env_sets_are_identical` keeps comparing `serverEnv` to the "
-            f"Dockerfile and reporting agreement about a value the pod does not get."
-        )
-        assert sorted(set(keys)) == sorted(PY_ENV_OVERRIDE_KEYS), (
-            f"the Python image's `Env` override adds {sorted(set(keys))!r}; the declared "
-            f"set is {sorted(PY_ENV_OVERRIDE_KEYS)!r}. The catch-all: a name outside "
-            f"`serverEnv` is still a value reaching the deployed pod that nothing here "
-            f"describes, and a MISSING `PATH` is the seeding/revocation regression the "
-            f"toolchain guard exists for. If the image needs another variable, add it "
-            f"here and say what reads it."
+        assert re.sub(r"\s+", " ", env_arg).strip() == PY_IMAGE_ENV_FORM, (
+            f"the Python image's `Env` is {env_arg!r}; the declared expression is "
+            f"{PY_IMAGE_ENV_FORM!r}. Every difference is a value reaching the deployed "
+            f"pod that nothing else here describes — `test_the_env_sets_are_identical` "
+            f"keeps comparing `serverEnv` to the Dockerfile and reporting agreement "
+            f"about a value the pod does not get, and a MISSING `PATH` is the "
+            f"seeding/revocation regression the toolchain guard exists for. If the image "
+            f"genuinely needs another variable, change this constant and say what reads "
+            f"it."
         )
 
     def test_the_env_sets_are_identical(self, dockerfile, flake):
@@ -718,26 +579,10 @@ class TestTheTwoBuildsAgree:
             "the image carries no busybox, so it has no sh/tar/find/cut — "
             "seeding and token revocation both go through `kubectl exec`"
         )
-        # And the PATH must actually be handed to the image config, not merely
-        # defined: a declared-but-unused binding is the shape that reads as
-        # covered while changing nothing.
-        #
-        # 🔴 SCOPED TO *THIS* IMAGE'S `Env`, AND THE UNSCOPED VERSION WAS MEASURED WRONG
-        # THE DAY A SECOND IMAGE LANDED. It used to search the WHOLE FILE. With only
-        # `mkServerImage` in `flake.nix` that was unambiguous; `mkGoServerImage` also
-        # writes `PATH = serverPath`, so deleting the override from the DEPLOYED image
-        # entirely — `Env = … serverEnv;` — left this assertion matching the OTHER
-        # image's line and the whole pair of modules green at 33 passed, 0 failed. A
-        # guard reading the wrong artefact is the failure this file's `maker` parameter
-        # exists for; it just had one site left that did not use it.
-        # `(?<![\w'-])` for the reason the Go module's copy has it: nix identifiers take
-        # `_`, `'` and `-`, so a bare `PATH\s*=` also matches `GOPATH = serverPath`.
-        env_arg = flake_image_arg(flake, "Env")
-        assert env_arg is not None, "no `Env` argument inside `mkServerImage`'s block"
-        assert re.search(r"(?<![\w'-])PATH\s*=\s*serverPath\b", env_arg), (
-            f"the Python image's `Env` is {env_arg!r} — `serverPath` is defined but "
-            f"never placed into THIS image's Env"
-        )
+        # That `serverPath` reaches THIS image's `Env` is
+        # `test_the_image_Env_is_EXACTLY_the_declared_expression`'s, not this test's: it
+        # pins the whole expression, so a second reader here would be the duplicated
+        # predicate this repository already has a rule about.
 
         # 🔴 THE SAME RULE APPLIED TO `serverTools`, AND ITS ABSENCE WAS
         # MEASURED. With only the assertions above, a mutant reverting

@@ -542,7 +542,10 @@
 
           # `/data` is where the PVC mounts and `/home/nonroot` is what HOME
           # names; both are created and owned here so the image is runnable
-          # without a mount, which is what makes a smoke test of it possible.
+          # without a mount. ⚠ UNGUARDED: nothing in this repo checks either
+          # line. `publish-image.yml`'s smoke run starts this image with no
+          # token source and expects a NON-ZERO exit, and `server/server.py`
+          # returns on the missing token before it opens the store root.
           fakeRootCommands = ''
             mkdir -p ./data ./home/nonroot
             chown -R ${toString serverUid}:${toString serverUid} ./data ./home/nonroot
@@ -609,8 +612,16 @@
           contents = [ goServer ] ++ goServerTools pkgs;
 
           # `/data` is where the PVC mounts; created and owned here so the image is
-          # runnable without a mount, which is what makes a smoke test of it possible.
-          # No `/home/nonroot`: this pod has no `HOME` — see `serverEnvPythonOnly`.
+          # runnable without a mount. No `/home/nonroot`: this pod has no `HOME` — see
+          # `serverEnvPythonOnly`.
+          #
+          # ⚠ UNGUARDED, AND THE RETRACTED CLAIM WAS THAT A SMOKE TEST WOULD CATCH IT.
+          # Nothing runs this image: `.github/workflows/ci.yml` asserts it BUILDS and
+          # says so in its own comment, and the only smoke run in the repo is on the
+          # PYTHON image. A `chown` mutant survives here with nothing to notice. (The
+          # `mkdir` is not a survivor — dropping it while keeping the `chown` fails the
+          # build.) Whether a PVC mounting over `/data` would mask it is a fact about a
+          # manifest outside this repo and is not verifiable here.
           fakeRootCommands = ''
             mkdir -p ./data
             chown -R ${toString serverUid}:${toString serverUid} ./data
