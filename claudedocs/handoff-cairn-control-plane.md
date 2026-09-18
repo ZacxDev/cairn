@@ -675,10 +675,18 @@ Fix as one round; closing one buys room for one rank.
   tests that actually read it had to be re-run (796 of them, rc 0). That is cheaper than a
   second full suite AND carries its own proof — but it only works if you NAME the differing
   paths; "the merge is trivial" is not the same claim.
-- **`clawgate_handoff.sh resolve` returned rc 5 for this session** (0 tasks), with its own
-  positive control proving the board reachable and the token accepted. No `clawgate-task:` field
-  was written. 🔴 That zero does NOT prove the session id is right — a wrong id also answers 200
-  with an empty array — so it is not a clean bill of health, just an honest blank.
+- **The session-to-task resolver `/handoff` step 1 runs returned rc 5 for this session** (0
+  tasks), with its own positive control proving the board reachable and the token accepted. No
+  task front-matter field was written. 🔴 That zero does NOT prove the session id is right — a
+  wrong id also answers 200 with an empty array — so it is not a clean bill of health, just an
+  honest blank.
+- 🔴 **AND THE LEAK GATE CAUGHT THE FIRST DRAFT OF THAT VERY BULLET, AFTER THE PUSH — the
+  identical failure this document already records one section up, reproduced by the session that
+  had just read it.** Naming the external tool by its own name put a `denied-identifier` into a
+  PUBLIC repo (`rc 1`, two findings, both in this file). `handoff_doc.py` owns the commit AND the
+  push as one step, so "scan before pushing" is not available in that flow: the only working
+  order is **scan the SCRATCH DELTA before handing it to the tool**, which is what I failed to
+  do. Describe an external tool by its ROLE, never by its name, in anything written here.
 
 ## How to verify
 ```bash
