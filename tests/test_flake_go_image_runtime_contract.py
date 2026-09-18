@@ -23,20 +23,39 @@ a file they did not touch. The direction of failure matters: a derived Go env ga
 the variable its Deployment already sets. So the DERIVATION is asserted structurally, and
 the values are asserted on top of it.
 
-🔴 AND THE FIRST DEFECT THIS MODULE EVER HAD WAS ITS OWN. Its first version computed the
-env as a MODEL — `serverEnv` minus `serverEnvPythonOnly`, read from the `let` block — and
-never looked at what `mkGoServerImage` hands to `buildLayeredImage`. Three hand-written
-mutants therefore SURVIVED it whole — 13 tests, 47 assertions, nothing red: an `Env` built
-from `serverEnv`
-(CPython's knobs in a pod with no interpreter), an `Env` built from a wrong-store literal,
-and a `serverEnvGo` carrying a second `removeAttrs` that dropped `SUBSYSTEM_STORE_TOKEN_FILE`
-(a pod reading a compiled-in token path instead of the mounted one). Each shipped a pod
-under an env no assertion here read. The model's stated reason was not WRONG — a parser
-that read the `Env` argument INSTEAD would be satisfied by a literal — it was INCOMPLETE,
-which is this repository's named worst case: a description claiming a relationship over a
-body that inspects one side, inside the module written against exactly that. The fix is
-both halves: `go_env()`'s model, plus `SERVER_ENV_GO_FORM` and
+🔴 AND THE FIRST DEFECT THIS MODULE EVER HAD WAS ITS OWN — TWICE, THE SAME DEFECT. Its
+first version computed the env as a MODEL — `serverEnv` minus `serverEnvPythonOnly`, read
+from the `let` block — and never looked at what `mkGoServerImage` hands to
+`buildLayeredImage`. Three hand-written mutants therefore SURVIVED it whole, nothing red:
+an `Env` built from `serverEnv` (CPython's knobs in a pod with no interpreter), an `Env`
+whose base was SUBSTITUTED for a wrong-store literal, and a `serverEnvGo` carrying a
+second `removeAttrs` that dropped `SUBSYSTEM_STORE_TOKEN_FILE` (a pod reading a
+compiled-in token path instead of the mounted one). Each shipped a pod under an env no
+assertion here read. The model's stated reason was not WRONG — a parser that read the
+`Env` argument INSTEAD would be satisfied by a literal — it was INCOMPLETE, which is this
+repository's named worst case: a description claiming a relationship over a body that
+inspects one side, inside the module written against exactly that. The fix was both
+halves: `go_env()`'s model, plus `SERVER_ENV_GO_FORM` and
 `test_the_image_Env_IS_serverEnvGo_and_not_a_lookalike` pinning the seam.
+
+🔴 THEN IT HAPPENED AGAIN, AND THE SECOND ROUND IS WHY THIS PARAGRAPH IS WORDED SO
+CAREFULLY. Only the SUBSTITUTION spelling of the wrong-store mutant was closed — swapping
+the base `serverEnvGo` for something else. The COMPOSITION spelling was not: `Env = …
+(serverEnvGo // { … })` keeps the correct base, passes the seam guard, passes
+`SERVER_ENV_GO_FORM`, passes the removal-list guard, and overrides the derived value
+anyway, because `//` is right-biased. Three more mutants — `SUBSYSTEM_STORE_ROOT`,
+`SUBSYSTEM_STORE_TOKEN_FILE` and `SUBSYSTEM_STORE_PORT` written into that attrset —
+survived the whole module. `SERVER_ENV_GO_FORM`'s own comment had NAMED "an `//` override"
+as the hazard while pinning the one binding where no `//` exists. That is the third
+instance in this file of a description wider than its body; `ENV_OVERRIDE_KEYS` and
+`test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle` close it, and every prose site
+that overstated its reach has been corrected in place rather than deleted.
+
+⚠ DO NOT RESTATE A TEST OR ASSERTION COUNT HERE. An earlier version of this docstring
+carried "13 tests, 47 assertions" as part of the survivor story; the file was 14 and 51
+by the time anyone read it back, so the number documented nothing and misdated the story
+it was attached to. Derive it if you need it — `ast`, `FunctionDef` names starting
+`test_`, `ast.Assert` nodes — and put the derivation in the commit, not here.
 
 ⚠ THESE ARE INVARIANT GUARDS, NOT REGRESSION COVERAGE, WITH ONE EXCEPTION NAMED BELOW.
 No defect ever shipped from `mkGoServerImage`; it did not exist before the commit that
@@ -56,6 +75,16 @@ it therefore CANNOT see is layer contents: whether busybox's applets really land
 binary really starts. Those were read off the built image by hand at the commit that added
 this file, and the general lesson from the sibling stands — before deploying an image,
 diff it for what the test cannot read.
+
+🔴 AND THAT BLIND SPOT HAS ALREADY COST A CLAIM, WHICH IS WHY THE PARAGRAPH ABOVE IS NOT
+A FORMALITY. This module's `SSL_CERT_FILE` assertion shipped with a message asserting that
+without the variable the bundle would be "in the image and unreachable". Read off the
+BUILT image, it is false: `pkgs.cacert` in `contents` is root-merged, so the image has an
+`/etc/ssl/certs`, which is in Go's `certDirectories` — an `x509.SystemCertPool()` probe
+reports the same 121 roots with the variable shipped, unset, or pointing at a nonexistent
+path (0 for the same binary in an image with no roots, which is what makes 121 a
+measurement). The retraction and the numbers live beside `goServerCaBundle` in
+`flake.nix`; the assertion now pins the only thing that is true and checkable from source.
 """
 from __future__ import annotations
 
@@ -75,6 +104,8 @@ from test_flake_image_matches_dockerfile import (  # noqa: E402
     flake_image_arg,
     flake_image_block,
     flake_int,
+    nix_attrset_keys,
+    nix_override_terms,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +127,21 @@ DEPLOY_CONTRACT = (
     "SUBSYSTEM_STORE_TOKEN_FILE",
 )
 
+#: The ONLY names `mkGoServerImage`'s `Env` argument may add on top of `serverEnvGo`.
+#:
+#: 🔴 AN EXACT SET, BECAUSE THIS IS THE ONE PLACE A VALUE CAN REACH THE POD WITHOUT
+#: PASSING THROUGH `serverEnvGo` AT ALL. `Env = … (serverEnvGo // { … })` composes, and
+#: `//` is right-biased: a key named on the right REPLACES the derived one. Three
+#: hand-written mutants — `SUBSYSTEM_STORE_ROOT = "/wrong"`,
+#: `SUBSYSTEM_STORE_TOKEN_FILE = "/etc/cairn-token"` and `SUBSYSTEM_STORE_PORT = "9999"`,
+#: each added to this attrset — SURVIVED every other assertion in this module, because
+#: `serverEnvGo` is still a clean subtraction, the `Env` argument still names it, the
+#: removal list still drops nothing, and every value assertion compares `go_env()`'s
+#: MODEL, which is computed from the `let` block and never reads this attrset. The pod
+#: they ship starts, passes its health check and serves — from the wrong store, or
+#: reading its bearer token from a compiled-in path with the secret mounted elsewhere.
+ENV_OVERRIDE_KEYS = ("PATH", "SSL_CERT_FILE")
+
 #: The ONLY expression `go_env()` below is a valid model of, whitespace-normalised.
 #:
 #: 🔴 A WHOLE STRING RATHER THAN A WORD SEARCH, BECAUSE THE ARTEFACT UNDER TEST IS AN
@@ -106,6 +152,15 @@ DEPLOY_CONTRACT = (
 #: ⚠ The cost is that a genuine change of shape fails here first. That is the point: it
 #: also invalidates `go_env()`, and the two must move together or the model silently stops
 #: describing what runs.
+#:
+#: 🔴 AND THIS PINS THE *BINDING*, WHICH IS NARROWER THAN IT ONCE CLAIMED. An earlier
+#: wording named "an `//` override" among the terms it rejects. It does reject one HERE —
+#: in `serverEnvGo`'s own right-hand side, where no `//` has ever been written — and it
+#: is structurally blind to the `//` that DOES exist, in `mkGoServerImage`'s `Env`
+#: ARGUMENT. Three mutants added a `DEPLOY_CONTRACT` key to that argument's override and
+#: survived this string untouched. `ENV_OVERRIDE_KEYS` and
+#: `test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle` are what read that one; this
+#: string does not, and saying so is the correction.
 SERVER_ENV_GO_FORM = "builtins.removeAttrs serverEnv serverEnvPythonOnly"
 
 
@@ -154,11 +209,19 @@ def go_env(text: str) -> dict[str, str] | None:
     and a `serverEnvGo` carrying a SECOND `removeAttrs` that dropped the token path — each
     of them a pod that serves under an env this function never looks at.
 
-    The fix is BOTH, not a swap: this model stays, and two assertions pin the SEAM it
+    The fix is BOTH, not a swap: this model stays, and THREE assertions pin the SEAM it
     cannot see — `test_the_image_Env_IS_serverEnvGo_and_not_a_lookalike` (the image uses
-    the binding) and the exact-form assertion in
+    the binding), the exact-form assertion in
     `test_the_go_env_is_DERIVED_from_serverEnv_rather_than_restated` (the binding computes
-    what this function computes). Read the three together; any one alone is walkable.
+    what this function computes), and
+    `test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle` (nothing is composed on top
+    of it afterwards). Read the four together; any one alone is walkable.
+
+    ⚠ THE THIRD ARRIVED LATE, AND THE GAP IT CLOSED IS THE REASON THIS DOCSTRING IS
+    EXPLICIT ABOUT *WHICH* HALF EACH GUARD READS. For a while the seam was pinned only at
+    the base of the `Env` expression, so `serverEnvGo // { SUBSYSTEM_STORE_ROOT = "/wrong";
+    … }` satisfied every one of them and this function kept reporting the derived value
+    the pod was not getting.
     """
     base = flake_attrset(text, "serverEnv")
     drop = flake_string_list(text, "serverEnvPythonOnly")
@@ -237,6 +300,15 @@ class TestTheExtractorsSeeSomething:
         # standing in for one.
         assert go_env("  serverEnvPythonOnly = [ \"HOME\" ];\n") is None
 
+        # ⚠ THE `//` EXTRACTORS ARE CONTROLLED IN THE MODULE THAT DEFINES THEM —
+        # `test_the_override_extractors_can_fail` in
+        # `tests/test_flake_image_matches_dockerfile.py`. They are shared by both image
+        # guards, and a second control here would be the re-implemented control this
+        # repository already has a rule about. What IS asserted here is that the import
+        # reached them at all, since a `None` from either would otherwise read as "the
+        # override is absent" rather than "the extractor is not the one that ships".
+        assert callable(nix_override_terms) and callable(nix_attrset_keys)
+
 
 # ---------------------------------------------------------------------------
 # The contract.
@@ -284,11 +356,13 @@ class TestTheGoImageRunsUnderTheSameContract:
         assert re.sub(r"\s+", " ", binding).strip() == SERVER_ENV_GO_FORM, (
             f"`serverEnvGo` is {binding!r}, and the only form this module's `go_env()` "
             f"model is valid for is {SERVER_ENV_GO_FORM!r}. A second `removeAttrs`, an "
-            f"`//` override or any other extra term changes what the pod actually gets "
-            f"while every value assertion here keeps comparing the model — which is how "
-            f"a mutant that dropped SUBSYSTEM_STORE_TOKEN_FILE survived this module whole. "
-            f"If the derivation genuinely changes shape, change `go_env()` and this "
-            f"string together."
+            f"`//` override IN THIS BINDING or any other extra term changes what the pod "
+            f"actually gets while every value assertion here keeps comparing the model — "
+            f"which is how a mutant that dropped SUBSYSTEM_STORE_TOKEN_FILE survived this "
+            f"module whole. (The `//` in `mkGoServerImage`'s `Env` ARGUMENT is a different "
+            f"place and is read by `test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle`, "
+            f"not here.) If the derivation genuinely changes shape, change `go_env()` and "
+            f"this string together."
         )
 
     def test_the_image_Env_IS_serverEnvGo_and_not_a_lookalike(self, flake):
@@ -306,6 +380,14 @@ class TestTheGoImageRunsUnderTheSameContract:
         argument INSTEAD of modelling the derivation would be satisfied by a literal
         attrset holding today's values — the defect the model exists to catch. One
         assertion each way is what makes the pair a claim about the relationship.
+
+        ⚠ AND IT READS THE *BASE* OF THE EXPRESSION ONLY, WHICH IS NARROWER THAN THE
+        SENTENCE ABOVE SOUNDS. Both mutants it names SUBSTITUTE the base. The composition
+        spelling — `serverEnvGo // { SUBSYSTEM_STORE_ROOT = "/wrong"; … }` — names
+        `serverEnvGo`, does not name bare `serverEnv`, and passes both assertions here
+        while the pod gets the literal. That one is
+        `test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle`'s, and it survived this
+        module whole until that test existed.
 
         ⚠ AN INVARIANT GUARD. Neither mutant ever shipped; both were written by hand
         against this module and watched to SURVIVE it before this assertion existed.
@@ -326,6 +408,77 @@ class TestTheGoImageRunsUnderTheSameContract:
             f"that contains no interpreter"
         )
 
+    def test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle(self, flake):
+        """🔴 THE THIRD WAY IN, AND IT IS THE ONE THAT WAS STILL OPEN.
+
+        `Env = … (serverEnvGo // { PATH = …; SSL_CERT_FILE = …; })`. `//` is right-biased,
+        so a name written into that attrset REPLACES the derived value — and every other
+        assertion in this module passes while it does. `serverEnvGo` is still the clean
+        subtraction (`SERVER_ENV_GO_FORM` passes), the `Env` argument still names
+        `serverEnvGo` and not `serverEnv` (the seam guard passes), the removal list still
+        drops nothing a Deployment sets (that guard passes), and every value assertion
+        compares `go_env()`, a MODEL built from the `let` block that never reads this
+        attrset at all.
+
+        🔴 THREE MUTANTS, EACH ADDING ONE KEY TO THIS ATTRSET, WERE WATCHED TO SURVIVE
+        THE WHOLE MODULE BEFORE THIS ASSERTION EXISTED — `SUBSYSTEM_STORE_ROOT = "/wrong"`,
+        `SUBSYSTEM_STORE_TOKEN_FILE = "/etc/cairn-token"`, `SUBSYSTEM_STORE_PORT = "9999"`.
+        Each ships a pod that starts, passes its health check and serves: from the wrong
+        store, on a port the Service does not name, or reading its bearer token from a
+        compiled-in path while the secret is mounted somewhere else.
+
+        ⚠ WHAT THIS EMPTIES, SAID RATHER THAN LEFT TO BE FOUND. The PRESENCE half of
+        `test_the_go_image_carries_the_operational_toolchain_and_declares_a_PATH`'s two
+        env assertions now lives here: `PATH` and `SSL_CERT_FILE` being keys of this set
+        is asserted below, exactly. What stays there is the half this test does NOT make —
+        the VALUES those two keys are bound to. Read the two together.
+
+        ⚠ AN INVARIANT GUARD. Nothing ever shipped with a wrong override; the three
+        mutants were written by hand against this module. What it pins is that the one
+        composition point the model cannot see stays a composition of two known names.
+        """
+        env_arg = flake_image_arg(flake, "Env", GO_MAKER)
+        assert env_arg is not None, f"no `Env` argument inside `{GO_MAKER}`'s block"
+
+        terms = nix_override_terms(env_arg)
+        assert len(terms) == 1, (
+            f"the Go image's `Env` composes {len(terms)} `//` overrides onto "
+            f"`serverEnvGo`: {terms!r}. This module models ONE, and `//` is right-biased "
+            f"— a second term silently outranks the first, so every key in the last one "
+            f"is a value reaching the pod that `go_env()` does not describe."
+        )
+
+        keys = nix_attrset_keys(terms[0])
+        assert keys is not None, (
+            f"the Go image's `Env` override is {terms[0]!r} — not a literal attrset, so "
+            f"what it adds to the pod's environment is decided somewhere this guard "
+            f"cannot read. A named binding here would pass every other assertion in this "
+            f"module while setting anything at all."
+        )
+        assert len(keys) == len(set(keys)), (
+            f"the Go image's `Env` override names {keys!r} with a repeat — nix takes the "
+            f"LAST, so the duplicate is the one that runs and the first is a decoy"
+        )
+
+        overlap = sorted(set(keys) & set(DEPLOY_CONTRACT))
+        assert not overlap, (
+            f"the Go image's `Env` override sets {overlap} on top of `serverEnvGo`. "
+            f"Those are the variables a Deployment SETS, and `//` is right-biased, so "
+            f"this literal WINS over the derived value while `go_env()` — which every "
+            f"value assertion in this module compares — keeps reporting the derived one. "
+            f"The pod starts, health-checks and serves the wrong store, binds a port the "
+            f"Service does not name, or reads its bearer token from a compiled-in path "
+            f"with the secret mounted elsewhere."
+        )
+        assert sorted(set(keys)) == sorted(ENV_OVERRIDE_KEYS), (
+            f"the Go image's `Env` override adds {sorted(set(keys))!r}; the declared set "
+            f"is {sorted(ENV_OVERRIDE_KEYS)!r}. This is the catch-all: a name that is not "
+            f"in `DEPLOY_CONTRACT` is still a value reaching the pod that no model here "
+            f"describes, and a MISSING one is the `PATH`/`SSL_CERT_FILE` regression the "
+            f"toolchain guard exists for. If the image genuinely needs another variable, "
+            f"add it to `ENV_OVERRIDE_KEYS` and say what reads it."
+        )
+
     def test_the_removal_list_drops_NOTHING_the_deployment_names(self, flake):
         """🔴 THE SUBTRACTION CAN SUBTRACT TOO MUCH, AND THIS IS THE DANGEROUS DIRECTION.
 
@@ -335,16 +488,28 @@ class TestTheGoImageRunsUnderTheSameContract:
         instead of the mounted path. So the list is checked against what a Deployment
         actually sets, in the direction that matters.
 
-        ⚠ THIS DOCSTRING USED TO OPEN "🔴 THE ONE WAY THE SUBTRACTION CAN BE WRONG", AND
-        THAT WAS FALSE — it is corrected rather than deleted, because the false version is
-        the finding. There is a SECOND way, and this test cannot see it: the subtraction
-        can be written to drop a name the LIST does not contain
-        (`removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ])
-        serverEnvPythonOnly`), which reads the list this test checks and is still wrong.
-        That one is closed by `SERVER_ENV_GO_FORM` in
-        `test_the_go_env_is_DERIVED_from_serverEnv_rather_than_restated`. A guard whose
-        description claims a relationship its body does not cover is worse than no guard —
-        it stops the next person looking — which is exactly what happened here.
+        ⚠ THIS DOCSTRING HAS NOW BEEN WRONG TWICE, IN THE SAME DIRECTION, AND BOTH
+        VERSIONS ARE KEPT BECAUSE THE PATTERN IS THE FINDING. It first opened "🔴 THE ONE
+        WAY THE SUBTRACTION CAN BE WRONG"; that was corrected to "there is a SECOND way",
+        and THAT was wrong too. There are THREE places a `DEPLOY_CONTRACT` variable can
+        come out wrong, and this test reads exactly one of them:
+
+          1. the removal list drops it — what this test checks;
+          2. the subtraction drops a name the LIST does not contain
+             (`removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ])
+             serverEnvPythonOnly`), which reads the list this test checks and is still
+             wrong — closed by `SERVER_ENV_GO_FORM` in
+             `test_the_go_env_is_DERIVED_from_serverEnv_rather_than_restated`;
+          3. the image's `Env` argument OVERRIDES it with `//` after the subtraction has
+             done its job correctly — every binding-level guard passes, and the pod gets
+             the literal. Closed by
+             `test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle`, and open until it
+             existed: three mutants of this exact shape survived the whole module.
+
+        A guard whose description claims a relationship its body does not cover is worse
+        than no guard — it stops the next person looking — which is what happened here
+        twice. If a FOURTH place turns up, add it to this list rather than reopening the
+        sentence.
         """
         drop = flake_string_list(flake, "serverEnvPythonOnly")
         assert drop, "no `serverEnvPythonOnly` entries — see the controls"
@@ -514,8 +679,14 @@ class TestTheGoImageRunsUnderTheSameContract:
             f"`goServerTools` is {tools!r} — it does not build on `serverTools`, so the "
             f"two pods' operational toolchains are stated twice and can diverge"
         )
+        # 🔴 THIS IS THE ASSERTION THE ROOTS ACTUALLY DEPEND ON. `pkgs.cacert` in
+        # `contents` is what root-merges an `/etc/ssl/certs` into the image, and that
+        # directory — not `$SSL_CERT_FILE` — is what `crypto/x509` finds the roots
+        # through; measured, see the `SSL_CERT_FILE` assertion below. Drop it and the
+        # image has no `/etc` at all, like its Python sibling.
         assert re.search(r"\bcacert\b", tools), (
-            f"`goServerTools` is {tools!r} — no CA bundle. The image ships no `/etc`, so "
+            f"`goServerTools` is {tools!r} — no CA bundle. Without it the image carries "
+            f"no `/etc/ssl/certs` and no bundle at any path Go's `crypto/x509` reads, so "
             f"`internal/identity/jwks.go`'s https fetch has no roots to verify against"
         )
 
@@ -524,7 +695,20 @@ class TestTheGoImageRunsUnderTheSameContract:
         # changes the layout without changing this.
         env_arg = flake_image_arg(flake, "Env", GO_MAKER)
         assert env_arg is not None, f"no `Env` argument inside `{GO_MAKER}`'s block"
-        assert re.search(r"PATH\s*=\s*serverPath", env_arg), (
+        # `(?<![\w'-])` so this is `PATH`, not the tail of `X_PATH` — nix identifiers
+        # take `_`, `'` and `-`, and a bare `PATH\s*=` matched `GOPATH = serverPath` just
+        # as happily. The PRESENCE of the key is
+        # `test_the_Env_OVERRIDE_adds_only_PATH_and_the_CA_bundle`'s exact-set assertion;
+        # what is asserted here is the VALUE it is bound to.
+        #
+        # ⚠ AND THE TIGHTENING IS REDUNDANT TODAY — SAID RATHER THAN COUNTED AS COVERAGE.
+        # The only mutants the two spellings disagree about are the ones where a name
+        # ENDING in `PATH` is bound to `serverPath` and bare `PATH` is gone, and the
+        # exact-set assertion kills every one of those on its own: `GOPATH = serverPath`
+        # was measured to fail BOTH tests. What the lookbehind buys is that this
+        # assertion stays true about the thing it names if `ENV_OVERRIDE_KEYS` ever
+        # stops being an exact set — not a mutant it is the only one to catch.
+        assert re.search(r"(?<![\w'-])PATH\s*=\s*serverPath\b", env_arg), (
             f"the Go image's `Env` is {env_arg!r} — `serverPath` is never placed into "
             f"it, so `kubectl exec … -- tar` fails with `executable file not found in "
             f"$PATH` even though busybox is in the image"
@@ -535,13 +719,30 @@ class TestTheGoImageRunsUnderTheSameContract:
             f"/bin in the built image — a PATH pointing elsewhere leaves them present "
             f"and unreachable"
         )
-        # And the CA bundle has to be NAMED, not merely present: Go's crypto/x509 reads
-        # `$SSL_CERT_FILE` first and then searches a list of system paths this image does
-        # not have, so shipping the closure without the variable changes nothing.
-        assert "SSL_CERT_FILE" in env_arg, (
-            f"the Go image's `Env` is {env_arg!r} — no `SSL_CERT_FILE`. The bundle would "
-            f"be in the image and unreachable, which is the `serverPath = \"/nonexistent\"` "
-            f"mutant in a different costume"
+        # 🔴 AND `SSL_CERT_FILE` IS PINNED TO THE *CLOSURE*, NOT TO A REACHABILITY STORY
+        # — the reachability story this assertion used to carry was measured FALSE and is
+        # retracted in `flake.nix` beside `goServerCaBundle`. It read: "no
+        # `SSL_CERT_FILE`. The bundle would be in the image and unreachable, which is the
+        # `serverPath = "/nonexistent"` mutant in a different costume." It is not. The
+        # image HAS an `/etc/ssl/certs` — `pkgs.cacert` in `contents` is root-merged —
+        # and that directory is in Go's `certDirectories`, which `loadSystemRoots` walks
+        # in addition to `$SSL_CERT_FILE`. Measured on the built image at uid 65532 with
+        # an `x509.SystemCertPool()` probe: 121 roots with this variable as shipped, 121
+        # with it unset, 121 with it pointing at `/nonexistent/ca-bundle.crt`, against 0
+        # for the same binary in an image carrying no CA roots.
+        #
+        # So the reachable thing to assert is NOT that the variable rescues anything —
+        # it does not, measurably — but that the path it names is the SAME closure
+        # `contents` carries. That is true, it is what makes the declaration harmless
+        # rather than a second, driftable statement of where the bundle is, and it is the
+        # only claim available: the third measurement above shows a wrong literal here is
+        # behaviourally invisible, so no guard can catch one by its effect.
+        assert re.search(r"(?<![\w'-])SSL_CERT_FILE\s*=\s*goServerCaBundle\b", env_arg), (
+            f"the Go image's `Env` is {env_arg!r} — `SSL_CERT_FILE` is not bound to "
+            f"`goServerCaBundle`. A literal path here is a second statement of where the "
+            f"bundle lives, and it can drift from the closure `contents` actually carries "
+            f"with nothing to notice: a wrong value is MEASURED invisible, because the "
+            f"`/etc/ssl/certs` directory fallback supplies the roots either way."
         )
 
     def test_the_go_image_does_not_reuse_the_python_pod_name(self, flake):

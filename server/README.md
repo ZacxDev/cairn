@@ -501,6 +501,18 @@ where the Python flake image has no `/etc` at all — needed because
 no roots otherwise. The same trade applies to its applets and it has not been
 re-argued here.
 
+🔴 **AND `/etc/ssl/certs` — NOT THE `SSL_CERT_FILE` THE IMAGE ALSO DECLARES — IS
+WHAT MAKES THOSE ROOTS REACHABLE.** `crypto/x509` walks its `certDirectories`
+*in addition to* whatever `$SSL_CERT_FILE` names, and that directory is on the
+list. Measured on the built image at uid 65532 with an `x509.SystemCertPool()`
+probe: **121 roots** with the variable as shipped, **121** with it unset, **121**
+with it pointing at a nonexistent path — against **0** for the same binary in an
+image carrying no CA roots, which is what makes the 121 a measurement rather than
+a number a probe prints. So a wrong `SSL_CERT_FILE` here is behaviourally
+invisible; the variable is kept as a route that does not depend on Go's
+directory list, and `flake.nix` says so beside `goServerCaBundle` rather than
+claiming it is the mechanism.
+
 ### Pulling it from a second cluster
 
 ```bash

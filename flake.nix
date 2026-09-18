@@ -156,10 +156,12 @@
       # exists for: four pinned values agreeing over a pod that cannot do its documented
       # job.
       #
-      # ⚠ SCOPE, STATED SO NOBODY READS THIS AS MORE THAN IT IS. The bundle's PRESENCE
-      # at the path `SSL_CERT_FILE` names is what is built and pinned here. A live JWKS
-      # fetch against a real issuer is NOT verified by anything in this repository — it
-      # needs a pod, a network and an issuer, none of which a nix build has.
+      # ⚠ SCOPE, STATED SO NOBODY READS THIS AS MORE THAN IT IS. What is built and
+      # pinned here is the CLOSURE's presence in `contents` — which is what gives the
+      # image an `/etc/ssl/certs`, and therefore the roots; see the measurement over
+      # `goServerCaBundle` below, and note that the env var is NOT the mechanism. A live
+      # JWKS fetch against a real issuer is NOT verified by anything in this repository —
+      # it needs a pod, a network and an issuer, none of which a nix build has.
       #
       # ⚠ AND IT IS GO-ONLY ON PURPOSE. Adding `cacert` to `serverTools` would change
       # `packages.server-image`'s layer contents, which is the one thing
@@ -167,12 +169,43 @@
       # that has no use for it.
       goServerTools = pkgs: serverTools pkgs ++ [ pkgs.cacert ];
 
-      # 🔴 NAMED BY ABSOLUTE STORE PATH, AND `SSL_CERT_FILE` IS WHAT MAKES IT REACHABLE.
-      # Go's `crypto/x509` reads `$SSL_CERT_FILE` first and otherwise searches a list of
-      # system locations — `/etc/ssl/certs/ca-certificates.crt` and friends — none of
-      # which this image has, because it has no `/etc`. So shipping the closure without
-      # declaring the variable puts the bundle in the image and leaves it unreachable:
-      # the same end state as the `serverPath = "/nonexistent"` mutant, by another route.
+      # 🔴 NAMED BY ABSOLUTE STORE PATH, AND `SSL_CERT_FILE` IS *NOT* WHAT MAKES THE
+      # ROOTS REACHABLE — THAT IS MEASURED, AND IT RETRACTS WHAT THIS COMMENT USED TO
+      # SAY. The retracted theory, written down rather than quietly replaced: "Go's
+      # `crypto/x509` reads `$SSL_CERT_FILE` first and otherwise searches system
+      # locations, NONE OF WHICH THIS IMAGE HAS, BECAUSE IT HAS NO `/etc` — so shipping
+      # the closure without declaring the variable leaves the bundle unreachable."
+      # Both halves of that are false for THIS image. `pkgs.cacert` in `contents` is
+      # root-merged by `buildLayeredImage`, so the image DOES have an `/etc`, and it
+      # holds `/etc/ssl/certs/ca-bundle.crt` as a symlink into the store. `/etc/ssl/certs`
+      # is in Go's `certDirectories`, which `loadSystemRoots` walks IN ADDITION to
+      # whatever `$SSL_CERT_FILE` names, and the symlink targets contain `/` so
+      # `readUniqueDirectoryEntries` does not filter them out.
+      #
+      # Measured on the built image, uid 65532, with an `x509.SystemCertPool()` probe
+      # built CGO-off by the pinned toolchain:
+      #
+      #   SSL_CERT_FILE as shipped here .................. 121 roots
+      #   SSL_CERT_FILE unset ............................ 121 roots
+      #   SSL_CERT_FILE = "/nonexistent/ca-bundle.crt" ... 121 roots
+      #   positive control — the SAME binary in an image
+      #   with no CA roots at all ........................   0 roots
+      #
+      # The control is what makes the 121 a measurement rather than a harness printing a
+      # reassuring number: the probe can report zero.
+      #
+      # 🔴 SO THIS DECLARATION HAS NO MEASURABLE EFFECT TODAY, AND THAT IS WHAT IS
+      # WRITTEN HERE RATHER THAN A FRESH MECHANISM TO JUSTIFY IT. It is KEPT anyway, for
+      # one reason that is about the FAILURE DIRECTION and not about today's behaviour:
+      # the directory fallback depends on two things this repository does not control —
+      # Go's `certDirectories` list, and `buildLayeredImage` continuing to root-merge
+      # `contents` into `/etc`. If either changes, an image WITHOUT this variable loses
+      # its roots silently; an image with it does not. The cost is one env var whose
+      # value is correct by construction, because it is interpolated from the same
+      # `pkgs.cacert` that `goServerTools` puts in `contents` — which is also the only
+      # thing a guard can honestly assert about it, since the third row above shows a
+      # WRONG path here is behaviourally invisible.
+      #
       # The store path rather than an `/etc/…` spelling for the same reason `Cmd` uses
       # one: the file is present because `contents` carries the closure, not because
       # anything arranged a filesystem layout around it.
