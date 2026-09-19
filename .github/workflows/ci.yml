@@ -613,6 +613,16 @@ jobs:
       - name: the server image builds
         run: nix build .#packages.x86_64-linux.server-image --no-link --print-build-logs
 
+      # 🔴 THE GO POD'S IMAGE IS BUILT HERE FOR THE REASON THE PYTHON ONE ABOVE IS, AND
+      # ONE MORE. `tests/test_flake_go_image_runtime_contract.py` is a STRUCTURAL check on
+      # `flake.nix` — it reads the declaration and is blind to layer contents by
+      # construction — so nothing in the `tests` job can tell a declaration that builds
+      # from one that does not. This step is that half. It asserts it BUILDS; that it
+      # RUNS, can be seeded and can be rotated was measured by hand off the loaded image
+      # at the commit that added it, and is not asserted here.
+      - name: the Go server image builds
+        run: nix build .#packages.x86_64-linux.server-image-go --no-link --print-build-logs
+
       # The Go server is packaged too, and its build RUNS the unit tests — so this
       # step is a second, independent reading of the `go` job's verdict under the
       # PINNED toolchain rather than the one `setup-go` installed. Two tiers, both

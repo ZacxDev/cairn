@@ -96,7 +96,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
 | `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |
 | `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
-| `flake.nix` | both clients, the server image, the Go server, and the checks over all of them |
+| `flake.nix` | both clients (**`default` is still the PYTHON one**), BOTH pod images, and the checks |
 
 ## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
 
@@ -284,8 +284,9 @@ THE RULING IS THE SAME EVERY TIME: declare it, never mirror it into the oracle.*
   **2** with argparse's `usage:` on the oracle — the Go client *succeeding* where the oracle
   refuses, which is the dangerous direction. Declared rather than closed because a printed table on
   the oracle would be a second mechanism reaching a value the Python ledgers already read from the
-  parser and the AST. 🔴 **At cutover it WIDENS the CLI contract** — a single-dash token that
-  used to be refused starts answering 0 — so P8 owns a decision there, not just a deletion.
+  parser and the AST. 🔴 **IT WIDENS THE CLI CONTRACT WHEN `packages.default` FLIPS — NOT AT P8**,
+  which is the correction residual 7 carries: a single-dash token refused today starts answering 0
+  the moment the default moves. P8 owns the DECISION (public surface, or gated), not the moment.
 
 The other five: argparse's usage text (exit code compared, text not), `urllib`-vs-`net/http` failure
 tails, a reader error's exit route (3 by contract on Go, 1 by traceback on the oracle), and two
@@ -322,9 +323,11 @@ Binding rules: **`lib/README.md`**. Read it before editing any routing path.
 ## Installing and building with nix
 
 ```bash
-nix run   github:ZacxDev/cairn -- doctor    # the client, without installing it
-nix build github:ZacxDev/cairn#cairn        # the client
-nix build github:ZacxDev/cairn#server-image # the pod image, as a loadable tarball
+nix run   github:ZacxDev/cairn -- doctor       # the DEFAULT client — the PYTHON one — uninstalled
+nix build github:ZacxDev/cairn#cairn           # the PYTHON client, the oracle and the default
+nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name — NOT the default
+nix build github:ZacxDev/cairn#server-image    # the PYTHON pod image, as a loadable tarball
+nix build github:ZacxDev/cairn#server-image-go # the GO pod image — published by nothing
 ```
 
 Consumers pin this flake as an input; that is the supported way to get a `cairn`
@@ -332,13 +335,20 @@ whose version cannot disagree with the code in it, because **the version is the
 git revision** and is never written down by hand.
 
 🔴 **THERE ARE NOW TWO CLIENTS, AND EVERY CLAIM BELOW SAYS WHICH ONE IT IS
-ABOUT.** `cairn` (`packages.cairn`, and still `packages.default`) is the Python
-client and the ORACLE; `cmd/cairn` (`packages.cairn-go`) is the Go port. The Go
+ABOUT.** `cairn` (`packages.cairn`, and still `packages.default`/`apps.default`) is the
+Python client and the ORACLE; `cmd/cairn` (`packages.cairn-go`) is the Go port. The Go
 client is a SECOND artefact during P2, not a replacement: nothing in `apps` or
 `packages.default` points at it, because swapping them changes what
 `nix run github:…/cairn` executes for every existing consumer — a cutover, not a
 build. **The Python client, its `lib/` and its packaging are not deleted here**;
 the plan retires Python at P8, after the gate below has held over real use.
+
+🔴 **AND THE FLIP IS HELD ON A MEASUREMENT, NOT ONLY ON CAUTION.** On a host with more
+than one instance configured the Go client REFUSES every read verb at exit 11
+(`RefuseUnportedMultiInstance`), so the `nix run … -- doctor` line above would refuse
+there. The guard is correct; the flip waits on `tests/parity/README.md` residual 8's
+closing condition, and carries residual 7's contract widening. **Both are the flip's,
+not P8's.**
 
 🔴 **`lib/` MUST STAY BESIDE THE *PYTHON* CLIENT SCRIPT, AND `packages.cairn` IS
 BUILT THAT WAY ON PURPOSE.** `cairn` finds its modules with
@@ -382,7 +392,7 @@ reading or writing — the `AttributeError` above is exactly the class of defect
 cannot see. The parity gate is what measures behaviour, and it needs a running
 pod that a nix sandbox is the wrong place for.
 
-🔴 **THERE ARE TWO WAYS TO BUILD THE POD AND THEY MUST NOT DIVERGE.**
+🔴 **THERE ARE TWO WAYS TO BUILD THE *PYTHON* POD AND THEY MUST NOT DIVERGE.**
 `server/Dockerfile` is what is deployed today; `packages.server-image` is the
 reproducible alternative. The runtime contract — env, port, uid, entrypoint — is
 written in both, so `tests/test_flake_image_matches_dockerfile.py` pins them
@@ -407,41 +417,29 @@ assertions. The image now carries busybox and declares `PATH`, and
 pins that — but the general lesson stands: **before swapping the deployed
 image, diff the two for what the test cannot read.**
 
-Known remaining differences, measured on the built images (26 layers,
-209,252,641 bytes):
+📄 **THE MEASURED DIFFERENCES ARE IN `server/README.md`, NOT HERE** — the layer
+table, the busybox applet surface (network **servers** and **clients**, including
+`ssl_client`, beside a mounted credential), the setuid counts, and why that trade
+is RECORDED RATHER THAN FIXED. 🔴 **THIS SENTENCE NO LONGER CARRIES A COUNT, AND
+THE DELETION IS THE POINT: FOUR SUCCESSIVE DRAFTS GAVE ONE AND ALL FOUR WERE
+UNDERCOUNTS**, each in the direction of the previous fix, the last two while
+telling the reader to enumerate. **The set is whatever `busybox --list` on the
+built image says — read it there, and do not supply a fifth number here.**
+Neither image's tool surface is a subset of the other's, and nothing about it is
+settled.
 
-| | `server/Dockerfile` | `packages.server-image` |
-|---|---|---|
-| `/etc`, `/usr` | present | **absent** |
-| `WorkingDir` | `/` | `/app` |
-| shell / `tar` / `find` / `cut` | from `python:3.12-slim` | busybox 1.37.0 |
-| `python3` on `PATH` | **present** | **absent** — `Cmd` names it by store path |
-| `bash`, `apt-get` | **present** | absent |
-| `wget`, `nc`, `httpd`, `telnetd` | **absent** | **present** (busybox applets) |
-| size | smaller | larger |
-
-🔴 **NEITHER IMAGE'S TOOL SURFACE IS A SUBSET OF THE OTHER'S, and the row that
-matters is the `wget`/`nc`/`httpd`/`telnetd` one** — not the size row below it.
-busybox ships 402 applets at `/bin` (with `/sbin` a SYMLINK to it, so one
-directory, not two), which puts **four network servers** — `httpd`, `telnetd`,
-`ftpd`, `tftpd` — and a set of network clients — `wget`, `nc`, `telnet`,
-`ftpget`, `ftpput`, `tftp`, `nslookup`, `ping`, `traceroute`, `nbd-client`,
-`udhcpc`, `ntpd`, `rdate`, and notably **`ssl_client`** — into a pod that mounts
-a credential at `/run/secrets/subsystem-store/token`, none of which the deployed
-image has. ⚠ Two earlier drafts of this sentence undercounted, each in the
-direction of the previous fix ("two egress clients", then "an HTTP server, a
-telnet server"); enumerate from `busybox --list` on the built image rather than
-from this paragraph, because a reader told to "revisit the trade with the threat
-model in front of you" needs the real set and `ssl_client` is the one that
-matters for a token. Against that: the pod runs as uid 65532, no
-applet is setuid, and the deployed image ships `bash`, `apt-get` and **8 setuid
-binaries including `su` and `passwd`** — so neither is meaningfully "hardened"
-relative to the other. **This is recorded rather than fixed, deliberately** —
-trimming means `pkgs.busybox.override { extraConfig = "CONFIG_HTTPD n\n…"; }`,
-which rebuilds busybox from source with no cache hit, and the applets are not
-reachable without execution the attacker would already need. If this image is
-ever actually deployed, revisit that trade **then**, with the threat model in
-front of you; do not read this row as settled.
+🔴 **AND THERE IS A THIRD IMAGE: `packages.server-image-go`, WHICH IS A THIRD
+BUILD AND NOT A THIRD STATEMENT OF THE CONTRACT.** It wraps `cmd/cairn-server`
+and derives uid, port, exposed port and env from the same
+`serverUid`/`serverPort`/`serverEnv` bindings the pin above reads, minus a named
+`serverEnvPythonOnly` set — CPython's two knobs and a `HOME` that no package in
+the Go server's import closure reads. A COPY is the hazard; a subtraction is what
+makes a variable added for one pod reach both.
+`tests/test_flake_go_image_runtime_contract.py` pins that it stays derived, that
+it carries busybox and a `PATH`, and that its CA bundle is NAMED rather than
+merely present. 🔴 **NOTHING PUBLISHES OR DEPLOYS IT.**
+`.github/workflows/publish-image.yml` publishes `packages.server-image` — the
+PYTHON pod — and the cutover of the DEPLOYED image is a separate decision.
 
 🔴 **THE INTERPRETER IS PINNED, NOT INHERITED.** `flake.nix` uses
 `pkgs.python312` because `server/Dockerfile` is `python:3.12-slim` and CI pins

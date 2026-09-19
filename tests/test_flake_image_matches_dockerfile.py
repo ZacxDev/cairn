@@ -37,6 +37,28 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "server" / "Dockerfile"
 FLAKE = ROOT / "flake.nix"
 
+#: The ONLY `Env` expression `mkServerImage` may hand `buildLayeredImage`,
+#: whitespace-normalised.
+#:
+#: 🔴 THE WHOLE STATEMENT, BECAUSE A KEY-SET READER OVER THE `//` OPERAND WAS MEASURED
+#: WALKABLE AT FOUR SPELLINGS. `test_the_env_sets_are_identical` compares the `serverEnv`
+#: BINDING against `server/Dockerfile`; the pod runs an EXPRESSION built from it, and
+#: everything that expression does afterwards reached the pod unread. `inherit (x) K;`
+#: and `${"K"} = "/wrong";` inside the operand carry no bare identifier before an `=`;
+#: `… ++ [ "K=/wrong" ]` appends to the resulting LIST and is not an operand at all; a
+#: mapper lambda can rewrite a value by key. Each shipped `SUBSYSTEM_STORE_ROOT=/wrong`
+#: to a pod that starts, health-checks and serves the wrong store — a duplicate name in
+#: the list resolves to the LAST entry — with both guard modules green. So this is the
+#: repo's stated remedy for a guard on WORDS: pin the whole normalised string. A
+#: cosmetic reformat fails here; that is the price, and it is the point.
+#:
+#: ⚠ The Go image's expression is a DIFFERENT constant (`GO_IMAGE_ENV_FORM` in
+#: `tests/test_flake_go_image_runtime_contract.py`), because the two images legitimately
+#: differ — sharing one would make each image's guard pass for the other's shape.
+PY_IMAGE_ENV_FORM = (
+    'pkgs.lib.mapAttrsToList (k: v: "${k}=${v}") (serverEnv // { PATH = serverPath; })'
+)
+
 
 # ---------------------------------------------------------------------------
 # Extractors. Each is a pure function of text so the controls below can drive
@@ -121,8 +143,18 @@ def flake_int(text: str, name: str) -> str | None:
     return m.group(1) if m else None
 
 
-def flake_image_block(text: str) -> str | None:
-    """The `buildLayeredImage { … }` argument set, brace-matched.
+def flake_image_block(text: str, maker: str = "mkServerImage") -> str | None:
+    """The `buildLayeredImage { … }` argument set of ONE maker, brace-matched.
+
+    🔴 `maker` IS NOT A CONVENIENCE PARAMETER — THERE IS MORE THAN ONE IMAGE NOW.
+    `flake.nix` builds the Python pod (`mkServerImage`) and the Go pod
+    (`mkGoServerImage`), so an unscoped `text.find("buildLayeredImage")` returns
+    whichever appears FIRST in the file and every assertion below it becomes a claim
+    about source ORDER. That is the same first-occurrence defect this module already
+    fixed twice — in the Dockerfile extractors, and in the `serverPath` regex that read
+    its value out of a COMMENT. The search therefore starts at the maker's own binding,
+    and `TestTheExtractorsSeeSomething` pins that the two makers resolve to DIFFERENT
+    blocks, which is the only thing that distinguishes a scoped lookup from a lucky one.
 
     🔴 THE SCOPE IS THE POINT, AND MATCHING LINE-ANYWHERE WAS NOT ENOUGH. Two
     separate guards were defeated by a binding of the right NAME in the wrong
@@ -141,7 +173,10 @@ def flake_image_block(text: str) -> str | None:
     introduced: a multi-line list, or an extra `++ [ … ]` term, are ordinary
     formatting that produced a byte-identical derivation and a red test.
     """
-    i = text.find("buildLayeredImage")
+    start = re.search(rf"^\s*{re.escape(maker)}\s*=\s*pkgs:", text, re.M)
+    if start is None:
+        return None
+    i = text.find("buildLayeredImage", start.end())
     if i == -1:
         return None
     try:
@@ -159,17 +194,58 @@ def flake_image_block(text: str) -> str | None:
     return None
 
 
-def flake_image_arg(text: str, name: str) -> str | None:
-    """One `name = <value>;` argument from inside the image block."""
-    block = flake_image_block(text)
+def flake_image_arg(text: str, name: str, maker: str = "mkServerImage") -> str | None:
+    """One `name = <value>;` argument from inside ONE maker's image block.
+
+    🔴 THE VALUE ENDS AT A `;` OUTSIDE ANY BRACKET, NOT AT THE FIRST `;` THAT ENDS A
+    LINE. The line-ending version was written first and it TRUNCATES: an argument whose
+    value is a multi-line attrset — `Env = … (serverEnvGo // {\\n PATH = …;\\n FOO = …;\\n
+    });` — stops at `PATH = …;` and returns a prefix. Nothing about that reads as a
+    parse failure. It returns a non-empty string, so a positive control asserting "the
+    argument was found" passes, and every assertion about a LATER key in the same value
+    then fails with a message naming a cause the tree does not have — the false red this
+    module already records for its `serverPath` regex, arriving from the other side.
+
+    Depth-counting over the three bracket kinds is enough here for the reason the `#`
+    anchor elsewhere in this file is enough: it is a fact about this codebase, not about
+    the parser. A `;` inside a nix STRING would still end the scan. `flake.nix` has
+    none, and the alternative is a nix parser.
+    """
+    block = flake_image_block(text, maker)
     if block is None:
         return None
-    m = re.search(rf"^\s*{re.escape(name)}\s*=\s*(.*?);\s*$", block, re.M | re.S)
-    return m.group(1).strip() if m else None
+    m = re.search(rf"^\s*{re.escape(name)}\s*=\s*", block, re.M)
+    if m is None:
+        return None
+    depth = 0
+    for k in range(m.end(), len(block)):
+        c = block[k]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                # The enclosing block closed before the value did: a malformed argument,
+                # reported as absent rather than as a prefix of something else.
+                return None
+            depth -= 1
+        elif c == ";" and depth == 0:
+            return block[m.end():k].strip()
+    return None
 
 
-def flake_cmd_script(text: str) -> str | None:
-    m = re.search(r"Cmd\s*=\s*\[(.*?)\];", text, re.S)
+def flake_cmd_script(text: str, maker: str = "mkServerImage") -> str | None:
+    """The `.py` script one maker's image `Cmd` runs.
+
+    🔴 SCOPED TO THE MAKER, FOR THE REASON `flake_image_block` GIVES. Unscoped, this
+    took the FIRST `Cmd = [ … ];` in the whole file, and the Go pod's image has one
+    too — naming a BINARY, not a script. A `.py` filter over the wrong block returns
+    None, which reads as "the CMD line stopped parsing" rather than "you read the
+    other image".
+    """
+    block = flake_image_block(text, maker)
+    if block is None:
+        return None
+    m = re.search(r"Cmd\s*=\s*\[(.*?)\];", block, re.S)
     if not m:
         return None
     scripts = [s for s in re.findall(r'"([^"]*)"', m.group(1)) if s.endswith(".py")]
@@ -242,7 +318,77 @@ class TestTheExtractorsSeeSomething:
         assert dockerfile_cmd_script('CMD ["python3"]\n') is None
         assert flake_attrset("{ other = { A = \"b\"; }; }", "serverEnv") == {}
         assert flake_int("{ serverUid = \"not-a-number\"; }", "serverUid") is None
-        assert flake_cmd_script("{ Cmd = [ \"python3\" ]; }") is None
+        # 🔴 THE MAKER BINDING IS PRESENT IN THIS FIXTURE ON PURPOSE. Without it the
+        # extractor returns None because it cannot find the SCOPE, which is a different
+        # reason from the one this control means to test — "the Cmd names no `.py`". A
+        # control that passes for the wrong reason is a control that stops testing the
+        # day the real defect appears.
+        assert flake_cmd_script(
+            '  mkServerImage = pkgs:\n    buildLayeredImage {\n'
+            '      Cmd = [ "python3" ];\n    };\n'
+        ) is None
+
+    def test_an_arguments_value_is_captured_WHOLE_not_truncated(self):
+        """🔴 A TRUNCATED VALUE IS NOT A PARSE FAILURE, WHICH IS WHY IT NEEDS ITS OWN
+        CONTROL. It returns a non-empty string, so "the argument was found" passes; only
+        an assertion about the tail of the value notices, and it reports the tail as
+        MISSING FROM THE SOURCE rather than as unread.
+
+        Driven over the shipped extractor with a fixture whose shape is the one that
+        broke it: a multi-line override set with a `;` at the end of an inner line.
+        """
+        fixture = (
+            "  mkFixtureImage = pkgs:\n"
+            "    buildLayeredImage {\n"
+            "      Env = mapAttrsToList f (base // {\n"
+            "        FIRST = a;\n"
+            "        LAST = b;\n"
+            "      });\n"
+            "      after = 1;\n"
+            "    };\n"
+        )
+        got = flake_image_arg(fixture, "Env", "mkFixtureImage")
+        assert got is not None, "the fixture's Env argument did not parse at all"
+        assert "LAST" in got, (
+            f"the value was truncated to {got!r} — everything after the first "
+            f"line-ending `;` was silently dropped"
+        )
+        assert "after" not in got, (
+            f"the value ran past its own `;` into the next argument: {got!r}"
+        )
+
+    def test_the_extractors_are_SCOPED_to_one_maker(self, flake):
+        """🔴 TWO IMAGES NOW LIVE IN `flake.nix`, AND AN UNSCOPED READ PICKS BY ORDER.
+
+        `mkServerImage` builds the Python pod and `mkGoServerImage` the Go one. Every
+        assertion in `TestTheTwoBuildsAgree` is about the FIRST of those, and before the
+        `maker` parameter existed "the first" meant "whichever the file happens to
+        mention earlier" — so moving the Go image above the Python one would silently
+        re-point this whole file at the wrong artefact, with nothing going red.
+
+        Three claims, because two of them are satisfiable by an extractor wired to
+        nothing: both blocks parse, they are DIFFERENT, and a maker that does not exist
+        yields None rather than a block belonging to somebody else.
+        """
+        python_block = flake_image_block(flake, "mkServerImage")
+        go_block = flake_image_block(flake, "mkGoServerImage")
+        assert python_block, "no buildLayeredImage block found for `mkServerImage`"
+        assert go_block, "no buildLayeredImage block found for `mkGoServerImage`"
+        assert python_block != go_block, (
+            "both makers resolved to the SAME block — the scoping is not working, and "
+            "every assertion in this file is about an image nobody chose"
+        )
+        assert flake_image_block(flake, "mkNoSuchImage") is None, (
+            "an unknown maker resolved to a block, so the scope is decorative"
+        )
+        # And the scoping is load-bearing in the direction that matters: the Python
+        # image's Cmd runs a `.py`, the Go image's runs a binary and has none.
+        assert flake_cmd_script(flake, "mkServerImage") is not None
+        assert flake_cmd_script(flake, "mkGoServerImage") is None, (
+            "the Go pod's image Cmd names a `.py` script — it is supposed to exec the "
+            "compiled server, so either the Cmd is wrong or this extractor is reading "
+            "the Python block"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +396,34 @@ class TestTheExtractorsSeeSomething:
 # ---------------------------------------------------------------------------
 
 class TestTheTwoBuildsAgree:
+
+    def test_the_image_Env_is_EXACTLY_the_declared_expression(self, flake):
+        """🔴 THE AGREEMENT IS CHECKED ON THE BINDING; THE POD RUNS THE EXPRESSION.
+
+        `test_the_env_sets_are_identical` compares `serverEnv` to `server/Dockerfile`'s
+        `ENV` block. The image does not ship `serverEnv` — it ships `PY_IMAGE_ENV_FORM`,
+        and every term of that expression after `serverEnv` is a value reaching the
+        DEPLOYED pod that nothing else in either guard module reads.
+
+        🔴 REGRESSION COVERAGE, NOT AN INVARIANT GUARD, AND THAT LABEL WAS WRONG ONCE.
+        For the mutant that DELETES the override — `Env = … serverEnv;` — the matrix is
+        red at `d443e31`, GREEN at `19975d6` (this branch's own regression: the only
+        reader was an unscoped whole-file `PATH = serverPath` search, which the second
+        image's identical line satisfied), red again since. The mutants that ADD a name
+        are invariant guards; this one is not.
+        """
+        env_arg = flake_image_arg(flake, "Env")
+        assert env_arg is not None, "no `Env` argument inside `mkServerImage`'s block"
+        assert re.sub(r"\s+", " ", env_arg).strip() == PY_IMAGE_ENV_FORM, (
+            f"the Python image's `Env` is {env_arg!r}; the declared expression is "
+            f"{PY_IMAGE_ENV_FORM!r}. Every difference is a value reaching the deployed "
+            f"pod that nothing else here describes — `test_the_env_sets_are_identical` "
+            f"keeps comparing `serverEnv` to the Dockerfile and reporting agreement "
+            f"about a value the pod does not get, and a MISSING `PATH` is the "
+            f"seeding/revocation regression the toolchain guard exists for. If the image "
+            f"genuinely needs another variable, change this constant and say what reads "
+            f"it."
+        )
 
     def test_the_env_sets_are_identical(self, dockerfile, flake):
         """Both the NAMES and the VALUES, and equality in BOTH directions.
@@ -405,12 +579,10 @@ class TestTheTwoBuildsAgree:
             "the image carries no busybox, so it has no sh/tar/find/cut — "
             "seeding and token revocation both go through `kubectl exec`"
         )
-        # And the PATH must actually be handed to the image config, not merely
-        # defined: a declared-but-unused binding is the shape that reads as
-        # covered while changing nothing.
-        assert re.search(r"PATH\s*=\s*serverPath", flake), (
-            "`serverPath` is defined but never placed into the image's Env"
-        )
+        # That `serverPath` reaches THIS image's `Env` is
+        # `test_the_image_Env_is_EXACTLY_the_declared_expression`'s, not this test's: it
+        # pins the whole expression, so a second reader here would be the duplicated
+        # predicate this repository already has a rule about.
 
         # 🔴 THE SAME RULE APPLIED TO `serverTools`, AND ITS ABSENCE WAS
         # MEASURED. With only the assertions above, a mutant reverting
