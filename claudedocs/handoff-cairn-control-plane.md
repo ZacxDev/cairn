@@ -776,6 +776,9 @@ because a closed block's value is its measured values and eliminations. Read it 
   existed**. That is the sharp version: the precondition was **undischargeable**, not merely
   undischarged. Still open beside it: `publish-image.yml` publishes the Python image, and
   nothing publishes the Go one, so CI now builds an artefact nobody consumes.
+  ⚠ **SUPERSEDED — both halves of that last sentence are now wrong.** `publish-image.yml` has
+  in fact published NOTHING, ever (7 runs, 7 failures), and a Go publish path is in flight.
+  See the CLOSED block and the publish-gate block appended below.
 - **Ruled out:** that the Go image cannot be operated. Both documented procedures were exercised
   end to end against a loaded container — `server/seed.sh`'s `tar` push plus its containment
   guard, and `server/README.md`'s `kill -HUP 1` revocation, which reached `token reload: LOADED`.
@@ -783,10 +786,11 @@ because a closed block's value is its measured values and eliminations. Read it 
 - **Ruled out:** that the port loses SIGHUP reload. `cmd/cairn-server/main.go` calls
   `signal.Notify(signals, syscall.SIGHUP)` and the startup line advertises `reload=SIGHUP`.
   `via: code`
-- **Next probe:** a judgement, not a command — decide whether the pod runs the Go server, and
-  whether `publish-image.yml` publishes it. 🔴 **Enumerate the busybox applet set from
-  `busybox --list` on the BUILT image, never from any paragraph** (four drafts, four
-  undercounts — see the Gotchas).
+- **Next probe:** 🔴 **RETIRED — DO NOT RUN. This block is CLOSED.** The judgement it asked for
+  was made: the diff is done, the busybox call is made, and the operator chose publish AND
+  swap. A later reader following this line would re-derive a decision that already has an
+  answer. The enumeration instruction it carried survives in the CLOSED block below, which is
+  where it now belongs.
 
 ### The `packages.default` flip is blocked on a mechanical closing condition
 - as-of: 2026-09-18
