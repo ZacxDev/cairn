@@ -136,7 +136,35 @@ class Mutant:
     # label is the claim; the run is what checks it.
     equivalent: bool = False
     equivalent_reason: str = ""
+    # Other Go test functions that must ALSO fail for this mutant — a LEDGER, asserted.
+    #
+    # 🔴 IT WAS INERT FOR SEVERAL ROUNDS AND `internal/control/README.md` LEANED ON IT AS A
+    # GATE, WHICH IS THIS REPOSITORY'S SIGNATURE DEFECT INSIDE THE BATTERY BUILT TO REFUSE
+    # IT. The field was set on 23 rows (30 entries) and read by NOTHING: the verdict logic
+    # required only `m.killer in failing` and tolerated any other failing test regardless,
+    # so the README's "and is listed as an `extra_killers` on both rows" read as coverage
+    # and provided none. A listed killer that quietly stopped killing was a silent
+    # downgrade nobody could be told about.
+    #
+    # 🔴 SO IT IS NOW A DECLARED SET THAT MUST HOLD, AND THE DIRECTION MATTERS: every entry
+    # must be in `failing`, and a row whose list has gone stale is a RED battery rather
+    # than a quieter green. That is the same claim `killer` makes, one step wider — the
+    # difference is that `killer` is "this guard, and no other, is what noticed" while this
+    # is "these guards noticed too, and the day one of them stops is the day somebody has
+    # to look".
+    #
+    # ⚠ NOT VALID ON AN `equivalent` ROW, AND REFUSED AT LOAD RATHER THAN AT RUN. An
+    # equivalent mutant is expected to have NO failing test at all, so a listed extra there
+    # is a contradiction that could only ever report itself as a failure of the run.
     extra_killers: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if self.equivalent and self.extra_killers:
+            raise AssertionError(
+                f"{self.name}: an EQUIVALENT row lists extra_killers {self.extra_killers}. "
+                "An equivalent mutant is expected to leave the suite green, so those can "
+                "never fail — the row is claiming two incompatible things."
+            )
 
 
 MUTANTS: tuple[Mutant, ...] = (
@@ -369,6 +397,11 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tnext := current.clone()",
         new="\tnext := current",
         killer="TestARejectedBatchLeavesNeitherBytesNorState",
+        # `TestARefusedProvisioningLeavesNeitherBytesNorState` now reads `lastKnownGood()`
+        # rather than `Model()` — `Model` is unconditionally `Reload`, so it re-read a file
+        # the refused batch never touched and its "…nor State" arm was vacuous. Repairing it
+        # made it a second, legitimate killer of this row, one layer up.
+        extra_killers=("TestARefusedProvisioningLeavesNeitherBytesNorState",),
         why="THE DEFECT THIS PACKAGE ACTUALLY SHIPPED WITH IN ITS FIRST DRAFT. A Model is "
         "six maps behind a struct header, so a struct copy shares every bucket and a "
         "rejected batch's earlier events stay applied to the served authority.",
@@ -379,6 +412,7 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\tout := NewModel()\n\tout.Epoch = m.Epoch",
         new="\tout := m\n\tout.Epoch = m.Epoch",
         killer="TestARejectedBatchLeavesNeitherBytesNorState",
+        extra_killers=("TestARefusedProvisioningLeavesNeitherBytesNorState",),
         why="the same defect one level down, where the function is NAMED clone and so "
         "reads as if it cannot be wrong.",
     ),
@@ -488,7 +522,20 @@ MUTANTS: tuple[Mutant, ...] = (
             "\treturn c.model\n}"
         ),
         killer="TestTheHotPathNeverCallsTheAuthority",
-        extra_killers=("TestAKilledAuthorityKeepsServingAndTheAgeGrows",),
+        # 🔴 THIS LIST USED TO NAME `TestAKilledAuthorityKeepsServingAndTheAgeGrows`, AND
+        # THAT ENTRY WAS FALSE FROM THE DAY IT WAS WRITTEN — surfaced the moment
+        # `extra_killers` stopped being inert. That test `unplug()`s the source, so every
+        # `c.src.Model(ctx)` the mutant inserts returns an ERROR and the read-through falls
+        # straight back to `c.model`: its whole world is the one branch this edit does not
+        # change, so it is structurally incapable of seeing it. The reasoning was already
+        # written one row above, on `refresh-holds-the-lock-across-the-authority` — "no
+        # test that only kills the authority can see this" — and this list contradicted it.
+        # The GUARD did not move; the LIST was aspirational. Replaced with the two that
+        # were MEASURED red under this mutant on this tree.
+        extra_killers=(
+            "TestTheHotPathDoesNotContactTheAuthority",
+            "TestAScopeCreatedOutOfBandReachesABareRowAfterARefresh",
+        ),
         why="'read through, fall back on error' — which reads like a strictly better "
         "cache and is the single most likely thing a later contributor writes. It puts "
         "a call to the authority on every authorization decision, so an authority that "
@@ -529,7 +576,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="run-stops-on-a-failed-refresh",
         path="internal/control/cache.go",
-        old="\t\tcase <-tick:\n\t\t\t_ = c.refresh(ctx, RefreshTimer)",
+        old="\t\tcase <-tick:\n\t\t\treport(c.refresh(ctx, RefreshTimer))",
         new="\t\tcase <-tick:\n\t\t\tif err := c.refresh(ctx, RefreshTimer); err != nil {\n\t\t\t\treturn err\n\t\t\t}",
         killer="TestAFailedRefreshDoesNotStopTheLoop",
         why="propagating the error, which is what a reviewer asks for on sight of `_ =`. "
@@ -540,8 +587,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="timer-refresh-mislabelled",
         path="internal/control/cache.go",
-        old="_ = c.refresh(ctx, RefreshTimer)",
-        new="_ = c.refresh(ctx, RefreshExplicit)",
+        old="report(c.refresh(ctx, RefreshTimer))",
+        new="report(c.refresh(ctx, RefreshExplicit))",
         killer="TestTheTimerTriggerRefreshes",
         why="a copy-paste in the trigger label. `LastTrigger` is the ONLY thing that "
         "distinguishes three mechanisms producing one observable, so a wrong label makes "
@@ -550,7 +597,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="sighup-trigger-dropped",
         path="internal/control/cache.go",
-        old="\t\tcase <-tr.Signals:\n\t\t\t_ = c.refresh(ctx, RefreshSignal)",
+        old="\t\tcase <-tr.Signals:\n\t\t\treport(c.refresh(ctx, RefreshSignal))",
         new="\t\tcase <-tr.Signals:\n\t\t\tcontinue",
         killer="TestSIGHUPRefreshesTheCache",
         why="draining the signal without acting on it — which is indistinguishable from "
@@ -561,7 +608,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="change-trigger-dropped",
         path="internal/control/cache.go",
-        old="\t\tcase <-tr.OnChange:\n\t\t\t_ = c.refresh(ctx, RefreshChange)",
+        old="\t\tcase <-tr.OnChange:\n\t\t\treport(c.refresh(ctx, RefreshChange))",
         new="\t\tcase <-tr.OnChange:\n\t\t\tcontinue",
         killer="TestTheChangeTriggerRefreshes",
         why="the same drop on the notification path. Here the revocation lag silently "
@@ -1376,6 +1423,228 @@ MUTANTS: tuple[Mutant, ...] = (
         why="two sources for one secret means 'which is live' depends on a precedence "
         "nobody reads, and a rotation that updated the other appears to work.",
     ),
+    # ---- P5a: the user-creation path, and the authority the SESSIONS resolve against --
+    #
+    # 🔴 THESE THIRTEEN EXIST BECAUSE P4 SHIPPED THREE BACKENDS AND NO WAY TO PUT A USER IN
+    # FRONT OF THEM. Every row above was green through a period in which no deployment
+    # that could exist authenticated anybody through a session backend: the only authority
+    # any binary wired was the token-file projection, whose one synthetic user sits at
+    # provider `cairn-token-file` and holds no membership. Measured at `229c142`: a
+    # trusted-header backend aimed at that exact pair authenticated, `Valid()` returned
+    # true, and the authorization carried ZERO readable scopes. So the rows here mutate
+    # the WIRING and the batch CONTENT — the two places where "it authenticated" and "it
+    # can do something" come apart.
+    # 🔴 TWO ROWS, ONE PER BACKEND, BECAUSE "THE SESSION BACKENDS RESOLVE AGAINST THE
+    # CONFIGURED AUTHORITY" IS A CLAIM ABOUT A SET. There used to be one row here, over a
+    # shared `sessionAuthority` local that both constructors read; that local is gone —
+    # it existed only to hold the fallback to `authority`, which is now a refusal — so the
+    # parameter is passed at two sites and a mutant at one leaves the other asserted by
+    # nothing.
+    Mutant(
+        name="the-supabase-backend-resolves-against-the-token-file-authority-again",
+        path="internal/identity/config.go",
+        old="\t\tsupabase, err = supabaseFromEnv(supabaseValues, sessions)",
+        new="\t\tsupabase, err = supabaseFromEnv(supabaseValues, authority)",
+        killer="TestAnOperatorProvisionedSupabaseSessionAuthenticatesWithRealAuthority",
+        why="the parameter ignored, which is exactly the state this slice found the "
+        "repository in. Nothing fails to build, no backend is missing, the chain has the "
+        "right length — and a browser sign-in resolves a provider-named subject in a "
+        "projection that has none, or worse, in a DIFFERENT world's user of the same name.",
+    ),
+    Mutant(
+        name="the-trusted-header-backend-resolves-against-the-token-file-authority-again",
+        path="internal/identity/config.go",
+        old="\t\ttrusted, err = trustedHeaderFromEnv(proxyValues, sessions)",
+        new="\t\ttrusted, err = trustedHeaderFromEnv(proxyValues, authority)",
+        killer="TestAnOperatorProvisionedTrustedHeaderSessionAuthenticatesWithRealAuthority",
+        why="the same defect one backend over, and the one whose blast radius "
+        "`TrustedHeader`'s own comment calls the most dangerous thing in P4. A proxy that "
+        "has already established an identity hands it to a resolver looking in the wrong "
+        "world; the request authenticates and reads somebody else's authorization or none.",
+    ),
+    Mutant(
+        name="a-session-backend-with-no-authority-comes-up-quietly",
+        path="internal/identity/config.go",
+        old="\tif (supabaseArmed || proxyArmed) && sessions == nil {",
+        new="\tif false {",
+        killer="TestASessionBackendWithNoSessionAuthorityRefusesToStart",
+        why="the MIRROR of the row below, and the direction the defect was measured in. "
+        "Without it an armed session backend with no `$CAIRN_CONTROL_JOURNAL` falls back "
+        "to the token-file projection: the pod starts, the JWT verifies, `Valid()` is "
+        "true, an audit line names a principal — and the authorization is EMPTY. "
+        "Measured at `e11c3a7`, where this guard did not exist: err=nil, a two-backend "
+        "chain, and a sign-in that authenticates into nothing. It is the strictly worse "
+        "of the two directions, because the loud one refuses everybody and this one "
+        "refuses nobody.",
+    ),
+    Mutant(
+        name="a-journal-nobody-reads-comes-up-quietly",
+        path="internal/identity/config.go",
+        old="\tif sessions != nil && supabase == nil && trusted == nil {",
+        new="\tif false {",
+        killer="TestASessionAuthorityNobodyReadsRefusesToStart",
+        why="the partial-configuration refusal deleted one level up from the ledgers. An "
+        "operator who provisioned users and forgot the Supabase block gets a pod that "
+        "comes up healthy with nothing reading the journal — indistinguishable, from "
+        "outside, from an empty journal or a wrong subject.",
+    ),
+    Mutant(
+        name="duplicate-provider-subject-accepted",
+        path="internal/control/journal.go",
+        old="\t\tfor id, u := range m.Users {\n\t\t\tif u.Provider == e.Provider && u.Subject == e.Subject {",
+        new="\t\tfor id, u := range m.Users {\n\t\t\tif false {\n\t\t\t\t_ = id\n\t\t\t\t_ = u",
+        killer="TestTwoUsersCannotShareOneProviderSubjectPair",
+        why="the uniqueness rule on the natural key every identity backend looks a "
+        "session up by. `UserByProviderSubject` returns the FIRST match over a Go map, so "
+        "two rows make 'who is this session' answer a different user id — with a different "
+        "authorization — on different requests in one process. Nothing errors.",
+    ),
+    Mutant(
+        name="scope-name-collision-across-projects-accepted",
+        path="internal/control/provision.go",
+        # The narrowest edit that still COMPILES: the check is called with the wrong
+        # operand rather than deleted, because deleting the call leaves `current` unused
+        # and the mutant would die at the build.
+        old="\tif err := checkScopeNamesAreFree(current, req.ScopeNames); err != nil {",
+        new="\tif err := checkScopeNamesAreFree(current, nil); err != nil {",
+        killer="TestAScopeNameAlreadyInTheJournalIsRefused",
+        # ⚠ THE THIRD ENTRY IS THE WITHIN-REQUEST HALF, WHICH THIS EDIT ALSO DISABLES —
+        # `nil` removes the operand both halves read. It is listed because the ledger is
+        # asserted now: if this row's edit ever stops reaching that half, the battery says
+        # so rather than scoring a quieter kill.
+        extra_killers=(
+            "TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused",
+            "TestTwoScopeNamesInONEREQUESTThatFoldAlikeAreRefused",
+        ),
+        why="the guard that is WIDER than the model's own rule, so it looks redundant "
+        "beside `apply`'s within-a-project uniqueness and reads as a candidate for "
+        "deletion. It is not: the reader narrows the store root's DIRECTORIES by display "
+        "name, so two scope records sharing one name resolve to one directory and each "
+        "project's members read the other's entries.",
+    ),
+    Mutant(
+        name="scope-name-collision-by-FOLD-accepted",
+        path="internal/control/provision.go",
+        # The narrowest expression that can be wrong: the COMPARISON, with both folds
+        # dropped — which is the guard exactly as it shipped one round earlier.
+        old="\t\t\tif store.NormalizeRef(sc.DisplayName) == folded {",
+        new="\t\t\tif sc.DisplayName == name {",
+        killer="TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused",
+        why="THE TENANCY BOUNDARY DEFEATED BY A CAPITAL LETTER, and the shipped state at "
+        "`18df63d`. What decides 'one directory' is `store.NormalizeRef`, applied on both "
+        "sides of `store.ScopeSet.Allows` and again on the write path — so `Quarry_Notes` "
+        "and `quarry-notes` are ONE directory to every reader and every writer, and a raw "
+        "`==` here is strictly narrower than the thing it protects. Measured: two "
+        "`-create-user` runs in different projects both succeeded, both owners held "
+        "`RoleOwner`, and the second read AND wrote the first's entries. There is no undo "
+        "— nothing emits `scope-renamed` and the journal is append-only. ⚠ The row above "
+        "does NOT cover this: it deletes the guard's operand, so a guard that is present "
+        "but too narrow survives it.",
+    ),
+    Mutant(
+        name="within-ONE-request-a-FOLDED-duplicate-accepted",
+        path="internal/control/provision.go",
+        # The narrowest expression that can be wrong: the key the request's own claim is
+        # RECORDED under. Reading it back by `folded` while storing it by the RAW name is
+        # the same guard written raw, which is what the journal half already shipped once.
+        old="\t\tclaimed[folded] = name",
+        new="\t\tclaimed[name] = name",
+        killer="TestTwoScopeNamesInONEREQUESTThatFoldAlikeAreRefused",
+        why="the WITHIN-REQUEST half, defeated by a capital letter exactly as the journal "
+        "half was at `18df63d`. Measured at `8c06ea1`, before the half existed: "
+        "`-create-user -project quarry -scopes \"Quarry_Notes,quarry-notes\"` was ACCEPTED "
+        "— two `scope-created` events, two distinct scope ids, both folding to "
+        "`quarry-notes`, i.e. ONE directory, append-only and with no undo. ⚠ Neither row "
+        "above covers it: one deletes the operand both halves read, the other mutates the "
+        "comparison against `m.Scopes`, and a request is not in `m.Scopes`. Bounded today "
+        "(one project, one owner) and an authorization defect the moment SHARING lands, "
+        "because a grant names a scope ID and granting one of the pair hands over the "
+        "other's bytes while every id-keyed check agrees it was honoured exactly.",
+    ),
+    Mutant(
+        name="membership-omitted-from-the-provisioning-batch",
+        path="internal/control/provision.go",
+        old="\t\t{\n\t\t\tKind: EventMemberSet, At: at, Actor: req.Actor,\n\t\t\tProjectID: projectID, UserID: userID, Role: RoleOwner,\n\t\t},\n\t}",
+        new="\t}",
+        killer="TestProvisioningAUserYieldsAnAuthorityThatAuthorisesThem",
+        why="the user is created, the project is created, the project NAMES them as its "
+        "owner — and `Resolve` reads membership, not `Project.OwnerUserID`. Every "
+        "structural check passes and the authorization is empty, which is the precise "
+        "state this whole slice exists to leave behind.",
+    ),
+    Mutant(
+        name="filestore-model-serves-the-process-local-cache-again",
+        path="internal/control/filestore.go",
+        old="func (s *FileStore) Model(ctx context.Context) (Model, error) {\n\treturn s.Reload(ctx)\n}",
+        new="func (s *FileStore) Model(ctx context.Context) (Model, error) {\n"
+        "\ts.mu.RLock()\n\tif s.loaded {\n\t\tm := s.cached\n\t\ts.mu.RUnlock()\n\t\treturn m, nil\n\t}\n"
+        "\ts.mu.RUnlock()\n\treturn s.Reload(ctx)\n}",
+        killer="TestAFileStoreSeesAWriteFromAnotherProcessThroughItsOrdinaryReadPath",
+        extra_killers=("TestAnUnreadableJournalLeavesTheFileStoreServingLastKnownGood",),
+        why="the short-circuit this method shipped with, restored verbatim. It served a "
+        "process-local projection invalidated only by THIS VALUE's appends, so a pod "
+        "reading through it would materialize the journal once at startup and never see a "
+        "user created by `cairn-server -create-user` in another process — the journal "
+        "correct, the command successful, the sign-in still refused. ⚠ It is the ONE "
+        "mutant here that is not a one-expression edit: the guard IS the branch, so the "
+        "narrowest thing that can be wrong is its presence. `--show` prints it in full.",
+    ),
+    Mutant(
+        name="unconfigured-deployment-gets-a-TYPED-nil-session-authority",
+        path="cmd/cairn-server/createuser.go",
+        old="\tif journal == \"\" {\n\t\treturn nil, nil\n\t}\n\tstore, err := control.OpenFileStore(journal)",
+        new="\tif journal == \"\" {\n\t\tvar typed *control.Cache\n\t\treturn typed, nil\n\t}\n\tstore, err := control.OpenFileStore(journal)",
+        killer="TestNoControlJournalMeansNoSessionAuthorityAtAll",
+        extra_killers=(
+            "TestARefusedReloadDoesNotClaimNothingChanged",
+            "TestTheBinaryREFUSESToStartOverAStoreRootItCannotEnumerate",
+            "TestTheBinarysOwnTimerIsWhatClosesTheDivergence",
+        ),
+        why="a typed nil in an interface is NOT nil, and that is the Go trap most likely "
+        "to be written here by somebody tidying the two return paths into one. It turns "
+        "every existing deployment — which configures no session backend — into "
+        "`ErrSessionAuthorityUnread` and a refusal to start: a live pod's auth path broken "
+        "by a feature it does not use. The three extra killers are the server-lifecycle "
+        "tests, which is what that break looks like from outside.",
+    ),
+    Mutant(
+        name="blank-control-journal-test-narrowed-to-TrimSpace",
+        path="cmd/cairn-server/createuser.go",
+        old="\tif identity.ValueReducesToNothing(raw) {",
+        new="\tif strings.TrimSpace(raw) == \"\" {",
+        killer="TestABlankControlJournalIsRefusedRatherThanReadAsUnset",
+        why="the local spelling of the blank test, which is why the predicate is exported "
+        "from `internal/identity` rather than re-written here. `TrimSpace` uses "
+        "`unicode.White_Space`, which does NOT hold the zero-width runes — the measured "
+        "bypass that cost this repository a live shared secret at a different setting.",
+    ),
+    Mutant(
+        name="the-journal-refresh-failure-is-never-reported",
+        path="cmd/cairn-server/createuser.go",
+        old="\t\tInterval:  refreshInterval,\n\t\tOnRefresh: journalRefreshReporter(journal, warn),",
+        new="\t\tInterval: refreshInterval,",
+        killer="TestTheRunningPodSAYSSoWhenItsControlJournalGoesBad",
+        why="the WIRING of the only signal a running pod gives about a control journal "
+        "that has stopped loading. `Cache.Run` discarded every refresh error and "
+        "`Cache.Staleness()` has no caller outside the tests, so before this field existed "
+        "the sequence was: an append hits ENOSPC and leaves a torn last line, the pod keeps "
+        "serving last-known-good (correctly), nothing is said anywhere, and the next restart "
+        "is a permanent refusal to start. ⚠ Its sibling "
+        "`TestABrokenControlJournalIsSaidONCEAndItsRecoverySaidONCE` calls "
+        "`journalRefreshReporter` DIRECTLY and stays GREEN under this mutant — the same "
+        "'a capability in a function nobody routes to' shape as the row below, which is "
+        "why this row exists rather than trusting that one.",
+    ),
+    Mutant(
+        name="main-never-dispatches-create-user",
+        path="cmd/cairn-server/main.go",
+        old="\tif *create.enabled {\n\t\t// `*store` is passed",
+        new="\tif false {\n\t\t// `*store` is passed",
+        killer="TestTheBinaryActuallyDispatchesCreateUser",
+        why="the mode unreachable while every in-process test of it stays green, because "
+        "those call `runCreateUser` directly. The same shape as the refresh-loop row: a "
+        "capability that exists in a function nobody routes to.",
+    ),
 )
 
 
@@ -1504,6 +1773,7 @@ def main() -> int:
         survived: list[Mutant] = []
         misattributed: list[tuple[Mutant, set[str]]] = []
         broken: list[tuple[Mutant, str]] = []
+        stale_extras: list[tuple[Mutant, list[str], set[str]]] = []
 
         for m in selected:
             work = Path(tmp) / f"m-{m.name}"
@@ -1528,7 +1798,15 @@ def main() -> int:
                 verdict = f"MISATTRIBUTED ({', '.join(sorted(failing))})"
                 misattributed.append((m, failing))
             else:
-                verdict = "killed"
+                # 🔴 THE `extra_killers` LEDGER IS CHECKED HERE, AND ONLY ON A KILL. The
+                # row has already been attributed to its named guard; what is left is the
+                # claim that the OTHER listed guards saw it too. A missing entry is a
+                # finding, not a verdict downgrade: the mutant WAS killed, and what has
+                # gone stale is the ledger's description of who noticed.
+                absent = [k for k in m.extra_killers if k not in failing]
+                verdict = "killed" if not absent else f"killed, STALE EXTRAS ({', '.join(sorted(absent))})"
+                if absent:
+                    stale_extras.append((m, absent, failing))
                 killed.append(m)
             print(f"  {m.name:<46} {verdict}")
 
@@ -1537,7 +1815,8 @@ def main() -> int:
     actual_survivors = {m.name for m in survived}
     print(
         f"SUMMARY mutants={len(selected)} killed={len(killed)} survived={len(survived)} "
-        f"misattributed={len(misattributed)} harness-errors={len(broken)}"
+        f"misattributed={len(misattributed)} harness-errors={len(broken)} "
+        f"stale-extras={len(stale_extras)}"
     )
 
     ok = True
@@ -1549,6 +1828,22 @@ def main() -> int:
             f"\n🔴 MISATTRIBUTED: {m.name} was killed by {sorted(failing)}, not by its named "
             f"guard {m.killer}. That proves the suite can fail and proves nothing about the "
             "guard this row exists for.",
+            file=sys.stderr,
+        )
+        ok = False
+
+    # 🔴 A LISTED EXTRA KILLER THAT DID NOT FAIL IS A FAILURE, NOT A NOTE. The whole point
+    # of making the field real is that a guard which quietly stopped noticing is exactly
+    # what a battery is for; reporting it without failing would be the inert field again,
+    # one layer up. The remedy is per row and is a DECISION: either the guard was moved out
+    # from under this mutant's observable — fix the guard — or the row's list was aspirational
+    # and must be narrowed, with the reason written down beside it.
+    for m, absent, failing in stale_extras:
+        print(
+            f"\n🔴 STALE extra_killers: {m.name} lists {sorted(absent)}, which did NOT fail. "
+            f"What actually failed: {sorted(failing)}. A listed killer that has stopped "
+            "killing reads as coverage and provides none — decide whether the GUARD moved "
+            "or the LIST was wrong, and say which in the row.",
             file=sys.stderr,
         )
         ok = False

@@ -41,7 +41,77 @@ const (
 	// that came up with a weak token or an unset proxy allowlist is worse than one
 	// that did not come up at all, because it looks healthy.
 	exitConfig = 78
+
+	// 🔴 THERE IS NO SECOND FAILURE CODE, AND THE ONE THAT WAS HERE WAS DELETED RATHER
+	// THAN NARROWED. `exitDataErr = 65` (sysexits.h EX_DATAERR) was defined as "the pod is
+	// configured correctly and the REQUEST was refused" — a typo in a `-subject`, a scope
+	// name already taken — so that an operator reading exit codes could tell that from a
+	// missing journal path. It did not do that: `runCreateUser` returned 65 for EVERY
+	// `control.ProvisionUser` error, including `reading the control journal`, which is an
+	// unreadable or corrupt journal and is this file's own definition of 78.
+	//
+	// Making it honest needs a classifier `internal/control` does not have: `Append`
+	// returns a plain `fmt.Errorf` both for a batch the model refused (a request fault)
+	// and for a failed `write`/`flock`/`Sync` (a deployment fault), so narrowing means
+	// adding sentinels to the journal for the benefit of a code nothing reads.
+	//
+	// 🔴 AND NOTHING READS IT, MEASURED RATHER THAN ASSUMED — `AGENTS.md`'s `{0, 9}`
+	// OVERLAP RULE IS ABOUT A DIFFERENT PROGRAM AND DOES NOT APPLY. The printed
+	// exit-code contract belongs to the CLIENT: `cmd/cairn` registers an `exit-codes`
+	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
+	// five flags — `store`, `host`, `port`, `token-file`, `routes` — plus
+	// `-create-user`'s six, and no exit-code flag among them; measured at `e11c3a7` by
+	// reading every file under `cmd/cairn-server/` in that tree (positive control: the
+	// same sweep hits `-routes` in three of them). So this program declares its exit
+	// codes to nothing, and no runbook, test or script branches on 65. A distinction
+	// with no consumer, no gate and a known-wrong classification is worth less than the
+	// two true codes left: 0, and 78 for every refusal to act.
+	//
+	// ⚠ Do not re-run that sweep as a LITERAL search of this tree and expect zero: the
+	// sentence above names the flag, so the string is now in this file. The claim is
+	// about what the program REGISTERS, which is the list six lines up.
+	//
+	// What the operator needs is on stderr and always was — the journal's own message
+	// names the offending event and the field. **If something ever does branch on the
+	// difference**, bring the code back WITH the sentinels that make it true, not before.
 )
+
+// EnvControlJournal is the path to the append-only control journal this pod resolves
+// browser/proxy SESSIONS against.
+//
+// 🔴 UNSET MEANS "NO JOURNAL AUTHORITY", WHICH IS EXACTLY TODAY'S BEHAVIOUR AND IS THE
+// WHOLE COMPATIBILITY CLAIM. A deployment that does not set this wires
+// `tokenfile.Source` and nothing else, and `identity.FromEnvironment` resolves its
+// session backends against the same projection it always did. Nothing about the serving
+// path changes; there is no new route, and the machine-token backend is untouched.
+//
+// 🔴 A VALUE THAT REDUCES TO NOTHING IS REFUSED RATHER THAN READ AS UNSET, AND THAT IS
+// THE `refuseBlank` POLICY `internal/identity/config.go` DECLARES FOR THE SETTINGS WHOSE
+// BLANK SILENTLY DISABLES WHAT THE OPERATOR WROTE DOWN. This is one of them: an operator
+// who wrote the line meant the pod to read a journal, and a blank read as "not set"
+// discards it. The blank test is `identity.ValueReducesToNothing`, the one predicate,
+// rather than a second `strings.TrimSpace` here: 32 zero-width runes are not whitespace
+// and it has already cost this repository a live bypass at a different setting.
+//
+// ⚠ IT IS NO LONGER THE ONLY THING STANDING BETWEEN A TYPO AND A SILENT POD, AND THIS
+// COMMENT CLAIMED IT WAS. It said a blank "gives them a pod that starts, fetches its
+// JWKS, passes its health check and refuses every sign-in" — true when it was written and
+// false now: an armed session backend with no session authority is
+// `identity.ErrSessionBackendWithoutAuthority` and the pod refuses to start either way.
+// What the blank policy buys is the BETTER of the two messages — "your journal line
+// reduces to nothing" rather than "set the variable you can see you already set" — and
+// it is the only thing that refuses a blank on the `-create-user` path, which arms no
+// backend at all.
+//
+// ⚠ IT IS NOT IN AN `internal/identity` LEDGER, AND THE REASON IS WHAT THAT MACHINERY
+// ASKS. A ledger's `armed` flag answers "is this BACKEND half-configured, so refuse
+// rather than come up silently off"; a journal path configures no backend — it supplies
+// the authority the backends resolve against — and the gate over that machinery requires
+// a ledger to carry at least two settings, so putting it there would mean inventing a
+// second setting to satisfy a test. What the ledger would have bought instead is bought
+// directly: the blank policy is declared above, the predicate is shared, and
+// `TestABlankControlJournalIsRefusedRatherThanReadAsUnset` is the gate.
+const EnvControlJournal = "CAIRN_CONTROL_JOURNAL"
 
 // The two reload verdicts, AS CONSTANTS, BECAUSE THE OPERATOR'S ONLY SIGNAL THAT A
 // `kill -HUP` DID ANYTHING IS THIS LINE.
@@ -97,13 +167,32 @@ func main() {
 			"suite discovers the oracle's routes from its source by AST and has no "+
 			"equivalent here, so it reads this instead. It is an output of the DISPATCH "+
 			"TABLES, never a restatement of them")
+	create := registerCreateUserFlags()
 	flag.Parse()
 
+	// 🔴 TWO MODES AT ONCE IS A REFUSAL, NOT A PRECEDENCE. Checking `-routes` first and
+	// returning would make `-routes -create-user` print the ledger and silently NOT create
+	// the user — exit 0, plausible output, and an operator who believes a person now has
+	// access. There is no reading of that command line worth guessing at.
+	if *routes && *create.enabled {
+		fmt.Fprintln(os.Stderr, reloadSafe(
+			"subsystem-store-api: -routes and -create-user are both set. One prints a ledger and "+
+				"exits, the other writes to the control journal and exits; running either silently "+
+				"while ignoring the other is how an operator concludes a user was created"))
+		os.Exit(exitConfig)
+	}
 	if *routes {
 		for _, route := range api.DeclaredRoutes() {
 			fmt.Println(route)
 		}
 		return
+	}
+	if *create.enabled {
+		// `*store` is passed because this mode is the ONE place a scope display name is
+		// chosen, and the store root is the only thing that can say whether that name
+		// already reaches somebody else's directory. `internal/control` holds no path and
+		// must not grow one; see `warnScopesThatAlreadyExistOnDisk`.
+		os.Exit(runCreateUser(environ(), *store, create, os.Stdout, os.Stderr))
 	}
 
 	env := environ()
@@ -178,8 +267,45 @@ func main() {
 	// refuses without a source check on top of that. A pod that is reachable directly
 	// and has this backend armed is an authentication bypass for every user in the
 	// control plane, which is why arming it takes two deliberate settings and not one.
-	identities, supabase, err := identity.FromEnvironment(env, srv.AuthorityView())
+	//
+	// 🔴 AND THE SESSION BACKENDS RESOLVE AGAINST A DIFFERENT AUTHORITY WHEN ONE IS
+	// CONFIGURED, WHICH IS WHAT MAKES THEM ABLE TO AUTHENTICATE ANYBODY AT ALL. Until
+	// `CAIRN_CONTROL_JOURNAL` existed the only authority any binary wired was the
+	// token-file projection, which holds one synthetic user at provider
+	// `cairn-token-file` and grants only project subjects — so `SupabaseJWT` (default
+	// provider `supabase`) could never match `UserByProviderSubject`, and a
+	// `TrustedHeader` aimed at that one pair resolved to an EMPTY `Authorization`. A
+	// deployment could follow `internal/identity/README.md` exactly, come up clean, pass
+	// its health check and refuse every sign-in. `openSessionAuthority` returns a nil
+	// `identity.ModelSource` when the setting is absent, which is byte-for-byte today's
+	// wiring.
+	sessions, err := openSessionAuthority(context.Background(), env, warn)
 	if err != nil {
+		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: control journal: "+err.Error()))
+		os.Exit(exitConfig)
+	}
+	identities, supabase, err := identity.FromEnvironment(env, srv.AuthorityView(), sessions)
+	if err != nil {
+		if errors.Is(err, identity.ErrSessionAuthorityUnread) {
+			// The sentinel carries no variable name — it cannot, the package is handed a
+			// `ModelSource` — so the line an operator has to edit is named here. Same
+			// shape as the `tokenfile.ErrStoreRootUnreadable` arm above.
+			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+				"subsystem-store-api: identity: %s. Either configure a session backend (a "+
+					"$CAIRN_SUPABASE_* or $CAIRN_TRUSTED_HEADER_* set) or unset $%s",
+				err.Error(), EnvControlJournal)))
+			os.Exit(exitConfig)
+		}
+		// 🔴 THE MIRROR SENTINEL GETS NO SECOND WORDING HERE, AND THAT IS THE DIFFERENCE
+		// BETWEEN THE TWO ARMS RATHER THAN AN OMISSION. `ErrSessionAuthorityUnread` has two
+		// remedies and `internal/identity` cannot name either, so this program supplies the
+		// sentence. `ErrSessionBackendWithoutAuthority` has exactly one — set the journal —
+		// and the sentinel already says so, including the variable's name; repeating it
+		// here would be a second description of one rule, and the one that drifts is always
+		// the copy. `TestTheSentinelNamesTheVariableThisProgramReads` is what keeps the
+		// spelling in that sentinel and `EnvControlJournal` from coming apart.
+		//
+		// It falls through to the generic arm below, which prints the sentinel and exits 78.
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: "+err.Error()))
 		os.Exit(exitConfig)
 	}
@@ -313,7 +439,16 @@ func main() {
 // only way to keep two implementations of that predicate in step is to have one. A
 // reload path with its own parser is the shape where the migration guards silently stop
 // applying to the only file anybody edits after day one.
+//
+// ⚠ IT IS THE ONLY SIGHUP CONSUMER IN THIS PROGRAM, AND THAT IS A RULE RATHER THAN A
+// COINCIDENCE — see the authority timer above, which states it. A second
+// `signal.Notify` channel was added here for the control-journal cache and then removed:
+// it bought at most one refresh interval on a command a human runs by hand, and it put a
+// second answer beside the one the timer already gives.
 func installReload(srv *api.Server, tokenFile string, env map[string]string) {
+	// BUFFERED, BECAUSE `signal.Notify` DROPS ON A FULL CHANNEL rather than blocking the
+	// signal delivery. One slot is the right size for a reload: a second HUP arriving
+	// while the first is being serviced asks for the same thing.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP)
 	go func() {

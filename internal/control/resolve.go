@@ -323,6 +323,13 @@ func (m Model) PrincipalFor(kind Kind, id ID) (Principal, bool) {
 // account; just-in-time provisioning is signup, it is P6, and doing it here would make
 // every read route a user-creation endpoint for anyone with an account at the IdP.
 //
+// 🔴 AT MOST ONE ROW CAN MATCH, AND THAT IS ENFORCED IN `apply` RATHER THAN ASSUMED
+// HERE. The loop below returns the FIRST match and Go randomises map range order, so two
+// user rows carrying one (provider, subject) pair would make this function answer a
+// different user — with a different authorization — on different calls in one process.
+// `EventUserCreated` refuses the second row for exactly that reason; without that rule
+// this scan would be a coin flip rather than a lookup.
+//
 // ⚠ IT IS A LINEAR SCAN, AND THAT IS A DELIBERATE NON-OPTIMISATION RATHER THAN AN
 // OVERSIGHT. `Resolve` already sorts every grant in the model on every authentication,
 // so a scan over users is not a new complexity class here; adding a third index to

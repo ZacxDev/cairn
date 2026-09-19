@@ -452,6 +452,26 @@ type RefreshTriggers struct {
 	Signals <-chan os.Signal
 	// OnChange is a change notification from the authority side. Nil disables it.
 	OnChange <-chan struct{}
+	// OnRefresh is called after EVERY refresh this loop performs, with that refresh's
+	// own result — nil on success. Nil disables it.
+	//
+	// 🔴 IT EXISTS BECAUSE `Run` DISCARDS THE ERROR AND `Staleness` WAS READ BY NOBODY,
+	// SO A BROKEN AUTHORITY WAS SILENT UNTIL THE NEXT RESTART. The journal shape: an
+	// append that hits ENOSPC leaves a torn last line, `ReadEvents` refuses it, this loop
+	// keeps serving last-known-good — correctly — and the operator's first signal is a
+	// pod that will not come back up, at restart time, with no clue when it broke. A
+	// failing refresh is not an emergency; a failing refresh nobody can SEE is.
+	//
+	// ⚠ CALLED ON SUCCESS TOO, WITH A NIL ERROR, WHICH IS WHAT MAKES "IT RECOVERED"
+	// EXPRESSIBLE. A failure-only hook can say a thing broke and can never say it is
+	// fixed, so every consumer would have to poll `Staleness` for the other edge — a
+	// second mechanism answering the same question. Edge detection belongs to the caller
+	// because how loud to be is the caller's decision, not this package's.
+	//
+	// ⚠ IT RUNS ON THE LOOP'S OWN GOROUTINE, SO IT MUST NOT BLOCK. A hook that blocks
+	// stops the refresh it was told about, which turns a reporting surface into an
+	// outage. `cmd/cairn-server` writes one line to stderr.
+	OnRefresh func(error)
 }
 
 // ErrRefreshCannotKeepBound refuses a schedule that cannot keep the bound it declares.
@@ -475,8 +495,11 @@ var ErrRefreshCannotKeepBound = errors.New("control: the refresh interval cannot
 // the failure would be reported once, by a goroutine nobody is watching, and the age
 // would then grow forever with the mechanism that could fix it already dead. The error
 // is recorded in `Staleness` (`Failing`, `Failures`, `LastError`), which is the
-// reporting surface this piece exists to provide — and which, today, nothing outside the
-// tests reads. See the type comment: recorded is not rendered.
+// reporting surface this piece exists to provide — and it is PUSHED to
+// `RefreshTriggers.OnRefresh` when the caller supplies one, because recorded is not
+// rendered and nothing outside the tests was reading the record. `cmd/cairn-server`
+// supplies one for the control journal; a caller that supplies none keeps the old
+// behaviour exactly.
 //
 // ⚠ A NIL CHANNEL IN A `select` IS NEVER READY, which is how `Signals` and `OnChange`
 // are disabled. That is a Go property rather than a trick, and it is stated because a
@@ -494,16 +517,25 @@ func (c *Cache) Run(ctx context.Context, tr RefreshTriggers) error {
 		tick = ticker.C
 	}
 
+	// `report` is what replaces the three discarded returns. One closure rather than
+	// three inline `if tr.OnRefresh != nil` blocks, for the reason this repository states
+	// as one-rule-one-place: a nil check open-coded at three sites is one that is wrong at
+	// the fourth the next time a trigger is added.
+	report := func(err error) {
+		if tr.OnRefresh != nil {
+			tr.OnRefresh(err)
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tick:
-			_ = c.refresh(ctx, RefreshTimer)
+			report(c.refresh(ctx, RefreshTimer))
 		case <-tr.Signals:
-			_ = c.refresh(ctx, RefreshSignal)
+			report(c.refresh(ctx, RefreshSignal))
 		case <-tr.OnChange:
-			_ = c.refresh(ctx, RefreshChange)
+			report(c.refresh(ctx, RefreshChange))
 		}
 	}
 }

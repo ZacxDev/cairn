@@ -108,23 +108,36 @@ func (s *FileStore) now() time.Time {
 	return time.Now().UTC()
 }
 
-// Model returns the current world, replaying the journal on first use and serving
-// the cached projection afterwards.
+// Model returns the current world, re-reading the journal every time.
 //
-// ⚠ THE CACHE IS PROCESS-LOCAL AND IS INVALIDATED ONLY BY THIS PROCESS'S OWN
-// APPENDS. A journal written by a DIFFERENT process is not noticed. That is correct
-// for the deployed shape — one pod owns the file — and it is the precise reason
-// `Reload` exists and is wired to SIGHUP: an operator editing the journal out of
-// band has a defined way to make the process see it, which is the same muscle
-// memory the token file already trained.
+// 🔴 IT IS `Reload`, UNCONDITIONALLY, AND THE SHORT-CIRCUIT THAT USED TO BE HERE WAS
+// DELETED RATHER THAN DOCUMENTED. This method served a process-local projection
+// invalidated only by THIS VALUE'S own appends, and the comment above it claimed that was
+// "correct for the deployed shape — one pod owns the file". Measured: the deployed shape
+// has TWO processes — the pod reads, `cairn-server -create-user` writes through
+// `kubectl exec` — so a pod reading through the short-circuit would materialize the
+// journal once at startup and never see a provisioned user. The journal correct, the
+// command successful, the sign-in still refused.
+//
+// 🔴 THE PREVIOUS ANSWER WAS A SECOND TYPE, AND THAT IS WHAT THIS DELETES. A one-line
+// `ReloadingSource{Store: *FileStore}` existed only to make `Reload` satisfy `Source`, so
+// every caller had to know which of two read paths it wanted and the wrong one was the
+// default spelling. One rule, one place: there is now one read path and it cannot be
+// stale.
+//
+// ⚠ AND THE SHORT-CIRCUIT SAVED NOTHING, MEASURED RATHER THAN ARGUED. Its only
+// beneficiary was a caller that owns the file and reads it more than once; the only such
+// caller is `ProvisionUser`, which reads once and appends once. Counted with
+// `strace -e trace=openat` over a real `cairn-server -create-user`, at `e11c3a7` and
+// again with this change: **4 opens of the journal either way** — the `OpenFileStore`
+// create, this read, the `O_APPEND` write, and `Append`'s own re-read under the lock.
+// The branch was never taken, because the `FileStore` value is fresh when `ProvisionUser`
+// reaches it.
+//
+// The `cached`/`loaded` fields stay: `Reload` writes them and `lastKnownGood` reads them,
+// which is what keeps an unreadable journal degrading to a STALE authority rather than to
+// an empty one.
 func (s *FileStore) Model(ctx context.Context) (Model, error) {
-	s.mu.RLock()
-	if s.loaded {
-		m := s.cached
-		s.mu.RUnlock()
-		return m, nil
-	}
-	s.mu.RUnlock()
 	return s.Reload(ctx)
 }
 

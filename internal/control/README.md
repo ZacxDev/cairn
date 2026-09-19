@@ -164,6 +164,16 @@ would be making exactly the call the outage is supposed to survive. So the lag i
 rendered and pinned; nothing prints it. Why it is deferred, and the closing condition for
 it, are one section down under *What piece (a) structurally cannot see*.
 
+⚠ **ONE HALF OF THAT SILENCE IS NOW BROKEN, AND ONLY ONE — SAY WHICH.** `Run` used to
+DISCARD each refresh's error (`_ = c.refresh(…)`), so a failing authority was invisible
+until a restart. `RefreshTriggers.OnRefresh` is called after every refresh with that
+refresh's own result, nil on success, and `cmd/cairn-server` supplies one for the control
+journal that prints a line on each TRANSITION — it broke, it recovered. That reports
+**failure**, not **staleness**: a cache refreshing successfully against an authority
+nobody has written to is fresh by this signal and could still be `degraded` by
+`Staleness`. The deferred surface above is unchanged, and the reporter deliberately does
+not call `Staleness()` — see its comment for why, and for the condition that joins them.
+
 ### The five design calls
 
 | decision | what was chosen | why |
@@ -234,8 +244,13 @@ last-known-good keeps answering:
   so `LastTrigger` identifies the mechanism. That they are independent is the `select`'s
   property, reasoned about rather than measured — with one exception that was worth
   measuring: `TestTwoNotifyChannelsBothReceiveOneSIGHUP`, because the plausible belief
-  ("the token reload will swallow it") would make this trigger silently dead in the only
-  program that has both.
+  ("the token reload will swallow it") would make a second registration silently dead.
+  ⚠ **No program has two registrations today.** `cmd/cairn-server` added one for the
+  control-journal cache in P5 and it was removed in the same review: it bought at most one
+  refresh interval on a command a human runs by hand, against the rule that program states
+  beside its authority timer — *one trigger, one place*. The measurement is kept because it
+  is what would be relied on if a second consumer is ever justified; it is not a
+  description of the current wiring.
 - **Anything about another replica, or about a copy already synced.** `ApplyNow`'s
   promise is about *this process's* cache. Revoking stops future syncs; it does not
   recall the files already on somebody's laptop.
@@ -243,12 +258,12 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 96 mutants, over FIVE packages
+python3 tests/control_mutants.py          # 110 mutants, over FIVE packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 96 mutants, 94 killed, 2 labelled EQUIVALENT at the code,
-0 misattributed, 0 harness errors, positive control GREEN.**
+**Measured on this tree: 110 mutants, 108 killed, 2 labelled EQUIVALENT at the code,
+0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
 
 ⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
 `bcfaa19` to `8fb98d2` and went stale at `ca632e3`, a round that added ten mutants and
@@ -296,7 +311,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 96 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 110 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -325,6 +340,50 @@ timing one, defended by the comment beside each call. They are listed here so a 
 finding them SURVIVED does not read that as "the comparison does not matter" — and there
 are two rather than one because they are two different secrets at two different call
 sites, not one guard counted twice.
+
+🔴 **AND TWO MORE SURVIVED BRIEFLY, BECAUSE A PRODUCTION CHANGE MOVED THE OBSERVABLE OUT
+FROM UNDER A GUARD THAT WAS NOT EDITED.** `append-validates-against-the-live-cache` and
+`clone-is-shallow` both point at `TestARejectedBatchLeavesNeitherBytesNorState`, which read
+the poisoned state through `FileStore.Model`. Deleting `Model`'s cache short-circuit —
+correct, and unrelated to those guards — made `Model` re-read the journal, which the
+rejected batch never touched, so the test answered correctly whether or not the leak
+happened. Measured: **both scored SURVIVED on a fully green `go test ./...`**, and the
+suite gave no other signal at all. The observable is now `lastKnownGood()`, the retained
+model, which is what a poisoned cache would actually be served from the moment a reload
+fails; both mutants die on it with the guard's own message.
+
+⚠ **THE LESSON IS THE ONE THIS BATTERY EXISTS FOR, STATED IN THE DIRECTION THAT IS EASY TO
+MISS.** Nothing edited the guard, and nothing edited its mutants. A change three
+declarations away silently made the test read through a path where the defect is invisible
+— which a green suite cannot distinguish from a guard that works. **When a read path is
+changed, re-run the battery, not the suite.**
+
+🔴 **FOUR TIMES IN ONE SLICE, WHICH MAKES IT A CLASS RATHER THAN AN INCIDENT — AND ONLY
+THE FIRST TWO HAD A MUTANT TO REPORT THEM.** The two above were caught because a battery row
+pointed at the affected test. The third was not: `provision_test.go`'s sibling
+`TestARefusedProvisioningLeavesNeitherBytesNorState` read its state arm through
+`FileStore.Model` too, and — being one layer up, with no row of its own — simply passed
+while asserting nothing about state. It now reads `lastKnownGood()` and is listed as an
+`extra_killers` on both rows.
+
+🔴 **AND THAT SENTENCE WAS ITSELF THE DEFECT IT DESCRIBES, FOR SEVERAL ROUNDS.** `extra_killers`
+was a field set on 23 rows (30 entries) and **read by nothing**: the verdict logic required only
+`m.killer in failing` and tolerated any other failing test regardless. So "is listed as an
+`extra_killers` on both rows" was offered here as the closure for a silently-emptied guard while
+being no gate at all — coverage claimed, none provided, inside the battery built to refuse exactly
+that. It is a real ledger now: every listed entry must be in that mutant's failing set, and a row
+whose list has gone stale is a **red** battery (`stale-extras=N` in the SUMMARY line) rather than a
+quieter kill. The remedy is per row and is a decision — either the guard moved out from under the
+mutant's observable, or the row's list was aspirational — and the failure message says so rather
+than inviting the entry to be deleted. **And the fourth is in a different package entirely:**
+`internal/identity`'s `TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` loops
+every ledger variable set alone and asserts each reaches a refusal. Putting
+`ErrSessionBackendWithoutAuthority` **before** the constructors moved that observable —
+measured: with a nil session authority, **15 of 15** variables refused via the new
+sentinel and **0** via their own ledger; with an authority supplied, **0** and **15**. The
+loop now supplies one and asserts the refusal's **provenance** rather than its existence.
+**The tell in all four is the same: a production change to a READ PATH, and a test nobody
+edited.** Ask what a test's observable is, not whether it is green.
 
 🔴 **THERE WAS BRIEFLY A SECOND SURVIVOR, AND ITS LABEL WAS FALSE.**
 `the-write-ignores-a-newer-commit` — deleting the `mine >= c.committed` clause from
@@ -502,6 +561,126 @@ what piece (d) and P4 build. At that point `tokenfile.storeDirs` has no reason t
 and the enumeration is complete by construction. It does **not** close by widening the
 adapter, and it must **not** be closed by reintroducing an unrestricted principal.
 
+## The user-creation path — P5's first slice
+
+`ProvisionUser` (`provision.go`) is the first thing in this repository that WRITES to a
+journal-backed authority. One batch: `user-created`, `project-created`, `member-set` at
+`RoleOwner`, and one `scope-created` per requested scope. `cairn-server -create-user` is
+its only caller.
+
+🔴 **IT CLOSES A DEFECT THAT WAS MEASURED, NOT ANTICIPATED.** P4 shipped three identity
+backends and a durable `Store`, and nothing that could put a user into one: enumerated at
+`229c142` over every non-test `.go` file under `cmd/` and `internal/`, `OpenFileStore` had
+no caller but its own definition (positive control: the same sweep hits in
+`filestore_test.go` and `cache_test.go`). So the only authority any binary wired was the
+token-file projection, whose single synthetic user sits at provider `cairn-token-file`,
+holds no membership, and is the subject of no grant. Measured live at that commit: a
+trusted-header backend aimed at exactly that pair **authenticated** — `Identity.Valid()`
+true, principal `user:usr_… (cairn-token-file:operator)` — with **zero** readable scopes.
+Both session backends were inert in every deployment that could exist.
+
+**Three rules the path carries, each with its own reason:**
+
+1. **Membership is what confers authority, and the batch must contain it.** `Resolve`
+   reads memberships and grants; `Project.OwnerUserID` is a record of who made the
+   project and is not consulted. A batch with the user and the project and no `member-set`
+   passes every structural check and resolves to an empty authorization — the exact state
+   above. `membership-omitted-from-the-provisioning-batch` is the mutant.
+2. **One user per (provider, subject) pair**, enforced in `apply` rather than at this
+   path, because the rule has to hold for every writer. `UserByProviderSubject` returns
+   the first match over a Go map, so a duplicated pair makes "who is this session" answer
+   a different user id — with a different authorization — on different requests in one
+   process, with nothing erroring.
+3. **A scope display name must be free across the WHOLE journal, compared by its FOLDED
+   form**, which is wider than `apply`'s within-a-project rule and is a guard at this path
+   only. Authorization is keyed on ids; the READER is not — `VisibleScopes` hands out
+   names and the store root's directories are narrowed by them, so two scope records
+   sharing a display name resolve to one directory and each project's members read the
+   other's entries.
+
+   🔴 **AND "SHARING A DISPLAY NAME" MEANS `store.NormalizeRef`-EQUAL, NOT
+   STRING-EQUAL — THE FIRST VERSION OF THIS GUARD COMPARED RAW AND WAS DEFEATED BY A
+   CAPITAL LETTER.** That fold is what decides the directory: it is applied on both sides
+   of `store.ScopeSet.Allows` and again on the write path, where `createEntry` folds the
+   scope before resolving a filename. So `Quarry_Notes` and `quarry-notes` are ONE
+   directory to every reader and every writer. Measured at `18df63d`: two `-create-user`
+   runs in different projects, both accepted, both owners at `RoleOwner`, and the second
+   read **and wrote** the first's entries — with no undo, because nothing emits
+   `scope-renamed` and the journal is append-only. `scope-name-collision-by-FOLD-accepted`
+   is the mutant, and it is a *second* row rather than a widening of
+   `scope-name-collision-across-projects-accepted`: that one deletes the guard's operand,
+   so a guard that is present and too NARROW survives it.
+
+   ⚠ **WHAT IT DOES NOT SEE, AND ONE ITEM IS LIVE IN EVERY DEPLOYMENT.** It iterates the
+   JOURNAL's scopes. The machine-token world's scopes are the **store root's
+   subdirectories** (`tokenfile.Source.storeDirs`), and both worlds are narrowed against
+   the one store root — so on first use, with an empty journal, this guard passes
+   unconditionally while the store root may already hold every existing tenant's
+   directory. `internal/control` holds no path and must not grow one;
+   `cmd/cairn-server`'s `warnScopesThatAlreadyExistOnDisk` is where that is seen, and it
+   **warns** rather than refuses because an existing directory is equally the hazard and
+   the ordinary sequence (seed the store, then provision its owner) and nothing on disk
+   distinguishes them. The other three blind spots — `scope-renamed`, `scope-moved`, a
+   hand-edited journal — reach the same collision without passing through this function,
+   and a fourth is the read of `s.Model(ctx)` happening **outside** the `flock` `Append`
+   takes, so two concurrent `-create-user` runs can both pass it. It closes when a scope's
+   bytes are addressed by id rather than by display name.
+
+   🔴 **THERE WAS A SIXTH AND THIS ENUMERATION — WRITTEN UNDER THE HEADING THAT A GUARD'S
+   DESCRIPTION HAS TO BE AS WIDE AS ITS BODY — OMITTED IT: THE REQUEST ITSELF.** The guard
+   compared each requested name against `m.Scopes` and against nothing else, so two names
+   inside ONE batch met only `apply`'s within-a-project rule, which is a **raw** `==`
+   (`Model.ScopeByNameIn`). Measured at `8c06ea1`:
+   `-create-user -project quarry -scopes "Quarry_Notes,quarry-notes"` was **accepted** —
+   two `scope-created` events, two scope ids, one directory, append-only, no undo. It is
+   closed: `checkScopeNamesAreFree` now folds within the request as well as against the
+   journal, `TestTwoScopeNamesInONEREQUESTThatFoldAlikeAreRefused` is the guard and
+   `within-ONE-request-a-FOLDED-duplicate-accepted` is the mutant. Its blast radius was
+   bounded — both records land in one project under one owner — and it would have become
+   an authorization defect the moment scope **sharing** lands, because a grant names a
+   scope **id** and granting one of a folded pair hands over the other's bytes while every
+   id-keyed check agrees the grant was honoured exactly.
+
+   ⚠ **AND CLOSING IT LEAVES A RESIDUAL, DECLARED RATHER THAN NORMALISED AWAY.** The fold
+   is in `checkScopeNamesAreFree`, not in `apply` — `Model.ScopeByNameIn` stays raw,
+   deliberately: it is a RESOLVER as well as a collision check (folding it would make
+   `ScopeByNameIn(p, "Quarry_Notes")` return the scope named `quarry-notes`, a second
+   silent name-resolution mechanism inside the model), it would put the reader's fold into
+   a model that must know nothing about the reader, and it would silently widen
+   `scope-renamed` and `scope-moved`, which nothing emits and no test pins. So a
+   `scope-created` appended by a writer that does not come through `ProvisionUser` is
+   still checked raw. `TestApplyRefusesTwoScopesWithONENameInONEProject` asserts both
+   halves of that — the raw refusal and the folded acceptance — so the residual cannot
+   drift silently.
+
+⚠ **AND `FileStore.Model` RE-READS THE JOURNAL ON EVERY CALL, BECAUSE THE WRITER IS A
+DIFFERENT PROCESS.** It used to serve a process-local projection invalidated only by that
+value's own appends — correct for a single owner and wrong for this shape, where
+`kubectl exec … cairn-server -create-user` writes and the server reads. A pod reading
+through the short-circuit would materialize once at startup and never see a provisioned
+user: the journal correct, the command successful, the sign-in still refused.
+
+🔴 **THE FIX WAS TO DELETE THE SHORT-CIRCUIT, NOT TO ROUTE AROUND IT.** The first version
+added a one-line `ReloadingSource` wrapping the same `*FileStore` so that `Reload` could
+satisfy `Source`; the pod took the wrapper and every other caller took `Model`. That is two
+spellings of one read path with the unsafe one as the default, and it is the shape that
+regenerates the same bug at the next call site. `ReloadingSource` is gone; `Model` **is**
+`Reload`. The `cached`/`loaded` fields stay because `lastKnownGood` reads them, which is
+what keeps an unreadable journal degrading to a STALE authority rather than an empty one
+(`TestAnUnreadableJournalLeavesTheFileStoreServingLastKnownGood`).
+
+⚠ **AND THE SHORT-CIRCUIT SAVED NOTHING, MEASURED RATHER THAN ARGUED.** Its only
+beneficiary was a caller that owns the file and reads it more than once, and the only such
+caller is `ProvisionUser`, which reads once and appends once. Counted with
+`strace -e trace=openat` over a real `cairn-server -create-user`, at `e11c3a7` and again
+after the deletion: **4 opens of the journal either way** — the `OpenFileStore` create,
+the `Model` read, the `O_APPEND` write, and `Append`'s own re-read under the `flock`. The
+branch was never taken, because the `FileStore` value is fresh when `ProvisionUser` reaches
+it.
+
+⚠ **AND THE POD'S CACHE HAS ONE TRIGGER: THE TIMER.** A SIGHUP channel was registered for
+it and removed — see the trigger note above.
+
 ## What this package structurally cannot see
 
 - **A second authority.** Everything above is measured against a `FileStore` or a test
@@ -529,6 +708,10 @@ adapter, and it must **not** be closed by reintroducing an unrestricted principa
   events to a durable journal: the projection is rebuilt on every refresh and nothing has
   appended it to a `FileStore`. `Source.Events` is exported so that conversion, when it
   happens, is the same function rather than a second description of the same world.
+  ⚠ P5's first slice did NOT change this. It writes a journal for SESSIONS, beside the
+  token-file projection rather than over it, and the machine-token backend still
+  authorises from the projection — so the two authorities coexist and the migration of the
+  existing credentials is still owed.
 
 ## One question the code answers narrowly, and the caller may want to answer wider
 
