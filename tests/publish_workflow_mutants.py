@@ -48,12 +48,12 @@ MUTANTS = [
     (
         "push-a-mutable-latest-tag",
         lambda t: t.replace(
-            '      - name: push the version tag, on a tag push only\n',
+            "      - name: push the Python pod's version tag, on a tag push only\n",
             '      - name: push latest\n'
             '        run: |\n'
             '          ${{ steps.skopeo.outputs.bin }} copy '
             '"docker-archive:x" "docker://${{ steps.ref.outputs.image }}:latest"\n'
-            '      - name: push the version tag, on a tag push only\n',
+            "      - name: push the Python pod's version tag, on a tag push only\n",
             1,
         ),
         "test_every_published_tag_is_one_of_the_two_immutable_ones",
@@ -97,6 +97,54 @@ MUTANTS = [
             r"^.*sha-0000000000000000000000000000000000000000.*\n", "", t, count=1, flags=re.M
         ),
         "test_the_anonymous_check_carries_its_own_negative_control",
+    ),
+    # 🔴 THE FOUR BELOW COVER THE MEASURED DEFECTS, NOT HYPOTHETICAL ONES. Every
+    # run of this workflow failed at the skopeo step because `nixpkgs#skopeo` is
+    # multi-output; nothing published the Go pod at all; and the Python pod's
+    # positive control cannot work on the Go image, which is the copy-paste this
+    # change was most likely to ship.
+    (
+        "rebuild-the-skopeo-path-by-concatenation",
+        lambda t: t.replace(
+            '          bin=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths \\\n'
+            '                  | scripts/resolve-skopeo.sh)\n'
+            "          printf 'bin=%s\\n' \"$bin\" >> \"$GITHUB_OUTPUT\"\n",
+            '          out=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths)\n'
+            "          printf 'bin=%s/bin/skopeo\\n' \"$out\" >> \"$GITHUB_OUTPUT\"\n",
+            1,
+        ),
+        "test_the_workflow_resolves_skopeo_through_the_script",
+    ),
+    (
+        "drop-the-go-pods-push",
+        lambda t: re.sub(
+            r"      - name: push the Go pod's immutable sha tag\n(?:.*\n)*?\n",
+            "",
+            t,
+            count=1,
+        ),
+        "test_both_pods_are_published_and_every_push_step_is_pinned_WHOLE",
+    ),
+    (
+        "reword-a-push-step",
+        lambda t: t.replace(
+            '            "docker-archive:${{ steps.build-go.outputs.archive }}" \\\n'
+            '            "docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.sha_tag }}"\n',
+            '            "docker-archive:${{ steps.build.outputs.archive }}" \\\n'
+            '            "docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.sha_tag }}"\n',
+            1,
+        ),
+        "test_both_pods_are_published_and_every_push_step_is_pinned_WHOLE",
+    ),
+    (
+        "copy-the-python-positive-control-into-the-go-control",
+        lambda t: t.replace(
+            "          routes=$(docker run --rm --entrypoint \"$server\" \"$loaded\" -routes)\n",
+            "          routes=$(docker run --rm --entrypoint \"$server\" \"$loaded\" -c "
+            "'import subsystem_recall')\n",
+            1,
+        ),
+        "test_the_GO_pods_positive_control_is_its_ROUTE_LEDGER_not_the_Pythons",
     ),
 ]
 

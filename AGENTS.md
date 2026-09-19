@@ -327,7 +327,7 @@ nix run   github:ZacxDev/cairn -- doctor       # the DEFAULT client — the PYTH
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client, the oracle and the default
 nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name — NOT the default
 nix build github:ZacxDev/cairn#server-image    # the PYTHON pod image, as a loadable tarball
-nix build github:ZacxDev/cairn#server-image-go # the GO pod image — published by nothing
+nix build github:ZacxDev/cairn#server-image-go # the GO pod image — published, deployed by nothing
 ```
 
 Consumers pin this flake as an input; that is the supported way to get a `cairn`
@@ -437,9 +437,12 @@ the Go server's import closure reads. A COPY is the hazard; a subtraction is wha
 makes a variable added for one pod reach both.
 `tests/test_flake_go_image_runtime_contract.py` pins that it stays derived, that
 it carries busybox and a `PATH`, and that its CA bundle is NAMED rather than
-merely present. 🔴 **NOTHING PUBLISHES OR DEPLOYS IT.**
-`.github/workflows/publish-image.yml` publishes `packages.server-image` — the
-PYTHON pod — and the cutover of the DEPLOYED image is a separate decision.
+merely present. 🔴 **IT IS NOW PUBLISHED AND STILL DEPLOYED BY NOTHING, AND THOSE
+ARE TWO CLAIMS.** `.github/workflows/publish-image.yml` pushes BOTH pods, to two
+ghcr packages (`cairn-store`, `cairn-store-go`) under one `sha-<40-hex>` scheme;
+the cutover of the DEPLOYED image remains a separate decision. ⚠ A ghcr package
+is PRIVATE on first publish, so the Go package's FIRST run is EXPECTED to fail at
+the anonymous-pull proof until the one-time visibility flip the step prints.
 
 🔴 **THE INTERPRETER IS PINNED, NOT INHERITED.** `flake.nix` uses
 `pkgs.python312` because `server/Dockerfile` is `python:3.12-slim` and CI pins

@@ -566,11 +566,12 @@
           };
         };
 
-      # 🔴 THE GO POD'S IMAGE. IT IS AN ADDITION, AND UNTIL THIS COMMIT THERE WAS NO
-      # GO SERVER IMAGE AT ALL — `packages.cairn-server-go` is a bare binary package,
-      # and `.github/workflows/publish-image.yml` publishes `packages.server-image`,
-      # which is the PYTHON pod. Nothing here changes either of those. The image this
-      # builds is not published, not deployed, and not referenced by any manifest.
+      # 🔴 THE GO POD'S IMAGE. IT IS AN ADDITION, AND UNTIL IT LANDED THERE WAS NO
+      # GO SERVER IMAGE AT ALL — `packages.cairn-server-go` is a bare binary package.
+      # ⚠ IT IS NOW PUBLISHED: `.github/workflows/publish-image.yml` pushes this output
+      # to the `cairn-store-go` ghcr package beside the Python pod's `cairn-store`,
+      # under the same `sha-<40-hex>` tag scheme. PUBLISHED IS NOT DEPLOYED — no
+      # manifest references it, and the cutover is a separate decision.
       #
       # 🔴 A THIRD BUILD, NOT A THIRD STATEMENT OF THE CONTRACT, AND THAT DISTINCTION
       # IS THE WHOLE DESIGN. `server/README.md` says "do not add a third way to produce
@@ -667,7 +668,8 @@
           # `.github/workflows/publish-image.yml` builds `packages.server-image` by
           # name, `server/README.md` documents it, and consumers pin it. Renaming it to
           # make room for this one would change what gets PUBLISHED, which is a deploy
-          # decision and not a build. Nothing publishes `server-image-go`.
+          # decision and not a build. `server-image-go` is published under its OWN
+          # package name (`cairn-store-go`), which is what keeps that true.
           server-image-go = mkGoServerImage pkgs;
         });
 

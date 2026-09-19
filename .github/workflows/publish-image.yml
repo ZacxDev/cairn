@@ -1,5 +1,15 @@
-# Publish the server image to a PUBLIC registry, so a cluster that holds no
-# credential for this repository can pull it.
+# Publish the server images to a PUBLIC registry, so a cluster that holds no
+# credential for this repository can pull them.
+#
+# 🔴 TWO PODS, TWO GHCR PACKAGES, ONE WORKFLOW. `packages.server-image` is the
+# PYTHON pod and `packages.server-image-go` is the Go one; they go to
+# `cairn-store` and `cairn-store-go` respectively, never to two tags of one
+# package. A registry package is the unit of VISIBILITY — one flip, one settings
+# page — so two pods sharing a package would mean flipping the Go pod public as a
+# side effect of the Python one, and an operator reading the package's tag list
+# could not tell which implementation a tag holds. Their tag SCHEMES are
+# identical on purpose: `sha-<40-hex>` derived from the same rev, so one revision
+# names one artefact in each package and the two are comparable.
 #
 # 🔴 WHY THIS EXISTS, AND WHAT WAS ACTUALLY MEASURED. `ci.yml`'s `nix` job builds
 # `packages.server-image` and asserts nothing further — its own comment says so:
@@ -85,17 +95,24 @@ jobs:
       # this repository's owner is not: `ZacxDev` is a 404 as a ghcr namespace.
       # Derived rather than hardcoded so a fork publishes into ITS own namespace
       # instead of failing against one it cannot write.
-      - name: derive the image reference and its immutable tag
+      - name: derive the image references and their immutable tag
         id: ref
         run: |
           set -euo pipefail
           owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           image="ghcr.io/$owner/cairn-store"
+          # 🔴 A SECOND PACKAGE, NOT A SECOND TAG OF THE FIRST. Visibility is a
+          # per-PACKAGE setting, so sharing one package would make the Go pod
+          # public as a side effect of the Python pod's flip; and a tag list that
+          # mixed two implementations could not be read by anyone pinning one.
+          image_go="ghcr.io/$owner/cairn-store-go"
           # The 40-hex commit sha, not the short one. Both are derivable from a
           # rev; only the full one cannot collide, and a registry tag is the
-          # thing a cluster pins for months.
+          # thing a cluster pins for months. ONE tag scheme for both packages, so
+          # a revision names one artefact in each and the two are comparable.
           sha_tag="sha-${{ github.sha }}"
           printf 'image=%s\n' "$image"      >> "$GITHUB_OUTPUT"
+          printf 'image_go=%s\n' "$image_go" >> "$GITHUB_OUTPUT"
           printf 'sha_tag=%s\n' "$sha_tag"  >> "$GITHUB_OUTPUT"
 
           version_tag=""
@@ -112,6 +129,7 @@ jobs:
           printf 'version_tag=%s\n' "$version_tag" >> "$GITHUB_OUTPUT"
 
           echo "image        = $image"
+          echo "image (go)   = $image_go"
           echo "sha tag      = $sha_tag"
           echo "version tag  = ${version_tag:-<none: not a tag push>}"
 
@@ -120,11 +138,32 @@ jobs:
       # `tests/test_flake_image_matches_dockerfile.py` is that there are two and
       # they are pinned against each other. Publishing the nix output keeps the
       # published artefact inside that pin.
-      - name: build the server image from the flake
+      - name: build the Python server image from the flake
         id: build
         run: |
           set -euo pipefail
           out=$(nix build .#packages.x86_64-linux.server-image \
+                  --no-link --print-out-paths --print-build-logs)
+          printf 'archive=%s\n' "$out" >> "$GITHUB_OUTPUT"
+          echo "archive = $out"
+          ls -l "$out"
+
+      # 🔴 THE GO POD IS BUILT HERE AND PUBLISHED BELOW; NOTHING DEPLOYS IT YET.
+      # `flake.nix` says "Nothing publishes `server-image-go`" about the state
+      # before this workflow did, and `ci.yml` asserts only that it BUILDS. What
+      # changes here is publication, not deployment: `cairn-store-go` gets the
+      # same immutable tags as the Python package so that pointing a pod at it
+      # later is a manifest edit rather than a build, and so the two pods over
+      # one revision can be pulled and compared by anyone.
+      #
+      # `buildLayeredImage` is single-output, so `--print-out-paths` prints one
+      # line here — unlike `nixpkgs#skopeo` below, which is the reason
+      # `scripts/resolve-skopeo.sh` exists.
+      - name: build the Go server image from the flake
+        id: build-go
+        run: |
+          set -euo pipefail
+          out=$(nix build .#packages.x86_64-linux.server-image-go \
                   --no-link --print-out-paths --print-build-logs)
           printf 'archive=%s\n' "$out" >> "$GITHUB_OUTPUT"
           echo "archive = $out"
@@ -198,6 +237,94 @@ jobs:
           esac
           echo "control: the image runs and refuses by name — OK"
 
+      # 🔴 THE GO POD'S OWN CONTROLS, AND WHICH ONES TRANSFER WAS MEASURED RATHER
+      # THAN ASSUMED. Copying the step above wholesale is the obvious move and it
+      # is wrong in one specific place:
+      #
+      #   * `/data` is empty — TRANSFERS. Both images report 0, through the same
+      #     `/bin/busybox`: `flake.nix`'s `goServerTools` is `serverTools` plus CA
+      #     roots, so busybox and `PATH=/bin` are present here too.
+      #   * the image RUNS and REFUSES BY NAME with no token source — TRANSFERS.
+      #     The Go server prints the same `subsystem-store-api:` prefix and exits
+      #     non-zero (78, EX_CONFIG — asserted as "non-zero and named" here
+      #     because the exact code is `cmd/cairn-server`'s own printed contract,
+      #     pinned by `main_test.go`, and restating it here would be a second
+      #     spelling of it).
+      #   * the POSITIVE control does NOT transfer. The Python step runs the
+      #     image's own `Cmd[0]` — an interpreter — with `-c 'import …'`. This
+      #     image's `Cmd[0]` is the SERVER BINARY, which has no `-c` and answers
+      #     `flag provided but not defined: -c`. The Go equivalent is the route
+      #     ledger: `cairn-server -routes`, read out of the RUNNING image, which
+      #     is the one claim a build cannot make. It is asserted on CONTENT — a
+      #     named route must be present — because a COUNT alone passes for eight
+      #     wrong names, and an empty answer must fail loudly rather than read as
+      #     a reassuring zero.
+      - name: control — the GO image is EMPTY of store data, declares its routes, and refuses
+        run: |
+          set -euo pipefail
+          loaded=$(docker load -i "${{ steps.build-go.outputs.archive }}" \
+                   | sed -n 's/^Loaded image: //p')
+          echo "loaded = $loaded"
+          test -n "$loaded"
+
+          leaked=$(docker run --rm --entrypoint /bin/busybox "$loaded" \
+                     sh -c 'ls -A /data | wc -l')
+          if [ "$leaked" != "0" ]; then
+            echo "REFUSING TO PUBLISH: /data in the Go image holds $leaked entr(y|ies)."
+            echo "  This image is about to become PUBLIC. Store content must arrive"
+            echo "  at runtime on a volume and must never be in a layer."
+            docker run --rm --entrypoint /bin/busybox "$loaded" sh -c 'ls -A /data'
+            exit 1
+          fi
+          echo "control: /data holds $leaked files (must be 0) — OK"
+
+          # The positive half of that zero: the server binary really is in the
+          # image, it runs, and it declares the routes it dispatches.
+          server=$(docker inspect -f '{{index .Config.Cmd 0}}' "$loaded")
+          echo "server (from the image's own Cmd) = $server"
+          routes=$(docker run --rm --entrypoint "$server" "$loaded" -routes)
+          declared=$(printf '%s\n' "$routes" | grep -c . || true)
+          echo "$routes"
+          if [ "$declared" -eq 0 ]; then
+            echo "REFUSING TO PUBLISH: the route ledger is EMPTY."
+            echo "  A command that printed nothing and exited 0 is indistinguishable"
+            echo "  from one wired to nothing, and the /data zero above would then be"
+            echo "  the only measurement left — which an image with no filesystem"
+            echo "  would also satisfy."
+            exit 1
+          fi
+          for want in 'GET recall' 'GET search' 'GET snapshot' 'POST entry' 'PUT entry'; do
+            case "$routes" in
+              *"$want"*) ;;
+              *) echo "REFUSING TO PUBLISH: the route ledger does not name '$want'."
+                 echo "  The count alone would pass for $declared wrong names; the"
+                 echo "  content is what makes this a measurement."
+                 exit 1 ;;
+            esac
+          done
+          echo "positive control: the server is in the image and declares $declared routes — OK"
+
+          # …and the image RUNS: with no token source it must refuse for a NAMED
+          # configuration reason and exit non-zero, exactly as the Python pod does.
+          set +e
+          startup=$(docker run --rm "$loaded" 2>&1)
+          rc=$?
+          set -e
+          echo "no-config start: rc=$rc"
+          echo "$startup"
+          if [ "$rc" -eq 0 ]; then
+            echo "REFUSING TO PUBLISH: the Go server exited 0 with no token source."
+            echo "  It is supposed to refuse. A 0 here means the entrypoint is not"
+            echo "  running the server at all."
+            exit 1
+          fi
+          case "$startup" in
+            *"subsystem-store-api:"*) ;;
+            *) echo "REFUSING TO PUBLISH: the refusal did not come from the server"
+               exit 1 ;;
+          esac
+          echo "control: the Go image runs and refuses by name — OK"
+
       # 🔴 skopeo IS TAKEN FROM THE FLAKE'S OWN PINNED nixpkgs, NOT FROM THE
       # RUNNER IMAGE. GitHub's ubuntu image happens to ship one today; a job whose
       # verdict depends on what a runner image happens to contain is a job whose
@@ -205,13 +332,37 @@ jobs:
       # images change without telling anybody. `--inputs-from .` resolves
       # `nixpkgs#` through `flake.lock`, so this is the same nixpkgs everything
       # else here is built from.
+      #
+      # 🔴 AND THE RESOLUTION GOES THROUGH `scripts/resolve-skopeo.sh`, BECAUSE
+      # THE OBVIOUS VERSION OF THIS STEP FAILED EVERY SINGLE RUN. MEASURED:
+      # `nixpkgs#skopeo` is a MULTI-OUTPUT derivation (`outputs = ["out","man"]`),
+      # so `--print-out-paths` prints TWO store paths and the `-man` one comes
+      # FIRST. The earlier step captured that into `out` and then ran
+      # `"$out/bin/skopeo"`, which is a TWO-LINE command — the runner reported
+      # `No such file or directory` and `exit code 127` — while
+      # `printf 'bin=%s/bin/skopeo\n' "$out" >> "$GITHUB_OUTPUT"` wrote a
+      # multi-line value that `$GITHUB_OUTPUT` rejects with `Invalid format`.
+      # Every run of this workflow died here, at this step.
+      #
+      # The fix is a SELECTION rather than a smarter parse of the same text:
+      # "take the last line" or "drop anything ending in `-man`" would each work
+      # until the next output appears. The script asks which candidate actually
+      # HAS an executable `bin/skopeo` and refuses, by name, when the answer is
+      # not exactly one — and it reads its candidates on stdin so the selection
+      # is driven from a real temp-directory layout by
+      # `tests/test_publish_workflow.py`, with no nix and no registry.
+      #
+      # `--version` stays: it is the positive control that the resolved path is
+      # really a skopeo, and no amount of correct selection asserts that.
       - name: pin skopeo to the flake's nixpkgs
         id: skopeo
         run: |
           set -euo pipefail
-          out=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths)
-          printf 'bin=%s/bin/skopeo\n' "$out" >> "$GITHUB_OUTPUT"
-          "$out/bin/skopeo" --version
+          bin=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths \
+                  | scripts/resolve-skopeo.sh)
+          printf 'bin=%s\n' "$bin" >> "$GITHUB_OUTPUT"
+          echo "skopeo = $bin"
+          "$bin" --version
 
       # `GITHUB_TOKEN`, not a stored secret. The token is scoped to this
       # repository and expires with the run, so there is nothing here for a
@@ -220,7 +371,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
-            | ${{ steps.skopeo.outputs.bin }} login ghcr.io \
+            | "${{ steps.skopeo.outputs.bin }}" login ghcr.io \
                 -u '${{ github.actor }}' --password-stdin
 
       # 🔴 `docker-archive:` READS THE GZIPPED TAR THE FLAKE PRODUCES DIRECTLY —
@@ -228,20 +379,41 @@ jobs:
       # compressor and skopeo detects it. No decompression step, and in
       # particular no change to the derivation's `compressor`, which would move
       # the artefact that `test_flake_image_matches_dockerfile.py` is pinned to.
-      - name: push the immutable sha tag
+      #
+      # 🔴 THE FOUR PUSH STEPS BELOW ARE PINNED BY THEIR WHOLE NORMALISED COMMAND
+      # TEXT in `tests/test_publish_workflow.py`, not by a keyword. Which archive
+      # goes to which package under which tag is the entire contract, and a guard
+      # on words is walkable by rewording. A cosmetic edit here fails that test;
+      # that is the price of a machine-readable claim, and it is paid on purpose.
+      - name: push the Python pod's immutable sha tag
         run: |
           set -euo pipefail
-          ${{ steps.skopeo.outputs.bin }} copy --all \
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
             "docker-archive:${{ steps.build.outputs.archive }}" \
             "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}"
 
-      - name: push the version tag, on a tag push only
+      - name: push the Python pod's version tag, on a tag push only
         if: steps.ref.outputs.version_tag != ''
         run: |
           set -euo pipefail
-          ${{ steps.skopeo.outputs.bin }} copy --all \
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
             "docker-archive:${{ steps.build.outputs.archive }}" \
             "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version_tag }}"
+
+      - name: push the Go pod's immutable sha tag
+        run: |
+          set -euo pipefail
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
+            "docker-archive:${{ steps.build-go.outputs.archive }}" \
+            "docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.sha_tag }}"
+
+      - name: push the Go pod's version tag, on a tag push only
+        if: steps.ref.outputs.version_tag != ''
+        run: |
+          set -euo pipefail
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
+            "docker-archive:${{ steps.build-go.outputs.archive }}" \
+            "docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.version_tag }}"
 
       # 🔴 THE ONLY CHECK THAT ANSWERS THE QUESTION THIS WORKFLOW EXISTS FOR, AND
       # A GREEN PUSH DOES NOT ANSWER IT. A ghcr package is PRIVATE on first
@@ -291,6 +463,78 @@ jobs:
             echo
             echo "  Until then no cluster outside this repository can pull this image,"
             echo "  which is the entire reason this workflow exists."
+            exit 1
+          fi
+          echo "$out" | head -20
+          digest=$(printf '%s' "$out" | sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' | head -1)
+          echo
+          echo "ANONYMOUS PULL OK: $ref"
+          echo "digest: $digest"
+          echo "pin this in a deployment: $ref"
+
+      # 🔴🔴 THE FIRST RUN OF THIS STEP IS EXPECTED TO FAIL, AND THAT IS NOT A
+      # BUG IN THE WORKFLOW. `cairn-store-go` is a NEW ghcr package, and a ghcr
+      # package is PRIVATE on first publish. There is no REST route for the
+      # visibility flip, so the push above will succeed, this step will refuse,
+      # and the job will go red until somebody opens:
+      #
+      #   https://github.com/users/<owner>/packages/container/cairn-store-go/settings
+      #   -> Danger Zone -> Change visibility -> Public
+      #
+      # …once, by hand, and re-runs the workflow (`workflow_dispatch` is in the
+      # trigger set for exactly this). The same thing happened to `cairn-store`;
+      # the step below prints the owner-substituted URL when it refuses.
+      #
+      # 🔴 THE STEP IS NOT SOFTENED FOR THAT. A `continue-on-error` here would
+      # make the first run green and every LATER regression green too — and a
+      # private image and a working one are indistinguishable from inside this
+      # job, which is the whole reason this check exists. An expected failure
+      # that is explained is cheaper than a gate that cannot fail.
+      #
+      # It runs LAST so that the Python pod's proof — the one that governs what
+      # is deployed today — is already reported by the time this refuses.
+      - name: PROVE the published GO image is pullable with NO credentials
+        run: |
+          set -euo pipefail
+          ref='${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.sha_tag }}'
+          skopeo='${{ steps.skopeo.outputs.bin }}'
+
+          # This package's OWN negative control. The Python step's control says
+          # nothing about this registry path: they are two packages with two
+          # visibility settings, and an instrument proved honest about one of
+          # them has not been proved honest about the other.
+          set +e
+          $skopeo inspect --no-creds \
+            "docker://${{ steps.ref.outputs.image_go }}:sha-0000000000000000000000000000000000000000" \
+            >/dev/null 2>&1
+          control_rc=$?
+          set -e
+          if [ "$control_rc" -eq 0 ]; then
+            echo "REFUSING: an anonymous inspect of a tag that does not exist SUCCEEDED."
+            echo "  This check cannot distinguish a public image from anything."
+            exit 1
+          fi
+          echo "negative control: absent tag refused anonymously (rc=$control_rc) — OK"
+
+          set +e
+          out=$($skopeo inspect --no-creds "docker://$ref" 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "$out"
+            echo
+            echo "REFUSING: $ref was PUSHED but cannot be pulled without credentials."
+            echo
+            echo "  🔴 IF THIS IS THE FIRST TIME THE GO PACKAGE HAS EVER PUBLISHED,"
+            echo "     THIS FAILURE IS EXPECTED. A ghcr package is PRIVATE on first"
+            echo "     publish and GitHub exposes no REST route to change that. It is"
+            echo "     a ONE-TIME manual step, per package:"
+            echo
+            echo "    https://github.com/users/${{ github.repository_owner }}/packages/container/cairn-store-go/settings"
+            echo "    -> Danger Zone -> Change visibility -> Public"
+            echo
+            echo "  Then re-run this workflow (workflow_dispatch). Until it is done, no"
+            echo "  cluster outside this repository can pull the Go pod."
             exit 1
           fi
           echo "$out" | head -20

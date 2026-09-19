@@ -1,23 +1,30 @@
 """The publish workflow's safety properties, pinned so they cannot move alone.
 
-🔴 WHY THIS FILE EXISTS. `.github/workflows/publish-image.yml` pushes an image to
-a PUBLIC registry using a token with `packages: write`. Three of its properties
-are load-bearing and none of them is visible in a green run:
+🔴 WHY THIS FILE EXISTS. `.github/workflows/publish-image.yml` pushes TWO images
+to a PUBLIC registry using a token with `packages: write`. Several of its
+properties are load-bearing and none of them is visible in a green run:
 
   * a pull request — including one from a fork — must never reach it;
   * the tags it publishes must be IMMUTABLE, so "both clusters pull the same tag"
     is a checkable sentence rather than a hopeful one;
-  * the check that proves the image is anonymously pullable must actually be
+  * the check that proves an image is anonymously pullable must actually be
     anonymous. The job is logged in to ghcr two steps earlier, so an `inspect`
     without `--no-creds` passes on the job's OWN credential and certifies
     nothing — a green that is indistinguishable from the failure it exists to
-    catch.
+    catch. One control PER PACKAGE, because visibility is per-package;
+  * both pods must be pushed, to their own packages, and each must carry ITS OWN
+    controls — the Python pod's positive control is an interpreter `-c` probe and
+    the Go image's `Cmd[0]` is a server binary that has no `-c`;
+  * skopeo must be resolved by SELECTION. `nixpkgs#skopeo` is multi-output, so
+    `--print-out-paths` prints two paths; the step that appended `/bin/skopeo` to
+    that value ran a two-line command and exited 127 on every run this workflow
+    ever had.
 
 A workflow file is configuration, so nothing in the suite would otherwise read
-it, and a mistake in any of the three is silent until it is expensive: the first
+it, and a mistake in any of these is silent until it is expensive: the first
 surfaces as a fork publishing an image, the second as a pod restarting on
 somebody else's code, the third as `ImagePullBackOff` in a cluster that is not
-this one.
+this one, and the last as a workflow that has never once succeeded.
 
 🔴 THIS FILE PARSES YAML BY HAND, WHICH MAKES THE FORMAT A DEPENDENCY IT DID NOT
 OTHERWISE HAVE, AND A PARSER THAT MATCHES NOTHING REPORTS PERFECT AGREEMENT — an
@@ -36,22 +43,40 @@ a file no test would otherwise read, pinned so it goes red when it moves.
 
 from __future__ import annotations
 
+import os
 import re
+import stat
+import subprocess
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-image.yml"
+RESOLVE_SKOPEO = REPO_ROOT / "scripts" / "resolve-skopeo.sh"
 
-# The image's PACKAGE name is pinned; the OWNER is not, because it is derived
+# The images' PACKAGE names are pinned; the OWNER is not, because it is derived
 # from `github.repository_owner` so a fork publishes into its own namespace
 # rather than failing against one it cannot write.
 PACKAGE = "cairn-store"
+PACKAGE_GO = "cairn-store-go"
 
-# Every push destination must name this one expression, so the assertion about
-# what it RESOLVES to covers all of them rather than one.
+# Every push destination must name one of these two expressions, so the
+# assertion about what they RESOLVE to covers all of them rather than one.
 IMAGE_EXPRESSION = "${{ steps.ref.outputs.image }}"
+IMAGE_EXPRESSION_GO = "${{ steps.ref.outputs.image_go }}"
+IMAGE_EXPRESSIONS = {IMAGE_EXPRESSION, IMAGE_EXPRESSION_GO}
+
+# The flake outputs this workflow is allowed to publish, as a SET of package
+# attribute names rather than a substring search. `server-image` is a PREFIX of
+# `server-image-go`, so `"…x86_64-linux.server-image" in text` is satisfied by a
+# file that builds only the Go one — a guard that reads as covering both while
+# covering neither.
+PUBLISHED_FLAKE_PACKAGES = {"server-image", "server-image-go"}
+
+# The tag whose only job is to not exist. Written as a concatenation so the
+# literal below cannot drift from the length assertion it carries.
+ABSENT_TAG = "sha-" + "0" * 40
 
 # 🔴 AN EQUALITY, NOT AN EXCLUSION LIST. The hazard is "an event a pull request
 # can raise reaches a job holding `packages: write`", and that class has several
@@ -177,6 +202,129 @@ def fetch_depths(text: str) -> list[str]:
     return re.findall(r"^\s*fetch-depth:\s*(\S+)", "\n".join(commands(text)), re.M)
 
 
+def flake_packages_built(text: str) -> set[str]:
+    """Every `.#packages.<system>.<name>` this workflow builds, as a NAME SET.
+
+    🔴 A SET RATHER THAN A SUBSTRING SEARCH, AND THE DIFFERENCE IS LOAD-BEARING.
+    `server-image` is a prefix of `server-image-go`, so
+    `"…x86_64-linux.server-image" in text` is satisfied by a file that builds
+    ONLY the Go image — the guard reads as "the Python pod still comes from the
+    flake" while asserting nothing about it. Reading the names and comparing the
+    set cannot be walked that way.
+    """
+    return set(
+        re.findall(r"\.#packages\.[\w-]+\.([\w-]+)", "\n".join(commands(text)))
+    )
+
+
+def skopeo_path_concatenations(text: str) -> list[str]:
+    """Command lines that build a skopeo path by APPENDING `/bin/skopeo` to a value.
+
+    🔴 THIS IS THE MEASURED DEFECT, NOT A STYLE RULE. `nixpkgs#skopeo` is a
+    MULTI-OUTPUT derivation (`outputs = ["out", "man"]`), so
+    `nix build … --print-out-paths` prints TWO store paths, the `-man` one first.
+    A step that captured that into `out` and then ran `"$out/bin/skopeo"` built a
+    two-line command: every run of this workflow died at exit 127, and the
+    `$GITHUB_OUTPUT` write of the same multi-line value was rejected with
+    `Invalid format`. The fix is not a smarter parse of the same output — it is
+    `scripts/resolve-skopeo.sh`, which selects by asking which candidate actually
+    HAS an executable `bin/skopeo` and refuses rather than guess.
+    """
+    return [line.strip() for line in commands(text) if "/bin/skopeo" in line]
+
+
+def normalise_shell(block: str) -> str:
+    """A shell block as one NORMALISED line: comments dropped, continuations
+    joined, every run of whitespace collapsed to a single space."""
+    kept = [l for l in block.splitlines() if not l.lstrip().startswith("#")]
+    joined = re.sub(r"\\\n\s*", " ", "\n".join(kept))
+    return " ".join(joined.split())
+
+
+def step_bodies(text: str) -> dict[str, str]:
+    """`- name: <step>` → that step's `run: |` block, NORMALISED by `normalise_shell`.
+
+    🔴 WHOLE NORMALISED TEXT, BECAUSE A GUARD ON WORDS IS WALKABLE BY REWORDING.
+    The keyword form of "this workflow publishes both images" — a search for
+    `cairn-store-go` somewhere in the file — is satisfied by a comment, by a
+    deleted step's leftover prose, and by a push step whose destination was
+    edited to something else. Pinning the step's entire command text means a
+    cosmetic reword fails the test, which is the price of a machine-readable
+    claim about what the step DOES.
+    """
+    lines = text.splitlines()
+    out: dict[str, str] = {}
+    name: str | None = None
+    i = 0
+    while i < len(lines):
+        named = re.match(r"^\s*- name:\s*(\S.*?)\s*$", lines[i])
+        if named:
+            name = named.group(1)
+            i += 1
+            continue
+        run = re.match(r"^(\s*)run:\s*\|\s*$", lines[i])
+        if run and name is not None:
+            indent = len(run.group(1))
+            body: list[str] = []
+            i += 1
+            while i < len(lines):
+                nxt = lines[i]
+                if nxt.strip() and (len(nxt) - len(nxt.lstrip())) <= indent:
+                    break
+                body.append(nxt)
+                i += 1
+            out[name] = normalise_shell("\n".join(body))
+            name = None
+            continue
+        i += 1
+    return out
+
+
+def absent_tag_inspects(text: str) -> list[str]:
+    """Every anonymous inspect of the tag that must not exist — the negative control.
+
+    🔴 A LIST, NOT A BOOLEAN. The earlier guard asked `ABSENT_TAG in text`, which
+    two published images turn into a guard on ONE of them: delete either
+    package's control and the string is still there, so the mutant survives. A
+    count against the number of published images cannot be satisfied by the
+    other image's control.
+    """
+    return [line for line in inspect_invocations(text) if ABSENT_TAG in line]
+
+
+# ---------------------------------------------------------------------------
+# The resolver's own harness. It reads candidate paths on STDIN precisely so it
+# can be driven from a real temp directory with no nix, no network and no
+# registry — the CI step is then "build, pipe, capture one line".
+# ---------------------------------------------------------------------------
+
+
+def run_resolver(candidates: str) -> subprocess.CompletedProcess[str]:
+    """Run the SHIPPED script, by path, so the executable bit is exercised too."""
+    return subprocess.run(
+        [str(RESOLVE_SKOPEO)],
+        input=candidates,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _output(root: Path, name: str, *, binary: str | None) -> Path:
+    """A fake nix output directory. `binary` is the mode of its `bin/skopeo`:
+    `None` = no `bin/` at all (what the `-man` output looks like)."""
+    out = root / name
+    if binary is None:
+        (out / "share" / "man" / "man1").mkdir(parents=True)
+        (out / "share" / "man" / "man1" / "skopeo.1").write_text("stub manpage\n")
+        return out
+    (out / "bin").mkdir(parents=True)
+    exe = out / "bin" / "skopeo"
+    exe.write_text("#!/bin/sh\necho 'skopeo version 0.0.0-stub'\n")
+    if binary == "executable":
+        exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return out
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -202,6 +350,9 @@ def test_the_extractors_find_something(text: str) -> None:
     assert push_destinations(text), "no `docker://` destination found — nothing is pushed"
     assert inspect_invocations(text), "no `skopeo inspect` found — nothing is verified"
     assert fetch_depths(text), "the `fetch-depth:` extractor found no setting at all"
+    assert flake_packages_built(text), "the `.#packages.…` extractor found no build at all"
+    assert step_bodies(text), "the step-body extractor found no `run:` block at all"
+    assert absent_tag_inspects(text), "no anonymous inspect of the absent tag was found"
 
 
 def test_no_pull_request_event_can_reach_this_workflow(text: str) -> None:
@@ -248,19 +399,21 @@ def test_every_published_tag_is_one_of_the_two_immutable_ones(text: str) -> None
     assert pushed, "no push destination found — the extractor is wrong"
 
     images = {dest.rpartition(":")[0] for dest in pushed}
-    assert images == {IMAGE_EXPRESSION}, (
+    assert images == IMAGE_EXPRESSIONS, (
         f"the push destinations name {sorted(images)}; every one of them must be "
-        f"{IMAGE_EXPRESSION!r}. One repository, computed once, is what makes the "
-        "next assertion — about the registry that repository resolves to — cover "
-        "all of them."
+        f"one of {sorted(IMAGE_EXPRESSIONS)}. Two repositories, each computed "
+        "once, is what makes the next assertion — about the registries those "
+        "expressions resolve to — cover every push rather than one."
     )
-    # …and that one expression resolves to the pinned package on ghcr, which is
+    # …and those two expressions resolve to the pinned packages on ghcr, which is
     # the only registry an unauthenticated cluster is being promised.
-    assert f'image="ghcr.io/$owner/{PACKAGE}"' in text, (
-        f"the derive step no longer builds `ghcr.io/$owner/{PACKAGE}`. The owner "
-        "is a variable on purpose — a fork must publish into its own namespace — "
-        "but the registry and the package name are the contract."
-    )
+    for package in (PACKAGE, PACKAGE_GO):
+        assign = "image_go=" if package == PACKAGE_GO else "image="
+        assert f'{assign}"ghcr.io/$owner/{package}"' in text, (
+            f"the derive step no longer builds `ghcr.io/$owner/{package}`. The "
+            "owner is a variable on purpose — a fork must publish into its own "
+            "namespace — but the registry and the package name are the contract."
+        )
 
     tags = {dest.rpartition(":")[2] for dest in pushed}
     assert tags == ALLOWED_PUSH_TAG_EXPRESSIONS, (
@@ -307,12 +460,28 @@ def test_the_anonymous_check_carries_its_own_negative_control(text: str) -> None
     The workflow inspects a tag that cannot exist and requires that to FAIL
     before it believes the real one. Pinned here because it is the kind of step
     that gets deleted as noise by someone who reads it as a duplicate.
+
+    🔴 ONE CONTROL PER PUBLISHED IMAGE, COUNTED. The earlier form of this test
+    asked `ABSENT_TAG in text`, which was a correct guard while one image was
+    published and became a guard on ONE OF TWO the moment a second was: deleting
+    either package's control leaves the string present, so the mutant survives.
     """
-    assert "sha-0000000000000000000000000000000000000000" in text, (
-        "the negative control (an anonymous inspect of an absent tag, which must "
-        "fail) is gone. Without it a green anonymous pull is indistinguishable "
-        "from an instrument that says yes to everything."
+    controls = absent_tag_inspects(text)
+    assert len(controls) == len(IMAGE_EXPRESSIONS), (
+        f"{len(controls)} anonymous inspect(s) of the absent tag, for "
+        f"{len(IMAGE_EXPRESSIONS)} published image(s):\n  "
+        + "\n  ".join(controls)
+        + "\nWithout one per image, that image's green anonymous pull is "
+        "indistinguishable from an instrument that says yes to everything."
     )
+    for expression in sorted(IMAGE_EXPRESSIONS):
+        naming = [line for line in controls if expression in line]
+        assert len(naming) == 1, (
+            f"{len(naming)} absent-tag control(s) name {expression!r}; exactly "
+            "one must. A control aimed at the OTHER package proves nothing about "
+            "this one — the two are separate ghcr packages with separate "
+            "visibility settings."
+        )
 
 
 def test_the_checkout_is_not_shallow(text: str) -> None:
@@ -341,8 +510,12 @@ def test_the_publish_builds_the_FLAKE_image_and_not_a_third_one(text: str) -> No
     of it, outside that pin, and the artefact that actually ships would be the
     unpinned one.
     """
-    assert "nix build .#packages.x86_64-linux.server-image" in text, (
-        "the published artefact no longer comes from the flake output"
+    built = flake_packages_built(text)
+    assert built == PUBLISHED_FLAKE_PACKAGES, (
+        f"this workflow builds {sorted(built)}; the ledger is "
+        f"{sorted(PUBLISHED_FLAKE_PACKAGES)}. Every published artefact must come "
+        "from a flake output, and both pods must come from THIS file rather than "
+        "one of them quietly dropping out of the publish path."
     )
     builds = docker_build_invocations(text)
     assert not builds, (
@@ -350,6 +523,287 @@ def test_the_publish_builds_the_FLAKE_image_and_not_a_third_one(text: str) -> No
         + "\n  ".join(builds)
         + "\nIt would be a THIRD way to produce this pod, outside the "
         "flake/Dockerfile pin, and it would be the one that actually ships."
+    )
+
+
+# ---------------------------------------------------------------------------
+# `scripts/resolve-skopeo.sh` — the structural fix for the measured failure.
+#
+# 🔴 THE MEASUREMENT, SO NOBODY RE-DERIVES IT. `nixpkgs#skopeo` declares
+# `outputs = ["out", "man"]`, so `nix build … --print-out-paths` prints TWO store
+# paths and the `-man` one comes FIRST. The step that captured that into a single
+# variable and appended `/bin/skopeo` therefore ran a two-line command — exit 127
+# — and wrote a multi-line value into `$GITHUB_OUTPUT`, which rejects it with
+# `Invalid format`. Every run of this workflow failed there, at the same step.
+#
+# The fix is a SELECTION, not a smarter parse: ask which candidate actually has
+# an executable `bin/skopeo`, and refuse when the answer is not exactly one. The
+# tests below drive the shipped script over a real temp layout, in the SAME order
+# CI sees, which is why they need neither nix nor a network.
+# ---------------------------------------------------------------------------
+
+
+def test_the_resolver_exists_and_is_executable() -> None:
+    """The positive control for every resolver test below.
+
+    `run_resolver` execs the file by path. If it were missing or non-executable
+    the three tests below would fail for a reason that has nothing to do with
+    what they claim to measure, so the reason is named here instead.
+    """
+    assert RESOLVE_SKOPEO.is_file(), f"{RESOLVE_SKOPEO} is missing"
+    assert os.access(RESOLVE_SKOPEO, os.X_OK), (
+        f"{RESOLVE_SKOPEO} is not executable, so the workflow's pipe into it "
+        "would fail with a permission error rather than resolve anything"
+    )
+
+
+def test_the_resolver_picks_the_output_that_carries_the_binary(tmp_path) -> None:
+    """THE REGRESSION TEST for the measured failure, over a real directory tree.
+
+    The `-man` output is fed FIRST, which is the order `--print-out-paths`
+    actually prints and the order that made the old step run the wrong path.
+    """
+    man = _output(tmp_path, "aaaaaaaa-skopeo-0.0.0-man", binary=None)
+    real = _output(tmp_path, "bbbbbbbb-skopeo-0.0.0", binary="executable")
+
+    result = run_resolver(f"{man}\n{real}\n")
+
+    assert result.returncode == 0, (
+        f"the resolver refused a layout with exactly one valid candidate "
+        f"(rc={result.returncode}):\n{result.stderr}"
+    )
+    assert result.stdout.strip() == str(real / "bin" / "skopeo"), (
+        f"the resolver printed {result.stdout.strip()!r}; the only candidate "
+        f"with an executable `bin/skopeo` is {real / 'bin' / 'skopeo'}"
+    )
+    assert "\n" not in result.stdout.strip(), (
+        "the resolver printed more than one line, which is the exact shape that "
+        "made the old step a two-line command and `$GITHUB_OUTPUT` reject the value"
+    )
+
+
+def test_the_resolver_refuses_when_no_candidate_qualifies(tmp_path) -> None:
+    """Zero is a refusal with a NAME, never a silent empty answer.
+
+    Both realistic zero-shapes are fed: an output with no `bin/` at all (the
+    `-man` output) and one whose `bin/skopeo` exists but is NOT executable — the
+    second is the shape a `-x` check catches and an `-e` check does not.
+    """
+    man = _output(tmp_path, "aaaaaaaa-skopeo-0.0.0-man", binary=None)
+    unusable = _output(tmp_path, "cccccccc-skopeo-0.0.0-lib", binary="not-executable")
+
+    result = run_resolver(f"{man}\n{unusable}\n")
+
+    assert result.returncode != 0, (
+        "the resolver exited 0 over a layout where NOTHING is runnable; the "
+        "caller would then capture an empty string and run it"
+    )
+    assert "NO CANDIDATE" in result.stderr, (
+        f"the refusal is not named — stderr was {result.stderr!r}. An unnamed "
+        "non-zero exit in CI reads as 'nix is broken' rather than as this check"
+    )
+    assert result.stdout.strip() == "", (
+        f"the resolver put {result.stdout!r} on stdout while refusing; the "
+        "workflow captures stdout, so anything there is a path it would run"
+    )
+
+    empty = run_resolver("")
+    assert empty.returncode != 0 and "NO CANDIDATE" in empty.stderr, (
+        "empty input — the shape a failed or silent `nix build` produces — must "
+        f"refuse by name too; got rc={empty.returncode} {empty.stderr!r}"
+    )
+
+
+def test_the_resolver_refuses_an_AMBIGUOUS_answer(tmp_path) -> None:
+    """Two valid candidates is a refusal, and that is the bug class being closed.
+
+    Silently picking one is exactly how the original defect reads in the other
+    direction: the step would keep working, on whichever path happened to sort
+    first, until the day the two differed. A resolver that guesses has no way to
+    tell anyone it guessed.
+    """
+    first = _output(tmp_path, "dddddddd-skopeo-0.0.0", binary="executable")
+    second = _output(tmp_path, "eeeeeeee-skopeo-0.0.1", binary="executable")
+
+    result = run_resolver(f"{first}\n{second}\n")
+
+    assert result.returncode != 0, (
+        "the resolver picked one of TWO valid candidates instead of refusing; an "
+        "ambiguous answer silently chosen is the class this script exists to close"
+    )
+    assert "AMBIGUOUS" in result.stderr, (
+        f"the ambiguity refusal is not named — stderr was {result.stderr!r}"
+    )
+    assert result.stdout.strip() == "", (
+        f"the resolver put {result.stdout!r} on stdout while refusing"
+    )
+
+
+def test_the_workflow_resolves_skopeo_through_the_script(text: str) -> None:
+    """The old inline shape must not be present, and the script must be piped into.
+
+    This is the workflow half of the regression: the behavioural tests above
+    prove the script is right, and this proves the workflow USES it. Neither
+    claim implies the other — a correct script nothing calls fixes nothing.
+    """
+    concatenations = skopeo_path_concatenations(text)
+    assert not concatenations, (
+        "these command lines build a skopeo path by appending `/bin/skopeo`:\n  "
+        + "\n  ".join(concatenations)
+        + "\n`nixpkgs#skopeo` is MULTI-OUTPUT: `--print-out-paths` prints the "
+        "`-man` path and the real one, in that order. Appending to that value "
+        "produces a two-line command (exit 127) and a `$GITHUB_OUTPUT` write the "
+        "runner rejects with `Invalid format`. Pipe the candidates into "
+        "`scripts/resolve-skopeo.sh` instead."
+    )
+    piping = [
+        line for line in commands(text) if "scripts/resolve-skopeo.sh" in line
+    ]
+    assert piping, (
+        "no command invokes `scripts/resolve-skopeo.sh`. The script can be "
+        "perfectly correct and change nothing if the workflow does not call it."
+    )
+    assert any("nix build" in line for line in piping), (
+        "the resolver is invoked, but not on the output of a `nix build`:\n  "
+        + "\n  ".join(piping)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Both pods are published, and each carries ITS OWN controls.
+# ---------------------------------------------------------------------------
+
+# 🔴 THE WHOLE NORMALISED COMMAND TEXT OF EVERY PUSH STEP, PINNED BY EQUALITY.
+# The repository's own lesson: a guard on WORDS is walkable by rewording, so when
+# the artefact under test is text, pin the whole normalised string and pay the
+# cost of a cosmetic reword failing the test. A keyword search for
+# `cairn-store-go` would be satisfied by a comment mentioning it.
+PINNED_PUSH_STEPS = {
+    "push the Python pod's immutable sha tag": (
+        "set -euo pipefail "
+        '"${{ steps.skopeo.outputs.bin }}" copy --all '
+        '"docker-archive:${{ steps.build.outputs.archive }}" '
+        '"docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}"'
+    ),
+    "push the Python pod's version tag, on a tag push only": (
+        "set -euo pipefail "
+        '"${{ steps.skopeo.outputs.bin }}" copy --all '
+        '"docker-archive:${{ steps.build.outputs.archive }}" '
+        '"docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version_tag }}"'
+    ),
+    "push the Go pod's immutable sha tag": (
+        "set -euo pipefail "
+        '"${{ steps.skopeo.outputs.bin }}" copy --all '
+        '"docker-archive:${{ steps.build-go.outputs.archive }}" '
+        '"docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.sha_tag }}"'
+    ),
+    "push the Go pod's version tag, on a tag push only": (
+        "set -euo pipefail "
+        '"${{ steps.skopeo.outputs.bin }}" copy --all '
+        '"docker-archive:${{ steps.build-go.outputs.archive }}" '
+        '"docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.version_tag }}"'
+    ),
+}
+
+# The step whose body is the Go pod's own control set, and the Python one it must
+# not be a copy of.
+GO_CONTROL_STEP = "control — the GO image is EMPTY of store data, declares its routes, and refuses"
+PYTHON_CONTROL_STEP = "control — /data is EMPTY in the image, and the code is really there"
+
+
+def test_both_pods_are_published_and_every_push_step_is_pinned_WHOLE(text: str) -> None:
+    """Four push steps, each pinned by its entire normalised command text.
+
+    A reword cannot walk past this, a deleted step cannot hide behind the other
+    three, and a destination edited to a different package fails on the string
+    rather than on a keyword that happens to survive elsewhere in the file.
+    """
+    bodies = step_bodies(text)
+    missing = sorted(set(PINNED_PUSH_STEPS) - set(bodies))
+    assert not missing, (
+        f"these push steps are absent: {missing}\nthe file's steps are: "
+        f"{sorted(bodies)}\nBoth pods must be pushed from this one workflow; a "
+        "second place that publishes an image is a second contract."
+    )
+    actual = {name: bodies[name] for name in PINNED_PUSH_STEPS}
+    assert actual == PINNED_PUSH_STEPS, (
+        "a push step's command text moved. Every difference is shown by pytest "
+        "below; this is pinned WHOLE rather than by keyword because a guard on "
+        "words is walkable by rewording, and what these four lines do — which "
+        "archive goes to which repository under which tag — is the contract."
+    )
+
+
+def test_the_GO_pods_positive_control_is_its_ROUTE_LEDGER_not_the_Pythons(text: str) -> None:
+    """MEASURED: the Python positive control does not transfer to the Go image.
+
+    The Python control runs the image's own `Cmd[0]` — an interpreter — with
+    `-c 'import subsystem_recall …'`. The Go image's `Cmd[0]` is the SERVER
+    BINARY, which has no `-c`: it answers `flag provided but not defined: -c` and
+    exits non-zero, so the copied control would fail for a reason that has
+    nothing to do with what it claims to measure. `cairn-server -routes` is the
+    Go pod's own equivalent — a ledger read out of the RUNNING image, which is
+    the one claim a build cannot make.
+    """
+    bodies = step_bodies(text)
+    assert GO_CONTROL_STEP in bodies, (
+        f"the Go pod has no control step named {GO_CONTROL_STEP!r}; the file's "
+        f"steps are {sorted(bodies)}"
+    )
+    assert PYTHON_CONTROL_STEP in bodies, (
+        "the PYTHON control step is gone, so the comparison this test makes is "
+        "vacuous — it would be asserting a difference against nothing"
+    )
+
+    go = bodies[GO_CONTROL_STEP]
+    assert "import subsystem_recall" not in go, (
+        "the Go pod's control imports a PYTHON module. Measured: the Go image's "
+        "`Cmd[0]` is the server binary and rejects `-c` with `flag provided but "
+        "not defined: -c`, so this control cannot pass for the reason it names."
+    )
+    assert "-routes" in go, (
+        "the Go pod's positive control no longer reads the route ledger out of "
+        "the running image. Without it, `/data holds 0 files` is the only "
+        "measurement left — and a zero is what an image with no filesystem "
+        "reports too."
+    )
+    for route in ("GET recall", "POST entry"):
+        assert route in go, (
+            f"the Go control does not assert the route {route!r} is present. A "
+            "check on the COUNT alone passes for a ledger of eight wrong names; "
+            "content is what makes it a measurement."
+        )
+    assert "EMPTY" in go and "REFUSING TO PUBLISH" in go, (
+        "the Go control does not refuse loudly on an empty ledger. A command "
+        "that printed nothing and exited 0 would otherwise read as a pass, which "
+        "is the reassuring zero this repository's own rules forbid."
+    )
+
+    # …and the Python control is the only place its own import appears, so the
+    # assertion above is about the whole file rather than one step's spelling.
+    assert text.count("import subsystem_recall") == 1, (
+        f"`import subsystem_recall` appears {text.count('import subsystem_recall')} "
+        "times. It belongs to the Python pod's control and nowhere else."
+    )
+    assert "import subsystem_recall" in bodies[PYTHON_CONTROL_STEP]
+
+
+def test_the_go_package_documents_that_its_FIRST_publish_will_fail(text: str) -> None:
+    """A ghcr package is PRIVATE on first publish, and the new one has never published.
+
+    The Go pod's anonymous-pull proof is therefore EXPECTED to fail on its first
+    run, and the failure looks identical to a broken workflow unless the file
+    says so and prints the one-time settings URL. An invariant guard, labelled:
+    it pins a property no measured bug has violated, because the property is new.
+    """
+    assert f"packages/container/{PACKAGE_GO}/settings" in text, (
+        f"the exact settings URL for the `{PACKAGE_GO}` package is not printed. "
+        "GitHub exposes no REST route for the visibility flip, so an operator "
+        "who cannot find the page cannot finish the publish."
+    )
+    assert f"packages/container/{PACKAGE}/settings" in text, (
+        f"the `{PACKAGE}` package's settings URL went missing while the Go one "
+        "was added — the two failures are separate and so are the two pages"
     )
 
 
@@ -396,7 +850,7 @@ def test_the_controls_can_fail() -> None:
     # expression, and the tag is `latest`.
     dests = push_destinations(hostile)
     assert "ghcr.io/o/cairn-store:latest" in dests
-    assert {d.rpartition(":")[0] for d in dests} != {IMAGE_EXPRESSION}
+    assert {d.rpartition(":")[0] for d in dests} != IMAGE_EXPRESSIONS
     assert {d.rpartition(":")[2] for d in dests} != ALLOWED_PUSH_TAG_EXPRESSIONS
 
     # …and the inspect extractor sees an invocation with no `--no-creds`.
@@ -426,6 +880,69 @@ def test_the_controls_can_fail() -> None:
         "      # a `docker build` here would be a third path\n"
     ) == []
 
+    # 🔴 THE NEW EXTRACTORS, DRIVEN OVER THE HAZARD EACH EXISTS FOR.
+    #
+    # The package-set extractor must SEE a build that names only the Go output —
+    # the exact text a substring search for `…server-image` reads as "both are
+    # still built", because `server-image` is a prefix of `server-image-go`.
+    go_only = "      - run: nix build .#packages.x86_64-linux.server-image-go --no-link\n"
+    assert flake_packages_built(go_only) == {"server-image-go"}
+    assert flake_packages_built(go_only) != PUBLISHED_FLAKE_PACKAGES
+    assert "nix build .#packages.x86_64-linux.server-image" in go_only, (
+        "the naive substring search is satisfied by Go-only text — which is why "
+        "the shipped guard compares a SET of names instead"
+    )
+
+    # The concatenation extractor sees the shape that actually failed: a captured
+    # multi-output store path with `/bin/skopeo` appended.
+    old_step = (
+        "        run: |\n"
+        "          out=$(nix build --inputs-from . nixpkgs#skopeo "
+        "--no-link --print-out-paths)\n"
+        "          printf 'bin=%s/bin/skopeo\\n' \"$out\" >> \"$GITHUB_OUTPUT\"\n"
+        '          "$out/bin/skopeo" --version\n'
+    )
+    assert len(skopeo_path_concatenations(old_step)) == 2, (
+        "the concatenation extractor did not see BOTH halves of the step that "
+        "failed — the `$GITHUB_OUTPUT` write and the version probe"
+    )
+    # …and prose ABOUT the hazard is not the hazard, for the same reason
+    # `docker_build_invocations` drops comments.
+    assert skopeo_path_concatenations(
+        "      # never append `/bin/skopeo` to a multi-output path\n"
+    ) == []
+
+    # The step-body extractor reads a whole `run: |` block and stops at the next
+    # step, rather than swallowing the file from there on.
+    two_steps = (
+        "      - name: first\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          echo one \\\n"
+        "            two\n"
+        "          # a comment, which is not command text\n"
+        "      - name: second\n"
+        "        run: |\n"
+        "          echo three\n"
+    )
+    assert step_bodies(two_steps) == {
+        "first": "set -euo pipefail echo one two",
+        "second": "echo three",
+    }
+
+    # …and a step whose body was REWORDED is a different string, which is the
+    # whole point of pinning the normalised text rather than a keyword.
+    assert step_bodies(two_steps)["second"] != "echo four"
+
+    # The absent-tag extractor counts controls; two images with ONE control is a
+    # different answer from two images with two.
+    one_control = (
+        "      - run: skopeo inspect --no-creds "
+        f'"docker://${{{{ steps.ref.outputs.image }}}}:{ABSENT_TAG}"\n'
+    )
+    assert len(absent_tag_inspects(one_control)) == 1
+    assert len(absent_tag_inspects(one_control)) != len(IMAGE_EXPRESSIONS)
+
 
 def test_an_EMPTY_file_does_not_satisfy_the_extractors() -> None:
     """The other half of the control: nothing must read as agreement.
@@ -441,3 +958,7 @@ def test_an_EMPTY_file_does_not_satisfy_the_extractors() -> None:
     assert inspect_invocations("") == []
     assert docker_build_invocations("") == []
     assert fetch_depths("") == []
+    assert flake_packages_built("") == set()
+    assert step_bodies("") == {}
+    assert absent_tag_inspects("") == []
+    assert skopeo_path_concatenations("") == []
