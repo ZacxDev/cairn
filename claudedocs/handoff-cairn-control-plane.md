@@ -23,98 +23,62 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ **`d443e31`**, clean, in sync with origin. The only commit since the last
-  handoff is that handoff itself (#39, docs only).
-- 🔴 **RANK 1 (THE CUTOVER) HAS A SCOPE CHANGE MEASURED THIS SESSION: THERE IS NO GO SERVER
-  IMAGE, ANYWHERE.** `packages.server-image` and `server/Dockerfile` **both build the PYTHON
-  pod**; `packages.cairn-server-go` is a plain binary package and nothing wraps it in an image;
-  `.github/workflows/publish-image.yml` publishes the PYTHON image to ghcr. So "the deployed
-  image → the Go server" had no artefact to deploy. **Operator decision this session: build the
-  Go server image, extend the agreement guard, then flip `packages.default` — deploy nothing.**
-  Branch **`feat/go-server-image-and-default-cutover`** is created and PUSHED; implementation is
-  **IN FLIGHT** via a dispatched agent in a hand-built worktree off `origin/main`.
-- ✅ **THE IMAGE DIFF — `AGENTS.md`'s stated precondition for the cutover — IS DONE.** Both
-  images built and loaded. It confirmed the table except for one row, below.
-- **What #38 ships** (carried forward — it is still unmerged): `control.ProvisionUser` (one
-  batch: `user-created`, `project-created`, `member-set`@`RoleOwner`, one `scope-created` per
-  scope), `cairn-server -create-user` (an operator flag mode that exits — **no new HTTP route**),
-  `$CAIRN_CONTROL_JOURNAL` plus a cache/refresh timer for the pod's read path,
-  `identity.FromEnvironment(env, authority, sessions)` refusing in **both** directions, and
-  `(provider, subject)` + folded scope-name uniqueness. It closes the 🔴 that both identity
-  backends were inert. Ladder heads in order: `e11c3a7` → `18df63d` → `8c06ea1` → `96be4ec`.
-- 🔴 **RANK 2 (P5 slice 1) IS STILL `ZacxDev/cairn#38` @ `96be4ec`, NOT MERGED — but its CI is
-  now FULLY GREEN**, which the previous handoff could not say: six checks present, all
-  `COMPLETED`/`SUCCESS` on that exact head, `mergeable=MERGEABLE`, `mergeStateStatus=CLEAN`, one
-  commit behind `main` and that commit is docs-only.
-- 🔴 **ROUND 2's `audit-claims` BLOCK WAS NEVER POSTED, AND ROUND 3 WOULD HAVE SILENTLY AUDITED
-  TWO ROUNDS.** Reconstructed from `96be4ec`'s own diff and commit message and posted as
-  `issuecomment-5734737878`; `--round 3` then re-assembled with **silent stderr** and the correct
-  range `8c06ea1..96be4ec`.
-- ✅ **ROUND 3 IS DONE: 2🟡 + 1🟢, and BOTH 🟡 ARE AGAINST ROUND 2's OWN PROSE — the ladder's
-  documented dominant failure mode, for the fourth consecutive round.** So **a fix round and then
-  round 4 are OWED**; a ladder that stops on findings has shipped the finding. The findings:
-  (1) `server/README.md:968` — round 2's `--store`→`-store` nit-fix is CORRECT in the Go-server
-  section and a **regression** in the SIGHUP section, which is about `server.py`, where
-  `-store` is rejected (`rc 2`, `error: unrecognized arguments`) — measured; (2)
-  `cmd/cairn-server/createuser_test.go:254-259` — the F3 comment predicts the race recurring at
-  ~35 s under load or `-count>1`, and that **does not follow**: `Cache.Model()` takes `RLock`
-  and the test's own `sessions.Model()` call sits after both reads, creating a happens-before
-  edge to every later write. Refuted with a discriminating control (removing only
-  `sessions.Model()` turns the same tree RED). **The code change is correct and strictly better;
-  the CLAIM is false.** (3) 🟢 an enumeration replacing a stale tally is itself incomplete.
-- ✅ **THE MERGED-TREE GATES FOR #38 ARE COMPLETE, AND THE TRANSFER IS MEASURED RATHER THAN
-  ASSUMED.** Merged tree is **`5c1de19`** (`origin/main` + `96be4ec`; `git merge-tree
-  --write-tree` rc 0). `git diff --name-only 96be4ec 5c1de19` returns **exactly one path**,
-  `claudedocs/handoff-cairn-control-plane.md` — so every gate whose inputs exclude that file
-  carries over from the PR head verbatim. Run on the PR head by round 3's auditor: `pytest`
-  **1 failed / 1941 passed** (the failure is the pre-declared host-state one), battery
-  `mutants=110 killed=108 survived=2 misattributed=0 harness-errors=0 stale-extras=0` rc 0 with
-  the positive control GREEN, conformance `requests=99 assertions=415 failures=0 skipped=4`,
-  `go vet` rc 0, `go test` 15 ok, `go test -race` 15 ok / **0** DATA RACE. Run by me **on the
-  merged tree itself**: `leakscan` rc 0 / 0 findings / 298 files with both controls watched, and
-  the 796 tests that actually scan `claudedocs/` (`test_subsystem_store_api.py` +
-  `test_agent_instructions_weight.py`) **796 passed, rc 0**. `parity`/`dualrun` were NOT run —
-  they need a live pod; CI runs both and all six checks are green.
-- **Claims:** `cairn-control-plane-1` re-subjected to the CUTOVER (it still named the P5 slice
-  after the rank shuffle); `cairn-control-plane-2` taken for #38. Both held by this session.
-- **Deploy/verify status: unchanged — NOTHING DEPLOYED.** `packages.default` is still
-  `mkCairn` (the Python client) on `main`; the live pod is still the Python image.
+- Branch `main` @ **`d443e31`**, clean. **Three PRs are open and TWO ARE MERGE-READY.**
+- ✅ **`ZacxDev/cairn#38` (P5 slice 1) @ `fbb1f48` — ALL SIX CHECKS GREEN, `mergeStateStatus: CLEAN`.**
+  Its audit ladder is **CLOSED**. Rounds 0–4 ran; round 4 found one 🟡 (a false measurement
+  sentence), which was fixed. Ships `control.ProvisionUser`, `cairn-server -create-user` (a flag
+  mode, **no new HTTP route**), `$CAIRN_CONTROL_JOURNAL` + a cache/refresh timer,
+  `identity.FromEnvironment` refusing in **both** directions, and `(provider, subject)` + folded
+  scope-name uniqueness. It closes the 🔴 that both identity backends were inert. Ladder heads:
+  `e11c3a7` → `18df63d` → `8c06ea1` → `96be4ec` → `3121d30` → `fbb1f48`.
+- ✅ **`ZacxDev/cairn#41` (the cutover's BUILD half) @ `ab156f6` — ALL SIX CHECKS GREEN,
+  `CLEAN`/`MERGEABLE`.** Ladder **CLOSED** after rounds 0, 1 and 2. Adds
+  **`packages.server-image-go`** (the first image that has ever wrapped `cmd/cairn-server`),
+  its guard module, a CI build step, and doc corrections. `apps.cairn-go` deleted as redundant.
+- 🔴 **`packages.default` IS STILL THE PYTHON CLIENT, DELIBERATELY — the flip was built, MEASURED
+  TO BREAK THIS HOST, AND REMOVED.** `RefuseUnportedMultiInstance` gates every read verb
+  (`sync`, `ls-entries`, `recall`/`search`, `validate`, `doctor`) at exit 11 on any host with
+  more than one instance configured. Measured with the Go client built from the branch: `doctor`
+  → **exit 11, 0 bytes stdout**; `ls-entries` → same. This host is already multi-instance. The
+  flip would have broken **the exact quickstart the PR's own `AGENTS.md` edit recommended**.
+  Operator decision: **ship the image, hold the flip.**
+- **`ZacxDev/cairn#40`** — the handoff doc, branch `docs/handoff-cutover-scope-and-round3`.
+- **Claims:** `cairn-control-plane-1` (the cutover) and `cairn-control-plane-2` (#38) both held
+  by this session. **Release both when the PRs merge.**
+- **Deploy/verify status: NOTHING DEPLOYED, NOTHING PUBLISHED.** `publish-image.yml` still
+  publishes the **Python** image. No Go image has ever run outside a local docker test.
 
 ## Next steps (ranked)
-1. **THE CUTOVER — 🔴 IN FLIGHT on `feat/go-server-image-and-default-cutover` (pushed, PR not yet
-   open at the time of writing).** Scope as decided by the operator this session: **build the Go
-   server image** (busybox + `PATH` are mandatory, not cosmetic — `server/seed.sh` seeds through
-   `kubectl exec … -- tar` and revocation is `sh -c 'kill -HUP 1'`), extend the agreement guard to
-   pin its runtime contract against the same constants, then flip `packages.default` and
-   `apps.default` to the Go client. **Deploy nothing.** 🔴 It WIDENS the CLI contract: `cairn
-   -verbs`/`-exit-codes` exit 0 with a table on Go where the oracle exits 2 — declare it, do not
-   mirror it into the oracle. 🔴 `AGENTS.md` has an enforced byte budget with ~1,501 B merged
-   headroom and this change edits it: build the MERGED tree and run
-   `tests/test_agent_instructions_weight.py` there. Then **P3(d)**.
-   forcing: user — operator promoted this above the rest of P5, and confirmed the widened scope
-   this session after the missing-image measurement.
-2. **P5 slice 1 — 🔴 IN FLIGHT as `ZacxDev/cairn#38` @ `96be4ec`.** The merged-tree gates are
-   DONE (above) and CI is green; what is owed is the **ladder**: a fix round closing round 3's
-   two 🟡 (the `server/README.md:968` `-store` regression, and the false race prediction in
-   `createuser_test.go:254-259` — **delete the comparative, do not reverse it**; the guard has no
-   reason left to state and saying so is the correct fix), then post the round-3 claims block
-   with `--audited 96be4ec --payload <count>`, then **round 4** as a delta on the fix. Merge when
-   a round comes back clean. Files: `cmd/cairn-server/createuser_test.go`, `server/README.md`,
-   `cmd/cairn-server/createuser.go`.
-   forcing: user — "identity via supabase (github and google)", plus a named second instance
-   fronted by an oauth proxy; this slice is what makes either reachable.
+1. **MERGE #38 AND #41, THEN THE DEPLOY HALF OF THE CUTOVER.** Both are green with closed
+   ladders and a verified merged tree; the merge itself is the operator's call. 🔴 Both edit
+   `.github/workflows/ci.yml` — the merged tree was built and gated (`go vet` rc 0, `go test`
+   15 ok, byte budget green, merged `ci.yml` carries both hunks and parses), but **re-check after
+   whichever merges first, because the base will have moved**. Then rank 1's real remainder: the
+   **deployed-vs-Go image diff**, the busybox threat-model call, and whether
+   `publish-image.yml` should publish `server-image-go`. **Release `cairn-control-plane-1` and
+   `-2` when they land.**
+   forcing: user — operator promoted the cutover above the rest of P5, and chose "build the
+   image, hold the flip" this session.
+2. **THE `packages.default` FLIP — blocked, with a mechanical closing condition.** Gated on
+   `tests/parity/README.md` **row 8**: the read verbs take an instance, `internal/report` takes
+   an instance-aware caveat, a multi-instance parity row over a READ verb exists, and
+   `RefuseUnportedMultiInstance` is deleted with the row. 🔴 Do not flip before that — it is
+   measured to break every read verb on a multi-instance host, this host included. When it does
+   land it also **widens** the CLI contract (`cairn -verbs`/`-exit-codes` answer 0 where the
+   oracle exits 2); that correction is already in `tests/parity/README.md` residual 7, tensed as
+   pending.
+   forcing: user — the cutover is the operator's rank 1, and this is the half that remains.
 3. **P5 remainder — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members,
    scopes, entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share
    dialog must state that unsharing cannot recall a replica — pin the whole normalised string,
-   not keywords. ⚠ The carve of P5 into "enabling work first" was the ORCHESTRATOR's, not the
-   operator's; the ask on record is the full PWA. This is clause 2 of the closing condition.
+   not keywords. This is clause 2 of the closing condition and the largest thing left.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
 4. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
    🔴 With P3 landed this is correctness, not scale: with many principals a mis-keyed cache
    cross-serves another tenant's tar, so key it on **principal + epoch** —
    `control.Authorization` already carries `Epoch`.
    forcing: none
-5. **P8 — retire the Python oracle.** Gated on 1 having held in real use.
+5. **P8 — retire the Python oracle.** Gated on 1 and 2 having held in real use.
    forcing: none
 
 ## Defects (batched)
@@ -688,6 +652,90 @@ Fix as one round; closing one buys room for one rank.
   order is **scan the SCRATCH DELTA before handing it to the tool**, which is what I failed to
   do. Describe an external tool by its ROLE, never by its name, in anything written here.
 
+- 🔴 **THE DUAL-RUN GATE HAS A ~1-MINUTE WINDOW EACH DAY IN WHICH IT STRUCTURALLY CANNOT VOUCH,
+  AND IT GOES RED RATHER THAN QUIET.** The append route stamps the UTC date into the bullet and
+  the ETag hashes the stamped content, so a run that crosses midnight asks the two servers about
+  **two different days**. The harness detects exactly that and exits **2** — "could not vouch" —
+  which GitHub can only render as a failed job. Measured on #41: job window `23:59:26Z →
+  00:00:40Z`, refusal printed at `00:00:00.75Z`, plus `SELF-TEST mutants=7 caught=6` as a
+  knock-on. The identical tree re-run at `00:09:48Z` was **all six green**. 🔴 **Do not read a
+  midnight-UTC `dualrun` red as a regression, and do not "fix" it by loosening the gate** — the
+  refusal is the design working. Diagnose it the same way: read the REASON, compare the job's
+  wall time against its own baseline (74 s against 61–100 s here), and check whether a SIBLING
+  job on the same run was inflated (it was not — `parity` 58 s against 53–62 s). Load inflates
+  every job; a failed assertion inflates one.
+- 🔴 **"EXECUTABLE" IS NOT "PAYLOAD", AND I GOT THIS WRONG ON BOTH PRs BEFORE CORRECTING IT.**
+  The attribution gate counts the payload lines a round's FIXES change, and the tie-breaker is
+  the **REVERT TEST**: if this file's diff were reverted, would the PR's stated deliverable still
+  ship? On #38 I first posted `payload=13` because the change was in a source file — but it was a
+  doc comment, and reverting it still ships `ProvisionUser`. On #41 a fix round reported `102`
+  for changes confined to two guard modules — revert them and `packages.server-image-go` still
+  ships. **Both are 0.** Measure it: strip comments and blanks and compare (`flake.nix` was
+  byte-identical across both #41 fix rounds), and run a positive control proving the method
+  detects a real change. 🔴 **Correct such a figure IN PUBLIC on the PR** — a class that moves
+  between rounds makes the stop unfalsifiable, and the only thing separating a correction from
+  a manipulation is that it is stated, with its reasoning, where the next reader will see it.
+- 🔴 **BOTH LADDERS ENDED ON THE ATTRIBUTION GATE, NOT ON A CLEAN ROUND, AND THAT IS THE
+  DESIGNED OUTCOME.** #38 ran rounds 0–4 and #41 rounds 0–2; every round found something real,
+  so the findings-keyed rule would have run forever. What the later rounds found were defects in
+  **scaffolding the ladder itself had just written** — a false sentence in a retraction, a count
+  introduced by the commit that deleted a count for being unpinned. Two consecutive rounds whose
+  fixes change zero payload lines means the ladder has left the PR. **File the remainder with a
+  closing condition rather than fixing it**, so it reads as open rather than absent.
+- 🔴 **A GUARD SPELLED RATHER THAN STRUCTURAL PRODUCED A FOURTH SPELLING IN ONE MODULE, AND THE
+  FIX WAS TO STOP PARSING.** #41's `Env` guard read keys out of the `//` override with the regex
+  `[A-Za-z_][\w'-]*\s*=(?!=)`. Four spellings walked past it, each shipping
+  `SUBSYSTEM_STORE_ROOT=/wrong` to the pod with every assertion green: `inherit` (no `=`),
+  `${"NAME"} =` (no bare identifier), a mapper lambda, and `++ [ "…=/wrong" ]` appended to the
+  resulting **list**, which the override reader never looks at. That last one has teeth — the pod
+  then carries two `SUBSYSTEM_STORE_ROOT` entries and Go's env map takes the later, so the server
+  starts, health-checks and serves an empty store. **Closed by pinning the WHOLE NORMALISED `Env`
+  expression** for both images and DELETING the key parsing — net 125 insertions / 430 deletions.
+  Teaching the parser two more spellings is how a fifth arrives. Cost accepted deliberately: a
+  cosmetic reformat of either `Env` block now fails the test, which is what buys a
+  machine-readable claim instead of a walkable one.
+- 🔴 **A MISSING *INTERMEDIATE* `audit-claims` BLOCK DOES NOT REFUSE — IT SILENTLY WIDENS THE
+  RANGE.** With #38's round-2 block never posted, `--round 3` anchored on **round 1's** tip and
+  the "delta" would have spanned two rounds' fixes. It is announced **once, on stderr, and
+  nowhere in the brief**. Check BOTH surfaces before concluding a block is absent —
+  `gh api repos/<o>/<r>/issues/<n>/comments` AND `.../pulls/<n>/comments` (and `/reviews`): the
+  script reads only the first, so a block posted as a REVIEW is invisible to it. The fix is to
+  **post the missing block**, reconstructed from the fix commit's own DIFF — never from a
+  handoff's prose about why the fix is correct, which is exactly the framing a blind round must
+  not receive.
+- 🔴 **A RANK SHUFFLE SILENTLY RE-POINTS EVERY LIVE CLAIM, BECAUSE THE RANK IS HALF THE SLUG.**
+  `cairn-control-plane-1` was held with a subject describing the P5 slice after the cutover was
+  promoted to rank 1, so `claim-work --slug-for <doc> 1` returned a ref naming different work and
+  `rc 12` ("already yours, carry on") would have let a session continue with the wrong item.
+  **When you re-rank, re-subject the claims in the same breath.**
+- 🔴 **A `docker run` IS NOT A READ OF THE IMAGE.** Inspecting the nix image through a container
+  showed `/etc` present, contradicting `AGENTS.md`. The image's own layers carry **no `etc/`** —
+  docker injects `mtab`, `resolv.conf`, `hostname` and `hosts` at runtime. The table was right
+  and the container reading was the error. ⚠ The **Go** image is different and genuinely does
+  have `/etc/ssl/certs`, because `pkgs.cacert` is root-merged; that is not a contradiction.
+- 🔴 **THE BUSYBOX NETWORK-SERVER COUNT WAS WRONG FOUR TIMES, EACH IN THE SAME DIRECTION, SO THE
+  NUMBER IS GONE.** Drafts said two, then four, then six (mine). Enumerated from the pinned
+  build: beyond those six there are `fakeidentd`, `udhcpd`, `lpd`, `dhcprelay`, `tcpsvd` and
+  `udpsvd` — and `tcpsvd`/`udpsvd` bind an arbitrary port and exec anything — with
+  `ntpd`/`rdate`/`zcip` on a boundary no single number resolves. **The instruction stays, the
+  count is deleted, and the record that four drafts were wrong is kept so nobody supplies a
+  fifth.** Enumerate from `busybox --list` on the built image.
+- 🔴 **THE LEAK GATE CAUGHT ME PUSHING A DENIED IDENTIFIER INTO THIS PUBLIC REPO — the same
+  failure this document already recorded, reproduced by the session that had just read it.**
+  Naming an external tool by its own name in a Gotchas bullet was `rc 1`, two findings.
+  `handoff_doc.py` owns the commit AND the push as one step, so "scan before pushing" does not
+  exist in that flow: **scan the SCRATCH DELTA before handing it to the tool.** Describe an
+  external tool by its ROLE here, never by its name.
+- ⚠ **A worktree created with `git worktree add -b <branch> origin/main` has upstream
+  `origin/main`, so a bare `git push` there TARGETS MAIN.** Mine was refused only because
+  `push.default=simple` requires the branch names to match — luck, not design. Push with an
+  explicit refspec (`git push origin <branch>:<branch>`) and fix the upstream immediately.
+- ⚠ **`xargs -0 command grep` FAILS** (`command` is a builtin xargs cannot exec) with 127 and
+  empty output — indistinguishable from a clean zero. Use plain `grep` under `xargs`: it execs
+  the binary, so this host's `.gitignore`-honouring `grep` FUNCTION never applies.
+- **Decision (operator, this session): the cutover is SPLIT.** The Go server image ships now;
+  the `packages.default` flip waits for read routing. The reasoning is in rank 2 and in #41.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
@@ -695,23 +743,24 @@ python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
 python3 tests/leakscan.py --self-test; echo "rc=$?"
 uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
 go vet ./... && go test ./... && go test -race ./...
-python3 -u tests/control_mutants.py          # -u: its stdout is block-buffered, looks FROZEN ~12m
+python3 -u tests/control_mutants.py          # -u: stdout block-buffers, looks FROZEN ~12m
 python3 tests/conformance/suite.py run       # oracle: 0 failures
 bash tests/conformance/run_go.sh             # Go: 0 failures, 4 skips
-python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
+python3 tests/dualrun/harness.py             # SUMMARY … differences=0
+python3 tests/dualrun/harness.py --self-test # mutants=7 caught=7
 python3 tests/dualrun/harness.py --break-both # MUST exit 2 — could not vouch
+python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
+nix build .#packages.x86_64-linux.server-image-go --no-link -L
 ```
-🔴 `parity` and `dualrun` need a LIVE POD; CI runs both. Say so rather than implying you ran them.
-🔴 **`leakscan` exits 2 if an agent worktree exists under `.claude/worktrees/`** — remove them
-first, or its clean run is unearned.
-🔴 **Before merging alongside another open PR, BUILD THE MERGED TREE and run the gate there.**
+🔴 **`dualrun` and `parity` exit 2 for "COULD NOT VOUCH", which is NOT "failed" — read the
+reason before treating a red as a regression.** See the midnight-window Gotcha.
+🔴 **An image that BUILDS is not an image that works.** Load it and read its config back; run
+`server/seed.sh`'s `tar` path and `kill -HUP 1` against it. This repo has shipped an image that
+started, health-checked and served while every documented operation against it failed.
+🔴 **Before merging alongside another open PR, BUILD THE MERGED TREE and run the gate there** —
+and re-run after the first one merges, because the base has moved.
 🔴 **Reading CI: require SIX checks present AND all COMPLETED** before believing a verdict.
-🔴 **Do not run the battery or `pytest` while another agent is running gates** — two
-`uv run --with pytest` invocations dispose of each other's venv, and load inflates the battery's
-timings past the point where a flake is separable from a real failure.
-🔴 **For an image claim, LOAD the image and read its config back.** `nix build` succeeding is not
-evidence: the first `packages.server-image` shipped with no `PATH` and no `sh`/`tar` while all
-four pinned values agreed.
+🔴 **`leakscan` exits 2 if an agent worktree exists under `.claude/worktrees/`.**
 ## Open investigations — live diagnosis state
 
 ### PR #35's `tests` job was RED on the previous head; the fix is pushed but unconfirmed
@@ -919,3 +968,63 @@ four pinned values agreed.
   the battery or `pytest` while another agent is running gates — two `uv run --with pytest`
   invocations dispose of each other's venv, and load inflates the battery's timings past the
   point where a flake is separable from a real failure.
+
+### ✅ RESOLVED — a red `dualrun` on #41 that was the CLOCK, not the code
+- as-of: 2026-09-18
+- **Resolution:** closed by measurement. The gate did exactly what it was built to do.
+- **Symptom:** `dualrun` FAILURE on `ab156f6` while every other check was green, on a PR whose
+  range touches only `flake.nix` comments and two guard modules.
+- **Observed (with values):** the job ran `23:59:26Z → 00:00:40Z` and **crossed midnight UTC**.
+  At `00:00:00.75Z` the harness printed `REFUSING TO VOUCH: the UTC date rolled from 2026-09-18
+  to 2026-09-19 during this run. The append route stamps the date into the bullet and the ETag
+  hashes the stamped content, so the two servers were asked about two different days and any
+  write difference above is the clock, not the code.` It exited **2** — "could not vouch" —
+  which GitHub can only render as a red job. Knock-on: `SELF-TEST mutants=7 caught=6`.
+- **Ruled out: a defect in the PR.** The same tree run locally gives `SUMMARY targets=361
+  comparisons=1489 differences=0 entries=119` rc 0, `--self-test mutants=7 caught=7`,
+  `--break-both` **rc 2** with `REFUSING TO VOUCH` present, `--positive-control` 361→462.
+  `via: measurement`
+- **Ruled out: a load flake.** dualrun took **74 s** against a 61–100 s baseline, and `parity`
+  on the SAME run took 58 s against 53–62 s. Load inflates every job; a failed assertion
+  inflates one. Nothing was inflated. `via: measurement`
+- **Confirmed by control:** the job was re-run at `00:09:48Z`, clear of the rollover, on the
+  **identical tree** — all six checks SUCCESS. Same tree, different clock window.
+- **Next probe:** none. But see the Gotcha below: this is a standing ~1-minute daily window.
+
+### The deploy half of the cutover is untouched, and it is what rank 1 now means
+- as-of: 2026-09-18
+- **Symptom + exact repro:** not a defect — unstarted work. `AGENTS.md` states a precondition
+  for swapping the deployed image: *"before swapping the deployed image, diff the two for what
+  the test cannot read"*, and says the busybox trade is **recorded rather than settled** and must
+  be revisited *"with the threat model in front of you"* if the image is ever deployed.
+- **Observed (with values):** the image diff between the two **Python** builds is DONE and is in
+  this doc. What has never been done is the diff that matters for the cutover — the **deployed
+  Python image against the new Go image** — because until #41 no Go image existed. Round 0 on #41
+  made the point that is easy to miss: the precondition was **undischargeable**, not merely
+  undischarged. Also open: `publish-image.yml` still publishes the Python image and nothing
+  publishes `server-image-go`, so CI builds an artefact nobody consumes.
+- **Ruled out:** that the Go image cannot be operated. Both documented procedures were exercised
+  end to end against a loaded container — `server/seed.sh`'s `tar` push plus its containment
+  guard, and `server/README.md`'s `kill -HUP 1` revocation, which reached `token reload: LOADED`.
+  PID 1 is the server binary. `via: measurement`
+- **Ruled out:** that the port loses SIGHUP reload. `cmd/cairn-server/main.go:318` does
+  `signal.Notify(signals, syscall.SIGHUP)` and the startup line advertises `reload=SIGHUP`.
+  `via: code`
+- **Next probe:** decide whether the pod moves to the Go server at all. That is a threat-model
+  judgement, not a mechanical check, and the busybox applet set is the input to it — **enumerate
+  it from `busybox --list` on the built image, never from any paragraph** (see the Gotcha).
+
+### A live JWKS fetch has never been exercised against a real issuer
+- as-of: 2026-09-18
+- **Symptom + exact repro:** not a defect — a coverage gap, named because three separate rounds
+  hit its edge and none could close it.
+- **Observed (with values):** every measurement taken about the Go image's TLS trust is an
+  `x509.SystemCertPool()` root COUNT, never a completed handshake: 121 roots with
+  `SSL_CERT_FILE` as shipped, 121 unset, 121 pointed at `/nonexistent`, against a positive
+  control of **0** in an image with no CA roots. So the bundle is reachable and the variable is
+  **inert in both directions** — which is now what the code says.
+- **Ruled out:** the original justification, that the image "has no `/etc`" so the bundle would
+  be unreachable without the variable. `pkgs.cacert` is root-merged by `buildLayeredImage`, so
+  `/etc/ssl/certs/ca-bundle.crt` exists and `/etc/ssl/certs` is in Go's `certDirectories`.
+  `via: measurement`
+- **Next probe:** a pod, a network and a real issuer. Nothing in the repo covers it.
