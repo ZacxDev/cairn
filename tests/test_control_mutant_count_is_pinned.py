@@ -1,4 +1,4 @@
-"""The battery's mutant and PACKAGE counts are quoted in prose. Pin both to the code.
+"""Each battery's mutant and PACKAGE counts are quoted in prose. Pin them to the code.
 
 🔴 A NUMBER QUOTED IN PROSE AND DERIVABLE FROM CODE IS A CLAIM WITH NO GATE, AND THIS
 ONE HAS GONE STALE TWICE. Measured history of `internal/control/README.md`'s headline:
@@ -34,6 +34,22 @@ lives; it is deliberately not quoted here either, because a second copy of it in
 would be one more of exactly what this file exists to delete. So a wrong split can still
 ship; this closes the halves that never had to.
 
+🔴 AND IT COVERS **BOTH** BATTERIES, BECAUSE THE SECOND ONE WAS PINNED BY NOTHING AND THE
+FIRST ONE'S HISTORY IS THE WHOLE ARGUMENT. `tests/publish_workflow_mutants.py` declares its
+own `MUTANTS`; `.github/workflows/ci.yml` quoted the number in a step NAME — the same
+string, in the same file, in the same UI, as the copy this module docstring records going
+stale twice — and NOTHING in the tree referenced either the battery module or that step.
+The count moved 8 -> 14 -> 19 across three rounds of one pull request. A number that has
+moved three times and is checked by nothing is a stale number that has not happened yet.
+
+⚠ THE PUBLISH BATTERY HAS NO PACKAGE COUNT AND NO README, so only the mutant-count half of
+this file applies to it. Its sites are a ledger of exact strings (`PUBLISH_ANCHORS`) rather
+than a file-wide sweep: `ci.yml` also carries the AUTHZ battery's counts and a historical
+`at 62 mutants` timing note, so a sweep for `N mutants` over that file would have to
+distinguish three claims by phrasing — which is the walkable discriminator this file
+already declares as a limit, tripled. A ledger fails on a DELETED anchor too, which is the
+other way prose and code come apart.
+
 The precedent is `tests/test_flake_image_matches_dockerfile.py`: two files stating one
 fact, pinned against each other, red when one moves alone.
 """
@@ -49,19 +65,20 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BATTERY = REPO_ROOT / "tests" / "control_mutants.py"
+PUBLISH_BATTERY = REPO_ROOT / "tests" / "publish_workflow_mutants.py"
 README = REPO_ROOT / "internal" / "control" / "README.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
-def _battery():
-    """Import the battery module.
+def _battery(path: Path = BATTERY, name: str = "cairn_control_mutants"):
+    """Import a battery module.
 
     Imported rather than parsed: the module is the authority, and a regex over its
     source would be a second way to count that can disagree with the first — which is
     the shape this whole file exists to close.
     """
-    spec = importlib.util.spec_from_file_location("cairn_control_mutants", BATTERY)
-    assert spec and spec.loader, f"cannot load {BATTERY}"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader, f"cannot load {path}"
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -71,6 +88,11 @@ def _battery():
 @pytest.fixture(scope="module")
 def count() -> int:
     return len(_battery().MUTANTS)
+
+
+@pytest.fixture(scope="module")
+def publish_count() -> int:
+    return len(_battery(PUBLISH_BATTERY, "cairn_publish_workflow_mutants").MUTANTS)
 
 
 @pytest.fixture(scope="module")
@@ -168,6 +190,53 @@ def test_the_CI_step_matches_the_battery(count: int) -> None:
     assert int(found.group(1)) == count, (
         f"the CI step NAME says {found.group(1)} mutants; the battery declares {count}. "
         "That string is what a reader sees in the Actions UI."
+    )
+
+
+# ── The PUBLISH-WORKFLOW battery ─────────────────────────────────────────────────────
+#
+# The sites that state, in the PRESENT tense, how many mutants
+# `tests/publish_workflow_mutants.py` declares. A ledger of exact strings, so DELETING an
+# anchor fails as loudly as a stale one — which is how the authz battery's count came
+# apart the first time. The step NAME is first because it is the copy a reader sees in
+# the Actions UI, and the copy that carried a stale number for a whole round.
+PUBLISH_ANCHORS = (
+    "- name: prove every publish-workflow guard can go RED ({n} mutants)",
+    "# prose. {n} mutants, each required to be killed by the test that NAMES its",
+)
+
+
+def test_the_publish_battery_declares_a_plausible_number_of_mutants(publish_count: int) -> None:
+    """A POSITIVE CONTROL on this file's fourth instrument, in the shape of the first.
+
+    Every assertion below searches for a number. A `publish_count` of 0 — a renamed
+    `MUTANTS`, a half-executed import — would send a reader to edit correct prose in
+    `ci.yml` rather than to fix the import.
+    """
+    assert publish_count > 1, (
+        f"the publish battery declares {publish_count} mutant(s) — this file's instrument "
+        "is broken, and the failure below would blame `ci.yml` for it"
+    )
+
+
+def test_the_publish_battery_CI_anchors_match_its_own_count(publish_count: int) -> None:
+    """🔴 THE COUNT MOVED 8 -> 14 -> 19 ACROSS THREE ROUNDS AND NOTHING READ IT.
+
+    Measured on the tree this test was added to: `git grep publish_workflow_mutants`
+    matched the battery itself and one `run:` line in `ci.yml`; nothing referenced the
+    step NAME, and nothing derived the number in it from `MUTANTS`. That is the exact
+    state `internal/control/README.md` was in when its headline went stale twice — the
+    second time in a step name, in this same file.
+    """
+    text = CI.read_text(encoding="utf-8")
+    missing = [a.format(n=publish_count) for a in PUBLISH_ANCHORS if a.format(n=publish_count) not in text]
+    assert not missing, (
+        f"{CI.relative_to(REPO_ROOT)} does not carry these present-tense claims at "
+        f"{publish_count} mutants:\n  " + "\n  ".join(repr(m) for m in missing) + "\n"
+        "Either the count moved and the prose did not, or an anchor was reworded/deleted. "
+        "Re-derive it from `len(MUTANTS)` in `tests/publish_workflow_mutants.py` rather "
+        "than editing the number to match — and note that the kill/survivor split is NOT "
+        "pinned by anything, exactly as for the authz battery above."
     )
 
 

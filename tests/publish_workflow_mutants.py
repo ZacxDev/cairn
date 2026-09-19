@@ -52,6 +52,26 @@ def _move_go_build_first(text: str) -> str:
     return text.replace(block, "", 1).replace(python_build, block + python_build, 1)
 
 
+# The `/data`-is-empty control, as it appears in BOTH image-control steps: the
+# probe, the branch that reads it, and the line that reports the zero. The two
+# copies are textually near-identical, so the occurrence is selected by INDEX
+# rather than by a Python-vs-Go word — which is also the honest statement of the
+# hazard, since deleting EITHER copy was measured to leave the suite green.
+_DATA_BLOCK = re.compile(
+    r"          leaked=\$\(docker run(?:.*\n)*?"
+    r'          echo "control: /data holds \$leaked files \(must be 0\) — OK"\n'
+)
+
+
+def _drop_data_block(text: str, index: int) -> str:
+    """Delete the `index`-th `/data` emptiness control (0 = Python, 1 = Go)."""
+    matches = list(_DATA_BLOCK.finditer(text))
+    if len(matches) <= index:
+        return text
+    found = matches[index]
+    return text[: found.start()] + text[found.end():]
+
+
 MUTANTS = [
     (
         "add-pull_request-trigger",
@@ -188,6 +208,65 @@ MUTANTS = [
         ),
         "test_the_GO_pods_positive_control_is_its_ROUTE_LEDGER_not_the_Pythons",
     ),
+    # 🔴 THE FIVE BELOW CLOSE FOUR HOLES A BLIND AUDIT FOUND AND MEASURED: the
+    # mutant was applied, the suite stayed 16/16 green, and the workflow would
+    # have published anyway. None of them is hypothetical.
+    (
+        # The Go proof re-aimed at the PYTHON package — the shape a copy-paste
+        # produces. The job pushes the Go image, prints `ANONYMOUS PULL OK` for
+        # `cairn-store` and exits 0; a ghcr package is PRIVATE on first publish,
+        # so the one condition the step exists to surface goes invisible and the
+        # operator never learns to do the one-time visibility flip.
+        "aim-the-GO-proof-at-the-PYTHON-package",
+        lambda t: t.replace(
+            "          ref='${{ steps.ref.outputs.image_go }}:"
+            "${{ steps.ref.outputs.sha_tag }}'\n",
+            "          ref='${{ steps.ref.outputs.image }}:"
+            "${{ steps.ref.outputs.sha_tag }}'\n",
+            1,
+        ),
+        "test_each_anonymous_proof_inspects_ITS_OWN_package",
+    ),
+    (
+        # The step this workflow's own prose calls "the control that matters
+        # most here", deleted from the PYTHON pod — in a PUBLIC repository
+        # publishing to a PUBLIC registry.
+        "delete-the-PYTHON-pods-/data-emptiness-control",
+        lambda t: _drop_data_block(t, 0),
+        "test_both_image_controls_REFUSE_on_a_non_empty_data_directory",
+    ),
+    (
+        # …and from the GO pod. Two sites, two mutants: a guard that covered one
+        # of them would read as covering both, which is the defect the split
+        # exists to make visible.
+        "delete-the-GO-pods-/data-emptiness-control",
+        lambda t: _drop_data_block(t, 1),
+        "test_both_image_controls_REFUSE_on_a_non_empty_data_directory",
+    ),
+    (
+        # A refusal that prints and returns success. `REFUSING TO PUBLISH` and
+        # `EMPTY` both survive this edit, which is why the guard that asserted
+        # those two words stayed green while the control published anyway.
+        "let-the-empty-ledger-refusal-exit-ZERO",
+        lambda t: t.replace(
+            '            echo "  would also satisfy."\n            exit 1\n',
+            '            echo "  would also satisfy."\n            exit 0\n',
+            1,
+        ),
+        "test_no_control_step_can_REFUSE_and_exit_ZERO",
+    ),
+    (
+        # The whole-body pin's own reachability: a cosmetic reword inside a
+        # control step that no narrower guard in the file reads. If this
+        # survives, the pin is not pinning.
+        "reword-a-control-step",
+        lambda t: t.replace(
+            '          echo "server (from the image\'s own Cmd) = $server"\n',
+            '          echo "server (read from the image\'s own Cmd) = $server"\n',
+            1,
+        ),
+        "test_every_control_step_is_pinned_WHOLE",
+    ),
 ]
 
 
@@ -201,9 +280,9 @@ def run_suite(wt: Path) -> tuple[set[str], int]:
     SURVIVED because nothing ran to catch it, and the battery prints a confident
     verdict about the SHELL rather than about the workflow.
 
-    MEASURED, both directions, on one tree: `python3 -m pytest` ->
-    `No module named pytest` -> 14 mutants, 14 SURVIVED; the same tree under an
-    interpreter carrying pytest -> 14 KILLED, 0 problems. Nothing in the output
+    MEASURED, both directions, on one tree at 14 mutants: `python3 -m pytest` ->
+    `No module named pytest` -> 14 SURVIVED; the same tree under an interpreter
+    carrying pytest -> 14 KILLED, 0 problems. Nothing in the output
     distinguished the two except the verdict itself.
 
     So the second element is this battery's POSITIVE control — a number that must

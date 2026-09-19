@@ -185,6 +185,15 @@ jobs:
       # from a probe wired to nothing. The second command is the positive half:
       # the code IS in the image and imports, so the zero above was measured
       # against a real root.
+      #
+      # 🔴 THE `/data` BLOCK IS PINNED THREE WAYS AND IT USED TO BE PINNED NONE.
+      # MEASURED: deleting it from EITHER pod's control left the whole suite
+      # green. `test_both_image_controls_REFUSE_on_a_non_empty_data_directory`
+      # now reads the PROBE, the BRANCH on `$leaked`, and that branch's exit
+      # code; this step's whole command text is pinned as well. Do not delete or
+      # reword it without reading that test — and note that a variable which
+      # merely EXISTS is not a guard, so moving the measurement out of the `if`
+      # is the same defect as deleting it.
       - name: control — /data is EMPTY in the image, and the code is really there
         run: |
           set -euo pipefail
@@ -304,6 +313,13 @@ jobs:
       # goes to which package under which tag is the entire contract, and a guard
       # on words is walkable by rewording. A cosmetic edit here fails that test;
       # that is the price of a machine-readable claim, and it is paid on purpose.
+      #
+      # 🔴 AND SO ARE THE FOUR CONTROL STEPS — both `control — …` steps and both
+      # `PROVE …` steps — for the same reason and after a measurement: three of
+      # them were pinned by NOTHING, and mutants that re-aimed the Go proof at
+      # the Python package, deleted either pod's `/data` emptiness check, and
+      # turned a refusal's `exit 1` into `exit 0` each SURVIVED a fully green
+      # suite. Reformatting any of those eight steps now fails a test.
       - name: push the Python pod's immutable sha tag
         run: |
           set -euo pipefail
@@ -329,6 +345,16 @@ jobs:
       # `--no-creds` is the point: it is the same read an unauthenticated cluster
       # makes. The run is still logged in from two steps ago, so without that flag
       # this would pass on THIS job's credentials and prove nothing at all.
+      #
+      # 🔴 AND THE `ref` IS PER-PACKAGE, WHICH NOTHING USED TO SAY. The absent-tag
+      # control below is COUNTED one per package; the reference that must RESOLVE
+      # is reached through `$ref`, one indirection away, and was constrained by
+      # nothing. MEASURED: aiming the GO step's `ref` at this package left the
+      # suite green while the job pushed the Go image and then printed
+      # `ANONYMOUS PULL OK` for `cairn-store`.
+      # `test_each_anonymous_proof_inspects_ITS_OWN_package` now pins each proof
+      # step's `ref`, forbids the other package's expression anywhere in the
+      # step, and requires the printed settings URL to name this step's package.
       - name: PROVE the published image is pullable with NO credentials
         run: |
           set -euo pipefail
@@ -433,6 +459,14 @@ jobs:
       # answer is "can this binary ever observe the thing": a zero-line ledger or
       # a non-zero exit fails loudly here, and WHICH routes are declared is the
       # four ledgers' claim rather than this one's.
+      #
+      # 🔴 "FAILS LOUDLY" IS AN EXIT CODE, NOT A SENTENCE, AND THAT DISTINCTION
+      # WAS MEASURED. Flipping this step's empty-ledger `exit 1` to `exit 0` left
+      # `REFUSING TO PUBLISH` and `EMPTY` both present and the suite fully green:
+      # the control printed a refusal and published anyway. The guard that
+      # asserted those two words is gone;
+      # `test_no_control_step_can_REFUSE_and_exit_ZERO` reads the `exit`
+      # STATEMENTS of all four control steps and the branch on `$declared`.
       - name: control — the GO image is EMPTY of store data, declares its routes, and refuses
         run: |
           set -euo pipefail
