@@ -15,10 +15,14 @@ properties are load-bearing and none of them is visible in a green run:
   * both pods must be pushed, to their own packages, and each must carry ITS OWN
     controls — the Python pod's positive control is an interpreter `-c` probe and
     the Go image's `Cmd[0]` is a server binary that has no `-c`;
-  * skopeo must be resolved by SELECTION. `nixpkgs#skopeo` is multi-output, so
-    `--print-out-paths` prints two paths; the step that appended `/bin/skopeo` to
-    that value ran a two-line command and exited 127 on every run this workflow
-    ever had.
+  * the whole PYTHON half must complete before the first GO step. Nothing in this
+    repository has ever RUN the Go image, so every Go step is a first execution;
+    in front of the Python publish, one of them going red keeps the pod that IS
+    deployed unpublished — which is exactly what the seven failed runs did;
+  * the `nix build` that resolves skopeo must name an OUTPUT. `nixpkgs#skopeo` is
+    multi-output, so `--print-out-paths` prints two paths with the `-man` one
+    FIRST; the step that appended `/bin/skopeo` to that value ran a two-line
+    command and exited 127 on every run this workflow ever had.
 
 A workflow file is configuration, so nothing in the suite would otherwise read
 it, and a mistake in any of these is silent until it is expensive: the first
@@ -43,17 +47,13 @@ a file no test would otherwise read, pinned so it goes red when it moves.
 
 from __future__ import annotations
 
-import os
 import re
-import stat
-import subprocess
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-image.yml"
-RESOLVE_SKOPEO = REPO_ROOT / "scripts" / "resolve-skopeo.sh"
 
 # The images' PACKAGE names are pinned; the OWNER is not, because it is derived
 # from `github.repository_owner` so a fork publishes into its own namespace
@@ -74,8 +74,11 @@ IMAGE_EXPRESSIONS = {IMAGE_EXPRESSION, IMAGE_EXPRESSION_GO}
 # covering neither.
 PUBLISHED_FLAKE_PACKAGES = {"server-image", "server-image-go"}
 
-# The tag whose only job is to not exist. Written as a concatenation so the
-# literal below cannot drift from the length assertion it carries.
+# The tag whose only job is to not exist. Written as a concatenation so the 40
+# zeros are produced by the code rather than counted by eye, and asserted to be
+# 40 in `test_the_anonymous_check_carries_its_own_negative_control` — the control
+# must be refused because the tag is ABSENT, not because it is the wrong shape
+# for a tag this workflow could ever push.
 ABSENT_TAG = "sha-" + "0" * 40
 
 # 🔴 AN EQUALITY, NOT AN EXCLUSION LIST. The hazard is "an event a pull request
@@ -217,20 +220,33 @@ def flake_packages_built(text: str) -> set[str]:
     )
 
 
-def skopeo_path_concatenations(text: str) -> list[str]:
-    """Command lines that build a skopeo path by APPENDING `/bin/skopeo` to a value.
+def skopeo_nix_builds(text: str) -> list[str]:
+    """Every command line that runs `nix build … nixpkgs#skopeo…`.
 
     🔴 THIS IS THE MEASURED DEFECT, NOT A STYLE RULE. `nixpkgs#skopeo` is a
     MULTI-OUTPUT derivation (`outputs = ["out", "man"]`), so
-    `nix build … --print-out-paths` prints TWO store paths, the `-man` one first.
-    A step that captured that into `out` and then ran `"$out/bin/skopeo"` built a
-    two-line command: every run of this workflow died at exit 127, and the
-    `$GITHUB_OUTPUT` write of the same multi-line value was rejected with
-    `Invalid format`. The fix is not a smarter parse of the same output — it is
-    `scripts/resolve-skopeo.sh`, which selects by asking which candidate actually
-    HAS an executable `bin/skopeo` and refuses rather than guess.
+    `nix build … --print-out-paths` prints TWO store paths, the `-man` one first
+    — re-measured at this flake's pinned lock on nix 2.34.8: 2 lines for the bare
+    attribute, 1 for `nixpkgs#skopeo.out`. A step that captured the bare output
+    into `out` and then ran `"$out/bin/skopeo"` built a two-line command: every
+    run of this workflow died at exit 127, and the `$GITHUB_OUTPUT` write of the
+    same multi-line value was rejected with `Invalid format`.
     """
-    return [line.strip() for line in commands(text) if "/bin/skopeo" in line]
+    return [
+        line.strip()
+        for line in commands(text)
+        if re.search(r"\bnix build\b", line) and "nixpkgs#skopeo" in line
+    ]
+
+
+def step_names(text: str) -> list[str]:
+    """Every step's `- name:`, IN FILE ORDER, prose about one excluded.
+
+    🔴 ORDER IS THE POINT, SO THIS RETURNS A LIST. The property it serves is a
+    RELATION between two groups of steps — every Python-half step before every
+    Go-half step — and a set or a membership check cannot express it.
+    """
+    return re.findall(r"^\s*- name:\s*(\S.*?)\s*$", "\n".join(commands(text)), re.M)
 
 
 def normalise_shell(block: str) -> str:
@@ -293,39 +309,6 @@ def absent_tag_inspects(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# The resolver's own harness. It reads candidate paths on STDIN precisely so it
-# can be driven from a real temp directory with no nix, no network and no
-# registry — the CI step is then "build, pipe, capture one line".
-# ---------------------------------------------------------------------------
-
-
-def run_resolver(candidates: str) -> subprocess.CompletedProcess[str]:
-    """Run the SHIPPED script, by path, so the executable bit is exercised too."""
-    return subprocess.run(
-        [str(RESOLVE_SKOPEO)],
-        input=candidates,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _output(root: Path, name: str, *, binary: str | None) -> Path:
-    """A fake nix output directory. `binary` is the mode of its `bin/skopeo`:
-    `None` = no `bin/` at all (what the `-man` output looks like)."""
-    out = root / name
-    if binary is None:
-        (out / "share" / "man" / "man1").mkdir(parents=True)
-        (out / "share" / "man" / "man1" / "skopeo.1").write_text("stub manpage\n")
-        return out
-    (out / "bin").mkdir(parents=True)
-    exe = out / "bin" / "skopeo"
-    exe.write_text("#!/bin/sh\necho 'skopeo version 0.0.0-stub'\n")
-    if binary == "executable":
-        exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return out
-
-
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -353,6 +336,8 @@ def test_the_extractors_find_something(text: str) -> None:
     assert flake_packages_built(text), "the `.#packages.…` extractor found no build at all"
     assert step_bodies(text), "the step-body extractor found no `run:` block at all"
     assert absent_tag_inspects(text), "no anonymous inspect of the absent tag was found"
+    assert step_names(text), "the step-name extractor found no `- name:` at all"
+    assert skopeo_nix_builds(text), "no `nix build … nixpkgs#skopeo` found at all"
 
 
 def test_no_pull_request_event_can_reach_this_workflow(text: str) -> None:
@@ -466,6 +451,15 @@ def test_the_anonymous_check_carries_its_own_negative_control(text: str) -> None
     published and became a guard on ONE OF TWO the moment a second was: deleting
     either package's control leaves the string present, so the mutant survives.
     """
+    # The assertion `ABSENT_TAG`'s own comment names. `github.sha` is 40 hex, so
+    # the control tag is built to the same shape a real one has — it must be
+    # refused for being ABSENT rather than for being a malformed reference, which
+    # would make the negative control pass for the wrong reason.
+    assert len(ABSENT_TAG) == len("sha-") + 40, (
+        f"the absent-tag control is {ABSENT_TAG!r}, which is not `sha-` plus 40 "
+        "characters — the shape every tag this workflow pushes has"
+    )
+
     controls = absent_tag_inspects(text)
     assert len(controls) == len(IMAGE_EXPRESSIONS), (
         f"{len(controls)} anonymous inspect(s) of the absent tag, for "
@@ -527,7 +521,7 @@ def test_the_publish_builds_the_FLAKE_image_and_not_a_third_one(text: str) -> No
 
 
 # ---------------------------------------------------------------------------
-# `scripts/resolve-skopeo.sh` — the structural fix for the measured failure.
+# The skopeo build — the structural fix for the measured failure.
 #
 # 🔴 THE MEASUREMENT, SO NOBODY RE-DERIVES IT. `nixpkgs#skopeo` declares
 # `outputs = ["out", "man"]`, so `nix build … --print-out-paths` prints TWO store
@@ -536,136 +530,52 @@ def test_the_publish_builds_the_FLAKE_image_and_not_a_third_one(text: str) -> No
 # — and wrote a multi-line value into `$GITHUB_OUTPUT`, which rejects it with
 # `Invalid format`. Every run of this workflow failed there, at the same step.
 #
-# The fix is a SELECTION, not a smarter parse: ask which candidate actually has
-# an executable `bin/skopeo`, and refuse when the answer is not exactly one. The
-# tests below drive the shipped script over a real temp layout, in the SAME order
-# CI sees, which is why they need neither nix nor a network.
+# 🔴 AND THE FIX IS NIX'S OWN SELECTION, WHICH IS WHY THE GUARD BELOW IS THIS
+# NARROW. `nixpkgs#skopeo.out` names ONE output, so `--print-out-paths` prints one
+# line — measured at this flake's pinned lock on nix 2.34.8: 2 lines bare with
+# `…-man` first, 1 line with `.out`, and `$out/bin/skopeo --version` answering
+# `skopeo version 1.24.0`. Every alternative parses the same text instead ("take
+# the last line", "drop anything ending in `-man`", or probe each printed
+# candidate for an executable `bin/skopeo`) and every one of them is walked by a
+# new `dev` output, a changed output order, or a platform-specific `debug`
+# output — none of which change what `.out` NAMES.
 # ---------------------------------------------------------------------------
 
+# The spellings that select a single output. `.out` is the attribute path and
+# `^out` is the output selector; nix resolves both to the same derivation output,
+# and the workflow uses `.out` because it needs no shell quoting.
+SKOPEO_OUTPUT_SELECTORS = ("nixpkgs#skopeo.out", "nixpkgs#skopeo^out")
 
-def test_the_resolver_exists_and_is_executable() -> None:
-    """The positive control for every resolver test below.
 
-    `run_resolver` execs the file by path. If it were missing or non-executable
-    the three tests below would fail for a reason that has nothing to do with
-    what they claim to measure, so the reason is named here instead.
+def test_the_skopeo_build_names_an_OUTPUT_and_not_the_bare_derivation(text: str) -> None:
+    """THE REGRESSION GUARD for the measured failure, on the narrowest thing
+    that can be wrong: the attribute the build names.
+
+    A bare `nixpkgs#skopeo` builds every output and prints every path, so
+    whatever the step does with that value afterwards — append `/bin/skopeo`,
+    write it to `$GITHUB_OUTPUT`, run it — it is doing it to two lines. This
+    asserts the build asks nix for ONE output; what the step then does with a
+    single-line answer is ordinary shell.
     """
-    assert RESOLVE_SKOPEO.is_file(), f"{RESOLVE_SKOPEO} is missing"
-    assert os.access(RESOLVE_SKOPEO, os.X_OK), (
-        f"{RESOLVE_SKOPEO} is not executable, so the workflow's pipe into it "
-        "would fail with a permission error rather than resolve anything"
+    builds = skopeo_nix_builds(text)
+    assert builds, (
+        "no `nix build … nixpkgs#skopeo…` found at all. skopeo must come from the "
+        "flake's own pinned nixpkgs rather than from whatever the runner image "
+        "happens to ship, and with no build here this guard would be vacuous."
     )
-
-
-def test_the_resolver_picks_the_output_that_carries_the_binary(tmp_path) -> None:
-    """THE REGRESSION TEST for the measured failure, over a real directory tree.
-
-    The `-man` output is fed FIRST, which is the order `--print-out-paths`
-    actually prints and the order that made the old step run the wrong path.
-    """
-    man = _output(tmp_path, "aaaaaaaa-skopeo-0.0.0-man", binary=None)
-    real = _output(tmp_path, "bbbbbbbb-skopeo-0.0.0", binary="executable")
-
-    result = run_resolver(f"{man}\n{real}\n")
-
-    assert result.returncode == 0, (
-        f"the resolver refused a layout with exactly one valid candidate "
-        f"(rc={result.returncode}):\n{result.stderr}"
-    )
-    assert result.stdout.strip() == str(real / "bin" / "skopeo"), (
-        f"the resolver printed {result.stdout.strip()!r}; the only candidate "
-        f"with an executable `bin/skopeo` is {real / 'bin' / 'skopeo'}"
-    )
-    assert "\n" not in result.stdout.strip(), (
-        "the resolver printed more than one line, which is the exact shape that "
-        "made the old step a two-line command and `$GITHUB_OUTPUT` reject the value"
-    )
-
-
-def test_the_resolver_refuses_when_no_candidate_qualifies(tmp_path) -> None:
-    """Zero is a refusal with a NAME, never a silent empty answer.
-
-    Both realistic zero-shapes are fed: an output with no `bin/` at all (the
-    `-man` output) and one whose `bin/skopeo` exists but is NOT executable — the
-    second is the shape a `-x` check catches and an `-e` check does not.
-    """
-    man = _output(tmp_path, "aaaaaaaa-skopeo-0.0.0-man", binary=None)
-    unusable = _output(tmp_path, "cccccccc-skopeo-0.0.0-lib", binary="not-executable")
-
-    result = run_resolver(f"{man}\n{unusable}\n")
-
-    assert result.returncode != 0, (
-        "the resolver exited 0 over a layout where NOTHING is runnable; the "
-        "caller would then capture an empty string and run it"
-    )
-    assert "NO CANDIDATE" in result.stderr, (
-        f"the refusal is not named — stderr was {result.stderr!r}. An unnamed "
-        "non-zero exit in CI reads as 'nix is broken' rather than as this check"
-    )
-    assert result.stdout.strip() == "", (
-        f"the resolver put {result.stdout!r} on stdout while refusing; the "
-        "workflow captures stdout, so anything there is a path it would run"
-    )
-
-    empty = run_resolver("")
-    assert empty.returncode != 0 and "NO CANDIDATE" in empty.stderr, (
-        "empty input — the shape a failed or silent `nix build` produces — must "
-        f"refuse by name too; got rc={empty.returncode} {empty.stderr!r}"
-    )
-
-
-def test_the_resolver_refuses_an_AMBIGUOUS_answer(tmp_path) -> None:
-    """Two valid candidates is a refusal, and that is the bug class being closed.
-
-    Silently picking one is exactly how the original defect reads in the other
-    direction: the step would keep working, on whichever path happened to sort
-    first, until the day the two differed. A resolver that guesses has no way to
-    tell anyone it guessed.
-    """
-    first = _output(tmp_path, "dddddddd-skopeo-0.0.0", binary="executable")
-    second = _output(tmp_path, "eeeeeeee-skopeo-0.0.1", binary="executable")
-
-    result = run_resolver(f"{first}\n{second}\n")
-
-    assert result.returncode != 0, (
-        "the resolver picked one of TWO valid candidates instead of refusing; an "
-        "ambiguous answer silently chosen is the class this script exists to close"
-    )
-    assert "AMBIGUOUS" in result.stderr, (
-        f"the ambiguity refusal is not named — stderr was {result.stderr!r}"
-    )
-    assert result.stdout.strip() == "", (
-        f"the resolver put {result.stdout!r} on stdout while refusing"
-    )
-
-
-def test_the_workflow_resolves_skopeo_through_the_script(text: str) -> None:
-    """The old inline shape must not be present, and the script must be piped into.
-
-    This is the workflow half of the regression: the behavioural tests above
-    prove the script is right, and this proves the workflow USES it. Neither
-    claim implies the other — a correct script nothing calls fixes nothing.
-    """
-    concatenations = skopeo_path_concatenations(text)
-    assert not concatenations, (
-        "these command lines build a skopeo path by appending `/bin/skopeo`:\n  "
-        + "\n  ".join(concatenations)
-        + "\n`nixpkgs#skopeo` is MULTI-OUTPUT: `--print-out-paths` prints the "
-        "`-man` path and the real one, in that order. Appending to that value "
-        "produces a two-line command (exit 127) and a `$GITHUB_OUTPUT` write the "
-        "runner rejects with `Invalid format`. Pipe the candidates into "
-        "`scripts/resolve-skopeo.sh` instead."
-    )
-    piping = [
-        line for line in commands(text) if "scripts/resolve-skopeo.sh" in line
+    unselected = [
+        line
+        for line in builds
+        if not any(selector in line for selector in SKOPEO_OUTPUT_SELECTORS)
     ]
-    assert piping, (
-        "no command invokes `scripts/resolve-skopeo.sh`. The script can be "
-        "perfectly correct and change nothing if the workflow does not call it."
-    )
-    assert any("nix build" in line for line in piping), (
-        "the resolver is invoked, but not on the output of a `nix build`:\n  "
-        + "\n  ".join(piping)
+    assert not unselected, (
+        "these `nix build` lines name the bare multi-output derivation:\n  "
+        + "\n  ".join(unselected)
+        + f"\nOne of {list(SKOPEO_OUTPUT_SELECTORS)} is required. `nixpkgs#skopeo` "
+        "declares `outputs = [\"out\" \"man\"]`, so `--print-out-paths` prints TWO "
+        "store paths and the `-man` one FIRST: the value becomes a two-line "
+        "command (exit 127) and a `$GITHUB_OUTPUT` write the runner rejects with "
+        "`Invalid format`. That is what every run of this workflow did."
     )
 
 
@@ -709,6 +619,62 @@ PINNED_PUSH_STEPS = {
 # not be a copy of.
 GO_CONTROL_STEP = "control — the GO image is EMPTY of store data, declares its routes, and refuses"
 PYTHON_CONTROL_STEP = "control — /data is EMPTY in the image, and the code is really there"
+
+# A line of `api.DeclaredRoutes()` is `"<METHOD> <head>"` — `internal/api/routes.go`
+# builds every entry as `method + " " + head`. The methods are spelled in upper
+# case and the heads in lower, which is what keeps this from matching the step's
+# own prose (`REFUSING TO PUBLISH`, `head -20`).
+ROUTE_LITERAL = re.compile(r"\b(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\s+[a-z][\w-]*\b")
+
+# 🔴 THE TWO HALVES, IN THE ORDER THE JOB MUST RUN THEM. Every member of the
+# first must appear before every member of the second.
+PYTHON_HALF_STEPS = (
+    "build the Python server image from the flake",
+    PYTHON_CONTROL_STEP,
+    "push the Python pod's immutable sha tag",
+    "push the Python pod's version tag, on a tag push only",
+    "PROVE the published image is pullable with NO credentials",
+)
+GO_HALF_STEPS = (
+    "build the Go server image from the flake",
+    GO_CONTROL_STEP,
+    "push the Go pod's immutable sha tag",
+    "push the Go pod's version tag, on a tag push only",
+    "PROVE the published GO image is pullable with NO credentials",
+)
+
+
+def test_the_whole_PYTHON_half_runs_before_the_first_GO_step(text: str) -> None:
+    """🔴 A RELATION BETWEEN TWO GROUPS, NOT A PROPERTY OF ONE STEP.
+
+    Nothing in this repository has ever RUN the Go image — `ci.yml` asserts only
+    that it BUILDS — so every Go step in this workflow is a FIRST execution. A
+    first execution placed in front of the Python publish gates the pod that is
+    actually deployed on a path nobody has exercised, which is the exact shape of
+    the failure this workflow was rewritten to fix: seven consecutive runs where
+    nothing published because one unexercised step went red.
+
+    The earlier draft had the Go BUILD and the Go CONTROLS before the Python
+    push, and carried a comment claiming "it runs last" — true of the Go
+    anonymous-pull proof alone, and false of the half it was read as covering.
+    """
+    names = step_names(text)
+    missing = [n for n in PYTHON_HALF_STEPS + GO_HALF_STEPS if n not in names]
+    assert not missing, (
+        f"these steps are absent, so the ordering below would compare nothing: "
+        f"{missing}\nthe file's steps are: {names}"
+    )
+    last_python = max(names.index(n) for n in PYTHON_HALF_STEPS)
+    first_go = min(names.index(n) for n in GO_HALF_STEPS)
+    assert last_python < first_go, (
+        f"{names[first_go]!r} (step {first_go + 1}) runs before "
+        f"{names[last_python]!r} (step {last_python + 1}).\n"
+        "Every Python step — build, control, both pushes and the anonymous-pull "
+        "proof — must finish before the FIRST Go-image step. The Go image has "
+        "never been run by anything in this repository; a first execution in "
+        "front of the Python publish leaves the deployed pod unpublished when it "
+        "goes red, which is what the last seven runs of this workflow did."
+    )
 
 
 def test_both_pods_are_published_and_every_push_step_is_pinned_WHOLE(text: str) -> None:
@@ -767,16 +733,34 @@ def test_the_GO_pods_positive_control_is_its_ROUTE_LEDGER_not_the_Pythons(text: 
         "measurement left — and a zero is what an image with no filesystem "
         "reports too."
     )
-    for route in ("GET recall", "POST entry"):
-        assert route in go, (
-            f"the Go control does not assert the route {route!r} is present. A "
-            "check on the COUNT alone passes for a ledger of eight wrong names; "
-            "content is what makes it a measurement."
-        )
+    assert "routes_rc" in go and "declared" in go, (
+        "the Go control no longer captures the binary's EXIT CODE and the "
+        "ledger's LINE COUNT. Both are needed: a zero-line ledger and a binary "
+        "that would not start are different facts, and `set -e` alone cannot "
+        "tell the log which one happened."
+    )
     assert "EMPTY" in go and "REFUSING TO PUBLISH" in go, (
         "the Go control does not refuse loudly on an empty ledger. A command "
         "that printed nothing and exited 0 would otherwise read as a pass, which "
         "is the reassuring zero this repository's own rules forbid."
+    )
+
+    # 🔴 AND IT MUST NOT NAME ROUTES — THAT IS THE ASSERTION, NOT AN OMISSION.
+    # `AGENTS.md` says a route moves FOUR ledgers together (`api.DeclaredRoutes()`,
+    # `tests/conformance/requests.json`, the construction check and
+    # `checks.go-server-declares-its-routes`). A route name written into this
+    # workflow is a FIFTH spelling none of those four can see: rename a route and
+    # all four stay green while this job refuses mid-push. The earlier version of
+    # this test asserted the opposite — that `'GET recall'` and `'POST entry'`
+    # appear here — which is how the fifth site got written in the first place.
+    named_routes = ROUTE_LITERAL.findall(go)
+    assert not named_routes, (
+        f"the Go control names route(s) {named_routes}. That is a FIFTH route "
+        "ledger, and the four `AGENTS.md` lists cannot see it — renaming a route "
+        "would leave all four green and this job refusing mid-push, after the "
+        "Python pod has already been published. A publish control's question is "
+        "'can this binary ever observe the thing': assert the ledger is non-empty "
+        "and the binary exited 0, and leave WHICH routes to the four ledgers."
     )
 
     # …and the Python control is the only place its own import appears, so the
@@ -893,8 +877,8 @@ def test_the_controls_can_fail() -> None:
         "the shipped guard compares a SET of names instead"
     )
 
-    # The concatenation extractor sees the shape that actually failed: a captured
-    # multi-output store path with `/bin/skopeo` appended.
+    # The skopeo-build extractor sees the shape that actually failed: a build of
+    # the BARE multi-output attribute, whose output the step then appended to.
     old_step = (
         "        run: |\n"
         "          out=$(nix build --inputs-from . nixpkgs#skopeo "
@@ -902,14 +886,52 @@ def test_the_controls_can_fail() -> None:
         "          printf 'bin=%s/bin/skopeo\\n' \"$out\" >> \"$GITHUB_OUTPUT\"\n"
         '          "$out/bin/skopeo" --version\n'
     )
-    assert len(skopeo_path_concatenations(old_step)) == 2, (
-        "the concatenation extractor did not see BOTH halves of the step that "
-        "failed — the `$GITHUB_OUTPUT` write and the version probe"
+    old_builds = skopeo_nix_builds(old_step)
+    assert len(old_builds) == 1, (
+        f"the skopeo-build extractor found {old_builds} in the step that failed; "
+        "it must see exactly the one `nix build` line"
     )
+    assert not any(s in old_builds[0] for s in SKOPEO_OUTPUT_SELECTORS), (
+        "the extractor saw the pre-fix build but the selector check accepted it "
+        "— `test_the_skopeo_build_names_an_OUTPUT_and_not_the_bare_derivation` "
+        "would then be green over the exact text that exited 127 seven times"
+    )
+    # …and the FIXED spelling passes the same check, so the guard is a
+    # discrimination rather than a ban on the two words `nix build`.
+    fixed_step = (
+        "        run: |\n"
+        "          out=$(nix build --inputs-from . nixpkgs#skopeo.out "
+        "--no-link --print-out-paths)\n"
+    )
+    assert any(s in skopeo_nix_builds(fixed_step)[0] for s in SKOPEO_OUTPUT_SELECTORS)
     # …and prose ABOUT the hazard is not the hazard, for the same reason
     # `docker_build_invocations` drops comments.
-    assert skopeo_path_concatenations(
-        "      # never append `/bin/skopeo` to a multi-output path\n"
+    assert skopeo_nix_builds(
+        "      # never `nix build … nixpkgs#skopeo` without an output selector\n"
+    ) == []
+
+    # The step-NAME extractor reads names in FILE ORDER — the ordering guard is a
+    # comparison of indices, so a set-like or reordered answer would make it
+    # vacuous — and prose naming a step is not a step.
+    ordered = (
+        "      - name: second thing\n"
+        "        run: |\n"
+        "          echo two\n"
+        "      - name: first thing\n"
+        "        run: |\n"
+        "          echo one\n"
+    )
+    assert step_names(ordered) == ["second thing", "first thing"]
+    assert step_names("      # - name: a step described in prose\n") == []
+
+    # The route-literal pattern SEES a hardcoded ledger entry — the fifth
+    # spelling — and does NOT fire on the control step's own prose.
+    assert ROUTE_LITERAL.findall("for want in 'GET recall' 'POST entry'; do") == [
+        "GET recall",
+        "POST entry",
+    ]
+    assert ROUTE_LITERAL.findall(
+        'echo "REFUSING TO PUBLISH: the route ledger is EMPTY"; echo "$out" | head -20'
     ) == []
 
     # The step-body extractor reads a whole `run: |` block and stops at the next
@@ -961,4 +983,5 @@ def test_an_EMPTY_file_does_not_satisfy_the_extractors() -> None:
     assert flake_packages_built("") == set()
     assert step_bodies("") == {}
     assert absent_tag_inspects("") == []
-    assert skopeo_path_concatenations("") == []
+    assert skopeo_nix_builds("") == []
+    assert step_names("") == []

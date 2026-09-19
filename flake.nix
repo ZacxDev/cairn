@@ -616,13 +616,25 @@
           # runnable without a mount. No `/home/nonroot`: this pod has no `HOME` — see
           # `serverEnvPythonOnly`.
           #
-          # ⚠ UNGUARDED, AND THE RETRACTED CLAIM WAS THAT A SMOKE TEST WOULD CATCH IT.
-          # Nothing runs this image: `.github/workflows/ci.yml` asserts it BUILDS and
-          # says so in its own comment, and the only smoke run in the repo is on the
-          # PYTHON image. A `chown` mutant survives here with nothing to notice. (The
-          # `mkdir` is not a survivor — dropping it while keeping the `chown` fails the
-          # build.) Whether a PVC mounting over `/data` would mask it is a fact about a
-          # manifest outside this repo and is not verifiable here.
+          # ⚠ THE `chown` IS UNGUARDED, AND THE RETRACTED CLAIM WAS THAT A SMOKE TEST
+          # WOULD CATCH IT. The sentence that used to carry this — "nothing runs this
+          # image" — is NO LONGER TRUE: `.github/workflows/publish-image.yml` runs it
+          # three ways before it publishes. The claim NARROWS rather than lapses,
+          # because none of the three reads OWNERSHIP: `ls -A /data | wc -l` counts
+          # NAMES and a root-owned `/data` is still listable by this uid;
+          # `cairn-server -routes` never touches `/data`; and the no-token start
+          # refuses at `authz.LoadTokens` (78) BEFORE `api.New` reads the store root,
+          # so nothing writes. A `chown` mutant therefore still survives — now with
+          # three smoke runs that structurally cannot notice. `ci.yml` remains a build
+          # assertion only, and says so in its own comment. (The `mkdir` is not a
+          # survivor — dropping it while keeping the `chown` fails the build.) Whether
+          # a PVC mounting over `/data` would mask it is a fact about a manifest
+          # outside this repo and is not verifiable here.
+          #
+          # ⚠ SCOPE OF THAT NARROWING: it was derived by READING the three commands in
+          # the publish workflow's Go control step against `cmd/cairn-server/main.go`'s
+          # startup order, not by building a `chown`-less image and watching the step
+          # stay green. If you close it, close it with a control that reads ownership.
           fakeRootCommands = ''
             mkdir -p ./data
             chown -R ${toString serverUid}:${toString serverUid} ./data

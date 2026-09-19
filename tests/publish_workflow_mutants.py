@@ -34,6 +34,24 @@ WT = Path(__file__).resolve().parents[1]
 WF = WT / ".github" / "workflows" / "publish-image.yml"
 TEST = "tests/test_publish_workflow.py"
 
+
+def _move_go_build_first(text: str) -> str:
+    """Relocate the Go image build to in front of the Python one.
+
+    A step's BLOCK is `- name: …` through the next blank line; the comment above
+    it is left where it was, which does not matter — the order guard reads step
+    names out of the command text with comments already dropped.
+    """
+    found = re.search(
+        r"      - name: build the Go server image from the flake\n(?:.*\n)*?\n", text
+    )
+    if not found:
+        return text
+    block = found.group(0)
+    python_build = "      - name: build the Python server image from the flake\n"
+    return text.replace(block, "", 1).replace(python_build, block + python_build, 1)
+
+
 MUTANTS = [
     (
         "add-pull_request-trigger",
@@ -98,22 +116,46 @@ MUTANTS = [
         ),
         "test_the_anonymous_check_carries_its_own_negative_control",
     ),
-    # 🔴 THE FOUR BELOW COVER THE MEASURED DEFECTS, NOT HYPOTHETICAL ONES. Every
+    # 🔴 THE SIX BELOW COVER THE MEASURED DEFECTS, NOT HYPOTHETICAL ONES. Every
     # run of this workflow failed at the skopeo step because `nixpkgs#skopeo` is
-    # multi-output; nothing published the Go pod at all; and the Python pod's
-    # positive control cannot work on the Go image, which is the copy-paste this
-    # change was most likely to ship.
+    # multi-output; nothing published the Go pod at all; the Python pod's positive
+    # control cannot work on the Go image, which is the copy-paste this change was
+    # most likely to ship; a hardcoded route name here is a FIFTH route ledger
+    # that the four in `AGENTS.md` cannot see; and the Go half in front of the
+    # Python publish is the ordering that made the original failure total.
     (
-        "rebuild-the-skopeo-path-by-concatenation",
+        "build-the-BARE-multi-output-skopeo-attribute",
         lambda t: t.replace(
-            '          bin=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths \\\n'
-            '                  | scripts/resolve-skopeo.sh)\n'
-            "          printf 'bin=%s\\n' \"$bin\" >> \"$GITHUB_OUTPUT\"\n",
-            '          out=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths)\n'
-            "          printf 'bin=%s/bin/skopeo\\n' \"$out\" >> \"$GITHUB_OUTPUT\"\n",
+            '          out=$(nix build --inputs-from . nixpkgs#skopeo.out \\\n'
+            '                  --no-link --print-out-paths)\n',
+            '          out=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths)\n',
             1,
         ),
-        "test_the_workflow_resolves_skopeo_through_the_script",
+        "test_the_skopeo_build_names_an_OUTPUT_and_not_the_bare_derivation",
+    ),
+    (
+        # The Go BUILD moved in front of the Python build — the ordering the first
+        # draft of this workflow shipped, where a first-execution Go step going red
+        # leaves the DEPLOYED pod unpublished.
+        "run-the-GO-half-before-the-PYTHON-publish",
+        _move_go_build_first,
+        "test_the_whole_PYTHON_half_runs_before_the_first_GO_step",
+    ),
+    (
+        "hardcode-route-names-as-a-FIFTH-ledger",
+        lambda t: t.replace(
+            '          echo "positive control: the server ran, exited 0 and declared $declared ledger line(s) — OK"\n',
+            "          for want in 'GET recall' 'POST entry'; do\n"
+            '            case "$routes" in\n'
+            '              *"$want"*) ;;\n'
+            '              *) echo "REFUSING TO PUBLISH: the ledger does not name $want"\n'
+            "                 exit 1 ;;\n"
+            "            esac\n"
+            "          done\n"
+            '          echo "positive control: the server ran, exited 0 and declared $declared ledger line(s) — OK"\n',
+            1,
+        ),
+        "test_the_GO_pods_positive_control_is_its_ROUTE_LEDGER_not_the_Pythons",
     ),
     (
         "drop-the-go-pods-push",

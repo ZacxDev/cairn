@@ -46,19 +46,20 @@ jobs:
       # no pull-request event reaches a job holding `packages: write`, that every
       # published tag is immutable, that the anonymous-pull check is actually
       # anonymous, that BOTH pods are pushed and each carries its OWN controls,
-      # and that skopeo is resolved by selection rather than by appending
-      # `/bin/skopeo` to a multi-output `--print-out-paths` (which is what made
+      # that the whole PYTHON half runs before the first GO step, and that the
+      # `nix build` resolving skopeo names an OUTPUT rather than the bare
+      # multi-output attribute whose `-man` path prints FIRST (which is what made
       # every run of this workflow exit 127) — and it pins them with regular
       # expressions and whole-string equality over a file whose
       # own comments contain every string those expressions look for. That is the
       # easiest kind of guard to write so that it can never fail, and one of them
       # WAS: the `fetch-depth` guard matched the sentence explaining the setting
       # rather than the setting, and survived a mutant that flipped the real
-      # value. Twelve mutants, each required to be killed by the test that NAMES
+      # value. Fourteen mutants, each required to be killed by the test that NAMES
       # its property; a kill by any other test is reported MISATTRIBUTED. It runs
       # BEFORE the suite because a suite green over an inert guard is the thing
       # it exists to rule out, and it takes about four seconds.
-      - name: prove every publish-workflow guard can go RED (12 mutants)
+      - name: prove every publish-workflow guard can go RED (14 mutants)
         run: python3 tests/publish_workflow_mutants.py
 
       # 🔴 READ THE COLLECTED COUNT, NOT JUST THE EXIT CODE. pytest can collect
