@@ -86,6 +86,24 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   absence HERE"*; `lib/host_identity.py` on `main` now carries *"⚠ NOT 'UNREPLICATED', WHICH
   IS WHAT THIS SAID AND IS NO LONGER TRUE"*. **Closing condition:** any republish — Go or
   Python — reaching the pod. The Go swap discharges it.
+- 🟡 **FOUR SCAFFOLDING DEFECTS FILED BY #44'S LADDER RATHER THAN FIXED**, because two
+  consecutive rounds changed zero payload lines and the attribution gate refused round 3
+  (`audit-dispatch.py … --round 3` → **rc 5**). All four are in test files; none changes what
+  CI does. (a) `tests/test_publish_workflow.py:1202` — the guard is wider than its name and
+  its failure MESSAGE misdiagnoses: an ordinary trailing `exit 0` reds with "a control that
+  exits 0 on the branch it took because it found the hazard", sending the reader after a
+  branch that does not exist. (b) `tests/test_control_mutant_count_is_pinned.py:212` — a
+  docstring names a missing variable and asserts a value for it; a renamed `MUTANTS` raises
+  `AttributeError` and the control never runs. (c) `:45-51` says a sweep would face **three**
+  claims; `ci.yml` carries **four**. (d) `:277` — `normalise_shell` is dead after the
+  `_dropped`/`step_blocks` split while `step_bodies`' docstring still points at it.
+  **Closing condition:** one PR touching those two files that corrects all four — closed when
+  it merges, or when a named reader dismisses them in writing.
+- 🟡 **Three things are unpinned BY CONSTRUCTION in `publish-image.yml`, flagged not fixed:**
+  `ci.yml:496`'s `(7 mutants)` ARM count is checked by nothing; step-level `if:` expressions
+  sit outside the four whole-body pins, because `step_bodies` reads only `run:`; and
+  `log in to ghcr` is the one remaining credential-handling `run:` step no test pins.
+  **Closing condition:** a decision to pin each or a written line saying why not.
 - 🟡 **The deployment manifest's node-affinity comment will go STALE on the swap.** It keeps
   the pod off the off-LAN burst node *because the LAN registry does not resolve there*. Pull
   from ghcr and that stated reason is void, while the affinity may still be wanted (the PVC
