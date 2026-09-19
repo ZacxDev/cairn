@@ -4,12 +4,20 @@
 # 🔴 TWO PODS, TWO GHCR PACKAGES, ONE WORKFLOW. `packages.server-image` is the
 # PYTHON pod and `packages.server-image-go` is the Go one; they go to
 # `cairn-store` and `cairn-store-go` respectively, never to two tags of one
-# package. A registry package is the unit of VISIBILITY — one flip, one settings
-# page — so two pods sharing a package would mean flipping the Go pod public as a
-# side effect of the Python one, and an operator reading the package's tag list
-# could not tell which implementation a tag holds. Their tag SCHEMES are
-# identical on purpose: `sha-<40-hex>` derived from the same rev, so one revision
-# names one artefact in each package and the two are comparable.
+# package. The reason is READABILITY OF THE TAG LIST: a package holding one
+# implementation can be pinned by reading it, and a mixed list distinguished only
+# by a tag prefix reads as a mistake to whoever finds it later. Their tag SCHEMES
+# are identical on purpose: `sha-<40-hex>` derived from the same rev, so one
+# revision names one artefact in each package and the two are comparable.
+#
+# 🔴 AN EARLIER DRAFT JUSTIFIED THIS BY VISIBILITY — "sharing a package would flip
+# the Go pod public as a side effect of the Python one" — AND THAT WAS BACKWARDS.
+# `cairn-store` is ALREADY public (measured: an anonymous tag-list read answers
+# 200), and the job below FAILS unless the Go pod is anonymously pullable, so the
+# "side effect" being avoided was the state this workflow is trying to reach. The
+# retracted reason is recorded rather than deleted so nobody derives it again.
+# What the separate package genuinely COSTS is stated at the visibility step: the
+# first run publishing a NEW package goes red until a one-time manual flip.
 #
 # 🔴 AND THE PYTHON HALF RUNS FIRST, WHOLE. Build, controls, both pushes and the
 # anonymous-pull proof for `cairn-store` all complete before the FIRST Go-image
@@ -112,10 +120,11 @@ jobs:
           set -euo pipefail
           owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           image="ghcr.io/$owner/cairn-store"
-          # 🔴 A SECOND PACKAGE, NOT A SECOND TAG OF THE FIRST. Visibility is a
-          # per-PACKAGE setting, so sharing one package would make the Go pod
-          # public as a side effect of the Python pod's flip; and a tag list that
-          # mixed two implementations could not be read by anyone pinning one.
+          # 🔴 A SECOND PACKAGE, NOT A SECOND TAG OF THE FIRST — and the reason is
+          # the TAG LIST, not visibility. A list mixing two implementations,
+          # separated only by a tag prefix, cannot be read by anyone pinning one.
+          # Do NOT restore the visibility argument: `cairn-store` is already
+          # public, so it was backwards. The header records why.
           image_go="ghcr.io/$owner/cairn-store-go"
           # The 40-hex commit sha, not the short one. Both are derivable from a
           # rev; only the full one cannot collide, and a registry tag is the

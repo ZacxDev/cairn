@@ -191,12 +191,37 @@ MUTANTS = [
 ]
 
 
-def failing_tests(wt: Path) -> set[str]:
+def run_suite(wt: Path) -> tuple[set[str], int]:
+    """Run the guard suite once; return (failing test names, tests that RAN).
+
+    🔴 A COUNT OF FAILURES IS NOT A COUNT OF RUNS, AND THAT GAP IS THE ONE THIS
+    BATTERY CANNOT SURVIVE. The failure set is parsed from `FAILED` lines, so an
+    interpreter with no `pytest` emits none — which is byte-indistinguishable
+    from a green suite. The baseline then reads `0 failures`, EVERY mutant scores
+    SURVIVED because nothing ran to catch it, and the battery prints a confident
+    verdict about the SHELL rather than about the workflow.
+
+    MEASURED, both directions, on one tree: `python3 -m pytest` ->
+    `No module named pytest` -> 14 mutants, 14 SURVIVED; the same tree under an
+    interpreter carrying pytest -> 14 KILLED, 0 problems. Nothing in the output
+    distinguished the two except the verdict itself.
+
+    So the second element is this battery's POSITIVE control — a number that must
+    move off zero before any verdict here is readable.
+    """
     r = subprocess.run(
         [sys.executable, "-m", "pytest", TEST, "-p", "no:randomly", "-q", "--tb=no", "-rf"],
         cwd=wt, capture_output=True, text=True,
     )
-    return set(re.findall(r"^FAILED .*::(\w+)", r.stdout, re.M))
+    failed = set(re.findall(r"^FAILED .*::(\w+)", r.stdout, re.M))
+    # Read the runner's OWN summary counts rather than inferring from the exit
+    # code: a wrapper's status is the last command's, and "no tests ran" exits 5.
+    ran = sum(int(n) for n in re.findall(r"(\d+) (?:passed|failed)", r.stdout))
+    return failed, ran
+
+
+def failing_tests(wt: Path) -> set[str]:
+    return run_suite(wt)[0]
 
 
 def main() -> int:
@@ -208,11 +233,19 @@ def main() -> int:
     # test X fail?", and a test already failing at HEAD would be scored as a kill
     # for every mutant in the list — a fully green battery over a guard that
     # never ran.
-    baseline = failing_tests(WT)
+    baseline, ran = run_suite(WT)
     if baseline:
         print(f"REFUSING: the suite is already red at HEAD: {sorted(baseline)}")
         return 1
-    print("baseline: 0 failures — the battery can attribute\n")
+    # 🔴 THE POSITIVE CONTROL, AND IT EXITS 2 — "could not vouch", never "passed".
+    # A zero here means the runner never executed the guards, in which case every
+    # SURVIVED below would be a fact about this shell. See `run_suite`.
+    if ran == 0:
+        print("REFUSING TO VOUCH: the baseline run executed ZERO tests, so a "
+              "'0 failures' reading says nothing about the guards. Usually a "
+              f"shell without pytest — check `{sys.executable} -m pytest --version`.")
+        return 2
+    print(f"baseline: 0 failures over {ran} test(s) that RAN — the battery can attribute\n")
 
     bad = 0
     try:
