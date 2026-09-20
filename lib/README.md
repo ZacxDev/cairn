@@ -87,6 +87,15 @@ anyone editing that path:
   (`kills`), with a deliberately-fatal row as its positive control and a
   `PYTHONDONTWRITEBYTECODE=1` + `__pycache__` sweep so a same-length edit cannot be scored
   SURVIVED without having run.
+  🔴 **AND IT REFUSES (exit 2) WHEN A RUN COLLECTED ZERO TESTS, which it did not until the
+  round-2 audit read the variable that was measuring it.** `run_suites` computed `collected`
+  and `main` never looked, so a shell without pytest produced no `FAILED` lines,
+  `failing_tests` returned `[]`, and the `positive-control` row — which declares no `kills` —
+  was scored `KILLED … by []` at **rc 0**: a fully green battery over nothing. Measured on a
+  pytest-less interpreter: `KILLED positive-control by []` / `killed=1` / rc 0 before, and
+  `REFUSING TO VOUCH … ran ZERO tests` / rc 2 after. The Go arm counts its own result lines for
+  the same reason (there it reported `KILLED-BY-THE-WRONG-TEST`, which blames a guard for a
+  missing runner).
   ⚠ **THE CAPTURE HAS BEEN BLIND TWICE, IN THE SAME SHAPE, AND BOTH ARE WORTH KNOWING.** Its
   first version ran only the no-table configuration — the one state in which the old predicate
   was `False` by construction — so it measured green over the defect above; re-run it with
@@ -121,11 +130,29 @@ anyone editing that path:
     longer has the terminal.
   - `recall`/`search` and `validate` consult it too, and `sync`, `ls-entries`
     and `doctor` take no scope so they walk EVERY configured instance. All six
-    print the alias — in the banner, in the caveat's multi-instance clause, and
-    as `ls-entries`' `[alias] ` line prefix — **only when more than one instance
-    is configured**. That emptiness is the compatibility guarantee: a
-    one-instance host's bytes are unchanged, which the reader fixture measures
-    (regenerating with the clause added 225 lines and changed none).
+    print the alias — in the banner, in the caveat's multi-instance clause, as
+    `ls-entries`' `[alias] ` line prefix, and as `doctor`'s `<alias>/<check>`
+    **row names**, which is the one of the four a machine consumer of
+    `doctor --json` parses — **only when more than one instance is configured**.
+    That emptiness is the compatibility guarantee: a one-instance host's bytes
+    are unchanged, which the reader fixture measures (regenerating with the
+    clause added 225 lines and changed none).
+  - 🔴 **AND THAT GUARANTEE IS ABOUT *LABELLING*, NOT ABOUT *ROUTING* — the
+    sentence above is echoed in `internal/client/instances.go` and
+    `tests/parity/README.md`, and all three read wider than they are.** The
+    scope-taking reads did not consult the table at all before;
+    they do now, and `alias_for` row 3 REFUSES at ONE instance as well as at
+    many. So exactly one single-instance case moved: a host whose table routes
+    the scope to an alias it has no config for — a stale or typo'd entry, the
+    case `routes --check` exists to find. Measured over one world with the
+    packaged Go client and `routes.json = {"alpha-notes": "nowhere"}`:
+    `recall`, `search` and `validate` each answered **exit 0**, off the default
+    instance's cache, at `d8b858a`, and each answers **exit 11, refusing**, at
+    HEAD. HEAD is the right
+    answer — the old one read a store the table said was elsewhere — but it is
+    a behaviour change on a one-instance host, and it belongs in whatever
+    announcement the `packages.default` flip carries. `sync`, `ls-entries` and
+    `doctor` take no scope, so none of it reaches them.
   - 🔴 `routes` reports rather than routes, and it must keep working before any
     table is right: it is the verb an operator runs *while standing up* a second
     instance.

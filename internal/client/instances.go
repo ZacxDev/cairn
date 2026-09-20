@@ -40,6 +40,20 @@ import (
 //   - **`routes` reports rather than routes.** It prints what is configured and, with
 //     `--check`, grades the table against every instance. It is the verb an operator runs
 //     WHILE STANDING UP a second instance, so it must keep working before any table is right.
+//
+// 🔴 "A ONE-INSTANCE HOST'S BYTES ARE UNCHANGED" IS TRUE OF *LABELLING* AND WAS READ AS COVERING
+// *ROUTING* TOO. `recall`/`search`/`validate` now resolve their scope through `AliasFor`, which
+// they did not do before, and `AliasFor` row 3 REFUSES at one instance exactly as at many. So
+// there IS a single-instance behaviour change, and it is exactly one case: a host with ONE
+// instance whose table routes the scope to an alias it has no config for — a stale or typo'd
+// entry, the kind `routes --check` exists to find. Measured over one world with this client and
+// `routes.json = {"alpha-notes": "nowhere"}`: `recall`, `search` and `validate` each answered
+// **exit 0** off the default instance's cache at `d8b858a`, and each answers **exit 11,
+// refusing** at HEAD. HEAD is the correct answer — the old one read a store the table said was
+// somewhere else — but it is not "unchanged", and it belongs in whatever announcement the
+// `packages.default` flip carries. `sync`, `ls-entries` and `doctor` take no scope, so none of
+// this reaches them. The same clause is on `lib/README.md`'s bullet and in
+// `tests/parity/README.md`.
 
 const (
 	// ConfigEnv names the DEFAULT instance's config file. It predates instances and keeps

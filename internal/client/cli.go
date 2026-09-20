@@ -710,13 +710,22 @@ func doctorInstance(opts Options, routing Routing, instance Instance) ([]doctor.
 		TokenReason:    tokenReason,
 		IdentityRemedy: IdentityRemedy,
 	})
-	if !routing.MultiInstance() {
+	// 🔴 `instanceLabel`, NOT A SECOND `MultiInstance()` CALL — AND THE SECOND SPELLING HAD NO
+	// REASON TO EXIST. `instanceLabel`'s own comment says "ONE spelling, because every read
+	// verb needs it and a second copy is a second place for the count-versus-table confusion
+	// to come back"; this function open-coded the predicate in the same change that wrote that
+	// sentence. Nothing here needs a different question — `doctor` labels exactly when the
+	// banners do — so the comment was false rather than the copy justified. One consequence is
+	// mechanical: a mutant over `instanceLabel` now reaches `doctor`'s row names too, where
+	// before it could not.
+	prefix := instanceLabel(routing, instance.Alias)
+	if prefix == "" {
 		return checks, nil
 	}
 	named := make([]doctor.Check, 0, len(checks))
 	for _, check := range checks {
 		named = append(named, doctor.Check{
-			Name:   instance.Alias + "/" + check.Name,
+			Name:   prefix + "/" + check.Name,
 			State:  check.State,
 			Detail: check.Detail,
 		})

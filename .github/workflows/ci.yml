@@ -444,19 +444,22 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 98 PASS lines measured on the multi-instance branch: 97 cases plus
-          # `cache-mtime-parity`. It was 91 (90 cases) at `871e6ff`; the seven new rows are the
+          # 102 PASS lines measured on the multi-instance branch: 101 cases plus
+          # `cache-mtime-parity`. It was 91 (90 cases) at `871e6ff`; the eleven new rows are the
           # `routes` verb, which the verb ledger requires a case for, `exit 11`, which the
           # exit-code ledger requires a row to reach, TWO MULTI-INSTANCE rows that stand up
           # a second pod — the shape every other row is blind to by construction, and the one
           # that catches a client reading every instance from the DEFAULT instance's config —
-          # and, from the round-2 audit, a routed `put` at a NON-DEFAULT alias: until it landed
-          # both `<MULTICFG>` rows were `routes --check`, so the routed WRITE path this branch
-          # exists to ship had no cross-client byte comparison at all.
+          # a routed `put` at a NON-DEFAULT alias (until it landed both `<MULTICFG>` rows were
+          # `routes --check`, so the routed WRITE path had no cross-client byte comparison at
+          # all), three routed READS, and a routed `validate` whose COUNT caught a defect in the
+          # ORACLE.
           # ⚠ THE FLOOR IS NOT REDUNDANT WITH "ZERO FAILURES". A run that compared nothing has
           # zero failures too; the floor is what tells a green gate from an absent one.
-          if [ "$passes" -lt 98 ]; then
-            echo "REFUSING: $passes passes, and 98 were measured — the gate got smaller"
+          # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
+          # rows were added, which is a floor that cannot see the four newest disappear.
+          if [ "$passes" -lt 102 ]; then
+            echo "REFUSING: $passes passes, and 102 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then

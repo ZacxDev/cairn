@@ -378,8 +378,18 @@ def _instance_for(args: argparse.Namespace, scope: str) -> tuple[str, str | None
     `label` is the alias when this host has MORE THAN ONE INSTANCE and `None`
     when it has one. 🔴 THAT `None` IS THE COMPATIBILITY GUARANTEE, not a
     formatting nicety: it is what keeps a one-instance host's output
-    byte-for-byte what it was, so the routing machinery can ship and be proven
-    inert before any data moves.
+    byte-for-byte what it was, so the LABELLING half of the routing machinery
+    can ship and be proven inert before any data moves.
+
+    ⚠ THE *ROUTING* HALF IS NOT INERT AT ONE INSTANCE, AND THIS SENTENCE USED
+    TO BE READ AS COVERING BOTH. `routing.alias_for` is consulted whatever
+    `multi_instance` says, and its row 3 — a table routing this scope to an
+    alias the host has no config for — REFUSES at exit 11 with one instance
+    exactly as with many. Measured on a one-instance host with
+    `routes.json = {"alpha-notes": "nowhere"}`: `recall`, `search` and
+    `validate` all exit 11 here, and the Go client agrees (it answered 0 with
+    a digest at `d8b858a`, before its reads routed). `sync`, `ls-entries` and
+    `doctor` take no scope and are untouched.
 
     🔴 AND IT IS GATED ON THE INSTANCE COUNT, NEVER ON THE TABLE. A one-instance
     host that has written a routing table is still a host with one place an
@@ -912,7 +922,8 @@ def banner(state: str, detail: str, instance: str | None = None) -> str:
 
     `instance=None` is the single-instance host and renders exactly what this
     client has always rendered — which is what makes the multi-instance
-    machinery provably inert before an operator configures a second store.
+    machinery's LABELLING half provably inert before an operator configures a
+    second store. ⚠ Its ROUTING half is not: see `_instance_for`.
     Given an alias, every state line carries it, because "where did that come
     from" is the question a second instance creates and a banner is the only
     line every read prints.
@@ -1279,7 +1290,32 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # one. A count that MOVES with the store is what makes the zero mean
         # something: parse one entry and it says 1, parse none and it says 0
         # and you can see that it did nothing.
-        checked = sum(1 for _ in (args.cache / scope).glob("*.md"))
+        #
+        # 🔴 `cache`, NOT `args.cache` — AND THIS IS AN AUTHORISED CHANGE TO THE ORACLE.
+        # P1's rule is that `server/server.py` and this client are the golden source and are
+        # not edited to make the port agree; the standing exception is a defect the contract
+        # cannot contain, and it is granted by the OPERATOR, per site, in writing. The
+        # precedent is `seeded=UNREADABLE` — recorded because "a contract cannot include
+        # 'sometimes truncate the response mid-stream'". The same sentence applies here: a
+        # contract cannot include "sometimes print a NEGATIVE count".
+        #
+        # `_instance_for` above, `cache.iterdir()` and `load_index(cache, …)` all read the
+        # ROUTED instance; this one line globbed `args.cache`, the DEFAULT instance's root.
+        # On a host where `--scope` routes elsewhere the numerator and the denominator came
+        # from two different stores, so the command whose entire job is to make a zero mean
+        # something printed `0 of 0 entry file(s) parse, 0 malformed` over a scope holding a
+        # readable entry — and, with a malformed file in the routed store, `-1 of 0 … 1
+        # malformed`, a count below zero. Measured against the Go client over one world:
+        # `0 of 0` vs `1 of 1` at exit 0, and `-1 of 0` vs `1 of 2` at exit 5.
+        #
+        # ⚠ THE EXCEPTION IS THIS LINE AND NOTHING ELSE. It does not license changing the
+        # oracle to match the port anywhere else, and the scope of it is written down in
+        # `tests/parity/README.md` beside the `seeded=UNREADABLE` precedent.
+        #
+        # 🔴 AND AN EXIT-CODE-ONLY PARITY ROW WOULD HAVE SEEN NEITHER SYMPTOM: both clients
+        # exit 0 on the clean store and 5 on the malformed one. The count lives on stdout, so
+        # `validate-routed-to-a-NON-DEFAULT-instance` compares stdout, stderr AND the code.
+        checked = sum(1 for _ in (cache / scope).glob("*.md"))
         print(
             f"cairn: {scope}: {checked - len(malformed)} of {checked} "
             f"entry file(s) parse, {len(malformed)} malformed"

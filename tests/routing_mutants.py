@@ -325,6 +325,33 @@ MUTANTS: list[Mutant] = [
         go_package="./internal/client/",
     ),
     Mutant(
+        # 🔴 THE GO TWIN OF `multi-instance-counts-the-table`, AND IT HAD NO TWIN UNTIL NOW.
+        # The Python mutant restores the shipped defect inside `multi_instance`; this one puts
+        # the same confusion back one level DOWN, in the label itself, where
+        # `Routing.MultiInstance` stays honest and the caller asks the table anyway. It is the
+        # shape the count-versus-table rule exists to forbid, and `instanceLabel`'s own comment
+        # calls a second copy "a second place for the count-versus-table confusion to come
+        # back" — so the battery has to be able to see it arrive.
+        #
+        # ⚠ IT SURVIVED AT `d57f46b` AT 54 PASS / 0 FAIL, and the reason was the FIXTURE and not
+        # the guard: `oneInstanceHost` wrote no `routes.json`, so `routing.Routes` was nil, the
+        # added disjunct could not change the branch taken, and the mutant was byte-identical in
+        # behaviour on every case the suite built. A one-instance host WITH a table is the only
+        # world that separates the two predicates.
+        id="go-read-label-counts-the-table",
+        target="internal/client/routes.go",
+        old="\tif !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n\treturn alias",
+        new="\tif routing.Routes == nil && !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n"
+            "\treturn alias",
+        why="the count-versus-table confusion, re-introduced below `MultiInstance` where the "
+            "predicate's own guard cannot see it: a ONE-instance host that has merely written a "
+            "routing table gains `cairn[personal]` on every banner, the multi-instance clause "
+            "in every caveat, a `[personal] ` prefix on every `ls-entries` line and "
+            "`personal/<check>` on every `doctor` row.",
+        kills="TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb",
+        go_package="./internal/client/",
+    ),
+    Mutant(
         id="go-read-label-is-never-set",
         target="internal/client/routes.go",
         old="\tif !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n\treturn alias",
@@ -608,22 +635,41 @@ def failing_tests(output: str, is_go: bool) -> list[str]:
 
 
 def run_suites(tree: Path, mutant: Mutant) -> tuple[int, str, int]:
-    """`(returncode, output, collected)` for one mutant's suites."""
+    """`(returncode, output, collected)` for one mutant's suites.
+
+    🔴 `collected` IS THIS BATTERY'S POSITIVE CONTROL AND `main` REFUSES TO VOUCH ON A ZERO.
+    It was computed and never read, which is exactly the reassuring zero the house rules name:
+    a run that collected NOTHING exits non-zero with no `FAILED` lines, so `failing_tests`
+    returns `[]` and a mutant with no declared `kills` — `positive-control` is one — scores
+    `KILLED … by []`. Measured on a shell with no pytest: the whole Python half reported KILLED
+    while nothing had executed. The instrument must be able to say "I ran nothing", and that is
+    a different sentence from "the guard died".
+
+    ⚠ IT IS SUMMED, NOT `re.search`-ed. pytest's tail is `1 failed, 53 passed in 0.4s`, so the
+    first match alone counts the FAILURES and calls a 54-test run "1". `publish_workflow_mutants.py`
+    already sums for the same reason.
+
+    ⚠ AND THE GO ARM COUNTS TOO, BECAUSE IT HAS THE SAME HOLE. A tree with no `go` on `PATH`
+    produces no `--- FAIL:` lines either; `ok <pkg>` / `FAIL <pkg>` / `--- PASS|FAIL|SKIP` are
+    the runner's own result lines, and a build failure prints `FAIL <pkg> [build failed]` plus a
+    bare `FAIL`, which counts NON-ZERO (measured: 2) — so a mutant that does not COMPILE is
+    still caught by its `kills` check rather than refused here or credited with a death.
+    """
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     if mutant.go_package:
         proc = subprocess.run(["go", "test", mutant.go_package], cwd=str(tree), env=env,
                               capture_output=True, text=True, timeout=1800)
-        return proc.returncode, proc.stdout + proc.stderr, -1
+        output = proc.stdout + proc.stderr
+        collected = len(re.findall(r"^(?:--- (?:PASS|FAIL|SKIP):|ok\s|FAIL\s)", output,
+                                   re.MULTILINE))
+        return proc.returncode, output, collected
     sweep_pycache(tree)
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", *mutant.suites, "-q", "-p", "no:randomly"],
         cwd=str(tree), env=env, capture_output=True, text=True, timeout=1800)
     output = proc.stdout + proc.stderr
-    collected = 0
-    match = re.search(r"(\d+) (?:passed|failed)", output)
-    if match:
-        collected = int(match.group(1))
+    collected = sum(int(n) for n in re.findall(r"(\d+) (?:passed|failed)", output))
     return proc.returncode, output, collected
 
 
@@ -652,6 +698,16 @@ def main(argv: list[str] | None = None) -> int:
             tree = build_tree(work, index)
             apply_mutation(tree, mutant)
             rc, output, collected = run_suites(tree, mutant)
+            # 🔴 THE POSITIVE CONTROL, READ BEFORE THE VERDICT AND NOT AFTER. Zero result lines
+            # means the runner never executed the tree it edited, so every word below — KILLED,
+            # SURVIVED, the summary — would be a fact about this shell. Exit 2 is "could not
+            # vouch", never "failed"; the same refusal `publish_workflow_mutants.py` makes.
+            if collected == 0:
+                print(f"REFUSING TO VOUCH: `{mutant.id}` ran ZERO tests, so nothing above or "
+                      f"below is a claim about the guards. Usually a shell without the runner — "
+                      f"check `{sys.executable} -m pytest --version` / `go version`.\n"
+                      f"{output[-2000:]}", file=sys.stderr)
+                return 2
             failures = failing_tests(output, bool(mutant.go_package))
             if rc == 0:
                 survived.append(mutant.id)

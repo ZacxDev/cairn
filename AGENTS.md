@@ -247,12 +247,12 @@ small Go renderer would also have satisfied. What carries the port is the reason
 property, not a P2 one** — the Python renderer ships as `packages.default` until the oracle is
 deleted, so until then the gate below IS the comparison rather than the absence of one.
 
-**Measured on this tree: 100 cases, 101 PASS, 0 failures, 0 dead normalizations** — all nine
+**Measured on this tree: 101 cases, 102 PASS, 0 failures, 0 dead normalizations** — all nine
 verbs, every output-shaping flag, every documented exit code, `--help` in four spellings, the
-argument-shape rules below, a TWO-INSTANCE `routes --check`, a routed `put` and three routed
-READS against a second pod, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 100 BYTE DIFFS: 69
+argument-shape rules below, a TWO-INSTANCE `routes --check`, a routed `put` and four routed
+READS against a second pod, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 101 BYTE DIFFS: 70
 rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8 compare the exit
-code plus "both sides put something on stdout" — so 31 of 100 never compare output text.**
+code plus "both sides put something on stdout" — so 31 of 101 never compare output text.**
 Declared per row and in the residual table; it is the HEADLINE that reads wider than the gate,
 so know which rows are load-bearing before trusting one.
 

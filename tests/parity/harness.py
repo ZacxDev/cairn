@@ -647,6 +647,17 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "instance loses `gamma-notes/gauge-api.md` entirely",
              ["ls-entries"], no_cache_flag=True,
              env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+        Case("validate-routed-to-a-NON-DEFAULT-instance",
+             "🔴 THE ROW THAT CAUGHT AN ORACLE DEFECT, AND IT HAD TO COMPARE STDOUT TO DO IT. "
+             "`validate` routes `gamma-notes` to the SECOND pod, and the COUNT it prints is the "
+             "whole evidence anything was checked — the command exists to make a zero mean "
+             "something. The oracle globbed the DEFAULT instance's root while parsing the "
+             "ROUTED one, so it answered `0 of 0 entry file(s) parse` for a scope holding one "
+             "readable entry, and `-1 of 0 … 1 malformed` once the routed store held a bad "
+             "file. Both sides exit 0 here and both exit 5 there, so `compare=\"exit\"` sees "
+             "NEITHER: the count is on stdout or it is nowhere",
+             ["validate", "--scope", "gamma-notes"], no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
 
         # --- a routed WRITE at a non-default alias -----------------------------
         # 🔴 THE REGION THAT HAD ZERO BYTE COMPARISON, AND IT IS THE ONE THIS WORK EXISTS TO

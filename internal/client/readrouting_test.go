@@ -43,12 +43,32 @@ func twoInstanceHost(t *testing.T) (home string) {
 }
 
 // oneInstanceHost is the same world with NO `instances/` directory — every host today.
+//
+// 🔴 IT WRITES A `routes.json`, AND THAT IS THE WHOLE DIFFERENCE BETWEEN THIS FIXTURE AND A
+// FIXTURE THAT MEASURES NOTHING. A one-instance host with NO table cannot separate "the label
+// asks the instance COUNT" from "the label asks the TABLE": both predicates answer the same on
+// it, so a gate that consulted `routing.Routes` was byte-identical to the correct one on every
+// case built here. Measured at `d57f46b`: `instanceLabel` mutated to
+// `if routing.Routes == nil && !routing.MultiInstance()` — the historical defect
+// `Routing.MultiInstance`'s own comment names — SURVIVED at 54 PASS / 0 FAIL, byte-identical
+// to the unmutated run, and so did the same edit to `doctorInstance`'s gate. A table present
+// on a host with one instance is row 2 of `AliasFor`'s three-row table, and it is the only
+// world in which the two questions have different answers.
+//
+// ⚠ THE TABLE MUST ROUTE `alpha-notes` TO AN ALIAS THIS HOST HAS. Routing it anywhere else is
+// row 3, which REFUSES at exit 11 before any label is computed — a different claim, and one
+// that would hide this one.
 func oneInstanceHost(t *testing.T) (home string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CAIRN_MIRROR_ROOT", "")
-	configuredHost(t, filepath.Join(home, "config"))
+	// Pinned at a closed port so `sync` — the one verb here that is not `--no-sync`able —
+	// fails fast and locally instead of reaching whatever the operator's shell configured.
+	t.Setenv("SUBSYSTEM_STORE_URL", "http://127.0.0.1:1")
+	t.Setenv("SUBSYSTEM_STORE_TOKEN", "x")
+	dir := configuredHost(t, filepath.Join(home, "config"))
+	writeTable(t, dir, `{"alpha-notes": "`+DefaultAlias+`"}`)
 	seedCache(t, filepath.Join(home, ".cache", "subsystem-store"), "alpha-notes", "one")
 	return home
 }
@@ -148,8 +168,19 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 	// 🔴 THE COMPATIBILITY GUARANTEE, ASSERTED AT THE VERB RATHER THAN AT THE RENDERER. The
 	// label is gated on the instance COUNT, so a gate that asked the routing table instead —
 	// or that labelled unconditionally — would change the bytes of every existing host's
-	// output. `cairn[` and the caveat's clause are the two strings that can only appear when
-	// something labelled.
+	// output. `cairn[`, the caveat's clause, the `[personal] ` line prefix and a `personal/`
+	// row name are the four strings that can only appear when something labelled.
+	//
+	// 🔴 AND THE HOST HAS A TABLE, WHICH IS WHAT MAKES THE FIRST HALF OF THAT SENTENCE
+	// MEASURABLE. The docstring used to claim both halves while `oneInstanceHost` wrote no
+	// `routes.json` — so "asked the table instead" was unreachable and only "labelled
+	// unconditionally" was ever caught. See `oneInstanceHost` for the measurement.
+	//
+	// ⚠ ALL SIX LABELLING VERBS, BECAUSE THE PREDICATE IS REACHED FROM SIX PLACES. `search`,
+	// `sync` and `doctor` were absent; the last two are the ones that take no scope, and
+	// `doctor` is the one whose alias is NOT in its prose — it prefixes its ROW NAMES, the one
+	// mechanism a machine consumer of `doctor --json` parses and the one a forbidden-substring
+	// check does not see, which is why it gets an assertion of its own below.
 	//
 	// ⚠ IT IS AN INVARIANT GUARD ON THE `ls-entries`/`validate` HALF: those verbs printed
 	// nothing labelled before this change either. It is REGRESSION coverage on `recall`,
@@ -161,16 +192,34 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 		"ls-entries": LsEntries,
 		"validate":   Validate,
 		"recall":     func(e Env, o Options) (int, error) { return Report(e, o, false) },
+		"search":     func(e Env, o Options) (int, error) { return Report(e, o, true) },
+		"sync":       Sync,
+		"doctor":     Doctor,
 	} {
 		opts := readOpts()
-		if name == "recall" || name == "validate" {
+		if name == "recall" || name == "validate" || name == "search" {
 			opts.Scope = "alpha-notes"
+		}
+		if name == "search" {
+			opts.Query = "synthetic"
 		}
 		_, stdout, stderr := capture(t, verb, opts)
 		for _, forbidden := range []string{"cairn[", "instance ONLY", "[personal]"} {
 			if strings.Contains(stdout+stderr, forbidden) {
 				t.Fatalf("%s: a one-instance host must not print %q:\n%s\n%s",
 					name, forbidden, stdout, stderr)
+			}
+		}
+		if name != "doctor" {
+			continue
+		}
+		// 🔴 THE ROW NAME, NOT A SUBSTRING OF THE WHOLE REPORT. `doctor`'s alias lives in the
+		// NAME column (`<alias>/<check>`), and a detail field may legitimately quote a path
+		// containing the word — so the assertion is anchored at the start of the line.
+		for _, line := range strings.Split(stdout, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), DefaultAlias+"/") {
+				t.Fatalf("doctor: a one-instance host must not prefix its row names: %q\n%s",
+					line, stdout)
 			}
 		}
 	}

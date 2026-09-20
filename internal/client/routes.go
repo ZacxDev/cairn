@@ -170,9 +170,13 @@ func instanceCache(opts Options, alias string) (string, error) {
 // oracle's `_instance_for`. The error is an `*UnroutedScope`, and it NEVER guesses.
 //
 // 🔴 THE EMPTY `label` IS THE COMPATIBILITY GUARANTEE, NOT A FORMATTING NICETY. It is what
-// keeps a one-instance host's output byte-for-byte what it was, so the routing machinery ships
-// and is provably inert before any data moves: every rendered caveat, every banner and every
-// `ls-entries` line is unchanged where nothing is configured.
+// keeps a one-instance host's output byte-for-byte what it was, so the LABELLING half of the
+// routing machinery ships and is provably inert before any data moves: every rendered caveat,
+// every banner and every `ls-entries` line is unchanged where nothing is configured.
+//
+// ⚠ THE *ROUTING* HALF IS NOT INERT AT ONE INSTANCE — the paragraph below says `AliasFor` "may
+// already have refused", and that refusal is a measured single-instance behaviour change. See
+// `Routing`'s header in `instances.go` for the case and the two-commit measurement.
 //
 // 🔴 AND IT IS GATED ON THE INSTANCE COUNT, NEVER ON THE TABLE. A one-instance host that has
 // written a routing table is still a host with one place an answer can come from, so it is
