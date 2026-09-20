@@ -369,25 +369,27 @@
         };
       };
 
-      # 🔴 THE GO CLIENT IS A SECOND ARTEFACT DURING P2, NOT A REPLACEMENT. `packages.cairn`
-      # stays the Python client and `apps.default` stays pointed at it: swapping them changes
-      # what `nix run github:…/cairn` executes for every existing consumer, which is a
-      # CUTOVER and not a build. The plan puts the cutover after the parity gate has held
-      # over real use and the deletion of Python at P8.
+      # 🔴 THE GO CLIENT IS NOW `packages.default`/`apps.default`, AND THE PYTHON ONE IS STILL
+      # SHIPPED AS `packages.cairn`. That is a DEFAULT CUTOVER, not a deletion: the oracle, its
+      # `lib/`, `checks.client-resolves-its-lib` and the parity gate are all untouched, and
+      # Python is retired at P8.
       #
-      # ⚠ A DRAFT OF THIS BRANCH TOOK THE FLIP AND IT WAS REVERTED, RECORDED HERE SO NOBODY
-      # RE-DERIVES IT FROM THE PARITY GATE ALONE. The gate was green and the reasoning was
-      # "the gate held, so the default can move" — which reads the gate wider than it is, and
-      # that remains true however green the gate gets.
+      # 🔴 WHAT LICENSED THE FLIP WAS AN OPERATOR DECISION, NOT A GREEN GATE — RECORDED HERE
+      # SO NOBODY RE-DERIVES IT FROM THE GATE. An earlier draft took the flip on exactly that
+      # reading ("the gate held, so the default can move") and was REVERTED; the gate being
+      # green has never licensed this and still does not, however green it gets. The decision
+      # was taken after residual 8 closed, which removed the flip's one MEASURED blocker: on a
+      # host with more than one instance configured, every read verb — `cairn doctor`
+      # included, the quickstart this repository's own README recommends — refused at exit 11.
+      # The read verbs route now and that guard is deleted. That closure is a PRECONDITION,
+      # not the licence.
       #
-      # ⚠ THE REVERT'S OWN REASON IS NOW CLOSED, WHICH IS A DIFFERENT CLAIM FROM "THE FLIP IS
-      # LICENSED". It was MEASURED: on a host with more than one instance configured,
-      # `cairn ls-entries --scope <x>` and `cairn doctor` each exited **11** and printed a
-      # REFUSAL, because every read verb sat behind a guard (`tests/parity/README.md` residual
-      # 8) — and `nix run github:ZacxDev/cairn -- doctor` is the quickstart this repository's
-      # own README recommends. The read verbs route now and that row is deleted, so what holds
-      # the flip is residual 7's CLI-contract widening and an operator decision, not a missing
-      # capability. See `packages.default` below.
+      # ⚠ THE FLIP WIDENS THE CLI CONTRACT, AND THAT IS ITS COST RATHER THAN A SIDE EFFECT
+      # (`tests/parity/README.md` residual 7). `cairn -verbs` and `cairn -exit-codes` exit 0
+      # with a table on stdout here where the oracle's argparse exits 2 with `usage:`, so a
+      # single-dash token `nix run github:…/cairn` refused BEFORE this commit answers 0 AFTER
+      # it, for every consumer who does not name `#cairn`. `README.md` carries the
+      # announcement; measured at both points on the flip's branch.
       #
       # 🔴 `gitMinimal` ON THE WRAPPER'S PATH, FOR THE SAME REASON THE PYTHON PACKAGE HAS IT.
       # The client invokes `git` by BARE NAME to derive a repo's scope
@@ -658,22 +660,15 @@
       packages = forAll (pkgs:
         {
           cairn = mkCairn pkgs;
-          # 🔴 `default` STAYS THE PYTHON CLIENT. The Go server AND the Go client are
-          # SECOND artefacts during the dual-run, not replacements for anything: making
-          # either the default would change what `nix run github:…/cairn` executes
-          # for every existing consumer, which is a cutover and not a build.
+          # 🔴 `default` IS THE GO CLIENT, AND `cairn` IS STILL THE PYTHON ONE. The
+          # cutover was an OPERATOR DECISION taken after residual 8 closed — never a
+          # gate outcome; see the block above `mkGoClient` for the reverted draft that
+          # read it the other way. `packages.cairn` is NOT deleted here: it is still
+          # the oracle the parity gate measures against, and it goes at P8.
           #
-          # 🔴 THE FLIP'S MEASURED BLOCKER IS CLOSED AND IT IS STILL NOT TAKEN HERE —
-          # see the ⚠ above `mkGoClient` for why those are two claims. The Go client
-          # used to REFUSE every read verb at exit 11 on a multi-instance host, so
-          # `nix run github:…/cairn -- doctor` — the quickstart — would have refused
-          # there (`tests/parity/README.md` residual 8, now routed and deleted). What
-          # remains is residual 7: the flip WIDENS the CLI contract, because
-          # `cairn -verbs`/`-exit-codes` exit 0 with a table here where the oracle's
-          # argparse exits 2 with `usage:`, so a single-dash token that is refused
-          # today starts answering 0 for every consumer who does not name `#cairn`.
-          # That is an operator decision with an announcement, not a build change.
-          default = mkCairn pkgs;
+          # 🔴 THIS LINE AND `apps.default` MOVE TOGETHER OR NOT AT ALL — see the block
+          # above `apps` for why one alone gives two clients under one name.
+          default = mkGoClient pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
         }
@@ -689,17 +684,20 @@
         });
 
       # 🔴 `apps.default` MOVES WITH `packages.default` OR NOT AT ALL — AND TODAY THAT
-      # MEANS NEITHER MOVES. `nix run github:…/cairn` resolves `apps.default` FIRST and
-      # only falls back to `packages.default`'s `mainProgram`, so flipping one alone
-      # would leave `nix run` on one client while `nix profile install` and every flake
-      # input got the other — one name, two clients, differing by which command the
-      # consumer happened to use. Both are the Python client here.
+      # MEANS BOTH HAVE MOVED, TO THE GO CLIENT. `nix run github:…/cairn` resolves
+      # `apps.default` FIRST and only falls back to `packages.default`'s `mainProgram`,
+      # so flipping one alone would leave `nix run` on one client while
+      # `nix profile install` and every flake input got the other — one name, two
+      # clients, differing by which command the consumer happened to use.
+      #
+      # ⚠ `apps.cairn` DELIBERATELY DID NOT MOVE. It is the escape hatch the
+      # announcement names: `nix run github:…/cairn#cairn` is still the Python client,
+      # which is what makes residual 7's widening opt-out-able rather than forced.
       #
       # ⚠ THERE IS NO `apps.cairn-go`, DELIBERATELY. `nix run .#cairn-go` already
       # resolves through `packages.cairn-go`'s `mainProgram = "cairn"` — measured, not
       # assumed — so an entry here would be a third name for one binary with nothing to
-      # buy. `apps.cairn` predates the Go port and is left alone rather than deleted in
-      # a change about the default.
+      # buy, and `apps.default` above is now a fourth.
       apps = forAll (pkgs: {
         cairn = {
           type = "app";
@@ -707,7 +705,7 @@
         };
         default = {
           type = "app";
-          program = "${nixpkgs.lib.getExe (mkCairn pkgs)}";
+          program = "${nixpkgs.lib.getExe (mkGoClient pkgs)}";
         };
       });
 

@@ -167,8 +167,13 @@ anyone editing that path:
     instance's cache, at `d8b858a`, and each answers **exit 11, refusing**, at
     HEAD. HEAD is the right
     answer — the old one read a store the table said was elsewhere — but it is
-    a behaviour change on a one-instance host, and it belongs in whatever
-    announcement the `packages.default` flip carries. `sync`, `ls-entries` and
+    a behaviour change on a one-instance host. 🔴 **This used to add "and it
+    belongs in whatever announcement the `packages.default` flip carries", and
+    that clause is RETRACTED by measurement**: it is a change to the GO client,
+    not to the DEFAULT — the default was the Python oracle, this routing was
+    ported FROM the oracle, and both packaged clients now exit 11 on all three
+    verbs over the same world, so the flip changes nothing here. `README.md`
+    records it as a non-change. `sync`, `ls-entries` and
     `doctor` route NOTHING, so none of it reaches them.
   - 🔴 **AND THAT LAST CLAUSE USED TO READ "take no scope, so none of it
     reaches them", WHICH `--help` FALSIFIES FOR TWO OF THE THREE.** `cairn

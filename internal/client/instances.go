@@ -52,8 +52,16 @@ import (
 // `routes.json = {"alpha-notes": "nowhere"}`: `recall`, `search` and `validate` each answered
 // **exit 0** off the default instance's cache at `d8b858a`, and each answers **exit 11,
 // refusing** at HEAD. HEAD is the correct answer — the old one read a store the table said was
-// somewhere else — but it is not "unchanged", and it belongs in whatever announcement the
-// `packages.default` flip carries. `sync`, `ls-entries` and `doctor` route NOTHING, so none of
+// somewhere else — but it is not "unchanged".
+//
+// 🔴 THIS USED TO ADD "and it belongs in whatever announcement the `packages.default` flip
+// carries", AND THAT CLAUSE IS RETRACTED BY MEASUREMENT. It is a change to THIS client, not to
+// the DEFAULT: the default was the Python oracle and the routing here was ported FROM it, so the
+// oracle already refused. Re-measured on the flip's branch over the same world, both packaged
+// clients exit 11 on all three verbs — so a consumer moving to the new default sees no change
+// here. `README.md`'s announcement records it as a NON-change rather than dropping it.
+//
+// `sync`, `ls-entries` and `doctor` route NOTHING, so none of
 // this reaches them. The same clause is on `lib/README.md`'s bullet, in `tests/parity/README.md`,
 // in `cairn`'s `_instance_for` and on `Sync`.
 //

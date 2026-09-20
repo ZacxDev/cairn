@@ -4,22 +4,23 @@
 // `internal/report`, so byte-identity between pod output and local output is a property of there
 // being one implementation rather than a discipline two implementations are held to.
 //
-// ⚠ THE PYTHON CLIENT IS STILL SHIPPED, IS STILL THE ORACLE, AND IS STILL THE DEFAULT.
-// `tests/parity/harness.py` runs both against ONE cache root and diffs stdout, stderr and
-// exit code per verb and per flag combination. That gate is green, and it is NOT sufficient
-// for the cutover: `packages.cairn`/`packages.default` stay the Python client and this binary
-// is `packages.cairn-go` beside them — swapping them is P2's LAST step, not its first, and
-// the plan puts the deletion of Python at P8.
+// ⚠ THIS BINARY IS NOW `packages.default`/`apps.default`, AND THE PYTHON CLIENT IS STILL
+// SHIPPED AND STILL THE ORACLE. The cutover moved which client a consumer gets by default; it
+// deleted nothing. `packages.cairn` remains the Python client, `tests/parity/harness.py` still
+// runs both against ONE cache root and diffs stdout, stderr and exit code per verb and flag
+// combination, and the plan puts the deletion of Python at P8.
 //
-// ⚠ ONE THING THE FLIP STILL CARRIES, DECLARED IN `tests/parity/README.md` RATHER THAN OPEN.
-// Residual 7: `-verbs` and `-exit-codes` exit 0 with a table here where the oracle's argparse
-// exits 2 with `usage:`, so the flip WIDENS the CLI contract at the moment it lands.
+// 🔴 THE GREEN GATE IS NOT WHAT LICENSED THE FLIP, AND SAYING SO IS THE POINT: a branch took it
+// on that reading and was REVERTED. It was taken on an operator decision, after residual 8's
+// closure removed its one MEASURED blocker — "every READ verb here refuses at exit 11 on a host
+// with more than one instance configured", which made `nix run github:…/cairn -- doctor`, the
+// quickstart, refuse on such a host. The read verbs route now and that row is deleted; that is
+// a PRECONDITION, not a licence, and the gate being green never was one.
 //
-// ⚠ AND ONE THAT IT NO LONGER CARRIES, RECORDED SO NOBODY RE-DERIVES THE HOLD FROM AN OLD
-// READING. Residual 8 was "every READ verb here refuses at exit 11 on a host with more than
-// one instance configured", which made `nix run github:…/cairn -- doctor` — the quickstart —
-// refuse on such a host; that was MEASURED, and it is why the flip was held. The read verbs
-// route now, the row is deleted, and what remains is the decision rather than a gap.
+// ⚠ WHAT THE FLIP CARRIED, AND NOW HAS DELIVERED: residual 7's CLI-contract widening. `-verbs`
+// and `-exit-codes` exit 0 with a table here where the oracle's argparse exits 2 with `usage:`,
+// so a single-dash token `nix run github:…/cairn` refused before the flip answers 0 after it,
+// for every consumer who does not name `#cairn`. `README.md` carries the announcement.
 package main
 
 import (
