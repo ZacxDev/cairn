@@ -16,8 +16,11 @@
 # 200), and the job below FAILS unless the Go pod is anonymously pullable, so the
 # "side effect" being avoided was the state this workflow is trying to reach. The
 # retracted reason is recorded rather than deleted so nobody derives it again.
-# What the separate package genuinely COSTS is stated at the visibility step: the
-# first run publishing a NEW package goes red until a one-time manual flip.
+# ⚠ A SECOND PREDICTION IN THIS PARAGRAPH WAS ALSO WRONG — it said the first run
+# publishing a NEW package "goes red until a one-time manual flip". It did not:
+# `cairn-store-go` was created PUBLIC by Actions and its proof passed first time.
+# The separate package's real cost is therefore smaller than stated here, and the
+# retraction with its scope lives at that step.
 #
 # 🔴 AND THE PYTHON HALF RUNS FIRST, WHOLE. Build, controls, both pushes and the
 # anonymous-pull proof for `cairn-store` all complete before the FIRST Go-image
@@ -385,8 +388,10 @@ jobs:
             echo "$out"
             echo
             echo "REFUSING: $ref was PUSHED but cannot be pulled without credentials."
-            echo "  A ghcr package is PRIVATE on first publish and GitHub exposes no"
-            echo "  REST route to change that. It is a ONE-TIME manual step, per package:"
+            echo "  A package created by Actions in a PUBLIC repo has been measured to"
+            echo "  come out PUBLIC, so this is NOT the expected first-publish state --"
+            echo "  something made this one private. GitHub exposes no REST route for"
+            echo "  the flip; it is a ONE-TIME manual step, per package:"
             echo
             echo "    https://github.com/users/${{ github.repository_owner }}/packages/container/cairn-store/settings"
             echo "    -> Danger Zone -> Change visibility -> Public"
@@ -546,14 +551,22 @@ jobs:
             "docker-archive:${{ steps.build-go.outputs.archive }}" \
             "docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.version_tag }}"
 
-      # 🔴🔴 THE FIRST RUN OF THIS STEP IS EXPECTED TO FAIL, AND THAT IS NOT A
-      # BUG IN THE WORKFLOW. `cairn-store-go` is a NEW ghcr package, and a ghcr
-      # package is PRIVATE on first publish. There is no REST route for the
-      # visibility flip, so the push above will succeed, this step will refuse,
-      # and the job will go red until somebody opens:
+      # 🔴 THIS STEP WAS PREDICTED TO FAIL ON ITS FIRST RUN. IT DID NOT, AND THE
+      # RETRACTION IS KEPT SO NOBODY RE-DERIVES THE PREDICTION.
+      # The claim was: `cairn-store-go` is a NEW ghcr package, a ghcr package is
+      # PRIVATE on first publish, so this step refuses until a manual flip.
+      # MEASURED on the first run that ever reached it: the package was created
+      # **public**, this step passed, and an anonymous `skopeo inspect` from an
+      # unauthenticated host answered 200 — against a negative control (an absent
+      # tag) that was refused, so the instrument was not vacuous.
       #
-      #   https://github.com/users/<owner>/packages/container/cairn-store-go/settings
-      #   -> Danger Zone -> Change visibility -> Public
+      # ⚠ SCOPE, because one observation is not a general rule: that was ONE
+      # package, created BY ACTIONS, in a PUBLIC repository. It does NOT
+      # establish what happens for a private repo, for a hand-pushed package, or
+      # for an org-owned one — the visibility a package inherits at creation is
+      # GitHub's behaviour, not this workflow's, and nothing here pins it.
+      # So the refusal below STAYS: it is cheap, and it is the only thing that
+      # would catch the case where the inheritance does not happen.
       #
       # …once, by hand, and re-runs the workflow (`workflow_dispatch` is in the
       # trigger set for exactly this). The same thing happened to `cairn-store`;
