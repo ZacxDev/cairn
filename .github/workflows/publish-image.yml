@@ -1,5 +1,34 @@
-# Publish the server image to a PUBLIC registry, so a cluster that holds no
-# credential for this repository can pull it.
+# Publish the server images to a PUBLIC registry, so a cluster that holds no
+# credential for this repository can pull them.
+#
+# 🔴 TWO PODS, TWO GHCR PACKAGES, ONE WORKFLOW. `packages.server-image` is the
+# PYTHON pod and `packages.server-image-go` is the Go one; they go to
+# `cairn-store` and `cairn-store-go` respectively, never to two tags of one
+# package. The reason is READABILITY OF THE TAG LIST: a package holding one
+# implementation can be pinned by reading it, and a mixed list distinguished only
+# by a tag prefix reads as a mistake to whoever finds it later. Their tag SCHEMES
+# are identical on purpose: `sha-<40-hex>` derived from the same rev, so one
+# revision names one artefact in each package and the two are comparable.
+#
+# 🔴 AN EARLIER DRAFT JUSTIFIED THIS BY VISIBILITY — "sharing a package would flip
+# the Go pod public as a side effect of the Python one" — AND THAT WAS BACKWARDS.
+# `cairn-store` is ALREADY public (measured: an anonymous tag-list read answers
+# 200), and the job below FAILS unless the Go pod is anonymously pullable, so the
+# "side effect" being avoided was the state this workflow is trying to reach. The
+# retracted reason is recorded rather than deleted so nobody derives it again.
+# What the separate package genuinely COSTS is stated at the visibility step: the
+# first run publishing a NEW package goes red until a one-time manual flip.
+#
+# 🔴 AND THE PYTHON HALF RUNS FIRST, WHOLE. Build, controls, both pushes and the
+# anonymous-pull proof for `cairn-store` all complete before the FIRST Go-image
+# step. Nothing in this repository has ever RUN the Go image — `ci.yml` asserts
+# only that it BUILDS, and `flake.nix` says so about its own `fakeRootCommands` —
+# so every Go step here is a FIRST execution. Ordering a first execution in front
+# of the Python publish would gate the pod that is actually deployed on a path
+# that has never run once, which is the same shape as the failure this file was
+# written to fix: seven runs in a row where nothing published because one step
+# nobody had exercised went red. `tests/test_publish_workflow.py` pins the ORDER,
+# not only the membership.
 #
 # 🔴 WHY THIS EXISTS, AND WHAT WAS ACTUALLY MEASURED. `ci.yml`'s `nix` job builds
 # `packages.server-image` and asserts nothing further — its own comment says so:
@@ -85,17 +114,25 @@ jobs:
       # this repository's owner is not: `ZacxDev` is a 404 as a ghcr namespace.
       # Derived rather than hardcoded so a fork publishes into ITS own namespace
       # instead of failing against one it cannot write.
-      - name: derive the image reference and its immutable tag
+      - name: derive the image references and their immutable tag
         id: ref
         run: |
           set -euo pipefail
           owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           image="ghcr.io/$owner/cairn-store"
+          # 🔴 A SECOND PACKAGE, NOT A SECOND TAG OF THE FIRST — and the reason is
+          # the TAG LIST, not visibility. A list mixing two implementations,
+          # separated only by a tag prefix, cannot be read by anyone pinning one.
+          # Do NOT restore the visibility argument: `cairn-store` is already
+          # public, so it was backwards. The header records why.
+          image_go="ghcr.io/$owner/cairn-store-go"
           # The 40-hex commit sha, not the short one. Both are derivable from a
           # rev; only the full one cannot collide, and a registry tag is the
-          # thing a cluster pins for months.
+          # thing a cluster pins for months. ONE tag scheme for both packages, so
+          # a revision names one artefact in each and the two are comparable.
           sha_tag="sha-${{ github.sha }}"
           printf 'image=%s\n' "$image"      >> "$GITHUB_OUTPUT"
+          printf 'image_go=%s\n' "$image_go" >> "$GITHUB_OUTPUT"
           printf 'sha_tag=%s\n' "$sha_tag"  >> "$GITHUB_OUTPUT"
 
           version_tag=""
@@ -112,15 +149,20 @@ jobs:
           printf 'version_tag=%s\n' "$version_tag" >> "$GITHUB_OUTPUT"
 
           echo "image        = $image"
+          echo "image (go)   = $image_go"
           echo "sha tag      = $sha_tag"
           echo "version tag  = ${version_tag:-<none: not a tag push>}"
+
+      # ── THE PYTHON POD. Everything about `cairn-store` — build, control, both
+      # pushes, and the anonymous-pull proof — happens before the first Go step.
+      # ─────────────────────────────────────────────────────────────────────────
 
       # 🔴 ONE BUILD, AND IT IS THE FLAKE'S. A second `docker build` here would
       # be a THIRD way to produce this pod, and the premise of
       # `tests/test_flake_image_matches_dockerfile.py` is that there are two and
       # they are pinned against each other. Publishing the nix output keeps the
       # published artefact inside that pin.
-      - name: build the server image from the flake
+      - name: build the Python server image from the flake
         id: build
         run: |
           set -euo pipefail
@@ -143,6 +185,15 @@ jobs:
       # from a probe wired to nothing. The second command is the positive half:
       # the code IS in the image and imports, so the zero above was measured
       # against a real root.
+      #
+      # 🔴 THE `/data` BLOCK IS PINNED THREE WAYS AND IT USED TO BE PINNED NONE.
+      # MEASURED: deleting it from EITHER pod's control left the whole suite
+      # green. `test_both_image_controls_REFUSE_on_a_non_empty_data_directory`
+      # now reads the PROBE, the BRANCH on `$leaked`, and that branch's exit
+      # code; this step's whole command text is pinned as well. Do not delete or
+      # reword it without reading that test — and note that a variable which
+      # merely EXISTS is not a guard, so moving the measurement out of the `if`
+      # is the same defect as deleting it.
       - name: control — /data is EMPTY in the image, and the code is really there
         run: |
           set -euo pipefail
@@ -205,13 +256,41 @@ jobs:
       # images change without telling anybody. `--inputs-from .` resolves
       # `nixpkgs#` through `flake.lock`, so this is the same nixpkgs everything
       # else here is built from.
+      #
+      # 🔴 AND THE ATTRIBUTE NAMES AN OUTPUT — `.out` — BECAUSE THE BARE ONE
+      # FAILED EVERY SINGLE RUN. MEASURED: `nixpkgs#skopeo` declares
+      # `outputs = ["out" "man"]`, so `nix build … --print-out-paths` prints TWO
+      # store paths and the `-man` one comes FIRST. The earlier step captured that
+      # into `out` and then ran `"$out/bin/skopeo"`, which is a TWO-LINE command —
+      # the runner reported `No such file or directory` and `exit code 127` —
+      # while `printf 'bin=%s/bin/skopeo\n' "$out" >> "$GITHUB_OUTPUT"` wrote a
+      # multi-line value that `$GITHUB_OUTPUT` rejects with `Invalid format`.
+      # Every run of this workflow died here, at this step.
+      #
+      # 🔴 THE SELECTION IS NIX'S, NOT A PARSE OF ITS OUTPUT, AND THAT IS WHAT
+      # MAKES IT STRUCTURAL. Measured at this flake's pinned lock on nix 2.34.8:
+      # `nixpkgs#skopeo` prints 2 lines (`…-man` first), `nixpkgs#skopeo.out`
+      # prints 1, and `$out/bin/skopeo --version` answers `skopeo version 1.24.0`.
+      # The alternatives all parse the same text — "take the last line", "drop
+      # anything ending in `-man`", or probe the printed candidates for an
+      # executable `bin/skopeo` — and every one of them is a guess that a `dev`
+      # output, a changed output order or a platform-specific `debug` output can
+      # walk past. None of those change what `.out` NAMES.
+      # (`nixpkgs#skopeo^out` selects the same output; the attribute-path
+      # spelling is older and needs no shell quoting, which is why it is used.)
+      #
+      # `--version` stays: it is the positive control that the resolved path is
+      # really a skopeo, and no amount of correct selection asserts that.
       - name: pin skopeo to the flake's nixpkgs
         id: skopeo
         run: |
           set -euo pipefail
-          out=$(nix build --inputs-from . nixpkgs#skopeo --no-link --print-out-paths)
-          printf 'bin=%s/bin/skopeo\n' "$out" >> "$GITHUB_OUTPUT"
-          "$out/bin/skopeo" --version
+          out=$(nix build --inputs-from . nixpkgs#skopeo.out \
+                  --no-link --print-out-paths)
+          bin="$out/bin/skopeo"
+          printf 'bin=%s\n' "$bin" >> "$GITHUB_OUTPUT"
+          echo "skopeo = $bin"
+          "$bin" --version
 
       # `GITHUB_TOKEN`, not a stored secret. The token is scoped to this
       # repository and expires with the run, so there is nothing here for a
@@ -220,7 +299,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
-            | ${{ steps.skopeo.outputs.bin }} login ghcr.io \
+            | "${{ steps.skopeo.outputs.bin }}" login ghcr.io \
                 -u '${{ github.actor }}' --password-stdin
 
       # 🔴 `docker-archive:` READS THE GZIPPED TAR THE FLAKE PRODUCES DIRECTLY —
@@ -228,18 +307,31 @@ jobs:
       # compressor and skopeo detects it. No decompression step, and in
       # particular no change to the derivation's `compressor`, which would move
       # the artefact that `test_flake_image_matches_dockerfile.py` is pinned to.
-      - name: push the immutable sha tag
+      #
+      # 🔴 THE FOUR PUSH STEPS BELOW ARE PINNED BY THEIR WHOLE NORMALISED COMMAND
+      # TEXT in `tests/test_publish_workflow.py`, not by a keyword. Which archive
+      # goes to which package under which tag is the entire contract, and a guard
+      # on words is walkable by rewording. A cosmetic edit here fails that test;
+      # that is the price of a machine-readable claim, and it is paid on purpose.
+      #
+      # 🔴 AND SO ARE THE FOUR CONTROL STEPS — both `control — …` steps and both
+      # `PROVE …` steps — for the same reason and after a measurement: three of
+      # them were pinned by NOTHING, and mutants that re-aimed the Go proof at
+      # the Python package, deleted either pod's `/data` emptiness check, and
+      # turned a refusal's `exit 1` into `exit 0` each SURVIVED a fully green
+      # suite. Reformatting any of those eight steps now fails a test.
+      - name: push the Python pod's immutable sha tag
         run: |
           set -euo pipefail
-          ${{ steps.skopeo.outputs.bin }} copy --all \
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
             "docker-archive:${{ steps.build.outputs.archive }}" \
             "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}"
 
-      - name: push the version tag, on a tag push only
+      - name: push the Python pod's version tag, on a tag push only
         if: steps.ref.outputs.version_tag != ''
         run: |
           set -euo pipefail
-          ${{ steps.skopeo.outputs.bin }} copy --all \
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
             "docker-archive:${{ steps.build.outputs.archive }}" \
             "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version_tag }}"
 
@@ -253,6 +345,16 @@ jobs:
       # `--no-creds` is the point: it is the same read an unauthenticated cluster
       # makes. The run is still logged in from two steps ago, so without that flag
       # this would pass on THIS job's credentials and prove nothing at all.
+      #
+      # 🔴 AND THE `ref` IS PER-PACKAGE, WHICH NOTHING USED TO SAY. The absent-tag
+      # control below is COUNTED one per package; the reference that must RESOLVE
+      # is reached through `$ref`, one indirection away, and was constrained by
+      # nothing. MEASURED: aiming the GO step's `ref` at this package left the
+      # suite green while the job pushed the Go image and then printed
+      # `ANONYMOUS PULL OK` for `cairn-store`.
+      # `test_each_anonymous_proof_inspects_ITS_OWN_package` now pins each proof
+      # step's `ref`, forbids the other package's expression anywhere in the
+      # step, and requires the printed settings URL to name this step's package.
       - name: PROVE the published image is pullable with NO credentials
         run: |
           set -euo pipefail
@@ -291,6 +393,226 @@ jobs:
             echo
             echo "  Until then no cluster outside this repository can pull this image,"
             echo "  which is the entire reason this workflow exists."
+            exit 1
+          fi
+          echo "$out" | head -20
+          digest=$(printf '%s' "$out" | sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' | head -1)
+          echo
+          echo "ANONYMOUS PULL OK: $ref"
+          echo "digest: $digest"
+          echo "pin this in a deployment: $ref"
+
+      # ── THE GO POD. Nothing below this line runs until the Python pod above is
+      # built, controlled, pushed and proved anonymously pullable. See the 🔴 at
+      # the top of this file: every step from here down is a FIRST execution of an
+      # image nothing in this repository has ever run.
+      # ─────────────────────────────────────────────────────────────────────────
+
+      # 🔴 THE GO POD IS BUILT HERE AND PUBLISHED BELOW; NOTHING DEPLOYS IT YET.
+      # `flake.nix` says the Go image is deployed by nothing, and `ci.yml` asserts
+      # only that it BUILDS. What changes here is publication, not deployment:
+      # `cairn-store-go` gets the same immutable tags as the Python package so
+      # that pointing a pod at it later is a manifest edit rather than a build,
+      # and so the two pods over one revision can be pulled and compared.
+      #
+      # `buildLayeredImage` is single-output, so `--print-out-paths` prints one
+      # line here — unlike `nixpkgs#skopeo` above, which is why that step names
+      # `.out` rather than the bare attribute.
+      - name: build the Go server image from the flake
+        id: build-go
+        run: |
+          set -euo pipefail
+          out=$(nix build .#packages.x86_64-linux.server-image-go \
+                  --no-link --print-out-paths --print-build-logs)
+          printf 'archive=%s\n' "$out" >> "$GITHUB_OUTPUT"
+          echo "archive = $out"
+          ls -l "$out"
+
+      # 🔴 THE GO POD'S OWN CONTROLS, AND WHICH ONES TRANSFER WAS MEASURED RATHER
+      # THAN ASSUMED. Copying the Python control step wholesale is the obvious
+      # move and it is wrong in one specific place:
+      #
+      #   * `/data` is empty — TRANSFERS. Both images report 0, through the same
+      #     `/bin/busybox`: `flake.nix`'s `goServerTools` is `serverTools` plus CA
+      #     roots, so busybox and `PATH=/bin` are present here too.
+      #   * the image RUNS and REFUSES BY NAME with no token source — TRANSFERS.
+      #     The Go server prints the same `subsystem-store-api:` prefix and exits
+      #     non-zero (78, EX_CONFIG — asserted as "non-zero and named" here
+      #     because the exact code is `cmd/cairn-server`'s own printed contract,
+      #     pinned by `main_test.go`, and restating it here would be a second
+      #     spelling of it).
+      #   * the POSITIVE control does NOT transfer. The Python step runs the
+      #     image's own `Cmd[0]` — an interpreter — with `-c 'import …'`. This
+      #     image's `Cmd[0]` is the SERVER BINARY, which has no `-c` and answers
+      #     `flag provided but not defined: -c`. The Go equivalent is the route
+      #     ledger: `cairn-server -routes`, read out of the RUNNING image, which
+      #     is the one claim a build cannot make.
+      #
+      # 🔴 AND IT ASSERTS THE LEDGER IS NON-EMPTY AND THE BINARY EXITED 0 — IT
+      # DOES NOT NAME ROUTES, DELIBERATELY. `AGENTS.md` states that adding a route
+      # moves FOUR ledgers together: `api.DeclaredRoutes()`,
+      # `tests/conformance/requests.json`, the construction check, and
+      # `checks.go-server-declares-its-routes`. Route names written out here would
+      # be a FIFTH spelling that none of those four can see — rename a route and
+      # all four stay green while this job refuses mid-push, after the Python pod
+      # has already been published. The question a publish control exists to
+      # answer is "can this binary ever observe the thing": a zero-line ledger or
+      # a non-zero exit fails loudly here, and WHICH routes are declared is the
+      # four ledgers' claim rather than this one's.
+      #
+      # 🔴 "FAILS LOUDLY" IS AN EXIT CODE, NOT A SENTENCE, AND THAT DISTINCTION
+      # WAS MEASURED. Flipping this step's empty-ledger `exit 1` to `exit 0` left
+      # `REFUSING TO PUBLISH` and `EMPTY` both present and the suite fully green:
+      # the control printed a refusal and published anyway. The guard that
+      # asserted those two words is gone;
+      # `test_no_control_step_can_REFUSE_and_exit_ZERO` reads the `exit`
+      # STATEMENTS of all four control steps and the branch on `$declared`.
+      - name: control — the GO image is EMPTY of store data, declares its routes, and refuses
+        run: |
+          set -euo pipefail
+          loaded=$(docker load -i "${{ steps.build-go.outputs.archive }}" \
+                   | sed -n 's/^Loaded image: //p')
+          echo "loaded = $loaded"
+          test -n "$loaded"
+
+          leaked=$(docker run --rm --entrypoint /bin/busybox "$loaded" \
+                     sh -c 'ls -A /data | wc -l')
+          if [ "$leaked" != "0" ]; then
+            echo "REFUSING TO PUBLISH: /data in the Go image holds $leaked entr(y|ies)."
+            echo "  This image is about to become PUBLIC. Store content must arrive"
+            echo "  at runtime on a volume and must never be in a layer."
+            docker run --rm --entrypoint /bin/busybox "$loaded" sh -c 'ls -A /data'
+            exit 1
+          fi
+          echo "control: /data holds $leaked files (must be 0) — OK"
+
+          # The positive half of that zero: the server binary really is in the
+          # image, it runs, it exits 0, and it declares SOMETHING. The exit code
+          # is captured rather than left to `set -e` so the refusal below can say
+          # WHICH half failed — an empty ledger and a binary that would not start
+          # are different facts about the image.
+          server=$(docker inspect -f '{{index .Config.Cmd 0}}' "$loaded")
+          echo "server (from the image's own Cmd) = $server"
+          set +e
+          routes=$(docker run --rm --entrypoint "$server" "$loaded" -routes)
+          routes_rc=$?
+          set -e
+          declared=$(printf '%s\n' "$routes" | grep -c . || true)
+          echo "$routes"
+          if [ "$routes_rc" -ne 0 ] || [ "$declared" -eq 0 ]; then
+            echo "REFUSING TO PUBLISH: the route ledger is EMPTY, or the binary did"
+            echo "  not exit 0 (rc=$routes_rc, non-blank lines=$declared)."
+            echo "  A command that printed nothing and exited 0 is indistinguishable"
+            echo "  from one wired to nothing, and the /data zero above would then be"
+            echo "  the only measurement left — which an image with no filesystem"
+            echo "  would also satisfy."
+            exit 1
+          fi
+          echo "positive control: the server ran, exited 0 and declared $declared ledger line(s) — OK"
+
+          # …and the image RUNS: with no token source it must refuse for a NAMED
+          # configuration reason and exit non-zero, exactly as the Python pod does.
+          set +e
+          startup=$(docker run --rm "$loaded" 2>&1)
+          rc=$?
+          set -e
+          echo "no-config start: rc=$rc"
+          echo "$startup"
+          if [ "$rc" -eq 0 ]; then
+            echo "REFUSING TO PUBLISH: the Go server exited 0 with no token source."
+            echo "  It is supposed to refuse. A 0 here means the entrypoint is not"
+            echo "  running the server at all."
+            exit 1
+          fi
+          case "$startup" in
+            *"subsystem-store-api:"*) ;;
+            *) echo "REFUSING TO PUBLISH: the refusal did not come from the server"
+               exit 1 ;;
+          esac
+          echo "control: the Go image runs and refuses by name — OK"
+
+      - name: push the Go pod's immutable sha tag
+        run: |
+          set -euo pipefail
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
+            "docker-archive:${{ steps.build-go.outputs.archive }}" \
+            "docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.sha_tag }}"
+
+      - name: push the Go pod's version tag, on a tag push only
+        if: steps.ref.outputs.version_tag != ''
+        run: |
+          set -euo pipefail
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
+            "docker-archive:${{ steps.build-go.outputs.archive }}" \
+            "docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.version_tag }}"
+
+      # 🔴🔴 THE FIRST RUN OF THIS STEP IS EXPECTED TO FAIL, AND THAT IS NOT A
+      # BUG IN THE WORKFLOW. `cairn-store-go` is a NEW ghcr package, and a ghcr
+      # package is PRIVATE on first publish. There is no REST route for the
+      # visibility flip, so the push above will succeed, this step will refuse,
+      # and the job will go red until somebody opens:
+      #
+      #   https://github.com/users/<owner>/packages/container/cairn-store-go/settings
+      #   -> Danger Zone -> Change visibility -> Public
+      #
+      # …once, by hand, and re-runs the workflow (`workflow_dispatch` is in the
+      # trigger set for exactly this). The same thing happened to `cairn-store`;
+      # the step below prints the owner-substituted URL when it refuses.
+      #
+      # 🔴 THE STEP IS NOT SOFTENED FOR THAT. A `continue-on-error` here would
+      # make the first run green and every LATER regression green too — and a
+      # private image and a working one are indistinguishable from inside this
+      # job, which is the whole reason this check exists. An expected failure
+      # that is explained is cheaper than a gate that cannot fail.
+      #
+      # 🔴 AND THAT EXPECTED FAILURE IS WHY THE WHOLE GO HALF RUNS AFTER THE WHOLE
+      # PYTHON ONE, NOT ONLY THIS STEP. An earlier draft put the Go build and the
+      # Go controls in front of the Python push and claimed "it runs last" on the
+      # strength of this step alone — which left the pod that IS deployed unable
+      # to publish if any first-execution Go step went red, the exact failure mode
+      # of the seven runs this file was written to fix.
+      - name: PROVE the published GO image is pullable with NO credentials
+        run: |
+          set -euo pipefail
+          ref='${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.sha_tag }}'
+          skopeo='${{ steps.skopeo.outputs.bin }}'
+
+          # This package's OWN negative control. The Python step's control says
+          # nothing about this registry path: they are two packages with two
+          # visibility settings, and an instrument proved honest about one of
+          # them has not been proved honest about the other.
+          set +e
+          $skopeo inspect --no-creds \
+            "docker://${{ steps.ref.outputs.image_go }}:sha-0000000000000000000000000000000000000000" \
+            >/dev/null 2>&1
+          control_rc=$?
+          set -e
+          if [ "$control_rc" -eq 0 ]; then
+            echo "REFUSING: an anonymous inspect of a tag that does not exist SUCCEEDED."
+            echo "  This check cannot distinguish a public image from anything."
+            exit 1
+          fi
+          echo "negative control: absent tag refused anonymously (rc=$control_rc) — OK"
+
+          set +e
+          out=$($skopeo inspect --no-creds "docker://$ref" 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "$out"
+            echo
+            echo "REFUSING: $ref was PUSHED but cannot be pulled without credentials."
+            echo
+            echo "  🔴 IF THIS IS THE FIRST TIME THE GO PACKAGE HAS EVER PUBLISHED,"
+            echo "     THIS FAILURE IS EXPECTED. A ghcr package is PRIVATE on first"
+            echo "     publish and GitHub exposes no REST route to change that. It is"
+            echo "     a ONE-TIME manual step, per package:"
+            echo
+            echo "    https://github.com/users/${{ github.repository_owner }}/packages/container/cairn-store-go/settings"
+            echo "    -> Danger Zone -> Change visibility -> Public"
+            echo
+            echo "  Then re-run this workflow (workflow_dispatch). Until it is done, no"
+            echo "  cluster outside this repository can pull the Go pod."
             exit 1
           fi
           echo "$out" | head -20

@@ -427,8 +427,15 @@ port, exposed port and every environment variable are derived from the same
 -deps ./cmd/cairn-server` reaches no package that reads `$HOME`).
 `tests/test_flake_go_image_runtime_contract.py` is what keeps it derived, because
 "it is derived" is a property of today's source and a copy is one edit away.
-**Nothing publishes or deploys it**: `publish-image.yml` publishes
-`packages.server-image`, which is this Python pod.
+**It is published, and deployed by nothing** — two separate claims.
+`publish-image.yml` pushes both pods: `packages.server-image` to the
+`cairn-store` ghcr package and `packages.server-image-go` to `cairn-store-go`,
+under one `sha-<40-hex>` tag scheme so a revision names one artefact in each. No
+manifest references the Go one; pointing a pod at it is a separate decision.
+⚠ A ghcr package is PRIVATE on first publish and GitHub exposes no REST route for
+the flip, so the Go package's FIRST publish run is EXPECTED to fail at the
+anonymous-pull proof until an operator does the one-time visibility change the
+step prints, then re-runs via `workflow_dispatch`.
 
 ⚠ **They are not interchangeable in one respect.** The Dockerfile image is
 `python:3.12-slim` and has `python3` on its `PATH`; the flake image's `PATH` is
@@ -437,7 +444,8 @@ path in `Cmd`. So `docker run <image> python3 …` works against one and not the
 other. Read the interpreter out of the image when you need it:
 `docker inspect -f '{{index .Config.Cmd 0}}' <image>`.
 
-⚠ **x86_64 only.** The workflow publishes `packages.x86_64-linux.server-image`.
+⚠ **x86_64 only.** The workflow publishes `packages.x86_64-linux.server-image`
+and `packages.x86_64-linux.server-image-go`.
 The flake also builds `aarch64-linux`, but cross-building it on the runner would
 need emulation, so an arm64 node cannot pull the published tag today.
 

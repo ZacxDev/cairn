@@ -566,11 +566,12 @@
           };
         };
 
-      # 🔴 THE GO POD'S IMAGE. IT IS AN ADDITION, AND UNTIL THIS COMMIT THERE WAS NO
-      # GO SERVER IMAGE AT ALL — `packages.cairn-server-go` is a bare binary package,
-      # and `.github/workflows/publish-image.yml` publishes `packages.server-image`,
-      # which is the PYTHON pod. Nothing here changes either of those. The image this
-      # builds is not published, not deployed, and not referenced by any manifest.
+      # 🔴 THE GO POD'S IMAGE. IT IS AN ADDITION, AND UNTIL IT LANDED THERE WAS NO
+      # GO SERVER IMAGE AT ALL — `packages.cairn-server-go` is a bare binary package.
+      # ⚠ IT IS NOW PUBLISHED: `.github/workflows/publish-image.yml` pushes this output
+      # to the `cairn-store-go` ghcr package beside the Python pod's `cairn-store`,
+      # under the same `sha-<40-hex>` tag scheme. PUBLISHED IS NOT DEPLOYED — no
+      # manifest references it, and the cutover is a separate decision.
       #
       # 🔴 A THIRD BUILD, NOT A THIRD STATEMENT OF THE CONTRACT, AND THAT DISTINCTION
       # IS THE WHOLE DESIGN. `server/README.md` says "do not add a third way to produce
@@ -615,13 +616,25 @@
           # runnable without a mount. No `/home/nonroot`: this pod has no `HOME` — see
           # `serverEnvPythonOnly`.
           #
-          # ⚠ UNGUARDED, AND THE RETRACTED CLAIM WAS THAT A SMOKE TEST WOULD CATCH IT.
-          # Nothing runs this image: `.github/workflows/ci.yml` asserts it BUILDS and
-          # says so in its own comment, and the only smoke run in the repo is on the
-          # PYTHON image. A `chown` mutant survives here with nothing to notice. (The
-          # `mkdir` is not a survivor — dropping it while keeping the `chown` fails the
-          # build.) Whether a PVC mounting over `/data` would mask it is a fact about a
-          # manifest outside this repo and is not verifiable here.
+          # ⚠ THE `chown` IS UNGUARDED, AND THE RETRACTED CLAIM WAS THAT A SMOKE TEST
+          # WOULD CATCH IT. The sentence that used to carry this — "nothing runs this
+          # image" — is NO LONGER TRUE: `.github/workflows/publish-image.yml` runs it
+          # three ways before it publishes. The claim NARROWS rather than lapses,
+          # because none of the three reads OWNERSHIP: `ls -A /data | wc -l` counts
+          # NAMES and a root-owned `/data` is still listable by this uid;
+          # `cairn-server -routes` never touches `/data`; and the no-token start
+          # refuses at `authz.LoadTokens` (78) BEFORE `api.New` reads the store root,
+          # so nothing writes. A `chown` mutant therefore still survives — now with
+          # three smoke runs that structurally cannot notice. `ci.yml` remains a build
+          # assertion only, and says so in its own comment. (The `mkdir` is not a
+          # survivor — dropping it while keeping the `chown` fails the build.) Whether
+          # a PVC mounting over `/data` would mask it is a fact about a manifest
+          # outside this repo and is not verifiable here.
+          #
+          # ⚠ SCOPE OF THAT NARROWING: it was derived by READING the three commands in
+          # the publish workflow's Go control step against `cmd/cairn-server/main.go`'s
+          # startup order, not by building a `chown`-less image and watching the step
+          # stay green. If you close it, close it with a control that reads ownership.
           fakeRootCommands = ''
             mkdir -p ./data
             chown -R ${toString serverUid}:${toString serverUid} ./data
@@ -667,7 +680,8 @@
           # `.github/workflows/publish-image.yml` builds `packages.server-image` by
           # name, `server/README.md` documents it, and consumers pin it. Renaming it to
           # make room for this one would change what gets PUBLISHED, which is a deploy
-          # decision and not a build. Nothing publishes `server-image-go`.
+          # decision and not a build. `server-image-go` is published under its OWN
+          # package name (`cairn-store-go`), which is what keeps that true.
           server-image-go = mkGoServerImage pkgs;
         });
 

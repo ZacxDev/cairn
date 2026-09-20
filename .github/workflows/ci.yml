@@ -41,20 +41,36 @@ jobs:
         run: python3 -m pip install --upgrade pip pytest
 
       # 🔴 THE PUBLISH WORKFLOW'S GUARDS, PROVED TO GO RED BEFORE THE SUITE IS
-      # BELIEVED. `tests/test_publish_workflow.py` pins three properties of
+      # BELIEVED. `tests/test_publish_workflow.py` pins properties of
       # `.github/workflows/publish-image.yml` that no green run can show — that
       # no pull-request event reaches a job holding `packages: write`, that every
-      # published tag is immutable, and that the anonymous-pull check is actually
-      # anonymous — and it pins them with regular expressions over a file whose
+      # published tag is immutable, that the anonymous-pull check is actually
+      # anonymous, that BOTH pods are pushed and each carries its OWN controls,
+      # that the whole PYTHON half runs before the first GO step, and that the
+      # `nix build` resolving skopeo names an OUTPUT rather than the bare
+      # multi-output attribute whose `-man` path prints FIRST (which is what made
+      # every run of this workflow exit 127) — and it pins them with regular
+      # expressions and whole-string equality over a file whose
       # own comments contain every string those expressions look for. That is the
       # easiest kind of guard to write so that it can never fail, and one of them
       # WAS: the `fetch-depth` guard matched the sentence explaining the setting
       # rather than the setting, and survived a mutant that flipped the real
-      # value. Eight mutants, each required to be killed by the test that NAMES
-      # its property; a kill by any other test is reported MISATTRIBUTED. It runs
+      # value — and a later blind audit found four more, every one of them
+      # measured SURVIVED against a fully green suite: the Go anonymous-pull
+      # proof re-aimed at the PYTHON package, the `/data`-is-empty control
+      # deleted from EITHER pod, and a refusal whose `exit 1` became `exit 0`
+      # while both its words survived. The four control steps are now pinned by
+      # their whole normalised command text, the way the four push steps are.
+      #
+      # 🔴 THE COUNT ON THE STEP NAME IS PINNED TO `MUTANTS` BY
+      # `tests/test_control_mutant_count_is_pinned.py`. The authz battery's
+      # number went stale twice in this same file, once in a step NAME — which
+      # is the copy a reader sees in the Actions UI — so this one is not left to
+      # prose. 19 mutants, each required to be killed by the test that NAMES its
+      # property; a kill by any other test is reported MISATTRIBUTED. It runs
       # BEFORE the suite because a suite green over an inert guard is the thing
-      # it exists to rule out, and it takes about four seconds.
-      - name: prove every publish-workflow guard can go RED (8 mutants)
+      # it exists to rule out, and it takes about six seconds.
+      - name: prove every publish-workflow guard can go RED (19 mutants)
         run: python3 tests/publish_workflow_mutants.py
 
       # 🔴 READ THE COLLECTED COUNT, NOT JUST THE EXIT CODE. pytest can collect
