@@ -43,85 +43,162 @@ func (e Env) host() string {
 // — exit non-zero, naming the host. A `sync` that exited 0 on an outage is how a timer reports
 // success forever while the cache silently ages out.
 //
-// 🔴 THE FOUR READ VERBS BELOW PASS `DefaultAlias` EXPLICITLY, AND THAT IS A CLAIM RATHER
-// THAN A PLACEHOLDER. Each is guarded by `RefuseUnportedMultiInstance`, so the only host that
-// reaches them has exactly one instance and `personal` is the only answer. Spelling it out is
-// what makes a future caller that drops the guard — or adds a fifth read verb — write down
-// which store it means, instead of inheriting the default from a function that hid it.
+// 🔴 EVERY CONFIGURED INSTANCE, NOT THE ROUTED ONE. `sync` takes no scope, so it has nothing
+// to route — and refreshing one of two instances while reporting success would leave the other
+// silently ageing, which is the failure this function's own contract exists to prevent, one
+// instance over. The exit code is the WORST of the walk: one reachable store must never make a
+// second one that is down look measured.
 func Sync(env Env, opts Options) (int, error) {
-	if code, stop := RefuseUnportedMultiInstance(env, "sync"); stop {
-		return code, nil
-	}
-	// 🔴 `scope=""`, ALWAYS. `--scope` used to be threaded through here, which REPLACED THE
-	// SHARED CACHE with a one-scope copy: measured, a scoped run took the cache from 305
-	// entries to 2, after which an offline recall of any other scope printed "the store has
-	// no 'other-scope/' directory" at exit 0 — a claim about the STORE derived from a
-	// filtered cache. The server keeps `?scope=`; it is a legitimate API capability that may
-	// not narrow THIS cache.
-	state, err := ResolveState(opts.Cache, false, "", opts.Timeout, DefaultAlias)
+	routing, err := Discover(nil)
 	if err != nil {
 		return 0, err
 	}
-	if state.Name == StateLive {
-		fmt.Fprintln(env.Stdout, Banner(state.Name, state.Detail))
-		return ExitOK, nil
+	if refusal := refuseSharedCache(env, routing, opts, "sync"); refusal != 0 {
+		return refusal, nil
 	}
-	fmt.Fprintln(env.Stderr, Banner(state.Name, state.Detail))
-	if state.ExitHint != 0 {
-		return state.ExitHint, nil
+	worst := ExitOK
+	for _, instance := range routing.Instances {
+		label := instanceLabel(routing, instance.Alias)
+		cache, cacheErr := instanceCache(opts, instance.Alias)
+		if cacheErr != nil {
+			return 0, cacheErr
+		}
+		// 🔴 `scope=""`, ALWAYS. `--scope` used to be threaded through here, which REPLACED
+		// THE SHARED CACHE with a one-scope copy: measured, a scoped run took the cache from
+		// 305 entries to 2, after which an offline recall of any other scope printed "the
+		// store has no 'other-scope/' directory" at exit 0 — a claim about the STORE derived
+		// from a filtered cache. The server keeps `?scope=`; it is a legitimate API
+		// capability that may not narrow THIS cache.
+		//
+		// 🔴 AND THE ALIAS IS THREADED, NOT JUST THE CACHE PATH. `ResolveState` FETCHES as
+		// well as unpacks, so handing it instance N's cache root while it loads the DEFAULT
+		// instance's credentials writes the default instance's snapshot into every other
+		// instance's cache — the exact damage `refuseSharedCache` exists to prevent,
+		// arriving through the code path rather than through `--cache`.
+		state, stateErr := ResolveState(cache, false, "", opts.Timeout, instance.Alias)
+		if stateErr != nil {
+			return 0, stateErr
+		}
+		if state.Name == StateLive {
+			fmt.Fprintln(env.Stdout, BannerNamed(state.Name, state.Detail, label))
+			continue
+		}
+		fmt.Fprintln(env.Stderr, BannerNamed(state.Name, state.Detail, label))
+		if state.ExitHint != 0 {
+			worst = max(worst, state.ExitHint)
+		} else {
+			worst = max(worst, ExitRefreshFailed)
+		}
 	}
-	return ExitRefreshFailed, nil
+	return worst, nil
 }
 
-// LsEntries prints one `<scope>/<entry>.md` per line.
+// LsEntries prints one `<scope>/<entry>.md` per line — per instance when there is more than
+// one.
+//
+// 🔴 THE INSTANCE PREFIX IS A `[alias] ` ON THE LINE, NOT A THIRD PATH SEGMENT. A consumer
+// splits these on `/` expecting exactly two parts; making it `alias/scope/entry.md` would
+// silently re-point every such split at the wrong field. The prefix is absent entirely on a
+// single-instance host.
 func LsEntries(env Env, opts Options) (int, error) {
-	if code, stop := RefuseUnportedMultiInstance(env, "ls-entries"); stop {
-		return code, nil
-	}
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
+	routing, err := Discover(nil)
 	if err != nil {
 		return 0, err
 	}
-	fmt.Fprintln(env.Stderr, Banner(state.Name, state.Detail))
-	if state.ExitHint != 0 {
-		return state.ExitHint, nil
+	if refusal := refuseSharedCache(env, routing, opts, "ls-entries"); refusal != 0 {
+		return refusal, nil
 	}
-	matches, _ := filepath.Glob(filepath.Join(opts.Cache, "*", "*.md"))
-	sort.Strings(matches)
-	for _, path := range matches {
-		fmt.Fprintf(env.Stdout, "%s/%s\n", filepath.Base(filepath.Dir(path)), filepath.Base(path))
+	worst := ExitOK
+	for _, instance := range routing.Instances {
+		label := instanceLabel(routing, instance.Alias)
+		cache, cacheErr := instanceCache(opts, instance.Alias)
+		if cacheErr != nil {
+			return 0, cacheErr
+		}
+		state, stateErr := ResolveState(cache, opts.NoSync, "", opts.Timeout, instance.Alias)
+		if stateErr != nil {
+			return 0, stateErr
+		}
+		fmt.Fprintln(env.Stderr, BannerNamed(state.Name, state.Detail, label))
+		if state.ExitHint != 0 {
+			worst = max(worst, state.ExitHint)
+			continue
+		}
+		prefix := ""
+		if label != "" {
+			prefix = "[" + label + "] "
+		}
+		matches, _ := filepath.Glob(filepath.Join(cache, "*", "*.md"))
+		sort.Strings(matches)
+		for _, path := range matches {
+			fmt.Fprintf(env.Stdout, "%s%s/%s\n", prefix,
+				filepath.Base(filepath.Dir(path)), filepath.Base(path))
+		}
 	}
-	return ExitOK, nil
+	return worst, nil
 }
 
 // Report is `recall` and `search` — ONE function, because the state handling, the scope
 // derivation, the banner and the exit passthrough are identical and three of them rendered
 // differently when they were separate.
 func Report(env Env, opts Options, isSearch bool) (int, error) {
-	if code, stop := RefuseUnportedMultiInstance(env, "recall/search"); stop {
-		return code, nil
+	routing, err := Discover(nil)
+	if err != nil {
+		return 0, err
 	}
+	// 🔴 `--all-scopes` NAMES NO SCOPE, SO IT IS NOT ROUTED — IT FANS OUT. Asking the routing
+	// table about this repo's scope here would refuse a fleet-wide search because the scope
+	// the caller did not name is unregistered, which is a refusal about a question nobody
+	// asked.
+	if isSearch && opts.AllScopes && routing.MultiInstance() {
+		return searchEveryInstance(env, opts, routing)
+	}
+
+	// 🔴 THE SCOPE IS DERIVED BEFORE THE SYNC, BECAUSE IT DECIDES WHICH STORE TO SYNC. The
+	// failure ORDER is preserved deliberately: a store that cannot be read is still reported
+	// before a scope that cannot be derived, because that is what this command has always
+	// done and the two are independent. That is why `ScopeOrReason` returns the sentence
+	// instead of printing it.
+	scope, scopeReason := ScopeOrReason(opts.Scope, opts.Repo)
+
+	// No scope means nothing to route: the default instance is the one this host has always
+	// read, the default cache root is what `--cache` already resolved, and the usage error
+	// below is the real answer. 🔴 UNLABELLED EVEN ON A MULTI-INSTANCE HOST — the run is
+	// about to refuse, and naming an instance it did not choose would be a claim about a
+	// read that never happened.
+	alias, label, cache := DefaultAlias, "", opts.Cache
+	if scopeReason == "" {
+		// 🔴 BEFORE THE NETWORK. Nothing is fetched, nothing is written and no cache is
+		// touched: the client does not know where this scope lives, so any store it
+		// contacted would be a guess. The `*UnroutedScope` escapes to `Run`, which is the
+		// ONE spelling of the refusal.
+		var routeErr error
+		alias, label, cache, routeErr = readInstance(opts, scope)
+		if routeErr != nil {
+			return 0, routeErr
+		}
+	}
+
 	// 🔴 SYNC THE WHOLE STORE, NEVER `scope=opts.Scope`. A scope-filtered cache makes the
 	// reader answer `scope-absent` for every scope that was simply not fetched —
 	// indistinguishable, in the output, from a scope the store has never held.
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
+	state, err := ResolveState(cache, opts.NoSync, "", opts.Timeout, alias)
 	if err != nil {
 		return 0, err
 	}
 	if state.ExitHint != 0 {
-		fmt.Fprintln(env.Stderr, Banner(state.Name, state.Detail))
+		fmt.Fprintln(env.Stderr, BannerNamed(state.Name, state.Detail, label))
 		return state.ExitHint, nil
 	}
-
-	scope := ResolveScope(opts.Scope, opts.Repo, env.Stderr)
-	if scope == "" {
+	if scopeReason != "" {
+		fmt.Fprintln(env.Stderr, scopeReason)
 		return ExitUsage, nil
 	}
 
-	var text, status, label string
+	var text, status, exitLabel string
 	var malformed []store.MalformedEntry
 	if isSearch {
-		rep, searchErr := report.Search(opts.Cache, report.SearchOptions{
+		rep, searchErr := report.Search(cache, report.SearchOptions{
 			Scope:     scope,
 			Query:     opts.Query,
 			Context:   report.ContextBullet,
@@ -132,12 +209,15 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 		if searchErr != nil {
 			return 0, searchErr
 		}
-		text = rep.RenderText(env.host(), nil)
+		text = rep.RenderText(env.host(), nil, label)
 		status, malformed = rep.Status, rep.Malformed
-		// 🔴 SEARCH USES ITS OWN LABEL. `SearchReport.Label()` names the scopes SEARCHED;
+		// 🔴 SEARCH USES ITS OWN EXIT LABEL. `SearchReport.Label()` names the scopes SEARCHED;
 		// passing the query instead made the reader's failure sentence say "`lease` holds 1
 		// entry file" — naming the search term as if it were a scope path.
-		label = rep.Label()
+		// ⚠ IT IS NOT THE INSTANCE LABEL. Two things called `label` met here when the read
+		// verbs learned to route; they are the reader's exit operand and the printed alias,
+		// and swapping them would put a scope path in a caveat and a scope set in an alias.
+		exitLabel = rep.Label()
 		if state.Name == StateLive && isEmptyStatus(rep.Status) {
 			state = emptyState(state)
 		}
@@ -187,22 +267,22 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 			fmt.Fprintf(env.Stderr, "cairn: %s\n", vErr)
 			return ExitUsage, nil
 		}
-		rep, recallErr := report.Recall(opts.Cache, recallOpts, store.Unrestricted())
+		rep, recallErr := report.Recall(cache, recallOpts, store.Unrestricted())
 		if recallErr != nil {
 			return 0, recallErr
 		}
-		text = rep.RenderText(env.host(), nil)
+		text = rep.RenderText(env.host(), nil, label)
 		status, malformed = rep.Status, rep.Malformed
-		// ⚠ `label` IS DERIVED, NOT AN ATTRIBUTE. The recall report has no label field, and
-		// assuming it did was an AttributeError that took every recall to exit 1 on the
+		// ⚠ THE EXIT LABEL IS DERIVED, NOT AN ATTRIBUTE. The recall report has no label field,
+		// and assuming it did was an AttributeError that took every recall to exit 1 on the
 		// Python side. Derived exactly as the pod's own `Reader.Recall` derives it.
-		label = rep.Scope + "/"
+		exitLabel = rep.Scope + "/"
 		if state.Name == StateLive && isEmptyStatus(rep.Status) {
 			state = emptyState(state)
 		}
 	}
 
-	fmt.Fprintln(env.Stdout, Banner(state.Name, state.Detail))
+	fmt.Fprintln(env.Stdout, BannerNamed(state.Name, state.Detail, label))
 	fmt.Fprintln(env.Stdout)
 	fmt.Fprintln(env.Stdout, text)
 	// 🔴 THE READER'S OWN EXIT CODE, PASSED THROUGH. Hardcoding 0 here was a measured defect:
@@ -213,11 +293,78 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 	// 🔴 AND THE WARNING SENTENCE IS FORWARDED. `report.ExitFor` RETURNS it instead of
 	// writing to stderr from inside the library (the one deliberate difference from the
 	// oracle in that path), so the caller that drops it is the caller that loses the signal.
-	code, warning := report.ExitFor(status, label, malformed)
+	code, warning := report.ExitFor(status, exitLabel, malformed)
 	if warning != "" {
 		fmt.Fprintln(env.Stderr, warning)
 	}
 	return code, nil
+}
+
+// searchEveryInstance is `search --all-scopes` across every configured instance.
+//
+// 🔴 A PARTIAL RESULT IS A LIE, SO AN UNREAD INSTANCE IS LOUD AND NON-ZERO. "No matches" from
+// a fan-out that silently skipped a store is the same silent zero this client was built to
+// prevent, one layer up: the caller concludes the thing is not recorded anywhere. Hits that
+// WERE found are still printed — throwing away real answers to report a defect is its own harm
+// — but the run exits non-zero and names the instance it could not read.
+//
+// 🔴 AND EACH SECTION NAMES ITS INSTANCE UNCONDITIONALLY. This function only runs when there
+// is more than one, so there is no single-instance case to keep unlabelled here — and without
+// the name, two hits with the same ref from two stores are indistinguishable, which is the
+// question a second instance creates.
+func searchEveryInstance(env Env, opts Options, routing Routing) (int, error) {
+	if refusal := refuseSharedCache(env, routing, opts, "search --all-scopes"); refusal != 0 {
+		return refusal, nil
+	}
+	worst := ExitOK
+	var unread []string
+	for _, instance := range routing.Instances {
+		cache, cacheErr := instanceCache(opts, instance.Alias)
+		if cacheErr != nil {
+			return 0, cacheErr
+		}
+		state, stateErr := ResolveState(cache, opts.NoSync, "", opts.Timeout, instance.Alias)
+		if stateErr != nil {
+			return 0, stateErr
+		}
+		if state.ExitHint != 0 {
+			fmt.Fprintln(env.Stderr, BannerNamed(state.Name, state.Detail, instance.Alias))
+			unread = append(unread, instance.Alias)
+			worst = max(worst, state.ExitHint)
+			continue
+		}
+		// 🔴 `Scope: ""` WITH `AllScopes`, WHICH IS THE ORACLE'S CALL EXACTLY. The caller
+		// named no scope; passing one derived from the repo would narrow the "elsewhere"
+		// accounting of a fleet-wide search to a scope nobody asked about.
+		rep, searchErr := report.Search(cache, report.SearchOptions{
+			Scope:     "",
+			Query:     opts.Query,
+			Context:   report.ContextBullet,
+			Threshold: report.DefaultThreshold,
+			MaxHits:   report.DefaultMaxHits,
+			AllScopes: true,
+		}, store.Unrestricted())
+		if searchErr != nil {
+			return 0, searchErr
+		}
+		fmt.Fprintln(env.Stdout, BannerNamed(state.Name, state.Detail, instance.Alias))
+		fmt.Fprintln(env.Stdout)
+		fmt.Fprintln(env.Stdout, rep.RenderText(env.host(), nil, instance.Alias))
+		fmt.Fprintln(env.Stdout)
+		code, warning := report.ExitFor(rep.Status, rep.Label(), rep.Malformed)
+		if warning != "" {
+			fmt.Fprintln(env.Stderr, warning)
+		}
+		worst = max(worst, code)
+	}
+	if len(unread) > 0 {
+		fmt.Fprintf(env.Stderr, "🔴 cairn: PARTIAL — %d of %d instance(s) could not be read "+
+			"(%s). Anything printed above is what the instances that ANSWERED hold; it is "+
+			"NOT an answer about the ones that did not, and 'no matches' above does not mean "+
+			"the query matches nothing.\n", len(unread), len(routing.Instances),
+			joinComma(unread))
+	}
+	return worst, nil
 }
 
 func isEmptyStatus(status string) bool {
@@ -242,15 +389,30 @@ func emptyState(state State) State {
 // "malformed" means. The Python version once shelled a separate authoring tool's `--validate`,
 // which was a second implementation of the same predicate — exactly the shape that lets a file
 // validate clean and then fail to render.
+// 🔴 ONE INSTANCE, ROUTED BY `--scope`/`--repo` LIKE A READ. Validation is a claim about the
+// BYTES of a particular cache, so it names which one rather than merging several — a merged
+// verdict could not say where the malformed file is. With no scope at all the default instance
+// is the answer, which is what `RepoScope` swallowing its error is for.
 func Validate(env Env, opts Options) (int, error) {
-	if code, stop := RefuseUnportedMultiInstance(env, "validate"); stop {
-		return code, nil
+	scope := opts.Scope
+	if scope == "" {
+		scope = RepoScope(opts.Repo)
 	}
-	state, err := ResolveState(opts.Cache, opts.NoSync, "", opts.Timeout, DefaultAlias)
+	var alias, label, cache string
+	var err error
+	if scope != "" {
+		alias, label, cache, err = readInstance(opts, scope)
+	} else {
+		alias, label, cache, err = defaultInstance(opts)
+	}
 	if err != nil {
 		return 0, err
 	}
-	fmt.Fprintln(env.Stderr, Banner(state.Name, state.Detail))
+	state, err := ResolveState(cache, opts.NoSync, "", opts.Timeout, alias)
+	if err != nil {
+		return 0, err
+	}
+	fmt.Fprintln(env.Stderr, BannerNamed(state.Name, state.Detail, label))
 	if state.ExitHint != 0 {
 		return state.ExitHint, nil
 	}
@@ -259,12 +421,12 @@ func Validate(env Env, opts Options) (int, error) {
 	// CHECKED — a zero here is NOT a clean bill of health" while exiting 0. With no `--scope`
 	// we validate EVERY scope in the cache.
 	var held []string
-	entries, readErr := os.ReadDir(opts.Cache)
+	entries, readErr := os.ReadDir(cache)
 	if readErr != nil {
 		return 0, readErr
 	}
 	for _, e := range entries {
-		info, statErr := os.Stat(filepath.Join(opts.Cache, e.Name()))
+		info, statErr := os.Stat(filepath.Join(cache, e.Name()))
 		if statErr != nil || !info.IsDir() {
 			continue
 		}
@@ -292,13 +454,13 @@ func Validate(env Env, opts Options) (int, error) {
 		scopes = held
 	}
 	if len(scopes) == 0 {
-		fmt.Fprintf(env.Stderr, "cairn: nothing to validate — %s holds no scopes\n", opts.Cache)
+		fmt.Fprintf(env.Stderr, "cairn: nothing to validate — %s holds no scopes\n", cache)
 		return ExitUnreachableNoCache, nil
 	}
 
 	worst := ExitOK
 	for _, scope := range scopes {
-		index, loadErr := store.LoadIndex(opts.Cache, store.Collect,
+		index, loadErr := store.LoadIndex(cache, store.Collect,
 			store.VisibleScopeSet([]string{scope}))
 		if loadErr != nil {
 			return 0, loadErr
@@ -311,7 +473,7 @@ func Validate(env Env, opts Options) (int, error) {
 		// files at all — and this command is the post-write check the write protocol
 		// MANDATES, so that zero was being read as "the entry I just wrote is fine". A count
 		// that MOVES with the store is what makes the zero mean something.
-		checked, _ := filepath.Glob(filepath.Join(opts.Cache, scope, "*.md"))
+		checked, _ := filepath.Glob(filepath.Join(cache, scope, "*.md"))
 		fmt.Fprintf(env.Stdout, "cairn: %s: %d of %d entry file(s) parse, %d malformed\n",
 			scope, len(checked)-len(index.Malformed), len(checked), len(index.Malformed))
 		if len(index.Malformed) > 0 && ExitCorrupt > worst {

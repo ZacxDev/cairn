@@ -21,32 +21,25 @@ import (
 // in this repository: a public tool that shipped somebody's taxonomy would be publishing their
 // org chart.
 //
-// 🔴 WHAT IS PORTED HERE AND WHAT IS NOT, STATED RATHER THAN LEFT TO BE FOUND — AND THE
-// WRITE/READ SPLIT IS THE PART TO GET RIGHT, BECAUSE THIS PARAGRAPH USED TO GET IT BACKWARDS.
-// It read "the READ and WRITE verbs do NOT yet consult `AliasFor`", which was false of the
-// writes on the very commit that introduced it: `writeInstance` calls `AliasFor` and `append`,
-// `put` and `create` all go through it. A wrong sentence in the header of the file holding the
-// function it is wrong about is the shape that stops anyone looking — and it is the premise a
-// maintainer would have carried into `Put`'s revision derivation, which really was reading the
-// default instance. What is true:
+// 🔴 EVERY VERB ROUTES NOW, AND THE READ/WRITE SPLIT IS A DIFFERENCE IN *LABELLING* RATHER
+// THAN IN ROUTING. This paragraph has twice said something false about that split — first that
+// the writes did not consult `AliasFor` (they always did), then that the reads refused
+// outright (they did, until declared difference 8 in `tests/parity/README.md` was closed) — so
+// it states the mechanism rather than a status:
 //
-//   - `routes` and `ExitUnrouted` are ported. The verb ledger and the shared exit-code ledger
-//     read this binary's own tables, and a Go client missing either would leave both gates
-//     green over a client that had silently lost a capability.
-//   - **The WRITE verbs ROUTE.** `append`, `put` and `create` resolve the scope through
-//     `AliasFor`, load the ROUTED instance's credentials, sync the ROUTED instance's cache,
-//     and print `instance=<alias>` unconditionally. `tests/parity/README.md` row 8 has said
-//     so since the writes landed; this header now agrees with it.
-//   - **The READ verbs do NOT.** `sync`, `ls-entries`, `recall`/`search`, `validate` and
-//     `doctor` call `RefuseUnportedMultiInstance` instead: routing a read needs the caveat's multi-instance
-//     clause inside `internal/report`, which is the renderer the POD shares and which has no
-//     instance context at all. Declared difference 8 in `tests/parity/README.md` carries the
-//     closing condition. Until it closes, a multi-instance host reads with the Python client.
-//   - ⚠ **`routes` is deliberately NOT behind that refusal**, and `put` is not either. Both
-//     route. `routes --check` is the verb an operator runs WHILE STANDING UP a second
-//     instance, so a refusal there would disable the grading tool at the one moment it is the
-//     tool for; the read verbs are different because they have a working alternative and no
-//     role in that moment.
+//   - **The WRITE verbs ROUTE and ALWAYS PRINT THE ALIAS.** `append`, `put` and `create`
+//     resolve the scope through `AliasFor`, load the ROUTED instance's credentials, sync the
+//     ROUTED instance's cache, and print `instance=<alias>` unconditionally — at one instance
+//     and at many. "Where did that bullet go" is a question about a DURABLE record, asked
+//     later, by someone who no longer has the terminal.
+//   - **The READ verbs ROUTE and label CONDITIONALLY.** `recall`/`search` and `validate`
+//     resolve their scope through `AliasFor`; `sync`, `ls-entries` and `doctor` take no scope
+//     and walk EVERY configured instance. All six print the alias only when
+//     `MultiInstance()` — see `readInstance`/`instanceLabel` in `routes.go`. That emptiness is
+//     the compatibility guarantee: a one-instance host's bytes are unchanged.
+//   - **`routes` reports rather than routes.** It prints what is configured and, with
+//     `--check`, grades the table against every instance. It is the verb an operator runs
+//     WHILE STANDING UP a second instance, so it must keep working before any table is right.
 
 const (
 	// ConfigEnv names the DEFAULT instance's config file. It predates instances and keeps
@@ -330,41 +323,6 @@ func (r Routing) Check(scopes []string) ([]string, []string, error) {
 		}
 	}
 	return problems, notes, nil
-}
-
-// RefuseUnportedMultiInstance is the guard that keeps this port's PARTIAL routing from being a
-// silent wrong answer. It returns `(exit code, true)` when the caller must stop.
-//
-// 🔴 A HALF-PORTED FEATURE MUST FAIL LOUD, NOT DEGRADE. The WRITE verbs route — they had to,
-// because a write prints `instance=<alias>` and the parity gate compares that byte for byte — but
-// the READ verbs do not: `recall` and `search` would need the caveat's multi-instance clause
-// inside `internal/report`, which is the renderer the POD shares and which has no instance
-// context at all, and `sync`/`ls-entries`/`doctor` would need to walk every instance. A Go client
-// that read the DEFAULT instance on a multi-instance host would answer confidently out of the
-// wrong store — the exact failure the routing refusal exists to prevent, arriving as a digest
-// rather than as an error.
-//
-// ⚠ IT IS INVISIBLE ON A ONE-INSTANCE HOST, which is every host today and every row of the
-// parity gate. That is the point: the narrowing costs nothing where nothing is configured.
-//
-// Closing condition: declared difference 8 in `tests/parity/README.md` — the read verbs take an
-// instance, `internal/report` takes an instance-aware caveat, and this function is deleted with
-// the difference.
-func RefuseUnportedMultiInstance(env Env, verb string) (int, bool) {
-	routing, err := Discover(nil)
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "🔴 cairn: REFUSING — %s\n", err)
-		return ExitUnrouted, true
-	}
-	if !routing.MultiInstance() {
-		return 0, false
-	}
-	fmt.Fprintf(env.Stderr, "🔴 cairn: REFUSING — this host has %d instances configured (%s) and "+
-		"this client's `%s` does not route reads yet: it would read the `%s` instance and say "+
-		"nothing about the others, which is a confident answer out of a store nobody chose. "+
-		"Run the Python `cairn` on a multi-instance host.\n",
-		len(routing.Instances), strings.Join(routing.Aliases(), ", "), verb, DefaultAlias)
-	return ExitUnrouted, true
 }
 
 // envLookup is the environment as a function, so a test can supply one without touching the

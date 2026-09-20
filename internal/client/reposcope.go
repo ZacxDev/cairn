@@ -124,25 +124,54 @@ func RepoPathMissingMessage(path string) string {
 		"git at all.", lead, store.PyRepr(path))
 }
 
-// ResolveScope is `args.scope or scope_for_repo(args.repo)`, plus the one refusal sentence
-// both the read and the write halves print. It returns the scope, or "" having already put
-// the reason on stderr.
+// ScopeOrReason is `args.scope or scope_for_repo(args.repo)` and the refusal SENTENCE, with
+// nothing printed. `(scope, "")` on success, `("", <sentence>)` on failure.
 //
 // 🔴 A GIT FAILURE IS A USAGE ERROR HERE, NOT A CRASH. `cairn recall` in a plain directory
 // used to exit 1 with a traceback, which made the usage path unreachable for the commonest way
 // to hit it.
-func ResolveScope(scope, repo string, stderr *os.File) string {
+//
+// 🔴 IT RETURNS THE SENTENCE RATHER THAN PRINTING IT BECAUSE THE READ PATH DEFERS IT, AND THE
+// ORDER IS OBSERVABLE. The oracle's `_report` derives the scope FIRST (the scope decides which
+// instance, and therefore which store, to sync) but reports a store that could not be read
+// BEFORE a scope that could not be derived — two independent failures whose order is part of
+// the printed contract. A helper that printed from inside would emit them in the wrong order
+// the moment the derivation moved above the sync.
+func ScopeOrReason(scope, repo string) (string, string) {
 	if scope != "" {
-		return scope
+		return scope, ""
 	}
 	derived, err := ScopeForRepo(repo)
 	if err != nil {
-		fmt.Fprintf(stderr, "cairn: could not derive a scope from %s: %s\n"+
-			"       pass --scope explicitly.\n", store.PyRepr(repo), err)
-		return ""
+		return "", fmt.Sprintf("cairn: could not derive a scope from %s: %s\n"+
+			"       pass --scope explicitly.", store.PyRepr(repo), err)
 	}
 	if derived == "" {
-		fmt.Fprintln(stderr, "cairn: --scope is required (no scope could be derived)")
+		return "", "cairn: --scope is required (no scope could be derived)"
+	}
+	return derived, ""
+}
+
+// ResolveScope is `ScopeOrReason` with the sentence already on stderr — the shape the WRITE
+// verbs want, where nothing is deferred. It returns the scope, or "".
+func ResolveScope(scope, repo string, stderr *os.File) string {
+	derived, reason := ScopeOrReason(scope, repo)
+	if reason != "" {
+		fmt.Fprintln(stderr, reason)
+		return ""
+	}
+	return derived
+}
+
+// RepoScope is the scope `--repo` derives, or "" when it cannot be derived.
+//
+// 🔴 IT SWALLOWS THE ERROR ON PURPOSE AND ONLY WHERE THE CALLER HAS A REAL ANSWER FOR THE
+// EMPTY CASE — `validate` falls back to the default instance, because "which cache am I
+// checking" has one sensible answer outside a repo and "where does this write land" does not.
+// The oracle's `_repo_scope` is the same function for the same one caller.
+func RepoScope(repo string) string {
+	derived, err := ScopeForRepo(repo)
+	if err != nil {
 		return ""
 	}
 	return derived

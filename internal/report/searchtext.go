@@ -13,8 +13,11 @@ import (
 //
 // `extraHeader` has the same contract as the recall renderer's: a CLI's read-store stamp
 // belongs in the header block, and a search is a read like any other, so it carries its own
-// freshness too.
-func (r SearchReport) RenderText(host string, extraHeader []string) string {
+// freshness too. So does `instance`: `""` is the single-instance case the pod and every
+// one-instance host pass, and an alias adds the caveat's multi-instance clause. See
+// `RecallReport.RenderText` for why that string is the whole of this package's instance
+// awareness.
+func (r SearchReport) RenderText(host string, extraHeader []string, instance string) string {
 	ctx := "bullet"
 	if r.Context != ContextBullet {
 		ctx = "±" + strconv.Itoa(r.Context) + " raw lines"
@@ -24,7 +27,7 @@ func (r SearchReport) RenderText(host string, extraHeader []string) string {
 			" query=" + store.PyRepr(r.Query) +
 			" threshold=" + twoPlaces(r.Threshold) + " context=" + ctx,
 		"  store: " + r.StoreRoot,
-		hostid.StoreHostLine(host, "  "),
+		hostid.StoreHostLine(host, "  ", instance),
 	}
 	out = append(out, extraHeader...)
 	out = append(out, "  caveat: "+r.Caveat())
@@ -44,7 +47,7 @@ func (r SearchReport) RenderText(host string, extraHeader []string) string {
 		out = append(out, "NOTHING RECORDED YET ON THIS HOST — "+host+"'s store has no `"+
 			r.Scope+"/` directory, so the query was never run. This is NOT 'no matches': "+
 			"nothing was searched, so nothing can be concluded from it.")
-		out = append(out, "  NOT A FACT ABOUT THE FLEET — "+hostid.StoreIsPerHost+". The "+
+		out = append(out, "  NOT A FACT ABOUT THE FLEET — "+hostid.StoreCaveat(instance)+". The "+
 			"other host syncs the SAME hosted store through its own cache, and may already "+
 			"hold `"+r.Scope+"/` where this one has not synced it yet.")
 		out = append(out, "  scopes THIS HOST's store holds: "+joinOrNone(r.KnownScopes))

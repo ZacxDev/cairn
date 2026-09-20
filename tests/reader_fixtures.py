@@ -503,6 +503,12 @@ def _recall(case_id: str, why: str, **kwargs) -> dict:
         # and the `…` truncation, which is what makes the port a measurement.
         "focus_paths": kwargs.pop("focus_paths", []),
         "focus_source": kwargs.pop("focus_source", None),
+        # 🔴 `None` IS THE SINGLE-INSTANCE CASE AND IT IS NOT THE SAME AS AN EMPTY STRING
+        # ANYWHERE THAT MATTERS, WHICH IS WHY IT IS DECLARED PER ROW RATHER THAN DEFAULTED
+        # AWAY. Every row that omits it renders the bytes the pod and every one-instance host
+        # produce, so the ~60 rows below are the guard on the compatibility guarantee: a port
+        # that added the clause unconditionally moves all of them.
+        "instance": kwargs.pop("instance", None),
     }
     assert not kwargs, kwargs
     return row
@@ -520,6 +526,8 @@ def _search(case_id: str, why: str, **kwargs) -> dict:
         "max_hits": kwargs.pop("max_hits", rc.DEFAULT_MAX_HITS),
         "all_scopes": kwargs.pop("all_scopes", False),
         "visible": kwargs.pop("visible", None),
+        #: Same contract as `_recall`'s: `None` is the single-instance case.
+        "instance": kwargs.pop("instance", None),
     }
     assert not kwargs, kwargs
     return row
@@ -619,6 +627,23 @@ CASES: list[dict] = [
     # shape a silent empty index renders as, and the sentinel is the only thing that tells a
     # reader "0 entries in nothing" from "0 entries in your scope".
     _search("all-scopes-nothing-visible", "all scopes over an EMPTY allowlist: the searched set is `(none)`, not blank", scope="alpha-notes", query="lease", all_scopes=True, visible=[]),
+    # --- THE CAVEAT'S MULTI-INSTANCE CLAUSE. ------------------------------------------
+    # 🔴 THE FOUR ROWS BELOW ARE THE ONLY ONES THAT PASS AN INSTANCE, AND THEIR VALUE IS
+    # DIFFERENTIAL IN BOTH DIRECTIONS. The clause reaches TWO sentences and they are not the
+    # same sentence: the `host:` line every status prints, and the `NOT A FACT ABOUT THE
+    # FLEET` line only `scope-absent` prints. A port that threaded the alias into one and not
+    # the other would be green on an ordinary digest and wrong on exactly the answer the
+    # clause exists for — an ABSENCE, which on a multi-instance host is also explainable by
+    # the scope living on the other instance. So each kind is measured at BOTH points:
+    # present-scope (host line only) and absent-scope (host line AND fleet line).
+    #
+    # ⚠ `secondary` IS A SYNTHETIC ALIAS AND MUST STAY ONE. It is the same spelling the parity
+    # harness stands its second pod up under, which is deliberate: the two gates then name the
+    # same thing, and neither names anybody's real deployment.
+    _recall("digest-multi-instance", "the caveat's multi-instance clause on an ordinary digest, where the HOST LINE is the only place it appears", scope="alpha-notes", instance="secondary"),
+    _recall("scope-absent-multi-instance", "the same clause where it MATTERS: an absence, so it lands in the `NOT A FACT ABOUT THE FLEET` sentence as well as the host line", scope="ghost-void", instance="secondary"),
+    _search("hit-multi-instance", "the search renderer takes the same alias, and its host line is built from the same seam", scope="alpha-notes", query="lease", instance="secondary"),
+    _search("scope-absent-multi-instance", "and the search side's own fleet sentence, which is a SECOND interpolation and not the recall one", scope="ghost-void", query="lease", instance="secondary"),
 ]
 
 
@@ -698,7 +723,7 @@ def _expect(case: dict, store: Path) -> dict:
             focus_paths=case["focus_paths"],
             focus_source=case["focus_source"],
         )
-        text = rc.render_text(report)
+        text = rc.render_text(report, instance=case["instance"])
         label = f"{report.scope}/"
         malformed = report.malformed
     else:
@@ -712,7 +737,7 @@ def _expect(case: dict, store: Path) -> dict:
             all_scopes=case["all_scopes"],
             visible_scopes=visible,
         )
-        text = rc.render_search(report)
+        text = rc.render_search(report, instance=case["instance"])
         label = report.label
         malformed = report.malformed
 

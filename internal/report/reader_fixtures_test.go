@@ -92,6 +92,13 @@ type fixtureCase struct {
 	FocusPaths  []string `json:"focus_paths"`
 	FocusSource *string  `json:"focus_source"`
 
+	// Instance is the alias the report was read from, and `null` — the single-instance case
+	// — is what the pod and every one-instance host produce. A POINTER rather than a plain
+	// string, so a row that declares nothing and a row that declares the empty string cannot
+	// be confused in this file: the renderer treats `""` as "no instance", and a fixture that
+	// silently supplied one would be testing the wrong branch while looking correct.
+	Instance *string `json:"instance"`
+
 	Expect fixtureExpect `json:"expect"`
 }
 
@@ -158,6 +165,15 @@ func buildFixtureStore(t *testing.T, fx fixtureFile) string {
 	return root
 }
 
+// instanceName is the alias to render with — `""` for a row that declares none, which is the
+// renderer's own spelling of the single-instance case.
+func (c fixtureCase) instanceName() string {
+	if c.Instance == nil {
+		return ""
+	}
+	return *c.Instance
+}
+
 func (c fixtureCase) visibleSet() store.ScopeSet {
 	if c.Visible == nil {
 		return store.Unrestricted()
@@ -165,53 +181,86 @@ func (c fixtureCase) visibleSet() store.ScopeSet {
 	return store.VisibleScopeSet(*c.Visible)
 }
 
+// replayFixtureCase runs ONE row through the exact sequence `internal/client` runs —
+// `Recall`/`Search`, then `RenderText`, then `ExitFor` — and returns it in the pod's own
+// `Rendered` shape so the assertions below are unchanged.
+//
+// 🔴 THE OPTION LADDER IS RUN, AND IT IS THE HANDLER'S RATHER THAN THE RENDERER'S. A fixture
+// row that could not reach the renderer through a real route would be a row measuring
+// something unreachable.
+func replayFixtureCase(t *testing.T, root, host string, tc fixtureCase) (Rendered, error) {
+	t.Helper()
+	switch tc.Kind {
+	case "recall":
+		opts := RecallOptions{Scope: tc.Scope, Limit: tc.Limit, Mode: tc.Mode, Page: tc.Page}
+		if tc.Ref != nil {
+			opts.Ref, opts.HasRef = *tc.Ref, true
+		}
+		opts.FocusPaths = tc.FocusPaths
+		if tc.FocusSource != nil {
+			opts.FocusSource = *tc.FocusSource
+		}
+		if vErr := ValidateRecall(opts); vErr != nil {
+			t.Fatalf("the fixture row does not pass the option ladder: %v", vErr)
+		}
+		rep, err := Recall(root, opts, tc.visibleSet())
+		if err != nil {
+			return Rendered{}, err
+		}
+		code, warning := ExitFor(rep.Status, rep.Scope+"/", rep.Malformed)
+		return Rendered{
+			Status:  rep.Status,
+			Scope:   rep.Scope,
+			Exit:    code,
+			Text:    rep.RenderText(host, nil, tc.instanceName()),
+			Warning: warning,
+		}, nil
+	case "search":
+		opts := SearchOptions{
+			Scope:     tc.Scope,
+			Query:     tc.Query,
+			Context:   tc.Context,
+			Threshold: tc.Threshold,
+			MaxHits:   tc.MaxHits,
+			AllScopes: tc.AllScopes,
+		}
+		if vErr := ValidateSearch(opts); vErr != nil {
+			t.Fatalf("the fixture row does not pass the option ladder: %v", vErr)
+		}
+		rep, err := Search(root, opts, tc.visibleSet())
+		if err != nil {
+			return Rendered{}, err
+		}
+		code, warning := ExitFor(rep.Status, rep.Label(), rep.Malformed)
+		return Rendered{
+			Status:  rep.Status,
+			Scope:   rep.Scope,
+			Exit:    code,
+			Text:    rep.RenderText(host, nil, tc.instanceName()),
+			Warning: warning,
+		}, nil
+	}
+	t.Fatalf("unknown fixture kind %q", tc.Kind)
+	return Rendered{}, nil
+}
+
 func TestTheRenderedBytesMatchTheORACLEOverShapesTheCorpusCannotSend(t *testing.T) {
 	fx := loadFixture(t)
 	root := buildFixtureStore(t, fx)
-	renderer := Reader{Host: func() string { return fx.Host }}
 
+	// ⚠ `Reader` IS NOT USED HERE ANY MORE, AND THE REASON IS THE INSTANCE. `Reader` is the
+	// POD's renderer and it renders with no instance by construction (a pod serves one store),
+	// so a fixture row carrying an alias cannot be replayed through it. The rows are replayed
+	// through the same `Recall`/`Search` + `RenderText` + `ExitFor` sequence `internal/client`
+	// uses, which is what the CLI-only rows below were always measuring anyway.
+	//
+	// 🔴 `Reader` THEREFORE NEEDS ITS OWN COVERAGE, AND IT HAS IT:
+	// `TestTheSERVERSRendererNeverAddsTheInstanceClause` below replays a row through BOTH and
+	// pins that the pod's bytes are the no-instance bytes. Without that, moving off `Reader`
+	// here would have quietly dropped the pod's renderer out of this file's measurement.
 	for _, tc := range fx.Cases {
 		t.Run(tc.ID, func(t *testing.T) {
-			var got Rendered
-			var err error
-			switch tc.Kind {
-			case "recall":
-				opts := RecallOptions{
-					Scope: tc.Scope,
-					Limit: tc.Limit,
-					Mode:  tc.Mode,
-					Page:  tc.Page,
-				}
-				if tc.Ref != nil {
-					opts.Ref, opts.HasRef = *tc.Ref, true
-				}
-				opts.FocusPaths = tc.FocusPaths
-				if tc.FocusSource != nil {
-					opts.FocusSource = *tc.FocusSource
-				}
-				// The validation ladder is the HANDLER's, not the renderer's, so it is run
-				// here too — a fixture row that could not reach the renderer through a real
-				// route would be a row measuring something unreachable.
-				if vErr := ValidateRecall(opts); vErr != nil {
-					t.Fatalf("the fixture row does not pass the option ladder: %v", vErr)
-				}
-				got, err = renderer.Recall(root, opts, tc.visibleSet())
-			case "search":
-				opts := SearchOptions{
-					Scope:     tc.Scope,
-					Query:     tc.Query,
-					Context:   tc.Context,
-					Threshold: tc.Threshold,
-					MaxHits:   tc.MaxHits,
-					AllScopes: tc.AllScopes,
-				}
-				if vErr := ValidateSearch(opts); vErr != nil {
-					t.Fatalf("the fixture row does not pass the option ladder: %v", vErr)
-				}
-				got, err = renderer.Search(root, opts, tc.visibleSet())
-			default:
-				t.Fatalf("unknown fixture kind %q", tc.Kind)
-			}
+			got, err := replayFixtureCase(t, root, fx.Host, tc)
 			if err != nil {
 				t.Fatalf("%s (%s): %v", tc.ID, tc.Why, err)
 			}
@@ -432,7 +481,7 @@ func TestACLIConsumesTheReportWithoutAServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	stamp := []string{"  read store: /cache/subsystem-store", "  synced: 2000-01-04T00:00:00Z"}
-	text := rep.RenderText(fx.Host, stamp)
+	text := rep.RenderText(fx.Host, stamp, "")
 	code, warning := ExitFor(rep.Status, rep.Scope+"/", rep.Malformed)
 
 	if code != 0 || warning != "" {
@@ -457,7 +506,7 @@ func TestACLIConsumesTheReportWithoutAServer(t *testing.T) {
 	}
 	// And the same report renders WITHOUT them, byte-identical apart from those two lines —
 	// so the parameter adds and never reflows.
-	bare := rep.RenderText(fx.Host, nil)
+	bare := rep.RenderText(fx.Host, nil, "")
 	if withoutStamp := strings.Replace(text, stamp[0]+"\n"+stamp[1]+"\n", "", 1); withoutStamp != bare {
 		t.Fatalf("the extra header must be purely additive")
 	}
@@ -478,7 +527,7 @@ func TestACLIConsumesTheReportWithoutAServer(t *testing.T) {
 	if !strings.HasPrefix(searchWarning, "subsystem-recall: search-unreadable: all 2 entry files under `rubble-heap/` are MALFORMED") {
 		t.Fatalf("the warning is the reader's own sentence: %q", searchWarning)
 	}
-	if !strings.Contains(sr.RenderText(fx.Host, stamp), stamp[1]) {
+	if !strings.Contains(sr.RenderText(fx.Host, stamp, ""), stamp[1]) {
 		t.Fatal("the search renderer takes the same extra header")
 	}
 }
@@ -623,11 +672,87 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		// needs equal counts AND an mtime tie.
 		{"path COUNT beating the mtime signal", "2 of 3 quoted path(s) name it: a/gadget-one/1.md, b/gadget-one/2.md"},
 		{"the REF as the last resort, on a nanosecond mtime tie", "name it: a/tied-alpha/1.md"},
+		// The caveat's MULTI-INSTANCE clause, which reaches two different sentences. Each
+		// marker below can be produced by exactly one of them: the host line's clause always
+		// ends at the closing paren, and the fleet line's is preceded by its own lead-in. A
+		// port that threaded the alias into one and not the other fails exactly one row.
+		{"the multi-instance clause on the HOST line", "consulted no other, and this run read the `secondary` instance ONLY — with more than one instance configured, an absence here is also explainable by the scope living on another instance, so it is NOT an absence from the fleet)"},
+		{"the multi-instance clause in the recall FLEET sentence", "NOT A FACT ABOUT THE FLEET — the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other, and this run read the `secondary` instance ONLY"},
+		// 🔴 AND THE NEGATIVE HALF, WHICH IS THE COMPATIBILITY GUARANTEE ITSELF. A host line
+		// with NO clause ends `consulted no other)`; with one it ends `from the fleet)`. A
+		// port that added the clause unconditionally would produce ZERO of these and fail
+		// here — which is a claim the ~59 unlabelled rows above also make, in bytes, but
+		// which nothing NAMED until this row.
+		{"a host line with NO instance clause, which is every single-instance host and the pod", "consulted no other)"},
 	} {
 		if !strings.Contains(rendered, row.marker) {
 			t.Errorf("no fixture case renders %s (looked for %q). The fixture's whole value "+
 				"is covering what the HTTP corpus cannot send; a branch that dropped out of "+
 				"it is a branch nothing measures.", row.branch, row.marker)
 		}
+	}
+}
+
+func TestTheSERVERSRendererNeverAddsTheInstanceClause(t *testing.T) {
+	// 🔴 THIS IS WHAT STOPS `Reader` DROPPING OUT OF THE MEASUREMENT. The fixture replay above
+	// calls `Recall`/`Search` + `RenderText` directly, because a row carrying an alias cannot
+	// be replayed through `Reader` — `Reader` is the POD's renderer and a pod serves exactly
+	// ONE store, so it has no instance to name. That is a real property and not an accident of
+	// this test file, so it is pinned here: for the same report, the pod's bytes must be the
+	// NO-INSTANCE bytes, not merely "some bytes".
+	//
+	// ⚠ IT IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No defect ever made `Reader` emit
+	// the clause; the hazard it closes is a future `Reader` field or a default that quietly
+	// starts supplying one, which would make every pod response claim a routing this
+	// deployment does not have.
+	fx := loadFixture(t)
+	root := buildFixtureStore(t, fx)
+	renderer := Reader{Host: func() string { return fx.Host }}
+
+	for _, scope := range []string{"alpha-notes", "ghost-void"} {
+		opts := RecallOptions{Scope: scope, Limit: DefaultEntryLimit, Mode: DefaultMode, Page: 1}
+		pod, err := renderer.Recall(root, opts, store.Unrestricted())
+		if err != nil {
+			t.Fatal(err)
+		}
+		rep, err := Recall(root, opts, store.Unrestricted())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pod.Text != rep.RenderText(fx.Host, nil, "") {
+			t.Fatalf("%s: the pod's renderer must produce the NO-INSTANCE bytes", scope)
+		}
+		// And the control that says the comparison above can tell the two apart at all: with
+		// an alias the bytes MOVE. Without this, a renderer that ignored the parameter
+		// entirely would pass the assertion above.
+		if pod.Text == rep.RenderText(fx.Host, nil, "secondary") {
+			t.Fatalf("%s: naming an instance must change the rendered bytes, or this test "+
+				"cannot see the difference it is asserting", scope)
+		}
+	}
+
+	// The search half, and `ghost-void` is the row that carries BOTH interpolations.
+	sopts := SearchOptions{Scope: "ghost-void", Query: "lease", Context: ContextBullet,
+		Threshold: DefaultThreshold, MaxHits: DefaultMaxHits}
+	pod, err := renderer.Search(root, sopts, store.Unrestricted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sr, err := Search(root, sopts, store.Unrestricted())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Text != sr.RenderText(fx.Host, nil, "") {
+		t.Fatal("the pod's search renderer must produce the NO-INSTANCE bytes")
+	}
+	if pod.Text == sr.RenderText(fx.Host, nil, "secondary") {
+		t.Fatal("naming an instance must change the searched bytes too")
+	}
+	// 🔴 BOTH SENTENCES, COUNTED. `scope-absent` prints the host line AND the fleet line, and
+	// a port that threaded the alias into one of them would still move the bytes above. Two
+	// occurrences is the claim; one would pass a `Contains` check.
+	named := sr.RenderText(fx.Host, nil, "secondary")
+	if got := strings.Count(named, "this run read the `secondary` instance ONLY"); got != 2 {
+		t.Fatalf("the clause must reach BOTH the host line and the fleet sentence: found %d", got)
 	}
 }

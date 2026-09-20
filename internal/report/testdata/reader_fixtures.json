@@ -2880,6 +2880,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -2944,6 +2945,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -2991,6 +2993,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3040,6 +3043,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3189,6 +3193,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3235,6 +3240,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3271,6 +3277,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3309,6 +3316,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3347,6 +3355,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3379,6 +3388,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3424,6 +3434,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3463,6 +3474,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "ref-ambiguous",
     "exit": 0,
@@ -3494,6 +3506,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "ref-absent",
     "exit": 0,
@@ -3525,6 +3538,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "ref-absent",
     "exit": 0,
@@ -3553,6 +3567,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "scope-unreadable",
     "exit": 3,
@@ -3585,6 +3600,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "scope-unreadable",
     "exit": 3,
@@ -3617,6 +3633,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "scope-empty",
     "exit": 0,
@@ -3645,6 +3662,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "scope-absent",
     "exit": 0,
@@ -3677,6 +3695,7 @@
    ],
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "scope-absent",
     "exit": 0,
@@ -3705,6 +3724,7 @@
    "visible": [],
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "scope-absent",
     "exit": 0,
@@ -3733,6 +3753,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3864,6 +3885,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3895,6 +3917,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3926,6 +3949,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -3967,6 +3991,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4012,6 +4037,7 @@
     "apps/gadget-two/values.yaml"
    ],
    "focus_source": "claudedocs/handoff-alpha.md",
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4072,6 +4098,7 @@
     "svc/lease-holder/main.go"
    ],
    "focus_source": "claudedocs/handoff-alpha.md",
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4132,6 +4159,7 @@
     "apps/nothing-here/values.yaml"
    ],
    "focus_source": "claudedocs/handoff-alpha.md",
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4199,6 +4227,7 @@
     "svc/shared-alias/main.go"
    ],
    "focus_source": "claudedocs/handoff-alpha.md",
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4266,6 +4295,7 @@
     "b/gadget-two/y.md"
    ],
    "focus_source": "claudedocs/handoff-alpha.md",
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4327,6 +4357,7 @@
     "c/gadget-two/1.md"
    ],
    "focus_source": "claudedocs/handoff-alpha.md",
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4387,6 +4418,7 @@
     "b/tied-zulu/1.md"
    ],
    "focus_source": "claudedocs/handoff-alpha.md",
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4434,6 +4466,7 @@
     "d/gadget-one/4.md"
    ],
    "focus_source": "claudedocs/handoff-alpha.md",
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4493,6 +4526,7 @@
     "apps/gadget-two/values.yaml"
    ],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4550,6 +4584,7 @@
    "visible": null,
    "focus_paths": [],
    "focus_source": null,
+   "instance": null,
    "expect": {
     "status": "recalled",
     "exit": 0,
@@ -4586,6 +4621,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4625,6 +4661,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4674,6 +4711,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4713,6 +4751,7 @@
    "max_hits": 1,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4748,6 +4787,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4781,6 +4821,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4814,6 +4855,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4850,6 +4892,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4883,6 +4926,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4916,6 +4960,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -4949,6 +4994,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-no-match",
     "exit": 0,
@@ -4979,6 +5025,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-no-match",
     "exit": 0,
@@ -5009,6 +5056,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-no-match",
     "exit": 0,
@@ -5036,6 +5084,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-no-match",
     "exit": 0,
@@ -5066,6 +5115,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -5099,6 +5149,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -5132,6 +5183,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -5171,6 +5223,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-no-match",
     "exit": 0,
@@ -5201,6 +5254,7 @@
    "max_hits": 10,
    "all_scopes": true,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -5246,6 +5300,7 @@
    "visible": [
     "beta-notes"
    ],
+   "instance": null,
    "expect": {
     "status": "search-hit",
     "exit": 0,
@@ -5274,6 +5329,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "search-unreadable",
     "exit": 3,
@@ -5306,6 +5362,7 @@
    "max_hits": 10,
    "all_scopes": false,
    "visible": null,
+   "instance": null,
    "expect": {
     "status": "scope-absent",
     "exit": 0,
@@ -5337,6 +5394,7 @@
    "visible": [
     "beta-notes"
    ],
+   "instance": null,
    "expect": {
     "status": "scope-absent",
     "exit": 0,
@@ -5364,6 +5422,7 @@
    "max_hits": 10,
    "all_scopes": true,
    "visible": [],
+   "instance": null,
    "expect": {
     "status": "search-no-match",
     "exit": 0,
@@ -5375,6 +5434,172 @@
      "  caveat: from index — RECALL, NOT LIVE OBSERVATION. These are notes curated by PAST sessions in the local store under `(no scope)`. Nothing here was re-derived just now, nothing was matched against anything THIS session has done, and an entry is exactly as fresh as the last time someone pruned it (prune-on-resolve is manual), so a bullet may describe a gotcha already fixed. This window CANNOT see: live state of any kind, any repo whose scope has no directory in THIS HOST's store, and any work neither `/analyze-service` nor `/handoff` ever recorded. Treat every line as a POINTER to verify, never as a current reading. This window read a LOCAL CACHE of the hosted store, not the store itself, so it is only as complete as the last `cairn sync` on THIS machine: an entry written on the OTHER machine that has not synced here yet is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact about the store. `🔴 N OPEN` on an index row means N bullets DECLARE unfinished business — re-check each against the repo, because a remedy that has since landed reads exactly like one that has not; the absence of that marker means nothing was declared, NOT that nothing is open. Sensitivity is marked per entry; absent means `client-confidential` — never copy an entry's content into a public repo.",
      "",
      "NO MATCH — searched 0 entries in (none), and nothing cleared the threshold. No candidate scored above zero at all, so this is an absent term rather than a weak one."
+    ]
+   }
+  },
+  {
+   "id": "digest-multi-instance",
+   "why": "the caveat's multi-instance clause on an ordinary digest, where the HOST LINE is the only place it appears",
+   "kind": "recall",
+   "scope": "alpha-notes",
+   "ref": null,
+   "limit": 12,
+   "mode": "digest",
+   "page": 1,
+   "visible": null,
+   "focus_paths": [],
+   "focus_source": null,
+   "instance": "secondary",
+   "expect": {
+    "status": "recalled",
+    "exit": 0,
+    "warning": "",
+    "text_lines": [
+     "subsystem-recall: status=recalled scope=alpha-notes",
+     "  store: <STORE-ROOT>",
+     "  host: fixture-host-000000000000  (the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other, and this run read the `secondary` instance ONLY — with more than one instance configured, an absence here is also explainable by the scope living on another instance, so it is NOT an absence from the fleet)",
+     "  caveat: from index — RECALL, NOT LIVE OBSERVATION. These are notes curated by PAST sessions in the local store under `alpha-notes/`. Nothing here was re-derived just now, nothing was matched against anything THIS session has done, and an entry is exactly as fresh as the last time someone pruned it (prune-on-resolve is manual), so a bullet may describe a gotcha already fixed. This window CANNOT see: live state of any kind, any repo whose scope has no directory in THIS HOST's store, and any work neither `/analyze-service` nor `/handoff` ever recorded. Treat every line as a POINTER to verify, never as a current reading. This window read a LOCAL CACHE of the hosted store, not the store itself, so it is only as complete as the last `cairn sync` on THIS machine: an entry written on the OTHER machine that has not synced here yet is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact about the store. `🔴 N OPEN` on an index row means N bullets DECLARE unfinished business — re-check each against the repo, because a remedy that has since landed reads exactly like one that has not; the absence of that marker means nothing was declared, NOT that nothing is open. Three further badges say the row's own numbers cannot be trusted: `🔴 N NEAR-MISS` — N bullets TRIED to write a marker and missed the grammar, so they declare nothing and `N OPEN` is short by up to N; `⚠ N UNVERIFIABLE` — N `RESOLVED:` bullets name no sha, so the closure cannot be checked; `🔴 NO <heading>` — that heading is absent or renamed, so `N nuance` and every openness count on that row are 0 BY PARSE FAILURE and not by measurement, and the entry's content is on disk but invisible to this read. Sensitivity is marked per entry; absent means `client-confidential` — never copy an entry's content into a public repo.",
+     "",
+     "🔴 MALFORMED — 1 entry file in `alpha-notes/` could NOT be indexed and is therefore absent from EVERYTHING below (the index, --ref, --search). Not dropped, not hidden: listed here, once each.",
+     "  malformed index entry `alpha-notes/broken-nine.md`: missing or empty `service:` — an entry with no name cannot be addressed",
+     "  (A STORE DEFECT, not an absence of content. Front matter is parsed LINE BY LINE, so the usual cause is a value wrapped across two physical lines — an `aliases: [...]` list in particular must be on ONE line. Check a scope with `cairn validate --scope <scope>`, which names each file that fails to parse.)",
+     "  (+2 further malformed entries in OTHER scopes of this store, not shown: rubble-heap (2). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
+     "",
+     "INDEX (from index) — the 14 READABLE entries in `alpha-notes/` (newest-first by file mtime). NOT complete: 1 further file in this scope could not be indexed and is named above, never here:",
+     "  marked-three         6 nuance   public   🔴 1 OPEN   🔴 1 NEAR-MISS   ⚠ 1 UNVERIFIABLE   🔗 2 tasks",
+     "  gadget-two           1 nuance   client-confidential (declared: internal)",
+     "  gadget-one           1 nuance   client-confidential (declared: internal)",
+     "  alias-eight          1 nuance   client-confidential",
+     "  alias-seven          1 nuance   client-confidential",
+     "  zebra-lease          1 nuance   client-confidential",
+     "  dupes-six            2 nuance   client-confidential",
+     "  nginx-seventeen      1 nuance   client-confidential",
+     "  dotted-sixteen       1 nuance   client-confidential",
+     "  clauses-fifteen      1 nuance   client-confidential",
+     "  emptysec-fourteen    1 nuance   client-confidential",
+     "  halfway-thirteen     0 nuance   client-confidential   🔴 NO Nuance / work-history",
+     "  nowhat-five          1 nuance   personal",
+     "  bare-four            0 nuance   client-confidential   🔴 NO Pointers, Nuance / work-history",
+     "",
+     "FEATURED IN FULL (from index) — 1 of 14, most-recent fallback — newest entry file in `alpha-notes/` (no handoff doc to read a path window from):",
+     "",
+     "  ### marked-three  (alpha-notes/marked-three.md, sensitivity=public)",
+     "    tasks: github:example-org/example-repo#428, linear:ENG-441",
+     "    ## What it is",
+     "      The entry that carries every openness population.",
+     "    ## Pointers",
+     "      - `docs/marked-three.md`",
+     "    ## Nuance / work-history",
+     "      - 2000-01-02: OPEN: the retry budget is still unbounded.",
+     "        a continuation line, which belongs to the bullet above it.",
+     "      - 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
+     "      - 2000-01-04: RESOLVED: closed, and nothing proves it.",
+     "      - 2000-01-05: **OPEN:** a marker that missed the grammar.",
+     "      - 2000-01-06: the retry budget is not yet addressed.",
+     "      - 2000-01-07: an ordinary bullet that declares nothing.",
+     "",
+     "… 13 further entries in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 14` prints them all."
+    ]
+   }
+  },
+  {
+   "id": "scope-absent-multi-instance",
+   "why": "the same clause where it MATTERS: an absence, so it lands in the `NOT A FACT ABOUT THE FLEET` sentence as well as the host line",
+   "kind": "recall",
+   "scope": "ghost-void",
+   "ref": null,
+   "limit": 12,
+   "mode": "digest",
+   "page": 1,
+   "visible": null,
+   "focus_paths": [],
+   "focus_source": null,
+   "instance": "secondary",
+   "expect": {
+    "status": "scope-absent",
+    "exit": 0,
+    "warning": "",
+    "text_lines": [
+     "subsystem-recall: status=scope-absent scope=ghost-void",
+     "  store: <STORE-ROOT>",
+     "  host: fixture-host-000000000000  (the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other, and this run read the `secondary` instance ONLY — with more than one instance configured, an absence here is also explainable by the scope living on another instance, so it is NOT an absence from the fleet)",
+     "  caveat: from index — RECALL, NOT LIVE OBSERVATION. These are notes curated by PAST sessions in the local store under `ghost-void/`. Nothing here was re-derived just now, nothing was matched against anything THIS session has done, and an entry is exactly as fresh as the last time someone pruned it (prune-on-resolve is manual), so a bullet may describe a gotcha already fixed. This window CANNOT see: live state of any kind, any repo whose scope has no directory in THIS HOST's store, and any work neither `/analyze-service` nor `/handoff` ever recorded. Treat every line as a POINTER to verify, never as a current reading. This window read a LOCAL CACHE of the hosted store, not the store itself, so it is only as complete as the last `cairn sync` on THIS machine: an entry written on the OTHER machine that has not synced here yet is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact about the store. `🔴 N OPEN` on an index row means N bullets DECLARE unfinished business — re-check each against the repo, because a remedy that has since landed reads exactly like one that has not; the absence of that marker means nothing was declared, NOT that nothing is open. Sensitivity is marked per entry; absent means `client-confidential` — never copy an entry's content into a public repo.",
+     "",
+     "  (+3 further malformed entries in OTHER scopes of this store, not shown: alpha-notes (1), rubble-heap (2). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
+     "",
+     "NOTHING RECORDED YET ON THIS HOST — fixture-host-000000000000's store has no `ghost-void/` directory. This is the ordinary case in most repos (the store is young and its scopes are few), NOT an error and NOT an absence of drift: nothing was checked, so nothing can be concluded from it. Carry on with the resume and say plainly that the index had nothing for this repo ON THIS MACHINE.",
+     "  NOT A FACT ABOUT THE FLEET — the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other, and this run read the `secondary` instance ONLY — with more than one instance configured, an absence here is also explainable by the scope living on another instance, so it is NOT an absence from the fleet. The other host syncs the SAME hosted store through its own cache, and may already hold `ghost-void/` where this one has not synced it yet.",
+     "  scopes THIS HOST's store holds: alpha-notes, beta-notes, hollow-set, many-notes, rubble-heap, tied-notes"
+    ]
+   }
+  },
+  {
+   "id": "hit-multi-instance",
+   "why": "the search renderer takes the same alias, and its host line is built from the same seam",
+   "kind": "search",
+   "scope": "alpha-notes",
+   "query": "lease",
+   "context": -1,
+   "threshold": 0.6,
+   "max_hits": 10,
+   "all_scopes": false,
+   "visible": null,
+   "instance": "secondary",
+   "expect": {
+    "status": "search-hit",
+    "exit": 0,
+    "warning": "",
+    "text_lines": [
+     "subsystem-recall: status=search-hit scope=alpha-notes query='lease' threshold=0.60 context=bullet",
+     "  store: <STORE-ROOT>",
+     "  host: fixture-host-000000000000  (the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other, and this run read the `secondary` instance ONLY — with more than one instance configured, an absence here is also explainable by the scope living on another instance, so it is NOT an absence from the fleet)",
+     "  caveat: from index — RECALL, NOT LIVE OBSERVATION. These are notes curated by PAST sessions in the local store under `alpha-notes/`. Nothing here was re-derived just now, nothing was matched against anything THIS session has done, and an entry is exactly as fresh as the last time someone pruned it (prune-on-resolve is manual), so a bullet may describe a gotcha already fixed. This window CANNOT see: live state of any kind, any repo whose scope has no directory in THIS HOST's store, and any work neither `/analyze-service` nor `/handoff` ever recorded. Treat every line as a POINTER to verify, never as a current reading. This window read a LOCAL CACHE of the hosted store, not the store itself, so it is only as complete as the last `cairn sync` on THIS machine: an entry written on the OTHER machine that has not synced here yet is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact about the store. `🔴 N OPEN` on an index row means N bullets DECLARE unfinished business — re-check each against the repo, because a remedy that has since landed reads exactly like one that has not; the absence of that marker means nothing was declared, NOT that nothing is open. Sensitivity is marked per entry; absent means `client-confidential` — never copy an entry's content into a public repo.",
+     "",
+     "🔴 MALFORMED — 1 entry file in `alpha-notes/` could NOT be indexed and is therefore absent from EVERYTHING below (the index, --ref, --search). Not dropped, not hidden: listed here, once each.",
+     "  malformed index entry `alpha-notes/broken-nine.md`: missing or empty `service:` — an entry with no name cannot be addressed",
+     "  (A STORE DEFECT, not an absence of content. Front matter is parsed LINE BY LINE, so the usual cause is a value wrapped across two physical lines — an `aliases: [...]` list in particular must be on ONE line. Check a scope with `cairn validate --scope <scope>`, which names each file that fails to parse.)",
+     "  (+2 further malformed entries in OTHER scopes of this store, not shown: rubble-heap (2). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
+     "",
+     "SEARCH (from index) — 3 of 3 hunks at or above 0.60, from 14 entries in `alpha-notes/`:",
+     "",
+     "  [1.00 entry-name] alpha-notes/alias-seven  ## What it is  (alpha-notes/alias-seven.md:8-8, sensitivity=client-confidential)",
+     "    Reachable by two aliases.",
+     "",
+     "  [1.00 entry-name] alpha-notes/zebra-lease  ## What it is  (alpha-notes/zebra-lease.md:7-7, sensitivity=client-confidential)",
+     "    The subsystem this query is NAMING, whose body never spells the word.",
+     "",
+     "  [1.00 line] alpha-notes/gadget-two  ## Nuance / work-history  (alpha-notes/gadget-two.md:14-14, sensitivity=client-confidential (declared: internal))",
+     "    - 2000-01-02: the sidecar drops its lease during a rollout."
+    ]
+   }
+  },
+  {
+   "id": "scope-absent-multi-instance",
+   "why": "and the search side's own fleet sentence, which is a SECOND interpolation and not the recall one",
+   "kind": "search",
+   "scope": "ghost-void",
+   "query": "lease",
+   "context": -1,
+   "threshold": 0.6,
+   "max_hits": 10,
+   "all_scopes": false,
+   "visible": null,
+   "instance": "secondary",
+   "expect": {
+    "status": "scope-absent",
+    "exit": 0,
+    "warning": "",
+    "text_lines": [
+     "subsystem-recall: status=scope-absent scope=ghost-void query='lease' threshold=0.60 context=bullet",
+     "  store: <STORE-ROOT>",
+     "  host: fixture-host-000000000000  (the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other, and this run read the `secondary` instance ONLY — with more than one instance configured, an absence here is also explainable by the scope living on another instance, so it is NOT an absence from the fleet)",
+     "  caveat: from index — RECALL, NOT LIVE OBSERVATION. These are notes curated by PAST sessions in the local store under `(no scope)`. Nothing here was re-derived just now, nothing was matched against anything THIS session has done, and an entry is exactly as fresh as the last time someone pruned it (prune-on-resolve is manual), so a bullet may describe a gotcha already fixed. This window CANNOT see: live state of any kind, any repo whose scope has no directory in THIS HOST's store, and any work neither `/analyze-service` nor `/handoff` ever recorded. Treat every line as a POINTER to verify, never as a current reading. This window read a LOCAL CACHE of the hosted store, not the store itself, so it is only as complete as the last `cairn sync` on THIS machine: an entry written on the OTHER machine that has not synced here yet is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact about the store. `🔴 N OPEN` on an index row means N bullets DECLARE unfinished business — re-check each against the repo, because a remedy that has since landed reads exactly like one that has not; the absence of that marker means nothing was declared, NOT that nothing is open. Sensitivity is marked per entry; absent means `client-confidential` — never copy an entry's content into a public repo.",
+     "",
+     "  (+3 further malformed entries in OTHER scopes of this store, not shown: alpha-notes (1), rubble-heap (2). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
+     "",
+     "NOTHING RECORDED YET ON THIS HOST — fixture-host-000000000000's store has no `ghost-void/` directory, so the query was never run. This is NOT 'no matches': nothing was searched, so nothing can be concluded from it.",
+     "  NOT A FACT ABOUT THE FLEET — the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other, and this run read the `secondary` instance ONLY — with more than one instance configured, an absence here is also explainable by the scope living on another instance, so it is NOT an absence from the fleet. The other host syncs the SAME hosted store through its own cache, and may already hold `ghost-void/` where this one has not synced it yet.",
+     "  scopes THIS HOST's store holds: alpha-notes, beta-notes, hollow-set, many-notes, rubble-heap, tied-notes"
     ]
    }
   }

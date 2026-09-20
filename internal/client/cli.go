@@ -610,11 +610,55 @@ func Run(env Env, argv []string) int {
 }
 
 // Doctor is the one call for every fact a reader otherwise assembles by hand.
+//
+// 🔴 EVERY CONFIGURED INSTANCE, CHECKED SEPARATELY, SO A HEALTHY ONE CANNOT MASK A BROKEN ONE.
+// The checks are per-instance rows rather than a merged verdict, and the exit code is the
+// WORST of them: one reachable store must never make a second one that is down look measured.
+// On a host with one instance the rows are exactly what they always were — no prefix, no extra
+// section — because there is nothing to disambiguate.
 func Doctor(env Env, opts Options) (int, error) {
-	if code, stop := RefuseUnportedMultiInstance(env, "doctor"); stop {
-		return code, nil
+	routing, err := Discover(nil)
+	if err != nil {
+		return 0, err
 	}
-	resolved := ResolveReadStore("")
+	if refusal := refuseSharedCache(env, routing, opts, "doctor"); refusal != 0 {
+		return refusal, nil
+	}
+	var checks []doctor.Check
+	for _, instance := range routing.Instances {
+		rows, rowErr := doctorInstance(opts, routing, instance)
+		if rowErr != nil {
+			return 0, rowErr
+		}
+		checks = append(checks, rows...)
+	}
+	if opts.JSON {
+		fmt.Fprintln(env.Stdout, doctor.JSON(checks))
+	} else {
+		fmt.Fprintln(env.Stdout, doctor.Render(checks))
+	}
+	return doctor.ExitCode(checks), nil
+}
+
+// doctorInstance is the checks for ONE instance, named after it when this host is routing.
+//
+// 🔴 THE NAME CARRIES THE ALIAS, NOT THE DETAIL TEXT. `doctor --json` is consumed by machine
+// and `Render` aligns on the name column, so an alias buried in prose would be unreadable to
+// both. `<alias>/<check>` keeps every row addressable and sorts together.
+func doctorInstance(opts Options, routing Routing, instance Instance) ([]doctor.Check, error) {
+	// 🔴 THE READER'S RESOLUTION IS NOT `--cache`, AND THE TWO ARE DIFFERENT QUESTIONS. This
+	// row answers "which directory does this host's READER resolve", which is the default root
+	// for the default instance and the per-alias sibling for any other — an override invented
+	// here would make `doctor` report a root the reader would not actually use.
+	readRoot := ""
+	if !instance.IsDefault() {
+		var err error
+		readRoot, err = CacheRootFor(instance.Alias)
+		if err != nil {
+			return nil, err
+		}
+	}
+	resolved := ResolveReadStore(readRoot)
 
 	// 🔴 THE CONFIG LOAD HAPPENS EVEN UNDER `--no-sync`, AND THAT IS A FIX. It is a local file
 	// read, so "is a credential configured on this host" is answerable with the network
@@ -622,7 +666,7 @@ func Doctor(env Env, opts Options) (int, error) {
 	// `token PROBLEM: no token is configured` on a host whose token was sitting in its config
 	// file unread. A check that says PROBLEM about something it never looked at is the same
 	// defect as one that says OK about it.
-	cfg, cfgErr := LoadConfig()
+	cfg, cfgErr := LoadConfigFor(instance.Alias)
 	tokenReason := ""
 	if cfgErr != nil {
 		tokenReason = cfgErr.Error()
@@ -638,27 +682,46 @@ func Doctor(env Env, opts Options) (int, error) {
 		pod = ProbeStore(cfg, opts.Timeout)
 	}
 	if err := pod.Validate(); err != nil {
-		return 0, err
+		return nil, err
+	}
+
+	cache, err := instanceCache(opts, instance.Alias)
+	if err != nil {
+		return nil, err
+	}
+	// 🔴 THE FROZEN MIRROR BELONGS TO THE DEFAULT INSTANCE ALONE. It is the pre-cutover local
+	// store this host migrated FROM, so there is exactly one of it however many instances are
+	// configured; reporting it under each would state one fact N times and make N-1 of the
+	// rows a claim about a directory that instance has nothing to do with.
+	mirror := ""
+	if instance.IsDefault() {
+		mirror = MirrorRoot()
 	}
 
 	checks := doctor.Collect(doctor.Inputs{
 		ResolvedRoot:   resolved.Root,
 		StampLines:     resolved.Stamp,
 		StampReason:    resolved.Reason,
-		CacheRoot:      opts.Cache,
-		MirrorRoot:     MirrorRoot(),
+		CacheRoot:      cache,
+		MirrorRoot:     mirror,
 		Pod:            pod,
 		Token:          cfg.Token,
 		HasToken:       cfgErr == nil,
 		TokenReason:    tokenReason,
 		IdentityRemedy: IdentityRemedy,
 	})
-	if opts.JSON {
-		fmt.Fprintln(env.Stdout, doctor.JSON(checks))
-	} else {
-		fmt.Fprintln(env.Stdout, doctor.Render(checks))
+	if !routing.MultiInstance() {
+		return checks, nil
 	}
-	return doctor.ExitCode(checks), nil
+	named := make([]doctor.Check, 0, len(checks))
+	for _, check := range checks {
+		named = append(named, doctor.Check{
+			Name:   instance.Alias + "/" + check.Name,
+			State:  check.State,
+			Detail: check.Detail,
+		})
+	}
+	return named, nil
 }
 
 // MirrorRoot is the frozen pre-cutover store, if this deployment has one.

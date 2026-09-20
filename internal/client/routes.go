@@ -151,10 +151,7 @@ func joinComma(items []string) string {
 // instance would change the bytes of output on every host that has merely written a routing
 // table, which is the compatibility guarantee the whole design rests on.
 func bannerFor(state, detail string, routing Routing, alias string) string {
-	if !routing.MultiInstance() {
-		return BannerNamed(state, detail, "")
-	}
-	return BannerNamed(state, detail, alias)
+	return BannerNamed(state, detail, instanceLabel(routing, alias))
 }
 
 // instanceCache is the cache root for `alias`, honouring an explicit `--cache`.
@@ -167,6 +164,66 @@ func instanceCache(opts Options, alias string) (string, error) {
 		return opts.Cache, nil
 	}
 	return CacheRootFor(alias)
+}
+
+// readInstance is `(alias, label, cache)` for a READ of `scope` — the Go spelling of the
+// oracle's `_instance_for`. The error is an `*UnroutedScope`, and it NEVER guesses.
+//
+// 🔴 THE EMPTY `label` IS THE COMPATIBILITY GUARANTEE, NOT A FORMATTING NICETY. It is what
+// keeps a one-instance host's output byte-for-byte what it was, so the routing machinery ships
+// and is provably inert before any data moves: every rendered caveat, every banner and every
+// `ls-entries` line is unchanged where nothing is configured.
+//
+// 🔴 AND IT IS GATED ON THE INSTANCE COUNT, NEVER ON THE TABLE. A one-instance host that has
+// written a routing table is still a host with one place an answer can come from, so it is
+// still unlabelled — while `AliasFor` has already consulted that table and may already have
+// refused. The two questions are separate; see `Routing.MultiInstance` and `Routing.AliasFor`.
+//
+// ⚠ `alias` AND `label` ARE DIFFERENT VALUES AND BOTH ARE RETURNED ON PURPOSE. `alias` names
+// which instance to read — credentials, cache root, state resolver — and is never empty;
+// `label` is what gets PRINTED and is empty at one instance. Collapsing them would either
+// label a single-instance host or read the wrong store.
+func readInstance(opts Options, scope string) (alias, label, cache string, err error) {
+	routing, err := Discover(nil)
+	if err != nil {
+		return "", "", "", err
+	}
+	alias, err = routing.AliasFor(scope)
+	if err != nil {
+		return "", "", "", err
+	}
+	cache, err = instanceCache(opts, alias)
+	if err != nil {
+		return "", "", "", err
+	}
+	return alias, instanceLabel(routing, alias), cache, nil
+}
+
+// defaultInstance is `readInstance` where there is no scope to route — the oracle's
+// `_default_instance`.
+//
+// 🔴 THE LABEL STILL APPEARS. "Which of my instances did that read" is exactly as pressing
+// when the COMMAND picked one as when a table did.
+func defaultInstance(opts Options) (alias, label, cache string, err error) {
+	routing, err := Discover(nil)
+	if err != nil {
+		return "", "", "", err
+	}
+	cache, err = instanceCache(opts, DefaultAlias)
+	if err != nil {
+		return "", "", "", err
+	}
+	return DefaultAlias, instanceLabel(routing, DefaultAlias), cache, nil
+}
+
+// instanceLabel is the alias when this host has MORE THAN ONE instance, and "" when it has
+// one. ONE spelling, because every read verb needs it and a second copy is a second place for
+// the count-versus-table confusion to come back.
+func instanceLabel(routing Routing, alias string) string {
+	if !routing.MultiInstance() {
+		return ""
+	}
+	return alias
 }
 
 // refuseSharedCache refuses an explicit `--cache` that would make N instances share one
