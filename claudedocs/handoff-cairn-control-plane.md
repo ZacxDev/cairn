@@ -23,125 +23,127 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ **`2269416`**, clean, **no open PRs**. **Four** PRs merged this session, each
-  verified BY CONTENT (a squash makes `--is-ancestor` false forever): **#44 → `deecfcd`** (the
-  publish gate unbroken + both pods published), **#43 → `7bab908`**, **#45 → `a0c4d07`** (a
-  retraction), **#46 → `2269416`** (this doc's previous update + the archive prune).
-- ✅ **THE CUTOVER IS COMPLETE AND THE ARC IS CLOSED.** The pod runs the **Go server**, pulled
-  from the public registry at an immutable `sha-<40-hex>` tag. One GitOps commit moved the
-  REGISTRY and the IMPLEMENTATION together; the parsed manifest differs from its predecessor in
-  `image` and **nothing else**, asserted by comparing the whole tree with that key redacted.
-- ✅ **VERIFIED AGAINST THE RUNTIME SYMPTOM, THROUGH THE PUBLIC ENDPOINT, WITHOUT CLUSTER
-  ACCESS.** This host has no kubeconfig context for the cluster, so the usual check was
-  unavailable; the **24-row rendering difference measured before the swap turned out to BE the
-  discriminator** — only the new image emits the corrected read-through-cache caveat. Observed
-  in order: four polls on the old text, **one 502** (the `Recreate` window, expected at
-  `replicas: 1`), then the corrected text. Then, negative controls first (bad token → 401, no
-  token → 401): recall 200/11,966 B `status=recalled`, search 200/16,007 B, snapshot 200/1.2 MB
-  extracting **276 members**, an absent scope 200 carrying `status=scope-absent` (the oracle's
-  own contract — both servers answered 200 for that shape in the pre-deploy dual-run), and
-  `cairn sync` **rc 0** fetching 275 entries live. **Re-checked after the last merge**: still
-  serving the Go image.
-- ✅ **THE PUBLISH WORKFLOW SUCCEEDS**, after seven consecutive failures. Both pods publish to
-  two packages under one `sha-<40-hex>` scheme, both anonymously pullable — checked after a
-  negative control on an absent tag was refused.
-- **Claim `cairn-control-plane-1` is RELEASED.** The ranked list below is unclaimed.
-- ⚠ This doc is ~7 KB over a 65,536 B guideline that enforces nothing, after a prune that moved
-  four answered blocks to `claudedocs/handoff-cairn-control-plane-archive.md` (now nine).
-  **Prune before appending.** The ladder-closure facts that used to be carried here have moved
-  to Gotchas, which APPENDS — see the next bullet for why.
+- Branch `main` @ **`181053a`**. ✅ **#48 IS MERGED AND `tests/parity/README.md` RESIDUAL 8 IS
+  CLOSED ON `main`** — verified **BY CONTENT**, never by ancestry (a squash makes
+  `--is-ancestor` false forever): all seven payload paths at `d27b570` are byte-identical to
+  `origin/main`, `func RefuseUnportedMultiInstance` returns **0** matches tree-wide, and the
+  residual-8 table row is gone.
+- **What #48 shipped, all four clauses:** `internal/report` takes an instance-aware caveat
+  (`hostid.StoreCaveat`, `StoreHostLine(id, indent, instance)`); `recall`/`search`/`validate`
+  route through `AliasFor` while `sync`/`ls-entries`/`doctor` walk every instance and
+  `search --all-scopes` fans out; **four** multi-instance READ parity rows compare
+  stdout+stderr+exit; and the guard is deleted with its five call sites and its table row.
+- ✅ **THE COMPATIBILITY GUARANTEE HELD THROUGHOUT.** Regenerating
+  `internal/report/testdata/reader_fixtures.json` was **225 insertions / 0 deletions**, and **no
+  golden moved at ANY round of the ladder** — `internal/report/testdata/` and
+  `tests/conformance/` were re-checked byte-identical after every fix commit, including the one
+  that changed the oracle.
+- 🔴 **`packages.default` IS STILL THE PYTHON CLIENT** (`flake.nix:676`). Merging #48 removed the
+  CAPABILITY blocker and nothing else.
+- 🔴 **THE FLIP IS NOW AUTHORISED BY THE OPERATOR AND IS THE WORK IN FLIGHT.** It moves
+  `packages.default` **and** `apps.default` together or not at all (`flake.nix:688`), and it
+  carries residual 7's **CLI-contract widening**: `-verbs`/`-exit-codes` answer **0** where the
+  oracle exits **2**, from that instant, for every consumer of `nix run github:…/cairn` who does
+  not name `#cairn`. **That needs an announcement** — it changes a contract for people who never
+  asked for a new client.
+- ✅ **AN AUTHORISED CHANGE TO THE ORACLE SHIPPED IN #48, AND IT IS THE FIRST SINCE THE
+  `seeded=UNREADABLE` ONE.** `cairn:1282` globbed `args.cache` — the DEFAULT instance — while
+  `_instance_for`, `cache.iterdir()` and `load_index()` in the same function all used the ROUTED
+  `cache`, so routed `validate` counted files in the wrong store and could print a **negative
+  count** (`-1 of 0 entry file(s) parse, 1 malformed`). One token. Operator-authorised on the
+  reasoning that **a contract cannot include "sometimes print a negative count"**.
+- **Claim `cairn-control-plane-1` is still HELD** by this session. Release it when the flip lands
+  or is abandoned.
+- **No task-board field is recorded** — the board-resolution helper exited 5 (no task for this
+  session) with its positive control passing. A real read of the board, and **not** proof the
+  session id is right; a wrong id answers 200 with an empty array too.
 
 ## Next steps (ranked)
-1. **THE `packages.default` FLIP — its measured blocker is CLOSED; the DECISION is not.**
-   Residual 8 is gone: the read verbs route, `internal/report` takes an instance-aware caveat,
-   three multi-instance READ rows compare bytes, and `RefuseUnportedMultiInstance` is deleted.
-   🔴 A green gate has never licensed the flip — a branch took it on that reading and was
-   reverted. What is left is residual 7's CLI-contract widening (`-verbs`/`-exit-codes` answer
-   0 where the oracle exits 2) plus an announcement, because the flip changes what
-   `nix run github:…/cairn` executes for consumers who never asked for a new client.
+1. **THE `packages.default` FLIP — AUTHORISED, IN FLIGHT.** `packages.default` and `apps.default`
+   move together (`flake.nix:673,688,705`). Carries residual 7's contract widening and needs an
+   announcement. 🔴 **A green gate has never licensed this** — a branch took it on that reading
+   and was reverted; that remains true now that the capability blocker is gone, because what was
+   removed was the blocker, not the decision. The decision has now been taken by the operator.
    forcing: user — the cutover is the operator's ask and this is its client half.
-2. **P5 remainder — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members,
-   scopes, entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share
-   dialog must state that unsharing cannot recall a replica — pin the whole normalised string.
-   Clause 2 of the closing condition and the largest thing left.
+2. **P5 remainder — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
+   entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share dialog must
+   state that unsharing cannot recall a replica — pin the whole normalised string. Clause 2 of
+   the closing condition, the largest thing left, and **entirely unstarted**.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
-3. **The filed scaffolding defects from #44's ladder** — four test-file items and three
-   unpinned-by-construction ones, all listed under Defects with closing conditions.
-   forcing: gate — they were filed BY the attribution gate rather than fixed, so nothing else
-   will surface them.
-4. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
-   Key it on **principal + epoch** — `control.Authorization` already carries `Epoch`.
+3. **The batched scaffolding defects** — #44's ladder's four, the three unpinned-by-construction
+   items, and #48's ladder's three. All test-file or harness items; none changes what CI does.
+   forcing: gate — filed BY an attribution gate rather than fixed, so nothing else will surface
+   them.
+4. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304. Key
+   it on **principal + epoch** — `control.Authorization` already carries `Epoch`.
    forcing: none
 5. **P8 — retire the Python oracle.** Gated on 1 having held in real use.
    forcing: none
 
 ## Defects (batched)
-- ✅ **THE SKOPEO DEFECT IS CLOSED ON `main` (`deecfcd`), AND THE RUN NOW REACHES THE PUSH** —
-  steps 7 (`pin skopeo`) and 8 (`log in to ghcr`) passed for the first time in this
-  workflow's history. Root cause and evidence in the investigation block below.
-- 🔴 **AND THE PUSH IS REFUSED FOR A SECOND, INDEPENDENT REASON THE FIRST ONE HID: the ghcr
-  package is not linked to any repository, so `GITHUB_TOKEN` cannot write it.**
-  Run `35481257420`, step 9: `denied: permission_denied: write_package` against
-  `/v2/<owner>/cairn-store/blobs/uploads/`. Measured cause —
-  `gh api user/packages/container/cairn-store` returns **`repository: null`** with
-  `created=2026-09-16T19:45:31Z`, i.e. **17 minutes BEFORE the workflow first landed**. The
-  hand push created a USER-scoped package owned by nobody's repo; `permissions: packages:
-  write` grants repo-based access and there is no repo to base it on. Seven runs never found
-  this because they all died at the skopeo step first — **one defect masking another, and the
-  second only observable once the first was fixed.**
-  ⚠ **What is measured and what is not:** that the package is unlinked is measured; that
-  LINKING it is sufficient to fix the push is standard GitHub behaviour I could not verify
-  from here. **Closing condition:** a `publish-image.yml` run that reaches
-  `PROVE the published image is pullable`. Two operator routes, both UI-only (no REST route):
-  grant this repo Actions **write** access on the package, or **delete** the package and let
-  Actions create it repo-owned — the latter costs the existing public visibility and makes the
-  first run red at the visibility proof, like the Go one.
-- 🟡 **The workflow surfaces skopeo's raw `denied` rather than naming this cause.** Everything
-  else in that file refuses by name with a remedy; this path does not, so the next reader gets
-  a registry error with no pointer. **Closing condition:** a named refusal on the push steps
-  that says "the package is not linked to this repository" and prints the settings URL.
-- 🔴 **THE ONE PUBLISHED ghcr TAG WAS HAND-PUSHED AND IS 7 COMMITS STALE** — see the same
-  block. **The artefact CI publishes and the artefact the pod runs have never been the same
-  build.** Anonymous pull works, so that package's visibility flip was already done.
-- 🔴 **THE DEPLOYED POD SERVES A REPLICATION-HONESTY CLAIM THE REPO HAS SINCE MEASURED
-  FALSE.** It renders *"the store is PER-HOST and unreplicated … an absence below is an
-  absence HERE"*; `lib/host_identity.py` on `main` now carries *"⚠ NOT 'UNREPLICATED', WHICH
-  IS WHAT THIS SAID AND IS NO LONGER TRUE"*. **Closing condition:** any republish — Go or
-  Python — reaching the pod. The Go swap discharges it.
-- 🟡 **FOUR SCAFFOLDING DEFECTS FILED BY #44'S LADDER RATHER THAN FIXED**, because two
-  consecutive rounds changed zero payload lines and the attribution gate refused round 3
-  (`audit-dispatch.py … --round 3` → **rc 5**). All four are in test files; none changes what
-  CI does. (a) `tests/test_publish_workflow.py:1202` — the guard is wider than its name and
-  its failure MESSAGE misdiagnoses: an ordinary trailing `exit 0` reds with "a control that
-  exits 0 on the branch it took because it found the hazard", sending the reader after a
-  branch that does not exist. (b) `tests/test_control_mutant_count_is_pinned.py:212` — a
+- 🔴 **THIS DOC IS 83 KB AGAINST A 65,536 B GUIDELINE — 18 KB OVER, AND THE LAST TWO UPDATES EACH
+  FLAGGED IT AND THEN GREW IT** (+4,078 B, then +8,576 B). No test reads the number, so nothing
+  will go red; it is judgement about what the next session must read before it can act. The
+  archive (`claudedocs/handoff-cairn-control-plane-archive.md`, 16.7 KB, nine blocks) is where
+  answered material goes. 🔴 **Do NOT satisfy this by deleting a claim or narrowing a rule** —
+  that is the failure mode the byte budget on `AGENTS.md` already produced once, where the only
+  reordering that fit deleted the word "BYPASS" from the row describing an auth-bypass surface.
+  **Closing condition:** a prune PR that moves answered Gotchas blocks to the archive and brings
+  this file under 65,536 B, or a written line from a named reader saying the ceiling is wrong.
+- 🟡 **THREE FILED BY #48'S LADDER, RECORDED RATHER THAN FIXED** so the round that filed them
+  stayed the last. (a) `internal/client/readrouting_test.go:281` — the failure message says the
+  predicate "must inspect EVERY state", but the assertion is `rows < 2 || nonOK == 0` and the
+  fixture yields `PROBLEM=0`, so `doctorRow`'s `Problem` branch — the astral rune both comments
+  argue hardest about — never executes. (b) `internal/doctor/render.go:99` — `Markers()` has one
+  consumer and exports a rendering detail to serve it, where `doctor --json` would need no
+  export; separately, a state added to `markers` but not to `States` makes `doctorRow` silently
+  skip those rows. (c) `lib/README.md:156-159` — the re-count recipe greps two literal phrases,
+  so it is a SPELLED check: it returns 5 and structurally cannot see
+  `tests/test_cairn_instances.py`, which the same commit identifies as a sixth site carrying the
+  claim in different words. **Closing condition:** one PR touching those three files that
+  corrects all three — closed when it merges, or when a named reader dismisses them in writing.
+- 🟡 **EVERY COUNT #48'S LADDER TOUCHED IS PROSE NOTHING ASSERTS ON** — `README.md`'s
+  101/102/70/23/8, `lib/README.md`'s five echo sites, `tests/test_parity_harness.py`'s 95/101,
+  `tests/parity/harness.py`'s 2/5/5/6. Each now says so at its site. The repo already owns the
+  fix pattern (`tests/test_control_mutant_count_is_pinned.py` pins a README headline against its
+  derived value); applying it is separate work. **Closing condition:** a decision to pin each or
+  a written line saying why not.
+- 🟡 **FOUR SCAFFOLDING DEFECTS FILED BY #44'S LADDER**, all in test files, none changing what CI
+  does. (a) `tests/test_publish_workflow.py:1202` — the guard is wider than its name and its
+  failure MESSAGE misdiagnoses. (b) `tests/test_control_mutant_count_is_pinned.py:212` — a
   docstring names a missing variable and asserts a value for it; a renamed `MUTANTS` raises
   `AttributeError` and the control never runs. (c) `:45-51` says a sweep would face **three**
   claims; `ci.yml` carries **four**. (d) `:277` — `normalise_shell` is dead after the
   `_dropped`/`step_blocks` split while `step_bodies`' docstring still points at it.
-  **Closing condition:** one PR touching those two files that corrects all four — closed when
-  it merges, or when a named reader dismisses them in writing.
-- 🟡 **Three things are unpinned BY CONSTRUCTION in `publish-image.yml`, flagged not fixed:**
-  `ci.yml:496`'s `(7 mutants)` ARM count is checked by nothing; step-level `if:` expressions
-  sit outside the four whole-body pins, because `step_bodies` reads only `run:`; and
-  `log in to ghcr` is the one remaining credential-handling `run:` step no test pins.
-  **Closing condition:** a decision to pin each or a written line saying why not.
-- 🟡 **The deployment manifest's node-affinity comment will go STALE on the swap.** It keeps
-  the pod off the off-LAN burst node *because the LAN registry does not resolve there*. Pull
-  from ghcr and that stated reason is void, while the affinity may still be wanted (the PVC
-  is ReadWriteOnce local-path). **A comment is a claim too** — update it in the same commit
-  that moves `image:`, or the next reader deletes the affinity on a false premise.
-- 🟡 **`tests/dualrun/` cannot see image drift, and that is structural, not a bug in it.** It
-  runs the TREE's `server.py`. Nothing in the repo compares the Go server against the artefact
-  actually serving. The scratch harness that did it is NOT in the repo. **Closing condition:**
-  decide whether a deployed-artefact arm is worth owning, or write the line saying it is not.
-- Everything previously listed here stands unchanged: #38's three residuals; `ScopeByNameIn`
+  **Closing condition:** one PR touching those two files that corrects all four.
+- 🟡 **Three things are unpinned BY CONSTRUCTION in `publish-image.yml`:** `ci.yml:496`'s
+  `(7 mutants)` ARM count is checked by nothing; step-level `if:` expressions sit outside the
+  four whole-body pins, because `step_bodies` reads only `run:`; and `log in to ghcr` is the one
+  remaining credential-handling `run:` step no test pins. **Closing condition:** a decision to
+  pin each, or a written line saying why not.
+- 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE, NOT PROSPECTIVELY STALE.** It
+  keeps the pod off the off-LAN burst node *because the LAN registry does not resolve there*; the
+  pod now pulls from ghcr, so that reason is void while the affinity may still be wanted (the PVC
+  is ReadWriteOnce local-path). The cutover commit moved `image:` and nothing else. **A comment
+  is a claim too. Closing condition:** the comment states the reason that is actually true, or
+  the affinity goes.
+- 🟡 **`tests/dualrun/` cannot see image drift, and that is structural.** It runs the TREE's
+  `server.py`. Nothing in the repo compares the Go server against the artefact actually serving;
+  the scratch harness that did it is not in the repo. **Closing condition:** decide whether a
+  deployed-artefact arm is worth owning, or write the line saying it is not.
+- ✅ **CLOSED by #48:** the `search --all-scopes` fan-out's measured-zero coverage; routed
+  `validate`'s oracle divergence; two unconditional-label mutants surviving on `defaultInstance`
+  and `bannerFor`; `tests/routing_mutants.py` scoring a never-run suite as KILLED; and two CI
+  floors with silent slack (parity `>= 98` against 102, and `tests/test_parity_harness.py`'s 85
+  against 101).
+- ✅ **CLOSED earlier:** the ghcr package link, the skopeo defect, and the pod's false
+  replication-honesty claim.
+- Everything previously listed stands unchanged: #38's three residuals; `ScopeByNameIn`
   raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six
-  findings; the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; three files
-  not `gofmt`-clean with nothing in CI grepping it; `-race` gated in one tier only; P4 rounds
-  1 and 3's guards absent from the persistent battery; and the `AGENTS.md` byte budget
-  (`MAX_BYTES` 32,500, merged headroom 1,501 B — evict a section rather than move the number
-  a third time).
+  findings; the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; three files not
+  `gofmt`-clean with nothing in CI grepping it (`internal/client/exit.go`, `options.go`,
+  `internal/doctor/doctor_test.go`); `-race` gated in one tier only; P4 rounds 1 and 3's guards
+  absent from the persistent battery; and the `AGENTS.md` byte budget.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **A green corpus is not a green port.** The conformance split was 94/22/0/4 *before*
@@ -808,6 +810,110 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   rounds. And the **INERT-BACKENDS defect is CLOSED ON `main`**, not merely in a branch: #38
   landed as `2055bd2`. **The general rule: if you find yourself re-typing a fact to stop a
   REPLACE heading eating it, it belongs under an APPEND one.**
+
+- ✅ **THE CUTOVER IS COMPLETE AND VERIFIED — CARRIED HERE BECAUSE `State now` REPLACES.** The pod
+  runs the **Go server** from the public registry at an immutable `sha-<40-hex>` tag; one GitOps
+  commit moved the REGISTRY and the IMPLEMENTATION together and the parsed manifest differs from
+  its predecessor in `image` and nothing else. Verified **against the runtime symptom through the
+  public endpoint with no cluster access**: four polls on the old text, one 502 (the `Recreate`
+  window at `replicas: 1`, expected), then the corrected read-through-cache caveat. Negative
+  controls first (bad token → 401, no token → 401), then recall 200, search 200, snapshot 200
+  extracting 276 members, an absent scope 200 carrying `status=scope-absent`, `cairn sync` rc 0.
+  **The publish workflow succeeds** after seven consecutive failures, both packages anonymously
+  pullable. **This is the third update running that a durable fact had to be hand-carried out of
+  `State now`; the doc's own rule is that such a fact belongs under an APPEND heading.**
+- 🔴 **#48'S AUDIT LADDER: FOUR ROUNDS, ENDED ON A CLEAN ROUND, AND EVERY ROUND FOUND SOMETHING
+  SIX GREEN CI CHECKS COULD NOT SEE.** Round 0 (requirements) found `searchEveryInstance`
+  shipping with **measured-zero coverage** — `if true { return ExitOK, nil }` as its first
+  statement **compiled** and left the suite at 51 PASS / 0 FAIL, byte-identical to baseline.
+  Round 1 (blind, nine axes) found the merge blocker: routed `validate` disagreed with the oracle
+  and **the oracle was the wrong side**. Round 2 found two unconditional-label mutants surviving
+  on `defaultInstance` (the no-scope `cairn validate` path — the DEFAULT invocation) and
+  `bannerFor`, plus five sentences a previous fix round had written. Round 3 was **clean**.
+  ⚠ **The attribution gate was one round from firing** — round 3's fixes changed **0** payload
+  lines — so the ladder ended on cleanliness with the mechanical stop right behind it.
+- 🔴 **THE LADDER'S 100% PROSE BASE RATE BROKE, AND THAT IS THE SIGNAL THAT ENDED IT.** Every
+  round until the last found a defect in the PREVIOUS round's prose — round 1's fixes created
+  round 2's findings, round 2's created round 3's. Round 3's rewritten prose audited **true**,
+  including its meta-claims about round 2's prose. **A base rate breaking is evidence; "I have had
+  enough rounds" is not.**
+- 🔴 **AN IDE DIAGNOSTIC SURFACE IS AN INSTRUMENT TOO, AND IT REPORTED A BRANCH THAT DOES NOT
+  COMPILE WHILE CI WAS 6/6 GREEN — REPEATEDLY.** The editor reported `not enough arguments in
+  call to StoreHostLine`, `undefined: RefuseUnportedMultiInstance` and a dozen `UndeclaredName`s,
+  every time resolving some files from an agent's worktree and others from the base clone on a
+  different commit. All false, every time. **The discriminating control is a BUILD in the tree you
+  are asking about** — `go vet ./...` there, rc captured before any pipe. Read a diagnostic panel
+  as a claim about the indexer's view, never about a tree.
+- 🔴 **I DOUBTED A CORRECT AGENT REPORT BECAUSE MY OWN GREP WAS THE WRONG INSTRUMENT.** Checking
+  "three multi-instance READ parity rows", I grepped the harness for row names matching
+  `multi-instance` and found only the two pre-existing `routes-*` rows — which reads exactly like
+  an unsupported claim. The rows are named `recall-routed-to-a-NON-DEFAULT-instance`,
+  `recall-routed-to-the-DEFAULT-instance-is-still-labelled` and `ls-entries-walks-EVERY-instance`.
+  **Validate the instrument before disbelieving the report**: a zero from a pattern you chose is a
+  fact about the pattern.
+- 🔴 **TWO SUITE COUNTS THAT DISAGREE ARE USUALLY TWO PACKAGE SETS, AND THIS LADDER PRODUCED THE
+  SCARE TWICE.** An audit reported `74 PASS` where the next round measured `54`; both were right
+  (`./internal/client ./internal/report ./internal/hostid` versus `./internal/client` alone).
+  Later, `54` versus `911` — the same thing against `./...`. **Name the PACKAGE SET beside any Go
+  count**, the way this repo already says to name the tree. The agent that flagged the
+  discrepancy rather than papering over it is what made it one command to settle.
+- **A MERGED-TREE GATE IS FREE WHEN THE MERGE-BASE EQUALS THE BASE TIP — SAY SO RATHER THAN
+  BUILDING ONE.** Throughout #48, `git merge-base origin/main <branch>` returned `main`'s own tip,
+  so the merged tree WAS the branch tree and the branch's green WAS the merged green. It stops
+  being free the moment anything lands on `main`; re-run the check, never remember its answer.
+- 🔴 **TWO PRs EDITING THIS DOC CONFLICTED WHILE BOTH REPORTED `MERGEABLE` — MEASURED AGAIN, AND
+  THE RESOLUTION IS THE INTERESTING PART.** `git merge-tree --write-tree` between #48 and the
+  handoff PR exited **1**; GitHub called both CLEAN because it compared each against a `main`
+  where neither had landed. 🔴 **Branch on the EXIT CODE** — that command prints only a tree OID
+  on success and emits NO conflict markers, so a marker grep finds nothing either way. ⚠ **And
+  the fix was not a conflict resolution**: #48's own handoff edit had rewritten the same sections
+  with facts that were now TRUE, while the handoff PR's narrative ("#48 is open, not merged") had
+  gone stale in the minutes since it was written. The right move was to **reset the docs branch
+  onto the new `main` and rebuild the delta against it**, not to merge a stale story into a fresh
+  one. **A doc PR that loses a race does not need resolving — it needs re-deriving.**
+- 🔴 **THE `/audit-pr` BRIEF'S "WHERE TO WORK" AND THIS REPO'S GOTCHA DISAGREE, AND THE REPO IS
+  RIGHT — THE BRIEF SAYS IT CONFIDENTLY AND SAYS IT EVERY TIME.** `audit-dispatch.py` prints
+  *"Dispatch with `isolation: "worktree"` — the flag worktrees the CWD's repo, and here that is
+  the right one."* True about the REPO and wrong about the REF: the flag branches from the DEFAULT
+  branch, so an agent sent at an unmerged PR gets a tree of `main` with none of it. Every one of
+  the six dispatches across this PR got a hand-built `git worktree add` at the exact sha plus **a
+  base check it could fail**. Zero mis-targeted agents.
+- 🔴 **zsh ATE `$var:` A THIRD TIME, IN THE SESSION THAT HAD JUST READ THE WARNING.**
+  `git show $B:tests/parity/README.md` expanded through the history modifier `:t` and produced
+  `fatal: ambiguous argument 'route-the-read-verbsests/parity/README.md'`. That one is LOUD and
+  therefore harmless; the same expansion inside a grep returns a confident wrong value.
+  **Brace it: `${B}:path`.** Recorded as the third instance because two were not enough.
+- 🔴 **THE LEAK GATE CAUGHT MY OWN HANDOFF DELTA — BEFORE THE PUSH, WHICH IS THE WHOLE POINT.**
+  Scanning the scratch delta before handing it to the write tool found **two real leaks**: an
+  external tool named directly, and four private repo names quoted out of a search result. Both
+  rewritten to describe by ROLE. Re-scan: 5 findings → 0, same instrument. ⚠ **My positive control
+  was badly chosen and did NOT go red** — reach was proven instead by the test run flagging the
+  file directly. A control that fails to fire is not a passing control; say which one actually
+  carried the proof.
+- ⚠ **`leakscan` EXIT 2 IS "COULD NOT VOUCH", AND A LEFTOVER AGENT WORKTREE CAUSES IT.** A removed
+  agent's worktree directory under `.claude/worktrees/` made the scanner exit 2 with
+  `COULD NOT READ … Is a directory`. Not a leak and not a pass. Check the worktree is clean and
+  its commits are on `origin` **before** removing it — then re-run for a real verdict.
+- **Decision (operator, on #48): the oracle may be changed when a contract cannot include the
+  behaviour.** `cmd_validate`'s negative count is the second such exception, after
+  `seeded=UNREADABLE`. Both were chosen over the two alternatives — declaring a residual, and
+  making the port bug-compatible — and the reasoning is recorded at the change site, not only
+  here.
+- **Decision (operator, on #48): residual 8 and the flip are TWO PRs.** Bundling them would put
+  an irreversible-for-consumers contract change inside a PR whose stated subject is a narrowing
+  being closed, where no reviewer is looking for it.
+- ⚠ **The host-dependent red was RE-MEASURED, not assumed.**
+  `tests/test_cairn_doctor.py::TestTheCliWiring::test_a_no_sync_run_still_reads_the_LOCAL_config`
+  fails `IndexError` at `:876` because `~/.config/subsystem-store/instances/` holds one instance
+  file (mtime unchanged across the whole session). Local: **1 failed, 1969 passed**; **CI's
+  `tests` job passes**, which is the control saying it is the HOME and not the tree. The real
+  defect is that the test inherits the operator's HOME rather than pinning one.
+- ⚠ **THE CROSS-REPO HANDOFF SEARCH HAS ZERO REACH INTO THIS REPO**, so that half of `/resume`
+  step 4 is inert here. Its scope line names four OTHER repositories and `in_scope_docs` equals
+  `indexed_docs` — this repo is absent from the indexer's repo handles, so `--exclude-slug` parsed
+  and matched nothing **because no doc from here is indexed at all**. A query about this arc
+  returns unrelated hits from unrelated repositories, which must not be pasted into this PUBLIC
+  repo. **`cairn recall --repo` is the only step-4 surface that reaches this work.**
 
 ## How to verify
 ```bash
