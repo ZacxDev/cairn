@@ -23,59 +23,56 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ **`3c4a1c6`**, clean. No PRs were merged this session.
-- ✅ **`#44` MERGED as `deecfcd`, verified BY CONTENT** (a squash makes `--is-ancestor` false
-  forever): all four payload paths diff EMPTY against `origin/main`, the merge commit exists,
-  and `scripts/resolve-skopeo.sh` is absent on `main`. It fixed the publish gate, deleted the
-  resolver script an audit showed should never have existed, stopped the Go half gating the
-  Python publish, removed a fifth route ledger, and pinned the four control steps whole.
-  **Its audit ladder is CLOSED on the attribution gate** — rounds 0/1/2, two consecutive
-  payload-0 rounds, `audit-dispatch.py --round 3` refuses at **rc 5**.
-- 🔴 **RANK 1'S PRECONDITION IS DISCHARGED: the deployed artefact has now been diffed against
-  `packages.server-image-go`, and the busybox call is MADE.** Operator decision this session:
-  **publish AND swap the pod to Go**, and the busybox trade is **accepted as a narrowing**.
-- **Deploy/verify status: STILL NOTHING DEPLOYED, AND — newly measured — NOTHING EVER
-  PUBLISHED BY CI EITHER.** See the three findings below; the second one blocks the swap.
-- **Claim `cairn-control-plane-1` is HELD** by this session with the cutover subject. Release
-  it or re-subject it when the rank list moves.
-- **Both audit ladders remain CLOSED** — #38 over rounds 0–4, #41 over rounds 0–2, **both
-  ending on the attribution gate rather than on a clean round** (carried forward: this sits
-  under a REPLACE heading and would otherwise be deleted by this very update).
-- ✅ **The INERT-BACKENDS defect is now CLOSED ON `main`**, not merely in a branch: #38 landed
-  as `2055bd2`, which is the closing condition that entry carried.
-- ⚠ **THIS DOC IS OVER ITS SIZE GUIDELINE** — ~72 KB against the 65,536 B the handoff tooling
-  advises, and **no test in this repo enforces it**, so nothing will go red. The archive
-  (`claudedocs/handoff-cairn-control-plane-archive.md`) is the release valve and already holds
-  five closed blocks. **Prune before appending next time.**
+- Branch `main` @ **`a0c4d07`**. Three PRs merged this session, each verified BY CONTENT:
+  **#44 → `deecfcd`** (the publish gate unbroken + the Go pod published), **#43 → `7bab908`**
+  (the handoff), **#45 → `a0c4d07`** (a retraction, below).
+- ✅ **THE CUTOVER IS DONE AND VERIFIED AGAINST THE RUNTIME SYMPTOM, NOT THE ROLLOUT.** The pod
+  now runs the **Go server**, pulled from the public registry at an immutable `sha-<40-hex>`
+  tag. The GitOps commit moved the REGISTRY and the IMPLEMENTATION in one line; the parsed
+  manifest differs from its predecessor in `image` and **nothing else**, asserted by comparing
+  the whole tree with that key redacted.
+- ✅ **VERIFIED THROUGH THE PUBLIC ENDPOINT, WITHOUT CLUSTER ACCESS**, using the 24-row
+  rendering difference as the discriminator — only the new image emits the corrected
+  read-through-cache caveat. Observed in order: four polls on the old text, **one 502** (the
+  `Recreate` window, expected at `replicas: 1`), then the corrected text. Then, with negative
+  controls first (bad token → 401, no token → 401): recall 200/11,966 B `status=recalled`,
+  search 200/16,007 B, snapshot 200/1.2 MB extracting **276 members**, an absent scope 200
+  carrying `status=scope-absent` (the oracle's own contract — both servers answered 200 for
+  that shape in the pre-deploy dual-run), and `cairn sync` **rc 0** fetching 275 entries live.
+- ✅ **THE PUBLISH WORKFLOW SUCCEEDS.** Both pods publish to two packages under one
+  `sha-<40-hex>` scheme, both anonymously pullable — checked after a negative control on an
+  absent tag was refused.
+- **Carried forward (these sit under a REPLACE heading and would otherwise be deleted):**
+  **all three audit ladders are CLOSED** — #38 over rounds 0–4 and #41 over rounds 0–2, both
+  ending on the attribution gate rather than a clean round; #44 over rounds 0/1/2, stopped by
+  the gate MECHANICALLY (`audit-dispatch.py --round 3` → **rc 5**) after two consecutive
+  payload-0 rounds. And the **INERT-BACKENDS defect is CLOSED ON `main`**, not merely in a
+  branch: #38 landed as `2055bd2`.
+- ⚠ **THIS DOC WAS PRUNED IN THE SAME COMMIT AS THIS UPDATE** — **four** answered investigation
+  blocks moved verbatim to `claudedocs/handoff-cairn-control-plane-archive.md`, which now holds
+  nine. (This line said "three" in its first draft and the prune moved four — a count written
+  before the act it describes. Derive such a number AFTER doing the thing, from the thing.) It had reached
+  ~79 KB against a 65,536 B guideline that enforces nothing, and two previous updates flagged
+  that without acting, which is how it got there. **Prune before appending.**
 
 ## Next steps (ranked)
-1. **LAND THE PUBLISH FIX AND THE GO PUBLISH PATH.** `IN FLIGHT: feat/publish-the-go-image`.
-   Fixes the skopeo multi-output defect (extracted to a stdin-driven script so it is testable
-   without nix) and publishes `server-image-go` to its own ghcr package with its OWN positive
-   control. 🔴 **The Python positive control does NOT transfer** — the Go image's `Cmd[0]` is
-   the server binary and has no `-c` flag (`flag provided but not defined: -c`); the Go
-   equivalent is `cairn-server -routes` read out of the running image.
-   forcing: user — operator chose "publish AND swap"; this is the publish half.
-2. **THE ONE-TIME ghcr VISIBILITY FLIP, THEN THE POD SWAP.** A ghcr package is **PRIVATE on
-   first publish**, so the Go package's first run is EXPECTED to fail at the pullability gate
-   until the operator flips it in the GitHub UI (the workflow prints the exact URL). Only then
-   can the deployment's `image:` move. 🔴 **That manifest lives in the GitOps repo, where
-   committing to the mainline IS deploying** — and the store is internet-reachable behind a
-   gateway, so this is not a local change. Take the affinity-comment defect with it.
-   forcing: user — operator chose "publish AND swap"; this is the swap half.
-3. **THE `packages.default` FLIP — still blocked on `tests/parity/README.md` residual 8.**
-   Unchanged: measured to break every read verb at exit 11 on a multi-instance host, this one
-   included. Carries residual 7's contract widening.
+1. **THE `packages.default` FLIP — blocked on `tests/parity/README.md` residual 8.** Unchanged:
+   measured to break every read verb at exit 11 on a multi-instance host, this one included.
+   Carries residual 7's contract widening. Now the last piece of the cutover arc.
    forcing: user — the cutover is the operator's ask and this is its client half.
-4. **P5 remainder — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members,
+2. **P5 remainder — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members,
    scopes, entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share
    dialog must state that unsharing cannot recall a replica — pin the whole normalised string.
    Clause 2 of the closing condition and the largest thing left.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
-5. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
+3. **The filed scaffolding defects from #44's ladder** — four test-file items and three
+   unpinned-by-construction ones, all listed under Defects with closing conditions.
+   forcing: gate — they were filed BY the attribution gate rather than fixed, so nothing else
+   will surface them.
+4. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
    Key it on **principal + epoch** — `control.Authorization` already carries `Epoch`.
    forcing: none
-6. **P8 — retire the Python oracle.** Gated on 1–3 having held in real use.
+5. **P8 — retire the Python oracle.** Gated on 1 having held in real use.
    forcing: none
 
 ## Defects (batched)
@@ -747,36 +744,66 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   ranks 1 and 2 below are both "the cutover", so re-subject before splitting them across two
   sessions.
 
+- 🔴 **ONE DEFECT CAN MASK ANOTHER, AND THE SECOND IS ONLY OBSERVABLE ONCE THE FIRST IS FIXED.**
+  Seven runs failed at the skopeo step, so nobody ever learned that the package could not be
+  written either. Both were real, both blocked publishing, and no amount of staring at the
+  seven red runs would have revealed the second. **When a gate has never once passed, expect
+  the failure you can see to be hiding the next one — budget for a second round.**
+- 🔴 **A MUTATION BATTERY THAT PARSES `FAILED` LINES SCORES EVERY MUTANT AS SURVIVED WHEN THE
+  RUNNER NEVER RAN.** Measured on one tree: `python3 -m pytest` → `No module named pytest` →
+  **14 mutants, 14 SURVIVED**; the same tree under an interpreter carrying pytest → **14
+  KILLED**. Nothing in the output distinguished the two except the verdict. `publish_workflow_
+  mutants.py` now reads the runner's own summary counts and refuses with **exit 2** when zero
+  tests ran. ⚠ **`tests/control_mutants.py` has the SAME shape and has NOT been given that
+  control** — run it under a pytest-carrying interpreter, or fix it.
+- 🔴 **A GO IMAGE'S DIGEST MOVES ON EVERY COMMIT EVEN WHEN NO GO CODE CHANGED**, because the
+  binary's store path embeds the short rev: `cairn-server-<rev>`. Measured across a prose-only
+  PR — the Go digest moved, the Python one did **not** (`171ba281…` on both revs, because that
+  image's content is rev-independent). **A moved digest is NOT evidence the server changed**,
+  which is exactly what someone diffing digests to decide whether to redeploy would conclude.
+- 🔴 **`textwrap.wrap` COLLAPSES RUNS OF WHITESPACE, so regenerating a whole-string pin with it
+  silently rewrites the bytes the pin exists to assert.** Caught only because the test stayed
+  red. Slice the string instead, and assert the round trip.
+- 🔴 **A PREDICTION I STATED CONFIDENTLY WAS FALSIFIED BY THE FIRST RUN THAT TESTED IT:** "a
+  ghcr package is PRIVATE on first publish, so the Go package's first run is EXPECTED to fail".
+  It was created **public** and the proof passed. Four sites asserted it, one of them telling
+  the reader to expect red. Retracted in #45 with the scope stated — one package, created by
+  Actions, in a PUBLIC repo — and the refusal KEPT, because it is the only thing that would
+  catch the case where that inheritance does not happen.
+- **Decision (operator, this session): the busybox trade is a NARROWING, accepted.** Measured
+  relationally to avoid the counting trap: the two nix images carry **identical** applet sets,
+  so the cutover adds none; against the retired image it trades network applets for the loss of
+  two interpreters and 11 setuid binaries.
+- **Decision (operator, this session): registry move and implementation swap as ONE commit**,
+  on the reasoning that they are entangled — the Go pod is published only to the public
+  registry, so either half alone deploys nothing.
+- ⚠ **A `Recreate` + `replicas: 1` rollout has a hard refusal window, and it was OBSERVED** —
+  one 502 between the old and new text. Expected, brief, and worth telling anyone who watches
+  a swap that a single non-200 mid-rollout is the design, not a fault.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
 python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
-python3 tests/leakscan.py --self-test; echo "rc=$?"
 uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
 go vet ./... && go test ./... && go test -race ./...
-python3 -u tests/control_mutants.py          # -u: stdout block-buffers, looks FROZEN ~12m
+python3 -u tests/control_mutants.py
+uv run --python 3.12 --with pytest -- python -u tests/publish_workflow_mutants.py
 python3 tests/conformance/suite.py run       # oracle: 0 failures
 bash tests/conformance/run_go.sh             # Go: 0 failures, 4 skips
 python3 tests/dualrun/harness.py             # SUMMARY … differences=0
-python3 tests/dualrun/harness.py --self-test # mutants=7 caught=7
-python3 tests/dualrun/harness.py --break-both # MUST exit 2 — could not vouch
 python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
-nix build .#packages.x86_64-linux.server-image-go --no-link -L
 ```
-🔴 **`dualrun` and `parity` exit 2 for "COULD NOT VOUCH", which is NOT "failed"** — read the
-reason before treating a red as a regression. See the midnight-window Gotcha.
-🔴 **`tests/dualrun/` IS NOT A CLAIM ABOUT THE POD.** It runs the TREE's `server.py`. To ask
-about the artefact that actually serves, pull the tag the GitOps manifest pins and run both as
-CONTAINERS over one store — and give that comparison a POSITIVE CONTROL, because the first
-draft of exactly that harness compared 27 pairs of identical 404s and reported `differing=0`.
-🔴 **Check the publish workflow actually RAN, not merely that a tag exists:**
-`gh run list --workflow=publish-image.yml`. Every run to date has failed while a tag sat in
-the registry, pushed by hand — so a tag's existence proves nothing about CI.
-🔴 **An image that BUILDS is not an image that works.** Load it, read its config back, and run
-`server/seed.sh`'s `tar` path and `kill -HUP 1` against it.
-🔴 **Before merging alongside another open PR, BUILD THE MERGED TREE and run the gate there.**
+🔴 **RUN THE MUTATION BATTERIES UNDER AN INTERPRETER THAT HAS `pytest`.** A bare `python3` has
+none; the publish battery now refuses with **exit 2** rather than printing a false all-SURVIVED,
+but only that one does — see the Gotcha.
+🔴 **`dualrun` and `parity` exit 2 for "COULD NOT VOUCH", which is NOT "failed"**.
+🔴 **VERIFY A DEPLOY BY THE RUNTIME SYMPTOM.** For this pod the discriminator is the rendered
+caveat: the retired image says the store is *"PER-HOST and unreplicated"*, the current one says
+it is *"read through a PER-HOST CACHE"*. A recall through the public endpoint tells you which
+is serving without any cluster access at all.
 🔴 **Verify a squash merge BY CONTENT, never by ancestry.**
-🔴 **Reading CI: require SIX checks present AND all COMPLETED** before believing a verdict.
+🔴 **Reading CI: require SIX checks present AND all COMPLETED.**
 
 ## Open investigations — live diagnosis state
 
@@ -806,34 +833,6 @@ because a closed block's value is its measured values and eliminations. Read it 
   second store instance) wrote that config. CI is unaffected — fresh checkout, clean HOME.
 - **Next probe:** none needed for #38. If it is to be fixed, the test should pin the HOME it
   reads rather than inheriting the operator's — that is the real defect.
-
-### 🔴 RANK 1'S REMAINDER: the DEPLOY decision, now dischargeable for the first time
-- as-of: 2026-09-18
-- **Symptom + exact repro:** not a defect — the half of the cutover that was never startable.
-  `AGENTS.md` states the precondition: *"before swapping the deployed image, diff the two for
-  what the test cannot read"*, and says the busybox trade is **recorded rather than settled**,
-  to be revisited *"with the threat model in front of you"* if the image is ever deployed.
-- **Observed (with values):** the diff between the two **Python** builds is done and is in this
-  doc. The diff that matters for the cutover — the deployed Python image against
-  `packages.server-image-go` — has never been done, because until `bb87cbd` **no Go image
-  existed**. That is the sharp version: the precondition was **undischargeable**, not merely
-  undischarged. Still open beside it: `publish-image.yml` publishes the Python image, and
-  nothing publishes the Go one, so CI now builds an artefact nobody consumes.
-  ⚠ **SUPERSEDED — both halves of that last sentence are now wrong.** `publish-image.yml` has
-  in fact published NOTHING, ever (7 runs, 7 failures), and a Go publish path is in flight.
-  See the CLOSED block and the publish-gate block appended below.
-- **Ruled out:** that the Go image cannot be operated. Both documented procedures were exercised
-  end to end against a loaded container — `server/seed.sh`'s `tar` push plus its containment
-  guard, and `server/README.md`'s `kill -HUP 1` revocation, which reached `token reload: LOADED`.
-  PID 1 is the server binary. `via: measurement`
-- **Ruled out:** that the port loses SIGHUP reload. `cmd/cairn-server/main.go` calls
-  `signal.Notify(signals, syscall.SIGHUP)` and the startup line advertises `reload=SIGHUP`.
-  `via: code`
-- **Next probe:** 🔴 **RETIRED — DO NOT RUN. This block is CLOSED.** The judgement it asked for
-  was made: the diff is done, the busybox call is made, and the operator chose publish AND
-  swap. A later reader following this line would re-derive a decision that already has an
-  answer. The enumeration instruction it carried survives in the CLOSED block below, which is
-  where it now belongs.
 
 ### The `packages.default` flip is blocked on a mechanical closing condition
 - as-of: 2026-09-18
@@ -866,80 +865,18 @@ because a closed block's value is its measured values and eliminations. Read it 
   `via: measurement`
 - **Next probe:** a pod, a network and a real issuer. Nothing in the repo covers it.
 
-### CLOSED — "RANK 1'S REMAINDER: the DEPLOY decision" is discharged; do not re-run its probes
+### CLOSED — the publish gate, and the second defect the first one hid
 - as-of: 2026-09-19
-- **Symptom + exact repro:** not a defect. That block asked for a diff of the deployed image
-  against `packages.server-image-go`, and for the busybox call. **Both are now done and the
-  operator has decided.** Its "Next probe" line is RETIRED — do not treat it as open work.
-- **Observed (with values):** compared as containers at `3c4a1c6`. Deployed (Debian-slim
-  base): **128 MB, CPython 3.12 + Perl, 11 setuid/setgid binaries** (`su`, `passwd`, `mount`,
-  `umount`, `chsh`, `chfn`, `gpasswd`, `newgrp`, `chage`, `expiry`, `unix_chkpwd`), 360 PATH
-  executables, **no** `nc`/`wget`/`curl`. `server-image-go`: **50 MB, ZERO interpreters, ZERO
-  setuid**, busybox 1.37.0. Both run as uid 65532 on 8102 and refuse an unconfigured start
-  with **exit 78** and the SAME `subsystem-store-api: token file unreadable: …` prefix.
-- **Ruled out:** that the cutover widens the busybox surface. `busybox --list` on BOTH nix
-  images: **402 applets each, zero difference in either direction** — the Python image CI
-  already publishes carries the identical set. `via: measurement`
-- **Ruled out:** that the Go image cannot be operated — re-verified at `3c4a1c6` rather than
-  taken from the earlier note. `seed.sh`'s `tar -xf -` push landed 9 scopes; PID 1 is the
-  server binary; `kill -HUP 1` revocation moved the old token **200 → 401** and the new one
-  **401 → 200**; a malformed token file is REFUSED with `NOTHING CHANGED: still serving the 3
-  previously loaded identities`. `via: measurement`
-- **Ruled out:** that the trusted-proxy path is untested. It was, and the first attempt used
-  the WRONG HEADER: `X-Forwarded-For` is deliberately never read (caller-supplied); the server
-  keys on **`CF-Connecting-IP`**. With it: single header → **200 on both**, byte-identical
-  audit lines; duplicate, malformed and empty → **401 on both**, identical bodies,
-  `status=no-client-ip`. `via: measurement`
-- **Leading hypothesis:** none — closed. The busybox trade is a **narrowing on both axes**: an
-  interpreter subsumes the busybox network set, and `su`/`mount`/`passwd` disappear. Busybox
-  stays load-bearing (seeding needs `tar`, revocation needs `sh -c 'kill -HUP 1'`), which is
-  why a distroless variant was not pursued.
-- **Next probe:** none. Work moved to ranks 1 and 2.
-
-### 🔴 THE POD DOES NOT SERVE THE TREE, AND NO GATE IN THIS REPO CAN SEE IT
-- as-of: 2026-09-19
-- **Symptom + exact repro:** every byte-identity claim here compares Go against the TREE's
-  `server.py`. The pod serves an image built from an OLDER tree, so "byte-identical to the
-  oracle" and "byte-identical to production" are different claims and only the first was
-  measured. Repro: pull the tag the GitOps manifest pins, extract `/app`, diff against the
-  tree.
-- **Observed (with values):** deployed `server.py` is **5,421 lines** against the tree's
-  **5,473** (+52/−5 over 4 hunks); **all five** `lib/` modules differ, and three tree modules
-  (`cairn_doctor.py`, `cairn_instances.py`, `timeouts.py`) are absent from the image. Run as
-  containers over one generated world, 39 rows: **13 identical** (every refusal — 401/404/400
-  — plus `/healthz`); **2** `/api/v1/snapshot` rows differing in the gzip envelope ONLY, with
-  the **uncompressed tar byte-identical at 256,000 B** and the extracted trees identical;
-  **24 differing, every one of them solely in the replication-honesty prose.**
-  Today's `tests/dualrun/harness.py` on the same world: `targets=361 comparisons=1489
-  differences=0`.
-- **Ruled out:** that the 24 rows are a Go-vs-Python divergence. The only behavioural change
-  in the 52-line `server.py` delta is the `_header_safe` / `seeded=UNREADABLE` handling — the
-  operator-authorised oracle exception already recorded in the Gotchas. The rest of the delta
-  is extraction scrub. `via: measurement`
-- **Ruled out:** that the `host:` line difference was real. It embeds the container hostname;
-  pinned identical on both, the line still differs — because it carries the caveat
-  parenthetical. The hostname itself was a dimension the first measurement did not name.
-  `via: measurement`
-- **Leading hypothesis:** the drift is entirely image staleness, and the cutover CORRECTS a
-  false claim rather than risking one. Transitive: Go == tree (dualrun, same world), tree !=
-  deployed, therefore Go != deployed.
-- **Next probe:** none needed for the decision. If a deployed-artefact arm is ever wanted, it
-  needs a POSITIVE CONTROL — see the Gotcha below on how the first draft failed.
-
-### The publish gate has never run to completion, and a hand-pushed tag hid it
-- as-of: 2026-09-19
-- **Symptom + exact repro:** `gh run list --workflow=publish-image.yml` → **7 runs, 7
-  failures**, oldest to newest, while `ghcr.io/<owner>/cairn-store` holds a pullable tag.
-- **Observed (with values):** every run dies in `pin skopeo to the flake's nixpkgs` with
-  `line 4: /nix/store/…-skopeo-1.24.0-man` / `/nix/store/…-skopeo-1.24.0/bin/skopeo: No such
-  file or directory` / `##[error]Process completed with exit code 127`, plus
-  `##[error]Unable to process file command 'output' successfully` /
-  `Invalid format '…/bin/skopeo'`. Reproduced locally: `--print-out-paths` emits the `-man`
-  output first, then the real one.
-- **Ruled out:** that the workflow published the existing tag. No run exists for `5d048dd`
-  (the workflow landed later, in `0d9d3fa`), and every run that did exist failed **before**
-  the push step. `via: measurement`
-- **Leading hypothesis:** the tag was pushed by hand — its `Env` matches the NIX image, not
-  the Dockerfile image the pod runs.
-- **Next probe:** land rank 1, then `gh run list --workflow=publish-image.yml` must show a run
-  that REACHES the push step. A tag appearing is not that.
+- **Symptom + exact repro:** `gh run list --workflow=publish-image.yml` → 7 runs, 7 failures.
+- **Observed (with values):** every run died in `pin skopeo` with exit 127 plus
+  `Invalid format`, because `nix build --print-out-paths` prints **two** paths for
+  `nixpkgs#skopeo` (the `man` output FIRST). Fixed by naming the output — `nixpkgs#skopeo.out`
+  prints exactly one, measured at the pinned lock on nix 2.34.8.
+- **Observed (with values):** with that closed, the run reached the push and failed
+  **`denied: permission_denied: write_package`**. Cause measured: the package read
+  `repository: null`, created **17 minutes BEFORE the workflow first landed** — a hand push had
+  made it a user-scoped package with no repo for `packages: write` to be based on. Granting the
+  repo write access fixed it; both packages now read `vis=public repo=<this repo>`.
+- **Ruled out:** that the resolver needed a script. An audit refuted it by measurement and the
+  111-line script was deleted. `via: measurement`
+- **Next probe:** none — closed. A successful run is on record.

@@ -110,3 +110,116 @@ handoff. This file is read on demand and therefore costs nothing per session.
   this doc deliberately does not name) and dispatch it against a detached worktree at the PR
   head, never `isolation: "worktree"`.
 
+
+## Moved from the handoff when the cutover completed
+
+Four blocks whose question is ANSWERED — the deploy decision (and the block it
+superseded), the publish gate, and the pod-vs-tree divergence the cutover closed.
+Kept verbatim: a closed block's value is its measured values and its eliminations.
+
+### 🔴 RANK 1'S REMAINDER: the DEPLOY decision, now dischargeable for the first time
+- as-of: 2026-09-18
+- **Symptom + exact repro:** not a defect — the half of the cutover that was never startable.
+  `AGENTS.md` states the precondition: *"before swapping the deployed image, diff the two for
+  what the test cannot read"*, and says the busybox trade is **recorded rather than settled**,
+  to be revisited *"with the threat model in front of you"* if the image is ever deployed.
+- **Observed (with values):** the diff between the two **Python** builds is done and is in this
+  doc. The diff that matters for the cutover — the deployed Python image against
+  `packages.server-image-go` — has never been done, because until `bb87cbd` **no Go image
+  existed**. That is the sharp version: the precondition was **undischargeable**, not merely
+  undischarged. Still open beside it: `publish-image.yml` publishes the Python image, and
+  nothing publishes the Go one, so CI now builds an artefact nobody consumes.
+  ⚠ **SUPERSEDED — both halves of that last sentence are now wrong.** `publish-image.yml` has
+  in fact published NOTHING, ever (7 runs, 7 failures), and a Go publish path is in flight.
+  See the CLOSED block and the publish-gate block appended below.
+- **Ruled out:** that the Go image cannot be operated. Both documented procedures were exercised
+  end to end against a loaded container — `server/seed.sh`'s `tar` push plus its containment
+  guard, and `server/README.md`'s `kill -HUP 1` revocation, which reached `token reload: LOADED`.
+  PID 1 is the server binary. `via: measurement`
+- **Ruled out:** that the port loses SIGHUP reload. `cmd/cairn-server/main.go` calls
+  `signal.Notify(signals, syscall.SIGHUP)` and the startup line advertises `reload=SIGHUP`.
+  `via: code`
+- **Next probe:** 🔴 **RETIRED — DO NOT RUN. This block is CLOSED.** The judgement it asked for
+  was made: the diff is done, the busybox call is made, and the operator chose publish AND
+  swap. A later reader following this line would re-derive a decision that already has an
+  answer. The enumeration instruction it carried survives in the CLOSED block below, which is
+  where it now belongs.
+
+### CLOSED — "RANK 1'S REMAINDER: the DEPLOY decision" is discharged; do not re-run its probes
+- as-of: 2026-09-19
+- **Symptom + exact repro:** not a defect. That block asked for a diff of the deployed image
+  against `packages.server-image-go`, and for the busybox call. **Both are now done and the
+  operator has decided.** Its "Next probe" line is RETIRED — do not treat it as open work.
+- **Observed (with values):** compared as containers at `3c4a1c6`. Deployed (Debian-slim
+  base): **128 MB, CPython 3.12 + Perl, 11 setuid/setgid binaries** (`su`, `passwd`, `mount`,
+  `umount`, `chsh`, `chfn`, `gpasswd`, `newgrp`, `chage`, `expiry`, `unix_chkpwd`), 360 PATH
+  executables, **no** `nc`/`wget`/`curl`. `server-image-go`: **50 MB, ZERO interpreters, ZERO
+  setuid**, busybox 1.37.0. Both run as uid 65532 on 8102 and refuse an unconfigured start
+  with **exit 78** and the SAME `subsystem-store-api: token file unreadable: …` prefix.
+- **Ruled out:** that the cutover widens the busybox surface. `busybox --list` on BOTH nix
+  images: **402 applets each, zero difference in either direction** — the Python image CI
+  already publishes carries the identical set. `via: measurement`
+- **Ruled out:** that the Go image cannot be operated — re-verified at `3c4a1c6` rather than
+  taken from the earlier note. `seed.sh`'s `tar -xf -` push landed 9 scopes; PID 1 is the
+  server binary; `kill -HUP 1` revocation moved the old token **200 → 401** and the new one
+  **401 → 200**; a malformed token file is REFUSED with `NOTHING CHANGED: still serving the 3
+  previously loaded identities`. `via: measurement`
+- **Ruled out:** that the trusted-proxy path is untested. It was, and the first attempt used
+  the WRONG HEADER: `X-Forwarded-For` is deliberately never read (caller-supplied); the server
+  keys on **`CF-Connecting-IP`**. With it: single header → **200 on both**, byte-identical
+  audit lines; duplicate, malformed and empty → **401 on both**, identical bodies,
+  `status=no-client-ip`. `via: measurement`
+- **Leading hypothesis:** none — closed. The busybox trade is a **narrowing on both axes**: an
+  interpreter subsumes the busybox network set, and `su`/`mount`/`passwd` disappear. Busybox
+  stays load-bearing (seeding needs `tar`, revocation needs `sh -c 'kill -HUP 1'`), which is
+  why a distroless variant was not pursued.
+- **Next probe:** none. Work moved to ranks 1 and 2.
+
+### 🔴 THE POD DOES NOT SERVE THE TREE, AND NO GATE IN THIS REPO CAN SEE IT
+- as-of: 2026-09-19
+- **Symptom + exact repro:** every byte-identity claim here compares Go against the TREE's
+  `server.py`. The pod serves an image built from an OLDER tree, so "byte-identical to the
+  oracle" and "byte-identical to production" are different claims and only the first was
+  measured. Repro: pull the tag the GitOps manifest pins, extract `/app`, diff against the
+  tree.
+- **Observed (with values):** deployed `server.py` is **5,421 lines** against the tree's
+  **5,473** (+52/−5 over 4 hunks); **all five** `lib/` modules differ, and three tree modules
+  (`cairn_doctor.py`, `cairn_instances.py`, `timeouts.py`) are absent from the image. Run as
+  containers over one generated world, 39 rows: **13 identical** (every refusal — 401/404/400
+  — plus `/healthz`); **2** `/api/v1/snapshot` rows differing in the gzip envelope ONLY, with
+  the **uncompressed tar byte-identical at 256,000 B** and the extracted trees identical;
+  **24 differing, every one of them solely in the replication-honesty prose.**
+  Today's `tests/dualrun/harness.py` on the same world: `targets=361 comparisons=1489
+  differences=0`.
+- **Ruled out:** that the 24 rows are a Go-vs-Python divergence. The only behavioural change
+  in the 52-line `server.py` delta is the `_header_safe` / `seeded=UNREADABLE` handling — the
+  operator-authorised oracle exception already recorded in the Gotchas. The rest of the delta
+  is extraction scrub. `via: measurement`
+- **Ruled out:** that the `host:` line difference was real. It embeds the container hostname;
+  pinned identical on both, the line still differs — because it carries the caveat
+  parenthetical. The hostname itself was a dimension the first measurement did not name.
+  `via: measurement`
+- **Leading hypothesis:** the drift is entirely image staleness, and the cutover CORRECTS a
+  false claim rather than risking one. Transitive: Go == tree (dualrun, same world), tree !=
+  deployed, therefore Go != deployed.
+- **Next probe:** none needed for the decision. If a deployed-artefact arm is ever wanted, it
+  needs a POSITIVE CONTROL — see the Gotcha below on how the first draft failed.
+
+### The publish gate has never run to completion, and a hand-pushed tag hid it
+- as-of: 2026-09-19
+- **Symptom + exact repro:** `gh run list --workflow=publish-image.yml` → **7 runs, 7
+  failures**, oldest to newest, while `ghcr.io/<owner>/cairn-store` holds a pullable tag.
+- **Observed (with values):** every run dies in `pin skopeo to the flake's nixpkgs` with
+  `line 4: /nix/store/…-skopeo-1.24.0-man` / `/nix/store/…-skopeo-1.24.0/bin/skopeo: No such
+  file or directory` / `##[error]Process completed with exit code 127`, plus
+  `##[error]Unable to process file command 'output' successfully` /
+  `Invalid format '…/bin/skopeo'`. Reproduced locally: `--print-out-paths` emits the `-man`
+  output first, then the real one.
+- **Ruled out:** that the workflow published the existing tag. No run exists for `5d048dd`
+  (the workflow landed later, in `0d9d3fa`), and every run that did exist failed **before**
+  the push step. `via: measurement`
+- **Leading hypothesis:** the tag was pushed by hand — its `Env` matches the NIX image, not
+  the Dockerfile image the pod runs.
+- **Next probe:** land rank 1, then `gh run list --workflow=publish-image.yml` must show a run
+  that REACHES the push step. A tag appearing is not that.
+
