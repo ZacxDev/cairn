@@ -357,6 +357,27 @@ MUTANTS: list[Mutant] = [
         go_package="./internal/client/",
     ),
     Mutant(
+        # ⚠ THE ANCHOR CARRIES ITS SECOND LINE, AND THAT IS NOT DECORATION. The bare
+        # `rep, searchErr := report.Search(cache, report.SearchOptions{` occurs TWICE in
+        # `verbs.go` — once in `Report`'s scoped arm and once here — so it would make this
+        # harness REFUSE. `Scope: ""` is what only the fan-out spells, because only the fan-out
+        # names no scope.
+        id="go-a-search-fan-out-reads-ONE-instance",
+        target="internal/client/verbs.go",
+        old='\t\trep, searchErr := report.Search(cache, report.SearchOptions{\n'
+            '\t\t\tScope:     "",',
+        new='\t\trep, searchErr := report.Search(opts.Cache, report.SearchOptions{\n'
+            '\t\t\tScope:     "",',
+        why="`search --all-scopes` walks every instance and searches the DEFAULT one's cache N "
+            "times: every section prints the right `cairn[<alias>]` banner over the WRONG "
+            "store's hits, so an entry that exists only on the second instance is reported as "
+            "absent from a fleet-wide search. 🔴 THE SITE HAD MEASURED-ZERO COVERAGE UNTIL THE "
+            "KILLING TEST EXISTED — `if true { return ExitOK, nil }` at the top of "
+            "`searchEveryInstance` compiled and left `./internal/client` at 51 PASS / 0 FAIL.",
+        kills="TestAllScopesFANSOUTToEveryInstanceAndLABELSEachSection",
+        go_package="./internal/client/",
+    ),
+    Mutant(
         id="go-caveat-always-carries-the-clause",
         target="internal/hostid/hostid.go",
         old="\tif instance == \"\" {\n\t\treturn StoreIsPerHost\n\t}",

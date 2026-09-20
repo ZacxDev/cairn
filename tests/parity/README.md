@@ -172,7 +172,32 @@ happens when it is a VALUE? The rule is argparse's, and both halves are measured
   *server's* narrowing is the conformance corpus's claim, not this one's — but note that a refused
   scope and an absent one are byte-identical by design, so a client cannot tell them apart either
   way.
-- **A multi-instance host beyond the three READ rows and the two `routes` rows.** The world stands up exactly TWO instances against TWO pods; three instances, an instance whose config is present but empty, and a fan-out where one pod is down are not built. The per-verb behaviour there is `internal/client`'s own tests' claim, not this one's.
+- **A multi-instance host beyond the three READ rows and the two `routes` rows.** The world stands
+  up exactly TWO instances against TWO pods; three instances, an instance whose config is present
+  but empty, and a fan-out where one pod is down are not built.
+
+  🔴 **THIS BULLET USED TO END *"The per-verb behaviour there is `internal/client`'s own tests'
+  claim, not this one's"*, AND THAT SENTENCE WAS FALSE ON THE COMMIT THAT ADDED IT.** Measured at
+  `0c187d76`: `searchEveryInstance` — the whole `search --all-scopes` fan-out — had **zero**
+  behavioural coverage. Inserting `if true { return ExitOK, nil }` as its first statement, a
+  fan-out that searches nothing and reports success, **compiled** (`go build ./...` rc 0) and left
+  `go test -count=1 -v ./internal/client` at **51 PASS / 0 FAIL**, byte-identical to the unmutated
+  run. The only occurrence of `--all-scopes` anywhere under `internal/client`'s tests was an
+  argv-rejection row (`recall --all-scopes` is not a flag `recall` takes), which never reaches the
+  fan-out at all. A sentence that READS as coverage while providing none is worse than no sentence,
+  because it stops anyone looking — so the retraction is recorded here rather than quietly
+  rewritten. What is true now, gap by gap:
+
+  | gap | covered by |
+  |---|---|
+  | the fan-out over several instances — every one searched, each section labelled, its own cache read | `TestAllScopesFANSOUTToEveryInstanceAndLABELSEachSection`, `TestAllScopesDoesNOTRequireThisReposScopeToBeRegistered`, `TestAnUNREADInstanceMakesTheFanOutLOUDAndNonZero`, plus mutant `go-a-search-fan-out-reads-ONE-instance` |
+  | a fan-out where one pod is **DOWN** | **nothing.** The three rows above run OFFLINE: an instance is unread because it has no cache under `--no-sync`. That reaches the SAME branch (`state.ExitHint != 0`) a dead pod would, which is why the PARTIAL banner is measured — but a branch reached by another cause is not the cause |
+  | an instance whose config is present but **empty** | `TestAPutLoadsTheROUTEDCredentialsLAZILY` — for `put` only. **No read verb has a row** |
+  | **three** instances | **nothing.** Every test in this repository, both languages, stands up exactly two |
+
+  ⚠ The three rows above are `internal/client`'s claim and NOT this gate's, which is what the
+  retracted sentence was reaching for. The difference is that the pointer is now checkable: the
+  test names are in it, and `tests/routing_mutants.py` carries a mutant that dies by name.
 - **The `doctor` states no world reaches.** An unreadable local root (`token-scopes` UNMEASURED
   with `unread`) needs a mode-000 directory, which a root-run CI job would not honour.
 - **Anything after the pod answers 5xx from a real fault.** The world is healthy; `503` is only

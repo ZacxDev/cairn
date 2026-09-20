@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -280,13 +281,172 @@ func TestValidateROUTESAndDoctorWALKS(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// `search --all-scopes` — THE FAN-OUT.
+//
+// 🔴 THESE THREE EXIST BECAUSE `searchEveryInstance` SHIPPED WITH MEASURED-ZERO COVERAGE.
+// Verified at 0c187d76: inserting `if true { return ExitOK, nil }` as its first statement — a
+// fan-out that searches nothing and reports success — compiled and left this package at 51
+// PASS / 0 FAIL, byte-identical to the unmutated run. The prose in `tests/parity/README.md`
+// pointed a reader here for exactly this behaviour while nothing here referenced it.
+//
+// They are the Go spelling of the oracle's `TestSearchAcrossInstances`, ported as CLAIMS
+// rather than as Python: every instance is searched and each section names its own; an
+// UNREGISTERED scope does not refuse a search that named no scope; and an instance that could
+// not be read is LOUD and non-zero.
+//
+// ⚠ EACH ONE ASSERTS OUTPUT AND NOT ONLY AN EXIT CODE, WHICH IS WHAT THE MUTANT ABOVE FORCES.
+// `report.ExitFor` answers 0 for `search-hit` AND for `search-no-match`, so a fan-out that
+// returned `ExitOK` having searched nothing is indistinguishable from a successful one by its
+// code alone — the case the oracle's first test compares stdout for.
+//
+// 🔴 THE MATRIX, MEASURED AT TWO POINTS RATHER THAN ONE. RED at `d8b858a` (the commit before
+// the routing landed) — all three refuse at exit 11 with `RefuseUnportedMultiInstance`, the
+// file header's one reason, so they are regression coverage and not invariant guards. RED
+// again at HEAD under the no-op fan-out above, each failing on its OWN assertion. GREEN at
+// HEAD unmutated. The two reds are different defects, which is why both were run.
+// =============================================================================
+
+// fanOutOpts is `search --all-scopes <query>` with no scope named — the invocation the whole
+// path exists for.
+func fanOutOpts(query string) Options {
+	opts := readOpts()
+	opts.Query = query
+	opts.AllScopes = true
+	return opts
+}
+
+func searchRun(e Env, o Options) (int, error) { return Report(e, o, true) }
+
+func TestAllScopesFANSOUTToEveryInstanceAndLABELSEachSection(t *testing.T) {
+	// 🔴 THE HITS, NOT THE BANNERS, ARE WHAT PROVE THE SECOND STORE WAS READ. `instance.Alias`
+	// reaches the banner directly, so a fan-out that walked the instance list while searching
+	// ONE cache N times would print both labels over one store's content. The discriminator is
+	// each section's own `store:` line and its own scope — `gamma-notes` exists ONLY under the
+	// secondary root.
+	home := twoInstanceHost(t)
+	code, stdout, stderr := capture(t, searchRun, fanOutOpts("synthetic"))
+	if code != ExitOK {
+		t.Fatalf("both instances are readable, so the fan-out exits 0, got %d\n%s", code, stderr)
+	}
+	for _, alias := range []string{"personal", "secondary"} {
+		if !strings.Contains(stdout, "cairn["+alias+"]: cached") {
+			t.Fatalf("every section's banner must name its instance (%q missing):\n%s",
+				alias, stdout)
+		}
+	}
+	// Each section read ITS OWN cache root, which is the half a label check cannot see.
+	for _, root := range []string{
+		filepath.Join(home, ".cache", "subsystem-store"),
+		filepath.Join(home, ".cache", "subsystem-store-secondary"),
+	} {
+		if !strings.Contains(stdout, "  store: "+root) {
+			t.Fatalf("a section must name the cache it searched (%q missing):\n%s", root, stdout)
+		}
+	}
+	// …and each store's OWN entry is in the hits, so "searched" is not "listed".
+	for _, hit := range []string{"alpha-notes/one", "gamma-notes/two"} {
+		if !strings.Contains(stdout, hit) {
+			t.Fatalf("the fan-out must report %q, which lives on one instance only:\n%s",
+				hit, stdout)
+		}
+	}
+	if strings.Contains(stdout, "status=search-no-match") {
+		t.Fatalf("the query matches both stores; a no-match section means one was not searched:\n%s",
+			stdout)
+	}
+}
+
+func TestAllScopesDoesNOTRequireThisReposScopeToBeRegistered(t *testing.T) {
+	// 🔴 `--all-scopes` NAMES NO SCOPE, SO ROUTING IT IS A REFUSAL ABOUT A QUESTION NOBODY
+	// ASKED — and it is the shape a naive "route every read" implementation produces. The
+	// dispatch in `Report` therefore sits ABOVE `ScopeOrReason`; moving it below, or asking
+	// the table first, makes this invocation exit 11 with an `*UnroutedScope`.
+	//
+	// ⚠ EXIT 0 ALONE IS NOT THE CLAIM. A fan-out that returned success without searching would
+	// satisfy a returncode check, so the labelled sections are asserted here too — the oracle's
+	// row checks only the code, and this port is deliberately the stronger one.
+	twoInstanceHost(t)
+	writeTable(t, filepath.Join(os.Getenv("HOME"), "config"),
+		`{"alpha-notes": "personal", "gamma-notes": "secondary"}`)
+
+	opts := fanOutOpts("synthetic")
+	opts.Scope = "never-registered"
+	code, stdout, stderr := capture(t, searchRun, opts)
+	if code != ExitOK {
+		t.Fatalf("an unregistered --scope must not refuse a fan-out, got %d\n%s", code, stderr)
+	}
+	for _, alias := range []string{"personal", "secondary"} {
+		if !strings.Contains(stdout, "cairn["+alias+"]: cached") {
+			t.Fatalf("the fan-out must still have searched instance %q:\n%s", alias, stdout)
+		}
+	}
+	// The negative control on the refusal itself: the SAME unregistered scope on a search that
+	// is NOT `--all-scopes` does refuse, so the row above is about the fan-out and not about
+	// this host having no routing rules.
+	routed := opts
+	routed.AllScopes = false
+	sink, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+	var discard bytes.Buffer
+	_, runErr := searchRun(Env{Stdout: &discard, Stderr: sink,
+		Host: func() string { return "fixture-host-000000000000" }}, routed)
+	var unrouted *UnroutedScope
+	if !errors.As(runErr, &unrouted) {
+		t.Fatalf("a SCOPED read of an unregistered scope must still refuse, got %v", runErr)
+	}
+}
+
+func TestAnUNREADInstanceMakesTheFanOutLOUDAndNonZero(t *testing.T) {
+	// 🔴 A SILENT PARTIAL MAKES "found nothing" A LIE. The hits that WERE found are still
+	// printed — discarding real answers is its own harm — but the run exits non-zero and NAMES
+	// the instance it could not read.
+	//
+	// ⚠ THE INSTANCE IS UNREAD BECAUSE IT HAS NO CACHE UNDER `--no-sync`, WHERE THE ORACLE'S
+	// ROW POINTS ITS SECOND INSTANCE AT A CLOSED PORT. Both arrive at the SAME branch — the
+	// `state.ExitHint != 0` arm of the walk — and this file runs offline by design (see the
+	// header). What is NOT measured here is the network failure itself; that is the parity
+	// harness's claim.
+	home := twoInstanceHost(t)
+	if err := os.RemoveAll(filepath.Join(home, ".cache", "subsystem-store-secondary")); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := capture(t, searchRun, fanOutOpts("synthetic"))
+	if code != ExitUnreachableNoCache {
+		t.Fatalf("an unread instance makes the fan-out exit %d, got %d\n%s",
+			ExitUnreachableNoCache, code, stderr)
+	}
+	if !strings.Contains(stderr, "PARTIAL") {
+		t.Fatalf("the partial must be LOUD on stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "secondary") {
+		t.Fatalf("…and must NAME the instance it could not read:\n%s", stderr)
+	}
+	// The hits that were found are still printed — the other half of the contract.
+	if !strings.Contains(stdout, "alpha-notes/one") {
+		t.Fatalf("a partial fan-out still prints what the instances that ANSWERED hold:\n%s",
+			stdout)
+	}
+}
+
 func TestAFanOutREFUSESAnExplicitSharedCache(t *testing.T) {
 	// 🔴 THE DAMAGE IS SILENT AND IT IS TO THE CACHE. Two snapshots unpacked into one root
 	// interleave their scopes while `.sync-stamp` dates whichever synced last — a store that
-	// can say neither what it holds nor how old it is. All three fan-out verbs refuse BEFORE
-	// the walk, and all three are listed here because the refusal is per-call-site.
+	// can say neither what it holds nor how old it is. All FOUR fan-out verbs refuse BEFORE the
+	// walk, and all four are listed here because the refusal is per-call-site.
 	//
-	// ⚠ REGRESSION COVERAGE ONLY FOR THE THREE READ VERBS: `routes --check` already refused
+	// 🔴 THE COUNT USED TO READ "three", WHICH WAS AN UNDERCOUNT RATHER THAN A PHRASING — AND
+	// THE MISSING ROW WAS THE UNCOVERED ONE. `refuseSharedCache` has FIVE call sites (`sync`,
+	// `ls-entries`, `search --all-scopes`, `doctor`, `routes --check`); this map held four, and
+	// the one it omitted was the call inside `searchEveryInstance`, the function that shipped
+	// with measured-zero coverage. A comment that counts the call sites is a claim about which
+	// ones are exercised — count them (`grep -c refuseSharedCache`) rather than restating this
+	// number when a sixth appears.
+	//
+	// ⚠ REGRESSION COVERAGE ONLY FOR THE FOUR READ VERBS: `routes --check` already refused
 	// (`refuseSharedCache` predates this change) and is included as the control that the
 	// mechanism itself works, not as new coverage.
 	twoInstanceHost(t)
@@ -299,6 +459,12 @@ func TestAFanOutREFUSESAnExplicitSharedCache(t *testing.T) {
 		"ls-entries": LsEntries,
 		"doctor":     Doctor,
 		"routes":     Routes,
+		// The fifth call site, and the reason the count above moved. It needs `--all-scopes`
+		// and a query of its own, because `Report` dispatches the fan-out on the flag.
+		"search --all-scopes": func(e Env, o Options) (int, error) {
+			o.AllScopes, o.Query = true, "synthetic"
+			return Report(e, o, true)
+		},
 	} {
 		opts := readOpts()
 		opts.Cache = filepath.Join(t.TempDir(), "shared")
