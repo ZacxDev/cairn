@@ -181,11 +181,23 @@ func renderListing(r RecallReport) []string {
 // `extraHeader` is how a CLI puts the read store's snapshot stamp WITH the `store:`/`host:`
 // lines instead of somewhere else on the page. The POD passes none: its `/data` has no
 // stamp to print.
-func (r RecallReport) RenderText(host string, extraHeader []string) string {
+//
+// `instance` is the alias of the cairn instance this report was read from, and `""` — the
+// single-instance case — is what the POD passes and what every client on a host with one
+// instance configured passes. It adds a clause to the caveat naming which instance was
+// consulted; see `hostid.StoreCaveat`.
+//
+// 🔴 THAT IS THE WHOLE INSTANCE AWARENESS THIS PACKAGE HAS, AND THE NARROWNESS IS THE POINT.
+// It is a string that reaches two sentences. This package does not DISCOVER instances, does
+// not know what a routing table is, and takes no server or client config — the renderer is a
+// library both the pod and the CLI import, and instance discovery belongs to
+// `internal/client`, which is the only caller that can answer "how many stores can this
+// machine reach".
+func (r RecallReport) RenderText(host string, extraHeader []string, instance string) string {
 	out := []string{
 		"subsystem-recall: status=" + r.Status + " scope=" + r.Scope,
 		"  store: " + r.StoreRoot,
-		hostid.StoreHostLine(host, "  "),
+		hostid.StoreHostLine(host, "  ", instance),
 	}
 	out = append(out, extraHeader...)
 	out = append(out, "  caveat: "+r.Caveat())
@@ -214,7 +226,7 @@ func (r RecallReport) RenderText(host string, extraHeader []string) string {
 		// "not recorded" was routinely false of the fleet while true of the disk that was
 		// read. Post-cutover the caches converge — but only when each syncs, so a read
 		// still sees one disk at one time.
-		out = append(out, "  NOT A FACT ABOUT THE FLEET — "+hostid.StoreIsPerHost+". The "+
+		out = append(out, "  NOT A FACT ABOUT THE FLEET — "+hostid.StoreCaveat(instance)+". The "+
 			"other host syncs the SAME hosted store through its own cache, and may already "+
 			"hold `"+r.Scope+"/` where this one has not synced it yet.")
 		out = append(out, "  scopes THIS HOST's store holds: "+joinOrNone(r.KnownScopes))

@@ -179,7 +179,8 @@ filter for the same reason `requests.json` is.
 🔴 **THE RENDERER IS A LIBRARY, NOT A HANDLER, BECAUSE P2 IMPORTS IT.** `internal/report`
 holds `Recall`, `Search`, `RecallReport.RenderText`, `SearchReport.RenderText` and
 `ExitFor` — plain values in, plain values out, no `net/http` type in any signature, no
-server config, and every error classifiable with `errors.As`/`errors.Is`
+server config (the instance is a plain string; `""` is the pod's), and every error
+classifiable with `errors.As`/`errors.Is`
 (`store.StoreMissingError`, `store.EntryUnreadableError`). `report.Reader` is the thin
 `Renderer` the pod hands to `internal/api` and the ONLY type in the package that knows a
 server exists. **That shape is no longer a promise about P2: `internal/client` is the second
@@ -246,14 +247,14 @@ small Go renderer would also have satisfied. What carries the port is the reason
 property, not a P2 one** — the Python renderer ships as `packages.default` until the oracle is
 deleted, so until then the gate below IS the comparison rather than the absence of one.
 
-**Measured on this tree: 97 cases, 98 PASS, 0 failures, 0 dead normalizations** — all nine verbs,
-every output-shaping flag, every documented exit code, `--help` in four spellings, the
-argument-shape rules below, a TWO-INSTANCE `routes --check` and a routed `put` against a second
-pod, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 97 BYTE DIFFS: 66 rows compare stdout,
-stderr AND the exit code; 23 compare the exit code ONLY; 8 compare the exit code plus "both sides
-put something on stdout" — so 31 of 97 never compare output text.** Declared per row and in the
-residual table; it is the HEADLINE that reads wider than the gate, so know which rows are
-load-bearing before trusting one.
+**Measured on this tree: 101 cases, 102 PASS, 0 failures, 0 dead normalizations** — all nine
+verbs, every output-shaping flag, every documented exit code, `--help` in four spellings, the
+argument-shape rules below, a TWO-INSTANCE `routes --check`, a routed `put` and four routed
+READS against a second pod, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 101 BYTE DIFFS: 70
+rows compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8 compare the exit
+code plus "both sides put something on stdout" — so 31 of 101 never compare output text.**
+Declared per row and in the residual table; it is the HEADLINE that reads wider than the gate,
+so know which rows are load-bearing before trusting one.
 
 🔴 **ITS FIRST FULL RUN REPORTED 72 PASS / 0 FAIL AND MEASURED NOTHING** — a
 `SUBSYSTEM_STORE_TRUSTED_PROXIES` value copied from the conformance runner made the pod refuse every
@@ -311,10 +312,10 @@ discovered operand sets. Do not renumber the 9 to make it unique: it is unambigu
 call site (`doctor` never creates an entry, `create` never runs diagnostics), and renumbering
 changes a contract the command PRINTS to remove a collision that was never a defect.
 
-⚠ **WHAT THE GATE STRUCTURALLY CANNOT SEE**, listed in `tests/parity/README.md` and worth one
-line here: concurrency (both clients take the same `flock`, but nothing runs them at the same
-instant), real network failures beyond a connect refusal, a narrowed credential (the SERVER's
-narrowing is the corpus's claim), and the `doctor` states no healthy world reaches.
+⚠ **THE GATE HAS A NAMED BLIND SET — concurrency, real network failures, a narrowed
+credential, unreached `doctor` states, and multi-instance worlds beyond two.** It is enumerated
+in `tests/parity/README.md` and NOT transcribed here: a copy of it went stale the first time the
+list grew.
 
 ## 🔴 SEVERAL INSTANCES: AN UNROUTED SCOPE REFUSES
 
@@ -343,12 +344,11 @@ client is a SECOND artefact during P2, not a replacement: nothing in `apps` or
 build. **The Python client, its `lib/` and its packaging are not deleted here**;
 the plan retires Python at P8, after the gate below has held over real use.
 
-🔴 **AND THE FLIP IS HELD ON A MEASUREMENT, NOT ONLY ON CAUTION.** On a host with more
-than one instance configured the Go client REFUSES every read verb at exit 11
-(`RefuseUnportedMultiInstance`), so the `nix run … -- doctor` line above would refuse
-there. The guard is correct; the flip waits on `tests/parity/README.md` residual 8's
-closing condition, and carries residual 7's contract widening. **Both are the flip's,
-not P8's.**
+🔴 **THE FLIP'S ONE MEASURED BLOCKER IS CLOSED; WHAT IS LEFT IS A DECISION.** The Go
+client refused every read verb at exit 11 on a multi-instance host, which would have
+made the `doctor` quickstart above refuse there — `tests/parity/README.md` residual 8,
+now routed and deleted. It still carries residual 7's widening, and **a green gate has
+never licensed it.**
 
 🔴 **`lib/` MUST STAY BESIDE THE *PYTHON* CLIENT SCRIPT, AND `packages.cairn` IS
 BUILT THAT WAY ON PURPOSE.** `cairn` finds its modules with

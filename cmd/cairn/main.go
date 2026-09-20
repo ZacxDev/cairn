@@ -11,13 +11,15 @@
 // is `packages.cairn-go` beside them — swapping them is P2's LAST step, not its first, and
 // the plan puts the deletion of Python at P8.
 //
-// ⚠ TWO THINGS THE FLIP CARRIES, BOTH DECLARED IN `tests/parity/README.md` RATHER THAN OPEN.
-// Residual 8: every READ verb here refuses at exit 11 on a host with more than one instance
-// configured (`client.RefuseUnportedMultiInstance`, in `internal/client/instances.go`), so
-// the flip would make `nix run github:…/cairn -- doctor` — the quickstart — refuse on such a
-// host. That was MEASURED on such a host, with this binary, and it is why the flip
-// is held. Residual 7: `-verbs` and `-exit-codes` exit 0 with a table here where the oracle's
-// argparse exits 2 with `usage:`, so the flip WIDENS the CLI contract at the moment it lands.
+// ⚠ ONE THING THE FLIP STILL CARRIES, DECLARED IN `tests/parity/README.md` RATHER THAN OPEN.
+// Residual 7: `-verbs` and `-exit-codes` exit 0 with a table here where the oracle's argparse
+// exits 2 with `usage:`, so the flip WIDENS the CLI contract at the moment it lands.
+//
+// ⚠ AND ONE THAT IT NO LONGER CARRIES, RECORDED SO NOBODY RE-DERIVES THE HOLD FROM AN OLD
+// READING. Residual 8 was "every READ verb here refuses at exit 11 on a host with more than
+// one instance configured", which made `nix run github:…/cairn -- doctor` — the quickstart —
+// refuse on such a host; that was MEASURED, and it is why the flip was held. The read verbs
+// route now, the row is deleted, and what remains is the decision rather than a gap.
 package main
 
 import (

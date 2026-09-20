@@ -87,6 +87,24 @@ anyone editing that path:
   (`kills`), with a deliberately-fatal row as its positive control and a
   `PYTHONDONTWRITEBYTECODE=1` + `__pycache__` sweep so a same-length edit cannot be scored
   SURVIVED without having run.
+  🔴 **AND IT REFUSES (exit 2) WHEN A RUN COLLECTED ZERO TESTS, which it did not until the
+  round-2 audit read the variable that was measuring it.** `run_suites` computed `collected`
+  and `main` never looked, so a shell without pytest produced no `FAILED` lines,
+  `failing_tests` returned `[]`, and the `positive-control` row — which declares no `kills` —
+  was scored `KILLED … by []` at **rc 0**: a fully green battery over nothing. Measured on a
+  pytest-less interpreter: `KILLED positive-control by []` / `killed=1` / rc 0 before, and
+  `REFUSING TO VOUCH … ran ZERO tests` / rc 2 after. The Go arm counts its own result lines for
+  the same reason.
+  🔴 **AND THE PARENTHESIS THAT USED TO END THAT SENTENCE IS RETRACTED: "there it reported
+  `KILLED-BY-THE-WRONG-TEST`, which blames a guard for a missing runner".** Measured with `go`
+  absent, both before and after the count was added: `subprocess.run(["go", …])` raises
+  `FileNotFoundError`, so the battery never reaches the count, never reaches a verdict, and
+  printed a traceback at **exit 1** — which is also its "a mutant SURVIVED" code, leaving a
+  missing toolchain indistinguishable from a finding. The count was the right fix for the
+  case it covers (a runner that IS present and reports nothing) and was never the fix for
+  this one. It is closed separately: `_run` raises `ToolchainMissing` and `main` refuses at
+  **exit 2**, the same "could not vouch" the zero-collected case makes. ⚠ Nothing in
+  `.github/` or `flake.nix` runs this battery, so neither state was ever a CI hole.
   ⚠ **THE CAPTURE HAS BEEN BLIND TWICE, IN THE SAME SHAPE, AND BOTH ARE WORTH KNOWING.** Its
   first version ran only the no-table configuration — the one state in which the old predicate
   was `False` by construction — so it measured green over the defect above; re-run it with
@@ -104,28 +122,68 @@ anyone editing that path:
   is the value the `instance=` field carries. A write shape that exits non-zero also refuses to
   vouch — a refused write never reaches the `instance=` line, so it would contribute a
   reassuring "identical" while measuring nothing.
-- ⚠ **THE GO CLIENT ROUTES ITS WRITES AND REFUSES ITS READS, AND THIS BULLET USED
-  TO SAY OTHERWISE.** It read "what it does **not** do is consult the table on
-  `recall`/`search`/`append`/`put`/`create`", which was false of the three write
-  verbs on the commit that introduced it and contradicted `tests/parity/`
-  README's row 8, which had it right. What is true:
+- ⚠ **EVERY VERB OF THE GO CLIENT ROUTES, AND THIS BULLET HAS BEEN WRONG TWICE —
+  SO IT STATES THE MECHANISM RATHER THAN A STATUS.** It first read "what it does
+  **not** do is consult the table on `recall`/`search`/`append`/`put`/`create`",
+  which was false of the three write verbs on the commit that introduced it; it
+  then read that the read verbs refused a multi-instance host outright, which
+  stopped being true when declared difference 8 closed. What is true:
   - `cmd/cairn` declares `routes` and `EXIT_UNROUTED = 11` and implements both —
     the ledgers and the parity gate would otherwise be green over a client that
     had silently lost a verb and a code.
-  - `append`, `put` and `create` **do** consult the table: `writeInstance` calls
-    `Routing.AliasFor`, loads the ROUTED instance's credentials, syncs the ROUTED
-    instance's cache (which is what `put` derives its `If-Match` from) and prints
-    `instance=<alias>` unconditionally.
-  - `sync`, `ls-entries`, `recall`/`search`, `validate` and `doctor` do **not**:
-    they call `RefuseUnportedMultiInstance`, because routing a read needs the caveat's
-    multi-instance clause inside `internal/report` — the renderer the POD shares,
-    which has no instance context at all. Declared difference 8 in
-    `tests/parity/README.md` carries the closing condition. Until it closes, a
-    multi-instance host must READ with the Python client.
-  - 🔴 `routes` is deliberately **not** behind that refusal. It is the verb an
-    operator runs *while standing up* a second instance, so refusing there would
-    disable the grading tool at the one moment it is the tool for. The read verbs
-    are different: they have a working alternative and no role in that moment.
+  - `append`, `put` and `create` consult the table and **always print the
+    alias**: `writeInstance` calls `Routing.AliasFor`, loads the ROUTED
+    instance's credentials, syncs the ROUTED instance's cache (which is what
+    `put` derives its `If-Match` from) and prints `instance=<alias>` at one
+    instance and at many. A durable record is read later, by someone who no
+    longer has the terminal.
+  - `recall`/`search` and `validate` consult it too, and `sync`, `ls-entries`
+    and `doctor` route NOTHING so they walk EVERY configured instance. ⚠ Not
+    because none of them takes a scope — only `doctor` has no `--scope`;
+    `sync` and `ls-entries` declare one and pass `scope=""` regardless. All six
+    print the alias — in the banner, in the caveat's multi-instance clause, as
+    `ls-entries`' `[alias] ` line prefix, and as `doctor`'s `<alias>/<check>`
+    **row names**, which is the one of the four a machine consumer of
+    `doctor --json` parses — **only when more than one instance is configured**.
+    That emptiness is the compatibility guarantee: a one-instance host's bytes
+    are unchanged, which the reader fixture measures (regenerating with the
+    clause added 225 lines and changed none).
+  - 🔴 **AND THAT GUARANTEE IS ABOUT *LABELLING*, NOT ABOUT *ROUTING* — the
+    sentence above is echoed in FIVE places, not three: here,
+    `internal/client/instances.go`, `tests/parity/README.md`, `cairn`'s
+    `_instance_for` docstring and `internal/client/routes.go`'s `readInstance`.
+    All five read wider than they are, and all five now carry this narrowing.**
+    ⚠ The count said "all three" and was an undercount; it is stated here only
+    so the next sweep knows how many sites to visit — nothing asserts on it, so
+    re-count (`grep` for `byte-for-byte what it was` and for
+    `bytes are unchanged`) rather than trusting this number. The
+    scope-taking reads did not consult the table at all before;
+    they do now, and `alias_for` row 3 REFUSES at ONE instance as well as at
+    many. So exactly one single-instance case moved: a host whose table routes
+    the scope to an alias it has no config for — a stale or typo'd entry, the
+    case `routes --check` exists to find. Measured over one world with the
+    packaged Go client and `routes.json = {"alpha-notes": "nowhere"}`:
+    `recall`, `search` and `validate` each answered **exit 0**, off the default
+    instance's cache, at `d8b858a`, and each answers **exit 11, refusing**, at
+    HEAD. HEAD is the right
+    answer — the old one read a store the table said was elsewhere — but it is
+    a behaviour change on a one-instance host, and it belongs in whatever
+    announcement the `packages.default` flip carries. `sync`, `ls-entries` and
+    `doctor` route NOTHING, so none of it reaches them.
+  - 🔴 **AND THAT LAST CLAUSE USED TO READ "take no scope, so none of it
+    reaches them", WHICH `--help` FALSIFIES FOR TWO OF THE THREE.** `cairn
+    sync` and `cairn ls-entries` both declare `--scope`; only `doctor` has
+    none. What makes them untouched is that they pass `scope=""` and fan out
+    over every instance, not that there is no scope to route. Re-measured over
+    the same `{"alpha-notes": "nowhere"}` world: `sync --scope alpha-notes`
+    exits 4 and `ls-entries --scope alpha-notes` exits 0 on BOTH clients,
+    byte-identical to the unscoped runs — the CONCLUSION stands and only the
+    reason moved. The reason is load-bearing: a later change that routed
+    `ls-entries --scope` through `alias_for` would falsify the conclusion while
+    the old reason still read as covering it.
+  - 🔴 `routes` reports rather than routes, and it must keep working before any
+    table is right: it is the verb an operator runs *while standing up* a second
+    instance.
 - 🔴 **`routes --check` MUST THREAD THE ALIAS INTO THE STATE RESOLVER, NOT JUST THE
   CACHE PATH.** `resolve_state`/`ResolveState` FETCHES as well as unpacks, so a
   caller that hands it instance `N`'s cache root while it loads the DEFAULT

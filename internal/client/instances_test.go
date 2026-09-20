@@ -394,43 +394,6 @@ func TestCacheRootForKeepsTheDefaultAndSIBLINGSTheRest(t *testing.T) {
 	}
 }
 
-// TestTheUnportedReadGuardFiresOnlyWithMoreThanOneInstance.
-//
-// 🔴 A HALF-PORTED FEATURE MUST FAIL LOUD, NOT DEGRADE — and it must be INVISIBLE where nothing
-// is configured, which is every host today and every row of the parity gate. Both halves are
-// asserted, because a guard that fired at one instance would change the bytes of every read.
-func TestTheUnportedReadGuardFiresOnlyWithMoreThanOneInstance(t *testing.T) {
-	dir := configuredHost(t, t.TempDir())
-	var buf bytes.Buffer
-	env := Env{Stdout: &buf, Stderr: os.Stderr}
-
-	if code, stop := RefuseUnportedMultiInstance(env, "recall"); stop || code != 0 {
-		t.Fatalf("one instance must not be refused: (%d, %v)", code, stop)
-	}
-
-	addInstance(t, dir, "secondary")
-	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, stop := RefuseUnportedMultiInstance(Env{Stdout: &buf, Stderr: stderr}, "recall")
-	if !stop || code != ExitUnrouted {
-		t.Fatalf("two instances must stop the verb at exit %d, got (%d, %v)",
-			ExitUnrouted, code, stop)
-	}
-	written, err := os.ReadFile(stderr.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 🔴 THE MESSAGE MUST NAME THE VERB AND THE INSTANCES. A refusal that said only "cannot"
-	// would send the reader hunting for a store outage.
-	for _, want := range []string{"recall", "secondary", DefaultAlias, "REFUSING"} {
-		if !strings.Contains(string(written), want) {
-			t.Fatalf("the refusal must name %q: %s", want, written)
-		}
-	}
-}
-
 // TestLoadConfigForReadsTheENVIRONMENTForTheDefaultInstanceONLY.
 //
 // 🔴 IF THE ENVIRONMENT WON EVERYWHERE, A FAN-OUT WOULD MEASURE ONE STORE N TIMES and report
@@ -808,10 +771,11 @@ func TestAPutLoadsTheROUTEDCredentialsLAZILY(t *testing.T) {
 
 // TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11 is finding 6.
 //
-// 🔴 EVERY VERB, NOT JUST `routes`. `Discover` runs on the routing path of every write and on
-// `RefuseUnportedMultiInstance` for every read, so a hard `*RoutingConfigError` here refused the
-// whole tool while one buffer was open. Emacs writes `.#secondary.env` as a DANGLING SYMLINK,
-// so `IsDir()` is false and the name ends in `.env` — it reached the refusal.
+// 🔴 EVERY VERB, NOT JUST `routes`. `Discover` runs on the routing path of every write AND of
+// every read (`readInstance`, and the fan-out in `sync`/`ls-entries`/`doctor`), so a hard
+// `*RoutingConfigError` here refused the whole tool while one buffer was open. Emacs writes
+// `.#secondary.env` as a DANGLING SYMLINK, so `IsDir()` is false and the name ends in `.env` —
+// it reached the refusal.
 func TestAnEDITORLockFileDoesNotTakeEveryVerbToExit11(t *testing.T) {
 	dir := configuredHost(t, t.TempDir())
 	instances := filepath.Join(dir, InstanceDirName)

@@ -608,13 +608,76 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              ["routes", "--check", "--no-sync"], env={"CAIRN_ROUTES": "<ROUTES>"},
              wipe_cache=True),
 
+        # --- READ verbs on a MULTI-INSTANCE host --------------------------------
+        # 🔴 THE ROWS DECLARED DIFFERENCE 8 NAMED AS ITS CLOSING CONDITION, AND THEY ARE FULL
+        # BYTE COMPARISONS ON PURPOSE. Until this landed the Go client REFUSED every read verb
+        # at exit 11 on a host with more than one instance, so an exit-only row would have
+        # compared two refusals — or, worse, two different answers that happened to share a
+        # code. What has to match is the TEXT: which instance's cache was read, which alias the
+        # banner carries, and whether the rendered caveat gained its multi-instance clause.
+        #
+        # ⚠ ALL THREE NEED `no_cache_flag`, and not as a convenience. An explicit `--cache` on
+        # a fan-out is refused at exit 2 by BOTH clients before the walk begins, which compares
+        # equal and measures nothing — the same trap `routes-multi-instance-check` documents.
+        Case("recall-routed-to-a-NON-DEFAULT-instance",
+             "🔴 THE ROUTED READ, COMPARED BYTE FOR BYTE, AND IT IS THE ROW THE CAVEAT EXISTS "
+             "FOR. `gamma-notes` lives on the SECOND pod and only there, so a client that read "
+             "the default instance answers `scope-absent` — a confident nothing out of a store "
+             "nobody chose. Every line is load-bearing: the banner must read `cairn[secondary]` "
+             "and name the SECOND pod's URL, and the rendered caveat must carry `this run read "
+             "the `secondary` instance ONLY`, which is what tells a reader an absence here is "
+             "not an absence from the fleet",
+             ["recall", "--scope", "gamma-notes"], no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+        Case("recall-routed-to-the-DEFAULT-instance-is-still-labelled",
+             "🔴 THE OTHER DIRECTION, WHICH IS WHAT MAKES THE ROW ABOVE A MEASUREMENT RATHER "
+             "THAN A COINCIDENCE. `alpha-notes` routes to `personal`, so the answer comes from "
+             "the FIRST pod — and it is STILL labelled `cairn[personal]` with the clause naming "
+             "`personal`, because the label asks the instance COUNT and not which alias won. A "
+             "client that labelled only non-default instances passes the row above and fails "
+             "this one",
+             ["recall", "--scope", "alpha-notes"], no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+        Case("ls-entries-walks-EVERY-instance",
+             "🔴 THE FAN-OUT, AND THE PREFIX IS A `[alias] ` ON THE LINE RATHER THAN A THIRD "
+             "PATH SEGMENT. Both banners, both caches, both listings, in discovery order — and "
+             "a consumer splits these on `/` expecting exactly two parts, so a client that "
+             "wrote `alias/scope/entry.md` would re-point every such split at the wrong field "
+             "while containing the alias just as happily. A client that walked only the default "
+             "instance loses `gamma-notes/gauge-api.md` entirely",
+             ["ls-entries"], no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+        Case("validate-routed-to-a-NON-DEFAULT-instance",
+             "🔴 THE ROW THAT CAUGHT AN ORACLE DEFECT, AND IT HAD TO COMPARE STDOUT TO DO IT. "
+             "`validate` routes `gamma-notes` to the SECOND pod, and the COUNT it prints is the "
+             "whole evidence anything was checked — the command exists to make a zero mean "
+             "something. The oracle globbed the DEFAULT instance's root while parsing the "
+             "ROUTED one, so it answered `0 of 0 entry file(s) parse` for a scope holding one "
+             "readable entry, and `-1 of 0 … 1 malformed` once the routed store held a bad "
+             "file. Both sides exit 0 here and both exit 5 there, so `compare=\"exit\"` sees "
+             "NEITHER: the count is on stdout or it is nowhere",
+             ["validate", "--scope", "gamma-notes"], no_cache_flag=True,
+             env={"SUBSYSTEM_STORE_CONFIG": "<MULTICFG>", "CAIRN_ROUTES": "<ROUTES2>"}),
+
         # --- a routed WRITE at a non-default alias -----------------------------
         # 🔴 THE REGION THAT HAD ZERO BYTE COMPARISON, AND IT IS THE ONE THIS WORK EXISTS TO
-        # SHIP. Both `<MULTICFG>` rows above are `routes --check` — the GRADER — so the routed
-        # WRITE path was covered only by each client's own unit tests, which cannot compare
-        # bytes across the two. A live divergence was measured in exactly that gap (`put`
-        # against a routed instance with an incomplete config: same exit code, different
-        # sentence, because the oracle loads the credentials lazily and the port did not).
+        # SHIP. When this row was written (`baee2f0`) the only `<MULTICFG>` rows above it were
+        # the two `routes --check` GRADER rows, so the routed WRITE path was covered only by
+        # each client's own unit tests, which cannot compare bytes across the two. A live
+        # divergence was measured in exactly that gap (`put` against a routed instance with an
+        # incomplete config: same exit code, different sentence, because the oracle loads the
+        # credentials lazily and the port did not).
+        #
+        # ⚠ PAST TENSE, AND DELIBERATELY SO: THE SENTENCE ABOVE IS HISTORY AND STOOD IN THE
+        # PRESENT TENSE FOR TWO COMMITS AFTER IT STOPPED BEING TRUE. Counted per commit —
+        # `<MULTICFG>` env rows declared ABOVE this one — `baee2f0` 2, `0c187d7` 5, `d57f46b` 5,
+        # `b28787b` 6. It was exact when written and false from the second of those; the same
+        # commit that corrected the sibling sentence in `ci.yml` to past tense left this one.
+        # The four added rows are routed READS (`recall` to a non-default alias, `recall` to the
+        # default one, `ls-entries`' fan-out, `validate`'s routed COUNT), all four full
+        # stdout/stderr/exit comparisons. Nothing asserts on that six, so COUNT the rows rather
+        # than trusting it; what still holds, and is this row's whole reason, is that every one
+        # of those six READS and this is the only one that WRITES.
         #
         # ⚠ IT GOES LAST ON PURPOSE. It is the only row that WRITES to the second pod, and the
         # `routes --check` rows above read that pod's scope set; `restore_store` on the second
@@ -892,8 +955,12 @@ def main(argv: list[str] | None = None) -> int:
 
         # The multi-instance HOME. 🔴 A DIRECTORY OF ITS OWN, NOT THE ONE EVERY OTHER ROW USES:
         # creating `instances/` beside the shared config path would make EVERY read row
-        # multi-instance, and the Go client refuses those (`RefuseUnportedMultiInstance`) — the
-        # gate would go red on thirty rows that are not about routing at all.
+        # multi-instance, so every banner would gain an alias and every rendered caveat a
+        # clause — thirty rows whose stated subject is not routing, all comparing different
+        # bytes than they were written to compare. Opting in per row is what keeps the
+        # single-instance bytes the DEFAULT of this gate, which is the compatibility guarantee
+        # the labelling rests on. (Before the read verbs routed, the same separation was needed
+        # for a blunter reason: the Go client refused those rows outright at exit 11.)
         multi_dir = work / "multi-config"
         (multi_dir / "instances").mkdir(parents=True)
         multi_config = multi_dir / "env"          # deliberately NOT created: the DEFAULT

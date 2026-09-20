@@ -20,6 +20,7 @@
 package hostid
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -65,6 +66,31 @@ const MachineIDDisplayChars = 12
 // StoreIsPerHost is the caveat clause every verdict about the store carries.
 const StoreIsPerHost = "the store is read through a PER-HOST CACHE, only as fresh as " +
 	"its last sync; this run read THIS machine's disk and consulted no other"
+
+// StoreIsOneInstance is the clause the caveat GAINS when this host reads one of SEVERAL
+// configured instances. It is a `%s` template and `StoreCaveat` is its only caller.
+//
+// 🔴 IT NAMES THE INSTANCE, NOT JUST THE FACT OF ROUTING. "several instances exist" leaves the
+// reader with the question they started with; the alias is what makes an absence actionable —
+// it says which store was consulted, so "look on the other one" is a command they can type.
+const StoreIsOneInstance = "and this run read the `%s` instance ONLY — with more than one " +
+	"instance configured, an absence here is also explainable by the scope living on " +
+	"another instance, so it is NOT an absence from the fleet"
+
+// StoreCaveat is the per-host caveat, extended when this host reads more than one instance.
+//
+// 🔴 THE EMPTY INSTANCE IS THE SINGLE-INSTANCE CASE AND MUST STAY BYTE-IDENTICAL. The POD
+// renders with no instance context at all, and so does every client on a host with one
+// instance configured; both must produce exactly the sentence this package's consumers, the
+// oracle's `entry_shape.store_caveat` and two generated corpora already agree on. A caller
+// passes an alias only when there IS more than one place the answer could have come from —
+// which is a question about the instance COUNT, never about the presence of a routing table.
+func StoreCaveat(instance string) string {
+	if instance == "" {
+		return StoreIsPerHost
+	}
+	return StoreIsPerHost + ", " + fmt.Sprintf(StoreIsOneInstance, instance)
+}
 
 var unsafeLabelChars = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
@@ -136,6 +162,11 @@ func ThisHost() string {
 // 🔴 ONE SEAM, because the reader and a writer describe the SAME directory: two
 // spellings of "whose disk is this" would disagree the first time one of them was
 // edited, and this is a claim about the SCOPE of every verdict below it.
-func StoreHostLine(identity, indent string) string {
-	return indent + "host: " + identity + "  (" + StoreIsPerHost + ")"
+//
+// ⚠ `instance` IS LAST AND IS NOT ADJACENT TO `identity`, DELIBERATELY. Both are strings a
+// caller supplies, and two adjacent string parameters is the shape that gets swapped silently;
+// `indent` between them makes a transposition a visible nonsense rather than a wrong caveat.
+// `""` is the single-instance host — see `StoreCaveat`.
+func StoreHostLine(identity, indent, instance string) string {
+	return indent + "host: " + identity + "  (" + StoreCaveat(instance) + ")"
 }

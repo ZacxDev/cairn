@@ -52,9 +52,13 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   to Gotchas, which APPENDS — see the next bullet for why.
 
 ## Next steps (ranked)
-1. **THE `packages.default` FLIP — blocked on `tests/parity/README.md` residual 8.** Unchanged:
-   measured to break every read verb at exit 11 on a multi-instance host, this one included.
-   Carries residual 7's contract widening. Now the last piece of the cutover arc.
+1. **THE `packages.default` FLIP — its measured blocker is CLOSED; the DECISION is not.**
+   Residual 8 is gone: the read verbs route, `internal/report` takes an instance-aware caveat,
+   three multi-instance READ rows compare bytes, and `RefuseUnportedMultiInstance` is deleted.
+   🔴 A green gate has never licensed the flip — a branch took it on that reading and was
+   reverted. What is left is residual 7's CLI-contract widening (`-verbs`/`-exit-codes` answer
+   0 where the oracle exits 2) plus an announcement, because the flip changes what
+   `nix run github:…/cairn` executes for consumers who never asked for a new client.
    forcing: user — the cutover is the operator's ask and this is its client half.
 2. **P5 remainder — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members,
    scopes, entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share
@@ -685,8 +689,9 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   this session: #41 and the handoff PR both touched it, GitHub compared each against `main` where
   neither had landed, and `git merge-tree --write-tree` between the two exited **1**. Branch on
   the EXIT CODE — that command prints only a tree OID on success and emits no conflict markers.
-- **Decision (operator, this session): the cutover is SPLIT.** The Go server image ships; the
-  `packages.default` flip waits on residual 8.
+- **Decision (operator): the cutover is SPLIT.** The Go server image ships; the
+  `packages.default` flip is separate. ⚠ It waited on residual 8, which is now CLOSED — so the
+  flip waits on the operator and on residual 7's contract widening, not on a capability.
 
 - 🔴 **A DIFFERENTIAL HARNESS WHOSE ROUTE PATHS ARE GUESSED COMPARES REFUSALS AND REPORTS
   ZERO.** My first deployed-vs-Go comparison invented `/api/v1/entries?scope=…` and
@@ -857,22 +862,23 @@ because a closed block's value is its measured values and eliminations. Read it 
 - **Next probe:** none needed for #38. If it is to be fixed, the test should pin the HOME it
   reads rather than inheriting the operator's — that is the real defect.
 
-### The `packages.default` flip is blocked on a mechanical closing condition
-- as-of: 2026-09-18
-- **Symptom + exact repro:** `cairn doctor` / `cairn ls-entries` via the Go client on a host with
-  more than one instance configured → **exit 11**, refusal on stderr, 0 bytes stdout.
-- **Observed (with values):** all five read paths sit behind `RefuseUnportedMultiInstance` —
-  `verbs.go:52,78,101,246` (`sync`, `ls-entries`, `recall`/`search`, `validate`) and
-  `cli.go:614` (`doctor`). The guard is correct and intentional; `tests/parity/README.md`
-  **residual 8** declares it with a closing condition.
-- **Ruled out:** that this is a doc fix. It was raised as an undeclared narrowing whose blast
+### ✅ CLOSED — the `packages.default` flip's mechanical blocker (residual 8)
+- as-of: closed at `feat/route-the-read-verbs`; the entry is kept rather than deleted because the
+  measurement that made it a blocker is what stops the next session re-deriving the hold.
+- **Was:** `cairn doctor` / `cairn ls-entries` via the Go client on a host with more than one
+  instance configured → **exit 11**, refusal on stderr, 0 bytes stdout. All five read paths sat
+  behind `RefuseUnportedMultiInstance` (`verbs.go:52,78,101,246`, `cli.go:614`).
+- **Ruled out:** that this was a doc fix. It was raised as an undeclared narrowing whose blast
   radius could not be established from the code; running the packaged client on a real
   multi-instance host is what turned it into a blocker. `via: measurement`
-- **Next probe / closing condition (residual 8):** read routing in `internal/report`, the read
-  verbs taking an alias, a multi-instance parity row **over a read verb**, and
-  `RefuseUnportedMultiInstance` deleted with the row. ⚠ The flip also **widens** the CLI contract
-  (`-verbs`/`-exit-codes` answer 0 where the oracle exits 2) — residual 7, already corrected to
-  say it belongs to the flip rather than to P8.
+- **Closed by:** `internal/report` taking an instance-aware caveat (four red-at-`d8b858a`
+  differential fixture rows), `recall`/`search`/`validate` routing their scope and
+  `sync`/`ls-entries`/`doctor` walking every instance, three multi-instance READ parity rows
+  comparing stdout+stderr+exit, and the guard deleted with residual 8's table row.
+- 🔴 **WHAT IS LEFT IS A DECISION, NOT A CAPABILITY — AND A GREEN GATE STILL DOES NOT LICENSE
+  IT.** The flip **widens** the CLI contract (`-verbs`/`-exit-codes` answer 0 where the oracle
+  exits 2) — residual 7 — and needs an announcement, because it changes what
+  `nix run github:…/cairn` executes for consumers who never asked for a new client.
 
 ### A live JWKS fetch has never been exercised against a real issuer
 - as-of: 2026-09-18

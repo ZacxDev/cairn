@@ -309,24 +309,127 @@ MUTANTS: list[Mutant] = [
         go_package="./internal/client/",
     ),
     Mutant(
-        id="go-unported-read-guard-deleted",
-        target="internal/client/instances.go",
-        old="\tif !routing.MultiInstance() {\n\t\treturn 0, false\n\t}",
-        new="\treturn 0, false\n\tif !routing.MultiInstance() {\n\t\treturn 0, false\n\t}",
-        why="the half-port becomes a SILENT wrong answer: a Go read on a multi-instance host "
-            "would answer confidently out of the default store.",
-        kills="TestTheUnportedReadGuardFiresOnlyWithMoreThanOneInstance",
+        # ⚠ TWO MUTANTS OVER `RefuseUnportedMultiInstance` USED TO LIVE HERE AND WERE DELETED
+        # WITH IT, NOT LEFT TO ANCHOR ON NOTHING. An anchor that occurs zero times makes this
+        # harness REFUSE, which is the harness working — but a mutant nobody replaced is
+        # coverage silently subtracted, so the four below take over the region: the read verbs
+        # now ROUTE where the guard used to refuse.
+        id="go-read-label-is-unconditional",
+        target="internal/client/routes.go",
+        old="\tif !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n\treturn alias",
+        new="\treturn alias",
+        why="every single-instance host labelled — the compatibility guarantee inverted, on the "
+            "Go side this time. Every banner gains `cairn[personal]`, every caveat gains the "
+            "multi-instance clause, and `ls-entries` gains a `[personal] ` prefix on every line.",
+        kills="TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb",
         go_package="./internal/client/",
     ),
     Mutant(
-        id="go-unported-read-guard-fires-always",
-        target="internal/client/instances.go",
-        old="\tif !routing.MultiInstance() {\n\t\treturn 0, false\n\t}",
-        new="\tif false {\n\t\treturn 0, false\n\t}",
-        why="the other direction, and the one the parity gate would catch: every single-instance "
-            "read refused, which is every host today.",
-        kills="TestTheUnportedReadGuardFiresOnlyWithMoreThanOneInstance",
+        # 🔴 THE GO TWIN OF `multi-instance-counts-the-table`, AND IT HAD NO TWIN UNTIL NOW.
+        # The Python mutant restores the shipped defect inside `multi_instance`; this one puts
+        # the same confusion back one level DOWN, in the label itself, where
+        # `Routing.MultiInstance` stays honest and the caller asks the table anyway. It is the
+        # shape the count-versus-table rule exists to forbid, and `instanceLabel`'s own comment
+        # calls a second copy "a second place for the count-versus-table confusion to come
+        # back" — so the battery has to be able to see it arrive.
+        #
+        # ⚠ IT SURVIVED AT `d57f46b` AT 54 PASS / 0 FAIL, and the reason was the FIXTURE and not
+        # the guard: `oneInstanceHost` wrote no `routes.json`, so `routing.Routes` was nil, the
+        # added disjunct could not change the branch taken, and the mutant was byte-identical in
+        # behaviour on every case the suite built. A one-instance host WITH a table is the only
+        # world that separates the two predicates.
+        id="go-read-label-counts-the-table",
+        target="internal/client/routes.go",
+        old="\tif !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n\treturn alias",
+        new="\tif routing.Routes == nil && !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n"
+            "\treturn alias",
+        why="the count-versus-table confusion, re-introduced below `MultiInstance` where the "
+            "predicate's own guard cannot see it: a ONE-instance host that has merely written a "
+            "routing table gains `cairn[personal]` on every banner, the multi-instance clause "
+            "in every caveat, a `[personal] ` prefix on every `ls-entries` line and "
+            "`personal/<check>` on every `doctor` row.",
+        kills="TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb",
         go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-read-label-is-never-set",
+        target="internal/client/routes.go",
+        old="\tif !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n\treturn alias",
+        new="\treturn \"\"",
+        why="the other direction: a two-instance host reads the right store and never says "
+            "which, so an absence still reads as an absence from the fleet.",
+        kills="TestRecallROUTESItsScopeAndCARRIESTheCaveatsInstanceClause",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-a-read-does-not-route-its-scope",
+        target="internal/client/routes.go",
+        old="\talias, err = routing.AliasFor(scope)",
+        new="\talias = DefaultAlias",
+        why="THE DEFECT THE DELETED GUARD EXISTED TO PREVENT, now reachable because the reads "
+            "route: a routed scope is read out of the DEFAULT instance, so a scope that lives "
+            "only on the second store answers `scope-absent` — a confident nothing out of a "
+            "store nobody chose.",
+        kills="TestRecallROUTESItsScopeAndCARRIESTheCaveatsInstanceClause",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-a-fan-out-reads-ONE-instance",
+        target="internal/client/verbs.go",
+        old="\t\tmatches, _ := filepath.Glob(filepath.Join(cache, \"*\", \"*.md\"))",
+        new="\t\tmatches, _ := filepath.Glob(filepath.Join(opts.Cache, \"*\", \"*.md\"))",
+        why="`ls-entries` walks every instance and lists the DEFAULT one's cache N times — the "
+            "entries that exist only on the second store vanish, under a banner that names it.",
+        kills="TestLsEntriesWALKSEveryInstanceAndPrefixesTheLINE",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        # ⚠ THE ANCHOR CARRIES ITS SECOND LINE, AND THAT IS NOT DECORATION. The bare
+        # `rep, searchErr := report.Search(cache, report.SearchOptions{` occurs TWICE in
+        # `verbs.go` — once in `Report`'s scoped arm and once here — so it would make this
+        # harness REFUSE. `Scope: ""` is what only the fan-out spells, because only the fan-out
+        # names no scope.
+        id="go-a-search-fan-out-reads-ONE-instance",
+        target="internal/client/verbs.go",
+        old='\t\trep, searchErr := report.Search(cache, report.SearchOptions{\n'
+            '\t\t\tScope:     "",',
+        new='\t\trep, searchErr := report.Search(opts.Cache, report.SearchOptions{\n'
+            '\t\t\tScope:     "",',
+        why="`search --all-scopes` walks every instance and searches the DEFAULT one's cache N "
+            "times: every section prints the right `cairn[<alias>]` banner over the WRONG "
+            "store's hits, so an entry that exists only on the second instance is reported as "
+            "absent from a fleet-wide search. 🔴 THE SITE HAD MEASURED-ZERO COVERAGE UNTIL THE "
+            "KILLING TEST EXISTED — `if true { return ExitOK, nil }` at the top of "
+            "`searchEveryInstance` compiled and left `./internal/client` at 51 PASS / 0 FAIL.",
+        kills="TestAllScopesFANSOUTToEveryInstanceAndLABELSEachSection",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-caveat-always-carries-the-clause",
+        target="internal/hostid/hostid.go",
+        old="\tif instance == \"\" {\n\t\treturn StoreIsPerHost\n\t}",
+        new="\tif false {\n\t\treturn StoreIsPerHost\n\t}",
+        why="the Go twin of `the-caveat-always-carries-the-clause`. The single-instance sentence "
+            "is byte-mirrored into the reader fixture and the parity gate; extending it "
+            "unconditionally warns every host — and every POD response — about a second "
+            "instance that does not exist there.",
+        kills="TestTheCaveatGainsTheInstanceClauseONLYWhenAnAliasIsNamed",
+        go_package="./internal/hostid/",
+    ),
+    Mutant(
+        id="go-caveat-never-carries-the-clause",
+        target="internal/hostid/hostid.go",
+        # ⚠ THE GUARD IS INVERTED RATHER THAN THE RETURN DELETED, AND THE FIRST CUT GOT THIS
+        # WRONG. Deleting `return StoreIsPerHost + ", " + fmt.Sprintf(...)` leaves `fmt`
+        # imported and unused, so the package does not COMPILE — the mutant was scored
+        # KILLED-BY-THE-WRONG-TEST with an empty failure list, which is the harness catching a
+        # mutant that died of a build error rather than of the guard it was aimed at.
+        old="\tif instance == \"\" {\n\t\treturn StoreIsPerHost\n\t}",
+        new="\tif true {\n\t\treturn StoreIsPerHost\n\t}",
+        why="the clause is the whole point of the change: without it a multi-instance absence "
+            "still reads as an absence from the fleet.",
+        kills="TestTheCaveatGainsTheInstanceClauseONLYWhenAnAliasIsNamed",
+        go_package="./internal/hostid/",
     ),
     Mutant(
         id="go-check-direction1-does-not-ask-the-resolver",
@@ -531,23 +634,72 @@ def failing_tests(output: str, is_go: bool) -> list[str]:
     return sorted(set(re.findall(r"^FAILED \S+::(?:\S+::)?(\w+)", output, re.MULTILINE)))
 
 
+class ToolchainMissing(Exception):
+    """The runner named by a mutant's arm is not on `PATH`.
+
+    🔴 A SEPARATE SIGNAL, BECAUSE THE ALTERNATIVE IS A NUMBER THAT MEANS TWO THINGS. An absent
+    `go` makes `subprocess.run` raise before anything is measured; left uncaught that became a
+    traceback at exit **1**, and 1 is this battery's "a mutant survived" verdict — so a shell
+    with no toolchain was indistinguishable from a real finding, which is precisely what the
+    collected-count control exists to prevent one layer up. `main` turns this into exit 2,
+    "could not vouch". ⚠ The Python arm cannot raise it (`sys.executable` is this interpreter),
+    so the class is for the Go arm and for whatever arm is added next.
+    """
+
+
+def _run(argv: list[str], tree: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
+    """`subprocess.run` with the missing-binary case turned into `ToolchainMissing`."""
+    try:
+        return subprocess.run(argv, cwd=str(tree), env=env,
+                              capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError as exc:
+        raise ToolchainMissing(f"{argv[0]!r} is not on PATH") from exc
+
+
 def run_suites(tree: Path, mutant: Mutant) -> tuple[int, str, int]:
-    """`(returncode, output, collected)` for one mutant's suites."""
+    """`(returncode, output, collected)` for one mutant's suites.
+
+    🔴 `collected` IS THIS BATTERY'S POSITIVE CONTROL AND `main` REFUSES TO VOUCH ON A ZERO.
+    It was computed and never read, which is exactly the reassuring zero the house rules name:
+    a run that collected NOTHING exits non-zero with no `FAILED` lines, so `failing_tests`
+    returns `[]` and a mutant with no declared `kills` — `positive-control` is one — scores
+    `KILLED … by []`. Measured on a shell with no pytest: the whole Python half reported KILLED
+    while nothing had executed. The instrument must be able to say "I ran nothing", and that is
+    a different sentence from "the guard died".
+
+    ⚠ IT IS SUMMED, NOT `re.search`-ed. pytest's tail is `1 failed, 53 passed in 0.4s`, so the
+    first match alone counts the FAILURES and calls a 54-test run "1". `publish_workflow_mutants.py`
+    already sums for the same reason.
+
+    ⚠ AND THE GO ARM COUNTS TOO, FOR THE SAME REASON: `ok <pkg>` / `FAIL <pkg>` /
+    `--- PASS|FAIL|SKIP` are the runner's own result lines, and a build failure prints
+    `FAIL <pkg> [build failed]` plus a bare `FAIL`, which counts NON-ZERO (measured: 2) — so a
+    mutant that does not COMPILE is still caught by its `kills` check rather than refused here
+    or credited with a death.
+
+    🔴 BUT "A TREE WITH NO `go` ON `PATH` PRODUCES NO `--- FAIL:` LINES EITHER" IS WHAT THIS
+    PARAGRAPH USED TO SAY, AND IT IS RETRACTED — MEASURED, BOTH BEFORE AND AFTER THE COUNT WAS
+    ADDED. `subprocess.run(["go", …])` never runs and never returns: it raises
+    `FileNotFoundError`, which propagated out of `main` as a traceback and exited **1**. The
+    count is therefore not what covers a missing toolchain on this arm — it never executes — and
+    1 is ALSO this battery's "a mutant survived" verdict, so the two were indistinguishable,
+    which is the exact confusion the count exists to remove one layer up. `_run` below closes it
+    by refusing at **2**; the count still covers the case the old sentence was reaching for, a
+    runner that IS present and reports nothing.
+    """
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     if mutant.go_package:
-        proc = subprocess.run(["go", "test", mutant.go_package], cwd=str(tree), env=env,
-                              capture_output=True, text=True, timeout=1800)
-        return proc.returncode, proc.stdout + proc.stderr, -1
+        proc = _run(["go", "test", mutant.go_package], tree, env)
+        output = proc.stdout + proc.stderr
+        collected = len(re.findall(r"^(?:--- (?:PASS|FAIL|SKIP):|ok\s|FAIL\s)", output,
+                                   re.MULTILINE))
+        return proc.returncode, output, collected
     sweep_pycache(tree)
-    proc = subprocess.run(
-        [sys.executable, "-m", "pytest", *mutant.suites, "-q", "-p", "no:randomly"],
-        cwd=str(tree), env=env, capture_output=True, text=True, timeout=1800)
+    proc = _run([sys.executable, "-m", "pytest", *mutant.suites, "-q", "-p", "no:randomly"],
+                tree, env)
     output = proc.stdout + proc.stderr
-    collected = 0
-    match = re.search(r"(\d+) (?:passed|failed)", output)
-    if match:
-        collected = int(match.group(1))
+    collected = sum(int(n) for n in re.findall(r"(\d+) (?:passed|failed)", output))
     return proc.returncode, output, collected
 
 
@@ -575,7 +727,25 @@ def main(argv: list[str] | None = None) -> int:
         for index, mutant in enumerate(selected):
             tree = build_tree(work, index)
             apply_mutation(tree, mutant)
-            rc, output, collected = run_suites(tree, mutant)
+            try:
+                rc, output, collected = run_suites(tree, mutant)
+            except ToolchainMissing as missing:
+                # 🔴 EXIT 2, NOT 1 — "could not vouch", the same refusal the zero-collected
+                # case makes below. Letting this propagate exited 1, which this battery also
+                # returns when a mutant SURVIVED, so a missing toolchain read as a finding.
+                print(f"REFUSING TO VOUCH: `{mutant.id}` could not run — {missing}. Nothing "
+                      f"above or below is a claim about the guards.", file=sys.stderr)
+                return 2
+            # 🔴 THE POSITIVE CONTROL, READ BEFORE THE VERDICT AND NOT AFTER. Zero result lines
+            # means the runner never executed the tree it edited, so every word below — KILLED,
+            # SURVIVED, the summary — would be a fact about this shell. Exit 2 is "could not
+            # vouch", never "failed"; the same refusal `publish_workflow_mutants.py` makes.
+            if collected == 0:
+                print(f"REFUSING TO VOUCH: `{mutant.id}` ran ZERO tests, so nothing above or "
+                      f"below is a claim about the guards. Usually a shell without the runner — "
+                      f"check `{sys.executable} -m pytest --version` / `go version`.\n"
+                      f"{output[-2000:]}", file=sys.stderr)
+                return 2
             failures = failing_tests(output, bool(mutant.go_package))
             if rc == 0:
                 survived.append(mutant.id)

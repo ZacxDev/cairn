@@ -136,7 +136,7 @@ func TestTheHostLineIsONESpelling(t *testing.T) {
 	// The line is compared byte for byte against the oracle's in
 	// `report.TestTheRenderedBytes…`; this pins its SHAPE where it is built, so a reader of
 	// this package can see the contract without loading the renderer's fixture.
-	got := StoreHostLine("some-host-000000000000", "  ")
+	got := StoreHostLine("some-host-000000000000", "  ", "")
 	want := "  host: some-host-000000000000  (" + StoreIsPerHost + ")"
 	if got != want {
 		t.Fatalf("\n got %q\nwant %q", got, want)
@@ -145,5 +145,41 @@ func TestTheHostLineIsONESpelling(t *testing.T) {
 	// transcription loses silently.
 	if !strings.Contains(got, "000  (the store") {
 		t.Fatalf("the double space before the caveat is part of the line: %q", got)
+	}
+}
+
+func TestTheCaveatGainsTheInstanceClauseONLYWhenAnAliasIsNamed(t *testing.T) {
+	// 🔴 THE EMPTY INSTANCE MUST BE BYTE-IDENTICAL TO THE CONSTANT, AND THAT IS THE WHOLE
+	// COMPATIBILITY GUARANTEE OF THE MULTI-INSTANCE WORK. The pod renders with no instance,
+	// and so does every client on a host with one configured; both must keep producing the
+	// sentence two generated corpora and the oracle's `entry_shape.store_caveat` already
+	// agree on. An `==` against the constant is the assertion — a `HasPrefix` would pass for
+	// a caveat that had grown a trailing clause nobody asked for.
+	//
+	// ⚠ LABELLED AS AN INVARIANT GUARD FOR THE EMPTY HALF: no defect ever made the empty case
+	// carry a clause. The NAMED half is a port of behaviour the Go side did not have at all.
+	if got := StoreCaveat(""); got != StoreIsPerHost {
+		t.Fatalf("no instance must render the bare caveat:\n got %q\nwant %q",
+			got, StoreIsPerHost)
+	}
+	named := StoreCaveat("secondary")
+	if named == StoreIsPerHost {
+		t.Fatal("naming an instance must CHANGE the caveat, or the clause is inert")
+	}
+	if !strings.HasPrefix(named, StoreIsPerHost+", ") {
+		t.Fatalf("the clause EXTENDS the per-host caveat rather than replacing it: %q", named)
+	}
+	// The alias itself, backquoted — the point of the clause is that "look on the other one"
+	// is a command the reader can type, which needs the NAME and not just the fact.
+	if !strings.Contains(named, "`secondary` instance ONLY") {
+		t.Fatalf("the clause must NAME the instance: %q", named)
+	}
+	// And the host line carries whichever of the two it was handed, in the same one spelling.
+	for _, instance := range []string{"", "secondary"} {
+		line := StoreHostLine("some-host-000000000000", "  ", instance)
+		if !strings.HasSuffix(line, "("+StoreCaveat(instance)+")") {
+			t.Fatalf("instance %q: the host line must end in the caveat it was given: %q",
+				instance, line)
+		}
 	}
 }

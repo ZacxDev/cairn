@@ -37,6 +37,13 @@ func (rd Reader) host() string {
 }
 
 // Recall renders one `/recall` request.
+//
+// 🔴 IT AND `Search` PASS NO INSTANCE TO `RenderText`, AND THAT IS A STATEMENT ABOUT THE POD
+// RATHER THAN A DEFAULT NOBODY REVISITED. This is the `Renderer` the SERVER hands
+// `internal/api`, and a pod serves exactly ONE store: there is no second place its answer
+// could have come from, so the caveat's multi-instance clause would be false of it on every
+// request. The CLI is the caller that can have several, and it reaches `RenderText` directly
+// rather than through this type — see `internal/client`.
 func (rd Reader) Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Rendered, error) {
 	rep, err := Recall(storeRoot, opts, visible)
 	if err != nil {
@@ -50,7 +57,7 @@ func (rd Reader) Recall(storeRoot string, opts RecallOptions, visible store.Scop
 		Status:  rep.Status,
 		Scope:   rep.Scope,
 		Exit:    code,
-		Text:    rep.RenderText(rd.host(), nil),
+		Text:    rep.RenderText(rd.host(), nil, ""),
 		Warning: warning,
 	}, nil
 }
@@ -66,7 +73,7 @@ func (rd Reader) Search(storeRoot string, opts SearchOptions, visible store.Scop
 		Status:  rep.Status,
 		Scope:   rep.Scope,
 		Exit:    code,
-		Text:    rep.RenderText(rd.host(), nil),
+		Text:    rep.RenderText(rd.host(), nil, ""),
 		Warning: warning,
 	}, nil
 }
