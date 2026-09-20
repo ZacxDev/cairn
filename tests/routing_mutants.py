@@ -309,24 +309,79 @@ MUTANTS: list[Mutant] = [
         go_package="./internal/client/",
     ),
     Mutant(
-        id="go-unported-read-guard-deleted",
-        target="internal/client/instances.go",
-        old="\tif !routing.MultiInstance() {\n\t\treturn 0, false\n\t}",
-        new="\treturn 0, false\n\tif !routing.MultiInstance() {\n\t\treturn 0, false\n\t}",
-        why="the half-port becomes a SILENT wrong answer: a Go read on a multi-instance host "
-            "would answer confidently out of the default store.",
-        kills="TestTheUnportedReadGuardFiresOnlyWithMoreThanOneInstance",
+        # ⚠ TWO MUTANTS OVER `RefuseUnportedMultiInstance` USED TO LIVE HERE AND WERE DELETED
+        # WITH IT, NOT LEFT TO ANCHOR ON NOTHING. An anchor that occurs zero times makes this
+        # harness REFUSE, which is the harness working — but a mutant nobody replaced is
+        # coverage silently subtracted, so the four below take over the region: the read verbs
+        # now ROUTE where the guard used to refuse.
+        id="go-read-label-is-unconditional",
+        target="internal/client/routes.go",
+        old="\tif !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n\treturn alias",
+        new="\treturn alias",
+        why="every single-instance host labelled — the compatibility guarantee inverted, on the "
+            "Go side this time. Every banner gains `cairn[personal]`, every caveat gains the "
+            "multi-instance clause, and `ls-entries` gains a `[personal] ` prefix on every line.",
+        kills="TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb",
         go_package="./internal/client/",
     ),
     Mutant(
-        id="go-unported-read-guard-fires-always",
-        target="internal/client/instances.go",
-        old="\tif !routing.MultiInstance() {\n\t\treturn 0, false\n\t}",
-        new="\tif false {\n\t\treturn 0, false\n\t}",
-        why="the other direction, and the one the parity gate would catch: every single-instance "
-            "read refused, which is every host today.",
-        kills="TestTheUnportedReadGuardFiresOnlyWithMoreThanOneInstance",
+        id="go-read-label-is-never-set",
+        target="internal/client/routes.go",
+        old="\tif !routing.MultiInstance() {\n\t\treturn \"\"\n\t}\n\treturn alias",
+        new="\treturn \"\"",
+        why="the other direction: a two-instance host reads the right store and never says "
+            "which, so an absence still reads as an absence from the fleet.",
+        kills="TestRecallROUTESItsScopeAndCARRIESTheCaveatsInstanceClause",
         go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-a-read-does-not-route-its-scope",
+        target="internal/client/routes.go",
+        old="\talias, err = routing.AliasFor(scope)",
+        new="\talias = DefaultAlias",
+        why="THE DEFECT THE DELETED GUARD EXISTED TO PREVENT, now reachable because the reads "
+            "route: a routed scope is read out of the DEFAULT instance, so a scope that lives "
+            "only on the second store answers `scope-absent` — a confident nothing out of a "
+            "store nobody chose.",
+        kills="TestRecallROUTESItsScopeAndCARRIESTheCaveatsInstanceClause",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-a-fan-out-reads-ONE-instance",
+        target="internal/client/verbs.go",
+        old="\t\tmatches, _ := filepath.Glob(filepath.Join(cache, \"*\", \"*.md\"))",
+        new="\t\tmatches, _ := filepath.Glob(filepath.Join(opts.Cache, \"*\", \"*.md\"))",
+        why="`ls-entries` walks every instance and lists the DEFAULT one's cache N times — the "
+            "entries that exist only on the second store vanish, under a banner that names it.",
+        kills="TestLsEntriesWALKSEveryInstanceAndPrefixesTheLINE",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-caveat-always-carries-the-clause",
+        target="internal/hostid/hostid.go",
+        old="\tif instance == \"\" {\n\t\treturn StoreIsPerHost\n\t}",
+        new="\tif false {\n\t\treturn StoreIsPerHost\n\t}",
+        why="the Go twin of `the-caveat-always-carries-the-clause`. The single-instance sentence "
+            "is byte-mirrored into the reader fixture and the parity gate; extending it "
+            "unconditionally warns every host — and every POD response — about a second "
+            "instance that does not exist there.",
+        kills="TestTheCaveatGainsTheInstanceClauseONLYWhenAnAliasIsNamed",
+        go_package="./internal/hostid/",
+    ),
+    Mutant(
+        id="go-caveat-never-carries-the-clause",
+        target="internal/hostid/hostid.go",
+        # ⚠ THE GUARD IS INVERTED RATHER THAN THE RETURN DELETED, AND THE FIRST CUT GOT THIS
+        # WRONG. Deleting `return StoreIsPerHost + ", " + fmt.Sprintf(...)` leaves `fmt`
+        # imported and unused, so the package does not COMPILE — the mutant was scored
+        # KILLED-BY-THE-WRONG-TEST with an empty failure list, which is the harness catching a
+        # mutant that died of a build error rather than of the guard it was aimed at.
+        old="\tif instance == \"\" {\n\t\treturn StoreIsPerHost\n\t}",
+        new="\tif true {\n\t\treturn StoreIsPerHost\n\t}",
+        why="the clause is the whole point of the change: without it a multi-instance absence "
+            "still reads as an absence from the fleet.",
+        kills="TestTheCaveatGainsTheInstanceClauseONLYWhenAnAliasIsNamed",
+        go_package="./internal/hostid/",
     ),
     Mutant(
         id="go-check-direction1-does-not-ask-the-resolver",

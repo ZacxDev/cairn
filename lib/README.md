@@ -104,28 +104,31 @@ anyone editing that path:
   is the value the `instance=` field carries. A write shape that exits non-zero also refuses to
   vouch — a refused write never reaches the `instance=` line, so it would contribute a
   reassuring "identical" while measuring nothing.
-- ⚠ **THE GO CLIENT ROUTES ITS WRITES AND REFUSES ITS READS, AND THIS BULLET USED
-  TO SAY OTHERWISE.** It read "what it does **not** do is consult the table on
-  `recall`/`search`/`append`/`put`/`create`", which was false of the three write
-  verbs on the commit that introduced it and contradicted `tests/parity/`
-  README's row 8, which had it right. What is true:
+- ⚠ **EVERY VERB OF THE GO CLIENT ROUTES, AND THIS BULLET HAS BEEN WRONG TWICE —
+  SO IT STATES THE MECHANISM RATHER THAN A STATUS.** It first read "what it does
+  **not** do is consult the table on `recall`/`search`/`append`/`put`/`create`",
+  which was false of the three write verbs on the commit that introduced it; it
+  then read that the read verbs refused a multi-instance host outright, which
+  stopped being true when declared difference 8 closed. What is true:
   - `cmd/cairn` declares `routes` and `EXIT_UNROUTED = 11` and implements both —
     the ledgers and the parity gate would otherwise be green over a client that
     had silently lost a verb and a code.
-  - `append`, `put` and `create` **do** consult the table: `writeInstance` calls
-    `Routing.AliasFor`, loads the ROUTED instance's credentials, syncs the ROUTED
-    instance's cache (which is what `put` derives its `If-Match` from) and prints
-    `instance=<alias>` unconditionally.
-  - `sync`, `ls-entries`, `recall`/`search`, `validate` and `doctor` do **not**:
-    they call `RefuseUnportedMultiInstance`, because routing a read needs the caveat's
-    multi-instance clause inside `internal/report` — the renderer the POD shares,
-    which has no instance context at all. Declared difference 8 in
-    `tests/parity/README.md` carries the closing condition. Until it closes, a
-    multi-instance host must READ with the Python client.
-  - 🔴 `routes` is deliberately **not** behind that refusal. It is the verb an
-    operator runs *while standing up* a second instance, so refusing there would
-    disable the grading tool at the one moment it is the tool for. The read verbs
-    are different: they have a working alternative and no role in that moment.
+  - `append`, `put` and `create` consult the table and **always print the
+    alias**: `writeInstance` calls `Routing.AliasFor`, loads the ROUTED
+    instance's credentials, syncs the ROUTED instance's cache (which is what
+    `put` derives its `If-Match` from) and prints `instance=<alias>` at one
+    instance and at many. A durable record is read later, by someone who no
+    longer has the terminal.
+  - `recall`/`search` and `validate` consult it too, and `sync`, `ls-entries`
+    and `doctor` take no scope so they walk EVERY configured instance. All six
+    print the alias — in the banner, in the caveat's multi-instance clause, and
+    as `ls-entries`' `[alias] ` line prefix — **only when more than one instance
+    is configured**. That emptiness is the compatibility guarantee: a
+    one-instance host's bytes are unchanged, which the reader fixture measures
+    (regenerating with the clause added 225 lines and changed none).
+  - 🔴 `routes` reports rather than routes, and it must keep working before any
+    table is right: it is the verb an operator runs *while standing up* a second
+    instance.
 - 🔴 **`routes --check` MUST THREAD THE ALIAS INTO THE STATE RESOLVER, NOT JUST THE
   CACHE PATH.** `resolve_state`/`ResolveState` FETCHES as well as unpacks, so a
   caller that hands it instance `N`'s cache root while it loads the DEFAULT

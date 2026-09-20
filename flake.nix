@@ -377,16 +377,17 @@
       #
       # ⚠ A DRAFT OF THIS BRANCH TOOK THE FLIP AND IT WAS REVERTED, RECORDED HERE SO NOBODY
       # RE-DERIVES IT FROM THE PARITY GATE ALONE. The gate was green and the reasoning was
-      # "the gate held, so the default can move" — which reads the gate wider than it is.
-      # MEASURED on a host with more than one instance configured, with the Go client built
-      # from this branch: `cairn ls-entries --scope <x>` and `cairn doctor` each exit **11**
-      # and print a REFUSAL, because every read verb is behind `RefuseUnportedMultiInstance`
-      # (`tests/parity/README.md` residual 8). `nix run github:ZacxDev/cairn -- doctor` is the
-      # quickstart this repository's own README recommends, so the flip would have made the
-      # documented first command refuse on such a host. The guard is CORRECT and stays; the
-      # FLIP is what waits. Closing condition: residual 8's — read routing in
-      # `internal/report`, a multi-instance parity row over a read verb, and the guard
-      # deleted with the row. See `packages.default` below.
+      # "the gate held, so the default can move" — which reads the gate wider than it is, and
+      # that remains true however green the gate gets.
+      #
+      # ⚠ THE REVERT'S OWN REASON IS NOW CLOSED, WHICH IS A DIFFERENT CLAIM FROM "THE FLIP IS
+      # LICENSED". It was MEASURED: on a host with more than one instance configured,
+      # `cairn ls-entries --scope <x>` and `cairn doctor` each exited **11** and printed a
+      # REFUSAL, because every read verb sat behind a guard (`tests/parity/README.md` residual
+      # 8) — and `nix run github:ZacxDev/cairn -- doctor` is the quickstart this repository's
+      # own README recommends. The read verbs route now and that row is deleted, so what holds
+      # the flip is residual 7's CLI-contract widening and an operator decision, not a missing
+      # capability. See `packages.default` below.
       #
       # 🔴 `gitMinimal` ON THE WRAPPER'S PATH, FOR THE SAME REASON THE PYTHON PACKAGE HAS IT.
       # The client invokes `git` by BARE NAME to derive a repo's scope
@@ -662,14 +663,16 @@
           # either the default would change what `nix run github:…/cairn` executes
           # for every existing consumer, which is a cutover and not a build.
           #
-          # 🔴 AND THE FLIP IS BLOCKED ON A MEASUREMENT, NOT ONLY ON CAUTION — see the
-          # ⚠ above `mkGoClient`. On a host with more than one instance configured the
-          # Go client REFUSES every read verb at exit 11, so `nix run github:…/cairn --
-          # doctor` — the quickstart — would refuse there. The flip also WIDENS the CLI
-          # contract: `cairn -verbs`/`-exit-codes` exit 0 with a table here where the
-          # oracle's argparse exits 2 with `usage:`, so a single-dash token that is
-          # refused today would start answering 0. Both belong to the flip, not to P8;
-          # `tests/parity/README.md` residuals 7 and 8 carry them.
+          # 🔴 THE FLIP'S MEASURED BLOCKER IS CLOSED AND IT IS STILL NOT TAKEN HERE —
+          # see the ⚠ above `mkGoClient` for why those are two claims. The Go client
+          # used to REFUSE every read verb at exit 11 on a multi-instance host, so
+          # `nix run github:…/cairn -- doctor` — the quickstart — would have refused
+          # there (`tests/parity/README.md` residual 8, now routed and deleted). What
+          # remains is residual 7: the flip WIDENS the CLI contract, because
+          # `cairn -verbs`/`-exit-codes` exit 0 with a table here where the oracle's
+          # argparse exits 2 with `usage:`, so a single-dash token that is refused
+          # today starts answering 0 for every consumer who does not name `#cairn`.
+          # That is an operator decision with an announcement, not a build change.
           default = mkCairn pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
