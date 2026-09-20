@@ -432,10 +432,13 @@ port, exposed port and every environment variable are derived from the same
 `cairn-store` ghcr package and `packages.server-image-go` to `cairn-store-go`,
 under one `sha-<40-hex>` tag scheme so a revision names one artefact in each. No
 manifest references the Go one; pointing a pod at it is a separate decision.
-⚠ A ghcr package is PRIVATE on first publish and GitHub exposes no REST route for
-the flip, so the Go package's FIRST publish run is EXPECTED to fail at the
-anonymous-pull proof until an operator does the one-time visibility change the
-step prints, then re-runs via `workflow_dispatch`.
+⚠ **THAT PARAGRAPH USED TO PREDICT A RED FIRST RUN, AND THE PREDICTION WAS
+WRONG.** It said a ghcr package is PRIVATE on first publish, so the Go package's
+first run was EXPECTED to fail at the anonymous-pull proof. Measured on the run
+that first reached it: `cairn-store-go` was created **public**, the proof passed,
+and an unauthenticated `skopeo inspect` answered 200 — against a negative control
+(an absent tag) that was refused. Scope: one package, created BY ACTIONS, in a
+PUBLIC repo; it says nothing about a private repo or a hand-pushed package.
 
 ⚠ **They are not interchangeable in one respect.** The Dockerfile image is
 `python:3.12-slim` and has `python3` on its `PATH`; the flake image's `PATH` is
@@ -528,11 +531,15 @@ claiming it is the mechanism.
 skopeo inspect --no-creds docker://ghcr.io/<owner>/cairn-store:sha-<40-hex sha>
 ```
 
-🔴 **A ghcr package is PRIVATE on first publish, and GitHub exposes no REST route
-to change that.** The workflow's last step is an anonymous `skopeo inspect
---no-creds` against the tag it just pushed, so a private package fails the run
-loudly instead of surfacing as `ImagePullBackOff` in somebody else's cluster
-hours later. It is a **one-time manual step, per package**:
+🔴 **A PACKAGE THAT IS NOT ANONYMOUSLY PULLABLE FAILS THE RUN LOUDLY, WHICH IS
+THE POINT — but do NOT read that as "the first publish is always private".** That
+was asserted here and measured false: an Actions-created package in this public
+repo came out public. The guard stays because it is cheap and it is the only
+thing that would catch the case where that inheritance does not happen. The
+workflow's last step is an anonymous `skopeo inspect --no-creds` against the tag
+it just pushed, so a private package fails the run instead of surfacing as
+`ImagePullBackOff` in somebody else's cluster hours later. If it ever does fire,
+the fix is a **one-time manual step, per package**:
 
 > `https://github.com/users/<owner>/packages/container/cairn-store/settings`
 > → Danger Zone → Change visibility → Public

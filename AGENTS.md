@@ -440,9 +440,10 @@ it carries busybox and a `PATH`, and that its CA bundle is NAMED rather than
 merely present. 🔴 **IT IS NOW PUBLISHED AND STILL DEPLOYED BY NOTHING, AND THOSE
 ARE TWO CLAIMS.** `.github/workflows/publish-image.yml` pushes BOTH pods, to two
 ghcr packages (`cairn-store`, `cairn-store-go`) under one `sha-<40-hex>` scheme;
-the cutover of the DEPLOYED image remains a separate decision. ⚠ A ghcr package
-is PRIVATE on first publish, so the Go package's FIRST run is EXPECTED to fail at
-the anonymous-pull proof until the one-time visibility flip the step prints.
+the cutover of the DEPLOYED image remains a separate decision. ⚠ Both are
+PUBLIC and anonymously pullable, verified against a negative control. A previous
+draft predicted the Go package's first run would FAIL as private-on-first-publish;
+it did not, and the retraction is recorded at the step rather than here.
 
 🔴 **THE INTERPRETER IS PINNED, NOT INHERITED.** `flake.nix` uses
 `pkgs.python312` because `server/Dockerfile` is `python:3.12-slim` and CI pins
