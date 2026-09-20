@@ -48,8 +48,10 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   the gate MECHANICALLY (`audit-dispatch.py --round 3` → **rc 5**) after two consecutive
   payload-0 rounds. And the **INERT-BACKENDS defect is CLOSED ON `main`**, not merely in a
   branch: #38 landed as `2055bd2`.
-- ⚠ **THIS DOC WAS PRUNED IN THE SAME COMMIT AS THIS UPDATE** — three resolved investigation
-  blocks moved verbatim to `claudedocs/handoff-cairn-control-plane-archive.md`. It had reached
+- ⚠ **THIS DOC WAS PRUNED IN THE SAME COMMIT AS THIS UPDATE** — **four** answered investigation
+  blocks moved verbatim to `claudedocs/handoff-cairn-control-plane-archive.md`, which now holds
+  nine. (This line said "three" in its first draft and the prune moved four — a count written
+  before the act it describes. Derive such a number AFTER doing the thing, from the thing.) It had reached
   ~79 KB against a 65,536 B guideline that enforces nothing, and two previous updates flagged
   that without acting, which is how it got there. **Prune before appending.**
 
