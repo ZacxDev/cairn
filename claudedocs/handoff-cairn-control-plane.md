@@ -23,127 +23,111 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ **`181053a`**. ✅ **#48 IS MERGED AND `tests/parity/README.md` RESIDUAL 8 IS
-  CLOSED ON `main`** — verified **BY CONTENT**, never by ancestry (a squash makes
-  `--is-ancestor` false forever): all seven payload paths at `d27b570` are byte-identical to
-  `origin/main`, `func RefuseUnportedMultiInstance` returns **0** matches tree-wide, and the
-  residual-8 table row is gone.
-- **What #48 shipped, all four clauses:** `internal/report` takes an instance-aware caveat
-  (`hostid.StoreCaveat`, `StoreHostLine(id, indent, instance)`); `recall`/`search`/`validate`
-  route through `AliasFor` while `sync`/`ls-entries`/`doctor` walk every instance and
-  `search --all-scopes` fans out; **four** multi-instance READ parity rows compare
-  stdout+stderr+exit; and the guard is deleted with its five call sites and its table row.
-- ✅ **THE COMPATIBILITY GUARANTEE HELD THROUGHOUT.** Regenerating
-  `internal/report/testdata/reader_fixtures.json` was **225 insertions / 0 deletions**, and **no
-  golden moved at ANY round of the ladder** — `internal/report/testdata/` and
-  `tests/conformance/` were re-checked byte-identical after every fix commit, including the one
-  that changed the oracle.
-- 🔴 **`packages.default` IS STILL THE PYTHON CLIENT** (`flake.nix:676`). Merging #48 removed the
-  CAPABILITY blocker and nothing else.
-- 🔴 **THE FLIP IS NOW AUTHORISED BY THE OPERATOR AND IS THE WORK IN FLIGHT.** It moves
-  `packages.default` **and** `apps.default` together or not at all (`flake.nix:688`), and it
-  carries residual 7's **CLI-contract widening**: `-verbs`/`-exit-codes` answer **0** where the
-  oracle exits **2**, from that instant, for every consumer of `nix run github:…/cairn` who does
-  not name `#cairn`. **That needs an announcement** — it changes a contract for people who never
-  asked for a new client.
-- ✅ **AN AUTHORISED CHANGE TO THE ORACLE SHIPPED IN #48, AND IT IS THE FIRST SINCE THE
-  `seeded=UNREADABLE` ONE.** `cairn:1282` globbed `args.cache` — the DEFAULT instance — while
-  `_instance_for`, `cache.iterdir()` and `load_index()` in the same function all used the ROUTED
-  `cache`, so routed `validate` counted files in the wrong store and could print a **negative
-  count** (`-1 of 0 entry file(s) parse, 1 malformed`). One token. Operator-authorised on the
-  reasoning that **a contract cannot include "sometimes print a negative count"**.
-- **Claim `cairn-control-plane-1` is still HELD** by this session. Release it when the flip lands
-  or is abandoned.
-- **No task-board field is recorded** — the board-resolution helper exited 5 (no task for this
-  session) with its positive control passing. A real read of the board, and **not** proof the
-  session id is right; a wrong id answers 200 with an empty array too.
+- Branch `main` @ **`1a59e59`**, clean, **no open PRs**. Three PRs merged this session, each verified
+  BY CONTENT: **#48 → `181053a`** (residual 8 closed), **#49 → `d8ce83b`** (the previous handoff),
+  **#50 → `1a59e59`** (the flip).
+- ✅ **THE CUTOVER ARC IS COMPLETE. `packages.default` AND `apps.default` ARE THE GO CLIENT.**
+  Verified on `main` by **running it**, not by reading the diff: `nix run .# -- -verbs` → **rc 0**
+  with a 134 B table; `nix run .#cairn -- -verbs` → **rc 2** with argparse's usage. That pair IS
+  residual 7's contract widening, and it is now the shipped behaviour.
+- ✅ **THE ANNOUNCED ESCAPE HATCH WORKS AND IS SPELLED FOR BOTH CONSUMPTION MODES.** `README.md`
+  carries the CLI form (`#cairn`) **and** the flake-input form
+  (`cairn.packages.${system}.cairn` / `cairn.apps.${system}.cairn`) — the second was missing and a
+  round-0 audit caught it: `README.md` calls flake-input the PRIMARY mode, so the consumers most
+  affected had been handed an opt-out they could not use. The announcement is anchored to **PR
+  #50**, never to a date.
+- ✅ **`checks.default-is-the-go-client` PINS THE WIRING AS A RELATIONSHIP**, and it is **named
+  explicitly in `ci.yml`** — 🔴 because **CI never runs `nix flake check`**; the `nix` job builds
+  each check by name, so a `checks.*` entry nobody names is a check nobody runs. It asserts
+  `packages.default == packages.cairn-go`, `apps.default == getExe packages.default`,
+  `apps.cairn == getExe packages.cairn`, `packages.cairn != packages.default`, and the resolved
+  programs' base names. Build-free by design (0 `inputDrvs`), so a compile failure cannot redden it
+  and read as "the default moved".
+- 🔴 **THE ARC'S CLOSING CONDITION IS NOW 3 OF 4. ONLY THE PWA REMAINS.** Green: the authz matrix,
+  identity through both backends, and `packages.default` the Go client. Unmet: **the PWA's share
+  flow with its replica-honesty notice pinned by a test — nothing exists** (no web/pwa/ui directory
+  in the tree).
+- ✅ **THE PYTHON CLIENT IS UNCHANGED, STILL SHIPPED, AND STILL THE ORACLE.** `packages.cairn`,
+  `apps.cairn` and `lib/` are untouched; `tests/parity/` is still the gate and byte-identity is
+  still required both ways. **P8 retires Python; this was not P8.**
+- **Claim `cairn-control-plane-1` is RELEASED.** The ranked list below is unclaimed.
 
 ## Next steps (ranked)
-1. **THE `packages.default` FLIP — AUTHORISED, IN FLIGHT.** `packages.default` and `apps.default`
-   move together (`flake.nix:673,688,705`). Carries residual 7's contract widening and needs an
-   announcement. 🔴 **A green gate has never licensed this** — a branch took it on that reading
-   and was reverted; that remains true now that the capability blocker is gone, because what was
-   removed was the blocker, not the decision. The decision has now been taken by the operator.
-   forcing: user — the cutover is the operator's ask and this is its client half.
-2. **P5 remainder — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
+1. **P5 remainder — the PWA** (Tailwind + gomponents + htmx). Sign-in, projects, members, scopes,
    entry view, search, **share dialog**, credentials, grant log, status. 🔴 The share dialog must
-   state that unsharing cannot recall a replica — pin the whole normalised string. Clause 2 of
-   the closing condition, the largest thing left, and **entirely unstarted**.
+   state that unsharing cannot recall a replica — **pin the whole normalised string**, because a
+   guard on words is walkable by rewording. This is now the **only** unmet clause of the arc's
+   closing condition and the largest thing left; it is entirely unstarted.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
-3. **The batched scaffolding defects** — #44's ladder's four, the three unpinned-by-construction
-   items, and #48's ladder's three. All test-file or harness items; none changes what CI does.
-   forcing: gate — filed BY an attribution gate rather than fixed, so nothing else will surface
-   them.
-4. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304. Key
-   it on **principal + epoch** — `control.Authorization` already carries `Epoch`.
+2. **The batched scaffolding defects**, including **issue #51** (evict `AGENTS.md`'s reverted-draft
+   flip history — **147 B** of headroom before the byte-budget warning band fires). All are test,
+   harness or prose items; none changes what CI does.
+   forcing: gate — filed BY attribution gates rather than fixed, so nothing else will surface them.
+3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304. Key it
+   on **principal + epoch** — `control.Authorization` already carries `Epoch`.
    forcing: none
-5. **P8 — retire the Python oracle.** Gated on 1 having held in real use.
+4. **P8 — retire the Python oracle.** Now genuinely unblocked by the flip having landed, but gated
+   on it **holding over real use** — which is a waiting period, not a task. The retirement ledger
+   in `tests/parity/README.md` is a list of DECISIONS, not a delete script.
    forcing: none
 
 ## Defects (batched)
-- 🔴 **THIS DOC IS 83 KB AGAINST A 65,536 B GUIDELINE — 18 KB OVER, AND THE LAST TWO UPDATES EACH
-  FLAGGED IT AND THEN GREW IT** (+4,078 B, then +8,576 B). No test reads the number, so nothing
-  will go red; it is judgement about what the next session must read before it can act. The
-  archive (`claudedocs/handoff-cairn-control-plane-archive.md`, 16.7 KB, nine blocks) is where
-  answered material goes. 🔴 **Do NOT satisfy this by deleting a claim or narrowing a rule** —
-  that is the failure mode the byte budget on `AGENTS.md` already produced once, where the only
-  reordering that fit deleted the word "BYPASS" from the row describing an auth-bypass surface.
-  **Closing condition:** a prune PR that moves answered Gotchas blocks to the archive and brings
-  this file under 65,536 B, or a written line from a named reader saying the ceiling is wrong.
-- 🟡 **THREE FILED BY #48'S LADDER, RECORDED RATHER THAN FIXED** so the round that filed them
-  stayed the last. (a) `internal/client/readrouting_test.go:281` — the failure message says the
-  predicate "must inspect EVERY state", but the assertion is `rows < 2 || nonOK == 0` and the
-  fixture yields `PROBLEM=0`, so `doctorRow`'s `Problem` branch — the astral rune both comments
-  argue hardest about — never executes. (b) `internal/doctor/render.go:99` — `Markers()` has one
-  consumer and exports a rendering detail to serve it, where `doctor --json` would need no
-  export; separately, a state added to `markers` but not to `States` makes `doctorRow` silently
-  skip those rows. (c) `lib/README.md:156-159` — the re-count recipe greps two literal phrases,
-  so it is a SPELLED check: it returns 5 and structurally cannot see
-  `tests/test_cairn_instances.py`, which the same commit identifies as a sixth site carrying the
-  claim in different words. **Closing condition:** one PR touching those three files that
-  corrects all three — closed when it merges, or when a named reader dismisses them in writing.
-- 🟡 **EVERY COUNT #48'S LADDER TOUCHED IS PROSE NOTHING ASSERTS ON** — `README.md`'s
-  101/102/70/23/8, `lib/README.md`'s five echo sites, `tests/test_parity_harness.py`'s 95/101,
-  `tests/parity/harness.py`'s 2/5/5/6. Each now says so at its site. The repo already owns the
-  fix pattern (`tests/test_control_mutant_count_is_pinned.py` pins a README headline against its
-  derived value); applying it is separate work. **Closing condition:** a decision to pin each or
-  a written line saying why not.
-- 🟡 **FOUR SCAFFOLDING DEFECTS FILED BY #44'S LADDER**, all in test files, none changing what CI
-  does. (a) `tests/test_publish_workflow.py:1202` — the guard is wider than its name and its
-  failure MESSAGE misdiagnoses. (b) `tests/test_control_mutant_count_is_pinned.py:212` — a
-  docstring names a missing variable and asserts a value for it; a renamed `MUTANTS` raises
-  `AttributeError` and the control never runs. (c) `:45-51` says a sweep would face **three**
-  claims; `ci.yml` carries **four**. (d) `:277` — `normalise_shell` is dead after the
-  `_dropped`/`step_blocks` split while `step_bodies`' docstring still points at it.
-  **Closing condition:** one PR touching those two files that corrects all four.
-- 🟡 **Three things are unpinned BY CONSTRUCTION in `publish-image.yml`:** `ci.yml:496`'s
-  `(7 mutants)` ARM count is checked by nothing; step-level `if:` expressions sit outside the
-  four whole-body pins, because `step_bodies` reads only `run:`; and `log in to ghcr` is the one
-  remaining credential-handling `run:` step no test pins. **Closing condition:** a decision to
-  pin each, or a written line saying why not.
-- 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE, NOT PROSPECTIVELY STALE.** It
-  keeps the pod off the off-LAN burst node *because the LAN registry does not resolve there*; the
-  pod now pulls from ghcr, so that reason is void while the affinity may still be wanted (the PVC
-  is ReadWriteOnce local-path). The cutover commit moved `image:` and nothing else. **A comment
-  is a claim too. Closing condition:** the comment states the reason that is actually true, or
-  the affinity goes.
-- 🟡 **`tests/dualrun/` cannot see image drift, and that is structural.** It runs the TREE's
-  `server.py`. Nothing in the repo compares the Go server against the artefact actually serving;
-  the scratch harness that did it is not in the repo. **Closing condition:** decide whether a
-  deployed-artefact arm is worth owning, or write the line saying it is not.
-- ✅ **CLOSED by #48:** the `search --all-scopes` fan-out's measured-zero coverage; routed
-  `validate`'s oracle divergence; two unconditional-label mutants surviving on `defaultInstance`
-  and `bannerFor`; `tests/routing_mutants.py` scoring a never-run suite as KILLED; and two CI
-  floors with silent slack (parity `>= 98` against 102, and `tests/test_parity_harness.py`'s 85
-  against 101).
-- ✅ **CLOSED earlier:** the ghcr package link, the skopeo defect, and the pod's false
-  replication-honesty claim.
+- 🔴 **THIS DOC IS OVER ITS 65,536 B GUIDELINE AND THREE CONSECUTIVE UPDATES HAVE EACH FLAGGED IT
+  AND THEN GROWN IT.** No test reads the number, so nothing goes red; it is judgement about what the
+  next session must read before it can act. The archive
+  (`claudedocs/handoff-cairn-control-plane-archive.md`) is where answered material goes. 🔴 **Do NOT
+  satisfy this by deleting a claim or narrowing a rule** — that is the failure the `AGENTS.md` budget
+  already produced once, where the only reordering that fit deleted the word "BYPASS" from the row
+  describing an auth-bypass surface. **Closing condition:** a prune PR that moves answered Gotchas
+  blocks to the archive and brings this file under the guideline, or a written line from a named
+  reader saying the ceiling is wrong.
+- 🟡 **`apps.cairn` WAS UNPINNED UNTIL #50's FIX ROUND, AND THE NEAR-MISS IS THE RECORD WORTH
+  KEEPING.** `README.md` promises "naming `#cairn` is the opt-out"; `nix run …#cairn` resolves
+  `apps.cairn` first. Repointing it at the Go client left **all three** of the guard's original
+  assertions green while the announced hatch silently became the Go client — the same half-flip class
+  the guard exists for, one attribute over, defeating a promise the same PR created. Closed by a
+  fourth assertion. **Kept as a defect entry because the lesson generalises: a guard written for
+  attribute A does not cover sibling attribute B, and a promise made in prose creates a new thing to
+  pin.**
+- 🟡 **`checks.default-is-the-go-client` IS INSENSITIVE ON THE PYTHON SIDE.** `mkCairn`'s pname is
+  already `cairn`, so a `meta.mainProgram` removed *there* leaves the base-name assertions green.
+  Written into the flake comment rather than left to be discovered. **Closing condition:** a decision
+  to close it or a written line saying why not.
+- 🟡 **THREE FILED BY #48'S LADDER.** (a) `internal/client/readrouting_test.go:281` — the failure
+  message says the predicate "must inspect EVERY state", but the assertion is `rows < 2 || nonOK == 0`
+  and the fixture yields `PROBLEM=0`, so the `Problem` branch never executes. (b)
+  `internal/doctor/render.go:99` — `Markers()` has one consumer and exports a rendering detail;
+  separately, a state added to `markers` but not to `States` makes `doctorRow` silently skip those
+  rows. (c) `lib/README.md` — the re-count recipe greps two literal phrases, so it is a SPELLED check
+  that cannot see a reworded echo. **Closing condition:** one PR correcting all three.
+- 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — `README.md`'s 101/102/70/23/8,
+  `lib/README.md`'s echo-site count, `tests/test_parity_harness.py`'s floor. Each now says so at its
+  site. The repo owns the fix pattern (`tests/test_control_mutant_count_is_pinned.py` pins a README
+  headline against its derived value); applying it is separate work. **Closing condition:** a decision
+  to pin each or a written line saying why not.
+- 🟡 **FOUR FILED BY #44'S LADDER** in `tests/test_publish_workflow.py` and
+  `tests/test_control_mutant_count_is_pinned.py`, plus **three unpinned by construction** in
+  `publish-image.yml` (`ci.yml:496`'s ARM count, step-level `if:` expressions outside the whole-body
+  pins, and `log in to ghcr` being the one credential-handling `run:` step no test pins).
+  **Closing condition:** one PR each, or a written line saying why not.
+- 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE.** It keeps the pod off the off-LAN
+  burst node *because the LAN registry does not resolve there*; the pod now pulls from ghcr, so that
+  reason is void while the affinity may still be wanted (the PVC is ReadWriteOnce local-path).
+  **A comment is a claim too. Closing condition:** the comment states the reason that is true, or the
+  affinity goes.
+- 🟡 **`tests/dualrun/` cannot see image drift, structurally.** It runs the TREE's `server.py`;
+  nothing compares the Go server against the artefact actually serving. **Closing condition:** decide
+  whether a deployed-artefact arm is worth owning, or write the line saying it is not.
+- ✅ **CLOSED this session:** residual 8 in all four clauses; the `search --all-scopes` fan-out's
+  measured-zero coverage; routed `validate`'s oracle divergence (an authorised oracle change); two
+  unconditional-label mutants surviving on `defaultInstance` and `bannerFor`;
+  `tests/routing_mutants.py` scoring a never-run suite as KILLED and exiting 1 on a missing toolchain;
+  two CI floors with silent slack; and the flake wiring being pinned by prose only.
 - Everything previously listed stands unchanged: #38's three residuals; `ScopeByNameIn`
-  raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six
-  findings; the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; three files not
-  `gofmt`-clean with nothing in CI grepping it (`internal/client/exit.go`, `options.go`,
-  `internal/doctor/doctor_test.go`); `-race` gated in one tier only; P4 rounds 1 and 3's guards
-  absent from the persistent battery; and the `AGENTS.md` byte budget.
+  raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six findings;
+  the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; three files not `gofmt`-clean
+  with nothing in CI grepping it; `-race` gated in one tier only; and P4 rounds 1 and 3's guards
+  absent from the persistent battery.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **A green corpus is not a green port.** The conformance split was 94/22/0/4 *before*
@@ -914,6 +898,75 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   and matched nothing **because no doc from here is indexed at all**. A query about this arc
   returns unrelated hits from unrelated repositories, which must not be pasted into this PUBLIC
   repo. **`cairn recall --repo` is the only step-4 surface that reaches this work.**
+
+- 🔴 **CI NEVER RUNS `nix flake check` — THE `nix` JOB BUILDS EACH CHECK BY NAME, SO A `checks.*`
+  ENTRY NOBODY NAMES IS A CHECK NOBODY RUNS.** Verified on `main`: no flake-check step, eight
+  explicit `nix build .#…` steps. All pre-existing checks ARE named, so there was no latent hole —
+  but the convention is one omission away from producing one, and the omission reads as covered
+  because the check exists in `flake.nix`. **Adding a `checks.*` entry means adding a CI step in the
+  same commit.**
+- 🔴 **A GUARD WRITTEN FOR ATTRIBUTE A DOES NOT COVER SIBLING ATTRIBUTE B — AND A PROMISE MADE IN
+  PROSE CREATES A NEW THING TO PIN.** The flip's guard pinned `packages.default`/`apps.default` and
+  left `apps.cairn` free, in the same PR whose `README.md` promised `#cairn` was the opt-out.
+  Repointing `apps.cairn` kept all three original assertions green while the announced hatch became
+  the Go client. **Ask of every new guard: what sibling does this not reach, and did this change make
+  that sibling load-bearing?**
+- 🔴 **A COMMON-MODE OPERAND DEFEATS AN EQUALITY GUARD SILENTLY.** The flip guard compared two
+  `getExe`-derived paths — the *same expression* — so a wrong `meta.mainProgram` moved BOTH operands
+  together, leaving the guard green while `nix run` would fail. Measured: `getExe` without
+  `mainProgram` emits only a deprecation **warning** and returns a differently-named path. **An
+  equality between two values derived the same way tests the derivation, not the wiring.** Closed
+  with a base-name assertion.
+- 🔴 **A GUARD'S NAMED HAZARD CAN BE UNREACHABLE, WHICH MAKES IT AN INVARIANT GUARD RATHER THAN A
+  REGRESSION GUARD — AND THE LABEL MATTERS.** The flip guard's store-path floor was written as if it
+  caught a missing attribute; a missing flake attribute is an **eval error**, not `""`. Worth keeping
+  (two empty strings compare equal, which is the zero an equality gate must rule out) but relabelled,
+  because a comment claiming regression coverage it does not provide is how the next reader stops
+  looking.
+- 🔴 **AN ANNOUNCEMENT IS ONLY AS GOOD AS THE CONSUMPTION MODE IT IS SPELLED FOR.** #50's first draft
+  gave the opt-out only as a CLI fragment (`#cairn`) while `README.md`'s own second line says
+  consumers **pin this flake as an input** — so the people most affected were handed an opt-out they
+  could not paste. Found by round 0, not by any gate. **Ask who reads this and in what form**, and
+  anchor the announcement to a **sha or PR number, never a date** (the leak gate refuses dates, and a
+  sha says which tree rather than when somebody looked).
+- 🔴 **MY OWN GREP WAS THE WRONG INSTRUMENT THREE TIMES IN ONE SESSION, AND THE THIRD ONE ALMOST
+  REOPENED A CLOSED FINDING.** (a) Grepping parity row names for `multi-instance` found none and read
+  as an unsupported claim — the rows are named `recall-routed-…`. (b) A crude comment filter reported
+  7 "non-comment" lines in an all-docstring diff. (c) Grepping for a retracted sentence counted the
+  **quoted retraction** — the repo's house style of recording the old wording so nobody re-derives it
+  — as a live claim. **A zero, or a hit, from a pattern you chose is a fact about the pattern. Read
+  the match before believing the count.**
+- 🔴 **A FORCE-PUSH TO EXACTLY THE BASE TIP AUTO-CLOSES A PR.** Re-pointing a docs branch at `main`
+  left it with zero commits ahead and GitHub closed the PR; the follow-up commit then landed on a
+  closed PR. It **reopened** cleanly — unlike the deleted-base-branch case this repo already records,
+  which refuses to reopen — and nothing was lost. **Push the branch WITH its commit, or reopen and
+  check.**
+- 🔴 **I MERGED A PR THROUGH TWO PENDING CHECKS BECAUSE `--auto` DID NOT WAIT.** `gh pr merge --auto`
+  merged immediately with `go` and `tests` still running; they passed afterwards on `main`, which is
+  the outcome being lucky rather than the process being right. **Read the rollup yourself before
+  merging** — require the full check set present AND completed — and treat `--auto` as a request, not
+  a guarantee.
+- 🔴 **A DOC PR THAT LOSES A RACE NEEDS RE-DERIVING, NOT RESOLVING.** #48 and the handoff PR both
+  edited this file; `git merge-tree --write-tree` exited **1** while GitHub reported both
+  `MERGEABLE`, because it compares each against a `main` where neither had landed. But the fix was
+  not a conflict resolution: #48's own edit had rewritten those sections with facts that had become
+  TRUE, while the handoff's narrative had gone stale in the minutes since it was written. **Reset the
+  branch onto the new base and rebuild the delta.**
+- **Decision (operator, this session): the oracle may be changed when a contract cannot include the
+  behaviour.** `cmd_validate`'s negative entry count is the second such exception, after
+  `seeded=UNREADABLE`. Chosen over declaring a residual and over making the port bug-compatible.
+- **Decision (operator, this session): the flip ships, and it is a DECISION rather than a gate
+  outcome.** Residual 8 closing removed the measured blocker; a green gate has never licensed this
+  flip, and the branch that read it that way was reverted. Recorded at the change site and in
+  `flake.nix`, not only here.
+- **Decision (operator, this session): the default-wiring guard lands WITH the flip**, not as a
+  follow-up — the flip is what makes its claim true, and filing it would have left the repo's most
+  consequential wiring unpinned for the length of the follow-up.
+- ⚠ **#50's ladder was round 0 + one fix round, by operator choice, and round 0 was the round that
+  paid.** It found the announcement gap and the `apps.cairn` hole — neither visible to any gate, both
+  in the half of the PR that exists for people outside this repo. **Round 0 is the only round that
+  can ask whether the thing should exist, and it is only actionable while the merge decision is
+  open.**
 
 ## How to verify
 ```bash
