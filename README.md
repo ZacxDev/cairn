@@ -13,14 +13,79 @@ which state produced what it printed.
 ## Installing and building with nix
 
 ```bash
-nix run   github:ZacxDev/cairn -- doctor     # the client, without installing it
-nix build github:ZacxDev/cairn#cairn        # the client
-nix build github:ZacxDev/cairn#server-image # the pod image, as a loadable tarball
+nix run   github:ZacxDev/cairn -- doctor       # the default client — the GO one — uninstalled
+nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name
+nix build github:ZacxDev/cairn#cairn           # the PYTHON client — no longer the default
+nix build github:ZacxDev/cairn#server-image    # the pod image, as a loadable tarball
 ```
 
 Consumers pin this flake as an input. The version **is** the git revision —
 never written down by hand — so a built `cairn` cannot disagree with the code
 in it.
+
+### 🔴 The default client is now the Go one — what changed for you
+
+`packages.default` and `apps.default` were the **Python** client. They are now the
+**Go** one, landed by **[#50](https://github.com/ZacxDev/cairn/pull/50)** — the anchor
+to check a pin against, because "now" cannot tell you whether the flip sits between the
+revision you are on and the one you are moving to. So `nix run github:ZacxDev/cairn`
+and `nix profile install
+github:ZacxDev/cairn` both execute `cmd/cairn` rather than the Python script.
+`#cairn-go` is the same store path under its own name.
+
+**Nothing was deleted, and `cairn` is the opt-out — in BOTH consumption modes.** The
+Python client is still built, still the **oracle** the Go one is measured against, and
+retired at P8 rather than here. Naming it opts out of everything in this section. From
+the CLI that is a `#fragment`:
+
+```bash
+nix build github:ZacxDev/cairn#cairn           # the Python client, explicitly
+nix run   github:ZacxDev/cairn#cairn -- doctor
+```
+
+…but the consumer this flip actually lands on is the one this README calls primary
+above — who **pins this flake as an input** and reaches an *attribute*, where a
+`#fragment` is not a spelling you can use. That one:
+
+```nix
+{
+  inputs.cairn.url = "github:ZacxDev/cairn";   # or pin a rev/ref
+
+  outputs = { self, nixpkgs, cairn, ... }:
+    let system = "x86_64-linux"; in {
+      # `cairn.packages.${system}.default` is now the GO client.
+      # Take the PYTHON client by name instead:
+      packages.${system}.my-cairn = cairn.packages.${system}.cairn;
+      # …and its runnable form, if you re-export an app:
+      apps.${system}.my-cairn = cairn.apps.${system}.cairn;
+    };
+}
+```
+
+Both spellings are gated rather than promised. `checks.default-is-the-go-client` pins
+`apps.cairn.program` to `packages.cairn`'s executable, and pins `packages.cairn`
+distinct from `packages.default` — at evaluation time, building neither client — so
+neither attribute can be repointed at the Go client without reddening CI.
+
+The two clients are diffed against each other by
+[`tests/parity/`](tests/parity/README.md) over all nine verbs — **101 cases, 102
+PASS, 0 failures** — so a `cairn recall` / `search` / `ls-entries` / `doctor` you
+already run prints what it always printed. ⚠ Read that gate at its real width
+before relying on it: **31 of the 101 rows compare only the exit code**, or the
+exit code plus "both sides printed something", and never the output text. The
+residual table says which, per row. **Two things do change:**
+
+- **`cairn -verbs` and `cairn -exit-codes` now answer.** They exit **0** with a
+  table on stdout; the Python client exits **2** with argparse's `usage:` block on
+  stderr for the same argv. A single-dash token that the default *refused* before
+  this change *succeeds* after it — the dangerous direction, which is why it is
+  stated here rather than left to be discovered. They are the Go client's ledgers
+  (`tests/parity/README.md` residual 7); whether they become documented public
+  surface or move behind a gate is a P8 decision that has not been taken.
+- **Argparse's exact wording is gone from `--help` and from usage errors.** The
+  exit codes are identical and gated; the *text* of a usage failure is not, and
+  the parity gate deliberately does not compare it. Anything parsing argparse's
+  prose will need re-reading.
 
 ## The client — `cairn`
 
@@ -107,10 +172,10 @@ runbook (seeding, byte-identity verification, rotation, rate limiting), is
 | `lib/` | the Python reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
 | `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, not deployed |
-| `cmd/cairn`, `internal/client` | the Go port of the CLIENT — byte-identical to the Python one |
+| `cmd/cairn`, `internal/client` | the Go port of the CLIENT, and **the default** — byte-identical to the Python one |
 | `internal/report` | the ONE renderer, shared by the pod and the CLI |
 | `tests/` | the suites, plus `leakscan.py`, the HTTP conformance corpus, the server dual-run gate and the client parity gate |
-| `flake.nix` | both clients, the server image, the Go server, and the checks |
+| `flake.nix` | both clients (`default` is the **Go** one, `#cairn` the Python one), the server image, the Go server, and the checks |
 
 ## The Go port, and why two servers are alive
 
@@ -151,9 +216,10 @@ also have satisfied. What carries the full port is the next reason: **a single b
 language, and Python retirable at P8**. Both land on the same `internal/report`: one renderer,
 three consumers (pod, CLI, a future UI), which makes byte-identity a property of there being one
 implementation rather than a discipline two are held to — ⚠ **from P8, not from today**, because
-the Python renderer ships as `packages.default` until the oracle is deleted.
+the Python renderer still ships as `packages.cairn` until the oracle is deleted. The default
+flipping to Go did not make it one renderer; it changed which one you get by default.
 
-`cairn` stays the oracle and `packages.default` still builds it. The gate is
+`cairn` stays the oracle, and `packages.cairn` still builds it. The gate is
 [`tests/parity/`](tests/parity/README.md): both clients, one pod, one store, one cache root,
 identical argv. **101 cases, 102 PASS, 0 failures** across all nine verbs, every output-shaping
 flag, every documented exit code, `--help` in four spellings, argparse's option-versus-value

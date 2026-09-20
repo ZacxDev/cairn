@@ -369,25 +369,27 @@
         };
       };
 
-      # 🔴 THE GO CLIENT IS A SECOND ARTEFACT DURING P2, NOT A REPLACEMENT. `packages.cairn`
-      # stays the Python client and `apps.default` stays pointed at it: swapping them changes
-      # what `nix run github:…/cairn` executes for every existing consumer, which is a
-      # CUTOVER and not a build. The plan puts the cutover after the parity gate has held
-      # over real use and the deletion of Python at P8.
+      # 🔴 THE GO CLIENT IS NOW `packages.default`/`apps.default`, AND THE PYTHON ONE IS STILL
+      # SHIPPED AS `packages.cairn`. That is a DEFAULT CUTOVER, not a deletion: the oracle, its
+      # `lib/`, `checks.client-resolves-its-lib` and the parity gate are all untouched, and
+      # Python is retired at P8.
       #
-      # ⚠ A DRAFT OF THIS BRANCH TOOK THE FLIP AND IT WAS REVERTED, RECORDED HERE SO NOBODY
-      # RE-DERIVES IT FROM THE PARITY GATE ALONE. The gate was green and the reasoning was
-      # "the gate held, so the default can move" — which reads the gate wider than it is, and
-      # that remains true however green the gate gets.
+      # 🔴 WHAT LICENSED THE FLIP WAS AN OPERATOR DECISION, NOT A GREEN GATE — RECORDED HERE
+      # SO NOBODY RE-DERIVES IT FROM THE GATE. An earlier draft took the flip on exactly that
+      # reading ("the gate held, so the default can move") and was REVERTED; the gate being
+      # green has never licensed this and still does not, however green it gets. The decision
+      # was taken after residual 8 closed, which removed the flip's one MEASURED blocker: on a
+      # host with more than one instance configured, every read verb — `cairn doctor`
+      # included, the quickstart this repository's own README recommends — refused at exit 11.
+      # The read verbs route now and that guard is deleted. That closure is a PRECONDITION,
+      # not the licence.
       #
-      # ⚠ THE REVERT'S OWN REASON IS NOW CLOSED, WHICH IS A DIFFERENT CLAIM FROM "THE FLIP IS
-      # LICENSED". It was MEASURED: on a host with more than one instance configured,
-      # `cairn ls-entries --scope <x>` and `cairn doctor` each exited **11** and printed a
-      # REFUSAL, because every read verb sat behind a guard (`tests/parity/README.md` residual
-      # 8) — and `nix run github:ZacxDev/cairn -- doctor` is the quickstart this repository's
-      # own README recommends. The read verbs route now and that row is deleted, so what holds
-      # the flip is residual 7's CLI-contract widening and an operator decision, not a missing
-      # capability. See `packages.default` below.
+      # ⚠ THE FLIP WIDENS THE CLI CONTRACT, AND THAT IS ITS COST RATHER THAN A SIDE EFFECT
+      # (`tests/parity/README.md` residual 7). `cairn -verbs` and `cairn -exit-codes` exit 0
+      # with a table on stdout here where the oracle's argparse exits 2 with `usage:`, so a
+      # single-dash token `nix run github:…/cairn` refused BEFORE this commit answers 0 AFTER
+      # it, for every consumer who does not name `#cairn`. `README.md` carries the
+      # announcement; measured at both points on the flip's branch.
       #
       # 🔴 `gitMinimal` ON THE WRAPPER'S PATH, FOR THE SAME REASON THE PYTHON PACKAGE HAS IT.
       # The client invokes `git` by BARE NAME to derive a repo's scope
@@ -658,22 +660,15 @@
       packages = forAll (pkgs:
         {
           cairn = mkCairn pkgs;
-          # 🔴 `default` STAYS THE PYTHON CLIENT. The Go server AND the Go client are
-          # SECOND artefacts during the dual-run, not replacements for anything: making
-          # either the default would change what `nix run github:…/cairn` executes
-          # for every existing consumer, which is a cutover and not a build.
+          # 🔴 `default` IS THE GO CLIENT, AND `cairn` IS STILL THE PYTHON ONE. The
+          # cutover was an OPERATOR DECISION taken after residual 8 closed — never a
+          # gate outcome; see the block above `mkGoClient` for the reverted draft that
+          # read it the other way. `packages.cairn` is NOT deleted here: it is still
+          # the oracle the parity gate measures against, and it goes at P8.
           #
-          # 🔴 THE FLIP'S MEASURED BLOCKER IS CLOSED AND IT IS STILL NOT TAKEN HERE —
-          # see the ⚠ above `mkGoClient` for why those are two claims. The Go client
-          # used to REFUSE every read verb at exit 11 on a multi-instance host, so
-          # `nix run github:…/cairn -- doctor` — the quickstart — would have refused
-          # there (`tests/parity/README.md` residual 8, now routed and deleted). What
-          # remains is residual 7: the flip WIDENS the CLI contract, because
-          # `cairn -verbs`/`-exit-codes` exit 0 with a table here where the oracle's
-          # argparse exits 2 with `usage:`, so a single-dash token that is refused
-          # today starts answering 0 for every consumer who does not name `#cairn`.
-          # That is an operator decision with an announcement, not a build change.
-          default = mkCairn pkgs;
+          # 🔴 THIS LINE AND `apps.default` MOVE TOGETHER OR NOT AT ALL — see the block
+          # above `apps` for why one alone gives two clients under one name.
+          default = mkGoClient pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
         }
@@ -689,17 +684,24 @@
         });
 
       # 🔴 `apps.default` MOVES WITH `packages.default` OR NOT AT ALL — AND TODAY THAT
-      # MEANS NEITHER MOVES. `nix run github:…/cairn` resolves `apps.default` FIRST and
-      # only falls back to `packages.default`'s `mainProgram`, so flipping one alone
-      # would leave `nix run` on one client while `nix profile install` and every flake
-      # input got the other — one name, two clients, differing by which command the
-      # consumer happened to use. Both are the Python client here.
+      # MEANS BOTH HAVE MOVED, TO THE GO CLIENT. `nix run github:…/cairn` resolves
+      # `apps.default` FIRST and only falls back to `packages.default`'s `mainProgram`,
+      # so flipping one alone would leave `nix run` on one client while
+      # `nix profile install` and every flake input got the other — one name, two
+      # clients, differing by which command the consumer happened to use.
+      #
+      # 🔴 `apps.cairn` DELIBERATELY DID NOT MOVE, AND IT IS PINNED RATHER THAN LEFT TO
+      # PROSE. It is the escape hatch the announcement names: `nix run
+      # github:…/cairn#cairn` is still the Python client, which is what makes residual
+      # 7's widening opt-out-able rather than forced. Because `README.md` now PROMISES
+      # that, repointing this one line at `mkGoClient` would defeat the promise while
+      # `packages.default`/`apps.default`/`packages.cairn` all stayed exactly right —
+      # the half-flip class one attribute over. `default-is-the-go-client` asserts it.
       #
       # ⚠ THERE IS NO `apps.cairn-go`, DELIBERATELY. `nix run .#cairn-go` already
       # resolves through `packages.cairn-go`'s `mainProgram = "cairn"` — measured, not
       # assumed — so an entry here would be a third name for one binary with nothing to
-      # buy. `apps.cairn` predates the Go port and is left alone rather than deleted in
-      # a change about the default.
+      # buy, and `apps.default` above is now a fourth.
       apps = forAll (pkgs: {
         cairn = {
           type = "app";
@@ -707,7 +709,7 @@
         };
         default = {
           type = "app";
-          program = "${nixpkgs.lib.getExe (mkCairn pkgs)}";
+          program = "${nixpkgs.lib.getExe (mkGoClient pkgs)}";
         };
       });
 
@@ -715,6 +717,188 @@
         cairn = mkCairn pkgs;
         cairn-server-go = mkGoServer pkgs;
         cairn-go = mkGoClient pkgs;
+
+        # 🔴 WHICH CLIENT THE UNQUALIFIED NAMES RESOLVE TO, PINNED AS A RELATIONSHIP
+        # BETWEEN RESOLVED DERIVATIONS. Before this check, NOTHING in the repository
+        # asserted it: `packages.default`/`apps.default` appeared in `flake.nix` and in no
+        # test, the two other `checks.*` entries name `mkCairn`/`mkGoClient` explicitly,
+        # every CI job builds by explicit attribute, and the parity harness builds with
+        # `go build ./cmd/cairn` and runs the oracle script directly. The wiring was pinned
+        # by PROSE, and prose is walkable three ways:
+        #
+        #   • a flip taken on the wrong licence, REVERTED once already, could land fully
+        #     green — nothing here would have noticed either the flip or the revert;
+        #   • a HALF-FLIP — `packages.default` moved, `apps.default` not, or the reverse —
+        #     is also fully green, and it is the dangerous half: `nix run github:…/cairn`
+        #     resolves `apps.default` FIRST and only falls back to `packages.default`'s
+        #     `mainProgram`, so the run path and the build path would serve two different
+        #     clients under ONE name, differing by which command the consumer used;
+        #   • a later accidental revert of either line would be invisible;
+        #   • and the SAME half-flip one attribute over: repointing `apps.cairn` at the Go
+        #     client leaves all three of the assertions above green — `packages.cairn` is
+        #     untouched by it — while the ESCAPE HATCH `README.md` promises silently
+        #     becomes the Go client. That is why `apps.cairn` is compared here too.
+        #
+        # 🔴 IT COMPARES RESOLVED DERIVATIONS, NOT SPELLINGS. A guard matching the string
+        # `mkGoClient` in this file is walkable by renaming the binding while the wiring
+        # stays wrong, and is red on a rename that changed nothing. `apps.default` is an
+        # APP rather than a package, so its `program` is resolved to the executable it
+        # actually points at and compared against the DEFAULT PACKAGE's `mainProgram`
+        # executable — two things of the same kind.
+        #
+        # ⚠ IT IS DELIBERATELY BUILD-FREE: the paths are taken at EVALUATION time with the
+        # string context discarded, so this derivation depends on no client and cannot be
+        # red for a reason that is not a wiring difference. A kill for the wrong reason —
+        # the Go compiler failing, say — would read here as "the default moved", which is
+        # the one thing this check must never say by accident.
+        #
+        # 🔴 AND THE TWO `getExe`-DERIVED OPERANDS OF THE `apps.default` EQUALITY ARE THE
+        # SAME EXPRESSION, SO THEY MOVE TOGETHER — a COMMON-MODE blind spot rather than a
+        # comparison. Measured: `lib.getExe` on a derivation whose `meta.mainProgram` has
+        # been removed does not error — it emits a DEPRECATION WARNING and falls back to
+        # the pname, returning `…/bin/cairn-go`. Both sides of that equality then hold the
+        # same wrong path and compare equal while `nix run github:ZacxDev/cairn` fails on
+        # a missing binary. Nothing else covers it: `go-client-declares-its-verbs` puts
+        # the package on `PATH` and calls `cairn`, which proves `bin/cairn` EXISTS and
+        # says nothing about `mainProgram`, and no CI job runs `.#` bare. The NAME check
+        # below is the second, independent reading.
+        #
+        # ⚠ WHAT IT DOES NOT CLAIM: nothing about either client's BEHAVIOUR; and the name
+        # check is insensitive on the PYTHON side, where `pname` is already `cairn`, so a
+        # `mainProgram` removed from `mkCairn` would leave it green. That is a real gap,
+        # named rather than papered over — the hazard it exists for is `mkGoClient`, whose
+        # pname and mainProgram DIFFER.
+        default-is-the-go-client =
+          let
+            system = pkgs.stdenv.hostPlatform.system;
+            # `builtins.unsafeDiscardStringContext` is what makes this a wiring assertion
+            # rather than a build: the store path is known without realising anything.
+            path = drv: builtins.unsafeDiscardStringContext drv.outPath;
+            exe = drv: builtins.unsafeDiscardStringContext (nixpkgs.lib.getExe drv);
+            defaultPkg = path self.packages.${system}.default;
+            goPkg = path self.packages.${system}.cairn-go;
+            pyPkg = path self.packages.${system}.cairn;
+            defaultExe = exe self.packages.${system}.default;
+            pyExe = exe self.packages.${system}.cairn;
+            appProgram =
+              builtins.unsafeDiscardStringContext self.apps.${system}.default.program;
+            pyAppProgram =
+              builtins.unsafeDiscardStringContext self.apps.${system}.cairn.program;
+            # Both clients declare `mainProgram = "cairn"`, which is the single name every
+            # documented invocation uses. `mkGoClient`'s pname is `cairn-go`, so this is
+            # the one operand where the fallback is DISTINGUISHABLE from the intent.
+            wantExeName = "cairn";
+          in
+          pkgs.runCommand "cairn-default-is-the-go-client" { } ''
+            failed=0
+
+            # ⚠ AN INVARIANT GUARD, AND LABELLED AS ONE BECAUSE THE HAZARD ITS FIRST
+            # COMMENT NAMED IS UNREACHABLE. That comment read as regression coverage of a
+            # missing flake attribute resolving to `""`. Measured: a missing attribute is
+            # an EVAL ERROR (`error: attribute 'nosuchattr' missing`), so this derivation
+            # is never built and no run of it can observe that case. What it DOES pin is
+            # the floor every equality below rests on — two empty strings compare equal,
+            # so the comparisons are only as good as their operands being store paths.
+            # Keep it, and do not count it as coverage of a defect anyone has observed.
+            for p in '${defaultPkg}' '${goPkg}' '${pyPkg}' '${defaultExe}' '${pyExe}' \
+                     '${appProgram}' '${pyAppProgram}'; do
+              case "$p" in
+                /nix/store/?*) ;;
+                *)
+                  echo "FAIL: '$p' is not a store path — an attribute resolved to nothing,"
+                  echo "      and every comparison below would then be an equality between"
+                  echo "      two empty strings."
+                  failed=1
+                  ;;
+              esac
+            done
+
+            if [ "${defaultPkg}" != "${goPkg}" ]; then
+              echo "FAIL: packages.default is NOT packages.cairn-go."
+              echo "      packages.default  = ${defaultPkg}"
+              echo "      packages.cairn-go = ${goPkg}"
+              echo "      The default client is whatever a consumer gets from"
+              echo "      \`nix profile install github:…/cairn\` and from a flake input that"
+              echo "      names no attribute. Moving it is a cutover decision, not a build."
+              failed=1
+            fi
+
+            if [ "${appProgram}" != "${defaultExe}" ]; then
+              echo "FAIL: apps.default and packages.default resolve to DIFFERENT executables."
+              echo "      apps.default.program        = ${appProgram}"
+              echo "      getExe packages.default     = ${defaultExe}"
+              echo "      \`nix run github:…/cairn\` resolves apps.default FIRST and only falls"
+              echo "      back to packages.default's mainProgram, so this state gives ONE name"
+              echo "      two clients — which one you get depends on the command you ran."
+              failed=1
+            fi
+
+            if [ "${pyPkg}" = "${defaultPkg}" ]; then
+              echo "FAIL: packages.cairn and packages.default are the SAME derivation."
+              echo "      packages.cairn = packages.default = ${pyPkg}"
+              echo "      \`#cairn\` is the opt-out README.md announces, and this state points"
+              echo "      it at the Go client. It would NOT redden the parity gate —"
+              echo "      tests/parity/harness.py runs the oracle SCRIPT directly and never"
+              echo "      builds this package — which is exactly why it is asserted here."
+              failed=1
+            fi
+
+            # 🔴 THE ESCAPE HATCH'S `nix run` SPELLING, WHICH THE THREE ABOVE LEAVE FREE.
+            # `nix run github:…/cairn#cairn` resolves `apps.cairn` FIRST, the same
+            # precedence that makes `apps.default` load-bearing. README.md now PROMISES
+            # this spelling opts out, and a flake input taking `apps.${system}.cairn` gets
+            # the same attribute, so a repoint here is a silent flip of the documented
+            # escape hatch with every other assertion in this file still green.
+            if [ "${pyAppProgram}" != "${pyExe}" ]; then
+              echo "FAIL: apps.cairn does NOT point at packages.cairn — the announced opt-out"
+              echo "      resolves to something else."
+              echo "      apps.cairn.program      = ${pyAppProgram}"
+              echo "      getExe packages.cairn   = ${pyExe}"
+              echo "      README.md names \`#cairn\` as the opt-out from the default flip, in"
+              echo "      both the CLI and the flake-input spelling. If this pair disagrees,"
+              echo "      the opt-out is a promise the tree does not keep."
+              failed=1
+            fi
+
+            # 🔴 THE NAME, NOT ANOTHER EQUALITY — the common-mode reading. See the block
+            # above: a removed `meta.mainProgram` moves BOTH sides of an equality at once,
+            # so the equalities cannot see it. `getExe` falls back to the pname with only a
+            # deprecation warning, which turns the Go client's executable into `cairn-go`
+            # and breaks every documented invocation while the comparisons stay green.
+            for spec in \
+              'getExe packages.default|${builtins.baseNameOf defaultExe}' \
+              'apps.default.program|${builtins.baseNameOf appProgram}' \
+              'getExe packages.cairn|${builtins.baseNameOf pyExe}' \
+              'apps.cairn.program|${builtins.baseNameOf pyAppProgram}'; do
+              label="''${spec%%|*}"
+              name="''${spec##*|}"
+              if [ "$name" != '${wantExeName}' ]; then
+                echo "FAIL: $label resolves to an executable named '$name', not"
+                echo "      '${wantExeName}'. meta.mainProgram is missing or wrong, and getExe"
+                echo "      fell back to the pname with a deprecation warning rather than an"
+                echo "      error. Every equality in this check still passes — both operands"
+                echo "      move together — while \`nix run\` serves a binary under a name"
+                echo "      nothing documented here uses."
+                failed=1
+              fi
+            done
+
+            [ "$failed" -eq 0 ] || exit 1
+
+            echo "ok: packages.default == packages.cairn-go == ${defaultPkg}"
+            echo "    apps.default.program == ${appProgram}"
+            echo "    packages.cairn is distinct == ${pyPkg}"
+            echo "    apps.cairn.program == getExe packages.cairn == ${pyAppProgram}"
+            echo "    all four resolved programs are named '${wantExeName}'"
+            {
+              echo "packages.default ${defaultPkg}"
+              echo "packages.cairn-go ${goPkg}"
+              echo "packages.cairn ${pyPkg}"
+              echo "apps.default.program ${appProgram}"
+              echo "apps.cairn.program ${pyAppProgram}"
+              echo "exe-name ${wantExeName}"
+            } > $out
+          '';
 
         # 🔴 THE GO CLIENT'S OWN LEDGER, READ OUT OF THE RUNNING BINARY — the one claim a
         # compile cannot make, and the one the PYTHON-side gates are structurally blind to.
