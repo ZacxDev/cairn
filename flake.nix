@@ -690,9 +690,13 @@
       # `nix profile install` and every flake input got the other — one name, two
       # clients, differing by which command the consumer happened to use.
       #
-      # ⚠ `apps.cairn` DELIBERATELY DID NOT MOVE. It is the escape hatch the
-      # announcement names: `nix run github:…/cairn#cairn` is still the Python client,
-      # which is what makes residual 7's widening opt-out-able rather than forced.
+      # 🔴 `apps.cairn` DELIBERATELY DID NOT MOVE, AND IT IS PINNED RATHER THAN LEFT TO
+      # PROSE. It is the escape hatch the announcement names: `nix run
+      # github:…/cairn#cairn` is still the Python client, which is what makes residual
+      # 7's widening opt-out-able rather than forced. Because `README.md` now PROMISES
+      # that, repointing this one line at `mkGoClient` would defeat the promise while
+      # `packages.default`/`apps.default`/`packages.cairn` all stayed exactly right —
+      # the half-flip class one attribute over. `default-is-the-go-client` asserts it.
       #
       # ⚠ THERE IS NO `apps.cairn-go`, DELIBERATELY. `nix run .#cairn-go` already
       # resolves through `packages.cairn-go`'s `mainProgram = "cairn"` — measured, not
@@ -729,7 +733,11 @@
         #     resolves `apps.default` FIRST and only falls back to `packages.default`'s
         #     `mainProgram`, so the run path and the build path would serve two different
         #     clients under ONE name, differing by which command the consumer used;
-        #   • a later accidental revert of either line would be invisible.
+        #   • a later accidental revert of either line would be invisible;
+        #   • and the SAME half-flip one attribute over: repointing `apps.cairn` at the Go
+        #     client leaves all three of the assertions above green — `packages.cairn` is
+        #     untouched by it — while the ESCAPE HATCH `README.md` promises silently
+        #     becomes the Go client. That is why `apps.cairn` is compared here too.
         #
         # 🔴 IT COMPARES RESOLVED DERIVATIONS, NOT SPELLINGS. A guard matching the string
         # `mkGoClient` in this file is walkable by renaming the binding while the wiring
@@ -744,8 +752,22 @@
         # the Go compiler failing, say — would read here as "the default moved", which is
         # the one thing this check must never say by accident.
         #
-        # ⚠ WHAT IT DOES NOT CLAIM: nothing about either client's BEHAVIOUR, and nothing
-        # about `apps.cairn` (the deliberate Python escape hatch, unpinned here).
+        # 🔴 AND THE TWO `getExe`-DERIVED OPERANDS OF THE `apps.default` EQUALITY ARE THE
+        # SAME EXPRESSION, SO THEY MOVE TOGETHER — a COMMON-MODE blind spot rather than a
+        # comparison. Measured: `lib.getExe` on a derivation whose `meta.mainProgram` has
+        # been removed does not error — it emits a DEPRECATION WARNING and falls back to
+        # the pname, returning `…/bin/cairn-go`. Both sides of that equality then hold the
+        # same wrong path and compare equal while `nix run github:ZacxDev/cairn` fails on
+        # a missing binary. Nothing else covers it: `go-client-declares-its-verbs` puts
+        # the package on `PATH` and calls `cairn`, which proves `bin/cairn` EXISTS and
+        # says nothing about `mainProgram`, and no CI job runs `.#` bare. The NAME check
+        # below is the second, independent reading.
+        #
+        # ⚠ WHAT IT DOES NOT CLAIM: nothing about either client's BEHAVIOUR; and the name
+        # check is insensitive on the PYTHON side, where `pname` is already `cairn`, so a
+        # `mainProgram` removed from `mkCairn` would leave it green. That is a real gap,
+        # named rather than papered over — the hazard it exists for is `mkGoClient`, whose
+        # pname and mainProgram DIFFER.
         default-is-the-go-client =
           let
             system = pkgs.stdenv.hostPlatform.system;
@@ -757,17 +779,29 @@
             goPkg = path self.packages.${system}.cairn-go;
             pyPkg = path self.packages.${system}.cairn;
             defaultExe = exe self.packages.${system}.default;
+            pyExe = exe self.packages.${system}.cairn;
             appProgram =
               builtins.unsafeDiscardStringContext self.apps.${system}.default.program;
+            pyAppProgram =
+              builtins.unsafeDiscardStringContext self.apps.${system}.cairn.program;
+            # Both clients declare `mainProgram = "cairn"`, which is the single name every
+            # documented invocation uses. `mkGoClient`'s pname is `cairn-go`, so this is
+            # the one operand where the fallback is DISTINGUISHABLE from the intent.
+            wantExeName = "cairn";
           in
           pkgs.runCommand "cairn-default-is-the-go-client" { } ''
             failed=0
 
-            # 🔴 A PAIR, NOT A ZERO. Every assertion below is an equality between two
-            # strings, and two EMPTY strings compare equal — so the values are floored
-            # first. Without this the whole check passes over an attribute set that
-            # resolved to nothing.
-            for p in '${defaultPkg}' '${goPkg}' '${pyPkg}' '${defaultExe}' '${appProgram}'; do
+            # ⚠ AN INVARIANT GUARD, AND LABELLED AS ONE BECAUSE THE HAZARD ITS FIRST
+            # COMMENT NAMED IS UNREACHABLE. That comment read as regression coverage of a
+            # missing flake attribute resolving to `""`. Measured: a missing attribute is
+            # an EVAL ERROR (`error: attribute 'nosuchattr' missing`), so this derivation
+            # is never built and no run of it can observe that case. What it DOES pin is
+            # the floor every equality below rests on — two empty strings compare equal,
+            # so the comparisons are only as good as their operands being store paths.
+            # Keep it, and do not count it as coverage of a defect anyone has observed.
+            for p in '${defaultPkg}' '${goPkg}' '${pyPkg}' '${defaultExe}' '${pyExe}' \
+                     '${appProgram}' '${pyAppProgram}'; do
               case "$p" in
                 /nix/store/?*) ;;
                 *)
@@ -802,21 +836,67 @@
             if [ "${pyPkg}" = "${defaultPkg}" ]; then
               echo "FAIL: packages.cairn and packages.default are the SAME derivation."
               echo "      packages.cairn = packages.default = ${pyPkg}"
-              echo "      The Python client is the parity gate's oracle and stays a distinct,"
-              echo "      separately-addressable package until it is retired at P8."
+              echo "      \`#cairn\` is the opt-out README.md announces, and this state points"
+              echo "      it at the Go client. It would NOT redden the parity gate —"
+              echo "      tests/parity/harness.py runs the oracle SCRIPT directly and never"
+              echo "      builds this package — which is exactly why it is asserted here."
               failed=1
             fi
+
+            # 🔴 THE ESCAPE HATCH'S `nix run` SPELLING, WHICH THE THREE ABOVE LEAVE FREE.
+            # `nix run github:…/cairn#cairn` resolves `apps.cairn` FIRST, the same
+            # precedence that makes `apps.default` load-bearing. README.md now PROMISES
+            # this spelling opts out, and a flake input taking `apps.${system}.cairn` gets
+            # the same attribute, so a repoint here is a silent flip of the documented
+            # escape hatch with every other assertion in this file still green.
+            if [ "${pyAppProgram}" != "${pyExe}" ]; then
+              echo "FAIL: apps.cairn does NOT point at packages.cairn — the announced opt-out"
+              echo "      resolves to something else."
+              echo "      apps.cairn.program      = ${pyAppProgram}"
+              echo "      getExe packages.cairn   = ${pyExe}"
+              echo "      README.md names \`#cairn\` as the opt-out from the default flip, in"
+              echo "      both the CLI and the flake-input spelling. If this pair disagrees,"
+              echo "      the opt-out is a promise the tree does not keep."
+              failed=1
+            fi
+
+            # 🔴 THE NAME, NOT ANOTHER EQUALITY — the common-mode reading. See the block
+            # above: a removed `meta.mainProgram` moves BOTH sides of an equality at once,
+            # so the equalities cannot see it. `getExe` falls back to the pname with only a
+            # deprecation warning, which turns the Go client's executable into `cairn-go`
+            # and breaks every documented invocation while the comparisons stay green.
+            for spec in \
+              'getExe packages.default|${builtins.baseNameOf defaultExe}' \
+              'apps.default.program|${builtins.baseNameOf appProgram}' \
+              'getExe packages.cairn|${builtins.baseNameOf pyExe}' \
+              'apps.cairn.program|${builtins.baseNameOf pyAppProgram}'; do
+              label="''${spec%%|*}"
+              name="''${spec##*|}"
+              if [ "$name" != '${wantExeName}' ]; then
+                echo "FAIL: $label resolves to an executable named '$name', not"
+                echo "      '${wantExeName}'. meta.mainProgram is missing or wrong, and getExe"
+                echo "      fell back to the pname with a deprecation warning rather than an"
+                echo "      error. Every equality in this check still passes — both operands"
+                echo "      move together — while \`nix run\` serves a binary under a name"
+                echo "      nothing documented here uses."
+                failed=1
+              fi
+            done
 
             [ "$failed" -eq 0 ] || exit 1
 
             echo "ok: packages.default == packages.cairn-go == ${defaultPkg}"
             echo "    apps.default.program == ${appProgram}"
             echo "    packages.cairn is distinct == ${pyPkg}"
+            echo "    apps.cairn.program == getExe packages.cairn == ${pyAppProgram}"
+            echo "    all four resolved programs are named '${wantExeName}'"
             {
               echo "packages.default ${defaultPkg}"
               echo "packages.cairn-go ${goPkg}"
               echo "packages.cairn ${pyPkg}"
               echo "apps.default.program ${appProgram}"
+              echo "apps.cairn.program ${pyAppProgram}"
+              echo "exe-name ${wantExeName}"
             } > $out
           '';
 

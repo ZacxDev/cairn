@@ -26,13 +26,46 @@ in it.
 ### 🔴 The default client is now the Go one — what changed for you
 
 `packages.default` and `apps.default` were the **Python** client. They are now the
-**Go** one, so `nix run github:ZacxDev/cairn` and `nix profile install
+**Go** one, landed by **[#50](https://github.com/ZacxDev/cairn/pull/50)** — the anchor
+to check a pin against, because "now" cannot tell you whether the flip sits between the
+revision you are on and the one you are moving to. So `nix run github:ZacxDev/cairn`
+and `nix profile install
 github:ZacxDev/cairn` both execute `cmd/cairn` rather than the Python script.
 `#cairn-go` is the same store path under its own name.
 
-**Nothing was deleted.** `nix build github:ZacxDev/cairn#cairn` still builds the
-Python client, which remains the **oracle** the Go one is measured against; it is
-retired at P8, not here. Naming `#cairn` is the opt-out from everything below.
+**Nothing was deleted, and `cairn` is the opt-out — in BOTH consumption modes.** The
+Python client is still built, still the **oracle** the Go one is measured against, and
+retired at P8 rather than here. Naming it opts out of everything in this section. From
+the CLI that is a `#fragment`:
+
+```bash
+nix build github:ZacxDev/cairn#cairn           # the Python client, explicitly
+nix run   github:ZacxDev/cairn#cairn -- doctor
+```
+
+…but the consumer this flip actually lands on is the one this README calls primary
+above — who **pins this flake as an input** and reaches an *attribute*, where a
+`#fragment` is not a spelling you can use. That one:
+
+```nix
+{
+  inputs.cairn.url = "github:ZacxDev/cairn";   # or pin a rev/ref
+
+  outputs = { self, nixpkgs, cairn, ... }:
+    let system = "x86_64-linux"; in {
+      # `cairn.packages.${system}.default` is now the GO client.
+      # Take the PYTHON client by name instead:
+      packages.${system}.my-cairn = cairn.packages.${system}.cairn;
+      # …and its runnable form, if you re-export an app:
+      apps.${system}.my-cairn = cairn.apps.${system}.cairn;
+    };
+}
+```
+
+Both spellings are gated rather than promised. `checks.default-is-the-go-client` pins
+`apps.cairn.program` to `packages.cairn`'s executable, and pins `packages.cairn`
+distinct from `packages.default` — at evaluation time, building neither client — so
+neither attribute can be repointed at the Go client without reddening CI.
 
 The two clients are diffed against each other by
 [`tests/parity/`](tests/parity/README.md) over all nine verbs — **101 cases, 102
@@ -53,24 +86,6 @@ residual table says which, per row. **Two things do change:**
   exit codes are identical and gated; the *text* of a usage failure is not, and
   the parity gate deliberately does not compare it. Anything parsing argparse's
   prose will need re-reading.
-
-⚠ **And one thing that was expected to change and MEASURABLY DOES NOT.** A
-`routes.json` entry naming an alias this host has no config for makes `recall`,
-`search` and `validate` refuse at exit **11** — at one instance as well as many.
-That became true of the *Go* client only recently (`tests/parity/README.md`
-residual 8), so it was written down as belonging in this announcement. It does not:
-measured here over one synthetic world with `{"alpha-notes": "nowhere"}`, **both**
-clients exit 11 on all three verbs, because the port took the behaviour *from* the
-oracle. The old default already refused, so the new default refusing is not a
-change for anyone. `cairn routes --check` grades the table in both directions;
-`sync`, `ls-entries` and `doctor` route nothing and are untouched.
-
-**What licensed this was an operator decision, not a green gate.** An earlier draft
-took the flip because the parity gate was green; it was reverted, and that reading
-is still wrong. The decision followed the closure of the one *measured* blocker:
-the Go client used to refuse every read verb at exit 11 on a host with more than
-one instance configured, which would have made the `doctor` quickstart above refuse
-there. It routes now.
 
 ## The client — `cairn`
 

@@ -172,8 +172,11 @@ anyone editing that path:
     that clause is RETRACTED by measurement**: it is a change to the GO client,
     not to the DEFAULT — the default was the Python oracle, this routing was
     ported FROM the oracle, and both packaged clients now exit 11 on all three
-    verbs over the same world, so the flip changes nothing here. `README.md`
-    records it as a non-change. `sync`, `ls-entries` and
+    verbs over the same world, so the flip changes nothing here. `README.md`'s
+    announcement **drops** it — this bullet once said it *recorded* it, and the
+    draft paragraph was cut: a consumer cannot act on a non-change. The record
+    is here, on `internal/client/instances.go`'s header and in
+    `tests/parity/README.md`. `sync`, `ls-entries` and
     `doctor` route NOTHING, so none of it reaches them.
   - 🔴 **AND THAT LAST CLAUSE USED TO READ "take no scope, so none of it
     reaches them", WHICH `--help` FALSIFIES FOR TWO OF THE THREE.** `cairn

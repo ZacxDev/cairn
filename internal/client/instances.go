@@ -59,7 +59,11 @@ import (
 // the DEFAULT: the default was the Python oracle and the routing here was ported FROM it, so the
 // oracle already refused. Re-measured on the flip's branch over the same world, both packaged
 // clients exit 11 on all three verbs — so a consumer moving to the new default sees no change
-// here. `README.md`'s announcement records it as a NON-change rather than dropping it.
+// here. `README.md`'s announcement DROPS it rather than recording it — this comment once said
+// the opposite, and the draft paragraph it referred to was cut: a consumer-facing section
+// cannot hand a consumer an action for a change that measurably is not one. The record lives
+// here, in `lib/README.md`'s bullet and in `tests/parity/README.md`, which is where a
+// contributor who might re-derive the wrong expectation reads.
 //
 // `sync`, `ls-entries` and `doctor` route NOTHING, so none of
 // this reaches them. The same clause is on `lib/README.md`'s bullet, in `tests/parity/README.md`,
