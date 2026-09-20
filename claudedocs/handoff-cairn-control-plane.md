@@ -24,9 +24,13 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 - Branch `main` @ **`3c4a1c6`**, clean. No PRs were merged this session.
-- **IN FLIGHT: `feat/publish-the-go-image`** (worktree, based `3c4a1c6`) — fixes the publish
-  gate and adds a Go publish path. Dispatched to an agent; PR not yet opened at the time this
-  was written. **Verify its state before acting on rank 1.**
+- ✅ **`#44` MERGED as `deecfcd`, verified BY CONTENT** (a squash makes `--is-ancestor` false
+  forever): all four payload paths diff EMPTY against `origin/main`, the merge commit exists,
+  and `scripts/resolve-skopeo.sh` is absent on `main`. It fixed the publish gate, deleted the
+  resolver script an audit showed should never have existed, stopped the Go half gating the
+  Python publish, removed a fifth route ledger, and pinned the four control steps whole.
+  **Its audit ladder is CLOSED on the attribution gate** — rounds 0/1/2, two consecutive
+  payload-0 rounds, `audit-dispatch.py --round 3` refuses at **rc 5**.
 - 🔴 **RANK 1'S PRECONDITION IS DISCHARGED: the deployed artefact has now been diffed against
   `packages.server-image-go`, and the busybox call is MADE.** Operator decision this session:
   **publish AND swap the pod to Go**, and the busybox trade is **accepted as a narrowing**.
@@ -75,9 +79,30 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
    forcing: none
 
 ## Defects (batched)
-- 🔴 **`publish-image.yml` HAS NEVER SUCCEEDED — all 7 runs, same step, since it landed.**
-  Root cause and evidence in the investigation block below. **Closing condition:** rank 1
-  merged, with a run that REACHES the push step.
+- ✅ **THE SKOPEO DEFECT IS CLOSED ON `main` (`deecfcd`), AND THE RUN NOW REACHES THE PUSH** —
+  steps 7 (`pin skopeo`) and 8 (`log in to ghcr`) passed for the first time in this
+  workflow's history. Root cause and evidence in the investigation block below.
+- 🔴 **AND THE PUSH IS REFUSED FOR A SECOND, INDEPENDENT REASON THE FIRST ONE HID: the ghcr
+  package is not linked to any repository, so `GITHUB_TOKEN` cannot write it.**
+  Run `35481257420`, step 9: `denied: permission_denied: write_package` against
+  `/v2/<owner>/cairn-store/blobs/uploads/`. Measured cause —
+  `gh api user/packages/container/cairn-store` returns **`repository: null`** with
+  `created=2026-09-16T19:45:31Z`, i.e. **17 minutes BEFORE the workflow first landed**. The
+  hand push created a USER-scoped package owned by nobody's repo; `permissions: packages:
+  write` grants repo-based access and there is no repo to base it on. Seven runs never found
+  this because they all died at the skopeo step first — **one defect masking another, and the
+  second only observable once the first was fixed.**
+  ⚠ **What is measured and what is not:** that the package is unlinked is measured; that
+  LINKING it is sufficient to fix the push is standard GitHub behaviour I could not verify
+  from here. **Closing condition:** a `publish-image.yml` run that reaches
+  `PROVE the published image is pullable`. Two operator routes, both UI-only (no REST route):
+  grant this repo Actions **write** access on the package, or **delete** the package and let
+  Actions create it repo-owned — the latter costs the existing public visibility and makes the
+  first run red at the visibility proof, like the Go one.
+- 🟡 **The workflow surfaces skopeo's raw `denied` rather than naming this cause.** Everything
+  else in that file refuses by name with a remedy; this path does not, so the next reader gets
+  a registry error with no pointer. **Closing condition:** a named refusal on the push steps
+  that says "the package is not linked to this repository" and prints the settings URL.
 - 🔴 **THE ONE PUBLISHED ghcr TAG WAS HAND-PUSHED AND IS 7 COMMITS STALE** — see the same
   block. **The artefact CI publishes and the artefact the pod runs have never been the same
   build.** Anonymous pull works, so that package's visibility flip was already done.
