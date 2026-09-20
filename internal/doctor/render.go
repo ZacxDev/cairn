@@ -83,6 +83,27 @@ var markers = map[string]string{
 	OK: "  ", Problem: "🔴", Unmeasured: "⚠ ", NotObservable: "· ",
 }
 
+// Markers is that table, copied, so a CONSUMER that has to find a rendered row's NAME column
+// strips the glyph this renderer actually wrote instead of spelling a guess at it.
+//
+// 🔴 THE GLYPHS ARE NOT ALL THE SAME WIDTH, WHICH IS WHY A FIXED OFFSET AND A `TrimSpace` ARE
+// BOTH WRONG. `OK` is two SPACES, `Problem` is a single astral rune, and the other two are a
+// rune plus a space — so a rune offset that finds the name on one state misses it on another,
+// and `strings.TrimSpace(line)` reaches the name on `OK` rows ONLY, silently skipping every
+// other state. A guard written that way is true of whichever states its fixture happens to
+// produce. Measured: `internal/client`'s one-instance `doctor` fixture renders 2 OK rows and 5
+// non-OK ones, and the `TrimSpace` spelling inspected the 2.
+//
+// ⚠ IT IS EXPORTED FOR TESTS AND IS STILL THE ONE TABLE — `Render` reads `markers` directly, so
+// there is no second copy to disagree with.
+func Markers() map[string]string {
+	out := make(map[string]string, len(markers))
+	for state, glyph := range markers {
+		out[state] = glyph
+	}
+	return out
+}
+
 // Render is the report, plus the exit legend, plus a one-line verdict.
 //
 // ⚠ THE COLUMN WIDTHS ARE COUNTED IN CODE POINTS, NOT BYTES, because the oracle's `ljust` and

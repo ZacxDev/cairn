@@ -389,7 +389,19 @@ def _instance_for(args: argparse.Namespace, scope: str) -> tuple[str, str | None
     `routes.json = {"alpha-notes": "nowhere"}`: `recall`, `search` and
     `validate` all exit 11 here, and the Go client agrees (it answered 0 with
     a digest at `d8b858a`, before its reads routed). `sync`, `ls-entries` and
-    `doctor` take no scope and are untouched.
+    `doctor` are untouched — they ROUTE NOTHING.
+
+    🔴 "THEY TAKE NO SCOPE" IS WHAT THAT LAST CLAUSE USED TO SAY, AND `--help`
+    FALSIFIES IT FOR TWO OF THE THREE. `cairn sync` and `cairn ls-entries` both
+    declare `--scope`; only `doctor` has no such flag. What makes them untouched
+    is that they pass `scope=None`/`""` regardless and walk EVERY instance — see
+    `cmd_sync` for the measured reason this cache may never be narrowed. The
+    conclusion is unchanged and re-measured on the same world: `sync --scope
+    alpha-notes` exits 4 and `ls-entries --scope alpha-notes` exits 0, on both
+    clients, byte-identical to the unscoped runs. 🔴 THE REASON IS LOAD-BEARING
+    RATHER THAN PEDANTIC: a later change that routed `ls-entries --scope`
+    through `alias_for` would falsify the conclusion while the old reason still
+    read as covering it.
 
     🔴 AND IT IS GATED ON THE INSTANCE COUNT, NEVER ON THE TABLE. A one-instance
     host that has written a routing table is still a host with one place an
@@ -955,8 +967,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
     # silently inherit the completeness claim. The server keeps `?scope=` — it
     # is a legitimate API capability with its own tests; it is just not
     # something that may narrow this cache.
-    # 🔴 EVERY CONFIGURED INSTANCE, NOT THE ROUTED ONE. `sync` takes no scope,
-    # so it has nothing to route — and refreshing one of two instances while
+    # 🔴 EVERY CONFIGURED INSTANCE, NOT THE ROUTED ONE. `sync` DOES declare
+    # `--scope` and passes `scope=None` regardless (see above), so it has
+    # nothing to route — and refreshing one of two instances while
     # reporting success would leave the other silently ageing, which is the
     # failure this command's own docstring exists to prevent, one instance over.
     routing = _routing()

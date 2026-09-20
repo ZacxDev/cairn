@@ -634,6 +634,28 @@ def failing_tests(output: str, is_go: bool) -> list[str]:
     return sorted(set(re.findall(r"^FAILED \S+::(?:\S+::)?(\w+)", output, re.MULTILINE)))
 
 
+class ToolchainMissing(Exception):
+    """The runner named by a mutant's arm is not on `PATH`.
+
+    🔴 A SEPARATE SIGNAL, BECAUSE THE ALTERNATIVE IS A NUMBER THAT MEANS TWO THINGS. An absent
+    `go` makes `subprocess.run` raise before anything is measured; left uncaught that became a
+    traceback at exit **1**, and 1 is this battery's "a mutant survived" verdict — so a shell
+    with no toolchain was indistinguishable from a real finding, which is precisely what the
+    collected-count control exists to prevent one layer up. `main` turns this into exit 2,
+    "could not vouch". ⚠ The Python arm cannot raise it (`sys.executable` is this interpreter),
+    so the class is for the Go arm and for whatever arm is added next.
+    """
+
+
+def _run(argv: list[str], tree: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
+    """`subprocess.run` with the missing-binary case turned into `ToolchainMissing`."""
+    try:
+        return subprocess.run(argv, cwd=str(tree), env=env,
+                              capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError as exc:
+        raise ToolchainMissing(f"{argv[0]!r} is not on PATH") from exc
+
+
 def run_suites(tree: Path, mutant: Mutant) -> tuple[int, str, int]:
     """`(returncode, output, collected)` for one mutant's suites.
 
@@ -649,25 +671,33 @@ def run_suites(tree: Path, mutant: Mutant) -> tuple[int, str, int]:
     first match alone counts the FAILURES and calls a 54-test run "1". `publish_workflow_mutants.py`
     already sums for the same reason.
 
-    ⚠ AND THE GO ARM COUNTS TOO, BECAUSE IT HAS THE SAME HOLE. A tree with no `go` on `PATH`
-    produces no `--- FAIL:` lines either; `ok <pkg>` / `FAIL <pkg>` / `--- PASS|FAIL|SKIP` are
-    the runner's own result lines, and a build failure prints `FAIL <pkg> [build failed]` plus a
-    bare `FAIL`, which counts NON-ZERO (measured: 2) — so a mutant that does not COMPILE is
-    still caught by its `kills` check rather than refused here or credited with a death.
+    ⚠ AND THE GO ARM COUNTS TOO, FOR THE SAME REASON: `ok <pkg>` / `FAIL <pkg>` /
+    `--- PASS|FAIL|SKIP` are the runner's own result lines, and a build failure prints
+    `FAIL <pkg> [build failed]` plus a bare `FAIL`, which counts NON-ZERO (measured: 2) — so a
+    mutant that does not COMPILE is still caught by its `kills` check rather than refused here
+    or credited with a death.
+
+    🔴 BUT "A TREE WITH NO `go` ON `PATH` PRODUCES NO `--- FAIL:` LINES EITHER" IS WHAT THIS
+    PARAGRAPH USED TO SAY, AND IT IS RETRACTED — MEASURED, BOTH BEFORE AND AFTER THE COUNT WAS
+    ADDED. `subprocess.run(["go", …])` never runs and never returns: it raises
+    `FileNotFoundError`, which propagated out of `main` as a traceback and exited **1**. The
+    count is therefore not what covers a missing toolchain on this arm — it never executes — and
+    1 is ALSO this battery's "a mutant survived" verdict, so the two were indistinguishable,
+    which is the exact confusion the count exists to remove one layer up. `_run` below closes it
+    by refusing at **2**; the count still covers the case the old sentence was reaching for, a
+    runner that IS present and reports nothing.
     """
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     if mutant.go_package:
-        proc = subprocess.run(["go", "test", mutant.go_package], cwd=str(tree), env=env,
-                              capture_output=True, text=True, timeout=1800)
+        proc = _run(["go", "test", mutant.go_package], tree, env)
         output = proc.stdout + proc.stderr
         collected = len(re.findall(r"^(?:--- (?:PASS|FAIL|SKIP):|ok\s|FAIL\s)", output,
                                    re.MULTILINE))
         return proc.returncode, output, collected
     sweep_pycache(tree)
-    proc = subprocess.run(
-        [sys.executable, "-m", "pytest", *mutant.suites, "-q", "-p", "no:randomly"],
-        cwd=str(tree), env=env, capture_output=True, text=True, timeout=1800)
+    proc = _run([sys.executable, "-m", "pytest", *mutant.suites, "-q", "-p", "no:randomly"],
+                tree, env)
     output = proc.stdout + proc.stderr
     collected = sum(int(n) for n in re.findall(r"(\d+) (?:passed|failed)", output))
     return proc.returncode, output, collected
@@ -697,7 +727,15 @@ def main(argv: list[str] | None = None) -> int:
         for index, mutant in enumerate(selected):
             tree = build_tree(work, index)
             apply_mutation(tree, mutant)
-            rc, output, collected = run_suites(tree, mutant)
+            try:
+                rc, output, collected = run_suites(tree, mutant)
+            except ToolchainMissing as missing:
+                # 🔴 EXIT 2, NOT 1 — "could not vouch", the same refusal the zero-collected
+                # case makes below. Letting this propagate exited 1, which this battery also
+                # returns when a mutant SURVIVED, so a missing toolchain read as a finding.
+                print(f"REFUSING TO VOUCH: `{mutant.id}` could not run — {missing}. Nothing "
+                      f"above or below is a claim about the guards.", file=sys.stderr)
+                return 2
             # 🔴 THE POSITIVE CONTROL, READ BEFORE THE VERDICT AND NOT AFTER. Zero result lines
             # means the runner never executed the tree it edited, so every word below — KILLED,
             # SURVIVED, the summary — would be a fact about this shell. Exit 2 is "could not

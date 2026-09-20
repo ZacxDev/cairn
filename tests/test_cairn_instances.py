@@ -3,13 +3,29 @@
 
 🔴 WHAT THIS FILE IS GUARDING, IN ONE SENTENCE: that a client pointed at more
 than one store never GUESSES which one a scope belongs to, and that a client
-pointed at exactly one behaves as if none of this code existed.
+pointed at exactly one prints the SAME BYTES it always did.
 
 Those two are the whole design. The first is the safety property — a write that
 lands in a store nobody reads is discovered days later, by accident, if at all,
 so an unregistered scope REFUSES and names itself. The second is what makes the
-first shippable: the routing machinery is inert until an operator configures a
-second instance, which is why it can go in before any data moves.
+first shippable: the LABELLING half of the routing machinery is inert until an
+operator configures a second instance, which is why it can go in before any data
+moves.
+
+🔴 AND THE SECOND HALF IS ABOUT *LABELLING* ONLY — "a client pointed at exactly
+one behaves as if none of this code existed" and "the routing machinery is inert
+until an operator configures a second instance" are what those two sentences used
+to say, and both are FALSE. `cairn_instances.Routing.alias_for`'s own
+docstring says the opposite in as many words — its row 3, a table routing a scope
+to an alias this host has no config for, "refuses at ONE instance and at many" —
+and the oracle was measured refusing at exit 11 on a one-instance host with
+`routes.json = {"alpha-notes": "nowhere"}`. Both sentences and that refusal
+landed in the SAME commit (`baee2f0`), so this docstring has never been true.
+The narrowing was applied at five other sites (`cairn`, `lib/README.md`,
+`internal/client/instances.go`, `internal/client/routes.go`,
+`tests/parity/README.md`) before this one; this file is the site that sweep
+missed, and the retraction is recorded here rather than the sentence silently
+rewritten, because the over-wide version keeps getting re-derived.
 
 Every CLI test here runs the real client as a SUBPROCESS against a real server.
 That is deliberate and it is what makes the red-at-baseline claims meaningful: a

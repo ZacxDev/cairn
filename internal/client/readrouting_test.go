@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ZacxDev/cairn/internal/doctor"
 	"github.com/ZacxDev/cairn/internal/report"
 )
 
@@ -176,9 +177,28 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 	// `routes.json` — so "asked the table instead" was unreachable and only "labelled
 	// unconditionally" was ever caught. See `oneInstanceHost` for the measurement.
 	//
-	// ⚠ ALL SIX LABELLING VERBS, BECAUSE THE PREDICATE IS REACHED FROM SIX PLACES. `search`,
-	// `sync` and `doctor` were absent; the last two are the ones that take no scope, and
-	// `doctor` is the one whose alias is NOT in its prose — it prefixes its ROW NAMES, the one
+	// ⚠ THE INVOCATIONS BELOW COVER `instanceLabel`'S SIX CALL SITES, AND VERBS DO NOT MAP ONTO
+	// THEM ONE-TO-ONE — WHICH IS WHY THERE ARE EIGHT OF THEM AND NOT SIX. An earlier draft of
+	// this comment said "ALL SIX LABELLING VERBS, BECAUSE THE PREDICATE IS REACHED FROM SIX
+	// PLACES", which reads as a 6↔6 correspondence and is false in both directions: `recall`,
+	// scoped `validate` and `search` share ONE site, and `validate` alone reaches TWO. The
+	// mapping, spelled out because nothing checks it mechanically:
+	//
+	//	verbs.go   Sync              <- `sync`
+	//	verbs.go   LsEntries         <- `ls-entries`
+	//	cli.go     doctorInstance    <- `doctor`
+	//	routes.go  readInstance      <- `recall`, `validate`, `search` (all SCOPED)
+	//	routes.go  defaultInstance   <- `validate` with NO scope and a non-repo `--repo`
+	//	routes.go  bannerFor         <- `routes --check`
+	//
+	// 🔴 THE LAST TWO ROWS ARE WHY THE LIST GREW, AND THE FIRST OF THEM WAS A MEASURED HOLE.
+	// Verified at b28787b8: mutating `defaultInstance`'s return to an unconditional
+	// `DefaultAlias` label — the no-scope `cairn validate` path, which is what the command does
+	// with no arguments outside a repo — SURVIVED the whole `./internal/client` package at rc 0.
+	// `bannerFor` was unreached by the same reasoning and is now covered too; it needs
+	// `--check`, because without it `Routes` returns before any banner is printed.
+	//
+	// ⚠ `doctor` IS THE ONE WHOSE ALIAS IS NOT IN ITS PROSE — it prefixes its ROW NAMES, the one
 	// mechanism a machine consumer of `doctor --json` parses and the one a forbidden-substring
 	// check does not see, which is why it gets an assertion of its own below.
 	//
@@ -187,42 +207,110 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 	// which at the previous commit did not reach a rendered report at all here — but that is
 	// a statement about the two-instance host, so the honest label for this test as a whole
 	// is INVARIANT.
-	oneInstanceHost(t)
-	for name, verb := range map[string]func(Env, Options) (int, error){
-		"ls-entries": LsEntries,
-		"validate":   Validate,
-		"recall":     func(e Env, o Options) (int, error) { return Report(e, o, false) },
-		"search":     func(e Env, o Options) (int, error) { return Report(e, o, true) },
-		"sync":       Sync,
-		"doctor":     Doctor,
+	home := oneInstanceHost(t)
+	// A directory that is not a git repository, so `RepoScope` yields "" and `Validate` takes
+	// its `defaultInstance` arm. `--repo .` would derive THIS checkout's scope and take the
+	// `readInstance` arm instead, which is the arm three other rows already cover.
+	plain := filepath.Join(home, "not-a-repo")
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, invocation := range []struct {
+		name string
+		run  func(Env, Options) (int, error)
+		with func(o *Options)
+	}{
+		{"ls-entries", LsEntries, nil},
+		{"validate", Validate, func(o *Options) { o.Scope = "alpha-notes" }},
+		{"recall", func(e Env, o Options) (int, error) { return Report(e, o, false) },
+			func(o *Options) { o.Scope = "alpha-notes" }},
+		{"search", func(e Env, o Options) (int, error) { return Report(e, o, true) },
+			func(o *Options) { o.Scope, o.Query = "alpha-notes", "synthetic" }},
+		{"sync", Sync, nil},
+		{"doctor", Doctor, nil},
+		{"validate (no scope)", Validate, func(o *Options) { o.Scope, o.Repo = "", plain }},
+		{"routes --check", Routes, func(o *Options) { o.Check = true }},
 	} {
 		opts := readOpts()
-		if name == "recall" || name == "validate" || name == "search" {
-			opts.Scope = "alpha-notes"
+		if invocation.with != nil {
+			invocation.with(&opts)
 		}
-		if name == "search" {
-			opts.Query = "synthetic"
-		}
-		_, stdout, stderr := capture(t, verb, opts)
+		_, stdout, stderr := capture(t, invocation.run, opts)
 		for _, forbidden := range []string{"cairn[", "instance ONLY", "[personal]"} {
 			if strings.Contains(stdout+stderr, forbidden) {
 				t.Fatalf("%s: a one-instance host must not print %q:\n%s\n%s",
-					name, forbidden, stdout, stderr)
+					invocation.name, forbidden, stdout, stderr)
 			}
 		}
-		if name != "doctor" {
+		if invocation.name != "doctor" {
 			continue
 		}
 		// 🔴 THE ROW NAME, NOT A SUBSTRING OF THE WHOLE REPORT. `doctor`'s alias lives in the
 		// NAME column (`<alias>/<check>`), and a detail field may legitimately quote a path
-		// containing the word — so the assertion is anchored at the start of the line.
+		// containing the word — so the assertion is on the NAME column alone.
+		//
+		// 🔴 AND THE COLUMN IS FOUND BY STRIPPING THE RENDERER'S OWN MARKER, NOT BY
+		// `strings.TrimSpace`. The previous spelling was
+		// `strings.HasPrefix(strings.TrimSpace(line), DefaultAlias+"/")`, which reaches the
+		// name on an `OK` row — marker `"  "` — and on NO other state, because `"🔴"`, `"⚠ "`
+		// and `"· "` are not whitespace. Measured at b28787b8: this fixture renders 2 OK rows
+		// and 5 non-OK ones, so the guard inspected 2 of 7 and a fixture change leaving no OK
+		// row would have emptied it in silence. `doctor.Markers()` is the table `Render`
+		// itself writes from.
+		rows, nonOK := 0, 0
 		for _, line := range strings.Split(stdout, "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), DefaultAlias+"/") {
+			name, state := doctorRow(line)
+			if name == "" {
+				continue
+			}
+			rows++
+			if state != doctor.OK {
+				nonOK++
+			}
+			if strings.HasPrefix(name, DefaultAlias+"/") {
 				t.Fatalf("doctor: a one-instance host must not prefix its row names: %q\n%s",
 					line, stdout)
 			}
 		}
+		// 🔴 THE POSITIVE CONTROL, BECAUSE THE ASSERTION ABOVE IS A REASSURING ZERO OTHERWISE.
+		// "No row was prefixed" and "no row was read" are the same observation from a loop that
+		// matched nothing, and the second one is what the `TrimSpace` spelling was one fixture
+		// change away from. The non-OK count is the half that pins the marker handling: revert
+		// `doctorRow` to the old spelling and this line goes red at `nonOK == 0`.
+		if rows < 2 || nonOK == 0 {
+			t.Fatalf("the row predicate read %d row(s), %d of them non-OK — it must inspect "+
+				"EVERY state, not whichever this fixture happens to produce:\n%s",
+				rows, nonOK, stdout)
+		}
 	}
+}
+
+// doctorRow splits one line of a rendered `doctor` report into its NAME and STATE columns, and
+// returns `("", "")` for a line that is not a check row.
+//
+// 🔴 IT STRIPS THE MARKER THE RENDERER WROTE, WHICH IS THE WHOLE REASON IT EXISTS. `Render`
+// emits `"<marker> <name>  <state> <detail>"`, and the four markers are neither the same width
+// nor all whitespace — so both obvious spellings are wrong for some states and right for
+// others: a fixed rune offset (`"🔴"` is ONE rune, the other three are two) and a `TrimSpace`
+// (which reaches the name on `OK` rows only). The state is checked against `doctor.States` so a
+// footer or legend line cannot be mistaken for a row.
+func doctorRow(line string) (name, state string) {
+	for _, marker := range doctor.Markers() {
+		rest, found := strings.CutPrefix(line, marker)
+		if !found {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) < 2 {
+			continue
+		}
+		for _, known := range doctor.States {
+			if fields[1] == known {
+				return fields[0], known
+			}
+		}
+	}
+	return "", ""
 }
 
 func TestRecallROUTESItsScopeAndCARRIESTheCaveatsInstanceClause(t *testing.T) {

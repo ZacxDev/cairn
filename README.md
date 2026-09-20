@@ -155,13 +155,20 @@ the Python renderer ships as `packages.default` until the oracle is deleted.
 
 `cairn` stays the oracle and `packages.default` still builds it. The gate is
 [`tests/parity/`](tests/parity/README.md): both clients, one pod, one store, one cache root,
-identical argv. **90 cases, 91 PASS, 0 failures** across all nine verbs, every output-shaping
-flag, every documented exit code, `--help` in four spellings, and argparse's option-versus-value
-rules. ⚠ **That is not 90 byte diffs, and the split says which rows are load-bearing:** 59 rows
-diff stdout, stderr *and* the exit code; 23 compare the exit code only; 8 compare the exit code
-plus "both sides put something on stdout" — so **31 of the 90 never compare output text**, every
-one of them because argparse's wording is not worth reproducing in Go. The residual table says
-which, per row.
+identical argv. **101 cases, 102 PASS, 0 failures** across all nine verbs, every output-shaping
+flag, every documented exit code, `--help` in four spellings, argparse's option-versus-value
+rules, and a two-instance host with a second pod. ⚠ **That is not 101 byte diffs, and the split
+says which rows are load-bearing:** 70 rows diff stdout, stderr *and* the exit code; 23 compare
+the exit code only; 8 compare the exit code plus "both sides put something on stdout" — so
+**31 of the 101 never compare output text**, every one of them because argparse's wording is not
+worth reproducing in Go. The residual table says which, per row.
+
+⚠ **Every count in that paragraph is restated here from `AGENTS.md` and NOTHING ASSERTS ON
+THEM** — the gate's own floor lives in `.github/workflows/ci.yml`, which refuses below 102
+passes. They went stale while `AGENTS.md` and that floor moved, and this file still read
+`90 / 91 / 59 / 31 of the 90`, so re-derive rather than trust:
+`grep -c 'Case(' tests/parity/harness.py` for the case count, and the `compare=` distribution
+beside it for the split.
 
 ⚠ **A green gate is not evidence until its controls have been watched to work.** This one's
 first full run reported 72 PASS / 0 FAIL while every request was refused and no cache was ever

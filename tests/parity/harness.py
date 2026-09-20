@@ -661,11 +661,23 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
 
         # --- a routed WRITE at a non-default alias -----------------------------
         # 🔴 THE REGION THAT HAD ZERO BYTE COMPARISON, AND IT IS THE ONE THIS WORK EXISTS TO
-        # SHIP. Both `<MULTICFG>` rows above are `routes --check` — the GRADER — so the routed
-        # WRITE path was covered only by each client's own unit tests, which cannot compare
-        # bytes across the two. A live divergence was measured in exactly that gap (`put`
-        # against a routed instance with an incomplete config: same exit code, different
-        # sentence, because the oracle loads the credentials lazily and the port did not).
+        # SHIP. When this row was written (`baee2f0`) the only `<MULTICFG>` rows above it were
+        # the two `routes --check` GRADER rows, so the routed WRITE path was covered only by
+        # each client's own unit tests, which cannot compare bytes across the two. A live
+        # divergence was measured in exactly that gap (`put` against a routed instance with an
+        # incomplete config: same exit code, different sentence, because the oracle loads the
+        # credentials lazily and the port did not).
+        #
+        # ⚠ PAST TENSE, AND DELIBERATELY SO: THE SENTENCE ABOVE IS HISTORY AND STOOD IN THE
+        # PRESENT TENSE FOR TWO COMMITS AFTER IT STOPPED BEING TRUE. Counted per commit —
+        # `<MULTICFG>` env rows declared ABOVE this one — `baee2f0` 2, `0c187d7` 5, `d57f46b` 5,
+        # `b28787b` 6. It was exact when written and false from the second of those; the same
+        # commit that corrected the sibling sentence in `ci.yml` to past tense left this one.
+        # The four added rows are routed READS (`recall` to a non-default alias, `recall` to the
+        # default one, `ls-entries`' fan-out, `validate`'s routed COUNT), all four full
+        # stdout/stderr/exit comparisons. Nothing asserts on that six, so COUNT the rows rather
+        # than trusting it; what still holds, and is this row's whole reason, is that every one
+        # of those six READS and this is the only one that WRITES.
         #
         # ⚠ IT GOES LAST ON PURPOSE. It is the only row that WRITES to the second pod, and the
         # `routes --check` rows above read that pod's scope set; `restore_store` on the second

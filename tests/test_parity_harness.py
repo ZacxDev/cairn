@@ -262,9 +262,12 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     narrower` and `test_the_case_ids_are_unique` pass VACUOUSLY — an empty list has no thin `why`
     and no duplicate id. So the floor covers those two, and nothing else in this file does.
 
-    ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below 91
-    PASS lines, but that job needs a Go toolchain and a running pod; a developer running
-    `pytest tests` reaches this one and not that one.
+    ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below the
+    PASS count `.github/workflows/ci.yml` pins — **102 at this head**, not the 91 this docstring
+    still carried — but that job needs a Go toolchain and a running pod; a developer
+    running `pytest tests` reaches this one and not that one. 🔴 NOTHING ASSERTS THAT THE TWO
+    NUMBERS AGREE, which is exactly how this one went stale: read `ci.yml`'s `-lt` comparison
+    rather than this sentence.
 
     The AST half of the old test is deleted as genuinely redundant: `harness` is imported at module
     scope (line 30) and the `cases` fixture calls `harness.cases(1)`, so a syntax error or a
@@ -273,15 +276,18 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
     declared = len(harness.cases(1))
-    # 90 measured on this tree. The floor is the repository's own formula for a collected-count
-    # floor — `m - min(50, max(1, m / 20))` for a measured `m`, which `.github/workflows/ci.yml`
-    # owns and justifies: close enough that a real narrowing cannot hide under it, loose enough
-    # that adding or dropping a handful of rows in a PR does not make it permanently red. The
-    # previous floor was 50 against 90, which could not see a 44% narrowing — the same blindness
-    # that comment describes one layer up.
-    floor = 85
+    # 101 measured on this tree (`grep -c 'Case(' tests/parity/harness.py`). The floor is the
+    # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
+    # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
+    # narrowing cannot hide under it, loose enough that adding or dropping a handful of rows in a
+    # PR does not make it permanently red. The previous floor was 50 against 90, which could not
+    # see a 44% narrowing — the same blindness that comment describes one layer up.
+    # ⚠ AND IT WAS 85 AGAINST 101 UNTIL THIS COMMIT, because the measured `m` moved by eleven rows
+    # and the floor did not — a floor left behind by its own formula loosens silently, which is
+    # the same failure one size larger. Move BOTH when a row lands.
+    floor = 95
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (90 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (101 were "
         f"measured on this tree, across nine verbs and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."

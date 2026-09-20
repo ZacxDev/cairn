@@ -33,8 +33,10 @@ import (
 //     and at many. "Where did that bullet go" is a question about a DURABLE record, asked
 //     later, by someone who no longer has the terminal.
 //   - **The READ verbs ROUTE and label CONDITIONALLY.** `recall`/`search` and `validate`
-//     resolve their scope through `AliasFor`; `sync`, `ls-entries` and `doctor` take no scope
-//     and walk EVERY configured instance. All six print the alias only when
+//     resolve their scope through `AliasFor`; `sync`, `ls-entries` and `doctor` route NOTHING
+//     and walk EVERY configured instance. ⚠ Not because none of them takes a scope: only
+//     `doctor` has no `--scope`, and `sync`/`ls-entries` declare one and pass `scope=""`
+//     regardless — see the retraction below. All six print the alias only when
 //     `MultiInstance()` — see `readInstance`/`instanceLabel` in `routes.go`. That emptiness is
 //     the compatibility guarantee: a one-instance host's bytes are unchanged.
 //   - **`routes` reports rather than routes.** It prints what is configured and, with
@@ -51,9 +53,20 @@ import (
 // **exit 0** off the default instance's cache at `d8b858a`, and each answers **exit 11,
 // refusing** at HEAD. HEAD is the correct answer — the old one read a store the table said was
 // somewhere else — but it is not "unchanged", and it belongs in whatever announcement the
-// `packages.default` flip carries. `sync`, `ls-entries` and `doctor` take no scope, so none of
-// this reaches them. The same clause is on `lib/README.md`'s bullet and in
-// `tests/parity/README.md`.
+// `packages.default` flip carries. `sync`, `ls-entries` and `doctor` route NOTHING, so none of
+// this reaches them. The same clause is on `lib/README.md`'s bullet, in `tests/parity/README.md`,
+// in `cairn`'s `_instance_for` and on `Sync`.
+//
+// 🔴 AND THAT LAST CLAUSE USED TO GIVE A DIFFERENT, FALSE REASON — "take no scope, so none of
+// this reaches them" — WHICH `--help` FALSIFIES FOR TWO OF THE THREE. `cairn sync` and
+// `cairn ls-entries` both declare `--scope`; only `doctor` has none. What makes them untouched
+// is that they pass `scope=""` and fan out over every instance (`Sync`, `LsEntries`), not that
+// there is no scope to route. Re-measured over the same `{"alpha-notes": "nowhere"}` world:
+// `sync --scope alpha-notes` exits 4 and `ls-entries --scope alpha-notes` exits 0 on BOTH
+// clients, byte-identical to the unscoped runs — so the CONCLUSION stands and only the reason
+// moved. 🔴 The difference is load-bearing because this paragraph is what the flip's
+// announcement is written from: a later change that routed `ls-entries --scope` through
+// `AliasFor` would falsify the conclusion while the old reason still read as covering it.
 
 const (
 	// ConfigEnv names the DEFAULT instance's config file. It predates instances and keeps

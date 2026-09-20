@@ -43,8 +43,11 @@ func (e Env) host() string {
 // — exit non-zero, naming the host. A `sync` that exited 0 on an outage is how a timer reports
 // success forever while the cache silently ages out.
 //
-// 🔴 EVERY CONFIGURED INSTANCE, NOT THE ROUTED ONE. `sync` takes no scope, so it has nothing
-// to route — and refreshing one of two instances while reporting success would leave the other
+// 🔴 EVERY CONFIGURED INSTANCE, NOT THE ROUTED ONE. `sync` DOES declare `--scope` — `Verbs()`
+// says so, and the oracle's subparser does too — and passes `scope=""` regardless, so it has
+// nothing to route. ⚠ "`sync` TAKES NO SCOPE" IS WHAT THIS SENTENCE USED TO SAY AND `--help`
+// FALSIFIES IT; the conclusion is the same and the reason is not.
+// Refreshing one of two instances while reporting success would leave the other
 // silently ageing, which is the failure this function's own contract exists to prevent, one
 // instance over. The exit code is the WORST of the walk: one reachable store must never make a
 // second one that is down look measured.
