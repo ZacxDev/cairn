@@ -23,37 +23,33 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ **`a0c4d07`**. Three PRs merged this session, each verified BY CONTENT:
-  **#44 → `deecfcd`** (the publish gate unbroken + the Go pod published), **#43 → `7bab908`**
-  (the handoff), **#45 → `a0c4d07`** (a retraction, below).
-- ✅ **THE CUTOVER IS DONE AND VERIFIED AGAINST THE RUNTIME SYMPTOM, NOT THE ROLLOUT.** The pod
-  now runs the **Go server**, pulled from the public registry at an immutable `sha-<40-hex>`
-  tag. The GitOps commit moved the REGISTRY and the IMPLEMENTATION in one line; the parsed
-  manifest differs from its predecessor in `image` and **nothing else**, asserted by comparing
-  the whole tree with that key redacted.
-- ✅ **VERIFIED THROUGH THE PUBLIC ENDPOINT, WITHOUT CLUSTER ACCESS**, using the 24-row
-  rendering difference as the discriminator — only the new image emits the corrected
-  read-through-cache caveat. Observed in order: four polls on the old text, **one 502** (the
-  `Recreate` window, expected at `replicas: 1`), then the corrected text. Then, with negative
-  controls first (bad token → 401, no token → 401): recall 200/11,966 B `status=recalled`,
-  search 200/16,007 B, snapshot 200/1.2 MB extracting **276 members**, an absent scope 200
-  carrying `status=scope-absent` (the oracle's own contract — both servers answered 200 for
-  that shape in the pre-deploy dual-run), and `cairn sync` **rc 0** fetching 275 entries live.
-- ✅ **THE PUBLISH WORKFLOW SUCCEEDS.** Both pods publish to two packages under one
-  `sha-<40-hex>` scheme, both anonymously pullable — checked after a negative control on an
-  absent tag was refused.
-- **Carried forward (these sit under a REPLACE heading and would otherwise be deleted):**
-  **all three audit ladders are CLOSED** — #38 over rounds 0–4 and #41 over rounds 0–2, both
-  ending on the attribution gate rather than a clean round; #44 over rounds 0/1/2, stopped by
-  the gate MECHANICALLY (`audit-dispatch.py --round 3` → **rc 5**) after two consecutive
-  payload-0 rounds. And the **INERT-BACKENDS defect is CLOSED ON `main`**, not merely in a
-  branch: #38 landed as `2055bd2`.
-- ⚠ **THIS DOC WAS PRUNED IN THE SAME COMMIT AS THIS UPDATE** — **four** answered investigation
-  blocks moved verbatim to `claudedocs/handoff-cairn-control-plane-archive.md`, which now holds
-  nine. (This line said "three" in its first draft and the prune moved four — a count written
-  before the act it describes. Derive such a number AFTER doing the thing, from the thing.) It had reached
-  ~79 KB against a 65,536 B guideline that enforces nothing, and two previous updates flagged
-  that without acting, which is how it got there. **Prune before appending.**
+- Branch `main` @ **`2269416`**, clean, **no open PRs**. **Four** PRs merged this session, each
+  verified BY CONTENT (a squash makes `--is-ancestor` false forever): **#44 → `deecfcd`** (the
+  publish gate unbroken + both pods published), **#43 → `7bab908`**, **#45 → `a0c4d07`** (a
+  retraction), **#46 → `2269416`** (this doc's previous update + the archive prune).
+- ✅ **THE CUTOVER IS COMPLETE AND THE ARC IS CLOSED.** The pod runs the **Go server**, pulled
+  from the public registry at an immutable `sha-<40-hex>` tag. One GitOps commit moved the
+  REGISTRY and the IMPLEMENTATION together; the parsed manifest differs from its predecessor in
+  `image` and **nothing else**, asserted by comparing the whole tree with that key redacted.
+- ✅ **VERIFIED AGAINST THE RUNTIME SYMPTOM, THROUGH THE PUBLIC ENDPOINT, WITHOUT CLUSTER
+  ACCESS.** This host has no kubeconfig context for the cluster, so the usual check was
+  unavailable; the **24-row rendering difference measured before the swap turned out to BE the
+  discriminator** — only the new image emits the corrected read-through-cache caveat. Observed
+  in order: four polls on the old text, **one 502** (the `Recreate` window, expected at
+  `replicas: 1`), then the corrected text. Then, negative controls first (bad token → 401, no
+  token → 401): recall 200/11,966 B `status=recalled`, search 200/16,007 B, snapshot 200/1.2 MB
+  extracting **276 members**, an absent scope 200 carrying `status=scope-absent` (the oracle's
+  own contract — both servers answered 200 for that shape in the pre-deploy dual-run), and
+  `cairn sync` **rc 0** fetching 275 entries live. **Re-checked after the last merge**: still
+  serving the Go image.
+- ✅ **THE PUBLISH WORKFLOW SUCCEEDS**, after seven consecutive failures. Both pods publish to
+  two packages under one `sha-<40-hex>` scheme, both anonymously pullable — checked after a
+  negative control on an absent tag was refused.
+- **Claim `cairn-control-plane-1` is RELEASED.** The ranked list below is unclaimed.
+- ⚠ This doc is ~7 KB over a 65,536 B guideline that enforces nothing, after a prune that moved
+  four answered blocks to `claudedocs/handoff-cairn-control-plane-archive.md` (now nine).
+  **Prune before appending.** The ladder-closure facts that used to be carried here have moved
+  to Gotchas, which APPENDS — see the next bullet for why.
 
 ## Next steps (ranked)
 1. **THE `packages.default` FLIP — blocked on `tests/parity/README.md` residual 8.** Unchanged:
@@ -780,6 +776,33 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 - ⚠ **A `Recreate` + `replicas: 1` rollout has a hard refusal window, and it was OBSERVED** —
   one 502 between the old and new text. Expected, brief, and worth telling anyone who watches
   a swap that a single non-200 mid-rollout is the design, not a fault.
+
+- 🔴 **A PRUNED-TO ARCHIVE IS NOT A HANDOFF DOC, AND THE WRITE-BACK GUARD CANNOT KNOW THAT.**
+  Moving blocks into `handoff-cairn-control-plane-archive.md` made the guard treat that
+  filename as its own topic and demand a handoff for it. Checked rather than asserted before
+  dismissing: the archive carries **zero** of `## Goal`, `## State now`, `## Next steps`,
+  `## How to verify` or a closing-condition, and the prune is already described inside the real
+  doc. **Dismiss is the right answer there** — a handoff written "for the archive topic" would
+  mint a doc nobody wants. ⚠ The dismissal is per-session; a new session starts fresh.
+- 🔴 **CHECKING A CLAIM BEFORE DISMISSING A GUARD IS WHERE THE DEFECT WAS.** The dismissal
+  itself was correct, but verifying the reasoning turned up a **wrong count**: the prune note
+  said three blocks moved and four had. It was written while drafting the delta — *before the
+  act it describes*. **Derive a count AFTER doing the thing, from the thing**, and when
+  correcting one, record the cause rather than only the number.
+- ⚠ **A HANDOFF DOC CAN NEVER RECORD ITS OWN MERGE**, so a `State now` naming the branch sha
+  is stale by exactly one commit the moment it lands. That is the mechanism, not rot — do not
+  read it as the doc being behind, and do not open a PR solely to bump it.
+- 🔴 **THE SAME TWO FACTS WERE CARRIED FORWARD BY HAND THREE UPDATES RUNNING, WHICH IS WHAT THE
+  DURABLE-DROP WARNING IS ACTUALLY FOR.** `State now` REPLACES, so anything durable parked there
+  must be re-typed every single update or it silently disappears — and the warning is a textual
+  FLOOR, so a reworded carry-forward still trips it and a silent run still is not proof nothing
+  was lost. Moved here instead, where the section APPENDS and the problem stops recurring:
+  **all three audit ladders are CLOSED** — #38 over rounds 0–4 and #41 over rounds 0–2, both
+  ending on the attribution gate rather than on a clean round; **#44 over rounds 0/1/2, stopped
+  MECHANICALLY** (`audit-dispatch.py --round 3` → **rc 5**) after two consecutive payload-0
+  rounds. And the **INERT-BACKENDS defect is CLOSED ON `main`**, not merely in a branch: #38
+  landed as `2055bd2`. **The general rule: if you find yourself re-typing a fact to stop a
+  REPLACE heading eating it, it belongs under an APPEND one.**
 
 ## How to verify
 ```bash
