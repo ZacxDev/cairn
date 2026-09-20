@@ -714,6 +714,112 @@
         cairn-server-go = mkGoServer pkgs;
         cairn-go = mkGoClient pkgs;
 
+        # 🔴 WHICH CLIENT THE UNQUALIFIED NAMES RESOLVE TO, PINNED AS A RELATIONSHIP
+        # BETWEEN RESOLVED DERIVATIONS. Before this check, NOTHING in the repository
+        # asserted it: `packages.default`/`apps.default` appeared in `flake.nix` and in no
+        # test, the two other `checks.*` entries name `mkCairn`/`mkGoClient` explicitly,
+        # every CI job builds by explicit attribute, and the parity harness builds with
+        # `go build ./cmd/cairn` and runs the oracle script directly. The wiring was pinned
+        # by PROSE, and prose is walkable three ways:
+        #
+        #   • a flip taken on the wrong licence, REVERTED once already, could land fully
+        #     green — nothing here would have noticed either the flip or the revert;
+        #   • a HALF-FLIP — `packages.default` moved, `apps.default` not, or the reverse —
+        #     is also fully green, and it is the dangerous half: `nix run github:…/cairn`
+        #     resolves `apps.default` FIRST and only falls back to `packages.default`'s
+        #     `mainProgram`, so the run path and the build path would serve two different
+        #     clients under ONE name, differing by which command the consumer used;
+        #   • a later accidental revert of either line would be invisible.
+        #
+        # 🔴 IT COMPARES RESOLVED DERIVATIONS, NOT SPELLINGS. A guard matching the string
+        # `mkGoClient` in this file is walkable by renaming the binding while the wiring
+        # stays wrong, and is red on a rename that changed nothing. `apps.default` is an
+        # APP rather than a package, so its `program` is resolved to the executable it
+        # actually points at and compared against the DEFAULT PACKAGE's `mainProgram`
+        # executable — two things of the same kind.
+        #
+        # ⚠ IT IS DELIBERATELY BUILD-FREE: the paths are taken at EVALUATION time with the
+        # string context discarded, so this derivation depends on no client and cannot be
+        # red for a reason that is not a wiring difference. A kill for the wrong reason —
+        # the Go compiler failing, say — would read here as "the default moved", which is
+        # the one thing this check must never say by accident.
+        #
+        # ⚠ WHAT IT DOES NOT CLAIM: nothing about either client's BEHAVIOUR, and nothing
+        # about `apps.cairn` (the deliberate Python escape hatch, unpinned here).
+        default-is-the-go-client =
+          let
+            system = pkgs.stdenv.hostPlatform.system;
+            # `builtins.unsafeDiscardStringContext` is what makes this a wiring assertion
+            # rather than a build: the store path is known without realising anything.
+            path = drv: builtins.unsafeDiscardStringContext drv.outPath;
+            exe = drv: builtins.unsafeDiscardStringContext (nixpkgs.lib.getExe drv);
+            defaultPkg = path self.packages.${system}.default;
+            goPkg = path self.packages.${system}.cairn-go;
+            pyPkg = path self.packages.${system}.cairn;
+            defaultExe = exe self.packages.${system}.default;
+            appProgram =
+              builtins.unsafeDiscardStringContext self.apps.${system}.default.program;
+          in
+          pkgs.runCommand "cairn-default-is-the-go-client" { } ''
+            failed=0
+
+            # 🔴 A PAIR, NOT A ZERO. Every assertion below is an equality between two
+            # strings, and two EMPTY strings compare equal — so the values are floored
+            # first. Without this the whole check passes over an attribute set that
+            # resolved to nothing.
+            for p in '${defaultPkg}' '${goPkg}' '${pyPkg}' '${defaultExe}' '${appProgram}'; do
+              case "$p" in
+                /nix/store/?*) ;;
+                *)
+                  echo "FAIL: '$p' is not a store path — an attribute resolved to nothing,"
+                  echo "      and every comparison below would then be an equality between"
+                  echo "      two empty strings."
+                  failed=1
+                  ;;
+              esac
+            done
+
+            if [ "${defaultPkg}" != "${goPkg}" ]; then
+              echo "FAIL: packages.default is NOT packages.cairn-go."
+              echo "      packages.default  = ${defaultPkg}"
+              echo "      packages.cairn-go = ${goPkg}"
+              echo "      The default client is whatever a consumer gets from"
+              echo "      \`nix profile install github:…/cairn\` and from a flake input that"
+              echo "      names no attribute. Moving it is a cutover decision, not a build."
+              failed=1
+            fi
+
+            if [ "${appProgram}" != "${defaultExe}" ]; then
+              echo "FAIL: apps.default and packages.default resolve to DIFFERENT executables."
+              echo "      apps.default.program        = ${appProgram}"
+              echo "      getExe packages.default     = ${defaultExe}"
+              echo "      \`nix run github:…/cairn\` resolves apps.default FIRST and only falls"
+              echo "      back to packages.default's mainProgram, so this state gives ONE name"
+              echo "      two clients — which one you get depends on the command you ran."
+              failed=1
+            fi
+
+            if [ "${pyPkg}" = "${defaultPkg}" ]; then
+              echo "FAIL: packages.cairn and packages.default are the SAME derivation."
+              echo "      packages.cairn = packages.default = ${pyPkg}"
+              echo "      The Python client is the parity gate's oracle and stays a distinct,"
+              echo "      separately-addressable package until it is retired at P8."
+              failed=1
+            fi
+
+            [ "$failed" -eq 0 ] || exit 1
+
+            echo "ok: packages.default == packages.cairn-go == ${defaultPkg}"
+            echo "    apps.default.program == ${appProgram}"
+            echo "    packages.cairn is distinct == ${pyPkg}"
+            {
+              echo "packages.default ${defaultPkg}"
+              echo "packages.cairn-go ${goPkg}"
+              echo "packages.cairn ${pyPkg}"
+              echo "apps.default.program ${appProgram}"
+            } > $out
+          '';
+
         # 🔴 THE GO CLIENT'S OWN LEDGER, READ OUT OF THE RUNNING BINARY — the one claim a
         # compile cannot make, and the one the PYTHON-side gates are structurally blind to.
         # `capability_ledger.cli_verbs_from_parser` asks the PYTHON argparse parser what

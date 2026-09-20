@@ -667,3 +667,12 @@ jobs:
       # other stays unobservable moves a bug rather than removing it.
       - name: the Go client declares exactly the verbs and codes the ledger names
         run: nix build .#checks.x86_64-linux.go-client-declares-its-verbs --no-link --print-build-logs
+
+      # 🔴 WHICH CLIENT THE UNQUALIFIED NAMES RESOLVE TO — AND THIS JOB IS THE ONLY ONE
+      # THAT CAN ASSERT IT. The claim is about flake ATTRIBUTES, so reading it needs a
+      # nix evaluator; the `tests` job has none, and a pytest test that shelled out to
+      # `nix` there would skip or error, which is a pass nobody counts. It is a step of
+      # its own rather than a `nix flake check` because this job builds explicit
+      # attributes by design — a check nothing names is a check nothing runs.
+      - name: packages.default and apps.default both resolve to the Go client
+        run: nix build .#checks.x86_64-linux.default-is-the-go-client --no-link --print-build-logs
