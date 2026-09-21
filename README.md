@@ -266,14 +266,18 @@ nix build github:ZacxDev/cairn#cairn-ui
 ./result/bin/cairn-ui -store <store root> -token-file <token file> -port 8103
 ```
 
-⚠ **`-token-file` is not optional off-cluster.** It defaults to the pod's secret
-mount, so on a machine that has none the binary exits **78** without serving, and
-exporting `SUBSYSTEM_STORE_TOKEN` does not help — the flag always carries a
-default, so the env fallback is never reached. Single-dash flags: this binary uses
-Go's stdlib `flag`, not the client's `--long` style, and `-h` lists all four
-(`-store`, `-host`, `-port`, `-token-file`; each default is env-resolved, so what
-`-h` prints depends on your environment). It reads the store **from disk** rather
-than over HTTP, and authenticates with the same machine token file as the pod.
+⚠ **A credential is required, and off-cluster you must say where it is.**
+`-token-file` defaults to the pod's secret mount
+(`/run/secrets/subsystem-store/token`), so on a machine without one the binary
+exits **78** and serves nothing. Three ways to supply it, all measured:
+`-token-file <path>`; `SUBSYSTEM_STORE_TOKEN_FILE=<path>` with no flag; or
+`-token-file=` (explicitly empty) plus `SUBSYSTEM_STORE_TOKEN=<row>`, which is the
+env fallback the binary's own refusal names. Single-dash flags: this uses Go's
+stdlib `flag`, not the client's `--long` style. `-h` lists four — `-store`
+(`SUBSYSTEM_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
+`-token-file` (`SUBSYSTEM_STORE_TOKEN_FILE`) — and every default is env-resolved,
+so what `-h` prints depends on your environment. It reads the store **from disk**
+rather than over HTTP, and authenticates against the same token file as the pod.
 
 🔴 **Two backends are absent, for two different reasons, and conflating them is the
 misreading to avoid.** Supabase is simply *not wired yet* and returns with the
