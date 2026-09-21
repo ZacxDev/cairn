@@ -29,4 +29,4 @@ claim to cover them; `git log` and the PR history are the record for those.
 
 | change | anchor | what you may have to do | why it was taken |
 |---|---|---|---|
-| `packages.default` and `apps.default` became the **Go** client — `nix run` and `nix profile install github:ZacxDev/cairn` now execute `cmd/cairn` | [#50](https://github.com/ZacxDev/cairn/pull/50) → `1a59e59` [`README.md`](README.md), § *The default client is now the Go one* — the `-verbs`/`-exit-codes` widening, the loss of argparse's wording, and the opt-out in both consumption modes | [`tests/parity/README.md`](tests/parity/README.md) residual 7 |
+| `packages.default` and `apps.default` became the **Go** client — `nix run` and `nix profile install github:ZacxDev/cairn` now execute `cmd/cairn` | [#50](https://github.com/ZacxDev/cairn/pull/50) → `1a59e59` | [`README.md`](README.md), § *The default client is now the Go one* — the `-verbs`/`-exit-codes` widening, the loss of argparse's wording, and the opt-out in both consumption modes | [`tests/parity/README.md`](tests/parity/README.md) residual 7 |

@@ -28,11 +28,16 @@ bucket, a git repo or an NFS mount:
   **store-wide** `entry-files=` count, over scopes the caller cannot name. Two
   parties on one pod can each watch the other's count move. Stated in
   `server/server.py`, and repeated here rather than left to be found.
-- **Attributed — on `append`.** `cairn append` requires `--session` (no default,
-  no env fallback), the actor comes from the token, and a body-supplied `actor`
-  is accepted and discarded as hostile input, so a bullet renders as
-  `- YYYY-MM-DD: <text> [cairn: <identity>/<session>]` that its writer could not
-  forge. 🔴 **That guarantee is exactly as wide as `POST /bullets`.** `put`
+- **Attributed — on `append`, and only the identity half is a guarantee.**
+  `cairn append` requires `--session` (no default, no env fallback) and renders
+  `- YYYY-MM-DD: <text> [cairn: <identity>/<session>]`. The **`<identity>`**
+  comes from the token and a body-supplied `actor` is accepted and discarded as
+  hostile input, so a writer cannot forge it. The **`<session>`** is
+  caller-supplied **correlation data, not an identity claim** — it says which
+  run of which agent wrote this, and the agent is the only thing that knows;
+  it is validated as hostile input for shape, never for ownership. An agent can
+  name another agent's session. 🔴 **And even the identity guarantee is exactly
+  as wide as `POST /bullets`.** `put`
   writes your bytes **verbatim** — a body containing someone else's
   `[cairn: …/…]` trailer lands exactly as sent, and the server does not check
   it. Enforcing it was considered and declined (`server/server.py`); treat a
@@ -49,12 +54,15 @@ bucket, a git repo or an NFS mount:
   idempotent and reports `duplicate` rather than writing twice — the failure
   mode a retrying agent actually has.
 - **Honest about staleness.** Each host keeps a stamped read-through replica, so
-  recall does not depend on the network — but a read always names the state that
-  produced it: `live`, `cached` (with the cache's age and revision),
-  `scope-empty` (the scope is there and holds nothing), `scope-absent` (this
-  cache has no such scope — which is also what a scope your token cannot see
-  looks like), or `scope-unreadable`. An agent that cannot tell "nothing is
-  there" from "I could not look" will act on the difference.
+  recall does not depend on the network. A read names **which of four states**
+  produced it — `live`, `cached` (with age and revision), `scope-empty`, or
+  🔴 **`store-unreachable, no cache`, which exits `3` and must never be read as
+  the third**: `scope-empty` and an unreachable store both "print no entries"
+  and one of them is a lie. Orthogonally it names the **scope's status**, so a
+  `cached` read can still report `scope-absent` (no such scope here — also what
+  a scope your token cannot see looks like) or `scope-unreadable`. An agent that
+  cannot tell "nothing is there" from "I could not look" will act on the
+  difference.
 
 ## Quickstart — two agents, one store
 
