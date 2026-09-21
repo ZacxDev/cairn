@@ -196,16 +196,20 @@ def world(tmp_path: Path):
             # instance — the one path where the environment wins — and a test
             # that reads the operator's live store is not a test.
             #
-            # ⚠ THIS USED TO NAME FIVE VARIABLES AND THE LIST WAS ALREADY SHORT.
-            # `env_pin` sweeps by PREFIX, so it also clears the three
-            # `HOST_LABEL_ENV` names this list omitted. Measured before the
-            # change: with `CAIRN_HOST=hostile-developer-box` exported this file
-            # returned 63 passed, identical to the unset run — nothing here
-            # asserts on a host label, so the omission was real and not
-            # reachable. The sweep is for the assertion that does, and for the
-            # sixth variable nobody has added yet.
-            env = env_pin.sanitized_env(
-                HOME=str(home), **{k: str(v) for k, v in env_extra.items()}
+            # ⚠ THIS USED TO NAME FIVE VARIABLES AND THE LIST WAS ALREADY SHORT:
+            # it omitted `host_identity.HOST_LABEL_ENV`. `env_pin` clears those
+            # too — by DERIVING them, because two of the three carry no swept
+            # prefix and an earlier draft of this comment claimed a prefix sweep
+            # covered them, which was false. Measured before the change: with
+            # `CAIRN_HOST=hostile-developer-box` exported this file returned 63
+            # passed, identical to the unset run — nothing here asserts on a host
+            # label, so the omission was real and not reachable.
+            # 🔴 PRECEDENCE PRESERVED: `env_extra` wins over `HOME`, because the
+            # original was `env["HOME"] = …` followed by `env.update(env_extra)`.
+            # The first rewrite of this line put them the other way round, which
+            # no test would have caught — no caller passes `HOME` today.
+            env = env_pin.sanitized_env_with(
+                {"HOME": str(home)}, **{k: str(v) for k, v in env_extra.items()}
             )
             return subprocess.run(
                 [sys.executable, str(CAIRN_CLI), "--timeout", "5", *args],

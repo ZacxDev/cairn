@@ -36,7 +36,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
-from testlib import cairn_source, hang_mechanism, store_siting  # noqa: E402
+from testlib import cairn_source, env_pin, hang_mechanism, store_siting  # noqa: E402
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
 GOOD_TOKEN = "w" * 20 + "R" * 20 + "t" * 8
@@ -227,12 +227,14 @@ def _write_status_table() -> dict[int, int]:
 
 
 def run_cairn(*args: str, url: str | None, cache: Path, token: str = GOOD_TOKEN):
-    env = dict(os.environ)
-    env["SUBSYSTEM_STORE_TOKEN"] = token
     # A path that does not exist, so the developer's real credentials can never
     # make a test pass. A test that reads live credentials is not a test.
-    env["SUBSYSTEM_STORE_CONFIG"] = str(cache.parent / "no-such-config")
-    env["SUBSYSTEM_STORE_URL"] = url or f"http://127.0.0.1:{_dead_port()}"
+    # Cleared by prefix first — see the sibling helper in `test_cairn_cli.py`.
+    env = env_pin.sanitized_env(
+        SUBSYSTEM_STORE_TOKEN=token,
+        SUBSYSTEM_STORE_CONFIG=str(cache.parent / "no-such-config"),
+        SUBSYSTEM_STORE_URL=url or f"http://127.0.0.1:{_dead_port()}",
+    )
     return subprocess.run(
         [sys.executable, str(CAIRN_CLI), "--cache", str(cache), "--timeout", "5", *args],
         capture_output=True, text=True, env=env, timeout=120,

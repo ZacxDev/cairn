@@ -39,7 +39,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
-from testlib import store_siting  # noqa: E402
+from testlib import env_pin, store_siting  # noqa: E402
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
 GOOD_TOKEN = "a" * 20 + "B" * 20 + "c" * 8
@@ -198,17 +198,21 @@ def live_store(source_store: Path):
 
 
 def run_cairn(*args: str, url: str | None, cache: Path, token: str = GOOD_TOKEN):
-    env = dict(os.environ)
-    env["SUBSYSTEM_STORE_TOKEN"] = token
     # Point config resolution at a path that does not exist, so a real
     # `~/.config/subsystem-store/env` on the developer's box can never make a
     # test pass. A test that reads the operator's live credentials is not a test.
-    env["SUBSYSTEM_STORE_CONFIG"] = str(cache.parent / "no-such-config")
-    if url is None:
-        env.pop("SUBSYSTEM_STORE_URL", None)
-        env["SUBSYSTEM_STORE_URL"] = f"http://127.0.0.1:{_dead_port()}"
-    else:
-        env["SUBSYSTEM_STORE_URL"] = url
+    #
+    # 🔴 THIS USED TO CLEAR EXACTLY ONE NAME AND WAS THE NARROWEST COPY IN THE
+    # TREE. Measured with `CAIRN_ROUTES=/nonexistent/routes.json` exported and
+    # this helper unconverted: **80 failed, 20 passed** across this file and
+    # `test_cairn_write.py` — an explicit routing table that does not exist makes
+    # the table MANDATORY, so every subprocess refuses before doing anything.
+    # `env_pin` clears the whole configuration surface.
+    env = env_pin.sanitized_env(
+        SUBSYSTEM_STORE_TOKEN=token,
+        SUBSYSTEM_STORE_CONFIG=str(cache.parent / "no-such-config"),
+        SUBSYSTEM_STORE_URL=url or f"http://127.0.0.1:{_dead_port()}",
+    )
     proc = subprocess.run(
         [sys.executable, str(CAIRN_CLI), "--cache", str(cache), "--timeout", "5", *args],
         capture_output=True,

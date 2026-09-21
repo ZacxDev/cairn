@@ -51,7 +51,15 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 # `testlib` lives beside the suites, one level up from this harness's own dir.
-sys.path.insert(0, str(ROOT / "tests"))
+# 🔴 INSERTED AT 1, NOT 0, SO THIS DIRECTORY KEEPS PRECEDENCE. At index 0 the
+# parent would shadow `tests/parity/` for every later import — and this repo
+# already has an incident in that exact class, `tests/parity/harness.py` and
+# `tests/dualrun/harness.py` colliding on the module name `harness`. `world`
+# and `hostile` are the names at risk here; neither exists in `tests/` today,
+# which is why the ordering is a latent hazard rather than a live one.
+# ⚠ Redundant under pytest, which already puts `tests/` on the path; it is the
+# standalone-script path that needs it.
+sys.path.insert(1, str(ROOT / "tests"))
 
 import hostile  # noqa: E402
 import world as W  # noqa: E402
