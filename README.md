@@ -263,16 +263,25 @@ routes, no sign-in flow, and **nothing deploys it** — it is built and run by h
 
 ```bash
 nix build github:ZacxDev/cairn#cairn-ui
-./result/bin/cairn-ui -store <store root> -port 8103   # SUBSYSTEM_STORE_ROOT / CAIRN_UI_PORT
+./result/bin/cairn-ui -store <store root> -token-file <token file> -port 8103
 ```
 
-Single-dash flags: this binary uses Go's stdlib `flag`, not the client's `--long`
-style. `-h` lists all four (`-store` `/data`, `-host` `0.0.0.0`, `-port` `8103`,
-`-token-file`). It reads the store **from disk** rather than over HTTP, and
-authenticates with the same machine token file as the pod. The Supabase and
-trusted-header backends are deliberately *not* reachable from it: the constructor
-takes one backend and there is no parameter for the others, so a sign-in flow
-arrives with the phase that builds one.
+⚠ **`-token-file` is not optional off-cluster.** It defaults to the pod's secret
+mount, so on a machine that has none the binary exits **78** without serving, and
+exporting `SUBSYSTEM_STORE_TOKEN` does not help — the flag always carries a
+default, so the env fallback is never reached. Single-dash flags: this binary uses
+Go's stdlib `flag`, not the client's `--long` style, and `-h` lists all four
+(`-store`, `-host`, `-port`, `-token-file`; each default is env-resolved, so what
+`-h` prints depends on your environment). It reads the store **from disk** rather
+than over HTTP, and authenticates with the same machine token file as the pod.
+
+🔴 **Two backends are absent, for two different reasons, and conflating them is the
+misreading to avoid.** Supabase is simply *not wired yet* and returns with the
+phase that builds a sign-in flow. The **trusted-header** backend is refused on
+principle and is not coming back here: a browser surface exists to be publicly
+reachable, and that backend lets anyone who can open a socket to it *be* any user
+at full authority. `AuthBackends` takes one parameter so neither can be passed;
+`TestTheUIChainHasNoTrustedHeaderMember` pins the exclusion.
 
 It is the only package here that links a third-party module (`gomponents`, for
 HTML), and **the serving path is still stdlib-only** — no package the pod or the
@@ -303,8 +312,13 @@ those claims have one home each and a correction belongs there.
 it, deployed by nothing. Rewriting the server alone would have left two renderers in
 two languages that must agree byte-for-byte forever, with drift arriving as "a
 different order that reads as a stale cache" — no error, no missing entry. So both
-land on the same `internal/report`: one renderer, three consumers (pod, CLI, a future
-UI). ⚠ That becomes a *property* only when the Python renderer is deleted at P8; until
+land on the same `internal/report`: one renderer, two consumers — the pod and the CLI.
+⚠ **The browser surface is not one of them.** `internal/ui` imports `internal/report`
+nowhere; it reads `internal/store` and renders HTML through its own code, so the page
+is a *second* renderer producing a different medium, and nothing compares the two. That
+was a forecast ("a future UI") until `cairn-ui` shipped; it is now a measured exception,
+and whether the page should ever route through `internal/report` is open. ⚠ And
+one-renderer becomes a *property* only when the Python renderer is deleted at P8; until
 then it is a discipline, and these three instruments are what enforce it:
 
 | instrument | what it compares | read it |
