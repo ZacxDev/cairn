@@ -24,6 +24,7 @@ answer.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import io
@@ -45,6 +46,69 @@ from testlib import cairn_source  # noqa: E402
 
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
+
+#: Every environment variable that decides what `cairn` thinks this HOST is
+#: configured with. A LEDGER, because `_pin_the_hosts_configuration` below is
+#: only as wide as this tuple and a sixth variable added to the client would
+#: otherwise be inherited silently — exactly the defect that fixture exists for.
+#: Discovered by reading every `environ.get`/`env.get` site in `cairn` and
+#: `lib/`, and pinned against that discovery by
+#: `test_the_configuration_ledger_names_every_variable_the_client_READS`.
+#:
+#: ⚠ WHAT IT DELIBERATELY EXCLUDES: `host_identity.HOST_LABEL_ENV`. That names
+#: the MACHINE, not its store configuration, and nothing in this file asserts on
+#: a host label — pinning it here would make this ledger a claim it does not
+#: grade. Said rather than left to be inferred from the absence.
+CONFIG_ENV_LEDGER = (
+    "SUBSYSTEM_STORE_CONFIG",
+    "CAIRN_ROUTES",
+    "CAIRN_MIRROR_ROOT",
+    "SUBSYSTEM_STORE_URL",
+    "SUBSYSTEM_STORE_TOKEN",
+)
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_hosts_configuration(tmp_path, monkeypatch):
+    """🔴 A TEST THAT INHERITS THE OPERATOR'S HOME IS PINNED TO NO DIMENSION AT
+    ALL, AND ONE IN THIS FILE WAS RED ON A DEVELOPER HOST FOR DAYS WHILE CI
+    STAYED GREEN.
+
+    The mechanism, measured rather than supposed: `cmd_doctor` asks
+    `cairn_instances.discover` what this host holds, and `discover` reads
+    `$SUBSYSTEM_STORE_CONFIG` or — absent it — `~/.config/subsystem-store/`.
+    A second `instances/<alias>.env` in that REAL directory, dropped there by
+    anything at all, makes `routing.multi_instance` true, and `_doctor_instance`
+    then renames every check `<alias>/<check>`. `test_a_no_sync_run_still_reads_
+    the_LOCAL_config` looks its answer up by the bare name `token`, so it raised
+    `IndexError` on a host whose only sin was having two stores configured. CI
+    never saw it: a fresh checkout has an empty HOME. A suite whose CONFIG pins a
+    dimension is blind to that dimension's bugs — and a suite that pins it by
+    ACCIDENT, to whatever the operator's disk happens to say, is worse: it is
+    blind AND it varies.
+
+    So the dimension is PINNED rather than inherited, for every test in the file.
+    `$SUBSYSTEM_STORE_CONFIG` moves the config file, the `instances/` directory
+    beside it and the default `routes.json` together — that is `instance_dir`'s
+    stated design, one variable for the whole configuration — and the rest of
+    `CONFIG_ENV_LEDGER` is cleared, `$CAIRN_ROUTES` because it is the one setting
+    `$SUBSYSTEM_STORE_CONFIG` does NOT move. The directory starts EMPTY, which is
+    the single-instance world these tests were written against.
+
+    🔴 MEASURED AT TWO POINTS, NAMED. The empty directory here is the boundary;
+    `TestAnExtraInstanceRenamesEveryCheck` is the other point — it writes an
+    instance into this same pinned directory and watches the prefix appear. That
+    second test is what makes this fixture load-bearing rather than decorative:
+    delete the fixture and it still passes, delete the fixture on a host with a
+    second instance configured and the boundary test goes red again.
+    """
+    config_home = tmp_path / "pinned-config"
+    config_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("SUBSYSTEM_STORE_CONFIG", str(config_home / "env"))
+    for name in CONFIG_ENV_LEDGER:
+        if name != "SUBSYSTEM_STORE_CONFIG":
+            monkeypatch.delenv(name, raising=False)
+    return config_home
 
 
 def _load_cairn_cli():
@@ -1104,3 +1168,268 @@ class TestAnUnconfiguredMirrorDoesNotCrashTheVisibilityCheck:
         ))["token-scopes"]
         assert check.state == cd.PROBLEM
         assert "beta" in check.detail
+
+
+#: The check names `doctor` emits on a SINGLE-instance host, in order. Written
+#: out as a literal here rather than read from `cd` — the same rule the module
+#: docstring states, and the reason `test_the_check_set_is_pinned_to_these_seven_names`
+#: carries its own copy.
+SINGLE_INSTANCE_CHECKS = (
+    "reader-resolution", "cache-stamp", "frozen-mirror", "pod",
+    "cache-vs-pod", "token-scopes", "token",
+)
+
+
+class TestAnExtraInstanceRenamesEveryCheck:
+    """🔴 THE SECOND OF THE TWO POINTS `_pin_the_hosts_configuration` IS MEASURED
+    AT, AND THE ONE THAT MAKES THAT FIXTURE LOAD-BEARING RATHER THAN DECORATIVE.
+
+    The fixture pins the host's configuration to an EMPTY directory, which is the
+    single-instance boundary. A guard that only ever measures the boundary cannot
+    tell a fixture that pins the dimension from a fixture that pins nothing and is
+    lucky — both are green on a host whose HOME happens to be empty. So this class
+    writes a second instance INTO the pinned directory and watches the check names
+    move, which is the exact mechanism that made
+    `test_a_no_sync_run_still_reads_the_LOCAL_config` raise `IndexError` when the
+    directory being read was the operator's own.
+
+    ⚠ IT IS NOT A CLAIM THAT THE PREFIX IS WRONG. `_doctor_instance` renames on
+    purpose — one reachable store must not make a second one that is down look
+    measured. The defect was never the prefix; it was a test that could not say
+    which world it was running in.
+    """
+
+    @staticmethod
+    def _doctor_json(cli, monkeypatch, tmp_path, argv=("doctor", "--no-sync", "--json")):
+        """Run `cmd_doctor` against the pinned world and return its parsed report.
+
+        No `--cache`: an explicit one is refused at exit 2 on a multi-instance
+        fan-out (`_refuse_shared_cache`), which would compare equal in both arms
+        and measure nothing. Repointing `DEFAULT_CACHE_ROOT` moves EVERY
+        instance's root together — `cache_root_for` reads it at call time — so
+        both arms read tmp disk and neither touches the operator's cache.
+        """
+        import contextlib
+
+        monkeypatch.setattr(cli._read_store, "DEFAULT_CACHE_ROOT", tmp_path / "cache")
+        args = cli.build_parser().parse_args(list(argv))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.cmd_doctor(args)
+        return json.loads(buf.getvalue()), rc
+
+    def test_the_boundary_an_empty_config_dir_leaves_every_name_BARE(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        cli = _load_cairn_cli()
+        monkeypatch.setenv("SUBSYSTEM_STORE_URL", "https://example.invalid")
+        monkeypatch.setenv("SUBSYSTEM_STORE_TOKEN", "a-token-from-the-env")
+        payload, _rc = self._doctor_json(cli, monkeypatch, tmp_path)
+        assert tuple(c["name"] for c in payload["checks"]) == SINGLE_INSTANCE_CHECKS
+
+    def test_a_second_instance_prefixes_EVERY_name_with_its_alias(
+        self, tmp_path, monkeypatch, _pin_the_hosts_configuration
+    ) -> None:
+        """The other point. One `.env` in the pinned `instances/` directory and
+        every name grows an alias — including the DEFAULT instance's, which is
+        what a test looking `token` up by its bare name cannot survive."""
+        cli = _load_cairn_cli()
+        monkeypatch.setenv("SUBSYSTEM_STORE_URL", "https://example.invalid")
+        monkeypatch.setenv("SUBSYSTEM_STORE_TOKEN", "a-token-from-the-env")
+        mirror = tmp_path / "frozen-mirror" / "alpha"
+        mirror.mkdir(parents=True)
+        (mirror / "a.md").write_text("# a\n", encoding="utf-8")
+        (mirror / "a.md").chmod(0o444)
+        monkeypatch.setenv("CAIRN_MIRROR_ROOT", str(tmp_path / "frozen-mirror"))
+        instances = _pin_the_hosts_configuration / "instances"
+        instances.mkdir()
+        (instances / "beta.env").write_text(
+            "SUBSYSTEM_STORE_URL=https://beta.example.invalid\n"
+            "SUBSYSTEM_STORE_TOKEN=a-token-for-beta\n",
+            encoding="utf-8",
+        )
+        payload, _rc = self._doctor_json(cli, monkeypatch, tmp_path)
+        names = tuple(c["name"] for c in payload["checks"])
+        by_name = {c["name"]: c for c in payload["checks"]}
+
+        # The default instance is `personal`, and it is prefixed too: the alias
+        # answers "which store", and omitting it for the default would make the
+        # bare name mean two different things on two hosts.
+        assert "token" not in names, names
+        assert tuple(n for n in names if n.startswith("personal/")) == tuple(
+            f"personal/{c}" for c in SINGLE_INSTANCE_CHECKS
+        ), names
+        assert tuple(n for n in names if n.startswith("beta/")) == tuple(
+            f"beta/{c}" for c in SINGLE_INSTANCE_CHECKS
+        ), names
+
+        # 🔴 EVERY ROW IS RENAMED AND NO ROW IS DROPPED — the two halves of the
+        # claim, and the second is why the sets are compared rather than counted.
+        # ⚠ `frozen-mirror` was WRITTEN here as `beta` carrying one row fewer,
+        # reasoning from `_doctor_instance`'s "the frozen mirror belongs to the
+        # default instance ALONE" comment; measured, beta carries the row too and
+        # what belongs to the default alone is the mirror's CONTENT. So the
+        # discriminator is the STATE, not the row count, and it needs a mirror
+        # actually configured — with `$CAIRN_MIRROR_ROOT` unset both sides read
+        # NOT-OBSERVABLE and this assertion would pass on a build that reported
+        # the default's mirror under every alias.
+        assert by_name["personal/frozen-mirror"]["state"] == cd.OK, by_name[
+            "personal/frozen-mirror"
+        ]
+        assert by_name["beta/frozen-mirror"]["state"] == cd.NOT_OBSERVABLE, by_name[
+            "beta/frozen-mirror"
+        ]
+
+
+def _env_reads(path: Path, consts: dict[str, object]) -> tuple[set[str], list[str]]:
+    """`(names read, sites this scanner could NOT resolve)` for one source file.
+
+    🔴 IT RETURNS ITS OWN BLIND SPOTS RATHER THAN SWALLOWING THEM. An env read
+    written in a shape this walker does not recognise would otherwise leave the
+    ledger silently short by one — a reassuring zero indistinguishable from a
+    scanner wired to nothing. Unresolved sites are returned so the caller can
+    fail on them by name.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    # Module-level string and tuple-of-string constants, for `env.get(CONFIG_ENV)`.
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets: list[ast.expr] = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        value = node.value
+        for target in targets:
+            if not isinstance(target, ast.Name) or value is None:
+                continue
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                consts[target.id] = value.value
+            elif isinstance(value, ast.Tuple) and all(
+                isinstance(e, ast.Constant) and isinstance(e.value, str)
+                for e in value.elts
+            ):
+                consts[target.id] = tuple(e.value for e in value.elts)  # type: ignore[misc]
+
+    # `for var in SOME_TUPLE: … environ.get(var)` — the shape `host_label` uses.
+    loop_bound: dict[str, tuple[str, ...]] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and isinstance(node.iter, ast.Name)
+            and isinstance(consts.get(node.iter.id), tuple)
+        ):
+            loop_bound[node.target.id] = consts[node.iter.id]  # type: ignore[assignment]
+
+    found: set[str] = set()
+    unresolved: list[str] = []
+
+    def _record(arg: ast.expr, node: ast.AST) -> None:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            found.add(arg.value)
+            return
+        if isinstance(arg, ast.Name):
+            resolved = consts.get(arg.id, loop_bound.get(arg.id))
+            if isinstance(resolved, str):
+                found.add(resolved)
+                return
+            if isinstance(resolved, tuple):
+                found.update(resolved)
+                return
+        unresolved.append(f"{path.name}:{getattr(node, 'lineno', '?')}")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            is_env_get = (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and (
+                    (isinstance(func.value, ast.Attribute) and func.value.attr == "environ")
+                    or (isinstance(func.value, ast.Name) and func.value.id == "env")
+                )
+            )
+            is_getenv = (
+                isinstance(func, ast.Attribute) and func.attr == "getenv"
+            ) or (isinstance(func, ast.Name) and func.id == "getenv")
+            if (is_env_get or is_getenv) and node.args:
+                _record(node.args[0], node)
+        elif (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "environ"
+        ):
+            _record(node.slice, node)
+
+    return found, unresolved
+
+
+class TestTheConfigurationLedgerIsDISCOVERED:
+    """🔴 `CONFIG_ENV_LEDGER` IS A CLAIM ABOUT THE CLIENT, SO IT IS GRADED
+    AGAINST THE CLIENT RATHER THAN RESTATED.
+
+    `_pin_the_hosts_configuration` is only as wide as that tuple. A sixth
+    configuration variable added to `cairn` or `lib/` would be inherited from the
+    operator's environment by every test in this file, silently — which is the
+    defect the fixture exists for, arriving one variable to its left. So the
+    ledger is compared against an AST walk of what the client actually reads.
+    """
+
+    #: Client sources whose env reads the ledger is a claim about.
+    SOURCES = (REPO / "cairn",) + tuple(sorted((REPO / "lib").glob("*.py")))
+
+    #: Read by the client, deliberately NOT pinned: these name the MACHINE, not
+    #: its store configuration, and no test in this file asserts on a host label.
+    #: An exemption with a reason, so a reader can disagree with the reason rather
+    #: than discover the gap.
+    HOST_IDENTITY_EXEMPT = frozenset({"CAIRN_HOST", "ASIB_HOST", "ACTIVITY_HOST"})
+
+    def _discovered(self) -> set[str]:
+        consts: dict[str, object] = {}
+        found: set[str] = set()
+        unresolved: list[str] = []
+        for source in self.SOURCES:
+            names, blind = _env_reads(source, consts)
+            found |= names
+            unresolved += blind
+        assert not unresolved, (
+            "this walker met an environment read it could not resolve, so the "
+            "ledger below cannot vouch for being complete. Sites: "
+            f"{unresolved}. Teach `_env_reads` the shape, or state why it is "
+            "unreachable — do NOT widen the ledger by hand and leave the "
+            "scanner blind."
+        )
+        return found
+
+    def test_the_walker_can_see_all_three_shapes_a_POSITIVE_CONTROL(self) -> None:
+        """Validate the instrument before reading its verdict.
+
+        Each assertion below is reachable through exactly ONE limb of
+        `_env_reads`, so a limb that silently stopped matching cannot hide behind
+        the other two — and a scanner wired to nothing fails all three rather
+        than returning a reassuring set that happens to equal the ledger.
+        """
+        found = self._discovered()
+        # literal:  `os.environ.get("CAIRN_MIRROR_ROOT", "")`
+        assert "CAIRN_MIRROR_ROOT" in found
+        # constant: `env.get(CONFIG_ENV, "")`, resolved through a module global
+        assert "SUBSYSTEM_STORE_CONFIG" in found
+        # loop:     `for var in HOST_LABEL_ENV: os.environ.get(var)`
+        assert "CAIRN_HOST" in found
+
+    def test_the_ledger_names_every_configuration_variable_the_client_READS(
+        self,
+    ) -> None:
+        discovered = {
+            n for n in self._discovered()
+            if n.startswith(("SUBSYSTEM_STORE_", "CAIRN_"))
+        } - self.HOST_IDENTITY_EXEMPT
+        assert discovered == set(CONFIG_ENV_LEDGER), (
+            "the client's configuration surface and this file's ledger disagree. "
+            f"read but NOT pinned: {sorted(discovered - set(CONFIG_ENV_LEDGER))}; "
+            f"pinned but no longer read: {sorted(set(CONFIG_ENV_LEDGER) - discovered)}. "
+            "Anything in the first list is inherited from the operator's "
+            "environment by every test in this file."
+        )

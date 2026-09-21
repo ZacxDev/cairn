@@ -72,6 +72,31 @@ STORE_PLACEHOLDER = "<STORE-ROOT>"
 #: keeps the declaration readable and every timestamp in the synthetic year 2000.
 EPOCH_NS = 946684800 * 1_000_000_000
 
+#: The session-attribution trailer `server.py`'s `render_bullet` appends — the SHAPE, in
+#: synthetic actors. Spelled to satisfy `server.py`'s `_ATTRIBUTION_RE`
+#: (`[a-z0-9][a-z0-9-]{0,31}` / `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`), because a trailer that
+#: regex cannot read is not an attribution and would measure a different thing entirely.
+#:
+#: 🔴 WHY IT IS HERE AT ALL: this fixture held ZERO of them — measured, 0 occurrences
+#: against 8 in `server.py` as a positive control — so the one differential gate over the
+#: renderer never rendered a line an appended entry actually carries. Every bullet any
+#: real store accumulates ends in one of these, and the reader has no branch for them:
+#: they are ordinary text, which is exactly why nothing noticed they were absent.
+#:
+#: ⚠ WHAT IT DOES AND DOES NOT MEASURE. Neither `lib/` nor `internal/report` parses a
+#: trailer, so this adds NO branch coverage and is not claimed as any. What it adds is
+#: bytes of a shape the renderers had never been compared over — a bracketed
+#: `actor/session` with a colon, a slash and hyphens — through the tokenizer, the
+#: adjacent-pair join, the enclosing-bullet context window and the openness grammar,
+#: each of which decides where a line ends or how it splits.
+#:
+#: 🔴 TWO ACTORS, NOT ONE, AND THE SECOND IS THE POINT. `server.py`'s own comments call a
+#: `[cairn: someone-else/…]` trailer the case an operator reads as SOMEBODY ELSE'S
+#: attribution; one actor spelled everywhere cannot tell a renderer that prints the actor
+#: from one that prints a constant.
+ATTRIBUTED = " [cairn: fixture-actor/sess-0000000000000001]"
+ATTRIBUTED_OTHER = " [cairn: other-actor/sess-0000000000000002]"
+
 
 def _entry(path: str, mtime_ns: int, lines: list[str]) -> dict:
     return {"path": path, "mtime_ns": mtime_ns, "text_lines": lines + [""]}
@@ -155,7 +180,7 @@ ENTRIES: list[dict] = [
         "- ops skill `manage-gadget` - the same skill, deliberately",
         "",
         "## Nuance / work-history",
-        "- 2000-01-02: the sidecar drops its lease during a rollout.",
+        f"- 2000-01-02: the sidecar drops its lease during a rollout.{ATTRIBUTED}",
     ]),
     # Every openness population at once, plus `tasks:` and an HONOURED sensitivity.
     _entry("alpha-notes/marked-three.md", EPOCH_NS + 3 * 86400 * 1_000_000_000, [
@@ -173,13 +198,20 @@ ENTRIES: list[dict] = [
         "- `docs/marked-three.md`",
         "",
         "## Nuance / work-history",
-        "- 2000-01-02: OPEN: the retry budget is still unbounded.",
+        # 🔴 THE OPEN BULLET CARRIES A TRAILER AND MUST STILL DECLARE ITSELF. The
+        # marker grammar is a PREFIX rule and the trailer is a SUFFIX, so the badge
+        # is expected to survive — `server.py` says so in as many words beside
+        # `ATTRIBUTION`. Expected, and therefore worth watching: the ledger row
+        # `🔴 1 OPEN` is what fails if a trailer turns out to end the bullet early.
+        f"- 2000-01-02: OPEN: the retry budget is still unbounded.{ATTRIBUTED}",
         "  a continuation line, which belongs to the bullet above it.",
         "- 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
         "- 2000-01-04: RESOLVED: closed, and nothing proves it.",
         "- 2000-01-05: **OPEN:** a marker that missed the grammar.",
         "- 2000-01-06: the retry budget is not yet addressed.",
-        "- 2000-01-07: an ordinary bullet that declares nothing.",
+        # A SECOND actor, so a renderer printing a constant where the actor goes
+        # cannot pass by agreeing with itself.
+        f"- 2000-01-07: an ordinary bullet that declares nothing.{ATTRIBUTED_OTHER}",
     ]),
     # Neither COUNTED heading, so `is_bare` AND both `missing_sections` fire.
     _entry("alpha-notes/bare-four.md", EPOCH_NS + 1_000_000, [
@@ -603,6 +635,17 @@ CASES: list[dict] = [
     _search("substring", "the substring rung at 0.85, which needs a candidate spelling the query as PART of one word", scope="beta-notes", query="limit"),
     _search("exact-token-beats-substring", "and the same query in the scope that writes `rate-limit`, where an EXACT token outranks the rung above", scope="alpha-notes", query="limit"),
     _search("joined-compound", "the adjacent-pair join, which makes a concatenated term an EXACT hit", scope="alpha-notes", query="ratelimit"),
+    # 🔴 THE TOKENIZER, RUN OVER AN ATTRIBUTION TRAILER. Every bullet in a store that has
+    # ever been appended to ends in ` [cairn: <actor>/<session>]`, and this fixture carried
+    # none until now — so the one place the two renderers are compared byte-for-byte had
+    # never seen a bracket, a colon and a slash inside a hyphenated identifier at end of
+    # line. The query is the JOINED form, so it can only score through the adjacent-pair
+    # join spanning the hyphen INSIDE the trailer: a tokenizer that stopped at `[`, that
+    # split `cairn:` differently, or that dropped the trailer before scoring returns a
+    # different answer here and the same answer everywhere else in this file.
+    # ⚠ The ENCLOSING-BULLET window over a trailer is covered for free by `hit`, whose
+    # `lease` match now lands on a bullet that ends in one — it is not a second row.
+    _search("attribution-actor-joined", "the adjacent-pair join spanning the hyphen inside an attribution trailer, a shape no other row in this world carries", scope="alpha-notes", query="fixtureactor"),
     _search("name-only", "the entry NAME qualified and no block did, so basis=entry-name", scope="alpha-notes", query="alias-seven"),
     _search("near-miss-below", "a mean below the threshold, so the zero carries the best NEAR miss and its score — and TWO entries tie at it, so 'the FIRST maximal' is the claim", scope="alpha-notes", query="nginx zzzzqqqq"),
     # 🔴 A THIRD DECIMAL IN THE NEAR-MISS SCORE. Three query tokens, one of which matches, so

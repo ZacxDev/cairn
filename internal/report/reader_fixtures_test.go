@@ -647,6 +647,18 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		{"scope-unreadable", "NOTHING COULD BE READ"},
 		{"search-unreadable's extra sentence", "was never run against anything"},
 		{"a name-only search hit", "entry-name]"},
+		// 🔴 THE SESSION-ATTRIBUTION TRAILER, WHICH THIS FIXTURE CARRIED ZERO OF.
+		// Measured before it was added: 0 occurrences here against 8 in `server.py` as
+		// a positive control — so the one gate that compares the two renderers
+		// byte-for-byte had never rendered the line shape every appended bullet in a
+		// real store ends with. Neither reader BRANCHES on a trailer, so these rows
+		// claim bytes rather than branch coverage; what they stop is the trailer
+		// silently leaving the world again, which is how it was absent in the first
+		// place. Two actors, because a renderer printing a constant where the actor
+		// goes agrees with itself on one.
+		{"a bullet carrying a session-attribution trailer", " [cairn: fixture-actor/sess-0000000000000001]"},
+		{"a SECOND actor's trailer, which one spelling cannot cover", " [cairn: other-actor/sess-0000000000000002]"},
+		{"the adjacent-pair join spanning the hyphen INSIDE a trailer", "query='fixtureactor'"},
 		{"the difflib fuzzy rung", "[0.95 line]"},
 		{"the prefix rung", "[0.92 line]"},
 		{"the substring rung", "[0.85 line]"},

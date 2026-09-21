@@ -12,12 +12,22 @@
 //  2. the ROLLBACK is one commit. Nothing is written: `Events` is read-only, no caller
 //     appends it to a `FileStore`, so reverting leaves no converted data behind to
 //     restore;
-//  3. the JOURNAL FORMAT IS NOT SETTLED. `go.mod` has no `require` block, which blocks
-//     every Postgres driver and every embedded SQL engine, so P4 owes a decision about
+//  3. the JOURNAL FORMAT IS NOT SETTLED. Every Postgres driver and every embedded SQL
+//     engine is still refused in the serving path, so P4 owes a decision about
 //     stdlib-only before there is a durable authority to convert INTO — and piece (d)
 //     changes what a scope IS, from a directory this file enumerates to a
 //     `scope-created` event. A conversion today writes a format the next phase is
 //     about to move.
+//
+//     ⚠ WHAT ENFORCES THAT REFUSAL MOVED, AND THIS LINE SAID THE OLD THING. It read
+//     "`go.mod` has no `require` block, which blocks every Postgres driver" — true
+//     until `internal/ui` took a dependency on an HTML library, after which `go.mod`
+//     has one and a missing block blocks nothing. The refusal now lives in
+//     `internal/depspolicy`, whose package doc is the CANONICAL statement of it;
+//     read it there rather than here, because a second spelling is a second thing to
+//     go stale, which is what this paragraph just demonstrated. The CONSTRAINT did
+//     not move — a driver reaching `cmd/cairn-server` is still a failing build
+//     through nix — only the thing that catches it.
 //
 // 🔴 AND THE REASON THIS USED TO GIVE FIRST IS FALSE — MEASURED, NOT RECONSIDERED. It
 // read "because it makes the conformance corpus a DIFFERENTIAL gate over the
