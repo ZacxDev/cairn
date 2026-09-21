@@ -36,9 +36,11 @@ bucket, a git repo or an NFS mount:
     body-supplied `actor` is never read — so on that route it cannot be forged;
   - the **`<session>`** is supplied by the caller. It is **correlation data,
     not an identity claim**: the server validates its shape and never its
-    ownership, so one agent can name another's session — and every session id
-    that has written to a scope is printed in that scope's own recall, so they
-    are not secrets either;
+    ownership, so one agent can name another's session — and a session id is
+    printed in the recall of the entry it wrote to, readable by anyone who can
+    read the scope (`--ref <entry>`, or `--limit <n>` for the whole scope; the
+    default digest prints one body out of N, so it is **not** the way to
+    enumerate them), so they are not secrets either;
   - `put` and `create` write your bytes **verbatim**, trailer included, and the
     server does not check it. Enforcing that was considered and declined
     (`server/server.py`).
