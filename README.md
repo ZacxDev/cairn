@@ -110,6 +110,7 @@ nix run   github:ZacxDev/cairn -- doctor       # the default client — the GO o
 nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client — no longer the default
 nix build github:ZacxDev/cairn#server-image    # the pod image, as a loadable tarball
+nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — phase A, deployed by nothing
 ```
 
 Consumers pin this flake as an input. The version **is** the git revision —
@@ -252,6 +253,38 @@ Auth is a token **set** — one row per line, `<token>` for legacy or
 hot-reloadable with `SIGHUP`, so onboarding an agent does not restart the pod. The
 full contract, plus the operating runbook (seeding, byte-identity verification,
 rotation, rate limiting), is [`server/README.md`](server/README.md).
+
+## The browser surface — `cairn-ui`
+
+There is one, and it is **phase A**: a single read-only page listing the scopes
+your credential can see and the entries in them. `GET /` is the page and is
+authenticated; `/healthz` is the one unauthenticated route. There are no write
+routes, no sign-in flow, and **nothing deploys it** — it is built and run by hand.
+
+```bash
+nix build github:ZacxDev/cairn#cairn-ui
+./result/bin/cairn-ui -store <store root> -port 8103   # SUBSYSTEM_STORE_ROOT / CAIRN_UI_PORT
+```
+
+Single-dash flags: this binary uses Go's stdlib `flag`, not the client's `--long`
+style. `-h` lists all four (`-store` `/data`, `-host` `0.0.0.0`, `-port` `8103`,
+`-token-file`). It reads the store **from disk** rather than over HTTP, and
+authenticates with the same machine token file as the pod. The Supabase and
+trusted-header backends are deliberately *not* reachable from it: the constructor
+takes one backend and there is no parameter for the others, so a sign-in flow
+arrives with the phase that builds one.
+
+🔴 **It is the only package in the repository that links a third-party module**
+(`gomponents`, for HTML), which is why `go.mod` no longer has an empty `require`
+block and `flake.nix` no longer passes `vendorHash = null`. **The serving path is
+still stdlib-only** — that the pod's and the CLI's binaries do not reach this
+package is *measured* by
+`TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule`, not asked for by
+convention, and `internal/depspolicy` is the allowlist and import ban that replaced
+the old build failure. ⚠ And note what gomponents' escaper does **not** do: it is
+not context-aware the way `html/template` is, so a `javascript:` URL in an href
+position passes through unchanged. Details and the raw-node ban:
+[`internal/ui/README.md`](internal/ui/README.md).
 
 ## Layout
 
