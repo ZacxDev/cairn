@@ -1,9 +1,9 @@
 """Which environment variables configure the `cairn` client — THE one definition.
 
-🔴 WHY THIS MODULE EXISTS: THE PREDICATE WAS OPEN-CODED AT SEVEN SITES AND THEY
-DISAGREED. Every suite that drives the client has to stop the developer's own
-environment reaching it — a run that reads the operator's live store is not a
-test — and each site answered "which variables are those?" for itself:
+🔴 WHY THIS MODULE EXISTS: THE PREDICATE WAS OPEN-CODED AT EVERY SUITE THAT
+DRIVES THE CLIENT, AND THEY DISAGREED. Each has to stop the developer's own
+environment reaching the client — a run that reads the operator's live store is
+not a test — and each answered "which variables are those?" for itself:
 
   * `tests/test_cairn_doctor.py` swept by PREFIX (`monkeypatch.delenv`);
   * `tests/test_cairn_instances.py` popped a hand-written list of FIVE names;
@@ -18,15 +18,26 @@ sites regenerates the same bug at every site."* And its corollary — consolidat
 is a bug-finding instrument, because unifying the copies is what makes the
 disagreement audible.
 
-🔴 **THE COUNT IN THE HEADING WAS "FOUR", THEN "FIVE", AND BOTH WERE WRONG — THE
-MISCOUNT IS THE POINT, NOT AN ERRATUM.** The first draft of this module listed
-four sites and OMITTED `tests/parity/harness.py`, which is the one site whose
-omission was the measured defect. Two independent audits then found two more
-(`test_cairn_cli.py`, `test_cairn_write.py`). A module that claims to be the one
-definition while undercounting its own consumers sends the next reader to the
-wrong set, which is the failure it was written to end. **The set is not restated
-anywhere it can drift from: `tests/test_env_pin.py` asserts it, failing when it
-GROWS or SHRINKS.**
+🔴 **THIS HEADING CARRIES NO COUNT, AND THE DELETION IS THE FIX RATHER THAN A
+SHORTENING.** It said FOUR, then FIVE, then SEVEN, and every one was wrong. The
+first omitted `tests/parity/harness.py` — the one site whose omission WAS the
+measured defect. The second was found short by two audits. The third was written
+without measuring at all. The word "site" is the trap: it means a file to one
+reader, a call site to another, and the client-vs-server distinction to a third,
+so any number is defensible and none is checkable.
+
+**So the set is not stated anywhere it can drift from.** `tests/test_env_pin.py`
+holds it as an assertion that fails when it GROWS *or* SHRINKS, discovered by AST
+rather than by grep, with its own instruments validated against every spelling
+they must see. If you want the number, run that test.
+
+⚠ **WHAT IT DOES NOT COVER, SAID RATHER THAN LEFT TO BE INFERRED.** The ledger is
+scoped to consumers under `tests/`, and raw environment copies remain in files
+that are NOT consumers — `tests/test_subsystem_store_api.py`,
+`tests/routing_mutants.py`, `tests/parity/world.py`, `tests/dualrun/harness.py`
+and `tests/conformance/oracle.py` among them. Most build a SERVER environment,
+which is a different predicate; none was audited here. Converting them is
+separate work and is not pretended to be done.
 
 ## What the swept set is, and why it is not a list of names
 
@@ -34,12 +45,28 @@ GROWS or SHRINKS.**
 
 🔴 A PREFIX, NOT A LEDGER OF NAMES. An enumerated list is the thing that goes
 stale: a variable added to the client is inherited silently by every suite until
-somebody remembers seven files. A prefix sweep pins a new one AUTOMATICALLY, and
-that is not a speculative benefit — `CAIRN_ROUTES` was added in #24 and reached
-three of the four sites that existed, missing the fourth. A discovered ledger —
-an AST walk over the client naming exactly what it reads — was built and then
-deleted in favour of this: ~120 lines to REPORT an unpinned variable, against
-three lines that PIN it.
+somebody remembers every file. A prefix sweep pins a new one AUTOMATICALLY.
+
+That is not a speculative benefit, and the evidence is re-derived from git rather
+than summarised. `CAIRN_ROUTES` arrived with `baee2f0` (#24) — the ONLY client
+configuration variable added since the extraction; every other one dates from
+`2026-09-04`. At that commit it had to be threaded by hand into each site's pin
+list, and it **reached `test_cairn_instances.py` and `unchanged_output_capture.py`
+and missed `test_cairn_cli.py`, `test_cairn_write.py`, and `parity/harness.py`'s
+`base_env`** — measured by reading `baee2f0`, not inferred. All three omissions
+were still open when this module was written; fixing them is most of what it
+cost. One variable in seventeen days, and the single growth event diverged three
+ways.
+
+⚠ AN EARLIER DRAFT SAID "reached three of the four sites that existed, missing
+the fourth". Both numbers were wrong — there were more sites than four, and the
+misses outnumbered the hits. The sentence was the load-bearing evidence for this
+module's central design choice while UNDERSTATING the defect it cited, which is
+the worst direction for a claim like this to be wrong in.
+
+A discovered ledger — an AST walk over the client naming exactly what it reads —
+was built and then deleted in favour of this: ~120 lines to REPORT an unpinned
+variable, against three lines that PIN it.
 
 🔴 **BUT A PREFIX CANNOT COVER A NAME THAT DOES NOT CARRY ONE, AND THIS MODULE'S
 FIRST DRAFT CLAIMED OTHERWISE.** It asserted — in the paragraph it labelled
@@ -83,13 +110,20 @@ EXTRA_CONFIG_ENV = frozenset(HOST_LABEL_ENV)
 #: where a test store is sited; clearing it would reconfigure the HARNESS rather
 #: than the client, which is the opposite of what every caller here wants.
 #:
-#: ⚠ REACHABLE FROM NO CURRENT CONSUMER, AND THAT SCOPE IS PART OF THE CLAIM.
-#: `store_siting` is imported by `tests/test_subsystem_store_api.py` alone, which
-#: does not use this module, and no subprocess any consumer spawns reads the
-#: variable. It is cheap insurance against the day one does — stated with its
-#: scope rather than as a live guarantee, because a previous draft dropped the
-#: caveat while moving the claim somewhere more central, which is widening a
-#: rule by deleting what bounded it.
+#: ⚠ BEHAVIOURALLY INERT TODAY, AND THE SCOPE IS PART OF THE CLAIM — but it is
+#: ONE FIXTURE AWAY FROM MATTERING, not unreachable. `tests/test_cairn_cli.py`
+#: and `tests/test_cairn_write.py` both import `store_siting` AND consume this
+#: module; they only build a CHILD environment, where a cleared
+#: `CAIRN_TEST_TMPFS` would never be read back by the parent's own siting call.
+#: A consumer that cleared it over the LIVE `os.environ` — the shape
+#: `test_cairn_doctor.py` uses — would reconfigure the harness under itself.
+#:
+#: 🔴 THE PREVIOUS TWO DRAFTS OF THIS CAVEAT WERE BOTH WRONG, IN OPPOSITE
+#: DIRECTIONS. The first dropped the scope entirely and asserted a live
+#: guarantee; the second said `store_siting` is imported by
+#: `tests/test_subsystem_store_api.py` **alone** — falsified by the very commit
+#: that wrote it, which made those two files consumers. State the scope, and
+#: re-derive it when the consumer set moves.
 HARNESS_ENV_PREFIX = "CAIRN_TEST_"
 
 

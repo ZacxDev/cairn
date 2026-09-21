@@ -18,8 +18,10 @@ consumers assume and what nothing else looks at.
 
 from __future__ import annotations
 
+import ast
 import os
 import sys
+import textwrap
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -27,6 +29,143 @@ sys.path.insert(0, str(REPO / "lib"))
 
 import host_identity  # noqa: E402
 from testlib import env_pin  # noqa: E402
+
+#: Files that define the mechanism rather than consume it.
+_NOT_CONSUMERS = ("tests/testlib/env_pin.py", "tests/test_env_pin.py")
+
+
+def _is_environ(node: ast.AST) -> bool:
+    """`os.environ` (or any `<x>.environ`), as an expression."""
+    return isinstance(node, ast.Attribute) and node.attr == "environ"
+
+
+def _environ_copy_lines(path: Path) -> list[int]:
+    """Every line where `path` COPIES the environment, by AST.
+
+    🔴 STRUCTURAL, BECAUSE THE SPELLED VERSION WAS MEASURABLY WALKABLE. The first
+    draft grepped for `dict(os.environ)` and `os.environ.copy()`. An audit
+    reverted a consumer off `env_pin` the way a person would — restoring the copy
+    spelled `{**os.environ, …}` — and **all 14 tests passed**. Three further
+    spellings walked it. So the shapes are enumerated against the AST, and
+    `test_the_copy_detector_sees_every_spelling` feeds it each one: a spelling
+    this function cannot see is a RED test rather than a silent pass.
+
+    ⚠ It reports COPIES, not reads. `os.environ.get(...)`, `os.environ[...]` and
+    `os.environ` passed to `monkeypatch.delenv` are not copies and are not
+    flagged — a consumer legitimately reads the environment.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    hits: list[int] = []
+    for node in ast.walk(tree):
+        # `{**os.environ, ...}` — a dict display with `os.environ` splatted in.
+        if isinstance(node, ast.Dict) and any(
+            k is None and _is_environ(v) for k, v in zip(node.keys, node.values)
+        ):
+            hits.append(node.lineno)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            # `os.environ.copy()`
+            if isinstance(func, ast.Attribute) and func.attr == "copy" and _is_environ(
+                func.value
+            ):
+                hits.append(node.lineno)
+            # `dict(os.environ)` / `dict(**os.environ)` / `copy.copy(os.environ)`
+            elif (isinstance(func, ast.Name) and func.id == "dict") or (
+                isinstance(func, ast.Attribute) and func.attr in ("copy", "deepcopy")
+            ):
+                if any(_is_environ(a) for a in node.args) or any(
+                    kw.arg is None and _is_environ(kw.value) for kw in node.keywords
+                ):
+                    hits.append(node.lineno)
+    return sorted(set(hits))
+
+
+def _imports_env_pin(path: Path) -> bool:
+    """Does `path` actually IMPORT `env_pin`?
+
+    🔴 AN IMPORT, NEVER A SUBSTRING. The first draft asked whether the text
+    `env_pin` appeared anywhere in the file, so a consumer that had been reverted
+    off the module stayed in the discovered set on the strength of a surviving
+    COMMENT — measured, and the SHRINK direction the ledger exists for never
+    fired.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and any(
+            a.name == "env_pin" for a in node.names
+        ):
+            return True
+        if isinstance(node, ast.Import) and any(
+            a.name.split(".")[-1] == "env_pin" for a in node.names
+        ):
+            return True
+    return False
+
+
+def _walk_consumers() -> list[tuple[str, Path]]:
+    """Every file under `tests/` that imports `env_pin`."""
+    return [
+        (path.relative_to(REPO).as_posix(), path)
+        for path in sorted((REPO / "tests").rglob("*.py"))
+        if path.relative_to(REPO).as_posix() not in _NOT_CONSUMERS
+        and _imports_env_pin(path)
+    ]
+
+
+class TestTheInstrumentsAreValidated:
+    """🔴 VALIDATE THE INSTRUMENT BEFORE READING ITS VERDICT.
+
+    The two ledgers below this class are only as good as the two walkers above
+    it, and the spelled versions of both were measurably walkable: a consumer
+    reverted off `env_pin` stayed in the discovered set on a surviving COMMENT,
+    and a raw copy spelled `{**os.environ}` was invisible. A reassuring zero from
+    a walker wired to nothing is indistinguishable from a clean tree.
+    """
+
+    #: Every way this tree could copy the environment. The detector must see all
+    #: of them; the negative cases must not be flagged.
+    COPY_SPELLINGS = (
+        "env = dict(os.environ)",
+        "env = os.environ.copy()",
+        "env = {**os.environ}",
+        'env = {**os.environ, "A": "b"}',
+        "env = dict(**os.environ)",
+        "env = copy.copy(os.environ)",
+        "env = copy.deepcopy(os.environ)",
+    )
+    NOT_COPIES = (
+        'v = os.environ.get("X")',
+        'v = os.environ["X"]',
+        'monkeypatch.delenv("X", raising=False)',
+        "env = dict(a=1)",
+        'v = something.get("X")',
+    )
+
+    def test_the_copy_detector_sees_every_spelling(self, tmp_path) -> None:
+        for src in self.COPY_SPELLINGS:
+            p = tmp_path / "probe.py"
+            p.write_text(textwrap.dedent(f"import copy, os\n{src}\n"), encoding="utf-8")
+            assert _environ_copy_lines(p), f"NOT DETECTED: {src}"
+
+    def test_the_copy_detector_does_not_flag_a_READ(self, tmp_path) -> None:
+        """The other half — a detector that flagged everything would make the
+        exemption mapping grow until it covered the tree."""
+        for src in self.NOT_COPIES:
+            p = tmp_path / "probe.py"
+            p.write_text(
+                textwrap.dedent(f"import copy, os\nmonkeypatch = something = None\n{src}\n"),
+                encoding="utf-8",
+            )
+            assert not _environ_copy_lines(p), f"FALSELY FLAGGED: {src}"
+
+    def test_the_consumer_walker_needs_an_IMPORT_not_a_mention(self, tmp_path) -> None:
+        """The measured revert: the module named only in a comment."""
+        mention = tmp_path / "mention.py"
+        mention.write_text("# env_pin used to be imported here\nx = 1\n", encoding="utf-8")
+        real = tmp_path / "real.py"
+        real.write_text("from testlib import env_pin\n", encoding="utf-8")
+        assert not _imports_env_pin(mention)
+        assert _imports_env_pin(real)
 
 
 class TestThePredicate:
@@ -158,13 +297,7 @@ class TestTheConsumerSetIsPinned:
     }
 
     def test_the_consumer_set_is_exactly_these_files(self) -> None:
-        found = set()
-        for path in sorted((REPO / "tests").rglob("*.py")):
-            rel = path.relative_to(REPO).as_posix()
-            if rel in ("tests/testlib/env_pin.py", "tests/test_env_pin.py"):
-                continue
-            if "env_pin" in path.read_text(encoding="utf-8"):
-                found.add(rel)
+        found = {rel for rel, _ in _walk_consumers()}
         # Validate the instrument before reading its verdict: a walker that found
         # nothing would satisfy neither direction by accident, but it would make
         # the SHRINK message unreadable.
@@ -204,8 +337,7 @@ class TestTheConsumerSetIsPinned:
         assert all(self.RAW_COPY_EXEMPT.values()), "an exemption with no reason"
         offenders = []
         for rel in sorted(self.EXPECTED - set(self.RAW_COPY_EXEMPT)):
-            text = (REPO / rel).read_text(encoding="utf-8")
-            if "dict(os.environ)" in text or "os.environ.copy()" in text:
+            if _environ_copy_lines(REPO / rel):
                 offenders.append(rel)
         assert not offenders, (
             f"these consume `env_pin` AND build a raw environment copy: {offenders}. "
@@ -222,8 +354,7 @@ class TestTheConsumerSetIsPinned:
         well as GROW."""
         dead = [
             rel for rel in sorted(self.RAW_COPY_EXEMPT)
-            if "dict(os.environ)" not in (REPO / rel).read_text(encoding="utf-8")
-            and "os.environ.copy()" not in (REPO / rel).read_text(encoding="utf-8")
+            if not _environ_copy_lines(REPO / rel)
         ]
         assert not dead, (
             f"these are exempted from the raw-copy rule and no longer break it: "

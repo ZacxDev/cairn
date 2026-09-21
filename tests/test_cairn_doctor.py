@@ -48,7 +48,10 @@ CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
 
 #: Which variables configure the client is `testlib/env_pin.py`'s question now,
-#: not this module's — it was open-coded at four sites and they disagreed.
+#: not this module's. It was open-coded at every suite that drives the client and
+#: they disagreed; the SET is asserted in `tests/test_env_pin.py` and deliberately
+#: not counted here — four separate drafts of that number were wrong, including
+#: one written in this very comment.
 
 #: The check names `doctor` emits on a SINGLE-instance host, in order.
 #:
@@ -97,7 +100,7 @@ def _pin_the_hosts_configuration(tmp_path, monkeypatch):
     hand-maintained copy of the same surface — `test_cairn_instances.py` clears
     the same five, `unchanged_output_capture.py` sets them twice. Discovered
     coverage of that surface, if anyone wants it, belongs in `cairn_source.py`
-    beside the other AST readers, graded for all four sites at once.
+    beside the other AST readers, graded for every consumer at once.
 
     What the sweep pins, in three kinds because they fail differently:
 

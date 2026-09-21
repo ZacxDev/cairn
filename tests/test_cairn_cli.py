@@ -43,6 +43,39 @@ from testlib import env_pin, store_siting  # noqa: E402
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
 GOOD_TOKEN = "a" * 20 + "B" * 20 + "c" * 8
+
+#: The host label BOTH sides of a byte-identity comparison must print. 🔴 IT IS
+#: SET IN THIS PROCESS *AND* PASSED TO EVERY CHILD, AND ONE SIDE ALONE IS NOT A
+#: FIX — that was measured, not reasoned about. `run_cairn` clears the client's
+#: configuration from the child (`env_pin`), which includes the host label; a
+#: test that renders the expected bytes IN-PROCESS then reads the operator's
+#: label while the child reads `socket.gethostname()`, and the two `host:` lines
+#: diverge. Pinning only the child swaps one divergence for another — applied and
+#: watched still failing before this fixture was written.
+#:
+#: ⚠ AND IT IS STRICTLY BETTER THAN WHAT IT REPLACES. Before, the two sides
+#: agreed because BOTH read the operator's real `$CAIRN_HOST` — agreement bought
+#: by putting a real machine name through a test in a PUBLIC repository. Now both
+#: read a synthetic one, which is the convention every other harness here already
+#: follows (`CAPTURE_HOST`, `PARITY_HOST`, `DUALRUN_HOST`).
+CLI_HOST = "cli-harness"
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_host_label(monkeypatch):
+    """Both sides of every comparison in this file read `CLI_HOST`.
+
+    The names come from `env_pin.EXTRA_CONFIG_ENV`, which derives them from
+    `host_identity.HOST_LABEL_ENV` — so a fourth host-label variable is cleared
+    here on the day it is added, without anybody editing this file. They are
+    cleared before the pin because `host_label()` returns the FIRST one set, so
+    leaving `$ASIB_HOST` behind would decide the answer on some hosts and not
+    others.
+    """
+    for name in env_pin.EXTRA_CONFIG_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CAIRN_HOST", CLI_HOST)
+
 LOOPBACK = ipaddress.ip_network("127.0.0.1/32")
 
 
@@ -209,6 +242,7 @@ def run_cairn(*args: str, url: str | None, cache: Path, token: str = GOOD_TOKEN)
     # the table MANDATORY, so every subprocess refuses before doing anything.
     # `env_pin` clears the whole configuration surface.
     env = env_pin.sanitized_env(
+        CAIRN_HOST=CLI_HOST,
         SUBSYSTEM_STORE_TOKEN=token,
         SUBSYSTEM_STORE_CONFIG=str(cache.parent / "no-such-config"),
         SUBSYSTEM_STORE_URL=url or f"http://127.0.0.1:{_dead_port()}",
