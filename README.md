@@ -110,6 +110,7 @@ nix run   github:ZacxDev/cairn -- doctor       # the default client — the GO o
 nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client — no longer the default
 nix build github:ZacxDev/cairn#server-image    # the pod image, as a loadable tarball
+nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — phase A, deployed by nothing
 ```
 
 Consumers pin this flake as an input. The version **is** the git revision —
@@ -253,6 +254,47 @@ hot-reloadable with `SIGHUP`, so onboarding an agent does not restart the pod. T
 full contract, plus the operating runbook (seeding, byte-identity verification,
 rotation, rate limiting), is [`server/README.md`](server/README.md).
 
+## The browser surface — `cairn-ui`
+
+There is one, and it is **phase A**: a single read-only page listing the scopes
+your credential can see and the entries in them. `GET /` is the page and is
+authenticated; `/healthz` is the one unauthenticated route. There are no write
+routes, no sign-in flow, and **nothing deploys it** — it is built and run by hand.
+
+```bash
+nix build github:ZacxDev/cairn#cairn-ui
+./result/bin/cairn-ui -store <store root> -token-file <token file> -port 8103
+```
+
+⚠ **A credential is required, and off-cluster you must say where it is.**
+`-token-file` defaults to the pod's secret mount
+(`/run/secrets/subsystem-store/token`), so on a machine without one the binary
+exits **78** and serves nothing. Three ways to supply it, all measured:
+`-token-file <path>`; `SUBSYSTEM_STORE_TOKEN_FILE=<path>` with no flag; or
+`-token-file=` (explicitly empty) plus `SUBSYSTEM_STORE_TOKEN=<row>`, which is the
+env fallback the binary's own refusal names. Single-dash flags: this uses Go's
+stdlib `flag`, not the client's `--long` style. `-h` lists four — `-store`
+(`SUBSYSTEM_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
+`-token-file` (`SUBSYSTEM_STORE_TOKEN_FILE`) — and every default is env-resolved,
+so what `-h` prints depends on your environment. It reads the store **from disk**
+rather than over HTTP, and authenticates against the same token file as the pod.
+
+🔴 **Two backends are absent, for two different reasons, and conflating them is the
+misreading to avoid.** Supabase is simply *not wired yet* and returns with the
+phase that builds a sign-in flow. The **trusted-header** backend is refused on
+principle and is not coming back here: a browser surface exists to be publicly
+reachable, and that backend lets anyone who can open a socket to it *be* any user
+at full authority. `AuthBackends` takes one parameter so neither can be passed;
+`TestTheUIChainHasNoTrustedHeaderMember` pins the exclusion.
+
+It is the only package here that links a third-party module (`gomponents`, for
+HTML), and **the serving path is still stdlib-only** — no package the pod or the
+CLI links reaches it. What replaced `vendorHash = null`, and how that is measured
+rather than asked for, is stated once in `internal/depspolicy`'s package doc; how
+this page escapes entry text is stated once in
+[`internal/ui/README.md`](internal/ui/README.md). Both are pointers on purpose:
+those claims have one home each and a correction belongs there.
+
 ## Layout
 
 | path | what |
@@ -274,8 +316,13 @@ rotation, rate limiting), is [`server/README.md`](server/README.md).
 it, deployed by nothing. Rewriting the server alone would have left two renderers in
 two languages that must agree byte-for-byte forever, with drift arriving as "a
 different order that reads as a stale cache" — no error, no missing entry. So both
-land on the same `internal/report`: one renderer, three consumers (pod, CLI, a future
-UI). ⚠ That becomes a *property* only when the Python renderer is deleted at P8; until
+land on the same `internal/report`: one renderer, two consumers — the pod and the CLI.
+⚠ **The browser surface is not one of them.** `internal/ui` imports `internal/report`
+nowhere; it reads `internal/store` and renders HTML through its own code, so the page
+is a *second* renderer producing a different medium, and nothing compares the two. That
+was a forecast ("a future UI") until `cairn-ui` shipped; it is now a measured exception,
+and whether the page should ever route through `internal/report` is open. ⚠ And
+one-renderer becomes a *property* only when the Python renderer is deleted at P8; until
 then it is a discipline, and these three instruments are what enforce it:
 
 | instrument | what it compares | read it |
