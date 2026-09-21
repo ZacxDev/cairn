@@ -28,21 +28,27 @@ bucket, a git repo or an NFS mount:
   **store-wide** `entry-files=` count, over scopes the caller cannot name. Two
   parties on one pod can each watch the other's count move. Stated in
   `server/server.py`, and repeated here rather than left to be found.
-- **Attributed — on `append`, and only the identity half is a guarantee.**
+- **Attributed — a record of who wrote what, not a security boundary.**
   `cairn append` requires `--session` (no default, no env fallback) and renders
-  `- YYYY-MM-DD: <text> [cairn: <identity>/<session>]`. The **`<identity>`**
-  comes from the token and a body-supplied `actor` is accepted and discarded as
-  hostile input, so a writer cannot forge it. The **`<session>`** is
-  caller-supplied **correlation data, not an identity claim** — it says which
-  run of which agent wrote this, and the agent is the only thing that knows;
-  it is validated as hostile input for shape, never for ownership. An agent can
-  name another agent's session. 🔴 **And even the identity guarantee is exactly
-  as wide as `POST /bullets`.** `put`
-  writes your bytes **verbatim** — a body containing someone else's
-  `[cairn: …/…]` trailer lands exactly as sent, and the server does not check
-  it. Enforcing it was considered and declined (`server/server.py`); treat a
-  trailer as proof of authorship only where every token that can reach the scope
-  is append-only.
+  `- YYYY-MM-DD: <text> [cairn: <identity>/<session>]`, so a swarm's memory
+  carries which agent believed a thing and on which run. Read at its real width:
+  - the **`<identity>`** is taken from the token on `POST /bullets`, and a
+    body-supplied `actor` is never read — so on that route it cannot be forged;
+  - the **`<session>`** is supplied by the caller. It is **correlation data,
+    not an identity claim**: the server validates its shape and never its
+    ownership, so one agent can name another's session — and every session id
+    that has written to a scope is printed in that scope's own recall, so they
+    are not secrets either;
+  - `put` and `create` write your bytes **verbatim**, trailer included, and the
+    server does not check it. Enforcing that was considered and declined
+    (`server/server.py`).
+
+  🔴 **And there is no append-only credential to close the gap with.** The verb
+  set is closed at three — `read`, `write`, `admin` — with `append` deliberately
+  absent, because all three write verbs mutate a file through one path and a
+  fourth verb would be spelled rather than structural (`internal/control`). Any
+  token that can append can also `PUT`. **So treat a trailer as a cooperative
+  record for debugging and recall, never as evidence of authorship.**
 - **Concurrency-safe, and safe to retry.** `PUT` requires `If-Match` (`428`
   without it; `*` refused), and `create` lands through a hard link, so `EEXIST`
   is decided by the kernel rather than by a check-then-write. Two agents racing a
