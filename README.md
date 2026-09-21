@@ -274,17 +274,13 @@ trusted-header backends are deliberately *not* reachable from it: the constructo
 takes one backend and there is no parameter for the others, so a sign-in flow
 arrives with the phase that builds one.
 
-🔴 **It is the only package in the repository that links a third-party module**
-(`gomponents`, for HTML), which is why `go.mod` no longer has an empty `require`
-block and `flake.nix` no longer passes `vendorHash = null`. **The serving path is
-still stdlib-only** — that the pod's and the CLI's binaries do not reach this
-package is *measured* by
-`TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule`, not asked for by
-convention, and `internal/depspolicy` is the allowlist and import ban that replaced
-the old build failure. ⚠ And note what gomponents' escaper does **not** do: it is
-not context-aware the way `html/template` is, so a `javascript:` URL in an href
-position passes through unchanged. Details and the raw-node ban:
-[`internal/ui/README.md`](internal/ui/README.md).
+It is the only package here that links a third-party module (`gomponents`, for
+HTML), and **the serving path is still stdlib-only** — no package the pod or the
+CLI links reaches it. What replaced `vendorHash = null`, and how that is measured
+rather than asked for, is stated once in `internal/depspolicy`'s package doc; how
+this page escapes entry text is stated once in
+[`internal/ui/README.md`](internal/ui/README.md). Both are pointers on purpose:
+those claims have one home each and a correction belongs there.
 
 ## Layout
 
