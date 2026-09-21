@@ -167,8 +167,6 @@ EVICTION_TARGETS = {
     "lib/README.md": "the Python reader: multi-instance routing, the cache layout, "
                      "and what binds anyone editing a routing path",
     "README.md": "what the project IS, for a human arriving at the repo",
-    "CHANGELOG.md": "user-facing contract changes, and the record behind each "
-                    "announcement README.md only summarises",
     "claudedocs/plan-cairn-control-plane.md": "the phase plan and the decision record",
 }
 

@@ -131,10 +131,12 @@ reaches an *attribute*, where a `#fragment` is not a spelling you can use:
 ```
 
 Both spellings are gated rather than promised: `checks.default-is-the-go-client` pins
-`apps.cairn.program` to `packages.cairn`'s executable and pins `packages.cairn` distinct
-from `packages.default`, at evaluation time, building neither client. The full record —
-why the flip was taken on an operator decision rather than on a green gate, and what it
-did *not* retire — is in [`CHANGELOG.md`](CHANGELOG.md).
+the flip itself and both opt-out spellings, at evaluation time, building neither client.
+⚠ It is described here in one sentence and in full beside the code it guards
+(`flake.nix`), which is the only description worth trusting — this one is hand-written
+and nothing asserts it. **The record of why the flip was taken on an operator decision
+rather than on a green gate** lives in [`tests/parity/README.md`](tests/parity/README.md)
+residual 7, and nowhere else on purpose.
 
 ## The client — `cairn`
 
@@ -188,8 +190,9 @@ configured, every read prints what it always did. Two exceptions at any instance
 count: the **write** verbs name their instance unconditionally — "where did that
 bullet go" is a question about a durable record, asked later, by someone who no
 longer has the terminal — and a table entry naming an alias this host has no config
-for still refuses. The binding rules for anyone editing a routing path are in
-[`lib/README.md`](lib/README.md).
+for still refuses. ⚠ **If you parse `cairn: appended scope=… ref=…` positionally,
+that field is new — it sits between the status and `scope=`.** The binding rules for
+anyone editing a routing path are in [`lib/README.md`](lib/README.md).
 
 ## The server
 
@@ -240,7 +243,10 @@ then it is a discipline, and these three instruments are what enforce it:
 ⚠ **Counts are deliberately not quoted here.** Every one of them went stale in this
 file at least once while the gates moved, and nothing asserted on them; the numbers
 live beside the gates that produce them, and the CI floors live in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Re-derive rather than trust.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Re-derive rather than trust —
+`grep -c 'Case(' tests/parity/harness.py` for the parity case count, and the
+`compare=` distribution beside it for how many rows compare output text rather than
+only the exit code.
 
 ⚠ **And a green gate is not evidence until its controls have been watched to work.**
 The parity gate's first full run reported 72 PASS / 0 FAIL while every request was
