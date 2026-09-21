@@ -256,10 +256,24 @@ rotation, rate limiting), is [`server/README.md`](server/README.md).
 
 ## The browser surface — `cairn-ui`
 
-There is one, and it is **phase A**: a single read-only page listing the scopes
-your credential can see and the entries in them. `GET /` is the page and is
-authenticated; `/healthz` is the one unauthenticated route. There are no write
-routes, no sign-in flow, and **nothing deploys it** — it is built and run by hand.
+There is one, and it is **phases A and B**: a single read-only page listing the
+scopes your credential can see and the entries in them, plus a browser sign-in.
+Four routes, which `cairn-ui` derives from the dispatcher rather than restating:
+`GET /` is the page and is authenticated; `GET`/`POST /sign-in` are reachable
+without a session, because they are how you get one; `POST /sign-out` revokes.
+`/healthz` is the one unauthenticated route outside that set.
+
+Sessions are **server-side and revocable** — a `HttpOnly` cookie naming a record
+the server holds, so signing out revokes it rather than asking the browser to
+forget. They live 12 hours by default and survive a restart of the process that
+issued them.
+
+🔴 **`cairn-ui` is a SINGLE-REPLICA surface, and the session table is what makes
+it one.** A second replica without shared storage is not a degraded version of
+this — it is a surface that signs users out on a random fraction of requests,
+because each replica holds its own sessions. Multi-replica is a later arc, not a
+configuration. And **nothing deploys it**: there is no image and no manifest in
+this repository — it is built and run by hand.
 
 ```bash
 nix build github:ZacxDev/cairn#cairn-ui
