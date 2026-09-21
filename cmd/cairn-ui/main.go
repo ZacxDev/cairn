@@ -39,6 +39,17 @@ const (
 	defaultTokenFile = "/run/secrets/subsystem-store/token"
 	defaultPort      = 8103
 
+	// defaultSessionFile is where the browser session table lives.
+	//
+	// 🔴 IT IS NOT UNDER THE STORE ROOT, AND THAT IS DELIBERATE. `/data` is the notes
+	// volume: `store.LoadStore` enumerates it, `server/seed.sh` replaces its contents
+	// through `tar -xf -`, and `/snapshot` serves it. A session table under it would
+	// be a set of live credentials inside a directory whose documented operations are
+	// "enumerate" and "overwrite wholesale". A separate path means the deployment has
+	// to mount a second writable volume — which `OpenFileSessionStore` refuses loudly
+	// at startup if it did not, rather than discovering it at the first sign-in.
+	defaultSessionFile = "/var/lib/cairn-ui/sessions"
+
 	// exitConfig is sysexits.h EX_CONFIG, the same code `cmd/cairn-server` uses and
 	// for the same reason: a surface that came up misconfigured is worse than one
 	// that did not come up, because it looks healthy.
@@ -59,6 +70,10 @@ func main() {
 	port := flag.Int("port", envInt("CAIRN_UI_PORT", defaultPort), "listen port")
 	tokenFile := flag.String("token-file", envOr("SUBSYSTEM_STORE_TOKEN_FILE", defaultTokenFile),
 		"path to the token file this surface authenticates against")
+	sessionFile := flag.String("session-file", envOr("CAIRN_UI_SESSION_FILE", defaultSessionFile),
+		"path to the browser session table")
+	sessionTTL := flag.Duration("session-ttl", envDuration("CAIRN_UI_SESSION_TTL", identity.DefaultSessionTTL),
+		"absolute lifetime of a browser session")
 	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
 	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
 	// contract and cannot read a compiled binary — the printed table is the only way
@@ -115,21 +130,55 @@ func main() {
 		os.Exit(exitConfig)
 	}
 
-	// 🔴 `ui.AuthBackends`, NOT `identity.FromEnvironment`. The environment builder
-	// arms the trusted-header backend when an operator declares the deployment
-	// proxy-fronted, and this surface must not have that backend at any setting —
-	// see `internal/ui/auth.go` for why a browser endpoint cannot carry that trade.
-	// The chain's membership is pinned by `TestTheUIChainHasNoTrustedHeaderMember`
-	// rather than by this call site. It takes the machine token and nothing else:
-	// the Supabase backend is not wired in phase A, and a parameter every caller
-	// passed `nil` to was removed rather than kept as a promise.
-	chain, err := ui.AuthBackends(machine)
+	// 🔴 THE SESSION TABLE IS OPENED BEFORE THE LISTENER, SO A SURFACE THAT CANNOT
+	// PERSIST A SESSION DOES NOT COME UP. Discovering it at the first sign-in would
+	// mean a pod that passes every health check and refuses every login, which is the
+	// shape every startup refusal in this repository exists against.
+	sessions, err := identity.OpenFileSessionStore(*sessionFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"cairn-ui: the session table %s cannot be opened (%s), so no browser could sign in. "+
+				"Refusing to start; mount a writable volume for it and restart\n", *sessionFile, err.Error())
+		os.Exit(exitConfig)
+	}
+
+	cookie, err := identity.NewCookieSession(sessions, authority)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: identity: "+err.Error())
 		os.Exit(exitConfig)
 	}
 
-	srv, err := ui.New(chain, ui.StoreSource{Root: *store})
+	// 🔴 `ui.AuthBackends`, NOT `identity.FromEnvironment`. The environment builder
+	// arms the trusted-header backend when an operator declares the deployment
+	// proxy-fronted, and this surface must not have that backend at any setting —
+	// see `internal/ui/auth.go` for why a browser endpoint cannot carry that trade.
+	// The chain's membership is pinned by `TestTheUIChainHasNoTrustedHeaderMember`
+	// rather than by this call site. It takes the machine token and the cookie
+	// backend: the Supabase backend is still not wired, and a parameter every caller
+	// passed `nil` to was removed rather than kept as a promise.
+	chain, err := ui.AuthBackends(machine, cookie)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: identity: "+err.Error())
+		os.Exit(exitConfig)
+	}
+
+	srv, err := ui.New(ui.Config{
+		Auth: chain,
+		// ⚠ THE SAME `authority` THE MACHINE-TOKEN BACKEND HOLDS, WHICH IS THE POINT.
+		// The sign-in form resolves its credential through the same projection every
+		// request is authenticated against; a second authority here would be a second
+		// answer to "is this token real", and the first thing two answers lose is
+		// agreement about a revocation.
+		Credentials: authority,
+		Source:      ui.StoreSource{Root: *store},
+		Sessions:    sessions,
+		TTL:         *sessionTTL,
+		// One clock for the server and the store. `FileSessionStore.Now` is left nil,
+		// which means `time.Now().UTC()`, and `ui.Config.Now` defaults to the same
+		// thing — so they agree by both taking the default rather than by one being
+		// handed the other's.
+		Log: os.Stderr,
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
@@ -198,6 +247,27 @@ func envOr(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envDuration falls back on an unparseable value rather than refusing, which matches
+// `envInt` beside it.
+//
+// ⚠ THAT IS THE WEAKER OF THE TWO AVAILABLE RULINGS AND IT IS THE EXISTING ONE. A
+// mistyped `CAIRN_UI_SESSION_TTL` silently gets the default rather than refusing to
+// start — the opposite of how `internal/identity`'s ledger treats a mistyped duration.
+// It is left consistent with the neighbouring readers rather than made a one-off, and
+// the divergence between this program's ad-hoc environment reads and that package's
+// ledger is the thing to close, in one change, rather than here.
+func envDuration(name string, fallback time.Duration) time.Duration {
+	v, set := os.LookupEnv(name)
+	if !set || v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 func envInt(name string, fallback int) int {

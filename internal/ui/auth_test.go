@@ -67,7 +67,7 @@ func TestTheUIChainHasNoTrustedHeaderMember(t *testing.T) {
 
 	// POSITIVE CONTROL — the assertion can see a trusted-header member when there is
 	// one. Reported as a pair with the zero below, never on its own.
-	full, err := identity.Backends(machine, nil, trusted)
+	full, err := identity.Backends(machine, nil, nil, trusted)
 	if err != nil {
 		t.Fatalf("identity.Backends refused the control chain: %v", err)
 	}
@@ -78,10 +78,17 @@ func TestTheUIChainHasNoTrustedHeaderMember(t *testing.T) {
 			"the UI chain below would mean nothing.", len(full))
 	}
 
-	// THE PIN.
-	uiChain, err := AuthBackends(machine)
+	// THE PIN — and it is taken over the WIDEST chain this constructor can build, with
+	// the cookie backend present. A pin taken over the narrowest one would go green for
+	// a `AuthBackends` that forwarded a trusted header only when a cookie backend was
+	// also supplied.
+	cookieBackend, err := identity.NewCookieSession(uiTestSessions(t), authority)
 	if err != nil {
-		t.Fatalf("ui.AuthBackends refused a machine-token-only chain: %v", err)
+		t.Fatalf("the cookie backend did not build: %v", err)
+	}
+	uiChain, err := AuthBackends(machine, cookieBackend)
+	if err != nil {
+		t.Fatalf("ui.AuthBackends refused a machine-token-and-cookie chain: %v", err)
 	}
 	if len(uiChain) == 0 {
 		t.Fatal("ui.AuthBackends returned an EMPTY chain, which authenticates nobody — and an empty chain also " +
@@ -112,17 +119,33 @@ func countTrustedHeaders(chain identity.Chain) int {
 // TestAnEmptyUIChainIsRefusedAtConstruction pins the fail-closed direction one level
 // up from `identity.ErrNoBackends`: a UI server with no authenticator must not build.
 func TestAnEmptyUIChainIsRefusedAtConstruction(t *testing.T) {
-	if _, err := AuthBackends(nil); err != identity.ErrNoBackends {
+	if _, err := AuthBackends(nil, nil); err != identity.ErrNoBackends {
 		t.Errorf("a chain with no backend must be %v, got %v", identity.ErrNoBackends, err)
 	}
-	if _, err := New(nil, StoreSource{Root: "/nonexistent"}); err != ErrNoAuthenticator {
-		t.Errorf("ui.New with no authenticator must be %v, got %v", ErrNoAuthenticator, err)
+	// And a chain of the COOKIE backend alone is legal: it is a whole way to
+	// authenticate, and `identity.Backends` skipping nil members is what makes that
+	// true without a second assembly here.
+	cookieOnly, err := AuthBackends(nil, mustCookieBackend(t))
+	if err != nil || len(cookieOnly) != 1 {
+		t.Errorf("a cookie-only chain must be legal, got %v / %d members", err, len(cookieOnly))
 	}
-	chain, err := AuthBackends(&identity.MachineToken{Authority: materializedAuthority(t)})
+	// `ui.New`'s own refusals are pinned per sentinel by
+	// `TestANilPartIsRefusedAtConstruction`; this file's subject is the CHAIN.
+}
+
+// uiTestSessions and mustCookieBackend build the one dependency the chain tests need. A
+// real `FileSessionStore` rather than a stub, because the type assertions below are
+// about MEMBERSHIP and a stub would be a second implementation of the thing under test.
+func uiTestSessions(t *testing.T) *identity.FileSessionStore {
+	t.Helper()
+	return mustSessions(t)
+}
+
+func mustCookieBackend(t *testing.T) *identity.CookieSession {
+	t.Helper()
+	backend, err := identity.NewCookieSession(uiTestSessions(t), materializedAuthority(t))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("the cookie backend did not build: %v", err)
 	}
-	if _, err := New(chain, nil); err != ErrNoSource {
-		t.Errorf("ui.New with no source must be %v, got %v", ErrNoSource, err)
-	}
+	return backend
 }

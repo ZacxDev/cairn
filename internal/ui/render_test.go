@@ -149,10 +149,19 @@ func hostileWorld() []Scope {
 	}}
 }
 
+// renderCSRF is a FIXED token, and the same one for the hostile and the benign world.
+//
+// 🔴 THE STRUCTURAL DIFFERENTIAL BELOW IS A COUNT OF `<`, `>` AND `="`, SO ANYTHING THAT
+// RENDERS IN ONE WORLD AND NOT THE OTHER BREAKS IT FOR THE WRONG REASON. The sign-out
+// form renders only when a token is present, so passing one here — the same one to both
+// — keeps the two pages the same SHAPE while bringing the form inside the escaping
+// assertions rather than leaving a new markup sink outside them.
+const renderCSRF = "a-fixed-fixture-csrf-token"
+
 func render(t *testing.T, viewer string, scopes []Scope) string {
 	t.Helper()
 	var b strings.Builder
-	if err := Page(viewer, scopes).Render(&b); err != nil {
+	if err := Page(viewer, scopes, renderCSRF).Render(&b); err != nil {
 		t.Fatalf("the page did not render: %v", err)
 	}
 	return b.String()

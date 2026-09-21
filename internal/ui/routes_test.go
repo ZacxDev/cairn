@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ZacxDev/cairn/internal/control"
@@ -20,22 +22,48 @@ import (
 // spelled out once here by hand. That is a GROW-or-SHRINK guard on a hand-written
 // list, not a contract comparison, and the difference matters if anybody later reads
 // a green here as "the browser contract is pinned".
+//
+// 🔴 THE HAND-WRITTEN LIST CARRIES EACH ROW'S CLASS, AND THAT IS WHAT MAKES `public` A
+// DECISION RATHER THAN A DEFAULT. A class can only make a route LESS protected — public
+// rows are dispatched before the authentication chain — so adding one has to be written
+// out here, in a list somebody reads, rather than being a bit set in a map nobody
+// re-reads. The plain `DeclaredRoutes()` is checked against this one by stripping the
+// classes, so the two derived views cannot drift.
 func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
-	want := []string{"GET /"}
-	got := DeclaredRoutes()
+	want := []string{
+		"GET / content",
+		"GET /sign-in public",
+		"POST /sign-in public",
+		"POST /sign-out",
+	}
+	got := DeclaredRouteLedger()
 
 	if len(got) == 0 {
-		t.Fatal("DeclaredRoutes is EMPTY, so the comparison below is vacuous and this server dispatches nothing")
+		t.Fatal("DeclaredRouteLedger is EMPTY, so the comparison below is vacuous and this server dispatches nothing")
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("the declared route set is %v, the ledger names %v.\n"+
 			"Adding a row to `routes` is adding a public, internet-reachable endpoint on a BROWSER surface, and "+
-			"this is where somebody has to think about it. Removing one silently is the other direction and this "+
+			"this is where somebody has to think about it — INCLUDING its class: `public` means the row is "+
+			"dispatched BEFORE the authentication chain. Removing a row silently is the other direction and this "+
 			"check refuses both.", got, want)
 	}
 	if !slices.IsSorted(got) {
-		t.Errorf("DeclaredRoutes is not sorted (%v); the comparison above is order-sensitive, and an unsorted "+
-			"ledger derived from a map iteration would make this test flap rather than fail", got)
+		t.Errorf("DeclaredRouteLedger is not sorted (%v); the comparison above is order-sensitive, and an "+
+			"unsorted ledger derived from a map iteration would make this test flap rather than fail", got)
+	}
+
+	// The two views are one map. Stripping each line's class must reproduce the plain
+	// ledger exactly, or `cmd/cairn-ui` is counting a different set from the one
+	// declared above.
+	stripped := make([]string, 0, len(got))
+	for _, line := range got {
+		method, path, _ := splitRoute(line)
+		stripped = append(stripped, method+" "+path)
+	}
+	if plain := DeclaredRoutes(); !slices.Equal(plain, stripped) {
+		t.Errorf("DeclaredRoutes() is %v but the classed ledger strips to %v; the two are meant to be two views "+
+			"of ONE map and a disagreement means there is a second copy somewhere", plain, stripped)
 	}
 	// The health path is deliberately NOT in the ledger — it is answered before
 	// authentication and serves no content. Asserting its absence is what stops a
@@ -74,13 +102,76 @@ func testIdentity() identity.Identity {
 	}}
 }
 
+// staticCredentials resolves exactly one token string, so the sign-in exchange can be
+// driven without a control journal. Everything else it refuses.
+type staticCredentials struct {
+	token     string
+	principal control.Principal
+	auth      control.Authorization
+}
+
+func (s staticCredentials) Authenticate(token string) (control.Principal, control.Authorization, error) {
+	if token == "" || token != s.token {
+		return control.Principal{}, control.Authorization{}, control.ErrNoCredential{}
+	}
+	return s.principal, s.auth, nil
+}
+
+// testConfig is the fully wired server every dispatch test starts from. Each field is
+// spelled here once so a test that needs to vary ONE of them varies exactly one.
+func testConfig(t *testing.T, auth identity.Authenticator) Config {
+	t.Helper()
+	return Config{
+		Auth:        auth,
+		Credentials: staticCredentials{token: testCredential, principal: testIdentity().Principal},
+		Source:      staticSource{scopes: benignWorld()},
+		Sessions:    mustSessions(t),
+		Log:         io.Discard,
+	}
+}
+
+// testCredential is SYNTHETIC. See `fixtures_test.go` for the rule.
+const testCredential = "fixture-credential-value-which-is-not-a-real-token"
+
 func newTestServer(t *testing.T, auth identity.Authenticator) *Server {
 	t.Helper()
-	srv, err := New(auth, staticSource{scopes: benignWorld()})
+	srv, err := New(testConfig(t, auth))
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)
 	}
 	return srv
+}
+
+// ledgerClasses returns the class field of a classed ledger line, or "" for a row with
+// no class.
+func ledgerClasses(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 3 {
+		return ""
+	}
+	return fields[2]
+}
+
+// contentRoutes and publicRoutes walk the LEDGER rather than naming paths, so a row
+// added later is covered on the day it is added.
+func contentRoutes() []string {
+	var out []string
+	for _, line := range DeclaredRouteLedger() {
+		if strings.Contains(ledgerClasses(line), "content") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func publicRoutes() []string {
+	var out []string
+	for _, line := range DeclaredRouteLedger() {
+		if strings.Contains(ledgerClasses(line), "public") {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 // TestEveryServedPathComesFromTheLedger closes the blind spot `DeclaredRoutes`'s own
@@ -88,21 +179,26 @@ func newTestServer(t *testing.T, auth identity.Authenticator) *Server {
 func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 
-	// POSITIVE CONTROL: a declared route really is served, so the refusals below are
-	// not "this handler refuses everything".
+	// POSITIVE CONTROL: every GET route really is served, so the refusals below are
+	// not "this handler refuses everything". The POST rows are excluded because they
+	// answer a redirect rather than a 200 — `TestTheWholeSessionLifecycle` is what
+	// drives those.
 	served := 0
-	for _, route := range DeclaredRoutes() {
+	for _, route := range DeclaredRouteLedger() {
 		method, path, _ := splitRoute(route)
+		if method != http.MethodGet {
+			continue
+		}
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 		if rec.Code != http.StatusOK {
-			t.Errorf("declared route %s answered %d, not 200", route, rec.Code)
+			t.Errorf("declared route %s %s answered %d, not 200", method, path, rec.Code)
 			continue
 		}
 		served++
 	}
 	if served == 0 {
-		t.Fatal("NO declared route answered 200, so the refusals below prove nothing about routing")
+		t.Fatal("NO declared GET route answered 200, so the refusals below prove nothing about routing")
 	}
 
 	// An undeclared path gets the SAME uniform refusal a bad credential gets — never
@@ -111,12 +207,20 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 	// of naming it: it WAS a row, and the row was removed because the page behind it
 	// and the page behind `GET /` are the same page. A path that stops being a route
 	// must get the uniform refusal, not a 404 and not a stale handler.
+	//
+	// ⚠ EVERY PROBE IS A GET AND THE NEAR-MISSES OF THE PUBLIC ROWS ARE IN IT. A POST
+	// probe would be refused by the same-origin gate before the ledger is ever
+	// consulted, so it would measure gate (2) rather than routing and would pass with
+	// the ledger deleted. The public rows themselves are NOT probed here: they answer
+	// 200 to anybody by design, which is the narrowing `routes` states.
 	for _, probe := range [][2]string{
 		{"GET", "/entries"},
 		{"GET", "/entries/"},
 		{"GET", "/admin"},
-		{"POST", "/"},
 		{"GET", "/entriesx"},
+		{"GET", "/sign-out"},
+		{"GET", "/sign-in/"},
+		{"GET", "/sign-inx"},
 	} {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(probe[0], probe[1], nil))
@@ -125,7 +229,34 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 				"gets, so the URL space is not mappable", probe[0], probe[1], rec.Code)
 		}
 	}
-	t.Logf("routing: %d declared route(s) served 200, 5 undeclared probe(s) refused 401", served)
+	// 🔴 AND THE STATE-CHANGING PROBES, WITH A CORRECT ORIGIN SO THEY MEASURE ROUTING.
+	// `POST /` was in the list above before Phase B; it moved here because the
+	// same-origin gate now runs BEFORE the ledger, so a POST without an `Origin` would
+	// be refused at 403 by gate (2) and the probe would pass with the ledger deleted.
+	// Giving it a correct origin puts the ledger back in the path.
+	crossed := 0
+	for _, probe := range [][2]string{
+		{"POST", "/"},
+		{"POST", "/admin"},
+		{"PUT", "/sign-out"},
+		{"DELETE", "/sign-in"},
+	} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(probe[0], probe[1], nil)
+		r.Header.Set("Origin", "https://"+r.Host)
+		srv.ServeHTTP(rec, r)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s with a correct Origin answered %d; an undeclared method/path pair must get the same "+
+				"uniform 401 a bad credential gets", probe[0], probe[1], rec.Code)
+			continue
+		}
+		crossed++
+	}
+	if crossed == 0 {
+		t.Error("NO same-origin state-changing probe reached the uniform 401, so the ledger is not in their path")
+	}
+	t.Logf("routing: %d declared GET route(s) served 200, 7 undeclared GET probe(s) refused 401, "+
+		"%d same-origin state-changing probe(s) refused 401", served, crossed)
 }
 
 // countingSource records whether the authority was consulted, and is the whole
@@ -157,15 +288,18 @@ func (c *countingSource) Visible(control.Authorization) ([]Scope, error) {
 // ⚠ IT PINS "ASKED", NOT "RENDERED WHAT IT WAS TOLD". The differential fixture in
 // `render_test.go` is what measures the second.
 func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
-	declared := DeclaredRoutes()
+	declared := contentRoutes()
 	if len(declared) == 0 {
-		t.Fatal("DeclaredRoutes is EMPTY, so this test iterates nothing and passes vacuously")
+		t.Fatal("NO route in the ledger carries the `content` class, so this test iterates nothing and passes " +
+			"vacuously. If a content route stopped being classed as one, the class is the thing to fix.")
 	}
 
 	for _, route := range declared {
 		method, path, _ := splitRoute(route)
 		source := &countingSource{scopes: benignWorld()}
-		srv, err := New(staticAuth{testIdentity()}, source)
+		cfg := testConfig(t, staticAuth{testIdentity()})
+		cfg.Source = source
+		srv, err := New(cfg)
 		if err != nil {
 			t.Fatalf("the server did not build: %v", err)
 		}
@@ -198,7 +332,9 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 	// measurement rather than a counter that only goes up. The health path is answered
 	// before the chain and before the ledger, and must consult nobody.
 	health := &countingSource{scopes: benignWorld()}
-	srv, err := New(staticAuth{testIdentity()}, health)
+	cfg := testConfig(t, staticAuth{testIdentity()})
+	cfg.Source = health
+	srv, err := New(cfg)
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)
 	}
@@ -208,24 +344,90 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 		t.Errorf("the health path consulted the authority %d time(s); it is answered before the chain runs and "+
 			"must read nothing", health.calls)
 	}
-	t.Logf("authority consulted: once per declared route (%d route(s)), 0 times on %s",
-		len(declared), HealthPath)
+
+	// 🔴 AND THE HOLE THE `content` CLASS ITSELF OPENS, CLOSED BY DERIVING THE CLASS
+	// RATHER THAN TRUSTING IT. The loop above walks the rows that DECLARE themselves
+	// content, so a new page route added without the class would be skipped by it —
+	// and the ledger test above passes for a row written out with no class at all. So:
+	// any non-public route that answers 200 with an HTML body IS a content route,
+	// whatever its class says, and must carry the class.
+	classified := 0
+	for _, route := range DeclaredRouteLedger() {
+		if strings.Contains(ledgerClasses(route), "public") {
+			continue
+		}
+		method, path, _ := splitRoute(route)
+		if method != http.MethodGet {
+			continue
+		}
+		rec := httptest.NewRecorder()
+		srv := newTestServer(t, staticAuth{testIdentity()})
+		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		isHTML := rec.Code == http.StatusOK &&
+			strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html")
+		if !isHTML {
+			continue
+		}
+		classified++
+		if !strings.Contains(ledgerClasses(route), "content") {
+			t.Errorf("%s answers 200 with an HTML body and is NOT classed `content`, so the walk above skips it "+
+				"and nothing requires it to consult the authority. `Page`'s empty branch asserts an answer about "+
+				"AUTHORITY; a route that renders it either asks or is not a route. Add the class.", route)
+		}
+	}
+	if classified == 0 {
+		t.Fatal("NO non-public route answered 200 with an HTML body, so the derivation above inspected nothing " +
+			"and could not have contradicted any row's class")
+	}
+
+	t.Logf("authority consulted: once per declared content route (%d route(s)), 0 times on %s; %d HTML-answering "+
+		"route(s) cross-checked against the class they declare", len(declared), HealthPath, classified)
 }
 
 // TestAnUnauthenticatedRequestReachesNoRenderer pins that the chain runs BEFORE the
 // ledger is consulted — a refusal must not depend on which path was asked for.
 func TestAnUnauthenticatedRequestReachesNoRenderer(t *testing.T) {
 	srv := newTestServer(t, refusingAuth{})
-	for _, route := range DeclaredRoutes() {
+	checked := 0
+	for _, route := range DeclaredRouteLedger() {
+		if strings.Contains(ledgerClasses(route), "public") {
+			continue
+		}
 		method, path, _ := splitRoute(route)
 		rec := httptest.NewRecorder()
-		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		r := httptest.NewRequest(method, path, nil)
+		// The same-origin gate runs BEFORE the chain, so a POST row without an Origin
+		// would be refused at 403 and this test would report a refusal it did not
+		// measure. Setting a correct Origin makes the chain the only thing left that
+		// can refuse.
+		r.Header.Set("Origin", "https://"+r.Host)
+		srv.ServeHTTP(rec, r)
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s answered %d for an unauthenticated caller, not 401", route, rec.Code)
 		}
 		if body := rec.Body.String(); body != "unauthorized" {
 			t.Errorf("%s answered %q; the refusal body must be uniform and carry no reason — a reason that "+
 				"reaches the wire is an enumeration API", route, body)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("every declared route is PUBLIC, so this test skipped all of them and measured nothing. A " +
+			"surface on which no row is behind the chain is a surface with no authentication.")
+	}
+
+	// The PUBLIC rows are the stated exception and they must answer WITHOUT a
+	// credential, or the sign-in flow is unreachable and the surface has no way in.
+	for _, route := range publicRoutes() {
+		method, path, _ := splitRoute(route)
+		if method != http.MethodGet {
+			continue
+		}
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("the public row %s answered %d for an unauthenticated caller; a sign-in page behind the "+
+				"authentication chain is a door locked from the inside", route, rec.Code)
 		}
 	}
 
@@ -263,23 +465,33 @@ func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 		t.Errorf("X-Content-Type-Options is %q; every byte of this body came out of a store entry, and a "+
 			"browser that content-sniffs can be talked into a different type by the leading bytes", got)
 	}
+	// 🔴 THE POLICY IS PINNED AS A LITERAL HERE RATHER THAN READ FROM
+	// `ContentSecurityPolicy`, AND THAT IS THE POINT. A test comparing the header
+	// against the constant the handler sets is a test that `a == a`: it goes green for
+	// every edit of the constant, including one that deletes `default-src 'none'`.
+	// The literal below is the contract; changing it is a decision somebody takes here.
+	const want = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'"
 	if got := rec.Header().Get("Content-Security-Policy"); got == "" {
 		t.Error("no Content-Security-Policy was sent")
-	} else if !slices.Contains([]string{"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"}, got) {
-		t.Errorf("the Content-Security-Policy is %q, which is not the policy this surface declares. It permits "+
-			"no script at all, which is a SECOND barrier behind the escaping — widening it is a decision, not a "+
-			"tidy-up.", got)
+	} else if got != want {
+		t.Errorf("the Content-Security-Policy is %q, want %q. It permits no script at all, which is a SECOND "+
+			"barrier behind the escaping — widening it is a decision, not a tidy-up. `form-action 'self'` is as "+
+			"wide as it goes: it admits this surface's own sign-in and sign-out forms and refuses a form that "+
+			"posts anywhere else.", got, want)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Errorf("Content-Type is %q", got)
 	}
 }
 
+// splitRoute parses a ledger line. It accepts BOTH spellings — `"<METHOD> <path>"` and
+// `"<METHOD> <path> <classes>"` — because both ledgers are read here and a parser that
+// silently folded a class into the path would make a route probe drive `"/ content"`,
+// get the uniform 401 it expects for an unknown path, and pass.
 func splitRoute(route string) (method, path string, ok bool) {
-	for i := 0; i < len(route); i++ {
-		if route[i] == ' ' {
-			return route[:i], route[i+1:], true
-		}
+	fields := strings.Fields(route)
+	if len(fields) < 2 {
+		return "", "", false
 	}
-	return "", "", false
+	return fields[0], fields[1], true
 }

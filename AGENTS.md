@@ -93,7 +93,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
-| `cmd/cairn-ui`, `internal/ui` | P-A: the BROWSER surface — one page, gomponents, deployed by nothing; 📄 its own README |
+| `cmd/cairn-ui`, `internal/ui` | P-A/P-B: the BROWSER surface — pages, gomponents, COOKIE SESSIONS, deployed by nothing; 📄 its own README |
 | `internal/depspolicy` | the ALLOWLIST and import BAN that replaced `vendorHash = null` |
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
 | `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |
@@ -312,6 +312,25 @@ it on every route. A new module moves BOTH, and only `internal/ui` may import on
 job's `ok` floor notices, and only per PACKAGE. 🔴 **gomponents does NOT neutralise a URL
 scheme**: hrefs go through `safeHref`, `Raw`/`Rawf` are AST-banned.
 📄 `internal/depspolicy`'s package doc (the claim, ONCE); `internal/ui/README.md`.
+
+## 🔴 BROWSER SESSIONS ARE SERVER-SIDE AND REVOCABLE, AND THAT IS THE WHOLE POINT
+
+A client-held JWT was refused because it has no server-side logout. Sessions are rows in
+`identity.FileSessionStore` — a rewritten (not appended) 0600 file under an exclusive
+`flock`, re-read under it, `Sync`ed before success. 🔴 **IT STORES `sha256(id)`, NEVER THE
+ID**, and `Lookup`'s scan does NOT short-circuit. 🔴 **THE COOKIE BACKEND IS THIRD OF FOUR
+IN `identity.Backends`: every HEADER-borne credential is tried before the AMBIENT one**, so
+a bearer token beats a stale cookie. `TrustedHeader` is still absent from the UI chain.
+
+🔴 **TWO CROSS-SITE GATES, BOTH DERIVED FROM THE METHOD RATHER THAN OPTED INTO BY A ROW**
+(`stateChanging`): same-origin (`Origin` vs `Host`, missing = REFUSED) **before** auth, so
+it covers the PUBLIC sign-in row; then a per-session CSRF token **after** auth, so the token
+gate is reachable rather than shadowed. The token is `HMAC(key=session id)` — computable
+from the cookie, not from the store, and it dies with the session. Route rows carry only
+`public`/`content`; a class can only make a route LESS protected, so each is hand-written in
+the ledger test. ⚠ The public rows make the URL space mappable **to the extent of those two
+paths** — a stated narrowing of Phase A's uniform 401. CSP moved `form-action` `'none'` →
+`'self'`. 📄 `internal/ui/README.md` for the rejected storage options and every RED proof.
 
 ## 🔴 SEVERAL INSTANCES: AN UNROUTED SCOPE REFUSES
 

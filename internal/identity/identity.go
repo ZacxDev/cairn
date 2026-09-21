@@ -181,13 +181,33 @@ func refuse(backend, reason string) error { return &Refusal{Backend: backend, Re
 // Chain tries each authenticator in order and takes the first that succeeds.
 //
 // 🔴 ORDER IS A SECURITY DECISION, AND THE RECOMMENDED ONE IS FIXED BY `Backends`:
-// machine token, then Supabase JWT, then trusted header. Two reasons, both about what
-// happens when a request carries more than one credential. First, the machine token is
-// the only credential this pod MINTED and the only one whose revocation is one edit
-// away, so it must win where both are present. Second, the trusted-header backend is
-// last because it is the one whose source check is a property of the DEPLOYMENT rather
-// than of the request — see `TrustedHeader`, which refuses to exist at all unless an
-// operator has declared the deployment proxy-fronted.
+// machine token, then Supabase JWT, then cookie session, then trusted header. Three
+// reasons, all about what happens when a request carries more than one credential.
+// First, the machine token is the only credential this pod MINTED as a bearer token and
+// the only one whose revocation is one edit away, so it must win where both are present.
+// Second, the trusted-header backend is last because it is the one whose source check is
+// a property of the DEPLOYMENT rather than of the request — see `TrustedHeader`, which
+// refuses to exist at all unless an operator has declared the deployment proxy-fronted.
+//
+// 🔴 THIRD, AND THIS IS THE ONE THE FOURTH BACKEND ADDED: EVERY EXPLICITLY-PRESENTED
+// CREDENTIAL IS TRIED BEFORE THE ONE THE BROWSER SENDS BY ITSELF. A machine token and a
+// Supabase JWT arrive in an `Authorization` header, which no user agent sets on its own —
+// a caller had to decide to send it. A session cookie is AMBIENT: the browser attaches it
+// to every request to this origin, including one a different site caused. So a request
+// carrying both resolves as the header's principal, which is the one the caller chose;
+// the alternative ordering would let an old cookie silently shadow the credential
+// somebody deliberately presented, and the person debugging that would be reading a page
+// rendered for a principal they did not ask to be. ⚠ It is NOT a CSRF defence — a
+// cross-site request carries no `Authorization` header either, so this ordering changes
+// nothing about that case. The guard for it is in `internal/ui`.
+//
+// ⚠ AND THE COOKIE SITS BEFORE THE TRUSTED HEADER RATHER THAN AFTER, WHICH IS A CHOICE
+// BETWEEN TWO AMBIENT-ISH CREDENTIALS. The trusted header stays last because its
+// precondition is a deployment declaration an operator made once, so a request that
+// satisfies it satisfies it for every caller who can reach the socket; a session cookie
+// is at least a credential this surface minted for one browser. No deployment has both
+// today — `internal/ui/auth.go` refuses the trusted header outright — so this ordering
+// is a decision recorded before it can be reached rather than one anything exercises.
 //
 // 🔴 IT SHORT-CIRCUITS ON SUCCESS AND NOT ON FAILURE. Stopping at the first success
 // leaks which backend accepted — a fact the 200 already carries — while running every
@@ -241,16 +261,21 @@ var ErrNoBackends = errors.New("identity: no authentication backend is configure
 
 // Backends assembles the chain in the fixed order above, skipping nil backends.
 //
-// It takes the backends as explicit arguments rather than a slice so that adding a
-// fourth is an edit to this signature — a place somebody has to think about ordering —
-// rather than an append at a call site.
-func Backends(machine *MachineToken, supabase *SupabaseJWT, trusted *TrustedHeader) (Chain, error) {
+// It takes the backends as explicit arguments rather than a slice so that adding one is
+// an edit to this signature — a place somebody has to think about ordering — rather than
+// an append at a call site. ⚠ THE MECHANISM WORKED: `cookie` is the fourth, and adding it
+// broke every caller until each had decided where it goes. That is the whole point of the
+// positional shape and it is worth recording that it was paid rather than dodged.
+func Backends(machine *MachineToken, supabase *SupabaseJWT, cookie *CookieSession, trusted *TrustedHeader) (Chain, error) {
 	var chain Chain
 	if machine != nil {
 		chain = append(chain, machine)
 	}
 	if supabase != nil {
 		chain = append(chain, supabase)
+	}
+	if cookie != nil {
+		chain = append(chain, cookie)
 	}
 	if trusted != nil {
 		chain = append(chain, trusted)

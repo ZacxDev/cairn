@@ -2,8 +2,10 @@ package ui
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
@@ -86,8 +88,52 @@ func (s StoreSource) Visible(auth control.Authorization) ([]Scope, error) {
 
 // Server is the UI's HTTP surface.
 type Server struct {
-	auth   identity.Authenticator
-	source Source
+	auth        identity.Authenticator
+	credentials identity.TokenAuthority
+	source      Source
+	sessions    identity.SessionStore
+	ttl         time.Duration
+	now         func() time.Time
+	log         io.Writer
+}
+
+// Config is what [New] needs. A struct rather than seven positional parameters,
+// because six of them are interfaces and a call site that transposed two would still
+// compile.
+type Config struct {
+	// Auth is the chain every request is resolved against. See `AuthBackends`.
+	Auth identity.Authenticator
+	// Credentials resolves the bearer token a SIGN-IN FORM carries, and it is
+	// deliberately a `TokenAuthority` rather than an `Authenticator`.
+	//
+	// 🔴 A STRING IN, A PRINCIPAL OUT, AND NO `*http.Request` ANYWHERE NEAR IT. The
+	// sign-in exchange must resolve the credential the form carried and NOTHING the
+	// request also happens to carry — most of all not the session cookie the browser
+	// already holds. An `Authenticator` here would take the whole request, so the
+	// cookie backend would be in scope and a form submitted with a wrong token but a
+	// live cookie would "succeed" as the cookie's principal, minting a fresh session
+	// for a credential that was refused. Taking a string makes that unrepresentable
+	// rather than avoided by care.
+	Credentials identity.TokenAuthority
+	// Source is the store read, narrowed by the caller's authority.
+	Source Source
+	// Sessions is the durable session table sign-in writes to and sign-out removes
+	// from. It is the SAME store the cookie backend in `Auth` reads; two stores would
+	// be a logout that revokes a session nothing authenticates from.
+	Sessions identity.SessionStore
+	// TTL is a session's absolute lifetime. Zero means `identity.DefaultSessionTTL`;
+	// negative is refused.
+	TTL time.Duration
+	// Now is the clock, injected so expiry is testable without sleeping. It must be
+	// the same clock the session store uses, or a session can be live to one and dead
+	// to the other.
+	Now func() time.Time
+	// Log is where operational lines go. Nil means `io.Discard`.
+	//
+	// 🔴 NOTHING WRITTEN HERE MAY CARRY A SESSION ID, A CSRF TOKEN OR A PRESENTED
+	// CREDENTIAL. `TestNoSecretReachesTheLogOrThePage` is what measures that, with a
+	// positive control so the zero it reports is not a sink wired to nothing.
+	Log io.Writer
 }
 
 // ErrNoAuthenticator refuses a server with no way to authenticate anybody, at
@@ -99,25 +145,107 @@ var ErrNoAuthenticator = errors.New("ui: no authenticator was supplied, so no re
 // ErrNoSource refuses a server with nothing to render.
 var ErrNoSource = errors.New("ui: no source was supplied, so every page would render empty")
 
-// New builds the server.
-func New(auth identity.Authenticator, source Source) (*Server, error) {
-	if auth == nil {
+// ErrNoCredentials refuses a server whose sign-in form could never resolve anything.
+// Separate from `ErrNoAuthenticator` because they are separate wirings and an operator
+// reading a startup refusal needs to know which one is missing.
+var ErrNoCredentials = errors.New("ui: no credential authority was supplied, so no sign-in could ever succeed")
+
+// ErrNoSessions refuses a server with nowhere to put a session. Without it sign-in
+// would return a cookie nothing can resolve, which looks like a working sign-in
+// followed by an immediate, unexplained sign-out.
+var ErrNoSessions = errors.New("ui: no session store was supplied, so a sign-in could mint no session")
+
+// ErrNegativeTTL refuses a session lifetime that is negative. Zero is legal and means
+// the default; a negative one would mint sessions that are already expired, so every
+// sign-in would appear to succeed and every subsequent request would be refused.
+var ErrNegativeTTL = errors.New("ui: the session TTL is negative, so every session would be born expired")
+
+// New builds the server, refusing each missing part with its own sentinel.
+func New(cfg Config) (*Server, error) {
+	if cfg.Auth == nil {
 		return nil, ErrNoAuthenticator
 	}
-	if source == nil {
+	if cfg.Credentials == nil {
+		return nil, ErrNoCredentials
+	}
+	if cfg.Source == nil {
 		return nil, ErrNoSource
 	}
-	return &Server{auth: auth, source: source}, nil
+	if cfg.Sessions == nil {
+		return nil, ErrNoSessions
+	}
+	if cfg.TTL < 0 {
+		return nil, ErrNegativeTTL
+	}
+	ttl := cfg.TTL
+	if ttl == 0 {
+		ttl = identity.DefaultSessionTTL
+	}
+	now := cfg.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	out := cfg.Log
+	if out == nil {
+		out = io.Discard
+	}
+	return &Server{
+		auth:        cfg.Auth,
+		credentials: cfg.Credentials,
+		source:      cfg.Source,
+		sessions:    cfg.Sessions,
+		ttl:         ttl,
+		now:         now,
+		log:         out,
+	}, nil
 }
 
 // ServeHTTP dispatches from the ledger and from nothing else.
+//
+// 🔴 THE ORDER OF THE GATES IS THE SECURITY MODEL, AND EACH ONE IS DERIVED FROM THE
+// REQUEST RATHER THAN OPTED INTO BY A ROW:
+//
+//  1. the health path, before everything, because a readiness probe broken by a
+//     security guard is how the guard gets deleted;
+//  2. the SAME-ORIGIN gate, on every state-changing method, before authentication —
+//     it costs nothing, it needs no credential, and it is the only thing standing in
+//     front of a cross-site POST to the PUBLIC sign-in row, which by definition has no
+//     session to carry a token;
+//  3. public rows, dispatched with a zero `identity.Identity`;
+//  4. the authentication chain, whose refusal is uniform across every remaining path;
+//  5. the ledger, so an unknown path is indistinguishable from a bad credential;
+//  6. the CSRF TOKEN gate, on every state-changing method that got this far.
+//
+// 🔴 THE CSRF GATE IS AFTER AUTHENTICATION ON PURPOSE, AND THAT IS WHAT MAKES IT
+// REACHABLE RATHER THAN SHADOWED. A token check placed ahead of the chain would refuse
+// every unauthenticated request before the chain ever ran, so a test asserting "a
+// request without a token is refused" would pass against a server whose token check did
+// nothing at all. Here the only way to reach it is to be authenticated, which is the
+// case `TestTheCSRFGuardIsReachedByAnAUTHENTICATEDRequest` builds.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Before everything, and the only thing before auth.
+	// (1) Before everything, and the only thing before the origin gate.
 	if r.URL.Path == HealthPath {
 		writePlain(w, http.StatusOK, healthBody)
 		return
 	}
 
+	// (2) Same origin, for every method that can change something.
+	if stateChanging(r) && !sameOrigin(r) {
+		writePlain(w, http.StatusForbidden, crossSiteRefusal)
+		return
+	}
+
+	rt, known := routes[routeKey{method: r.Method, path: r.URL.Path}]
+
+	// (3) A public row runs with no identity at all. The zero value is passed rather
+	// than a synthesized one so a handler that mistakenly read `id.Auth` would see the
+	// zero `control.Authorization`, which permits nothing.
+	if known && rt.class&classPublic != 0 {
+		rt.handle(s, w, r, identity.Identity{})
+		return
+	}
+
+	// (4)
 	id, err := s.auth.Authenticate(r)
 	if err != nil || !id.Valid() {
 		// 🔴 THE SAME UNIFORM REFUSAL THE POD GIVES, FOR THE SAME REASON, AND IT
@@ -127,18 +255,57 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		//
 		// ⚠ `WWW-Authenticate` IS NOT SENT, DELIBERATELY. A browser that receives it
 		// raises a native basic-auth dialog, which is a credential prompt this
-		// surface does not implement and cannot honour. The sign-in flow is a later
-		// phase; until it exists, a bare 401 is the honest answer.
+		// surface does not implement and cannot honour.
+		//
+		// ⚠ AND IT IS NOT A REDIRECT TO THE SIGN-IN PAGE, WHICH IS THE OBVIOUS
+		// BROWSER-FRIENDLY THING AND WAS REFUSED. A 303 for `GET /` beside a 401 for
+		// `GET /admin` tells an unauthenticated caller which paths are real, which is
+		// the enumeration this uniform answer exists to prevent. The cost is that a
+		// browser landing on `/` sees plain text; the entry point is `/sign-in`, and
+		// widening the answer is a decision a later phase can make deliberately.
 		writePlain(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	route, known := routes[routeKey{method: r.Method, path: r.URL.Path}]
+	// (5)
 	if !known {
 		writePlain(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	route(s, w, r, id)
+
+	// (6)
+	if stateChanging(r) && !csrfTokenValid(r) {
+		writePlain(w, http.StatusForbidden, csrfRefusal)
+		return
+	}
+
+	rt.handle(s, w, r, id)
+}
+
+// stateChanging is the ONE predicate that decides which requests the two cross-site
+// gates apply to, so there is no second spelling to disagree with it.
+//
+// 🔴 IT IS A DENYLIST OF SAFE METHODS RATHER THAN AN ALLOWLIST OF UNSAFE ONES, WHICH IS
+// THE OPPOSITE OF `safeHref`'s ruling AND CORRECT FOR THE OPPOSITE REASON. There the
+// permitted set is small and closed (two URL schemes) while the dangerous set is open;
+// here the SAFE set is the closed one — `GET`, `HEAD` and `OPTIONS` are defined as
+// having no side effects — and the unsafe set is open, because a method this server does
+// not dispatch today is a method somebody may add tomorrow. Listing the unsafe ones
+// would make a new verb default to unguarded.
+func stateChanging(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
+	}
+}
+
+func writePlain(w http.ResponseWriter, code int, body string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	_, _ = w.Write([]byte(body))
 }
 
 // handlePage is the ONE content handler, and there is one because a page that does
@@ -153,15 +320,28 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	s.renderPage(w, id, scopes)
+	// 🔴 THE CSRF TOKEN RENDERED INTO THIS PAGE IS DERIVED FROM THE COOKIE ON THIS
+	// REQUEST, NOT FROM THE IDENTITY. A page reached with an `Authorization` header and
+	// no cookie therefore renders an EMPTY token, and its sign-out button will be
+	// refused by gate (6) — which is correct rather than a gap: there is no session for
+	// that caller to sign out of. Deriving it from the identity would require the
+	// identity to carry a session id, and `identity.Identity` deliberately carries no
+	// backend discriminator at all.
+	s.renderPage(w, id, scopes, csrfTokenFor(r))
 }
 
-func (s *Server) renderPage(w http.ResponseWriter, id identity.Identity, scopes []Scope) {
+func (s *Server) renderPage(w http.ResponseWriter, id identity.Identity, scopes []Scope, csrf string) {
 	var b strings.Builder
-	if err := Page(id.Principal.Display, scopes).Render(&b); err != nil {
+	if err := Page(id.Principal.Display, scopes, csrf).Render(&b); err != nil {
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}
+	writeHTML(w, http.StatusOK, b.String())
+}
+
+// writeHTML is the ONE place an HTML response's headers are chosen, so the sign-in page
+// and the content page cannot end up under different policies.
+func writeHTML(w http.ResponseWriter, code int, body string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// 🔴 `nosniff` IS NOT DECORATION HERE. Every byte of the body below came out of
 	// a store entry somebody wrote, and a browser that content-sniffs a response it
@@ -171,14 +351,19 @@ func (s *Server) renderPage(w http.ResponseWriter, id identity.Identity, scopes 
 	// which is a SECOND barrier behind the escaping rather than a replacement for
 	// it — the escaping is the guard, and `TestHostileEntryTextIsEscaped` is what
 	// measures it.
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(b.String()))
-}
-
-func writePlain(w http.ResponseWriter, code int, body string) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", ContentSecurityPolicy)
 	w.WriteHeader(code)
 	_, _ = w.Write([]byte(body))
 }
+
+// ContentSecurityPolicy is the policy every HTML response carries.
+//
+// 🔴 `form-action 'self'` WHERE PHASE A HAD `'none'`, AND THE WIDENING IS A DECISION
+// RATHER THAN A CONSEQUENCE. `'none'` forbids a form submission outright, so the sign-in
+// and sign-out forms would be inert in a conforming browser — the policy would have
+// silently disabled the feature rather than refusing to ship it. `'self'` still refuses
+// a form that posts anywhere but this origin, which is the property `'none'` was buying
+// on a page that had no forms: it means an injected `<form action="//elsewhere">` cannot
+// exfiltrate whatever a user types. Nothing else moved; there is still no `script-src`,
+// so no script runs at any origin.
+const ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'"

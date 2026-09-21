@@ -409,3 +409,273 @@ UNCHANGED  tests/conformance/golden/root-path.json    8a715a7fbafda493…
 - **A revoked credential.** This binary has no SIGHUP reload path, so a revocation takes a
   restart. That is a real operational difference from the pod and not something to assume
   away from the shared `control.Cache` type.
+
+---
+
+# Phase B — cookie sessions, CSRF, logout and expiry
+
+## 🔴 The storage decision, and the three shapes it beat
+
+The operator chose cookie sessions **over a client-held JWT**, and the stated reason was that
+a JWT has no server-side logout: it is valid until its `exp` and nothing can take it back. So
+**"logout actually revokes" is a requirement**, and it is what priced the four options.
+
+| option | verdict | why |
+|---|---|---|
+| **(a) a file-backed store shaped like `control.FileStore`** | **CHOSEN** | durable across restart, revocable in one write, reuses mechanics this repo has already measured: exclusive `flock`, re-read UNDER the lock, `Sync` before success |
+| (b) sessions as events in the control journal | rejected | `control.FileStore.Model` re-reads and REPLAYS the whole journal on **every** call and every authenticated request calls it — so session churn, the highest-rate write here, makes every authorization decision monotonically slower forever at a rate set by login volume. The category objection stands beside that and would survive a fix: the journal answers "who could see this, and when", and an operator reading it for a grant history would be reading it through session noise |
+| (c) a signed stateless cookie plus a revocation list | rejected | it is (a) with extra parts. The revocation list is a durable store that must survive restart or logout is a lie, so nothing is saved; it adds a signing key, which is a new secret with a new rotation story; and entries must be kept until each revoked token's `exp`, so it is a store that can only GROW. A session id is already an unguessable 256-bit value — signing it proves nothing the lookup does not |
+| (d) in-memory only | rejected | every restart signs everybody out, which on a rolling deploy is not rare. And it is a **new kind** of multi-replica failure rather than a worse version of the declared one |
+
+⚠ **On (d) and `internal/control/README.md`'s "two pods over one journal" blind spot, precisely.**
+That blind spot is *divergence about one durable truth* — two caches at different epochs, which
+converges. An in-memory session table has no shared truth to converge on: a session opened on pod
+A does not exist on pod B and never will, so a load balancer without sticky sessions signs the user
+out on a random fraction of requests. (d) makes the declared blind spot worse **in that sense**.
+🔴 **And the honest half: (a) does not FIX replication either** — it inherits exactly the journal's
+shared-filesystem assumption, no more and no less, and it ends where the journal's does, at the
+second `control.Store` implementation.
+
+### Where it diverges from `control.FileStore`, and why
+
+`FileSessionStore` **rewrites** where the journal **appends**. The journal is append-only because
+the authority it holds is; a session table's whole content is the set of sessions live *right now*.
+Appending would mean a file growing without bound at login rate, a replay getting slower forever,
+and a revocation that is a later line SHADOWING an earlier one rather than an absence. The rewrite
+forces the lock onto a **side file**, for the reason `internal/write/atomic.go` already records: a
+temp-file-plus-rename changes the inode, so a lock on the old one is held on a file nobody is
+looking at. Third site, same ruling, not a fourth answer.
+
+Two more rulings that deliberately differ from the journal's:
+
+- **a malformed line is REFUSED, not skipped.** There, an unreadable journal degrades to
+  last-known-good because an empty authority is a total outage. Here the content is a set of live
+  credentials and the next write rewrites the whole file, so a skipped line is a session silently
+  dropped — a user signed out with no error anywhere — and a `Revoke` that reports success having
+  rewritten a file that never held the record it was asked to remove.
+- **a store that cannot be read refuses every session.** Serving from a remembered copy would be
+  serving credentials somebody may have just withdrawn.
+
+## 🔴 Where the fourth backend sits in the chain, and why
+
+`identity.Backends(machine, supabase, cookie, trusted)` — the cookie is **third of four**. The
+positional signature did its job: adding it broke every caller until each had decided.
+
+The new rule, beside the two `Chain`'s comment already carried: **every explicitly-presented
+credential is tried before the one the browser sends by itself.** An `Authorization` header is
+set by a caller who decided to; a cookie is *ambient* — the user agent attaches it to every
+request to this origin, including one a different site caused. A request carrying both resolves
+as the header's principal. The other ordering lets a stale cookie silently shadow a deliberately
+presented credential, and the person debugging it is reading a page rendered for a principal they
+did not ask to be.
+
+⚠ It is **not** a CSRF defence: a cross-site request carries no `Authorization` header either, so
+the ordering changes nothing there. ⚠ The cookie sits *before* the trusted header because the
+latter's precondition is a deployment declaration — satisfied for every caller who can reach the
+socket — while a cookie is at least a credential this surface minted for one browser. No
+deployment has both; `ui.AuthBackends` refuses the trusted header outright, so that half of the
+ordering is a decision recorded before it can be reached.
+
+**`TrustedHeader` is still absent from the UI chain**, and the pin is now taken over the *widest*
+chain `AuthBackends` can build — with a cookie backend present — because a pin over the narrowest
+would go green for a constructor that forwarded a trusted header only when a cookie was also
+supplied.
+
+## 🔴 The two cross-site gates, and why neither is a route class
+
+`Server.ServeHTTP` runs six gates in a fixed order. The two that matter here are **derived from
+the METHOD** (`stateChanging`), never opted into by a row:
+
+1. **same-origin**, on every state-changing method, **before** authentication. It compares
+   `Origin` against `Host`. That sounds circular and is not: a browser sets `Origin` from the page
+   that MADE the request and will not let that page lie, so an attacker's page sends its own
+   origin with our host. A **missing `Origin` is refused** — fail-closed, at the cost that a
+   `curl` driving this surface must set the header. It runs before auth because that is the only
+   thing standing in front of the **public** sign-in row, which by definition has no session to
+   carry a token. ⚠ The scheme is deliberately not compared: this process cannot know whether it
+   is behind a TLS-terminating proxy without trusting `X-Forwarded-Proto`, which is the
+   `TrustedHeader` hazard in miniature.
+2. **the per-session CSRF token**, **after** authentication — which is what makes it *reachable*
+   rather than shadowed. A token check ahead of the chain would refuse every anonymous request
+   first, so "a POST without a token is refused" would pass against a server whose token check did
+   nothing at all.
+
+🔴 **A class can only make a route LESS protected**, which is why there are exactly two
+(`public`, `content`) and why neither is `csrf`: a per-row opt-in to a security check is a check
+somebody forgets to opt a new row into, silently. Each class is spelled out in the hand-written
+ledger in `routes_test.go`, so adding a row means writing its class by hand.
+
+⚠ **A stated narrowing.** Before Phase B every path but `/healthz` answered the same uniform 401,
+so an unauthenticated caller could not tell a route from a typo. `GET /sign-in` answers 200 to
+anybody — the URL space is now mappable **to the extent of the two public rows**, which a sign-in
+flow has to advertise anyway. The property still holds in full for every authenticated row.
+`GET /` was **not** made to redirect to `/sign-in`, though that is the browser-friendly thing: a
+303 for `/` beside a 401 for `/admin` is exactly the enumeration the uniform answer prevents.
+
+**CSP moved `form-action 'none'` → `'self'`.** `'none'` forbids form submission outright, so both
+forms would have been inert in a conforming browser — the policy would have silently disabled the
+feature rather than refusing to ship it. `'self'` still refuses a form posting anywhere else, so an
+injected `<form action="//elsewhere">` cannot exfiltrate what a user types. Nothing else moved;
+there is still no `script-src`. The header test pins the policy as a **literal**, not against the
+constant the handler reads, because the latter is a test that `a == a`.
+
+## 🔴 The CSRF token is derived, not stored
+
+`CSRFTokenFor(id) = base64url(HMAC-SHA256(key = the session id, msg = "cairn-csrf-v1"))`. No second
+secret, no second stored field, and three properties fall out:
+
+- **computable from the COOKIE and nothing else.** A cross-site attacker can make the browser
+  *send* the cookie but not *read* it (`HttpOnly` stops script, the same-origin policy stops a
+  response being read), so they cannot derive the token. That is the whole CSRF property.
+- **not computable from the STORE.** The store holds `sha256(id)`, and a digest is not a key — so
+  somebody who reads the session file cannot mint a token. A stored random token would have made
+  that file a forgery kit.
+- **rotates and dies with the session for free.**
+
+⚠ It is rendered into the page on purpose; that is what a hidden form field is. Disclosing a MAC
+does not disclose its key. `hmac.Equal` compares it, and **there** constant time is load-bearing:
+the presented value is chosen by the requester, so an early-returning comparison is an oracle
+anybody can drive — submit, measure, extend by one byte, repeat.
+
+## The cookie, and one unverified claim
+
+`__Host-cairn-session`, `HttpOnly`, `Secure` (unconditional), `SameSite=Lax`, `Path=/`, no
+`Domain`. Each flag refuses something specific rather than being good practice — see
+`session.go`. Two are worth repeating here:
+
+- `Secure` has **no opt-out**, because an env var to disable it for local development is a
+  variable that ends up set in production.
+- `SameSite=Lax` rather than `Strict` so an ordinary link into the surface still works, and it is
+  **not** treated as the guard: it is a browser-side property this server cannot verify, and
+  "same site" still includes a sibling subdomain.
+
+🔴 **`__Host-` and the `Secure`-on-`http://localhost` allowance are claims about BROWSERS and
+nothing here has measured either.** The prefix's value is that a sibling host cannot plant a
+cookie we will honour — session fixation performed entirely outside this process, invisible to
+every guard in this package. Its failure direction is safe (a browser that ignores the prefix
+treats it as an ordinary name), so being wrong costs a guard we thought we had, not an opening.
+
+## The seven properties, each proven RED
+
+Every mutant below was confirmed to **BUILD** first — a mutant that dies at the compiler proves
+nothing — and each is asserted to fail with **its own message**, because a kill by a different arm
+is a misattribution that reports a deleted check as covered.
+
+| # | property | mutant | killed by, with its own message |
+|---|---|---|---|
+| 1 | cookie flags | `HttpOnly: true` → `false` | `…does not carry HttpOnly` (constructor **and** real sign-in) |
+| 1 | | `Secure: true` → `false` | `…does not carry Secure` |
+| 1 | | `SameSiteLaxMode` → `SameSiteNoneMode` | `…does not carry SameSite=Lax` |
+| 2 | CSRF | the gate `if false && …` | `THE STATE CHANGE WAS PERFORMED` |
+| 2 | | `csrfTokenValid` → `return true` | `THE STATE CHANGE WAS PERFORMED` |
+| 2 | | the HMAC keyed on the LABEL instead of the id | `…derive the SAME CSRF token` |
+| 3 | comparison | `hmac.Equal` → `==` | `NO \`hmac.Equal\` CALL REMAINS` |
+| 3 | | `subtle.ConstantTimeCompare` → `==` (plus the import) | ``NO `subtle.ConstantTimeCompare` CALL REMAINS`` |
+| 3 | scan | a `break` on match | `THE SCAN SHORT-CIRCUITS` (8, 8, 8 over 8 records → 1, 8, 8) |
+| 3 | entropy | `SessionIDBytes` 32 → 16 | `SessionIDBytes is 16, want 32` |
+| 4 | expiry | `Live` → `return true` | `AN EXPIRED SESSION WAS SERVED` |
+| 4 | | `now.Before(exp)` → `!now.After(exp)` | `the expiry instant itself` |
+| 5 | logout | `Revoke` becomes a no-op | `THE REVOKED COOKIE STILL AUTHENTICATES` |
+| 5 | | a process-local memo absorbs revocations but not creations — **option (d) in one edit** | `THE REVOKED SESSION CAME BACK AFTER A RESTART` |
+| 6 | fixation | the sign-in revocation removed | `THE PRE-SIGN-IN SESSION IS STILL LIVE` |
+| 7 | secrets | the session id added to the sign-in log line | `THE LOG CONTAINS the session id` |
+| 7 | | the submitted token echoed into the refusal page | `THE REFUSED SIGN-IN PAGE CONTAINS the wrong credential` |
+| — | origin gate | `if false && …` | five arms, `want 403` |
+| — | | a missing `Origin` accepted | `no Origin header at all` |
+| — | chain order | the cookie appended FIRST | `…resolved to … the COOKIE's principal` |
+| — | UI chain | `AuthBackends` forwards a live `TrustedHeader` | `THE UI CHAIN CONTAINS 1 *identity.TrustedHeader MEMBER(S)` |
+| — | authority | the content route skips `Source.Visible` | `…rendered a page WITHOUT consulting the authority` |
+| — | ledger | an undeclared `public` row added | `the declared route set is …` |
+| — | class | a second HTML route added WITHOUT the `content` class | `GET /dup answers 200 with an HTML body and is NOT classed \`content\`` |
+| — | class | the one content route's class removed | `NO route in the ledger carries the \`content\` class` (the vacuity arm) |
+
+**25 mutants, 25 killed, 0 survived**, after two were re-cut:
+
+- 🔴 **one mutant was REFUSED A KILL BY THE PAIR ASSERTION, and that is the finding.** The first
+  "logout is not durable" mutant skipped the rename entirely — which breaks *creation* too, so
+  `TestLogoutRevokes…` failed on its OTHER arm (*the untouched session did not survive the
+  restart*) rather than on the revocation one. The pair assertion exists precisely so a store that
+  refuses everything cannot score a kill, and it worked. It was re-cut as the option-(d) memo above,
+  which is narrower **and more faithful**: creation persists, revocation does not.
+- one mutant initially **did not build** (dropping the `subtle` call left its import unused) and
+  was re-cut to remove both.
+
+### 🔴 The CSRF reachability proof, stated separately
+
+Every arm of `TestTheCSRFGuardIsReachedByAnAuthenticatedRequest` is **authenticated** (a real
+sign-in, a real cookie) and carries a **correct `Origin`**, so gates (1)–(5) cannot refuse it and
+the only thing left is gate (6). Each arm asserts three things rather than "it was refused":
+
+1. the status is **403, not 401** — a 401 would mean the *authentication* chain refused it, making
+   the test evidence about the chain;
+2. the body is **`csrf token missing or invalid`, not `cross-site request refused`** — the two
+   gates answer the same status and a test reading the status alone would score one as the other;
+3. the state did **not** change — the session is still live afterwards, because a refusal that
+   performs the action is worse than no gate.
+
+And the **positive control runs first**: that exact request *with* a valid token must answer 303,
+or every refusal below it is about a route that never works. The five arms are: no token, an empty
+token, another session's well-formed token, the token with one character changed, and the session
+id itself presented as the token.
+
+### The env-ledger question, measured
+
+Phase B adds `CAIRN_UI_SESSION_FILE` and `CAIRN_UI_SESSION_TTL`, and both are read by
+`cmd/cairn-ui` — like `CAIRN_UI_HOST`/`CAIRN_UI_PORT` already are — **not** by `internal/identity`,
+so neither belongs in that package's ledgers. `identity.FromEnvironment` passes `nil` for the
+cookie backend, deliberately: the pod is an API with no way to *set* a cookie, and a pod resolving
+a session it could never issue would be honouring a credential minted by a different binary against
+a store it does not own.
+
+🔴 **The ledger guard WAS checked for the failure the task warns about, rather than assumed.** An
+extra exported `Env*` constant declared in neither ledger was added, and
+`TestTheEnvironmentLedgersNameEveryVariableEachBackendReads` went **RED** naming it
+(`the ledgers and the constants disagree … CAIRN_UI_SESSION_FILE`), GREEN on restore. It reads the
+constants out of the package's own **source**, which is what lets it see the set GROW; the
+hand-written list it replaced could only ever have seen it shrink.
+
+⚠ `cmd/cairn-ui`'s `envDuration` falls back on an unparseable value rather than refusing, matching
+`envInt` beside it and **not** matching `internal/identity`'s ledger, which refuses a mistyped
+duration. Left consistent with its neighbours rather than made a one-off; the divergence between
+this program's ad-hoc environment reads and that package's ledger is a thing to close in one
+change, not here.
+
+### 🔴 The guard this change could itself have emptied, and how it was closed
+
+`TestEveryContentRouteConsultsTheAuthority` used to walk **every** declared route. Phase B made
+it walk only the rows that declare themselves `content` — which is a hole in the shape this
+repository names: a new page route added *without* the class is skipped by the walk, and the
+hand-written ledger test passes for a row written out with no class at all. Two rows, two
+guards, and nothing requiring the second to ask the authority.
+
+It is closed by **deriving** the class rather than trusting it: every non-public `GET` that
+answers 200 with an HTML body **is** a content route, whatever its class says, and must carry the
+class. Proven red at both ends — the derivation arm fires on a second HTML route added without the
+class, and the vacuity arm fires when the only content route loses its.
+
+The other narrowing is declared rather than closed: `TestAnUnauthenticatedRequestReachesNoRenderer`
+now skips public rows, with a `checked == 0` fatal so a tree in which *every* row went public
+cannot pass it silently. And `{"POST", "/"}` moved out of the undeclared-path probe list into a
+new one that sets a correct `Origin`, because gate (2) now runs before the ledger and the probe
+would otherwise have passed with the ledger deleted.
+
+## What Phase B's tests still structurally cannot see
+
+Everything in Phase A's list still applies, and three of them now matter more:
+
+- 🔴 **A REAL BROWSER. Nothing in this repository has been driven against one, at any phase.**
+  Every cookie assertion is over a rendered `Set-Cookie` header; `HttpOnly`, `Secure`, `SameSite`
+  and the `__Host-` prefix are all enforced **by the browser**, so what is measured here is that
+  the server *asks* for them. Nothing measures that a browser honours the ask.
+- **Concurrency is now partly covered and not fully.** `go test -race ./...` is clean over 19
+  packages, and `FileSessionStore` takes a process mutex ahead of an exclusive `flock` — but no
+  test drives two requests at the same instant, and no test runs two *processes* against one
+  session file. The cross-process claim rests on `flock` plus rename atomicity, argued from the
+  same reasoning `control.FileStore.Append` records, not measured here.
+- **The `nix` check sandbox still pins dimensions.** `checks.go-client-declares-its-verbs` and the
+  UI derivation's own check phase have no store, no token, no network and no HOME; the session
+  tests use `t.TempDir()` and run inside `go test`, so they DO exercise a real file — but nothing
+  exercises a real deployment, a mounted volume, or the `/var/lib/cairn-ui` default path.
+- **Login CSRF beyond the origin gate.** The public sign-in form carries no token because there is
+  no session to derive one from; the same-origin gate is the whole defence there, and it is a
+  browser-behaviour claim in the same way the cookie flags are.
