@@ -43,6 +43,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Runnable as a script AND importable as a module, so `testlib` has to be
+# reachable either way: as a script `sys.path[0]` is already this directory, but
+# under an importer it is not.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from testlib import env_pin  # noqa: E402
+
 #: The host label both arms must print. 🔴 SET EXPLICITLY: the rendered report names the machine
 #: it read, and an unset label would put this host's real name into a PUBLIC repository's log.
 CAPTURE_HOST = "capture-harness"
@@ -239,17 +245,20 @@ def capture_writes(tree: Path, home: Path, server_tree: Path, work: Path, name: 
     cache = work / f"write-cache-{name}"
 
     proc, port = start_store(server_tree, store, work, name)
-    env = dict(os.environ)
-    env.update({
-        "HOME": str(home),
-        "CAIRN_HOST": CAPTURE_HOST,
-        "SUBSYSTEM_STORE_CONFIG": str(home / ".config" / "subsystem-store" / "env"),
-        "SUBSYSTEM_STORE_URL": f"http://127.0.0.1:{port}",
-        "SUBSYSTEM_STORE_TOKEN": CAPTURE_TOKEN,
-        "CAIRN_MIRROR_ROOT": "",
-        "CAIRN_ROUTES": "",
-        "PYTHONDONTWRITEBYTECODE": "1",
-    })
+    # 🔴 CLEARED BY PREFIX FIRST, THEN PINNED. `dict(os.environ)` plus an
+    # `update()` pins exactly the names somebody listed and inherits every other
+    # one — so a sixth `CAIRN_*` variable would reach the client and move these
+    # captured bytes, which is the one thing this harness exists to hold still.
+    env = env_pin.sanitized_env(
+        HOME=str(home),
+        CAIRN_HOST=CAPTURE_HOST,
+        SUBSYSTEM_STORE_CONFIG=str(home / ".config" / "subsystem-store" / "env"),
+        SUBSYSTEM_STORE_URL=f"http://127.0.0.1:{port}",
+        SUBSYSTEM_STORE_TOKEN=CAPTURE_TOKEN,
+        CAIRN_MIRROR_ROOT="",
+        CAIRN_ROUTES="",
+        PYTHONDONTWRITEBYTECODE="1",
+    )
     out: dict[str, str] = {}
     try:
         for shape, argv in WRITE_SHAPES:
@@ -295,19 +304,19 @@ def capture(tree: Path, home: Path, cache: Path, configuration: str, work: Path)
     elif table.exists():
         table.unlink()
 
-    env = dict(os.environ)
-    env.update({
-        "HOME": str(home),
-        "CAIRN_HOST": CAPTURE_HOST,
+    # Cleared by prefix first, then pinned — see the sibling site above.
+    env = env_pin.sanitized_env(
+        HOME=str(home),
+        CAIRN_HOST=CAPTURE_HOST,
         # 🔴 POINTED AT A FILE THAT DOES NOT EXIST, DELIBERATELY, so neither arm falls back to
         # the operator's real `~/.config` and makes the run depend on the machine it ran on.
-        "SUBSYSTEM_STORE_CONFIG": str(home / ".config" / "subsystem-store" / "env"),
-        "SUBSYSTEM_STORE_URL": "http://127.0.0.1:1",
-        "SUBSYSTEM_STORE_TOKEN": "x" * 48,
-        "CAIRN_MIRROR_ROOT": "",
-        "CAIRN_ROUTES": "",
-        "PYTHONDONTWRITEBYTECODE": "1",
-    })
+        SUBSYSTEM_STORE_CONFIG=str(home / ".config" / "subsystem-store" / "env"),
+        SUBSYSTEM_STORE_URL="http://127.0.0.1:1",
+        SUBSYSTEM_STORE_TOKEN="x" * 48,
+        CAIRN_MIRROR_ROOT="",
+        CAIRN_ROUTES="",
+        PYTHONDONTWRITEBYTECODE="1",
+    )
     out: dict[str, str] = {}
     for name, argv in SHAPES:
         proc = subprocess.run(

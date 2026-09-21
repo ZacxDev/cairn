@@ -28,7 +28,6 @@ import hashlib
 import importlib.util
 import io
 import json
-import os
 import subprocess
 import sys
 import tarfile
@@ -43,20 +42,13 @@ sys.path.insert(0, str(REPO / "lib"))
 
 import cairn_doctor as cd  # noqa: E402
 import subsystem_read_store as srs  # noqa: E402
-from testlib import cairn_source  # noqa: E402
+from testlib import cairn_source, env_pin  # noqa: E402
 
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
 
-#: The prefixes every variable that configures this client carries. A test
-#: harness knob is NOT one of those — `testlib/store_siting.py` reads
-#: `CAIRN_TEST_TMPFS` at call time, and clearing it would reconfigure the harness
-#: rather than the client. No file in this module imports `store_siting` today,
-#: so the exemption is not load-bearing here; it is spelled anyway because the
-#: fixture below is the obvious thing to hoist into a `conftest.py`, and there it
-#: would be.
-CONFIG_ENV_PREFIXES = ("SUBSYSTEM_STORE_", "CAIRN_")
-HARNESS_ENV_PREFIX = "CAIRN_TEST_"
+#: Which variables configure the client is `testlib/env_pin.py`'s question now,
+#: not this module's — it was open-coded at four sites and they disagreed.
 
 #: The check names `doctor` emits on a SINGLE-instance host, in order.
 #:
@@ -131,11 +123,8 @@ def _pin_the_hosts_configuration(tmp_path, monkeypatch):
     neutered, a clean-HOME run reds exactly that one test, while this host reds
     three.
     """
-    for name in list(os.environ):
-        if name.startswith(CONFIG_ENV_PREFIXES) and not name.startswith(
-            HARNESS_ENV_PREFIX
-        ):
-            monkeypatch.delenv(name, raising=False)
+    for name in env_pin.inherited_config():
+        monkeypatch.delenv(name, raising=False)
     config_home = tmp_path / "pinned-config"
     config_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("SUBSYSTEM_STORE_CONFIG", str(config_home / "env"))

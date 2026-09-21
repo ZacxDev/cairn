@@ -56,6 +56,7 @@ SERVER_PY = REPO / "server" / "server.py"
 sys.path.insert(0, str(REPO / "lib"))
 import cairn_instances as ci  # noqa: E402
 import subsystem_read_store as rs  # noqa: E402
+from testlib import env_pin  # noqa: E402
 
 TOKEN_DEFAULT = "d" * 20 + "K" * 20 + "p" * 8
 TOKEN_SECOND = "s" * 20 + "K" * 20 + "p" * 8
@@ -190,17 +191,22 @@ def world(tmp_path: Path):
             return path
 
         def run(self, *args: str, **env_extra) -> subprocess.CompletedProcess:
-            env = dict(os.environ)
-            env["HOME"] = str(home)
             # 🔴 EVERY INHERITED POINTER IS CLEARED. A developer's own
             # `$SUBSYSTEM_STORE_URL` would otherwise override the DEFAULT
             # instance — the one path where the environment wins — and a test
             # that reads the operator's live store is not a test.
-            for key in ("SUBSYSTEM_STORE_URL", "SUBSYSTEM_STORE_TOKEN",
-                        "SUBSYSTEM_STORE_CONFIG", "CAIRN_ROUTES",
-                        "CAIRN_MIRROR_ROOT"):
-                env.pop(key, None)
-            env.update({k: str(v) for k, v in env_extra.items()})
+            #
+            # ⚠ THIS USED TO NAME FIVE VARIABLES AND THE LIST WAS ALREADY SHORT.
+            # `env_pin` sweeps by PREFIX, so it also clears the three
+            # `HOST_LABEL_ENV` names this list omitted. Measured before the
+            # change: with `CAIRN_HOST=hostile-developer-box` exported this file
+            # returned 63 passed, identical to the unset run — nothing here
+            # asserts on a host label, so the omission was real and not
+            # reachable. The sweep is for the assertion that does, and for the
+            # sixth variable nobody has added yet.
+            env = env_pin.sanitized_env(
+                HOME=str(home), **{k: str(v) for k, v in env_extra.items()}
+            )
             return subprocess.run(
                 [sys.executable, str(CAIRN_CLI), "--timeout", "5", *args],
                 capture_output=True, text=True, env=env, timeout=120,
