@@ -19,15 +19,10 @@
 //     `scope-created` event. A conversion today writes a format the next phase is
 //     about to move.
 //
-//     ⚠ WHAT ENFORCES THAT REFUSAL MOVED, AND THIS LINE SAID THE OLD THING. It read
-//     "`go.mod` has no `require` block, which blocks every Postgres driver" — true
-//     until `internal/ui` took a dependency on an HTML library, after which `go.mod`
-//     has one and a missing block blocks nothing. The refusal now lives in
-//     `internal/depspolicy`, whose package doc is the CANONICAL statement of it;
-//     read it there rather than here, because a second spelling is a second thing to
-//     go stale, which is what this paragraph just demonstrated. The CONSTRAINT did
-//     not move — a driver reaching `cmd/cairn-server` is still a failing build
-//     through nix — only the thing that catches it.
+//     ⚠ WHAT ENFORCES IT IS `internal/depspolicy`; READ ITS PACKAGE DOC, WHICH IS THE
+//     CANONICAL STATEMENT AND SAYS SO. This line previously named `go.mod`'s absent
+//     `require` block, which stopped being the mechanism when `internal/ui` took a
+//     dependency — it was the sixth spelling that doc predicted would go stale.
 //
 // 🔴 AND THE REASON THIS USED TO GIVE FIRST IS FALSE — MEASURED, NOT RECONSIDERED. It
 // read "because it makes the conformance corpus a DIFFERENTIAL gate over the

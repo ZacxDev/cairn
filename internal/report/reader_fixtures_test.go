@@ -658,7 +658,15 @@ func TestTheFixtureCoversTheSHAPESTheCorpusCannotSend(t *testing.T) {
 		// goes agrees with itself on one.
 		{"a bullet carrying a session-attribution trailer", " [cairn: fixture-actor/sess-0000000000000001]"},
 		{"a SECOND actor's trailer, which one spelling cannot cover", " [cairn: other-actor/sess-0000000000000002]"},
-		{"the adjacent-pair join spanning the hyphen INSIDE a trailer", "query='fixtureactor'"},
+		// 🔴 THE HIT LINE, NOT THE QUERY ECHO, AND THE FIRST DRAFT WAS THE ECHO.
+		// This row read `query='fixtureactor'` — which is the case's INPUT, printed
+		// in the status line of a MISS just as it is of a hit, so it survives the
+		// join being deleted. Measured: regenerate the fixture with the
+		// adjacent-pair join removed from the oracle and that case degrades from
+		// `search-hit` to `search-no-match` while all three of these rows stay
+		// green. The marker below is rendered by exactly one case and only when
+		// the join scores, which is what the rule at the top of this list asks for.
+		{"the adjacent-pair join spanning the hyphen INSIDE a trailer", "  [1.00 line] alpha-notes/marked-three  ## Nuance / work-history"},
 		{"the difflib fuzzy rung", "[0.95 line]"},
 		{"the prefix rung", "[0.92 line]"},
 		{"the substring rung", "[0.85 line]"},

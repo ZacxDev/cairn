@@ -46,6 +46,7 @@ regenerating under a 240-character directory and comparing against what is commi
 """
 from __future__ import annotations
 
+import ast
 import difflib
 import json
 import os
@@ -59,6 +60,7 @@ import entry_shape  # noqa: E402
 import subsystem_recall as rc  # noqa: E402
 
 FIXTURE = ROOT / "internal" / "report" / "testdata" / "reader_fixtures.json"
+SERVER_PY = ROOT / "server" / "server.py"
 
 #: An obviously-synthetic host identity. It is what BOTH sides print, so it must look
 #: nothing like a real one — twelve zeroes where a machine-id prefix would be.
@@ -94,8 +96,50 @@ EPOCH_NS = 946684800 * 1_000_000_000
 #: `[cairn: someone-else/…]` trailer the case an operator reads as SOMEBODY ELSE'S
 #: attribution; one actor spelled everywhere cannot tell a renderer that prints the actor
 #: from one that prints a constant.
-ATTRIBUTED = " [cairn: fixture-actor/sess-0000000000000001]"
-ATTRIBUTED_OTHER = " [cairn: other-actor/sess-0000000000000002]"
+#: 🔴 DERIVED FROM `server.py`, NOT HAND-COPIED, AND THE FIRST DRAFT HAND-COPIED
+#: IT. Two literals spelling the same trailer as `ATTRIBUTION` agree on the day
+#: they are written and nothing asserts they still do: grow the constant a field
+#: and this fixture keeps rendering the OLD shape, both renderers keep agreeing
+#: on it, every gate stays green, and the fixture is once again not rendering the
+#: line a real store's bullets carry — the exact condition these constants were
+#: added to remove. Read by AST rather than by importing `server.py`: the same
+#: choice `testlib/cairn_source.py` makes and for the reason its docstring gives,
+#: and it keeps the generator free of the pod's import side effects.
+def _server_attribution_format() -> str:
+    """`server.py`'s `ATTRIBUTION` format string, or refuse.
+
+    Refusing is the point: a fallback literal here would silently restore the
+    hand-copied spelling this function exists to delete.
+    """
+    tree = ast.parse(SERVER_PY.read_text(encoding="utf-8"), filename=str(SERVER_PY))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "ATTRIBUTION" for t in node.targets):
+            continue
+        fmt = node.value.value
+        if not isinstance(fmt, str):
+            break
+        # A positive control on the read itself: a format string that had lost
+        # its fields would `.format()` to a CONSTANT trailer, identical for both
+        # actors, and the two-actor row below would then pass by agreeing with
+        # itself rather than by distinguishing anything.
+        if "{actor}" not in fmt or "{session}" not in fmt:
+            raise SystemExit(
+                f"server.py's ATTRIBUTION is {fmt!r}, which does not interpolate "
+                f"both `actor` and `session`. Two actors cannot be distinguished "
+                f"through it, so this fixture would measure less than it claims."
+            )
+        return fmt
+    raise SystemExit(
+        f"no module-level `ATTRIBUTION = <str>` found in {SERVER_PY}. It moved or "
+        f"was renamed; point this reader at it rather than restoring a literal here."
+    )
+
+
+_ATTRIBUTION_FMT = _server_attribution_format()
+ATTRIBUTED = _ATTRIBUTION_FMT.format(actor="fixture-actor", session="sess-0000000000000001")
+ATTRIBUTED_OTHER = _ATTRIBUTION_FMT.format(actor="other-actor", session="sess-0000000000000002")
 
 
 def _entry(path: str, mtime_ns: int, lines: list[str]) -> dict:
@@ -635,14 +679,26 @@ CASES: list[dict] = [
     _search("substring", "the substring rung at 0.85, which needs a candidate spelling the query as PART of one word", scope="beta-notes", query="limit"),
     _search("exact-token-beats-substring", "and the same query in the scope that writes `rate-limit`, where an EXACT token outranks the rung above", scope="alpha-notes", query="limit"),
     _search("joined-compound", "the adjacent-pair join, which makes a concatenated term an EXACT hit", scope="alpha-notes", query="ratelimit"),
-    # 🔴 THE TOKENIZER, RUN OVER AN ATTRIBUTION TRAILER. Every bullet in a store that has
-    # ever been appended to ends in ` [cairn: <actor>/<session>]`, and this fixture carried
-    # none until now — so the one place the two renderers are compared byte-for-byte had
-    # never seen a bracket, a colon and a slash inside a hyphenated identifier at end of
-    # line. The query is the JOINED form, so it can only score through the adjacent-pair
-    # join spanning the hyphen INSIDE the trailer: a tokenizer that stopped at `[`, that
-    # split `cairn:` differently, or that dropped the trailer before scoring returns a
-    # different answer here and the same answer everywhere else in this file.
+    # 🔴 THE TOKENIZER, RUN OVER AN ATTRIBUTION TRAILER. Every APPENDED bullet ends in
+    # ` [cairn: <actor>/<session>]` (a `PUT` writes verbatim — `render_bullet`'s own
+    # docstring says so), and this fixture carried none until now, so the one place the
+    # two renderers are compared byte-for-byte had never seen a bracket, a colon and a
+    # slash inside a hyphenated identifier at end of line. The query is the JOINED form,
+    # so it can only score through the adjacent-pair join spanning the hyphen INSIDE the
+    # trailer: `fixtureactor` appears in the joined list and never in the plain tokens.
+    #
+    # 🔴 TWO FURTHER DISCRIMINATORS WERE CLAIMED HERE AND BOTH MEASURED FALSE. The first
+    # draft said a tokenizer "that stopped at `[`" or "that split `cairn:` differently"
+    # would also answer differently here. Measured by regenerating the whole fixture
+    # under each mutation and diffing case by case: removing `:` from the clause breaks
+    # moves ZERO cases (with a positive control confirming the mutation applied — the
+    # candidate list gains `cairnfixture` and `02the`), and the `[`/`]` break is not
+    # exercised at all, because all three attributed bullets end their prose with `.`
+    # and a full stop before whitespace already breaks the clause. They are recorded as
+    # refuted rather than replaced with a third guess: the join claim above is the one
+    # that measured true, and a rationale found while under pressure to supply one is a
+    # hypothesis. A bullet whose prose ends in a letter would reach the `[` break; this
+    # world has none, and that is a real gap rather than a covered case.
     # ⚠ The ENCLOSING-BULLET window over a trailer is covered for free by `hit`, whose
     # `lease` match now lands on a bullet that ends in one — it is not a second row.
     _search("attribution-actor-joined", "the adjacent-pair join spanning the hyphen inside an attribution trailer, a shape no other row in this world carries", scope="alpha-notes", query="fixtureactor"),

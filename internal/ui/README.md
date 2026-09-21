@@ -344,14 +344,11 @@ arms the backend from the environment). The backend is unreachable here by const
 rather than refused by configuration, which is the stronger claim: a configuration refusal
 can be reconfigured.
 
-⚠ **This sentence deliberately carries NO parameter COUNT, and the deletion is the fix
-rather than a shortening.** It read *"takes two backends where `identity.Backends` takes
-three"* while `AuthBackends` took **one** — and a count is exactly the claim that goes
-stale silently here, because every phase of the browser work adds a backend to one side or
-both. Worse, refreshing the number to the value that is true today would have been *wrong
-on merge* with no textual conflict to warn anybody: the branch adding cookie sessions moves
-`AuthBackends` to two parameters and `identity.Backends` to four, and does not touch this
-line. The ABSENCE of one named parameter is the property, it is what makes the claim true,
+⚠ **This sentence deliberately carries NO parameter COUNT.** It read *"takes two backends
+where `identity.Backends` takes three"* while `AuthBackends` took **one**, and refreshing
+that number would have been *wrong on merge with no textual conflict to warn anybody*: the
+branch adding cookie sessions moves `AuthBackends` to two parameters and `identity.Backends`
+to four, and does not touch this line. The ABSENCE of one named parameter is the property,
 and it is what `TestTheUIChainHasNoTrustedHeaderMember` grades — on the chain the function
 RETURNS, not on its signature.
 
