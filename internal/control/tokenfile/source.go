@@ -12,12 +12,17 @@
 //  2. the ROLLBACK is one commit. Nothing is written: `Events` is read-only, no caller
 //     appends it to a `FileStore`, so reverting leaves no converted data behind to
 //     restore;
-//  3. the JOURNAL FORMAT IS NOT SETTLED. `go.mod` has no `require` block, which blocks
-//     every Postgres driver and every embedded SQL engine, so P4 owes a decision about
+//  3. the JOURNAL FORMAT IS NOT SETTLED. Every Postgres driver and every embedded SQL
+//     engine is still refused in the serving path, so P4 owes a decision about
 //     stdlib-only before there is a durable authority to convert INTO — and piece (d)
 //     changes what a scope IS, from a directory this file enumerates to a
 //     `scope-created` event. A conversion today writes a format the next phase is
 //     about to move.
+//
+//     ⚠ WHAT ENFORCES IT IS `internal/depspolicy`; READ ITS PACKAGE DOC, WHICH IS THE
+//     CANONICAL STATEMENT AND SAYS SO. This line previously named `go.mod`'s absent
+//     `require` block, which stopped being the mechanism when `internal/ui` took a
+//     dependency — it was the sixth spelling that doc predicted would go stale.
 //
 // 🔴 AND THE REASON THIS USED TO GIVE FIRST IS FALSE — MEASURED, NOT RECONSIDERED. It
 // read "because it makes the conformance corpus a DIFFERENTIAL gate over the

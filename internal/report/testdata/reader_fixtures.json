@@ -61,7 +61,7 @@
     "- ops skill `manage-gadget` - the same skill, deliberately",
     "",
     "## Nuance / work-history",
-    "- 2000-01-02: the sidecar drops its lease during a rollout.",
+    "- 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]",
     ""
    ],
    "st_mtime_hex": "0x1.c36a1c0600000p+29"
@@ -84,13 +84,13 @@
     "- `docs/marked-three.md`",
     "",
     "## Nuance / work-history",
-    "- 2000-01-02: OPEN: the retry budget is still unbounded.",
+    "- 2000-01-02: OPEN: the retry budget is still unbounded. [cairn: fixture-actor/sess-0000000000000001]",
     "  a continuation line, which belongs to the bullet above it.",
     "- 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
     "- 2000-01-04: RESOLVED: closed, and nothing proves it.",
     "- 2000-01-05: **OPEN:** a marker that missed the grammar.",
     "- 2000-01-06: the retry budget is not yet addressed.",
-    "- 2000-01-07: an ordinary bullet that declares nothing.",
+    "- 2000-01-07: an ordinary bullet that declares nothing. [cairn: other-actor/sess-0000000000000002]",
     ""
    ],
    "st_mtime_hex": "0x1.c389c00000000p+29"
@@ -2921,13 +2921,13 @@
      "    ## Pointers",
      "      - `docs/marked-three.md`",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: OPEN: the retry budget is still unbounded.",
+     "      - 2000-01-02: OPEN: the retry budget is still unbounded. [cairn: fixture-actor/sess-0000000000000001]",
      "        a continuation line, which belongs to the bullet above it.",
      "      - 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
      "      - 2000-01-04: RESOLVED: closed, and nothing proves it.",
      "      - 2000-01-05: **OPEN:** a marker that missed the grammar.",
      "      - 2000-01-06: the retry budget is not yet addressed.",
-     "      - 2000-01-07: an ordinary bullet that declares nothing.",
+     "      - 2000-01-07: an ordinary bullet that declares nothing. [cairn: other-actor/sess-0000000000000002]",
      "",
      "… 13 further entries in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 14` prints them all."
     ]
@@ -3132,7 +3132,7 @@
      "    ## Pointers",
      "      - ops skill `manage-gadget` - the same skill, deliberately",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: the sidecar drops its lease during a rollout.",
+     "      - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]",
      "",
      "  ### halfway-thirteen  (alpha-notes/halfway-thirteen.md, sensitivity=client-confidential)",
      "    ## What it is",
@@ -3148,13 +3148,13 @@
      "    ## Pointers",
      "      - `docs/marked-three.md`",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: OPEN: the retry budget is still unbounded.",
+     "      - 2000-01-02: OPEN: the retry budget is still unbounded. [cairn: fixture-actor/sess-0000000000000001]",
      "        a continuation line, which belongs to the bullet above it.",
      "      - 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
      "      - 2000-01-04: RESOLVED: closed, and nothing proves it.",
      "      - 2000-01-05: **OPEN:** a marker that missed the grammar.",
      "      - 2000-01-06: the retry budget is not yet addressed.",
-     "      - 2000-01-07: an ordinary bullet that declares nothing.",
+     "      - 2000-01-07: an ordinary bullet that declares nothing. [cairn: other-actor/sess-0000000000000002]",
      "",
      "  ### nginx-seventeen  (alpha-notes/nginx-seventeen.md, sensitivity=client-confidential)",
      "    ## What it is",
@@ -3218,13 +3218,13 @@
      "    ## Pointers",
      "      - `docs/marked-three.md`",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: OPEN: the retry budget is still unbounded.",
+     "      - 2000-01-02: OPEN: the retry budget is still unbounded. [cairn: fixture-actor/sess-0000000000000001]",
      "        a continuation line, which belongs to the bullet above it.",
      "      - 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
      "      - 2000-01-04: RESOLVED: closed, and nothing proves it.",
      "      - 2000-01-05: **OPEN:** a marker that missed the grammar.",
      "      - 2000-01-06: the retry budget is not yet addressed.",
-     "      - 2000-01-07: an ordinary bullet that declares nothing."
+     "      - 2000-01-07: an ordinary bullet that declares nothing. [cairn: other-actor/sess-0000000000000002]"
     ]
    }
   },
@@ -4077,7 +4077,7 @@
      "    ## Pointers",
      "      - ops skill `manage-gadget` - the same skill, deliberately",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: the sidecar drops its lease during a rollout.",
+     "      - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]",
      "",
      "… 13 further entries in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 14` prints them all."
     ]
@@ -4200,13 +4200,13 @@
      "    ## Pointers",
      "      - `docs/marked-three.md`",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: OPEN: the retry budget is still unbounded.",
+     "      - 2000-01-02: OPEN: the retry budget is still unbounded. [cairn: fixture-actor/sess-0000000000000001]",
      "        a continuation line, which belongs to the bullet above it.",
      "      - 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
      "      - 2000-01-04: RESOLVED: closed, and nothing proves it.",
      "      - 2000-01-05: **OPEN:** a marker that missed the grammar.",
      "      - 2000-01-06: the retry budget is not yet addressed.",
-     "      - 2000-01-07: an ordinary bullet that declares nothing.",
+     "      - 2000-01-07: an ordinary bullet that declares nothing. [cairn: other-actor/sess-0000000000000002]",
      "",
      "… 13 further entries in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 14` prints them all."
     ]
@@ -4268,13 +4268,13 @@
      "    ## Pointers",
      "      - `docs/marked-three.md`",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: OPEN: the retry budget is still unbounded.",
+     "      - 2000-01-02: OPEN: the retry budget is still unbounded. [cairn: fixture-actor/sess-0000000000000001]",
      "        a continuation line, which belongs to the bullet above it.",
      "      - 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
      "      - 2000-01-04: RESOLVED: closed, and nothing proves it.",
      "      - 2000-01-05: **OPEN:** a marker that missed the grammar.",
      "      - 2000-01-06: the retry budget is not yet addressed.",
-     "      - 2000-01-07: an ordinary bullet that declares nothing.",
+     "      - 2000-01-07: an ordinary bullet that declares nothing. [cairn: other-actor/sess-0000000000000002]",
      "",
      "… 13 further entries in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 14` prints them all."
     ]
@@ -4335,7 +4335,7 @@
      "    ## Pointers",
      "      - ops skill `manage-gadget` - the same skill, deliberately",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: the sidecar drops its lease during a rollout.",
+     "      - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]",
      "",
      "… 13 further entries in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 14` prints them all."
     ]
@@ -4566,7 +4566,7 @@
      "    ## Pointers",
      "      - ops skill `manage-gadget` - the same skill, deliberately",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: the sidecar drops its lease during a rollout.",
+     "      - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]",
      "",
      "… 13 further entries in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 14` prints them all."
     ]
@@ -4646,7 +4646,7 @@
      "    The subsystem this query is NAMING, whose body never spells the word.",
      "",
      "  [1.00 line] alpha-notes/gadget-two  ## Nuance / work-history  (alpha-notes/gadget-two.md:14-14, sensitivity=client-confidential (declared: internal))",
-     "    - 2000-01-02: the sidecar drops its lease during a rollout."
+     "    - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]"
     ]
    }
   },
@@ -4696,7 +4696,7 @@
      "  [1.00 line] alpha-notes/gadget-two  ## Nuance / work-history  (alpha-notes/gadget-two.md:12-14, sensitivity=client-confidential (declared: internal))",
      "    ",
      "    ## Nuance / work-history",
-     "    - 2000-01-02: the sidecar drops its lease during a rollout."
+     "    - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]"
     ]
    }
   },
@@ -4736,7 +4736,7 @@
      "    The subsystem this query is NAMING, whose body never spells the word.",
      "",
      "  [1.00 line] alpha-notes/gadget-two  ## Nuance / work-history  (alpha-notes/gadget-two.md:14-14, sensitivity=client-confidential (declared: internal))",
-     "    - 2000-01-02: the sidecar drops its lease during a rollout."
+     "    - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]"
     ]
    }
   },
@@ -4946,6 +4946,44 @@
      "",
      "  [1.00 line] alpha-notes/gadget-one  ## What it is  (alpha-notes/gadget-one.md:8-8, sensitivity=client-confidential (declared: internal))",
      "    A synthetic entry. It mentions a rate-limit and a postgresql connection."
+    ]
+   }
+  },
+  {
+   "id": "attribution-actor-joined",
+   "why": "the adjacent-pair join spanning the hyphen inside an attribution trailer, a shape no other row in this world carries",
+   "kind": "search",
+   "scope": "alpha-notes",
+   "query": "fixtureactor",
+   "context": -1,
+   "threshold": 0.6,
+   "max_hits": 10,
+   "all_scopes": false,
+   "visible": null,
+   "instance": null,
+   "expect": {
+    "status": "search-hit",
+    "exit": 0,
+    "warning": "",
+    "text_lines": [
+     "subsystem-recall: status=search-hit scope=alpha-notes query='fixtureactor' threshold=0.60 context=bullet",
+     "  store: <STORE-ROOT>",
+     "  host: fixture-host-000000000000  (the store is read through a PER-HOST CACHE, only as fresh as its last sync; this run read THIS machine's disk and consulted no other)",
+     "  caveat: from index — RECALL, NOT LIVE OBSERVATION. These are notes curated by PAST sessions in the local store under `alpha-notes/`. Nothing here was re-derived just now, nothing was matched against anything THIS session has done, and an entry is exactly as fresh as the last time someone pruned it (prune-on-resolve is manual), so a bullet may describe a gotcha already fixed. This window CANNOT see: live state of any kind, any repo whose scope has no directory in THIS HOST's store, and any work neither `/analyze-service` nor `/handoff` ever recorded. Treat every line as a POINTER to verify, never as a current reading. This window read a LOCAL CACHE of the hosted store, not the store itself, so it is only as complete as the last `cairn sync` on THIS machine: an entry written on the OTHER machine that has not synced here yet is invisible, and an absence below is an absence AS OF THAT SYNC, not a fact about the store. `🔴 N OPEN` on an index row means N bullets DECLARE unfinished business — re-check each against the repo, because a remedy that has since landed reads exactly like one that has not; the absence of that marker means nothing was declared, NOT that nothing is open. Sensitivity is marked per entry; absent means `client-confidential` — never copy an entry's content into a public repo.",
+     "",
+     "🔴 MALFORMED — 1 entry file in `alpha-notes/` could NOT be indexed and is therefore absent from EVERYTHING below (the index, --ref, --search). Not dropped, not hidden: listed here, once each.",
+     "  malformed index entry `alpha-notes/broken-nine.md`: missing or empty `service:` — an entry with no name cannot be addressed",
+     "  (A STORE DEFECT, not an absence of content. Front matter is parsed LINE BY LINE, so the usual cause is a value wrapped across two physical lines — an `aliases: [...]` list in particular must be on ONE line. Check a scope with `cairn validate --scope <scope>`, which names each file that fails to parse.)",
+     "  (+2 further malformed entries in OTHER scopes of this store, not shown: rubble-heap (2). Nothing on this screen is affected by them; they are named so a defect in a scope nobody recalls today is still visible.)",
+     "",
+     "SEARCH (from index) — 2 of 2 hunks at or above 0.60, from 14 entries in `alpha-notes/`:",
+     "",
+     "  [1.00 line] alpha-notes/gadget-two  ## Nuance / work-history  (alpha-notes/gadget-two.md:14-14, sensitivity=client-confidential (declared: internal))",
+     "    - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]",
+     "",
+     "  [1.00 line] alpha-notes/marked-three  ## Nuance / work-history  (alpha-notes/marked-three.md:15-16, sensitivity=public)",
+     "    - 2000-01-02: OPEN: the retry budget is still unbounded. [cairn: fixture-actor/sess-0000000000000001]",
+     "      a continuation line, which belongs to the bullet above it."
     ]
    }
   },
@@ -5208,7 +5246,7 @@
      "    The subsystem this query is NAMING, whose body never spells the word.",
      "",
      "  [1.00 line] alpha-notes/gadget-two  ## Nuance / work-history  (alpha-notes/gadget-two.md:14-14, sensitivity=client-confidential (declared: internal))",
-     "    - 2000-01-02: the sidecar drops its lease during a rollout."
+     "    - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]"
     ]
    }
   },
@@ -5280,7 +5318,7 @@
      "    The subsystem this query is NAMING, whose body never spells the word.",
      "",
      "  [1.00 line] alpha-notes/gadget-two  ## Nuance / work-history  (alpha-notes/gadget-two.md:14-14, sensitivity=client-confidential (declared: internal))",
-     "    - 2000-01-02: the sidecar drops its lease during a rollout.",
+     "    - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]",
      "",
      "  [1.00 line] beta-notes/widget-ten  ## Nuance / work-history  (beta-notes/widget-ten.md:14-14, sensitivity=public)",
      "    - 2000-01-03: the lease renewal races the readiness gate."
@@ -5490,13 +5528,13 @@
      "    ## Pointers",
      "      - `docs/marked-three.md`",
      "    ## Nuance / work-history",
-     "      - 2000-01-02: OPEN: the retry budget is still unbounded.",
+     "      - 2000-01-02: OPEN: the retry budget is still unbounded. [cairn: fixture-actor/sess-0000000000000001]",
      "        a continuation line, which belongs to the bullet above it.",
      "      - 2000-01-03: RESOLVED abc1234: closed, and the sha proves it.",
      "      - 2000-01-04: RESOLVED: closed, and nothing proves it.",
      "      - 2000-01-05: **OPEN:** a marker that missed the grammar.",
      "      - 2000-01-06: the retry budget is not yet addressed.",
-     "      - 2000-01-07: an ordinary bullet that declares nothing.",
+     "      - 2000-01-07: an ordinary bullet that declares nothing. [cairn: other-actor/sess-0000000000000002]",
      "",
      "… 13 further entries in `alpha-notes/` LISTED ABOVE but NOT shown in full. Nothing is hidden: this is the default digest, not a judgement about relevance. `--ref <name>` prints any one of them in full; `--limit 14` prints them all."
     ]
@@ -5569,7 +5607,7 @@
      "    The subsystem this query is NAMING, whose body never spells the word.",
      "",
      "  [1.00 line] alpha-notes/gadget-two  ## Nuance / work-history  (alpha-notes/gadget-two.md:14-14, sensitivity=client-confidential (declared: internal))",
-     "    - 2000-01-02: the sidecar drops its lease during a rollout."
+     "    - 2000-01-02: the sidecar drops its lease during a rollout. [cairn: fixture-actor/sess-0000000000000001]"
     ]
    }
   },

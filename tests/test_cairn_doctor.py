@@ -28,6 +28,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -41,10 +42,106 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "lib"))
 
 import cairn_doctor as cd  # noqa: E402
+import subsystem_read_store as srs  # noqa: E402
 from testlib import cairn_source  # noqa: E402
 
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
+
+#: The prefixes every variable that configures this client carries. A test
+#: harness knob is NOT one of those — `testlib/store_siting.py` reads
+#: `CAIRN_TEST_TMPFS` at call time, and clearing it would reconfigure the harness
+#: rather than the client. No file in this module imports `store_siting` today,
+#: so the exemption is not load-bearing here; it is spelled anyway because the
+#: fixture below is the obvious thing to hoist into a `conftest.py`, and there it
+#: would be.
+CONFIG_ENV_PREFIXES = ("SUBSYSTEM_STORE_", "CAIRN_")
+HARNESS_ENV_PREFIX = "CAIRN_TEST_"
+
+#: The check names `doctor` emits on a SINGLE-instance host, in order.
+#:
+#: 🔴 A LITERAL WRITTEN OUT HERE, ONCE. The module docstring's rule is that an
+#: expected value is spelled in this file rather than read from `cd` — `assert
+#: X == module.X` is a constant agreeing with itself and has shipped here five
+#: times. It is NOT a licence for three copies: this list was written out three
+#: separate times in this module, so a check renamed in `cd` reds two sites and
+#: a THIRD copy sits there agreeing with whichever one somebody remembered.
+#: One literal, three readers.
+SINGLE_INSTANCE_CHECKS = (
+    "reader-resolution", "cache-stamp", "frozen-mirror", "pod",
+    "cache-vs-pod", "token-scopes", "token",
+)
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_hosts_configuration(tmp_path, monkeypatch):
+    """🔴 A TEST THAT INHERITS THE OPERATOR'S HOME IS PINNED TO NO DIMENSION AT
+    ALL, AND ONE IN THIS FILE WAS RED ON A DEVELOPER HOST FOR DAYS WHILE CI
+    STAYED GREEN.
+
+    The mechanism, measured rather than supposed: `cmd_doctor` asks
+    `cairn_instances.discover` what this host holds, and `discover` reads
+    `$SUBSYSTEM_STORE_CONFIG` or — absent it — `~/.config/subsystem-store/`.
+    A second `instances/<alias>.env` in that REAL directory, dropped there by
+    anything at all, makes `routing.multi_instance` true, and `_doctor_instance`
+    then renames every check `<alias>/<check>`. `test_a_no_sync_run_still_reads_
+    the_LOCAL_config` looks its answer up by the bare name `token`, so it raised
+    `IndexError` on a host whose only sin was having two stores configured. CI
+    never saw it: a fresh checkout has an empty HOME. A suite whose CONFIG pins a
+    dimension is blind to that dimension's bugs — and a suite that pins it by
+    ACCIDENT, to whatever the operator's disk happens to say, is worse: it is
+    blind AND it varies.
+
+    🔴 A PREFIX SWEEP, NOT A LEDGER OF NAMES, AND THE LEDGER WAS TRIED FIRST.
+    The first draft enumerated the five variables the client reads and graded
+    that list with an AST walker over `cairn` and `lib/`, so a sixth would be
+    REPORTED as unpinned. An audit built the alternative and measured it: the
+    sweep below is three lines against that draft's ~120, passes at both points
+    the draft did, and is strictly WIDER — a sixth variable is *pinned
+    automatically* rather than reported, which is what the requirement actually
+    wanted. The walker was also a SECOND AST reader of the client's source in a
+    module that already imports the first (`testlib.cairn_source`, whose own
+    docstring cites "one rule, one place"), and the enumerated list was a FOURTH
+    hand-maintained copy of the same surface — `test_cairn_instances.py` clears
+    the same five, `unchanged_output_capture.py` sets them twice. Discovered
+    coverage of that surface, if anyone wants it, belongs in `cairn_source.py`
+    beside the other AST readers, graded for all four sites at once.
+
+    What the sweep pins, in three kinds because they fail differently:
+
+      * the ENVIRONMENT — every `SUBSYSTEM_STORE_*`/`CAIRN_*` name is cleared,
+        then `$SUBSYSTEM_STORE_CONFIG` is pointed at an empty directory. That one
+        variable moves the config file, the `instances/` directory beside it and
+        the default `routes.json` together; `$CAIRN_ROUTES` is the one setting it
+        does not move, and the sweep covers it.
+      * `$HOME` — for anything resolving `Path.home()` at CALL time.
+      * 🔴 `DEFAULT_CACHE_ROOT` — which no env clear can reach. It is bound at
+        IMPORT time from `Path.home()`, so it is not an environment read at all
+        and moving `$HOME` afterwards does nothing to it. `read_store_root()`
+        reads the module global at call time precisely so a test can repoint it.
+        Two audits independently found the first draft's docstring claiming to
+        pin "the dimension" while leaving this one inherited — the implementation
+        is widened here rather than the sentence narrowed.
+
+    🔴 MEASURED AT TWO POINTS, NAMED. The empty directory here is the boundary;
+    `TestAnExtraInstanceRenamesEveryCheck` is the other point — it writes an
+    instance into this same pinned directory and watches the prefix appear. That
+    second test is what makes this fixture load-bearing rather than decorative,
+    and it is measurably the ONLY thing that notices on CI: with the fixture
+    neutered, a clean-HOME run reds exactly that one test, while this host reds
+    three.
+    """
+    for name in list(os.environ):
+        if name.startswith(CONFIG_ENV_PREFIXES) and not name.startswith(
+            HARNESS_ENV_PREFIX
+        ):
+            monkeypatch.delenv(name, raising=False)
+    config_home = tmp_path / "pinned-config"
+    config_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("SUBSYSTEM_STORE_CONFIG", str(config_home / "env"))
+    monkeypatch.setenv("HOME", str(tmp_path / "pinned-home"))
+    monkeypatch.setattr(srs, "DEFAULT_CACHE_ROOT", tmp_path / "pinned-cache")
+    return config_home
 
 
 def _load_cairn_cli():
@@ -793,18 +890,18 @@ class TestTheRenderedReport:
         payload = cd.to_dict(_collect())
         assert payload["exit"] in (0, 9, 10)
         assert set(payload["exit_legend"]) == {"0", "9", "10"}
-        assert {c["name"] for c in payload["checks"]} == {
-            "reader-resolution", "cache-stamp", "frozen-mirror", "pod",
-            "cache-vs-pod", "token-scopes", "token",
-        }
+        assert {c["name"] for c in payload["checks"]} == set(SINGLE_INSTANCE_CHECKS)
 
     def test_the_check_set_is_pinned_to_these_seven_names(self) -> None:
         """A LEDGER, not a count: a check silently disappearing is a fact nobody
-        is checking any more, and a count would not say which."""
-        assert [c.name for c in _collect()] == [
-            "reader-resolution", "cache-stamp", "frozen-mirror", "pod",
-            "cache-vs-pod", "token-scopes", "token",
-        ]
+        is checking any more, and a count would not say which.
+
+        ⚠ The two assertions are NOT the same claim and the duplication is
+        deliberate: this one pins the ORDER (`render` aligns on it), the
+        `--json` one above pins the SET. They share `SINGLE_INSTANCE_CHECKS`
+        because sharing the literal is what stops a third spelling drifting —
+        not because either subsumes the other."""
+        assert [c.name for c in _collect()] == list(SINGLE_INSTANCE_CHECKS)
 
 
 class TestTheCliWiring:
@@ -1104,3 +1201,104 @@ class TestAnUnconfiguredMirrorDoesNotCrashTheVisibilityCheck:
         ))["token-scopes"]
         assert check.state == cd.PROBLEM
         assert "beta" in check.detail
+
+
+class TestAnExtraInstanceRenamesEveryCheck:
+    """🔴 THE SECOND OF THE TWO POINTS `_pin_the_hosts_configuration` IS MEASURED
+    AT, AND THE ONE THAT MAKES THAT FIXTURE LOAD-BEARING RATHER THAN DECORATIVE.
+
+    The fixture pins the host's configuration to an EMPTY directory, which is the
+    single-instance boundary. A guard that only ever measures the boundary cannot
+    tell a fixture that pins the dimension from a fixture that pins nothing and is
+    lucky — both are green on a host whose HOME happens to be empty. So this class
+    writes a second instance INTO the pinned directory and watches the check names
+    move, which is the exact mechanism that made
+    `test_a_no_sync_run_still_reads_the_LOCAL_config` raise `IndexError` when the
+    directory being read was the operator's own.
+
+    ⚠ IT IS NOT A CLAIM THAT THE PREFIX IS WRONG. `_doctor_instance` renames on
+    purpose — one reachable store must not make a second one that is down look
+    measured. The defect was never the prefix; it was a test that could not say
+    which world it was running in.
+    """
+
+    @staticmethod
+    def _doctor_json(cli, monkeypatch, tmp_path, argv=("doctor", "--no-sync", "--json")):
+        """Run `cmd_doctor` against the pinned world and return its parsed report.
+
+        No `--cache`: an explicit one is refused at exit 2 on a multi-instance
+        fan-out (`_refuse_shared_cache`), which would compare equal in both arms
+        and measure nothing. Repointing `DEFAULT_CACHE_ROOT` moves EVERY
+        instance's root together — `cache_root_for` reads it at call time — so
+        both arms read tmp disk and neither touches the operator's cache.
+        """
+        import contextlib
+
+        monkeypatch.setattr(cli._read_store, "DEFAULT_CACHE_ROOT", tmp_path / "cache")
+        args = cli.build_parser().parse_args(list(argv))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.cmd_doctor(args)
+        return json.loads(buf.getvalue()), rc
+
+    def test_the_boundary_an_empty_config_dir_leaves_every_name_BARE(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        cli = _load_cairn_cli()
+        monkeypatch.setenv("SUBSYSTEM_STORE_URL", "https://example.invalid")
+        monkeypatch.setenv("SUBSYSTEM_STORE_TOKEN", "a-token-from-the-env")
+        payload, _rc = self._doctor_json(cli, monkeypatch, tmp_path)
+        assert tuple(c["name"] for c in payload["checks"]) == SINGLE_INSTANCE_CHECKS
+
+    def test_a_second_instance_prefixes_EVERY_name_with_its_alias(
+        self, tmp_path, monkeypatch, _pin_the_hosts_configuration
+    ) -> None:
+        """The other point. One `.env` in the pinned `instances/` directory and
+        every name grows an alias — including the DEFAULT instance's, which is
+        what a test looking `token` up by its bare name cannot survive."""
+        cli = _load_cairn_cli()
+        monkeypatch.setenv("SUBSYSTEM_STORE_URL", "https://example.invalid")
+        monkeypatch.setenv("SUBSYSTEM_STORE_TOKEN", "a-token-from-the-env")
+        mirror = tmp_path / "frozen-mirror" / "alpha"
+        mirror.mkdir(parents=True)
+        (mirror / "a.md").write_text("# a\n", encoding="utf-8")
+        (mirror / "a.md").chmod(0o444)
+        monkeypatch.setenv("CAIRN_MIRROR_ROOT", str(tmp_path / "frozen-mirror"))
+        instances = _pin_the_hosts_configuration / "instances"
+        instances.mkdir()
+        (instances / "beta.env").write_text(
+            "SUBSYSTEM_STORE_URL=https://beta.example.invalid\n"
+            "SUBSYSTEM_STORE_TOKEN=a-token-for-beta\n",
+            encoding="utf-8",
+        )
+        payload, _rc = self._doctor_json(cli, monkeypatch, tmp_path)
+        names = tuple(c["name"] for c in payload["checks"])
+        by_name = {c["name"]: c for c in payload["checks"]}
+
+        # The default instance is `personal`, and it is prefixed too: the alias
+        # answers "which store", and omitting it for the default would make the
+        # bare name mean two different things on two hosts.
+        assert "token" not in names, names
+        assert tuple(n for n in names if n.startswith("personal/")) == tuple(
+            f"personal/{c}" for c in SINGLE_INSTANCE_CHECKS
+        ), names
+        assert tuple(n for n in names if n.startswith("beta/")) == tuple(
+            f"beta/{c}" for c in SINGLE_INSTANCE_CHECKS
+        ), names
+
+        # 🔴 EVERY ROW IS RENAMED AND NO ROW IS DROPPED — the two halves of the
+        # claim, and the second is why the sets are compared rather than counted.
+        # ⚠ `frozen-mirror` was WRITTEN here as `beta` carrying one row fewer,
+        # reasoning from `_doctor_instance`'s "the frozen mirror belongs to the
+        # default instance ALONE" comment; measured, beta carries the row too and
+        # what belongs to the default alone is the mirror's CONTENT. So the
+        # discriminator is the STATE, not the row count, and it needs a mirror
+        # actually configured — with `$CAIRN_MIRROR_ROOT` unset both sides read
+        # NOT-OBSERVABLE and this assertion would pass on a build that reported
+        # the default's mirror under every alias.
+        assert by_name["personal/frozen-mirror"]["state"] == cd.OK, by_name[
+            "personal/frozen-mirror"
+        ]
+        assert by_name["beta/frozen-mirror"]["state"] == cd.NOT_OBSERVABLE, by_name[
+            "beta/frozen-mirror"
+        ]
