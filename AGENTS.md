@@ -342,12 +342,8 @@ ABOUT.** `cairn` (`packages.cairn`) is the Python client and the ORACLE; `cmd/ca
 **The Python client, its `lib/` and its packaging are not deleted here**; the plan
 retires Python at P8, and the gate below stays the comparison until it does.
 
-🔴 **THE DEFAULT FLIPPED ON AN OPERATOR DECISION, NOT ON A GREEN GATE — a draft took it
-on the gate alone and was REVERTED, and that reading stays wrong however green the gate
-gets.** The decision followed residual 8's closure, which removed the one MEASURED
-blocker (every read verb refused at exit 11 on a multi-instance host, so the `doctor`
-quickstart above would have refused there). The flip WIDENS the CLI contract —
-residual 7, announced in `README.md` — and `#cairn` is the opt-out.
+🔴 **THE DEFAULT FLIPPED ON AN OPERATOR DECISION, NOT ON A GREEN GATE** — the record is
+`tests/parity/README.md` residual 7.
 
 🔴 **`lib/` MUST STAY BESIDE THE *PYTHON* CLIENT SCRIPT, AND `packages.cairn` IS
 BUILT THAT WAY ON PURPOSE.** `cairn` finds its modules with

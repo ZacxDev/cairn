@@ -59,9 +59,10 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
    guard on words is walkable by rewording. This is now the **only** unmet clause of the arc's
    closing condition and the largest thing left; it is entirely unstarted.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
-2. **The batched scaffolding defects**, including **issue #51** (evict `AGENTS.md`'s reverted-draft
-   flip history — **147 B** of headroom before the byte-budget warning band fires). All are test,
-   harness or prose items; none changes what CI does.
+2. **The batched scaffolding defects.** ✅ **Issue #51 is DONE** — the reverted-draft flip history
+   is evicted to `tests/parity/README.md` residual 7, which already carried it; `AGENTS.md` +
+   `CLAUDE.md` are **31,082 B**, so the headroom before the warning band is **518 B**, not 147.
+   The rest are test, harness or prose items; none changes what CI does.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else will surface them.
 3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304. Key it
    on **principal + epoch** — `control.Authorization` already carries `Epoch`.
