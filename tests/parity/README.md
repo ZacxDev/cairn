@@ -253,6 +253,22 @@ happens when it is a VALUE? The rule is argparse's, and both halves are measured
 - **Anything after the pod answers 5xx from a real fault.** The world is healthy; `503` is only
   reached through a refused scope, which this token does not have.
 
+### …and what the NIX CHECKS cannot see, which is why this gate exists at all
+
+Relocated from `AGENTS.md`, which keeps the imperative — *ask what your sandbox cannot
+have before reading its green as coverage* — and hands the evidence here.
+
+`checks.client-resolves-its-lib` runs in a nix sandbox whose HOME has no cache root. That
+pinned dimension is exactly why it did not notice the `_visibility_check` defect that took
+`cairn doctor` to exit 1 with zero stdout on any host that HAD one — a crash recorded beside
+the code it lived in (`lib/cairn_doctor.py`, `internal/doctor/collect.go` and both of their
+tests), and invisible to a check whose world cannot contain the trigger.
+
+**Every `*-declares-its-*` check has the same shape of blindness**: no store, no token, no
+network and no cache-root HOME, so each exercises a LEDGER and nothing about behaviour. This
+harness is what measures behaviour instead, and it needs a running pod that a nix sandbox is
+the wrong place for.
+
 ## The mutation battery over P2 — 61 mutants, 58 killed, 3 labelled equivalent at the code
 
 🔴 **Also relocated here from `AGENTS.md`, for the same reason: this is a round-by-round record,
