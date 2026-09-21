@@ -50,9 +50,20 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
+# `testlib` lives beside the suites, one level up from this harness's own dir.
+# 🔴 INSERTED AT 1, NOT 0, SO THIS DIRECTORY KEEPS PRECEDENCE. At index 0 the
+# parent would shadow `tests/parity/` for every later import — and this repo
+# already has an incident in that exact class, `tests/parity/harness.py` and
+# `tests/dualrun/harness.py` colliding on the module name `harness`. `world`
+# and `hostile` are the names at risk here; neither exists in `tests/` today,
+# which is why the ordering is a latent hazard rather than a live one.
+# ⚠ Redundant under pytest, which already puts `tests/` on the path; it is the
+# standalone-script path that needs it.
+sys.path.insert(1, str(ROOT / "tests"))
 
 import hostile  # noqa: E402
 import world as W  # noqa: E402
+from testlib import env_pin  # noqa: E402
 
 #: The stamp filename, excluded from the mtime comparison below: it is written at sync time by
 #: each client and its `synced=` line is wall-clock by design, so comparing it would be comparing
@@ -1014,21 +1025,32 @@ def main(argv: list[str] | None = None) -> int:
                 subprocess.run(["go", "build", "-C", str(ROOT), "-o", go_binary, "./cmd/cairn"],
                                check=True)
 
-            base_env = dict(os.environ)
-            base_env.update({
-                "HOME": str(home),
-                "CAIRN_HOST": PARITY_HOST,
-                "SUBSYSTEM_STORE_URL": f"http://127.0.0.1:{port}",
-                "SUBSYSTEM_STORE_TOKEN": W.TOKEN,
+            # 🔴 CLEARED BY PREFIX FIRST — AND THE OMISSION THAT MOTIVATED IT WAS
+            # THIS BLOCK'S. It pinned five names over an inherited `os.environ`
+            # and did NOT pin `CAIRN_ROUTES`, which every other site in the tree
+            # clears. Measured: with `CAIRN_ROUTES=/nonexistent/routes.json`
+            # exported, an explicit table that does not exist is an ERROR, the
+            # oracle's sync produces no entry files, and this gate exits **2** —
+            # `REFUSING TO VOUCH: no row produced a LIVE banner and a rendered
+            # digest`. Not a false green: the content floor does its job. But the
+            # operator is told their RUN measured refusals, not that their SHELL
+            # did it, and a per-case `CAIRN_ROUTES` override cannot help the rows
+            # that set none. `env_pin` clears the whole prefix, so the rows that
+            # DO set one still get exactly what they set.
+            base_env = env_pin.sanitized_env(
+                HOME=str(home),
+                CAIRN_HOST=PARITY_HOST,
+                SUBSYSTEM_STORE_URL=f"http://127.0.0.1:{port}",
+                SUBSYSTEM_STORE_TOKEN=W.TOKEN,
                 # 🔴 POINTED AT A FILE THAT DOES NOT EXIST, DELIBERATELY. Both clients read a
                 # config file when the environment does not supply a value; letting them fall
                 # back to the operator's real `~/.config` would make the run depend on the
                 # machine it ran on.
-                "SUBSYSTEM_STORE_CONFIG": str(work / "no-such-config"),
-                "CAIRN_MIRROR_ROOT": "",
-                "GIT_CONFIG_GLOBAL": "/dev/null",
-                "GIT_CONFIG_SYSTEM": "/dev/null",
-            })
+                SUBSYSTEM_STORE_CONFIG=str(work / "no-such-config"),
+                CAIRN_MIRROR_ROOT="",
+                GIT_CONFIG_GLOBAL="/dev/null",
+                GIT_CONFIG_SYSTEM="/dev/null",
+            )
 
             status, declared = preflight(port)
             print(f"PREFLIGHT status={status} declared-entries={declared}")

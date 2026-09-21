@@ -36,10 +36,43 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
-from testlib import cairn_source, hang_mechanism, store_siting  # noqa: E402
+from testlib import cairn_source, env_pin, hang_mechanism, store_siting  # noqa: E402
 CAIRN_CLI = REPO / "cairn"
 SERVER_PY = REPO / "server" / "server.py"
 GOOD_TOKEN = "w" * 20 + "R" * 20 + "t" * 8
+
+#: The host label BOTH sides of a byte-identity comparison must print. 🔴 IT IS
+#: SET IN THIS PROCESS *AND* PASSED TO EVERY CHILD, AND ONE SIDE ALONE IS NOT A
+#: FIX — that was measured, not reasoned about. `run_cairn` clears the client's
+#: configuration from the child (`env_pin`), which includes the host label; a
+#: test that renders the expected bytes IN-PROCESS then reads the operator's
+#: label while the child reads `socket.gethostname()`, and the two `host:` lines
+#: diverge. Pinning only the child swaps one divergence for another — applied and
+#: watched still failing before this fixture was written.
+#:
+#: ⚠ AND IT IS STRICTLY BETTER THAN WHAT IT REPLACES. Before, the two sides
+#: agreed because BOTH read the operator's real `$CAIRN_HOST` — agreement bought
+#: by putting a real machine name through a test in a PUBLIC repository. Now both
+#: read a synthetic one, which is the convention every other harness here already
+#: follows (`CAPTURE_HOST`, `PARITY_HOST`, `DUALRUN_HOST`).
+WRITE_HOST = "write-harness"
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_host_label(monkeypatch):
+    """Both sides of every comparison in this file read `WRITE_HOST`.
+
+    The names come from `env_pin.EXTRA_CONFIG_ENV`, which derives them from
+    `host_identity.HOST_LABEL_ENV` — so a fourth host-label variable is cleared
+    here on the day it is added, without anybody editing this file. They are
+    cleared before the pin because `host_label()` returns the FIRST one set, so
+    leaving `$ASIB_HOST` behind would decide the answer on some hosts and not
+    others.
+    """
+    for name in env_pin.EXTRA_CONFIG_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CAIRN_HOST", WRITE_HOST)
+
 LOOPBACK = ipaddress.ip_network("127.0.0.1/32")
 SESSION = "test-session-01"
 
@@ -227,12 +260,15 @@ def _write_status_table() -> dict[int, int]:
 
 
 def run_cairn(*args: str, url: str | None, cache: Path, token: str = GOOD_TOKEN):
-    env = dict(os.environ)
-    env["SUBSYSTEM_STORE_TOKEN"] = token
     # A path that does not exist, so the developer's real credentials can never
     # make a test pass. A test that reads live credentials is not a test.
-    env["SUBSYSTEM_STORE_CONFIG"] = str(cache.parent / "no-such-config")
-    env["SUBSYSTEM_STORE_URL"] = url or f"http://127.0.0.1:{_dead_port()}"
+    # Cleared by prefix first — see the sibling helper in `test_cairn_cli.py`.
+    env = env_pin.sanitized_env(
+        CAIRN_HOST=WRITE_HOST,
+        SUBSYSTEM_STORE_TOKEN=token,
+        SUBSYSTEM_STORE_CONFIG=str(cache.parent / "no-such-config"),
+        SUBSYSTEM_STORE_URL=url or f"http://127.0.0.1:{_dead_port()}",
+    )
     return subprocess.run(
         [sys.executable, str(CAIRN_CLI), "--cache", str(cache), "--timeout", "5", *args],
         capture_output=True, text=True, env=env, timeout=120,
@@ -864,8 +900,18 @@ class TestTheRequestItself:
             [sys.executable, str(CAIRN_CLI), "append", "--scope", "widget-cfg",
              "--ref", "thing-alpha", "--text", "x"],
             capture_output=True, text=True, timeout=60,
-            env={**os.environ, "CLAUDE_SESSION_ID": "leaked-from-the-env",
-                 "CAIRN_SESSION": "also-leaked"},
+            # ⚠ THE OVERRIDES SURVIVE THE SWEEP ON PURPOSE. `sanitized_env`
+            # clears the client's configuration and THEN applies what it is
+            # given, so these two deliberately-leaked names are still set — which
+            # is the whole point of the probe — while any OTHER stray
+            # `CAIRN_*`/`SUBSYSTEM_STORE_*` the operator exports is gone.
+            # `CAIRN_SESSION` matches `env_pin`'s own predicate, so this was the
+            # ninth copy of the surface: spelled `{**os.environ, …}`, invisible
+            # to the first, grep-based version of the ledger that now catches it.
+            env=env_pin.sanitized_env(
+                CLAUDE_SESSION_ID="leaked-from-the-env",
+                CAIRN_SESSION="also-leaked",
+            ),
         )
         assert env_probe.returncode == 2
         assert "--session" in env_probe.stderr
