@@ -278,6 +278,20 @@
             || pkgs.lib.hasPrefix "cmd/" rel || pkgs.lib.hasPrefix "internal/" rel
           ))
           || (rel == "go.mod")
+          # 🔴 `go.sum` IS NAMED EXPLICITLY, AND ITS ABSENCE FROM THIS LIST WAS A
+          # BUILD FAILURE RATHER THAN A SILENT ONE — which is the good direction and
+          # still worth writing down. `buildGoModule` with a real `vendorHash` needs
+          # the lock file to resolve the module graph, so a filter that carried
+          # `go.mod` alone stops the fetch phase dead. It is spelled as its own row
+          # for the reason the `.go` row below gives: a `go.*` glob would be an
+          # allowlist that says something wider than it means.
+          #
+          # ⚠ AND IT IS READ BY A TEST, NOT ONLY BY THE FETCHER.
+          # `internal/depspolicy` parses BOTH lock files and compares them against
+          # each other and against its allowlist, so a sandbox build without this
+          # row would fail that test for a reason that has nothing to do with the
+          # tree — the same shape as `reader_fixtures.json` two rows down.
+          || (rel == "go.sum")
           || (rel == "tests/conformance/requests.json")
           || (rel == "internal/report/testdata/reader_fixtures.json")
           # A `.go` file only under the two directories this module is made of. A
@@ -309,17 +323,54 @@
       # skew would break.
       buildGoPinned = pkgs: pkgs.buildGo125Module;
 
-      # 🔴 NO VENDOR HASH, BECAUSE THERE ARE NO DEPENDENCIES. `null` is
-      # `buildGoModule`'s spelling for "this module requires nothing outside the
-      # standard library". That is not a convenience: it is the property
-      # `go.mod`'s missing `require` block states, and this is the line that makes
-      # a new dependency a build FAILURE rather than a silent addition to the
-      # serving path.
+      # 🔴 ONE BINDING, READ BY ALL THREE GO DERIVATIONS, BECAUSE THERE IS ONE
+      # MODULE. Three literals would be three chances for one to go stale, and a
+      # stale vendor hash is a build failure whose message points at the derivation
+      # rather than at the `go.mod` change that caused it.
+      #
+      # ⚠ IT COVERS `cairn-go` AND `cairn-server-go` TOO, NEITHER OF WHICH IMPORTS
+      # ANYTHING THIRD-PARTY. That is the cost of one module rather than three, and
+      # it is accepted rather than worked around: a second module for the UI would
+      # split `internal/` in two and put a version skew between the renderer the pod
+      # links and the one the CLI links, which is the exact failure `internal/report`
+      # being ONE package exists to prevent.
+      #
+      # To move it: change the dependency, set this to
+      # `lib.fakeHash`, run `nix build .#cairn-ui`, and copy the hash nix prints.
+      goVendorHash = "sha256-La+SYvwXEPSEbmLbsEJfXdMzYfs/3Df3tbSfNsrlkzU=";
+
+      # 🔴 THIS USED TO BE `vendorHash = null`, AND THE SENTENCE THAT STOOD HERE —
+      # "this is the line that makes a new dependency a build FAILURE rather than a
+      # silent addition to the serving path" — IS NO LONGER TRUE OF ANY LINE IN THIS
+      # FILE. It is written out rather than deleted because a maintainer who
+      # remembers the old guarantee has to be told where it went, not left to infer
+      # that nothing replaced it.
+      #
+      # `internal/ui` renders HTML with `maragu.dev/gomponents`, there is ONE module,
+      # and so all three Go derivations carry a real vendor hash — including the two
+      # that import nothing third-party and pay it anyway. That loss was an operator
+      # decision, taken explicitly.
+      #
+      # 🔴 WHERE THE REFUSAL LIVES NOW: `internal/depspolicy`, whose package doc is
+      # the ONE place it is stated. Not restated here — that comment already had five
+      # copies and this was one of them.
+      #
+      # What this file contributes to it, and the reason the pointer is here at all:
+      # all three derivations below set `doCheck = true` with `checkPhase` spelled out
+      # as `go vet ./...` then `go test ./...`, so the policy's tests run in the
+      # PACKAGE build a consumer makes rather than only in CI. That is what makes an
+      # import-ban failure a BUILD failure for anyone building through nix — the same
+      # consequence `vendorHash = null` had, which is the strongest thing that can be
+      # said for the replacement and is said in full over there.
+      #
+      # ⚠ A VENDOR HASH IS NOT A DEPENDENCY GATE AND MUST NOT BE READ AS ONE. It
+      # pins the BYTES of whatever the module graph resolves to; it says nothing
+      # about which modules are in that graph, and adding one just changes the hash.
       mkGoServer = pkgs: (buildGoPinned pkgs) {
         pname = "cairn-server";
         inherit version;
         src = onlyGo pkgs;
-        vendorHash = null;
+        vendorHash = goVendorHash;
 
         subPackages = [ "cmd/cairn-server" ];
 
@@ -401,7 +452,7 @@
         pname = "cairn-go";
         inherit version;
         src = onlyGo pkgs;
-        vendorHash = null;
+        vendorHash = goVendorHash;
 
         subPackages = [ "cmd/cairn" ];
 
@@ -430,6 +481,52 @@
           homepage = "https://github.com/ZacxDev/cairn";
           license = licenses.mit;
           mainProgram = "cairn";
+          platforms = platforms.unix;
+        };
+      };
+
+      # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
+      # MODULE. `cmd/cairn-ui` is PHASE A: one page, one authentication chain, one
+      # rendering path. It is DEPLOYED BY NOTHING and no image wraps it — saying so
+      # is part of the change, the same way `cmd/cairn-server`'s own doc comment says
+      # it for the Go pod.
+      #
+      # 🔴 NO `gitMinimal` ON A WRAPPER, AND THE ABSENCE IS DELIBERATE RATHER THAN
+      # FORGOTTEN. `packages.cairn` and `packages.cairn-go` carry one because their
+      # code invokes `git` by BARE NAME to derive a repo's scope
+      # (`internal/client/reposcope.go`), so a package without its own answer would
+      # behave differently on two machines. This binary has no repo, no cwd that
+      # means anything, and imports neither `internal/client` nor anything that
+      # shells out — it reads a store root it is told about. A wrapper here would be
+      # a PATH entry with no caller, which is the shape this repository refuses
+      # elsewhere as exported API with no consumer.
+      #
+      # ⚠ WHAT `doCheck` HERE BUYS THAT THE OTHER TWO DERIVATIONS DO NOT: nothing.
+      # `checkPhase` is `go test ./...` in all three, so the UI's tests already run
+      # in the pod's and the client's builds too. It is spelled out identically
+      # anyway, because the failure that made it necessary — `subPackages` silently
+      # scoping the test walk — is a property of this builder, not of a package.
+      mkGoUI = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-ui";
+        inherit version;
+        src = onlyGo pkgs;
+        vendorHash = goVendorHash;
+
+        subPackages = [ "cmd/cairn-ui" ];
+
+        doCheck = true;
+        checkPhase = ''
+          runHook preCheck
+          go vet ./...
+          go test ./...
+          runHook postCheck
+        '';
+
+        meta = with pkgs.lib; {
+          description = "The cairn browser surface (phase A: one page, deployed by nothing)";
+          homepage = "https://github.com/ZacxDev/cairn";
+          license = licenses.mit;
+          mainProgram = "cairn-ui";
           platforms = platforms.unix;
         };
       };
@@ -671,6 +768,10 @@
           default = mkGoClient pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
+          # 🔴 THE BROWSER SURFACE IS A PACKAGE AND NOTHING ELSE — no `apps` entry, no
+          # image, and nothing in `default`. It is built by name or not at all, which
+          # is what "deployed by nothing" means concretely rather than as a promise.
+          cairn-ui = mkGoUI pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
           server-image = mkServerImage pkgs;
@@ -717,6 +818,7 @@
         cairn = mkCairn pkgs;
         cairn-server-go = mkGoServer pkgs;
         cairn-go = mkGoClient pkgs;
+        cairn-ui = mkGoUI pkgs;
 
         # 🔴 WHICH CLIENT THE UNQUALIFIED NAMES RESOLVE TO, PINNED AS A RELATIONSHIP
         # BETWEEN RESOLVED DERIVATIONS. Before this check, NOTHING in the repository
@@ -1031,6 +1133,22 @@
           echo "ok: $(wc -l < routes.txt) declared routes, matching the ledger"
           cp routes.txt $out
         '';
+
+        # ⚠ THERE IS NO `go-ui-declares-its-routes` HERE, AND ITS ABSENCE IS A
+        # DECISION RATHER THAN A GAP — a draft of this file carried one, modelled on
+        # `go-server-declares-its-routes` above. That check earns its place because
+        # the pod's route set is the SERVED CONTRACT `tests/conformance/requests.json`
+        # replays and the corpus builder is Python, blind to a compiled binary: the
+        # ledger read out of the running program is a genuinely second instrument in
+        # a second environment. The UI has neither — `ui.DeclaredRoutes()` derives
+        # from the same map its dispatcher reads, and the only expectation anywhere
+        # is a hand-written list. A check that ran the binary to print that list and
+        # diffed it against a third hand-written copy would restate one claim down a
+        # longer path, for a surface whose contract is one row. `internal/ui`'s
+        # `TestTheRouteLedgerMatchesTheDispatchTable` is the one mechanism kept, and
+        # it runs inside `mkGoUI`'s own check phase, so `nix build .#cairn-ui` gates
+        # it. When a later phase gives this surface an external corpus, the second
+        # tier comes back with it.
 
         # 🔴 THIS CHECK IS THE POSITIVE HALF, AND IT IS *NOT* THE DETECTOR FOR A
         # MISSING `lib/` — `doInstallCheck` above is, and it fires first.
