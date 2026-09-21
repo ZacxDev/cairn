@@ -416,14 +416,18 @@ UNCHANGED  tests/conformance/golden/root-path.json    8a715a7fbafda493…
 
 ## 🔴 The storage decision, and the three shapes it beat
 
-The operator chose cookie sessions **over a client-held JWT**, and the stated reason was that
-a JWT has no server-side logout: it is valid until its `exp` and nothing can take it back. So
-**"logout actually revokes" is a requirement**, and it is what priced the four options.
+The operator chose cookie sessions **over a client-held JWT**, and stated **two** requirements
+rather than one. **(i) logout actually revokes** — a JWT is valid until its `exp` and nothing can
+take it back. **(ii) sessions survive a process restart and a rolling deploy**, claimed on its own
+authority and *not* derived from (i): the requirement is **"a rolling deploy signs NOBODY out"**,
+with a brief 503 while a replica restarts being acceptable where a sign-out is not. Both priced the
+four options. The canonical statement of all of this is `internal/identity/session.go`'s package
+comment; this table is the echo.
 
 | option | verdict | why |
 |---|---|---|
 | **(a) a file-backed store shaped like `control.FileStore`** | **CHOSEN** | durable across restart, revocable in one write, reuses mechanics this repo has already measured: exclusive `flock`, re-read UNDER the lock, `Sync` before success |
-| (b) sessions as events in the control journal | rejected | `control.FileStore.Model` re-reads and REPLAYS the whole journal on **every** call and every authenticated request calls it — so session churn, the highest-rate write here, makes every authorization decision monotonically slower forever at a rate set by login volume. The category objection stands beside that and would survive a fix: the journal answers "who could see this, and when", and an operator reading it for a grant history would be reading it through session noise |
+| (b) sessions as events in the control journal | rejected | 🔴 **the performance reason this row led with was FALSE and is corrected, not softened.** It said the replay runs on every call "and every authenticated request calls it"; the second clause is wrong — every serving path reads through a `control.Cache`, so the replay is once per 30s refresh, and `cairn-ui` wires no `FileStore` at all. The reasons that hold: a cached authority makes logout **eventual** (up to one refresh interval), and bypassing the cache to make it immediate is what *would* reinstate replay-per-request; the journal's volume is **ReadWriteOnce on a node-local class**, so sessions in it pin every UI replica to one node — multi-replica dies by construction; and the category objection survives both — the journal answers "who could see this, and when", and an operator reading it for a grant history would be reading it through session noise. Full statement: `internal/identity/session.go`, option (b) |
 | (c) a signed stateless cookie plus a revocation list | rejected | it is (a) with extra parts. The revocation list is a durable store that must survive restart or logout is a lie, so nothing is saved; it adds a signing key, which is a new secret with a new rotation story; and entries must be kept until each revoked token's `exp`, so it is a store that can only GROW. A session id is already an unguessable 256-bit value — signing it proves nothing the lookup does not |
 | (d) in-memory only | rejected | every restart signs everybody out, which on a rolling deploy is not rare. And it is a **new kind** of multi-replica failure rather than a worse version of the declared one |
 
@@ -432,9 +436,24 @@ That blind spot is *divergence about one durable truth* — two caches at differ
 converges. An in-memory session table has no shared truth to converge on: a session opened on pod
 A does not exist on pod B and never will, so a load balancer without sticky sessions signs the user
 out on a random fraction of requests. (d) makes the declared blind spot worse **in that sense**.
-🔴 **And the honest half: (a) does not FIX replication either** — it inherits exactly the journal's
-shared-filesystem assumption, no more and no less, and it ends where the journal's does, at the
-second `control.Store` implementation.
+
+🔴 **And the honest half, said operationally rather than gently: `cairn-ui` is a SINGLE-REPLICA
+surface today.** (a) does not FIX replication — it inherits exactly the journal's shared-filesystem
+assumption, no more and no less, and it ends where the journal's does, at the second
+`control.Store` implementation. **A second replica without shared storage is not a degraded version
+of this design; it is a surface that signs users out on a random fraction of requests** — the same
+failure the table above rejects (d) for. And "share the filesystem" is visibly not a configuration
+away: the journal's volume is **ReadWriteOnce on a node-local storage class**, so a shared session
+file pins every replica to one node.
+
+⚠ **The direction, recorded as a direction and not as a commitment.** Requirement (ii) is met on
+one replica because the volume outlives the process. For more than one, the intended answer is
+**sticky routing — a StatefulSet with a per-ordinal volume**, each replica owning its own session
+table and returning to it after a restart. No Go change; stdlib-only intact. **Multi-replica
+sessions is its own arc**, and it is where the cross-replica storage decision gets made — including
+`FileSessionStore.Revoke`'s cost, which runs the full `mutate` (`flock`, whole-file re-read,
+rewrite, two `Sync`s) even for a digest that is ABSENT: no privilege is gained by a caller who
+already holds a bearer credential, but over shared storage it is a lock-contention amplifier.
 
 ### Where it diverges from `control.FileStore`, and why
 
@@ -571,12 +590,13 @@ is a misattribution that reports a deleted check as covered.
 | 2 | | the HMAC keyed on the LABEL instead of the id | `…derive the SAME CSRF token` |
 | 3 | comparison | `hmac.Equal` → `==` | `NO \`hmac.Equal\` CALL REMAINS` |
 | 3 | | `subtle.ConstantTimeCompare` → `==` (plus the import) | ``NO `subtle.ConstantTimeCompare` CALL REMAINS`` |
-| 3 | scan | a `break` on match | `THE SCAN SHORT-CIRCUITS` (8, 8, 8 over 8 records → 1, 8, 8) |
+| 3 | scan | a `break` on match | `THE SCAN SHORT-CIRCUITS` — now **structural**, naming `break` and its line |
+| 3 | scan | an early `return` on match | `THE SCAN SHORT-CIRCUITS` — naming `return` and its line |
 | 3 | entropy | `SessionIDBytes` 32 → 16 | `SessionIDBytes is 16, want 32` |
 | 4 | expiry | `Live` → `return true` | `AN EXPIRED SESSION WAS SERVED` |
 | 4 | | `now.Before(exp)` → `!now.After(exp)` | `the expiry instant itself` |
 | 5 | logout | `Revoke` becomes a no-op | `THE REVOKED COOKIE STILL AUTHENTICATES` |
-| 5 | | a process-local memo absorbs revocations but not creations — **option (d) in one edit** | `THE REVOKED SESSION CAME BACK AFTER A RESTART` |
+| 5 | | a process-local memo absorbs revocations but not creations — a **Create-persists / Revoke-doesn't hybrid**, narrower than any option priced above | `THE REVOKED SESSION CAME BACK AFTER A RESTART` |
 | 6 | fixation | the sign-in revocation removed | `THE PRE-SIGN-IN SESSION IS STILL LIVE` |
 | 7 | secrets | the session id added to the sign-in log line | `THE LOG CONTAINS the session id` |
 | 7 | | the submitted token echoed into the refusal page | `THE REFUSED SIGN-IN PAGE CONTAINS the wrong credential` |
@@ -589,14 +609,34 @@ is a misattribution that reports a deleted check as covered.
 | — | class | a second HTML route added WITHOUT the `content` class | `GET /dup answers 200 with an HTML body and is NOT classed \`content\`` |
 | — | class | the one content route's class removed | `NO route in the ledger carries the \`content\` class` (the vacuity arm) |
 
-**25 mutants, 25 killed, 0 survived**, after two were re-cut:
+**26 mutants, 26 killed, 0 survived**, after two were re-cut and one property changed instrument:
+
+- 🔴 **THE SCAN GUARD IS NOW STRUCTURAL, AND THAT IS A DELIBERATE TRADE RATHER THAN A LOSS.**
+  `TestTheSessionScanDoesNotShortCircuit` measured the property with a `comparisons atomic.Int64`
+  field on `FileSessionStore` — an instrument in the SERVING path, incremented once per record on
+  every request by every replica, existing for one test. The field is deleted; the property is now
+  pinned by `TestTheLookupScanHasNoEarlyExit`, which parses `sessionstore.go` and refuses a
+  `break`/`continue`/`goto`/`return` inside `Lookup`'s digest loop. **Four arms, all confirmed to
+  BUILD first:** a `break` and an early `return` each fail with `THE SCAN SHORT-CIRCUITS` naming the
+  statement and its line; rewriting the `range` as an index loop and replacing `digestsEqual` with
+  `==` each fail the guard's own POSITIVE CONTROLS ("contains no `range` statement at all" / "does
+  not call `digestsEqual`"), because "found no `break`" and "found no loop" are otherwise the same
+  green. ⚠ **What it cannot see, stated:** it pins the loop's ITERATION COUNT — what the counter
+  measured — and not the per-iteration COST, so a body whose work depends on whether *this* record
+  matched would leak the same fact with no branch statement anywhere. That half is `digestsEqual`'s
+  and row 3's `subtle.ConstantTimeCompare` guard's. Moving the scan out of `Lookup` is *not* in the
+  gap: the positive controls fire when the `range` or the `digestsEqual` call leaves the function.
 
 - 🔴 **one mutant was REFUSED A KILL BY THE PAIR ASSERTION, and that is the finding.** The first
   "logout is not durable" mutant skipped the rename entirely — which breaks *creation* too, so
   `TestLogoutRevokes…` failed on its OTHER arm (*the untouched session did not survive the
   restart*) rather than on the revocation one. The pair assertion exists precisely so a store that
-  refuses everything cannot score a kill, and it worked. It was re-cut as the option-(d) memo above,
-  which is narrower **and more faithful**: creation persists, revocation does not.
+  refuses everything cannot score a kill, and it worked. It was re-cut as the memo above, which is
+  narrower **and more faithful**: creation persists, revocation does not. ⚠ That row used to call the
+  re-cut "**option (d) in one edit**", which was wrong and is corrected: (d) is in-memory-only, where
+  **neither** create nor revoke persists. The re-cut is a Create-persists / Revoke-doesn't hybrid —
+  *narrower than any option that was priced*, which is the entire point of re-cutting it, and the old
+  label threw that away.
 - one mutant initially **did not build** (dropping the `subtle` call left its import unused) and
   was re-cut to remove both.
 
@@ -642,6 +682,15 @@ change, not here.
 
 ### 🔴 The guard this change could itself have emptied, and how it was closed
 
+**Twice now, and the second one is the review round's own edit.** Deleting the `comparisons`
+counter deletes the *only* measurement of "the scan does not short-circuit" — the exact shape this
+heading exists for. It was checked rather than assumed: the package's other tests were run against a
+`break` mutant with the counter test already gone, and **only** the new structural guard noticed, so
+nothing else was silently carrying the property. The guard is proven red on `break` and on `return`,
+and its two positive controls are proven reachable. What was NOT preserved is the behavioural
+observable; that is recorded beside the mutant table and in `Lookup`'s own comment rather than left
+for the next reader to find.
+
 `TestEveryContentRouteConsultsTheAuthority` used to walk **every** declared route. Phase B made
 it walk only the rows that declare themselves `content` — which is a hole in the shape this
 repository names: a new page route added *without* the class is skipped by the walk, and the
@@ -679,3 +728,9 @@ Everything in Phase A's list still applies, and three of them now matter more:
 - **Login CSRF beyond the origin gate.** The public sign-in form carries no token because there is
   no session to derive one from; the same-origin gate is the whole defence there, and it is a
   browser-behaviour claim in the same way the cookie flags are.
+- 🔴 **A SESSION VOLUME THAT VANISHES *AFTER* START.** `cmd/cairn-ui/main.go` refuses to start when
+  the session table cannot be opened — correct, and it says why — but `/healthz` answers `ok`
+  unconditionally ahead of the whole chain (`internal/ui/server.go`), so a replica that loses its
+  session volume after startup **passes readiness and refuses every login**: exactly the shape the
+  startup refusal exists against, arriving by the one route the refusal cannot cover. Nothing here
+  measures it, and nothing in this PR changes it.

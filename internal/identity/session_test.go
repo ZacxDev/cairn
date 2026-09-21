@@ -205,63 +205,105 @@ func TestSessionIDsCarryTheDeclaredEntropyAndDoNotRepeat(t *testing.T) {
 	t.Logf("entropy: %d draws, %d distinct, %d bytes each", draws, len(seen), wantBytes)
 }
 
-// TestTheSessionScanDoesNotShortCircuit is the COMPARISON half of property 3, and it
-// pins the property that is actually worth pinning.
+// TestTheLookupScanHasNoEarlyExit is the COMPARISON half of property 3, and it pins the
+// property that is actually worth pinning.
 //
 // 🔴 A CONSTANT-TIME COMPARE INSIDE A SHORT-CIRCUITING LOOP LEAKS ANYWAY. The comparison
 // is `subtle.ConstantTimeCompare`, so no single comparison leaks its operands' difference
 // — but a loop that RETURNS at the first match makes the response time carry the matched
-// record's position in the file, which is a fact about the store's contents. The scan
-// therefore runs to completion, and this is the only way to observe that without a timing
-// measurement, which is a flake generator.
+// record's position in the file, which is a fact about the store's contents.
 //
-// The instrument is validated before its verdict is read: the counter must MOVE at all
-// (a counter wired to nothing reports a comfortable equality forever), and the three
-// arms must agree with each other AND with the record count.
-func TestTheSessionScanDoesNotShortCircuit(t *testing.T) {
-	now := time.Date(2000, 6, 1, 12, 0, 0, 0, time.UTC)
-	store := newFileSessions(t, func() time.Time { return now })
+// 🔴 IT IS A STRUCTURAL GUARD AND IS LABELLED AS ONE, AND IT REPLACED A BEHAVIOURAL ONE
+// DELIBERATELY. The predecessor read a `comparisons atomic.Int64` counter incremented once
+// per record inside `Lookup` and probed three positions. That measured the property
+// directly, and it did so by carrying an instrument in the SERVING PATH — a field on the
+// production struct, incremented on every request by every replica, existing for one test.
+// The loop's shape is what the property actually is, so the shape is what is pinned here
+// and the counter is gone.
+//
+// ⚠ THE TRADE, STATED RATHER THAN LEFT TO BE DISCOVERED. This pins the loop's ITERATION
+// COUNT — exactly what the counter measured — and NOT the per-iteration COST. A body doing
+// work whose duration depends on whether this record matched would leak the matched
+// position with no branch statement anywhere, and neither this guard nor the counter it
+// replaced would see it; that half belongs to `digestsEqual` and
+// `TestTheSessionComparisonsUseConstantTimePrimitives`. Moving the scan out of `Lookup`
+// entirely is NOT in the gap: the positive controls below fail when the `range` or the
+// `digestsEqual` call leaves this function.
+//
+// ⚠ AND THE INSTRUMENT IS VALIDATED BEFORE ITS VERDICT IS READ, because "found no `break`"
+// and "found no loop" are the same green. The walk must find `Lookup`, must find a `range`
+// inside it, and that range's body must contain the `digestsEqual` call — which is what
+// makes it THE scan rather than some other loop that happens to be there.
+func TestTheLookupScanHasNoEarlyExit(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filepath.Join(".", "sessionstore.go"), nil, 0)
+	if err != nil {
+		t.Fatalf("parsing sessionstore.go: %v", err)
+	}
 
-	const records = 8
-	ids := make([]string, records)
-	for i := range ids {
-		id, err := NewSessionID()
-		if err != nil {
-			t.Fatal(err)
+	var lookup *ast.FuncDecl
+	for _, d := range file.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "Lookup" || fn.Recv == nil {
+			continue
 		}
-		ids[i] = id
-		if err := store.Create(liveSession(t, id, now.Add(time.Hour))); err != nil {
-			t.Fatalf("creating record %d: %v", i, err)
+		lookup = fn
+	}
+	if lookup == nil {
+		t.Fatal("POSITIVE CONTROL FAILED: no method named `Lookup` was found in sessionstore.go, so the " +
+			"absence of a branch statement below is a fact about the walk rather than about the scan")
+	}
+
+	var scan *ast.RangeStmt
+	ast.Inspect(lookup, func(n ast.Node) bool {
+		if rng, ok := n.(*ast.RangeStmt); ok && scan == nil {
+			scan = rng
 		}
+		return true
+	})
+	if scan == nil {
+		t.Fatal("POSITIVE CONTROL FAILED: `Lookup` contains no `range` statement at all, so this guard is " +
+			"inspecting nothing")
 	}
 
-	probe := func(id string) int64 {
-		before := store.comparisons.Load()
-		if _, _, err := store.Lookup(id); err != nil {
-			t.Fatalf("lookup: %v", err)
+	calls := 0
+	ast.Inspect(scan.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
 		}
-		return store.comparisons.Load() - before
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "digestsEqual" {
+			calls++
+		}
+		return true
+	})
+	if calls == 0 {
+		t.Fatal("POSITIVE CONTROL FAILED: the `range` found in `Lookup` does not call `digestsEqual`, so it is " +
+			"not the digest scan and this guard is pinning the wrong loop")
 	}
 
-	first := probe(ids[0])
-	// INSTRUMENT CONTROL: the counter moved. A zero here means the comparisons are not
-	// being counted at all, and the equalities below would be three zeroes agreeing.
-	if first == 0 {
-		t.Fatal("the comparison counter did not MOVE on a lookup over 8 records, so the equalities below would " +
-			"compare three zeroes and mean nothing")
-	}
-	last := probe(ids[records-1])
-	absent := probe("a-session-id-this-store-has-never-held")
+	var offenders []string
+	ast.Inspect(scan.Body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.BranchStmt:
+			offenders = append(offenders, fmt.Sprintf("%s at sessionstore.go:%d",
+				node.Tok.String(), fset.Position(node.Pos()).Line))
+		case *ast.ReturnStmt:
+			offenders = append(offenders, fmt.Sprintf("return at sessionstore.go:%d",
+				fset.Position(node.Pos()).Line))
+		}
+		return true
+	})
 
-	if first != records || last != records || absent != records {
-		t.Errorf("THE SCAN SHORT-CIRCUITS: %d comparison(s) for a match at position 1, %d for a match at position "+
-			"%d, %d for no match at all, over %d records. Returning at the first match makes the response time "+
-			"carry the matched record's POSITION in the store, which is a fact about the store's contents — a "+
-			"constant-time comparison does not help, because what leaks is how many comparisons happened rather "+
-			"than what any one of them found.", first, last, records, absent, records)
+	if len(offenders) > 0 {
+		t.Errorf("THE SCAN SHORT-CIRCUITS: `FileSessionStore.Lookup`'s digest loop contains %v. Leaving the "+
+			"loop early makes the response time carry the matched record's POSITION in the store, which is a "+
+			"fact about the store's contents — a constant-time comparison does not help, because what leaks is "+
+			"how many comparisons happened rather than what any one of them found. Record the match and let the "+
+			"loop run to completion.", offenders)
 	}
-	t.Logf("scan: %d comparisons for the first record, %d for the last, %d for an absent id, over %d records",
-		first, last, absent, records)
+	t.Logf("scan shape: the `Lookup` range at sessionstore.go:%d makes %d digestsEqual call(s) and contains "+
+		"%d early-exit statement(s)", fset.Position(scan.Pos()).Line, calls, len(offenders))
 }
 
 // --- property 4: expiry ----------------------------------------------------------------
@@ -374,6 +416,11 @@ func TestAnExpiredSessionIsDroppedByTheNextWrite(t *testing.T) {
 // survives the process that issued it. So the second half of this test throws the store
 // value away and opens a new one over the same path, which is what a pod restart is.
 //
+// 🔴 AND DURABILITY IS THE OPERATOR'S OWN REQUIREMENT, NOT AN IMPLICATION OF THE LOGOUT
+// ONE. See the package comment's requirement (ii): "a rolling deploy signs NOBODY out".
+// The restart arm below asserts that requirement directly; it does not derive it from
+// "logout revokes", which would be circular.
+//
 // ⚠ AND IT ASSERTS THE PAIR. A store that refuses everything after a restart would pass a
 // "the revoked session is refused" assertion perfectly; the second, untouched session
 // must still be LIVE across the same restart, or the refusal is about the restart rather
@@ -433,9 +480,12 @@ func TestLogoutRevokesAndTheRevocationSurvivesARestart(t *testing.T) {
 	reopened.Now = clock
 
 	if _, live, _ := reopened.Lookup(revoked); live {
-		t.Error("THE REVOKED SESSION CAME BACK AFTER A RESTART. A logout that does not survive the process that " +
-			"served it is a logout that a rolling deploy undoes — which is exactly the property a client-held " +
-			"JWT lacks and the reason this design does not use one.")
+		t.Error("THE REVOKED SESSION CAME BACK AFTER A RESTART. Durability across a process restart and a " +
+			"rolling deploy is the OPERATOR's stated requirement for this surface, claimed on its own authority " +
+			"rather than derived from the logout one: a rolling deploy must sign NOBODY out, and a brief 503 " +
+			"while a replica restarts is acceptable where a sign-out is not. (Deriving it from logout is " +
+			"circular — a logout that does not survive a restart is still a logout — and that is what this " +
+			"message used to do.)")
 	}
 	if _, live, _ := reopened.Lookup(kept); !live {
 		t.Error("THE UNTOUCHED SESSION DID NOT SURVIVE THE RESTART, so the refusal above is evidence about the " +

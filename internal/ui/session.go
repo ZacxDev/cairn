@@ -99,11 +99,32 @@ func csrfTokenFor(r *http.Request) string {
 // only thing that can bind a submitted token to the session it belongs to is the cookie
 // itself.
 //
-// ⚠ THE CONSEQUENCE, STATED: a request authenticated by the machine-token backend with
-// no cookie has no token and is refused on every state-changing row. That is correct for
-// the one such row (`POST /sign-out` — there is nothing to sign out of) and it is a real
-// constraint on any state-changing row a later phase adds for a header-authenticated
-// caller. It is written here rather than discovered there.
+// ⚠ THE CONSEQUENCE THIS COMMENT USED TO STATE WAS WRONG, AND THE CORRECTION IS RECORDED
+// RATHER THAN SWAPPED IN. It read: "a request authenticated by the machine-token backend
+// with no cookie has no token and is refused on every state-changing row." It is not
+// refused. The expected token is derived from the cookie ON THIS REQUEST, which the caller
+// chooses — so such a caller sends any value X as the cookie plus `identity.CSRFTokenFor(X)`
+// as the token and passes this gate.
+//
+// 🔴 THE IMPACT IS NIL, AND SAYING WHY IS THE POINT — "no impact" alone is how a wrong
+// claim gets replaced by an unexamined one. The gate is reachable only AFTER
+// authentication (see [Server.ServeHTTP]); the only state-changing row behind it is
+// `POST /sign-out`, because `POST /sign-in` is `classPublic` and dispatches ahead of the
+// chain; and `handleSignOut` then revokes `sha256(X)` for a caller-chosen X, which is
+// nothing. The CSRF property itself is untouched, because it defends against a CROSS-SITE
+// attacker riding a victim's cookie, and such an attacker can neither READ a `HttpOnly`
+// cookie nor SET a `__Host-` one for this origin.
+//
+// So the honest claim is narrower than a session binding: this gate binds a submitted
+// token to THE COOKIE ON THIS REQUEST. For a browser that did not choose its cookie that
+// is a session binding; for a caller who did, it is a self-consistency check — and that is
+// sound, because the gate's job is refusing CROSS-SITE requests and a caller choosing its
+// own cookie is not cross-site.
+//
+// 🔴 THE REAL CONSTRAINT ON A LATER PHASE SURVIVES THE CORRECTION: a header-authenticated
+// caller with NO SESSION cannot perform a state change that needs a SESSION-BOUND token,
+// since the only token it can compute is bound to a cookie value no session exists for.
+// It is written here rather than discovered there.
 func csrfTokenValid(r *http.Request) bool {
 	cookie, err := r.Cookie(identity.SessionCookieName)
 	if err != nil || cookie.Value == "" {

@@ -313,24 +313,20 @@ job's `ok` floor notices, and only per PACKAGE. 🔴 **gomponents does NOT neutr
 scheme**: hrefs go through `safeHref`, `Raw`/`Rawf` are AST-banned.
 📄 `internal/depspolicy`'s package doc (the claim, ONCE); `internal/ui/README.md`.
 
-## 🔴 BROWSER SESSIONS ARE SERVER-SIDE AND REVOCABLE, AND THAT IS THE WHOLE POINT
+## 🔴 BROWSER SESSIONS: THE TWO CLAIMS THAT BIND A NEXT EDIT
 
-A client-held JWT was refused because it has no server-side logout. Sessions are rows in
-`identity.FileSessionStore` — a rewritten (not appended) 0600 file under an exclusive
-`flock`, re-read under it, `Sync`ed before success. 🔴 **IT STORES `sha256(id)`, NEVER THE
-ID**, and `Lookup`'s scan does NOT short-circuit. 🔴 **THE COOKIE BACKEND IS THIRD OF FOUR
-IN `identity.Backends`: every HEADER-borne credential is tried before the AMBIENT one**, so
-a bearer token beats a stale cookie. `TrustedHeader` is still absent from the UI chain.
+🔴 **THE COOKIE BACKEND IS THIRD OF FOUR IN `identity.Backends`: every HEADER-borne
+credential is tried before the AMBIENT one**, so a bearer token beats a stale cookie.
 
-🔴 **TWO CROSS-SITE GATES, BOTH DERIVED FROM THE METHOD RATHER THAN OPTED INTO BY A ROW**
-(`stateChanging`): same-origin (`Origin` vs `Host`, missing = REFUSED) **before** auth, so
-it covers the PUBLIC sign-in row; then a per-session CSRF token **after** auth, so the token
-gate is reachable rather than shadowed. The token is `HMAC(key=session id)` — computable
-from the cookie, not from the store, and it dies with the session. Route rows carry only
-`public`/`content`; a class can only make a route LESS protected, so each is hand-written in
-the ledger test. ⚠ The public rows make the URL space mappable **to the extent of those two
-paths** — a stated narrowing of Phase A's uniform 401. CSP moved `form-action` `'none'` →
-`'self'`. 📄 `internal/ui/README.md` for the rejected storage options and every RED proof.
+🔴 **TWO CROSS-SITE GATES, BOTH DERIVED FROM THE METHOD (`stateChanging`) AND NEVER FROM A
+ROUTE CLASS**: same-origin **before** auth, so it covers the PUBLIC sign-in row; then a
+per-session CSRF token **after** auth, so the token gate is reachable rather than shadowed.
+A class can only make a route LESS protected, so no gate may be derived from one.
+
+📄 Everything else is re-derivable and lives where it is free to read: `internal/ui/README.md`
+(the storage decision, the gates' RED proofs, what they still cannot see) and
+`internal/identity/session.go` (the two operator requirements, the four options, the store's
+mechanics).
 
 ## 🔴 SEVERAL INSTANCES: AN UNROUTED SCOPE REFUSES
 

@@ -14,10 +14,17 @@ import (
 	"github.com/ZacxDev/cairn/internal/control"
 )
 
-// 🔴 THE STORAGE DECISION, AND THE ALTERNATIVES IT BEAT. P6 needs browser sessions with
-// a LOGOUT THAT ACTUALLY REVOKES — that requirement is why a client-held JWT was refused
-// at the start: a signed assertion is valid until its `exp` and no server can take it
-// back. Four shapes were priced against this tree, and the rejected three are written
+// 🔴 THE STORAGE DECISION, AND THE ALTERNATIVES IT BEAT. P6 needs browser sessions, and
+// the operator stated TWO requirements for them rather than one. (i) A LOGOUT THAT
+// ACTUALLY REVOKES — which is why a client-held JWT was refused at the start: a signed
+// assertion is valid until its `exp` and no server can take it back. (ii) DURABILITY
+// ACROSS A PROCESS RESTART AND A ROLLING DEPLOY, claimed on its own authority and NOT
+// derived from (i): "a rolling deploy signs NOBODY out" is the requirement, and a brief
+// 503 while a replica restarts is acceptable where a sign-out is not. Stating (ii)
+// separately matters because deriving it from (i) is circular — a logout that does not
+// survive a restart is still a logout — and the circular version was written here first.
+//
+// Four shapes were priced against this tree, and the rejected three are written
 // down here because the reasoning is what stops somebody re-deriving them.
 //
 //   - (a) A FILE-BACKED STORE IN THE SHAPE OF `control.FileStore` — CHOSEN. Durable
@@ -27,14 +34,35 @@ import (
 //     differs from `control.FileStore` in exactly one respect (it REWRITES rather than
 //     appends) and says why there.
 //
-//   - (b) SESSIONS AS EVENTS IN THE CONTROL JOURNAL — REJECTED, and not only on taste.
-//     `control.FileStore.Model` re-reads and REPLAYS the whole journal on every call, and
-//     every authenticated request calls it. Session churn is the highest-rate write this
-//     system has; putting it in an append-only file that authorization replays on every
-//     read makes every authorization decision monotonically slower, forever, at a rate
-//     set by login volume. The category objection stands beside that and is the one that
-//     would survive a fix: the journal answers "who could see this, and when", and an
-//     operator reading it for a grant history would be reading it through session noise.
+//   - (b) SESSIONS AS EVENTS IN THE CONTROL JOURNAL — REJECTED. 🔴 THE REASON THIS
+//     BULLET GAVE FIRST WAS FALSE, AND THE CORRECTION IS RECORDED RATHER THAN QUIETLY
+//     SWAPPED, because it was the load-bearing half of a published justification. It read
+//     "`control.FileStore.Model` re-reads and REPLAYS the whole journal on every call, and
+//     every authenticated request calls it". The first clause is true; the second is not.
+//     Every serving path wraps the store in a `control.Cache` — `internal/api/server.go`
+//     and `cmd/cairn-server/createuser.go`, whose comment states the reason outright
+//     ("reads must not touch the authority") — and `control.Cache.Model` returns the
+//     materialized value under an RLock without contacting its source. The replay happens
+//     once per `api.AuthorityRefreshInterval` (30s), not once per request. `cairn-ui`
+//     wires no `FileStore` at all: its authority is a `control.Cache` over
+//     `tokenfile.Source`.
+//
+//     What sessions-in-the-journal would ACTUALLY cost, which is the reason that holds:
+//     the authority is read through a cache with a declared staleness bound, so a logout
+//     would become EVENTUAL — up to one refresh interval — and bypassing the cache to make
+//     it immediate is exactly what would reinstate the replay-per-request the false clause
+//     imagined. So (i) is met only in the weakened form "revokes within 30 seconds", and
+//     the strong form costs what the false clause claimed the weak one already did.
+//
+//     🔴 AND THERE IS A STRUCTURAL BLOCKER NOBODY HAD WRITTEN DOWN, which is harder than
+//     any read cost: the journal's volume is ReadWriteOnce on a node-local storage class
+//     (`claudedocs/handoff-cairn-control-plane.md`), so sessions living in it would pin
+//     every UI replica to that one pod's node. Multi-replica dies by construction, and no
+//     amount of caching changes it.
+//
+//     The category objection stands beside both and would survive a fix to either: the
+//     journal answers "who could see this, and when", and an operator reading it for a
+//     grant history would be reading it through session noise.
 //
 //   - (c) A SIGNED STATELESS COOKIE PLUS A REVOCATION LIST — REJECTED because it is (a)
 //     with extra parts. The revocation list is a durable store that must survive restart
@@ -54,14 +82,29 @@ import (
 //     no shared truth to converge on: a session opened on pod A does not exist on pod B
 //     and never will, so a load balancer without sticky sessions produces a surface that
 //     signs the user out on a random fraction of requests. It makes the declared blind
-//     spot WORSE in that sense, and the honest statement is that (a) does not fix
-//     replication either — it inherits exactly the journal's shared-file assumption, no
-//     more and no less.
+//     spot WORSE in that sense.
 //
-// ⚠ WHAT (a) DOES NOT BUY, SAID HERE SO NOBODY READS "DURABLE" AS "DISTRIBUTED": the
-// file is shared between replicas only if the replicas share the filesystem, which is the
-// same assumption `control.FileStore` already makes and the same one that ends when the
-// Postgres backend behind `control.Store` arrives.
+// 🔴 WHAT (a) DOES NOT BUY, SAID OPERATIONALLY SO NOBODY READS "DURABLE" AS "DISTRIBUTED"
+// — AND THE HONEST VERSION IS BLUNTER THAN "(a) DOES NOT FIX REPLICATION EITHER".
+// `cairn-ui` IS A SINGLE-REPLICA SURFACE TODAY. (a) inherits exactly the journal's
+// shared-filesystem assumption, no more and no less; a second replica WITHOUT shared
+// storage is not a degraded version of this design, it is a surface that signs users out
+// on a random fraction of requests — the SAME failure (d) is rejected for. And "just share
+// the filesystem" is not a configuration away: the journal's volume is ReadWriteOnce on a
+// node-local storage class, so a shared session file pins every replica to one node.
+//
+// ⚠ THE DIRECTION, RECORDED AS A DIRECTION AND NOT AS A COMMITMENT. Requirement (ii)
+// above — a rolling deploy signs NOBODY out — is met on one replica by this store, given a
+// volume that outlives the process; the store's half of that is `Sync`-before-success, and
+// the volume's half is a deployment property nothing in this package can assert. The intended answer for more than one replica
+// is STICKY ROUTING: a StatefulSet with a per-ordinal volume, so each replica owns its own
+// session table and a restart returns to it. That needs no change here and keeps the
+// stdlib-only property. It is a separate arc, and it is where two other things get
+// decided: whether `control.Store`'s eventual Postgres backend takes sessions with it, and
+// `FileSessionStore.Revoke`'s cost — `Revoke` runs the full `mutate` (`flock`, whole-file
+// re-read, rewrite, two `Sync`s) even when the digest is ABSENT, which no authenticated
+// caller gains anything by but which is a lock-contention amplifier the moment N replicas
+// share one file.
 
 // SessionCookieName is the cookie the browser holds, and the `__Host-` prefix is a guard
 // rather than a naming convention.
@@ -202,7 +245,8 @@ func SessionDigest(id string) string {
 // IT: a scan that stops at the first match leaks the matched record's POSITION in the
 // file through time, which is a fact about the store's contents rather than about a
 // digest. `FileSessionStore.Lookup` does not short-circuit, and
-// `TestTheSessionScanDoesNotShortCircuit` is what measures that.
+// `TestTheLookupScanHasNoEarlyExit` is what pins that — structurally, over the AST of the
+// loop, for the reason that method's comment records.
 func digestsEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

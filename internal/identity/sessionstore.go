@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -51,17 +50,6 @@ type FileSessionStore struct {
 	// goroutines in one process from racing on the read-modify-write between the
 	// `flock` and the rename.
 	mu sync.Mutex
-
-	// comparisons counts digest comparisons performed by Lookup. It exists for
-	// `TestTheSessionScanDoesNotShortCircuit`, which is the only way the "does not stop
-	// at the first match" property can be observed at all — the alternative is a timing
-	// measurement, which is a flake generator.
-	//
-	// 🔴 ATOMIC BECAUSE `Lookup` TAKES NO LOCK AND EVERY REQUEST CALLS IT. A plain `int`
-	// here would be a data race between two concurrent requests — and a race in a
-	// counter is still a race: `go test -race` fails the whole package on it, so an
-	// instrument added for one test would have broken the gate for every other.
-	comparisons atomic.Int64
 }
 
 // OpenFileSessionStore opens (and creates if absent) a session table at path.
@@ -116,6 +104,15 @@ var _ SessionStore = (*FileSessionStore)(nil)
 // the response time carry the matched record's POSITION in the file, which is a fact
 // about the store rather than about any one digest; see [digestsEqual] for why the
 // comparison itself is the weaker of the two properties.
+//
+// ⚠ HOW THAT IS MEASURED, AND WHAT IT COSTS, BECAUSE THE ANSWER CHANGED. It used to be a
+// per-comparison counter field on this struct, read by a test that probed three positions
+// — an instrument in the serving path, carried by production for one test. It is now
+// `TestTheLookupScanHasNoEarlyExit`, a STRUCTURAL guard that parses this file and refuses
+// a `break`/`continue`/`goto`/`return` inside the loop below. It pins the loop's ITERATION
+// COUNT, which is the leak the counter measured. ⚠ What it does NOT pin is the per-iteration
+// COST: a body whose work depends on whether this record matched would leak the same fact
+// with no branch statement anywhere. That half is [digestsEqual]'s, and its own guard's.
 func (s *FileSessionStore) Lookup(presentedID string) (Session, bool, error) {
 	if presentedID == "" {
 		return Session{}, false, nil
@@ -130,9 +127,9 @@ func (s *FileSessionStore) Lookup(presentedID string) (Session, bool, error) {
 	var found Session
 	hit := false
 	for _, rec := range records {
-		s.comparisons.Add(1)
 		// No `break`, no early `return`: see the method comment. The match is recorded
-		// and the loop runs to completion over every record in the file.
+		// and the loop runs to completion over every record in the file, and
+		// `TestTheLookupScanHasNoEarlyExit` fails if a branch statement appears here.
 		if digestsEqual(rec.Digest, want) && rec.Live(now) {
 			found = rec
 			hit = true
