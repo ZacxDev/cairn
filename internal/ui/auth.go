@@ -6,9 +6,16 @@ import (
 
 // AuthBackends assembles the UI's authentication chain.
 //
-// 🔴 IT TAKES ONE BACKEND WHERE `identity.Backends` TAKES THREE, AND THE MISSING
+// 🔴 IT TAKES TWO BACKENDS WHERE `identity.Backends` TAKES FOUR, AND THE MISSING
 // ONES ARE THE POINT RATHER THAN AN OMISSION. `identity.TrustedHeader` cannot be
 // reached through this constructor: there is no parameter to pass one in.
+//
+// 🔴 THE COOKIE BACKEND IS THE SECOND PARAMETER AND ITS POSITION IN THE CHAIN IS
+// DECIDED BY `identity.Backends`, NOT HERE. It lands third of four — after both
+// header-borne credentials, before the trusted header — and the reason is written
+// where the ordering is: an `Authorization` header is a credential the caller chose
+// to send, a cookie is one the browser attaches by itself, and the chosen one must
+// win. Re-deciding that here would be a second assembly of the chain.
 //
 // ⚠ THE SECOND MISSING PARAMETER IS A DIFFERENT KIND OF ABSENCE, AND CONFLATING THE
 // TWO WOULD BE THE MISREADING TO AVOID. A `*identity.SupabaseJWT` parameter was here
@@ -41,7 +48,7 @@ import (
 // control proving that same value lands in `identity.Backends`'s chain. That pins
 // the MEMBERSHIP, which is the property, rather than the parameter list, which is
 // the current spelling of it.
-func AuthBackends(machine *identity.MachineToken) (identity.Chain, error) {
+func AuthBackends(machine *identity.MachineToken, cookie *identity.CookieSession) (identity.Chain, error) {
 	// The absent backends are spelled `nil` HERE, at the one site that may call
 	// `identity.Backends` for this binary, so `identity.Backends` stays the single
 	// place the ORDER of the chain is decided. Re-implementing the ordering here
@@ -49,5 +56,5 @@ func AuthBackends(machine *identity.MachineToken) (identity.Chain, error) {
 	// loses is the rule that the machine token — the only credential this pod minted
 	// and the only one whose revocation is one edit away — wins where two credentials
 	// are present.
-	return identity.Backends(machine, nil, nil)
+	return identity.Backends(machine, nil, cookie, nil)
 }

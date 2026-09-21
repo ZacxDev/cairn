@@ -3,6 +3,7 @@ package ui
 import (
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/ZacxDev/cairn/internal/identity"
 )
@@ -24,29 +25,78 @@ type routeKey struct {
 
 type handler func(*Server, http.ResponseWriter, *http.Request, identity.Identity)
 
+// routeClass is what a row DECLARES about itself. There are exactly two classes and
+// both had to be invented to add the sign-in flow; everything else a route is subject
+// to is DERIVED from the method instead — see [Server.ServeHTTP].
+//
+// 🔴 A CLASS IS A HOLE IN A GUARD BY CONSTRUCTION, WHICH IS WHY THERE ARE ONLY TWO AND
+// WHY NEITHER OF THEM IS `csrf`. A per-row opt-in to a security check is a check
+// somebody can forget to opt a new row into, and the forgetting is silent. So the CSRF
+// token requirement and the same-origin requirement are not classes: they are asked of
+// every state-changing request the dispatcher sees, derived from the METHOD, and a new
+// row inherits them without anybody remembering. What a class can only do is make a
+// route LESS protected, so each one is spelled into the hand-written ledger in
+// `routes_test.go` and adding a row means writing its class out by hand.
+type routeClass uint8
+
+const (
+	// classPublic is dispatched BEFORE the authentication chain runs. Exactly the
+	// sign-in pair carries it, because a surface whose only way in is behind its own
+	// authentication has no way in.
+	classPublic routeClass = 1 << iota
+	// classContent renders an answer about the caller's authority, so it MUST consult
+	// `Source.Visible` — `TestEveryContentRouteConsultsTheAuthority` walks the ledger
+	// for exactly these rows.
+	classContent
+)
+
+type route struct {
+	handle handler
+	class  routeClass
+}
+
 // routes is the dispatch table. It is a package-level var rather than a method so
 // that `DeclaredRoutes` derives from the same data the dispatcher uses — there is
 // no second copy to disagree with.
 //
-// 🔴 EVERY ROW HERE IS AUTHENTICATED. `HealthPath` below is the one unauthenticated
-// path and it is deliberately NOT a row: it is answered before the chain runs, it
-// says nothing but "ok", and it is not in the ledger because it serves no content.
-// That mirrors `internal/api`, where the health path is likewise outside
+// 🔴 `HealthPath` IS THE ONE PATH THAT IS NOT A ROW. It is answered before the chain
+// runs, it says nothing but "ok", and it is not in the ledger because it serves no
+// content. That mirrors `internal/api`, where the health path is likewise outside
 // `DeclaredRoutes()`.
 //
-// 🔴 ONE ROW, AND THE SECOND ONE WAS DELETED FOR A REASON WORTH KEEPING. This table
-// briefly held `GET /` beside `GET /entries`: the first rendered the page with NO
-// store read, the second over the scopes the credential may see. The first was a
-// measured lie. [Page] renders "No scope is visible to this credential. That is an
-// authority answer, not an empty store." whenever it is handed an empty slice — and
-// the handler behind `GET /` handed it `nil` without ever calling [Source.Visible],
-// so an operator with authority over every scope was told, in a sentence whose whole
-// purpose is to distinguish an authority answer from an empty one, that they had
-// none. A page that has not asked may not answer. The page that asks is the page the
-// browser opens.
-var routes = map[routeKey]handler{
-	{"GET", "/"}: (*Server).handlePage,
+// 🔴 ONE ROW WAS DELETED HERE FOR A REASON WORTH KEEPING. This table briefly held
+// `GET /` beside `GET /entries`: the first rendered the page with NO store read, the
+// second over the scopes the credential may see. The first was a measured lie. [Page]
+// renders "No scope is visible to this credential. That is an authority answer, not an
+// empty store." whenever it is handed an empty slice — and the handler behind `GET /`
+// handed it `nil` without ever calling [Source.Visible], so an operator with authority
+// over every scope was told, in a sentence whose whole purpose is to distinguish an
+// authority answer from an empty one, that they had none. A page that has not asked may
+// not answer.
+//
+// 🔴 AND THE SIGN-IN PAIR IS PUBLIC, WHICH NARROWS A PROPERTY PHASE A HAD. Before this
+// change every path that was not `/healthz` answered the same uniform 401, so an
+// unauthenticated caller could not tell a route from a typo. `GET /sign-in` answers 200
+// to anybody, so the URL space is now mappable TO THE EXTENT OF THE PUBLIC ROWS — two
+// paths, both of which a sign-in flow has to advertise anyway. The property still holds
+// in full for every authenticated row, and `TestEveryServedPathComesFromTheLedger`
+// probes non-public paths for exactly that reason. This is a stated narrowing, not an
+// accident: a sign-in page nobody can reach is not a sign-in page.
+var routes = map[routeKey]route{
+	{"GET", "/"}:          {(*Server).handlePage, classContent},
+	{"GET", "/sign-in"}:   {(*Server).handleSignInForm, classPublic},
+	{"POST", "/sign-in"}:  {(*Server).handleSignIn, classPublic},
+	{"POST", "/sign-out"}: {(*Server).handleSignOut, 0},
 }
+
+// SignInPath and SignOutPath are spelled once and read by the dispatcher, by the
+// renderer's form actions and by the redirects. A form posting to a literal string
+// would be a second spelling of a route, which is how a form outlives its handler.
+const (
+	SignInPath  = "/sign-in"
+	SignOutPath = "/sign-out"
+	RootPath    = "/"
+)
 
 // HealthPath is the readiness probe: before authentication, before rate limiting,
 // and outside the ledger. A readiness probe broken by a security guard is how the
@@ -65,14 +115,47 @@ const healthBody = "ok"
 // EQUIVALENT ON PURPOSE. `api.DeclaredRoutes()` is checked against an external
 // corpus and read back out of the running binary because the corpus builder is
 // Python and cannot see a compiled program. This surface has no corpus, so the
-// strongest available claim is that the ledger and the dispatcher read one map:
-// `TestTheRouteLedgerMatchesTheDispatchTable` makes it, and a nix check printing
-// the same list from the binary would have restated it rather than added to it.
+// strongest available claim is that the ledger and the dispatcher read one map.
 func DeclaredRoutes() []string {
 	out := make([]string, 0, len(routes))
 	for key := range routes {
 		out = append(out, key.method+" "+key.path)
 	}
 	slices.Sort(out)
+	return out
+}
+
+// DeclaredRouteLedger is [DeclaredRoutes] with each row's CLASS spelled out, and it is
+// the one the hand-written expectation is compared against.
+//
+// 🔴 TWO VIEWS OF ONE MAP, NEVER TWO COPIES, AND THE TEST PINS THEM TO EACH OTHER. A
+// classed ledger is what makes "this row is public" a thing somebody has to write down
+// when they add the row; a plain one is what `cmd/cairn-ui` counts at startup. They
+// derive from the same `routes` map, and `TestTheRouteLedgerMatchesTheDispatchTable`
+// asserts that stripping the classes off this one reproduces the other exactly — so the
+// two cannot drift even though there are two functions.
+func DeclaredRouteLedger() []string {
+	out := make([]string, 0, len(routes))
+	for key, r := range routes {
+		line := key.method + " " + key.path
+		if classes := classNames(r.class); len(classes) > 0 {
+			line += " " + strings.Join(classes, ",")
+		}
+		out = append(out, line)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// classNames renders a class set, sorted by the constants' own order so the ledger's
+// spelling cannot depend on anything but the bits.
+func classNames(c routeClass) []string {
+	var out []string
+	if c&classPublic != 0 {
+		out = append(out, "public")
+	}
+	if c&classContent != 0 {
+		out = append(out, "content")
+	}
 	return out
 }

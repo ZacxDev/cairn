@@ -806,7 +806,17 @@ func FromEnvironment(env map[string]string, authority interface {
 		return nil, nil, ErrSessionAuthorityUnread
 	}
 
-	chain, err := Backends(machine, supabase, trusted)
+	// 🔴 `nil` FOR THE COOKIE BACKEND, AND IT IS A REFUSAL RATHER THAN A GAP. This
+	// builder serves `cmd/cairn-server`, which is an API: it mints and resolves bearer
+	// tokens and has no sign-in flow, no form, no page and no way to SET a cookie. A
+	// pod that RESOLVED a session cookie it could never issue would be honouring a
+	// credential minted by a different binary against a session table it does not own —
+	// and it would do so on an endpoint whose whole contract is replayed byte-for-byte
+	// by `tests/conformance/`. The browser session lives in `cmd/cairn-ui`, which wires
+	// its own chain through `ui.AuthBackends` for exactly this reason. ⚠ There is
+	// therefore no `CAIRN_*` variable for it here and none in either ledger; if that
+	// ever changes, the ledgers are where it has to be declared.
+	chain, err := Backends(machine, supabase, nil, trusted)
 	if err != nil {
 		return nil, nil, err
 	}

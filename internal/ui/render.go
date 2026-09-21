@@ -23,7 +23,11 @@ import (
 // ASKS, across the whole dispatch table rather than at the one call site. It does
 // NOT pin that the answer is what reaches this function — a handler that called
 // [Source.Visible] and then passed `nil` anyway would satisfy it.
-func Page(viewer string, scopes []Scope) g.Node {
+// The `csrf` argument is the token from [csrfTokenFor] — empty for a caller with no
+// session cookie, in which case the sign-out control is not rendered at all. A button
+// that is present and cannot work is worse than one that is absent: it teaches a user
+// that sign-out is unreliable.
+func Page(viewer string, scopes []Scope, csrf string) g.Node {
 	return c.HTML5(c.HTML5Props{
 		Title:    "cairn",
 		Language: "en",
@@ -36,12 +40,80 @@ func Page(viewer string, scopes []Scope) g.Node {
 				// The viewer's display name is USER TEXT: it comes from a
 				// `control.Principal`, which comes from a provisioned user record.
 				h.P(h.Class("viewer"), g.Text("signed in as "+viewer)),
+				g.If(csrf != "", signOutForm(csrf)),
 			),
 			h.Main(
 				g.If(len(scopes) == 0, h.P(h.Class("empty"), g.Text(
 					"No scope is visible to this credential. That is an authority "+
 						"answer, not an empty store."))),
 				g.Map(scopes, scopeSection),
+			),
+		},
+	})
+}
+
+// signOutForm is a POST, and that is the security property rather than a style choice.
+//
+// 🔴 A SIGN-OUT LINK WOULD BE A `GET`, AND GATE (6) DOES NOT GUARD `GET`. A state change
+// behind a safe method is reachable by any `<img src>` on any page in the world; the
+// victim's browser fetches it, the cookie rides along, and they are signed out. Worse,
+// the same shape is how a link-prefetcher or an antivirus scanner performs the action by
+// accident. `stateChanging` is what decides which requests are guarded, so a state change
+// must be spelled with a method that function calls unsafe.
+func signOutForm(csrf string) g.Node {
+	return h.FormEl(
+		h.Class("signout"),
+		h.Method("post"),
+		h.Action(SignOutPath),
+		// The token goes in a QUOTED ATTRIBUTE VALUE, which gomponents escapes. It is
+		// base64url and could carry nothing dangerous anyway; it goes through the same
+		// path as everything else because a value that is safe today by virtue of its
+		// alphabet is safe by accident.
+		h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(csrf)),
+		h.Button(h.Type("submit"), g.Text("Sign out")),
+	)
+}
+
+// SignInPage is the way in, and it is the one page this surface renders to an
+// unauthenticated caller.
+//
+// 🔴 IT RENDERS NOTHING THE CALLER SENT. `message` is one of two package constants, never
+// a value from the request — the submitted token is not echoed into the field, and the
+// refusal does not say which part of the credential was wrong. Both are the same rule
+// `internal/api`'s uniform 401 follows, stated where a human is the reader.
+//
+// ⚠ THE FORM CARRIES NO CSRF TOKEN, AND ITS ABSENCE IS A CONSEQUENCE RATHER THAN AN
+// OVERSIGHT: there is no session yet, so there is nothing to derive one from. What stands
+// in front of login-CSRF — an attacker making a victim's browser sign in as the attacker,
+// so the victim's later writes land in the attacker's scopes — is gate (2), the
+// same-origin check, which runs on every state-changing request including this one and
+// needs no credential to do it. That is why gate (2) exists at all and why it is BEFORE
+// authentication rather than after.
+func SignInPage(message string) g.Node {
+	return c.HTML5(c.HTML5Props{
+		Title:    "cairn — sign in",
+		Language: "en",
+		Head:     []g.Node{h.StyleEl(g.Text(stylesheet))},
+		Body: []g.Node{
+			h.Header(h.H1(g.Text("cairn"))),
+			h.Main(
+				g.If(message != "", h.P(h.Class("refused"), g.Text(message))),
+				h.FormEl(
+					h.Class("signin"),
+					h.Method("post"),
+					h.Action(SignInPath),
+					h.Label(h.For("token"), g.Text("Credential")),
+					h.Input(
+						h.ID("token"),
+						// `password`: the value must not be shoulder-readable, and a
+						// browser must not offer to remember it as ordinary form text.
+						h.Type("password"),
+						h.Name(FieldToken),
+						h.AutoComplete("off"),
+						h.Required(),
+					),
+					h.Button(h.Type("submit"), g.Text("Sign in")),
+				),
 			),
 		},
 	})
@@ -159,4 +231,7 @@ body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 48rem
 .entry { margin-bottom: 0.75rem; }
 .ref { font-family: ui-monospace, monospace; margin-right: 0.5rem; }
 .task.refused { opacity: 0.6; text-decoration: line-through; }
+.refused { color: #a00; }
+.signin label { display: block; }
+.signout { display: inline; }
 `
