@@ -13,6 +13,16 @@ import (
 // 🔴 EVERY USER STRING GOES THROUGH `g.Text` OR THROUGH A QUOTED ATTRIBUTE VALUE,
 // AND NOTHING GOES THROUGH `g.Raw`. See this package's doc comment for the measured
 // scope of gomponents' escaper and for the one place it is NOT enough.
+//
+// 🔴 PRECONDITION: `scopes` IS THE RESULT OF AN AUTHORITY QUERY, EVEN WHEN IT IS
+// EMPTY. The empty branch below renders a sentence that distinguishes "your
+// credential may see nothing" from "the store is empty", and it can only say that if
+// somebody asked. Handing this function `nil` without calling [Source.Visible] makes
+// it assert an answer nobody obtained — which a route on this server once did.
+// `TestEveryContentRouteConsultsTheAuthority` pins that every route in the table
+// ASKS, across the whole dispatch table rather than at the one call site. It does
+// NOT pin that the answer is what reaches this function — a handler that called
+// [Source.Visible] and then passed `nil` anyway would satisfy it.
 func Page(viewer string, scopes []Scope) g.Node {
 	return c.HTML5(c.HTML5Props{
 		Title:    "cairn",

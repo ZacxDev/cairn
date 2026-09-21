@@ -1,5 +1,12 @@
 // Package depspolicy is the guarantee that replaced `vendorHash = null`.
 //
+// 🔴 THIS COMMENT IS THE CANONICAL STATEMENT OF THAT REPLACEMENT, AND EVERY OTHER
+// SITE POINTS HERE RATHER THAN RESTATING IT. `go.mod`, `flake.nix`, `internal/ui`'s
+// package doc, `internal/ui/README.md` and `AGENTS.md` each carried their own
+// paragraph of it beside this one — six spellings of one claim, which is six chances
+// for five of them to go stale in the direction nobody notices. One rule, one place:
+// the other five are now pointers, and a correction belongs HERE.
+//
 // 🔴 WHAT WAS LOST, STATED FIRST, BECAUSE A GUARANTEE REMOVED AND NOT REPLACED IS A
 // LOSS RATHER THAN A TRADE. Until `internal/ui` existed, `go.mod` had no `require`
 // block and `flake.nix` passed `vendorHash = null` to all three Go derivations.
@@ -29,6 +36,52 @@
 // library in the pod's binary", and it answers it by reading what the compiler would
 // read rather than by grepping for a string — a grep sees a name in a comment and
 // misses an import behind an alias.
+//
+// # WHAT THE REPLACEMENT IS STRONGER AT THAN "A TEST INSTEAD OF A BUILD FAILURE"
+//
+// 🔴 FOR ANYBODY BUILDING THROUGH NIX, AN IMPORT-BAN FAILURE **IS** A BUILD FAILURE,
+// AND THAT IS THE BEST ARGUMENT THE REPLACEMENT HAS. All three Go derivations in
+// `flake.nix` — `mkGoServer`, `mkGoClient`, `mkGoUI` — set `doCheck = true` with
+// `checkPhase` spelled out as `go vet ./...` then `go test ./...`, so these tests run
+// inside the derivation. `packages.default` is `mkGoClient`, so `nix run
+// github:ZacxDev/cairn` runs them; the `nix` CI job builds `cairn-server-go`,
+// `cairn-go` and `cairn-ui` by name, so they run there three times. A third-party
+// import reaching `cmd/cairn` or `cmd/cairn-server` does not produce a review comment
+// or a red tick beside a green artefact — it produces a derivation that does not
+// build, which is the same consequence `vendorHash = null` had.
+//
+// # WHAT IT IS WEAKER AT, WHICH NO PHRASING MAKES GO AWAY
+//
+// 🔴 A BUILD REFUSAL CANNOT BE SATISFIED BY DELETING A FILE. THIS ONE CAN. `vendorHash
+// = null` was a property of the derivation: the only way to add a dependency was to
+// change the hash, and there was nothing to delete that would make the refusal stop
+// applying. Deleting `depspolicy_test.go` deletes the refusal, and every derivation
+// above then builds green over a tree with no policy in it at all.
+//
+// What defends against that is the `ok` floor in `.github/workflows/ci.yml`'s `go`
+// job: it counts the packages that report `ok` and refuses below the measured count,
+// so a package whose tests disappear takes CI red. That defence is exactly one
+// package wide, and it is worth knowing its edges:
+//
+//   - It notices this FILE going, because `internal/depspolicy` would stop reporting
+//     `ok` and the count would drop.
+//   - It does NOT notice one `func Test…` being deleted from a file that keeps
+//     others. The package still reports `ok`, the count does not move, and nothing in
+//     this repository observes the difference.
+//   - It lives in the `go` job alone. The nix derivations run `go test ./...` with no
+//     floor, so the deletion is invisible to every `nix build`.
+//
+// Both halves are measured rather than argued. With `internal/report` given a blank
+// import of the HTML module, `nix build .#cairn-go` exits **1** with this package's own
+// `THE IMPORT BAN FAILED for …/cmd/cairn` naming the edge. With that import still there
+// and `depspolicy_test.go` DELETED, the same `nix build .#cairn-go` exits **0** over a
+// tree that links the HTML library into the installed CLI — 16 `ok` lines in its check
+// phase instead of 17 — and the `go` job's floor is the only thing that refuses.
+//
+// The honest summary: the replacement is as strong as `vendorHash = null` against ADDING
+// a dependency, and weaker against REMOVING the thing that checks. If the last
+// third-party module is ever dropped, the right move is to restore `vendorHash = null`
+// and delete this package, not to keep a weaker gate for its own sake.
 //
 // # HOW THE GRAPH IS BUILT, AND WHAT IT DELIBERATELY EXCLUDES
 //
@@ -71,10 +124,20 @@ const ModulePath = "github.com/ZacxDev/cairn"
 // warning and neither can be satisfied by editing only one side.
 //
 // ⚠ THE VERSION IS NOT PINNED HERE, AND THAT IS NOT AN OVERSIGHT. `go.sum` pins the
-// version and its checksum, and `go mod verify` in CI is what proves the bytes on
-// disk are the bytes that were hashed. Restating a version in this list would be a
-// second spelling of a fact the lock file already owns, and the copy that goes stale
-// is always the one a human maintains.
+// version and its checksum, and the BUILD is what proves the bytes on disk are the
+// bytes that were hashed: measured on go1.26.7, a flipped character in the `h1:` line
+// makes `go build ./...` exit 1 with `verifying maragu.dev/gomponents@v1.3.0: checksum
+// mismatch` and `SECURITY ERROR / This download does NOT match an earlier download
+// recorded in go.sum`. Restating a version in this list would be a second spelling of
+// a fact the lock file already owns, and the copy that goes stale is always the one a
+// human maintains.
+//
+// ⚠ `go mod verify` IS NOT WHAT PROVES IT, AND A CI STEP THAT SAID SO WAS REMOVED.
+// It compares each EXTRACTED module directory against the hash the cache itself
+// recorded at download time — never against `go.sum` — so it exits 0 with `all
+// modules verified` on the corrupted tree above, in both a cold and a populated
+// cache. On the cold cache CI actually had, it verified zero modules and printed the
+// same success line. See `.github/workflows/ci.yml`'s `go` job for the measurements.
 var DeclaredModules = []string{
 	// The HTML renderer `internal/ui` is built on. Zero transitive dependencies of
 	// its own — measured from its published `go.mod`, which carries no `require`

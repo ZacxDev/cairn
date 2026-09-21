@@ -94,7 +94,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
 | `cmd/cairn-ui`, `internal/ui` | P-A: the BROWSER surface — one page, gomponents, deployed by nothing; 📄 its own README |
-| `internal/depspolicy` | the module ALLOWLIST and the import BAN that replaced `vendorHash = null` |
+| `internal/depspolicy` | the ALLOWLIST and import BAN that replaced `vendorHash = null` |
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
 | `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |
 | `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
@@ -225,9 +225,8 @@ pins `go-version: "1.25"`. Move all three together or not at all. ⚠ `buildGoMo
 with the compiler in `nativeBuildInputs` is a NO-OP for the pin: it uses the `go` from
 its own scope, so the build fetched 1.26 while the derivation advertised 1.25.
 
-🔴 **THE SERVING PATH IS STILL STDLIB-ONLY, BUT NOT BECAUSE THE BUILD REFUSES.** That
-was `vendorHash = null`'s job and it is gone — see the dependency section below; the
-import ban is what makes this row a measurement.
+🔴 **THE SERVING PATH IS STILL STDLIB-ONLY — the import BAN measures it, not
+`vendorHash = null`, which is gone. See the dependency section below.**
 
 ## 🔴 TWO CLIENTS ARE ALIVE, `cairn` IS THE ORACLE, AND `tests/parity/` IS THE GATE
 
@@ -320,14 +319,15 @@ list grew.
 
 ## 🔴 A THIRD-PARTY DEPENDENCY EXISTS NOW, AND `vendorHash = null` IS GONE
 
-**A new dependency is no longer a BUILD FAILURE** — the property `go.mod` and `flake.nix`
-each claimed, both rewritten. The refusal is `internal/depspolicy`: an allowlist failing on
-GROW *or* SHRINK, plus an import ban over the graph out of `cmd/cairn`/`cmd/cairn-server`.
-🔴 **THE BAN KEEPS IT OUT OF THE POD; THE ALLOWLIST CANNOT** — one entry is satisfied by a
-tree where `internal/api` imports it on every route. A new module moves BOTH, and only
-`internal/ui` may import one. 🔴 **gomponents does NOT neutralise a URL scheme the way
-`html/template` does**: hrefs go through `safeHref`, `Raw`/`Rawf` are AST-banned.
-📄 `internal/ui/README.md`.
+The refusal is `internal/depspolicy`: an allowlist failing on GROW *or* SHRINK, plus an
+import ban over `cmd/cairn`/`cmd/cairn-server`'s graph. 🔴 **THE BAN KEEPS IT OUT OF THE
+POD; THE ALLOWLIST CANNOT** — one entry is satisfied by a tree where `internal/api` imports
+it on every route. A new module moves BOTH, and only `internal/ui` may import one.
+🔴 **STILL A BUILD FAILURE THROUGH NIX** (all three Go derivations run these tests in
+`doCheck`) **— but a build refusal cannot be deleted and this one can**; only the `go`
+job's `ok` floor notices, and only per PACKAGE. 🔴 **gomponents does NOT neutralise a URL
+scheme**: hrefs go through `safeHref`, `Raw`/`Rawf` are AST-banned.
+📄 `internal/depspolicy`'s package doc (the claim, ONCE); `internal/ui/README.md`.
 
 ## 🔴 SEVERAL INSTANCES: AN UNROUTED SCOPE REFUSES
 

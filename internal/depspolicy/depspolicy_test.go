@@ -1,7 +1,6 @@
 package depspolicy
 
 import (
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -99,7 +98,7 @@ func TestTheModuleSetIsExactlyTheAllowlist(t *testing.T) {
 	t.Logf("module set: go.mod=%v go.sum=%v allowlist=%v", fromMod, fromSum, DeclaredModules)
 }
 
-// TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule is gate part (iii), and
+// TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule is gate part (ii), and
 // it is the one that keeps the pod clean.
 //
 // 🔴 IT REPORTS A PAIR, NEVER A BARE ZERO. The positive control is `cmd/cairn-ui`,
@@ -232,41 +231,4 @@ func TestTheImportGraphDoesNotDependOnTheBuILDPLATFORM(t *testing.T) {
 			len(differing), strings.Join(differing, "\n  "))
 	}
 	t.Logf("%d package(s) walked; import sets identical with and without build-constraint evaluation", len(all))
-}
-
-// TestGoModVerifyPassesIsNotThisSuitesJob records, as a test, WHY gate part (ii) is
-// a CI step rather than a Go test — so the absence is deliberate rather than an
-// omission somebody closes by writing the wrong thing.
-//
-// 🔴 `go mod verify` ANSWERS A QUESTION ABOUT THE MODULE CACHE, NOT ABOUT THIS TREE
-// — AND NOT THE QUESTION ITS NAME SUGGESTS. Measured: it compares each extracted
-// module directory against the hash the CACHE recorded at download time, not against
-// `go.sum`. Corrupting the `h1:` line in `go.sum` leaves it exiting 0 with `all
-// modules verified`; it is `go build` that refuses that tree, with a SECURITY ERROR.
-// What `go mod verify` catches is a cache modified after the fetch — measured red in
-// an isolated GOMODCACHE as `dir has been modified`. Both halves are gated in CI, by
-// different steps. Either way it is meaningful exactly where a download happened:
-// CI, after `actions/setup-go`, with a cold cache. Running it from inside a test would either re-verify a cache
-// this process did not populate (a tautology) or shell out to a toolchain a nix
-// sandbox may not have on PATH. It is `.github/workflows/ci.yml`'s `go` job that
-// runs it, and this test asserts only that the tree is in the state that makes that
-// step meaningful: a go.sum exists and is non-empty.
-func TestGoModVerifyPassesIsNotThisSuitesJob(t *testing.T) {
-	root, err := RepoRoot()
-	if err != nil {
-		t.Fatalf("the repository root could not be derived: %v", err)
-	}
-	sum, err := ModulesInGoSum(root)
-	if err != nil {
-		t.Fatalf("go.sum could not be read: %v", err)
-	}
-	if len(sum) == 0 {
-		t.Fatal("go.sum names no module, so `go mod verify` in CI has nothing to verify and its green means nothing. " +
-			"If the last dependency was dropped, drop the CI step in the same change rather than leaving a gate that " +
-			"cannot fail.")
-	}
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Logf("no `go` on PATH here (%v); the verify step is CI's, and this test asserts only the precondition", err)
-	}
-	t.Logf("go.sum names %d module(s), so the CI verify step has something to verify", len(sum))
 }

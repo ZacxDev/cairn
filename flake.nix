@@ -351,23 +351,17 @@
       # that import nothing third-party and pay it anyway. That loss was an operator
       # decision, taken explicitly.
       #
-      # 🔴 WHERE THE REFUSAL LIVES NOW, AND IT IS TWO CLAIMS BECAUSE ONE CANNOT DO
-      # THE JOB OF THE OTHER:
+      # 🔴 WHERE THE REFUSAL LIVES NOW: `internal/depspolicy`, whose package doc is
+      # the ONE place it is stated. Not restated here — that comment already had five
+      # copies and this was one of them.
       #
-      #   • `internal/depspolicy.DeclaredModules` is the module allowlist, and
-      #     `TestTheModuleSetIsExactlyTheAllowlist` fails when the set GROWS *or*
-      #     SHRINKS, with a separate message per direction. A module added to
-      #     `go.mod` without a line there is a RED test.
-      #   • `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule` walks the
-      #     import graph out of `cmd/cairn` and `cmd/cairn-server` and refuses a
-      #     third-party import anywhere in either closure. THAT is what keeps the pod
-      #     clean — the allowlist alone is satisfied by a tree where `internal/api`
-      #     imports the HTML library on every route.
-      #
-      # Both run in `doCheck` below, so they run in the PACKAGE build a consumer
-      # makes, not only in CI — which is the same reasoning `checkPhase` is spelled
-      # out for. `go mod verify` is the third part and is CI's, because it is a claim
-      # about a module cache a download populated.
+      # What this file contributes to it, and the reason the pointer is here at all:
+      # all three derivations below set `doCheck = true` with `checkPhase` spelled out
+      # as `go vet ./...` then `go test ./...`, so the policy's tests run in the
+      # PACKAGE build a consumer makes rather than only in CI. That is what makes an
+      # import-ban failure a BUILD failure for anyone building through nix — the same
+      # consequence `vendorHash = null` had, which is the strongest thing that can be
+      # said for the replacement and is said in full over there.
       #
       # ⚠ A VENDOR HASH IS NOT A DEPENDENCY GATE AND MUST NOT BE READ AS ONE. It
       # pins the BYTES of whatever the module graph resolves to; it says nothing
@@ -1140,51 +1134,21 @@
           cp routes.txt $out
         '';
 
-        # 🔴 THE BROWSER SURFACE'S OWN ROUTE LEDGER, READ OUT OF THE RUNNING BINARY.
-        # Same shape as `go-server-declares-its-routes` above and for the same
-        # reason: a compiled program has no source for a ledger builder to walk, so
-        # the only way to ask a binary what it dispatches is to run it.
-        #
-        # ⚠ THE TWO LEDGERS ARE SEPARATE AND NEITHER MOVES THE OTHER. The pod's set
-        # is the SERVED CONTRACT the conformance corpus replays; this one is a
-        # browser surface with no corpus. `GET /` here is a page; `GET /` on the pod
-        # is the byte-pinned uniform 401 that `tests/conformance/golden/root-path.json`
-        # holds, and this commit changes neither.
-        #
-        # ⚠ WHAT THIS SANDBOX CANNOT HAVE: no store, no token file, no network and
-        # no HOME with a cache root — so it exercises the LEDGER and nothing about
-        # rendering or authenticating. The escaping guard and the chain-membership
-        # pin are `go test`'s, and they run in this package's own build.
-        go-ui-declares-its-routes = pkgs.runCommand "cairn-ui-declares-its-routes"
-          { nativeBuildInputs = [ (mkGoUI pkgs) ]; } ''
-          set -o pipefail
-          cairn-ui -routes > routes.txt
-
-          if ! grep -q . routes.txt; then
-            echo "FAIL: the binary printed NO route at all, so a ledger built from"
-            echo "      this output would agree with anything."
-            exit 1
-          fi
-
-          cat > want.txt <<'EOF'
-          GET /
-          GET /entries
-          EOF
-          sed -i 's/^ *//' want.txt
-
-          if ! diff -u want.txt routes.txt; then
-            echo "FAIL: the UI's declared route set is not the set this check names."
-            echo "      Adding a row to \`routes\` in internal/ui is adding a public,"
-            echo "      internet-reachable endpoint on a surface that renders"
-            echo "      arbitrary user text into HTML, and this is where somebody has"
-            echo "      to think about it. Removing one silently is the other"
-            echo "      direction and this check refuses both."
-            exit 1
-          fi
-
-          echo "ok: $(wc -l < routes.txt) declared routes, matching the ledger"
-          cp routes.txt $out
-        '';
+        # ⚠ THERE IS NO `go-ui-declares-its-routes` HERE, AND ITS ABSENCE IS A
+        # DECISION RATHER THAN A GAP — a draft of this file carried one, modelled on
+        # `go-server-declares-its-routes` above. That check earns its place because
+        # the pod's route set is the SERVED CONTRACT `tests/conformance/requests.json`
+        # replays and the corpus builder is Python, blind to a compiled binary: the
+        # ledger read out of the running program is a genuinely second instrument in
+        # a second environment. The UI has neither — `ui.DeclaredRoutes()` derives
+        # from the same map its dispatcher reads, and the only expectation anywhere
+        # is a hand-written list. A check that ran the binary to print that list and
+        # diffed it against a third hand-written copy would restate one claim down a
+        # longer path, for a surface whose contract is one row. `internal/ui`'s
+        # `TestTheRouteLedgerMatchesTheDispatchTable` is the one mechanism kept, and
+        # it runs inside `mkGoUI`'s own check phase, so `nix build .#cairn-ui` gates
+        # it. When a later phase gives this surface an external corpus, the second
+        # tier comes back with it.
 
         # 🔴 THIS CHECK IS THE POSITIVE HALF, AND IT IS *NOT* THE DETECTOR FOR A
         # MISSING `lib/` — `doInstallCheck` above is, and it fires first.

@@ -2,24 +2,17 @@
 // renders arbitrary user text into HTML, and the ONLY package that links a
 // third-party module.
 //
-// 🔴 THIS PACKAGE IS WHY `go.mod` NO LONGER HAS AN EMPTY `require` BLOCK, AND
-// THE GUARANTEE THAT REMOVED LIVES IN `internal/depspolicy`. Until this package
-// existed, "no third-party code in the serving path" was readable in one glance:
-// `go.mod` had no `require` and `flake.nix` passed `vendorHash = null`, so a new
-// dependency was a BUILD FAILURE. That is gone — the flake now carries a real
-// vendor hash on all three Go derivations, including the two that import nothing
-// from outside the standard library. What replaced it is mechanical rather than
-// glanceable, and it is two claims, not one:
+// 🔴 THIS PACKAGE IS WHY `go.mod` NO LONGER HAS AN EMPTY `require` BLOCK, AND WHY
+// `flake.nix` NO LONGER PASSES `vendorHash = null`. What replaced that guarantee,
+// what it is stronger at and what it is weaker at, is stated once — in
+// `internal/depspolicy`'s package doc. Read it there.
 //
-//   - `TestTheModuleSetIsExactlyTheAllowlist` pins the module set, failing when it
-//     GROWS *or* SHRINKS; and
-//   - `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule` walks the import
-//     graph out of `cmd/cairn` and `cmd/cairn-server` and refuses a third-party
-//     import anywhere in either closure.
-//
-// The second is the one that keeps the pod clean. This package is reachable from
-// `cmd/cairn-ui` and from nothing else, which is a property that test MEASURES
-// rather than a convention this comment asks for.
+// What belongs here is the consequence for THIS package: it is reachable from
+// `cmd/cairn-ui` and from nothing else, and that is a property
+// `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule` MEASURES rather than a
+// convention this comment asks for. An import of this package from anywhere in
+// `cmd/cairn`'s or `cmd/cairn-server`'s closure puts the HTML library in the pod's
+// binary, and that is the refusal.
 //
 // # 🔴 THE ESCAPING RULE, AND WHY IT IS NARROWER THAN "gomponents ESCAPES"
 //

@@ -141,11 +141,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route(s, w, r, id)
 }
 
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request, id identity.Identity) {
-	s.renderPage(w, id, nil)
-}
-
-func (s *Server) handleEntries(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+// handlePage is the ONE content handler, and there is one because a page that does
+// not consult the authority must not render an answer about it. See `routes` for the
+// route this replaced and the sentence that made it wrong.
+func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	scopes, err := s.source.Visible(id.Auth)
 	if err != nil {
 		// The reason does not reach the wire. `store.StoreMissingError` and

@@ -33,9 +33,19 @@ type handler func(*Server, http.ResponseWriter, *http.Request, identity.Identity
 // says nothing but "ok", and it is not in the ledger because it serves no content.
 // That mirrors `internal/api`, where the health path is likewise outside
 // `DeclaredRoutes()`.
+//
+// 🔴 ONE ROW, AND THE SECOND ONE WAS DELETED FOR A REASON WORTH KEEPING. This table
+// briefly held `GET /` beside `GET /entries`: the first rendered the page with NO
+// store read, the second over the scopes the credential may see. The first was a
+// measured lie. [Page] renders "No scope is visible to this credential. That is an
+// authority answer, not an empty store." whenever it is handed an empty slice — and
+// the handler behind `GET /` handed it `nil` without ever calling [Source.Visible],
+// so an operator with authority over every scope was told, in a sentence whose whole
+// purpose is to distinguish an authority answer from an empty one, that they had
+// none. A page that has not asked may not answer. The page that asks is the page the
+// browser opens.
 var routes = map[routeKey]handler{
-	{"GET", "/"}:        (*Server).handleIndex,
-	{"GET", "/entries"}: (*Server).handleEntries,
+	{"GET", "/"}: (*Server).handlePage,
 }
 
 // HealthPath is the readiness probe: before authentication, before rate limiting,
@@ -50,6 +60,14 @@ const healthBody = "ok"
 // ⚠ WHAT IT CANNOT SEE, stated rather than assumed away: a route dispatched from
 // anywhere other than `routes`. `TestEveryServedPathComesFromTheLedger` is what
 // keeps that true — it drives a path in no row and requires the no-route answer.
+//
+// ⚠ AND IT IS READ IN ONE PLACE PLUS A LOG LINE, WHICH IS WEAKER THAN THE POD'S
+// EQUIVALENT ON PURPOSE. `api.DeclaredRoutes()` is checked against an external
+// corpus and read back out of the running binary because the corpus builder is
+// Python and cannot see a compiled program. This surface has no corpus, so the
+// strongest available claim is that the ledger and the dispatcher read one map:
+// `TestTheRouteLedgerMatchesTheDispatchTable` makes it, and a nix check printing
+// the same list from the binary would have restated it rather than added to it.
 func DeclaredRoutes() []string {
 	out := make([]string, 0, len(routes))
 	for key := range routes {

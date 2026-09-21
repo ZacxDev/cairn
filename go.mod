@@ -10,21 +10,12 @@
 // the UI's, and `flake.nix` passes a real `vendorHash` to all three where it used to
 // pass `null`. That loss was an operator decision, taken explicitly.
 //
-// 🔴 THE REFUSAL NOW LIVES IN `internal/depspolicy`, AND IT IS TWO CLAIMS BECAUSE
-// ONE CANNOT DO THE JOB OF THE OTHER:
-//
-//   - `TestTheModuleSetIsExactlyTheAllowlist` compares the module set this file and
-//     `go.sum` declare against `depspolicy.DeclaredModules`, and fails when it GROWS
-//     *or* SHRINKS, with a separate message per direction. **A module added here
-//     without a line there is a RED test, not a review comment.**
-//   - `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule` walks the import
-//     graph out of `cmd/cairn` and `cmd/cairn-server` and refuses a third-party
-//     import anywhere in either closure. THAT is the one that keeps the pod clean:
-//     the allowlist alone is satisfied by a tree where `internal/api` imports the
-//     HTML library on every route.
-//
-// `go mod verify` in the `go` CI job is the third part, over a different question
-// again — see that step's own comment, which records what it does and does NOT catch.
+// 🔴 THE REFUSAL NOW LIVES IN `internal/depspolicy`. A module added to the `require`
+// block below without a line in `depspolicy.DeclaredModules` is a RED test, not a
+// review comment. What that package is, what it is stronger at than the build failure
+// it replaced, and what it is weaker at, are written ONCE — in its package doc, which
+// is the canonical site. Do not restate it here; a second spelling is a second thing
+// to go stale.
 //
 // 🔴 THE CONSTRAINT ITSELF HAS NOT MOVED, ONLY WHAT ENFORCES IT. `server/server.py`
 // is stdlib Python because it runs in a pod built from a base image nobody audits

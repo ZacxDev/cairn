@@ -21,11 +21,11 @@ import (
 // list, not a contract comparison, and the difference matters if anybody later reads
 // a green here as "the browser contract is pinned".
 func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
-	want := []string{"GET /", "GET /entries"}
+	want := []string{"GET /"}
 	got := DeclaredRoutes()
 
 	if len(got) == 0 {
-		t.Fatal("DeclaredRoutes is EMPTY, so the comparison below is vacuous and `cairn-ui -routes` prints nothing")
+		t.Fatal("DeclaredRoutes is EMPTY, so the comparison below is vacuous and this server dispatches nothing")
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("the declared route set is %v, the ledger names %v.\n"+
@@ -34,8 +34,8 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 			"check refuses both.", got, want)
 	}
 	if !slices.IsSorted(got) {
-		t.Errorf("DeclaredRoutes is not sorted (%v); `cairn-ui -routes` is read by a flake check that diffs its "+
-			"output against a fixed list, so an unstable order makes that check flap", got)
+		t.Errorf("DeclaredRoutes is not sorted (%v); the comparison above is order-sensitive, and an unsorted "+
+			"ledger derived from a map iteration would make this test flap rather than fail", got)
 	}
 	// The health path is deliberately NOT in the ledger — it is answered before
 	// authentication and serves no content. Asserting its absence is what stops a
@@ -107,10 +107,15 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 
 	// An undeclared path gets the SAME uniform refusal a bad credential gets — never
 	// a 404, which would let an unauthenticated caller map the URL space.
+	// `GET /entries` is in this list rather than in the ledger, and that is the point
+	// of naming it: it WAS a row, and the row was removed because the page behind it
+	// and the page behind `GET /` are the same page. A path that stops being a route
+	// must get the uniform refusal, not a 404 and not a stale handler.
 	for _, probe := range [][2]string{
+		{"GET", "/entries"},
 		{"GET", "/entries/"},
 		{"GET", "/admin"},
-		{"POST", "/entries"},
+		{"POST", "/"},
 		{"GET", "/entriesx"},
 	} {
 		rec := httptest.NewRecorder()
@@ -120,7 +125,91 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 				"gets, so the URL space is not mappable", probe[0], probe[1], rec.Code)
 		}
 	}
-	t.Logf("routing: %d declared route(s) served 200, 4 undeclared probe(s) refused 401", served)
+	t.Logf("routing: %d declared route(s) served 200, 5 undeclared probe(s) refused 401", served)
+}
+
+// countingSource records whether the authority was consulted, and is the whole
+// instrument for the test below.
+type countingSource struct {
+	calls  int
+	scopes []Scope
+}
+
+func (c *countingSource) Visible(control.Authorization) ([]Scope, error) {
+	c.calls++
+	return c.scopes, nil
+}
+
+// TestEveryContentRouteConsultsTheAuthority is a REGRESSION test, and the defect it
+// pins shipped: `GET /` was dispatched to a handler that called [Page] with a `nil`
+// scope slice and never called [Source.Visible].
+//
+// 🔴 THE PAGE'S EMPTY BRANCH IS AN ASSERTION ABOUT AUTHORITY, WHICH IS WHY A ROUTE
+// THAT DOES NOT ASK IS A ROUTE THAT LIES. `Page` renders "No scope is visible to this
+// credential. That is an authority answer, not an empty store." for any empty slice.
+// Handed `nil` by a handler that asked nobody, that sentence told an operator with
+// authority over every scope the exact opposite of the truth, in the one sentence
+// written to distinguish those two cases.
+//
+// It walks the LEDGER rather than naming a path, so a content route added later is
+// covered on the day it is added rather than on the day somebody remembers this file.
+//
+// ⚠ IT PINS "ASKED", NOT "RENDERED WHAT IT WAS TOLD". The differential fixture in
+// `render_test.go` is what measures the second.
+func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
+	declared := DeclaredRoutes()
+	if len(declared) == 0 {
+		t.Fatal("DeclaredRoutes is EMPTY, so this test iterates nothing and passes vacuously")
+	}
+
+	for _, route := range declared {
+		method, path, _ := splitRoute(route)
+		source := &countingSource{scopes: benignWorld()}
+		srv, err := New(staticAuth{testIdentity()}, source)
+		if err != nil {
+			t.Fatalf("the server did not build: %v", err)
+		}
+
+		// INSTRUMENT CONTROL: the counter starts at zero, so a non-zero below is the
+		// request's doing and not the constructor's.
+		if source.calls != 0 {
+			t.Fatalf("the counting source was already called %d time(s) before any request; its count below "+
+				"would measure construction rather than routing", source.calls)
+		}
+
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("declared route %s answered %d, not 200, so the authority count below is about a refusal",
+				route, rec.Code)
+			continue
+		}
+		if source.calls == 0 {
+			t.Errorf("%s rendered a page WITHOUT consulting the authority (Source.Visible called 0 times). "+
+				"Page's empty branch renders \"No scope is visible to this credential. That is an authority "+
+				"answer, not an empty store.\" — a sentence this route has no standing to say, and which is "+
+				"FALSE for any caller who can in fact see a scope. A route that renders the page either asks "+
+				"or is not a route.", route)
+		}
+	}
+
+	// POSITIVE CONTROL: the counter can stay at zero, so the non-zeroes above are a
+	// measurement rather than a counter that only goes up. The health path is answered
+	// before the chain and before the ledger, and must consult nobody.
+	health := &countingSource{scopes: benignWorld()}
+	srv, err := New(staticAuth{testIdentity()}, health)
+	if err != nil {
+		t.Fatalf("the server did not build: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", HealthPath, nil))
+	if health.calls != 0 {
+		t.Errorf("the health path consulted the authority %d time(s); it is answered before the chain runs and "+
+			"must read nothing", health.calls)
+	}
+	t.Logf("authority consulted: once per declared route (%d route(s)), 0 times on %s",
+		len(declared), HealthPath)
 }
 
 // TestAnUnauthenticatedRequestReachesNoRenderer pins that the chain runs BEFORE the
@@ -155,7 +244,7 @@ func TestAnUnauthenticatedRequestReachesNoRenderer(t *testing.T) {
 func TestAZeroIdentityWithNoErrorIsRefused(t *testing.T) {
 	srv := newTestServer(t, staticAuth{identity.Identity{}})
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/entries", nil))
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("a backend that answered `yes` without naming anybody was SERVED (%d). "+
 			"`Identity{}` has a zero Authorization that permits nothing, so no scope would leak — but the "+
@@ -169,7 +258,7 @@ func TestAZeroIdentityWithNoErrorIsRefused(t *testing.T) {
 func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/entries", nil))
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options is %q; every byte of this body came out of a store entry, and a "+
 			"browser that content-sniffs can be talked into a different type by the leading bytes", got)

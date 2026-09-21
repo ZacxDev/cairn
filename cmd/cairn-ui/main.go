@@ -59,19 +59,15 @@ func main() {
 	port := flag.Int("port", envInt("CAIRN_UI_PORT", defaultPort), "listen port")
 	tokenFile := flag.String("token-file", envOr("SUBSYSTEM_STORE_TOKEN_FILE", defaultTokenFile),
 		"path to the token file this surface authenticates against")
-	routes := flag.Bool("routes", false,
-		"print this binary's declared route ledger, one `<METHOD> <path>` per line, and exit. "+
-			"It is read out of the RUNNING binary by a test and by a flake check, for the same "+
-			"reason `cairn-server -routes` is: a compiled program has no source for a ledger "+
-			"builder to walk.")
+	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
+	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
+	// contract and cannot read a compiled binary — the printed table is the only way
+	// a second instrument can see it. This surface has no corpus and no Python-side
+	// gate: `ui.DeclaredRoutes()` derives from the map its dispatcher reads, and
+	// `TestTheRouteLedgerMatchesTheDispatchTable` reads it in-process. A flag whose
+	// only reader was a flake check printing the same list is a PATH entry with no
+	// caller, which this repository refuses elsewhere. It returns with a corpus.
 	flag.Parse()
-
-	if *routes {
-		for _, route := range ui.DeclaredRoutes() {
-			fmt.Println(route)
-		}
-		return
-	}
 
 	env := environ()
 	tokens, err := authz.LoadTokens(*tokenFile, env, func(line string) {
@@ -124,8 +120,10 @@ func main() {
 	// proxy-fronted, and this surface must not have that backend at any setting —
 	// see `internal/ui/auth.go` for why a browser endpoint cannot carry that trade.
 	// The chain's membership is pinned by `TestTheUIChainHasNoTrustedHeaderMember`
-	// rather than by this call site.
-	chain, err := ui.AuthBackends(machine, nil)
+	// rather than by this call site. It takes the machine token and nothing else:
+	// the Supabase backend is not wired in phase A, and a parameter every caller
+	// passed `nil` to was removed rather than kept as a promise.
+	chain, err := ui.AuthBackends(machine)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: identity: "+err.Error())
 		os.Exit(exitConfig)

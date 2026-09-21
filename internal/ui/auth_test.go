@@ -79,7 +79,7 @@ func TestTheUIChainHasNoTrustedHeaderMember(t *testing.T) {
 	}
 
 	// THE PIN.
-	uiChain, err := AuthBackends(machine, nil)
+	uiChain, err := AuthBackends(machine)
 	if err != nil {
 		t.Fatalf("ui.AuthBackends refused a machine-token-only chain: %v", err)
 	}
@@ -112,13 +112,13 @@ func countTrustedHeaders(chain identity.Chain) int {
 // TestAnEmptyUIChainIsRefusedAtConstruction pins the fail-closed direction one level
 // up from `identity.ErrNoBackends`: a UI server with no authenticator must not build.
 func TestAnEmptyUIChainIsRefusedAtConstruction(t *testing.T) {
-	if _, err := AuthBackends(nil, nil); err != identity.ErrNoBackends {
+	if _, err := AuthBackends(nil); err != identity.ErrNoBackends {
 		t.Errorf("a chain with no backend must be %v, got %v", identity.ErrNoBackends, err)
 	}
 	if _, err := New(nil, StoreSource{Root: "/nonexistent"}); err != ErrNoAuthenticator {
 		t.Errorf("ui.New with no authenticator must be %v, got %v", ErrNoAuthenticator, err)
 	}
-	chain, err := AuthBackends(&identity.MachineToken{Authority: materializedAuthority(t)}, nil)
+	chain, err := AuthBackends(&identity.MachineToken{Authority: materializedAuthority(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

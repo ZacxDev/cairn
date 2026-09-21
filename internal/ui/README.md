@@ -15,9 +15,20 @@ screens. Those are later phases with their own decisions. What exists is:
 
 | route | what |
 |---|---|
-| `GET /` | the page, with no store read |
-| `GET /entries` | the page, over the scopes this credential may read |
+| `GET /` | the page, over the scopes this credential may read |
 | `GET /healthz` | **not in the ledger** — answered before the chain runs, says only `ok` |
+
+🔴 **There was a second row and it was deleted, because it told an authorised operator
+the opposite of the truth.** `GET /` rendered the page *with no store read* and
+`GET /entries` did the work. `Page` emits *"No scope is visible to this credential.
+That is an authority answer, not an empty store."* for any empty scope slice — and the
+handler behind `GET /` handed it `nil` without ever calling `Source.Visible`, so a
+credential with authority over every scope was told it had none, in the one sentence
+written to distinguish those two cases. One page needs one route, and the route that
+renders it asks. `TestEveryContentRouteConsultsTheAuthority` walks the ledger and
+requires every declared route to consult the authority before rendering; it is a
+regression test, not an invariant guard — measured RED on the pre-change dispatch
+table with the message *"GET / rendered a page WITHOUT consulting the authority"*.
 
 Authentication is a bearer token against the same `internal/control` projection the pod
 resolves against. That is enough to exercise the chain without building the session flow,
@@ -25,22 +36,42 @@ and it is the reason the identity pin below is meaningful rather than notional.
 
 ## 🔴 The first third-party dependency, and the guarantee it removed
 
-Before this change, `go.mod` had no `require` block and `flake.nix` passed
-`vendorHash = null` to every Go derivation. Together those made a new dependency a **build
-failure**: `buildGoModule` with a null vendor hash refuses a module that needs anything
-outside the standard library. Two files said so in their own comments, and both said it
-was the mechanism rather than a convenience.
+🔴 **The canonical statement of what was lost and what replaced it is
+`internal/depspolicy`'s package doc, and it is not repeated here.** That paragraph stood in
+`go.mod`, `flake.nix`, `internal/ui/doc.go`, this file, `AGENTS.md` and the package doc
+itself — six sites; the package doc is now the only one that states it, and the other five
+point. Read it there, including the two things this section used to under-claim and
+over-claim respectively:
 
-Both are gone. `internal/ui` renders HTML with `maragu.dev/gomponents`; there is **one**
-module, so the requirement is carried by the pod's and the CLI's derivations too, and all
-three now pass a real `vendorHash`. That cost was accepted explicitly — a second module
-for the UI would split `internal/` in two and put a version skew between the renderer the
-pod links and the one the CLI links, which is the exact failure `internal/report` being
-ONE package exists to prevent.
+- the replacement is stronger than "a test instead of a build failure" sounds — all three
+  Go derivations run these tests in `doCheck`, so an import-ban failure **is** a build
+  failure for anyone building through nix;
+- and it is weaker in one way no phrasing removes — a build refusal cannot be satisfied by
+  deleting a file, and this one can. The `ok` floor in the `go` CI job is what notices a
+  package's tests disappearing, and it does not notice one function disappearing.
 
-**A guarantee removed and not replaced is a loss, not a trade.** What replaced it is
-mechanical, and it is deliberately several claims rather than one, because they fail for
-different reasons and none implies another.
+**Both halves measured, on this tree:**
+
+| tree | `nix build .#cairn-go` | `ok` lines in its check phase | the `go` job's floor (`-lt 17`) |
+|---|---|---|---|
+| unmutated | rc 0 | 17 | GREEN at 17 |
+| `internal/report` given `_ "maragu.dev/gomponents"` | **rc 1**, `THE IMPORT BAN FAILED for …/cmd/cairn: … internal/report -> maragu.dev/gomponents` | — | — |
+| the same import, **and `depspolicy_test.go` deleted** | **rc 0** — the HTML library is linked into the installed CLI and nix builds it | 16 | **RED at 16** |
+
+The third row is the whole weakness in one line: the policy is deletable where
+`vendorHash = null` was not, and the only mechanism that observes the deletion is a
+package count in one CI job.
+
+`internal/ui` renders HTML with `maragu.dev/gomponents`. There is **one** module, so the
+requirement is carried by the pod's and the CLI's derivations too, and all three now pass a
+real `vendorHash`. That cost was accepted explicitly — a second module for the UI would
+split `internal/` in two and put a version skew between the renderer the pod links and the
+one the CLI links, which is the exact failure `internal/report` being ONE package exists to
+prevent.
+
+What follows is the evidence for each part: the comparisons, the controls, and the mutants
+each was watched to fail on. Records of rounds, which is why they are here and not in a
+source comment.
 
 ### (i) The module allowlist — `TestTheModuleSetIsExactlyTheAllowlist`
 
@@ -68,28 +99,43 @@ nothing produces one of them.
 | `go get golang.org/x/text` (a real, resolvable extra module) | rc 0 | `THE MODULE SET GREW: 1 module(s) are required that the allowlist does not name: [golang.org/x/text]` — and nothing else fired |
 | an allowlist entry for a module nothing requires | rc 0 | `THE MODULE SET SHRANK: the allowlist names 1 module(s) go.mod does not require: […]` — and nothing else fired |
 
-### (ii) `go mod verify` — and what it does **not** check
+### 🔴 There is no `go mod verify` step, and the deletion is the finding
 
-It is a CI step in the `go` job rather than a test, because it is a claim about a module
-cache a download populated.
+A `go mod verify` step stood in the `go` job as "part (ii)", under a long block of
+comment arguing what it did and did not catch. **It verified the empty set.** `cache: false` on
+that job's `actions/setup-go` means it starts with no module cache, `go mod verify` does
+not download, and it stood ahead of the `go vet` step — so it ran against a cache nothing
+had yet populated and printed the identical success line over zero modules. Measured on go1.26.7 against isolated
+`GOMODCACHE`s, `rc` captured before any pipe:
 
-🔴 **Its name is misleading and the first draft of its comment was wrong.** Measured:
-flipping the last character of the `h1:` line in `go.sum` and running `go mod verify`
-exits **0** with `all modules verified`. It compares each extracted module directory
-against the hash the **cache itself** recorded at download time — not against `go.sum`.
+| state | rc | stdout | modules extracted in the cache |
+|---|---|---|---|
+| **cold — the state CI actually ran it in** | **0** | `all modules verified` | **0** |
+| populated (positive control) | 0 | `all modules verified` | 1 |
+| populated + a line appended inside the module dir (negative control) | **1** | `maragu.dev/gomponents v1.3.0: dir has been modified` | 1 |
 
-Both halves are gated, by different steps:
+Moving it below `go test` would not have rescued it. The only hazard it can see is a cache
+modified **after** its fetch; this job fetches into a cache no earlier step restored, and
+nothing between the fetch and the check writes to it. In its new position it would be
+green-by-construction too — a gate nobody can fail.
+
+It also never gated the hazard its name suggests. With `go.sum`'s `h1:` line corrupted it
+exits **0** with `all modules verified` in **both** cache states. What refuses that tree is
+the build, which the `go vet` and `go test` steps already run (measured with
+`go build ./...` over an isolated cache; whether a `nix build` refuses it with the same
+words is **not** measured):
 
 | tamper | `go mod verify` | `go build ./...` |
 |---|---|---|
-| a character changed in `go.sum`'s `h1:` line | **rc 0**, `all modules verified` | **rc 1**, `SECURITY ERROR / This download does NOT match an earlier download recorded in go.sum` |
-| a line appended to a file inside the module cache (measured in an isolated `GOMODCACHE`, the shared one untouched) | **rc 1**, `maragu.dev/gomponents v1.3.0: dir has been modified` | — |
+| a character changed in `go.sum`'s `h1:` line | **rc 0**, `all modules verified` (cold **and** populated) | **rc 1**, `verifying maragu.dev/gomponents@v1.3.0: checksum mismatch` → `SECURITY ERROR / This download does NOT match an earlier download recorded in go.sum` |
 
-`TestGoModVerifyPassesIsNotThisSuitesJob` asserts the precondition that keeps the step
-from becoming a gate over an empty set: `go.sum` must name at least one module, because
-`all modules verified` is also what a module set of zero prints.
+`TestGoModVerifyPassesIsNotThisSuitesJob` went with it. Its docstring claimed it kept the
+step from becoming a gate over an empty set; its body asserted that **`go.sum` names ≥1
+module**, which is the wrong quantity — a non-empty `go.sum` does not make the module cache
+non-empty, and the cold cache above is the proof. A guard whose description is wider than
+its body reads as coverage while providing none, which is worse than none.
 
-### (iii) 🔴 The import ban — the one that keeps the pod clean
+### (ii) 🔴 The import ban — the one that keeps the pod clean
 
 `TestNoPackageTheCLIOrThePodLINKSReachesAThirdPartyModule` builds the import graph of
 every package under `cmd/` and `internal/` with `go/build` — **parsed, not grepped**, so
@@ -140,12 +186,15 @@ for — `go tool nm` over the three binaries: `cairn` **0** gomponents symbols,
 `cairn-server` **0**, `cairn-ui` **75**; and `go version -m` records
 `dep maragu.dev/gomponents v1.3.0` in `cairn-ui` alone.
 
-### (iv) The prose
+### (iii) The prose
 
 `go.mod`'s header and `flake.nix`'s `vendorHash` comment both **stated** the old
-guarantee. Both now state what is true, and both quote the sentence they replaced rather
-than deleting it, so a maintainer who remembers the property is told where it went instead
-of inferring that nothing took its place.
+guarantee. Both now quote the sentence they replaced rather than deleting it, so a
+maintainer who remembers the property is told where it went instead of inferring that
+nothing took its place — and both then **point** at `internal/depspolicy`'s package doc
+rather than restating what replaced it. That restatement stood in six places at once;
+`one rule, one place` applies to prose that is a claim, and six copies of a claim are six
+chances for five of them to go stale while still reading as authoritative.
 
 ⚠ A vendor hash is **not** a dependency gate and must not be read as one. It pins the
 bytes of whatever the module graph resolves to; it says nothing about which modules are in
@@ -314,17 +363,26 @@ chain (2 members), 0 in the UI chain (1 members)`.
 ## The route ledger
 
 `ui.DeclaredRoutes()` derives from the same `routes` map the dispatcher reads — there is
-no second copy to disagree with — and `cairn-ui -routes` prints it, the same shape as
-`cairn-server -routes`, because a compiled program has no source for a ledger builder to
-walk. It is read in two places: `TestTheRouteLedgerMatchesTheDispatchTable` and
-`checks.go-ui-declares-its-routes` (a `nix` CI step in the same commit as the check entry,
-because this repository never runs `nix flake check`).
+no second copy to disagree with. It is read by **one** guard,
+`TestTheRouteLedgerMatchesTheDispatchTable`, which runs in `mkGoUI`'s own check phase, so
+`nix build .#cairn-ui` gates it.
 
-⚠ **It is weaker than `api.DeclaredRoutes()`'s equivalent, on purpose.** The pod's ledger
+🔴 **Three mechanisms pinned this list and two were removed, which is a decision and not
+an oversight.** A draft carried the Go test *plus* `checks.go-ui-declares-its-routes`
+(running the binary and diffing its `-routes` output against a third hand-written copy)
+*plus* a `nix` CI step naming that check — three mechanisms over a **one-row** hand-written
+list. The `-routes` flag went with them: its only reader was the check, and a flag with no
+caller is the shape this repository refuses elsewhere as exported API with no consumer.
+
+⚠ **The pod's equivalent is kept, and the asymmetry is the reason.** `api.DeclaredRoutes()`
 is checked against `tests/conformance/requests.json` — an external corpus saying what the
-world expects. This surface has no corpus, so the strongest available claim is that the
+world expects — and the corpus builder is **Python**, structurally blind to a compiled
+binary, so `cairn-server -routes` is a genuinely second instrument in a second environment.
+This surface has neither a corpus nor a Python-side gate; printing the list from the binary
+restates one claim down a longer path. The strongest available claim here is that the
 ledger and the dispatcher read one map and that the expected set is spelled out once by
-hand. That is a grow-or-shrink guard on a hand-written list, not a contract comparison.
+hand: a grow-or-shrink guard on a hand-written list, not a contract comparison. When a
+later phase gives this surface a corpus, the second tier comes back with it.
 
 ⚠ **The two ledgers are separate and neither moves the other.** `GET /` here is a page;
 `GET /` on the pod is the byte-pinned uniform 401 in
@@ -343,9 +401,10 @@ UNCHANGED  tests/conformance/golden/root-path.json    8a715a7fbafda493…
   the output the way a browser's tokenizer does, so a payload that survives HTML escaping
   and is still executed by a real parser quirk would pass. The structural differential is
   the closest thing to a parse and it is a count, not a tree.
-- **The `nix` sandbox checks pin dimensions.** `checks.go-ui-declares-its-routes` has no
-  store, no token, no network and no `HOME` with a cache root — it exercises the ledger and
-  nothing about rendering or authenticating.
+- **The `nix` build's check phase pins dimensions.** `mkGoUI`'s `go test ./...` runs in a
+  sandbox with no store, no token, no network and no `HOME` with a cache root. Every guard
+  here is over in-process fixtures for that reason; nothing in this package has been
+  measured against a real store on disk, a real token file, or a real socket.
 - **Concurrency.** Nothing runs two requests at the same instant.
 - **A revoked credential.** This binary has no SIGHUP reload path, so a revocation takes a
   restart. That is a real operational difference from the pod and not something to assume

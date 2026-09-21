@@ -216,40 +216,36 @@ jobs:
         with:
           python-version: "3.12"
 
-      # 🔴 GATE PART (ii) OF THE GUARANTEE THAT REPLACED `vendorHash = null`, AND
-      # IT IS THIS JOB'S BECAUSE IT IS A CLAIM ABOUT A MODULE CACHE A DOWNLOAD
-      # POPULATED. `cache: false` above is what makes this job that place.
+      # 🔴 THERE IS NO `go mod verify` STEP HERE, AND THE ABSENCE IS A MEASUREMENT
+      # RATHER THAN AN OVERSIGHT — a draft of this job ran one, right here, and it
+      # verified the EMPTY SET. `cache: false` above means this job starts with no
+      # module cache, `go mod verify` does not download, and it stood AHEAD of the
+      # `go vet` step below — so it ran against a cache nothing had yet populated and
+      # printed the identical success line over zero modules. Measured on go1.26.7
+      # against isolated `GOMODCACHE`s, `rc` captured before any pipe:
       #
-      # 🔴 WHAT IT ACTUALLY CHECKS, MEASURED RATHER THAN ASSUMED — AND IT IS NOT
-      # WHAT THE OBVIOUS READING SAYS. An earlier draft of this comment claimed it
-      # "re-hashes every downloaded module and compares against `go.sum`". MEASURED
-      # FALSE: flipping the last character of the `h1:` line in `go.sum` and running
-      # `go mod verify` exits **0** with `all modules verified`. It compares each
-      # extracted module DIRECTORY against the hash the cache itself recorded at
-      # download time, so what it catches is a cache whose contents changed after
-      # the fetch. Measured red, in an isolated `GOMODCACHE`: appending one line to
-      # a file inside the module directory gives exit 1 and
-      # `maragu.dev/gomponents v1.3.0: dir has been modified`.
+      #     cold (this job's state)              rc 0  `all modules verified`  0 modules in cache
+      #     populated                            rc 0  `all modules verified`  1 module  in cache
+      #     populated + a line appended in       rc 1  `maragu.dev/gomponents v1.3.0:
+      #       the module directory                     dir has been modified`
       #
-      # 🔴 SO THE `go.sum` COMPARISON IS THE **BUILD'S**, NOT THIS STEP'S, AND BOTH
-      # ARE PRESENT DELIBERATELY. The same corrupted `go.sum` fails `go build ./...`
-      # with `SECURITY ERROR / This download does NOT match an earlier download
-      # recorded in go.sum` — so the `go vet` and `go test` steps below already gate
-      # that half, and this step adds the half they do not: a cache that was fetched
-      # correctly and tampered with afterwards.
+      # 🔴 AND MOVING IT BELOW `go test` WOULD NOT HAVE RESCUED IT. The only thing
+      # it can catch is a module cache modified AFTER its fetch. This job fetches
+      # into a cache no earlier step restored and nothing between the fetch and the
+      # check writes to it, so the window it guards does not exist here — the step
+      # would be green-by-construction in its new position too, which is the gate
+      # nobody can fail that this repository refuses to keep.
       #
-      # 🔴 NEITHER IS THE SAME CLAIM AS THE ALLOWLIST. `internal/depspolicy` says
-      # WHICH modules may exist and that none of them reaches the pod or the CLI;
-      # these say the ones that do exist are the bytes they claim to be. A tampered
-      # module passes the allowlist; an unexpected module passes verification.
-      #
-      # ⚠ ITS OUTPUT ON SUCCESS IS THE SINGLE LINE `all modules verified`, AND A
-      # MODULE SET OF ZERO PRINTS THE SAME LINE. That is the reassuring zero this
-      # repository keeps finding, so the floor is asserted separately:
-      # `TestGoModVerifyPassesIsNotThisSuitesJob` fails if `go.sum` names no module,
-      # which is what stops this step becoming a gate over an empty set.
-      - name: the downloaded modules are the bytes they were fetched as
-        run: go mod verify
+      # 🔴 IT ALSO NEVER GATED THE HAZARD ITS NAME SUGGESTS. With `go.sum`'s `h1:`
+      # line corrupted it exits **0** with `all modules verified` in BOTH cache
+      # states — it compares the extracted directory against the hash the cache
+      # itself recorded at download time, never against `go.sum`. What refuses that
+      # tree is the BUILD, which the `go vet` and `go test` steps below already run:
+      # rc 1, `verifying maragu.dev/gomponents@v1.3.0: checksum mismatch` followed by
+      # `SECURITY ERROR / This download does NOT match an earlier download recorded
+      # in go.sum` — measured with `go build ./...` over an isolated cache. Whether a
+      # nix build refuses the same tree with the same words is NOT measured here; the
+      # claim above is scoped to the toolchain this job runs.
 
       # 🔴 `vet` BEFORE `test`, and both before the corpus. Each is a different
       # question: vet reads the code, the unit tests exercise the guards, and the
@@ -296,18 +292,38 @@ jobs:
           # `identity` with P4's authenticator interface and its two new backends, and
           # `depspolicy` + `ui` with the web UI's phase A — `depspolicy` is the module
           # allowlist and the import ban that replaced `vendorHash = null`, `ui` is the
-          # renderer, its escaping guard and its raw-node ban. Measured at 17 in the nix
+          # renderer, its escaping guard and its raw-node ban. Measured at 17 over the
+          # package set `./...` of module `github.com/ZacxDev/cairn`, and at 17 in the nix
           # `cairn-server-go` check phase on this branch, which runs the same walk.
-          # The floor is ONE BELOW that, so deleting a package's tests fails here
-          # while adding a package does not — the same shape as the Python collected-test
-          # floor, and for the same reason: `go test` over a package with no test files
-          # exits 0, so the exit code alone cannot tell a green suite from an absent one.
           #
-          # 🔴 MOVE THIS NUMBER WITH THE PACKAGE COUNT. A floor left at 14 while seventeen
-          # packages carry tests does not fail late — it stops failing at all for the FIRST
-          # THREE deletions, which are the only ones anybody would notice.
+          # 🔴 THE FLOOR IS THE COUNT ITSELF — **NOT** ONE BELOW IT, AND THE ARITHMETIC IS
+          # WRITTEN OUT HERE RATHER THAN ASSERTED AS A PROPERTY, BECAUSE THE PROPERTY WAS
+          # ASSERTED AND WAS FALSE. This comment used to read "the floor is ONE BELOW that,
+          # so deleting a package's tests fails here" while the test was `-lt 16` against
+          # seventeen packages. Deleting one package's tests gives 16, and 16 is not
+          # `< 16` — measured: with `internal/depspolicy`'s tests removed, `ok=16` and the
+          # old condition PASSED. A floor one below the count buys exactly one free
+          # deletion, which is the only deletion anybody would make. The same defect was in
+          # the pair this branch inherited (fifteen packages, `-lt 14`), so it is carried
+          # forward rather than introduced here — and it is fixed here because the package
+          # this floor now has to defend is `depspolicy` itself.
+          #
+          # So: `ok < 17` refuses. 17 passes (today's tree). 16 refuses (one package's tests
+          # gone). 18 passes (a package ADDED), which is the other half of the property and
+          # the reason this is a floor rather than an equality. It is the same shape as the
+          # Python collected-test floor, and for the same reason: `go test` over a package
+          # with no test files exits 0, so the exit code alone cannot tell a green suite
+          # from an absent one.
+          #
+          # 🔴 MOVE THIS NUMBER WITH THE PACKAGE COUNT, IN THE SAME COMMIT. A floor left
+          # behind does not fail late — it stops failing at all, once per package of lag.
+          #
+          # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
+          # file that keeps others leaves `ok` at 17 and this gate green. That gap is
+          # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
+          # is written down.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 16 ]; then
+          if [ "$ok" -lt 17 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
@@ -720,11 +736,17 @@ jobs:
       # TOOLCHAIN. This is also the only CI step that builds ANY artefact with the
       # new `vendorHash` from a clean store, so a lock file and a hash that came
       # apart fail here rather than in a consumer's `nix build`.
+      # ⚠ THERE IS NO `…-declares-its-routes` STEP FOR THE UI, UNLIKE THE POD AND THE
+      # CLIENT, AND THE ASYMMETRY IS THE DECISION. Those two exist because a PYTHON-side
+      # gate owns the contract and is blind to a compiled program — `requests.json` for
+      # the pod's routes, argparse and an AST walk for the client's verbs — so reading
+      # the ledger out of the running binary is a SECOND instrument in a second
+      # environment. The UI has no Python side and no corpus: `ui.DeclaredRoutes()`
+      # derives from the same map the dispatcher reads, and the only expectation is a
+      # hand-written list. Printing that list from the binary and diffing it against a
+      # third hand-written copy is the same claim down a longer path, so the Go test in
+      # `internal/ui` — which runs in this build's own check phase — is the one mechanism
+      # kept. If a later phase gives this surface an external corpus, the second tier
+      # comes back with it.
       - name: the browser surface builds, and its unit tests pass under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-ui --no-link --print-build-logs
-
-      # 🔴 A `checks.*` ENTRY WITH NO CI STEP IS A CHECK NOBODY RUNS — this job
-      # builds attributes by name and never runs `nix flake check`, so the entry and
-      # the step land in the same commit or the entry is decoration.
-      - name: the browser surface declares exactly the routes the ledger names
-        run: nix build .#checks.x86_64-linux.go-ui-declares-its-routes --no-link --print-build-logs

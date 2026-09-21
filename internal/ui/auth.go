@@ -6,9 +6,16 @@ import (
 
 // AuthBackends assembles the UI's authentication chain.
 //
-// 🔴 IT TAKES TWO BACKENDS WHERE `identity.Backends` TAKES THREE, AND THE MISSING
-// ONE IS THE POINT RATHER THAN AN OMISSION. `identity.TrustedHeader` cannot be
+// 🔴 IT TAKES ONE BACKEND WHERE `identity.Backends` TAKES THREE, AND THE MISSING
+// ONES ARE THE POINT RATHER THAN AN OMISSION. `identity.TrustedHeader` cannot be
 // reached through this constructor: there is no parameter to pass one in.
+//
+// ⚠ THE SECOND MISSING PARAMETER IS A DIFFERENT KIND OF ABSENCE, AND CONFLATING THE
+// TWO WOULD BE THE MISREADING TO AVOID. A `*identity.SupabaseJWT` parameter was here
+// and every call site passed `nil` — an exported parameter with no caller, which is
+// the shape this repository refuses elsewhere. It is not refused on principle the way
+// the trusted header is; it is simply not wired yet, and it comes back in the phase
+// that builds the sign-in flow, together with a caller that passes something.
 //
 // `internal/identity/README.md` states the hazard plainly — on a pod that is
 // reachable directly, anyone who can open a socket to it can set the identity
@@ -34,12 +41,13 @@ import (
 // control proving that same value lands in `identity.Backends`'s chain. That pins
 // the MEMBERSHIP, which is the property, rather than the parameter list, which is
 // the current spelling of it.
-func AuthBackends(machine *identity.MachineToken, supabase *identity.SupabaseJWT) (identity.Chain, error) {
-	// The third argument is `nil`, spelled at the one site that may call this, so
-	// `identity.Backends` stays the single place the ORDER of the chain is decided.
-	// Re-implementing the ordering here would be a second assembly of the chain, and
-	// the first thing a second assembly loses is the rule that the machine token —
-	// the only credential this pod minted and the only one whose revocation is one
-	// edit away — wins where two credentials are present.
-	return identity.Backends(machine, supabase, nil)
+func AuthBackends(machine *identity.MachineToken) (identity.Chain, error) {
+	// The absent backends are spelled `nil` HERE, at the one site that may call
+	// `identity.Backends` for this binary, so `identity.Backends` stays the single
+	// place the ORDER of the chain is decided. Re-implementing the ordering here
+	// would be a second assembly of the chain, and the first thing a second assembly
+	// loses is the rule that the machine token — the only credential this pod minted
+	// and the only one whose revocation is one edit away — wins where two credentials
+	// are present.
+	return identity.Backends(machine, nil, nil)
 }
