@@ -23,49 +23,49 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ **`e15e331`**, clean, ↑0↓0. **One open PR: [#58](https://github.com/ZacxDev/cairn/pull/58)**
-  (`feat/ui-cookie-sessions`) — Phase B browser cookie sessions, a SIBLING session's work, not this one's.
-- **Four merges landed since this doc was last written at `0587ace`**, two of them this session:
-  **#55 → `91389ae`** (sibling: Phase A browser surface, the first third-party dependency,
-  `internal/depspolicy` replacing `vendorHash = null`), **#54 → `43a6f59`** (this session),
-  **#56 → `7234da1`** (sibling: `AGENTS.md` history eviction, 31,516 → 28,907 B),
-  **#57 → `e15e331`** (this session). Each verified BY CONTENT, never by ancestry.
-- 🔴 **THE ARC'S CLOSING CONDITION IS STILL 3 OF 4, AND THE UNMET CLAUSE IS UNCHANGED.** Re-measured
-  at `e15e331`, not inherited from the previous update: **the PWA's share flow with its
-  replica-honesty notice pinned by a test does not exist.** `internal/ui/doc.go:50` says it in as
-  many words — *"No cookie session, no sign-in, no share flow"* — the UI route table is one row
-  (`{"GET", "/"}`), and no test in the tree mentions a replica-honesty notice (the only `replica`
-  hit is `internal/snapshot/snapshot_test.go`, about tar). #55 and #58 are progress toward that
-  clause; neither delivers it. ⚠ **Do not read "a browser surface shipped" as the clause being met.**
-- ✅ **THE PUBLIC SURFACE NOW STATES THE POSITIONING, AND THE MECHANISM ALREADY DID.** Operator ask,
-  verbatim: *"i am positioning cairn as simple, scoped, sharable memory for ai agent swarms"*.
-  Measured before editing: `agent-swarm` occurred **exactly once** in the whole shipped tree
-  (`README.md:3`); every other `agent` match was the FILE `AGENTS.md`; `swarm`/`MCP`/`LLM` occurred
-  nowhere else; the GitHub description read *"per-subsystem engineering notes"* with
-  `repositoryTopics: null`. Now: description + 9 topics set and read back, and `README.md` leads with
-  the four properties that were already built and each surfaced as at most a table cell — scope
-  isolation, session attribution, `If-Match` concurrency, content-hash idempotency — plus a two-agent
-  quickstart. **"scalable" was dropped from the headline**: nothing measures throughput or concurrent
-  writers, and `tests/parity/README.md`'s blind set leads with concurrency.
-- ✅ **`CHANGELOG.md` EXISTS AND IS AN INDEX, NOT A SECOND COPY** — two rows (#50's default flip,
-  #55's first third-party dependency), each linking out. Its shape was twice a defect before it
-  settled; the rule is in its own header.
-- ✅ **`cairn-ui` IS DOCUMENTED IN `README.md`** — one read-only page, no write routes, deployed by
-  nothing, reads the store from disk, three measured ways to supply a credential.
-- **Operator decision this session: MCP is HELD.** No MCP server; agents integrate via the CLI and
-  the HTTP API. 🔴 **Do not cite the old blocker when revisiting it** — "a third-party dependency is
-  a BUILD FAILURE under `vendorHash = null`" stopped being true at #55. The hold rests on the
-  operator's call alone. Recorded in this session's memory as `mcp-server-on-hold`.
-- **Claims: `cairn-control-plane-1` is HELD by the sibling session** (13h, the web-UI slice).
-  `cairn-positioning-readme` and `cairn-readme-browser-surface` were taken and RELEASED by this one.
+- Branch `main` @ **`372879a`**. **Two open PRs: [#61](https://github.com/ZacxDev/cairn/pull/61)**
+  (`fix/readme-describes-the-sign-in-flow`, THIS session) and
+  **[#60](https://github.com/ZacxDev/cairn/pull/60)** (`fix/pin-host-config-and-three-ladder-defects`,
+  the SIBLING session, claim `cairn-control-plane-2`).
+- ✅ **PHASE B IS MERGED: #58 → `372879a`** — browser cookie sessions whose logout actually revokes,
+  with CSRF, expiry, and a fourth identity backend. Verified BY CONTENT. `25 → 26` mutants, all
+  killed, `-race` clean, pod contract byte-unchanged, and **`TrustedHeader` still `nil`** at
+  `internal/ui/auth.go`, the one site that can wire it.
+- 🔴 **THE ARC IS STILL 3 OF 4. THE SHARE FLOW REMAINS THE ONLY UNMET CLAUSE**, and phases A and B
+  are progress toward it rather than delivery of it. The UI route table is now four rows
+  (`GET /`, `GET`/`POST /sign-in`, `POST /sign-out`); **no test in the tree pins a replica-honesty
+  notice.**
+- **Operator decisions this session, all three explicit:** (1) **the share flow goes next**, ahead
+  of multi-replica session work; (2) **#58 merges with its limit DECLARED** — `cairn-ui` is a
+  single-replica surface — rather than being held for a storage redesign; (3) **"survive a rolling
+  deploy" means NO USER GETS SIGNED OUT**, a brief 503 being acceptable, which keeps the cheap
+  answer (sticky routing via a StatefulSet with per-ordinal PVCs) on the table.
+- 🔴 **MULTI-REPLICA SESSION DURABILITY IS SCOPED AND DEFERRED — 4–6 SESSIONS, OF WHICH ONLY ONE IS
+  INSIDE THIS REPOSITORY.** Measured: there is **no `ui-image` derivation**, no publish-workflow arm
+  for one, and **no Kubernetes manifest of any kind in this tree** — the only YAML is the two CI
+  workflows. So "multiple replicas" is an intent with zero mechanism behind it. The recommended
+  order when it becomes real: **sticky routing (no Go change, stdlib-only intact) → stateless signed
+  cookie + shared revocation list → an external store**, the middle step being the only one that
+  makes the last one smaller.
+- ⚠ **`cairn-ui` IS DEPLOYED BY NOTHING AND THAT IS STRUCTURAL, NOT AN OVERSIGHT.** The repo builds
+  `server-image` and `server-image-go`; there is no UI equivalent.
+- **`AGENTS.md` + `CLAUDE.md` headroom: 1,801 B** (ceiling 31,600 B). #56 bought 2,609 B by
+  evicting history; Phase B spent 1,478 B and the Phase-B trim returned 586 B. Six UI screens remain.
+- **Claim `cairn-control-plane-1` is HELD by THIS session.** The sibling holds
+  `cairn-control-plane-2`. **Release rank 1 when the share flow lands or is abandoned.**
+- **No task-board field is recorded** — the board-resolution helper exited **5** (no task for this
+  session). An unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot distinguish
+  "touched no task" from "wrong id". **It is not a clean bill of health.**
 
 ## Next steps (ranked)
-1. **P5 remainder — the PWA's SHARE FLOW.** This is the arc's ONLY unmet closing-condition clause:
-   a scope granted from one user to another, served through the browser, with the replica-honesty
-   notice **pinned by a test** (pin the whole normalised string — a guard on words is walkable by
-   rewording). `internal/ui` is phase A; #58 is phase B (cookie sessions). Neither is the share flow.
-   **IN FLIGHT: ZacxDev/cairn#58** — and `cairn-control-plane-1` is CLAIMED by that session; do not
-   take rank 1 without checking `claim-work --list`.
+1. **P5 remainder — the PWA's SHARE FLOW.** The arc's ONLY unmet closing-condition clause: a scope
+   granted from one user to another, served through the browser, with the replica-honesty notice
+   **pinned by a test** — pin the whole normalised string, because a guard on words is walkable by
+   rewording. The tree now has the UI (`internal/ui`, phase A), cookie sessions (#58, phase B), the
+   one renderer (`internal/report`) and the authority seam (`control.Resolve`); **none of them is
+   the share flow.** 🔴 **Compute "who can see this" from `Resolve`, never from `Model.Grants`** —
+   authority arrives two ways and a grant-row listing under-reports every project member.
+   `cairn-control-plane-1` is CLAIMED; check `claim-work --list` before taking it.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
 2. **The batched scaffolding defects** below. All test, harness or prose; none changes what CI does.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else will surface them.
@@ -75,60 +75,63 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 4. **P8 — retire the Python oracle.** Unblocked; gated on the flip holding over real use, which is a
    waiting period rather than a task. `tests/parity/README.md`'s ledger is DECISIONS, not a script.
    forcing: none
-5. **Rename `SUBSYSTEM_STORE_*` → `CAIRN_*` behind a migration path.** Deferred, not dropped: it was
-   item 5 of the five the operator approved with *"proceed as recommended"*, and this session
-   narrowed to 1–3 and said so at the time. `AGENTS.md` "Naming" is the standing alias policy, so the
-   quickstart documents `SUBSYSTEM_STORE_*` until this lands.
+5. **Rename `SUBSYSTEM_STORE_*` → `CAIRN_*` behind a migration path.** Deferred, not dropped: item 5
+   of the five the operator approved with *"proceed as recommended"*. `AGENTS.md` "Naming" is the
+   standing alias policy until this lands.
    forcing: user — item 5 of the approved list, explicitly deferred rather than declined.
 
 ## Defects (batched)
-- 🔴 **THIS DOC IS 99,059 B AGAINST ITS OWN 65,536 B GUIDELINE — 33,523 B OVER, AND THIS UPDATE ADDED
-  9,975 B OF THAT.** Five consecutive updates have now flagged it and grown it, this one by the most.
-  ⚠ The figure is the POST-update size, stated that way on purpose: the previous draft of this bullet
-  quoted the pre-update 89,084 and would have been stale on arrival, which is the failure this entry
-  is about. No test reads the number, so nothing goes red. The
-  archive (`claudedocs/handoff-cairn-control-plane-archive.md`) is where answered material goes.
-  🔴 **Do NOT satisfy this by deleting a claim or narrowing a rule** — that is the failure the
-  `AGENTS.md` budget already produced once, where the only reordering that fit deleted the word
-  "BYPASS" from the row describing an auth-bypass surface. **Closing condition:** a prune PR moving
-  answered Gotchas blocks to the archive and bringing this file under the guideline, or a written
-  line from a named reader saying the ceiling is wrong.
+- 🔴 **THIS DOC IS FAR OVER ITS 65,536 B GUIDELINE, AND SIX CONSECUTIVE UPDATES HAVE NOW FLAGGED IT
+  AND GROWN IT.** No test reads the number, so nothing goes red; it is judgement about what the next
+  session must read before it can act. The archive
+  (`claudedocs/handoff-cairn-control-plane-archive.md`) is where answered material goes. 🔴 **Do NOT
+  satisfy this by deleting a claim or narrowing a rule** — that is the failure the `AGENTS.md` budget
+  already produced once, where the only reordering that fit deleted the word "BYPASS" from the row
+  describing an auth-bypass surface. **Closing condition:** a prune PR moving answered Gotchas blocks
+  to the archive and bringing this file under the guideline, or a written line from a named reader
+  saying the ceiling is wrong.
+- 🟡 **NEW — `cairn-ui`'s `/healthz` PASSES READINESS WHILE THE SURFACE IS UNUSABLE.**
+  `cmd/cairn-ui/main.go:133-143` refuses to START if the session table cannot be opened, which is
+  right — but `/healthz` answers `ok` unconditionally, before the chain
+  (`internal/ui/server.go:227-230`). A replica whose session volume vanishes **after** start passes
+  readiness and refuses every login. That is exactly the shape the startup refusal exists against,
+  arriving through a door it cannot watch. Recorded in `internal/ui/README.md`'s blind-spot list, not
+  fixed — changing `/healthz`'s meaning is its own decision. **Closing condition:** a readiness path
+  that reflects the session store, or a written line saying why the trivial probe is correct.
+- 🟡 **NEW — `Revoke` runs the full `mutate` even when the digest is absent.**
+  `internal/identity/sessionstore.go:174-188` → `:196-228`: `flock`, whole-file re-read, rewrite, two
+  `Sync`s, for a session id that is not there. An authenticated caller can force unbounded fsync'd
+  rewrites of the session table. No privilege is gained — they already hold a bearer credential — but
+  on N replicas over shared storage it is a lock-contention amplifier. **Closing condition:** decided
+  where the cross-replica storage decision is made, not before.
 - 🟡 **FOUR FILED BY #54's AND #57's LADDERS, none fixed.** (a) `internal/ui/README.md:341` says
-  "`ui.AuthBackends` takes **two** backends"; `internal/ui/auth.go:44` takes **one** parameter —
-  and `README.md` now points readers into that file. (b) `internal/control/tokenfile/source.go:21`
-  still says "`go.mod` has no `require` block", stale since #55 — the fifth spelling
-  `internal/depspolicy`'s own doc predicted would go stale. (c)
-  `internal/report/testdata/reader_fixtures.json` contains **no `[cairn: …]` trailer at all** (0
-  hits against 8 in `server.py` as a positive control), so the differential reader fixture never
-  exercises attribution rendering — which is why an attribution-rendering defect was invisible to
-  every gate. (d) Whether `cairn-ui` should ever render through `internal/report` rather than its
-  own code is **undecided and now stated as open in `README.md`**. **Closing condition:** one PR for
-  (a)–(c); a written line for (d).
-- 🟡 **`apps.cairn` WAS UNPINNED UNTIL #50's FIX ROUND, AND THE NEAR-MISS IS THE RECORD WORTH
-  KEEPING.** Repointing it at the Go client left **all three** of the guard's original assertions
-  green while the announced hatch silently became the Go client — a guard written for attribute A
-  not covering sibling attribute B, defeating a promise the same PR created. Closed by a fourth
-  assertion; kept because the lesson generalises.
+  "`ui.AuthBackends` takes **two** backends"; ⚠ **re-check this against #58**, which changed that
+  signature. (b) `internal/control/tokenfile/source.go:21` still says "`go.mod` has no `require`
+  block", stale since #55. (c) `internal/report/testdata/reader_fixtures.json` contains **no
+  `[cairn: …]` trailer at all** (0 hits against 8 in `server.py` as a positive control), so the
+  differential reader fixture never exercises attribution rendering. (d) Whether `cairn-ui` should
+  render through `internal/report` rather than its own code is **undecided and stated as open**.
+  **Closing condition:** one PR for (a)–(c); a written line for (d).
+- 🟡 **`apps.cairn` WAS UNPINNED UNTIL #50's FIX ROUND** — repointing it left all three of the
+  guard's original assertions green while the announced escape hatch silently became the Go client.
+  Closed by a fourth assertion; kept because the lesson generalises: a guard written for attribute A
+  does not cover sibling attribute B.
 - 🟡 **`checks.default-is-the-go-client` IS INSENSITIVE ON THE PYTHON SIDE.** `mkCairn`'s pname is
   already `cairn`, so a `meta.mainProgram` removed *there* leaves the base-name assertions green.
   **Closing condition:** a decision to close it or a written line saying why not.
 - 🟡 **THREE FILED BY #48'S LADDER.** (a) `internal/client/readrouting_test.go:281` — the failure
   message says the predicate "must inspect EVERY state", but the assertion is `rows < 2 || nonOK == 0`
-  and the fixture yields `PROBLEM=0`, so the `Problem` branch never executes. (b)
-  `internal/doctor/render.go:99` — `Markers()` has one consumer and exports a rendering detail;
-  separately, a state added to `markers` but not to `States` makes `doctorRow` silently skip those
-  rows. (c) `lib/README.md` — the re-count recipe greps two literal phrases, so it is a SPELLED check
-  that cannot see a reworded echo. **Closing condition:** one PR correcting all three.
+  and the fixture yields `PROBLEM=0`. (b) `internal/doctor/render.go:99` — `Markers()` has one
+  consumer and exports a rendering detail; a state added to `markers` but not `States` makes
+  `doctorRow` silently skip those rows. (c) `lib/README.md` — the re-count recipe greps two literal
+  phrases, a SPELLED check that cannot see a reworded echo. **Closing condition:** one PR for all three.
 - 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — `lib/README.md`'s echo-site count,
-  `tests/test_parity_harness.py`'s floor. ⚠ **`README.md`'s 101/102/70/23/8 are GONE** — #54 deleted
-  every count from that file rather than refreshing them, because the file itself recorded that they
-  had already gone stale once. The repo owns the fix pattern
-  (`tests/test_control_mutant_count_is_pinned.py`); applying it to what remains is separate work.
-  **Closing condition:** a decision to pin each or a written line saying why not.
+  `tests/test_parity_harness.py`'s floor. The repo owns the fix pattern
+  (`tests/test_control_mutant_count_is_pinned.py`). **Closing condition:** a decision to pin each or
+  a written line saying why not.
 - 🟡 **"NINE VERBS" SURVIVES AT FOUR SITES AND THE COUNT IS TEN.** `AGENTS.md`, `flake.nix:911`
-  (directly above its own `want-verbs.txt` listing **ten**), and `tests/test_parity_harness.py:32,291`.
-  Measured three ways: `cairn -verbs` prints 10, argparse lists 10, the parity harness exercises 10.
-  All four survivors are comments, so nothing reddens. #54 fixed only `README.md`'s copy.
+  (directly above its own `want-verbs.txt` listing ten), and `tests/test_parity_harness.py:32,291`.
+  Measured three ways. All four survivors are comments, so nothing reddens.
   **Closing condition:** one PR correcting all four.
 - 🟡 **FOUR FILED BY #44'S LADDER** in `tests/test_publish_workflow.py` and
   `tests/test_control_mutant_count_is_pinned.py`, plus **three unpinned by construction** in
@@ -137,14 +140,16 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   burst node *because the LAN registry does not resolve there*; the pod now pulls from ghcr, so that
   reason is void while the affinity may still be wanted (the PVC is ReadWriteOnce local-path).
   **A comment is a claim too. Closing condition:** the comment states the true reason, or it goes.
-- 🟡 **`tests/dualrun/` cannot see image drift, structurally.** It runs the TREE's `server.py`;
-  nothing compares the Go server against the artefact actually serving. **Closing condition:** decide
-  whether a deployed-artefact arm is worth owning, or write the line saying it is not.
-- ✅ **CLOSED BY #48's SESSION** (relabelled — this line previously read "this session" and now names
-  which): residual 8 in all four clauses; the `search --all-scopes` fan-out's measured-zero coverage;
-  routed `validate`'s oracle divergence; two unconditional-label mutants on `defaultInstance` and
-  `bannerFor`; `tests/routing_mutants.py` scoring a never-run suite as KILLED; two CI floors with
-  silent slack; the flake wiring pinned by prose only.
+- 🟡 **`tests/dualrun/` cannot see image drift, structurally.** It runs the TREE's `server.py`.
+  **Closing condition:** decide whether a deployed-artefact arm is worth owning, or write the line.
+- ✅ **CLOSED BY #58's SESSION:** the circular durability justification, the mutant mislabelled
+  "option (d) in one edit", the false "every authenticated request calls it" claim, the
+  `comparisons` counter (replaced by an AST guard), and the CSRF consequence comment.
+- ✅ **CLOSED BY #48's SESSION** (a sibling relabelled this from "this session" to name WHICH — with
+  two sessions writing one doc, "this session" stops being a referent): residual 8 in all four
+  clauses; the `search --all-scopes` fan-out's
+  measured-zero coverage; routed `validate`'s oracle divergence; two unconditional-label mutants;
+  `tests/routing_mutants.py` scoring a never-run suite as KILLED; two CI floors with silent slack.
 - ✅ **CLOSED BY #53:** issue #51, the `AGENTS.md` reverted-draft flip history.
 - Everything previously listed stands unchanged: #38's three residuals; `ScopeByNameIn`
   raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six findings;
@@ -1058,6 +1063,68 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   read** — three invocation forms and four flag→env mappings, each individually measured but never
   adversarially re-read. Stated on the PR so it reads as *unreviewed*, not *reviewed-clean*; those
   are indistinguishable in a merged history.
+
+- 🔴 **I WAS OPERATING IN THE SHARED CHECKOUT WHILE IT SAT ON ANOTHER SESSION'S BRANCH, AND ONLY
+  `--ff-only` CAUGHT IT.** The sibling ran `git checkout -b fix/pin-host-config-and-three-ladder-defects`
+  in `/home/zach/workspace/cairn` and committed. My mental model said `main`;
+  `git branch --show-current` said otherwise. **Every read I did came off THEIR branch** — which is
+  why `internal/ui/session.go` "did not exist" and why a grep for the README contradiction was
+  measuring the wrong tree. The only thing that stopped a write landing on their branch was
+  `git merge --ff-only origin/main` **refusing** rather than guessing. That is the entire argument
+  for `--ff-only` over `git pull`, demonstrated rather than recited. **Re-read
+  `git branch --show-current` before every write in a shared checkout, and do verification in a
+  WORKTREE rather than by switching the shared checkout out from under a peer.**
+- 🔴 **"DISJOINT FILES ARE NOT SAFETY" FIRED FOR REAL, AND THE FAILURE WAS NOT A RED `main`.** #57
+  and #58 shared **zero files**; `git merge-tree --write-tree` between them exited **0**; both CIs
+  stayed green. #57's `README.md` said the browser surface has *"no write routes, no sign-in flow"*;
+  #58 added four routes and a sign-in flow. The result was a **public README confidently
+  contradicting the shipped code** — no gate on either PR could see it, because there was nothing
+  textual to see. It was flagged on #57 before either merged, with the ordering offered as a
+  decision rather than a race; #57 landed first, and #61 carries the fix. **A semantic conflict
+  needs no shared file, and a clean `merge-tree` is evidence about TEXT only.**
+- 🔴 **A MEASURED OBJECTION CAN BE FALSE WHILE ITS CONCLUSION HOLDS — AND BOTH HALVES MATTER.** A
+  round-0 audit rejected "sessions in the control journal" because `FileStore.Model` replays the
+  whole journal *"and every authenticated request calls it"*. The second clause is **false**: every
+  serving path wraps it in a `control.Cache`, `Cache.Model()` returns under an `RLock` and contacts
+  nothing (`internal/control/cache.go:239`), so the replay is once per 30 s refresh — and `cairn-ui`
+  wires no `FileStore` at all. **But correcting it made the option WORSE**: the cache is stale by
+  design up to `AuthorityMaxAge`, so journal-backed sessions would turn "logout revokes" into
+  "logout revokes within 30 seconds" on every replica. Plus a structural blocker nobody had written
+  down — the journal's PVC is **ReadWriteOnce local-path**, which would pin every UI replica to one
+  node. **Check the stated reason even when you agree with the verdict; a right answer defended by a
+  false measurement is one edit from becoming a wrong one.**
+- 🔴 **A RAW GREP COUNT CONFLATED "THE CLAIM EXISTS" WITH "THE RECORD OF ITS CORRECTION EXISTS" —
+  FIVE TIMES IN ONE SESSION.** This repo's house style is to keep the retracted wording beside the
+  correction so nobody re-derives it, which means a `grep -c` for a false claim returns **1** on a
+  file that has already fixed it. It cost a wrong conclusion twice before I started reading matches
+  instead of counting them. **A count is a fact about the pattern; read the match.**
+- 🔴 **REQUIRING A MINIMUM CHECK *COUNT* IS WHAT STOPS AN EMPTY ROLLUP READING AS GREEN.** A CI
+  watcher showed `checks=0 pending=0` for four minutes after a push — indistinguishable from "all
+  clear" if you only count incomplete checks. Gating on `N >= 6 AND pending == 0` is what made it
+  wait. The rule was already written down; this is the measurement that it works.
+- 🔴 **`gh pr merge --auto` DOES NOT WAIT.** It merged a PR immediately with two checks still
+  running. They passed afterwards, which is the outcome being lucky rather than the process being
+  right. **Read the rollup yourself before merging** — full check set present AND completed.
+- 🔴 **A FORCE-PUSH TO EXACTLY THE BASE TIP AUTO-CLOSES A PR.** Re-pointing a docs branch at `main`
+  left it with zero commits ahead and GitHub closed it; the follow-up commit then landed on a closed
+  PR. It **reopened** cleanly — unlike the deleted-base-branch case this repo already records, which
+  refuses to reopen — and nothing was lost.
+- 🔴 **A DOC PR THAT LOSES A RACE NEEDS RE-DERIVING, NOT RESOLVING.** When two sessions both update
+  this handoff, the loser's narrative has usually gone stale in the minutes since it was written.
+  Reset onto the new base and rebuild the delta; do not merge a stale story into a fresh one.
+- **Decision (operator, this session): the share flow outranks multi-replica sessions.** The share
+  flow is one package in a tree that already has everything it needs; multi-replica is 4–6 sessions
+  of which five are in another repository where nothing in cairn's gates can see them.
+- **Decision (operator, this session): restart durability is the OPERATOR's requirement**, claimed
+  explicitly after a round-0 audit found it had come from a dispatch brief rather than from anyone.
+  The honest fix for an unattributed requirement is **attribution, not deletion** — but the
+  justification had to stop being circular, and it did.
+- ⚠ **ROUND 0 CAUGHT THE ORCHESTRATOR TWICE THIS SESSION, WHICH IS WHAT IT IS FOR.** Once by tracing
+  an unattributed requirement to my own dispatch brief; once by refuting my claim that a
+  four-position `Backends` signature was "exported API with no consumer" — I had conflated
+  `ui.AuthBackends` (which passes `nil` twice) with `identity.Backends`, which has two production
+  callers. **A brief is not an authority, and saying so in the brief is what makes the correction
+  possible.**
 
 ## How to verify
 ```bash
