@@ -263,6 +263,8 @@ rotation, rate limiting), is [`server/README.md`](server/README.md).
 | `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, not deployed |
 | `cmd/cairn`, `internal/client` | the Go port of the CLIENT, and **the default** — diffed against the Python one by `tests/parity/`, which declares both its residuals and the rows that compare only the exit code |
 | `internal/report` | the ONE renderer, shared by the pod and the CLI |
+| `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — one page, gomponents, deployed by nothing |
+| `internal/depspolicy` | the allowlist and import ban that replaced `vendorHash = null` — the serving path is still stdlib-only, and this is what measures it |
 | `tests/` | the suites, plus `leakscan.py`, the HTTP conformance corpus, the server dual-run gate and the client parity gate |
 | `flake.nix` | both clients (`default` is the **Go** one, `#cairn` the Python one), the server image, the Go server, and the checks |
 
