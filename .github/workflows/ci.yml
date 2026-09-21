@@ -216,6 +216,41 @@ jobs:
         with:
           python-version: "3.12"
 
+      # 🔴 GATE PART (ii) OF THE GUARANTEE THAT REPLACED `vendorHash = null`, AND
+      # IT IS THIS JOB'S BECAUSE IT IS A CLAIM ABOUT A MODULE CACHE A DOWNLOAD
+      # POPULATED. `cache: false` above is what makes this job that place.
+      #
+      # 🔴 WHAT IT ACTUALLY CHECKS, MEASURED RATHER THAN ASSUMED — AND IT IS NOT
+      # WHAT THE OBVIOUS READING SAYS. An earlier draft of this comment claimed it
+      # "re-hashes every downloaded module and compares against `go.sum`". MEASURED
+      # FALSE: flipping the last character of the `h1:` line in `go.sum` and running
+      # `go mod verify` exits **0** with `all modules verified`. It compares each
+      # extracted module DIRECTORY against the hash the cache itself recorded at
+      # download time, so what it catches is a cache whose contents changed after
+      # the fetch. Measured red, in an isolated `GOMODCACHE`: appending one line to
+      # a file inside the module directory gives exit 1 and
+      # `maragu.dev/gomponents v1.3.0: dir has been modified`.
+      #
+      # 🔴 SO THE `go.sum` COMPARISON IS THE **BUILD'S**, NOT THIS STEP'S, AND BOTH
+      # ARE PRESENT DELIBERATELY. The same corrupted `go.sum` fails `go build ./...`
+      # with `SECURITY ERROR / This download does NOT match an earlier download
+      # recorded in go.sum` — so the `go vet` and `go test` steps below already gate
+      # that half, and this step adds the half they do not: a cache that was fetched
+      # correctly and tampered with afterwards.
+      #
+      # 🔴 NEITHER IS THE SAME CLAIM AS THE ALLOWLIST. `internal/depspolicy` says
+      # WHICH modules may exist and that none of them reaches the pod or the CLI;
+      # these say the ones that do exist are the bytes they claim to be. A tampered
+      # module passes the allowlist; an unexpected module passes verification.
+      #
+      # ⚠ ITS OUTPUT ON SUCCESS IS THE SINGLE LINE `all modules verified`, AND A
+      # MODULE SET OF ZERO PRINTS THE SAME LINE. That is the reassuring zero this
+      # repository keeps finding, so the floor is asserted separately:
+      # `TestGoModVerifyPassesIsNotThisSuitesJob` fails if `go.sum` names no module,
+      # which is what stops this step becoming a gate over an empty set.
+      - name: the downloaded modules are the bytes they were fetched as
+        run: go mod verify
+
       # 🔴 `vet` BEFORE `test`, and both before the corpus. Each is a different
       # question: vet reads the code, the unit tests exercise the guards, and the
       # conformance corpus measures the SERVED behaviour against the oracle's
@@ -251,24 +286,28 @@ jobs:
           set -o pipefail
           go test -race ./... | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
-          # FIFTEEN packages carry tests, measured on this branch: api, authz, client,
-          # cmd/cairn-server, control, control/tokenfile, doctor, hostid, identity, netid,
-          # pytext, report, snapshot, store, write. It was NINE at P1b; `client` and
+          # SEVENTEEN packages carry tests, measured on this branch: api, authz, client,
+          # cmd/cairn-server, control, control/tokenfile, depspolicy, doctor, hostid,
+          # identity, netid, pytext, report, snapshot, store, ui, write. It was NINE at P1b; `client` and
           # `doctor` arrived with the Go CLIENT, `control` with P3a, `control/tokenfile`
           # with the control-plane wiring, `cmd/cairn-server` with the gate on the
           # authority refresh loop — which is the only thing bounding the token-file
           # adapter's declared divergence and had no test of any kind before it — and
-          # `identity` with P4's authenticator interface and its two new backends.
+          # `identity` with P4's authenticator interface and its two new backends, and
+          # `depspolicy` + `ui` with the web UI's phase A — `depspolicy` is the module
+          # allowlist and the import ban that replaced `vendorHash = null`, `ui` is the
+          # renderer, its escaping guard and its raw-node ban. Measured at 17 in the nix
+          # `cairn-server-go` check phase on this branch, which runs the same walk.
           # The floor is ONE BELOW that, so deleting a package's tests fails here
           # while adding a package does not — the same shape as the Python collected-test
           # floor, and for the same reason: `go test` over a package with no test files
           # exits 0, so the exit code alone cannot tell a green suite from an absent one.
           #
-          # 🔴 MOVE THIS NUMBER WITH THE PACKAGE COUNT. A floor left at 13 while fifteen
+          # 🔴 MOVE THIS NUMBER WITH THE PACKAGE COUNT. A floor left at 14 while seventeen
           # packages carry tests does not fail late — it stops failing at all for the FIRST
-          # TWO deletions, which are the only ones anybody would notice.
+          # THREE deletions, which are the only ones anybody would notice.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 14 ]; then
+          if [ "$ok" -lt 16 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
@@ -676,3 +715,16 @@ jobs:
       # attributes by design — a check nothing names is a check nothing runs.
       - name: packages.default and apps.default both resolve to the Go client
         run: nix build .#checks.x86_64-linux.default-is-the-go-client --no-link --print-build-logs
+
+      # 🔴 THE BROWSER SURFACE BUILDS, AND ITS UNIT TESTS RUN UNDER THE PINNED
+      # TOOLCHAIN. This is also the only CI step that builds ANY artefact with the
+      # new `vendorHash` from a clean store, so a lock file and a hash that came
+      # apart fail here rather than in a consumer's `nix build`.
+      - name: the browser surface builds, and its unit tests pass under the pinned toolchain
+        run: nix build .#packages.x86_64-linux.cairn-ui --no-link --print-build-logs
+
+      # 🔴 A `checks.*` ENTRY WITH NO CI STEP IS A CHECK NOBODY RUNS — this job
+      # builds attributes by name and never runs `nix flake check`, so the entry and
+      # the step land in the same commit or the entry is decoration.
+      - name: the browser surface declares exactly the routes the ledger names
+        run: nix build .#checks.x86_64-linux.go-ui-declares-its-routes --no-link --print-build-logs

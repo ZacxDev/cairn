@@ -93,10 +93,12 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
+| `cmd/cairn-ui`, `internal/ui` | P-A: the BROWSER surface — one page, gomponents, deployed by nothing; 📄 its own README |
+| `internal/depspolicy` | the module ALLOWLIST and the import BAN that replaced `vendorHash = null` |
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
 | `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |
 | `tests/` | the suites, `leakscan.py`, `conformance/`+`dualrun/` (P1's gates), `parity/` (P2's) |
-| `flake.nix` | both clients (**`default` is the GO one; `#cairn` is the Python one**), BOTH pod images, and the checks |
+| `flake.nix` | both clients (**`default` is the GO one; `#cairn` is the Python one**), BOTH pod images, the UI, and the checks |
 
 ## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
 
@@ -223,9 +225,9 @@ pins `go-version: "1.25"`. Move all three together or not at all. ⚠ `buildGoMo
 with the compiler in `nativeBuildInputs` is a NO-OP for the pin: it uses the `go` from
 its own scope, so the build fetched 1.26 while the derivation advertised 1.25.
 
-🔴 **STDLIB ONLY.** `go.mod` has no `require` block and `flake.nix` passes
-`vendorHash = null`; together those make a new dependency in the serving path a build
-FAILURE rather than a silent addition.
+🔴 **THE SERVING PATH IS STILL STDLIB-ONLY, BUT NOT BECAUSE THE BUILD REFUSES.** That
+was `vendorHash = null`'s job and it is gone — see the dependency section below; the
+import ban is what makes this row a measurement.
 
 ## 🔴 TWO CLIENTS ARE ALIVE, `cairn` IS THE ORACLE, AND `tests/parity/` IS THE GATE
 
@@ -257,22 +259,20 @@ code plus "both sides put something on stdout" — so 31 of 101 never compare ou
 Declared per row and in the residual table; it is the HEADLINE that reads wider than the gate,
 so know which rows are load-bearing before trusting one.
 
-🔴 **ITS FIRST FULL RUN REPORTED 72 PASS / 0 FAIL AND MEASURED NOTHING** — a
-`SUBSYSTEM_STORE_TRUSTED_PROXIES` value copied from the conformance runner made the pod refuse every
-direct request, so both clients rendered `store-unreachable` and **two clients failing identically
-compare equal**. Three controls now stand against that, they are three different claims, and each
-refuses with exit **2** ("could not vouch", never "failed"): `PREFLIGHT` (the POD answers a
-non-empty snapshot for this token), `CONTENT-FLOOR` (the CLIENTS reached a live fetch and a rendered
-digest), and `--self-test` → `sabotaged=4 caught=4` (the differ goes red on stdout, on stderr, on
-the exit code **and** on `exit+stdout`). `--break-pod` is the negative control on the first. Read
-all three; a green without them is a green about nothing.
+🔴 **TWO CLIENTS FAILING IDENTICALLY COMPARE EQUAL** — its first full run reported 72 PASS / 0
+FAIL against a pod that refused every request (worked example in `tests/parity/README.md`). Three
+controls stand against that, they are three different claims, and each refuses with exit **2**
+("could not vouch", never "failed"): `PREFLIGHT` (the POD answers a non-empty snapshot for this
+token), `CONTENT-FLOOR` (the CLIENTS reached a live fetch and a rendered digest), and `--self-test`
+→ `sabotaged=4 caught=4` (the differ goes red on stdout, on stderr, on the exit code **and** on
+`exit+stdout`). `--break-pod` is the negative control on the first. Read all three; a green without
+them is a green about nothing.
 
 📄 **READ ON DEMAND RATHER THAN HERE, all in `tests/parity/README.md`:** what the gate FOUND
 (ten divergences in seven findings), the MUTATION BATTERY over P2 (61 mutants, 58 killed, 3 labelled
 EQUIVALENT at the code), and the **P8 RETIREMENT LEDGER** — every file, guard and row that exists
-only while the Python oracle does. Those are records of rounds, not decision input before acting,
-and they were moved out of this file when it had quadrupled in one session; a survivor's authority
-is the label beside the code it labels. This file states the retirement condition for the `lib/`
+only while the Python oracle does. Those are records of rounds, not decision input before
+acting; a survivor's authority is the label beside the code it labels. This file states the retirement condition for the `lib/`
 rule and for nothing else, which is what the ledger is for — and the ledger is a list of DECISIONS,
 not a delete script.
 
@@ -317,6 +317,17 @@ changes a contract the command PRINTS to remove a collision that was never a def
 credential, unreached `doctor` states, and multi-instance worlds beyond two.** It is enumerated
 in `tests/parity/README.md` and NOT transcribed here: a copy of it went stale the first time the
 list grew.
+
+## 🔴 A THIRD-PARTY DEPENDENCY EXISTS NOW, AND `vendorHash = null` IS GONE
+
+**A new dependency is no longer a BUILD FAILURE** — the property `go.mod` and `flake.nix`
+each claimed, both rewritten. The refusal is `internal/depspolicy`: an allowlist failing on
+GROW *or* SHRINK, plus an import ban over the graph out of `cmd/cairn`/`cmd/cairn-server`.
+🔴 **THE BAN KEEPS IT OUT OF THE POD; THE ALLOWLIST CANNOT** — one entry is satisfied by a
+tree where `internal/api` imports it on every route. A new module moves BOTH, and only
+`internal/ui` may import one. 🔴 **gomponents does NOT neutralise a URL scheme the way
+`html/template` does**: hrefs go through `safeHref`, `Raw`/`Rawf` are AST-banned.
+📄 `internal/ui/README.md`.
 
 ## 🔴 SEVERAL INSTANCES: AN UNROUTED SCOPE REFUSES
 
@@ -378,14 +389,9 @@ dimensions.** Its HOME has no cache root, which is exactly why it did not
 notice that `cairn doctor` crashed on any host that HAD one
 (`AttributeError: 'NoneType' object has no attribute 'iterdir'`, zero stdout,
 exit 1, whenever `CAIRN_MIRROR_ROOT` was unset — the default). Ask what your
-sandbox cannot have before reading its green as coverage.
-
-⚠ **AND `checks.go-client-declares-its-verbs` HAS THE SAME SHAPE OF BLINDNESS,
-NAMED HERE BECAUSE IT IS NEW.** It has no store, no token, no network and no
-HOME with a cache root, so it exercises the two LEDGERS and nothing about
-reading or writing — the `AttributeError` above is exactly the class of defect it
-cannot see. The parity gate is what measures behaviour, and it needs a running
-pod that a nix sandbox is the wrong place for.
+sandbox cannot have before reading its green as coverage. **Same blindness, every
+`*-declares-its-*` check**: no store, token, network or cache-root HOME, so each
+exercises a LEDGER and nothing about behaviour.
 
 🔴 **THERE ARE TWO WAYS TO BUILD THE *PYTHON* POD AND THEY MUST NOT DIVERGE.**
 `server/Dockerfile` is what is deployed today; `packages.server-image` is the
@@ -415,11 +421,10 @@ image, diff the two for what the test cannot read.**
 📄 **THE MEASURED DIFFERENCES ARE IN `server/README.md`, NOT HERE** — the layer
 table, the busybox applet surface (network **servers** and **clients**, including
 `ssl_client`, beside a mounted credential), the setuid counts, and why that trade
-is RECORDED RATHER THAN FIXED. 🔴 **THIS SENTENCE NO LONGER CARRIES A COUNT, AND
-THE DELETION IS THE POINT: FOUR SUCCESSIVE DRAFTS GAVE ONE AND ALL FOUR WERE
-UNDERCOUNTS**, each in the direction of the previous fix, the last two while
-telling the reader to enumerate. **The set is whatever `busybox --list` on the
-built image says — read it there, and do not supply a fifth number here.**
+is RECORDED RATHER THAN FIXED. 🔴 **THIS SENTENCE CARRIES NO COUNT AND
+THE DELETION IS THE POINT — four drafts gave one and all four undercounted. The
+set is whatever `busybox --list` on the built image says; read it there, and do
+not supply a fifth number here.**
 Neither image's tool surface is a subset of the other's, and nothing about it is
 settled.
 
