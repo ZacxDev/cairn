@@ -110,7 +110,7 @@ nix run   github:ZacxDev/cairn -- doctor       # the default client — the GO o
 nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client — no longer the default
 nix build github:ZacxDev/cairn#server-image    # the pod image, as a loadable tarball
-nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — phase A, deployed by nothing
+nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — deployed by nothing
 ```
 
 Consumers pin this flake as an input. The version **is** the git revision —
@@ -287,6 +287,37 @@ reachable, and that backend lets anyone who can open a socket to it *be* any use
 at full authority. `AuthBackends` takes one parameter so neither can be passed;
 `TestTheUIChainHasNoTrustedHeaderMember` pins the exclusion.
 
+### Sharing a scope with somebody
+
+`GET /share` lists the scopes your credential may administer; `GET /share?scope=<id>`
+is one scope's page. It answers three things: **who can see this**, **which of those
+you can take back**, and a form to share it with somebody.
+
+🔴 **"Who can see this" is computed from the authority, not from the list of
+shares.** Access arrives two ways — a share, or membership of the project that owns
+the scope — so a page that listed only shares would under-report every project
+member, and in the direction that tells you your notes are more private than they
+are. The two lists are shown separately because only shares can be revoked:
+somebody who reaches a scope through project membership keeps it after every share
+is taken back, and the page says so.
+
+⚠ **You can only share with people and projects you already share a project with.**
+That is deliberate — a picker listing every user would turn admin on one scope into
+a directory of everyone in the deployment — and it means reaching anybody else needs
+an invite, which does not exist yet.
+
+🔴 **Recording a share needs `-control-journal <path>`.** Without it the authority is
+the token file, which has no shares to write and confers no `admin` to anybody; the
+share pages still answer "who can see this", and they **say on every load** that this
+deployment cannot record a share, rather than refusing once you have clicked.
+
+Every share page carries a notice about what this surface can and cannot promise: it
+is one replica's answer from a cached copy of the authority, another reader gains or
+loses access when their own cache refreshes rather than the instant you click, and
+revoking stops future syncs without recalling entries already copied onto somebody's
+machine. That notice is pinned **whole** by a test, so it cannot be quietly reworded
+into a stronger promise.
+
 It is the only package here that links a third-party module (`gomponents`, for
 HTML), and **the serving path is still stdlib-only** — no package the pod or the
 CLI links reaches it. What replaced `vendorHash = null`, and how that is measured
@@ -305,7 +336,7 @@ those claims have one home each and a correction belongs there.
 | `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, not deployed |
 | `cmd/cairn`, `internal/client` | the Go port of the CLIENT, and **the default** — diffed against the Python one by `tests/parity/`, which declares both its residuals and the rows that compare only the exit code |
 | `internal/report` | the ONE renderer, shared by the pod and the CLI |
-| `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — one page, gomponents, deployed by nothing |
+| `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — pages, sign-in, the share flow, gomponents, deployed by nothing |
 | `internal/depspolicy` | the allowlist and import ban that replaced `vendorHash = null` — the serving path is still stdlib-only, and this is what measures it |
 | `tests/` | the suites, plus `leakscan.py`, the HTTP conformance corpus, the server dual-run gate and the client parity gate |
 | `flake.nix` | both clients (`default` is the **Go** one, `#cairn` the Python one), the server image, the Go server, and the checks |

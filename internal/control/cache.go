@@ -633,9 +633,35 @@ func (c *Cache) ApplyNow(ctx context.Context, events ...Event) (WriteResult, err
 	return c.write(ctx, true, events)
 }
 
+// Writable answers whether this cache has an authority it can append to, WITHOUT
+// attempting a write.
+//
+// 🔴 IT EXISTS BECAUSE THE ONLY OTHER WAY TO LEARN THIS WAS TO TRY, AND A SURFACE THAT
+// LEARNS IT AT THE FIRST CLICK IS A SURFACE THAT LOOKS HEALTHY AND IS NOT. `internal/ui`
+// asks at RENDER time so the page can say a share cannot be recorded here, beside the
+// controls that would record it, rather than refusing after somebody has chosen a
+// recipient.
+//
+// ⚠ IT IS A CAPABILITY, NOT A PERMISSION, AND CONFLATING THE TWO WOULD BE THE MISREAD.
+// `true` says this process can append to the authority; it says NOTHING about whether
+// any particular principal may. A caller still has to pass `Allows`.
+func (c *Cache) Writable() bool { return c.writer() != nil }
+
+// writer is the ONE place this package asks whether its source can be appended to.
+//
+// 🔴 ONE ASSERTION, TWO CALLERS — not one assertion each. `Writable` and `write` ask
+// the same question, and a second `c.src.(Writer)` beside the first would be a second
+// answer the day either grows a condition. A draft of this change had exactly that,
+// with a comment above it claiming the opposite; the comment was right and the code
+// was not.
+func (c *Cache) writer() Writer {
+	w, _ := c.src.(Writer)
+	return w
+}
+
 func (c *Cache) write(ctx context.Context, materialize bool, events []Event) (WriteResult, error) {
-	w, writable := c.src.(Writer)
-	if !writable {
+	w := c.writer()
+	if w == nil {
 		return WriteResult{}, ErrAuthorityReadOnly
 	}
 	if len(events) == 0 {

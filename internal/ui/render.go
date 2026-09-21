@@ -6,6 +6,8 @@ import (
 	g "maragu.dev/gomponents"
 	c "maragu.dev/gomponents/components"
 	h "maragu.dev/gomponents/html"
+
+	"github.com/ZacxDev/cairn/internal/control"
 )
 
 // Page is the one page Phase A renders.
@@ -118,6 +120,280 @@ func SignInPage(message string) g.Node {
 		},
 	})
 }
+
+// ReplicaHonesty is the notice the share flow carries, and it is a CONSTANT so that a
+// test can pin the whole of it.
+//
+// 🔴 IT IS PINNED AS ONE NORMALISED STRING RATHER THAN BY KEYWORD, AND THAT CHOICE IS
+// THE GUARD. A test asserting the page contains "cache" or "replica" passes against a
+// reworded notice that has quietly dropped a clause — a guard on words is walkable by
+// rewording, and the clause most worth dropping is always the one that makes the
+// product sound weakest. `TestTheReplicaHonestyNoticeIsPinnedWhole` compares the
+// page's rendered text against this constant with HTML ENTITIES RESOLVED and
+// WHITESPACE COLLAPSED — the two normalisations that pin the SENTENCE rather than the
+// escaper's current spelling of an apostrophe or `gofmt`'s wrapping of this constant.
+// So a cosmetic reword FAILS the test. That cost is the price of a machine-readable claim, and it is
+// paid deliberately: changing what this surface promises should be an edit somebody
+// makes on purpose, in two places, with a reviewer.
+//
+// 🔴 EVERY CLAUSE IS MEASURED SOMEWHERE ELSE IN THIS TREE, WHICH IS WHY THERE ARE
+// EXACTLY THESE THREE:
+//
+//   - "one replica's answer, read from a cached copy of the authority" —
+//     `control.Cache` is stale by design up to its declared `MaxAge`, and `cairn-ui`
+//     is a single-replica surface (a stated limit, not an aspiration: there is no
+//     `ui-image` derivation and no deployment manifest in this repository).
+//   - "another reader gains or loses the scope when their own cache next refreshes" —
+//     `control.Cache.ApplyNow`'s promise is explicitly about THIS process and no other.
+//   - "does not recall entries already copied" — `ApplyNow` says it in as many words:
+//     revoking access stops future syncs and does not recall a replica.
+//
+// ⚠ WHAT IT DOES NOT SAY, DELIBERATELY: it gives no number. A "within 30 seconds" here
+// would be a promise about a refresh interval this package does not own and cannot
+// read — the interval is `cmd/cairn-ui`'s, an operator can change it, and a stale
+// number in a safety notice is worse than no number. The bound that IS known travels
+// per write instead, as [Effect.EffectiveBy].
+const ReplicaHonesty = "This page is one replica's answer, read from a cached copy of the " +
+	"authority. A change you record here is durable at once, but another reader gains or " +
+	"loses the scope when their own cache next refreshes, not at the instant you click. And " +
+	"revoking a share stops future syncs: it does not recall entries already copied onto " +
+	"somebody's machine."
+
+// ReadOnlyAuthority is what the page says when this deployment has no journal to
+// record a share in.
+//
+// 🔴 IT NAMES THE CONFIGURATION RATHER THAN THE SYMPTOM, WHICH IS THE OPPOSITE OF THIS
+// SURFACE'S UNIFORM-REFUSAL RULE AND CORRECT HERE. Everything else this server refuses
+// is refused without a reason, because a reason that reaches the wire is an enumeration
+// API. This sentence discriminates nothing — it is identical for every caller, every
+// scope and every request — and the alternative is an operator who mounted the wrong
+// volume hunting a permission problem that does not exist.
+//
+// ⚠ IT IS THE TOKEN-FILE DEPLOYMENT'S NORMAL STATE, NOT AN ERROR. `internal/control/
+// tokenfile` grants no `admin` verb to anybody by design — its own comment says the
+// token file "has no sharing to administer" — so on such a deployment the share flow
+// is a READ surface, and this sentence is what makes that legible rather than puzzling.
+const ReadOnlyAuthority = "This deployment's authority is read-only, so no share can be " +
+	"recorded here: cairn-ui was started against a token file rather than a control journal."
+
+// ShareView is everything the share flow renders, assembled by the handler.
+//
+// 🔴 AN EMPTY `Scope` MEANS THE INDEX — the list of scopes this caller may administer
+// — AND NOT "a scope page with nothing on it". The two are different pages and the
+// distinction is carried by one field rather than by two types, because both are
+// reached through one route and one handler; a second type would be a second place to
+// forget the notice.
+type ShareView struct {
+	// Viewer is the signed-in principal's display name. USER TEXT.
+	Viewer string
+	// CSRF is the token from `csrfTokenFor`. Empty for a caller with no session
+	// cookie, in which case no form is rendered at all — see [Page] for the rule.
+	CSRF string
+	// Administrable is every scope this caller may share, for the index.
+	Administrable []control.NamedScope
+	// Scope is the scope under view, or the zero value for the index.
+	Scope control.NamedScope
+	// Audience is who can see it, from `control.Resolve`.
+	Audience []Viewer
+	// Revocable is the grant rows this page can take back.
+	Revocable []GrantRow
+	// Candidates is who this caller may share with.
+	Candidates []Subject
+	// Outcome is the result of the write that redirected here, or "".
+	Outcome string
+	// ReadOnly is true when this deployment's authority cannot record a share at all.
+	//
+	// 🔴 IT IS A PROPERTY OF THE DEPLOYMENT AND IT IS RENDERED ON EVERY SHAPE OF THIS
+	// PAGE. A surface that serves the whole share flow and refuses the write only when
+	// somebody clicks is the shape every startup refusal in `cmd/cairn-ui` exists
+	// against, arriving through a door those refusals cannot watch: this one is a
+	// legitimate configuration rather than an error, so it is SAID rather than refused.
+	ReadOnly bool
+}
+
+// SharePage renders the share flow.
+//
+// 🔴 THE NOTICE IS RENDERED ON BOTH SHAPES OF THIS PAGE, AND UNCONDITIONALLY. It is
+// not attached to the form, because the AUDIENCE LIST is the claim that needs it most:
+// "these four principals can see this" is a statement about one replica's cached model
+// and reads as a statement about the world. A notice that appeared only when somebody
+// was about to write would leave the read — the thing people do far more often —
+// unqualified.
+func SharePage(v ShareView) g.Node {
+	title := "cairn — sharing"
+	if v.Scope.Name != "" {
+		title = "cairn — sharing " + v.Scope.Name
+	}
+	return c.HTML5(c.HTML5Props{
+		Title:    title,
+		Language: "en",
+		Head:     []g.Node{h.StyleEl(g.Text(stylesheet))},
+		Body: []g.Node{
+			h.Header(
+				h.H1(g.Text("cairn")),
+				h.P(h.Class("viewer"), g.Text("signed in as "+v.Viewer)),
+				g.If(v.CSRF != "", signOutForm(v.CSRF)),
+			),
+			h.Main(
+				// The notice is FIRST, above every answer it qualifies. A caveat under
+				// a list is a caveat most readers never reach.
+				h.P(h.Class("replica-honesty"), g.Text(ReplicaHonesty)),
+				g.If(v.ReadOnly, h.P(h.Class("read-only"), g.Text(ReadOnlyAuthority))),
+				g.If(v.Outcome != "", h.P(h.Class("outcome"), g.Text(v.Outcome))),
+				g.If(v.Scope.Name == "", shareIndex(v)),
+				g.If(v.Scope.Name != "", shareScopeSection(v)),
+			),
+		},
+	})
+}
+
+// shareIndex lists the scopes this caller may administer.
+func shareIndex(v ShareView) g.Node {
+	return h.Section(
+		h.Class("share-index"),
+		h.H2(g.Text("Scopes you can share")),
+		g.If(len(v.Administrable) == 0, h.P(h.Class("empty"), g.Text(
+			"No scope is administrable by this credential. That is an authority answer, "+
+				"not an empty store."))),
+		h.Ul(g.Map(v.Administrable, func(s control.NamedScope) g.Node {
+			// 🔴 THE LINK IS BUILT FROM A CONSTANT PATH AND AN ID, NEVER FROM THE
+			// DISPLAY NAME. A scope name is USER TEXT and a name-keyed URL would put it
+			// in a query position; the id is minted by `control.NewID` over an alphabet
+			// chosen to be safe in a URL without quoting, which is exactly the property
+			// being relied on here. `safeHref` is not reached and must not be — it
+			// ALLOWLISTS absolute http(s), and this is a same-origin path.
+			href := SharePath + "?" + QueryScope + "=" + string(s.ID)
+			return h.Li(h.A(h.Href(href), g.Text(s.Name)))
+		})),
+	)
+}
+
+// shareScopeSection is one scope's page: who can see it, what can be taken back, and the
+// form that adds somebody.
+func shareScopeSection(v ShareView) g.Node {
+	return h.Section(
+		h.Class("share-scope"),
+		h.H2(g.Text("Sharing "+v.Scope.Name)),
+
+		h.H3(g.Text("Who can see this")),
+		g.If(len(v.Audience) == 0, h.P(h.Class("empty"), g.Text("Nobody can read this scope."))),
+		h.Ul(h.Class("audience"), g.Map(v.Audience, audienceItem)),
+
+		h.H3(g.Text("Shares you can take back")),
+		// 🔴 THIS SENTENCE IS WHY THE TWO LISTS ARE SEPARATE RATHER THAN ONE LIST WITH
+		// SOME BUTTONS MISSING. A reader who revokes every row here and expects the
+		// audience to empty has misunderstood the model; saying it once, where they are
+		// looking, is cheaper than the support conversation.
+		h.P(h.Class("note"), g.Text(
+			"Only grants appear here. Somebody who reaches this scope through membership "+
+				"of the project that owns it keeps it after every grant below is revoked.")),
+		g.If(len(v.Revocable) == 0, h.P(h.Class("empty"), g.Text("No grant names this scope."))),
+		h.Ul(h.Class("grants"), g.Map(v.Revocable, func(row GrantRow) g.Node {
+			return revocableItem(row, v.CSRF)
+		})),
+
+		h.H3(g.Text("Share with")),
+		g.If(v.CSRF == "", h.P(h.Class("note"), g.Text(
+			"This credential has no browser session, so no form is rendered. Sign in to share."))),
+		g.If(v.CSRF != "", shareForm(v)),
+	)
+}
+
+func audienceItem(a Viewer) g.Node {
+	return h.Li(
+		h.Class("viewer-row"),
+		h.Span(h.Class("who"), g.Text(a.Display)),
+		h.Span(h.Class("kind"), g.Text(string(a.Kind))),
+		h.Span(h.Class("verbs"), g.Text(a.Verbs)),
+		g.If(a.ByMembership, h.Span(h.Class("via"), g.Text("via project membership"))),
+	)
+}
+
+// revocableItem renders one grant and its revoke button.
+//
+// 🔴 THE BUTTON IS A `POST` FOR THE REASON `signOutForm` IS, AND THE STAKE IS HIGHER
+// HERE. A revoke behind a `GET` is reachable by any `<img src>` in the world, and a
+// link-prefetcher would perform it by accident — silently withdrawing somebody's
+// access because a reader hovered a link.
+func revocableItem(row GrantRow, csrf string) g.Node {
+	return h.Li(
+		h.Class("grant-row"),
+		h.Span(h.Class("who"), g.Text(row.Subject.Display)),
+		h.Span(h.Class("kind"), g.Text(string(row.Subject.Kind))),
+		h.Span(h.Class("verbs"), g.Text(row.Verbs)),
+		h.Span(h.Class("at"), g.Text(row.GrantedAt)),
+		g.If(csrf != "", h.FormEl(
+			h.Class("revoke"),
+			h.Method("post"),
+			h.Action(UnsharePath),
+			h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(csrf)),
+			h.Input(h.Type("hidden"), h.Name(FieldGrant), h.Value(string(row.ID))),
+			h.Button(h.Type("submit"), g.Text("Revoke")),
+		)),
+	)
+}
+
+// shareForm is the grant form.
+//
+// 🔴 THE RECIPIENT IS A `select` OVER `Candidates`, NOT A FREE-TEXT FIELD, AND THAT IS
+// THE SAME DECISION `ControlSharing.Candidates` DOCUMENTS ONE LEVEL DOWN. A free-text
+// id or email would make this form an existence oracle: type an address, learn from
+// the refusal whether that person has an account here. A closed list cannot answer a
+// question the caller could not already answer.
+//
+// ⚠ THE HANDLER RE-VALIDATES THE CHOICE AGAINST THE SAME LIST. A `select` constrains a
+// browser, not an HTTP client, and this form's whole purpose is to be posted to.
+func shareForm(v ShareView) g.Node {
+	if len(v.Candidates) == 0 {
+		return h.P(h.Class("empty"), g.Text(
+			"There is nobody this credential can share with. Sharing is offered with the "+
+				"people and projects you already share a project with; reaching anybody "+
+				"else needs an invite, which this surface does not yet have."))
+	}
+	return h.FormEl(
+		h.Class("share"),
+		h.Method("post"),
+		h.Action(SharePath),
+		h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(v.CSRF)),
+		h.Input(h.Type("hidden"), h.Name(FieldScope), h.Value(string(v.Scope.ID))),
+		h.Label(h.For("subject"), g.Text("Share with")),
+		h.Select(
+			h.ID("subject"),
+			h.Name(FieldSubject),
+			h.Required(),
+			g.Map(v.Candidates, func(s Subject) g.Node {
+				return h.Option(h.Value(string(s.ID)), g.Text(s.Display+" ("+string(s.Kind)+")"))
+			}),
+		),
+		h.FieldSet(
+			h.Legend(g.Text("Permissions")),
+			g.Map(grantableVerbs, func(vb control.Verb) g.Node {
+				return h.Label(
+					h.Input(
+						h.Type("checkbox"),
+						h.Name(FieldVerb),
+						h.Value(string(vb)),
+						// Read is pre-ticked because a grant with no verb is refused,
+						// and a form whose default submission is an error teaches
+						// people to ignore the error.
+						g.If(vb == control.VerbRead, h.Checked()),
+					),
+					g.Text(string(vb)),
+				)
+			}),
+		),
+		h.Button(h.Type("submit"), g.Text("Share")),
+	)
+}
+
+// grantableVerbs is what the form offers, in a fixed order.
+//
+// 🔴 IT IS `control.AllVerbs` RATHER THAN A LIST WRITTEN OUT HERE. A hand-written copy
+// would silently stop offering a verb the model gained — a form that cannot express
+// part of the authority model, with nothing going red. `admin` IS offered: it is what
+// lets a recipient re-share, which is a real thing a person means to do, and leaving it
+// out of the form would not take it out of the model.
+var grantableVerbs = control.AllVerbs
 
 func scopeSection(s Scope) g.Node {
 	return h.Section(
@@ -234,4 +510,15 @@ body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 48rem
 .refused { color: #a00; }
 .signin label { display: block; }
 .signout { display: inline; }
+.replica-honesty { border-left: 3px solid currentColor; padding-left: 0.75rem; opacity: 0.85; }
+.outcome { font-weight: 600; }
+.read-only { border-left: 3px solid #a00; padding-left: 0.75rem; }
+.note { opacity: 0.75; }
+.audience .kind, .grants .kind { opacity: 0.6; margin-left: 0.5rem; }
+.audience .verbs, .grants .verbs { font-family: ui-monospace, monospace; margin-left: 0.5rem; }
+.audience .via { opacity: 0.6; margin-left: 0.5rem; font-style: italic; }
+.grants .at { opacity: 0.6; margin-left: 0.5rem; }
+.revoke { display: inline; margin-left: 0.5rem; }
+.share fieldset { border: 1px solid currentColor; margin: 0.5rem 0; }
+.share label { margin-right: 0.75rem; }
 `

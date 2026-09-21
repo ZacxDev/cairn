@@ -74,6 +74,16 @@ func main() {
 		"path to the browser session table")
 	sessionTTL := flag.Duration("session-ttl", envDuration("CAIRN_UI_SESSION_TTL", identity.DefaultSessionTTL),
 		"absolute lifetime of a browser session")
+	// 🔴 THE CONTROL JOURNAL IS WHAT LETS THE SHARE FLOW WRITE, AND IT REPLACES THE
+	// TOKEN-FILE PROJECTION RATHER THAN SITTING BESIDE IT. Two authorities would be two
+	// answers to "who may see what" — the thing `internal/control` exists to have
+	// exactly one of — so this flag SWITCHES the authority instead of adding one. With
+	// it unset the surface behaves exactly as it did before the share flow: the reads
+	// work, and a share attempt is refused with `control.ErrAuthorityReadOnly`, which
+	// the page renders as a sentence naming the real cause rather than as a permission
+	// problem the operator would go hunting for.
+	controlJournal := flag.String("control-journal", envOr("CAIRN_UI_CONTROL_JOURNAL", ""),
+		"path to the control journal; without one the authority is the token file and no share can be recorded")
 	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
 	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
 	// contract and cannot read a compiled binary — the printed table is the only way
@@ -84,31 +94,11 @@ func main() {
 	// caller, which this repository refuses elsewhere. It returns with a corpus.
 	flag.Parse()
 
-	env := environ()
-	tokens, err := authz.LoadTokens(*tokenFile, env, func(line string) {
-		fmt.Fprintln(os.Stderr, "cairn-ui: "+line)
-	})
+	authority, err := openAuthority(*controlJournal, *store, *tokenFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
 	}
-	if len(tokens) == 0 {
-		fmt.Fprintln(os.Stderr, "cairn-ui: the token table is empty: the UI is not served without a credential")
-		os.Exit(exitConfig)
-	}
-
-	// 🔴 THE AUTHORITY IS THE SAME PROJECTION THE POD USES, BUILT THE SAME WAY. A
-	// second way to read the token file would be a second answer to "who may see
-	// what", and the first thing two answers lose is agreement.
-	//
-	// ⚠ `Records` RETURNS A FIXED TABLE HERE, WHERE THE POD'S IS SWAPPABLE UNDER
-	// SIGHUP. This binary has no reload path yet, so a revoked credential takes a
-	// restart to stop working — stated because it is a real operational difference
-	// from the pod and not a property anybody should assume from the shared type.
-	authority := control.NewCache(tokenfile.Source{
-		StoreRoot: *store,
-		Records:   func() []authz.TokenRecord { return tokens },
-	}, control.CacheOptions{MaxAge: authorityMaxAge})
 
 	// Materializing is the caller's first `Refresh` — `NewCache` contacts nothing —
 	// so a startup failure is this program's to shout about.
@@ -171,8 +161,13 @@ func main() {
 		// agreement about a revocation.
 		Credentials: authority,
 		Source:      ui.StoreSource{Root: *store},
-		Sessions:    sessions,
-		TTL:         *sessionTTL,
+		// 🔴 THE SAME `authority` AGAIN, FOR THE SAME REASON THE LINE ABOVE GIVES. The
+		// share flow renders "who can see this" and the chain decides "may this caller
+		// see it"; two caches would let the page make a claim about a world the
+		// request was never authorised against.
+		Sharing:  ui.ControlSharing{Authority: authority},
+		Sessions: sessions,
+		TTL:      *sessionTTL,
 		// One clock for the server and the store. `FileSessionStore.Now` is left nil,
 		// which means `time.Now().UTC()`, and `ui.Config.Now` defaults to the same
 		// thing — so they agree by both taking the default rather than by one being
@@ -221,8 +216,17 @@ func main() {
 		_ = listener.Shutdown(shutdown)
 	}()
 
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s\n",
-		len(ui.DeclaredRoutes()), addr, *store)
+	// 🔴 THE LINE SAYS WHETHER A SHARE CAN BE RECORDED, BECAUSE THE ANSWER IS DECIDED
+	// AT STARTUP AND DISCOVERED AT THE FIRST CLICK OTHERWISE. A surface that serves
+	// every page and refuses every write is exactly the shape every other startup
+	// refusal in this program exists against; this one is a legitimate configuration
+	// rather than an error, so it is ANNOUNCED instead of refused.
+	sharingMode := "read-only (no -control-journal: no share can be recorded)"
+	if *controlJournal != "" {
+		sharingMode = "writable (control journal " + *controlJournal + ")"
+	}
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s\n",
+		len(ui.DeclaredRoutes()), addr, *store, sharingMode)
 	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
@@ -280,4 +284,51 @@ func envInt(name string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// openAuthority builds the ONE control-plane authority this surface reads.
+//
+// 🔴 IT RETURNS EXACTLY ONE CACHE AND THE TWO BRANCHES ARE EXCLUSIVE. A journal makes
+// the authority WRITABLE — `control.FileStore` implements `control.Writer`, so
+// `Cache.ApplyNow` records a grant; the token file does not, so the same call refuses
+// with `control.ErrAuthorityReadOnly`. Everything downstream is identical either way,
+// which is what keeps the share flow one code path rather than two.
+//
+// ⚠ THE TOKEN FILE IS STILL LOADED AND STILL REQUIRED TO BE NON-EMPTY IN THE
+// PROJECTION BRANCH, AND NOT LOADED AT ALL IN THE JOURNAL BRANCH. A journal carries its
+// own credentials (`EventCredentialIssued`), so reading the token file there would be
+// the second authority this function exists to avoid.
+func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error) {
+	if journal != "" {
+		src, err := control.OpenFileStore(journal)
+		if err != nil {
+			return nil, fmt.Errorf("the control journal %s cannot be opened (%w), so the authority has "+
+				"nothing to answer from. Refusing to start; mount a writable volume for it and restart",
+				journal, err)
+		}
+		return control.NewCache(src, control.CacheOptions{MaxAge: authorityMaxAge}), nil
+	}
+
+	tokens, err := authz.LoadTokens(tokenFile, environ(), func(line string) {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+line)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(tokens) == 0 {
+		return nil, errors.New("the token table is empty: the UI is not served without a credential")
+	}
+
+	// 🔴 THE AUTHORITY IS THE SAME PROJECTION THE POD USES, BUILT THE SAME WAY. A
+	// second way to read the token file would be a second answer to "who may see
+	// what", and the first thing two answers lose is agreement.
+	//
+	// ⚠ `Records` RETURNS A FIXED TABLE HERE, WHERE THE POD'S IS SWAPPABLE UNDER
+	// SIGHUP. This binary has no reload path yet, so a revoked credential takes a
+	// restart to stop working — stated because it is a real operational difference
+	// from the pod and not a property anybody should assume from the shared type.
+	return control.NewCache(tokenfile.Source{
+		StoreRoot: storeRoot,
+		Records:   func() []authz.TokenRecord { return tokens },
+	}, control.CacheOptions{MaxAge: authorityMaxAge}), nil
 }

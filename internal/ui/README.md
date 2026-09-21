@@ -743,3 +743,144 @@ Everything in Phase A's list still applies, and three of them now matter more:
   session volume after startup **passes readiness and refuses every login**: exactly the shape the
   startup refusal exists against, arriving by the one route the refusal cannot cover. Nothing here
   measures it, and nothing in this PR changes it.
+
+# Phase C — the share flow
+
+Three routes (`GET /share`, `POST /share`, `POST /unshare`), one new seam (`Sharing`), and one
+sentence pinned whole. This is the clause the control-plane arc's closing condition names: *a
+scope granted from one user to another, served through the browser, with its replica-honesty
+notice pinned by a test.*
+
+## 🔴 "Who can see this" is computed from `control.Resolve`, never from `Model.Grants`
+
+Authority arrives **two ways** — `control.Resolve`'s own comment enumerates them — and only one of
+them is a grant row:
+
+1. **Ownership.** A user who is a member of the project owning a scope reaches it at their role's
+   verbs, with **no grant row anywhere in the journal**.
+2. **Sharing.** A live grant names the principal, or a project they belong to.
+
+A page that answered "who can see this" from the grant table would **under-report every project
+member**, and silently: the list would be short, plausible, and wrong in the direction that tells
+somebody their notes are more private than they are. `ControlSharing.Audience` therefore resolves
+**every principal the model holds** and asks `VerbsOn(scope)`. That is O(principals × grants log
+grants) per page against the grant read's O(grants); the cost is accepted and the reason is written
+beside the function. Revisit it with a measurement in hand — not the source.
+
+`Revocable` **is** read from the grant table, and that is the other half of the decision: grants
+are the only thing this surface can take back. The two lists render separately with a sentence
+between them saying why, because a reader who revokes every row and expects the audience to empty
+has misunderstood the model.
+
+`TestTheAudienceIsComputedFromResolveNotFromGrantRows` pins it with a viewer who holds authority
+and **no grant row at all**, and asserts the grant table is empty first — without that second
+assertion a grant-reading implementation could pass.
+
+## 🔴 The replica-honesty notice is pinned as ONE NORMALISED STRING
+
+`ReplicaHonesty` is a constant and `TestTheReplicaHonestyNoticeIsPinnedWhole` compares the rendered
+page against the whole of it, with HTML entities resolved and whitespace collapsed. A guard on
+keywords — "the page mentions `cache`" — survives a reword that has quietly dropped a clause, and
+the clause a well-meaning edit drops is always the one that makes the product sound weakest. The
+cost is that **any** cosmetic reword reds the test. That is the intended cost.
+
+Each of its three clauses is a fact measured elsewhere in this tree:
+
+| clause | what makes it true |
+|---|---|
+| "one replica's answer, read from a cached copy of the authority" | `control.Cache` is stale by design up to its declared `MaxAge`; `cairn-ui` is single-replica (no `ui-image` derivation, no manifest in this repo) |
+| "another reader gains or loses the scope when their own cache next refreshes" | `control.Cache.ApplyNow`'s promise is explicitly about THIS process |
+| "does not recall entries already copied onto somebody's machine" | `ApplyNow` says it in as many words |
+
+It carries **no number**. A "within 30 seconds" would be a promise about a refresh interval this
+package does not own and an operator can change; the bound that IS known travels per write, as
+`Effect.EffectiveBy`, and `control.EffectDeferred`'s own comment makes rendering it mandatory
+rather than stylistic.
+
+## The decisions, and what each one costs
+
+- **The scope is a QUERY PARAMETER, not a path segment.** `routes` is an exact-match map; a path
+  parameter means a prefix match, and a prefix match is a second way to reach a handler that
+  `TestEveryServedPathComesFromTheLedger` structurally cannot probe — there is no longer a finite
+  set of paths to probe.
+- **`/unshare` is its own path, not an `action=` field on `/share`.** A hidden action field makes
+  the difference between granting and revoking a value chosen by whoever gets one request past
+  both cross-site gates. Two paths make the two writes two rows in the ledger.
+- **The recipient is a `select` over `Candidates`, and `Candidates` is the actor's own
+  collaborators.** A picker over every user turns admin on one scope into a directory of everybody
+  in the deployment. 🔴 **The cost is real and is not hidden: sharing with somebody you have no
+  project in common with is NOT REACHABLE from this page.** Lifting that is an invite flow (P6).
+- **The handler re-validates the chosen subject against the same list.** A `select` constrains a
+  browser, not an HTTP client.
+- **A revocation is authorised from the GRANT ROW, never from the form.** The grant id is the only
+  thing that says which scope a revocation touches. Passing a scope alongside it would let a caller
+  with admin on scope A revoke a grant on scope B.
+- **The outcome after a write is a CODE from a closed set, not a sentence.** A write redirects so a
+  refresh does not repeat it, and a redirect target is something anybody can put in a link. A
+  reflected sentence is not an XSS bug and is still an attack: the escaper turns markup into text
+  and has nothing to say about this page presenting an attacker's sentence as its own. The only
+  caller-supplied value that reaches the banner is an instant this code parsed and re-formatted.
+- **An unknown scope and an unauthorised one answer identically**, status and body. A 404 beside a
+  403 is an existence oracle over every scope in the deployment.
+
+## 🔴 A read-only deployment says so on the PAGE, and the first draft of that test SKIPPED
+
+`cairn-ui` gained a `-control-journal` flag. With it the authority is a `control.FileStore` and a
+share can be recorded; without it the authority is the token-file projection and it cannot. The
+flag **switches** the authority rather than adding one — two authorities would be two answers to
+"who may see what".
+
+The first version of this feature reported the read-only condition only when somebody clicked
+Share, and its test asserted a 501. **That test skipped, and the skip is why the design changed:**
+`internal/control/tokenfile` grants **no `admin` verb to anybody** — its own comment says the token
+file "has no sharing to administer" — so on such a deployment the authority check refuses first and
+the 501 arm is never reached. A skip nobody counts is a pass. So `control.Cache` gained `Writable()`
+(derived from the same type assertion `write` already made, not a second one), the page announces
+`ReadOnlyAuthority` on every load, and two tests replace the one that skipped: one measures the
+sentence on a real token-file deployment **and** asserts a journal-backed deployment does not
+render it; the other pins the 501 mapping through the real dispatcher and **says plainly that it
+drives the condition through a fixture**, because no authority in this tree is both read-only and
+able to confer admin.
+
+## The mutation battery — 8 mutants, 8 killed, each by its named test
+
+`tests/ui_share_mutants.py`, the same shape as `tests/control_mutants.py`: every pattern's
+occurrence count is asserted before the edit (a mutant that does not apply reports a false
+`SURVIVED`), a mutant that does not compile is `DID-NOT-BUILD` rather than a kill, attribution is
+by **which test failed**, and an unmutated run is the positive control.
+
+| mutant | killed by |
+|---|---|
+| `Audience` reads grant rows instead of `Resolve` | `TestTheAudienceIsComputedFromResolveNotFromGrantRows` |
+| the notice drops its "already copied" clause | `TestTheReplicaHonestyNoticeIsPinnedWhole` |
+| the verb list is read with `PostFormValue` (first value only) | `TestEveryTickedVerbReachesTheGrant` |
+| the subject is taken from the form without the candidate check | `TestTheSubjectIsValidatedAgainstCandidates…` |
+| `Unshare` skips the grant's own authority check | `TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm` |
+| the share PAGE skips its authority check | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` |
+| the page never reports a read-only authority | `TestAReadOnlyDeploymentSaysSoOnThePage…` |
+| the write's authority check is removed at **both** sites | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` |
+
+🔴 **That last row is the one worth reading.** The write path checks `Allows` twice — in the handler
+so it can choose a status, and in `ControlSharing.Share` because the interface is exported and a
+second caller that forgot would be authorised by omission. Removing **either alone is observably
+equivalent**: the other still answers 403 with the same body. That is what defence in depth means,
+and it is why the battery mutates both at once rather than recording a survivor it would have to
+explain away. Both call the same predicate, so this is one rule at two call sites, not two rules.
+
+## What Phase C's tests still cannot see
+
+Everything Phase A's and Phase B's lists say still applies, plus:
+
+- 🔴 **NO TEST DRIVES TWO ACTORS AT THE SAME INSTANT.** Two admins sharing and revoking one scope
+  concurrently is argued from `control.FileStore.Append`'s own locking and is not measured here.
+  `go test -race` is clean over the package; that is a different claim.
+- **The audience is not measured at scale.** Its cost is O(principals × grants log grants) per page
+  and the largest fixture holds three users. Nothing here would notice it becoming slow.
+- **`Candidates` is measured over one shape of membership** — two users in one common project.
+  Nested or overlapping memberships beyond that are untested.
+- 🔴 **A GRANT WHOSE OBJECT IS A PROJECT IS VISIBLE AND NOT REVOCABLE HERE**, deliberately: revoking
+  it from a page about one scope would silently withdraw every other scope that project owns. There
+  is no project page, so today there is **nowhere in this surface** to revoke one. Stated as a gap
+  rather than left for somebody to find by hunting for a button.
+- **Nothing measures a real deployment.** There is still no `ui-image` derivation and no manifest,
+  so `-control-journal` has been exercised by tests and by nothing else.

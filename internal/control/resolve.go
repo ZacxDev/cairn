@@ -104,12 +104,44 @@ func (a Authorization) ScopeIDs(verb Verb) []ID {
 // prevent.
 func (a Authorization) VisibleScopes(verb Verb) store.ScopeSet {
 	var names []string
-	for _, id := range a.ScopeIDs(verb) {
-		if name, known := a.names[id]; known {
-			names = append(names, name)
-		}
+	for _, s := range a.NamedScopes(verb) {
+		names = append(names, s.Name)
 	}
 	return store.VisibleScopeSet(names)
+}
+
+// NamedScope is one scope an authority reaches, carrying BOTH halves of its identity.
+//
+// 🔴 A CALLER THAT NEEDS BOTH MUST GET THEM FROM ONE TRAVERSAL, WHICH IS WHY THIS
+// TYPE EXISTS RATHER THAN A SECOND LOOKUP. The id is what a URL and a grant address;
+// the name is what a reader sees and what `store.ScopeSet` narrows on. A surface that
+// took the names from here and re-derived the ids from the Model would be asking two
+// different objects one question — and the Model holds scopes this authority cannot
+// see, so that re-derivation is wider than the authority BY CONSTRUCTION, in the one
+// direction this package exists to prevent.
+type NamedScope struct {
+	ID   ID
+	Name string
+}
+
+// NamedScopes lists every scope this principal reaches with `verb`, as id and display
+// name, in `ScopeIDs` order.
+//
+// 🔴 IT IS THE ONE TRAVERSAL AND `VisibleScopes` IS DERIVED FROM IT. Two loops over
+// `byScope` filtering on the same verb would be two answers to "what may this
+// principal see", which is what `Allows`'s own comment refuses one level down. The
+// name check stays in this one place for the same reason: `Resolve` already deletes a
+// scope whose name the model does not hold, so the branch is unreachable today — and
+// keeping it here means a future producer of an `Authorization` cannot introduce a
+// half-known scope that one of these two functions skips and the other serves.
+func (a Authorization) NamedScopes(verb Verb) []NamedScope {
+	var out []NamedScope
+	for _, id := range a.ScopeIDs(verb) {
+		if name, known := a.names[id]; known {
+			out = append(out, NamedScope{ID: id, Name: name})
+		}
+	}
+	return out
 }
 
 // Resolve computes a principal's authority from the model.

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,9 +33,12 @@ import (
 func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 	want := []string{
 		"GET / content",
+		"GET /share content",
 		"GET /sign-in public",
+		"POST /share",
 		"POST /sign-in public",
 		"POST /sign-out",
+		"POST /unshare",
 	}
 	got := DeclaredRouteLedger()
 
@@ -94,6 +98,100 @@ type staticSource struct{ scopes []Scope }
 
 func (s staticSource) Visible(control.Authorization) ([]Scope, error) { return s.scopes, nil }
 
+// staticSharing is a share world with no journal behind it, so the dispatch tests
+// measure ROUTING rather than the control plane. `sharing_test.go` is what drives the
+// real `ControlSharing` against a real `control.FileStore`.
+//
+// 🔴 ITS `Administrable` IS NOT DERIVED FROM THE AUTHORIZATION IT IS HANDED, AND THAT
+// IS DELIBERATE FOR A FIXTURE. The dispatch tests authenticate as a principal with a
+// ZERO `control.Authorization`, which permits nothing — so a faithful implementation
+// would return an empty list and `GET /share` would render the "no scope is
+// administrable" branch. That page is still a 200 with an HTML body, which is what
+// those tests measure, but a fixture that can never populate the list would make every
+// rendering assertion here vacuous.
+type staticSharing struct {
+	administrable []control.NamedScope
+	audience      []Viewer
+	revocable     []GrantRow
+	candidates    []Subject
+	// reads counts every authority QUESTION this fixture is asked, and it is what
+	// `TestEveryContentRouteConsultsTheAuthority` reads for the share routes — the
+	// same claim `countingSource` makes for the entries page, over the other half of
+	// the authority seam.
+	reads int
+	// shared and revoked record the writes, for a test that needs to know a handler
+	// reached the authority rather than refusing before it.
+	shared  int
+	revoked int
+	// err, when set, is what every write returns.
+	err error
+	// readOnly makes `Writable` false, which is what the page branches on.
+	readOnly bool
+}
+
+func (s *staticSharing) Administrable(control.Authorization) []control.NamedScope {
+	s.reads++
+	return s.administrable
+}
+
+func (s *staticSharing) Audience(control.ID) ([]Viewer, error) {
+	s.reads++
+	return s.audience, nil
+}
+
+func (s *staticSharing) Revocable(control.ID) ([]GrantRow, error) {
+	s.reads++
+	return s.revocable, nil
+}
+
+func (s *staticSharing) Candidates(control.Principal) ([]Subject, error) {
+	s.reads++
+	return s.candidates, nil
+}
+
+// Writable is TRUE for the dispatch fixtures, so the read-only banner is not rendered
+// on every page those tests inspect. `sharing_test.go` is what varies it.
+func (s *staticSharing) Writable() bool { return !s.readOnly }
+
+func (s *staticSharing) ScopeOfGrant(control.ID) (control.ID, bool) {
+	return fixtureScope, true
+}
+
+func (s *staticSharing) Share(context.Context, control.Principal, control.Authorization,
+	control.ID, Subject, control.VerbSet) (Effect, error) {
+	if s.err != nil {
+		return Effect{}, s.err
+	}
+	s.shared++
+	return Effect{Immediate: true}, nil
+}
+
+func (s *staticSharing) Unshare(context.Context, control.Principal, control.Authorization,
+	control.ID) (Effect, error) {
+	if s.err != nil {
+		return Effect{}, s.err
+	}
+	s.revoked++
+	return Effect{Immediate: true}, nil
+}
+
+// fixtureNamedScope is `fixtureScope` with the display name the fixture world gives
+// it, so the dispatch fixtures and `fixtures_test.go` name ONE scope rather than two.
+var fixtureNamedScope = control.NamedScope{ID: fixtureScope, Name: "quarry-notes"}
+
+func benignSharing() *staticSharing {
+	return &staticSharing{
+		administrable: []control.NamedScope{fixtureNamedScope},
+		audience: []Viewer{
+			{Display: "rowan@notes.example.invalid", Kind: control.KindUser, Verbs: "read,write,admin"},
+		},
+		candidates: []Subject{
+			{Kind: control.KindUser, ID: control.DerivedID(control.PrefixUser, "wren"),
+				Display: "wren@notes.example.invalid"},
+		},
+	}
+}
+
 func testIdentity() identity.Identity {
 	return identity.Identity{Principal: control.Principal{
 		Kind:    control.KindUser,
@@ -125,6 +223,7 @@ func testConfig(t *testing.T, auth identity.Authenticator) Config {
 		Auth:        auth,
 		Credentials: staticCredentials{token: testCredential, principal: testIdentity().Principal},
 		Source:      staticSource{scopes: benignWorld()},
+		Sharing:     benignSharing(),
 		Sessions:    mustSessions(t),
 		Log:         io.Discard,
 	}
@@ -297,18 +396,20 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 	for _, route := range declared {
 		method, path, _ := splitRoute(route)
 		source := &countingSource{scopes: benignWorld()}
+		sharing := benignSharing()
 		cfg := testConfig(t, staticAuth{testIdentity()})
 		cfg.Source = source
+		cfg.Sharing = sharing
 		srv, err := New(cfg)
 		if err != nil {
 			t.Fatalf("the server did not build: %v", err)
 		}
 
-		// INSTRUMENT CONTROL: the counter starts at zero, so a non-zero below is the
+		// INSTRUMENT CONTROL: both counters start at zero, so a non-zero below is the
 		// request's doing and not the constructor's.
-		if source.calls != 0 {
-			t.Fatalf("the counting source was already called %d time(s) before any request; its count below "+
-				"would measure construction rather than routing", source.calls)
+		if source.calls != 0 || sharing.reads != 0 {
+			t.Fatalf("the counting fixtures were already called (source %d, sharing %d) before any request; "+
+				"their counts below would measure construction rather than routing", source.calls, sharing.reads)
 		}
 
 		rec := httptest.NewRecorder()
@@ -319,12 +420,21 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 				route, rec.Code)
 			continue
 		}
-		if source.calls == 0 {
-			t.Errorf("%s rendered a page WITHOUT consulting the authority (Source.Visible called 0 times). "+
-				"Page's empty branch renders \"No scope is visible to this credential. That is an authority "+
-				"answer, not an empty store.\" — a sentence this route has no standing to say, and which is "+
-				"FALSE for any caller who can in fact see a scope. A route that renders the page either asks "+
-				"or is not a route.", route)
+		// 🔴 EITHER HALF OF THE AUTHORITY SEAM COUNTS, AND WIDENING THE INSTRUMENT WAS
+		// PART OF ADDING THE SHARE FLOW RATHER THAN A CONCESSION TO IT. The claim this
+		// test makes has always been "a page that renders an answer about authority
+		// asked the authority"; when `Source.Visible` was the only way to ask, counting
+		// it WAS that claim. `Sharing` is the second way to ask, so a guard still
+		// counting only the first would have gone green for a share page wired to
+		// nothing — a description wider than its body, which is the failure this
+		// repository names by name.
+		if source.calls+sharing.reads == 0 {
+			t.Errorf("%s rendered a page WITHOUT consulting any authority (Source.Visible 0 times, Sharing 0 "+
+				"times). Both pages carry a sentence that only an authority answer licenses — `Page`'s \"No "+
+				"scope is visible to this credential. That is an authority answer, not an empty store.\" and "+
+				"the share index's \"No scope is administrable by this credential\" — and either is FALSE for "+
+				"a caller who can in fact see one. A route that renders such a page either asks or is not a "+
+				"route.", route)
 		}
 	}
 
@@ -332,17 +442,19 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 	// measurement rather than a counter that only goes up. The health path is answered
 	// before the chain and before the ledger, and must consult nobody.
 	health := &countingSource{scopes: benignWorld()}
+	healthSharing := benignSharing()
 	cfg := testConfig(t, staticAuth{testIdentity()})
 	cfg.Source = health
+	cfg.Sharing = healthSharing
 	srv, err := New(cfg)
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)
 	}
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest("GET", HealthPath, nil))
-	if health.calls != 0 {
-		t.Errorf("the health path consulted the authority %d time(s); it is answered before the chain runs and "+
-			"must read nothing", health.calls)
+	if health.calls != 0 || healthSharing.reads != 0 {
+		t.Errorf("the health path consulted the authority (source %d, sharing %d time(s)); it is answered "+
+			"before the chain runs and must read nothing", health.calls, healthSharing.reads)
 	}
 
 	// 🔴 AND THE HOLE THE `content` CLASS ITSELF OPENS, CLOSED BY DERIVING THE CLASS

@@ -91,6 +91,7 @@ type Server struct {
 	auth        identity.Authenticator
 	credentials identity.TokenAuthority
 	source      Source
+	sharing     Sharing
 	sessions    identity.SessionStore
 	ttl         time.Duration
 	now         func() time.Time
@@ -117,6 +118,17 @@ type Config struct {
 	Credentials identity.TokenAuthority
 	// Source is the store read, narrowed by the caller's authority.
 	Source Source
+	// Sharing is the control-plane read and write the share flow needs.
+	//
+	// 🔴 IT IS REQUIRED, NOT OPTIONAL, EVEN THOUGH A DEPLOYMENT OVER A TOKEN FILE
+	// CANNOT WRITE. A nil-means-disabled field would put a route in the ledger whose
+	// handler was inert — and the ledger is the thing this surface's guards read to
+	// decide what to probe, so an inert row is a row every guard walks and none
+	// measures. A read-only authority is answered by the WRITE failing with
+	// `control.ErrAuthorityReadOnly`, which the page renders as a sentence naming the
+	// real cause; the READS still work, and "who can see this" is worth serving
+	// whether or not this deployment can change it.
+	Sharing Sharing
 	// Sessions is the durable session table sign-in writes to and sign-out removes
 	// from. It is the SAME store the cookie backend in `Auth` reads; two stores would
 	// be a logout that revokes a session nothing authenticates from.
@@ -145,6 +157,11 @@ var ErrNoAuthenticator = errors.New("ui: no authenticator was supplied, so no re
 // ErrNoSource refuses a server with nothing to render.
 var ErrNoSource = errors.New("ui: no source was supplied, so every page would render empty")
 
+// ErrNoSharing refuses a server whose share routes are in the ledger and wired to
+// nothing. Separate from `ErrNoSource` because they are separate wirings, and an
+// operator reading a startup refusal needs to know which one is missing.
+var ErrNoSharing = errors.New("ui: no sharing authority was supplied, so the share routes would be declared and inert")
+
 // ErrNoCredentials refuses a server whose sign-in form could never resolve anything.
 // Separate from `ErrNoAuthenticator` because they are separate wirings and an operator
 // reading a startup refusal needs to know which one is missing.
@@ -171,6 +188,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Source == nil {
 		return nil, ErrNoSource
 	}
+	if cfg.Sharing == nil {
+		return nil, ErrNoSharing
+	}
 	if cfg.Sessions == nil {
 		return nil, ErrNoSessions
 	}
@@ -193,6 +213,7 @@ func New(cfg Config) (*Server, error) {
 		auth:        cfg.Auth,
 		credentials: cfg.Credentials,
 		source:      cfg.Source,
+		sharing:     cfg.Sharing,
 		sessions:    cfg.Sessions,
 		ttl:         ttl,
 		now:         now,

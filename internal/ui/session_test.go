@@ -58,10 +58,15 @@ func newLive(t *testing.T) *live {
 		Auth:        chain,
 		Credentials: authority,
 		Source:      staticSource{scopes: benignWorld()},
-		Sessions:    l.sessions,
-		TTL:         time.Hour,
-		Now:         func() time.Time { return l.now },
-		Log:         l.log,
+		// The REAL sharing implementation over the SAME authority the chain reads,
+		// which is what `cmd/cairn-ui` wires. A static fixture here would let a defect
+		// in which world the share flow consults pass unseen — the same reason
+		// `fixtureCache` is one cache for all three of the wirings above.
+		Sharing:  ControlSharing{Authority: authority, Now: func() time.Time { return l.now }},
+		Sessions: l.sessions,
+		TTL:      time.Hour,
+		Now:      func() time.Time { return l.now },
+		Log:      l.log,
 	})
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)
@@ -620,6 +625,7 @@ func TestANilPartIsRefusedAtConstruction(t *testing.T) {
 		{"no authenticator", func(c *Config) { c.Auth = nil }, ErrNoAuthenticator},
 		{"no credential authority", func(c *Config) { c.Credentials = nil }, ErrNoCredentials},
 		{"no source", func(c *Config) { c.Source = nil }, ErrNoSource},
+		{"no sharing authority", func(c *Config) { c.Sharing = nil }, ErrNoSharing},
 		{"no session store", func(c *Config) { c.Sessions = nil }, ErrNoSessions},
 		{"a negative TTL", func(c *Config) { c.TTL = -time.Second }, ErrNegativeTTL},
 	} {
@@ -629,7 +635,7 @@ func TestANilPartIsRefusedAtConstruction(t *testing.T) {
 			t.Errorf("%s: New returned %v, want %v", arm.name, err, arm.want)
 		}
 	}
-	// POSITIVE CONTROL: the unbent config builds, so the five refusals are about the
+	// POSITIVE CONTROL: the unbent config builds, so the refusals above are about the
 	// one field each bent.
 	if _, err := New(base()); err != nil {
 		t.Fatalf("POSITIVE CONTROL FAILED: a fully wired config was refused (%v)", err)
