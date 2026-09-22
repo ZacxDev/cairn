@@ -24,76 +24,63 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`c5df961`**. **Six open PRs: #61, #62, #64, #65, #69** and this one.
-- 🔴 **THE ARC IS STILL 3 OF 4 *ON `main`*, AND THE FOURTH CLAUSE IS NOW GREEN AND UNMERGED
-  RATHER THAN ABSENT.** The closing condition says **"on `main`"**, so #64 being green does
-  not satisfy it — re-measure after it lands. **ZacxDev/cairn#64 is the share flow**: seven
-  UI routes, `ui.Sharing` over `control.Resolve`, `ui.ReplicaHonesty` pinned whole,
-  `cairn-ui -control-journal`. **All six checks SUCCESS, `mergeable=MERGEABLE state=CLEAN`**,
-  head `a2e46f0`.
-- ✅ **#64 CARRIES A FIVE-ROUND AUDIT LADDER THAT IS CLOSED, AND THE STOP IS ARGUED RATHER
-  THAN ASSERTED.** Round 0 (requirements/deletion) plus rounds 1–5 (nine axes, then four
-  delta re-audits), every round dispatched BLIND against a hand-built worktree at the PR
-  head. Round 5 returned **no 🔴, no 🟡** and no finding about the shipped feature; its four
-  🟢 were about prose the ladder itself wrote. **Executable payload per round, measured with
-  `--remerge-diff --not origin/main` and comments stripped: 15 → 22 → 31 → 4 → 7**, against
-  **722** in the PR proper. The attribution gate's two-consecutive-zeroes never fired and
-  this is not an all-prose PR, so neither mechanism ended it — the ladder was stopped on the
-  argued grounds that it had left the PR, with the auditor concurring unprompted.
-- 🔴 **WHAT THE LADDER FOUND, BECAUSE IT IS THE REASON TO KEEP RUNNING THEM.** Round 0: a
-  234-line mutation battery **no gate ran** (`grep -l` returned the file and one README
-  line), folded into `tests/control_mutants.py`. Round 1: a regression guard **I had widened
-  until it stopped guarding** — re-applying the original defect PASSED it — and an
-  `EQUIVALENT` mutation label **measured false**. Round 2: four retractions written at one
-  site each by the commit whose own message said a retraction is a tree-wide sweep. Round 3:
-  **the control-journal guard's own prescribed remedy produced the state it refuses**
-  (`cairn-server -create-user` mints no credential). Round 4: a CI comment that would have
-  instructed the next maintainer to undo the floor it had just moved. Round 5: a remedy that
-  **invited a secret into the authority journal** — `Event.validate` checks `token_hash`'s
-  LENGTH ONLY, so a 64-character token pastes in and persists.
-- 🔴 **A NAMED GAP #64 DOES NOT CLOSE: NO TOOL IN THIS REPOSITORY WRITES A CREDENTIAL INTO A
-  JOURNAL.** `cairn-server -create-user` mints none, there is no `-issue-credential`, and the
-  only other producer is `tokenfile`'s in-memory projection. So a journal-backed `cairn-ui`
-  **cannot be brought up sign-in-capable by any path here**; the binary refuses at startup
-  and says so rather than letting an operator find out at the sign-in form. Measured: one
-  hand-appended `credential-issued` line makes sign-in work, so the gap is TOOLING, not
-  capability. **Closing condition:** a credential-issuing command, or a written line saying
-  the hand-append is the supported path.
-- ⚠ **#65 IS SUPERSEDED BY THIS PR AND #61 IS SUBSUMED BY #64.** #65 lost the race to #67 and
-  its narrative went stale; this branch is re-derived off `c5df961` rather than merged onto
-  it, which is this doc's own rule for a doc PR that loses. #61 rewrote `README.md`'s
-  browser-surface lead; #64 now states three phases and seven routes there, because round 1
-  found the deferral condition was not mechanical and nothing gated it. **Close or rebase
-  both.**
-- ⚠ **`cairn-control-plane-1` IS STILL HELD** — #64 is open, and releasing a claim while its
-  PR is unmerged invites a sibling to take a rank in flight. Release it on merge.
-- 🔴 **THIS DELTA OMITS `## Defects (batched)` FOR THE REASON THE PREVIOUS ONE DID** — that
-  heading REPLACES, and writing it from here would delete the canonical list. Ranked item 6
-  still carries the fold-in.
-- **No external-task-board field**: the resolver exited **5** again this session. Its
-  positive control proves a CORRECT id would have resolved; it does not prove the id under
-  test is right, since a wrong one also answers 200 with an empty array.
+- `main` @ **`7d7c9ea`**. **#64 IS MERGED.** Open: **#71** (this doc), **#72** (the changelog
+  row), **#69** (the sibling's rename), **#61** and **#62** (both to close — see below).
+- 🔴 **THE ARC IS CLOSED. ALL FOUR CLAUSES MEASURED ON `main` @ `7d7c9ea`, NOT ON A BRANCH
+  AND NOT INFERRED FROM GREEN CI.** The closing condition says "on `main`" and names the
+  three commands a later session runs; all three were run:
+
+  | clause | verdict on `main` |
+  |---|---|
+  | a green principal × scope × verb authz matrix over projects+grants | **PASS** — `TestTheAuthorizationMatrixIsExactlyThis` |
+  | the PWA's share flow serving a scope granted from one user to another, with its replica-honesty notice pinned by a test | **PASS** — `TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser` and `TestTheReplicaHonestyNoticeIsPinnedWhole`; `internal/ui/routes.go` is seven rows; `ui.ReplicaHonesty` is a constant |
+  | identity resolving through both backends | **PASS** — `internal/identity`'s supabase (7 tests) and trusted-header (5) suites |
+  | `packages.default` the Go client | **PASS** — `flake.nix:774` `default = mkGoClient`; `nix eval .#default.meta.mainProgram` → `cairn` |
+
+  `pytest tests -q` **1997 passed / 0 failed** · `go test ./...` **18 ok** · `flake.nix` read.
+  **ADDRESSED ⇒ ARC CLOSED.**
+- ✅ **#64 VERIFIED BY CONTENT, NEVER BY ANCESTRY** — `git diff a2e46f0 7d7c9ea` over
+  `internal/ui/`, `cmd/cairn-ui/`, `internal/control/resolve.go` and `internal/control/cache.go`
+  is **empty**, and `gh pr view 64` reports `MERGED` with `mergeCommit=7d7c9eab`. A squash
+  makes ancestry false forever, so the two checks are made separately.
+- ✅ **`cairn-control-plane-1` IS RELEASED** (rc 0), now that the work it named has landed.
+- **#72 adds the `CHANGELOG.md` row**, which could not be written inside #64: that file's own
+  header requires an anchor of a PR **and a merge sha**, and the sha does not exist until the
+  squash.
+- ⚠ **#61 AND #62 ARE BOTH TO CLOSE, FOR DIFFERENT REASONS.** #61 rewrote `README.md`'s
+  browser-surface lead; #64 now states three phases and seven routes there, because audit
+  round 1 found the "whichever merges second fixes it" deferral was not mechanical and
+  nothing gated it. #62 is an earlier handoff delta whose narrative was overtaken twice.
+- 🔴 **WHAT THE ARC DID NOT CLOSE, NAMED SO IT IS NOT READ AS FINISHED.** (a) **No tool in
+  this repository writes a credential into a journal**, so a journal-backed `cairn-ui` cannot
+  be brought up sign-in-capable by any path here — the binary refuses at startup and says so;
+  one hand-appended record makes sign-in work, so it is a TOOLING gap. (b) `cairn-ui` is still
+  **deployed by nothing**: no image derivation, no manifest. (c) Sharing reaches only
+  principals you already share a project with; an invite flow is P6.
 
 ## Next steps (ranked)
 
-🔴 **NUMBERING PRESERVED — RANK IS HALF A CLAIM'S IDENTITY**, and `cairn-control-plane-1`
-points at item 1.
+🔴 **RANK 1 IS NEW WORK, AND THE NUMBERING MOVED FOR THE FIRST TIME BECAUSE THE OLD RANK 1
+CLOSED.** `cairn-control-plane-1` is RELEASED, so no live claim points at the old numbering.
+A session taking an item must `claim-work` it first.
 
-1. **Merge #64, then RE-MEASURE the arc on `main`.** The clause says "on `main`", so the
-   verdict is unavailable until it lands. On merge: release `cairn-control-plane-1`, add the
-   `CHANGELOG.md` row (it needs the squash sha, which is why it is not in the PR), and close
-   or rebase #61 and #65.
-   forcing: gate — the arc's own closing condition names `main`, and a green PR does not
-   satisfy it.
-2. **The batched scaffolding defects.** #64 adds none — its ladder's findings were fixed
-   in-round rather than filed. ⚠ **PARTLY CLOSED, NOT WHOLLY** — #60 closed #54/#57's
-   (a)(b)(c); #66 closed the parity-floor and echo-site counts, the credential step, the
-   dualrun deployed-artefact arm and the capture harness's trigger. **Still open:** #48's
-   (a) `internal/client/readrouting_test.go:281` and (b) `internal/doctor/render.go:99`; the
-   "nine verbs" count where the answer is ten; #44's four; the stale node-affinity comment;
-   and the carried-forward list. ⚠ The existing entry NAMES THE WRONG SITES for "nine verbs"
-   — measured, they are `flake.nix`, `tests/test_parity_harness.py` and
-   `tests/test_go_client_ledgers.py`.
+1. **PRUNE THIS DOCUMENT — the operator's chosen next work.** It is **115,213 B against its
+   own 65,536 B guideline — 49,677 B over**, and this is the *eighth* consecutive update to
+   flag the ceiling and then raise it. ⚠ That figure is the POST-update size, stated that way
+   because the previous draft of this line quoted the PRE-update one and would have been
+   stale on arrival — which is the failure this entry is about, committed inside the entry
+   about it. Move answered `Gotchas` and resolved `Open investigations` blocks to
+   `claudedocs/handoff-cairn-control-plane-archive.md`. 🔴 **Do NOT satisfy it by deleting a
+   claim or narrowing a rule** — that is the failure the `AGENTS.md` budget already produced
+   once, where the only reordering that fit deleted the word "BYPASS" from the row describing
+   an auth-bypass surface. **Closing condition:** the file is under the guideline, or a
+   written line from a named reader saying the ceiling is wrong.
+   forcing: user — chosen explicitly this session over feature work.
+2. **The batched scaffolding defects — the operator's chosen work after the prune.** Still
+   open: #48's (a) `internal/client/readrouting_test.go:281` and (b)
+   `internal/doctor/render.go:99`; the "nine verbs" count where the answer is ten, at
+   `flake.nix`, `tests/test_parity_harness.py` and `tests/test_go_client_ledgers.py`
+   (the old entry named the wrong sites); #44's four; and the stale node-affinity comment.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else surfaces them.
 3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
    Key it on principal + epoch; `control.Authorization` already carries `Epoch`.
@@ -101,22 +88,25 @@ points at item 1.
 4. **P8 — retire the Python oracle.** Gated on the default flip holding over real use, which
    is a waiting period rather than a task.
    forcing: none
-5. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` BEHIND A DEPRECATION WINDOW — THE SHAPE IS
-   ALREADY DECIDED.** ⚠ **IN FLIGHT as ZacxDev/cairn#69** — check `claim-work --list` before
-   taking it. Both names work; the old one logs a warning **naming its replacement**; the
-   removal version is **stated**. Explicitly NOT aliases-forever, and NOT a clean break
-   folded into P8 — both were offered and declined. Touches `lib/cairn_instances.py`,
-   `cairn`, `lib/subsystem_read_store.py`, `server/server.py`, the `internal/` env readers,
-   and `AGENTS.md`'s "Naming" section, which states the standing alias policy and must move
-   with it. ⚠ This repo is PUBLIC and consumers pin the flake, so the warning text and the
-   removal version are a PUBLISHED CONTRACT: decide them once, write them down, pin them.
-   ⚠ `tests/testlib/env_pin.py` is the ONE definition of the client's configuration surface
-   — the rename goes through its prefixes, and its consumer ledger names every suite that
-   has to move.
-   forcing: user — item 5 of the five approved with "proceed as recommended".
+5. **A CREDENTIAL-ISSUING COMMAND for the control journal.** Without one the `-control-journal`
+   mode cannot authenticate anybody, which `cmd/cairn-ui` now refuses at startup and explains.
+   ⚠ It is the one path on which a raw token could reach the journal — `Event.validate` checks
+   `token_hash`'s LENGTH ONLY — so it mints, prints once, and stores only the digest.
+   forcing: gate — a shipped binary refuses to start and names this as the missing piece.
 6. **Fold the new defect entries into `## Defects (batched)` and mark #60/#66 closed**, once
    the doc PRs have merged.
    forcing: user — the operator chose this sequencing explicitly.
+7. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` BEHIND A DEPRECATION WINDOW — SHAPE ALREADY
+   DECIDED, AND ⚠ IN FLIGHT as ZacxDev/cairn#69.** Check `claim-work --list` before taking
+   it. Both names work; the old one logs a warning **naming its replacement**; the removal
+   version is **stated**. Explicitly NOT aliases-forever and NOT a clean break folded into
+   P8 — both were offered and declined. Touches `lib/cairn_instances.py`, `cairn`,
+   `lib/subsystem_read_store.py`, `server/server.py`, the `internal/` env readers, and
+   `AGENTS.md`'s "Naming" section, which states the standing alias policy and must move with
+   it. ⚠ This repo is PUBLIC and consumers pin the flake, so the warning text and the removal
+   version are a PUBLISHED CONTRACT. ⚠ `tests/testlib/env_pin.py` is the ONE definition of
+   the client's configuration surface; the rename goes through its prefixes.
+   forcing: user — item 5 of the five approved with "proceed as recommended".
 
 ## Defects (batched)
 - 🔴 **THIS DOC IS 99,059 B AGAINST ITS OWN 65,536 B GUIDELINE — 33,523 B OVER, AND THIS UPDATE ADDED
@@ -1207,6 +1197,44 @@ points at item 1.
   smaller diff and no reachability.
 - **Decision (operator, this session): keep `Candidates`' co-membership narrowing** — you can
   only share with people you already share a project with — with the invite flow filed as P6.
+
+- 🔴 **THE SHARE FLOW'S SIX-ROUND AUDIT LADDER, RECORDED HERE RATHER THAN IN `State now`
+  BECAUSE THAT HEADING REPLACES AND THIS IS THE DURABLE HALF.** #64 carried round 0
+  (requirements/deletion) plus rounds 1–5, each dispatched BLIND against a hand-built
+  worktree at the PR head — `isolation: "worktree"` branches from the DEFAULT branch here and
+  would have handed every auditor a tree of `main` without the package under audit. What it
+  found, in order: **round 0** a 234-line mutation battery **no gate ran**; **round 1** a
+  regression guard the PR had **widened until it stopped guarding** (re-applying the original
+  defect PASSED it) and an `EQUIVALENT` label **measured false**; **round 2** four retractions
+  written at one site each by the commit whose own message said a retraction is a tree-wide
+  sweep; **round 3** the control-journal guard's **own prescribed remedy producing the state
+  it refuses**; **round 4** a CI comment that would have instructed the next maintainer to
+  undo the floor it had just moved; **round 5** a remedy that **invited a secret into the
+  authority journal**. 🔴 **THE STOP WAS ARGUED, NOT TRIGGERED.** Executable payload per
+  round — `--remerge-diff --not origin/main`, comments stripped — was **15 → 22 → 31 → 4 → 7**
+  against **722** in the PR proper. The attribution gate's two-consecutive-zeroes never fired
+  and this was not an all-prose PR, so neither mechanism ended it; it was stopped on the
+  stated grounds that the ladder had left the PR, with the auditor concurring unprompted.
+  **Every round's findings are on the PR as comments, which is the record.**
+- 🔴 **A DOC PR I WROTE PREDICTED ITS OWN STALENESS AND I MERGED THE FEATURE FIRST ANYWAY —
+  ON PURPOSE, AND THE ORDER IS THE POINT.** #71 said "still 3 of 4 on `main`", which merging
+  #64 made false within the minute. Writing the handoff first and merging second would have
+  shipped a doc that was wrong on arrival; merging first and re-deriving the delta costs one
+  rebase and produces a doc whose verdict was MEASURED rather than predicted. **When a doc's
+  claim is about a state your next action changes, take the action first.**
+- 🔴 **THE ARC'S VERDICT WAS TAKEN BY RUNNING THE THREE COMMANDS THE CONDITION NAMES, ON
+  `main`, NOT BY READING SIX GREEN CHECKS.** Green CI on a PR is a claim about the PR's
+  branch; the condition said "on `main`". They agreed here — but the whole reason the clause
+  is worded that way is that they need not, and a session that reported "addressed" off the
+  PR's rollup would have been asserting rather than measuring.
+- **Decision (operator, this session): the credential gap is FILED, not built.** A
+  credential-issuing command carries its own decisions — token generation, display-once,
+  revocation UX — and the one hazard worth naming is that it is the single path where a
+  secret could reach the journal. It is ranked work rather than a bolt-on to the share flow.
+- **Decision (operator, this session): `Candidates`' co-membership narrowing STAYS.** You can
+  share only with people you already share a project with; an invite flow is P6. Offered and
+  declined: an exact-id lookup behind a uniform refusal, and widening to projects you
+  administer.
 
 ## How to verify
 
