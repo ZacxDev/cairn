@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/store"
 )
 
@@ -369,11 +370,25 @@ func (r Routing) Check(scopes []string) ([]string, []string, error) {
 // process. nil means the real environment.
 type envLookup func(string) string
 
+// lookup resolves a caller-supplied getter (or the process environment) THROUGH THE ALIAS
+// LEDGER.
+//
+// 🔴 THE WRAP IS THE POINT, AND ITS ABSENCE WAS A MEASURED DEFECT. Every reader in this file
+// reaches the environment through here, so wrapping once covers `ConfigPath`, `InstanceDir`
+// and `RoutesFile` together. The version that did NOT wrap left `$SUBSYSTEM_STORE_CONFIG`
+// unreadable by the routing layer while `transport.go`'s separate copy still honoured it —
+// so a two-instance world collapsed to one, the routed scope refused as "not configured on
+// this host", and the recall banner lost its instance label. `tests/parity/harness.py` caught
+// it by diffing the two clients' bytes; every Go test stayed green.
+//
+// 🔴 BOTH ARMS, NOT JUST THE `nil` ONE. Every unit test in this package injects a getter and
+// no real run does, so wrapping only the process-environment arm would leave the guard
+// asserting the case that was never broken.
 func lookup(env envLookup) envLookup {
 	if env != nil {
-		return env
+		return envalias.Resolving(env)
 	}
-	return os.Getenv
+	return envalias.OSValue
 }
 
 // ConfigPath is the DEFAULT instance's config file — `$SUBSYSTEM_STORE_CONFIG` or the

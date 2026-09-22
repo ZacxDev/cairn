@@ -144,13 +144,35 @@ func Old(newName string) string { return news[newName] }
 // through this — none open-codes a fallback — because a predicate duplicated across call
 // sites regenerates the same bug at every site.
 func Value(env map[string]string, newName string) string {
-	if v := env[newName]; strings.TrimSpace(v) != "" {
+	return ValueFrom(func(k string) string { return env[k] }, newName)
+}
+
+// ValueFrom is `Value` over an arbitrary getter, and is where the precedence rule actually
+// lives — `Value`, `OSValue` and every wrapper below delegate to it.
+//
+// 🔴 IT EXISTS BECAUSE A SECOND SPELLING OF THE RULE ALREADY ESCAPED ONCE. `internal/client`
+// resolves its config path through an injectable `func(string) string`, not a map, and the
+// first cut of this package offered only the map form — so that call site kept a plain
+// single-name lookup, the routing layer stopped seeing `SUBSYSTEM_STORE_CONFIG`, and a
+// two-instance world silently collapsed to one. `tests/parity/harness.py` is what caught it,
+// by diffing the two clients' bytes; nothing in the Go tree noticed. The remedy is the one
+// the rules name: not a second patch, but one predicate every shape delegates to.
+func ValueFrom(get func(string) string, newName string) string {
+	if v := get(newName); strings.TrimSpace(v) != "" {
 		return v
 	}
 	if old := news[newName]; old != "" {
-		return env[old]
+		return get(old)
 	}
 	return ""
+}
+
+// Resolving wraps a getter so every lookup through it resolves aliases.
+//
+// For a call site that holds a `func(string) string` and passes it around — rather than
+// calling `ValueFrom` at each read — so the alias rule cannot be lost at one of the reads.
+func Resolving(get func(string) string) func(string) string {
+	return func(newName string) string { return ValueFrom(get, newName) }
 }
 
 // ValueOr is `Value` with a default for "neither is set".
@@ -182,10 +204,15 @@ func Environ() map[string]string {
 }
 
 // OSValue is `Value` over the process environment.
-func OSValue(newName string) string { return Value(Environ(), newName) }
+func OSValue(newName string) string { return ValueFrom(os.Getenv, newName) }
 
 // OSValueOr is `ValueOr` over the process environment.
-func OSValueOr(newName, fallback string) string { return ValueOr(Environ(), newName, fallback) }
+func OSValueOr(newName, fallback string) string {
+	if v := OSValue(newName); v != "" {
+		return v
+	}
+	return fallback
+}
 
 // OSDeprecations is `Deprecations` over the process environment.
 func OSDeprecations() []string { return Deprecations(Environ()) }

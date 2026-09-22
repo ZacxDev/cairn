@@ -100,16 +100,15 @@ const (
 )
 
 // DefaultConfigPath is `~/.config/subsystem-store/env`, mode 0600.
-func DefaultConfigPath() string {
-	if override := strings.TrimSpace(envalias.OSValue(ConfigEnv)); override != "" {
-		return expandUser(override)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".config", "subsystem-store", "env")
-}
+//
+// 🔴 ONE LINE, DELEGATING, BECAUSE THIS USED TO BE A SECOND COPY OF `ConfigPath` AND THE
+// COPY IS WHAT BROKE. Both spelled "$CONFIG or `~/.config/subsystem-store/env`" and agreed
+// — until the alias ledger landed in one of them and not the other, at which point the
+// credential loader honoured `$SUBSYSTEM_STORE_CONFIG` and the ROUTING layer did not, and a
+// two-instance host silently became a one-instance host. A predicate open-coded at two call
+// sites is wrong at one of them; consolidating is what makes the disagreement impossible
+// rather than merely fixed.
+func DefaultConfigPath() string { return ConfigPath(nil) }
 
 // LoadConfig is `(url, token)` from the env file, with the real environment taking priority.
 //

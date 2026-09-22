@@ -138,6 +138,63 @@ func TestTheConfigFileAcceptsBothSpellingsWithTheSamePrecedence(t *testing.T) {
 	}
 }
 
+// TestEVERYConfigPointerReaderHonoursTheDeprecatedSpelling is the guard for the defect this
+// change shipped and the parity harness caught: `LoadConfigFor` resolved the alias while the
+// ROUTING layer's own copy of "where is the config file" did not.
+//
+// 🔴 THE SYMPTOM DID NOT LOOK LIKE AN ENVIRONMENT BUG. With `$SUBSYSTEM_STORE_CONFIG` naming
+// a two-instance world, the credential loader found the file and the routing layer did not —
+// so the client reported the routed scope as living on an instance "not configured on this
+// host", and the recall banner lost its `[personal]` label because the instance COUNT came
+// back as one. Every Go test stayed green; only a byte diff against the other client saw it.
+//
+// It asserts the RELATIONSHIP — all three readers derive from ONE pointer — rather than
+// testing `ConfigPath` alone, because testing the one reader that was already correct is
+// exactly what the previous round did.
+func TestEVERYConfigPointerReaderHonoursTheDeprecatedSpelling(t *testing.T) {
+	home := hermetic(t)
+	world := filepath.Join(home, "elsewhere")
+	if err := os.MkdirAll(filepath.Join(world, InstanceDirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(world, "env")
+	t.Setenv("SUBSYSTEM_STORE_CONFIG", cfg)
+
+	if got := ConfigPath(nil); got != cfg {
+		t.Errorf("ConfigPath ignored the deprecated spelling: %q", got)
+	}
+	if got := DefaultConfigPath(); got != cfg {
+		t.Errorf("DefaultConfigPath disagrees with ConfigPath: %q", got)
+	}
+	dir, err := InstanceDir(nil)
+	if err != nil || dir != filepath.Join(world, InstanceDirName) {
+		t.Errorf("InstanceDir ignored the deprecated spelling: %q %v", dir, err)
+	}
+	routes, explicit, err := RoutesFile(nil)
+	if err != nil || explicit || routes != filepath.Join(world, RoutesFileName) {
+		t.Errorf("RoutesFile ignored the deprecated spelling: %q explicit=%v %v",
+			routes, explicit, err)
+	}
+}
+
+// TestAnInjectedLookupAlsoResolvesAliases.
+//
+// 🔴 THE INJECTED GETTER IS THE SHAPE THE BUG LIVED IN. `lookup` takes a caller-supplied
+// `func(string) string`, and the first fix wrapped only the `nil` (process-environment) arm —
+// which every unit test in this package exercises and no real run does. Both arms, or the
+// guard is a claim about the case that was never broken.
+func TestAnInjectedLookupAlsoResolvesAliases(t *testing.T) {
+	get := func(name string) string {
+		if name == "SUBSYSTEM_STORE_CONFIG" {
+			return "/tmp/synthetic/injected/env"
+		}
+		return ""
+	}
+	if got := ConfigPath(get); got != "/tmp/synthetic/injected/env" {
+		t.Fatalf("an injected lookup did not resolve the alias: %q", got)
+	}
+}
+
 // TestTheIncompleteRefusalNamesTheCURRENTSpelling.
 //
 // The refusal is what an operator reads when nothing is configured, so it is the one place
