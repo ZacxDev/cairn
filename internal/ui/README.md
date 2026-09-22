@@ -50,9 +50,12 @@ over-claim respectively:
   deleting a file, and this one can. The `ok` floor in the `go` CI job is what notices a
   package's tests disappearing, and it does not notice one function disappearing.
 
-**Both halves measured, on this tree:**
+**Both halves measured, AT A TREE OF SEVENTEEN TEST PACKAGES** — the floor is now `-lt 18`
+(`cmd/cairn-ui` gained tests with the share flow's startup refusals). The numbers below are
+a RECORD OF THAT RUN and are not re-derived here; what survives the count moving is the
+shape, which is the row that matters:
 
-| tree | `nix build .#cairn-go` | `ok` lines in its check phase | the `go` job's floor (`-lt 17`) |
+| tree | `nix build .#cairn-go` | `ok` lines in its check phase | the `go` job's floor as it then stood (`-lt 17`) |
 |---|---|---|---|
 | unmutated | rc 0 | 17 | GREEN at 17 |
 | `internal/report` given `_ "maragu.dev/gomponents"` | **rc 1**, `THE IMPORT BAN FAILED for …/cmd/cairn: … internal/report -> maragu.dev/gomponents` | — | — |
@@ -613,7 +616,7 @@ is a misattribution that reports a deleted check as covered.
 | — | | a missing `Origin` accepted | `no Origin header at all` |
 | — | chain order | the cookie appended FIRST | `…resolved to … the COOKIE's principal` |
 | — | UI chain | `AuthBackends` forwards a live `TrustedHeader` | `THE UI CHAIN CONTAINS 1 *identity.TrustedHeader MEMBER(S)` |
-| — | authority | the content route skips `Source.Visible` | `…rendered a page WITHOUT consulting the authority` |
+| — | authority | the content route skips `Source.Visible` | `…rendered a page WITHOUT consulting the <name> authority it answers from` |
 | — | ledger | an undeclared `public` row added | `the declared route set is …` |
 | — | class | a second HTML route added WITHOUT the `content` class | `GET /dup answers 200 with an HTML body and is NOT classed \`content\`` |
 | — | class | the one content route's class removed | `NO route in the ledger carries the \`content\` class` (the vacuity arm) |
@@ -743,3 +746,172 @@ Everything in Phase A's list still applies, and three of them now matter more:
   session volume after startup **passes readiness and refuses every login**: exactly the shape the
   startup refusal exists against, arriving by the one route the refusal cannot cover. Nothing here
   measures it, and nothing in this PR changes it.
+
+# Phase C — the share flow
+
+Three routes (`GET /share`, `POST /share`, `POST /unshare`), one new seam (`Sharing`), and one
+sentence pinned whole. This is the clause the control-plane arc's closing condition names: *a
+scope granted from one user to another, served through the browser, with its replica-honesty
+notice pinned by a test.*
+
+## 🔴 "Who has access to this" is computed from `control.Resolve`, never from `Model.Grants`
+
+Authority arrives **two ways** — `control.Resolve`'s own comment enumerates them — and only one of
+them is a grant row:
+
+1. **Ownership.** A user who is a member of the project owning a scope reaches it at their role's
+   verbs, with **no grant row anywhere in the journal**.
+2. **Sharing.** A live grant names the principal, or a project they belong to.
+
+A page that answered "who has access to this" from the grant table would **under-report every project
+member**, and silently: the list would be short, plausible, and wrong in the direction that tells
+somebody their notes are more private than they are. `ControlSharing.Audience` therefore resolves
+**every principal the model holds** and asks `VerbsOn(scope)`. That is O(principals × grants log
+grants) per page against the grant read's O(grants); the cost is accepted and the reason is written
+beside the function. ⚠ **The measurement now EXISTS** — `BenchmarkAudience` re-derives it; see `Audience`'s comment.
+
+`Revocable` **is** read from the grant table, and that is the other half of the decision: grants
+are the only thing this surface can take back. The two lists render separately with a sentence
+between them saying why, because a reader who revokes every row and expects the audience to empty
+has misunderstood the model.
+
+`TestTheAudienceIsComputedFromResolveNotFromGrantRows` pins it with a viewer who holds authority
+and **no grant row at all**, and asserts the grant table is empty first — without that second
+assertion a grant-reading implementation could pass.
+
+## 🔴 The replica-honesty notice is pinned as ONE NORMALISED STRING
+
+`ReplicaHonesty` is a constant and `TestTheReplicaHonestyNoticeIsPinnedWhole` compares the rendered
+page against the whole of it, with HTML entities resolved and whitespace collapsed. A guard on
+keywords — "the page mentions `cache`" — survives a reword that has quietly dropped a clause, and
+the clause a well-meaning edit drops is always the one that makes the product sound weakest. The
+cost is that **any** cosmetic reword reds the test. That is the intended cost.
+
+Each of its three clauses is a fact measured elsewhere in this tree:
+
+| clause | what makes it true |
+|---|---|
+| "one replica's answer, read from a cached copy of the authority" | `control.Cache` is stale by design up to its declared `MaxAge`; `cairn-ui` is single-replica (no `ui-image` derivation, no manifest in this repo) |
+| "another reader gains or loses the scope when their own cache next refreshes" | `control.Cache.ApplyNow`'s promise is explicitly about THIS process |
+| "does not recall entries already copied onto somebody's machine" | `ApplyNow` says it in as many words |
+
+It carries **no number**. A "within 30 seconds" would be a promise about a refresh interval this
+package does not own and an operator can change; the bound that IS known travels per write, as
+`Effect.EffectiveBy`, and `control.EffectDeferred`'s own comment makes rendering it mandatory
+rather than stylistic.
+
+## The decisions, and what each one costs
+
+- **The scope is a QUERY PARAMETER, not a path segment.** `routes` is an exact-match map; a path
+  parameter means a prefix match, and a prefix match is a second way to reach a handler that
+  `TestEveryServedPathComesFromTheLedger` structurally cannot probe — there is no longer a finite
+  set of paths to probe.
+- **`/unshare` is its own path, not an `action=` field on `/share`.** A hidden action field makes
+  the difference between granting and revoking a value chosen by whoever gets one request past
+  both cross-site gates. Two paths make the two writes two rows in the ledger.
+- **The recipient is a `select` over `Candidates`, and `Candidates` is the actor's own
+  collaborators.** A picker over every user turns admin on one scope into a directory of everybody
+  in the deployment. 🔴 **The cost is real and is not hidden: sharing with somebody you have no
+  project in common with is NOT REACHABLE from this page.** Lifting that is an invite flow (P6).
+- **The handler re-validates the chosen subject against the same list.** A `select` constrains a
+  browser, not an HTTP client.
+- **A revocation is authorised from the GRANT ROW, never from the form.** The grant id is the only
+  thing that says which scope a revocation touches. Passing a scope alongside it would let a caller
+  with admin on scope A revoke a grant on scope B.
+- **The outcome after a write is a CODE from a closed set, not a sentence.** A write redirects so a
+  refresh does not repeat it, and a redirect target is something anybody can put in a link. A
+  reflected sentence is not an XSS bug and is still an attack: the escaper turns markup into text
+  and has nothing to say about this page presenting an attacker's sentence as its own. The only
+  caller-supplied value that reaches the banner is an instant this code parsed and re-formatted.
+- **An unknown scope and an unauthorised one answer identically**, status and body. A 404 beside a
+  403 is an existence oracle over every scope in the deployment.
+
+## 🔴 A read-only deployment says so on the PAGE, and the first draft of that test SKIPPED
+
+`cairn-ui` gained a `-control-journal` flag. With it the authority is a `control.FileStore` and a
+share can be recorded; without it the authority is the token-file projection and it cannot. The
+flag **switches** the authority rather than adding one — two authorities would be two answers to
+"who may see what".
+
+The first version of this feature reported the read-only condition only when somebody clicked
+Share, and its test asserted a 501. **That test skipped, and the skip is why the design changed:**
+`internal/control/tokenfile` grants **no `admin` verb to anybody** — its own comment says the token
+file "has no sharing to administer" — so on such a deployment the authority check refuses first and
+the 501 arm is never reached. A skip nobody counts is a pass. So `control.Cache` gained `Writable()`
+(derived from the same type assertion `write` already made, not a second one), the page announces
+`ReadOnlyAuthority` on every load, and two tests replace the one that skipped: one measures the
+sentence on a real token-file deployment **and** asserts a journal-backed deployment does not
+render it; the other pins the 501 mapping through the real dispatcher and **says plainly that it
+drives the condition through a fixture**, because no authority in this tree is both read-only and
+able to confer admin.
+
+## The mutation rows — in `tests/control_mutants.py`, which CI runs
+
+🔴 **THERE IS NO SEPARATE BATTERY FOR THIS PACKAGE, AND THE ONE THAT BRIEFLY EXISTED IS THE
+LESSON.** The share flow shipped with `tests/ui_share_mutants.py` — 234 lines, a second copy of
+`control_mutants.py`'s harness — and **no gate ran it**: `grep -l ui_share_mutants` over the whole
+tree returned the file and one line of this README, while `control_mutants` is a step in
+`.github/workflows/ci.yml` and is pinned by `tests/test_control_mutant_count_is_pinned.py`. It also
+mutated the LIVE working tree where that harness mutates a `copytree`. Round 0 of #64's audit found
+it. The eight rows moved into `control_mutants.py` (the `ui-` prefixed ones), `./internal/ui/`
+joined its `PKGS`, and the file is deleted — so the rows now get the CI step, the isolation and the
+count pin that the copy would have had to re-earn. **A second battery is a second thing to remember
+to run.**
+
+| row | killed by |
+|---|---|
+| `ui-audience-reads-grant-rows-instead-of-Resolve` | `TestTheAudienceIsComputedFromResolveNotFromGrantRows` |
+| `ui-replica-notice-drops-a-clause` | `TestTheReplicaHonestyNoticeIsPinnedWhole` |
+| `ui-verbs-read-single-value` | `TestEveryTickedVerbReachesTheGrant` |
+| `ui-share-subject-accepted-from-the-form` | `TestTheSubjectIsValidatedAgainstCandidates…` |
+| `ui-unshare-skips-the-objects-authority-check` | `TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm` |
+| `ui-share-page-skips-its-authority-check` | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` |
+| `ui-page-never-reports-a-read-only-authority` | `TestAReadOnlyDeploymentSaysSoOnThePage…` |
+| `ui-share-write-authority-check-removed-in-the-handler` | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` (its no-verb arm) |
+
+🔴 **THAT LAST ROW WAS LABELLED `EQUIVALENT` AND THE LABEL WAS MEASURED FALSE — the
+retracted argument is kept here because an EQUIVALENT label is exactly what stops anybody
+writing the test that kills the mutant.** It read: *"Removing either alone is observably
+equivalent: the other still answers 403 with the same body … Both sites call the same
+predicate, so this is one rule at two call sites, not two rules."*
+
+The discriminator it missed is a request with **no `verb` field**. The handler's
+`Allows(scope, VerbAdmin)` runs BEFORE the form is validated, so:
+
+| tree | status |
+|---|---|
+| unmutated | **403** — refused on authority, disclosing nothing about the input |
+| the handler's check removed | **400** — the caller reaches verb validation and learns their input was the problem |
+
+So the two sites are **not** redundant, and the row is an ordinary killable one.
+`TestTheSharePageRefusesAScopeThisCallerCannotAdminister` carries that exact case.
+
+⚠ **AND THIS PARAGRAPH IS THE SECOND HALF OF THAT RETRACTION, WRITTEN A ROUND LATE.** The
+round that retracted the label did it in `tests/control_mutants.py` and
+`internal/control/README.md` and left this file arguing the refuted case — under a 🔴, in
+the first place a reader of `internal/ui` looks, telling them a check the same round had
+just proved load-bearing was redundant. Its own commit message said *"a retraction is a
+TREE-WIDE SWEEP, not an edit at the site you happened to be reading"*. Four retractions in
+that commit were swept at one site each.
+
+⚠ **The split is not restated here.** `internal/control/README.md` carries the battery's
+`mutants / killed / EQUIVALENT` line and is the only place pinned to it; a second copy here is the
+count that goes stale.
+
+## What Phase C's tests still cannot see
+
+Everything Phase A's and Phase B's lists say still applies, plus:
+
+- 🔴 **NO TEST DRIVES TWO ACTORS AT THE SAME INSTANT.** Two admins sharing and revoking one scope
+  concurrently is argued from `control.FileStore.Append`'s own locking and is not measured here.
+  `go test -race` is clean over the package; that is a different claim.
+- **The audience is not measured at scale.** Its cost is O(principals × grants log grants) per page
+  and the largest fixture holds three users. Nothing here would notice it becoming slow.
+- **`Candidates` is measured over one shape of membership** — two users in one common project.
+  Nested or overlapping memberships beyond that are untested.
+- 🔴 **A GRANT WHOSE OBJECT IS A PROJECT IS VISIBLE AND NOT REVOCABLE HERE**, deliberately: revoking
+  it from a page about one scope would silently withdraw every other scope that project owns. There
+  is no project page, so today there is **nowhere in this surface** to revoke one. Stated as a gap
+  rather than left for somebody to find by hunting for a button.
+- **Nothing measures a real deployment.** There is still no `ui-image` derivation and no manifest,
+  so `-control-journal` has been exercised by tests and by nothing else.

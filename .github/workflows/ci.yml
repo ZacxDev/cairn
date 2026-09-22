@@ -316,9 +316,9 @@ jobs:
           set -o pipefail
           go test -race ./... | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
-          # SEVENTEEN packages carry tests, measured on this branch: api, authz, client,
-          # cmd/cairn-server, control, control/tokenfile, depspolicy, doctor, hostid,
-          # identity, netid, pytext, report, snapshot, store, ui, write. It was NINE at P1b; `client` and
+          # EIGHTEEN packages carry tests, measured on this branch: api, authz, client,
+          # cmd/cairn-server, cmd/cairn-ui, control, control/tokenfile, depspolicy, doctor,
+          # hostid, identity, netid, pytext, report, snapshot, store, ui, write. It was NINE at P1b; `client` and
           # `doctor` arrived with the Go CLIENT, `control` with P3a, `control/tokenfile`
           # with the control-plane wiring, `cmd/cairn-server` with the gate on the
           # authority refresh loop — which is the only thing bounding the token-file
@@ -326,9 +326,13 @@ jobs:
           # `identity` with P4's authenticator interface and its two new backends, and
           # `depspolicy` + `ui` with the web UI's phase A — `depspolicy` is the module
           # allowlist and the import ban that replaced `vendorHash = null`, `ui` is the
-          # renderer, its escaping guard and its raw-node ban. Measured at 17 over the
-          # package set `./...` of module `github.com/ZacxDev/cairn`, and at 17 in the nix
-          # `cairn-server-go` check phase on this branch, which runs the same walk.
+          # renderer, its escaping guard and its raw-node ban. `cmd/cairn-ui` arrived LAST,
+          # with the share flow's startup refusals — the control-journal guard, whose first
+          # two spellings were each walked around by a state nobody had tested. Measured at
+          # 18 over the package set `./...` of module `github.com/ZacxDev/cairn`. ⚠ The nix
+          # `cairn-server-go` check phase runs the same walk and was measured at 17 BEFORE
+          # that package existed; it is not re-measured here, so read that as a record and
+          # not as a current reading.
           #
           # 🔴 THE FLOOR IS THE COUNT ITSELF — **NOT** ONE BELOW IT, AND THE ARITHMETIC IS
           # WRITTEN OUT HERE RATHER THAN ASSERTED AS A PROPERTY, BECAUSE THE PROPERTY WAS
@@ -342,9 +346,15 @@ jobs:
           # forward rather than introduced here — and it is fixed here because the package
           # this floor now has to defend is `depspolicy` itself.
           #
-          # So: `ok < 17` refuses. 17 passes (today's tree). 16 refuses (one package's tests
-          # gone). 18 passes (a package ADDED), which is the other half of the property and
-          # the reason this is a floor rather than an equality. It is the same shape as the
+          # So: `ok < 18` refuses. 18 passes (today's tree). 17 refuses (one package's tests
+          # gone). 19 passes (a package ADDED), which is the other half of the property and
+          # the reason this is a floor rather than an equality. 🔴 THE THREE NUMBERS IN THIS
+          # SENTENCE AND THE LEDGER ABOVE MOVE TOGETHER WITH THE CONDITION, IN ONE COMMIT —
+          # an audit round caught the commit that moved the condition to 18 leaving all of
+          # them at 17, including this sentence saying in bold that 17 passes. A maintainer
+          # whose deletion failed the gate would have read that, concluded the gate was
+          # misconfigured, and set it back — restoring the exact off-by-one this block was
+          # written about. It is the same shape as the
           # Python collected-test floor, and for the same reason: `go test` over a package
           # with no test files exits 0, so the exit code alone cannot tell a green suite
           # from an absent one.
@@ -353,11 +363,11 @@ jobs:
           # behind does not fail late — it stops failing at all, once per package of lag.
           #
           # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
-          # file that keeps others leaves `ok` at 17 and this gate green. That gap is
+          # file that keeps others leaves `ok` at 18 and this gate green. That gap is
           # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
           # is written down.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 17 ]; then
+          if [ "$ok" -lt 18 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
@@ -369,12 +379,15 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 110 mutants over FIVE packages, in `PKGS` order: `internal/control`,
+      # kill. 120 mutants over SEVEN packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
-      # `cmd/cairn-server` — the model, the token-file projection, P4's identity backends,
-      # the server that authorises from all of them and the program, because a mutant in
-      # one is killed by a guard in another and the refresh loop that bounds the adapter's
-      # declared divergence exists only in `main`. That enumeration is pinned to `PKGS` as
+      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui` — the model, the token-file
+      # projection, P4's identity backends, the server that authorises from all of them,
+      # the pod's program, the browser surface and the browser surface's program, because a
+      # mutant in one is killed by a guard in another, the refresh loop that bounds the
+      # adapter's declared divergence exists only in `main`, the share flow is the second
+      # consumer of the same authority, and the browser's startup refusals are the only
+      # thing between a misconfigured deployment and a surface that serves nobody. That enumeration is pinned to `PKGS` as
       # a whole string by `tests/test_control_mutant_count_is_pinned.py` — membership and
       # order, not just the count, because a swap that kept the count left it stale.
       # Four of the cache rows are killed
@@ -382,7 +395,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (110 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (120 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT

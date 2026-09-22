@@ -1,11 +1,20 @@
 // Command cairn-ui is the browser surface: the SECOND binary the pod's control
 // plane serves, and the one that renders HTML.
 //
-// 🔴 IT IS PHASE A AND IT IS DEPLOYED BY NOTHING. One page, one authentication
-// chain, one rendering path — enough to prove the wiring and to stand the gate that
-// replaces the guarantee the first third-party dependency in this repository
-// removed. Cookie sessions, the sign-in flow and the screens are later phases with
-// their own decisions; none of them are here.
+// 🔴 IT IS DEPLOYED BY NOTHING, AND IT NOW CARRIES THREE PHASES. Seven routes over one
+// authentication chain and one rendering path: the entries page, the sign-in pair with
+// server-side revocable cookie sessions, and the share flow. No image wraps this binary,
+// `apps` has no entry for it, and no manifest in this repository deploys it.
+//
+// ⚠ THIS COMMENT SAID "IT IS PHASE A … Cookie sessions, the sign-in flow and the screens
+// are later phases; none of them are here" THROUGH THE TWO PHASES THAT ADDED THEM. It is
+// the canonical site for a Go reader — `go doc ./cmd/cairn-ui`.
+//
+// ⚠ AND THIS COMMENT CLAIMED TO BE "the last copy of that claim standing", WHICH WAS
+// ITSELF FALSE — a round auditing the sweep found `flake.nix`'s `meta.description` still
+// shipping "phase A: one page", which is what `nix flake show` and `nix search` render and
+// is more visible than any Go doc comment. Two sweeps in a row asserted completeness and
+// missed a site; the lesson is to name where you LOOKED rather than to claim you finished.
 //
 // 🔴 AND IT IS A SEPARATE BINARY RATHER THAN ROUTES ON `cmd/cairn-server`, WHICH IS
 // WHAT KEEPS THE POD'S SERVED CONTRACT AND ITS DEPENDENCY SET BOTH UNMOVED.
@@ -74,6 +83,25 @@ func main() {
 		"path to the browser session table")
 	sessionTTL := flag.Duration("session-ttl", envDuration("CAIRN_UI_SESSION_TTL", identity.DefaultSessionTTL),
 		"absolute lifetime of a browser session")
+	// 🔴 THE CONTROL JOURNAL IS WHAT LETS THE SHARE FLOW WRITE, AND IT REPLACES THE
+	// TOKEN-FILE PROJECTION RATHER THAN SITTING BESIDE IT. Two authorities would be two
+	// answers to "who may see what" — the thing `internal/control` exists to have
+	// exactly one of — so this flag SWITCHES the authority instead of adding one. With
+	// it unset the surface behaves as it did before the share flow, and the share pages
+	// announce on every load that no share can be recorded here.
+	//
+	// 🔴 A SENTENCE STOOD HERE THAT WAS FALSE, AND IT IS RETRACTED RATHER THAN REPLACED.
+	// It read: "the reads work, and a share attempt is refused with
+	// `control.ErrAuthorityReadOnly`, which the page renders as a sentence naming the real
+	// cause rather than as a permission problem the operator would go hunting for."
+	// `internal/control/tokenfile` confers `admin` on NOBODY, so on a token-file
+	// deployment no scope is administrable: the scope page answers 404, and `POST /share`
+	// is refused **403** on authority before the sentinel is ever reached. The index read
+	// does still work and does carry the banner — that half is real. ⚠ This is the THIRD
+	// site of one retraction: the same claim was corrected in `README.md`, then in
+	// `internal/ui/server.go`, and left standing here both times.
+	controlJournal := flag.String("control-journal", envOr("CAIRN_UI_CONTROL_JOURNAL", ""),
+		"path to the control journal; without one the authority is the token file and no share can be recorded")
 	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
 	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
 	// contract and cannot read a compiled binary — the printed table is the only way
@@ -84,31 +112,11 @@ func main() {
 	// caller, which this repository refuses elsewhere. It returns with a corpus.
 	flag.Parse()
 
-	env := environ()
-	tokens, err := authz.LoadTokens(*tokenFile, env, func(line string) {
-		fmt.Fprintln(os.Stderr, "cairn-ui: "+line)
-	})
+	authority, err := openAuthority(*controlJournal, *store, *tokenFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
 	}
-	if len(tokens) == 0 {
-		fmt.Fprintln(os.Stderr, "cairn-ui: the token table is empty: the UI is not served without a credential")
-		os.Exit(exitConfig)
-	}
-
-	// 🔴 THE AUTHORITY IS THE SAME PROJECTION THE POD USES, BUILT THE SAME WAY. A
-	// second way to read the token file would be a second answer to "who may see
-	// what", and the first thing two answers lose is agreement.
-	//
-	// ⚠ `Records` RETURNS A FIXED TABLE HERE, WHERE THE POD'S IS SWAPPABLE UNDER
-	// SIGHUP. This binary has no reload path yet, so a revoked credential takes a
-	// restart to stop working — stated because it is a real operational difference
-	// from the pod and not a property anybody should assume from the shared type.
-	authority := control.NewCache(tokenfile.Source{
-		StoreRoot: *store,
-		Records:   func() []authz.TokenRecord { return tokens },
-	}, control.CacheOptions{MaxAge: authorityMaxAge})
 
 	// Materializing is the caller's first `Refresh` — `NewCache` contacts nothing —
 	// so a startup failure is this program's to shout about.
@@ -121,6 +129,11 @@ func main() {
 			os.Exit(exitConfig)
 		}
 		fmt.Fprintln(os.Stderr, "cairn-ui: authority: "+err.Error())
+		os.Exit(exitConfig)
+	}
+
+	if err := refuseAnAuthorityNobodyCanSignInTo(authority, *controlJournal); err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
 	}
 
@@ -171,8 +184,13 @@ func main() {
 		// agreement about a revocation.
 		Credentials: authority,
 		Source:      ui.StoreSource{Root: *store},
-		Sessions:    sessions,
-		TTL:         *sessionTTL,
+		// 🔴 THE SAME `authority` AGAIN, FOR THE SAME REASON THE LINE ABOVE GIVES. The
+		// share flow renders "who has access to this" and the chain decides "may this caller
+		// see it"; two caches would let the page make a claim about a world the
+		// request was never authorised against.
+		Sharing:  ui.ControlSharing{Authority: authority},
+		Sessions: sessions,
+		TTL:      *sessionTTL,
 		// One clock for the server and the store. `FileSessionStore.Now` is left nil,
 		// which means `time.Now().UTC()`, and `ui.Config.Now` defaults to the same
 		// thing — so they agree by both taking the default rather than by one being
@@ -221,8 +239,17 @@ func main() {
 		_ = listener.Shutdown(shutdown)
 	}()
 
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s\n",
-		len(ui.DeclaredRoutes()), addr, *store)
+	// 🔴 THE LINE SAYS WHETHER A SHARE CAN BE RECORDED, BECAUSE THE ANSWER IS DECIDED
+	// AT STARTUP AND DISCOVERED AT THE FIRST CLICK OTHERWISE. A surface that serves
+	// every page and refuses every write is exactly the shape every other startup
+	// refusal in this program exists against; this one is a legitimate configuration
+	// rather than an error, so it is ANNOUNCED instead of refused.
+	sharingMode := "read-only (no -control-journal: no share can be recorded)"
+	if *controlJournal != "" {
+		sharingMode = "writable (control journal " + *controlJournal + ")"
+	}
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s\n",
+		len(ui.DeclaredRoutes()), addr, *store, sharingMode)
 	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
@@ -280,4 +307,160 @@ func envInt(name string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// openAuthority builds the ONE control-plane authority this surface reads.
+//
+// 🔴 IT RETURNS EXACTLY ONE CACHE AND THE TWO BRANCHES ARE EXCLUSIVE. A journal makes
+// the authority WRITABLE — `control.FileStore` implements `control.Writer`, so
+// `Cache.ApplyNow` records a grant; the token file does not, so the same call refuses
+// with `control.ErrAuthorityReadOnly`. Everything downstream is identical either way,
+// which is what keeps the share flow one code path rather than two.
+//
+// ⚠ THE TOKEN FILE IS STILL LOADED AND STILL REQUIRED TO BE NON-EMPTY IN THE
+// PROJECTION BRANCH, AND NOT LOADED AT ALL IN THE JOURNAL BRANCH. A journal carries its
+// own credentials (`EventCredentialIssued`), so reading the token file there would be
+// the second authority this function exists to avoid.
+func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error) {
+	if journal != "" {
+		// 🔴 THE PATH IS REQUIRED TO EXIST AND TO BE A FILE, BECAUSE `OpenFileStore`
+		// CREATES IT AND AN EMPTY JOURNAL REPLAYS CLEAN. `control.OpenFileStore` does
+		// `MkdirAll` then `O_CREATE`, so a TYPO or an unmounted volume is not an error to
+		// it: the file is created, `Refresh` replays zero events successfully, and this
+		// program starts — announcing `sharing writable` — with an authority holding no
+		// users, no scopes and no credentials. Every sign-in then answers 401 and every
+		// page is empty. That is the shape every startup refusal in this file exists
+		// against: a surface that passes its health check and can serve nobody. Measured
+		// on the built binary with a deliberately misspelled path — `/healthz` 200,
+		// `GET /sign-in` 200, `POST /sign-in` 401 for any credential, and the misspelled
+		// file created at 0 bytes.
+		//
+		// ⚠ THE CHECK IS `Stat` BEFORE THE OPEN, so this program never creates the file it
+		// is complaining about. An operator bootstrapping a genuinely new deployment seeds
+		// the journal with `cairn-server -create-user`; this binary is a READER of the
+		// control plane and has no business minting one.
+		//
+		// 🔴 AND IT IS ONLY HALF THE GUARD — THE OTHER HALF IS
+		// `refuseAnAuthorityNobodyCanSignInTo`, AFTER THE REFRESH, BECAUSE THE HAZARD IS A
+		// STATE AND NOT A FILE SIZE. A first draft refused `info.Size() == 0` and called it
+		// done. Measured: a journal holding a single NEWLINE replays clean, and the surface
+		// came up announcing `sharing writable`, answered `/healthz` 200 and could
+		// authenticate nobody — the exact shape the refusal names, one byte outside its
+		// reach. That is this repository's "a guard can be SPELLED rather than STRUCTURAL"
+		// rule, and the spelling here was a byte count. See that function for the SECOND
+		// spelling that was also walked around, and for what the guard asks now.
+		if info, statErr := os.Stat(journal); statErr != nil {
+			return nil, fmt.Errorf("the control journal %s cannot be read (%w), so the authority would hold "+
+				"no users, no scopes and no credentials — this program would start, answer its health "+
+				"check and refuse every sign-in. Refusing to start; check the path and the mount, and "+
+				"seed a new control plane with `cairn-server -create-user` rather than here",
+				journal, statErr)
+		} else if info.IsDir() {
+			return nil, fmt.Errorf("the control journal %s is a DIRECTORY, not a journal file", journal)
+		}
+		src, err := control.OpenFileStore(journal)
+		if err != nil {
+			return nil, fmt.Errorf("the control journal %s cannot be opened (%w), so the authority has "+
+				"nothing to answer from. Refusing to start; mount a writable volume for it and restart",
+				journal, err)
+		}
+		return control.NewCache(src, control.CacheOptions{MaxAge: authorityMaxAge}), nil
+	}
+
+	tokens, err := authz.LoadTokens(tokenFile, environ(), func(line string) {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+line)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(tokens) == 0 {
+		return nil, errors.New("the token table is empty: the UI is not served without a credential")
+	}
+
+	// 🔴 THE AUTHORITY IS THE SAME PROJECTION THE POD USES, BUILT THE SAME WAY. A
+	// second way to read the token file would be a second answer to "who may see
+	// what", and the first thing two answers lose is agreement.
+	//
+	// ⚠ `Records` RETURNS A FIXED TABLE HERE, WHERE THE POD'S IS SWAPPABLE UNDER
+	// SIGHUP. This binary has no reload path yet, so a revoked credential takes a
+	// restart to stop working — stated because it is a real operational difference
+	// from the pod and not a property anybody should assume from the shared type.
+	return control.NewCache(tokenfile.Source{
+		StoreRoot: storeRoot,
+		Records:   func() []authz.TokenRecord { return tokens },
+	}, control.CacheOptions{MaxAge: authorityMaxAge}), nil
+}
+
+// refuseAnAuthorityNobodyCanSignInTo is the STATE half of the control-journal guard.
+//
+// 🔴 IT TESTS THE SIGN-IN PRECONDITION ITSELF — A LIVE CREDENTIAL WHOSE PRINCIPAL THE
+// MODEL HOLDS — AND THAT IS THE THIRD SPELLING OF THIS GUARD, THE FIRST TWO HAVING BEEN
+// PROXIES THAT THE HAZARD WALKED AROUND. Draft 1 refused `info.Size() == 0`; a journal
+// holding a single NEWLINE replays clean, so the surface came up announcing
+// `sharing writable` and served nobody, one byte outside the check. Draft 2 refused
+// `len(Model().Users) == 0` — and `cairn-server -create-user`, which this guard's own
+// error text prescribes as the remedy, writes a user and **no credential**
+// (`createuser.go`: "Never a token: this path mints no credential at all"). So following
+// the remedy produced exactly the state the refusal promises to prevent, and the guard
+// passed it. Measured end to end on both built binaries.
+//
+// `control.Authenticate` matches a presented token against LIVE credentials and then
+// requires `PrincipalFor` to know the principal, so "can anybody sign in at all" is
+// precisely the count below. A proxy for it can always be walked around; this is the
+// question itself.
+//
+// 🔴 AND THE HONEST CONSEQUENCE, WHICH IS A GAP RATHER THAN A BUG: **no tool in this
+// repository writes `EventCredentialIssued` into a journal.** `-create-user` does not,
+// and there is no `-issue-credential`. So a journal-backed `cairn-ui` cannot be brought up
+// sign-in-capable BY ANY TOOL HERE, and this guard REFUSES TO START rather than letting an
+// operator discover it at the sign-in form.
+//
+// ⚠ "NO TOOL HERE CAN" IS NOT "IT CANNOT", AND AN EARLIER DRAFT SAID THE WIDER THING —
+// that the mode was "not a sign-in-capable deployment today". MEASURED FALSE: appending one
+// `{"kind":"credential-issued",…}` line to a `-create-user` journal makes this binary start
+// and a real browser sign-in succeed (303, then 200 on `/`). The gap is TOOLING, not
+// capability, and an operator who believed the wider sentence would abandon a mode that
+// works.
+//
+// ⚠ IT IS SCOPED TO THE JOURNAL BRANCH, DELIBERATELY. The token-file projection
+// synthesizes a credential per row, so this could never fire there — and `openAuthority`
+// already refuses an empty token table, which is that branch's equivalent.
+//
+// ⚠ AND IT EQUATES "NOBODY CAN SIGN IN" WITH "SERVES NOBODY", WHICH IS ONE PATH SHORT.
+// `identity.CookieSession` resolves a live browser session from the session table and
+// `PrincipalFor`, consulting NO credential — so a deployment mid-rotation (every credential
+// revoked, the replacement not yet issued) is still serving every signed-in browser, and
+// this guard turns the next restart into a refusal that ends those sessions. That is the
+// right trade for a surface nothing deploys — coming up unable to authenticate anybody is
+// the louder failure — but it is a state the refusal's wording does not weigh, and it is
+// named here rather than discovered during a rotation.
+func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string) error {
+	if journal == "" {
+		return nil
+	}
+	m := authority.Model()
+	usable := 0
+	for _, c := range m.Credentials {
+		if !c.Live() {
+			continue
+		}
+		if _, known := m.PrincipalFor(c.PrincipalKind, c.PrincipalID); known {
+			usable++
+		}
+	}
+	if usable > 0 {
+		return nil
+	}
+	return fmt.Errorf("the control journal %s materialized an authority with NO USABLE CREDENTIAL "+
+		"(%d user(s), %d credential record(s), 0 of them live and attributable), so "+
+		"`control.Authenticate` can match nothing and every sign-in would answer 401 — this program "+
+		"would come up, announce itself writable and serve nobody. Refusing to start. ⚠ NOTE THAT "+
+		"`cairn-server -create-user` DOES NOT FIX THIS: it mints a user and no credential, and no "+
+		"tool in this repository writes a credential into a journal yet. A journal-backed cairn-ui "+
+		"cannot be made sign-in-capable BY ANY TOOL IN THIS REPOSITORY. Issue one from whatever "+
+		"provisions your control plane, or hand-append a `credential-issued` record — in which "+
+		"case note that `token_hash` is the SHA-256 HEX DIGEST of the token and NEVER the token: "+
+		"`Event.validate` checks that field's LENGTH only, so a 64-character secret pasted there "+
+		"is accepted and persisted into the authority journal",
+		journal, len(m.Users), len(m.Credentials))
 }

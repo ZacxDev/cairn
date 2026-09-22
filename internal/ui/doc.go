@@ -44,9 +44,24 @@
 //     the value escaping cannot see. The same test refuses a non-constant name
 //     argument to `El` or `Attr`.
 //
-// # WHAT THIS PACKAGE DOES NOT DO, IN PHASE A
+// # WHAT THIS PACKAGE DOES, AND WHAT IT STILL DOES NOT
 //
-// One page, authenticated by the same `internal/identity` chain the pod uses,
-// minus one backend. No cookie session, no sign-in, no share flow. See
-// `internal/ui/README.md`.
+// Four pages behind the same `internal/identity` chain the pod uses, minus one
+// backend: the entries page, the sign-in pair, and the share flow. Cookie
+// sessions arrived in phase B; the share flow — "who has access to this scope", a
+// grant, a revocation, and the notice qualifying all three — is phase C and is
+// this package's `sharing.go`, `sharehandlers.go` and [SharePage].
+//
+// 🔴 WHAT IT STILL DOES NOT DO, STATED RATHER THAN LEFT TO BE INFERRED:
+//
+//   - No INVITE. `ControlSharing.Candidates` offers only principals the actor
+//     already shares a project with, so a scope cannot be shared with somebody
+//     outside every project the actor belongs to. That is a deliberate narrowing
+//     against enumeration, and lifting it is an invite flow.
+//   - No PROJECT page, so a grant whose object is a PROJECT is visible in an
+//     audience and cannot be revoked from here.
+//   - No multi-replica story. This is a SINGLE-REPLICA surface and the pages say
+//     so — see [ReplicaHonesty], which is pinned whole by a test.
+//
+// See `internal/ui/README.md`.
 package ui

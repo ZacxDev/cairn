@@ -93,7 +93,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
-| `cmd/cairn-ui`, `internal/ui` | P-A/P-B: the BROWSER surface — pages, gomponents, COOKIE SESSIONS, deployed by nothing; 📄 its own README |
+| `cmd/cairn-ui`, `internal/ui` | P-A/B/C: the BROWSER surface — pages, gomponents, COOKIE SESSIONS, the SHARE FLOW, deployed by nothing; 📄 its own README |
 | `internal/depspolicy` | the ALLOWLIST and import BAN that replaced `vendorHash = null` |
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
 | `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |
@@ -313,7 +313,7 @@ job's `ok` floor notices, and only per PACKAGE. 🔴 **gomponents does NOT neutr
 scheme**: hrefs go through `safeHref`, `Raw`/`Rawf` are AST-banned.
 📄 `internal/depspolicy`'s package doc (the claim, ONCE); `internal/ui/README.md`.
 
-## 🔴 BROWSER SESSIONS: THE TWO CLAIMS THAT BIND A NEXT EDIT
+## 🔴 THE BROWSER SURFACE: THE CLAIMS THAT BIND A NEXT EDIT
 
 🔴 **THE COOKIE BACKEND IS THIRD OF FOUR IN `identity.Backends`: every HEADER-borne
 credential is tried before the AMBIENT one**, so a bearer token beats a stale cookie.
@@ -323,10 +323,16 @@ ROUTE CLASS**: same-origin **before** auth, so it covers the PUBLIC sign-in row;
 per-session CSRF token **after** auth, so the token gate is reachable rather than shadowed.
 A class can only make a route LESS protected, so no gate may be derived from one.
 
+🔴 **THE SHARE FLOW ANSWERS "WHO HAS ACCESS TO THIS" FROM `control.Resolve`, NEVER FROM
+`Model.Grants`** — authority arrives two ways, so a grant-row listing under-reports every
+project MEMBER. 🔴 **`ReplicaHonesty` is pinned as a WHOLE NORMALISED STRING.** Both bind the
+next edit; everything else about the flow — `Revocable`, `-control-journal`, why the
+token-file deployment can show nothing — is in the README below, which is free to read.
+
 📄 Everything else is re-derivable and lives where it is free to read: `internal/ui/README.md`
-(the storage decision, the gates' RED proofs, what they still cannot see) and
-`internal/identity/session.go` (the two operator requirements, the four options, the store's
-mechanics).
+(the storage decision, the gates' RED proofs, phase C's decisions and mutation table, what
+they still cannot see) and `internal/identity/session.go` (the two operator requirements, the
+four options, the store's mechanics).
 
 ## 🔴 SEVERAL INSTANCES: AN UNROUTED SCOPE REFUSES
 
