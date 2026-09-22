@@ -59,17 +59,23 @@
 //     clients' stderr BYTE-FOR-BYTE, so "whatever order the lookups happened in" is not
 //     an option: the order has to be a property of the ledger, not of the call sequence.
 //
-// 🔴 ONE CONSEQUENCE OF RULE 1 THAT IS NOT OBVIOUS, AND IS WHY BOTH POD IMAGES STILL BAKE
-// THE OLD SPELLING. An image's `ENV` and a Deployment's `env:` are not two sources: the
-// runtime merges them into the ONE process environment the pod starts with, so rule 1
-// decides between them — and the image half is a DEFAULT that is present whether or not
-// the manifest mentions it. So an image setting `CAIRN_STORE_ROOT` would outrank a Deployment
-// that explicitly sets `SUBSYSTEM_STORE_ROOT`: for those variables the old name would stop
-// working the day the image shipped, rather than at P8. `flake.nix`'s `serverEnv` and
-// `server/Dockerfile` therefore stay on `SUBSYSTEM_STORE_*`, and
-// `tests/test_flake_image_matches_dockerfile.py` refuses a current-spelling image default.
-// The reasoning lives at those three sites; this note exists so a reader who arrives at
-// rule 1 first does not "finish the rename" there.
+// 🔴 ONE CONSEQUENCE OF RULE 1 THAT IS NOT OBVIOUS, AND IS WHY NEITHER POD IMAGE SETS A
+// STORE VARIABLE AT ALL. An image's `ENV` and a Deployment's `env:` are not two sources:
+// the runtime merges them into the ONE process environment the pod starts with, so rule 1
+// decides between them — and the image half is a DEFAULT that is present whether or not the
+// manifest mentions it. An image setting `CAIRN_STORE_ROOT` would therefore outrank a
+// Deployment that explicitly sets `SUBSYSTEM_STORE_ROOT`, and for those variables the old
+// name would stop working the day the image shipped rather than at P8.
+//
+// The images used to answer that by staying on `SUBSYSTEM_STORE_*`. They now answer it by
+// setting NEITHER spelling: the three values they baked were byte-identical to the code
+// defaults, so they configured nothing, while their mere presence emitted three deprecation
+// lines per pod start that no manifest could clear — rule 2 sweeps the whole environment and
+// does not care who put a variable there. With no image default there is nothing to
+// outrank a manifest in either direction, which closes this consequence at the root rather
+// than deferring it to P8. `flake.nix`'s `serverEnv`, `server/Dockerfile` and
+// `tests/test_flake_image_matches_dockerfile.py` carry the measurement; this note exists so
+// a reader who arrives at rule 1 first does not "restore" an image default here.
 //
 // 🔴 ONE BEHAVIOUR CHANGE, AND IT IS AN AUTHORISED EXCEPTION TO "DO NOT CHANGE THE
 // ORACLE" RATHER THAN AN UNATTRIBUTED ONE. `Value` treats a PRESENT BUT EMPTY value as

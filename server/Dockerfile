@@ -51,27 +51,32 @@ COPY server/server.py            /app/server/
 # value is never used here (every call passes `--store`), but the import would
 # fail before anything could say so.
 #
-# 🔴 THE THREE STORE VARIABLES KEEP THEIR `SUBSYSTEM_STORE_*` SPELLING WHILE THE REST
-# OF THE TREE IS `CAIRN_*`, AND THAT IS THE MECHANISM RATHER THAN AN OVERSIGHT.
-# `lib/env_aliases.py` resolves NEW-NAME-WINS: an old name is read only when the new one
-# is absent. An image `ENV` is a DEFAULT, so baking the new spelling here would make the
-# image's own default outrank an explicit `env:` in a Deployment that still sets the old
-# name — the container would silently ignore the operator's store root, port or token
-# path and use the image's. That inverts the layering every other container knob obeys,
-# and it bites on the first repoint rather than at upgrade time, because a manifest that
-# happens to set the SAME values is unchanged by luck. The server reads BOTH spellings,
-# so nothing is lost by staying on the old one here.
+# 🔴 THIS `ENV` SETS NO STORE VARIABLE, IN EITHER SPELLING, AND THAT IS A DECISION.
+# `SUBSYSTEM_STORE_ROOT=/data`, `SUBSYSTEM_STORE_PORT=8102` and
+# `SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token` were here, and are gone.
+# They configured NOTHING: each was byte-identical to the code default `server.py` falls
+# back to with the variable unset (`DEFAULT_STORE`, `DEFAULT_PORT`, `DEFAULT_TOKEN_FILE`) —
+# measured by running the server under `env -i`, which prints
+# `listening on 0.0.0.0:8102 store=/data`. What they DID do was trip the resolver's
+# whole-environment deprecation sweep at every pod start: three unactionable warnings that
+# a Deployment migrating its own `env:` to `CAIRN_*` could not clear, because the image
+# half was still there. Measured 3 before, 0 after.
 #
-# 🔴 WHAT RELEASES THIS: a deployment manifest that names the `CAIRN_*` spelling (the
-# manifests live outside this repo), or P8, when the old names stop being read at all.
-# `tests/test_flake_image_matches_dockerfile.py` pins these three names against
-# `flake.nix`'s `serverEnv`, which carries the same note.
+# 🔴 AND IT CLOSES THE SHADOWING HAZARD AT THE ROOT. The note that used to sit here
+# explained why the image had to keep the OLD spelling: an image `ENV` is a DEFAULT present
+# whether or not the manifest mentions it, and new-name-wins would have let a
+# `CAIRN_STORE_ROOT` baked here outrank a Deployment that explicitly set the old name. That
+# was correct, and it is now moot — with no image default there is nothing to outrank a
+# manifest, so this image could adopt `CAIRN_*` later with no deprecation window at all.
+#
+# ⚠ THE ACCEPTED COST: `docker inspect` and this file no longer document where the store
+# lives, which port it binds, or where the token is read from. That moved to the code
+# defaults, which `tests/test_flake_image_matches_dockerfile.py` now pins against BOTH
+# implementations, and to the pod's own startup line. Do not "restore" it here — a value
+# stated in two places is the drift this whole file's tests exist to refuse.
 ENV HOME=/home/nonroot \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    SUBSYSTEM_STORE_ROOT=/data \
-    SUBSYSTEM_STORE_PORT=8102 \
-    SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token
+    PYTHONUNBUFFERED=1
 
 RUN mkdir -p /home/nonroot /data && chown -R 65532:65532 /home/nonroot /data
 

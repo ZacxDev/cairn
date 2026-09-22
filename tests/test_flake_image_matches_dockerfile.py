@@ -37,6 +37,75 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "server" / "Dockerfile"
 FLAKE = ROOT / "flake.nix"
+SERVER_PY = ROOT / "server" / "server.py"
+GO_SERVER = ROOT / "cmd" / "cairn-server" / "main.go"
+
+#: The runtime contract a Deployment relies on: where the store is, which port the pod
+#: binds, where the bearer token is read from.
+#:
+#: 🔴 IT IS PINNED AGAINST THE CODE DEFAULTS BECAUSE NEITHER IMAGE STATES IT ANY MORE, AND
+#: THAT IS THE WHOLE POINT OF THIS CONSTANT. Both images used to set
+#: `SUBSYSTEM_STORE_ROOT=/data`, `SUBSYSTEM_STORE_PORT=8102` and
+#: `SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token` in their `ENV`. Every
+#: one of those values was byte-identical to the default the server already falls back to,
+#: so they configured nothing while costing three deprecation warnings at every pod start
+#: (the resolver sweeps the whole process environment, and an image `ENV` is part of it).
+#: They are gone. `docker inspect` therefore no longer documents the contract — the
+#: accepted cost, recorded beside both `ENV` blocks — so the contract is pinned HERE,
+#: against the two implementations' own constants, in both directions.
+#:
+#: 🔴 SPELLED OUT BY HAND, NEVER DERIVED FROM EITHER IMPLEMENTATION. A value computed from
+#: `server.py` and compared to `server.py` is an identity. These literals are what a
+#: manifest in a cluster assumes, and the assertion is that both implementations still
+#: agree with them — so changing a default is a red test here, which is exactly the
+#: notification an operator with a live Deployment needs.
+STORE_DEFAULTS = {
+    "store": "/data",
+    "port": "8102",
+    "token_file": "/run/secrets/subsystem-store/token",
+}
+
+
+def oracle_store_defaults(text: str) -> dict[str, str]:
+    """`DEFAULT_STORE`/`DEFAULT_PORT`/`DEFAULT_TOKEN_FILE` out of `server/server.py`.
+
+    Keys absent from the result mean the constant did not parse, which the callers below
+    branch on — a partial parse must not read as partial agreement.
+    """
+    out: dict[str, str] = {}
+    for key, name in (
+        ("store", "DEFAULT_STORE"),
+        ("token_file", "DEFAULT_TOKEN_FILE"),
+    ):
+        m = re.search(rf'^{name}\s*=\s*"([^"]*)"\s*$', text, re.M)
+        if m:
+            out[key] = m.group(1)
+    m = re.search(r"^DEFAULT_PORT\s*=\s*(\d+)\s*$", text, re.M)
+    if m:
+        out["port"] = m.group(1)
+    return out
+
+
+def go_store_defaults(text: str) -> dict[str, str]:
+    """`defaultStore`/`defaultPort`/`defaultTokenFile` out of `cmd/cairn-server/main.go`.
+
+    Same shape as its oracle twin, and deliberately a SECOND function rather than one
+    parameterised by a name table: the two languages spell a constant differently, and a
+    shared regex that happened to match both would be a claim about the spelling rather
+    than about either file.
+    """
+    out: dict[str, str] = {}
+    for key, name in (
+        ("store", "defaultStore"),
+        ("token_file", "defaultTokenFile"),
+    ):
+        m = re.search(rf'^\s*{name}\s*=\s*"([^"]*)"\s*$', text, re.M)
+        if m:
+            out[key] = m.group(1)
+    m = re.search(r"^\s*defaultPort\s*=\s*(\d+)\s*$", text, re.M)
+    if m:
+        out["port"] = m.group(1)
+    return out
 
 # The alias ledger, for `test_no_image_default_uses_a_name_that_would_SHADOW_a_deployment`.
 # Read from `lib/` rather than restated here: a third copy of the name list is exactly the
@@ -302,6 +371,45 @@ class TestTheExtractorsSeeSomething:
         )
         assert "HOME" in env
 
+    def test_the_code_default_parses_find_all_three_in_BOTH_implementations(self):
+        """🔴 THE POSITIVE CONTROL FOR THE CONTRACT'S NEW OPERAND.
+
+        Since neither image states the contract, `STORE_DEFAULTS` is checked against two
+        source files instead — and a regex that matched nothing would make
+        `test_both_implementations_resolve_the_deployment_contract_with_no_env` compare
+        `{}` against `{}` for one side and read as agreement. Each parse must yield all
+        three keys, in each language.
+        """
+        for label, found in (
+            ("server/server.py", oracle_store_defaults(SERVER_PY.read_text(encoding="utf-8"))),
+            ("cmd/cairn-server/main.go", go_store_defaults(GO_SERVER.read_text(encoding="utf-8"))),
+        ):
+            assert set(found) == set(STORE_DEFAULTS), (
+                f"the default-constant parse over {label} found {sorted(found)}, not "
+                f"{sorted(STORE_DEFAULTS)} — the constant was renamed or the pattern is "
+                f"wrong, and a missing key reads as agreement rather than as a failure"
+            )
+
+    def test_the_code_default_parses_can_fail(self):
+        """🔴 THE NEGATIVE HALF, on realistic near-misses rather than on empty text.
+
+        A parser that only refuses `""` passes the edit that actually happens: a constant
+        renamed, moved into a function (so it is no longer at column zero / inside the Go
+        `const` block with the expected indent), or turned into an expression.
+        """
+        # Renamed — the commonest real edit.
+        assert oracle_store_defaults('DEFAULT_STORE_ROOT = "/data"\n') == {}
+        assert go_store_defaults('\tdefaultStoreRoot = "/data"\n') == {}
+        # Indented, i.e. moved inside a function: no longer the module-level constant.
+        assert "store" not in oracle_store_defaults('    DEFAULT_STORE = "/data"\n')
+        # An expression rather than a literal must not read as a literal.
+        assert oracle_store_defaults("DEFAULT_PORT = PORT_BASE + 2\n") == {}
+        assert go_store_defaults("\tdefaultPort = basePort + 2\n") == {}
+        # And a value that IS present reads back whole, not truncated.
+        assert oracle_store_defaults(
+            'DEFAULT_TOKEN_FILE = "/run/secrets/subsystem-store/token"\n'
+        ) == {"token_file": "/run/secrets/subsystem-store/token"}
+
     def test_the_scalar_parses_are_not_empty(self, dockerfile, flake):
         assert dockerfile_user(dockerfile) is not None, "no USER line parsed"
         assert dockerfile_expose(dockerfile) is not None, "no EXPOSE line parsed"
@@ -442,49 +550,105 @@ class TestTheTwoBuildsAgree:
         """
         assert flake_attrset(flake, "serverEnv") == dockerfile_env(dockerfile)
 
-    def test_no_image_default_uses_a_name_that_would_SHADOW_a_deployment(
+    def test_no_image_default_configures_the_store_in_EITHER_spelling(
         self, dockerfile, flake
     ):
-        """🔴 AN IMAGE DEFAULT MUST NOT OUTRANK AN EXPLICIT `env:` IN A DEPLOYMENT.
+        """🔴 AN IMAGE MUST SET NO VARIABLE THE SERVER'S RESOLVER READS — EITHER SPELLING.
 
-        `lib/env_aliases` / `internal/envalias` resolve NEW-NAME-WINS: an old name is read
-        only when the new one is absent or blank. An image `ENV` is a DEFAULT, present in
-        every container whether or not the manifest mentions it. Put a NEW name in the
-        image and the layering inverts — the image's own default beats a Deployment that
-        explicitly sets the OLD one, and the pod silently uses the image's store root,
-        port or token path instead of the operator's. That is not a deprecation window;
-        for those variables the old name stops working the day the image ships.
+        An image `ENV` is a DEFAULT, present in every container whether or not the manifest
+        mentions it, and it costs on both sides of the resolver:
 
-        🔴 REGRESSION COVERAGE, NOT AN INVARIANT GUARD. The tree violated this: at
-        `0c23e0f` both `serverEnv` and `server/Dockerfile` baked `CAIRN_STORE_ROOT`,
-        `CAIRN_PORT` and `CAIRN_TOKEN_FILE` while a live Deployment set the old spellings
-        — unchanged only by luck, because it happened to set the same values. Matrix:
-        RED at `0c23e0f`, green here.
+        * a CURRENT-spelling default INVERTS the layering. `lib/env_aliases` /
+          `internal/envalias` resolve new-name-wins, so `CAIRN_STORE_ROOT` baked into the
+          image beats a Deployment that explicitly sets `SUBSYSTEM_STORE_ROOT`, and the pod
+          silently uses the image's store root, port or token path instead of the
+          operator's. Not a deprecation window — for those variables the old name stops
+          working the day the image ships.
+        * a DEPRECATED-spelling default trips the resolver's whole-environment sweep at
+          every pod start. Those warnings name a variable the operator cannot unset from a
+          manifest, and migrating the Deployment to `CAIRN_*` does not clear them:
+          measured 3 warnings with the image env present, still 3 after the manifest
+          migrates, 0 once the image sets nothing.
+
+        🔴 THE PREVIOUS VERSION OF THIS GUARD CHECKED ONLY THE CURRENT SPELLING, AND THE
+        CHANGE THAT DROPPED THE THREE STORE VARIABLES WOULD HAVE LEFT IT PASSING
+        TRIVIALLY — an invariant the tree could no longer violate, reading as coverage.
+        It is widened rather than kept: BOTH columns of the ledger, so the assertion still
+        has something it can fail on.
+
+        🔴 REGRESSION COVERAGE IN BOTH DIRECTIONS, AND BOTH ARE REAL POINTS IN THIS
+        REPOSITORY'S HISTORY. RED at `0c23e0f`, where both files baked `CAIRN_STORE_ROOT`,
+        `CAIRN_PORT` and `CAIRN_TOKEN_FILE` while a live Deployment set the old spellings —
+        unchanged only by luck, because it set the same values. RED at `78679b9`, where
+        both files baked the three `SUBSYSTEM_STORE_*` names. Green here. Watched red at
+        both spellings by planting each in turn; each died with this assertion's own
+        message naming the offending file.
 
         ⚠ IT READS BOTH BUILDS, AND THE GO IMAGE IS COVERED BY DERIVATION. `serverEnv` is
         the single nix-side statement of the contract and `mkGoServerImage` subtracts from
-        it (`tests/test_flake_go_image_runtime_contract.py`), so a new name cannot enter
-        the Go pod without entering `serverEnv` first.
+        it (`tests/test_flake_go_image_runtime_contract.py`), so a name cannot enter the Go
+        pod without entering `serverEnv` first.
 
-        The rule is stated over the LEDGER rather than over three literal names, so a
-        variable renamed later is covered without anybody remembering to edit this.
+        The rule is stated over the LEDGER rather than over literal names, so a variable
+        renamed later is covered on the day it is added without anybody editing this.
         """
-        new_names = {new for new, _old in env_aliases.LEDGER}
-        assert new_names, "the ledger is empty — this guard would pass over nothing"
+        banned = {new for new, _old in env_aliases.LEDGER}
+        banned |= {old for _new, old in env_aliases.LEDGER}
+        assert len(banned) == 2 * len(env_aliases.LEDGER) > 0, (
+            f"the ledger yielded {len(banned)} names from {len(env_aliases.LEDGER)} pairs "
+            f"— a spelling appears in both columns, or the ledger is empty, and either way "
+            f"this guard is not covering what its docstring says"
+        )
         for where, env in (
             ("flake.nix's serverEnv", flake_attrset(flake, "serverEnv")),
             ("server/Dockerfile's ENV", dockerfile_env(dockerfile)),
         ):
             assert env, f"parsed no environment out of {where}"
-            offenders = sorted(set(env) & new_names)
+            offenders = sorted(set(env) & banned)
             assert not offenders, (
-                f"{where} bakes {offenders} — a CURRENT-spelling default. The new name "
-                f"wins, so this image default outranks a Deployment that explicitly sets "
-                f"the deprecated spelling, and the pod ignores the operator's value. Keep "
-                f"the image on the old names until a deployment manifest names the new "
-                f"ones, or until P8 retires the old ones entirely; both files carry the "
-                f"note."
+                f"{where} sets {offenders}. Neither image may configure the store, the "
+                f"port or the token path: a CURRENT-spelling default outranks a "
+                f"Deployment that sets the deprecated one, and a DEPRECATED-spelling "
+                f"default emits a deprecation warning at every pod start that no manifest "
+                f"can clear. Both files carry the note, and the values those variables "
+                f"used to hold are pinned as CODE defaults by "
+                f"`test_both_implementations_resolve_the_deployment_contract_with_no_env`."
             )
+
+    def test_both_implementations_resolve_the_deployment_contract_with_no_env(self):
+        """🔴 WHAT THE IMAGES STOPPED SAYING, PINNED WHERE IT NOW LIVES.
+
+        Dropping the three `ENV` entries means `docker inspect` no longer tells an
+        operator where the store is, which port the pod binds, or where the token is read
+        from. That was accepted as a cost — it must not also become UNASSERTED. With no
+        environment at all, both implementations must resolve the same three values, and
+        those values must still be the ones a live Deployment assumes.
+
+        Measured on the artefacts rather than only read off the source, at two points:
+        `env -i … server/server.py` prints `listening on 0.0.0.0:8102 store=/data`, and
+        `env -i … cairn-server` names `/run/secrets/subsystem-store/token` in its
+        token-file refusal. This test pins the constants those runs resolved, in both
+        implementations, so a change to either is a red test rather than a surprise in a
+        cluster.
+
+        ⚠ AN INVARIANT GUARD. No defect ever moved a default apart; what it refuses is a
+        default moving now that no image `ENV` would contradict it.
+        """
+        oracle = oracle_store_defaults(SERVER_PY.read_text(encoding="utf-8"))
+        go = go_store_defaults(GO_SERVER.read_text(encoding="utf-8"))
+        assert oracle == STORE_DEFAULTS, (
+            f"server/server.py's defaults are {oracle}, and a Deployment assumes "
+            f"{STORE_DEFAULTS}. Neither image states these any more, so this constant is "
+            f"the only place the contract is written down."
+        )
+        assert go == STORE_DEFAULTS, (
+            f"cmd/cairn-server/main.go's defaults are {go}, and a Deployment assumes "
+            f"{STORE_DEFAULTS}. Swapping the image must not require editing a manifest."
+        )
+        assert oracle == go, (
+            f"the two implementations disagree: {oracle} vs {go}. One image would serve a "
+            f"different store, or read a different token, from the other."
+        )
 
     def test_the_uid_agrees(self, dockerfile, flake):
         user = dockerfile_user(dockerfile)
@@ -578,18 +742,24 @@ class TestTheTwoBuildsAgree:
     def test_the_port_agrees(self, dockerfile, flake):
         assert dockerfile_expose(dockerfile) == flake_int(flake, "serverPort")
 
-    def test_the_exposed_port_agrees_with_the_env_the_server_actually_reads(
+    def test_the_exposed_port_agrees_with_the_port_the_server_actually_binds(
         self, dockerfile, flake
     ):
-        """🔴 EXPOSE IS DOCUMENTATION; `SUBSYSTEM_STORE_PORT` IS THE BINDING.
+        """🔴 EXPOSE IS DOCUMENTATION; THE CODE DEFAULT IS THE BINDING.
 
-        `server.py` takes its port from the env var. `EXPOSE` only annotates
-        the image. They can disagree, and if they do the pod listens somewhere
-        the manifest does not name — so the two are pinned together here rather
-        than each being pinned only to its own side of the other file.
+        `EXPOSE` only annotates the image. The pod binds whatever its port resolves to,
+        and with no `SUBSYSTEM_STORE_PORT`/`CAIRN_PORT` anywhere in the image that is the
+        code default. They can disagree, and if they do the pod listens somewhere the
+        manifest does not name — so the two are pinned together here rather than each
+        being pinned only to its own side of the other file.
+
+        ⚠ IT USED TO READ THE IMAGE `ENV`, AND THAT OPERAND NO LONGER EXISTS. Both images
+        stopped setting the port; re-aiming it at the resolved default is what keeps the
+        claim ("EXPOSE names the port the server binds") true rather than unasked.
         """
-        assert dockerfile_expose(dockerfile) == dockerfile_env(dockerfile)["SUBSYSTEM_STORE_PORT"]
-        assert flake_int(flake, "serverPort") == flake_attrset(flake, "serverEnv")["SUBSYSTEM_STORE_PORT"]
+        port = STORE_DEFAULTS["port"]
+        assert dockerfile_expose(dockerfile) == port
+        assert flake_int(flake, "serverPort") == port
 
     def test_the_entrypoint_script_agrees(self, dockerfile, flake):
         assert dockerfile_cmd_script(dockerfile) == flake_cmd_script(flake)
@@ -738,7 +908,7 @@ class TestTheTwoBuildsAgree:
         """ALL `EXPOSE` lines apply, so checking one of them is not enough."""
         exposed = dockerfile_exposes(dockerfile)
         assert exposed, "no EXPOSE parsed"
-        port = flake_attrset(flake, "serverEnv")["SUBSYSTEM_STORE_PORT"]
+        port = STORE_DEFAULTS["port"]
         assert set(exposed) == {port}, (
             f"EXPOSE declares {sorted(set(exposed))} but the server binds {port} — "
             "an exposed port nothing listens on reads as a working route"

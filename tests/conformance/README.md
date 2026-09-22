@@ -431,13 +431,16 @@ red — with the rule removed on the Go side the server came up and printed `sto
 empty value rather than refusing, so an empty store root is not loud on either
 implementation today. Nothing in either program treats "blank" as an operator error.
 
-⚠ **AND ONE INTERACTION A READER WILL OTHERWISE MEET AS A SURPRISE.** Both pod images bake
-the DEPRECATED spelling on purpose (`README.md`, § *The environment variables are now
-`CAIRN_*`*, and `flake.nix`'s `serverEnv`). So in a container a Deployment setting
-`CAIRN_STORE_ROOT=""` does not fall through to the code default — it falls through to the
-image's `SUBSYSTEM_STORE_ROOT=/data`. That is documented behaviour rather than an accident,
-and it is the safe direction: the pod keeps the mounted store instead of a home-directory
-default.
+⚠ **AND ONE INTERACTION THAT USED TO BE HERE IS GONE, WHICH IS WORTH MORE THAN THE
+INTERACTION WAS.** This paragraph read: both pod images bake the deprecated spelling on
+purpose, so in a container `CAIRN_STORE_ROOT=""` falls through not to the code default but
+to the image's `SUBSYSTEM_STORE_ROOT=/data`. **Neither image sets any store variable any
+more** (`README.md`, § *The environment variables are now `CAIRN_*`*; `flake.nix`'s
+`serverEnv`; `server/Dockerfile`'s `ENV`), so a blank resolves to the code default in a
+container exactly as it does anywhere else — and the values are the same `/data` and `8102`
+the image used to state, pinned against both implementations by
+`tests/test_flake_image_matches_dockerfile.py`. One fewer place where the rule means
+something different depending on where the process runs.
 
 🔴 **THE CORPUS IS BLIND TO THIS, AND THAT IS MEASURED RATHER THAN ASSUMED** — see the
 last bullet of *What this suite CANNOT see*: no `requests.json` key carries an

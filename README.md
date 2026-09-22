@@ -224,18 +224,26 @@ you so. `unset SUBSYSTEM_STORE_URL` (and `SUBSYSTEM_STORE_TOKEN`) in the same ch
 export the new names too. ⚠ For a **non-default** instance the environment is not
 consulted at all, so there the file is the only thing that decides.
 
-🔴 **The pod images deliberately still bake the OLD names, and that is the precedence
-rule protecting you rather than an unfinished rename.** `server/Dockerfile` and
-`packages.server-image`/`server-image-go` set `SUBSYSTEM_STORE_ROOT`,
-`SUBSYSTEM_STORE_PORT` and `SUBSYSTEM_STORE_TOKEN_FILE`. An image `ENV` is a *default*,
-and the new name wins — so an image that baked `CAIRN_STORE_ROOT` would outrank a
-Deployment that explicitly sets `SUBSYSTEM_STORE_ROOT`, and the pod would use the
-image's store root, port or token path instead of yours. Staying on the old spelling in
-the image is what keeps **either** spelling working in a container: set the new name and
-it wins over the image's default, set the old name and it replaces that default
-directly. So the image and the manifest do not have to move in the same change — in
-either order. The images go to `CAIRN_*` when deployment manifests name that spelling,
-or at P8, whichever comes first.
+🔴 **The pod images set NO store variable, in either spelling — so in a container there
+is no image default for your `env:` to argue with.** `server/Dockerfile` and
+`packages.server-image`/`server-image-go` used to bake `SUBSYSTEM_STORE_ROOT=/data`,
+`SUBSYSTEM_STORE_PORT=8102` and
+`SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token`. Every one of those
+values was identical to the default the server already falls back to, so they configured
+nothing — while tripping the deprecation sweep at every pod start with three lines no
+manifest could clear, because the sweep reads the *whole* process environment and an
+image `ENV` is part of it. They are gone. What this means for you:
+
+- **Either spelling works in a container, and neither is shadowed.** Set `CAIRN_STORE_ROOT`
+  or `SUBSYSTEM_STORE_ROOT` in your Deployment; whichever you set is what the pod reads.
+  Set neither and it resolves `/data`, port `8102`, token
+  `/run/secrets/subsystem-store/token` — the same three values the image used to state.
+- **Migrating your Deployment to `CAIRN_*` now silences the warnings.** It did not before:
+  the image's own `ENV` kept emitting them regardless of what your manifest said.
+- ⚠ **`docker inspect` no longer documents the store root, port or token path.** That is
+  the accepted cost. The pod's startup line prints all three, and
+  `tests/test_flake_image_matches_dockerfile.py` pins them against both implementations'
+  code defaults so they cannot drift apart unnoticed.
 
 **When the old names stop being read:** when the Python client (`packages.cairn`) is
 retired, which is this arc's P8 milestone. Not a date — there is no semver here to hang

@@ -48,29 +48,47 @@
       # (every call passes `--store`), but the import would fail before
       # anything could say so.
       #
-      # 🔴 THE THREE STORE VARIABLES KEEP THEIR `SUBSYSTEM_STORE_*` SPELLING WHILE THE
-      # REST OF THE TREE IS `CAIRN_*`, AND THAT IS THE MECHANISM RATHER THAN AN OVERSIGHT.
-      # `internal/envalias` resolves NEW-NAME-WINS: an old name is read only when the new
-      # one is absent. An image `ENV` is a DEFAULT, so baking the new spelling here would
-      # make the image's own default outrank an explicit `env:` in a Deployment that still
-      # sets the old name — the container would silently ignore the operator's store root,
-      # port or token path and use the image's. That inverts the layering every other
-      # container knob obeys, and it would bite on the first repoint rather than at upgrade
-      # time, because a manifest that happens to set the SAME values is unchanged by luck.
-      # The pods read BOTH spellings, so nothing is lost by staying on the old one here.
+      # 🔴 NEITHER IMAGE SETS A STORE VARIABLE IN EITHER SPELLING, AND THAT IS A DECISION
+      # RATHER THAN AN OMISSION. `SUBSYSTEM_STORE_ROOT=/data`,
+      # `SUBSYSTEM_STORE_PORT=8102` and
+      # `SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token` were here, and are
+      # gone. Two measurements decided it:
       #
-      # 🔴 WHAT RELEASES THIS: a deployment manifest that names the `CAIRN_*` spelling (the
-      # manifests live outside this repo), or P8, when the old names stop being read at all.
-      # Until one of those, "finishing the rename" here re-opens the shadowing described
-      # above. `tests/test_flake_image_matches_dockerfile.py` and
-      # `tests/test_flake_go_image_runtime_contract.py` pin these three names.
+      #   * THEY CONFIGURED NOTHING. Each value was byte-identical to the code default the
+      #     server falls back to with the variable unset — `server/server.py`'s
+      #     `DEFAULT_STORE`/`DEFAULT_PORT`/`DEFAULT_TOKEN_FILE` and
+      #     `cmd/cairn-server/main.go`'s `defaultStore`/`defaultPort`/`defaultTokenFile`.
+      #     Measured on both by running each with `env -i`: the oracle prints
+      #     `listening on 0.0.0.0:8102 store=/data`, and the Go server names
+      #     `/run/secrets/subsystem-store/token` in its token-file refusal. So removing
+      #     them moves no resolved value. `tests/test_flake_image_matches_dockerfile.py`
+      #     pins that agreement against BOTH implementations now that the image no longer
+      #     states it.
+      #   * THEY COST THREE DEPRECATION WARNINGS AT EVERY POD START. The resolver sweeps
+      #     the WHOLE process environment, and the image's own `ENV` is part of it — so the
+      #     pod emitted three unactionable lines nobody could clear from a manifest.
+      #     Measured: `deprecations(image_env)` is 3, and it is still 3 after a Deployment
+      #     migrates its own `env:` to `CAIRN_*`, because the image half is still there.
+      #     With the image setting nothing, that same migrated Deployment measures 0.
+      #
+      # 🔴 AND IT CLOSES THE SHADOWING HAZARD AT THE ROOT RATHER THAN DEFERRING IT TO P8.
+      # The note that used to sit here explained why the image had to keep the OLD spelling:
+      # an image `ENV` is a DEFAULT present whether or not the manifest mentions it, and
+      # new-name-wins would have let a `CAIRN_STORE_ROOT` baked here outrank a Deployment
+      # that explicitly set `SUBSYSTEM_STORE_ROOT`. That reasoning was correct and is now
+      # moot: with no image default there is nothing to outrank a manifest, in either
+      # spelling, so the images could adopt `CAIRN_*` later with no window at all.
+      #
+      # ⚠ THE ACCEPTED COST, STATED SO IT IS NOT REDISCOVERED AS A BUG. `docker inspect` and
+      # this file no longer show where the store lives, which port it binds or where the
+      # token is read from; the pod's own startup line and the two code-default constants
+      # are where that now lives. The operator took that trade knowingly. What replaced the
+      # env-based assertion is a pin on the CODE defaults in both implementations — see
+      # `DEPLOY_CONTRACT` in `tests/test_flake_go_image_runtime_contract.py`.
       serverEnv = {
         HOME = "/home/nonroot";
         PYTHONDONTWRITEBYTECODE = "1";
         PYTHONUNBUFFERED = "1";
-        SUBSYSTEM_STORE_ROOT = "/data";
-        SUBSYSTEM_STORE_PORT = "8102";
-        SUBSYSTEM_STORE_TOKEN_FILE = "/run/secrets/subsystem-store/token";
       };
       serverUid = 65532;
       serverPort = 8102;
@@ -79,9 +97,17 @@
       # A SECOND LITERAL. There are now THREE builds of a pod and only ONE statement
       # of the contract: `serverEnv` above. Deriving the Go image's env from it means
       # a variable added there reaches BOTH pods and cannot be forgotten on one.
-      # A second attrset holding copies of the three `SUBSYSTEM_STORE_*` values would
-      # invert that — the drift would be silent and in the direction that matters, a
-      # pod missing the env its Deployment already sets.
+      # A second attrset holding copies would invert that — the drift would be silent
+      # and in the direction that matters, a pod missing an env its Deployment sets.
+      #
+      # 🔴 IT NOW SUBTRACTS EVERYTHING, SO `serverEnvGo` IS `{ }`, AND THE MECHANISM IS
+      # KEPT ANYWAY RATHER THAN COLLAPSED TO A LITERAL. Dropping the three store variables
+      # from `serverEnv` left it holding only CPython knobs and a `HOME` for them, all
+      # three of which are Python-only — so the Go image's `Env` is its `//` override
+      # alone (`PATH`, `SSL_CERT_FILE`). Replacing this with a hardcoded two-element env
+      # would read as a simplification and would silently stop the NEXT shared variable
+      # from reaching the Go pod, which is the exact drift the subtraction exists for. The
+      # empty result is a fact about today's `serverEnv`, not about the derivation.
       #
       # WHY EACH NAME LEAVES, READ OUT OF THE CODE RATHER THAN ASSUMED:
       #   * `PYTHONDONTWRITEBYTECODE` / `PYTHONUNBUFFERED` are CPython knobs. A Go
