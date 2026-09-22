@@ -124,10 +124,18 @@ type Config struct {
 	// CANNOT WRITE. A nil-means-disabled field would put a route in the ledger whose
 	// handler was inert — and the ledger is the thing this surface's guards read to
 	// decide what to probe, so an inert row is a row every guard walks and none
-	// measures. A read-only authority is answered by the WRITE failing with
-	// `control.ErrAuthorityReadOnly`, which the page renders as a sentence naming the
-	// real cause; the READS still work, and "who can see this" is worth serving
-	// whether or not this deployment can change it.
+	// measures.
+	//
+	// 🔴 AND THE SENTENCE THAT STOOD HERE WAS FALSE, RETRACTED RATHER THAN QUIETLY
+	// REPLACED. It read: "A read-only authority is answered by the WRITE failing with
+	// `control.ErrAuthorityReadOnly` … the READS still work, and 'who can see this' is
+	// worth serving whether or not this deployment can change it." Both halves are wrong
+	// for the only read-only authority this tree has. `control/tokenfile` confers `admin`
+	// on NOBODY, so on such a deployment no scope is administrable, every scope page
+	// answers 404, and the write never reaches the sentinel — see `refuseWrite`. ⚠ The
+	// same claim was corrected in `README.md` one commit earlier and this copy was left
+	// standing: a retraction is a TREE-WIDE SWEEP, not an edit at the site you happened
+	// to be reading.
 	Sharing Sharing
 	// Sessions is the durable session table sign-in writes to and sign-out removes
 	// from. It is the SAME store the cookie backend in `Auth` reads; two stores would
@@ -329,9 +337,10 @@ func writePlain(w http.ResponseWriter, code int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// handlePage is the ONE content handler, and there is one because a page that does
-// not consult the authority must not render an answer about it. See `routes` for the
-// route this replaced and the sentence that made it wrong.
+// handlePage is the entries page's handler. It was once the ONE content handler and is
+// no longer — `GET /share` is classed `content` too, and `contentAuthority` in
+// `routes_test.go` is where each content route declares WHICH authority it answers from.
+// See `routes` for the route this replaced and the sentence that made it wrong.
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	scopes, err := s.source.Visible(id.Auth)
 	if err != nil {

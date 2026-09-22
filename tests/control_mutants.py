@@ -1772,21 +1772,24 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheSharePageRefusesAScopeThisCallerCannotAdminister",
         why="deleting the check that looks redundant because the layer below it checks "
         "too — the ordinary way a defence-in-depth pair quietly becomes a single point.",
-        equivalent=True,
-        equivalent_reason=(
-            "THE WRITE PATH CHECKS `Allows` AT TWO SITES ON PURPOSE — here, so the handler "
-            "can choose an HTTP status, and in `ControlSharing.Share`, because the interface "
-            "is exported and a second caller that forgot would be authorised by omission. "
-            "Removing EITHER alone is observably identical: the other still answers 403 with "
-            "the same body. That is what defence in depth means, and it is why this row is "
-            "LABELLED rather than reported as a coverage gap. 🔴 THE CASE THIS ROW DOES NOT "
-            "COVER — both sites removed at once — IS COVERED BY A TEST RATHER THAN BY A "
-            "MUTANT: TestTheSharePageRefusesAScopeThisCallerCannotAdminister drives the write "
-            "path and requires a 403, so a tree with neither check fails it. Measured, with "
-            "both sites removed together, before this row was written. ⚠ If this row ever "
-            "starts being KILLED, the runner's own ⚠ is the signal that the OTHER site has "
-            "gone."
-        ),
+        # 🔴 THIS ROW WAS LABELLED `equivalent=True` AND THE LABEL WAS MEASURED FALSE —
+        # the retracted reason is kept here because an EQUIVALENT label is precisely what
+        # stops anybody writing the test that kills the mutant, so the record of one being
+        # wrong is worth more than the tidy row. It read: "Removing EITHER alone is
+        # observably identical: the other still answers 403 with the same body." The
+        # discriminator it missed is a request with NO verb field: unmutated the handler's
+        # authority check refuses at **403** before the form is validated; with this site
+        # removed the request reaches the verb validation and answers **400**, telling a
+        # caller who may not touch the scope that their input was the problem. So the two
+        # sites are NOT redundant — the handler's runs first and refuses without
+        # disclosing. `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` gained that
+        # exact case and this row is an ordinary killable one.
+        #
+        # ⚠ THE GENERAL SHAPE, WHICH IS WHY THIS IS RECORDED RATHER THAN DELETED: an
+        # `equivalent` label is a CLAIM about every observable, and it was made here by
+        # comparing the one observable the author had in mind. A label that reads as
+        # coverage while providing none is this repository's signature defect, and it
+        # appeared inside the battery built to refuse it.
     ),
 )
 

@@ -275,8 +275,8 @@ func shareScopeSection(v ShareView) g.Node {
 		h.Class("share-scope"),
 		h.H2(g.Text("Sharing "+v.Scope.Name)),
 
-		h.H3(g.Text("Who can see this")),
-		g.If(len(v.Audience) == 0, h.P(h.Class("empty"), g.Text("Nobody can read this scope."))),
+		h.H3(g.Text("Who has access to this")),
+		g.If(len(v.Audience) == 0, h.P(h.Class("empty"), g.Text("Nobody has access to this scope."))),
 		h.Ul(h.Class("audience"), g.Map(v.Audience, audienceItem)),
 
 		h.H3(g.Text("Shares you can take back")),

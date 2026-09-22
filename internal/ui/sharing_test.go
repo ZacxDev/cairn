@@ -525,6 +525,25 @@ func TestTheSharePageRefusesAScopeThisCallerCannotAdminister(t *testing.T) {
 		t.Errorf("sharing a scope rowan cannot administer answered %d, want 403: %s",
 			wrote.Code, wrote.Body.String())
 	}
+
+	// 🔴 AND THE SAME REQUEST WITH NO VERB, WHICH IS WHAT DISTINGUISHES THE HANDLER'S
+	// AUTHORITY CHECK FROM THE ONE INSIDE `ControlSharing.Share`. The two look redundant
+	// and are not: the handler's runs BEFORE the form is validated, so an unauthorised
+	// caller is refused without learning anything about their input. Delete it and this
+	// request reaches the verb validation instead — measured **400** where the authorised
+	// answer is **403** — which tells a caller who may not touch this scope that their
+	// verb field was the problem. That is a small disclosure and an exact discriminator,
+	// and it is why the mutation row for this check is a KILLABLE one rather than the
+	// EQUIVALENT it was first labelled. The label came first, the measurement second, and
+	// the measurement won.
+	noVerb := url.Values{}
+	noVerb.Set(FieldScope, string(shareOtherScope))
+	noVerb.Set(FieldSubject, string(shareWren))
+	if wrote := rowan.post(SharePath, noVerb); wrote.Code != http.StatusForbidden {
+		t.Errorf("sharing a scope rowan cannot administer, with NO verb, answered %d, want 403. A 400 here "+
+			"means the authority check ran AFTER the form validation, so an unauthorised caller learns "+
+			"which part of their request was malformed.", wrote.Code)
+	}
 }
 
 // TestTheSubjectIsValidatedAgainstCandidatesRatherThanAcceptedFromTheForm pins the one
@@ -773,7 +792,6 @@ func TestAReadOnlyDeploymentSaysSoOnThePageRatherThanAtTheClick(t *testing.T) {
 	}
 
 	rig := newShareRigWithAuthority(t, authority)
-	rig.storeRoot = root
 	caller := rig.signIn(readOnlyToken)
 
 	// The READS still work. A deployment that cannot record a share can still answer
@@ -902,29 +920,6 @@ func driveForm(t *testing.T, srv *Server, path string, form url.Values) *httptes
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	return rec
-}
-
-// mustPrincipal returns the first principal of a kind the model holds, for a test that
-// needs any valid one.
-func mustPrincipal(t *testing.T, cache *control.Cache, kind control.Kind) control.Principal {
-	t.Helper()
-	m := cache.Model()
-	ids := m.Users
-	if kind == control.KindProject {
-		for id := range m.Projects {
-			if p, known := m.PrincipalFor(kind, id); known {
-				return p
-			}
-		}
-		t.Fatal("the model holds no project")
-	}
-	for id := range ids {
-		if p, known := m.PrincipalFor(kind, id); known {
-			return p
-		}
-	}
-	t.Fatal("the model holds no user")
-	return control.Principal{}
 }
 
 // TestTheOutcomeBannerRendersOnlySentencesWrittenHere pins that the redirect's message

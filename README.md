@@ -256,10 +256,20 @@ rotation, rate limiting), is [`server/README.md`](server/README.md).
 
 ## The browser surface — `cairn-ui`
 
-There is one, and it is **phase A**: a single read-only page listing the scopes
-your credential can see and the entries in them. `GET /` is the page and is
-authenticated; `/healthz` is the one unauthenticated route. There are no write
-routes, no sign-in flow, and **nothing deploys it** — it is built and run by hand.
+There is one, and it is **three phases**: the entries page, a browser sign-in with
+server-side revocable sessions, and the share flow. **Seven routes**, which
+`cairn-ui` derives from its dispatcher rather than restating — `GET /` is the
+entries page; `GET`/`POST /sign-in` are reachable without a session, because they
+are how you get one; `POST /sign-out` revokes; and `GET /share`, `POST /share`,
+`POST /unshare` are the share flow. `/healthz` is the one unauthenticated route
+outside that set.
+
+🔴 **`cairn-ui` is a SINGLE-REPLICA surface, and the session table is what makes it
+one.** A second replica without shared storage is not a degraded version of this —
+each replica holds its own sessions, so users are signed out on a random fraction
+of requests. Multi-replica is a later arc, not a configuration. And **nothing
+deploys it**: there is no image and no manifest in this repository — it is built
+and run by hand.
 
 ```bash
 nix build github:ZacxDev/cairn#cairn-ui
@@ -273,9 +283,11 @@ exits **78** and serves nothing. Three ways to supply it, all measured:
 `-token-file <path>`; `SUBSYSTEM_STORE_TOKEN_FILE=<path>` with no flag; or
 `-token-file=` (explicitly empty) plus `SUBSYSTEM_STORE_TOKEN=<row>`, which is the
 env fallback the binary's own refusal names. Single-dash flags: this uses Go's
-stdlib `flag`, not the client's `--long` style. `-h` lists four — `-store`
+stdlib `flag`, not the client's `--long` style. `-h` lists seven — `-store`
 (`SUBSYSTEM_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
-`-token-file` (`SUBSYSTEM_STORE_TOKEN_FILE`) — and every default is env-resolved,
+`-token-file` (`SUBSYSTEM_STORE_TOKEN_FILE`), `-session-file`
+(`CAIRN_UI_SESSION_FILE`), `-session-ttl` (`CAIRN_UI_SESSION_TTL`) and
+`-control-journal` (`CAIRN_UI_CONTROL_JOURNAL`) — and every default is env-resolved,
 so what `-h` prints depends on your environment. It reads the store **from disk**
 rather than over HTTP, and authenticates against the same token file as the pod.
 

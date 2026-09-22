@@ -358,6 +358,21 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		"%d same-origin state-changing probe(s) refused 401", served, crossed)
 }
 
+// contentAuthority names, per content route, WHICH half of the authority seam its
+// rendered answer comes from.
+//
+// 🔴 IT IS HAND-WRITTEN AND THAT IS THE POINT, BECAUSE THE LEDGER CANNOT SAY IT. A row's
+// `content` class declares that the route renders an answer about authority; it does not
+// and cannot say which authority was asked. Deriving the expectation from the route would
+// mean accepting whichever one it happened to call — which is exactly the sum this table
+// replaced, measured green on the defect the test exists for. A content route missing from
+// this map FAILS, so a route added later still forces the decision on the day it is added
+// rather than being silently absorbed.
+var contentAuthority = map[string]string{
+	"GET / content":      "source",
+	"GET /share content": "sharing",
+}
+
 // countingSource records whether the authority was consulted, and is the whole
 // instrument for the test below.
 type countingSource struct {
@@ -420,21 +435,29 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 				route, rec.Code)
 			continue
 		}
-		// 🔴 EITHER HALF OF THE AUTHORITY SEAM COUNTS, AND WIDENING THE INSTRUMENT WAS
-		// PART OF ADDING THE SHARE FLOW RATHER THAN A CONCESSION TO IT. The claim this
-		// test makes has always been "a page that renders an answer about authority
-		// asked the authority"; when `Source.Visible` was the only way to ask, counting
-		// it WAS that claim. `Sharing` is the second way to ask, so a guard still
-		// counting only the first would have gone green for a share page wired to
-		// nothing — a description wider than its body, which is the failure this
-		// repository names by name.
-		if source.calls+sharing.reads == 0 {
-			t.Errorf("%s rendered a page WITHOUT consulting any authority (Source.Visible 0 times, Sharing 0 "+
-				"times). Both pages carry a sentence that only an authority answer licenses — `Page`'s \"No "+
-				"scope is visible to this credential. That is an authority answer, not an empty store.\" and "+
-				"the share index's \"No scope is administrable by this credential\" — and either is FALSE for "+
-				"a caller who can in fact see one. A route that renders such a page either asks or is not a "+
-				"route.", route)
+		// 🔴 THE EXPECTATION IS PER ROUTE, AND A SUM WAS MEASURED TO DESTROY THIS GUARD.
+		// A previous version of this test asked only whether `source.calls+sharing.reads`
+		// was non-zero. That is satisfiable by the WRONG authority: the defect this test
+		// was written for — `handlePage` rendering `Page` with a `nil` slice and never
+		// calling `Source.Visible` — was re-applied with a `s.sharing.Administrable` call
+		// in its place, and this test PASSED. A guard that any authority can satisfy is a
+		// guard about none of them.
+		want, declared := contentAuthority[route]
+		if !declared {
+			t.Errorf("%s is classed `content` and this test does not know which authority its answer comes "+
+				"from. Add it to `contentAuthority` — that is the decision, and it is deliberately not "+
+				"derivable from the ledger: the ledger says a route renders an answer about authority, not "+
+				"WHICH authority it asked.", route)
+			continue
+		}
+		got := map[string]int{"source": source.calls, "sharing": sharing.reads}[want]
+		if got == 0 {
+			t.Errorf("%s rendered a page WITHOUT consulting the %s authority it answers from (source %d, "+
+				"sharing %d). Both pages carry a sentence that only an authority answer licenses — `Page`'s "+
+				"\"No scope is visible to this credential. That is an authority answer, not an empty store.\" "+
+				"and the share index's \"No scope is administrable by this credential\" — and either is FALSE "+
+				"for a caller who can in fact see one. Consulting the OTHER authority does not license "+
+				"either sentence.", route, want, source.calls, sharing.reads)
 		}
 	}
 

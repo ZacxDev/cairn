@@ -262,8 +262,18 @@ python3 tests/control_mutants.py          # 118 mutants, over SIX packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 118 mutants, 115 killed, 3 labelled EQUIVALENT at the code,
+**Measured on this tree: 118 mutants, 116 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
+
+🔴 **THE THIRD EQUIVALENT LABEL WAS MEASURED FALSE AND IS NOW A KILL, WHICH IS WHY THE
+SPLIT MOVED WITHOUT A ROW BEING ADDED.** `ui-share-write-authority-check-removed-in-the-
+handler` was labelled EQUIVALENT on the reasoning that the write path checks `Allows` at
+two sites, so removing either leaves the other answering 403. An audit round produced the
+discriminator the label had missed: a request with NO verb field answers **403** unmutated
+and **400** with the handler's site removed, because that check runs BEFORE the form is
+validated. The row's retracted reason is kept beside it — an EQUIVALENT label is precisely
+what stops anybody writing the test that kills the mutant, so a record of one being wrong
+is worth more than a tidy row.
 
 ⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
 `bcfaa19` to `8fb98d2` and went stale at `ca632e3`, a round that added ten mutants and

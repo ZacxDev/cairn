@@ -32,8 +32,19 @@ type Sharing interface {
 	// and the two would disagree the first time either was edited.
 	Administrable(auth control.Authorization) []control.NamedScope
 
-	// Audience is every principal that can READ this scope, computed from
+	// Audience is every principal with ANY authority over this scope, computed from
 	// [control.Resolve]. Ordered, so a page rendered twice reads the same.
+	//
+	// 🔴 ANY VERB, NOT `read` — AND THAT IS THE SAFE DIRECTION RATHER THAN A LOOSE ONE.
+	// The three verbs are independent bits (`control.VerbSet`), so `write` without
+	// `read` is representable and the shipped form can produce it: the checkboxes are
+	// independent and only `read` is pre-ticked. Filtering on `read` would DROP a
+	// principal who can modify the scope from the list somebody reads to decide who has
+	// access — an under-report, which is the exact failure this whole seam exists
+	// against. Each row renders its verb set, so a `write`-only principal is visible AND
+	// distinguishable. ⚠ An earlier draft of this doc said "can READ" while the body
+	// admitted any verb: a description NARROWER than its body, which reads as a promise
+	// nothing keeps.
 	Audience(scope control.ID) ([]Viewer, error)
 
 	// Revocable is the live grant rows naming this scope, which are the only thing
@@ -167,17 +178,31 @@ func (s ControlSharing) Administrable(auth control.Authorization) []control.Name
 	return auth.NamedScopes(control.VerbAdmin)
 }
 
-// Audience answers WHO CAN SEE THIS, and it answers it by resolving every principal
-// the model holds.
+// Audience answers WHO HAS ACCESS TO THIS, and it answers it by resolving every
+// principal the model holds.
 //
-// 🔴 IT RESOLVES RATHER THAN READING GRANTS, AND THE COST IS ACCEPTED DELIBERATELY.
-// This is O(principals x grants log grants) per page, where the grant-table read
-// would be O(grants) — and the grant-table read is WRONG, because a user who is a
-// member of the project owning this scope reaches it with no grant row in existence.
+// 🔴 IT RESOLVES RATHER THAN READING GRANTS, AND THE SOURCE IS NOT THE THING TO
+// REVISIT. The grant-table read would be O(grants) and is WRONG: a user who is a member
+// of the project owning this scope reaches it with no grant row in existence.
 // `control.Resolve` is the one function permitted to decide what a principal can see
-// (`internal/control/README.md`), and "who can see this" is that same question asked
-// of every principal instead of one. Revisit the cost with a measurement in hand; do
-// not revisit the source.
+// (`internal/control/README.md`), and "who can see this" is that question asked of every
+// principal instead of one.
+//
+// 🔴 THE COST IS QUADRATIC AND IS NOW MEASURED RATHER THAN BOUNDED BY A SENTENCE. An
+// earlier version of this comment said "O(principals x grants log grants) … revisit the
+// cost with a measurement in hand" — the measurement arrived and it is worse than the
+// expression implies, because `control.Resolve` allocates and SORTS the whole grant table
+// on every call and calls `ScopesIn` once per membership. Replayed worlds, one `Audience`
+// call, users x grants: 10x10 = 59 us · 100x100 = 2.1 ms · 300x300 = 19 ms · 600x600 =
+// 85 ms. Doubling 300 -> 600 multiplies the time by 4.5, which is quadratic and not the
+// log-linear the old expression reads as. Extrapolated: ~0.9 s at 2,000x2,000. There is
+// no cache and no rate limiter on this surface, and an admin can grow the grant count
+// through the shipped form without bound.
+//
+// ⚠ ACCEPTED FOR NOW, WITH THE NUMBERS RATHER THAN A SHRUG, because the deployments that
+// exist hold single-digit principals — and stated here so the next reader inherits the
+// measurement instead of the reassurance. The fix when it is needed is a per-epoch cache
+// keyed on `Model.Epoch`, not a grant-table read.
 func (s ControlSharing) Audience(scope control.ID) ([]Viewer, error) {
 	m := s.Authority.Model()
 	if _, known := m.Scopes[scope]; !known {

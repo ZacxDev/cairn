@@ -300,6 +300,33 @@ func envInt(name string, fallback int) int {
 // the second authority this function exists to avoid.
 func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error) {
 	if journal != "" {
+		// 🔴 THE PATH IS REQUIRED TO EXIST AND TO BE NON-EMPTY, BECAUSE `OpenFileStore`
+		// CREATES IT AND AN EMPTY JOURNAL REPLAYS CLEAN. `control.OpenFileStore` does
+		// `MkdirAll` then `O_CREATE`, so a TYPO or an unmounted volume is not an error to
+		// it: the file is created, `Refresh` replays zero events successfully, and this
+		// program starts — announcing `sharing writable` — with an authority holding no
+		// users, no scopes and no credentials. Every sign-in then answers 401 and every
+		// page is empty. That is the shape every startup refusal in this file exists
+		// against: a surface that passes its health check and can serve nobody. Measured
+		// on the built binary with a deliberately misspelled path — `/healthz` 200,
+		// `GET /sign-in` 200, `POST /sign-in` 401 for any credential, and the misspelled
+		// file created at 0 bytes.
+		//
+		// ⚠ THE CHECK IS `Stat` BEFORE THE OPEN, NOT A SIZE CHECK AFTER IT, so this
+		// program never creates the file it is complaining about. An operator bootstrapping
+		// a genuinely new deployment seeds the journal with `cairn-server -create-user`;
+		// this binary is a READER of the control plane and has no business minting one.
+		if info, statErr := os.Stat(journal); statErr != nil {
+			return nil, fmt.Errorf("the control journal %s cannot be read (%w), so the authority would hold "+
+				"no users, no scopes and no credentials — this program would start, answer its health "+
+				"check and refuse every sign-in. Refusing to start; check the path and the mount, and "+
+				"seed a new control plane with `cairn-server -create-user` rather than here",
+				journal, statErr)
+		} else if info.Size() == 0 {
+			return nil, fmt.Errorf("the control journal %s is EMPTY (0 bytes), so no credential could ever "+
+				"be resolved and every sign-in would answer 401. Refusing to start; seed it with "+
+				"`cairn-server -create-user`", journal)
+		}
 		src, err := control.OpenFileStore(journal)
 		if err != nil {
 			return nil, fmt.Errorf("the control journal %s cannot be opened (%w), so the authority has "+
