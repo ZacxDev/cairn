@@ -183,6 +183,19 @@ class TestTheTwoSpellingsAgree:
             )
 
 
+def _collisions(ledger, taken: set[str]) -> list[str]:
+    """Ledger new-names that are ALREADY live variables meaning something else.
+
+    🔴 A NAMED FUNCTION SO THE NEGATIVE CONTROL BELOW RUNS THE SAME CODE THE GUARD DOES.
+    Spelled inline at the guard, the "control" could only ever re-assert facts about its
+    own fixture — which is what it did: it built a `taken` set, checked two memberships in
+    it, and never executed the loop. Breaking the real predicate to `new in set()` left it
+    green. With one implementation, the control's fixture drives the predicate under test,
+    so breaking the predicate reddens the control.
+    """
+    return sorted(new for new, _old in ledger if new in taken)
+
+
 class TestTheLedgerItself:
     def test_no_new_name_collides_with_a_live_variable(self) -> None:
         """🔴 THE `CAIRN_HOST` COLLISION, PINNED SO IT CANNOT BE RE-INTRODUCED.
@@ -240,28 +253,58 @@ class TestTheLedgerItself:
         )
 
         taken = set(HOST_LABEL_ENV) | {ROUTES_ENV} | found
-        for new, _old in env_aliases.LEDGER:
-            assert new not in taken, (
-                f"{new} is already a live variable meaning something else; a rename onto "
-                "it makes two features read one name"
-            )
+        offenders = _collisions(env_aliases.LEDGER, taken)
+        assert not offenders, (
+            f"{offenders} are already live variables meaning something else; a rename "
+            "onto one makes two features read one name"
+        )
 
-    def test_the_collision_guard_CAN_go_red(self) -> None:
+    def test_the_collision_PREDICATE_can_go_red(self) -> None:
         """🔴 THE NEGATIVE CONTROL FOR THE GUARD ABOVE, WHICH IS OTHERWISE A ZERO.
 
-        Every name in today's ledger passes, so the loop above is a claim about an empty
-        intersection — indistinguishable from a `taken` set built by a broken sweep. This
-        feeds the same predicate a pair that MUST collide and watches it reject.
+        Every name in today's ledger passes, so the guard above is a claim about an empty
+        intersection — indistinguishable from a `taken` set built by a broken sweep, or
+        from a predicate that cannot reject anything.
+
+        🔴 IT RUNS `_collisions`, THE PREDICATE ITSELF, WHICH IS THE WHOLE POINT AND IS
+        WHAT THE PREVIOUS VERSION DID NOT DO. That one built a subset of `taken` and
+        asserted two membership facts about it; the guard's loop never executed. It was a
+        fixture sanity check wearing a negative control's label.
+
+        Measured, one mutation — the collision predicate emptied to `new in set()`, so it
+        can never report a collision:
+
+            before the rewrite (inline `assert new not in set()`):  37 passed, 0 failed
+            after  the rewrite (`_collisions(…, set())`):            36 passed, 1 failed
+
+        and the one failure is THIS test, on the first `_collisions` assertion below. So
+        the mutant was previously SURVIVED by the whole module and is now killed here and
+        nowhere else — the attribution the row exists for.
+
+        The hostile ledger is the MECHANICAL PREFIX SWAP — `SUBSYSTEM_STORE_HOST` ->
+        `CAIRN_HOST` — which is the actual defect the real ledger avoids, not an invented
+        collision. The second assertion is the other direction: the same predicate over
+        the same `taken` accepts the spelling the ledger really uses, so a predicate that
+        simply reported everything would fail here.
         """
         from host_identity import HOST_LABEL_ENV
 
         taken = set(HOST_LABEL_ENV)
-        assert "CAIRN_HOST" in taken, taken
-        # The mechanical prefix swap of SUBSYSTEM_STORE_HOST, which is the defect the
-        # real ledger avoids by spelling it CAIRN_LISTEN_HOST.
-        assert "CAIRN_HOST" in taken and "CAIRN_LISTEN_HOST" not in taken, (
-            "the collision predicate would accept the mechanical swap, so the guard above "
-            "is not measuring what its docstring claims"
+        assert "CAIRN_HOST" in taken, (
+            f"the fixture is wrong before the predicate is even reached: {sorted(taken)} "
+            "does not contain CAIRN_HOST, the machine label this collision is about"
+        )
+
+        swapped = [("CAIRN_HOST", "SUBSYSTEM_STORE_HOST")]
+        assert _collisions(swapped, taken) == ["CAIRN_HOST"], (
+            "the collision predicate accepted the mechanical prefix swap, so the guard "
+            "above is not measuring what its docstring claims"
+        )
+
+        chosen = [("CAIRN_LISTEN_HOST", "SUBSYSTEM_STORE_HOST")]
+        assert _collisions(chosen, taken) == [], (
+            "the collision predicate rejects the spelling the ledger actually uses — it "
+            "is not discriminating, and the guard above would be red on a correct tree"
         )
 
     def test_the_removal_anchor_carries_no_date(self) -> None:
