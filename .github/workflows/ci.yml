@@ -334,9 +334,10 @@ jobs:
           set -o pipefail
           go test -race ./... | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
-          # SEVENTEEN packages carry tests, measured on this branch: api, authz, client,
-          # cmd/cairn-server, control, control/tokenfile, depspolicy, doctor, hostid,
-          # identity, netid, pytext, report, snapshot, store, ui, write. It was NINE at P1b; `client` and
+          # EIGHTEEN packages carry tests, measured on this branch: api, authz, client,
+          # cmd/cairn-server, control, control/tokenfile, depspolicy, doctor, envalias,
+          # hostid, identity, netid, pytext, report, snapshot, store, ui, write. It was
+          # NINE at P1b; `client` and
           # `doctor` arrived with the Go CLIENT, `control` with P3a, `control/tokenfile`
           # with the control-plane wiring, `cmd/cairn-server` with the gate on the
           # authority refresh loop — which is the only thing bounding the token-file
@@ -344,9 +345,15 @@ jobs:
           # `identity` with P4's authenticator interface and its two new backends, and
           # `depspolicy` + `ui` with the web UI's phase A — `depspolicy` is the module
           # allowlist and the import ban that replaced `vendorHash = null`, `ui` is the
-          # renderer, its escaping guard and its raw-node ban. Measured at 17 over the
-          # package set `./...` of module `github.com/ZacxDev/cairn`, and at 17 in the nix
-          # `cairn-server-go` check phase on this branch, which runs the same walk.
+          # renderer, its escaping guard and its raw-node ban. `envalias` is the eighteenth
+          # and arrived with THIS branch: the `SUBSYSTEM_STORE_*` → `CAIRN_*` ledger, the
+          # resolver, and the whitespace-blank regression arm. Measured at 18 over the
+          # package set `./...` of module `github.com/ZacxDev/cairn`, on a developer host.
+          # ⚠ THE NIX `cairn-server-go` CHECK PHASE IS NOT A SECOND MEASUREMENT HERE. The
+          # line this replaced carried one ("and at 17 in the nix check phase"); it was not
+          # re-taken when this number moved, so rather than carry it forward at a new value
+          # nobody ran, it is dropped. That walk is the same `./...`, so it should agree —
+          # but "should" is the word, and this comment does not claim a run it did not make.
           #
           # 🔴 THE FLOOR IS THE COUNT ITSELF — **NOT** ONE BELOW IT, AND THE ARITHMETIC IS
           # WRITTEN OUT HERE RATHER THAN ASSERTED AS A PROPERTY, BECAUSE THE PROPERTY WAS
@@ -357,12 +364,22 @@ jobs:
           # old condition PASSED. A floor one below the count buys exactly one free
           # deletion, which is the only deletion anybody would make. The same defect was in
           # the pair this branch inherited (fifteen packages, `-lt 14`), so it is carried
-          # forward rather than introduced here — and it is fixed here because the package
-          # this floor now has to defend is `depspolicy` itself.
+          # forward rather than introduced here.
           #
-          # So: `ok < 17` refuses. 17 passes (today's tree). 16 refuses (one package's tests
-          # gone). 18 passes (a package ADDED), which is the other half of the property and
-          # the reason this is a floor rather than an equality. It is the same shape as the
+          # 🔴 AND IT REGENERATED ON THIS VERY BRANCH, WHICH IS WHY THE "MOVE IT" LINE BELOW
+          # IS NOT ENOUGH ON ITS OWN. `internal/envalias` was added here and the floor was
+          # left at 17, so the arithmetic was back to one-below-the-count and the free
+          # deletion was `internal/envalias/envalias_test.go` — the very file this branch
+          # exists to add. Measured on this tree: unmutated `ok=18`; with that file removed
+          # `ok=17`, and `17 -lt 17` is FALSE, so the old gate reported success while the
+          # branch's own regression arm was gone. At `-lt 18` the same removal refuses with
+          # the message below. Adding a package and not moving this number does not fail
+          # late — it stops failing at all.
+          #
+          # So: `ok < 18` refuses. 18 passes (today's tree, measured). 17 refuses (one
+          # package's tests gone, measured). 19 passes (a package ADDED), which is the
+          # other half of the property and the reason this is a floor rather than an
+          # equality. It is the same shape as the
           # Python collected-test floor, and for the same reason: `go test` over a package
           # with no test files exits 0, so the exit code alone cannot tell a green suite
           # from an absent one.
@@ -371,11 +388,11 @@ jobs:
           # behind does not fail late — it stops failing at all, once per package of lag.
           #
           # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
-          # file that keeps others leaves `ok` at 17 and this gate green. That gap is
+          # file that keeps others leaves `ok` at 18 and this gate green. That gap is
           # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
           # is written down.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 17 ]; then
+          if [ "$ok" -lt 18 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi

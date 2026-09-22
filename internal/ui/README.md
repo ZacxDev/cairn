@@ -50,13 +50,24 @@ over-claim respectively:
   deleting a file, and this one can. The `ok` floor in the `go` CI job is what notices a
   package's tests disappearing, and it does not notice one function disappearing.
 
-**Both halves measured, on this tree:**
+**Both halves measured — on the tree where the module had SEVENTEEN packages carrying
+tests.** `internal/envalias` has since made it eighteen and the `go` job's floor moved to
+`-lt 18` with it, so the counts below are *the count* and *one below the count* rather
+than the literals 17 and 16. They are left at the values that were actually run: nobody
+has re-run this battery at eighteen, and re-spelling a number is not re-measuring it.
 
-| tree | `nix build .#cairn-go` | `ok` lines in its check phase | the `go` job's floor (`-lt 17`) |
+| tree | `nix build .#cairn-go` | `ok` lines in its check phase | the `go` job's floor |
 |---|---|---|---|
-| unmutated | rc 0 | 17 | GREEN at 17 |
+| unmutated | rc 0 | 17 — the count | GREEN |
 | `internal/report` given `_ "maragu.dev/gomponents"` | **rc 1**, `THE IMPORT BAN FAILED for …/cmd/cairn: … internal/report -> maragu.dev/gomponents` | — | — |
-| the same import, **and `depspolicy_test.go` deleted** | **rc 0** — the HTML library is linked into the installed CLI and nix builds it | 16 | **RED at 16** |
+| the same import, **and `depspolicy_test.go` deleted** | **rc 0** — the HTML library is linked into the installed CLI and nix builds it | 16 — one below | **RED** |
+
+🔴 **The third row goes RED only while the floor EQUALS the package count**, and that is
+the fragile part rather than an aside. `-lt <count>` refuses the deletion; `-lt <count-1>`
+buys exactly one free deletion, which is the only deletion anybody would make. The floor
+has been left one behind twice — once inherited, once on the `CAIRN_*` rename branch that
+added `internal/envalias` — so the arithmetic is written out beside the number in
+`.github/workflows/ci.yml` and this row depends on it.
 
 The third row is the whole weakness in one line: the policy is deletable where
 `vendorHash = null` was not, and the only mechanism that observes the deletion is a
