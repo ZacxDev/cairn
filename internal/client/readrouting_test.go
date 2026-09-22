@@ -3,8 +3,10 @@ package client
 import (
 	"bytes"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -255,15 +257,17 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 		// name on an `OK` row — marker `"  "` — and on NO other state, because `"🔴"`, `"⚠ "`
 		// and `"· "` are not whitespace. Measured at b28787b8: this fixture renders 2 OK rows
 		// and 5 non-OK ones, so the guard inspected 2 of 7 and a fixture change leaving no OK
-		// row would have emptied it in silence. `doctor.Markers()` is the table `Render`
-		// itself writes from.
+		// row would have emptied it in silence. `doctor.ParseRow` is the renderer's own inverse,
+		// so it strips the glyph `Render` actually wrote rather than a guess at it.
 		rows, nonOK := 0, 0
+		seen := map[string]int{}
 		for _, line := range strings.Split(stdout, "\n") {
-			name, state := doctorRow(line)
+			name, state := doctor.ParseRow(line)
 			if name == "" {
 				continue
 			}
 			rows++
+			seen[state]++
 			if state != doctor.OK {
 				nonOK++
 			}
@@ -276,41 +280,32 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 		// "No row was prefixed" and "no row was read" are the same observation from a loop that
 		// matched nothing, and the second one is what the `TrimSpace` spelling was one fixture
 		// change away from. The non-OK count is the half that pins the marker handling: revert
-		// `doctorRow` to the old spelling and this line goes red at `nonOK == 0`.
+		// `doctor.ParseRow` to the old spelling and this line goes red at `nonOK == 0`.
 		if rows < 2 || nonOK == 0 {
-			t.Fatalf("the row predicate read %d row(s), %d of them non-OK — it must inspect "+
-				"EVERY state, not whichever this fixture happens to produce:\n%s",
-				rows, nonOK, stdout)
+			t.Fatalf("the row predicate read %d row(s), %d of them non-OK, over the states this "+
+				"fixture produces (%v):\n%s", rows, nonOK, slices.Sorted(maps.Keys(seen)), stdout)
 		}
-	}
-}
 
-// doctorRow splits one line of a rendered `doctor` report into its NAME and STATE columns, and
-// returns `("", "")` for a line that is not a check row.
-//
-// 🔴 IT STRIPS THE MARKER THE RENDERER WROTE, WHICH IS THE WHOLE REASON IT EXISTS. `Render`
-// emits `"<marker> <name>  <state> <detail>"`, and the four markers are neither the same width
-// nor all whitespace — so both obvious spellings are wrong for some states and right for
-// others: a fixed rune offset (`"🔴"` is ONE rune, the other three are two) and a `TrimSpace`
-// (which reaches the name on `OK` rows only). The state is checked against `doctor.States` so a
-// footer or legend line cannot be mistaken for a row.
-func doctorRow(line string) (name, state string) {
-	for _, marker := range doctor.Markers() {
-		rest, found := strings.CutPrefix(line, marker)
-		if !found {
-			continue
-		}
-		fields := strings.Fields(rest)
-		if len(fields) < 2 {
-			continue
-		}
-		for _, known := range doctor.States {
-			if fields[1] == known {
-				return fields[0], known
-			}
+		// 🔴 THE STATES THIS FIXTURE PRODUCES ARE A DECLARED LEDGER THAT MAY NOT SHRINK, AND THE
+		// MESSAGE ABOVE USED TO CLAIM MORE THAN THE BODY DID. It said the predicate "must inspect
+		// EVERY state, not whichever this fixture happens to produce" — while asserting only a row
+		// count and a non-OK count. MEASURED: this fixture renders `OK`, `UNMEASURED` and
+		// `NOT-OBSERVABLE` and has never rendered `PROBLEM`, so "every state" was three of four,
+		// and the missing one is the state whose marker is a SINGLE RUNE. A description wider than
+		// its body reads as coverage and provides none.
+		//
+		// ⚠ THE FOURTH STATE IS COVERED BY `internal/doctor`'s
+		// `TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne` INSTEAD, because reaching
+		// `PROBLEM` here would mean breaking the store this test exists
+		// to read cleanly — the fixture cannot produce it without ceasing to be this test's
+		// fixture. Two guards, one per reachable surface, rather than one guard claiming both.
+		wantStates := []string{doctor.NotObservable, doctor.OK, doctor.Unmeasured}
+		if got := slices.Sorted(maps.Keys(seen)); !slices.Equal(got, wantStates) {
+			t.Errorf("this fixture rendered states %v, and the ledger says %v. A state that stopped "+
+				"appearing makes the loop above quieter rather than louder — decide whether the "+
+				"FIXTURE changed or the RENDERER did, and move this list deliberately.", got, wantStates)
 		}
 	}
-	return "", ""
 }
 
 func TestRecallROUTESItsScopeAndCARRIESTheCaveatsInstanceClause(t *testing.T) {
@@ -623,3 +618,7 @@ func TestAFanOutREFUSESAnExplicitSharedCache(t *testing.T) {
 		t.Fatalf("without --cache there is nothing to refuse:\n%s", stderr)
 	}
 }
+
+// ⚠ THE FOURTH STATE'S COVERAGE LIVES IN `internal/doctor`, NOT HERE. `ParseRow` and the
+// `markers` table it strips are one package's own invariant, and a test of that relationship
+// belongs beside them — see `TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne`.

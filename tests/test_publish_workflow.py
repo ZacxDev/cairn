@@ -264,20 +264,14 @@ def _dropped(block: str) -> str:
     """A shell block with comments dropped and continuations joined, LINE
     STRUCTURE PRESERVED.
 
-    Split out of `normalise_shell` because two different questions are asked of
-    the same text: "is this step's whole command text unchanged" wants one
-    collapsed line, and "does this `if` branch exit non-zero" is a question about
-    STATEMENTS, which only survive while the lines do. Sharing this half keeps
-    both answers derived from the same view of the file.
+    It exists because two different questions are asked of the same text: "is this
+    step's whole command text unchanged" wants one collapsed line, and "does this
+    `if` branch exit non-zero" is a question about STATEMENTS, which only survive
+    while the lines do. Sharing this half keeps both answers derived from the same
+    view of the file.
     """
     kept = [l for l in block.splitlines() if not l.lstrip().startswith("#")]
     return re.sub(r"\\\n\s*", " ", "\n".join(kept))
-
-
-def normalise_shell(block: str) -> str:
-    """A shell block as one NORMALISED line: comments dropped, continuations
-    joined, every run of whitespace collapsed to a single space."""
-    return " ".join(_dropped(block).split())
 
 
 def step_blocks(text: str) -> dict[str, str]:
@@ -316,7 +310,8 @@ def step_blocks(text: str) -> dict[str, str]:
 
 
 def step_bodies(text: str) -> dict[str, str]:
-    """`- name: <step>` → that step's `run: |` block, NORMALISED by `normalise_shell`.
+    """`- name: <step>` → that step's `run: |` block, collapsed to ONE LINE of
+    single-spaced tokens (`" ".join(block.split())`).
 
     🔴 WHOLE NORMALISED TEXT, BECAUSE A GUARD ON WORDS IS WALKABLE BY REWORDING.
     The keyword form of "this workflow publishes both images" — a search for
@@ -1407,10 +1402,16 @@ def test_no_control_step_can_REFUSE_and_exit_ZERO(text: str) -> None:
             "publish, and a step that can only ever succeed is not one."
         )
         assert "0" not in codes, (
-            f"{step!r} exits {codes}. A control that exits 0 on the branch it "
-            "took because it found the hazard prints a refusal and publishes "
-            "anyway — which is worse than no control, because the log says it "
-            "checked."
+            f"{step!r} contains `exit 0`, and this guard refuses EVERY one of them "
+            f"(it exits {codes}) rather than only the one on a hazard branch. The "
+            "hazard is a control that finds the problem, prints a refusal and exits "
+            "0 anyway — worse than no control, because the log says it checked. But "
+            "`exit_statements` reads a TOKEN STREAM, not a control-flow graph, so it "
+            "cannot tell which branch an `exit 0` sits on; refusing all of them is "
+            "the safe direction and a plain trailing `exit 0` after the success "
+            "message is caught too. That is not a false positive to argue with — "
+            "DELETE the trailing `exit 0` and let the step fall off the end, which "
+            "is what every other control step here does."
         )
 
     # …and the Go control's empty-ledger refusal specifically, which is the

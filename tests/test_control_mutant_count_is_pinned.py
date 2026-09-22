@@ -46,8 +46,12 @@ moved three times and is checked by nothing is a stale number that has not happe
 this file applies to it. Its sites are a ledger of exact strings (`PUBLISH_ANCHORS`) rather
 than a file-wide sweep: `ci.yml` also carries the AUTHZ battery's counts and a historical
 `at 62 mutants` timing note, so a sweep for `N mutants` over that file would have to
-distinguish three claims by phrasing — which is the walkable discriminator this file
-already declares as a limit, tripled. A ledger fails on a DELETED anchor too, which is the
+discriminate BY PHRASING among every such claim it carries — which is the walkable
+discriminator this file already declares as a limit, multiplied. ⚠ THE COUNT THAT STOOD
+HERE IS DELETED RATHER THAN CORRECTED: it read "three claims", an audit measured four,
+and today `grep -coE '[0-9]+ mutants' .github/workflows/ci.yml` answers six. A number
+that has been wrong at every reading is not worth a fourth; the instruction to count it
+yourself is the part that stays true. A ledger fails on a DELETED anchor too, which is the
 other way prose and code come apart.
 
 The precedent is `tests/test_flake_image_matches_dockerfile.py`: two files stating one
@@ -104,10 +108,15 @@ def test_the_battery_declares_a_plausible_number_of_mutants(count: int) -> None:
     """A POSITIVE CONTROL on this file's own instrument.
 
     🔴 EVERY ASSERTION BELOW SEARCHES FOR A NUMBER, AND A SEARCH FOR THE WRONG NUMBER
-    FAILS THE SAME WAY A STALE DOCUMENT DOES. If the `count` fixture ever returned 0 — an
-    import that half-executed, a renamed `MUTANTS` — the other tests would go red naming
-    the documents, and a reader would edit the documents. So the count is checked for
-    sanity before anything is checked against it.
+    FAILS THE SAME WAY A STALE DOCUMENT DOES. If the `count` fixture ever returned 0, the
+    other tests would go red naming the documents, and a reader would edit the documents. So
+    the count is checked for sanity before anything is checked against it.
+
+    ⚠ ONLY AN *EMPTIED* `MUTANTS` PRODUCES THAT 0, AND THE OBVIOUS SECOND CAUSE IS MEASURED
+    FALSE. A RENAMED `MUTANTS` raises `AttributeError` while the fixture is being set up, so
+    this control never runs — measured both ways: renaming it in `publish_workflow_mutants.py`
+    gives 7 passed / 2 errors, and in `control_mutants.py` 5 passed / 4 errors, with `count`
+    returning 0 in neither. Naming a cause the code cannot reach reads as coverage of it.
     """
     assert count > 1, (
         f"the battery declares {count} mutant(s) — this file's instrument is broken, "
@@ -209,9 +218,15 @@ PUBLISH_ANCHORS = (
 def test_the_publish_battery_declares_a_plausible_number_of_mutants(publish_count: int) -> None:
     """A POSITIVE CONTROL on this file's fourth instrument, in the shape of the first.
 
-    Every assertion below searches for a number. A `publish_count` of 0 — a renamed
-    `MUTANTS`, a half-executed import — would send a reader to edit correct prose in
-    `ci.yml` rather than to fix the import.
+    Every assertion below searches for a number. A `publish_count` of 0 would send a
+    reader to edit correct prose in `ci.yml` rather than to fix the instrument.
+
+    ⚠ AND THE ONE WAY THAT CAN HAPPEN IS NARROWER THAN THIS DOCSTRING USED TO SAY. It
+    named "a renamed `MUTANTS`" as a cause, and that is MEASURED FALSE: a rename raises
+    `AttributeError` at collection (2 errors, 7 passed), so this control never runs and
+    nobody is sent anywhere. Only an EMPTIED `MUTANTS` — the tuple still there, the rows
+    gone — yields the 0 this control exists to catch. A docstring naming a failure mode
+    the code cannot reach reads as coverage of it.
     """
     assert publish_count > 1, (
         f"the publish battery declares {publish_count} mutant(s) — this file's instrument "
