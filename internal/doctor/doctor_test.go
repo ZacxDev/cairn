@@ -491,12 +491,25 @@ func TestTheMarkerTableAndTheStateListNameTheSameSet(t *testing.T) {
 // comparison here would fire FIRST, with the wrong diagnosis, and make that arm unreachable.
 func TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne(t *testing.T) {
 	for _, state := range States {
-		marker, known := markers[state]
-		if !known {
+		// The marker itself is no longer read here — the row comes from `Render` — but the
+		// membership check stays: it is the arm that reports a state `markers` has no entry
+		// for, and it is REACHABLE only because no length check runs ahead of it.
+		if _, known := markers[state]; !known {
 			t.Errorf("no marker for state %q", state)
 			continue
 		}
-		line := marker + "alpha-notes/pod-reachable  " + state + " some detail"
+		// 🔴 THE LINE COMES FROM `Render`, NOT FROM A SPELLING OF ITS FORMAT WRITTEN HERE. A
+		// hand-built row asserts that `ParseRow` inverts THIS TEST's idea of the layout, and
+		// the two had already drifted: `Render` pads the state column to 14 and the hand-built
+		// version did not, so the round trip was never actually exercised for any state.
+		//
+		// ⚠ WHAT THAT BUYS, MEASURED IN BOTH DIRECTIONS RATHER THAN ASSERTED. Caught: the name
+		// and state columns SWAPPED, and the marker column DROPPED — each reds on all four
+		// states. NOT caught, and correctly so: a whitespace-only change, because `ParseRow`
+		// reads `strings.Fields` and is deliberately tolerant of run length. So this is a guard
+		// on column ORDER and PRESENCE, not on spacing, and claiming it covers "layout" would
+		// be wider than what was run.
+		line := renderedRowFor(t, "alpha-notes/pod-reachable", state, "some detail")
 		name, got := ParseRow(line)
 		if name != "alpha-notes/pod-reachable" || got != state {
 			t.Errorf("ParseRow(%q) = (%q, %q), want (%q, %q). A marker this cannot strip makes the "+
@@ -504,4 +517,22 @@ func TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne(t *testing.T) {
 				line, name, got, "alpha-notes/pod-reachable", state)
 		}
 	}
+}
+
+// renderedRowFor returns the one line of a real `Render` output that carries the named check.
+//
+// ⚠ IT FINDS THE ROW BY NAME, NOT BY CALLING `ParseRow` — using the function under test to
+// locate its own input would make the round trip below assert nothing. The name is unique in a
+// one-check report, and the search is layout-independent, which is the property that lets the
+// column widths move without this helper moving with them.
+func renderedRowFor(t *testing.T, name, state, detail string) string {
+	t.Helper()
+	report := Render([]Check{{Name: name, State: state, Detail: detail}})
+	for _, line := range strings.Split(report, "\n") {
+		if strings.Contains(line, name) {
+			return line
+		}
+	}
+	t.Fatalf("Render emitted no line carrying %q:\n%s", name, report)
+	return ""
 }

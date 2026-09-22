@@ -108,10 +108,15 @@ def test_the_battery_declares_a_plausible_number_of_mutants(count: int) -> None:
     """A POSITIVE CONTROL on this file's own instrument.
 
     🔴 EVERY ASSERTION BELOW SEARCHES FOR A NUMBER, AND A SEARCH FOR THE WRONG NUMBER
-    FAILS THE SAME WAY A STALE DOCUMENT DOES. If the `count` fixture ever returned 0 — an
-    import that half-executed, a renamed `MUTANTS` — the other tests would go red naming
-    the documents, and a reader would edit the documents. So the count is checked for
-    sanity before anything is checked against it.
+    FAILS THE SAME WAY A STALE DOCUMENT DOES. If the `count` fixture ever returned 0, the
+    other tests would go red naming the documents, and a reader would edit the documents. So
+    the count is checked for sanity before anything is checked against it.
+
+    ⚠ ONLY AN *EMPTIED* `MUTANTS` PRODUCES THAT 0, AND THE OBVIOUS SECOND CAUSE IS MEASURED
+    FALSE. A RENAMED `MUTANTS` raises `AttributeError` while the fixture is being set up, so
+    this control never runs — measured both ways: renaming it in `publish_workflow_mutants.py`
+    gives 7 passed / 2 errors, and in `control_mutants.py` 5 passed / 4 errors, with `count`
+    returning 0 in neither. Naming a cause the code cannot reach reads as coverage of it.
     """
     assert count > 1, (
         f"the battery declares {count} mutant(s) — this file's instrument is broken, "

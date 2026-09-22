@@ -294,8 +294,9 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 		// and the missing one is the state whose marker is a SINGLE RUNE. A description wider than
 		// its body reads as coverage and provides none.
 		//
-		// ⚠ THE FOURTH STATE IS COVERED BY `TestDoctorRowReadsEveryMarkerIncludingTheSingleRuneOne`
-		// INSTEAD, because reaching `PROBLEM` here would mean breaking the store this test exists
+		// ⚠ THE FOURTH STATE IS COVERED BY `internal/doctor`'s
+		// `TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne` INSTEAD, because reaching
+		// `PROBLEM` here would mean breaking the store this test exists
 		// to read cleanly — the fixture cannot produce it without ceasing to be this test's
 		// fixture. Two guards, one per reachable surface, rather than one guard claiming both.
 		wantStates := []string{doctor.NotObservable, doctor.OK, doctor.Unmeasured}

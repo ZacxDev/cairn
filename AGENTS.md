@@ -87,7 +87,7 @@ These are the house style, and they are why the guards here are worth trusting:
 
 | path | what |
 |---|---|
-| `cairn` | the PYTHON client CLI and the ORACLE — sync, recall, search, validate, ls-entries, doctor, append, put, create |
+| `cairn` | the PYTHON client CLI and the ORACLE — every verb `cairn -verbs` prints; do not hand-list them here, this row omitted `routes` for the whole of P-A |
 | `lib/` | the Python reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
