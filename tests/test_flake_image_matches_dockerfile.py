@@ -577,12 +577,24 @@ class TestTheTwoBuildsAgree:
         has something it can fail on.
 
         🔴 REGRESSION COVERAGE IN BOTH DIRECTIONS, AND BOTH ARE REAL POINTS IN THIS
-        REPOSITORY'S HISTORY. RED at `0c23e0f`, where both files baked `CAIRN_STORE_ROOT`,
-        `CAIRN_PORT` and `CAIRN_TOKEN_FILE` while a live Deployment set the old spellings —
-        unchanged only by luck, because it set the same values. RED at `78679b9`, where
-        both files baked the three `SUBSYSTEM_STORE_*` names. Green here. Watched red at
-        both spellings by planting each in turn; each died with this assertion's own
-        message naming the offending file.
+        REPOSITORY'S HISTORY — replayed by copying THIS file over a `git archive` of each
+        commit and running it:
+
+            0c23e0f   RED, `['CAIRN_PORT', 'CAIRN_STORE_ROOT', 'CAIRN_TOKEN_FILE']`
+                      — both files baked the CURRENT spelling while a live Deployment
+                      set the old one; unchanged only by luck, because it set the same
+                      values
+            e878f4c   RED, `['SUBSYSTEM_STORE_PORT', 'SUBSYSTEM_STORE_ROOT',
+                      'SUBSYSTEM_STORE_TOKEN_FILE']` — both files baked the DEPRECATED
+                      spelling
+            HEAD      green
+
+        Each died with this assertion's own message naming the offending file.
+
+        ⚠ THE SECOND ROW USED TO CITE `78679b9`, WHICH DOES NOT EXIST — a local WIP commit
+        discarded by a soft reset, reachable from no ref in any clone. `e878f4c` is the
+        commit that actually carries that state, and the row above is a run against it
+        rather than a re-spelling of the old sentence.
 
         ⚠ IT READS BOTH BUILDS, AND THE GO IMAGE IS COVERED BY DERIVATION. `serverEnv` is
         the single nix-side statement of the contract and `mkGoServerImage` subtracts from

@@ -155,10 +155,24 @@ func TestABlankOldNameIsNotADeprecation(t *testing.T) {
 // TestABlankOldNameResolvesAsABSENT is the resolution half of the pair above, and it is
 // REGRESSION coverage rather than an invariant guard.
 //
-// Matrix: RED at `78679b9` (this branch's own pre-fix state) for the `whitespace` and
-// `tab` rows — `Value` returned `"  "` and `"\t"` — green here. The `empty` row was
-// already green, and is kept as the control that says the fix did not simply invert the
-// predicate.
+// 🔴 HOW THE BASELINE WAS OBTAINED, BECAUSE THE SHA THIS COMMENT USED TO NAME DOES NOT
+// EXIST. It said "RED at `78679b9` (this branch's own pre-fix state)". That was a local WIP
+// commit, discarded by a later soft reset and unreachable in every clone —
+// `git for-each-ref --contains 78679b9` returns nothing — so the matrix could not be
+// checked by anybody.
+//
+// The pre-change resolver is `envalias.go` at `e878f4c`, the commit before blankness became
+// one predicate. What was run: `git archive e878f4c` into a scratch tree, THIS file copied
+// over it, `go test ./internal/envalias/ -run TestABlankOldName`.
+//
+//	e878f4c  FAIL — `whitespace` and `tab` both ways: `Value` returned "  " / "\t",
+//	         and `OSValueOr` returned them instead of the fallback
+//	HEAD     ok
+//
+// The `empty` row is green at both ends, and is kept as the control that says the fix did
+// not simply invert the predicate. ⚠ It is TODAY'S test against the OLD resolver: the file
+// at `e878f4c` has no whitespace rows, so "the package was red there" would be a different
+// and weaker claim.
 //
 // 🔴 THE FIXTURE VALUES ARE PAIRWISE DISTINCT AND NONE OF THEM IS THE FALLBACK. A mutant
 // that hardcoded `""` for every old-name read would satisfy this and die in

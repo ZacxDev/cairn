@@ -357,10 +357,26 @@ class TestTheResolver:
     def test_a_blank_old_name_resolves_as_ABSENT(self, value) -> None:
         """🔴 REGRESSION COVERAGE, AND THE OTHER HALF OF THE PAIR ABOVE.
 
-        Matrix: RED at `78679b9` (this branch's own pre-fix state) for `"  "` and `"\\t"` —
-        `value` returned the whitespace and `value_or` therefore never reached its fallback,
-        so a pod would have taken a whitespace store root — green here. The `""` row was
-        already green and stays as the control that the fix did not invert the predicate.
+        🔴 HOW THE BASELINE WAS OBTAINED, BECAUSE THE SHA THIS DOCSTRING USED TO NAME DOES
+        NOT EXIST. It said "RED at `78679b9` (this branch's own pre-fix state)". That was a
+        local WIP commit, discarded by a later soft reset and unreachable in every clone —
+        `git for-each-ref --contains 78679b9` returns nothing — so the matrix could not be
+        checked by anybody.
+
+        The pre-change resolver is `lib/env_aliases.py` at **`e878f4c`**, the commit before
+        blankness became one predicate. What was run: `git archive e878f4c` into a scratch
+        tree, THIS file copied over it, `pytest tests/test_env_aliases.py`.
+
+            e878f4c   2 failed, 35 passed — this test at `[  ]` and `[\\t]`,
+                      `env_aliases.value` returning the whitespace so `value_or`
+                      never reached its fallback and a pod would have taken a
+                      whitespace store root
+            HEAD      37 passed
+
+        The `""` row is green at both ends and stays as the control that the fix did not
+        invert the predicate. ⚠ It is TODAY'S test against the OLD resolver: the file at
+        `e878f4c` has no whitespace rows, so "the suite was red there" would be a different
+        and weaker claim than the one this matrix makes.
 
         ⚠ IT IS IDENTICAL IN `internal/envalias`, WHICH IS WHY `tests/parity/` COULD NOT
         SEE IT: two clients failing the same way compare equal. Only reading the resolver

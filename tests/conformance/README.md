@@ -419,9 +419,32 @@ them equal and could not see it. It is closed by one named predicate per languag
 The alternative — warn on any non-empty old value, whitespace included — was rejected
 because it keeps a resolved value no operator can have meant. **The cost is the same one
 the section below already records, one step wider:** a manifest that sets a store root to
-whitespace now relocates writes quietly rather than serving a nonsense path. Watched RED
-at `78679b9` on the `"  "` and `"\t"` rows in both languages, with the `""` row green
-throughout as the control that the predicate was not simply inverted.
+whitespace now relocates writes quietly rather than serving a nonsense path.
+
+🔴 **WATCHED RED, AND HERE IS THE METHOD RATHER THAN A BARE SHA, BECAUSE THE SHA THIS
+SENTENCE USED TO NAME DOES NOT EXIST.** It read "watched RED at `78679b9`", which was a
+local WIP commit made to preserve work across a session limit and discarded by a later
+soft reset — `git for-each-ref --contains 78679b9` returns nothing, so it is unreachable
+in this clone and will never exist in any other. Every matrix anchored to it was
+uncheckable.
+
+The base is **`e878f4c`** — *"Declare the present-but-empty rule as an AUTHORISED P1
+exception, and pin it on both sides"* — the last commit before the one predicate landed.
+The pre-change resolvers are its `lib/env_aliases.py` and `internal/envalias/envalias.go`.
+Re-measured rather than re-spelled, by replaying **today's** test files against that tree
+(`git archive e878f4c` into a scratch dir, copy in `tests/test_env_aliases.py` and
+`internal/envalias/envalias_test.go`, run both):
+
+| | at `e878f4c` | at HEAD |
+|---|---|---|
+| `tests/test_env_aliases.py` | **2 failed**, 35 passed — `test_a_blank_old_name_resolves_as_ABSENT[  ]` and `[\t]` | 37 passed |
+| `go test ./internal/envalias/ -run TestABlankOldName` | **FAIL** — `Value` returned `"  "` / `"\t"`, and `OSValueOr` returned them instead of the fallback | ok |
+
+The `""` row is green at both ends throughout, as the control that the predicate was not
+simply inverted. ⚠ What is being replayed is the CURRENT test against the OLD resolver;
+the test files at `e878f4c` do not carry the whitespace rows, so "run the suite at
+`e878f4c`" would be a different and weaker claim. Same shape as
+`internal/client/envalias_test.go`'s baseline note, and for the same reason.
 
 🔴 **THE COST, WHICH IS REAL AND WAS TAKEN DELIBERATELY.** A blank store root now resolves
 to a default instead of failing, so a manifest bug that BLANKS it relocates writes quietly
