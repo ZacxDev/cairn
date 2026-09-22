@@ -379,12 +379,10 @@ jobs:
           # renderer, its escaping guard and its raw-node ban. `envalias` is the eighteenth
           # and arrived with THIS branch: the `SUBSYSTEM_STORE_*` → `CAIRN_*` ledger, the
           # resolver, and the whitespace-blank regression arm. Measured at 18 over the
-          # package set `./...` of module `github.com/ZacxDev/cairn`, on a developer host.
-          # ⚠ THE NIX `cairn-server-go` CHECK PHASE IS NOT A SECOND MEASUREMENT HERE. The
-          # line this replaced carried one ("and at 17 in the nix check phase"); it was not
-          # re-taken when this number moved, so rather than carry it forward at a new value
-          # nobody ran, it is dropped. That walk is the same `./...`, so it should agree —
-          # but "should" is the word, and this comment does not claim a run it did not make.
+          # package set `./...` of module `github.com/ZacxDev/cairn` on a developer host,
+          # and re-taken rather than carried forward in the nix check phases, which run the
+          # same walk: `nix log` for BOTH `cairn-server` and `cairn-go` reports 18 `ok`
+          # lines, `internal/envalias` among them.
           #
           # 🔴 THE FLOOR IS THE COUNT ITSELF — **NOT** ONE BELOW IT, AND THE ARITHMETIC IS
           # WRITTEN OUT HERE RATHER THAN ASSERTED AS A PROPERTY, BECAUSE THE PROPERTY WAS
