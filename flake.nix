@@ -1016,7 +1016,7 @@
         #
         # 🔴 AND IT IS A PAIR, NOT A ZERO. A check that asserted only "the command exited 0"
         # would pass for a binary that printed nothing. The exact set is pinned by hand here
-        # — the same nine verbs `tests/test_capability_ledger.py` discovers from the Python
+        # — the same TEN verbs `tests/test_capability_ledger.py` discovers from the Python
         # parser, which is what makes the two implementations comparable at all.
         #
         # ⚠ WHAT THIS SANDBOX CANNOT HAVE: no store, no token, no network and no HOME with a

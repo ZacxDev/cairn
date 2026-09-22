@@ -214,10 +214,20 @@ def test_the_go_client_declares_EXACTLY_the_pythons_verb_set(go_client):
         f"{len(disagreeing)} verb(s) disagree about whether they WRITE: {disagreeing}. That flag "
         f"decides whether an unreachable store exits 7 or 3."
     )
-    # The positive control on the discovery: nine verbs were measured when this was written, and a
-    # truncated read would otherwise pass the equality above by agreeing with an equally truncated
-    # other side.
-    assert len(go_verbs) >= 9, f"discovered only {sorted(go_verbs)}"
+    # The positive control on the discovery: a truncated read would otherwise pass the equality
+    # above by agreeing with an equally truncated other side.
+    #
+    # 🔴 THE FLOOR IS THE COUNT ITSELF, NOT ONE BELOW IT — AND IT WAS ONE BELOW IT. TEN verbs are
+    # measured on this tree (`cairn -verbs` prints ten rows and argparse lists ten), and this read
+    # `>= 9`: deleting a verb gives 9, and 9 is not `< 9`, so the assertion PASSED. A floor one
+    # below the count buys exactly one free deletion, which is the only deletion anybody would
+    # make. Same defect, same shape, as the `go` job's `ok` floor — which was `-lt 16` against
+    # seventeen packages for the same reason.
+    #
+    # ⚠ MOVE THIS NUMBER WITH THE VERB SET, IN THE SAME COMMIT, and move the four prose sites with
+    # it: `flake.nix`, `tests/test_parity_harness.py` (twice) and `AGENTS.md` all stated NINE while
+    # the answer was ten. Nothing reddened, because they are comments and this was off by one.
+    assert len(go_verbs) >= 10, f"discovered only {sorted(go_verbs)}"
 
 
 def test_the_go_clients_exit_codes_keep_the_shared_set_at_0_and_9(go_client):

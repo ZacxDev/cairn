@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -258,12 +259,14 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 		// row would have emptied it in silence. `doctor.Markers()` is the table `Render`
 		// itself writes from.
 		rows, nonOK := 0, 0
+		seen := map[string]int{}
 		for _, line := range strings.Split(stdout, "\n") {
 			name, state := doctorRow(line)
 			if name == "" {
 				continue
 			}
 			rows++
+			seen[state]++
 			if state != doctor.OK {
 				nonOK++
 			}
@@ -278,9 +281,27 @@ func TestAOneInstanceHostIsUNLABELLEDOnEveryReadVerb(t *testing.T) {
 		// change away from. The non-OK count is the half that pins the marker handling: revert
 		// `doctorRow` to the old spelling and this line goes red at `nonOK == 0`.
 		if rows < 2 || nonOK == 0 {
-			t.Fatalf("the row predicate read %d row(s), %d of them non-OK — it must inspect "+
-				"EVERY state, not whichever this fixture happens to produce:\n%s",
-				rows, nonOK, stdout)
+			t.Fatalf("the row predicate read %d row(s), %d of them non-OK, over the states this "+
+				"fixture produces (%v):\n%s", rows, nonOK, sortedKeys(seen), stdout)
+		}
+
+		// 🔴 THE STATES THIS FIXTURE PRODUCES ARE A DECLARED LEDGER THAT MAY NOT SHRINK, AND THE
+		// MESSAGE ABOVE USED TO CLAIM MORE THAN THE BODY DID. It said the predicate "must inspect
+		// EVERY state, not whichever this fixture happens to produce" — while asserting only a row
+		// count and a non-OK count. MEASURED: this fixture renders `OK`, `UNMEASURED` and
+		// `NOT-OBSERVABLE` and has never rendered `PROBLEM`, so "every state" was three of four,
+		// and the missing one is the state whose marker is a SINGLE RUNE. A description wider than
+		// its body reads as coverage and provides none.
+		//
+		// ⚠ THE FOURTH STATE IS COVERED BY `TestDoctorRowReadsEveryMarkerIncludingTheSingleRuneOne`
+		// INSTEAD, because reaching `PROBLEM` here would mean breaking the store this test exists
+		// to read cleanly — the fixture cannot produce it without ceasing to be this test's
+		// fixture. Two guards, one per reachable surface, rather than one guard claiming both.
+		wantStates := []string{doctor.NotObservable, doctor.OK, doctor.Unmeasured}
+		if got := sortedKeys(seen); !slices.Equal(got, wantStates) {
+			t.Errorf("this fixture rendered states %v, and the ledger says %v. A state that stopped "+
+				"appearing makes the loop above quieter rather than louder — decide whether the "+
+				"FIXTURE changed or the RENDERER did, and move this list deliberately.", got, wantStates)
 		}
 	}
 }
@@ -621,5 +642,51 @@ func TestAFanOutREFUSESAnExplicitSharedCache(t *testing.T) {
 	code, _, stderr := capture(t, LsEntries, readOpts())
 	if code == ExitUsage {
 		t.Fatalf("without --cache there is nothing to refuse:\n%s", stderr)
+	}
+}
+
+// sortedKeys is the deterministic spelling of a map's key set, so a ledger comparison
+// cannot flap on Go's randomised range order.
+func sortedKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestDoctorRowReadsEveryMarkerIncludingTheSingleRuneOne covers the state the routing
+// fixture above structurally cannot produce.
+//
+// 🔴 `PROBLEM`'s MARKER IS `🔴`, WHICH IS ONE RUNE WHERE THE OTHER THREE ARE TWO — and that
+// asymmetry is the entire reason `doctorRow` strips the renderer's own marker table instead
+// of a fixed offset. The integration fixture renders `OK`, `UNMEASURED` and `NOT-OBSERVABLE`
+// and never `PROBLEM`, so until this existed the one state that breaks the naive spelling was
+// the one nothing exercised.
+//
+// ⚠ IT DRIVES `doctor.Markers()` RATHER THAN A LIST WRITTEN HERE, so a state added to the
+// renderer is covered on the day it is added rather than on the day somebody remembers this
+// file.
+func TestDoctorRowReadsEveryMarkerIncludingTheSingleRuneOne(t *testing.T) {
+	markers := doctor.Markers()
+	if len(markers) != len(doctor.States) {
+		t.Fatalf("doctor.Markers() has %d entries and doctor.States has %d — a state with no marker "+
+			"renders a row `doctorRow` cannot read, and this test would silently skip it",
+			len(markers), len(doctor.States))
+	}
+	for _, state := range doctor.States {
+		marker, known := markers[state]
+		if !known {
+			t.Errorf("no marker for state %q", state)
+			continue
+		}
+		line := marker + "alpha-notes/pod-reachable  " + state + " some detail"
+		name, got := doctorRow(line)
+		if name != "alpha-notes/pod-reachable" || got != state {
+			t.Errorf("doctorRow(%q) = (%q, %q), want (%q, %q). A marker this cannot strip makes the "+
+				"row invisible to every guard that walks a rendered report.",
+				line, name, got, "alpha-notes/pod-reachable", state)
+		}
 	}
 }

@@ -3,6 +3,8 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -29,8 +31,8 @@ func world(t *testing.T) (cache, mirror string) {
 		}
 	}
 	for path, mode := range map[string]os.FileMode{
-		filepath.Join(cache, "alpha-notes", "widget-cfg.md"):        0o644,
-		filepath.Join(mirror, "alpha-notes", "frozen.md"):           0o444,
+		filepath.Join(cache, "alpha-notes", "widget-cfg.md"):         0o644,
+		filepath.Join(mirror, "alpha-notes", "frozen.md"):            0o444,
 		filepath.Join(mirror, "mirror-only-scope", "left-behind.md"): 0o444,
 	} {
 		if err := os.WriteFile(path, []byte("x\n"), mode); err != nil {
@@ -429,5 +431,44 @@ func TestAMissingTokenIsAProblemAboutTheCONFIGAndNotAnOutage(t *testing.T) {
 	got = byName(Collect(baseInputs(cache, "")))["token"]
 	if got.State != NotObservable || !strings.Contains(got.Detail, "the remedy") {
 		t.Fatalf("token: %#v", got)
+	}
+}
+
+// TestTheMarkerTableAndTheStateListNameTheSameSet is this package's own invariant, and it
+// is here rather than in the consumer that noticed it.
+//
+// 🔴 THE TWO ARE A RELATIONSHIP, AND A GUARD ON EITHER SIDE ALONE IS BLIND TO THE DIRECTION
+// THAT MATTERS. `Render` writes a row's glyph from `markers`; every consumer that reads a
+// rendered report back — `internal/client`'s `doctorRow` is the one today — strips a glyph
+// from `Markers()` and then validates the state against `States`. So a state added to
+// `markers` and NOT to `States` renders rows that the reader strips correctly and then
+// DISCARDS, and a state added to `States` and not to `markers` renders with no glyph at all.
+// Both are silent: the row simply stops being counted, and a guard that walks the report
+// gets quieter rather than louder.
+//
+// ⚠ IT ASSERTS THE SET, NOT THE COUNT. Two tables of equal size naming different states
+// compare equal on `len` and are exactly as broken.
+func TestTheMarkerTableAndTheStateListNameTheSameSet(t *testing.T) {
+	marked := make([]string, 0, len(markers))
+	for state := range markers {
+		marked = append(marked, state)
+	}
+	sort.Strings(marked)
+
+	declared := append([]string(nil), States...)
+	sort.Strings(declared)
+
+	if !slices.Equal(marked, declared) {
+		t.Errorf("the marker table names %v and `States` names %v.\n"+
+			"A state in ONE of them renders rows that the other side cannot account for, and the "+
+			"failure is silent at every call site: `Render` emits a row with no glyph, or a reader "+
+			"strips the glyph and then discards the row for an unknown state. Move both together.",
+			marked, declared)
+	}
+
+	// POSITIVE CONTROL: neither side is empty, so the comparison above is not two empty sets
+	// agreeing with each other.
+	if len(marked) == 0 {
+		t.Fatal("the marker table is EMPTY, so the equality above holds vacuously")
 	}
 }

@@ -29,7 +29,7 @@ sys.path.insert(0, str(HARNESS_DIR))
 import harness  # noqa: E402
 import world as parity_world  # noqa: E402
 
-#: The nine verbs. 🔴 READ FROM THE CLIENT'S OWN PARSER, NOT LISTED HERE. A hand list is blind to
+#: The ten verbs. 🔴 READ FROM THE CLIENT'S OWN PARSER, NOT LISTED HERE. A hand list is blind to
 #: a verb added after it was written, which is the whole defect the capability ledger exists to
 #: close — and a parity gate that quietly stopped covering a verb would be the same failure one
 #: layer down.
@@ -333,7 +333,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
         f"the parity gate declares only {declared} cases, and the floor is {floor} (101 were "
-        f"measured on this tree, across nine verbs and every documented exit code). Two guards in "
+        f"measured on this tree, across ten verbs and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."
     )

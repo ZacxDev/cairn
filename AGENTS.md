@@ -240,7 +240,7 @@ renderer" is a P8 property, not a P2 one, AND THE DEFAULT FLIP DID NOT MAKE IT O
 renderer still ships as `packages.cairn` until the oracle is deleted, so until then this gate IS
 the comparison rather than the absence of one.
 
-**Measured on this tree: 101 cases, 102 PASS, 0 failures, 0 dead normalizations** — all nine
+**Measured on this tree: 101 cases, 102 PASS, 0 failures, 0 dead normalizations** — all ten
 verbs, every output-shaping flag, every documented exit code, `--help` in four spellings, the
 argument-shape rules, a TWO-INSTANCE `routes --check`, a routed `put` and four routed READS
 against a second pod, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 101 BYTE DIFFS: 70 rows
