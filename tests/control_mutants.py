@@ -103,6 +103,24 @@ PKGS = (
     # and this battery never ran the package at all. A mitigation with no gate is a
     # mitigation nobody can be told has stopped working.
     "./cmd/cairn-server/",
+    # 🔴 THE BROWSER SURFACE, BECAUSE IT IS THE SECOND CONSUMER OF THE SAME AUTHORITY —
+    # and because the alternative was measured and refused. The share flow arrived with a
+    # battery of its OWN (`tests/ui_share_mutants.py`, 234 lines) that NO gate ran:
+    # `grep -l ui_share_mutants` over the whole tree returned the file and one README
+    # line, while that README's table presented "8 mutants, 8 killed" as a standing
+    # property rather than one afternoon's reading. It also mutated the LIVE working tree
+    # where this harness mutates a `copytree`, so an interrupt left a mutated
+    # `internal/ui/` in the checkout. Folding its rows in here buys the CI step, the
+    # isolation and the count pin at once — one battery, one place.
+    "./internal/ui/",
+    # 🔴 THE BROWSER SURFACE'S PROGRAM, BECAUSE ITS STARTUP REFUSALS ARE THE ONLY THING
+    # BETWEEN A MISCONFIGURED DEPLOYMENT AND A SURFACE THAT PASSES ITS HEALTH CHECK AND CAN
+    # SERVE NOBODY — and because the evidence that they work was, for four rounds, a
+    # hand-run sweep recorded in a commit message. That is the same ungated-instrument
+    # shape the `./internal/ui/` entry above exists because of, one level along: the guard
+    # had THREE spellings, the first two each walked around by a state nobody had tested,
+    # and the sweep that found the third's uncovered clause was not gated either.
+    "./cmd/cairn-ui/",
 )
 
 
@@ -1644,6 +1662,166 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the mode unreachable while every in-process test of it stays green, because "
         "those call `runCreateUser` directly. The same shape as the refresh-loop row: a "
         "capability that exists in a function nobody routes to.",
+    ),
+
+    # ---- the browser share flow: who can see a scope, and who may change that -------
+    #
+    # 🔴 THESE EIGHT CAME FROM A SECOND BATTERY NOTHING RAN. See the `./internal/ui/`
+    # entry in PKGS for what that cost and why they live here now.
+    Mutant(
+        name="ui-audience-reads-grant-rows-instead-of-Resolve",
+        path="internal/ui/sharing.go",
+        old="\tfor _, p := range principals(m) {\n"
+        "\t\tauth := control.Resolve(m, p)\n"
+        "\t\tverbs := auth.VerbsOn(scope)",
+        # The defect stated as ONE edit: narrow the audience to the subjects of a live
+        # grant on this scope. That is exactly what a grant-table listing computes, and
+        # it is what the operator's instruction for this feature forbade. Expressed
+        # in-place rather than by appending a helper, because a mutant that has to add a
+        # function is a mutant that can fail to COMPILE — which dies at the build and
+        # proves nothing about any guard.
+        new="\tsubjects := map[control.ID]struct{}{}\n"
+        "\tfor _, g := range m.Grants {\n"
+        "\t\tif g.Live() && g.ObjectKind == control.ObjectScope && g.ObjectID == scope {\n"
+        "\t\t\tsubjects[g.SubjectID] = struct{}{}\n"
+        "\t\t}\n"
+        "\t}\n"
+        "\tfor _, p := range principals(m) {\n"
+        "\t\tif _, granted := subjects[p.ID]; !granted {\n"
+        "\t\t\tcontinue\n"
+        "\t\t}\n"
+        "\t\tauth := control.Resolve(m, p)\n"
+        "\t\tverbs := auth.VerbsOn(scope)",
+        killer="TestTheAudienceIsComputedFromResolveNotFromGrantRows",
+        why="the obvious implementation of 'who has access to this' — read the sharing table. "
+        "It under-reports every project member, silently, and in the direction that tells "
+        "somebody their notes are more private than they are.",
+    ),
+    Mutant(
+        name="ui-replica-notice-drops-a-clause",
+        path="internal/ui/render.go",
+        old='\t"revoking a share stops future syncs: it does not recall entries already copied onto " +\n'
+        '\t"somebody\'s machine."',
+        new='\t"revoking a share stops future syncs."',
+        killer="TestTheReplicaHonestyNoticeIsPinnedWhole",
+        why="a reword that tightens the prose and drops the clause making the product "
+        "sound weakest — the exact edit a whole-string pin exists to refuse.",
+    ),
+    Mutant(
+        name="ui-verbs-read-single-value",
+        path="internal/ui/sharehandlers.go",
+        old="\tfor _, raw := range r.PostForm[FieldVerb] {\n"
+        "\t\tverbs = append(verbs, control.Verb(raw))\n"
+        "\t}",
+        new='\tif raw := r.PostFormValue(FieldVerb); raw != "" {\n'
+        "\t\tverbs = append(verbs, control.Verb(raw))\n"
+        "\t}",
+        killer="TestEveryTickedVerbReachesTheGrant",
+        why="`PostFormValue` is the reflex reach for a form field, and it returns the "
+        "FIRST value only — so a checkbox group silently records a read-only grant for "
+        "somebody who ticked read AND write.",
+    ),
+    Mutant(
+        name="ui-share-subject-accepted-from-the-form",
+        path="internal/ui/sharehandlers.go",
+        old="\tsubject, ok := pick(candidates, control.ID(r.PostFormValue(FieldSubject)))\n"
+        "\tif !ok {\n"
+        "\t\twritePlain(w, http.StatusForbidden, shareWriteRefusal)\n"
+        "\t\treturn\n"
+        "\t}",
+        new="\tsubject := Subject{Kind: control.KindUser, ID: control.ID(r.PostFormValue(FieldSubject))}\n"
+        "\t_ = candidates",
+        killer="TestTheSubjectIsValidatedAgainstCandidatesRatherThanAcceptedFromTheForm",
+        why="trusting the `select` the page rendered. It constrains a browser and nothing "
+        "else, so admin on one scope would let a caller widen it to any principal whose "
+        "id they can name.",
+    ),
+    Mutant(
+        name="ui-unshare-skips-the-objects-authority-check",
+        path="internal/ui/sharing.go",
+        old="\tif g.ObjectKind != control.ObjectScope || !auth.Allows(g.ObjectID, control.VerbAdmin) {",
+        new="\tif g.ObjectKind != control.ObjectScope {\n\t\t_ = auth",
+        killer="TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm",
+        why="the revocation already found the grant, so re-checking authority over its "
+        "object reads like belt-and-braces — it is the only thing stopping admin on scope "
+        "A from revoking a grant on scope B.",
+    ),
+    Mutant(
+        name="ui-share-page-skips-its-authority-check",
+        path="internal/ui/sharehandlers.go",
+        old="\tif !id.Auth.Allows(scope, control.VerbAdmin) {\n"
+        "\t\twritePlain(w, http.StatusNotFound, scopeRefusal)\n"
+        "\t\treturn\n"
+        "\t}",
+        new="\t_ = scopeRefusal",
+        killer="TestTheSharePageRefusesAScopeThisCallerCannotAdminister",
+        why="the page only READS, so gating it looks like caution — it is what stops the "
+        "audience of any scope being served to anybody who can name its id.",
+    ),
+    Mutant(
+        name="ui-page-never-reports-a-read-only-authority",
+        path="internal/ui/sharehandlers.go",
+        old="\t\tReadOnly: !s.sharing.Writable(),",
+        new="\t\tReadOnly: false,",
+        killer="TestAReadOnlyDeploymentSaysSoOnThePageRatherThanAtTheClick",
+        why="the banner looks like decoration. Without it a deployment that cannot record "
+        "a share serves the whole flow and refuses at the click, which reads to an "
+        "operator as a permission problem they do not have.",
+    ),
+    Mutant(
+        name="ui-share-write-authority-check-removed-in-the-handler",
+        path="internal/ui/sharehandlers.go",
+        old="\tscope := control.ID(r.PostFormValue(FieldScope))\n"
+        "\tif !id.Auth.Allows(scope, control.VerbAdmin) {\n"
+        "\t\twritePlain(w, http.StatusForbidden, shareWriteRefusal)\n"
+        "\t\treturn\n"
+        "\t}",
+        new="\tscope := control.ID(r.PostFormValue(FieldScope))",
+        killer="TestTheSharePageRefusesAScopeThisCallerCannotAdminister",
+        why="deleting the check that looks redundant because the layer below it checks "
+        "too — the ordinary way a defence-in-depth pair quietly becomes a single point.",
+        # 🔴 THIS ROW WAS LABELLED `equivalent=True` AND THE LABEL WAS MEASURED FALSE —
+        # the retracted reason is kept here because an EQUIVALENT label is precisely what
+        # stops anybody writing the test that kills the mutant, so the record of one being
+        # wrong is worth more than the tidy row. It read: "Removing EITHER alone is
+        # observably identical: the other still answers 403 with the same body." The
+        # discriminator it missed is a request with NO verb field: unmutated the handler's
+        # authority check refuses at **403** before the form is validated; with this site
+        # removed the request reaches the verb validation and answers **400**, telling a
+        # caller who may not touch the scope that their input was the problem. So the two
+        # sites are NOT redundant — the handler's runs first and refuses without
+        # disclosing. `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` gained that
+        # exact case and this row is an ordinary killable one.
+        #
+        # ⚠ THE GENERAL SHAPE, WHICH IS WHY THIS IS RECORDED RATHER THAN DELETED: an
+        # `equivalent` label is a CLAIM about every observable, and it was made here by
+        # comparing the one observable the author had in mind. A label that reads as
+        # coverage while providing none is this repository's signature defect, and it
+        # appeared inside the battery built to refuse it.
+    ),
+    # ---- the browser surface's startup refusals ------------------------------------
+    Mutant(
+        name="ui-startup-admits-a-revoked-credential",
+        path="cmd/cairn-ui/main.go",
+        old="\t\tif !c.Live() {\n\t\t\tcontinue\n\t\t}\n",
+        new="",
+        killer="TestAJournalWhoseCredentialsAreALLREVOKEDIsRefused",
+        why="counting credentials without asking whether they are live — the reading that "
+        "looks complete because the records are all there. A journal mid-rotation has its "
+        "credential rows and none of them live, and the surface then starts and can "
+        "authenticate nobody. This clause SURVIVED a sweep until the test that names it was "
+        "written, which is why the row is here rather than in a commit message.",
+    ),
+    Mutant(
+        name="ui-startup-admits-an-authority-with-no-credential",
+        path="cmd/cairn-ui/main.go",
+        old="\tif usable > 0 {\n\t\treturn nil\n\t}",
+        new="\tif usable >= 0 {\n\t\treturn nil\n\t}",
+        killer="TestAJournalWithUsersAndNoCredentialIsRefused",
+        extra_killers=("TestAJournalWhoseCredentialsAreALLREVOKEDIsRefused",),
+        why="the off-by-one that turns the whole refusal into a no-op while reading as a "
+        "bounds check. `cairn-server -create-user` produces exactly this state — a user and "
+        "no credential — so the mutant is the guard's own documented failure case.",
     ),
 )
 

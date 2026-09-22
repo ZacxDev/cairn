@@ -258,12 +258,22 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 110 mutants, over FIVE packages
+python3 tests/control_mutants.py          # 120 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 110 mutants, 108 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 120 mutants, 118 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
+
+🔴 **THE THIRD EQUIVALENT LABEL WAS MEASURED FALSE AND IS NOW A KILL, WHICH IS WHY THE
+SPLIT MOVED WITHOUT A ROW BEING ADDED.** `ui-share-write-authority-check-removed-in-the-
+handler` was labelled EQUIVALENT on the reasoning that the write path checks `Allows` at
+two sites, so removing either leaves the other answering 403. An audit round produced the
+discriminator the label had missed: a request with NO verb field answers **403** unmutated
+and **400** with the handler's site removed, because that check runs BEFORE the form is
+validated. The row's retracted reason is kept beside it — an EQUIVALENT label is precisely
+what stops anybody writing the test that kills the mutant, so a record of one being wrong
+is worth more than a tidy row.
 
 ⚠ **RE-DERIVE THESE, DO NOT CARRY THEM FORWARD.** They were current at every commit from
 `bcfaa19` to `8fb98d2` and went stale at `ca632e3`, a round that added ten mutants and
@@ -273,14 +283,30 @@ survivor did not exist while that survivor was the round's most important findin
 `python3 tests/control_mutants.py` prints the `SUMMARY` line these are copied from, and
 the survivor paragraph below must name exactly the mutants that actually survived.
 
-🔴 **IT RUNS OVER FIVE PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
+🔴 **IT RUNS OVER SEVEN PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
 order: `internal/control`, `internal/control/tokenfile`, `internal/identity`,
-`internal/api`, `cmd/cairn-server`. `internal/control` is the model and its predicate,
-`internal/control/tokenfile` is the projection, `internal/identity` is P4's authenticator
-and its two new backends, `internal/api` is the server that authorises from all of them,
-and `cmd/cairn-server` is the program — and a mutant in one is killed by a guard in
+`internal/api`, `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`. `internal/control` is the model and its
+predicate, `internal/control/tokenfile` is the projection, `internal/identity` is P4's
+authenticator and its two new backends, `internal/api` is the server that authorises from
+all of them, `cmd/cairn-server` is the program, and `internal/ui` is the BROWSER surface —
+the second consumer of the same authority — and a mutant in one is killed by a guard in
 another. A battery scoped to one package would have scored every one of those SURVIVED
 while the suite that catches them was never run.
+
+🔴 **`internal/ui` IS THE SIXTH, AND IT IS HERE BECAUSE THE ALTERNATIVE WAS MEASURED.** The
+share flow arrived with a battery of its OWN — `tests/ui_share_mutants.py`, 234 lines, a
+second copy of this harness — and **no gate ran it**: `grep -l ui_share_mutants` over the
+whole tree returned the file and one README line, where `control_mutants` is a step in
+`.github/workflows/ci.yml` and is pinned by `tests/test_control_mutant_count_is_pinned.py`.
+Its own README table meanwhile presented that one
+afternoon's reading as a standing property — a kill count in present tense, for a battery
+nothing would ever run again. (This very paragraph hit the same sweep: quoting that count
+verbatim made `test_control_mutant_count_is_pinned.py` read it as a live claim about THIS
+battery and go red. The pin is indifferent to who wrote the number, which is the point.) It also mutated the LIVE working tree where this
+harness mutates a `copytree`, so an interrupt left a mutated `internal/ui/` in the
+checkout. Its eight rows are the `ui-` prefixed ones here, and the file is deleted. **A
+second battery is a second thing to remember to run, and this repository's record is that
+nobody does.**
 
 ⚠ **THAT LIST IS PINNED TO `PKGS` AS A WHOLE STRING, MEMBERSHIP AND ORDER, NOT AS A COUNT.**
 `tests/test_control_mutant_count_is_pinned.py` derives it from the tuple and requires it
@@ -311,7 +337,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 110 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 120 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

@@ -365,9 +365,15 @@ jobs:
           set -o pipefail
           go test -race ./... | tee /tmp/go-test.txt
           ok=$(grep -c '^ok  ' /tmp/go-test.txt || true)
-          # EIGHTEEN packages carry tests, measured on this branch: api, authz, client,
-          # cmd/cairn-server, control, control/tokenfile, depspolicy, doctor, envalias,
-          # hostid, identity, netid, pytext, report, snapshot, store, ui, write. It was
+          # NINETEEN packages carry tests, measured on the MERGED tree: api, authz, client,
+          # cmd/cairn-server, cmd/cairn-ui, control, control/tokenfile, depspolicy, doctor,
+          # envalias, hostid, identity, netid, pytext, report, snapshot, store, ui, write.
+          # 🔴 NINETEEN IS A MERGE RESULT, AND NEITHER SIDE COULD SEE IT. Two branches each
+          # added ONE package and each measured EIGHTEEN correctly for its own tree —
+          # `cmd/cairn-ui` with the share flow, `envalias` with the `CAIRN_*` ledger. Taking
+          # either side's number wholesale puts the floor one BELOW the merged count, which
+          # is the free-deletion defect this comment already documents twice. The count was
+          # re-measured on the merged tree rather than computed from either side. It was
           # NINE at P1b; `client` and
           # `doctor` arrived with the Go CLIENT, `control` with P3a, `control/tokenfile`
           # with the control-plane wiring, `cmd/cairn-server` with the gate on the
@@ -376,13 +382,18 @@ jobs:
           # `identity` with P4's authenticator interface and its two new backends, and
           # `depspolicy` + `ui` with the web UI's phase A — `depspolicy` is the module
           # allowlist and the import ban that replaced `vendorHash = null`, `ui` is the
-          # renderer, its escaping guard and its raw-node ban. `envalias` is the eighteenth
-          # and arrived with THIS branch: the `SUBSYSTEM_STORE_*` → `CAIRN_*` ledger, the
-          # resolver, and the whitespace-blank regression arm. Measured at 18 over the
-          # package set `./...` of module `github.com/ZacxDev/cairn` on a developer host,
-          # and re-taken rather than carried forward in the nix check phases, which run the
-          # same walk: `nix log` for BOTH `cairn-server` and `cairn-go` reports 18 `ok`
-          # lines, `internal/envalias` among them.
+          # renderer, its escaping guard and its raw-node ban. TWO packages arrived last and
+          # independently: `cmd/cairn-ui`, with the share flow's startup refusals — the
+          # control-journal guard, whose first two spellings were each walked around by a
+          # state nobody had tested — and `envalias`, with the `SUBSYSTEM_STORE_*` → `CAIRN_*`
+          # ledger, the resolver and the whitespace-blank regression arm. Measured at 19 over
+          # the package set `./...` of module `github.com/ZacxDev/cairn` on a developer host,
+          # on the merged tree, with both of those present in the `ok` list.
+          # ⚠ THE NIX CHECK PHASES ARE NOT RE-MEASURED AT NINETEEN. They run the same walk and
+          # were last read at 18 (`nix log` for both `cairn-server` and `cairn-go`, before
+          # `cmd/cairn-ui` carried tests) and at 17 before that. Read those as a RECORD of the
+          # tree they were taken on, never as a current reading — re-spelling a number is not
+          # re-measuring it.
           #
           # 🔴 THE FLOOR IS THE COUNT ITSELF — **NOT** ONE BELOW IT, AND THE ARITHMETIC IS
           # WRITTEN OUT HERE RATHER THAN ASSERTED AS A PROPERTY, BECAUSE THE PROPERTY WAS
@@ -399,16 +410,25 @@ jobs:
           # IS NOT ENOUGH ON ITS OWN. `internal/envalias` was added here and the floor was
           # left at 17, so the arithmetic was back to one-below-the-count and the free
           # deletion was `internal/envalias/envalias_test.go` — the very file this branch
-          # exists to add. Measured on this tree: unmutated `ok=18`; with that file removed
-          # `ok=17`, and `17 -lt 17` is FALSE, so the old gate reported success while the
-          # branch's own regression arm was gone. At `-lt 18` the same removal refuses with
-          # the message below. Adding a package and not moving this number does not fail
-          # late — it stops failing at all.
+          # exists to add. Measured on the PRE-MERGE branch, where the module had eighteen
+          # test packages: unmutated `ok=18`; with that file removed `ok=17`, and
+          # `17 -lt 17` is FALSE, so the old gate reported success while the branch's own
+          # regression arm was gone. ⚠ Those two numbers are a RECORD of that tree, not of
+          # this one — the merge with the share flow made the count nineteen. Adding a
+          # package and not moving this number does not fail late — it stops failing at all.
           #
-          # So: `ok < 18` refuses. 18 passes (today's tree, measured). 17 refuses (one
-          # package's tests gone, measured). 19 passes (a package ADDED), which is the
-          # other half of the property and the reason this is a floor rather than an
-          # equality. It is the same shape as the
+          # So: `ok < 19` refuses. 19 passes (the merged tree, measured). 18 refuses (one
+          # package's tests gone). 20 passes (a package ADDED), which is the other half of
+          # the property and the reason this is a floor rather than an equality. 🔴 THE THREE
+          # NUMBERS IN THIS SENTENCE AND THE LEDGER ABOVE MOVE TOGETHER WITH THE CONDITION,
+          # IN ONE COMMIT — an audit round caught the commit that moved the condition to 18
+          # leaving all of them at 17, including this sentence saying in bold that 17 passes.
+          # A maintainer whose deletion failed the gate would have read that, concluded the
+          # gate was misconfigured, and set it back — restoring the exact off-by-one this
+          # block was written about. 🔴 AND THE NUMBERS MOVE ON A MERGE TOO, NOT ONLY ON AN
+          # EDIT: two branches each adding one package each measured 18 CORRECTLY for their
+          # own tree, and 18 is one BELOW the merged count. Re-measure on the merged tree;
+          # neither side's number is the answer. It is the same shape as the
           # Python collected-test floor, and for the same reason: `go test` over a package
           # with no test files exits 0, so the exit code alone cannot tell a green suite
           # from an absent one.
@@ -417,11 +437,11 @@ jobs:
           # behind does not fail late — it stops failing at all, once per package of lag.
           #
           # ⚠ AND IT DEFENDS THE PACKAGE, NOT THE TEST. Deleting one `func Test…` from a
-          # file that keeps others leaves `ok` at 18 and this gate green. That gap is
+          # file that keeps others leaves `ok` at 19 and this gate green. That gap is
           # stated in `internal/depspolicy`'s package doc, where the guarantee it defends
           # is written down.
           echo "packages with passing tests: $ok"
-          if [ "$ok" -lt 18 ]; then
+          if [ "$ok" -lt 19 ]; then
             echo "REFUSING: only $ok package(s) reported ok — the test walk narrowed"
             exit 1
           fi
@@ -433,12 +453,15 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 110 mutants over FIVE packages, in `PKGS` order: `internal/control`,
+      # kill. 120 mutants over SEVEN packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
-      # `cmd/cairn-server` — the model, the token-file projection, P4's identity backends,
-      # the server that authorises from all of them and the program, because a mutant in
-      # one is killed by a guard in another and the refresh loop that bounds the adapter's
-      # declared divergence exists only in `main`. That enumeration is pinned to `PKGS` as
+      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui` — the model, the token-file
+      # projection, P4's identity backends, the server that authorises from all of them,
+      # the pod's program, the browser surface and the browser surface's program, because a
+      # mutant in one is killed by a guard in another, the refresh loop that bounds the
+      # adapter's declared divergence exists only in `main`, the share flow is the second
+      # consumer of the same authority, and the browser's startup refusals are the only
+      # thing between a misconfigured deployment and a surface that serves nobody. That enumeration is pinned to `PKGS` as
       # a whole string by `tests/test_control_mutant_count_is_pinned.py` — membership and
       # order, not just the count, because a swap that kept the count left it stale.
       # Four of the cache rows are killed
@@ -446,7 +469,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (110 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (120 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT

@@ -44,9 +44,12 @@ const (
 	// sign-in pair carries it, because a surface whose only way in is behind its own
 	// authentication has no way in.
 	classPublic routeClass = 1 << iota
-	// classContent renders an answer about the caller's authority, so it MUST consult
-	// `Source.Visible` — `TestEveryContentRouteConsultsTheAuthority` walks the ledger
-	// for exactly these rows.
+	// classContent renders an answer about the caller's authority, so it MUST consult AN
+	// authority before rendering — which one is per route, declared in
+	// `contentAuthority` in `routes_test.go`, and a content route missing from that map
+	// fails. ⚠ This said "MUST consult `Source.Visible`" while the share flow's content
+	// route consults `Sharing` instead: a class doc naming one authority, three lines from
+	// where somebody adds the next row.
 	classContent
 )
 
@@ -82,8 +85,18 @@ type route struct {
 // in full for every authenticated row, and `TestEveryServedPathComesFromTheLedger`
 // probes non-public paths for exactly that reason. This is a stated narrowing, not an
 // accident: a sign-in page nobody can reach is not a sign-in page.
+// 🔴 AND THE SHARE FLOW IS THREE ROWS ON FIXED PATHS, WITH THE SCOPE IN A QUERY
+// PARAMETER RATHER THAN IN THE PATH. `routes` is an EXACT-MATCH map, so a path
+// parameter (`/share/{scope}`) would mean a prefix match in the dispatcher — and a
+// prefix match is a second way for a request to reach a handler, one that
+// `TestEveryServedPathComesFromTheLedger` structurally cannot probe, because there is
+// no longer a finite set of paths to probe. The query parameter keeps every served
+// path a literal key in this map, which is the property the whole ledger rests on.
 var routes = map[routeKey]route{
 	{"GET", "/"}:          {(*Server).handlePage, classContent},
+	{"GET", "/share"}:     {(*Server).handleSharePage, classContent},
+	{"POST", "/share"}:    {(*Server).handleShare, 0},
+	{"POST", "/unshare"}:  {(*Server).handleUnshare, 0},
 	{"GET", "/sign-in"}:   {(*Server).handleSignInForm, classPublic},
 	{"POST", "/sign-in"}:  {(*Server).handleSignIn, classPublic},
 	{"POST", "/sign-out"}: {(*Server).handleSignOut, 0},
@@ -96,6 +109,31 @@ const (
 	SignInPath  = "/sign-in"
 	SignOutPath = "/sign-out"
 	RootPath    = "/"
+	// SharePath answers the share flow's read AND its grant write, split by method.
+	SharePath = "/share"
+	// UnsharePath is a SEPARATE path rather than an action field on `SharePath`,
+	// deliberately. A hidden `action=revoke` would make the difference between
+	// granting and revoking a value inside a form body — something chosen by whoever
+	// gets one request past both cross-site gates, rather than something the route
+	// decides. Two paths make the two writes two rows in the ledger, which is where
+	// somebody reads them.
+	UnsharePath = "/unshare"
+)
+
+// QueryScope is the one query parameter this surface reads.
+const QueryScope = "scope"
+
+// The share flow's form fields, spelled once for the renderer and the handlers.
+//
+// ⚠ `FieldVerb` IS SINGULAR AND REPEATS. A checkbox group posts one name many times,
+// and `r.PostForm[FieldVerb]` is the only read that sees all of them:
+// `PostFormValue` returns the FIRST, which would silently narrow every multi-verb
+// grant to whichever box the browser happened to serialise first.
+const (
+	FieldScope   = "scope"
+	FieldSubject = "subject"
+	FieldVerb    = "verb"
+	FieldGrant   = "grant"
 )
 
 // HealthPath is the readiness probe: before authentication, before rate limiting,

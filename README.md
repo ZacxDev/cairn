@@ -110,7 +110,7 @@ nix run   github:ZacxDev/cairn -- doctor       # the default client — the GO o
 nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client — no longer the default
 nix build github:ZacxDev/cairn#server-image    # the pod image, as a loadable tarball
-nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — phase A, deployed by nothing
+nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — deployed by nothing
 ```
 
 Consumers pin this flake as an input. The version **is** the git revision —
@@ -343,10 +343,24 @@ rotation, rate limiting), is [`server/README.md`](server/README.md).
 
 ## The browser surface — `cairn-ui`
 
-There is one, and it is **phase A**: a single read-only page listing the scopes
-your credential can see and the entries in them. `GET /` is the page and is
-authenticated; `/healthz` is the one unauthenticated route. There are no write
-routes, no sign-in flow, and **nothing deploys it** — it is built and run by hand.
+There is one, and it is **three phases**: the entries page, a browser sign-in with
+server-side revocable sessions, and the share flow. **Seven routes**, which
+`cairn-ui` derives from its dispatcher rather than restating — `GET /` is the
+entries page; `GET`/`POST /sign-in` are reachable without a session, because they
+are how you get one; `POST /sign-out` revokes; and `GET /share`, `POST /share`,
+`POST /unshare` are the share flow. `/healthz` is the one unauthenticated route
+outside that set.
+
+🔴 **`cairn-ui` is a SINGLE-REPLICA surface, for TWO reasons and not one.** The
+session table is the loud one: each replica holds its own sessions, so a second
+replica without shared storage signs users out on a random fraction of requests.
+The quieter one is the **control-plane cache** — a share recorded on replica A is
+not served by B until B's cache refreshes, which is what the replica-honesty notice
+on every share page exists to say. Putting only the session file on shared storage
+buys two replicas that keep people signed in and silently disagree about who can
+see what. Multi-replica is a later arc, not a configuration. And **nothing
+deploys it**: there is no image and no manifest in this repository — it is built
+and run by hand.
 
 ```bash
 nix build github:ZacxDev/cairn#cairn-ui
@@ -360,9 +374,11 @@ exits **78** and serves nothing. Three ways to supply it, all measured:
 `-token-file <path>`; `CAIRN_TOKEN_FILE=<path>` with no flag; or
 `-token-file=` (explicitly empty) plus `CAIRN_TOKEN=<row>`, which is the
 env fallback the binary's own refusal names. Single-dash flags: this uses Go's
-stdlib `flag`, not the client's `--long` style. `-h` lists four — `-store`
+stdlib `flag`, not the client's `--long` style. `-h` lists seven — `-store`
 (`CAIRN_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
-`-token-file` (`CAIRN_TOKEN_FILE`) — and every default is env-resolved,
+`-token-file` (`CAIRN_TOKEN_FILE`), `-session-file`
+(`CAIRN_UI_SESSION_FILE`), `-session-ttl` (`CAIRN_UI_SESSION_TTL`) and
+`-control-journal` (`CAIRN_UI_CONTROL_JOURNAL`) — and every default is env-resolved,
 so what `-h` prints depends on your environment. It reads the store **from disk**
 rather than over HTTP, and authenticates against the same token file as the pod.
 
@@ -373,6 +389,46 @@ principle and is not coming back here: a browser surface exists to be publicly
 reachable, and that backend lets anyone who can open a socket to it *be* any user
 at full authority. `AuthBackends` takes one parameter so neither can be passed;
 `TestTheUIChainHasNoTrustedHeaderMember` pins the exclusion.
+
+### Sharing a scope with somebody
+
+`GET /share` lists the scopes your credential may administer; `GET /share?scope=<id>`
+is one scope's page. It answers three things: **who has access to this**, **which of
+those you can take back**, and a form to share it with somebody.
+
+🔴 **"Who has access to this" is computed from the authority, not from the list
+of shares.** Access arrives two ways — a share, or membership of the project that owns
+the scope — so a page that listed only shares would under-report every project
+member, and in the direction that tells you your notes are more private than they
+are. The two lists are shown separately because only shares can be revoked:
+somebody who reaches a scope through project membership keeps it after every share
+is taken back, and the page says so.
+
+⚠ **You can only share with people and projects you already share a project with.**
+That is deliberate — a picker listing every user would turn admin on one scope into
+a directory of everyone in the deployment — and it means reaching anybody else needs
+an invite, which does not exist yet.
+
+🔴 **THE SHARE FLOW NEEDS `-control-journal <path>`, AND NOT ONLY TO WRITE.** Without one
+the authority is the token file, which has no shares to record and **confers `admin` on
+nobody** — so no scope is administrable, `GET /share` renders "No scope is administrable
+by this credential", and a scope page answers **404 to every caller**. The page says on
+every load that this deployment cannot record a share, so the cause is visible rather
+than discovered at a click; but read the limit at its real width — without a journal the
+share flow has nothing to show, not merely nothing to change.
+
+⚠ An earlier draft of this paragraph claimed "the share pages still answer *who can see
+this*" without one. That is **false**, and it was measured false rather than argued: with
+a token-file authority, 0 scopes are administrable across every principal in the
+projection and the scope page is a 404. The retraction is kept because the sentence was
+plausible enough to survive writing it.
+
+Every share page carries a notice about what this surface can and cannot promise: it
+is one replica's answer from a cached copy of the authority, another reader gains or
+loses access when their own cache refreshes rather than the instant you click, and
+revoking stops future syncs without recalling entries already copied onto somebody's
+machine. That notice is pinned **whole** by a test, so it cannot be quietly reworded
+into a stronger promise.
 
 It is the only package here that links a third-party module (`gomponents`, for
 HTML), and **the serving path is still stdlib-only** — no package the pod or the
@@ -392,7 +448,7 @@ those claims have one home each and a correction belongs there.
 | `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, not deployed |
 | `cmd/cairn`, `internal/client` | the Go port of the CLIENT, and **the default** — diffed against the Python one by `tests/parity/`, which declares both its residuals and the rows that compare only the exit code |
 | `internal/report` | the ONE renderer, shared by the pod and the CLI |
-| `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — one page, gomponents, deployed by nothing |
+| `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — pages, sign-in, the share flow, gomponents, deployed by nothing |
 | `internal/depspolicy` | the allowlist and import ban that replaced `vendorHash = null` — the serving path is still stdlib-only, and this is what measures it |
 | `tests/` | the suites, plus `leakscan.py`, the HTTP conformance corpus, the server dual-run gate and the client parity gate |
 | `flake.nix` | both clients (`default` is the **Go** one, `#cairn` the Python one), the server image, the Go server, and the checks |

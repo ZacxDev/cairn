@@ -108,10 +108,14 @@ func csrfTokenFor(r *http.Request) string {
 //
 // 🔴 THE IMPACT IS NIL, AND SAYING WHY IS THE POINT — "no impact" alone is how a wrong
 // claim gets replaced by an unexamined one. The gate is reachable only AFTER
-// authentication (see [Server.ServeHTTP]); the only state-changing row behind it is
-// `POST /sign-out`, because `POST /sign-in` is `classPublic` and dispatches ahead of the
-// chain; and `handleSignOut` then revokes `sha256(X)` for a caller-chosen X, which is
-// nothing. The CSRF property itself is untouched, because it defends against a CROSS-SITE
+// authentication (see [Server.ServeHTTP]); the state-changing rows behind it are
+// `POST /sign-out`, `POST /share` and `POST /unshare` — `POST /sign-in` is `classPublic`
+// and dispatches ahead of the chain; `handleSignOut` then revokes `sha256(X)` for a
+// caller-chosen X, which is nothing, and the two share rows authorise from `id.Auth`
+// rather than from the cookie, so a caller who chose their own cookie gains no authority
+// by it. ⚠ THAT ENUMERATION READ "the only state-changing row is `POST /sign-out`" until
+// the share flow added two. The impact argument is unchanged; the LIST it rests on was
+// stale, and the list is the half a reader would have checked. The CSRF property itself is untouched, because it defends against a CROSS-SITE
 // attacker riding a victim's cookie, and such an attacker can neither READ a `HttpOnly`
 // cookie nor SET a `__Host-` one for this origin.
 //

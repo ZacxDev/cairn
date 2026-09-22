@@ -540,10 +540,16 @@
       };
 
       # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
-      # MODULE. `cmd/cairn-ui` is PHASE A: one page, one authentication chain, one
-      # rendering path. It is DEPLOYED BY NOTHING and no image wraps it — saying so
-      # is part of the change, the same way `cmd/cairn-server`'s own doc comment says
-      # it for the Go pod.
+      # MODULE. `cmd/cairn-ui` now carries three phases — the entries page, cookie
+      # sessions with a sign-in pair, and the SHARE FLOW — over one authentication
+      # chain and one rendering path. It is DEPLOYED BY NOTHING and no image wraps it
+      # — saying so is part of the change, the same way `cmd/cairn-server`'s own doc
+      # comment says it for the Go pod.
+      #
+      # ⚠ THIS COMMENT SAID "PHASE A: one page" THROUGH TWO PHASES THAT ADDED ROUTES,
+      # WHICH IS WHY THE PHASE COUNT IS NOT REPEATED AS A NUMBER ANYWHERE ELSE HERE.
+      # `ui.DeclaredRouteLedger()` is the count that cannot go stale; this sentence
+      # names what the surface DOES, which is the part a reader of `flake.nix` needs.
       #
       # 🔴 NO `gitMinimal` ON A WRAPPER, AND THE ABSENCE IS DELIBERATE RATHER THAN
       # FORGOTTEN. `packages.cairn` and `packages.cairn-go` carry one because their
@@ -577,7 +583,7 @@
         '';
 
         meta = with pkgs.lib; {
-          description = "The cairn browser surface (phase A: one page, deployed by nothing)";
+          description = "The cairn browser surface: entries page, sign-in, share flow; deployed by nothing";
           homepage = "https://github.com/ZacxDev/cairn";
           license = licenses.mit;
           mainProgram = "cairn-ui";
@@ -1198,7 +1204,8 @@
         # from the same map its dispatcher reads, and the only expectation anywhere
         # is a hand-written list. A check that ran the binary to print that list and
         # diffed it against a third hand-written copy would restate one claim down a
-        # longer path, for a surface whose contract is one row. `internal/ui`'s
+        # longer path — and that reasoning does not change with the row COUNT, which
+        # is why this comment no longer quotes one. `internal/ui`'s
         # `TestTheRouteLedgerMatchesTheDispatchTable` is the one mechanism kept, and
         # it runs inside `mkGoUI`'s own check phase, so `nix build .#cairn-ui` gates
         # it. When a later phase gives this surface an external corpus, the second
