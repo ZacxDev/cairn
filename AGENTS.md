@@ -87,7 +87,7 @@ These are the house style, and they are why the guards here are worth trusting:
 
 | path | what |
 |---|---|
-| `cairn` | the PYTHON client CLI and the ORACLE — sync, recall, search, validate, ls-entries, doctor, append, put, create |
+| `cairn` | the PYTHON client CLI and the ORACLE — every verb `cairn -verbs` prints; do not hand-list them here, this row omitted `routes` for the whole of P-A |
 | `lib/` | the Python reader: cache resolution, recall rendering, scope/ref resolution, doctor |
 | `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
@@ -240,8 +240,8 @@ renderer" is a P8 property, not a P2 one, AND THE DEFAULT FLIP DID NOT MAKE IT O
 renderer still ships as `packages.cairn` until the oracle is deleted, so until then this gate IS
 the comparison rather than the absence of one.
 
-**Measured on this tree: 101 cases, 102 PASS, 0 failures, 0 dead normalizations** — all nine
-verbs, every output-shaping flag, every documented exit code, `--help` in four spellings, the
+**Measured on this tree: 101 cases, 102 PASS, 0 failures, 0 dead normalizations** — every
+verb, every output-shaping flag, every documented exit code, `--help` in four spellings, the
 argument-shape rules, a TWO-INSTANCE `routes --check`, a routed `put` and four routed READS
 against a second pod, and `cache-mtime-parity` on top. 🔴 **THAT IS NOT 101 BYTE DIFFS: 70 rows
 compare stdout, stderr AND the exit code; 23 compare the exit code ONLY; 8 compare the exit code

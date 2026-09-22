@@ -3,6 +3,8 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -29,8 +31,8 @@ func world(t *testing.T) (cache, mirror string) {
 		}
 	}
 	for path, mode := range map[string]os.FileMode{
-		filepath.Join(cache, "alpha-notes", "widget-cfg.md"):        0o644,
-		filepath.Join(mirror, "alpha-notes", "frozen.md"):           0o444,
+		filepath.Join(cache, "alpha-notes", "widget-cfg.md"):         0o644,
+		filepath.Join(mirror, "alpha-notes", "frozen.md"):            0o444,
 		filepath.Join(mirror, "mirror-only-scope", "left-behind.md"): 0o444,
 	} {
 		if err := os.WriteFile(path, []byte("x\n"), mode); err != nil {
@@ -430,4 +432,107 @@ func TestAMissingTokenIsAProblemAboutTheCONFIGAndNotAnOutage(t *testing.T) {
 	if got.State != NotObservable || !strings.Contains(got.Detail, "the remedy") {
 		t.Fatalf("token: %#v", got)
 	}
+}
+
+// TestTheMarkerTableAndTheStateListNameTheSameSet is this package's own invariant, and it
+// is here rather than in the consumer that noticed it.
+//
+// 🔴 THE TWO ARE A RELATIONSHIP, AND A GUARD ON EITHER SIDE ALONE IS BLIND TO THE DIRECTION
+// THAT MATTERS. `Render` writes a row's glyph from `markers`; `ParseRow` reads a rendered
+// report back by stripping a glyph from `markers` and then validating the state against
+// `States`. So a state added to
+// `markers` and NOT to `States` renders rows that the reader strips correctly and then
+// DISCARDS, and a state added to `States` and not to `markers` renders with no glyph at all.
+// Both are silent: the row simply stops being counted, and a guard that walks the report
+// gets quieter rather than louder.
+//
+// ⚠ IT ASSERTS THE SET, NOT THE COUNT. Two tables of equal size naming different states
+// compare equal on `len` and are exactly as broken.
+func TestTheMarkerTableAndTheStateListNameTheSameSet(t *testing.T) {
+	marked := make([]string, 0, len(markers))
+	for state := range markers {
+		marked = append(marked, state)
+	}
+	sort.Strings(marked)
+
+	declared := append([]string(nil), States...)
+	sort.Strings(declared)
+
+	if !slices.Equal(marked, declared) {
+		t.Errorf("the marker table names %v and `States` names %v.\n"+
+			"A state in ONE of them renders rows that the other side cannot account for, and the "+
+			"failure is silent at every call site: `Render` emits a row with no glyph, or a reader "+
+			"strips the glyph and then discards the row for an unknown state. Move both together.",
+			marked, declared)
+	}
+
+	// POSITIVE CONTROL: neither side is empty, so the comparison above is not two empty sets
+	// agreeing with each other.
+	if len(marked) == 0 {
+		t.Fatal("the marker table is EMPTY, so the equality above holds vacuously")
+	}
+}
+
+// TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne covers the state `internal/client`'s
+// routing fixture structurally cannot produce.
+//
+// 🔴 `PROBLEM`'s MARKER IS `🔴`, WHICH IS ONE RUNE WHERE THE OTHER THREE ARE TWO — and that
+// asymmetry is the entire reason `ParseRow` strips this table instead of a fixed offset. The
+// integration fixture over in `internal/client` renders `OK`, `UNMEASURED` and
+// `NOT-OBSERVABLE` and never `PROBLEM`, so until this existed the one state that breaks the
+// naive spelling was the one nothing exercised. Reaching `PROBLEM` there would mean breaking
+// the store that test exists to read cleanly, which is why the fourth state is covered HERE
+// and by a unit case rather than by widening that fixture.
+//
+// ⚠ IT DRIVES `States` AND `markers` RATHER THAN A LIST WRITTEN HERE, so a state added to the
+// renderer is covered on the day it is added rather than on the day somebody remembers this
+// file. It carries NO length check of its own: `markers` ↔ `States` is asserted as a SET
+// directly above, and the loop below already errors on a state with no marker — a `len`
+// comparison here would fire FIRST, with the wrong diagnosis, and make that arm unreachable.
+func TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne(t *testing.T) {
+	for _, state := range States {
+		// The marker itself is no longer read here — the row comes from `Render` — but the
+		// membership check stays: it is the arm that reports a state `markers` has no entry
+		// for, and it is REACHABLE only because no length check runs ahead of it.
+		if _, known := markers[state]; !known {
+			t.Errorf("no marker for state %q", state)
+			continue
+		}
+		// 🔴 THE LINE COMES FROM `Render`, NOT FROM A SPELLING OF ITS FORMAT WRITTEN HERE. A
+		// hand-built row asserts that `ParseRow` inverts THIS TEST's idea of the layout, and
+		// the two had already drifted: `Render` pads the state column to 14 and the hand-built
+		// version did not, so the round trip was never actually exercised for any state.
+		//
+		// ⚠ WHAT THAT BUYS, MEASURED IN BOTH DIRECTIONS RATHER THAN ASSERTED. Caught: the name
+		// and state columns SWAPPED, and the marker column DROPPED — each reds on all four
+		// states. NOT caught, and correctly so: a whitespace-only change, because `ParseRow`
+		// reads `strings.Fields` and is deliberately tolerant of run length. So this is a guard
+		// on column ORDER and PRESENCE, not on spacing, and claiming it covers "layout" would
+		// be wider than what was run.
+		line := renderedRowFor(t, "alpha-notes/pod-reachable", state, "some detail")
+		name, got := ParseRow(line)
+		if name != "alpha-notes/pod-reachable" || got != state {
+			t.Errorf("ParseRow(%q) = (%q, %q), want (%q, %q). A marker this cannot strip makes the "+
+				"row invisible to every guard that walks a rendered report.",
+				line, name, got, "alpha-notes/pod-reachable", state)
+		}
+	}
+}
+
+// renderedRowFor returns the one line of a real `Render` output that carries the named check.
+//
+// ⚠ IT FINDS THE ROW BY NAME, NOT BY CALLING `ParseRow` — using the function under test to
+// locate its own input would make the round trip below assert nothing. The name is unique in a
+// one-check report, and the search is layout-independent, which is the property that lets the
+// column widths move without this helper moving with them.
+func renderedRowFor(t *testing.T, name, state, detail string) string {
+	t.Helper()
+	report := Render([]Check{{Name: name, State: state, Detail: detail}})
+	for _, line := range strings.Split(report, "\n") {
+		if strings.Contains(line, name) {
+			return line
+		}
+	}
+	t.Fatalf("Render emitted no line carrying %q:\n%s", name, report)
+	return ""
 }

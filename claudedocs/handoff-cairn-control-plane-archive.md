@@ -979,3 +979,39 @@ Kept verbatim: a closed block's value is its measured values and its elimination
   `main` with the change absent. Every audit agent got a hand-built detached worktree at the PR
   head **plus a base check it could fail**. Zero mis-targeted agents across seven dispatches.
 
+## Defect entries closed and moved out of the handoff at the `#75` update
+
+⚠ **VERBATIM, AND MOVED RATHER THAN SUMMARISED.** Each of these had its closing
+condition met by a named merge. They are kept because a closed entry still records what
+was believed and what closed it — if one contradicts the code, the code moved and this is
+the record. The durable LESSONS from the first of them live under `Gotchas` in the
+handoff, not here, because that section appends and this file is read on demand.
+
+- ✅ **CLOSED BY `f8a257e` — the byte-guideline entry.** It asked for a prune PR moving answered
+  `Gotchas` blocks to the archive and bringing this file under 65,536 B; `f8a257e` did that by
+  MOVING 125 of 174 bullets verbatim. 🔴 **IT STAYED 🔴-MARKED AND LIVE-LOOKING FOR TWO UPDATES
+  AFTER ITS CONDITION WAS MET, ASSERTING `99,059 B` ABOUT A FILE THAT `f8a257e` HAD ALREADY CUT
+  TO 52,228 — off by 46,831 B, at the top of the section ranked work is drawn from.** ⚠ The
+  figure quoted is the MERGED size at a named commit, deliberately: the draft before this one
+  quoted the size of its own parent, which every further edit falsified — the previous version of
+  this entry carried a warning saying exactly that, the warning was deleted with the entry, and
+  the failure it named was re-committed within the same round. **A self-referential byte count is
+  stale on arrival; quote a commit's.** The mechanism is worth more than
+  the entry: this section REPLACES, so a bullet survives every update that does not retype it,
+  and the prune deliberately did not touch `Defects`. **A closing condition met by a PR closes
+  NOTHING until somebody edits this section**, and the update that measures the file is the one
+  holding the evidence — so close it THERE, in the same change, or it reads as open forever.
+  ⚠ **The guideline itself has NO author of record and NO instrument.** Measured: no test and no
+  nix check reads `claudedocs/handoff-*.md` at all, and `AGENTS.md`'s budget —
+  `tests/test_agent_instructions_weight.py` — covers `AGENTS.md`/`CLAUDE.md` and has no analogue
+  here. ⚠ **But "65,536 appears nowhere else in the tree" was FALSE at the spelling a reader
+  greps**: `65536` is in three other files as a socket buffer size, and only the comma'd form is
+  doc-exclusive. The conclusion survives the correction; the supporting measurement did not, in
+  the same round that filed "grep for the number before batching a count as prose". Report the
+  guideline as a self-imposed target, never as a gate.
+- ✅ **CLOSED BY #48's SESSION** (relabelled — this line previously read "this session" and now names
+  which): residual 8 in all four clauses; the `search --all-scopes` fan-out's measured-zero coverage;
+  routed `validate`'s oracle divergence; two unconditional-label mutants on `defaultInstance` and
+  `bannerFor`; `tests/routing_mutants.py` scoring a never-run suite as KILLED; two CI floors with
+  silent slack; the flake wiring pinned by prose only.
+- ✅ **CLOSED BY #53:** issue #51, the `AGENTS.md` reverted-draft flip history.
