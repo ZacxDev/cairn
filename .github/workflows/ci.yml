@@ -177,22 +177,40 @@ jobs:
           # measurements rather than claims: the extractors find something, they can
           # SEE a planted hazard, and an empty file does not read as agreement.
           #
-          # Measured as the comment above requires — names on the base ref and on HEAD,
-          # one collect-only run each: base 1997 at the merge-base `c5df961`, head 2037,
-          # 55 added, 15 removed.
+          # Measured with names on the base ref and on HEAD, one collect-only run each:
+          # base 1997 at the merge-base `1659663`, head 2037, 55 added, 15 removed.
           #
-          # ⚠ RE-TAKEN, BECAUSE THE MERGE-BASE MOVED. This line read "base 1994 at the
-          # merge-base `080bb2d`, head 2034" — true when it was written and stale the
-          # moment #70 merged and this branch merged `main` back in. `080bb2d` is no
-          # longer the merge-base; `c5df961` is. Measured across that move: 1994 -> 1997,
-          # +3 added and 0 removed, the three being
-          # `test_cairn_cli.py::TestInterpretersWithoutTarExtractionFilters`. The same +3
-          # rode the merge into HEAD, 2034 -> 2037, which is why the 55/15 split below is
-          # unchanged — a measured coincidence, not a line left alone.
+          # 🔴 ON FULL NODE IDS, NOT ON THE RECIPE ABOVE AS WRITTEN, AND THE DIFFERENCE IS
+          # THE WHOLE 15. That recipe's `sed 's/\[.*//'` STRIPS PARAMETRISE IDS; ten of the
+          # fifteen removals are `TestNonFiniteLimiterSettings` id renames, which are
+          # exactly the rows `sed` deletes. Run verbatim it yields **5 removed / 45 added**
+          # — measured, at both bases. So `55/15` comes from the same pipeline with the
+          # `sed` dropped:
+          #   python3 -m pytest tests -p no:randomly --collect-only -q | grep :: \
+          #     | sort > names-<ref>.txt
+          # A sentence claiming to follow the recipe while quoting the other form's numbers
+          # is what this replaces. The `sed` line is left as it is on purpose: collapsing
+          # ids is the right form for "did a test FILE disappear", and the wrong one for a
+          # change that renames parameters — say which you ran.
+          #
+          # ⚠ RE-TAKEN TWICE, BECAUSE THE MERGE-BASE MOVED TWICE, AND THE SECOND RE-TAKE
+          # WENT STALE IN ITS OWN COMMIT. It read "base 1994 at the merge-base `080bb2d`",
+          # then "`080bb2d` is no longer the merge-base; `c5df961` is" — and the very next
+          # commit in this range merged `origin/main`, so on the shipped tree
+          # `git merge-base origin/main HEAD` is **`1659663`**. Not a wrong count: both
+          # `c5df961` and `1659663` collect **1997** (#64/#71/#72 added no Python tests),
+          # measured at both, so 55/15 holds across the move. Only the sha was stale — and
+          # a sha in a comment about a base ref is the one part of it nobody can re-derive.
+          # The earlier move, 1994 -> 1997, was reported as +3/-0
+          # (`test_cairn_cli.py::TestInterpretersWithoutTarExtractionFilters`); that half is
+          # CARRIED FORWARD from the previous re-take and was not re-measured here, which is
+          # said rather than dropped because `080bb2d` is no longer an interesting base.
           #
           # 🔴 "15 REMOVED" IS THE NUMBER THIS COMMENT EXISTS TO MAKE SOMEBODY EXPLAIN, SO
-          # HERE IS THE EXPLANATION, RE-DERIVED AGAINST `c5df961` RATHER THAN CARRIED
-          # FORWARD, AND IT IS NOT "TESTS WERE DELETED".
+          # HERE IS THE EXPLANATION, RE-DERIVED AGAINST `1659663` RATHER THAN CARRIED
+          # FORWARD, AND IT IS NOT "TESTS WERE DELETED". The removed and added SETS are
+          # byte-identical at `c5df961` and `1659663` — checked, not assumed, which is what
+          # lets the sha above move without this breakdown moving.
           #
           # TEN are `TestNonFiniteLimiterSettings` PARAMETRISE IDS that changed spelling
           # with the rename — `[SUBSYSTEM_STORE_LOCKOUT_S-nan]` became
