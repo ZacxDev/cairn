@@ -75,8 +75,10 @@ read the SUBJECT the claim prints rather than trusting the number.**
    forcing: gate — the entries' own closing conditions, which name a PR.
 2. **The remaining batched defects.** Still open after #74: #48's (c) `lib/README.md` (the
    re-count recipe greps two literal phrases, so it is a SPELLED check that cannot see a
-   reworded echo); the stale node-affinity comment, which lives in **`homelab-talos`** and
-   needs its own change THERE; and the carried-forward list.
+   reworded echo); the stale node-affinity comment, which lives in the **deployment-manifest
+   repository** rather than this one and needs its own change THERE — 🔴 that repo's NAME is a
+   denied identifier in THIS tree, and writing it here is what `leakscan` refused, so take it
+   from the operator rather than from a doc in this repo; and the carried-forward list.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else surfaces them.
 3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
    Key it on principal + epoch; `control.Authorization` already carries `Epoch`.
@@ -329,6 +331,16 @@ read the SUBJECT the claim prints rather than trusting the number.**
   was badly chosen and did NOT go red** — reach was proven instead by the test run flagging the
   file directly. A control that fails to fire is not a passing control; say which one actually
   carried the proof.
+- 🔴 **AND THEN IT CAUGHT THE *NEXT* HANDOFF DELTA, AFTER THE PUSH — SECOND OCCURRENCE, SAME
+  IDENTIFIER, AND THE BULLET DIRECTLY ABOVE HAD ALREADY BEEN WRITTEN.** The offending line was a
+  ranked item naming the repository a cross-repo defect lives in, which is exactly the fact the
+  item needs and exactly the one this tree may not carry. 🔴 **The failure is a SEQUENCING one:
+  `handoff_doc.py --confirm --push` commits and pushes in ONE call, so there is no moment
+  between them to scan in — the scan has to run on the SCRATCH DELTA, before the tool is
+  invoked at all.** Scanning "the pushed tree" is scanning after the mistake is public.
+  Remedy adopted: `leakscan` runs against the delta file itself; the cross-repo defect is
+  described BY ROLE ("the deployment-manifest repository") and the name is resolved from the
+  operator, never from a doc in this tree.
 - ⚠ **`leakscan` EXIT 2 IS "COULD NOT VOUCH", AND A LEFTOVER AGENT WORKTREE CAUSES IT.** A removed
   agent's worktree directory under `.claude/worktrees/` made the scanner exit 2 with
   `COULD NOT READ … Is a directory`. Not a leak and not a pass. Check the worktree is clean and
