@@ -202,11 +202,17 @@ func (s ControlSharing) Administrable(auth control.Authorization) []control.Name
 //
 //	users x grants     ns/op        ratio to previous     P x G x log G predicts
 //	10 x 10               19,963           —                       —
-//	100 x 100          1,321,957         66.2x                   100x
-//	300 x 300         12,194,371          9.2x                   11.1x
-//	600 x 600         51,533,099          4.2x                    4.5x
+//	100 x 100          1,321,957         66.2x                   200x
+//	300 x 300         12,194,371          9.2x                    11.1x
+//	600 x 600         51,533,099          4.2x                     4.5x
 //
-// So the model slightly OVER-predicts and is a safe bound. `control.Resolve` sorts the
+// ⚠ THE `100x` THAT STOOD IN ROW 2 WAS THE COLUMN COMPUTED A SECOND WAY — bare `P x G`,
+// with the log factor dropped — so a reader re-deriving it got 200 and concluded the table
+// was broken. It is 200x, and that row is where the model over-predicts MOST (200x against
+// 66.2x measured), not least.
+//
+// So the model OVER-predicts throughout and is a safe bound — by ~3x at the smallest step
+// and by a few percent at the largest, which is the direction a bound should err in. `control.Resolve` sorts the
 // whole grant table on every call (`sortedGrants`) and calls `ScopesIn` once per
 // membership — that is where the `G log G` comes from, and it is why one page render at
 // 600 principals allocates ~60 MB.
@@ -393,8 +399,15 @@ func (s ControlSharing) Candidates(actor control.Principal) ([]Subject, error) {
 // 🔴 IT CONSULTS `Allows` ITSELF RATHER THAN TRUSTING ITS CALLER. The handler checks
 // too, because it has to choose an HTTP status; this check is here because the
 // interface is exported and a second caller that forgot would be authorised by
-// omission. Both call the SAME predicate, so this is one rule at two call sites
-// rather than two rules.
+// omission.
+//
+// ⚠ AND THIS COMMENT USED TO END "Both call the SAME predicate, so this is one rule at two
+// call sites rather than two rules" — RETRACTED, AND THE FIFTH SITE OF THAT RETRACTION.
+// The two checks are NOT interchangeable: this one runs AFTER the form is validated, the
+// handler's runs BEFORE it, and a request with no verb field answers 403 from the handler
+// and 400 with the handler's check removed. An unauthorised caller learns which part of
+// their request was malformed. `internal/ui/README.md` carries the table; the mutation row
+// `ui-share-write-authority-check-removed-in-the-handler` is killable because of it.
 //
 // 🔴 AND IT CHECKS THE ACTOR'S AUTHORITY OVER THE SCOPE, NEVER OVER THE SUBJECT.
 // There is no "may I share with this person" right in the model, and inventing one

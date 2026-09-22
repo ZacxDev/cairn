@@ -1685,7 +1685,7 @@ MUTANTS: tuple[Mutant, ...] = (
         "\t\tauth := control.Resolve(m, p)\n"
         "\t\tverbs := auth.VerbsOn(scope)",
         killer="TestTheAudienceIsComputedFromResolveNotFromGrantRows",
-        why="the obvious implementation of 'who can see this' — read the sharing table. "
+        why="the obvious implementation of 'who has access to this' — read the sharing table. "
         "It under-reports every project member, silently, and in the direction that tells "
         "somebody their notes are more private than they are.",
     ),

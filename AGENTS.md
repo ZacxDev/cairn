@@ -323,7 +323,7 @@ ROUTE CLASS**: same-origin **before** auth, so it covers the PUBLIC sign-in row;
 per-session CSRF token **after** auth, so the token gate is reachable rather than shadowed.
 A class can only make a route LESS protected, so no gate may be derived from one.
 
-🔴 **THE SHARE FLOW ANSWERS "WHO CAN SEE THIS" FROM `control.Resolve`, NEVER FROM
+🔴 **THE SHARE FLOW ANSWERS "WHO HAS ACCESS TO THIS" FROM `control.Resolve`, NEVER FROM
 `Model.Grants`** — authority arrives two ways, so a grant-row listing under-reports every
 project MEMBER. 🔴 **`ReplicaHonesty` is pinned as a WHOLE NORMALISED STRING.** Both bind the
 next edit; everything else about the flow — `Revocable`, `-control-journal`, why the

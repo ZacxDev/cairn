@@ -341,7 +341,7 @@ func TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser(t *testing.T)
 // 🔴 A GRANT-ROW LISTING UNDER-REPORTS EVERY PROJECT MEMBER, AND IT UNDER-REPORTS IN
 // THE DIRECTION THAT TELLS SOMEBODY THEIR NOTES ARE MORE PRIVATE THAN THEY ARE.
 // Authority arrives two ways — `control.Resolve`'s own comment enumerates them — so a
-// page that answered "who can see this" from `Model.Grants` would show a short,
+// page that answered "who has access to this" from `Model.Grants` would show a short,
 // plausible, wrong list. Rowan reaches `quarry-notes` through OWNERSHIP of the project
 // that holds it, with no grant row naming rowan anywhere in the journal; this test
 // asserts rowan is in the audience and that the grant table is genuinely empty, so the
@@ -795,7 +795,7 @@ func TestAReadOnlyDeploymentSaysSoOnThePageRatherThanAtTheClick(t *testing.T) {
 	caller := rig.signIn(readOnlyToken)
 
 	// The READS still work. A deployment that cannot record a share can still answer
-	// "who can see this", and withholding that would be a worse surface, not a safer one.
+	// "who has access to this", and withholding that would be a worse surface, not a safer one.
 	index := caller.get(SharePath)
 	if index.Code != http.StatusOK {
 		t.Fatalf("the share index answered %d against a read-only authority; the reads need no journal: %s",

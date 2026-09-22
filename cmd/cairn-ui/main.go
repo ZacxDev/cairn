@@ -8,8 +8,13 @@
 //
 // ⚠ THIS COMMENT SAID "IT IS PHASE A … Cookie sessions, the sign-in flow and the screens
 // are later phases; none of them are here" THROUGH THE TWO PHASES THAT ADDED THEM. It is
-// the canonical site — `go doc ./cmd/cairn-ui` — and it was the last copy of that claim
-// standing after `README.md` was corrected.
+// the canonical site for a Go reader — `go doc ./cmd/cairn-ui`.
+//
+// ⚠ AND THIS COMMENT CLAIMED TO BE "the last copy of that claim standing", WHICH WAS
+// ITSELF FALSE — a round auditing the sweep found `flake.nix`'s `meta.description` still
+// shipping "phase A: one page", which is what `nix flake show` and `nix search` render and
+// is more visible than any Go doc comment. Two sweeps in a row asserted completeness and
+// missed a site; the lesson is to name where you LOOKED rather than to claim you finished.
 //
 // 🔴 AND IT IS A SEPARATE BINARY RATHER THAN ROUTES ON `cmd/cairn-server`, WHICH IS
 // WHAT KEEPS THE POD'S SERVED CONTRACT AND ITS DEPENDENCY SET BOTH UNMOVED.
@@ -127,7 +132,7 @@ func main() {
 		os.Exit(exitConfig)
 	}
 
-	if err := refuseAnEmptyAuthority(authority, *controlJournal); err != nil {
+	if err := refuseAnAuthorityNobodyCanSignInTo(authority, *controlJournal); err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
 	}
@@ -335,14 +340,15 @@ func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error)
 		// the journal with `cairn-server -create-user`; this binary is a READER of the
 		// control plane and has no business minting one.
 		//
-		// 🔴 AND IT IS ONLY HALF THE GUARD — THE OTHER HALF IS `refuseAnEmptyAuthority`,
-		// AFTER THE REFRESH, BECAUSE THE HAZARD IS A STATE AND NOT A FILE SIZE. A first
-		// draft refused `info.Size() == 0` and called it done. Measured: a journal holding
-		// a single NEWLINE replays clean, and the surface came up announcing
-		// `sharing writable`, answered `/healthz` 200 and held ZERO users — the exact shape
-		// the refusal names, one byte outside its reach. That is this repository's
-		// "a guard can be SPELLED rather than STRUCTURAL" rule, and the spelling here was
-		// a byte count standing in for "this authority knows nobody".
+		// 🔴 AND IT IS ONLY HALF THE GUARD — THE OTHER HALF IS
+		// `refuseAnAuthorityNobodyCanSignInTo`, AFTER THE REFRESH, BECAUSE THE HAZARD IS A
+		// STATE AND NOT A FILE SIZE. A first draft refused `info.Size() == 0` and called it
+		// done. Measured: a journal holding a single NEWLINE replays clean, and the surface
+		// came up announcing `sharing writable`, answered `/healthz` 200 and could
+		// authenticate nobody — the exact shape the refusal names, one byte outside its
+		// reach. That is this repository's "a guard can be SPELLED rather than STRUCTURAL"
+		// rule, and the spelling here was a byte count. See that function for the SECOND
+		// spelling that was also walked around, and for what the guard asks now.
 		if info, statErr := os.Stat(journal); statErr != nil {
 			return nil, fmt.Errorf("the control journal %s cannot be read (%w), so the authority would hold "+
 				"no users, no scopes and no credentials — this program would start, answer its health "+
@@ -385,28 +391,58 @@ func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error)
 	}, control.CacheOptions{MaxAge: authorityMaxAge}), nil
 }
 
-// refuseAnEmptyAuthority is the STATE half of the control-journal guard: a materialized
-// authority that knows nobody.
+// refuseAnAuthorityNobodyCanSignInTo is the STATE half of the control-journal guard.
 //
-// 🔴 IT ASKS THE MODEL, NOT THE FILE, AND THAT IS THE WHOLE POINT. The hazard is "this
-// surface can serve nobody", and a file size is a proxy for it that a single newline
-// defeats — measured, with the process coming up and answering its health check while
-// holding zero users. `len(Users) == 0` is the hazard itself, available for free once
-// `Refresh` has run.
+// 🔴 IT TESTS THE SIGN-IN PRECONDITION ITSELF — A LIVE CREDENTIAL WHOSE PRINCIPAL THE
+// MODEL HOLDS — AND THAT IS THE THIRD SPELLING OF THIS GUARD, THE FIRST TWO HAVING BEEN
+// PROXIES THAT THE HAZARD WALKED AROUND. Draft 1 refused `info.Size() == 0`; a journal
+// holding a single NEWLINE replays clean, so the surface came up announcing
+// `sharing writable` and served nobody, one byte outside the check. Draft 2 refused
+// `len(Model().Users) == 0` — and `cairn-server -create-user`, which this guard's own
+// error text prescribes as the remedy, writes a user and **no credential**
+// (`createuser.go`: "Never a token: this path mints no credential at all"). So following
+// the remedy produced exactly the state the refusal promises to prevent, and the guard
+// passed it. Measured end to end on both built binaries.
 //
-// ⚠ IT IS SCOPED TO THE JOURNAL BRANCH, DELIBERATELY. The token-file projection always
-// synthesizes one operator user, so this could never fire there — and a guard that cannot
-// fire on a path is a guard that path does not have. `openAuthority` refuses an empty
-// token table on its own, which is that branch's equivalent.
-func refuseAnEmptyAuthority(authority *control.Cache, journal string) error {
+// `control.Authenticate` matches a presented token against LIVE credentials and then
+// requires `PrincipalFor` to know the principal, so "can anybody sign in at all" is
+// precisely the count below. A proxy for it can always be walked around; this is the
+// question itself.
+//
+// 🔴 AND THE HONEST CONSEQUENCE, WHICH IS A GAP RATHER THAN A BUG: **no tool in this
+// repository writes `EventCredentialIssued` into a journal.** `-create-user` does not,
+// and there is no `-issue-credential`. So a journal-backed `cairn-ui` cannot authenticate
+// anybody by any path this repo provides, and this guard REFUSES TO START for that
+// reason rather than letting an operator discover it at the sign-in form. The remedy
+// named below is honest about it.
+//
+// ⚠ IT IS SCOPED TO THE JOURNAL BRANCH, DELIBERATELY. The token-file projection
+// synthesizes a credential per row, so this could never fire there — and `openAuthority`
+// already refuses an empty token table, which is that branch's equivalent.
+func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string) error {
 	if journal == "" {
 		return nil
 	}
-	if len(authority.Model().Users) == 0 {
-		return fmt.Errorf("the control journal %s materialized an authority with NO USERS, so no "+
-			"credential could ever be resolved and every sign-in would answer 401 — this program "+
-			"would come up, announce itself writable and serve nobody. Refusing to start; seed it "+
-			"with `cairn-server -create-user`", journal)
+	m := authority.Model()
+	usable := 0
+	for _, c := range m.Credentials {
+		if !c.Live() {
+			continue
+		}
+		if _, known := m.PrincipalFor(c.PrincipalKind, c.PrincipalID); known {
+			usable++
+		}
 	}
-	return nil
+	if usable > 0 {
+		return nil
+	}
+	return fmt.Errorf("the control journal %s materialized an authority with NO USABLE CREDENTIAL "+
+		"(%d user(s), %d credential record(s), 0 of them live and attributable), so "+
+		"`control.Authenticate` can match nothing and every sign-in would answer 401 — this program "+
+		"would come up, announce itself writable and serve nobody. Refusing to start. ⚠ NOTE THAT "+
+		"`cairn-server -create-user` DOES NOT FIX THIS: it mints a user and no credential, and no "+
+		"tool in this repository writes a credential into a journal yet. A journal-backed cairn-ui "+
+		"is therefore not a sign-in-capable deployment today; run without -control-journal to serve "+
+		"the read-only share pages from the token file",
+		journal, len(m.Users), len(m.Credentials))
 }

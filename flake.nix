@@ -529,7 +529,7 @@
         '';
 
         meta = with pkgs.lib; {
-          description = "The cairn browser surface (phase A: one page, deployed by nothing)";
+          description = "The cairn browser surface: entries page, sign-in, share flow; deployed by nothing";
           homepage = "https://github.com/ZacxDev/cairn";
           license = licenses.mit;
           mainProgram = "cairn-ui";

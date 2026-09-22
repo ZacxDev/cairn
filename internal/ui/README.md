@@ -50,9 +50,12 @@ over-claim respectively:
   deleting a file, and this one can. The `ok` floor in the `go` CI job is what notices a
   package's tests disappearing, and it does not notice one function disappearing.
 
-**Both halves measured, on this tree:**
+**Both halves measured, AT A TREE OF SEVENTEEN TEST PACKAGES** — the floor is now `-lt 18`
+(`cmd/cairn-ui` gained tests with the share flow's startup refusals). The numbers below are
+a RECORD OF THAT RUN and are not re-derived here; what survives the count moving is the
+shape, which is the row that matters:
 
-| tree | `nix build .#cairn-go` | `ok` lines in its check phase | the `go` job's floor (`-lt 17`) |
+| tree | `nix build .#cairn-go` | `ok` lines in its check phase | the `go` job's floor as it then stood (`-lt 17`) |
 |---|---|---|---|
 | unmutated | rc 0 | 17 | GREEN at 17 |
 | `internal/report` given `_ "maragu.dev/gomponents"` | **rc 1**, `THE IMPORT BAN FAILED for …/cmd/cairn: … internal/report -> maragu.dev/gomponents` | — | — |
