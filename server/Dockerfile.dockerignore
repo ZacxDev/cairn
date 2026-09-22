@@ -4,4 +4,5 @@
 !lib/subsystem_resolver.py
 !lib/entry_shape.py
 !lib/host_identity.py
+!lib/env_aliases.py
 !server/server.py

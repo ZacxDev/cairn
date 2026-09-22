@@ -150,6 +150,15 @@ from subsystem_read_store import SYNC_STAMP  # noqa: E402
 # `from … import DEFAULT_*` would bind a value — and the config path is exactly
 # the kind of fact a test repoints. One import style for both.
 import cairn_instances  # noqa: E402
+import env_aliases  # noqa: E402
+
+# The two names that configure the default instance, in their current spelling. Each
+# reads from an exported variable OR from a key of the config file, and each has a
+# deprecated `SUBSYSTEM_STORE_*` alias `env_aliases` resolves. They are constants rather
+# than literals because the "config incomplete" refusal interpolates them, and that
+# refusal is compared byte-for-byte against the GO client by `tests/parity/harness.py`.
+ENV_URL = "CAIRN_URL"
+ENV_TOKEN = "CAIRN_TOKEN"
 DEFAULT_TIMEOUT = 20
 # Ceiling on what a snapshot may unpack to. The whole store measured ~63 KB of
 # markdown across 305 entries in 2026-08; 256 MB is ~4000x that, so it bounds a
@@ -259,6 +268,18 @@ class StoreCorrupt(Exception):
     """
 
 
+def _warn_deprecations(lines: list[str]) -> None:
+    """Emit `env_aliases` warnings on stderr, at most once per process per line.
+
+    🔴 THE PREFIX AND THE STREAM ARE PART OF THE CONTRACT, NOT A PRESENTATION CHOICE.
+    `tests/parity/harness.py` diffs this client's stderr against the Go client's
+    BYTE-FOR-BYTE, so `cairn: ` and `file=sys.stderr` here have to match
+    `internal/client.Run`'s sink exactly. `env_aliases.warn_once` owns the "at most
+    once" rule for both languages, so neither side counts for itself.
+    """
+    env_aliases.warn_once(lines, lambda line: print(f"cairn: {line}", file=sys.stderr))
+
+
 def load_config(path: Path | None = None, *, instance: str | None = None) -> tuple[str, str]:
     """`(url, token)` from the env file, with real environment taking priority.
 
@@ -295,15 +316,22 @@ def load_config(path: Path | None = None, *, instance: str | None = None) -> tup
     except OSError:
         pass
 
+    # 🔴 THE FILE IS AS MUCH AN ALIAS SURFACE AS THE ENVIRONMENT IS. `SUBSYSTEM_STORE_URL=`
+    # is a KEY inside `~/.config/subsystem-store/env` as well as an exported variable, and
+    # an operator who renamed only one of the two would get a silent half-migration — the
+    # file key ignored, the environment honoured. Its warning NAMES THE FILE rather than
+    # `$VAR`, because the string lives somewhere they have to edit.
+    _warn_deprecations(env_aliases.file_deprecations(from_file, str(path)))
+
     if is_default:
-        url = os.environ.get("SUBSYSTEM_STORE_URL") or from_file.get("SUBSYSTEM_STORE_URL")
-        token = os.environ.get("SUBSYSTEM_STORE_TOKEN") or from_file.get(
-            "SUBSYSTEM_STORE_TOKEN"
+        url = env_aliases.value(os.environ, ENV_URL) or env_aliases.value(from_file, ENV_URL)
+        token = env_aliases.value(os.environ, ENV_TOKEN) or env_aliases.value(
+            from_file, ENV_TOKEN
         )
         where = f"(looked in {path} and the environment)"
     else:
-        url = from_file.get("SUBSYSTEM_STORE_URL")
-        token = from_file.get("SUBSYSTEM_STORE_TOKEN")
+        url = env_aliases.value(from_file, ENV_URL)
+        token = env_aliases.value(from_file, ENV_TOKEN)
         where = (
             f"(looked in {path}; the environment is NOT consulted for a "
             f"non-default instance, so a `{alias}` instance is configured by "
@@ -311,7 +339,7 @@ def load_config(path: Path | None = None, *, instance: str | None = None) -> tup
         )
     missing = [
         n
-        for n, v in (("SUBSYSTEM_STORE_URL", url), ("SUBSYSTEM_STORE_TOKEN", token))
+        for n, v in ((ENV_URL, url), (ENV_TOKEN, token))
         if not v
     ]
     if missing:
@@ -2298,6 +2326,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # 🔴 BEFORE `parse_args`, SO `--help` WARNS TOO, AND BECAUSE THE POSITION IS COMPARED.
+    # `tests/parity/harness.py` diffs this client's stderr against the Go client's
+    # byte-for-byte, and `internal/client.Run` emits the same sweep before ITS `Parse`.
+    # After `parse_args` the notice would land after argparse's usage error on this side
+    # and before the Go client's on the other.
+    #
+    # The FILE-key half cannot happen here — the config path is not known until an alias
+    # has been resolved — so `load_config` emits that half through the same sink.
+    _warn_deprecations(env_aliases.deprecations(os.environ))
+
     args = build_parser().parse_args(argv)
     if not hasattr(args, "no_sync"):
         args.no_sync = False

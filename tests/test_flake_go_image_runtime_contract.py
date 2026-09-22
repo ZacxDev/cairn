@@ -7,8 +7,8 @@ either can move alone. `packages.server-image-go` has no Dockerfile counterpart,
 shape does not transfer: there is no second text to diff it against.
 
 What CAN drift is the thing that actually matters to a deployment. A cluster running the
-Python pod has a Deployment that sets `SUBSYSTEM_STORE_ROOT`, mounts a token at
-`SUBSYSTEM_STORE_TOKEN_FILE`, targets `SUBSYSTEM_STORE_PORT` and expects uid 65532 on the
+Python pod has a Deployment that sets `CAIRN_STORE_ROOT`, mounts a token at
+`CAIRN_TOKEN_FILE`, targets `CAIRN_PORT` and expects uid 65532 on the
 PVC. Swapping the image must not require editing any of that. So the relationship this
 file pins is not "two files agree" but "the Go image's contract is DERIVED from the same
 `serverEnv`/`serverUid`/`serverPort` bindings the Python pod's is, and the derivation is
@@ -29,7 +29,7 @@ from the `let` block — and never looked at what `mkGoServerImage` hands to
 `buildLayeredImage`. Three hand-written mutants therefore SURVIVED it whole, nothing red:
 an `Env` built from `serverEnv` (CPython's knobs in a pod with no interpreter), an `Env`
 whose base was SUBSTITUTED for a wrong-store literal, and a `serverEnvGo` carrying a
-second `removeAttrs` that dropped `SUBSYSTEM_STORE_TOKEN_FILE` (a pod reading a
+second `removeAttrs` that dropped `CAIRN_TOKEN_FILE` (a pod reading a
 compiled-in token path instead of the mounted one). Each shipped a pod under an env no
 assertion here read. The model's stated reason was not WRONG — a parser that read the
 `Env` argument INSTEAD would be satisfied by a literal — it was INCOMPLETE, which is this
@@ -118,9 +118,9 @@ GO_MAKER = "mkGoServerImage"
 #: this is the claim: these three are what a manifest names, and a derivation that
 #: dropped one would satisfy any assertion computed from the derivation itself.
 DEPLOY_CONTRACT = (
-    "SUBSYSTEM_STORE_ROOT",
-    "SUBSYSTEM_STORE_PORT",
-    "SUBSYSTEM_STORE_TOKEN_FILE",
+    "CAIRN_STORE_ROOT",
+    "CAIRN_PORT",
+    "CAIRN_TOKEN_FILE",
 )
 
 #: The ONLY `Env` expression `mkGoServerImage` may hand `buildLayeredImage`,
@@ -136,7 +136,7 @@ GO_IMAGE_ENV_FORM = (
 #:
 #: 🔴 A WHOLE STRING RATHER THAN A WORD SEARCH, BECAUSE THE ARTEFACT UNDER TEST IS AN
 #: EXPRESSION AND A WORD IS WALKABLE BY WRITING A DIFFERENT EXPRESSION CONTAINING IT.
-#: `removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ]) serverEnvPythonOnly`
+#: `removeAttrs (removeAttrs serverEnv [ "CAIRN_TOKEN_FILE" ]) serverEnvPythonOnly`
 #: names both `serverEnv` and `serverEnvPythonOnly`, satisfies every other assertion in
 #: this module, and ships a pod that looks for its bearer token at a compiled-in default.
 #: ⚠ The cost is that a genuine change of shape fails here first. That is the point: it
@@ -306,7 +306,7 @@ class TestTheGoImageRunsUnderTheSameContract:
 
         🔴 THE EXACT-FORM ASSERTION IS A SEAM GUARD AND IT CLOSED A MEASURED SURVIVOR.
         The two name searches are satisfied by
-        `removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ]) serverEnvPythonOnly`
+        `removeAttrs (removeAttrs serverEnv [ "CAIRN_TOKEN_FILE" ]) serverEnvPythonOnly`
         — both names are present — and so is every value assertion in this module, because
         `go_env()` computes the subtraction it models rather than the one the source
         performs. That mutant ships a pod reading a compiled-in token path instead of the
@@ -331,7 +331,7 @@ class TestTheGoImageRunsUnderTheSameContract:
             f"model is valid for is {SERVER_ENV_GO_FORM!r}. A second `removeAttrs`, an "
             f"`//` override IN THIS BINDING or any other extra term changes what the pod "
             f"actually gets while every value assertion here keeps comparing the model — "
-            f"which is how a mutant that dropped SUBSYSTEM_STORE_TOKEN_FILE survived this "
+            f"which is how a mutant that dropped CAIRN_TOKEN_FILE survived this "
             f"module whole. (The `//` in `mkGoServerImage`'s `Env` ARGUMENT is a different "
             f"place and is read by `test_the_image_Env_is_EXACTLY_the_declared_expression`, "
             f"not here.) If the derivation genuinely changes shape, change `go_env()` and "
@@ -376,7 +376,7 @@ class TestTheGoImageRunsUnderTheSameContract:
         """🔴 THE SUBTRACTION CAN SUBTRACT TOO MUCH, AND THIS IS THE DANGEROUS DIRECTION.
 
         A derivation that subtracts too much is still a derivation: adding
-        `SUBSYSTEM_STORE_TOKEN_FILE` to the list satisfies every structural assertion
+        `CAIRN_TOKEN_FILE` to the list satisfies every structural assertion
         above and ships a pod that looks for its bearer token at the compiled-in default
         instead of the mounted path. So the list is checked against what a Deployment
         actually sets, in the direction that matters.
@@ -472,7 +472,7 @@ class TestTheGoImageRunsUnderTheSameContract:
         assert uid != "0", "the Go image would run the pod as ROOT"
 
     def test_the_exposed_port_derives_from_serverPort_and_matches_the_env(self, flake):
-        """🔴 `ExposedPorts` IS DOCUMENTATION; `SUBSYSTEM_STORE_PORT` IS THE BINDING.
+        """🔴 `ExposedPorts` IS DOCUMENTATION; `CAIRN_PORT` IS THE BINDING.
 
         `cmd/cairn-server/main.go` takes its port from the env var and `ExposedPorts`
         only annotates the image. They can disagree, and if they do the pod listens
@@ -488,8 +488,8 @@ class TestTheGoImageRunsUnderTheSameContract:
             f"drift from the one the server binds"
         )
         env = go_env(flake)
-        assert env and env["SUBSYSTEM_STORE_PORT"] == port, (
-            f"the Go pod binds {env['SUBSYSTEM_STORE_PORT'] if env else None!r} and the "
+        assert env and env["CAIRN_PORT"] == port, (
+            f"the Go pod binds {env['CAIRN_PORT'] if env else None!r} and the "
             f"image exposes serverPort={port!r}"
         )
 

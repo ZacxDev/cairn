@@ -51,9 +51,9 @@
         HOME = "/home/nonroot";
         PYTHONDONTWRITEBYTECODE = "1";
         PYTHONUNBUFFERED = "1";
-        SUBSYSTEM_STORE_ROOT = "/data";
-        SUBSYSTEM_STORE_PORT = "8102";
-        SUBSYSTEM_STORE_TOKEN_FILE = "/run/secrets/subsystem-store/token";
+        CAIRN_STORE_ROOT = "/data";
+        CAIRN_PORT = "8102";
+        CAIRN_TOKEN_FILE = "/run/secrets/subsystem-store/token";
       };
       serverUid = 65532;
       serverPort = 8102;
@@ -62,7 +62,7 @@
       # A SECOND LITERAL. There are now THREE builds of a pod and only ONE statement
       # of the contract: `serverEnv` above. Deriving the Go image's env from it means
       # a variable added there reaches BOTH pods and cannot be forgotten on one.
-      # A second attrset holding copies of the three `SUBSYSTEM_STORE_*` values would
+      # A second attrset holding copies of the three `CAIRN_*` values would
       # invert that — the drift would be silent and in the direction that matters, a
       # pod missing the env its Deployment already sets.
       #

@@ -46,7 +46,7 @@ FLAKE = ROOT / "flake.nix"
 #: everything that expression does afterwards reached the pod unread. `inherit (x) K;`
 #: and `${"K"} = "/wrong";` inside the operand carry no bare identifier before an `=`;
 #: `… ++ [ "K=/wrong" ]` appends to the resulting LIST and is not an operand at all; a
-#: mapper lambda can rewrite a value by key. Each shipped `SUBSYSTEM_STORE_ROOT=/wrong`
+#: mapper lambda can rewrite a value by key. Each shipped `CAIRN_STORE_ROOT=/wrong`
 #: to a pod that starts, health-checks and serves the wrong store — a duplicate name in
 #: the list resolves to the LAST entry — with both guard modules green. So this is the
 #: repo's stated remedy for a guard on WORDS: pin the whole normalised string. A
@@ -529,15 +529,15 @@ class TestTheTwoBuildsAgree:
     def test_the_exposed_port_agrees_with_the_env_the_server_actually_reads(
         self, dockerfile, flake
     ):
-        """🔴 EXPOSE IS DOCUMENTATION; `SUBSYSTEM_STORE_PORT` IS THE BINDING.
+        """🔴 EXPOSE IS DOCUMENTATION; `CAIRN_PORT` IS THE BINDING.
 
         `server.py` takes its port from the env var. `EXPOSE` only annotates
         the image. They can disagree, and if they do the pod listens somewhere
         the manifest does not name — so the two are pinned together here rather
         than each being pinned only to its own side of the other file.
         """
-        assert dockerfile_expose(dockerfile) == dockerfile_env(dockerfile)["SUBSYSTEM_STORE_PORT"]
-        assert flake_int(flake, "serverPort") == flake_attrset(flake, "serverEnv")["SUBSYSTEM_STORE_PORT"]
+        assert dockerfile_expose(dockerfile) == dockerfile_env(dockerfile)["CAIRN_PORT"]
+        assert flake_int(flake, "serverPort") == flake_attrset(flake, "serverEnv")["CAIRN_PORT"]
 
     def test_the_entrypoint_script_agrees(self, dockerfile, flake):
         assert dockerfile_cmd_script(dockerfile) == flake_cmd_script(flake)
@@ -686,7 +686,7 @@ class TestTheTwoBuildsAgree:
         """ALL `EXPOSE` lines apply, so checking one of them is not enough."""
         exposed = dockerfile_exposes(dockerfile)
         assert exposed, "no EXPOSE parsed"
-        port = flake_attrset(flake, "serverEnv")["SUBSYSTEM_STORE_PORT"]
+        port = flake_attrset(flake, "serverEnv")["CAIRN_PORT"]
         assert set(exposed) == {port}, (
             f"EXPOSE declares {sorted(set(exposed))} but the server binds {port} — "
             "an exposed port nothing listens on reads as a working route"

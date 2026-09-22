@@ -42,6 +42,7 @@ COPY lib/subsystem_read_store.py /app/lib/
 COPY lib/subsystem_resolver.py   /app/lib/
 COPY lib/entry_shape.py          /app/lib/
 COPY lib/host_identity.py        /app/lib/
+COPY lib/env_aliases.py          /app/lib/
 COPY server/server.py            /app/server/
 
 # `subsystem_touch` evaluates `DEFAULT_STORE_ROOT = Path.home() / ".claude" / …`
@@ -52,9 +53,9 @@ COPY server/server.py            /app/server/
 ENV HOME=/home/nonroot \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    SUBSYSTEM_STORE_ROOT=/data \
-    SUBSYSTEM_STORE_PORT=8102 \
-    SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token
+    CAIRN_STORE_ROOT=/data \
+    CAIRN_PORT=8102 \
+    CAIRN_TOKEN_FILE=/run/secrets/subsystem-store/token
 
 RUN mkdir -p /home/nonroot /data && chown -R 65532:65532 /home/nonroot /data
 
