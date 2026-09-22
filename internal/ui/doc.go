@@ -48,7 +48,7 @@
 //
 // Four pages behind the same `internal/identity` chain the pod uses, minus one
 // backend: the entries page, the sign-in pair, and the share flow. Cookie
-// sessions arrived in phase B; the share flow — "who can see this scope", a
+// sessions arrived in phase B; the share flow — "who has access to this scope", a
 // grant, a revocation, and the notice qualifying all three — is phase C and is
 // this package's `sharing.go`, `sharehandlers.go` and [SharePage].
 //

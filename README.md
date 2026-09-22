@@ -264,10 +264,14 @@ are how you get one; `POST /sign-out` revokes; and `GET /share`, `POST /share`,
 `POST /unshare` are the share flow. `/healthz` is the one unauthenticated route
 outside that set.
 
-🔴 **`cairn-ui` is a SINGLE-REPLICA surface, and the session table is what makes it
-one.** A second replica without shared storage is not a degraded version of this —
-each replica holds its own sessions, so users are signed out on a random fraction
-of requests. Multi-replica is a later arc, not a configuration. And **nothing
+🔴 **`cairn-ui` is a SINGLE-REPLICA surface, for TWO reasons and not one.** The
+session table is the loud one: each replica holds its own sessions, so a second
+replica without shared storage signs users out on a random fraction of requests.
+The quieter one is the **control-plane cache** — a share recorded on replica A is
+not served by B until B's cache refreshes, which is what the replica-honesty notice
+on every share page exists to say. Putting only the session file on shared storage
+buys two replicas that keep people signed in and silently disagree about who can
+see what. Multi-replica is a later arc, not a configuration. And **nothing
 deploys it**: there is no image and no manifest in this repository — it is built
 and run by hand.
 
@@ -302,11 +306,11 @@ at full authority. `AuthBackends` takes one parameter so neither can be passed;
 ### Sharing a scope with somebody
 
 `GET /share` lists the scopes your credential may administer; `GET /share?scope=<id>`
-is one scope's page. It answers three things: **who can see this**, **which of those
-you can take back**, and a form to share it with somebody.
+is one scope's page. It answers three things: **who has access to this**, **which of
+those you can take back**, and a form to share it with somebody.
 
-🔴 **"Who can see this" is computed from the authority, not from the list of
-shares.** Access arrives two ways — a share, or membership of the project that owns
+🔴 **"Who has access to this" is computed from the authority, not from the list
+of shares.** Access arrives two ways — a share, or membership of the project that owns
 the scope — so a page that listed only shares would under-report every project
 member, and in the direction that tells you your notes are more private than they
 are. The two lists are shown separately because only shares can be revoked:

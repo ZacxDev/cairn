@@ -129,8 +129,11 @@ type Config struct {
 	// 🔴 AND THE SENTENCE THAT STOOD HERE WAS FALSE, RETRACTED RATHER THAN QUIETLY
 	// REPLACED. It read: "A read-only authority is answered by the WRITE failing with
 	// `control.ErrAuthorityReadOnly` … the READS still work, and 'who can see this' is
-	// worth serving whether or not this deployment can change it." Both halves are wrong
-	// for the only read-only authority this tree has. `control/tokenfile` confers `admin`
+	// worth serving whether or not this deployment can change it." The SECOND half is
+	// wrong for the only read-only authority this tree has, and the first is wrong about
+	// which read: `GET /share` (the index) answers 200 and carries the banner —
+	// `TestAReadOnlyDeploymentSaysSoOnThePageRatherThanAtTheClick` measures exactly that.
+	// What does NOT work is the SCOPE page, "who has access to this", which 404s. `control/tokenfile` confers `admin`
 	// on NOBODY, so on such a deployment no scope is administrable, every scope page
 	// answers 404, and the write never reaches the sentinel — see `refuseWrite`. ⚠ The
 	// same claim was corrected in `README.md` one commit earlier and this copy was left

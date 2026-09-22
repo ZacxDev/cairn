@@ -613,7 +613,7 @@ is a misattribution that reports a deleted check as covered.
 | — | | a missing `Origin` accepted | `no Origin header at all` |
 | — | chain order | the cookie appended FIRST | `…resolved to … the COOKIE's principal` |
 | — | UI chain | `AuthBackends` forwards a live `TrustedHeader` | `THE UI CHAIN CONTAINS 1 *identity.TrustedHeader MEMBER(S)` |
-| — | authority | the content route skips `Source.Visible` | `…rendered a page WITHOUT consulting the authority` |
+| — | authority | the content route skips `Source.Visible` | `…rendered a page WITHOUT consulting the <name> authority it answers from` |
 | — | ledger | an undeclared `public` row added | `the declared route set is …` |
 | — | class | a second HTML route added WITHOUT the `content` class | `GET /dup answers 200 with an HTML body and is NOT classed \`content\`` |
 | — | class | the one content route's class removed | `NO route in the ledger carries the \`content\` class` (the vacuity arm) |
@@ -751,7 +751,7 @@ sentence pinned whole. This is the clause the control-plane arc's closing condit
 scope granted from one user to another, served through the browser, with its replica-honesty
 notice pinned by a test.*
 
-## 🔴 "Who can see this" is computed from `control.Resolve`, never from `Model.Grants`
+## 🔴 "Who has access to this" is computed from `control.Resolve`, never from `Model.Grants`
 
 Authority arrives **two ways** — `control.Resolve`'s own comment enumerates them — and only one of
 them is a grant row:
@@ -760,12 +760,12 @@ them is a grant row:
    verbs, with **no grant row anywhere in the journal**.
 2. **Sharing.** A live grant names the principal, or a project they belong to.
 
-A page that answered "who can see this" from the grant table would **under-report every project
+A page that answered "who has access to this" from the grant table would **under-report every project
 member**, and silently: the list would be short, plausible, and wrong in the direction that tells
 somebody their notes are more private than they are. `ControlSharing.Audience` therefore resolves
 **every principal the model holds** and asks `VerbsOn(scope)`. That is O(principals × grants log
 grants) per page against the grant read's O(grants); the cost is accepted and the reason is written
-beside the function. Revisit it with a measurement in hand — not the source.
+beside the function. ⚠ **The measurement now EXISTS** — `BenchmarkAudience` re-derives it; see `Audience`'s comment.
 
 `Revocable` **is** read from the grant table, and that is the other half of the decision: grants
 are the only thing this surface can take back. The two lists render separately with a sentence
@@ -864,17 +864,32 @@ to run.**
 | `ui-unshare-skips-the-objects-authority-check` | `TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm` |
 | `ui-share-page-skips-its-authority-check` | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` |
 | `ui-page-never-reports-a-read-only-authority` | `TestAReadOnlyDeploymentSaysSoOnThePage…` |
-| `ui-share-write-authority-check-removed-in-the-handler` | **EQUIVALENT** — see below |
+| `ui-share-write-authority-check-removed-in-the-handler` | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` (its no-verb arm) |
 
-🔴 **That last row is the one worth reading, and it is LABELLED rather than killed.** The write path
-checks `Allows` twice — in the handler so it can choose a status, and in `ControlSharing.Share`
-because the interface is exported and a second caller that forgot would be authorised by omission.
-Removing **either alone is observably equivalent**: the other still answers 403 with the same body.
-That is what defence in depth means. 🔴 **The case the row does NOT cover — both sites removed at
-once — is covered by a TEST rather than by a mutant**: `TestTheSharePageRefusesAScopeThisCaller
-CannotAdminister` drives the write path and requires a 403, so a tree with neither check fails it
-(measured with both removed together). Both sites call the same predicate, so this is one rule at
-two call sites, not two rules.
+🔴 **THAT LAST ROW WAS LABELLED `EQUIVALENT` AND THE LABEL WAS MEASURED FALSE — the
+retracted argument is kept here because an EQUIVALENT label is exactly what stops anybody
+writing the test that kills the mutant.** It read: *"Removing either alone is observably
+equivalent: the other still answers 403 with the same body … Both sites call the same
+predicate, so this is one rule at two call sites, not two rules."*
+
+The discriminator it missed is a request with **no `verb` field**. The handler's
+`Allows(scope, VerbAdmin)` runs BEFORE the form is validated, so:
+
+| tree | status |
+|---|---|
+| unmutated | **403** — refused on authority, disclosing nothing about the input |
+| the handler's check removed | **400** — the caller reaches verb validation and learns their input was the problem |
+
+So the two sites are **not** redundant, and the row is an ordinary killable one.
+`TestTheSharePageRefusesAScopeThisCallerCannotAdminister` carries that exact case.
+
+⚠ **AND THIS PARAGRAPH IS THE SECOND HALF OF THAT RETRACTION, WRITTEN A ROUND LATE.** The
+round that retracted the label did it in `tests/control_mutants.py` and
+`internal/control/README.md` and left this file arguing the refuted case — under a 🔴, in
+the first place a reader of `internal/ui` looks, telling them a check the same round had
+just proved load-bearing was redundant. Its own commit message said *"a retraction is a
+TREE-WIDE SWEEP, not an edit at the site you happened to be reading"*. Four retractions in
+that commit were swept at one site each.
 
 ⚠ **The split is not restated here.** `internal/control/README.md` carries the battery's
 `mutants / killed / EQUIVALENT` line and is the only place pinned to it; a second copy here is the

@@ -14,7 +14,7 @@ import (
 // on disk.
 //
 // 🔴 `Audience` AND `Revocable` ANSWER TWO DIFFERENT QUESTIONS AND THE DIFFERENCE IS
-// THE WHOLE POINT OF THIS INTERFACE. "Who can see this" is computed from
+// THE WHOLE POINT OF THIS INTERFACE. "Who has access to this" is computed from
 // [control.Resolve]; "which rows can I take back" is read from the grant table.
 // Authority arrives TWO ways — membership in the project that owns the scope, and a
 // live grant — so a page that answered the first question from the grant table would
@@ -185,24 +185,36 @@ func (s ControlSharing) Administrable(auth control.Authorization) []control.Name
 // REVISIT. The grant-table read would be O(grants) and is WRONG: a user who is a member
 // of the project owning this scope reaches it with no grant row in existence.
 // `control.Resolve` is the one function permitted to decide what a principal can see
-// (`internal/control/README.md`), and "who can see this" is that question asked of every
+// (`internal/control/README.md`), and "who has access to this" is that question asked of every
 // principal instead of one.
 //
-// 🔴 THE COST IS QUADRATIC AND IS NOW MEASURED RATHER THAN BOUNDED BY A SENTENCE. An
-// earlier version of this comment said "O(principals x grants log grants) … revisit the
-// cost with a measurement in hand" — the measurement arrived and it is worse than the
-// expression implies, because `control.Resolve` allocates and SORTS the whole grant table
-// on every call and calls `ScopesIn` once per membership. Replayed worlds, one `Audience`
-// call, users x grants: 10x10 = 59 us · 100x100 = 2.1 ms · 300x300 = 19 ms · 600x600 =
-// 85 ms. Doubling 300 -> 600 multiplies the time by 4.5, which is quadratic and not the
-// log-linear the old expression reads as. Extrapolated: ~0.9 s at 2,000x2,000. There is
-// no cache and no rate limiter on this surface, and an admin can grow the grant count
-// through the shipped form without bound.
+// 🔴 THE COST IS `P x G x log G` AND THE MEASUREMENT AGREES WITH THAT MODEL — WHICH IS
+// THE OPPOSITE OF WHAT THE PREVIOUS ROUND WROTE HERE, AND THE RETRACTION IS THE POINT.
+// That round replaced the expression with four timings and concluded the cost was "worse
+// than the expression implies … quadratic and not the log-linear the old expression reads
+// as". Both halves were wrong. `P x G x log G` is not log-linear in the world's SIZE: when
+// principals and grants grow together it is quadratic BY CONSTRUCTION, so the measurement
+// confirmed the model rather than contradicting it, and the conclusion was drawn by
+// reading a two-parameter expression as if one parameter were fixed.
+//
+// Re-derivable, via `BenchmarkAudience` in this package (`-bench BenchmarkAudience`), on
+// one idle host — ratios are the claim, absolute times are not:
+//
+//	users x grants     ns/op        ratio to previous     P x G x log G predicts
+//	10 x 10               19,963           —                       —
+//	100 x 100          1,321,957         66.2x                   100x
+//	300 x 300         12,194,371          9.2x                   11.1x
+//	600 x 600         51,533,099          4.2x                    4.5x
+//
+// So the model slightly OVER-predicts and is a safe bound. `control.Resolve` sorts the
+// whole grant table on every call (`sortedGrants`) and calls `ScopesIn` once per
+// membership — that is where the `G log G` comes from, and it is why one page render at
+// 600 principals allocates ~60 MB.
 //
 // ⚠ ACCEPTED FOR NOW, WITH THE NUMBERS RATHER THAN A SHRUG, because the deployments that
-// exist hold single-digit principals — and stated here so the next reader inherits the
-// measurement instead of the reassurance. The fix when it is needed is a per-epoch cache
-// keyed on `Model.Epoch`, not a grant-table read.
+// exist hold single-digit principals — and there is no cache and no rate limiter on this
+// surface, so the bound is worth knowing before either changes. The fix when it is needed
+// is a per-epoch cache keyed on `Model.Epoch`, not a grant-table read.
 func (s ControlSharing) Audience(scope control.ID) ([]Viewer, error) {
 	m := s.Authority.Model()
 	if _, known := m.Scopes[scope]; !known {

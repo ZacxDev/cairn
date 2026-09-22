@@ -44,9 +44,12 @@ const (
 	// sign-in pair carries it, because a surface whose only way in is behind its own
 	// authentication has no way in.
 	classPublic routeClass = 1 << iota
-	// classContent renders an answer about the caller's authority, so it MUST consult
-	// `Source.Visible` — `TestEveryContentRouteConsultsTheAuthority` walks the ledger
-	// for exactly these rows.
+	// classContent renders an answer about the caller's authority, so it MUST consult AN
+	// authority before rendering — which one is per route, declared in
+	// `contentAuthority` in `routes_test.go`, and a content route missing from that map
+	// fails. ⚠ This said "MUST consult `Source.Visible`" while the share flow's content
+	// route consults `Sharing` instead: a class doc naming one authority, three lines from
+	// where somebody adds the next row.
 	classContent
 )
 
