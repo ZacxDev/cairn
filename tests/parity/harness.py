@@ -735,7 +735,7 @@ def start_oracle(store: Path, token_file: Path, log: Path, port: int,
         # once it trips a correctly authorised request also answers 401 and every row after it
         # compares two wrong answers to each other. The corpus's own runner raises this ceiling
         # for exactly this reason.
-        "SUBSYSTEM_STORE_MAX_FAILURES": "1000000",
+        "CAIRN_MAX_FAILURES": "1000000",
         # 🔴 THE TRUSTED-PROXY SET MUST NOT CONTAIN THE HARNESS ITSELF, AND COPYING THE
         # CONFORMANCE RUNNER'S VALUE MADE THIS WHOLE GATE VACUOUS. `127.0.0.1/32` tells the
         # server that the loopback peer is a PROXY, after which every DIRECT request is refused
@@ -752,7 +752,7 @@ def start_oracle(store: Path, token_file: Path, log: Path, port: int,
         # exists as a CONTROL and nothing else: with it, every direct request is refused
         # `401 status=no-client-ip`, both clients fail identically, every row would compare equal
         # — and the pre-flight has to refuse to vouch instead of reporting that as a green.
-        "SUBSYSTEM_STORE_TRUSTED_PROXIES": "127.0.0.1/32" if break_pod else "192.0.2.1/32",
+        "CAIRN_TRUSTED_PROXIES": "127.0.0.1/32" if break_pod else "192.0.2.1/32",
         "CAIRN_HOST": PARITY_HOST,
     })
     handle = log.open("wb")
@@ -807,7 +807,8 @@ def preflight(port: int) -> tuple[int, int]:
     """Fetch the snapshot as the harness, and return `(status, declared entries)`.
 
     🔴 THIS IS THE POSITIVE CONTROL ON THE WHOLE GATE, AND IT EXISTS BECAUSE THE GATE WAS
-    MEASURED VACUOUS WITHOUT IT. With `SUBSYSTEM_STORE_TRUSTED_PROXIES` set to the loopback —
+    MEASURED VACUOUS WITHOUT IT. With `CAIRN_TRUSTED_PROXIES` (then spelled
+    `SUBSYSTEM_STORE_TRUSTED_PROXIES`) set to the loopback —
     copied from the conformance runner, where it is correct — the server refused every DIRECT
     request `401 status=no-client-ip`. Both clients were refused identically, so all 72 rows
     reported PASS while comparing two failures to each other, no cache was ever written, and
@@ -1037,6 +1038,17 @@ def main(argv: list[str] | None = None) -> int:
             # did it, and a per-case `CAIRN_ROUTES` override cannot help the rows
             # that set none. `env_pin` clears the whole prefix, so the rows that
             # DO set one still get exactly what they set.
+            # 🔴 THE CLIENT SIDE DELIBERATELY EXPORTS THE **DEPRECATED** SPELLINGS, AND
+            # THAT IS THIS HARNESS DOING A SECOND JOB. `internal/envalias` and
+            # `lib/env_aliases.py` are two spellings of one ledger;
+            # `tests/test_env_aliases.py` pins their TEXT against each other by reading
+            # source, which leaves one thing it structurally cannot see — a Go-side
+            # argument-ORDER mistake that still renders well-formed English. Running both
+            # real clients with the old names set makes the deprecation notice part of the
+            # stderr these rows already diff BYTE-FOR-BYTE, which is the only instrument
+            # that can. Do not "modernise" these three names without moving that claim
+            # somewhere it is still made. (The POD's env above is on the NEW names: its
+            # stderr is a log file nobody diffs, so the old spellings bought nothing there.)
             base_env = env_pin.sanitized_env(
                 HOME=str(home),
                 CAIRN_HOST=PARITY_HOST,

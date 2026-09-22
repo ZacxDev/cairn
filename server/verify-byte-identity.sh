@@ -221,7 +221,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # CF-Connecting-IP keys the server's per-client rate limiter — but ONLY when
-# the request arrives from a peer in `$SUBSYSTEM_STORE_TRUSTED_PROXIES`.
+# the request arrives from a peer in `$CAIRN_TRUSTED_PROXIES`.
 #
 # ⚠ ON THIS SCRIPT'S USUAL PATH IT IS INERT, AND AN EARLIER VERSION OF THIS
 # COMMENT CLAIMED THE OPPOSITE ("REQUIRED by the server … it must identify

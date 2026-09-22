@@ -367,7 +367,7 @@ SPOOF_IP = "198.51.100.4"  # TEST-NET-2 — the value a forged XFF would carry
 # The peer allowlist every in-process server below is built with. The harness
 # binds on loopback, so loopback IS the "trusted proxy" for these tests — and it
 # is spelled here rather than defaulted inside `build_server`, because a default
-# there would be the very hole `SUBSYSTEM_STORE_TRUSTED_PROXIES` exists to close.
+# there would be the very hole `CAIRN_TRUSTED_PROXIES` exists to close.
 LOOPBACK_PROXY = "127.0.0.1/32"
 # A proxy allowlist that loopback is NOT in. Used to drive the untrusted-peer
 # path without needing a second network interface. TEST-NET-1, distinct from
@@ -1173,7 +1173,7 @@ class TestTokenLoadingGuards:
             api.load_tokens(None, {})
         assert "no token source" in str(exc.value)
         assert "--token-file" in str(exc.value)
-        assert "SUBSYSTEM_STORE_TOKEN" in str(exc.value)
+        assert "CAIRN_TOKEN" in str(exc.value)
 
     def test_a_missing_file_is_not_confused_with_an_absent_one(self, tmp_path: Path):
         with pytest.raises(ValueError) as exc:
@@ -1223,12 +1223,12 @@ class TestTokenLoadingGuards:
         # mounted secret would make the deployed token unknowable.
         path = tmp_path / "tok"
         path.write_text("f" * 50)
-        assert loaded(str(path), {"SUBSYSTEM_STORE_TOKEN": "e" * 50}) == [
+        assert loaded(str(path), {"CAIRN_TOKEN": "e" * 50}) == [
             ("f" * 50, "legacy", None)
         ]
 
     def test_env_is_used_when_no_file_is_named(self):
-        assert loaded(None, {"SUBSYSTEM_STORE_TOKEN": "e" * 50}) == [
+        assert loaded(None, {"CAIRN_TOKEN": "e" * 50}) == [
             ("e" * 50, "legacy", None)
         ]
 
@@ -6448,7 +6448,7 @@ class TestTokenSetAndOverlapRotation:
             return _Fake()
 
         monkeypatch.setattr(api, "build_server", fake_build)
-        monkeypatch.setenv("SUBSYSTEM_STORE_TRUSTED_PROXIES", LOOPBACK_PROXY)
+        monkeypatch.setenv("CAIRN_TRUSTED_PROXIES", LOOPBACK_PROXY)
         rc = api.main(["--store", str(store), "--port", "0", "--token-file", path])
         assert rc == 0
         out = capsys.readouterr().out
@@ -6778,23 +6778,23 @@ class TestLimiterSettings:
 
     def test_env_overrides_all_three(self):
         env = {
-            "SUBSYSTEM_STORE_MAX_FAILURES": "9",
-            "SUBSYSTEM_STORE_FAILURE_WINDOW_S": "30",
-            "SUBSYSTEM_STORE_LOCKOUT_S": "120",
+            "CAIRN_MAX_FAILURES": "9",
+            "CAIRN_FAILURE_WINDOW_S": "30",
+            "CAIRN_LOCKOUT_S": "120",
         }
         assert api.limiter_settings(env) == (9, 30.0, 120.0)
 
     def test_a_TYPO_raises_rather_than_silently_defaulting(self):
         with pytest.raises(ValueError) as exc:
-            api.limiter_settings({"SUBSYSTEM_STORE_MAX_FAILURES": "fve"})
-        assert "SUBSYSTEM_STORE_MAX_FAILURES" in str(exc.value)
+            api.limiter_settings({"CAIRN_MAX_FAILURES": "fve"})
+        assert "CAIRN_MAX_FAILURES" in str(exc.value)
 
     def test_a_NON_POSITIVE_value_raises(self):
         # Reachable past the parse guard: "0" parses fine and would disable the
         # limiter — or lock everyone out on request one, depending on the
         # comparison. Neither is a setting anybody meant.
         with pytest.raises(ValueError) as exc:
-            api.limiter_settings({"SUBSYSTEM_STORE_LOCKOUT_S": "0"})
+            api.limiter_settings({"CAIRN_LOCKOUT_S": "0"})
         assert "positive" in str(exc.value)
 
     def test_main_EXITS_78_on_a_bad_limiter_setting(
@@ -6813,20 +6813,20 @@ class TestLimiterSettings:
 
         def _must_not_be_reached(**kwargs):
             raise AssertionError(
-                "main() reached build_server on a bad SUBSYSTEM_STORE_MAX_FAILURES "
+                "main() reached build_server on a bad CAIRN_MAX_FAILURES "
                 "— the limiter setting was accepted instead of exiting 78"
             )
 
         monkeypatch.setattr(api, "build_server", _must_not_be_reached)
         path = tmp_path / "tok"
         path.write_text(GOOD_TOKEN)
-        monkeypatch.setenv("SUBSYSTEM_STORE_MAX_FAILURES", "lots")
+        monkeypatch.setenv("CAIRN_MAX_FAILURES", "lots")
         # Set, so the failure under test is the LIMITER setting and not the
         # trusted-proxy one — two guards reaching one rc are indistinguishable.
-        monkeypatch.setenv("SUBSYSTEM_STORE_TRUSTED_PROXIES", LOOPBACK_PROXY)
+        monkeypatch.setenv("CAIRN_TRUSTED_PROXIES", LOOPBACK_PROXY)
         rc = api.main(["--store", str(store), "--port", "0", "--token-file", str(path)])
         assert rc == 78
-        assert "SUBSYSTEM_STORE_MAX_FAILURES" in capsys.readouterr().err
+        assert "CAIRN_MAX_FAILURES" in capsys.readouterr().err
 
 
 class TestLockoutOverHTTP:
@@ -7097,14 +7097,14 @@ def _child_env(trusted_proxies: str | None) -> dict[str, str]:
     """The spawned server's environment. `None` REMOVES the variable.
 
     🔴 It pops rather than skipping the set: `os.environ` is inherited, so a
-    developer who happens to export `SUBSYSTEM_STORE_TRUSTED_PROXIES` in their
+    developer who happens to export `CAIRN_TRUSTED_PROXIES` in their
     shell would otherwise make the "unset" test pass for the wrong reason — and
     on the day it mattered it would be the CI runner's environment deciding.
     """
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-    env.pop("SUBSYSTEM_STORE_TRUSTED_PROXIES", None)
+    env.pop("CAIRN_TRUSTED_PROXIES", None)
     if trusted_proxies is not None:
-        env["SUBSYSTEM_STORE_TRUSTED_PROXIES"] = trusted_proxies
+        env["CAIRN_TRUSTED_PROXIES"] = trusted_proxies
     return env
 
 
@@ -7448,7 +7448,7 @@ def running_subprocess(
 ):
     """Spawn the REAL `server.py` process and wait for it to answer /healthz.
 
-    `trusted_proxies` goes in as `$SUBSYSTEM_STORE_TRUSTED_PROXIES`. It is a
+    `trusted_proxies` goes in as `$CAIRN_TRUSTED_PROXIES`. It is a
     string, not a list, so a test can pass a deliberately malformed value; pass
     `None` to leave the variable UNSET, which is how the startup refusal is
     exercised. 🔴 The base ref ignores this variable entirely, which is what
@@ -8064,7 +8064,7 @@ class TestTheSpawnHarnessAndThePortRace:
         # Declines when the retry never fired — that is the regression itself.
         assert self._budget_reblame(never, attempts=1, budget=4.0) is None
         # Declines on a failure that is not about coming up at all.
-        other = AssertionError("server exited 78: SUBSYSTEM_STORE_TRUSTED_PROXIES")
+        other = AssertionError("server exited 78: CAIRN_TRUSTED_PROXIES")
         assert self._budget_reblame(other, attempts=3, budget=4.0) is None
 
         # And the stream verdict, all three outcomes.
@@ -8298,7 +8298,7 @@ class TestTheSpawnHarnessAndThePortRace:
                 pass  # pragma: no cover - the spawn must never get here
         assert len(picks) == 1, "a death unrelated to the port was retried"
         assert "server exited 78" in str(raised.value)
-        assert "SUBSYSTEM_STORE_TRUSTED_PROXIES" in str(raised.value)
+        assert "CAIRN_TRUSTED_PROXIES" in str(raised.value)
 
     def test_the_NEVER_HEALTHY_message_names_everything_the_old_one_dropped(
         self, store: Path, token_file: Path, monkeypatch: pytest.MonkeyPatch
@@ -9071,8 +9071,8 @@ class TestNonFiniteLimiterSettings:
     @pytest.mark.parametrize(
         "name",
         [
-            "SUBSYSTEM_STORE_FAILURE_WINDOW_S",
-            "SUBSYSTEM_STORE_LOCKOUT_S",
+            "CAIRN_FAILURE_WINDOW_S",
+            "CAIRN_LOCKOUT_S",
         ],
     )
     def test_a_non_finite_value_is_REFUSED(self, name: str, value: str):
@@ -9082,7 +9082,7 @@ class TestNonFiniteLimiterSettings:
 
     def test_a_FINITE_value_is_still_accepted(self):
         assert api.limiter_settings(
-            {"SUBSYSTEM_STORE_LOCKOUT_S": "42.5"}
+            {"CAIRN_LOCKOUT_S": "42.5"}
         ) == (5, 60.0, 42.5)
 
 
@@ -9627,7 +9627,7 @@ class TestTheDrainLoopActuallyLOOPS:
 # matters and the file's header explains why: `server.py` did not exist before
 # phase 1, so everything else here is red at ITS base for a collection error.
 # Phase 1.5b's base ref is different — `server.py` exists, it parses the same
-# command line, and it IGNORES `$SUBSYSTEM_STORE_TRUSTED_PROXIES` completely.
+# command line, and it IGNORES `$CAIRN_TRUSTED_PROXIES` completely.
 # So a test that spawns the real process with that variable set runs on BOTH
 # trees and its failure at base is a statement about BEHAVIOUR:
 #
@@ -10014,7 +10014,7 @@ class TestTrustedProxyOverTheRealProcess:
             env=_child_env(None),
         )
         assert proc.returncode == 78, (proc.returncode, proc.stdout, proc.stderr)
-        assert "SUBSYSTEM_STORE_TRUSTED_PROXIES" in proc.stderr
+        assert "CAIRN_TRUSTED_PROXIES" in proc.stderr
         assert "no trusted proxies" in proc.stderr
 
     def test_the_process_REFUSES_TO_START_on_a_DEFAULT_ROUTE(
@@ -11192,7 +11192,7 @@ class TestTrustedProxyAllowlistParsing:
     # weakened to `if raw is None`, a blank value falls through to the
     # empty-result guard and raises a message that still contains
     # "no trusted proxies", so the sweep scored it SURVIVED.
-    UNSET_SENTENCE = "set $SUBSYSTEM_STORE_TRUSTED_PROXIES to the address(es)"
+    UNSET_SENTENCE = "set $CAIRN_TRUSTED_PROXIES to the address(es)"
     NO_ENTRIES_SENTENCE = "resolved to no entries"
 
     def test_an_UNSET_variable_raises_rather_than_defaulting(self):
@@ -11206,7 +11206,7 @@ class TestTrustedProxyAllowlistParsing:
         the empty-result guard is a different message and a different bug.
         """
         with pytest.raises(ValueError) as exc:
-            api.load_trusted_proxies({"SUBSYSTEM_STORE_TRUSTED_PROXIES": "  \t "})
+            api.load_trusted_proxies({"CAIRN_TRUSTED_PROXIES": "  \t "})
         assert self.UNSET_SENTENCE in str(exc.value)
         assert self.NO_ENTRIES_SENTENCE not in str(exc.value)
 
@@ -11217,14 +11217,14 @@ class TestTrustedProxyAllowlistParsing:
         and the sweep says so — measured, it survived.
         """
         with pytest.raises(ValueError) as exc:
-            api.load_trusted_proxies({"SUBSYSTEM_STORE_TRUSTED_PROXIES": ",,"})
+            api.load_trusted_proxies({"CAIRN_TRUSTED_PROXIES": ",,"})
         assert self.NO_ENTRIES_SENTENCE in str(exc.value)
         assert self.UNSET_SENTENCE not in str(exc.value)
 
     def test_a_NON_ADDRESS_entry_names_the_offending_item(self):
         with pytest.raises(ValueError) as exc:
             api.load_trusted_proxies(
-                {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "192.0.2.1, gateway"}
+                {"CAIRN_TRUSTED_PROXIES": "192.0.2.1, gateway"}
             )
         message = str(exc.value)
         # 🔴 THE WHOLE COMPUTED PREFIX, PINNED AS ONE STRING — and that is a
@@ -11236,7 +11236,7 @@ class TestTrustedProxyAllowlistParsing:
         # on WORDS is walkable by a value that spells the same words somewhere
         # else in the sentence.
         assert message.startswith(
-            "SUBSYSTEM_STORE_TRUSTED_PROXIES: 'gateway' is not an IP address or CIDR ("
+            "CAIRN_TRUSTED_PROXIES: 'gateway' is not an IP address or CIDR ("
         ), message
         # And the VALID sibling must not be blamed.
         assert "192.0.2.1'" not in message
@@ -11250,7 +11250,7 @@ class TestTrustedProxyAllowlistParsing:
         for spelling in ("0.0.0.0/0", "::/0"):
             with pytest.raises(ValueError) as exc:
                 api.load_trusted_proxies(
-                    {"SUBSYSTEM_STORE_TRUSTED_PROXIES": spelling}
+                    {"CAIRN_TRUSTED_PROXIES": spelling}
                 )
             assert "trusts every peer" in str(exc.value), spelling
 
@@ -11282,7 +11282,7 @@ class TestTrustedProxyAllowlistParsing:
             "2001:db8::/48",  # the v6 mirror, which a v4-only floor would miss
         ):
             with pytest.raises(ValueError) as exc:
-                api.load_trusted_proxies({"SUBSYSTEM_STORE_TRUSTED_PROXIES": spelling})
+                api.load_trusted_proxies({"CAIRN_TRUSTED_PROXIES": spelling})
             assert "too broad" in str(exc.value), spelling
 
     def test_THE_FLOOR_ITSELF_IS_ACCEPTED_so_the_guard_is_not_a_ban_on_CIDRs(self):
@@ -11295,15 +11295,15 @@ class TestTrustedProxyAllowlistParsing:
         import ipaddress
 
         assert api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "198.51.100.0/24"}
+            {"CAIRN_TRUSTED_PROXIES": "198.51.100.0/24"}
         ) == (ipaddress.ip_network("198.51.100.0/24"),)
         assert api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "2001:db8::/64"}
+            {"CAIRN_TRUSTED_PROXIES": "2001:db8::/64"}
         ) == (ipaddress.ip_network("2001:db8::/64"),)
         for one_bit_wider in ("198.51.100.0/23", "2001:db8::/63"):
             with pytest.raises(ValueError) as exc:
                 api.load_trusted_proxies(
-                    {"SUBSYSTEM_STORE_TRUSTED_PROXIES": one_bit_wider}
+                    {"CAIRN_TRUSTED_PROXIES": one_bit_wider}
                 )
             assert "too broad" in str(exc.value), one_bit_wider
 
@@ -11314,9 +11314,9 @@ class TestTrustedProxyAllowlistParsing:
         exactly how two mutants survived an earlier round of this file.
         """
         with pytest.raises(ValueError) as zero:
-            api.load_trusted_proxies({"SUBSYSTEM_STORE_TRUSTED_PROXIES": "0.0.0.0/0"})
+            api.load_trusted_proxies({"CAIRN_TRUSTED_PROXIES": "0.0.0.0/0"})
         with pytest.raises(ValueError) as wide:
-            api.load_trusted_proxies({"SUBSYSTEM_STORE_TRUSTED_PROXIES": "10.0.0.0/8"})
+            api.load_trusted_proxies({"CAIRN_TRUSTED_PROXIES": "10.0.0.0/8"})
         assert "trusts every peer" in str(zero.value)
         assert "too broad" not in str(zero.value)
         assert "too broad" in str(wide.value)
@@ -11330,7 +11330,7 @@ class TestTrustedProxyAllowlistParsing:
         import ipaddress
 
         assert api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "192.0.2.1,198.51.100.0/24  203.0.113.9"}
+            {"CAIRN_TRUSTED_PROXIES": "192.0.2.1,198.51.100.0/24  203.0.113.9"}
         ) == (
             ipaddress.ip_network("192.0.2.1/32"),
             ipaddress.ip_network("198.51.100.0/24"),
@@ -11344,7 +11344,7 @@ class TestTrustedProxyAllowlistParsing:
         import ipaddress
 
         assert api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "198.51.100.7/24"}
+            {"CAIRN_TRUSTED_PROXIES": "198.51.100.7/24"}
         ) == (ipaddress.ip_network("198.51.100.0/24"),)
 
 
@@ -11359,7 +11359,7 @@ class TestPeerAddressNormalisation:
         and the operator widens it until it does.
         """
         trusted = api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "198.51.100.4"}
+            {"CAIRN_TRUSTED_PROXIES": "198.51.100.4"}
         )
         peer = api.peer_address(("::ffff:198.51.100.4", 4242, 0, 0))
         assert api.peer_is_trusted(peer, trusted) is True
@@ -11371,7 +11371,7 @@ class TestPeerAddressNormalisation:
         addresses in ONE /64: one allowlisted, the other must NOT be trusted.
         """
         trusted = api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "2001:db8:1:2::1"}
+            {"CAIRN_TRUSTED_PROXIES": "2001:db8:1:2::1"}
         )
         assert api.peer_is_trusted(api.peer_address(("2001:db8:1:2::1", 1, 0, 0)), trusted)
         sibling = api.peer_address(("2001:db8:1:2:ffff:ffff:ffff:ffff", 1, 0, 0))
@@ -11396,7 +11396,7 @@ class TestPeerAddressNormalisation:
 
     def test_None_is_never_trusted(self):
         trusted = api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "192.0.2.1"}
+            {"CAIRN_TRUSTED_PROXIES": "192.0.2.1"}
         )
         assert api.peer_is_trusted(None, trusted) is False
 
@@ -11412,7 +11412,7 @@ class TestPeerAddressNormalisation:
         is still worth pinning, so the test stays and the guard is gone.
         """
         trusted = api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": "192.0.2.0/24"}
+            {"CAIRN_TRUSTED_PROXIES": "192.0.2.0/24"}
         )
         assert api.peer_is_trusted(api.peer_address(("2001:db8::1", 1, 0, 0)), trusted) is False
 
@@ -11686,7 +11686,7 @@ class TestResolveClientIsTheWholeRule:
 
     def _trusted(self):
         return api.load_trusted_proxies(
-            {"SUBSYSTEM_STORE_TRUSTED_PROXIES": self.TRUSTED[0]}
+            {"CAIRN_TRUSTED_PROXIES": self.TRUSTED[0]}
         )
 
     def test_a_TRUSTED_peer_is_bucketed_on_the_HEADER(self):
@@ -12863,7 +12863,7 @@ class TestRefusedIsIndistinguishableFromAbsent:
 
         An equality between two responses is only evidence if the pair CAN
         differ. This server fail-closes to an EMPTY body without
-        `SUBSYSTEM_STORE_TRUSTED_PROXIES` and a `CF-Connecting-IP` header, and
+        `CAIRN_TRUSTED_PROXIES` and a `CF-Connecting-IP` header, and
         two empty bodies compare identical — so "byte-identical" is exactly the
         assertion a broken harness satisfies best. Same two phases, same query,
         an UNRESTRICTED token: present -> `search-hit` carrying the matched
@@ -20864,7 +20864,7 @@ class TestTheHandlerIsInstalledNotMerelyDefined:
 
         monkeypatch.setattr(api, "build_server", lambda **kw: _Fake())
         monkeypatch.setattr(api, "install_sighup_reload", spy_install)
-        monkeypatch.setenv("SUBSYSTEM_STORE_TRUSTED_PROXIES", LOOPBACK_PROXY)
+        monkeypatch.setenv("CAIRN_TRUSTED_PROXIES", LOOPBACK_PROXY)
         rc = api.main(
             ["--store", str(store), "--port", "0", "--token-file", str(path)]
         )
@@ -20875,7 +20875,7 @@ class TestTheHandlerIsInstalledNotMerelyDefined:
         self, store: Path, tmp_path: Path, monkeypatch
     ):
         """🔴 THE RESOLVED PATH, NOT `args.token_file`. `main` sets `token_file`
-        to `None` when the configured path is absent and `$SUBSYSTEM_STORE_TOKEN
+        to `None` when the configured path is absent and `$CAIRN_TOKEN
         ` is set, and prints that it did. A reloader handed the raw argument
         would then start re-reading a file the process deliberately ignored at
         startup — so a secret appearing at that path later would be adopted by a
@@ -20900,8 +20900,8 @@ class TestTheHandlerIsInstalledNotMerelyDefined:
 
         monkeypatch.setattr(api, "build_server", lambda **kw: _Fake())
         monkeypatch.setattr(api, "install_sighup_reload", spy_install)
-        monkeypatch.setenv("SUBSYSTEM_STORE_TRUSTED_PROXIES", LOOPBACK_PROXY)
-        monkeypatch.setenv("SUBSYSTEM_STORE_TOKEN", GOOD_TOKEN)
+        monkeypatch.setenv("CAIRN_TRUSTED_PROXIES", LOOPBACK_PROXY)
+        monkeypatch.setenv("CAIRN_TOKEN", GOOD_TOKEN)
         absent = tmp_path / "not-mounted"
         rc = api.main(
             ["--store", str(store), "--port", "0", "--token-file", str(absent)]
@@ -21614,16 +21614,22 @@ class TestReloadTokensSwapsRatherThanMutates:
         )
 
     def test_narrowing_the_emitter_receiver_did_NOT_lose_live_coverage(self):
-        """The control for the narrowing: the real source must still yield 8.
+        """The control for the narrowing: the real source must still yield 9.
 
-        Measured before and after — every one of the 8 is `print`/`emit` by bare
+        Measured before and after — every one of the 9 is `print`/`emit` by bare
         NAME, so the attr arm contributes zero matches either way and the change
         is behaviour-neutral TODAY. Asserting the count is what would catch a
         narrowing that quietly dropped a real emitter.
+
+        ⚠ IT WAS 8 UNTIL THE `SUBSYSTEM_STORE_*` -> `CAIRN_*` RENAME, which added the
+        alias-deprecation notice at the top of `main()`. That emitter is wrapped in
+        `reload_safe` like its eight neighbours, so only the COUNT moved — which is
+        exactly what this assertion is for, and the number is updated rather than the
+        assertion loosened.
         """
         _, checked = _bare_reload_emitters(SERVER_PATH.read_text(encoding="utf-8"))
-        assert checked == 8, (
-            f"the reload-stream scan checked {checked} emitters, not 8. If an "
+        assert checked == 9, (
+            f"the reload-stream scan checked {checked} emitters, not 9. If an "
             f"emitter was legitimately added or removed, update this number; if "
             f"it FELL, the receiver narrowing dropped a real sink."
         )

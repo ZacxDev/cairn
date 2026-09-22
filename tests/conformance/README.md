@@ -75,8 +75,8 @@ The goldens do not apply to a server started any other way:
 
 | env | value | why |
 |---|---|---|
-| `SUBSYSTEM_STORE_TRUSTED_PROXIES` | `127.0.0.1/32` | the suite connects over loopback, so loopback is the trusted proxy and `CF-Connecting-IP` is honoured |
-| `SUBSYSTEM_STORE_MAX_FAILURES` | a large number | **see below** |
+| `CAIRN_TRUSTED_PROXIES` | `127.0.0.1/32` | the suite connects over loopback, so loopback is the trusted proxy and `CF-Connecting-IP` is honoured |
+| `CAIRN_MAX_FAILURES` | a large number | **see below** |
 | `CAIRN_HOST` | `conformance-oracle` | keeps the real hostname out of a report body. Defence in depth only — the normalization is what makes a golden host-independent |
 
 🔴 **`MAX_FAILURES` is the one that would silently destroy a run.** The lockout
