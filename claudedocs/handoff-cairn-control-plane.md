@@ -24,9 +24,8 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`f8a257e`**. Open: **#74** (ranked item 1 below — it is the rank-2 CLAIM's work, and
-  the two numbers differ because the list shifted up; read the subject, not the number), **#75**
-  (this doc) and **#69** (the sibling's rename).
+- `main` @ **`f8a257e`**. Open: **#74** (ranked item 1), **#75** (this doc) and **#69** (the
+  rename, ranked item 7).
 - ✅ **THE ARC IS CLOSED, AND THE VERDICT WAS TAKEN ON `main`.** #64 merged as **`7d7c9ea`**;
   all four clauses were then measured on `main` rather than inferred from the PR's six green
   checks, because the condition says "on `main`" and names the commands: authz matrix PASS ·
@@ -48,8 +47,16 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 - ⏳ **#74 IS OPEN** — it closes three batched defect entries, one of which turned out to be a
   live gate defect rather than prose (recorded under `Gotchas`, which is the half that survives
   this heading being replaced). Its ladder is round 0 + round 1 per the standing decision.
-- ⚠ **`cairn-control-plane-2` IS HELD** for rank 2. `cairn-control-plane-1` was released when
-  the prune landed.
+- 🔴 **TWO LIVE CLAIMS WERE POINTING AT THE WRONG ITEMS, AND BOTH ARE NOW REPAIRED — THE
+  MEASUREMENT IS WORTH MORE THAN THE REPAIR.** `claim-work --list` said `-2` carried the subject
+  *"#48's two, the nine-verbs count, #44's four"*, which is ranked item **1**, not 2; and `-5`
+  carried the **rename**, which this list ranks at **7**. A session taking the credential command
+  (item 5) would have derived `-5`, been told *"ALREADY YOURS — carry on"*, and worked it under a
+  claim telling every other session the rename was in hand. ⚠ **`rc 12` IS THE DANGEROUS CODE, NOT
+  `rc 10`**: a stranger's claim stops you, your own waves you through, and only the SUBJECT says
+  what it is for. Now: `-1` land #74 · `-2` the defects still open after it · `-5` the credential
+  command · `-7` the rename. `cairn-control-plane-1` had been released when the prune landed and
+  is re-taken.
 - **No external-task-board field**: the resolver exited 5 again. Its positive control proves a
   CORRECT id would have resolved, which is narrower than a clean bill of health.
 
@@ -57,10 +64,12 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 🔴 **THE NUMBERING MOVED, DELIBERATELY, AND THE CLAIM MOVED WITH IT.** Rank is half a claim's
 slug, so a shuffle silently re-points every live one. The old rank 1 (prune this document)
-CLOSED as `f8a257e`, so items shifted up: `cairn-control-plane-1` was released on that merge
-and `cairn-control-plane-2` is now held against "the remaining batched defects", which is the
-same work its subject named. **A session taking an item must `claim-work` it first, and must
-read the SUBJECT the claim prints rather than trusting the number.**
+CLOSED as `f8a257e`, so ranks 1 and 2 moved (3–7 did not). 🔴 **RE-RANKING IS HALF THE JOB:
+RE-SUBJECT THE CLAIMS IN THE SAME BREATH.** This document already carried that rule and did not
+apply it to its own list — two claims were left pointing at work they did not name, and the
+audit that found it read the live queue rather than this file. **A session taking an item must
+`claim-work` it first, and must read the SUBJECT the claim prints rather than trusting the
+number** — the number is what went stale.
 
 1. **Land #74, then mark its three entries closed in `## Defects (batched)`.** The entries are
    *"THREE FILED BY #48'S LADDER"* (a) and (b) — **(c) `lib/README.md` is NOT closed and the
@@ -110,28 +119,28 @@ read the SUBJECT the claim prints rather than trusting the number.**
    because the scan ran on the working tree rather than after a commit. That is the remedy working
    by hand, and it is the argument for wiring it in. **Closing condition:** a delta
    carrying a known-denied identifier is refused by the tool, watched.
-   forcing: incident — three leak events, one of which reached `main` (#68); the gate's own
-   refusals are the evidence, and the third happened with the lesson already written down.
+   forcing: incident — FOUR leak events, one of which reached `main` (#68); the gate's own
+   refusals are the evidence, and the last two happened with the lesson already written down.
 
 ## Defects (batched)
-- ✅ **CLOSED BY `f8a257e` — the byte-guideline entry.** It asked for a prune PR moving answered
-  `Gotchas` blocks to the archive and bringing this file under 65,536 B; `f8a257e` did that by
-  MOVING 125 of 174 bullets verbatim. 🔴 **IT STAYED 🔴-MARKED AND LIVE-LOOKING FOR TWO UPDATES
-  AFTER ITS CONDITION WAS MET, ASSERTING `99,059 B` ABOUT A FILE MEASURING 56,649 — 42,410 B
-  WRONG, at the top of the section ranked work is drawn from.** The mechanism is worth more than
-  the entry: this section REPLACES, so a bullet survives every update that does not retype it,
-  and the prune deliberately did not touch `Defects`. **A closing condition met by a PR closes
-  NOTHING until somebody edits this section**, and the update that measures the file is the one
-  holding the evidence — so close it THERE, in the same change, or it reads as open forever.
-  ⚠ **The guideline itself has NO author of record and NO instrument** — 65,536 appears in this
-  doc and its archive and nowhere else in the tree; `AGENTS.md`'s budget is enforced by
-  `tests/test_agent_instructions_weight.py` and this has no analogue. Report it as a self-imposed
-  target, never as a gate.
-- 🟡 **FOUR FILED BY #54's AND #57's LADDERS, none fixed.** (a) `internal/ui/README.md:341` says
-  "`ui.AuthBackends` takes **two** backends"; `internal/ui/auth.go:44` takes **one** parameter —
-  and `README.md` now points readers into that file. (b) `internal/control/tokenfile/source.go:21`
-  still says "`go.mod` has no `require` block", stale since #55 — the fifth spelling
-  `internal/depspolicy`'s own doc predicted would go stale. (c)
+- ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** Three went there
+  with this update, verbatim. This section REPLACES, so every closed entry left in it is
+  retyped by hand each round until somebody drops it — which is how one sat 🔴 and
+  46,831 B wrong for two merges. The LESSONS from a closed entry belong under `Gotchas`,
+  which appends; the entry itself belongs in the archive.
+- 🟡 **FOUR FILED BY #54's AND #57's LADDERS — AND (a) AND (b) WERE RE-MEASURED AND ARE WRONG AS
+  FILED.** 🔴 **(a) IS CLOSED AND ITS ENTRY IS INVERTED.** `internal/ui/README.md` carries no
+  "takes two backends" sentence at all — it records the removal explicitly, saying the sentence
+  *"deliberately carries NO parameter COUNT"* because refreshing the number would have been wrong
+  on merge with no textual conflict to warn anybody — and `AuthBackends` now takes **two**
+  parameters, landed by #58. Acting on this entry means hunting a sentence that is gone, or
+  re-adding a count the file deleted on purpose. 🔴 **(b) NAMES THE WRONG FILE.**
+  `internal/control/tokenfile/source.go` was fixed by `c47636b`; it now names `internal/depspolicy`
+  and carries the retraction in place. The LIVE stale copy is
+  **`internal/control/filestore.go:54`** — *"This module has no `require` block and `flake.nix`
+  passes `vendorHash = null`"* — both halves false since #55. ⚠ **That is the same wrong-site
+  failure the "NINE VERBS" entry above was corrected for, in the same section, found by the same
+  audit.** (c)
   `internal/report/testdata/reader_fixtures.json` contains **no `[cairn: …]` trailer at all** (0
   hits against 8 in `server.py` as a positive control), so the differential reader fixture never
   exercises attribution rendering — which is why an attribution-rendering defect was invisible to
@@ -164,8 +173,12 @@ read the SUBJECT the claim prints rather than trusting the number.**
   had already gone stale once. The repo owns the fix pattern
   (`tests/test_control_mutant_count_is_pinned.py`); applying it to what remains is separate work.
   **Closing condition:** a decision to pin each or a written line saying why not.
-- 🟡 **"NINE VERBS" SURVIVES AT FIVE SITES AND THE COUNT IS TEN — AND THE FIFTH IS A GATE, NOT A
-  COMMENT.** `AGENTS.md`, `flake.nix:1019` (directly above its own `want-verbs.txt` listing **ten**),
+- 🟡 **"NINE VERBS" SURVIVES AT SIX SITES AND THE COUNT IS TEN — AND THE SIXTH IS A GATE, NOT A
+  COMMENT.** ⚠ **This entry has now been re-counted twice and was wrong both times** — filed as
+  four, corrected to five, measured at six: the site it kept missing is
+  `tests/test_go_client_ledgers.py:217`, the comment three lines ABOVE the floor, explaining the
+  very floor the correction had just added. Verified closed at #74's head, which leaves no `nine
+  verbs` anywhere outside this document.** `AGENTS.md`, `flake.nix:1019` (directly above its own `want-verbs.txt` listing **ten**),
   `tests/test_parity_harness.py:32,336` — all comments, so nothing reddens — **and
   `tests/test_go_client_ledgers.py`'s `assert len(go_verbs) >= 9`**, a floor one below the count,
   which buys exactly one free deletion and PASSES for it. ⚠ **This entry said FOUR and named the
@@ -183,12 +196,6 @@ read the SUBJECT the claim prints rather than trusting the number.**
 - 🟡 **`tests/dualrun/` cannot see image drift, structurally.** It runs the TREE's `server.py`;
   nothing compares the Go server against the artefact actually serving. **Closing condition:** decide
   whether a deployed-artefact arm is worth owning, or write the line saying it is not.
-- ✅ **CLOSED BY #48's SESSION** (relabelled — this line previously read "this session" and now names
-  which): residual 8 in all four clauses; the `search --all-scopes` fan-out's measured-zero coverage;
-  routed `validate`'s oracle divergence; two unconditional-label mutants on `defaultInstance` and
-  `bannerFor`; `tests/routing_mutants.py` scoring a never-run suite as KILLED; two CI floors with
-  silent slack; the flake wiring pinned by prose only.
-- ✅ **CLOSED BY #53:** issue #51, the `AGENTS.md` reverted-draft flip history.
 - Everything previously listed stands unchanged: #38's three residuals; `ScopeByNameIn`
   raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six findings;
   the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; three files not `gofmt`-clean
@@ -196,7 +203,7 @@ read the SUBJECT the claim prints rather than trusting the number.**
   absent from the persistent battery.
 
 ## Gotchas / decisions / dead-ends
-🔴 **THIS SECTION WAS PRUNED, AND PRUNED MEANS *MOVED*: NOT ONE BULLET WAS DELETED OR SHORTENED.** It held 174 bullets and 89,588 B — 78% of a document read first thing every session. 125 of them are now in `claudedocs/handoff-cairn-control-plane-archive.md`, **verbatim**, under a heading that says which arc they came from. What stayed is what binds a NEXT edit: one instance of each general tripwire, the standing operator decisions, and the current arc's record. What moved is a record of a round or an arc that has CLOSED, plus every duplicate instance of a tripwire kept here — `isolation: "worktree"` alone was recorded six times, `$?`-after-a-pipe three, MERGEABLE-but-conflicting four.
+🔴 **THIS SECTION WAS PRUNED, AND PRUNED MEANS *MOVED*: THE PRUNE DELETED AND SHORTENED NOTHING.** ⚠ One of the 49 survivors has since been superseded by a fuller instance in this same section and removed, so a re-run of the prune's own verification now reconciles to 173 rather than 174 — the CLAIM survived, the bullet did not, and those are different statements.** It held 174 bullets and 89,588 B — 78% of a document read first thing every session. 125 of them are now in `claudedocs/handoff-cairn-control-plane-archive.md`, **verbatim**, under a heading that says which arc they came from. What stayed is what binds a NEXT edit: one instance of each general tripwire, the standing operator decisions, and the current arc's record. What moved is a record of a round or an arc that has CLOSED, plus every duplicate instance of a tripwire kept here — `isolation: "worktree"` alone was recorded six times, `$?`-after-a-pipe three, MERGEABLE-but-conflicting four.
 
 ⚠ **A DUPLICATE IS NOT A REDUNDANCY WHEN THE SECOND ONE RECORDS THAT THE LESSON WAS READ AND THEN HIT ANYWAY** — that is why the instance kept is usually the LATEST, which carries the re-occurrence, rather than the first, which carries only the discovery.
 
@@ -527,6 +534,20 @@ read the SUBJECT the claim prints rather than trusting the number.**
   a branch, the clause asked about `main`, and they agreed here only because they were both
   measured. A session that reported "addressed" off the PR's rollup would have been asserting.
 
+- 🔴 **A CLOSING CONDITION MET BY A PR CLOSES NOTHING UNTIL SOMEBODY EDITS THE ENTRY — AND THE
+  UPDATE HOLDING THE MEASUREMENT IS THE ONE THAT HAS TO DO IT.** `Defects (batched)` REPLACES, so
+  a bullet survives every update that does not retype it; the prune deliberately did not touch
+  that section; and a 🔴 entry whose work had landed two merges earlier sat at the top of the list
+  ranked work is drawn from, asserting a byte count off by 46,831. ⚠ **This lesson is recorded
+  HERE and not beside the entry it came from, because that entry is now marked ✅ CLOSED and the
+  next session retyping the section will quite reasonably drop it** — which is the same structural
+  mistake, inverted, and an audit caught it one round after I made the un-inverted version.
+- 🔴 **A SELF-IMPOSED TARGET WITH NO INSTRUMENT MUST NOT BE REPORTED AS A GATE.** Nothing in this
+  tree reads `claudedocs/handoff-*.md` — no test, no nix check — so this document's byte guideline
+  is a number sessions quote to each other. `AGENTS.md`'s budget is different in kind: a test owns
+  it and prints what to evict. ⚠ And the sentence asserting the guideline appeared "nowhere else
+  in the tree" was itself false at the un-comma'd spelling, which is the count-defect shape one
+  bullet down, committed while filing it.
 - 🔴 **A COUNT FILED AS A PROSE DEFECT CAN BE A LIVE GATE DEFECT, AND THIS ONE WAS.** The
   "nine verbs" entry read as four stale comments. Measured: five sites, and one was
   `assert len(go_verbs) >= 9` against ten verbs — a floor ONE BELOW the count, which buys
@@ -549,7 +570,11 @@ read the SUBJECT the claim prints rather than trusting the number.**
   renders `OK`, `UNMEASURED` and `NOT-OBSERVABLE` — never `PROBLEM`, whose marker `🔴` is a
   SINGLE RUNE where the other three are two. Closed with two guards rather than one: the
   fixture's states are a ledger that fails if it SHRINKS, and a separate unit case drives
-  `doctor.ParseRow` over every state. **When a fixture cannot reach a case, the honest fix is
+  `doctor.ParseRow` over every state. ⚠ **`ParseRow` EXISTS ONLY ON #74's BRANCH** — on `main` the
+  symbol is still `doctor.Markers()`, which is what the `Defects` entry above correctly names. A
+  durable bullet asserting a symbol that is one unmerged PR away greps to zero hits with nothing
+  to tell a reader whether it was renamed or reverted, so the pending state is labelled rather
+  than assumed. **When a fixture cannot reach a case, the honest fix is
   a second guard, not a wider sentence.**
 - **Decision (operator, this session): the prune was chosen over feature work**, and its
   closing condition was met by MOVING rather than cutting. 🔴 **The safety property of a prune
