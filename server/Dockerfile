@@ -72,8 +72,16 @@ COPY server/server.py            /app/server/
 # ⚠ THE ACCEPTED COST: `docker inspect` and this file no longer document where the store
 # lives, which port it binds, or where the token is read from. That moved to the code
 # defaults, which `tests/test_flake_image_matches_dockerfile.py` now pins against BOTH
-# implementations, and to the pod's own startup line. Do not "restore" it here — a value
-# stated in two places is the drift this whole file's tests exist to refuse.
+# implementations. Do not "restore" it here — a value stated in two places is the drift
+# this whole file's tests exist to refuse.
+#
+# ⚠ AND THE STARTUP LINE COVERS TWO OF THE THREE, NOT THREE. It prints
+# `listening on <host>:<port> store=<root> token-ids=…`, so port and store root are
+# readable from a running container's log; `token-ids=` is the credential FINGERPRINTS and
+# no startup line on either implementation prints the token PATH. This server's `--help`
+# does not print its default either (the Go server's `-h` does). The only place the path
+# reaches a log is the `token file <path> absent; falling back to $CAIRN_TOKEN` notice on
+# stderr, which is a failure notice rather than documentation.
 ENV HOME=/home/nonroot \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

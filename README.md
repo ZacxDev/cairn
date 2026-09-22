@@ -199,8 +199,8 @@ upgrade, and nothing silently half-migrates.
 table will break a pod.** `CAIRN_HOST` was already taken — it is the human-readable
 machine *label* that appears in rendered output — so the pod's listen address is
 `CAIRN_LISTEN_HOST`. And `CAIRN_ROOT` would read as a sibling of the client-side
-`CAIRN_MIRROR_ROOT` when it is the *pod's* store root and belongs to neither side, so the
-pod's store root is `CAIRN_STORE_ROOT`.
+`CAIRN_MIRROR_ROOT` when it is the *pod's* store root and not a client-side name at all,
+so the pod's store root is `CAIRN_STORE_ROOT`.
 
 **The config file's KEYS count too.** `~/.config/subsystem-store/env` and
 `instances/<alias>.env` accept either spelling with the same precedence, and a deprecated
@@ -241,9 +241,17 @@ image `ENV` is part of it. They are gone. What this means for you:
 - **Migrating your Deployment to `CAIRN_*` now silences the warnings.** It did not before:
   the image's own `ENV` kept emitting them regardless of what your manifest said.
 - ⚠ **`docker inspect` no longer documents the store root, port or token path.** That is
-  the accepted cost. The pod's startup line prints all three, and
-  `tests/test_flake_image_matches_dockerfile.py` pins them against both implementations'
-  code defaults so they cannot drift apart unnoticed.
+  the accepted cost, and **the startup line replaces two of the three, not all three.**
+  Both pods print `listening on <host>:<port> store=<root> token-ids=… …`, so the port and
+  the store root are readable from the log of a running container. `token-ids=` is the
+  credential FINGERPRINTS, not the file they came from — the token PATH appears in no
+  startup line on either implementation. Where it is observable: the Go server's
+  `cairn-server -h`, which prints `(default "/run/secrets/subsystem-store/token")`; the
+  oracle's `--help` does not print its default at all. Both also emit the path to stderr
+  in one case only — `token file <path> absent; falling back to $CAIRN_TOKEN` — which is a
+  failure notice, not documentation. What keeps the three from drifting is
+  `tests/test_flake_image_matches_dockerfile.py`, which pins them against both
+  implementations' code defaults.
 
 **When the old names stop being read:** when the Python client (`packages.cairn`) is
 retired, which is this arc's P8 milestone. Not a date — there is no semver here to hang

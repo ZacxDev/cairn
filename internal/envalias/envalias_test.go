@@ -188,7 +188,7 @@ func TestABlankOldNameResolvesAsABSENT(t *testing.T) {
 	} {
 		if got := Value(map[string]string{"SUBSYSTEM_STORE_URL": tc.value}, "CAIRN_URL"); got != "" {
 			t.Errorf("%s: a blank OLD name resolved to %q; it must read as ABSENT, the "+
-				"same way a blank NEW name does, or `ValueOr`'s fallback never runs and "+
+				"same way a blank NEW name does, or `OSValueOr`'s fallback never runs and "+
 				"the pod takes a whitespace store root", tc.name, got)
 		}
 		// And through `OSValueOr`, which is the shape `cmd/cairn-server` actually reads

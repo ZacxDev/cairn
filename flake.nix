@@ -81,10 +81,21 @@
       #
       # ⚠ THE ACCEPTED COST, STATED SO IT IS NOT REDISCOVERED AS A BUG. `docker inspect` and
       # this file no longer show where the store lives, which port it binds or where the
-      # token is read from; the pod's own startup line and the two code-default constants
-      # are where that now lives. The operator took that trade knowingly. What replaced the
-      # env-based assertion is a pin on the CODE defaults in both implementations — see
-      # `DEPLOY_CONTRACT` in `tests/test_flake_go_image_runtime_contract.py`.
+      # token is read from. The operator took that trade knowingly. What replaced the
+      # env-based assertion is a pin on the CODE defaults in both implementations —
+      # `STORE_DEFAULTS` in `tests/test_flake_image_matches_dockerfile.py`, ONE declared
+      # constant holding all THREE values, spelled by hand and checked against each
+      # implementation's own constants. (`DEPLOY_CONTRACT` in
+      # `tests/test_flake_go_image_runtime_contract.py` is an alias for it, `= STORE_DEFAULTS`,
+      # so the sibling module's assertions read in the same vocabulary; the declaration has
+      # one home and this is not it.)
+      #
+      # ⚠ AND THE STARTUP LINE COVERS TWO OF THE THREE, NOT THREE — a sentence here used to
+      # say it printed all of them. Both pods print
+      # `listening on <host>:<port> store=<root> token-ids=…`; `token-ids=` is the credential
+      # FINGERPRINTS, and neither implementation's startup line prints the token PATH. The Go
+      # server's `-h` prints it as a flag default, the oracle's `--help` does not, and both
+      # emit it on stderr only in the `token file <path> absent` fallback notice.
       serverEnv = {
         HOME = "/home/nonroot";
         PYTHONDONTWRITEBYTECODE = "1";

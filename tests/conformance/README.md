@@ -416,6 +416,36 @@ them equal and could not see it. It is closed by one named predicate per languag
 | `--store` | `"  "` | `"  "` | falls through to `/data` |
 | a deprecation warning | n/a | none | none |
 
+🔴 **THE TABLE IS ONE WORKED EXAMPLE, NOT THE SCOPE — SIZE THE BLAST RADIUS FROM THE
+PREDICATE, NOT FROM THE ROW.** `blank`/`_blank` is read by `ValueFrom`/`value`, which is
+the single path every alias lookup goes through, so the widening governs **all 11 pairs in
+the ledger** — `CAIRN_CONFIG`, `CAIRN_FAILURE_WINDOW_S`, `CAIRN_LISTEN_HOST`,
+`CAIRN_LOCKOUT_S`, `CAIRN_MAX_FAILURES`, `CAIRN_PORT`, `CAIRN_STORE_ROOT`, `CAIRN_TOKEN`,
+`CAIRN_TOKEN_FILE`, `CAIRN_TRUSTED_PROXIES`, `CAIRN_URL` — across both clients and both
+servers, in the environment and in a config file alike. `SUBSYSTEM_STORE_ROOT` → `--store`
+is written out because it is the row with a store-relocating consequence; a reader who
+took it for the boundary would under-count the change by ten variables.
+
+⚠ **AND THE CHANGE CLOSES A REAL CROSS-LANGUAGE DIVERGENCE, WHICH IS AN ARGUMENT FOR IT
+THAT NOTHING ELSE HERE STATES.** With `SUBSYSTEM_STORE_URL="   "` exported and no
+`CAIRN_*` set, measured on both clients built from `e878f4c`:
+
+| | at `e878f4c` | at HEAD |
+|---|---|---|
+| Python client | uncaught `ValueError: unknown url type: '/api/v1/snapshot'`, traceback, **exit 1** | `config incomplete: CAIRN_URL not set …`, exit 3 |
+| Go client | `store-unreachable, no cache —     unreachable: unsupported protocol scheme ""`, **exit 3** | byte-identical to the oracle, exit 3 |
+
+Both took the whitespace URL — the shared defect — but the *failure* differed in stdout,
+stderr AND the exit code, which is exactly what `tests/parity/` compares. It did not see
+it because no case exports a whitespace-only deprecated name; the blind set in
+`tests/parity/README.md` is where that belongs.
+
+⚠ **ONE THING THIS IS NOT.** A round-2 note described the divergence as the Go client
+`TrimSpace`ing config-FILE values where the oracle returned them raw. Measured, that is
+false: `internal/client/transport.go` and `cairn` both `strip`/`TrimSpace` a file value at
+parse time, and both base clients answer a whitespace-only file key byte-identically. The
+file path never diverged; the environment path did.
+
 The alternative — warn on any non-empty old value, whitespace included — was rejected
 because it keeps a resolved value no operator can have meant. **The cost is the same one
 the section below already records, one step wider:** a manifest that sets a store root to

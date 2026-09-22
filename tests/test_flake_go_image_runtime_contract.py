@@ -453,10 +453,31 @@ class TestTheGoImageRunsUnderTheSameContract:
         subtraction is doing its job in the other direction from the test above.
 
         ⚠ IT IS STILL REACHABLE THOUGH THE COMPUTED ENV IS NOW `{}`, AND THAT IS WHY IT
-        SURVIVES ITEM A WHILE TWO NEIGHBOURS DID NOT. Deleting `"HOME"` from
-        `serverEnvPythonOnly` puts `HOME` straight back into the Go pod's env and this
-        goes red; the same for either `PYTHON*` knob. An empty set today is the
+        SURVIVES ITEM A WHILE TWO NEIGHBOURS DID NOT. An empty set today is the
         subtraction working, not the assertion having no operand.
+
+        🔴 MEASURED, ONE MUTANT — `"HOME"` deleted from `serverEnvPythonOnly` in
+        `flake.nix`, which puts `HOME` straight back into the Go pod's computed env:
+
+            2 failed, 11 passed
+              THIS test, at `assert "HOME" not in env` — its own message,
+                `assert 'HOME' not in {'HOME': '/home/nonroot'}`
+              test_the_computed_go_env_parses_and_is_now_LEGITIMATELY_empty
+
+        ⚠ READ THE TWO CLAUSES SEPARATELY, BECAUSE A ROUND-2 AUDIT READ ONLY THE FIRST AND
+        CONCLUDED THIS GUARD SURVIVED THAT MUTANT. The `leaked` clause below matches
+        `PYTHON*` and `HOME` does not start with `PYTHON`, so that clause alone is indeed
+        blind to it — but the `"HOME" not in env` clause underneath is what the mutant
+        hits, and it hits it with this guard's own assertion rather than a neighbour's.
+        The mutant is NOT isolated to this guard (the `env == {}` neighbour dies too), so
+        it is not a clean attribution test for this one; it IS a reachability proof for
+        the `HOME` clause, which is what the paragraph above claims.
+
+        🔴 SO `HOME` IS ASSERTED HERE AND NOT ONLY BY THAT NEIGHBOUR. The neighbour's own
+        message invites relaxing it ("a name here is not automatically wrong — say what
+        reads it and move this assertion deliberately"); if somebody takes that invitation,
+        `HOME` still has a guard. Do not delete the clause on the grounds that `env == {}`
+        already covers it.
         """
         env = go_env(flake)
         assert env is not None, "`go_env()` returned None — see the controls"

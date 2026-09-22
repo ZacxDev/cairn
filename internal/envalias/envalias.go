@@ -256,7 +256,7 @@ func ValueFrom(get func(string) string, newName string) string {
 // alternative — warn whenever an old name holds any non-empty string, whitespace included —
 // keeps a resolved value no operator can have meant. Treating it as absent instead makes
 // the old name behave exactly like the new one (which has been `TrimSpace`-tested since the
-// package was written) and lets `ValueOr`'s fallback, i.e. the code default, run.
+// package was written) and lets `OSValueOr`'s fallback, i.e. the code default, run.
 //
 // ⚠ IT TESTS BLANKNESS AND DOES NOT TRIM. A non-blank value is returned RAW, because
 // trimming a real value is the caller's business and doing it here would silently rewrite
@@ -292,7 +292,9 @@ func Environ() map[string]string {
 // OSValue is `Value` over the process environment.
 func OSValue(newName string) string { return ValueFrom(os.Getenv, newName) }
 
-// OSValueOr is `ValueOr` over the process environment.
+// OSValueOr is `OSValue` with a fallback for a blank result. There is no bare `ValueOr`:
+// a caller holding an env map calls `Value` and supplies its own fallback, and only the
+// `os.Getenv` shape is common enough to be worth a name.
 func OSValueOr(newName, fallback string) string {
 	if v := OSValue(newName); v != "" {
 		return v
