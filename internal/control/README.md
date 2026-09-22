@@ -258,11 +258,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 120 mutants, over SEVEN packages
+python3 tests/control_mutants.py          # 123 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 120 mutants, 118 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 123 mutants, 121 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
 
 🔴 **THE THIRD EQUIVALENT LABEL WAS MEASURED FALSE AND IS NOW A KILL, WHICH IS WHY THE
@@ -288,10 +288,12 @@ order: `internal/control`, `internal/control/tokenfile`, `internal/identity`,
 `internal/api`, `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`. `internal/control` is the model and its
 predicate, `internal/control/tokenfile` is the projection, `internal/identity` is P4's
 authenticator and its two new backends, `internal/api` is the server that authorises from
-all of them, `cmd/cairn-server` is the program, and `internal/ui` is the BROWSER surface —
-the second consumer of the same authority — and a mutant in one is killed by a guard in
-another. A battery scoped to one package would have scored every one of those SURVIVED
-while the suite that catches them was never run.
+all of them, `cmd/cairn-server` is the program, `internal/ui` is the BROWSER surface —
+the second consumer of the same authority — and `cmd/cairn-ui` is that surface's program,
+whose startup refusals are the only thing between a misconfigured deployment and a
+surface that passes its health check and can serve nobody. A mutant in one is killed by a
+guard in another. A battery scoped to one package would have scored every one of those
+SURVIVED while the suite that catches them was never run.
 
 🔴 **`internal/ui` IS THE SIXTH, AND IT IS HERE BECAUSE THE ALTERNATIVE WAS MEASURED.** The
 share flow arrived with a battery of its OWN — `tests/ui_share_mutants.py`, 234 lines, a
@@ -304,9 +306,12 @@ nothing would ever run again. (This very paragraph hit the same sweep: quoting t
 verbatim made `test_control_mutant_count_is_pinned.py` read it as a live claim about THIS
 battery and go red. The pin is indifferent to who wrote the number, which is the point.) It also mutated the LIVE working tree where this
 harness mutates a `copytree`, so an interrupt left a mutated `internal/ui/` in the
-checkout. Its eight rows are the `ui-` prefixed ones here, and the file is deleted. **A
-second battery is a second thing to remember to run, and this repository's record is that
-nobody does.**
+checkout. Its rows are the ones whose `path` is under `internal/ui/`, and the file is
+deleted. ⚠ **NOT "the `ui-` prefixed ones" — that read as an identification and is not
+one.** The `ui-startup-*` rows carry the same prefix, were written here rather than folded
+in, and mutate `cmd/cairn-ui/main.go`; a reader counting by prefix gets a number that
+answers a different question. The `path` field is the discriminator. **A second battery is
+a second thing to remember to run, and this repository's record is that nobody does.**
 
 ⚠ **THAT LIST IS PINNED TO `PKGS` AS A WHOLE STRING, MEMBERSHIP AND ORDER, NOT AS A COUNT.**
 `tests/test_control_mutant_count_is_pinned.py` derives it from the tuple and requires it
@@ -337,7 +342,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 120 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 123 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
