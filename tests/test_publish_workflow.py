@@ -824,6 +824,60 @@ def test_both_pods_are_published_and_every_push_step_is_pinned_WHOLE(text: str) 
     )
 
 
+#: The one credential-handling `run:` step in this workflow, pinned WHOLE.
+#:
+#: ✅ **DECIDED: PIN IT.** The handoff filed this as one of "three unpinned by
+#: construction" in `publish-image.yml`, closing condition "one PR each, or a
+#: written line saying why not". Of the three it is the one with a concrete
+#: failure scenario, so it gets the PR rather than the line.
+#:
+#: 🔴 WHAT THE PIN BUYS, CONCRETELY. `--password-stdin` keeps the token off the
+#: command line. The one-character-class edit that undoes it — `-p '${{
+#: secrets.GITHUB_TOKEN }}'` — is the obvious "simplification" for somebody
+#: debugging a login failure, and it puts a live credential in **argv**, where it
+#: is visible in the process table and in any `set -x` trace the step or a future
+#: `RUNNER_DEBUG` run produces. Nothing else in this file would notice: the
+#: secret is still referenced, the step still logs in, the push still succeeds,
+#: and every existing assertion stays green.
+#:
+#: Pinned whole for the reason `test_both_pods_are_published_and_every_push_step_
+#: is_pinned_WHOLE` gives: a guard on the WORD `--password-stdin` is satisfied by
+#: a step that also passes `-p`, and a guard on its absence is satisfied by a
+#: reword. The cost is the same one that test accepts — reformatting this step
+#: fails the test — and it buys a machine-readable claim about a credential.
+PINNED_CREDENTIAL_STEP = {
+    "log in to ghcr": (
+        "set -euo pipefail "
+        "printf '%s' '${{ secrets.GITHUB_TOKEN }}' "
+        '| "${{ steps.skopeo.outputs.bin }}" login ghcr.io '
+        "-u '${{ github.actor }}' --password-stdin"
+    ),
+}
+
+
+def test_the_credential_step_is_pinned_WHOLE(text: str) -> None:
+    """The only `run:` step that handles a secret, pinned by its entire text.
+
+    ⚠ ITS POSITIVE CONTROL IS THE STEP'S PRESENCE, asserted separately: a step
+    that had been renamed or deleted would otherwise make the comparison below
+    vacuous by having nothing on either side.
+    """
+    bodies = step_bodies(text)
+    missing = sorted(set(PINNED_CREDENTIAL_STEP) - set(bodies))
+    assert not missing, (
+        f"the credential step is absent under that name: {missing}\nthe file's "
+        f"steps are: {sorted(bodies)}\nIf the login moved, move this pin with it — "
+        f"an absent step makes the comparison below compare nothing."
+    )
+    actual = {name: bodies[name] for name in PINNED_CREDENTIAL_STEP}
+    assert actual == PINNED_CREDENTIAL_STEP, (
+        "the credential step's command text moved. pytest shows every difference "
+        "below. This is pinned WHOLE because the hazard is a SPELLING — swapping "
+        "`--password-stdin` for `-p '<secret>'` puts a live token in argv while "
+        "leaving every other assertion in this file green."
+    )
+
+
 def test_the_GO_pods_positive_control_is_its_ROUTE_LEDGER_not_the_Pythons(text: str) -> None:
     """MEASURED: the Python positive control does not transfer to the Go image.
 

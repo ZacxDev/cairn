@@ -24,6 +24,39 @@ shapes with NO `routes.json` anywhere — the one configuration in which the old
 `routes is not None or len(instances) > 1` predicate was `False` by construction, so it could not
 see the defect that predicate had. **Every shape is captured twice: without a table and WITH one**,
 because a one-instance host that has written a table is where the two answers differ.
+
+## 🔴 NOTHING TRIGGERS THIS, AND THAT IS DECIDED RATHER THAN OVERLOOKED
+
+**No CI job and no nix check runs this file** — measured, zero references in
+`.github/workflows/` and in `flake.nix`. An audit surfaced that as a gap: two of the call sites
+`testlib/env_pin` consolidated live here, and the only thing standing behind them is a human
+typing the command above.
+
+**The decision is that it stays MANUAL, with a named trigger, and here is the trigger:** run it
+before merging any change that touches the reader's rendering or labelling path — `lib/`'s
+recall/search renderers, `internal/report`, `cairn`'s `_instance_for`, or
+`internal/client`'s routing — i.e. exactly the changes whose compatibility claim is *"a
+one-instance host's bytes are unchanged"*. `tests/test_narrowing_echo_sites.py` pins the five
+places that claim is written down; this is the instrument that measures it.
+
+🔴 **WHY NOT A CI JOB, WHICH IS THE OBVIOUS ANSWER AND IS WRONG HERE.** This is a BASE-versus-HEAD
+differential: it builds two trees and diffs the bytes. On a feature branch that legitimately
+changes rendered output — most feature work touching this path — a blanket job is RED by
+construction, and a permanently-red gate trains everyone to click through, which is worse than
+no gate. The thing that makes it valuable is that a human aims it at a *compatibility claim*;
+a job that ran it on everything would destroy exactly that.
+
+⚠ **AND IT IS NOT DELETED, WHICH WAS THE OTHER CANDIDATE.** The claim it was built for has
+shipped, so "question the requirement" points at deletion — but P8 retires the Python oracle,
+and that is the largest byte-identity question this repository has left. This is the only
+instrument that can ask it, because a unit test runs one tree and this runs two. Keep it; the
+trigger above is what stops it being an orphan.
+
+⚠ **WHAT IT STILL CANNOT VOUCH FOR, so the trigger is not mistaken for coverage.** It compares
+the bytes of the shapes it declares, on one host, against one base ref. It is not a gate, nobody
+is required to run it, and a change that skips it leaves no trace. The static half — that this
+file's subprocess environments are built from the one predicate rather than a hand-listed copy —
+IS gated, by `tests/test_env_pin.py`'s consumer ledger.
 """
 from __future__ import annotations
 

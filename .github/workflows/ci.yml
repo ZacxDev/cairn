@@ -178,14 +178,23 @@ jobs:
           # SEE a planted hazard, and an empty file does not read as agreement.
           #
           # Measured as the comment above requires — names on the base ref and on HEAD,
-          # one worktree each: base 1972, head 1989, 17 added, 0 removed.
+          # one worktree each: base 1972, head 1992, 20 added, 0 removed.
           #
           # ⚠ IT WAS 1888 AGAINST A SUITE OF 1989, WHICH IS THE SECOND BLINDNESS THE
           # PARAGRAPH ABOVE NAMES — 101 tests could have vanished silently. It went
           # stale the ordinary way: every PR that adds tests and does not move this
           # line widens the gap, and nothing reds. Re-derived from the file's own rule
-          # `m - min(50, max(1, m/20))` at m=1989. If you add tests, move this too.
-          FLOOR = 1939
+          # `m - min(50, max(1, m/20))` at m=1992. If you add tests, move this too.
+          #
+          # ⚠ THE PARITY SUITE'S EQUIVALENT FLOOR IS NOW GUARDED AGAINST EXACTLY
+          # THIS DRIFT (`tests/test_parity_harness.py` asserts its literal has not
+          # loosened below the formula). This one is NOT, and the asymmetry is
+          # deliberate rather than an oversight: that floor's `m` is a Python
+          # expression the guard can evaluate in-process, while this one's `m` is
+          # a collected count that only exists after the suite has run — so a
+          # guard here would have to be a step reading its own job's output, which
+          # is a different instrument. Filed rather than built.
+          FLOOR = 1942
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
