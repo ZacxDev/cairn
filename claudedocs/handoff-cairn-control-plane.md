@@ -1,4 +1,4 @@
-# Handoff: cairn-control-plane — 2026-09-15
+# Handoff: cairn-control-plane — 2026-09-22
 
 ## Run this first — the index, one command
 ```bash
@@ -23,63 +23,83 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ **`e15e331`**, clean, ↑0↓0. **One open PR: [#58](https://github.com/ZacxDev/cairn/pull/58)**
-  (`feat/ui-cookie-sessions`) — Phase B browser cookie sessions, a SIBLING session's work, not this one's.
-- **Four merges landed since this doc was last written at `0587ace`**, two of them this session:
-  **#55 → `91389ae`** (sibling: Phase A browser surface, the first third-party dependency,
-  `internal/depspolicy` replacing `vendorHash = null`), **#54 → `43a6f59`** (this session),
-  **#56 → `7234da1`** (sibling: `AGENTS.md` history eviction, 31,516 → 28,907 B),
-  **#57 → `e15e331`** (this session). Each verified BY CONTENT, never by ancestry.
-- 🔴 **THE ARC'S CLOSING CONDITION IS STILL 3 OF 4, AND THE UNMET CLAUSE IS UNCHANGED.** Re-measured
-  at `e15e331`, not inherited from the previous update: **the PWA's share flow with its
-  replica-honesty notice pinned by a test does not exist.** `internal/ui/doc.go:50` says it in as
-  many words — *"No cookie session, no sign-in, no share flow"* — the UI route table is one row
-  (`{"GET", "/"}`), and no test in the tree mentions a replica-honesty notice (the only `replica`
-  hit is `internal/snapshot/snapshot_test.go`, about tar). #55 and #58 are progress toward that
-  clause; neither delivers it. ⚠ **Do not read "a browser surface shipped" as the clause being met.**
-- ✅ **THE PUBLIC SURFACE NOW STATES THE POSITIONING, AND THE MECHANISM ALREADY DID.** Operator ask,
-  verbatim: *"i am positioning cairn as simple, scoped, sharable memory for ai agent swarms"*.
-  Measured before editing: `agent-swarm` occurred **exactly once** in the whole shipped tree
-  (`README.md:3`); every other `agent` match was the FILE `AGENTS.md`; `swarm`/`MCP`/`LLM` occurred
-  nowhere else; the GitHub description read *"per-subsystem engineering notes"* with
-  `repositoryTopics: null`. Now: description + 9 topics set and read back, and `README.md` leads with
-  the four properties that were already built and each surfaced as at most a table cell — scope
-  isolation, session attribution, `If-Match` concurrency, content-hash idempotency — plus a two-agent
-  quickstart. **"scalable" was dropped from the headline**: nothing measures throughput or concurrent
-  writers, and `tests/parity/README.md`'s blind set leads with concurrency.
-- ✅ **`CHANGELOG.md` EXISTS AND IS AN INDEX, NOT A SECOND COPY** — two rows (#50's default flip,
-  #55's first third-party dependency), each linking out. Its shape was twice a defect before it
-  settled; the rule is in its own header.
-- ✅ **`cairn-ui` IS DOCUMENTED IN `README.md`** — one read-only page, no write routes, deployed by
-  nothing, reads the store from disk, three measured ways to supply a credential.
-- **Operator decision this session: MCP is HELD.** No MCP server; agents integrate via the CLI and
-  the HTTP API. 🔴 **Do not cite the old blocker when revisiting it** — "a third-party dependency is
-  a BUILD FAILURE under `vendorHash = null`" stopped being true at #55. The hold rests on the
-  operator's call alone. Recorded in this session's memory as `mcp-server-on-hold`.
-- **Claims: `cairn-control-plane-1` is HELD by the sibling session** (13h, the web-UI slice).
-  `cairn-positioning-readme` and `cairn-readme-browser-surface` were taken and RELEASED by this one.
+- `main` @ **`f2ddf45`**, clean, ↑0↓0. **Suite: 1994 passed · `go test ./...` 17 ok ·
+  `leakscan` rc 0** — measured on the merged `main`, not on three separate branches.
+- 🔴 **THE ARC IS STILL 3 OF 4, AND THE UNMET CLAUSE IS THE SHARE FLOW.** Re-measured at
+  `f2ddf45`: `internal/ui/routes.go` is four rows (`GET /`, `GET`/`POST /sign-in`,
+  `POST /sign-out`), none of them share; no test pins a replica-honesty notice.
+  **IN FLIGHT as the sibling's ZacxDev/cairn#64** — do not take it.
+- **Three PRs merged this session, each verified BY CONTENT (never by ancestry — a squash
+  makes ancestry false forever):** **#60 → `c47636b`**, **#63 → `5d72bc5`**,
+  **#66 → `f2ddf45`**.
+  - **#60** pinned the host configuration `tests/test_cairn_doctor.py` inherited, and closed
+    three #54/#57 ladder defects. That test had been red on this host and green in CI.
+  - **#63** replaced copies of "which variables configure the client" at seven call sites
+    with `tests/testlib/env_pin.py`.
+  - **#66** answered five batched defect entries whose closing condition was a written
+    decision, and pinned the two that said "pin it".
+- **Sibling session owns `cairn-control-plane-1` and four open PRs: #61, #62, #64, #65.**
+  #62 and #65 both edit `claudedocs/handoff-cairn-control-plane.md`.
+- 🔴 **NO `clawgate-task:` FIELD, AND THAT IS A MEASURED ABSENCE RATHER THAN AN OMISSION.**
+  `clawgate_handoff.sh resolve` exited **5** — 0 tasks for this session — with its positive
+  control confirming the board is reachable and the token accepted. ⚠ That control proves a
+  CORRECT id would have resolved; it does **not** prove the id under test is right, since a
+  wrong id also answers 200 with an empty array. Not a clean bill of health.
+- ⚠ **THIS DELTA LANDS AS A PR, NOT A COMMIT TO `main`, AND DELIBERATELY OMITS
+  `## Defects (batched)`.** That heading REPLACES and the canonical list holds **13 entries**;
+  writing it from here would delete them. Ranked item 6 carries the fold-in.
 
 ## Next steps (ranked)
-1. **P5 remainder — the PWA's SHARE FLOW.** This is the arc's ONLY unmet closing-condition clause:
-   a scope granted from one user to another, served through the browser, with the replica-honesty
-   notice **pinned by a test** (pin the whole normalised string — a guard on words is walkable by
-   rewording). `internal/ui` is phase A; #58 is phase B (cookie sessions). Neither is the share flow.
-   **IN FLIGHT: ZacxDev/cairn#58** — and `cairn-control-plane-1` is CLAIMED by that session; do not
-   take rank 1 without checking `claim-work --list`.
+🔴 **NUMBERING PRESERVED FROM THE PREVIOUS LIST ON PURPOSE — RANK IS HALF A CLAIM'S
+IDENTITY.** `cairn-control-plane-1` is LIVE and held by the sibling session; renumbering
+would silently re-point it at different work. Items 6–7 are APPENDED below the existing
+five rather than inserted among them. **The operator's chosen next work is item 5, not
+item 1** — item 1 belongs to the sibling.
+
+1. **P5 remainder — the PWA's SHARE FLOW.** The arc's ONLY unmet closing-condition clause.
+   Re-measured at `f2ddf45`: `internal/ui/routes.go` is four rows, none of them share, and
+   no test pins a replica-honesty notice. **IN FLIGHT: ZacxDev/cairn#64**, and
+   `cairn-control-plane-1` is CLAIMED by that session — do not take it.
    forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
-2. **The batched scaffolding defects** below. All test, harness or prose; none changes what CI does.
-   forcing: gate — filed BY attribution gates rather than fixed, so nothing else will surface them.
-3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304. Key it
-   on **principal + epoch** — `control.Authorization` already carries `Epoch`.
+2. **The batched scaffolding defects.** ⚠ **PARTLY CLOSED THIS SESSION, NOT WHOLLY** — #60
+   closed #54/#57's (a)(b)(c); #66 closed the parity-floor and echo-site counts, the
+   credential step, the dualrun deployed-artefact arm and the capture harness's trigger.
+   **Still open:** #48's (a) `internal/client/readrouting_test.go:281` and (b)
+   `internal/doctor/render.go:99`; the "nine verbs" count where the answer is ten; #44's
+   four; the stale node-affinity comment; and the carried-forward list.
+   ⚠ The existing entry NAMES THE WRONG SITES for "nine verbs" — measured, they are
+   `flake.nix`, `tests/test_parity_harness.py` and `tests/test_go_client_ledgers.py`.
+   forcing: gate — filed BY attribution gates rather than fixed, so nothing else surfaces them.
+3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
+   Key it on principal + epoch; `control.Authorization` already carries `Epoch`.
    forcing: none
-4. **P8 — retire the Python oracle.** Unblocked; gated on the flip holding over real use, which is a
-   waiting period rather than a task. `tests/parity/README.md`'s ledger is DECISIONS, not a script.
+4. **P8 — retire the Python oracle.** Gated on the default flip holding over real use, which
+   is a waiting period rather than a task.
    forcing: none
-5. **Rename `SUBSYSTEM_STORE_*` → `CAIRN_*` behind a migration path.** Deferred, not dropped: it was
-   item 5 of the five the operator approved with *"proceed as recommended"*, and this session
-   narrowed to 1–3 and said so at the time. `AGENTS.md` "Naming" is the standing alias policy, so the
-   quickstart documents `SUBSYSTEM_STORE_*` until this lands.
-   forcing: user — item 5 of the approved list, explicitly deferred rather than declined.
+5. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` BEHIND A DEPRECATION WINDOW — THE OPERATOR'S
+   CHOSEN NEXT WORK, AND THE SHAPE IS ALREADY DECIDED.** Both names work; the old one logs a
+   warning **naming its replacement**; the removal version is **stated**. Explicitly NOT
+   aliases-forever, and NOT a clean break folded into P8 — both were offered and declined.
+   Touches `lib/cairn_instances.py`, `cairn`, `lib/subsystem_read_store.py`,
+   `server/server.py`, the `internal/` env readers, and `AGENTS.md`'s "Naming" section,
+   which states the standing alias policy and must move with it.
+   ⚠ This repo is PUBLIC and consumers pin the flake, so the warning text and the removal
+   version are a PUBLISHED CONTRACT: decide them once, write them down, pin them.
+   ⚠ `tests/testlib/env_pin.py` is now the ONE definition of the client's configuration
+   surface — the rename goes through its prefixes, and its consumer ledger will name every
+   suite that has to move.
+   forcing: user — item 5 of the five approved with "proceed as recommended", deferred rather
+   than declined by an earlier session, and re-affirmed with a chosen shape this session.
+6. **Fold this session's four new defect entries into `## Defects (batched)`, and mark the
+   entries #60 and #66 closed** — once ZacxDev/cairn#62 and #65 have merged.
+   The four to add are in the Gotchas block below.
+   forcing: user — the operator chose this sequencing explicitly.
+7. **Pin the ARM battery's count.** `ci.yml`'s *"prove every ARM can go RED (7 mutants…)"* is
+   a count in a step name that nothing derives from its battery — the same class
+   `tests/test_control_mutant_count_is_pinned.py` already closes twice. #66 answered this one
+   with a written line rather than a PR; its closing condition is at the three-entry header in
+   `tests/test_publish_workflow.py`.
+   forcing: gate
 
 ## Defects (batched)
 - 🔴 **THIS DOC IS 99,059 B AGAINST ITS OWN 65,536 B GUIDELINE — 33,523 B OVER, AND THIS UPDATE ADDED
@@ -1059,37 +1079,73 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   adversarially re-read. Stated on the PR so it reads as *unreviewed*, not *reviewed-clean*; those
   are indistinguishable in a merged history.
 
+- 🔴 **CARRIED FORWARD FROM A `State now` THAT THIS UPDATE REPLACES, BECAUSE IT IS A
+  DURABLE DECISION AND NOT STATUS: MCP IS HELD.** No MCP server; agents integrate via the
+  CLI and the HTTP API. 🔴 **Do not cite the old blocker when revisiting it** — "a
+  third-party dependency is a BUILD FAILURE under `vendorHash = null`" stopped being true
+  at #55. The hold rests on the operator's call alone. Also in this host's memory as
+  `mcp-server-on-hold`. It sat under a REPLACE heading and would have been deleted by this
+  very update; moved here, where the bucket appends.
+- 🔴 **OPERATOR DECISION: the audit ladder on PRs touching only tests, prose and CI config is
+  now ROUND 0 + ROUND 1 ONLY, and stops regardless of findings.** Measured basis: round 0
+  changed the outcome on all three PRs this session, while later rounds increasingly audited
+  the ladder's own prose — three of four findings on #66's round 1 were prose-about-prose.
+  ⚠ The cost is named rather than hidden: **#66's round 1 found a live-credential hole round 0
+  missed**, so the round-1 pass is the half that must not be dropped.
+- 🔴 **FOUR NEW DEFECT ENTRIES, PARKED HERE BECAUSE THE `Defects` HEADING REPLACES AND WOULD
+  HAVE DELETED THIRTEEN.** Move them under ranked item 6.
+  **(a)** `tests/unchanged_output_capture.py` is run by NO CI job and no nix check — measured,
+  zero references in `.github/workflows/` and `flake.nix`. #66 decided it stays MANUAL with a
+  written trigger; a blanket job would be red by construction, since it is a base-vs-head
+  differential. **(b)** The canonical handoff is ~99 KB against its own 65 KB guideline and
+  does not record #60, #63 or #66; its prune PR is blocked behind #62 and #65. **(c)** Two
+  entries #66 deliberately did not answer because #64 owns their files — the
+  `checks.default-is-the-go-client` Python-side insensitivity (`flake.nix`) and 2(d), whether
+  `cairn-ui` should render through `internal/report` (`internal/ui/README.md`); 2(d) is likely
+  answered by #64 itself. **(d)** Raw environment copies remain in five NON-consumer files
+  (`tests/test_subsystem_store_api.py`, `tests/routing_mutants.py`, `tests/parity/world.py`,
+  `tests/dualrun/harness.py`, `tests/conformance/oracle.py`); most build a SERVER environment,
+  which is a different predicate, and none was audited. Stated in `env_pin.py`'s docstring.
+- 🔴 **EVERY LADDER THIS SESSION FOUND REAL DEFECTS IN MY OWN WORK, AND THE DOMINANT SHAPE WAS
+  A GUARD REPRODUCING THE DEFECT IT CLOSED.** #63's consolidation missed two of seven sites and
+  the defect it was named for was still live at both — **80 failed / 20 passed** when measured.
+  #66's echo ledger discovered sites using **the same two literal phrases as the recipe it
+  replaced**, so it was blind to a site phrased differently from birth; two such sites were
+  already in the tree, one of whose docstrings reads *"this file is the site that sweep missed"*.
+- 🔴 **A COUNT IN PROSE WENT WRONG FOUR TIMES IN ONE PR, ONCE WHILE FIXING THE FINDING THAT IT
+  WAS WRONG.** "all three" → "FIVE" → six → nine, the last written without measuring. "Site"
+  means a file, a call site, or a client-vs-server distinction depending on the reader, so no
+  number was checkable. **The total is now absent from prose and the SET is an assertion.**
+  Do not re-add a count.
+- 🔴 **AN AUDIT CAN BE RIGHT ABOUT THE GAP AND WRONG ABOUT THE FIX.** #63 round 2 proposed a
+  one-keyword fix for a host-label divergence; applied and measured, it **still failed** — the
+  comparison is child-versus-in-process, so pinning one side swaps one divergence for another.
+  Re-verify an audit's proposed fix rather than shipping on the reviewer's authority.
+- 🔴 **A PROSE RATIONALE CAN BE FALSIFIED BY `grep` ON ITS OWN FILE.** #66 argued the capture
+  harness must be kept because P8 will need it; every invocation in it is `sys.executable` over
+  `cairn` and `server/server.py` — exactly what P8 deletes. P8 is its RETIREMENT condition.
+- **`$?` AFTER A PIPE bit this session twice**, once while measuring the very gate whose rc
+  mattered — `tests/parity/harness.py` read as rc 0 when the true rc was **2**, "could not
+  vouch". Capture the rc into a variable before any pipe.
+- **The publish-workflow mutation battery REFUSES in a shell without pytest** —
+  `REFUSING TO VOUCH: the baseline run executed ZERO tests`. Run it as
+  `uv run --with pytest python -u tests/publish_workflow_mutants.py`; it is **22 mutants,
+  0 problems** at `f2ddf45`.
+- **`isolation: "worktree"` was avoided for EVERY dispatch, deliberately** — on this repo it
+  branches from the DEFAULT branch, so an agent sent to an unmerged branch gets a tree of
+  `main` with the change absent. Every audit agent got a hand-built detached worktree at the PR
+  head **plus a base check it could fail**. Zero mis-targeted agents across seven dispatches.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
-python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
-uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
-go vet ./... && go test ./... && go test -race ./...
-python3 -u tests/control_mutants.py
-uv run --python 3.12 --with pytest -- python -u tests/publish_workflow_mutants.py
-python3 tests/conformance/suite.py run       # oracle: 0 failures
-bash tests/conformance/run_go.sh             # Go: 0 failures, 4 skips
-python3 tests/dualrun/harness.py             # SUMMARY … differences=0
-python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
+uv run --with pytest python -m pytest tests -q -p no:randomly   # expect 1994 passed
+go vet ./... && go test ./...                                    # expect 17 ok
+python3 tests/leakscan.py                                        # expect rc 0
+uv run --with pytest python -u tests/publish_workflow_mutants.py # expect 22 mutants, 0 problems
 ```
-⚠ **Expect `1 failed, 1969 passed` from pytest on THIS host** — the HOME-dependent doctor test in
-Open investigations, red on plain `main` too. CI is unaffected.
-
-🔴 **RUN THE MUTATION BATTERIES UNDER AN INTERPRETER THAT HAS `pytest`.** A bare `python3` has none.
-🔴 **`dualrun` and `parity` exit 2 for "COULD NOT VOUCH", which is NOT "failed"**.
-🔴 **VERIFY A DEPLOY BY THE RUNTIME SYMPTOM.** The discriminator is the rendered caveat: the retired
-image says the store is *"PER-HOST and unreplicated"*, the current one *"read through a PER-HOST
-CACHE"*.
-🔴 **Verify a squash merge BY CONTENT, never by ancestry.**
-🔴 **Reading CI: require SIX checks present AND all COMPLETED** — a rollup with zero incomplete
-checks is also what "no checks exist yet" looks like.
-
-**The browser surface, added this session:**
-```bash
-nix build github:ZacxDev/cairn#cairn-ui
-./result/bin/cairn-ui -store <store> -token-file <tokens> -port 8103
-# /healthz unauth 200 · GET / unauth 401 · GET / +bearer 200 · POST / +bearer 401 · "serving 1 route(s)"
-```
+The arc's closing condition is **NOT met**: `internal/ui/routes.go` declares no share route,
+and no test in the tree pins a replica-honesty notice.
 
 ## Open investigations — live diagnosis state
 
@@ -1184,3 +1240,23 @@ because a closed block's value is its measured values and eliminations. Read it 
   test's `"token"` lookup finds none. CI is unaffected (fresh checkout, clean HOME).
 - **Next probe:** none needed for either merged PR. The real defect is that the test inherits the
   operator's HOME instead of pinning one; that is the fix when somebody wants it.
+
+### A byte-identity test failed once and has not reproduced
+- as-of: 2026-09-22
+- **Symptom + exact repro:** `uv run --with pytest python -m pytest tests -q -p no:randomly`
+  → `1 failed, 1971 passed`, the failure being
+  `tests/test_subsystem_store_api.py::TestSeedThenVerify::test_a_seeded_copy_serves_byte_identical_digests`.
+- **Observed (with values):** one failure in one full-suite run during #63's development.
+  Re-run alone: **1 passed**. Re-run as a full suite immediately after: **1972 passed**.
+  Every full-suite run since — four of them, up to **1994 passed** at `f2ddf45` — was green.
+  Wall time of the failing run was **485.82 s** against an observed band of **477–495 s**.
+  `via: measurement`
+- **Ruled out:** load. A load flake inflates EVERY test in a run; this run's wall time sits
+  inside the normal band and no sibling test was inflated. `via: measurement`
+- **Ruled out:** caused by #63. That test imports neither `env_pin` nor
+  `unchanged_output_capture` and shares no fixture with anything the PR touched. `via: code`
+- **Leading hypothesis:** a port collision. The test runs `run_seed` then `running(stage)`,
+  which binds a listening socket; a concurrent test or a sibling session's process taking the
+  same ephemeral port gives exactly one failure with no timing signal. `via: assumed`
+- **Next probe:** run the file alone in a loop of 20 and watch for a single failure —
+  `for i in $(seq 20); do uv run --with pytest python -m pytest tests/test_subsystem_store_api.py -q -p no:randomly | tail -1; done`
