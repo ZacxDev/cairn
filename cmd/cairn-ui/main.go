@@ -409,18 +409,26 @@ func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error)
 // precisely the count below. A proxy for it can always be walked around; this is the
 // question itself.
 //
-// 🔴 AND THE HONEST CONSEQUENCE, WHICH IS A GAP RATHER THAN A BUG: **no tool in this
-// repository writes `EventCredentialIssued` into a journal.** `-create-user` does not,
-// and there is no `-issue-credential`. So a journal-backed `cairn-ui` cannot be brought up
-// sign-in-capable BY ANY TOOL HERE, and this guard REFUSES TO START rather than letting an
-// operator discover it at the sign-in form.
+// ✅ AND THE CONSEQUENCE THAT USED TO BE A GAP IS CLOSED — THE PARAGRAPH IS KEPT RATHER
+// THAN DELETED BECAUSE A COMMENT IS A CLAIM TOO, AND THIS ONE WAS THE REASON THE REFUSAL'S
+// TEXT SAID WHAT IT SAID. It read: "**no tool in this repository writes
+// `EventCredentialIssued` into a journal.** `-create-user` does not, and there is no
+// `-issue-credential`. So a journal-backed `cairn-ui` cannot be brought up sign-in-capable
+// BY ANY TOOL HERE." All three sentences are now false. `cairn-server -issue-credential`
+// mints a token, writes only its digest, and prints the token once; a journal it has been
+// run against passes this guard, which is pinned by
+// `TestAJournalAnIssuedCredentialMakesSignInCapableIsAdmitted` below.
 //
-// ⚠ "NO TOOL HERE CAN" IS NOT "IT CANNOT", AND AN EARLIER DRAFT SAID THE WIDER THING —
-// that the mode was "not a sign-in-capable deployment today". MEASURED FALSE: appending one
-// `{"kind":"credential-issued",…}` line to a `-create-user` journal makes this binary start
-// and a real browser sign-in succeed (303, then 200 on `/`). The gap is TOOLING, not
-// capability, and an operator who believed the wider sentence would abandon a mode that
-// works.
+// ⚠ WHAT DOES NOT CHANGE IS THE GUARD, AND THAT IS THE POINT RATHER THAN AN OVERSIGHT.
+// `-create-user` still mints a user and NO credential, so the state this refuses is still
+// reachable by following the obvious first command — the remedy moved, the hazard did not.
+//
+// ⚠ "NO TOOL HERE CAN" WAS NEVER "IT CANNOT", AND AN EARLIER DRAFT SAID THE WIDER THING —
+// that the mode was "not a sign-in-capable deployment today". MEASURED FALSE even then:
+// appending one `{"kind":"credential-issued",…}` line to a `-create-user` journal made this
+// binary start and a real browser sign-in succeed (303, then 200 on `/`). The gap was
+// TOOLING and it is the tooling that landed; the record is kept because an operator who
+// believed the wider sentence would have abandoned a mode that worked.
 //
 // ⚠ IT IS SCOPED TO THE JOURNAL BRANCH, DELIBERATELY. The token-file projection
 // synthesizes a credential per row, so this could never fire there — and `openAuthority`
@@ -451,16 +459,21 @@ func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string
 	if usable > 0 {
 		return nil
 	}
+	// 🔴 THE REMEDY IS NAMED AS A COMMAND, BECAUSE THIS TEXT IS THE WHOLE OF WHAT AN
+	// OPERATOR GETS. The previous version said no tool here could fix it and offered a
+	// hand-appended journal line; that was true when written and is false now, and a
+	// refusal that sends somebody to hand-edit an append-only authority — with a live
+	// secret in their clipboard — when a command exists is the worst of the two.
 	return fmt.Errorf("the control journal %s materialized an authority with NO USABLE CREDENTIAL "+
 		"(%d user(s), %d credential record(s), 0 of them live and attributable), so "+
 		"`control.Authenticate` can match nothing and every sign-in would answer 401 — this program "+
 		"would come up, announce itself writable and serve nobody. Refusing to start. ⚠ NOTE THAT "+
-		"`cairn-server -create-user` DOES NOT FIX THIS: it mints a user and no credential, and no "+
-		"tool in this repository writes a credential into a journal yet. A journal-backed cairn-ui "+
-		"cannot be made sign-in-capable BY ANY TOOL IN THIS REPOSITORY. Issue one from whatever "+
-		"provisions your control plane, or hand-append a `credential-issued` record — in which "+
-		"case note that `token_hash` is the SHA-256 HEX DIGEST of the token and NEVER the token: "+
-		"`Event.validate` checks that field's LENGTH only, so a 64-character secret pasted there "+
-		"is accepted and persisted into the authority journal",
+		"`cairn-server -create-user` DOES NOT FIX THIS: it mints a user and no credential. What "+
+		"does fix it is `cairn-server -issue-credential -principal <usr_… or prj_…>` against THIS "+
+		"journal, which mints a token, writes only its SHA-256 digest, and prints the token once "+
+		"to stdout. ⚠ If you instead hand-append a `credential-issued` record, note that "+
+		"`token_hash` is the SHA-256 HEX DIGEST of the token and NEVER the token — a raw secret "+
+		"pasted there is refused as 'not a lowercase hex digest' rather than persisted, which it "+
+		"was at 64 characters before that check was widened",
 		journal, len(m.Users), len(m.Credentials))
 }

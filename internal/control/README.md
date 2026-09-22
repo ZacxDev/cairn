@@ -258,11 +258,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 120 mutants, over SEVEN packages
+python3 tests/control_mutants.py          # 127 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 120 mutants, 118 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 127 mutants, 125 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
 
 🔴 **THE THIRD EQUIVALENT LABEL WAS MEASURED FALSE AND IS NOW A KILL, WHICH IS WHY THE
@@ -337,7 +337,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 120 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 127 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -706,6 +706,69 @@ it.
 
 ⚠ **AND THE POD'S CACHE HAS ONE TRIGGER: THE TIMER.** A SIGHUP channel was registered for
 it and removed — see the trigger note above.
+
+## The credential-issuing path — and the sentence it made false
+
+`IssueCredential` (`credential_issue.go`) is the second thing in this repository that
+WRITES to a journal-backed authority, and `cairn-server -issue-credential` is its only
+caller. One event: `credential-issued`, carrying `HashToken(token)` and never the token.
+
+🔴 **IT CLOSES A GAP THAT WAS MEASURED AT THE OTHER END OF THE TREE, AND THE OBSERVABLE WAS
+A REFUSAL TO START.** P3 shipped `Authenticate`, `Credential`, `Narrow` and the
+digest-collision rule; P5's first slice shipped `ProvisionUser`. Nothing wrote a
+credential. So `cmd/cairn-ui -control-journal <file>` — whose startup guard asks the
+sign-in precondition itself, "is there a live, attributable credential" — refused to start
+against a journal `-create-user` had just written, and its own error text said so:
+*"no tool in this repository writes a credential into a journal yet. A journal-backed
+cairn-ui cannot be made sign-in-capable BY ANY TOOL IN THIS REPOSITORY."* The browser
+surface's entire write half was unreachable by any path here. **That sentence is now false
+and the refusal names the command instead**; the guard is unchanged, because
+`-create-user` still mints a user and no credential.
+
+**Three rules this path carries, each with its own reason:**
+
+1. **The width is not chosen here.** `TokenEntropyBytes` is 32, which renders as 43
+   base64url characters, because `authz.MinTokenChars` is 43 and the pod refuses to START
+   on a shorter token-file row. A narrower mint would be a credential this repository's own
+   programs reject as guessable, issued by the tool whose job is to produce a working one.
+   🔴 **Nothing in the production graph makes those two numbers agree** — `internal/control`
+   holds no configuration and must not import the token-file parser — so the agreement is a
+   SEAM GUARD, `TestTheMintedWidthAgreesWithTheTokenFileFloor`, which imports both.
+2. **The raw token leaves through `Issued.Token()` and nothing else.** The field is
+   unexported and `String`/`GoString` redact, so `%v`, `%+v`, `%s`, `%q` and `%#v` cannot
+   reach it. ⚠ That is a property of FORMATTING, not a confidentiality boundary: `Token()`
+   still returns the secret (which is the point — the command prints it once), an encoder
+   that skips unexported fields DROPS it rather than leaking it, and a debugger reads it
+   anyway. `Issued`'s own comment enumerates the four things it does not cover.
+3. **The principal is checked before the mint, not merely before the append.** `apply`
+   refuses the same batch under the `flock`, so as a correctness check this is redundant and
+   is not claimed otherwise. What it buys is that a request which cannot succeed never
+   causes a secret to EXIST, and a sentinel (`ErrNoSuchPrincipal`) an operator surface can
+   tell from "the volume is gone" — which through `Append` are one opaque `fmt.Errorf`.
+
+🔴 **AND THE DIGEST FIELD'S GUARD WAS WIDENED IN THE SAME CHANGE, BECAUSE A LENGTH CHECK
+WAS NOT THE GUARD IT READ AS.** `Event.validate` required `len(e.TokenHash) == HashHexLen`
+and its message said a short hash "is the shape a raw token takes" — true of the case it
+caught and false of the case that matters: **`base64.RawURLEncoding` of 48 random bytes is
+exactly 64 characters**, and 48 bytes is an ordinary width for a machine-minted token, so a
+raw secret had a natural spelling that cleared the check and was persisted verbatim into
+the append-only authority. It now requires a lowercase hex digest.
+`TestA64CharacterRawTokenIsRefusedAsADigest` is the regression test — **red at
+`origin/main`'s `journal.go`, green at HEAD** — and the pre-existing table test
+`TestTheJournalRefusesWhatItCannotEnforce` stays GREEN under that revert, which is the
+measurement saying it could never see this case (its fixture is 26 characters).
+`token-hash-checked-by-LENGTH-only` is the mutant, and it is a *second* row rather than a
+widening of `raw-token-accepted-as-a-digest`: that one deletes the guard's operand, so a
+guard that is present and too NARROW survives it.
+
+⚠ **WHAT THIS PATH DOES NOT DO, ENUMERATED RATHER THAN GESTURED AT.** It does not GRANT —
+a credential carries its principal's authority, computed at the moment it is asked, so one
+issued to a principal that can reach nothing authenticates and sees nothing (which is why
+`cairn-server -issue-credential` asks `Authenticate` with the token it just minted and says
+what it reaches). It does not REVOKE: `EventCredentialRevoked` still has no writer in this
+repository, so a rotation is "issue, then hand-append the revocation" — the same shape as
+the gap this path closed, one event over. And it does not RE-ISSUE: there is no recovery
+from a lost token, by construction, because the journal holds only the digest.
 
 ## What this package structurally cannot see
 

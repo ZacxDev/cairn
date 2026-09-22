@@ -334,11 +334,30 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="raw-token-accepted-as-a-digest",
         path="internal/control/journal.go",
-        old="\t\tif len(e.TokenHash) != HashHexLen {",
+        old="\t\tif !isLowerHexDigest(e.TokenHash) {",
         new="\t\tif false {",
         killer="TestTheJournalRefusesWhatItCannotEnforce",
         why="the guard standing between a caller's mistake and a credential written in "
         "clear text into a durable, operator-readable file.",
+        extra_killers=("TestA64CharacterRawTokenIsRefusedAsADigest",),
+    ),
+    Mutant(
+        name="token-hash-checked-by-LENGTH-only",
+        path="internal/control/journal.go",
+        old="\t\tif !isLowerHexDigest(e.TokenHash) {",
+        new="\t\tif len(e.TokenHash) != HashHexLen {",
+        killer="TestA64CharacterRawTokenIsRefusedAsADigest",
+        # 🔴 THIS MUTANT IS THE PRE-CHANGE CODE VERBATIM, WHICH IS WHY IT IS A SEPARATE ROW
+        # FROM THE ONE ABOVE RATHER THAN A WIDENING OF IT. `raw-token-accepted-as-a-digest`
+        # deletes the guard's operand entirely; a guard that is PRESENT and too NARROW
+        # survives that edit, and "too narrow" is the state this field was actually shipped
+        # in. The row's killer is deliberately NOT the table test: under this mutant
+        # `TestTheJournalRefusesWhatItCannotEnforce` stays GREEN, because its raw-token row
+        # is 26 characters and a length check still catches that — which is the measurement
+        # that says the table could not see the real case.
+        why="reverting to the length-only check that shipped: `base64.RawURLEncoding` of 48 "
+        "random bytes is exactly 64 characters, so a raw secret had a natural spelling "
+        "that cleared it and was persisted verbatim into the append-only authority.",
     ),
     Mutant(
         name="duplicate-digest-accepted",
@@ -462,6 +481,57 @@ MUTANTS: tuple[Mutant, ...] = (
         "'narrowed to nothing' — the nil/empty asymmetry losing its last carrier. "
         "The damage is fail-CLOSED (every unnarrowed credential would see nothing), "
         "which is why it needs a guard rather than being dismissed as harmless.",
+    ),
+    # ---- the credential-ISSUING path: the only thing here that holds a raw secret ----
+    Mutant(
+        name="issued-renders-its-token",
+        path="internal/control/credential_issue.go",
+        old='\treturn fmt.Sprintf("credential=%s digest=%s epoch=%d token=<redacted: shown once, on issue>",\n\t\ti.Credential, i.TokenHash, i.Epoch)',
+        new='\treturn fmt.Sprintf("credential=%s digest=%s epoch=%d token=%s",\n\t\ti.Credential, i.TokenHash, i.Epoch, i.token)',
+        killer="TestNoRenderingOfIssuedContainsTheToken",
+        why="the single most likely edit anybody makes to this type — putting the field "
+        "back in the log line while debugging. The realistic leak is not a deliberate "
+        "print of a secret; it is `%v` of a value that happens to hold one, in an error "
+        "path or a test failure message.",
+    ),
+    Mutant(
+        name="token-entropy-narrowed",
+        path="internal/control/credential_issue.go",
+        old="const TokenEntropyBytes = 32",
+        new="const TokenEntropyBytes = 16",
+        killer="TestTheMintedTokenIsExactlyTheDeclaredWidthAndAlphabet",
+        # The width is the one property two packages have to agree on without being able
+        # to see each other, so this row is also what stands on the seam guard beside it.
+        extra_killers=("TestTheMintedWidthAgreesWithTheTokenFileFloor",),
+        why="'128 bits is plenty for an id, so it is plenty here' — the reasoning "
+        "`NewID` states for an id and that does not transfer to the secret itself. A "
+        "narrower mint renders below `authz.MinTokenChars`, so the pod and `cairn-ui` "
+        "would refuse at STARTUP a token this command had just told an operator to use.",
+    ),
+    Mutant(
+        name="credential-issued-without-a-principal-check",
+        path="internal/control/credential_issue.go",
+        old="\tif err := current.checkSubject(req.SubjectKind, req.SubjectID); err != nil {",
+        new="\tif err := current.checkSubject(req.SubjectKind, req.SubjectID); err != nil && false {",
+        killer="TestIssuingToAPrincipalTheJournalDoesNotHoldIsRefusedBeforeAnythingIsWritten",
+        # 🔴 THE KILL IS BY THE SENTINEL, NOT BY "IT ERRORED", AND THE ROW EXISTS TO PIN
+        # THAT DISTINCTION. `apply` refuses the same batch under the lock, so the call still
+        # fails with the mutant applied — a test that accepted any error would score this
+        # SURVIVED while the two things the pre-check buys (no secret minted for a doomed
+        # request; a message that separates a typo from a broken mount) went unguarded.
+        why="deleting a check that looks redundant because the journal enforces the same "
+        "rule — true of the refusal, false of WHEN it happens and of what it says.",
+    ),
+    Mutant(
+        name="narrowing-flattened-on-issue",
+        path="internal/control/credential_issue.go",
+        old="\t\tNarrowedScopes: copyIDs(req.NarrowedScopes),",
+        new="\t\tNarrowedScopes: append([]ID(nil), req.NarrowedScopes...),",
+        killer="TestANarrowingRoundTripsThroughTheJournal",
+        why="the idiomatic defensive copy, which flattens a non-nil EMPTY narrowing into "
+        "nil — turning 'this credential sees nothing' into 'this credential is not "
+        "narrowed at all', a silent WIDENING inside a line that reads like hygiene. The "
+        "same defect `copyIDs` exists for, at the second site that has to reach for it.",
     ),
     Mutant(
         name="constant-time-compare-becomes-equality",
@@ -1058,7 +1128,34 @@ MUTANTS: tuple[Mutant, ...] = (
         "outage of the authority would stop every read, which is the promise cairn "
         "makes about an offline orient-me.",
     ),
-    # ---- the program: the only thing that bounds the declared divergence ----------
+    # ---- the program: the modes that EXIT, which is where a credential is minted ----
+    Mutant(
+        name="issue-credential-mode-is-not-dispatched",
+        path="cmd/cairn-server/main.go",
+        old="\tif *issue.enabled {",
+        new="\tif false && *issue.enabled {",
+        killer="TestTheBinaryActuallyDispatchesIssueCredential",
+        # 🔴 KILLED BY A DEADLINE, NOT AN ASSERTION, AND THAT IS THE OBSERVABLE THE DEFECT
+        # ACTUALLY HAS. A mode that is registered and never dispatched falls through into
+        # the SERVER path: the command does not refuse, it starts listening. The child in
+        # that test runs under a 20s context for exactly this shape.
+        why="the flags registered and the dispatch forgotten — a capability that exists in "
+        "`-help`, is exercised by every in-process test of `runIssueCredential`, and "
+        "cannot be reached from the command line at all.",
+    ),
+    Mutant(
+        name="two-modes-at-once-picks-a-precedence",
+        path="cmd/cairn-server/main.go",
+        old="\tif len(asked) > 1 {",
+        new="\tif false {",
+        killer="TestTheBinaryActuallyDispatchesIssueCredential",
+        extra_killers=("TestTheBinaryActuallyDispatchesCreateUser",),
+        why="the ledger replaced three pairwise `&&` checks, and a ledger can be wrong in "
+        "a way a pair cannot — it governs every combination or none. Without it the "
+        "FIRST mode in the dispatch order wins silently: `-routes -issue-credential` "
+        "prints the route table and exits 0 having minted nothing, which is the worst of "
+        "the three outcomes because the operator has a plausible success and no token.",
+    ),
     Mutant(
         name="the-cold-start-refusal-loses-its-operator-message",
         path="cmd/cairn-server/main.go",

@@ -173,10 +173,33 @@ func (e Event) validate() error {
 		if !e.SubjectKind.Valid() {
 			return fmt.Errorf("%s: unknown subject_kind %q", e.Kind, e.SubjectKind)
 		}
-		if len(e.TokenHash) != HashHexLen {
+		// 🔴 A LOWERCASE HEX DIGEST, NOT MERELY 64 CHARACTERS — AND THE LENGTH-ONLY
+		// VERSION THIS REPLACES WAS A GUARD THE HAZARD WALKED AROUND. It read
+		// `len(e.TokenHash) != HashHexLen` and its own message said a short hash "is the
+		// shape a raw token takes", which is true and is not the shape that gets here: a
+		// raw secret of exactly 64 characters PASSED and was persisted into the authority
+		// journal verbatim. That is not a contrived width. `base64.RawURLEncoding` of 48
+		// random bytes is exactly 64 characters, and 48 bytes is an entirely ordinary
+		// choice for a machine-minted token — so the one input the field must never hold
+		// had a natural spelling that cleared the check. `Event.validate` is the LAST
+		// boundary before `WriteEvents` puts the value in an append-only, operator-readable
+		// file with no undo, which is why the check belongs here rather than at each writer.
+		//
+		// ⚠ IT NARROWS UPPERCASE HEX OUT TOO, AND THAT COSTS NOTHING THAT WAS EVER ALIVE.
+		// `HashToken` is `hex.EncodeToString`, which emits lowercase, and `EqualHash` is a
+		// byte comparison — so an uppercase digest in a hand-edited journal could never
+		// have matched a presented token anyway. It was a credential record that replayed
+		// clean and authenticated nobody; refusing it names the problem at load instead.
+		//
+		// 🔴 THE MESSAGE REPORTS THE LENGTH AND NEVER THE VALUE. The whole premise of this
+		// branch is that the field may be holding a live secret, so interpolating it would
+		// re-stage that secret into the pod's stderr, the operator's scrollback and any
+		// transcript capturing the run — the guard against writing a token to disk,
+		// printing the token.
+		if !isLowerHexDigest(e.TokenHash) {
 			return fmt.Errorf(
-				"%s: token_hash is %d characters, want %d — a short hash here is the shape a raw token takes when it is written to the field that was supposed to hold its digest, and this journal is not a place a credential may ever land",
-				e.Kind, len(e.TokenHash), HashHexLen)
+				"%s: token_hash is not a %d-character lowercase hex digest (it is %d character(s)) — the field holds the SHA-256 DIGEST of a credential and never the credential, and a value that is the right length but not hex is the shape a raw token takes when it is written to the field that was supposed to hold its digest. This journal is not a place a credential may ever land, and it is append-only: there is no undo. The value is deliberately not echoed here, because if that is what happened it is a live secret",
+				e.Kind, HashHexLen, len(e.TokenHash))
 		}
 		return nil
 	case EventCredentialRevoked:

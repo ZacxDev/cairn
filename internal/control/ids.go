@@ -105,6 +105,36 @@ func HashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// isLowerHexDigest answers whether s is EXACTLY what `HashToken` produces: HashHexLen
+// characters, every one of them a lowercase hex digit.
+//
+// 🔴 IT IS THE SHAPE CHECK `Event.validate` APPLIES TO `token_hash`, AND IT IS WIDER THAN
+// A LENGTH CHECK FOR ONE MEASURED REASON: a 64-character raw secret is a realistic value,
+// not a contrived one. `base64.RawURLEncoding` of 48 random bytes is exactly 64
+// characters. A length-only check accepted that and wrote it into the append-only journal.
+//
+// ⚠ IT IS A SHAPE CHECK AND NOT AN AUTHENTICITY CHECK, WHICH IS ALL THAT IS AVAILABLE. It
+// cannot tell a real sha256 digest from 64 random hex characters, because nothing can — a
+// digest has no structure to verify. What it removes is the class of values that are not
+// digests at all, which is the class a raw token is in.
+//
+// ⚠ NOT `strings.ToLower` + `hex.DecodeString`. `hex.DecodeString` ACCEPTS uppercase, so
+// using it would admit a spelling `HashToken` never emits and `EqualHash` can never match
+// — a credential record that replays clean and authenticates nobody. The explicit range is
+// also allocation-free on the hot replay path, where every credential event runs it.
+func isLowerHexDigest(s string) bool {
+	if len(s) != HashHexLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // EqualHash compares two digests in constant time.
 //
 // 🔴 `subtle.ConstantTimeCompare`, NOT `==`, FOR THE SAME REASON `authz.Authorize`

@@ -51,12 +51,16 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   browser-surface lead; #64 now states three phases and seven routes there, because audit
   round 1 found the "whichever merges second fixes it" deferral was not mechanical and
   nothing gated it. #62 is an earlier handoff delta whose narrative was overtaken twice.
-- 🔴 **WHAT THE ARC DID NOT CLOSE, NAMED SO IT IS NOT READ AS FINISHED.** (a) **No tool in
-  this repository writes a credential into a journal**, so a journal-backed `cairn-ui` cannot
-  be brought up sign-in-capable by any path here — the binary refuses at startup and says so;
-  one hand-appended record makes sign-in work, so it is a TOOLING gap. (b) `cairn-ui` is still
-  **deployed by nothing**: no image derivation, no manifest. (c) Sharing reaches only
-  principals you already share a project with; an invite flow is P6.
+- 🔴 **WHAT THE ARC DID NOT CLOSE, NAMED SO IT IS NOT READ AS FINISHED.** (a) ✅ **CLOSED by
+  ranked item 5** — it read "**No tool in this repository writes a credential into a journal**,
+  so a journal-backed `cairn-ui` cannot be brought up sign-in-capable by any path here", and
+  `cairn-server -issue-credential` (over `control.IssueCredential`) is that tool. The bullet is
+  kept rather than deleted because it is what the UI's startup refusal was worded from, and
+  that wording moved with it. ⚠ What is NOT closed is the other half of the same shape:
+  `EventCredentialRevoked` still has no writer, so a rotation is "issue, then hand-append the
+  revocation". (b) `cairn-ui` is still **deployed by nothing**: no image derivation, no
+  manifest. (c) Sharing reaches only principals you already share a project with; an invite
+  flow is P6.
 
 ## Next steps (ranked)
 

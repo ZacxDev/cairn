@@ -174,6 +174,89 @@ func TestAJournalWithALiveCredentialIsAdmitted(t *testing.T) {
 	}
 }
 
+// TestAJournalAnIssuedCredentialMakesSignInCapableIsAdmitted is the regression test for
+// the DELIVERABLE rather than for a predicate: the refusal above IS the defect, and this
+// is the case that says an operator can now get out of it with a command.
+//
+// 🔴 IT BUILDS THE JOURNAL THE WAY AN OPERATOR DOES — `control.ProvisionUser` then
+// `control.IssueCredential`, the two library halves `cairn-server -create-user` and
+// `cairn-server -issue-credential` are the only callers of — rather than hand-appending a
+// `credential-issued` event the way `seededJournal` does. A hand-built fixture would pass
+// whether or not any tool in this repository could produce that state, which is exactly
+// the gap this change closes: the old refusal text said no tool could, and it was right.
+//
+// ⚠ ITS MATRIX IS NOT "RED AT THE BASE COMMIT", AND SAYING SO IS THE HONEST VERSION.
+// `control.IssueCredential` does not exist at `origin/main`, so this file does not COMPILE
+// there — which proves nothing about a guard. What is measured red at the base commit is
+// the defect itself, by hand and on the built binaries: `-create-user` writes a journal,
+// `cairn-ui -control-journal` on that journal exits 78 naming "0 credential record(s)", and
+// nothing in the tree moves it. The sibling `TestAJournalWithUsersAndNoCredentialIsRefused`
+// is the guard that pins that state stays refused; this one pins that it is now ESCAPABLE.
+func TestAJournalAnIssuedCredentialMakesSignInCapableIsAdmitted(t *testing.T) {
+	at := time.Date(2000, 6, 1, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "provisioned.journal")
+	store, err := control.OpenFileStore(path)
+	if err != nil {
+		t.Fatalf("opening the journal: %v", err)
+	}
+
+	made, err := control.ProvisionUser(context.Background(), store, control.NewUser{
+		Provider: "fixture-provider", Subject: "00000000-0000-4000-8000-000000000041",
+		Email: "rowan@notes.example.invalid", ProjectName: "quarry",
+		ScopeNames: []string{"quarry-notes"}, At: at,
+	})
+	if err != nil {
+		t.Fatalf("provisioning: %v", err)
+	}
+
+	// THE PRE-STATE, MEASURED RATHER THAN ASSUMED. Without this the test cannot tell "the
+	// credential fixed it" from "this journal was never refused in the first place", which
+	// is the same shape as a harness wired to nothing.
+	cache, err := openAuthority(path, t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("openAuthority: %v", err)
+	}
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("materializing: %v", err)
+	}
+	if err := refuseAnAuthorityNobodyCanSignInTo(cache, path); err == nil {
+		t.Fatal("PRE-STATE FAILED: a journal holding only a provisioned user was ADMITTED, so the " +
+			"case below measures nothing. `-create-user` mints a user and no credential.")
+	}
+
+	issued, err := control.IssueCredential(context.Background(), store, control.NewCredential{
+		SubjectKind: control.KindUser, SubjectID: made.User, Label: "rowan laptop", At: at,
+	})
+	if err != nil {
+		t.Fatalf("issuing a credential: %v", err)
+	}
+
+	// A fresh cache, because the refusal runs against what the binary materializes at
+	// startup rather than against a value a test kept warm.
+	after, err := openAuthority(path, t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("openAuthority after issuing: %v", err)
+	}
+	if err := after.Refresh(context.Background()); err != nil {
+		t.Fatalf("re-materializing: %v", err)
+	}
+	if err := refuseAnAuthorityNobodyCanSignInTo(after, path); err != nil {
+		t.Fatalf("a journal with a credential issued by `control.IssueCredential` — the library half "+
+			"of `cairn-server -issue-credential` — was still refused: %v", err)
+	}
+
+	// And the credential is the one that makes it sign-in-capable, asserted through the
+	// authentication path rather than by counting records: a record that cannot
+	// authenticate would satisfy the count and serve nobody.
+	p, _, err := control.Authenticate(after.Model(), issued.Token())
+	if err != nil {
+		t.Fatalf("the issued credential does not authenticate against the materialized authority: %v", err)
+	}
+	if p.ID != made.User {
+		t.Fatalf("the credential authenticates as %s, want the provisioned user %s", p.ID, made.User)
+	}
+}
+
 // credentialState is which of the three shapes a seeded journal carries. Named rather
 // than a bool, because the third state — a credential that exists and is REVOKED — is the
 // one a bool could not express and the one a mutation sweep found uncovered.
