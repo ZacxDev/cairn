@@ -26,7 +26,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -43,11 +42,15 @@ GO_MISSING = (
 
 
 @pytest.fixture(scope="module")
-def go_client() -> str:
+def go_client(tmp_path_factory) -> str:
+    # ⚠ `tmp_path_factory`, NOT `mkdtemp`, BECAUSE THE BINARY IS ~9 MB AND THIS RAN FOR MONTHS.
+    # The previous spelling never removed its directory, so every invocation of this file left
+    # one behind: measured at 156 directories and 1.4 GB on one developer host. pytest's factory
+    # is module-scoped-compatible and reclaims on a retention policy, so the leak closes without
+    # a finalizer nobody would notice had stopped running.
     if shutil.which("go") is None:
         pytest.skip(GO_MISSING)
-    workdir = tempfile.mkdtemp(prefix="cairn-go-ledger-")
-    binary = str(Path(workdir) / "cairn-go")
+    binary = str(tmp_path_factory.mktemp("cairn-go-ledger") / "cairn-go")
     proc = subprocess.run(
         ["go", "build", "-C", str(ROOT), "-o", binary, "./cmd/cairn"],
         capture_output=True, text=True,
@@ -214,10 +217,42 @@ def test_the_go_client_declares_EXACTLY_the_pythons_verb_set(go_client):
         f"{len(disagreeing)} verb(s) disagree about whether they WRITE: {disagreeing}. That flag "
         f"decides whether an unreachable store exits 7 or 3."
     )
-    # The positive control on the discovery: nine verbs were measured when this was written, and a
-    # truncated read would otherwise pass the equality above by agreeing with an equally truncated
-    # other side.
-    assert len(go_verbs) >= 9, f"discovered only {sorted(go_verbs)}"
+    # The positive control on the discovery: a truncated read would otherwise pass the equality
+    # above by agreeing with an equally truncated other side.
+    #
+    # 🔴 IT IS A PIN, NOT A FLOOR, AND IT WAS A FLOOR ONE BELOW THE COUNT. TEN verbs are measured
+    # on this tree (`cairn -verbs` prints ten rows and argparse lists ten) and this read `>= 9`,
+    # which passes for nine. ⚠ THE WORKED EXAMPLE THAT FIRST CORRECTED IT NAMED THE WRONG
+    # FAILURE, and the distinction is the whole reason this line exists: deleting a verb from ONE
+    # client reds at the set equality above, never here. The case this guards is BOTH discoveries
+    # truncated in agreement — a cutover dropping a verb from both clients, where the equality is
+    # satisfied and nine sails under a floor of nine. Same defect, same shape, as the `go` job's
+    # `ok` floor, which was `-lt 16` against seventeen packages.
+    #
+    # 🔴 AND A FLOOR *EQUAL* TO THE COUNT REGENERATES IT ON THE DAY AN ELEVENTH VERB LANDS — the
+    # number would again be one below, buying exactly one free deletion. `==` cannot: it reds
+    # when the set GROWS as well as when it shrinks, which turns the instruction below from
+    # advice into a mechanism. The failure it costs is a legitimate verb addition, and being
+    # sent here to move the number in the same commit is the point.
+    #
+    # 🔴 THIS IS NOW THE ONLY PLACE IN THE CODE TREE THE COUNT IS WRITTEN DOWN, AND THAT IS THE
+    # FIX RATHER THAN AN ACCIDENT. ⚠ "Only place" was first written unqualified and was false:
+    # `claudedocs/handoff-cairn-control-plane.md` carries it too, and a comment telling the next
+    # maintainer there is nowhere else to look is worse than one that names where. `flake.nix`, `tests/test_parity_harness.py` (twice) and `AGENTS.md` carried it in
+    # prose, all four said NINE while the answer was ten, and none of them reddened because a
+    # comment cannot. They now say "every verb" and name no count at all — the same ruling this
+    # repo already applied to the mutant-count docstring: a number that has been wrong at every
+    # reading is not worth a fourth correction, and the instruction to count it yourself is the
+    # part that stays true.
+    #
+    # ⚠ SO MOVE THIS NUMBER WITH THE VERB SET, IN THE SAME COMMIT. It is deliberately NOT derived
+    # from either side's discovery: this is the positive control ON that discovery, and a floor
+    # computed from the thing under test cannot fail when the thing under test is truncated.
+    assert len(go_verbs) == 10, (
+        f"discovered {len(go_verbs)} verb(s): {sorted(go_verbs)}. If a verb was ADDED, move this "
+        f"number in the same commit — that is what this pin is for. If one was LOST on both "
+        f"clients at once, the equality above cannot see it and this is the only line that can."
+    )
 
 
 def test_the_go_clients_exit_codes_keep_the_shared_set_at_0_and_9(go_client):
