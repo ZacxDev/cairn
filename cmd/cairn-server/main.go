@@ -202,10 +202,10 @@ func main() {
 		// chosen, and the store root is the only thing that can say whether that name
 		// already reaches somebody else's directory. `internal/control` holds no path and
 		// must not grow one; see `warnScopesThatAlreadyExistOnDisk`.
-		os.Exit(runCreateUser(environ(), *store, create, os.Stdout, os.Stderr))
+		os.Exit(runCreateUser(envalias.Environ(), *store, create, os.Stdout, os.Stderr))
 	}
 
-	env := environ()
+	env := envalias.Environ()
 	resolvedTokenFile := *tokenFile
 	// 🔴 `authz.IsTokenFile`, NOT A LOCAL COPY. This test and the loader's guard 2 decide
 	// the SAME question, and the local `!IsDir()` version they used to share accepted a
@@ -579,14 +579,4 @@ func envInt(name string, fallback int) int {
 		os.Exit(exitConfig)
 	}
 	return value
-}
-
-func environ() map[string]string {
-	out := map[string]string{}
-	for _, entry := range os.Environ() {
-		if key, value, found := strings.Cut(entry, "="); found {
-			out[key] = value
-		}
-	}
-	return out
 }

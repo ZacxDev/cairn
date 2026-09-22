@@ -93,7 +93,7 @@ func main() {
 	// caller, which this repository refuses elsewhere. It returns with a corpus.
 	flag.Parse()
 
-	env := environ()
+	env := envalias.Environ()
 	tokens, err := authz.LoadTokens(*tokenFile, env, func(line string) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+line)
 	})
@@ -236,19 +236,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
 	}
-}
-
-func environ() map[string]string {
-	out := make(map[string]string)
-	for _, kv := range os.Environ() {
-		for i := 0; i < len(kv); i++ {
-			if kv[i] == '=' {
-				out[kv[:i]] = kv[i+1:]
-				break
-			}
-		}
-	}
-	return out
 }
 
 // The three readers below resolve through `internal/envalias`, so a name passed to one is

@@ -61,9 +61,17 @@ cache it meant the entry was dark to every reader. Measured: five
 whole entries existed only on one host. `create` sends `If-None-Match: *`, so it
 creates only if absent and REFUSES (exit 9) rather than overwriting.
 
-CONFIG: `~/.config/subsystem-store/env` (mode 0600) — `SUBSYSTEM_STORE_URL`,
-`SUBSYSTEM_STORE_TOKEN`. Environment variables of the same name win, so a test
-can point this at a throwaway server without touching the file. See SECRETS.md.
+CONFIG: `~/.config/subsystem-store/env` (mode 0600) — `CAIRN_URL`, `CAIRN_TOKEN`
+(`ENV_URL`/`ENV_TOKEN` below). Environment variables of the same name win, so a
+test can point this at a throwaway server without touching the file. See
+SECRETS.md.
+
+🔴 THE `SUBSYSTEM_STORE_*` SPELLINGS STILL WORK, IN BOTH PLACES. `env_aliases`
+resolves `SUBSYSTEM_STORE_URL`/`SUBSYSTEM_STORE_TOKEN` as deprecated aliases —
+as exported variables AND as keys of the file above — with the NEW name winning
+and one stderr warning per process naming the replacement. The ledger, the
+precedence rule and the removal anchor (`packages.cairn` retiring, at P8) are
+`lib/env_aliases.py`; do not open-code a fallback here.
 
 🔴 MORE THAN ONE INSTANCE, AND NOTHING CHANGES UNTIL THERE IS ONE. The file
 above is the `personal` instance; additional instances are ADDITIVE files at

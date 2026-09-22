@@ -92,8 +92,8 @@ func TestANameThatWasNeverRenamedResolvesAsItself(t *testing.T) {
 	if got := Value(map[string]string{"CAIRN_UI_PORT": "8103"}, "CAIRN_UI_PORT"); got != "8103" {
 		t.Fatalf("un-aliased name did not resolve as itself: %q", got)
 	}
-	if Old("CAIRN_UI_PORT") != "" {
-		t.Fatal("Old() invented an alias for a name that was never renamed")
+	if oldName("CAIRN_UI_PORT") != "" {
+		t.Fatal("oldName() invented an alias for a name that was never renamed")
 	}
 }
 

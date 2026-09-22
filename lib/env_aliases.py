@@ -45,7 +45,6 @@ __all__ = [
     "env_warning",
     "file_deprecations",
     "file_warning",
-    "lookup",
     "old_name",
     "reset_warned_for_test",
     "value",
@@ -140,12 +139,6 @@ def value(env: Mapping[str, str], new: str) -> str:
 def value_or(env: Mapping[str, str], new: str, fallback: str) -> str:
     """`value`, with a default for "neither name is set"."""
     return value(env, new) or fallback
-
-
-def lookup(env: Mapping[str, str], new: str) -> tuple[str, bool]:
-    """`(value, was-it-set)`, for a caller that must tell an unset name from a blank."""
-    resolved = value(env, new)
-    return resolved, bool(resolved)
 
 
 def env_warning(new: str, old: str) -> str:
