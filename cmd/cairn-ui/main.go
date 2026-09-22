@@ -457,7 +457,10 @@ func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string
 		"would come up, announce itself writable and serve nobody. Refusing to start. ⚠ NOTE THAT "+
 		"`cairn-server -create-user` DOES NOT FIX THIS: it mints a user and no credential, and no "+
 		"tool in this repository writes a credential into a journal yet. A journal-backed cairn-ui "+
-		"cannot be made sign-in-capable BY ANY TOOL IN THIS REPOSITORY — hand-append a "+
-		"`credential-issued` record, or issue one from whatever provisions your control plane",
+		"cannot be made sign-in-capable BY ANY TOOL IN THIS REPOSITORY. Issue one from whatever "+
+		"provisions your control plane, or hand-append a `credential-issued` record — in which "+
+		"case note that `token_hash` is the SHA-256 HEX DIGEST of the token and NEVER the token: "+
+		"`Event.validate` checks that field's LENGTH only, so a 64-character secret pasted there "+
+		"is accepted and persisted into the authority journal",
 		journal, len(m.Users), len(m.Credentials))
 }

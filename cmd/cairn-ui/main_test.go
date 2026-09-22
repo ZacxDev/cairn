@@ -120,19 +120,42 @@ func TestAJournalWithUsersAndNoCredentialIsRefused(t *testing.T) {
 // operational state — a rotation with the new credential not yet issued — and without
 // that clause the surface starts and can authenticate nobody.
 //
-// ⚠ THE OTHER CLAUSE, `PrincipalFor`, IS EQUIVALENT AND DELIBERATELY HAS NO TEST.
-// `control.FileStore` refuses a `credential-issued` naming a subject the model does not
-// hold (`event N (credential-issued): subject … does not exist`), and there is no
-// user-deletion event kind, so no journal can reach the state that clause guards. Writing
-// a test for it would mean writing a journal the store refuses to replay. Recorded here
-// rather than left as an uncovered line somebody later "fixes" with a fixture that cannot
-// exist.
+// ⚠ THE OTHER CLAUSE, `PrincipalFor`, IS EQUIVALENT AND DELIBERATELY HAS NO TEST — AND
+// THE REASON RESTS ON THREE CONSTRAINTS, NOT ONE, BECAUSE A CREDENTIAL'S PRINCIPAL MAY BE
+// A PROJECT AS WELL AS A USER (`control.Kind.Valid()` accepts both). (a) `control.FileStore`
+// refuses a `credential-issued` naming a subject the model does not hold
+// (`event N (credential-issued): subject … does not exist`); (b) `AllEventKinds` has no
+// user-deletion, project-removal or project-RENAME kind — only `scope-renamed` — so a held
+// principal cannot stop being held or lose its name; and (c) `Event.validate` requires a
+// non-empty `name` on `project-created`, which is the only thing stopping `displayOf`
+// returning "" for a project the model DOES hold, which is how `PrincipalFor` reports
+// false. No journal can reach the state this clause guards, so a test for it would mean
+// writing a journal the store refuses to replay.
+//
+// 🔴 ALL THREE ARE LOAD-BEARING, AND (b) AND (c) ARE THE ONES A LATER CHANGE BREAKS. Add a
+// `project-renamed` kind without a non-empty-name check, or any principal-removal kind, and
+// this clause becomes REACHABLE while this comment still reads as a valid reason not to
+// test it. An audit round found the earlier version of this paragraph naming only (a) and
+// the user half of it.
 func TestAJournalWhoseCredentialsAreALLREVOKEDIsRefused(t *testing.T) {
 	cache, journal := seededJournal(t, credentialRevoked)
-	if err := refuseAnAuthorityNobodyCanSignInTo(cache, journal); err == nil {
+	err := refuseAnAuthorityNobodyCanSignInTo(cache, journal)
+	if err == nil {
 		t.Fatal("a journal whose only credential is REVOKED was admitted. `control.Authenticate` skips a " +
 			"revoked credential, so this deployment answers 401 to every sign-in while announcing " +
 			"itself writable.")
+	}
+	// 🔴 THE MESSAGE IS PINNED HERE FOR THE REASON ITS SIBLING PINS ONE, AND THIS IS THE
+	// STATE WHERE IT MATTERS MOST. An operator hitting the revoked case needs to read that a
+	// credential EXISTS and is not live — "1 credential record(s), 0 of them live" — not
+	// that they have none. A refusal reworked to report `0 credential record(s)` here would
+	// leave the no-credential test green and send them looking for a record that is sitting
+	// in the journal, revoked.
+	for _, want := range []string{"NO USABLE CREDENTIAL", "1 credential record(s)", "0 of them live"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q, so an operator cannot tell a REVOKED credential "+
+				"from an absent one:\n%s", want, err)
+		}
 	}
 }
 

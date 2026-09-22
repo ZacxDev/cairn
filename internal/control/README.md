@@ -258,11 +258,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 118 mutants, over SIX packages
+python3 tests/control_mutants.py          # 120 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 118 mutants, 116 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 120 mutants, 118 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
 
 🔴 **THE THIRD EQUIVALENT LABEL WAS MEASURED FALSE AND IS NOW A KILL, WHICH IS WHY THE
@@ -283,9 +283,9 @@ survivor did not exist while that survivor was the round's most important findin
 `python3 tests/control_mutants.py` prints the `SUMMARY` line these are copied from, and
 the survivor paragraph below must name exactly the mutants that actually survived.
 
-🔴 **IT RUNS OVER SIX PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
+🔴 **IT RUNS OVER SEVEN PACKAGES NOW, BECAUSE THE GUARDS SPAN A SEAM.** The set, in `PKGS`
 order: `internal/control`, `internal/control/tokenfile`, `internal/identity`,
-`internal/api`, `cmd/cairn-server`, `internal/ui`. `internal/control` is the model and its
+`internal/api`, `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui`. `internal/control` is the model and its
 predicate, `internal/control/tokenfile` is the projection, `internal/identity` is P4's
 authenticator and its two new backends, `internal/api` is the server that authorises from
 all of them, `cmd/cairn-server` is the program, and `internal/ui` is the BROWSER surface —
@@ -337,7 +337,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 118 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 120 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test

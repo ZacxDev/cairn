@@ -345,13 +345,15 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 118 mutants over SIX packages, in `PKGS` order: `internal/control`,
+      # kill. 120 mutants over SEVEN packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
-      # `cmd/cairn-server`, `internal/ui` — the model, the token-file projection, P4's
-      # identity backends, the server that authorises from all of them, the program, and
-      # the browser surface, because a mutant in one is killed by a guard in another, the
-      # refresh loop that bounds the adapter's declared divergence exists only in `main`,
-      # and the share flow is the second consumer of the same authority. That enumeration is pinned to `PKGS` as
+      # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui` — the model, the token-file
+      # projection, P4's identity backends, the server that authorises from all of them,
+      # the pod's program, the browser surface and the browser surface's program, because a
+      # mutant in one is killed by a guard in another, the refresh loop that bounds the
+      # adapter's declared divergence exists only in `main`, the share flow is the second
+      # consumer of the same authority, and the browser's startup refusals are the only
+      # thing between a misconfigured deployment and a surface that serves nobody. That enumeration is pinned to `PKGS` as
       # a whole string by `tests/test_control_mutant_count_is_pinned.py` — membership and
       # order, not just the count, because a swap that kept the count left it stale.
       # Four of the cache rows are killed
@@ -359,7 +361,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (118 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (120 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT

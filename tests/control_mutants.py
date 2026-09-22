@@ -113,6 +113,14 @@ PKGS = (
     # `internal/ui/` in the checkout. Folding its rows in here buys the CI step, the
     # isolation and the count pin at once — one battery, one place.
     "./internal/ui/",
+    # 🔴 THE BROWSER SURFACE'S PROGRAM, BECAUSE ITS STARTUP REFUSALS ARE THE ONLY THING
+    # BETWEEN A MISCONFIGURED DEPLOYMENT AND A SURFACE THAT PASSES ITS HEALTH CHECK AND CAN
+    # SERVE NOBODY — and because the evidence that they work was, for four rounds, a
+    # hand-run sweep recorded in a commit message. That is the same ungated-instrument
+    # shape the `./internal/ui/` entry above exists because of, one level along: the guard
+    # had THREE spellings, the first two each walked around by a state nobody had tested,
+    # and the sweep that found the third's uncovered clause was not gated either.
+    "./cmd/cairn-ui/",
 )
 
 
@@ -1790,6 +1798,30 @@ MUTANTS: tuple[Mutant, ...] = (
         # comparing the one observable the author had in mind. A label that reads as
         # coverage while providing none is this repository's signature defect, and it
         # appeared inside the battery built to refuse it.
+    ),
+    # ---- the browser surface's startup refusals ------------------------------------
+    Mutant(
+        name="ui-startup-admits-a-revoked-credential",
+        path="cmd/cairn-ui/main.go",
+        old="\t\tif !c.Live() {\n\t\t\tcontinue\n\t\t}\n",
+        new="",
+        killer="TestAJournalWhoseCredentialsAreALLREVOKEDIsRefused",
+        why="counting credentials without asking whether they are live — the reading that "
+        "looks complete because the records are all there. A journal mid-rotation has its "
+        "credential rows and none of them live, and the surface then starts and can "
+        "authenticate nobody. This clause SURVIVED a sweep until the test that names it was "
+        "written, which is why the row is here rather than in a commit message.",
+    ),
+    Mutant(
+        name="ui-startup-admits-an-authority-with-no-credential",
+        path="cmd/cairn-ui/main.go",
+        old="\tif usable > 0 {\n\t\treturn nil\n\t}",
+        new="\tif usable >= 0 {\n\t\treturn nil\n\t}",
+        killer="TestAJournalWithUsersAndNoCredentialIsRefused",
+        extra_killers=("TestAJournalWhoseCredentialsAreALLREVOKEDIsRefused",),
+        why="the off-by-one that turns the whole refusal into a no-op while reading as a "
+        "bounds check. `cairn-server -create-user` produces exactly this state — a user and "
+        "no credential — so the mutant is the guard's own documented failure case.",
     ),
 )
 
