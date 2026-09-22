@@ -24,64 +24,59 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`7d7c9ea`**. **#64 IS MERGED.** Open: **#71** (this doc), **#72** (the changelog
-  row), **#69** (the sibling's rename), **#61** and **#62** (both to close — see below).
-- 🔴 **THE ARC IS CLOSED. ALL FOUR CLAUSES MEASURED ON `main` @ `7d7c9ea`, NOT ON A BRANCH
-  AND NOT INFERRED FROM GREEN CI.** The closing condition says "on `main`" and names the
-  three commands a later session runs; all three were run:
-
-  | clause | verdict on `main` |
-  |---|---|
-  | a green principal × scope × verb authz matrix over projects+grants | **PASS** — `TestTheAuthorizationMatrixIsExactlyThis` |
-  | the PWA's share flow serving a scope granted from one user to another, with its replica-honesty notice pinned by a test | **PASS** — `TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser` and `TestTheReplicaHonestyNoticeIsPinnedWhole`; `internal/ui/routes.go` is seven rows; `ui.ReplicaHonesty` is a constant |
-  | identity resolving through both backends | **PASS** — `internal/identity`'s supabase (7 tests) and trusted-header (5) suites |
-  | `packages.default` the Go client | **PASS** — `flake.nix:774` `default = mkGoClient`; `nix eval .#default.meta.mainProgram` → `cairn` |
-
-  `pytest tests -q` **1997 passed / 0 failed** · `go test ./...` **18 ok** · `flake.nix` read.
-  **ADDRESSED ⇒ ARC CLOSED.**
-- ✅ **#64 VERIFIED BY CONTENT, NEVER BY ANCESTRY** — `git diff a2e46f0 7d7c9ea` over
-  `internal/ui/`, `cmd/cairn-ui/`, `internal/control/resolve.go` and `internal/control/cache.go`
-  is **empty**, and `gh pr view 64` reports `MERGED` with `mergeCommit=7d7c9eab`. A squash
-  makes ancestry false forever, so the two checks are made separately.
-- ✅ **`cairn-control-plane-1` IS RELEASED** (rc 0), now that the work it named has landed.
-- **#72 adds the `CHANGELOG.md` row**, which could not be written inside #64: that file's own
-  header requires an anchor of a PR **and a merge sha**, and the sha does not exist until the
-  squash.
-- ⚠ **#61 AND #62 ARE BOTH TO CLOSE, FOR DIFFERENT REASONS.** #61 rewrote `README.md`'s
-  browser-surface lead; #64 now states three phases and seven routes there, because audit
-  round 1 found the "whichever merges second fixes it" deferral was not mechanical and
-  nothing gated it. #62 is an earlier handoff delta whose narrative was overtaken twice.
-- 🔴 **WHAT THE ARC DID NOT CLOSE, NAMED SO IT IS NOT READ AS FINISHED.** (a) **No tool in
-  this repository writes a credential into a journal**, so a journal-backed `cairn-ui` cannot
-  be brought up sign-in-capable by any path here — the binary refuses at startup and says so;
-  one hand-appended record makes sign-in work, so it is a TOOLING gap. (b) `cairn-ui` is still
-  **deployed by nothing**: no image derivation, no manifest. (c) Sharing reaches only
-  principals you already share a project with; an invite flow is P6.
+- `main` @ **`f8a257e`**. Open: **#74** (rank 2, this session) and **#69** (the sibling's rename).
+- ✅ **THE ARC IS CLOSED, AND THE VERDICT WAS TAKEN ON `main`.** #64 merged as **`7d7c9ea`**;
+  all four clauses were then measured on `main` rather than inferred from the PR's six green
+  checks, because the condition says "on `main`" and names the commands: authz matrix PASS ·
+  share flow + replica-honesty notice PASS · identity through both backends PASS ·
+  `packages.default` the Go client PASS · `pytest tests -q` **1997 passed / 0 failed** ·
+  `go test ./...` **18 ok**. **ADDRESSED ⇒ ARC CLOSED.** Verified BY CONTENT: the payload
+  paths diff empty between the PR head and `main`.
+- ✅ **FOUR MERGED THIS SESSION, EACH VERIFIED BY CONTENT:** **#64 → `7d7c9ea`** (the share
+  flow), **#72 → `6db7179`** (the changelog row, which could not exist inside #64 because the
+  file requires a MERGE SHA), **#71 → `1659663`** (the handoff), **#73 → `f8a257e`** (the
+  prune). **Closed: #61** (subsumed by #64's README lead), **#62** and **#65** (superseded),
+  each with its reason posted rather than a bare close.
+- ✅ **THE DOC IS PRUNED: 115,483 B → 52,228 B**, under its own 65,536 B guideline for the
+  first time in eight updates. 🔴 **PRUNED MEANT MOVED — 125 of 174 `Gotchas` bullets went to
+  the archive VERBATIM and 49 stayed, with all 174 verified present in exactly one file, 0
+  missing and 0 duplicated**, every other section byte-identical and the archive append-only.
+  The bulk of the size was DUPLICATION rather than history: `isolation: "worktree"` was
+  recorded six times, `$?`-after-a-pipe three, MERGEABLE-but-conflicting four.
+- ⏳ **#74 IS OPEN AND ITS ROUND 0 IS IN FLIGHT AS THIS IS WRITTEN — READ THE PR, NOT THIS
+  LINE, FOR ITS OUTCOME.** It closes three batched defect entries. Per the standing operator
+  decision for PRs touching only tests, prose and CI config, its ladder is **round 0 + round 1
+  and then stops regardless of findings**.
+- 🔴 **ONE OF THOSE ENTRIES WAS NOT PROSE.** "Nine verbs" was **five** sites, not the four the
+  entry named, and the fifth was `tests/test_go_client_ledgers.py`'s `assert len(go_verbs) >= 9`
+  against **ten** verbs — a floor one below the count, so deleting a verb gives 9, which is not
+  `< 9`, and it passed. Identical shape to the `go` job's `ok` floor that was `-lt 16` against
+  seventeen packages. **A count filed as a prose defect can be a live gate defect; check which
+  before batching it.**
+- ⚠ **`cairn-control-plane-2` IS HELD** for rank 2. `cairn-control-plane-1` was released when
+  the prune landed.
+- **No external-task-board field**: the resolver exited 5 again. Its positive control proves a
+  CORRECT id would have resolved, which is narrower than a clean bill of health.
 
 ## Next steps (ranked)
 
-🔴 **RANK 1 IS NEW WORK, AND THE NUMBERING MOVED FOR THE FIRST TIME BECAUSE THE OLD RANK 1
-CLOSED.** `cairn-control-plane-1` is RELEASED, so no live claim points at the old numbering.
-A session taking an item must `claim-work` it first.
+🔴 **THE NUMBERING MOVED, DELIBERATELY, AND THE CLAIM MOVED WITH IT.** Rank is half a claim's
+slug, so a shuffle silently re-points every live one. The old rank 1 (prune this document)
+CLOSED as `f8a257e`, so items shifted up: `cairn-control-plane-1` was released on that merge
+and `cairn-control-plane-2` is now held against "the remaining batched defects", which is the
+same work its subject named. **A session taking an item must `claim-work` it first, and must
+read the SUBJECT the claim prints rather than trusting the number.**
 
-1. ✅ **DONE — THIS DOCUMENT IS PRUNED, AND PRUNED MEANT *MOVED*.** Measured with `wc -c`:
-   **115,483 B → 52,228 B**, under the 65,536 B guideline for the first time in eight
-   updates. 125 of the 174 `Gotchas` bullets went to
-   `claudedocs/handoff-cairn-control-plane-archive.md` **verbatim**; 49 stayed. 🔴 **NOT ONE
-   BULLET WAS DELETED OR SHORTENED**, and that is asserted rather than claimed: every one of
-   the 174 was checked to appear in exactly one of the two files, byte-identical — 0 missing,
-   0 duplicated. Every other section is byte-identical, and the archive was appended to, never
-   rewritten. ⚠ The first measurement of this said 51,622 — that was `read_text()` counting
-   CHARACTERS where the guideline is in BYTES, which is this document's own recorded trap, hit
-   while measuring its own prune.
-   **The rank is NOT renumbered**, because the rank is half a live claim's slug and a shuffle
-   re-points every one; the next work is item 2, and the next update may renumber deliberately.
-   forcing: user — chosen explicitly this session over feature work.
-2. **The batched scaffolding defects — the operator's chosen work after the prune.** Still
-   open: #48's (a) `internal/client/readrouting_test.go:281` and (b)
-   `internal/doctor/render.go:99`; the "nine verbs" count where the answer is ten, at
-   `flake.nix`, `tests/test_parity_harness.py` and `tests/test_go_client_ledgers.py`
-   (the old entry named the wrong sites); #44's four; and the stale node-affinity comment.
+1. **Land #74, then mark its three entries closed in `## Defects (batched)`.** The entries are
+   *"THREE FILED BY #48'S LADDER"* (a) and (b) — **(c) `lib/README.md` is NOT closed and the
+   condition says "all three", so split the entry or say why not** — *"NINE VERBS"*, and
+   *"FOUR FILED BY #44'S LADDER"*. ⚠ `Defects` REPLACES, so that edit must carry the whole
+   section forward.
+   forcing: gate — the entries' own closing conditions, which name a PR.
+2. **The remaining batched defects.** Still open after #74: #48's (c) `lib/README.md` (the
+   re-count recipe greps two literal phrases, so it is a SPELLED check that cannot see a
+   reworded echo); the stale node-affinity comment, which lives in **`homelab-talos`** and
+   needs its own change THERE; and the carried-forward list.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else surfaces them.
 3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
    Key it on principal + epoch; `control.Authorization` already carries `Epoch`.
@@ -90,23 +85,20 @@ A session taking an item must `claim-work` it first.
    is a waiting period rather than a task.
    forcing: none
 5. **A CREDENTIAL-ISSUING COMMAND for the control journal.** Without one the `-control-journal`
-   mode cannot authenticate anybody, which `cmd/cairn-ui` now refuses at startup and explains.
+   mode cannot authenticate anybody, which `cmd/cairn-ui` refuses at startup and explains.
    ⚠ It is the one path on which a raw token could reach the journal — `Event.validate` checks
    `token_hash`'s LENGTH ONLY — so it mints, prints once, and stores only the digest.
    forcing: gate — a shipped binary refuses to start and names this as the missing piece.
-6. **Fold the new defect entries into `## Defects (batched)` and mark #60/#66 closed**, once
-   the doc PRs have merged.
+6. **Fold the new defect entries in and mark #60/#66 closed**, once the doc PRs have merged.
    forcing: user — the operator chose this sequencing explicitly.
 7. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` BEHIND A DEPRECATION WINDOW — SHAPE ALREADY
-   DECIDED, AND ⚠ IN FLIGHT as ZacxDev/cairn#69.** Check `claim-work --list` before taking
-   it. Both names work; the old one logs a warning **naming its replacement**; the removal
-   version is **stated**. Explicitly NOT aliases-forever and NOT a clean break folded into
-   P8 — both were offered and declined. Touches `lib/cairn_instances.py`, `cairn`,
+   DECIDED, AND ⚠ IN FLIGHT as ZacxDev/cairn#69.** Check `claim-work --list` before taking it.
+   Both names work; the old one logs a warning **naming its replacement**; the removal version
+   is **stated**. Explicitly NOT aliases-forever and NOT a clean break folded into P8 — both
+   offered and declined. Touches `lib/cairn_instances.py`, `cairn`,
    `lib/subsystem_read_store.py`, `server/server.py`, the `internal/` env readers, and
-   `AGENTS.md`'s "Naming" section, which states the standing alias policy and must move with
-   it. ⚠ This repo is PUBLIC and consumers pin the flake, so the warning text and the removal
-   version are a PUBLISHED CONTRACT. ⚠ `tests/testlib/env_pin.py` is the ONE definition of
-   the client's configuration surface; the rename goes through its prefixes.
+   `AGENTS.md`'s "Naming" section. ⚠ The repo is PUBLIC and consumers pin the flake, so the
+   warning text and the removal version are a PUBLISHED CONTRACT.
    forcing: user — item 5 of the five approved with "proceed as recommended".
 
 ## Defects (batched)
@@ -488,6 +480,54 @@ A session taking an item must `claim-work` it first.
   share only with people you already share a project with; an invite flow is P6. Offered and
   declined: an exact-id lookup behind a uniform refusal, and widening to projects you
   administer.
+
+- ✅ **THE CONTROL-PLANE ARC CLOSED AT `7d7c9ea`, AND THE VERDICT IS RECORDED HERE BECAUSE
+  `State now` REPLACES AND THIS IS THE DURABLE HALF.** The condition — frozen at round 1, four
+  clauses, naming the three commands a later session runs — was measured **on `main`** rather
+  than inferred from the PR's six green checks: authz matrix PASS · share flow serving a scope
+  granted from one user to another with its replica-honesty notice pinned PASS · identity
+  through both backends PASS · `packages.default` the Go client PASS · `pytest tests -q` 1997
+  passed / 0 failed · `go test ./...` 18 ok. **ADDRESSED ⇒ ARC CLOSED.** 🔴 **THE "ON `main`"
+  WORDING IS THE WHOLE POINT AND IT COST ONE EXTRA STEP TO HONOUR**: green CI is a claim about
+  a branch, the clause asked about `main`, and they agreed here only because they were both
+  measured. A session that reported "addressed" off the PR's rollup would have been asserting.
+
+- 🔴 **A COUNT FILED AS A PROSE DEFECT CAN BE A LIVE GATE DEFECT, AND THIS ONE WAS.** The
+  "nine verbs" entry read as four stale comments. Measured: five sites, and one was
+  `assert len(go_verbs) >= 9` against ten verbs — a floor ONE BELOW the count, which buys
+  exactly one free deletion, which is the only deletion anybody would make. It is the same
+  defect as the `go` job's `ok` floor (`-lt 16` against seventeen packages) and as the
+  publish battery's, now three times in this repository. **Before batching a count defect as
+  prose, grep for the number in an `assert` or an `if`.**
+- 🔴 **MY OWN MEASUREMENT OF THAT COUNT WAS WRONG FIRST, AND IT WOULD HAVE HAD ME "CORRECT"
+  NINE TO NINE.** `go run ./cmd/cairn -verbs | tail -n +2 | grep -c .` answered **9** — the
+  `tail -n +2` assumed a header row that the command does not print, and silently dropped
+  `append`. Reading the RAW output answered ten, and argparse agreed. **Parsing a tool's
+  output makes its FORMAT a dependency you did not pin**, and the failure here was a
+  confident number that matched the stale prose.
+- 🔴 **DELETING DEAD CODE REPRODUCED THE FINDING INSIDE ITS OWN FIX.** #44's finding was that
+  `normalise_shell` was dead *and* that a docstring still pointed at it. Deleting the function
+  left TWO docstrings pointing at it — the same defect, freshly made, in the commit closing it.
+  **After removing a symbol, grep its NAME, not just its call sites.**
+- 🔴 **A GUARD'S MESSAGE CLAIMED EVERY STATE WHILE ITS BODY COUNTED ROWS, AND THE STATE IT
+  MISSED WAS THE ONE THAT BREAKS THE NAIVE SPELLING.** `internal/client`'s `doctor` fixture
+  renders `OK`, `UNMEASURED` and `NOT-OBSERVABLE` — never `PROBLEM`, whose marker `🔴` is a
+  SINGLE RUNE where the other three are two. Closed with two guards rather than one: the
+  fixture's states are a ledger that fails if it SHRINKS, and a separate unit case drives
+  `doctor.Markers()` for every state. **When a fixture cannot reach a case, the honest fix is
+  a second guard, not a wider sentence.**
+- **Decision (operator, this session): the credential gap is FILED, not built** — a
+  credential-issuing command carries its own decisions and is the single path on which a
+  secret could reach the journal.
+- **Decision (operator, this session): the prune was chosen over feature work**, and its
+  closing condition was met by MOVING rather than cutting. 🔴 **The safety property of a prune
+  is assertable and was asserted**: every bullet verified present in exactly one of the two
+  files, 0 missing and 0 duplicated, with every other section byte-identical. A prune that
+  cannot prove it moved rather than cut is the `BYPASS`-deletion failure with a tidier diff.
+- ⚠ **A DUPLICATE IS NOT A REDUNDANCY WHEN THE SECOND ONE RECORDS THAT THE LESSON WAS READ AND
+  THEN HIT ANYWAY.** That is why the prune kept the LATEST instance of each tripwire rather
+  than the first: *"zsh ate `$var:` a third time, in the session that had just read the
+  warning"* carries the re-occurrence, which is the part that makes a tripwire credible.
 
 ## How to verify
 
