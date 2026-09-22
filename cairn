@@ -177,6 +177,24 @@ MAX_UNPACKED_BYTES = 256 * 1024 * 1024
 # cannot see because empty members declare size 0.
 MAX_MEMBERS = 50_000
 
+# Whether this interpreter's `TarFile.extract` takes `filter=`.
+#
+# 🔴 FEATURE-DETECTED, NEVER A VERSION COMPARISON. The extraction filters landed
+# in 3.12 and were BACKPORTED to 3.11.4, 3.10.12, 3.9.17 and 3.8.17, so the
+# predicate "has filters" is not an interval on version_info and any `>=` spelling
+# of it is wrong for some supported interpreter. `hasattr(tarfile, "data_filter")`
+# is what CPython's own documentation tells a caller to branch on, and it is true
+# exactly when the kwarg exists.
+#
+# 🔴 THIS EXISTS BECAUSE THE CLIENT CARRIED AN UNDECLARED 3.12 FLOOR AND NOTHING
+# SAID SO. `tar.extract(..., filter="data")` is a TypeError on 3.11.2 — not a
+# degraded extraction, a crash on the sync path, so `recall` dies with a traceback
+# rather than any of this client's exit codes. It went unseen because every host
+# that runs the client interactively is on 3.12; it surfaces the moment the client
+# is installed into an image that is not. A client whose whole job is to be fetched
+# by sha and run on someone else's interpreter must not assume the newest one.
+HAS_TAR_FILTERS = hasattr(tarfile, "data_filter")
+
 # Exit codes. 0/3 are the contract §3 pins; the reader's own non-zero codes pass
 # through unchanged so a malformed entry still reports what it always did.
 EXIT_OK = 0
@@ -796,10 +814,29 @@ def install_snapshot(body: bytes, cache: Path, headers: dict[str, str]) -> int:
                 if name in seen:
                     raise StoreCorrupt(f"duplicate tar member: {name!r}")
                 seen.add(name)
-                # `filter="data"` is 3.12+'s safe extractor AND silences the
-                # DeprecationWarning that 3.14 prints on every extract — which
-                # would otherwise land on stderr on the /resume hot path.
-                tar.extract(member, staging, filter="data")
+                # `filter="data"` is the safe extractor AND silences the
+                # DeprecationWarning that 3.14 prints on every unfiltered extract
+                # — which would otherwise land on stderr on the /resume hot path.
+                #
+                # 🔴 THE FALLBACK IS NOT "THE SAME CALL WITHOUT THE GUARD", AND
+                # SAYING SO WOULD BE THE COMMENT THIS FILE WARNS ABOUT. By the time
+                # a member reaches here the four guards above have already refused
+                # every link, every non-regular member, every traversal name and
+                # every duplicate — which is most of what the data filter rejects,
+                # and all of it refused LOUDER (StoreCorrupt, not a silent skip).
+                # What the filter still contributes on this path is MODE: it drops
+                # setuid/setgid/sticky and clamps the permission bits, so a hostile
+                # archive cannot land a setuid-bit file in the cache. The fallback
+                # therefore sets the mode itself rather than trusting the
+                # archive's. 0o644 is not a clamp of `member.mode` but a
+                # replacement for it: every member here is a regular file in a
+                # read-through cache, nothing in the tree is executed, and a
+                # constant cannot be walked by a crafted mode the way a mask can.
+                if HAS_TAR_FILTERS:
+                    tar.extract(member, staging, filter="data")
+                else:
+                    member.mode = 0o644
+                    tar.extract(member, staging)
                 if name.endswith(".md"):
                     count += 1
 

@@ -383,6 +383,141 @@ class TestByteIdentityWithTheLocalReader:
         assert canon(got) == canon(want)
 
 
+class TestInterpretersWithoutTarExtractionFilters:
+    """The client is FETCHED BY SHA AND RUN ON SOMEBODY ELSE'S INTERPRETER, so
+    "works on the interpreter I develop on" is not a property it may assume.
+
+    `TarFile.extract(..., filter=...)` arrived in 3.12 and was backported to
+    3.11.4 / 3.10.12 / 3.9.17 / 3.8.17. On anything older the kwarg is a
+    TypeError — which on the sync path is a CRASH WITH A TRACEBACK, not one of
+    this client's exit codes, so every `EXIT_*` contract the rest of this file
+    pins is simply bypassed.
+
+    🔴 THE SHIM BELOW IS THE INSTRUMENT, SO IT IS CONTROLLED BEFORE IT IS READ.
+    `test_the_shim_really_removes_the_kwarg` is its negative control: it proves
+    the shim makes `filter=` raise, because a shim that quietly did nothing would
+    leave both tests below passing on the strength of the interpreter actually
+    running them — the classic harness wired to nothing.
+    """
+
+    @staticmethod
+    def _shim_dir(tmp_path: Path) -> Path:
+        """A `sitecustomize` that makes this interpreter look pre-backport.
+
+        Two halves, because the production failure has two halves: the module
+        attribute `hasattr(tarfile, "data_filter")` branches on, and the method
+        signature that raises. Removing only the attribute would exercise the
+        fallback while leaving the real TypeError unreproduced — green for a
+        reason that has nothing to do with the bug.
+        """
+        d = tmp_path / "py-shim"
+        d.mkdir()
+        (d / "sitecustomize.py").write_text(
+            "import tarfile\n"
+            "if hasattr(tarfile, 'data_filter'):\n"
+            "    del tarfile.data_filter\n"
+            "_real = tarfile.TarFile.extract\n"
+            "def extract(self, member, path='', set_attrs=True, *,"
+            " numeric_owner=False):\n"
+            "    return _real(self, member, path, set_attrs,"
+            " numeric_owner=numeric_owner)\n"
+            "tarfile.TarFile.extract = extract\n"
+        )
+        return d
+
+    def _run_pre_backport(self, *args, url, cache, tmp_path):
+        shim = self._shim_dir(tmp_path)
+        existing = os.environ.get("PYTHONPATH", "")
+        env = env_pin.sanitized_env(
+            CAIRN_HOST=CLI_HOST,
+            SUBSYSTEM_STORE_TOKEN=GOOD_TOKEN,
+            SUBSYSTEM_STORE_CONFIG=str(cache.parent / "no-such-config"),
+            SUBSYSTEM_STORE_URL=url,
+            PYTHONPATH=os.pathsep.join(p for p in (str(shim), existing) if p),
+        )
+        return subprocess.run(
+            [sys.executable, str(CAIRN_CLI), "--cache", str(cache),
+             "--timeout", "5", *args],
+            capture_output=True, text=True, env=env, timeout=120,
+        )
+
+    def test_the_shim_really_removes_the_kwarg(self, tmp_path: Path):
+        """NEGATIVE CONTROL for the two tests below — without this, a shim that
+        silently did nothing would make them pass on a 3.12 interpreter and
+        prove nothing at all."""
+        shim = self._shim_dir(tmp_path)
+        probe = (
+            "import tarfile, io, sys\n"
+            "assert not hasattr(tarfile, 'data_filter'), 'attribute survived'\n"
+            "buf = io.BytesIO()\n"
+            "with tarfile.open(fileobj=buf, mode='w') as t:\n"
+            "    i = tarfile.TarInfo('a.md'); i.size = 1\n"
+            "    t.addfile(i, io.BytesIO(b'x'))\n"
+            "buf.seek(0)\n"
+            "with tarfile.open(fileobj=buf) as t:\n"
+            "    m = t.getmembers()[0]\n"
+            "    try:\n"
+            "        t.extract(m, sys.argv[1], filter='data')\n"
+            "    except TypeError:\n"
+            "        print('RAISED_TYPEERROR')\n"
+            "    else:\n"
+            "        print('ACCEPTED_THE_KWARG')\n"
+        )
+        # `sanitized_env`, not `dict(os.environ)` — this probe touches only
+        # `tarfile` and would be correct either way, but a raw copy beside an
+        # `env_pin` consumer is the shape `test_env_pin` refuses, and it refuses
+        # it because that is how seven of them accumulated.
+        env = env_pin.sanitized_env(
+            PYTHONPATH=os.pathsep.join(
+                p for p in (str(shim), os.environ.get("PYTHONPATH", "")) if p
+            )
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", probe, str(tmp_path / "out")],
+            capture_output=True, text=True, env=env, timeout=60,
+        )
+        assert "RAISED_TYPEERROR" in out.stdout, (out.stdout, out.stderr)
+
+    def test_sync_SUCCEEDS_without_tar_extraction_filters(
+        self, live_store, tmp_path: Path
+    ):
+        """🔴 THE REGRESSION TEST. Red before the fix with
+        `TypeError: TarFile.extract() got an unexpected keyword argument
+        'filter'` and a non-zero exit; green after.
+        """
+        cache = tmp_path / "cache"
+        proc = self._run_pre_backport(
+            "sync", url=live_store.base, cache=cache, tmp_path=tmp_path
+        )
+        assert proc.returncode == 0, (proc.returncode, proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "filter" not in proc.stderr, proc.stderr
+        # …and it actually installed a store, rather than succeeding vacuously.
+        assert list(cache.rglob("*.md")), "no entries landed in the cache"
+
+    def test_the_fallback_still_strips_a_setuid_bit(
+        self, live_store, tmp_path: Path
+    ):
+        """The one thing `filter="data"` still contributes on this path is MODE
+        — the four guards above it already refuse links, non-regular members,
+        traversal names and duplicates. So the fallback must not simply drop it.
+
+        An INVARIANT guard, not a regression one: no measured bug ever landed a
+        setuid file in the cache. It exists so the fallback cannot be
+        "simplified" into a bare `tar.extract(member, staging)` later.
+        """
+        cache = tmp_path / "cache"
+        proc = self._run_pre_backport(
+            "sync", url=live_store.base, cache=cache, tmp_path=tmp_path
+        )
+        assert proc.returncode == 0, proc.stderr
+        entries = list(cache.rglob("*.md"))
+        assert entries, "no entries landed in the cache"
+        for p in entries:
+            mode = p.stat().st_mode & 0o7777
+            assert mode == 0o644, f"{p} landed with mode {oct(mode)}"
+
+
 class TestHostileOrBrokenArchives:
     """🔴 Every guard here was previously UNTESTED — an audit had to hand-build
     hostile tars to prove they fired at all. A guard nobody has watched work is
