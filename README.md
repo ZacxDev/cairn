@@ -306,10 +306,19 @@ That is deliberate — a picker listing every user would turn admin on one scope
 a directory of everyone in the deployment — and it means reaching anybody else needs
 an invite, which does not exist yet.
 
-🔴 **Recording a share needs `-control-journal <path>`.** Without it the authority is
-the token file, which has no shares to write and confers no `admin` to anybody; the
-share pages still answer "who can see this", and they **say on every load** that this
-deployment cannot record a share, rather than refusing once you have clicked.
+🔴 **THE SHARE FLOW NEEDS `-control-journal <path>`, AND NOT ONLY TO WRITE.** Without one
+the authority is the token file, which has no shares to record and **confers `admin` on
+nobody** — so no scope is administrable, `GET /share` renders "No scope is administrable
+by this credential", and a scope page answers **404 to every caller**. The page says on
+every load that this deployment cannot record a share, so the cause is visible rather
+than discovered at a click; but read the limit at its real width — without a journal the
+share flow has nothing to show, not merely nothing to change.
+
+⚠ An earlier draft of this paragraph claimed "the share pages still answer *who can see
+this*" without one. That is **false**, and it was measured false rather than argued: with
+a token-file authority, 0 scopes are administrable across every principal in the
+projection and the scope page is a 404. The retraction is kept because the sentence was
+plausible enough to survive writing it.
 
 Every share page carries a notice about what this surface can and cannot promise: it
 is one replica's answer from a cached copy of the authority, another reader gains or

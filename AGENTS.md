@@ -323,14 +323,11 @@ ROUTE CLASS**: same-origin **before** auth, so it covers the PUBLIC sign-in row;
 per-session CSRF token **after** auth, so the token gate is reachable rather than shadowed.
 A class can only make a route LESS protected, so no gate may be derived from one.
 
-🔴 **THE SHARE FLOW ANSWERS "WHO CAN SEE THIS" FROM `control.Resolve` AND NEVER FROM
+🔴 **THE SHARE FLOW ANSWERS "WHO CAN SEE THIS" FROM `control.Resolve`, NEVER FROM
 `Model.Grants`** — authority arrives two ways, so a grant-row listing under-reports every
-project MEMBER, silently and in the direction that reads as "more private than it is".
-`Revocable` **is** the grant table and the two render as separate lists, because grants are
-all this surface can take back. `ReplicaHonesty` is pinned as a **WHOLE NORMALISED STRING**:
-a keyword guard is walkable by rewording, and the dropped clause is always the weakest-
-sounding one. Sharing needs `-control-journal`; the token-file projection confers no `admin`
-to anybody, so the page SAYS it is read-only rather than refusing at the click.
+project MEMBER. 🔴 **`ReplicaHonesty` is pinned as a WHOLE NORMALISED STRING.** Both bind the
+next edit; everything else about the flow — `Revocable`, `-control-journal`, why the
+token-file deployment can show nothing — is in the README below, which is free to read.
 
 📄 Everything else is re-derivable and lives where it is free to read: `internal/ui/README.md`
 (the storage decision, the gates' RED proofs, phase C's decisions and mutation table, what

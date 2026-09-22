@@ -103,6 +103,16 @@ PKGS = (
     # and this battery never ran the package at all. A mitigation with no gate is a
     # mitigation nobody can be told has stopped working.
     "./cmd/cairn-server/",
+    # 🔴 THE BROWSER SURFACE, BECAUSE IT IS THE SECOND CONSUMER OF THE SAME AUTHORITY —
+    # and because the alternative was measured and refused. The share flow arrived with a
+    # battery of its OWN (`tests/ui_share_mutants.py`, 234 lines) that NO gate ran:
+    # `grep -l ui_share_mutants` over the whole tree returned the file and one README
+    # line, while that README's table presented "8 mutants, 8 killed" as a standing
+    # property rather than one afternoon's reading. It also mutated the LIVE working tree
+    # where this harness mutates a `copytree`, so an interrupt left a mutated
+    # `internal/ui/` in the checkout. Folding its rows in here buys the CI step, the
+    # isolation and the count pin at once — one battery, one place.
+    "./internal/ui/",
 )
 
 
@@ -1644,6 +1654,139 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the mode unreachable while every in-process test of it stays green, because "
         "those call `runCreateUser` directly. The same shape as the refresh-loop row: a "
         "capability that exists in a function nobody routes to.",
+    ),
+
+    # ---- the browser share flow: who can see a scope, and who may change that -------
+    #
+    # 🔴 THESE EIGHT CAME FROM A SECOND BATTERY NOTHING RAN. See the `./internal/ui/`
+    # entry in PKGS for what that cost and why they live here now.
+    Mutant(
+        name="ui-audience-reads-grant-rows-instead-of-Resolve",
+        path="internal/ui/sharing.go",
+        old="\tfor _, p := range principals(m) {\n"
+        "\t\tauth := control.Resolve(m, p)\n"
+        "\t\tverbs := auth.VerbsOn(scope)",
+        # The defect stated as ONE edit: narrow the audience to the subjects of a live
+        # grant on this scope. That is exactly what a grant-table listing computes, and
+        # it is what the operator's instruction for this feature forbade. Expressed
+        # in-place rather than by appending a helper, because a mutant that has to add a
+        # function is a mutant that can fail to COMPILE — which dies at the build and
+        # proves nothing about any guard.
+        new="\tsubjects := map[control.ID]struct{}{}\n"
+        "\tfor _, g := range m.Grants {\n"
+        "\t\tif g.Live() && g.ObjectKind == control.ObjectScope && g.ObjectID == scope {\n"
+        "\t\t\tsubjects[g.SubjectID] = struct{}{}\n"
+        "\t\t}\n"
+        "\t}\n"
+        "\tfor _, p := range principals(m) {\n"
+        "\t\tif _, granted := subjects[p.ID]; !granted {\n"
+        "\t\t\tcontinue\n"
+        "\t\t}\n"
+        "\t\tauth := control.Resolve(m, p)\n"
+        "\t\tverbs := auth.VerbsOn(scope)",
+        killer="TestTheAudienceIsComputedFromResolveNotFromGrantRows",
+        why="the obvious implementation of 'who can see this' — read the sharing table. "
+        "It under-reports every project member, silently, and in the direction that tells "
+        "somebody their notes are more private than they are.",
+    ),
+    Mutant(
+        name="ui-replica-notice-drops-a-clause",
+        path="internal/ui/render.go",
+        old='\t"revoking a share stops future syncs: it does not recall entries already copied onto " +\n'
+        '\t"somebody\'s machine."',
+        new='\t"revoking a share stops future syncs."',
+        killer="TestTheReplicaHonestyNoticeIsPinnedWhole",
+        why="a reword that tightens the prose and drops the clause making the product "
+        "sound weakest — the exact edit a whole-string pin exists to refuse.",
+    ),
+    Mutant(
+        name="ui-verbs-read-single-value",
+        path="internal/ui/sharehandlers.go",
+        old="\tfor _, raw := range r.PostForm[FieldVerb] {\n"
+        "\t\tverbs = append(verbs, control.Verb(raw))\n"
+        "\t}",
+        new='\tif raw := r.PostFormValue(FieldVerb); raw != "" {\n'
+        "\t\tverbs = append(verbs, control.Verb(raw))\n"
+        "\t}",
+        killer="TestEveryTickedVerbReachesTheGrant",
+        why="`PostFormValue` is the reflex reach for a form field, and it returns the "
+        "FIRST value only — so a checkbox group silently records a read-only grant for "
+        "somebody who ticked read AND write.",
+    ),
+    Mutant(
+        name="ui-share-subject-accepted-from-the-form",
+        path="internal/ui/sharehandlers.go",
+        old="\tsubject, ok := pick(candidates, control.ID(r.PostFormValue(FieldSubject)))\n"
+        "\tif !ok {\n"
+        "\t\twritePlain(w, http.StatusForbidden, shareWriteRefusal)\n"
+        "\t\treturn\n"
+        "\t}",
+        new="\tsubject := Subject{Kind: control.KindUser, ID: control.ID(r.PostFormValue(FieldSubject))}\n"
+        "\t_ = candidates",
+        killer="TestTheSubjectIsValidatedAgainstCandidatesRatherThanAcceptedFromTheForm",
+        why="trusting the `select` the page rendered. It constrains a browser and nothing "
+        "else, so admin on one scope would let a caller widen it to any principal whose "
+        "id they can name.",
+    ),
+    Mutant(
+        name="ui-unshare-skips-the-objects-authority-check",
+        path="internal/ui/sharing.go",
+        old="\tif g.ObjectKind != control.ObjectScope || !auth.Allows(g.ObjectID, control.VerbAdmin) {",
+        new="\tif g.ObjectKind != control.ObjectScope {\n\t\t_ = auth",
+        killer="TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm",
+        why="the revocation already found the grant, so re-checking authority over its "
+        "object reads like belt-and-braces — it is the only thing stopping admin on scope "
+        "A from revoking a grant on scope B.",
+    ),
+    Mutant(
+        name="ui-share-page-skips-its-authority-check",
+        path="internal/ui/sharehandlers.go",
+        old="\tif !id.Auth.Allows(scope, control.VerbAdmin) {\n"
+        "\t\twritePlain(w, http.StatusNotFound, scopeRefusal)\n"
+        "\t\treturn\n"
+        "\t}",
+        new="\t_ = scopeRefusal",
+        killer="TestTheSharePageRefusesAScopeThisCallerCannotAdminister",
+        why="the page only READS, so gating it looks like caution — it is what stops the "
+        "audience of any scope being served to anybody who can name its id.",
+    ),
+    Mutant(
+        name="ui-page-never-reports-a-read-only-authority",
+        path="internal/ui/sharehandlers.go",
+        old="\t\tReadOnly: !s.sharing.Writable(),",
+        new="\t\tReadOnly: false,",
+        killer="TestAReadOnlyDeploymentSaysSoOnThePageRatherThanAtTheClick",
+        why="the banner looks like decoration. Without it a deployment that cannot record "
+        "a share serves the whole flow and refuses at the click, which reads to an "
+        "operator as a permission problem they do not have.",
+    ),
+    Mutant(
+        name="ui-share-write-authority-check-removed-in-the-handler",
+        path="internal/ui/sharehandlers.go",
+        old="\tscope := control.ID(r.PostFormValue(FieldScope))\n"
+        "\tif !id.Auth.Allows(scope, control.VerbAdmin) {\n"
+        "\t\twritePlain(w, http.StatusForbidden, shareWriteRefusal)\n"
+        "\t\treturn\n"
+        "\t}",
+        new="\tscope := control.ID(r.PostFormValue(FieldScope))",
+        killer="TestTheSharePageRefusesAScopeThisCallerCannotAdminister",
+        why="deleting the check that looks redundant because the layer below it checks "
+        "too — the ordinary way a defence-in-depth pair quietly becomes a single point.",
+        equivalent=True,
+        equivalent_reason=(
+            "THE WRITE PATH CHECKS `Allows` AT TWO SITES ON PURPOSE — here, so the handler "
+            "can choose an HTTP status, and in `ControlSharing.Share`, because the interface "
+            "is exported and a second caller that forgot would be authorised by omission. "
+            "Removing EITHER alone is observably identical: the other still answers 403 with "
+            "the same body. That is what defence in depth means, and it is why this row is "
+            "LABELLED rather than reported as a coverage gap. 🔴 THE CASE THIS ROW DOES NOT "
+            "COVER — both sites removed at once — IS COVERED BY A TEST RATHER THAN BY A "
+            "MUTANT: TestTheSharePageRefusesAScopeThisCallerCannotAdminister drives the write "
+            "path and requires a 403, so a tree with neither check fails it. Measured, with "
+            "both sites removed together, before this row was written. ⚠ If this row ever "
+            "starts being KILLED, the runner's own ⚠ is the signal that the OTHER site has "
+            "gone."
+        ),
     ),
 )
 

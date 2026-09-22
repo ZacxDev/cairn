@@ -842,30 +842,43 @@ render it; the other pins the 501 mapping through the real dispatcher and **says
 drives the condition through a fixture**, because no authority in this tree is both read-only and
 able to confer admin.
 
-## The mutation battery — 8 mutants, 8 killed, each by its named test
+## The mutation rows — in `tests/control_mutants.py`, which CI runs
 
-`tests/ui_share_mutants.py`, the same shape as `tests/control_mutants.py`: every pattern's
-occurrence count is asserted before the edit (a mutant that does not apply reports a false
-`SURVIVED`), a mutant that does not compile is `DID-NOT-BUILD` rather than a kill, attribution is
-by **which test failed**, and an unmutated run is the positive control.
+🔴 **THERE IS NO SEPARATE BATTERY FOR THIS PACKAGE, AND THE ONE THAT BRIEFLY EXISTED IS THE
+LESSON.** The share flow shipped with `tests/ui_share_mutants.py` — 234 lines, a second copy of
+`control_mutants.py`'s harness — and **no gate ran it**: `grep -l ui_share_mutants` over the whole
+tree returned the file and one line of this README, while `control_mutants` is a step in
+`.github/workflows/ci.yml` and is pinned by `tests/test_control_mutant_count_is_pinned.py`. It also
+mutated the LIVE working tree where that harness mutates a `copytree`. Round 0 of #64's audit found
+it. The eight rows moved into `control_mutants.py` (the `ui-` prefixed ones), `./internal/ui/`
+joined its `PKGS`, and the file is deleted — so the rows now get the CI step, the isolation and the
+count pin that the copy would have had to re-earn. **A second battery is a second thing to remember
+to run.**
 
-| mutant | killed by |
+| row | killed by |
 |---|---|
-| `Audience` reads grant rows instead of `Resolve` | `TestTheAudienceIsComputedFromResolveNotFromGrantRows` |
-| the notice drops its "already copied" clause | `TestTheReplicaHonestyNoticeIsPinnedWhole` |
-| the verb list is read with `PostFormValue` (first value only) | `TestEveryTickedVerbReachesTheGrant` |
-| the subject is taken from the form without the candidate check | `TestTheSubjectIsValidatedAgainstCandidates…` |
-| `Unshare` skips the grant's own authority check | `TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm` |
-| the share PAGE skips its authority check | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` |
-| the page never reports a read-only authority | `TestAReadOnlyDeploymentSaysSoOnThePage…` |
-| the write's authority check is removed at **both** sites | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` |
+| `ui-audience-reads-grant-rows-instead-of-Resolve` | `TestTheAudienceIsComputedFromResolveNotFromGrantRows` |
+| `ui-replica-notice-drops-a-clause` | `TestTheReplicaHonestyNoticeIsPinnedWhole` |
+| `ui-verbs-read-single-value` | `TestEveryTickedVerbReachesTheGrant` |
+| `ui-share-subject-accepted-from-the-form` | `TestTheSubjectIsValidatedAgainstCandidates…` |
+| `ui-unshare-skips-the-objects-authority-check` | `TestARevokeIsAuthorisedFromTheGrantRatherThanFromTheForm` |
+| `ui-share-page-skips-its-authority-check` | `TestTheSharePageRefusesAScopeThisCallerCannotAdminister` |
+| `ui-page-never-reports-a-read-only-authority` | `TestAReadOnlyDeploymentSaysSoOnThePage…` |
+| `ui-share-write-authority-check-removed-in-the-handler` | **EQUIVALENT** — see below |
 
-🔴 **That last row is the one worth reading.** The write path checks `Allows` twice — in the handler
-so it can choose a status, and in `ControlSharing.Share` because the interface is exported and a
-second caller that forgot would be authorised by omission. Removing **either alone is observably
-equivalent**: the other still answers 403 with the same body. That is what defence in depth means,
-and it is why the battery mutates both at once rather than recording a survivor it would have to
-explain away. Both call the same predicate, so this is one rule at two call sites, not two rules.
+🔴 **That last row is the one worth reading, and it is LABELLED rather than killed.** The write path
+checks `Allows` twice — in the handler so it can choose a status, and in `ControlSharing.Share`
+because the interface is exported and a second caller that forgot would be authorised by omission.
+Removing **either alone is observably equivalent**: the other still answers 403 with the same body.
+That is what defence in depth means. 🔴 **The case the row does NOT cover — both sites removed at
+once — is covered by a TEST rather than by a mutant**: `TestTheSharePageRefusesAScopeThisCaller
+CannotAdminister` drives the write path and requires a 403, so a tree with neither check fails it
+(measured with both removed together). Both sites call the same predicate, so this is one rule at
+two call sites, not two rules.
+
+⚠ **The split is not restated here.** `internal/control/README.md` carries the battery's
+`mutants / killed / EQUIVALENT` line and is the only place pinned to it; a second copy here is the
+count that goes stale.
 
 ## What Phase C's tests still cannot see
 
