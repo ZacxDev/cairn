@@ -40,8 +40,8 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
     decision, and pinned the two that said "pin it".
 - **Sibling session owns `cairn-control-plane-1` and four open PRs: #61, #62, #64, #65.**
   #62 and #65 both edit `claudedocs/handoff-cairn-control-plane.md`.
-- 🔴 **NO `clawgate-task:` FIELD, AND THAT IS A MEASURED ABSENCE RATHER THAN AN OMISSION.**
-  `clawgate_handoff.sh resolve` exited **5** — 0 tasks for this session — with its positive
+- 🔴 **NO EXTERNAL-TASK-BOARD FIELD, AND THAT IS A MEASURED ABSENCE RATHER THAN AN OMISSION.**
+  The task-board resolver exited **5** — 0 tasks for this session — with its positive
   control confirming the board is reachable and the token accepted. ⚠ That control proves a
   CORRECT id would have resolved; it does **not** prove the id under test is right, since a
   wrong id also answers 200 with an empty array. Not a clean bill of health.
