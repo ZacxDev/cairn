@@ -142,7 +142,6 @@ from entry_shape import scope_for_repo  # noqa: E402
 # the operator's real cache. Nothing depended on that yet — which is exactly when
 # it is cheap to fix. `build_parser` calls the accessor instead.
 import subsystem_read_store as _read_store  # noqa: E402
-import subsystem_resolver  # noqa: E402
 from subsystem_read_store import SYNC_STAMP  # noqa: E402
 # 🔴 THE MODULE, FOR THE SAME REASON AS `_read_store` ABOVE. `cairn_instances`
 # resolves paths from `Path.home()` and the environment at CALL time, so a
@@ -1322,12 +1321,23 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # separate authoring tool's `--validate`, which was a second
         # implementation of the same predicate — exactly the shape that lets a
         # file validate clean and then fail to render.
-        index = subsystem_resolver.load_index(
-            cache,
-            on_malformed=subsystem_resolver.ON_MALFORMED_COLLECT,
-            visible_scopes=[scope],
-        )
-        malformed = index.malformed
+        #
+        # 🔴 AND IT GOES THROUGH `entry_shape.validate_scope` RATHER THAN
+        # ASSEMBLING THE PAIR HERE, WHICH FIXED A LIVE MISCOUNT. The numerator
+        # and the denominator of `N of M entry file(s) parse` are a RELATIONSHIP
+        # — "how many of the files I walked did the loader accept" — and this
+        # site used to derive the two halves from two different walks: the
+        # loader skips `README.md` in every scope (each scope dir carries one as
+        # its policy sheet) while the count below globbed `*.md` and included
+        # it. A scope holding one entry and one README printed `2 of 2 entry
+        # file(s) parse`, and with that entry malformed it printed `1 of 2 …
+        # 1 malformed` — claiming a file parsed when none had, out of the one
+        # command whose entire job is to make a zero mean something.
+        #
+        # One definition, in the vocabulary both halves share: `validate_scope`
+        # returns the files it WALKED and the rejections among them, so the two
+        # numbers cannot come from different rules again.
+        checked, malformed = entry_shape.validate_scope(cache, scope)
         for entry in malformed:
             print(f"cairn: {scope}: malformed: {entry}", file=sys.stderr)
         # 🔴 REPORT WHAT WAS CHECKED, NOT ONLY WHAT WAS WRONG. Until this line
@@ -1362,12 +1372,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # oracle to match the port anywhere else, and the scope of it is written down in
         # `tests/parity/README.md` beside the `seeded=UNREADABLE` precedent.
         #
+        # ⚠ THE LINE IT WAS ABOUT IS GONE — both halves of the count now come from the one
+        # `validate_scope(cache, scope)` call above, so there is no second walk left here to
+        # point at a different store. The record stays because the hazard is a property of
+        # this command, not of the expression that used to commit it.
+        #
         # 🔴 AND AN EXIT-CODE-ONLY PARITY ROW WOULD HAVE SEEN NEITHER SYMPTOM: both clients
         # exit 0 on the clean store and 5 on the malformed one. The count lives on stdout, so
         # `validate-routed-to-a-NON-DEFAULT-instance` compares stdout, stderr AND the code.
-        checked = sum(1 for _ in (cache / scope).glob("*.md"))
         print(
-            f"cairn: {scope}: {checked - len(malformed)} of {checked} "
+            f"cairn: {scope}: {len(checked) - len(malformed)} of {len(checked)} "
             f"entry file(s) parse, {len(malformed)} malformed"
         )
         worst = max(worst, EXIT_CORRUPT if malformed else EXIT_OK)

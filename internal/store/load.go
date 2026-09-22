@@ -313,6 +313,59 @@ func mdNamesIn(dir string) ([]string, error) {
 	return out, nil
 }
 
+// ValidateScope is `(checked, malformed)` for every entry file in ONE scope. READ-ONLY.
+// It is the Go spelling of the oracle's `entry_shape.validate_scope`.
+//
+// 🔴 IT EXISTS SO THE TWO HALVES OF `N of M entry file(s) parse` COME FROM ONE WALK.
+// They are a RELATIONSHIP — "how many of the files I walked did the loader accept" —
+// and the caller used to derive them from two: `LoadIndex` skips `README.md` in every
+// scope (see its own note) while the count globbed `*.md` and included it. A scope
+// holding one entry beside its policy sheet printed `2 of 2 entry file(s) parse`, and
+// with that entry malformed it printed `1 of 2 … 1 malformed` — a file claimed to have
+// parsed when none had, out of the one command whose whole job is to make a zero mean
+// something.
+//
+// 🔴 `checked` IS TAKEN FROM THE DIRECTORY, NOT FROM THE INDEX, so a file the loader
+// REJECTED is still counted as examined. `checked` must be "files walked", or the zero
+// it accompanies means nothing.
+//
+// 🔴 A MISSING ROOT IS AN ERROR; A MISSING SCOPE DIRECTORY IS TWO EMPTIES. Those are
+// different facts: the first means nothing was validated and is NOT "the scope is
+// clean", the second is an honest "this scope holds no entry files yet".
+func ValidateScope(root, scope string) ([]string, []MalformedEntry, error) {
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil, nil, &StoreMissingError{message: fmt.Sprintf(
+			"store root not found: %s — nothing was validated, and this is NOT "+
+				"'the scope is clean'", root)}
+	}
+	scopeDir := filepath.Join(root, NormalizeRef(scope))
+	var checked []string
+	if dirInfo, statErr := os.Stat(scopeDir); statErr == nil && dirInfo.IsDir() {
+		names, readErr := mdNamesIn(scopeDir)
+		if readErr != nil {
+			return nil, nil, readErr
+		}
+		for _, name := range names {
+			if name == "README.md" {
+				continue
+			}
+			checked = append(checked, name)
+		}
+	}
+	if len(checked) == 0 {
+		return nil, nil, nil
+	}
+	// 🔴 THROUGH `LoadIndex(Collect)` RATHER THAN A PER-FILE LOOP, so the DUPLICATE-ref
+	// check runs too. A duplicate is a relationship between two files, and the rejection
+	// lives in the index build: a loop over single files structurally cannot see it.
+	index, loadErr := LoadIndex(root, Collect, Unrestricted())
+	if loadErr != nil {
+		return nil, nil, loadErr
+	}
+	return checked, index.MalformedIn(scope), nil
+}
+
 // EntryUnreadable is the sentence the READER raises when ONE entry file it was told
 // about cannot be opened. It lives here beside LoadStore's store-wide twin so the two
 // "the store was not fully read" sentences cannot drift apart, and so a renderer does not

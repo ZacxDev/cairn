@@ -21,14 +21,26 @@ from pathlib import Path
 from typing import Sequence
 
 from host_identity import this_host
-from subsystem_resolver import NUANCE_HEADING, POINTERS_HEADING, normalize_ref
+from subsystem_resolver import (
+    NUANCE_HEADING,
+    ON_MALFORMED_COLLECT,
+    POINTERS_HEADING,
+    MalformedEntry,
+    MalformedEntryError,
+    SubsystemEntry,
+    entry_mapping,
+    load_index,
+    normalize_ref,
+)
 
 __all__ = [
-    "CairnError", "GitError", "RepoPathMissingError", "StoreMissingError",
+    "CairnError", "EntryFileMissingError", "GitError", "RepoPathMissingError",
+    "StoreMissingError",
     "BULLET_TEXT_MAX", "SHAPE_HEADINGS", "STORE_IS_PER_HOST",
     "STORE_IS_ONE_INSTANCE",
     "derive_scope", "repo_path_missing_message", "scope_for_repo",
     "store_caveat", "store_host", "store_host_line",
+    "validate_entry_file", "validate_scope",
 ]
 
 
@@ -62,6 +74,25 @@ class GitError(CairnError):
 
 class StoreMissingError(CairnError):
     """The store root does not exist. Sentinel: 'store root not found'."""
+
+
+class EntryFileMissingError(TouchError):
+    """A path handed to `validate_entry_file` is not a file.
+
+    Sentinel: 'index entry file not found'.
+
+    🔴 ITS OWN SENTINEL, NOT `malformed index entry`. A path that does not exist
+    and a file that does not parse are different facts with different fixes
+    (check the path vs. fix the front matter), and reporting the first as the
+    second would make the validator's own output the thing that misleads.
+
+    🔴 IT SUBCLASSES `TouchError`, WHICH IS THIS MODULE'S ALIAS FOR `CairnError`,
+    AND THE SPELLING IS THE POINT. The writer half that first raised this class
+    matches on `except TouchError`; naming a different base here would be a
+    silent behaviour change for every one of those clauses even though the
+    message stayed identical. `TouchError is CairnError`, so `except CairnError`
+    catches it too — the two names are one class, not two.
+    """
 
 
 class RepoPathMissingError(CairnError):
@@ -386,3 +417,110 @@ def scope_for_repo(
         repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]
     ).strip()
     return derive_scope(_toplevel(repo), common)
+
+
+# --------------------------------------------------------------------------
+# Validation — would the loader accept these bytes?
+# --------------------------------------------------------------------------
+#
+# 🔴 THESE TWO LIVE HERE, NOT IN THE WRITER, BECAUSE THE WRITER IS NOT ALWAYS
+# PRESENT. The post-write check the index-write protocol mandates has to be
+# runnable wherever an entry is written — including from an agent pod that has
+# this package and nothing else, on a cwd that is not a git checkout. The writer
+# module that first held them needs git at IMPORT time for unrelated reasons, so
+# importing it there is not an option; the functions themselves touch no git, no
+# clock and no network, so they belong in the shared vocabulary instead.
+#
+# 🔴 AND THEY GO IN `entry_shape`, NOT IN `subsystem_resolver`. `validate_scope`
+# raises `StoreMissingError`, which is defined above; `subsystem_resolver` is
+# imported BY this module, so putting them there would either invert that
+# dependency or fork the error class. The direction of the arrow is the reason,
+# not a preference.
+
+
+def validate_entry_file(path: str | Path) -> MalformedEntry | None:
+    """Would the loader accept this ONE file? `None` if yes, the rejection if no.
+
+    The scope is the PARENT DIRECTORY NAME, exactly as `load_index` takes it —
+    the directory is the authority on scope, so validating against the file's own
+    `scope:` field would answer a question the loader never asks.
+
+    🔴 IT GOES THROUGH `entry_mapping` + `SubsystemEntry.from_mapping`, THE
+    LOADER'S OWN TWO STEPS, rather than re-spelling the checks. A validator with
+    its own copy of the predicate blesses entries the reader rejects the day one
+    side learns a new identity field — the precise drift a write-time check
+    exists to prevent.
+
+    ⚠ A single file cannot be checked for DUPLICATES: that is a relationship
+    between two files. `validate_scope` covers it, and a caller reporting on the
+    single-file path should say so rather than leaving a narrower check to look
+    total.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise EntryFileMissingError(
+            f"index entry file not found: {p} — this takes the path to an entry `.md`. "
+            f"A missing file is not a malformed one, and reporting it as one would send "
+            f"you to fix front matter that is not there"
+        )
+    mapping = entry_mapping(
+        p.read_text(encoding="utf-8", errors="replace"),
+        filename=p.name,
+        scope=p.parent.name,
+    )
+    try:
+        SubsystemEntry.from_mapping(mapping, source=p.name)
+    except MalformedEntryError as exc:
+        return MalformedEntry(
+            scope=normalize_ref(p.parent.name), filename=p.name, reason=exc.why
+        )
+    return None
+
+
+def validate_scope(
+    store_root: str | Path, scope: str
+) -> tuple[tuple[str, ...], tuple[MalformedEntry, ...]]:
+    """`(checked, malformed)` for every entry file in ONE scope. READ-ONLY.
+
+    Goes through `load_index(COLLECT)` rather than looping `validate_entry_file`,
+    so the DUPLICATE-ref check runs too — that rejection lives in the index build
+    and a per-file loop structurally cannot see it.
+
+    🔴 `checked` IS TAKEN FROM THE DIRECTORY, NOT FROM THE INDEX, so a file the
+    loader rejected is still counted as examined: `checked` must be "files
+    walked", or the zero it accompanies means nothing. `README.md` is excluded
+    for the same reason `load_index` skips it — each scope dir carries one as its
+    policy sheet and it is not an entry. Counting it would put a file in the
+    denominator that was never parsed, which is how `N of M` starts disagreeing
+    with itself.
+
+    ⚠ THE INDEX IS LOADED WHOLE AND THEN FILTERED, NOT NARROWED AT THE LOADER —
+    so a caller looping every scope pays one whole-store load per scope. That is
+    deliberate: `malformed_in` is then a REAL filter, and a mutation that replaces
+    it with the unfiltered set is caught rather than being a no-op. MEASURED on a
+    synthetic store of 16 scopes x 150 entries (2,400 files, ~17x the live one):
+    0.69s for the whole loop against 0.04s narrowed. Both are noise next to a
+    sync, and this is not a hot path; if a store ever grows enough for that to
+    matter, narrow it AND keep a test that can still see the filter.
+
+    🔴 A MISSING STORE ROOT RAISES; A MISSING SCOPE DIR RETURNS TWO EMPTIES.
+    Those are different facts: the first means nothing was validated and is NOT
+    "the scope is clean", the second is an honest "this scope holds no entry
+    files yet". Collapsing them is the silent zero this whole check exists for.
+    """
+    store = Path(store_root)
+    if not store.is_dir():
+        raise StoreMissingError(
+            f"store root not found: {store} — nothing was validated, and this is NOT "
+            f"'the scope is clean'"
+        )
+    scope_dir = store / normalize_ref(scope)
+    checked = (
+        tuple(md.name for md in sorted(scope_dir.glob("*.md")) if md.name != "README.md")
+        if scope_dir.is_dir()
+        else ()
+    )
+    if not checked:
+        return (), ()
+    index = load_index(store, on_malformed=ON_MALFORMED_COLLECT)
+    return checked, index.malformed_in(scope)

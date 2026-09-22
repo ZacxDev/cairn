@@ -463,12 +463,15 @@ func Validate(env Env, opts Options) (int, error) {
 
 	worst := ExitOK
 	for _, scope := range scopes {
-		index, loadErr := store.LoadIndex(cache, store.Collect,
-			store.VisibleScopeSet([]string{scope}))
-		if loadErr != nil {
-			return 0, loadErr
+		// 🔴 ONE WALK PRODUCES BOTH HALVES OF THE COUNT — see `store.ValidateScope`, which
+		// is where the README miscount this site used to commit is written down. The pair
+		// is a RELATIONSHIP, and deriving it here from a `Glob` beside a `LoadIndex` that
+		// skips `README.md` is how the numerator and the denominator stopped agreeing.
+		checked, malformed, valErr := store.ValidateScope(cache, scope)
+		if valErr != nil {
+			return 0, valErr
 		}
-		for _, bad := range index.Malformed {
+		for _, bad := range malformed {
 			fmt.Fprintf(env.Stderr, "cairn: %s: malformed: %s\n", scope, pyMalformedRepr(bad))
 		}
 		// 🔴 REPORT WHAT WAS CHECKED, NOT ONLY WHAT WAS WRONG. Until this line a CLEAN scope
@@ -476,10 +479,9 @@ func Validate(env Env, opts Options) (int, error) {
 		// files at all — and this command is the post-write check the write protocol
 		// MANDATES, so that zero was being read as "the entry I just wrote is fine". A count
 		// that MOVES with the store is what makes the zero mean something.
-		checked, _ := filepath.Glob(filepath.Join(cache, scope, "*.md"))
 		fmt.Fprintf(env.Stdout, "cairn: %s: %d of %d entry file(s) parse, %d malformed\n",
-			scope, len(checked)-len(index.Malformed), len(checked), len(index.Malformed))
-		if len(index.Malformed) > 0 && ExitCorrupt > worst {
+			scope, len(checked)-len(malformed), len(checked), len(malformed))
+		if len(malformed) > 0 && ExitCorrupt > worst {
 			worst = ExitCorrupt
 		}
 	}

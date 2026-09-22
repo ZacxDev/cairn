@@ -866,6 +866,87 @@ class TestValidateActuallyRuns:
             after.stdout + after.stderr
         ), after.stdout + after.stderr
 
+    def test_the_count_EXCLUDES_the_scopes_README(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE NUMERATOR AND THE DENOMINATOR CAME FROM TWO DIFFERENT WALKS.
+
+        Every scope directory carries a `README.md` as its policy sheet; the
+        loader skips it in every scope, and `/snapshot` ships it, so it IS in the
+        cache. This command took its rejections from the loader and its count
+        from a `*.md` glob that included the README — so `widget-cfg`, holding two
+        entries beside one policy sheet, printed `3 of 3 entry file(s) parse`.
+
+        A count is the only evidence this command produces that anything was
+        checked at all. One inflated by a file nothing parsed is the reassuring
+        zero it exists to close, one layer up.
+
+        Both halves now come from `entry_shape.validate_scope`, which returns the
+        files it WALKED and the rejections among them.
+        """
+        (source_store / "widget-cfg" / "README.md").write_text(
+            "# widget-cfg — the scope's own policy sheet, not an entry\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 THE REACHABILITY CONTROL. If the snapshot dropped the README the
+        # assertion below would pass over a cache the defect cannot reach, and
+        # read as coverage while providing none.
+        assert (cache / "widget-cfg" / "README.md").is_file(), sorted(
+            p.name for p in (cache / "widget-cfg").iterdir()
+        )
+
+        proc = run_cairn("validate", "--scope", "widget-cfg", "--no-sync",
+                         url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = proc.stdout + proc.stderr
+        assert "widget-cfg: 2 of 2 entry file(s) parse, 0 malformed" in out, out
+
+    def test_a_scope_holding_ONLY_a_README_reports_ZERO_walked(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """The sharpest form of the same defect: a directory with no entries in
+        it printed `1 of 1 entry file(s) parse` — a clean bill of health over a
+        scope the reader will render as empty."""
+        (source_store / "hollow-area" / "README.md").write_text(
+            "# hollow-area — a policy sheet and nothing else\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        assert (cache / "hollow-area" / "README.md").is_file()
+
+        proc = run_cairn("validate", "--scope", "hollow-area", "--no-sync",
+                         url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = proc.stdout + proc.stderr
+        assert "hollow-area: 0 of 0 entry file(s) parse, 0 malformed" in out, out
+
+    def test_the_MALFORMED_count_is_not_softened_by_a_README(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE DIRECTION THAT MISLEADS. With one entry and one README in a
+        scope, a broken entry printed `1 of 2 … 1 malformed` — asserting that a
+        file parsed when NONE had. The honest line is `0 of 1`.
+        """
+        (source_store / "gizmo-notes" / "README.md").write_text(
+            "# gizmo-notes — policy sheet\n"
+        )
+        (source_store / "gizmo-notes" / "other-thing.md").write_text(
+            "aliases: [wrapped,\n  list]\nno front matter at all\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        assert (cache / "gizmo-notes" / "README.md").is_file()
+
+        proc = run_cairn("validate", "--scope", "gizmo-notes", "--no-sync",
+                         url=None, cache=cache)
+
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        out = proc.stdout + proc.stderr
+        assert "gizmo-notes: 0 of 1 entry file(s) parse, 1 malformed" in out, out
+
     def test_validate_exits_NONZERO_on_a_malformed_cache(
         self, source_store: Path, live_store, tmp_path: Path
     ):
