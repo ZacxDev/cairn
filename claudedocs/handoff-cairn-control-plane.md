@@ -24,8 +24,8 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`f8a257e`**. Open: **#74** (ranked item 1), **#75** (this doc) and **#69** (the
-  rename, ranked item 7).
+- `main` @ **`93d0f03`** (#74 merged). Open: **#75** (this doc) and **#69** (the rename, ranked
+  item 7).
 - ✅ **THE ARC IS CLOSED, AND THE VERDICT WAS TAKEN ON `main`.** #64 merged as **`7d7c9ea`**;
   all four clauses were then measured on `main` rather than inferred from the PR's six green
   checks, because the condition says "on `main`" and names the commands: authz matrix PASS ·
@@ -71,12 +71,11 @@ audit that found it read the live queue rather than this file. **A session takin
 `claim-work` it first, and must read the SUBJECT the claim prints rather than trusting the
 number** — the number is what went stale.
 
-1. **Land #74, then mark its three entries closed in `## Defects (batched)`.** The entries are
-   *"THREE FILED BY #48'S LADDER"* (a) and (b) — **(c) `lib/README.md` is NOT closed and the
-   condition says "all three", so split the entry or say why not** — *"NINE VERBS"*, and
-   *"FOUR FILED BY #44'S LADDER"*. ⚠ `Defects` REPLACES, so that edit must carry the whole
-   section forward.
-   forcing: gate — the entries' own closing conditions, which name a PR.
+1. ✅ **DONE — #74 merged as `93d0f03` and its entries are closed in `## Defects (batched)`.**
+   Kept as a numbered row rather than deleted, because deleting it renumbers every item below and
+   re-points every live `claim-work` slug — which this session measured going wrong twice in one
+   day. `cairn-control-plane-1` is released.
+   forcing: gate — the entries' own closing conditions, which named a PR.
 2. **The remaining batched defects.** Still open after #74: #48's (c) `lib/README.md` (the
    re-count recipe greps two literal phrases, so it is a SPELLED check that cannot see a
    reworded echo); the stale node-affinity comment, which lives in the **deployment-manifest
@@ -155,40 +154,27 @@ number** — the number is what went stale.
 - 🟡 **`checks.default-is-the-go-client` IS INSENSITIVE ON THE PYTHON SIDE.** `mkCairn`'s pname is
   already `cairn`, so a `meta.mainProgram` removed *there* leaves the base-name assertions green.
   **Closing condition:** a decision to close it or a written line saying why not.
-- 🟡 **THREE FILED BY #48'S LADDER.** (a) `internal/client/readrouting_test.go:281` — the failure
-  message says the predicate "must inspect EVERY state", but the assertion is `rows < 2 || nonOK == 0`
-  and the fixture yields `PROBLEM=0`, so the `Problem` branch never executes. (b)
-  `internal/doctor/render.go:99` — `Markers()` has one consumer and exports a rendering detail;
-  separately, a state added to `markers` but not to `States` makes `doctorRow` silently skip those
-  rows. (c) `lib/README.md` — the re-count recipe greps two literal phrases, so it is a SPELLED check
-  that cannot see a reworded echo. 🔴 **THE CONDITION SHOULD HAVE BEEN THREE CONDITIONS, AND SAYING
-  SO IS THE RULING RATHER THAN A COMPLAINT.** (a) and (b) share a package and a fixture; (c) shares
-  nothing with them but the ladder that filed it, and it overlaps the `COUNTS QUOTED IN PROSE` entry
-  above. Bundling unrelated findings under one "correct all three" forces either scope creep or a
-  condition nobody can honestly close. **Closing condition, SPLIT:** (a)+(b) by ZacxDev/cairn#74;
-  (c) by a separate change, and it is NOT covered by #74.
 - 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — `lib/README.md`'s echo-site count,
   `tests/test_parity_harness.py`'s floor. ⚠ **`README.md`'s 101/102/70/23/8 are GONE** — #54 deleted
   every count from that file rather than refreshing them, because the file itself recorded that they
   had already gone stale once. The repo owns the fix pattern
   (`tests/test_control_mutant_count_is_pinned.py`); applying it to what remains is separate work.
   **Closing condition:** a decision to pin each or a written line saying why not.
-- 🟡 **"NINE VERBS" SURVIVES AT SIX SITES AND THE COUNT IS TEN — AND THE SIXTH IS A GATE, NOT A
-  COMMENT.** ⚠ **This entry has now been re-counted twice and was wrong both times** — filed as
-  four, corrected to five, measured at six: the site it kept missing is
-  `tests/test_go_client_ledgers.py:217`, the comment three lines ABOVE the floor, explaining the
-  very floor the correction had just added. Verified closed at #74's head, which leaves no `nine
-  verbs` anywhere outside this document.** `AGENTS.md`, `flake.nix:1019` (directly above its own `want-verbs.txt` listing **ten**),
-  `tests/test_parity_harness.py:32,336` — all comments, so nothing reddens — **and
-  `tests/test_go_client_ledgers.py`'s `assert len(go_verbs) >= 9`**, a floor one below the count,
-  which buys exactly one free deletion and PASSES for it. ⚠ **This entry said FOUR and named the
-  four comments; the fifth was found by measuring rather than by reading it**, which is why a count
-  filed as a prose defect gets grepped for in an `assert` or an `if` before it is batched as prose.
-  Measured three ways: `cairn -verbs` prints 10, argparse lists 10, the parity harness exercises 10.
-  #54 fixed only `README.md`'s copy. **Closing condition:** ZacxDev/cairn#74 merged.
-- 🟡 **FOUR FILED BY #44'S LADDER** in `tests/test_publish_workflow.py` and
-  `tests/test_control_mutant_count_is_pinned.py`, plus **three unpinned by construction** in
-  `publish-image.yml`. **Closing condition:** one PR each, or a written line saying why not.
+- ✅ **CLOSED BY #74 (`93d0f03`) — #48's (a) AND (b), "NINE VERBS", AND #44's FOUR.** Verified by
+  CONTENT, not ancestry: the payload paths diff empty between the PR head and `origin/main`, and
+  `func Markers` is gone from `internal/doctor/render.go` while `func ParseRow` is there.
+  🔴 **(c) `lib/README.md` IS NOT CLOSED AND IS NOT COVERED** — the re-count recipe greps two
+  literal phrases, so it is a SPELLED check that cannot see a reworded echo, and it overlaps the
+  `COUNTS QUOTED IN PROSE` entry above. The entry's own condition said "all three"; the ruling
+  recorded before the merge was that it should have been three conditions, because (a) and (b)
+  share a package and a fixture while (c) shares nothing with them but the ladder that filed it.
+  ⚠ **The "NINE VERBS" count was re-measured twice and wrong BOTH times** — filed as four,
+  corrected to five, measured at six; the site it kept missing was the comment three lines above
+  the floor, explaining the very floor the correction had just added. 🔴 **And the sixth was a
+  GATE, not a comment**: `assert len(go_verbs) >= 9` against ten verbs, a floor one below the
+  count, which buys exactly one free deletion and passed for it. It is now `== 10`, which reds
+  when the set grows as well as when it shrinks. **A count filed as a prose defect can be a live
+  gate defect — grep the number in an `assert` or an `if` before batching it as prose.**
 - 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE.** It keeps the pod off the off-LAN
   burst node *because the LAN registry does not resolve there*; the pod now pulls from ghcr, so that
   reason is void while the affinity may still be wanted (the PVC is ReadWriteOnce local-path).
@@ -570,11 +556,10 @@ number** — the number is what went stale.
   renders `OK`, `UNMEASURED` and `NOT-OBSERVABLE` — never `PROBLEM`, whose marker `🔴` is a
   SINGLE RUNE where the other three are two. Closed with two guards rather than one: the
   fixture's states are a ledger that fails if it SHRINKS, and a separate unit case drives
-  `doctor.ParseRow` over every state. ⚠ **`ParseRow` EXISTS ONLY ON #74's BRANCH** — on `main` the
-  symbol is still `doctor.Markers()`, which is what the `Defects` entry above correctly names. A
-  durable bullet asserting a symbol that is one unmerged PR away greps to zero hits with nothing
-  to tell a reader whether it was renamed or reverted, so the pending state is labelled rather
-  than assumed. **When a fixture cannot reach a case, the honest fix is
+  `doctor.ParseRow` over every state. ⚠ **`ParseRow` LANDED ON `main` AT `93d0f03`**, replacing the
+  exported `Markers()` table; this bullet carried a "pending #74" label for exactly one merge,
+  which is the point — a durable bullet naming a symbol one unmerged PR away greps to zero hits
+  with nothing to tell a reader whether it was renamed or reverted. **When a fixture cannot reach a case, the honest fix is
   a second guard, not a wider sentence.**
 - **Decision (operator, this session): the prune was chosen over feature work**, and its
   closing condition was met by MOVING rather than cutting. 🔴 **The safety property of a prune
