@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/doctor"
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/report"
 )
 
@@ -523,6 +524,17 @@ func verbNames() []string {
 
 // Run is the whole client: parse, dispatch, and map every escaping error to its own exit code.
 func Run(env Env, argv []string) int {
+	// 🔴 BEFORE `Parse`, SO `--help` WARNS TOO, AND BECAUSE THE POSITION IS COMPARED.
+	// `tests/parity/harness.py` diffs the two clients' stderr byte-for-byte, so WHERE in the
+	// program the deprecation sweep runs is part of the contract rather than a detail: the
+	// Python client emits the same sweep at the top of its `main()`. Emitting it after
+	// `Parse` would order it differently against a usage error on the two sides.
+	//
+	// The FILE-key half of the sweep cannot happen here — the config path is not known until
+	// an alias has been resolved — so `LoadConfigFor` emits that half through the same sink.
+	SetDeprecationSink(func(line string) { fmt.Fprintln(env.Stderr, "cairn: "+line) })
+	WarnDeprecations(envalias.OSDeprecations())
+
 	verb, opts, err := Parse(argv)
 	if errors.Is(err, ErrHelpRequested) {
 		// 🔴 STDOUT AND EXIT 0. Help is an ANSWER, not a refusal — argparse does the same, and a

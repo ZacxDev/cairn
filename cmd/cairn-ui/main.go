@@ -30,6 +30,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/ui"
 )
@@ -65,10 +66,18 @@ const (
 )
 
 func main() {
-	store := flag.String("store", envOr("SUBSYSTEM_STORE_ROOT", defaultStore), "store root")
+	// Same position and the same reason as `cmd/cairn-server`: a `flag.String` default is
+	// evaluated at the call, so the notice has to precede the value it is about. This
+	// surface has no reload stream and so no sanitiser to route it through — the line is
+	// the ledger's own text and interpolates nothing caller-supplied.
+	envalias.WarnOnce(envalias.OSDeprecations(), func(line string) {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+line)
+	})
+
+	store := flag.String("store", envOr("CAIRN_STORE_ROOT", defaultStore), "store root")
 	host := flag.String("host", envOr("CAIRN_UI_HOST", "0.0.0.0"), "listen address")
 	port := flag.Int("port", envInt("CAIRN_UI_PORT", defaultPort), "listen port")
-	tokenFile := flag.String("token-file", envOr("SUBSYSTEM_STORE_TOKEN_FILE", defaultTokenFile),
+	tokenFile := flag.String("token-file", envOr("CAIRN_TOKEN_FILE", defaultTokenFile),
 		"path to the token file this surface authenticates against")
 	sessionFile := flag.String("session-file", envOr("CAIRN_UI_SESSION_FILE", defaultSessionFile),
 		"path to the browser session table")
@@ -242,11 +251,12 @@ func environ() map[string]string {
 	return out
 }
 
+// The three readers below resolve through `internal/envalias`, so a name passed to one is
+// the CURRENT spelling and its deprecated alias is found for free. `CAIRN_UI_*` has no
+// alias and resolves as itself — `envalias.Value` gives plain single-name behaviour for a
+// name that was never renamed, which is why no call site has to know which kind it holds.
 func envOr(name, fallback string) string {
-	if v, set := os.LookupEnv(name); set && v != "" {
-		return v
-	}
-	return fallback
+	return envalias.OSValueOr(name, fallback)
 }
 
 // envDuration falls back on an unparseable value rather than refusing, which matches
@@ -259,8 +269,8 @@ func envOr(name, fallback string) string {
 // the divergence between this program's ad-hoc environment reads and that package's
 // ledger is the thing to close, in one change, rather than here.
 func envDuration(name string, fallback time.Duration) time.Duration {
-	v, set := os.LookupEnv(name)
-	if !set || v == "" {
+	v := envalias.OSValue(name)
+	if v == "" {
 		return fallback
 	}
 	d, err := time.ParseDuration(v)
@@ -271,8 +281,8 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 }
 
 func envInt(name string, fallback int) int {
-	v, set := os.LookupEnv(name)
-	if !set || v == "" {
+	v := envalias.OSValue(name)
+	if v == "" {
 		return fallback
 	}
 	n, err := strconv.Atoi(v)

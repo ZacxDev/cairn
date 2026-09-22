@@ -82,8 +82,9 @@ import (
 
 const (
 	// ConfigEnv names the DEFAULT instance's config file. It predates instances and keeps
-	// its meaning exactly.
-	ConfigEnv = "SUBSYSTEM_STORE_CONFIG"
+	// its meaning exactly. `SUBSYSTEM_STORE_CONFIG` still resolves to it through
+	// `internal/envalias`; this file never spells the old name.
+	ConfigEnv = "CAIRN_CONFIG"
 	// RoutesEnv names the routing table. 🔴 SET IT AND THE TABLE IS MANDATORY — a missing
 	// file is an error, never "routing is off". An operator who named a table meant to use
 	// one, and silently ignoring the name is how a typo'd path turns a fail-loud design into
