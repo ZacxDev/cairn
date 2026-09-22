@@ -536,3 +536,132 @@ func freePort(t *testing.T) int {
 	}
 	return port
 }
+
+// TestABlankEnvironmentValueIsTreatedAsABSENT pins the AUTHORISED P1 exception declared
+// in `tests/conformance/README.md`: a variable that is PRESENT BUT EMPTY resolves as if
+// it were unset, so the deprecated spelling behind it is read instead.
+//
+// 🔴 THIS ARM IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND THE LABEL IS THE POINT.
+// The rule NARROWED the ORACLE (`server.py` used to hand argparse `""` for `--store` and
+// to raise `ValueError` on a blank `--port`). Go has always behaved this way — `envOr`
+// and `envInt` read through `envalias`, whose getter form cannot distinguish a
+// present-empty variable from an absent one — so no Go defect ever violated this. What
+// this arm buys is the OTHER half of a cross-language rule: the corpus is structurally
+// blind to it (no `requests.json` row sends an empty value and none can, the runner
+// building its targets from declared bodies rather than from an environment), so without
+// a guard on each side the rule is one refactor away from reverting on one side only,
+// which is the asymmetry this whole PR exists to remove. `tests/test_env_aliases.py`
+// carries the ORACLE arm, which IS regression coverage.
+//
+// 🔴 OBSERVED END-TO-END ON THE STARTUP LINE, NOT ON `envOr`. Both servers print
+// `listening on <host>:<port> store=<root> …`, so this reads the resolved values out of
+// the running program through the same text the oracle's arm reads. A unit test on
+// `envOr` would pass while `main` stopped calling it — the seam nobody owns.
+//
+// 🔴 EVERY FIXTURE VALUE IS ONE NO CONSTANT IN THIS PACKAGE CAN EQUAL. The store is a
+// `t.TempDir()` (never `defaultStore` = "/data"), the port is a kernel-assigned free one
+// asserted unequal to `defaultPort`, and the host is 127.0.0.1 against a "0.0.0.0"
+// default. A fixture that could only ever produce the default's own value cannot see a
+// mutant that hardcodes the default, and would survive a fully green suite. The second
+// run with a DIFFERENT store and port is the control that watches the output MOVE.
+func TestABlankEnvironmentValueIsTreatedAsABSENT(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(testToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// start runs the real `main` with the THREE current-spelling names present but
+	// EMPTY and their deprecated spellings carrying the real values. No `-store`,
+	// `-host` or `-port` flag: every one of those defaults is env-resolved, so the
+	// startup line reports exactly what the resolver decided.
+	start := func(store string, port int) string {
+		t.Helper()
+		child := exec.Command(self, "-token-file", tokenFile)
+		child.Env = []string{
+			runServerEnv + "=1",
+			testRefreshEnv + "=" + testRefreshPeriod.String(),
+			"CAIRN_TRUSTED_PROXIES=192.0.2.0/24",
+			// present, empty — the case under test
+			"CAIRN_STORE_ROOT=",
+			"CAIRN_LISTEN_HOST=",
+			"CAIRN_PORT=",
+			// the deprecated spellings, which must therefore be what is read
+			"SUBSYSTEM_STORE_ROOT=" + store,
+			"SUBSYSTEM_STORE_HOST=127.0.0.1",
+			"SUBSYSTEM_STORE_PORT=" + strconv.Itoa(port),
+		}
+		log := &lockedBuffer{}
+		child.Stdout, child.Stderr = log, log
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		// 🔴 `Wait` IN A GOROUTINE, NOT A `ProcessState` POLL. `ProcessState` stays nil
+		// until something calls `Wait`, so polling it never observes an exit and every
+		// failure of this test would burn the whole 20s deadline — which reads as
+		// infrastructure rather than as a finding, the trade the sibling test above
+		// names. Measured: with `envInt` mutated to prefer a present-empty value the
+		// poll form took 20.02s; this form fails as soon as the child refuses.
+		exited := make(chan struct{})
+		go func() { _ = child.Wait(); close(exited) }()
+		t.Cleanup(func() {
+			_ = child.Process.Kill()
+			<-exited
+		})
+		deadline := time.After(20 * time.Second)
+		for {
+			if strings.Contains(log.String(), "listening on") {
+				return log.String()
+			}
+			select {
+			case <-exited:
+				// One more read: the copying goroutines are done, so the log is whole.
+				if strings.Contains(log.String(), "listening on") {
+					return log.String()
+				}
+			case <-deadline:
+			case <-time.After(20 * time.Millisecond):
+				continue
+			}
+			break
+		}
+		// A blank value read as PRESENT is exactly this: `-store ""` refuses at 78
+		// ("Refusing to start"), and `strconv.Atoi("")` refuses at 78 ("must be a
+		// number"). Both are silent on the startup line, so the failure has to name
+		// what it did not see and print what the child said instead.
+		t.Fatalf("the server never printed a `listening on` line with a blank "+
+			"CAIRN_STORE_ROOT/CAIRN_LISTEN_HOST/CAIRN_PORT and the deprecated spellings "+
+			"set — a present-but-empty value was NOT treated as absent. Child output:\n%s",
+			log.String())
+		return ""
+	}
+
+	first, firstPort := t.TempDir(), freePort(t)
+	if firstPort == defaultPort {
+		t.Skipf("the kernel handed out %d, which IS defaultPort — this fixture must not "+
+			"be able to coincide with the constant under test", defaultPort)
+	}
+	wantFirst := fmt.Sprintf("listening on 127.0.0.1:%d store=%s ", firstPort, first)
+	if got := start(first, firstPort); !strings.Contains(got, wantFirst) {
+		t.Fatalf("the blank names did not fall through to the deprecated ones.\nwant a "+
+			"line containing %q\ngot:\n%s", wantFirst, got)
+	}
+
+	// 🔴 THE CONTROL THAT MAKES THE ASSERTION ABOVE MEAN SOMETHING. A second world with
+	// a different store and a different port: an implementation that ignored the
+	// environment and printed a compiled-in answer passes the first assertion for every
+	// run and fails here.
+	second, secondPort := t.TempDir(), freePort(t)
+	if second == first || secondPort == firstPort {
+		t.Fatalf("the control world is not distinct from the first: %q/%d vs %q/%d",
+			second, secondPort, first, firstPort)
+	}
+	wantSecond := fmt.Sprintf("listening on 127.0.0.1:%d store=%s ", secondPort, second)
+	if got := start(second, secondPort); !strings.Contains(got, wantSecond) {
+		t.Fatalf("the resolved values did not MOVE with the environment.\nwant a line "+
+			"containing %q\ngot:\n%s", wantSecond, got)
+	}
+}

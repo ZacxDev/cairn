@@ -10,11 +10,20 @@ rewording. Two spellings plus a gate is the shape `AGENTS.md` already blesses fo
 `server/Dockerfile` against `flake.nix`'s `serverEnv`.
 
 Read `internal/envalias/envalias.go`'s package doc for the reasoning in full — the
-`CAIRN_HOST` collision, the removal anchor, and the one measured behaviour change.
+`CAIRN_HOST` collision, the removal anchor, and the one behaviour change.
 The short form, because a reader editing THIS file should not have to open that one:
 
 * **The new name wins.** The old name is read only when the new one is absent or
   blank.
+* 🔴 **A PRESENT BUT EMPTY VALUE COUNTS AS ABSENT, AND THAT IS AN AUTHORISED CHANGE
+  TO THE ORACLE** — decision: the operator, on PR #69. `server.py`'s `main()` used to
+  hand argparse `""` for `--store` and to raise `ValueError` on a blank `--port`;
+  every Go call site and this client's `load_config` already treated blank as absent,
+  so the rule removes a divergence rather than creating one. 🔴 The conformance corpus
+  is structurally blind to it — no row sends an empty value and none can, the corpus
+  describing REQUESTS while this decides STARTUP — so a green corpus says nothing
+  about this rule. The declaration, the accepted cost and the two guards that stand in
+  the corpus's place are in `tests/conformance/README.md`.
 * **An old name that is present and non-blank warns once per process**, including
   when the new name shadows it. A blank value is how a caller UNSETS an alias — it
   changes no resolution, so it is not a deprecation and does not warn.

@@ -365,6 +365,81 @@ encodes:
 - **A hostname shorter than four characters**, for the leak guard: a
   three-character host name is a substring of ordinary English, so the short case
   is left uncovered rather than wrongly covered.
+- 🔴 **AN ENVIRONMENT VARIABLE THAT IS PRESENT BUT EMPTY**, which is the AUTHORISED
+  exception below. Two independent reasons, so closing one would not help: no key in
+  `requests.json` carries an environment at all — the corpus describes REQUESTS and the
+  rule decides STARTUP — and the three variables it is about never reach the server as
+  variables anyway, because `oracle.py` passes `--store`, `--host` and `--port` as FLAGS,
+  which override the defaults under test. `ORACLE_ENV`'s three entries are all non-empty.
+  So a green corpus is not evidence about that rule and never will be unless somebody
+  adds such a case. Its guards are named in the section below, one per implementation.
+
+## 🔴 An AUTHORISED exception to "do not change the oracle" — a present-but-empty value is ABSENT
+
+**Decision (operator, this session, on PR #69): `env_aliases.value` treats a variable
+that is PRESENT BUT EMPTY as ABSENT, in the oracle as well as in the client.** The
+standing P1 rule is that the oracle is the golden source and is never edited to make the
+port agree; the standing exception is a defect a contract cannot contain, granted by the
+operator, per site, in writing. The precedent is `seeded=UNREADABLE` on both servers —
+authorised "because a contract cannot include 'sometimes truncate the response
+mid-stream'"; `tests/parity/README.md` records the second, `cmd_validate`'s negative
+count. **Here: a contract cannot include "the same blank value means two different
+things in two implementations of one server".**
+
+**It NARROWS the oracle toward what Go already did.** Every Go call site tested `!= ""`
+before this PR existed (`envOr`, `envInt`, `netid.LimiterSettings`, `authz.LoadTokens`),
+and so did the Python client's `load_config`. The oracle's `main()` was the outlier:
+
+| a blank `CAIRN_PORT` / `CAIRN_STORE_ROOT` | oracle, before | Go, before and after | oracle, now |
+|---|---|---|---|
+| `--store` | `""` — serves a store root nothing named | falls through to the deprecated name, else `/data` | same as Go |
+| `--port` | `ValueError: invalid literal for int() with base 10: ''` | falls through, else 8102 | same as Go |
+
+So it removes a divergence rather than creating one, which is why "authorise and declare"
+was chosen over reverting it on the oracle.
+
+⚠ **THE EXCEPTION IS THAT RULE AND NOTHING ELSE.** It does not license editing the oracle
+anywhere else, and both spellings of the resolver carry the same statement in a comment.
+
+🔴 **THE COST, WHICH IS REAL AND WAS TAKEN DELIBERATELY.** A blank store root now resolves
+to a default instead of failing, so a manifest bug that BLANKS it relocates writes quietly
+rather than loudly. That is the trade: the old oracle's `""` and `ValueError` were at
+least loud on the pod's own startup line. Measured while proving the guards below can go
+red — with the rule removed on the Go side the server came up and printed `store=` with an
+empty value rather than refusing, so an empty store root is not loud on either
+implementation today. Nothing in either program treats "blank" as an operator error.
+
+⚠ **AND ONE INTERACTION A READER WILL OTHERWISE MEET AS A SURPRISE.** Both pod images bake
+the DEPRECATED spelling on purpose (`README.md`, § *The environment variables are now
+`CAIRN_*`*, and `flake.nix`'s `serverEnv`). So in a container a Deployment setting
+`CAIRN_STORE_ROOT=""` does not fall through to the code default — it falls through to the
+image's `SUBSYSTEM_STORE_ROOT=/data`. That is documented behaviour rather than an accident,
+and it is the safe direction: the pod keeps the mounted store instead of a home-directory
+default.
+
+🔴 **THE CORPUS IS BLIND TO THIS, AND THAT IS MEASURED RATHER THAN ASSUMED** — see the
+last bullet of *What this suite CANNOT see*: no `requests.json` key carries an
+environment, and `oracle.py` passes `--store`/`--host`/`--port` as flags, which override
+the very defaults the rule decides. **A green corpus is not evidence about this rule.**
+
+🔴 **WHAT COVERS IT, ON BOTH SIDES, BECAUSE THE CORPUS CANNOT.** Both servers print
+`listening on <host>:<port> store=<root> …`, so both guards read the RESOLVED values out
+of a running process rather than out of the resolver — a unit test on `value_or` stays
+green while `main()` stops calling it, which is the seam nobody owns. Each boots its
+server with the three current names present-but-EMPTY and the deprecated spellings
+carrying the real values, and passes no `--store`/`--host`/`--port` flag, since a flag
+would override the thing under test.
+
+| arm | guard | label | watched RED at |
+|---|---|---|---|
+| oracle | `tests/test_env_aliases.py::TestABlankValueIsTreatedAsAbsentByTheORACLE` | **regression coverage** | `--store` restored to `os.environ.get(...)` → `store=` empty; `--port` restored to `int(os.environ.get(...))` → `ValueError: invalid literal for int() with base 10: ''`. Two separate mutants, each killed by this guard's own message |
+| Go | `cmd/cairn-server::TestABlankEnvironmentValueIsTreatedAsABSENT` | **INVARIANT GUARD** — Go never had the other behaviour, so it is not evidence that anything was fixed | `envOr` made to prefer a present-empty value → `listening on :<port> store=` ; `envInt` likewise → `CAIRN_PORT must be a number, got ""`. Two separate mutants, each killed by this guard's own message |
+
+Every fixture value is one no constant under test can equal — a temporary directory
+against `/data`, a kernel-assigned port asserted unequal to 8102, `127.0.0.1` against a
+`0.0.0.0` default — and each arm runs a SECOND world and asserts the printed values MOVE.
+A fixture whose only possible output is the default's own value cannot see a mutant that
+hardcodes the default, and would survive a fully green suite.
 
 ## Validating the instrument
 

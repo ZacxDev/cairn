@@ -5364,6 +5364,17 @@ def main(argv: list[str] | None = None) -> int:
         prog="subsystem-store-api",
         description="Read-only HTTP layer over the subsystem store. Phase 1.",
     )
+    # 🔴 `env_aliases.value_or`, NOT `os.environ.get` — AND THIS IS AN AUTHORISED CHANGE
+    # TO THE ORACLE. Decision: the operator, on PR #69. These four defaults used to read
+    # the environment directly, so an exported-EMPTY variable reached argparse as `""`
+    # (`--store`) or raised `ValueError` (`--port`); the resolver treats present-but-empty
+    # as ABSENT, which is what every Go call site and the Python client already did. It
+    # narrows the oracle toward the port rather than the other way round. 🔴 The
+    # conformance corpus cannot see this — it declares REQUESTS and the rule decides
+    # STARTUP — so the guards are `tests/test_env_aliases.py`'s
+    # `TestABlankValueIsTreatedAsAbsentByTheORACLE` and `cmd/cairn-server`'s
+    # `TestABlankEnvironmentValueIsTreatedAsABSENT`, and the declaration with its accepted
+    # cost is in `tests/conformance/README.md`.
     p.add_argument(
         "--store", default=env_aliases.value_or(os.environ, ENV_STORE_ROOT, DEFAULT_STORE)
     )

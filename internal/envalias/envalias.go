@@ -56,14 +56,24 @@
 // The reasoning lives at those three sites; this note exists so a reader who arrives at
 // rule 1 first does not "finish the rename" there.
 //
-// ⚠ ONE MEASURED BEHAVIOUR CHANGE, NAMED RATHER THAN LEFT TO BE FOUND. `Value` treats a
-// PRESENT BUT EMPTY value as absent. Every Go call site already did (`envOr`, `envInt`,
-// `netid.LimiterSettings`, `authz.LoadTokens` all test `!= ""`), and so did the Python
-// client's `load_config`. The oracle's `main()` did NOT: `os.environ.get("SUBSYSTEM_STORE_ROOT",
-// DEFAULT_STORE)` RETURNS `""` for an exported-empty variable, and `int(os.environ.get(
+// 🔴 ONE BEHAVIOUR CHANGE, AND IT IS AN AUTHORISED EXCEPTION TO "DO NOT CHANGE THE
+// ORACLE" RATHER THAN AN UNATTRIBUTED ONE. `Value` treats a PRESENT BUT EMPTY value as
+// absent. Every Go call site already did (`envOr`, `envInt`, `netid.LimiterSettings`,
+// `authz.LoadTokens` all test `!= ""`), and so did the Python client's `load_config`.
+// The oracle's `main()` did NOT: `os.environ.get("SUBSYSTEM_STORE_ROOT", DEFAULT_STORE)`
+// RETURNS `""` for an exported-empty variable, and `int(os.environ.get(
 // "SUBSYSTEM_STORE_PORT", …))` raised `ValueError` on one. Routing both through this rule
 // NARROWS the oracle toward what Go already did — it removes a divergence rather than
-// creating one — and no conformance row sends an empty value for either.
+// creating one.
+//
+// **Decision: the operator, on PR #69**, per the standing "per site, in writing" rule.
+// 🔴 AND NO CONFORMANCE ROW SENDS AN EMPTY VALUE, NOR CAN ONE — the corpus describes
+// REQUESTS and this rule decides STARTUP — so a green corpus is not evidence about it.
+// The declaration, the cost the operator accepted (a blank store root now takes a default
+// instead of failing, so a manifest bug that blanks it is quiet rather than loud), and
+// the two guards that stand in the corpus's place are in `tests/conformance/README.md`,
+// § *An AUTHORISED exception to "do not change the oracle" — a present-but-empty value
+// is ABSENT*. Do not widen or narrow this rule without moving that section with it.
 package envalias
 
 import (

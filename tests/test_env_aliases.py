@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -374,3 +375,136 @@ class TestTheClientHonoursBothNames:
         proc = _run(tmp_path, "recall", "--scope", "alpha-notes", CAIRN_CONFIG=str(config))
         assert "config incomplete" not in proc.stderr, proc.stderr
         assert "deprecated alias" not in proc.stderr, proc.stderr
+
+
+# --- the AUTHORISED P1 exception: present-but-empty is ABSENT ------------------
+#
+# Declared in `tests/conformance/README.md`, § *An AUTHORISED exception to "do not change
+# the oracle" — a present-but-empty value is ABSENT*. Read it before editing this class:
+# it carries the decision, the author of record, and what the corpus structurally cannot
+# see about this rule.
+
+
+SERVER_PY = REPO / "server" / "server.py"
+
+#: A free port, taken and given straight back.
+#:
+#: ⚠ THE SAME RACE `tests/conformance/oracle.py` AND `freePort` IN THE GO TESTS RUN, and
+#: for the same reason: the alternative is passing a listener into a server that would
+#: then not be the real `main`. It fails LOUDLY — the child refuses and this file prints
+#: its output — rather than hanging.
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class TestABlankValueIsTreatedAsAbsentByTheORACLE:
+    """🔴 REGRESSION COVERAGE FOR THE AUTHORISED EXCEPTION, RED ON THE PRE-CHANGE ORACLE.
+
+    The oracle used to read these two through `os.environ.get`, which RETURNS `""` for an
+    exported-empty variable: `--store` became the empty string, and
+    `int(os.environ.get(ENV_PORT, …))` raised `ValueError` on a blank port. Routing both
+    through `env_aliases.value_or` makes a present-but-empty value resolve as ABSENT, so
+    the deprecated spelling behind it is read instead. That is a change to the ORACLE and
+    it is authorised per site, in writing — see the declaration named above.
+
+    🔴 WHY IT IS OBSERVED ON THE STARTUP LINE RATHER THAN ON `value_or`. A unit test on
+    the resolver stays green while `main()` stops calling it — the seam nobody owns. Both
+    servers print `listening on <host>:<port> store=<root> …`, so this reads the resolved
+    values out of the running program, through the same text
+    `cmd/cairn-server`'s `TestABlankEnvironmentValueIsTreatedAsABSENT` reads. That arm is
+    an INVARIANT GUARD (Go never had the other behaviour); this one is the regression half.
+
+    🔴 THE FIXTURE CANNOT COINCIDE WITH ANY CONSTANT UNDER TEST. The store is a `tmp_path`
+    and never `DEFAULT_STORE` (`/data`), the port is kernel-assigned and asserted unequal
+    to `DEFAULT_PORT` (8102), and the host is `127.0.0.1` against a `0.0.0.0` default —
+    so a mutant that hardcoded any of the three defaults cannot survive. The second world
+    is the control that watches the values MOVE.
+    """
+
+    #: 43 characters is `MIN_TOKEN_CHARS`. Built rather than written out: a real-looking
+    #: 43-character literal in this repository is a leak-scanner finding whatever it is.
+    TOKEN = "c" * 43
+
+    def _start(self, tmp_path: Path, store: Path, port: int, label: str) -> str:
+        """Boot the oracle with the CURRENT names blank and the OLD ones carrying values.
+
+        No `--store`, `--host` or `--port` flag: each of those defaults is env-resolved,
+        so the startup line reports exactly what the resolver decided. A flag would
+        override the very thing under test.
+        """
+        store.mkdir(parents=True, exist_ok=True)
+        token_file = tmp_path / f"tokens-{label}"
+        token_file.write_text(self.TOKEN + "\n", encoding="utf-8")
+        token_file.chmod(0o600)
+        env = env_pin.sanitized_env(
+            CAIRN_TRUSTED_PROXIES="192.0.2.0/24",
+            # present, empty — the case under test
+            CAIRN_STORE_ROOT="",
+            CAIRN_LISTEN_HOST="",
+            CAIRN_PORT="",
+            # the deprecated spellings, which must therefore be what is read
+            SUBSYSTEM_STORE_ROOT=str(store),
+            SUBSYSTEM_STORE_HOST="127.0.0.1",
+            SUBSYSTEM_STORE_PORT=str(port),
+        )
+        log = tmp_path / f"oracle-{label}.log"
+        with log.open("wb") as handle:
+            proc = subprocess.Popen(
+                [sys.executable, str(SERVER_PY), "--token-file", str(token_file)],
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+            try:
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    text = log.read_text(encoding="utf-8", errors="replace")
+                    if "listening on" in text:
+                        return text
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(0.02)
+                # A blank read as PRESENT is exactly this: `--store ""` and, for the
+                # port, the `ValueError` the pre-change oracle raised. Neither reaches
+                # the startup line, so the failure names what it did not see and prints
+                # what the process said instead.
+                raise AssertionError(
+                    "the oracle never printed a `listening on` line with a blank "
+                    "CAIRN_STORE_ROOT/CAIRN_LISTEN_HOST/CAIRN_PORT and the deprecated "
+                    "spellings set — a present-but-empty value was NOT treated as "
+                    "absent. Process output:\n"
+                    + log.read_text(encoding="utf-8", errors="replace")
+                )
+            finally:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_a_blank_current_name_falls_through_to_the_deprecated_one(
+        self, tmp_path: Path
+    ) -> None:
+        store, port = tmp_path / "world-one", _free_port()
+        assert port != 8102, (
+            "the kernel handed out DEFAULT_PORT — this fixture must not be able to "
+            "coincide with the constant under test"
+        )
+        text = self._start(tmp_path, store, port, "one")
+        assert f"listening on 127.0.0.1:{port} store={store} " in text, text
+
+    def test_the_resolved_values_MOVE_with_the_environment(self, tmp_path: Path) -> None:
+        """🔴 THE CONTROL, WITHOUT WHICH THE CASE ABOVE PROVES NOTHING.
+
+        An implementation that ignored the environment and printed a compiled-in answer
+        satisfies a single-world assertion for every run. Two distinct worlds is what
+        makes the first one a measurement.
+        """
+        first, first_port = tmp_path / "world-a", _free_port()
+        second, second_port = tmp_path / "world-b", _free_port()
+        assert first != second and first_port != second_port, (first, second)
+        one = self._start(tmp_path, first, first_port, "a")
+        two = self._start(tmp_path, second, second_port, "b")
+        assert f"listening on 127.0.0.1:{first_port} store={first} " in one, one
+        assert f"listening on 127.0.0.1:{second_port} store={second} " in two, two
