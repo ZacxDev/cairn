@@ -45,6 +45,17 @@
 //     clients' stderr BYTE-FOR-BYTE, so "whatever order the lookups happened in" is not
 //     an option: the order has to be a property of the ledger, not of the call sequence.
 //
+// 🔴 ONE CONSEQUENCE OF RULE 1 THAT IS NOT OBVIOUS, AND IS WHY BOTH POD IMAGES STILL BAKE
+// THE OLD SPELLING. Rule 1 makes a NEW name beat an OLD one regardless of where each came
+// from — and a container image's `ENV` is a DEFAULT that is present whether or not the
+// manifest mentions it. So an image setting `CAIRN_STORE_ROOT` would outrank a Deployment
+// that explicitly sets `SUBSYSTEM_STORE_ROOT`: for those variables the old name would stop
+// working the day the image shipped, rather than at P8. `flake.nix`'s `serverEnv` and
+// `server/Dockerfile` therefore stay on `SUBSYSTEM_STORE_*`, and
+// `tests/test_flake_image_matches_dockerfile.py` refuses a current-spelling image default.
+// The reasoning lives at those three sites; this note exists so a reader who arrives at
+// rule 1 first does not "finish the rename" there.
+//
 // ⚠ ONE MEASURED BEHAVIOUR CHANGE, NAMED RATHER THAN LEFT TO BE FOUND. `Value` treats a
 // PRESENT BUT EMPTY value as absent. Every Go call site already did (`envOr`, `envInt`,
 // `netid.LimiterSettings`, `authz.LoadTokens` all test `!= ""`), and so did the Python
@@ -129,13 +140,20 @@ var news = func() map[string]string {
 	return m
 }()
 
-// Old is the deprecated spelling of `newName`, or "" if there is not one.
+// oldName is the deprecated spelling of `newName`, or "" if there is not one.
 //
 // It returns "" rather than panicking so that a caller passing a name that was never
 // renamed — `CAIRN_ROUTES`, `CAIRN_UI_PORT` — gets plain single-name behaviour from
-// `Value` instead of a crash. `TestEveryConvertedCallSiteNamesALedgerEntry` is what
-// catches a typo'd name, because a typo here would otherwise read as "no alias".
-func Old(newName string) string { return news[newName] }
+// `Value` instead of a crash.
+//
+// ⚠ UNEXPORTED BECAUSE NOTHING OUTSIDE THIS PACKAGE ASKS THE REVERSE QUESTION. Every
+// caller names the CURRENT spelling and lets `ValueFrom` find the alias; the reverse
+// direction is only ever needed in here (and in the test that pins the "never renamed"
+// case). An exported name in `internal/` reads as "a consumer relies on this" — a claim
+// this one could not support. `lib/env_aliases.py`'s `old_name` stays public: Python has
+// no unexport, and the cross-language gate pins the LEDGER, the anchor and the warning
+// text, not the function set, so the two spellings do not have to match here.
+func oldName(newName string) string { return news[newName] }
 
 // Value is the resolved value of `newName` over `env`: the new name if it is present and
 // non-blank, else the old name, else "".
@@ -175,24 +193,14 @@ func Resolving(get func(string) string) func(string) string {
 	return func(newName string) string { return ValueFrom(get, newName) }
 }
 
-// ValueOr is `Value` with a default for "neither is set".
-func ValueOr(env map[string]string, newName, fallback string) string {
-	if v := Value(env, newName); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// Lookup is `Value` plus "was it set at all", for a caller that must distinguish an
-// explicit empty string from an unset variable (`envInt`'s "not a number" refusal needs
-// to know which, or a blank `CAIRN_PORT` exits 78 instead of taking the default).
-func Lookup(env map[string]string, newName string) (string, bool) {
-	v := Value(env, newName)
-	return v, v != ""
-}
-
 // Environ is `os.Environ()` as a map, so the process environment can be fed to the same
 // pure functions a test feeds a literal map to.
+//
+// 🔴 EXPORTED BECAUSE IT IS THE ONLY COPY. `cmd/cairn-server` and `cmd/cairn-ui` each
+// carried their own `environ()` before this package existed; both now call this one, so
+// the `KEY=VALUE` split is written once. A `map` form is what `runCreateUser` and the
+// UI's config load want — they take an env map — and `OSDeprecations` needs the same
+// thing, which is why this is not folded into a getter.
 func Environ() map[string]string {
 	out := map[string]string{}
 	for _, entry := range os.Environ() {

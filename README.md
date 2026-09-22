@@ -207,11 +207,18 @@ root is `CAIRN_STORE_ROOT`.
 key there warns with a line that names *the file* rather than a `$VAR`, because that is
 where you have to go to change it.
 
-**The pod images already emit the new names.** `server/Dockerfile` and
-`packages.server-image`/`server-image-go` set `CAIRN_STORE_ROOT`, `CAIRN_PORT` and
-`CAIRN_TOKEN_FILE`. A Deployment that still sets the old names on top of them keeps
-working — that is what the alias is for — so the image and the manifest do not have to
-move in the same change.
+🔴 **The pod images deliberately still bake the OLD names, and that is the precedence
+rule protecting you rather than an unfinished rename.** `server/Dockerfile` and
+`packages.server-image`/`server-image-go` set `SUBSYSTEM_STORE_ROOT`,
+`SUBSYSTEM_STORE_PORT` and `SUBSYSTEM_STORE_TOKEN_FILE`. An image `ENV` is a *default*,
+and the new name wins — so an image that baked `CAIRN_STORE_ROOT` would outrank a
+Deployment that explicitly sets `SUBSYSTEM_STORE_ROOT`, and the pod would use the
+image's store root, port or token path instead of yours. Staying on the old spelling in
+the image is what keeps **either** spelling working in a container: set the new name and
+it wins over the image's default, set the old name and it replaces that default
+directly. So the image and the manifest do not have to move in the same change — in
+either order. The images go to `CAIRN_*` when deployment manifests name that spelling,
+or at P8, whichever comes first.
 
 **When the old names stop being read:** when the Python client (`packages.cairn`) is
 retired, which is this arc's P8 milestone. Not a date — there is no semver here to hang

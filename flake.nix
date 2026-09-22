@@ -47,13 +47,30 @@
       # state of a numeric-UID container. The value is never used by the server
       # (every call passes `--store`), but the import would fail before
       # anything could say so.
+      #
+      # 🔴 THE THREE STORE VARIABLES KEEP THEIR `SUBSYSTEM_STORE_*` SPELLING WHILE THE
+      # REST OF THE TREE IS `CAIRN_*`, AND THAT IS THE MECHANISM RATHER THAN AN OVERSIGHT.
+      # `internal/envalias` resolves NEW-NAME-WINS: an old name is read only when the new
+      # one is absent. An image `ENV` is a DEFAULT, so baking the new spelling here would
+      # make the image's own default outrank an explicit `env:` in a Deployment that still
+      # sets the old name — the container would silently ignore the operator's store root,
+      # port or token path and use the image's. That inverts the layering every other
+      # container knob obeys, and it would bite on the first repoint rather than at upgrade
+      # time, because a manifest that happens to set the SAME values is unchanged by luck.
+      # The pods read BOTH spellings, so nothing is lost by staying on the old one here.
+      #
+      # 🔴 WHAT RELEASES THIS: a deployment manifest that names the `CAIRN_*` spelling (the
+      # manifests live outside this repo), or P8, when the old names stop being read at all.
+      # Until one of those, "finishing the rename" here re-opens the shadowing described
+      # above. `tests/test_flake_image_matches_dockerfile.py` and
+      # `tests/test_flake_go_image_runtime_contract.py` pin these three names.
       serverEnv = {
         HOME = "/home/nonroot";
         PYTHONDONTWRITEBYTECODE = "1";
         PYTHONUNBUFFERED = "1";
-        CAIRN_STORE_ROOT = "/data";
-        CAIRN_PORT = "8102";
-        CAIRN_TOKEN_FILE = "/run/secrets/subsystem-store/token";
+        SUBSYSTEM_STORE_ROOT = "/data";
+        SUBSYSTEM_STORE_PORT = "8102";
+        SUBSYSTEM_STORE_TOKEN_FILE = "/run/secrets/subsystem-store/token";
       };
       serverUid = 65532;
       serverPort = 8102;
@@ -62,7 +79,7 @@
       # A SECOND LITERAL. There are now THREE builds of a pod and only ONE statement
       # of the contract: `serverEnv` above. Deriving the Go image's env from it means
       # a variable added there reaches BOTH pods and cannot be forgotten on one.
-      # A second attrset holding copies of the three `CAIRN_*` values would
+      # A second attrset holding copies of the three `SUBSYSTEM_STORE_*` values would
       # invert that — the drift would be silent and in the direction that matters, a
       # pod missing the env its Deployment already sets.
       #

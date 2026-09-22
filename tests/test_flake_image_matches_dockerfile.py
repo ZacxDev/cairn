@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "server" / "Dockerfile"
 FLAKE = ROOT / "flake.nix"
+
+# The alias ledger, for `test_no_image_default_uses_a_name_that_would_SHADOW_a_deployment`.
+# Read from `lib/` rather than restated here: a third copy of the name list is exactly the
+# drift the rest of this module exists to refuse.
+sys.path.insert(0, str(ROOT / "lib"))
+
+import env_aliases  # noqa: E402
 
 #: The ONLY `Env` expression `mkServerImage` may hand `buildLayeredImage`,
 #: whitespace-normalised.
@@ -46,7 +54,7 @@ FLAKE = ROOT / "flake.nix"
 #: everything that expression does afterwards reached the pod unread. `inherit (x) K;`
 #: and `${"K"} = "/wrong";` inside the operand carry no bare identifier before an `=`;
 #: `… ++ [ "K=/wrong" ]` appends to the resulting LIST and is not an operand at all; a
-#: mapper lambda can rewrite a value by key. Each shipped `CAIRN_STORE_ROOT=/wrong`
+#: mapper lambda can rewrite a value by key. Each shipped `SUBSYSTEM_STORE_ROOT=/wrong`
 #: to a pod that starts, health-checks and serves the wrong store — a duplicate name in
 #: the list resolves to the LAST entry — with both guard modules green. So this is the
 #: repo's stated remedy for a guard on WORDS: pin the whole normalised string. A
@@ -434,6 +442,50 @@ class TestTheTwoBuildsAgree:
         """
         assert flake_attrset(flake, "serverEnv") == dockerfile_env(dockerfile)
 
+    def test_no_image_default_uses_a_name_that_would_SHADOW_a_deployment(
+        self, dockerfile, flake
+    ):
+        """🔴 AN IMAGE DEFAULT MUST NOT OUTRANK AN EXPLICIT `env:` IN A DEPLOYMENT.
+
+        `lib/env_aliases` / `internal/envalias` resolve NEW-NAME-WINS: an old name is read
+        only when the new one is absent or blank. An image `ENV` is a DEFAULT, present in
+        every container whether or not the manifest mentions it. Put a NEW name in the
+        image and the layering inverts — the image's own default beats a Deployment that
+        explicitly sets the OLD one, and the pod silently uses the image's store root,
+        port or token path instead of the operator's. That is not a deprecation window;
+        for those variables the old name stops working the day the image ships.
+
+        🔴 REGRESSION COVERAGE, NOT AN INVARIANT GUARD. The tree violated this: at
+        `0c23e0f` both `serverEnv` and `server/Dockerfile` baked `CAIRN_STORE_ROOT`,
+        `CAIRN_PORT` and `CAIRN_TOKEN_FILE` while a live Deployment set the old spellings
+        — unchanged only by luck, because it happened to set the same values. Matrix:
+        RED at `0c23e0f`, green here.
+
+        ⚠ IT READS BOTH BUILDS, AND THE GO IMAGE IS COVERED BY DERIVATION. `serverEnv` is
+        the single nix-side statement of the contract and `mkGoServerImage` subtracts from
+        it (`tests/test_flake_go_image_runtime_contract.py`), so a new name cannot enter
+        the Go pod without entering `serverEnv` first.
+
+        The rule is stated over the LEDGER rather than over three literal names, so a
+        variable renamed later is covered without anybody remembering to edit this.
+        """
+        new_names = {new for new, _old in env_aliases.LEDGER}
+        assert new_names, "the ledger is empty — this guard would pass over nothing"
+        for where, env in (
+            ("flake.nix's serverEnv", flake_attrset(flake, "serverEnv")),
+            ("server/Dockerfile's ENV", dockerfile_env(dockerfile)),
+        ):
+            assert env, f"parsed no environment out of {where}"
+            offenders = sorted(set(env) & new_names)
+            assert not offenders, (
+                f"{where} bakes {offenders} — a CURRENT-spelling default. The new name "
+                f"wins, so this image default outranks a Deployment that explicitly sets "
+                f"the deprecated spelling, and the pod ignores the operator's value. Keep "
+                f"the image on the old names until a deployment manifest names the new "
+                f"ones, or until P8 retires the old ones entirely; both files carry the "
+                f"note."
+            )
+
     def test_the_uid_agrees(self, dockerfile, flake):
         user = dockerfile_user(dockerfile)
         uid = flake_int(flake, "serverUid")
@@ -529,15 +581,15 @@ class TestTheTwoBuildsAgree:
     def test_the_exposed_port_agrees_with_the_env_the_server_actually_reads(
         self, dockerfile, flake
     ):
-        """🔴 EXPOSE IS DOCUMENTATION; `CAIRN_PORT` IS THE BINDING.
+        """🔴 EXPOSE IS DOCUMENTATION; `SUBSYSTEM_STORE_PORT` IS THE BINDING.
 
         `server.py` takes its port from the env var. `EXPOSE` only annotates
         the image. They can disagree, and if they do the pod listens somewhere
         the manifest does not name — so the two are pinned together here rather
         than each being pinned only to its own side of the other file.
         """
-        assert dockerfile_expose(dockerfile) == dockerfile_env(dockerfile)["CAIRN_PORT"]
-        assert flake_int(flake, "serverPort") == flake_attrset(flake, "serverEnv")["CAIRN_PORT"]
+        assert dockerfile_expose(dockerfile) == dockerfile_env(dockerfile)["SUBSYSTEM_STORE_PORT"]
+        assert flake_int(flake, "serverPort") == flake_attrset(flake, "serverEnv")["SUBSYSTEM_STORE_PORT"]
 
     def test_the_entrypoint_script_agrees(self, dockerfile, flake):
         assert dockerfile_cmd_script(dockerfile) == flake_cmd_script(flake)
@@ -686,7 +738,7 @@ class TestTheTwoBuildsAgree:
         """ALL `EXPOSE` lines apply, so checking one of them is not enough."""
         exposed = dockerfile_exposes(dockerfile)
         assert exposed, "no EXPOSE parsed"
-        port = flake_attrset(flake, "serverEnv")["CAIRN_PORT"]
+        port = flake_attrset(flake, "serverEnv")["SUBSYSTEM_STORE_PORT"]
         assert set(exposed) == {port}, (
             f"EXPOSE declares {sorted(set(exposed))} but the server binds {port} — "
             "an exposed port nothing listens on reads as a working route"
