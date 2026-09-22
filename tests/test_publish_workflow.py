@@ -269,11 +269,6 @@ def _dropped(block: str) -> str:
     `if` branch exit non-zero" is a question about STATEMENTS, which only survive
     while the lines do. Sharing this half keeps both answers derived from the same
     view of the file.
-
-    ⚠ IT WAS SPLIT OUT OF A `normalise_shell` THAT NO LONGER EXISTS. That function
-    was left behind by the split with no caller, and an audit round filed it; it is
-    deleted, and this sentence names the reason for the split rather than the name
-    of the thing it was split from.
     """
     kept = [l for l in block.splitlines() if not l.lstrip().startswith("#")]
     return re.sub(r"\\\n\s*", " ", "\n".join(kept))
@@ -1416,9 +1411,7 @@ def test_no_control_step_can_REFUSE_and_exit_ZERO(text: str) -> None:
             "the safe direction and a plain trailing `exit 0` after the success "
             "message is caught too. That is not a false positive to argue with — "
             "DELETE the trailing `exit 0` and let the step fall off the end, which "
-            "is what every other control step here does. ⚠ The message used to name "
-            "only the hazard branch, which sent a reader hunting a branch that did "
-            "not exist in their step."
+            "is what every other control step here does."
         )
 
     # …and the Go control's empty-ledger refusal specifically, which is the

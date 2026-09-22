@@ -438,9 +438,9 @@ func TestAMissingTokenIsAProblemAboutTheCONFIGAndNotAnOutage(t *testing.T) {
 // is here rather than in the consumer that noticed it.
 //
 // 🔴 THE TWO ARE A RELATIONSHIP, AND A GUARD ON EITHER SIDE ALONE IS BLIND TO THE DIRECTION
-// THAT MATTERS. `Render` writes a row's glyph from `markers`; every consumer that reads a
-// rendered report back — `internal/client`'s `doctorRow` is the one today — strips a glyph
-// from `Markers()` and then validates the state against `States`. So a state added to
+// THAT MATTERS. `Render` writes a row's glyph from `markers`; `ParseRow` reads a rendered
+// report back by stripping a glyph from `markers` and then validating the state against
+// `States`. So a state added to
 // `markers` and NOT to `States` renders rows that the reader strips correctly and then
 // DISCARDS, and a state added to `States` and not to `markers` renders with no glyph at all.
 // Both are silent: the row simply stops being counted, and a guard that walks the report
@@ -470,5 +470,38 @@ func TestTheMarkerTableAndTheStateListNameTheSameSet(t *testing.T) {
 	// agreeing with each other.
 	if len(marked) == 0 {
 		t.Fatal("the marker table is EMPTY, so the equality above holds vacuously")
+	}
+}
+
+// TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne covers the state `internal/client`'s
+// routing fixture structurally cannot produce.
+//
+// 🔴 `PROBLEM`'s MARKER IS `🔴`, WHICH IS ONE RUNE WHERE THE OTHER THREE ARE TWO — and that
+// asymmetry is the entire reason `ParseRow` strips this table instead of a fixed offset. The
+// integration fixture over in `internal/client` renders `OK`, `UNMEASURED` and
+// `NOT-OBSERVABLE` and never `PROBLEM`, so until this existed the one state that breaks the
+// naive spelling was the one nothing exercised. Reaching `PROBLEM` there would mean breaking
+// the store that test exists to read cleanly, which is why the fourth state is covered HERE
+// and by a unit case rather than by widening that fixture.
+//
+// ⚠ IT DRIVES `States` AND `markers` RATHER THAN A LIST WRITTEN HERE, so a state added to the
+// renderer is covered on the day it is added rather than on the day somebody remembers this
+// file. It carries NO length check of its own: `markers` ↔ `States` is asserted as a SET
+// directly above, and the loop below already errors on a state with no marker — a `len`
+// comparison here would fire FIRST, with the wrong diagnosis, and make that arm unreachable.
+func TestParseRowReadsEveryMarkerIncludingTheSingleRuneOne(t *testing.T) {
+	for _, state := range States {
+		marker, known := markers[state]
+		if !known {
+			t.Errorf("no marker for state %q", state)
+			continue
+		}
+		line := marker + "alpha-notes/pod-reachable  " + state + " some detail"
+		name, got := ParseRow(line)
+		if name != "alpha-notes/pod-reachable" || got != state {
+			t.Errorf("ParseRow(%q) = (%q, %q), want (%q, %q). A marker this cannot strip makes the "+
+				"row invisible to every guard that walks a rendered report.",
+				line, name, got, "alpha-notes/pod-reachable", state)
+		}
 	}
 }

@@ -1016,8 +1016,10 @@
         #
         # 🔴 AND IT IS A PAIR, NOT A ZERO. A check that asserted only "the command exited 0"
         # would pass for a binary that printed nothing. The exact set is pinned by hand here
-        # — the same TEN verbs `tests/test_capability_ledger.py` discovers from the Python
-        # parser, which is what makes the two implementations comparable at all.
+        # — the same verbs `tests/test_capability_ledger.py` discovers from the Python parser,
+        # which is what makes the two implementations comparable at all. 🔴 THE SET IS THE
+        # HEREDOC BELOW AND THE COUNT IS NOT WRITTEN DOWN ANYWHERE IN THIS COMMENT: a number
+        # here would be a hand list one word long, which is the thing the heredoc replaced.
         #
         # ⚠ WHAT THIS SANDBOX CANNOT HAVE: no store, no token, no network and no HOME with a
         # cache root, so it exercises the LEDGERS and nothing about reading or writing. The

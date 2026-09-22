@@ -224,9 +224,17 @@ def test_the_go_client_declares_EXACTLY_the_pythons_verb_set(go_client):
     # make. Same defect, same shape, as the `go` job's `ok` floor — which was `-lt 16` against
     # seventeen packages for the same reason.
     #
-    # ⚠ MOVE THIS NUMBER WITH THE VERB SET, IN THE SAME COMMIT, and move the four prose sites with
-    # it: `flake.nix`, `tests/test_parity_harness.py` (twice) and `AGENTS.md` all stated NINE while
-    # the answer was ten. Nothing reddened, because they are comments and this was off by one.
+    # 🔴 THIS IS NOW THE ONLY PLACE THE COUNT IS WRITTEN DOWN, AND THAT IS THE FIX RATHER THAN AN
+    # ACCIDENT. `flake.nix`, `tests/test_parity_harness.py` (twice) and `AGENTS.md` carried it in
+    # prose, all four said NINE while the answer was ten, and none of them reddened because a
+    # comment cannot. They now say "every verb" and name no count at all — the same ruling this
+    # repo already applied to the mutant-count docstring: a number that has been wrong at every
+    # reading is not worth a fourth correction, and the instruction to count it yourself is the
+    # part that stays true.
+    #
+    # ⚠ SO MOVE THIS NUMBER WITH THE VERB SET, IN THE SAME COMMIT. It is deliberately NOT derived
+    # from either side's discovery: this is the positive control ON that discovery, and a floor
+    # computed from the thing under test cannot fail when the thing under test is truncated.
     assert len(go_verbs) >= 10, f"discovered only {sorted(go_verbs)}"
 
 

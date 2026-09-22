@@ -83,8 +83,9 @@ var markers = map[string]string{
 	OK: "  ", Problem: "🔴", Unmeasured: "⚠ ", NotObservable: "· ",
 }
 
-// Markers is that table, copied, so a CONSUMER that has to find a rendered row's NAME column
-// strips the glyph this renderer actually wrote instead of spelling a guess at it.
+// ParseRow is the INVERSE of `Render`: it splits one rendered line into its NAME and STATE
+// columns, and returns `("", "")` for a line that is not a check row — a heading, a legend row,
+// the verdict, a blank.
 //
 // 🔴 THE GLYPHS ARE NOT ALL THE SAME WIDTH, WHICH IS WHY A FIXED OFFSET AND A `TrimSpace` ARE
 // BOTH WRONG. `OK` is two SPACES, `Problem` is a single astral rune, and the other two are a
@@ -92,16 +93,37 @@ var markers = map[string]string{
 // and `strings.TrimSpace(line)` reaches the name on `OK` rows ONLY, silently skipping every
 // other state. A guard written that way is true of whichever states its fixture happens to
 // produce. Measured: `internal/client`'s one-instance `doctor` fixture renders 2 OK rows and 5
-// non-OK ones, and the `TrimSpace` spelling inspected the 2.
+// non-OK ones, and the `TrimSpace` spelling inspected the 2. The state is checked against
+// `States` so a footer or legend line cannot be mistaken for a row.
 //
-// ⚠ IT IS EXPORTED FOR TESTS AND IS STILL THE ONE TABLE — `Render` reads `markers` directly, so
-// there is no second copy to disagree with.
-func Markers() map[string]string {
-	out := make(map[string]string, len(markers))
-	for state, glyph := range markers {
-		out[state] = glyph
+// 🔴 THIS IS A FUNCTION RATHER THAN AN EXPORTED `markers` TABLE, AND THE DIFFERENCE IS THE ONE
+// THE DEFECT ENTRY NAMED. Handing a consumer the table exports a RENDERING DETAIL and invites
+// every consumer to write its own stripping loop — which is the same predicate at N sites,
+// wrong at N−1 of them in the same direction. `markers` is now unexported and `Render` and this
+// function are its only readers, so there is nothing for a second copy to disagree with.
+//
+// ⚠ IT HAS NO PRODUCTION CALLER, AND SAYING SO IS BETTER THAN LEAVING IT TO BE FOUND. Its
+// callers are tests, in this package and in `internal/client` — the assertion they make is
+// genuinely about the compiled client's STDOUT, so the parsing has to live somewhere. The
+// choice is where, not whether, and beside the renderer it inverts is the only place where a
+// glyph change cannot silently outrun it.
+func ParseRow(line string) (name, state string) {
+	for _, marker := range markers {
+		rest, found := strings.CutPrefix(line, marker)
+		if !found {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) < 2 {
+			continue
+		}
+		for _, known := range States {
+			if fields[1] == known {
+				return fields[0], known
+			}
+		}
 	}
-	return out
+	return "", ""
 }
 
 // Render is the report, plus the exit legend, plus a one-line verdict.
