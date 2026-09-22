@@ -257,7 +257,7 @@ local one.
 The client is configured by `~/.config/subsystem-store/env` —
 `CAIRN_URL` and `CAIRN_TOKEN`, environment variables of the same name winning
 (and the old `SUBSYSTEM_STORE_*` spellings still accepted in both places, see
-[*The environment variables are now `CAIRN_*`*](#the-environment-variables-are-now-cairn_)) —
+the section *The environment variables are now `CAIRN_*`* above) —
 and that instance is called `personal`. A second instance is
 an **additive** file at `~/.config/subsystem-store/instances/<alias>.env` with its
 own cache root (`~/.cache/subsystem-store-<alias>`) and its own sync stamp; the

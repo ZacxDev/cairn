@@ -291,6 +291,13 @@ class TestTheConsumerSetIsPinned:
         "tests/parity/harness.py",
         "tests/test_cairn_cli.py",
         "tests/test_cairn_doctor.py",
+        # ⚠ ADDED BY THE `SUBSYSTEM_STORE_*` -> `CAIRN_*` RENAME, and it is the
+        # ledger working rather than a rubber stamp: this test went RED on the
+        # new file's first full run. It drives the client end-to-end over
+        # deliberately-deprecated names, so it needs exactly the hermetic
+        # environment `env_pin` defines — a `dict(os.environ)` there would let
+        # the operator's own `CAIRN_URL` decide which store the run reached.
+        "tests/test_env_aliases.py",
         "tests/test_cairn_instances.py",
         "tests/test_cairn_write.py",
         "tests/unchanged_output_capture.py",
