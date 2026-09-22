@@ -78,8 +78,8 @@ bucket, a git repo or an NFS mount:
 # Each agent host: point at the pod and its own token.
 mkdir -p ~/.config/subsystem-store
 cat > ~/.config/subsystem-store/env <<'EOF'
-SUBSYSTEM_STORE_URL=https://store.example.invalid
-SUBSYSTEM_STORE_TOKEN=<this agent's token>
+CAIRN_URL=https://store.example.invalid
+CAIRN_TOKEN=<this agent's token>
 EOF
 
 # Agent A records a finding, attributed to its own session.
@@ -173,6 +173,51 @@ residual 7, and nowhere else on purpose. [`CHANGELOG.md`](CHANGELOG.md) indexes 
 and every later contract change by PR and sha, so a consumer can tell whether one sits
 between the revision they are pinned to and the one they are moving to.
 
+### 🔴 The environment variables are now `CAIRN_*`
+
+Every `SUBSYSTEM_STORE_*` variable has a `CAIRN_*` name. **Both work.** The new name
+wins; the old one is read only when the new one is unset or blank; and an old name that
+is *present* — including when the new one shadows it — prints one line per process on
+stderr naming its replacement. Nothing breaks on the day you upgrade, and nothing
+silently half-migrates.
+
+| set this | instead of | what it is |
+|---|---|---|
+| `CAIRN_URL` | `SUBSYSTEM_STORE_URL` | client: the pod's base URL |
+| `CAIRN_TOKEN` | `SUBSYSTEM_STORE_TOKEN` | client: the bearer token · pod: the token-SET fallback when no token file is readable |
+| `CAIRN_CONFIG` | `SUBSYSTEM_STORE_CONFIG` | client: where the config file lives |
+| `CAIRN_TOKEN_FILE` | `SUBSYSTEM_STORE_TOKEN_FILE` | pod and `cairn-ui`: the token file |
+| **`CAIRN_STORE_ROOT`** | `SUBSYSTEM_STORE_ROOT` | pod and `cairn-ui`: the store root |
+| **`CAIRN_LISTEN_HOST`** | `SUBSYSTEM_STORE_HOST` | pod: the listen address |
+| `CAIRN_PORT` | `SUBSYSTEM_STORE_PORT` | pod: the listen port |
+| `CAIRN_TRUSTED_PROXIES` | `SUBSYSTEM_STORE_TRUSTED_PROXIES` | pod: the peer allowlist that makes `CF-Connecting-IP` readable |
+| `CAIRN_MAX_FAILURES` | `SUBSYSTEM_STORE_MAX_FAILURES` | pod: failed auths before a lockout |
+| `CAIRN_FAILURE_WINDOW_S` | `SUBSYSTEM_STORE_FAILURE_WINDOW_S` | pod: the window they must fall inside |
+| `CAIRN_LOCKOUT_S` | `SUBSYSTEM_STORE_LOCKOUT_S` | pod: the lockout duration |
+
+⚠ **Two rows are not the mechanical prefix swap, and copying the pattern instead of the
+table will break a pod.** `CAIRN_HOST` was already taken — it is the human-readable
+machine *label* that appears in rendered output — so the pod's listen address is
+`CAIRN_LISTEN_HOST`. And `CAIRN_ROOT` would sit beside the client's `CAIRN_CACHE_ROOT`
+and `CAIRN_MIRROR_ROOT` and read as a third member of that family, so the pod's store
+root is `CAIRN_STORE_ROOT`.
+
+**The config file's KEYS count too.** `~/.config/subsystem-store/env` and
+`instances/<alias>.env` accept either spelling with the same precedence, and a deprecated
+key there warns with a line that names *the file* rather than a `$VAR`, because that is
+where you have to go to change it.
+
+**The pod images already emit the new names.** `server/Dockerfile` and
+`packages.server-image`/`server-image-go` set `CAIRN_STORE_ROOT`, `CAIRN_PORT` and
+`CAIRN_TOKEN_FILE`. A Deployment that still sets the old names on top of them keeps
+working — that is what the alias is for — so the image and the manifest do not have to
+move in the same change.
+
+**When the old names stop being read:** when the Python client (`packages.cairn`) is
+retired, which is this arc's P8 milestone. Not a date — there is no semver here to hang
+one on (`flake.nix` sets `version = self.shortRev`), and a milestone is something you can
+check.
+
 ## The client — `cairn`
 
 | you want | run |
@@ -210,8 +255,10 @@ local one.
 ### One instance, or several
 
 The client is configured by `~/.config/subsystem-store/env` —
-`SUBSYSTEM_STORE_URL` and `SUBSYSTEM_STORE_TOKEN`, environment variables of the
-same name winning — and that instance is called `personal`. A second instance is
+`CAIRN_URL` and `CAIRN_TOKEN`, environment variables of the same name winning
+(and the old `SUBSYSTEM_STORE_*` spellings still accepted in both places, see
+[*The environment variables are now `CAIRN_*`*](#the-environment-variables-are-now-cairn_)) —
+and that instance is called `personal`. A second instance is
 an **additive** file at `~/.config/subsystem-store/instances/<alias>.env` with its
 own cache root (`~/.cache/subsystem-store-<alias>`) and its own sync stamp; the
 default instance's cache root does not move. Which instance a scope belongs to is
@@ -270,12 +317,12 @@ nix build github:ZacxDev/cairn#cairn-ui
 `-token-file` defaults to the pod's secret mount
 (`/run/secrets/subsystem-store/token`), so on a machine without one the binary
 exits **78** and serves nothing. Three ways to supply it, all measured:
-`-token-file <path>`; `SUBSYSTEM_STORE_TOKEN_FILE=<path>` with no flag; or
-`-token-file=` (explicitly empty) plus `SUBSYSTEM_STORE_TOKEN=<row>`, which is the
+`-token-file <path>`; `CAIRN_TOKEN_FILE=<path>` with no flag; or
+`-token-file=` (explicitly empty) plus `CAIRN_TOKEN=<row>`, which is the
 env fallback the binary's own refusal names. Single-dash flags: this uses Go's
 stdlib `flag`, not the client's `--long` style. `-h` lists four — `-store`
-(`SUBSYSTEM_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
-`-token-file` (`SUBSYSTEM_STORE_TOKEN_FILE`) — and every default is env-resolved,
+(`CAIRN_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
+`-token-file` (`CAIRN_TOKEN_FILE`) — and every default is env-resolved,
 so what `-h` prints depends on your environment. It reads the store **from disk**
 rather than over HTTP, and authenticates against the same token file as the pod.
 
@@ -366,6 +413,8 @@ commit. The full rules agents work under live in [`AGENTS.md`](AGENTS.md).
 
 ## Naming
 
-The project is **cairn**. Some identifiers still read `subsystem_store` /
-`SUBSYSTEM_STORE_*` — accepted aliases, kept so existing deployments don't
-need a coordinated cutover. New names use `cairn` / `CAIRN_*`.
+The project is **cairn**. Identifiers that are not environment variables still read
+`subsystem_store` — the `lib/` module names, `~/.config/subsystem-store/`,
+`/run/secrets/subsystem-store/`, the `subsystem-recall` CLI alias. Those are accepted
+aliases, kept so existing deployments don't need a coordinated cutover. The
+environment variables have been renamed; see the migration note below.
