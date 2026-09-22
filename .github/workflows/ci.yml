@@ -178,20 +178,51 @@ jobs:
           # SEE a planted hazard, and an empty file does not read as agreement.
           #
           # Measured as the comment above requires — names on the base ref and on HEAD,
-          # one collect-only run each: base 1994 at the merge-base `080bb2d`, head 2034,
+          # one collect-only run each: base 1997 at the merge-base `c5df961`, head 2037,
           # 55 added, 15 removed.
           #
+          # ⚠ RE-TAKEN, BECAUSE THE MERGE-BASE MOVED. This line read "base 1994 at the
+          # merge-base `080bb2d`, head 2034" — true when it was written and stale the
+          # moment #70 merged and this branch merged `main` back in. `080bb2d` is no
+          # longer the merge-base; `c5df961` is. Measured across that move: 1994 -> 1997,
+          # +3 added and 0 removed, the three being
+          # `test_cairn_cli.py::TestInterpretersWithoutTarExtractionFilters`. The same +3
+          # rode the merge into HEAD, 2034 -> 2037, which is why the 55/15 split below is
+          # unchanged — a measured coincidence, not a line left alone.
+          #
           # 🔴 "15 REMOVED" IS THE NUMBER THIS COMMENT EXISTS TO MAKE SOMEBODY EXPLAIN, SO
-          # HERE IS THE EXPLANATION, AND IT IS NOT "TESTS WERE DELETED". Ten of the
-          # fifteen are `TestNonFiniteLimiterSettings` PARAMETRISE IDS that changed
-          # spelling with the rename — `[SUBSYSTEM_STORE_LOCKOUT_S-nan]` became
-          # `[CAIRN_LOCKOUT_S-nan]`; the class collects 11 cases at both ends. The other
-          # five are guards this branch renamed or replaced when both pod images stopped
-          # setting the three store variables: two of them asserted the image `ENV`
-          # CONTAINS those names, which is now false by design, and the rest were re-aimed
-          # at the code defaults. A name diff cannot tell a rename from a deletion — so
-          # the rule is that whoever moves this line reads the removed set and says which
-          # each one is, rather than quoting the count.
+          # HERE IS THE EXPLANATION, RE-DERIVED AGAINST `c5df961` RATHER THAN CARRIED
+          # FORWARD, AND IT IS NOT "TESTS WERE DELETED".
+          #
+          # TEN are `TestNonFiniteLimiterSettings` PARAMETRISE IDS that changed spelling
+          # with the rename — `[SUBSYSTEM_STORE_LOCKOUT_S-nan]` became
+          # `[CAIRN_LOCKOUT_S-nan]`, two variables × five non-finite values; the class
+          # collects 11 cases at both ends.
+          #
+          # THREE are guards RENAMED with the assertion re-aimed, one new name each:
+          #   `…go_image_runtime_contract.py::test_the_computed_go_env_is_not_empty`
+          #     -> `…::test_the_computed_go_env_parses_and_is_now_LEGITIMATELY_empty`
+          #   `…go_image_runtime_contract.py::test_the_exposed_port_derives_from_serverPort_and_matches_the_env`
+          #     -> `…::test_the_exposed_port_derives_from_serverPort_and_matches_what_the_server_binds`
+          #   `…image_matches_dockerfile.py::test_the_exposed_port_agrees_with_the_env_the_server_actually_reads`
+          #     -> `…::test_the_exposed_port_agrees_with_the_port_the_server_actually_binds`
+          # Each lost its operand when the images stopped setting the three store
+          # variables, so each now reads the CODE default instead of the image `ENV`.
+          #
+          # TWO are DELETED outright, and both had to be:
+          #   `…::test_the_go_env_carries_the_deployment_contract_with_the_python_values`
+          #     asserted the Go pod's env CONTAINS the three `SUBSYSTEM_STORE_*` names,
+          #     which is now false by design — it would fail on a correct tree.
+          #   `…::test_the_removal_list_drops_NOTHING_the_deployment_names`
+          #     asserted `serverEnvPythonOnly` omits them; the names are not in
+          #     `serverEnv` at all any more, so it could never fail again — an invariant
+          #     guard reading as coverage.
+          # `test_NEITHER_image_sets_a_variable_the_resolver_would_read` is what stands in
+          # their place, over BOTH columns of the rename ledger.
+          #
+          # A name diff cannot tell a rename from a deletion — so the rule is that whoever
+          # moves this line reads the removed set and says which each one is, rather than
+          # quoting the count.
           #
           # ⚠ THAT LINE READ "base 1972 … 20 added" AND WAS WRONG, IN THE ONE SENTENCE
           # WHOSE ENTIRE PURPOSE IS A BASE-VS-HEAD COMPARISON. 1972 was carried over
@@ -205,9 +236,9 @@ jobs:
           # ordinary way: every PR that adds tests and does not move this line widens
           # the gap, and nothing red. Re-derived from `m - min(50, max(1, m/20))`.
           #
-          # 1984 = 2034 - min(50, max(1, 2034/20)), the formula above, for the m measured
+          # 1987 = 2037 - min(50, max(1, 2037/20)), the formula above, for the m measured
           # on this branch.
-          FLOOR = 1984
+          FLOOR = 1987
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
