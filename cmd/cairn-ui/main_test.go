@@ -359,8 +359,19 @@ func TestAWhitespaceControlJournalLineIsRefusedRatherThanReadAsUnset(t *testing.
 // was refused at 78 by `openAuthority`'s `Stat` the whole time; only the environment path
 // silently dropped it. `README.md` tells the reader "every default is env-resolved", which
 // is the sentence that makes the two paths look interchangeable. So this asserts they
-// refuse the same set — and it goes red if a later change makes the ENV path lenient again
-// OR makes the FLAG path lenient, which no single-sided test would.
+// refuse the same set OVER THE VALUES BELOW — and it goes red if a later change makes the
+// ENV path lenient again OR makes the FLAG path lenient, which no single-sided test would.
+//
+// 🔴 "THE SAME SET" IS THE LOOP'S SET AND NOT EVERY STRING, AND THE DIFFERENCE IS A
+// MEASURED RESIDUAL RATHER THAN A CAVEAT. The two sides refuse for DIFFERENT REASONS: the
+// environment side by the blank policy, the flag side by `openAuthority`'s `stat`, which
+// asks the filesystem rather than the spelling. So a value that reduces to nothing AND
+// NAMES AN EXISTING FILE parts them — measured on the built binary with a live-credential
+// journal whose filename is three spaces: `-control-journal '   '` came up
+// `sharing writable (control journal    )` while `CAIRN_UI_CONTROL_JOURNAL='   '` exited
+// 78. No value in the loop below names a file, which is why it is green and honest at once.
+// The residual is left open on purpose — the flag is the LENIENT side, so the direction is
+// safe, and `README.md` carries the ruling.
 //
 // ⚠ IT IS AN AGREEMENT TEST AND AGREEMENT IS SATISFIED BY TWO LENIENT SIDES, SO IT IS HALF
 // A GUARD ON ITS OWN. What pins the ABSOLUTE answer is the case above, which requires the
@@ -441,7 +452,20 @@ const reexecEnv = "CAIRN_UI_TEST_REEXEC_AS_MAIN"
 // observable is a process exit. So one case re-execs this binary as `cairn-ui`.
 func TestMain(m *testing.M) {
 	if os.Getenv(reexecEnv) == "1" {
-		// `testing.Init` has not run, so `flag.CommandLine` holds only `main`'s flags.
+		// ⚠ `flag.CommandLine` IS **NOT** CLEAN HERE, AND THE COMMENT THAT SAID IT WAS —
+		// "`testing.Init` has not run, so it holds only `main`'s flags" — WAS MEASURED
+		// FALSE. `testing.MainStart` calls `Init()` before it invokes this function, so the
+		// `-test.*` flags are already registered when `main()` adds its own: the child's
+		// `-h` printed **41** flags, `main`'s 7 plus 34 `-test.*` (go1.26.7; that 34 is a
+		// property of the toolchain, not of this file, so do not pin it).
+		//
+		// It is harmless TODAY for one reason only: no name `main` registers is also a
+		// registered `-test.*` name, so nothing collides and `flag.Parse` sees the arguments
+		// the case below passes. What it costs is that the child's usage output is not the
+		// real binary's, and that a `main` flag whose name EXACTLY matched one of them would
+		// panic with `flag redefined` rather than fail a comparison. Said here because the
+		// old sentence told a future editor the flag set was clean, which would make either
+		// surprise read as a defect somewhere else.
 		main()
 		return
 	}

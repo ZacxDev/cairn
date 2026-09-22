@@ -391,8 +391,25 @@ surface would come up on the token-file projection, which confers `admin` on nob
 every scope page answers 404 and no share can be recorded while `/healthz` still answers
 200. That is the same ruling the pod makes for its own `CAIRN_CONTROL_JOURNAL`. The **flag**
 path refuses the same value for a different reason — `-control-journal '   '` has always
-failed its `stat` — so the two arrival paths agree, which they did not between
-`1659663` and `68cf955`. The other six variables above are resolved by
+failed its `stat` — so the two arrival paths agree for every value that does **not name an
+existing file**, which they did not between `1659663` and `68cf955`.
+
+⚠ **THEY DO NOT AGREE ON A VALUE THAT DOES, AND THE FLAG IS THE LENIENT SIDE — MEASURED,
+NOT INFERRED.** With a control journal in the working directory whose filename is literally
+three spaces, `-control-journal '   '` **serves**, announcing
+`sharing writable (control journal    )`, while `CAIRN_UI_CONTROL_JOURNAL='   '` exits
+**78** naming the variable. The flag never meets the blank policy at all — it meets
+`openAuthority`'s `stat`, which is a question about the filesystem and not about the
+spelling — so "the two paths refuse the same set" is true of every value anyone would
+type and false in general. **It is left open, and the reason is a judgement rather than an
+argument from the mechanism**: the fix is available and obvious — run the same blank policy
+over the flag's value too — and it was not taken because the direction is safe (the flag is
+the LENIENT side, so nothing is refused that should be served), because naming a file with
+nothing but whitespace is not a thing an operator does, and because a check on the flag
+would refuse a path the filesystem resolves. Nothing gates it; the agreement test's own
+docstring says which values it covers.
+
+The other six variables above are resolved by
 `internal/envalias`, which reads a whitespace-only value as **absent** and silently takes
 the code default; `tests/conformance/README.md` measures what each one does with one.
 
