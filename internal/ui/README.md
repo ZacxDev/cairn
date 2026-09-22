@@ -845,6 +845,15 @@ share can be recorded; without it the authority is the token-file projection and
 flag **switches** the authority rather than adding one — two authorities would be two answers to
 "who may see what".
 
+🔴 **BECAUSE IT SWITCHES THE AUTHORITY, `CAIRN_UI_CONTROL_JOURNAL` IS THE ONE VARIABLE THIS BINARY
+READS RAW RATHER THAN THROUGH `internal/envalias`.** `envalias` reads a whitespace-only value as
+ABSENT, which for a listen address is a default and for this name is a silently different
+authority — the token-file projection, which confers `admin` on nobody. `cmd/cairn-ui`'s
+`controlJournalDefault` refuses it instead, the ruling `cmd/cairn-server`'s `controlJournalPath`
+already makes for the pod. Numbers, the two-binary measurement and what the other four `CAIRN_UI_*`
+names do with whitespace: `tests/conformance/README.md`, the blank-policy section. No copy of them
+here, deliberately.
+
 The first version of this feature reported the read-only condition only when somebody clicked
 Share, and its test asserted a 501. **That test skipped, and the skip is why the design changed:**
 `internal/control/tokenfile` grants **no `admin` verb to anybody** — its own comment says the token

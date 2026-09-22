@@ -426,6 +426,51 @@ servers, in the environment and in a config file alike. `SUBSYSTEM_STORE_ROOT` �
 is written out because it is the row with a store-relocating consequence; a reader who
 took it for the boundary would under-count the change by ten variables.
 
+🔴 **AND "ALL 11 PAIRS IN THE LEDGER" IS ITSELF AN UNDER-COUNT, WHICH IS THE SAME MISTAKE
+ONE LEVEL UP — SIZE IT FROM THE PREDICATE AGAIN.** `blank`/`_blank` is read by
+`ValueFrom`/`value` for **every name passed to them**, and a name with no alias is not a
+special case there: it is the `news[newName] == ""` branch, which returns `""`. So the
+widening governs every variable read through `envalias` **whether or not it is a renamed
+pair**. Six such names exist in this tree, all on the Go side —
+`CAIRN_ROUTES` (`internal/client/instances.go`) and `cmd/cairn-ui`'s `CAIRN_UI_HOST`,
+`CAIRN_UI_PORT`, `CAIRN_UI_SESSION_FILE`, `CAIRN_UI_SESSION_TTL` and
+`CAIRN_UI_CONTROL_JOURNAL`. The Python spelling has none: `cairn` and
+`lib/cairn_instances.py` pass `env_aliases.value` only ledger names, and read
+`CAIRN_ROUTES` off the map directly.
+
+⚠ **THE OTHER FIVE WERE MEASURED RATHER THAN REASONED ABOUT, AND THEY DO NOT ALL MOVE THE
+SAME WAY.** Same two binaries, same world, each name set to whitespace with no flag:
+
+| name | `1659663` | `68cf955` | moved? |
+|---|---|---|---|
+| `CAIRN_UI_PORT` | serves on `0.0.0.0:8103` | serves on `0.0.0.0:8103` | no |
+| `CAIRN_UI_SESSION_TTL` | serves | serves | no (`ParseDuration` refused it either way) |
+| `CAIRN_ROUTES` | `.strip()`ed at its call site | same | no |
+| `CAIRN_UI_HOST` | **exit 1**, `listen tcp: lookup    : no such host` | serves on `0.0.0.0` | loud → silent default |
+| `CAIRN_UI_SESSION_FILE` | **serves**, having created a session table named `"  "` in the process's CWD | takes `/var/lib/cairn-ui/sessions` | silent → the documented default |
+
+🔴 **`CAIRN_UI_SESSION_FILE` IS THE ROW THAT CONTRADICTS THE OBVIOUS SUMMARY, WHICH IS WHY
+IT IS HERE.** A draft of this paragraph said both changed rows went from "a loud failure"
+to "a silent default"; measured, that one went the other way — a live credential table
+silently written to a two-space filename beside whatever directory the pod was started
+from, now a named path a deployment must mount. The widening is an improvement there, a
+regression at `CAIRN_UI_HOST`, and neither is the reason this paragraph exists.
+
+🔴 **THE SIXTH IS WHY THIS PARAGRAPH EXISTS, AND IT SHIPPED AS A DEFECT.**
+`CAIRN_UI_CONTROL_JOURNAL` decides **which authority** `cairn-ui` serves from. Read as
+unset, the surface falls back to the token-file projection, which confers `admin` on
+nobody — every scope page 404s and no share can be recorded, while `/healthz` answers 200.
+Measured on two binaries, one world, `CAIRN_UI_CONTROL_JOURNAL='   '` and no flag:
+`1659663` exited **78** naming the journal, `68cf955` **served**. It arrived in a MERGE —
+the branch that routed `envOr` through `envalias` had no `-control-journal`, the branch
+that added `-control-journal` had no `envalias` — so no test on either side could see it.
+`cmd/cairn-ui`'s `controlJournalDefault` now reads that one name RAW and refuses a value
+that reduces to nothing, which is the ruling `cmd/cairn-server`'s `controlJournalPath`
+already made for the pod's own `CAIRN_CONTROL_JOURNAL`. ⚠ **The other five are left
+resolving through `envalias`**: a whitespace listen address or session path is a louder,
+smaller failure than a silently-swapped authority, and widening the refusal to all of them
+is a decision this change did not make.
+
 ⚠ **AND THE CHANGE CLOSES A REAL CROSS-LANGUAGE DIVERGENCE, WHICH IS AN ARGUMENT FOR IT
 THAT NOTHING ELSE HERE STATES.** With `SUBSYSTEM_STORE_URL="   "` exported and no
 `CAIRN_*` set, measured on both clients built from `e878f4c`:

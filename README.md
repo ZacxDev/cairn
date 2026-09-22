@@ -382,6 +382,20 @@ stdlib `flag`, not the client's `--long` style. `-h` lists seven — `-store`
 so what `-h` prints depends on your environment. It reads the store **from disk**
 rather than over HTTP, and authenticates against the same token file as the pod.
 
+🔴 **"Env-resolved" does NOT mean "the variable and the flag are interchangeable", and
+`CAIRN_UI_CONTROL_JOURNAL` is where that matters.** An unset variable and an explicitly
+EMPTY one both mean "no control journal" — the shape a manifest that emits every variable
+with an empty default produces. A value that reduces to **nothing but whitespace** is
+refused at **78**, naming the variable, rather than read as unset: read as unset this
+surface would come up on the token-file projection, which confers `admin` on nobody, so
+every scope page answers 404 and no share can be recorded while `/healthz` still answers
+200. That is the same ruling the pod makes for its own `CAIRN_CONTROL_JOURNAL`. The **flag**
+path refuses the same value for a different reason — `-control-journal '   '` has always
+failed its `stat` — so the two arrival paths agree, which they did not between
+`1659663` and `68cf955`. The other six variables above are resolved by
+`internal/envalias`, which reads a whitespace-only value as **absent** and silently takes
+the code default; `tests/conformance/README.md` measures what each one does with one.
+
 🔴 **Two backends are absent, for two different reasons, and conflating them is the
 misreading to avoid.** Supabase is simply *not wired yet* and returns with the
 phase that builds a sign-in flow. The **trusted-header** backend is refused on
