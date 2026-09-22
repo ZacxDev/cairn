@@ -178,7 +178,11 @@ jobs:
           # SEE a planted hazard, and an empty file does not read as agreement.
           #
           # Measured with names on the base ref and on HEAD, one collect-only run each:
-          # base 1997 at the merge-base `1659663`, head 2037, 55 added, 15 removed.
+          # base 1997, head 2037, 55 added, 15 removed. The base ref is whatever
+          # `git merge-base origin/main HEAD` prints — DELIBERATELY NOT SPELLED AS A SHA
+          # HERE; see the re-take note below for why. The FLOOR itself derives from the HEAD
+          # count alone; the base count is here only so the +55/-15 has something to be a
+          # delta FROM, which is why it can lose its sha without losing its meaning.
           #
           # 🔴 ON FULL NODE IDS, NOT ON THE RECIPE ABOVE AS WRITTEN, AND THE DIFFERENCE IS
           # THE WHOLE 15. That recipe's `sed 's/\[.*//'` STRIPS PARAMETRISE IDS; ten of the
@@ -193,24 +197,36 @@ jobs:
           # ids is the right form for "did a test FILE disappear", and the wrong one for a
           # change that renames parameters — say which you ran.
           #
-          # ⚠ RE-TAKEN TWICE, BECAUSE THE MERGE-BASE MOVED TWICE, AND THE SECOND RE-TAKE
-          # WENT STALE IN ITS OWN COMMIT. It read "base 1994 at the merge-base `080bb2d`",
-          # then "`080bb2d` is no longer the merge-base; `c5df961` is" — and the very next
-          # commit in this range merged `origin/main`, so on the shipped tree
-          # `git merge-base origin/main HEAD` is **`1659663`**. Not a wrong count: both
-          # `c5df961` and `1659663` collect **1997** (#64/#71/#72 added no Python tests),
-          # measured at both, so 55/15 holds across the move. Only the sha was stale — and
-          # a sha in a comment about a base ref is the one part of it nobody can re-derive.
+          # 🔴 THE MERGE-BASE SHA IS NOT NAMED ABOVE, AND THAT IS THE FIX RATHER THAN AN
+          # OMISSION: NAMING IT WENT STALE THREE TIMES, TWICE INSIDE THE COMMIT RANGE THAT
+          # RE-STATED IT. The sentence read "base 1994 at the merge-base `080bb2d`", then
+          # "`080bb2d` is no longer the merge-base; `c5df961` is", then "`1659663` is" —
+          # and each time the next merge of `origin/main` into this branch moved it again.
+          # `git log --merges --oneline origin/main..HEAD` counts FOUR such merges; a sha
+          # pinned here is stale on the fifth, by construction and not by carelessness. So
+          # the rule instead of the number: **the base ref for this measurement is whatever
+          # `git merge-base origin/main HEAD` prints at the moment you take it** — one
+          # command, re-derivable by anyone, and it cannot rot.
+          #
+          # ⚠ RE-TAKEN THREE TIMES AND THE COUNT NEVER MOVED, WHICH IS WHY ONLY THE SHA WAS
+          # EVER THE PROBLEM. `c5df961`, `1659663` and the base current at this commit each
+          # collect **1997** (#64/#71/#72 added no Python tests); re-measured from scratch at
+          # the last of those — 1997 base / 2037 head / +55 / -15, the same pipeline below —
+          # so 55/15 has held across every move. Those three shas are HISTORY and are
+          # correct as history; the line above is the only present-tense claim, and it names
+          # a command rather than a commit.
           # The earlier move, 1994 -> 1997, was reported as +3/-0
           # (`test_cairn_cli.py::TestInterpretersWithoutTarExtractionFilters`); that half is
           # CARRIED FORWARD from the previous re-take and was not re-measured here, which is
           # said rather than dropped because `080bb2d` is no longer an interesting base.
           #
           # 🔴 "15 REMOVED" IS THE NUMBER THIS COMMENT EXISTS TO MAKE SOMEBODY EXPLAIN, SO
-          # HERE IS THE EXPLANATION, RE-DERIVED AGAINST `1659663` RATHER THAN CARRIED
-          # FORWARD, AND IT IS NOT "TESTS WERE DELETED". The removed and added SETS are
-          # byte-identical at `c5df961` and `1659663` — checked, not assumed, which is what
-          # lets the sha above move without this breakdown moving.
+          # HERE IS THE EXPLANATION, RE-DERIVED AT EACH BASE RATHER THAN CARRIED FORWARD,
+          # AND IT IS NOT "TESTS WERE DELETED". The removed and added SETS are byte-identical
+          # at `c5df961`, at `1659663` and at the base current at this commit — checked each
+          # time, not assumed, which is what lets the base ref move without this breakdown
+          # moving. The 15 re-collected as ten `TestNonFiniteLimiterSettings` ids, the three
+          # renames and the two deletions enumerated below, member for member.
           #
           # TEN are `TestNonFiniteLimiterSettings` PARAMETRISE IDS that changed spelling
           # with the rename — `[SUBSYSTEM_STORE_LOCKOUT_S-nan]` became
