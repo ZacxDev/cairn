@@ -152,23 +152,24 @@ anyone editing that path:
     sentence above is echoed at SEVERAL sites, and the number is deliberately
     not written here — `tests/test_narrowing_echo_sites.py` holds the set.** They
     are: here, `internal/client/instances.go`, `tests/parity/README.md`, `cairn`'s
-    `_instance_for` docstring, `internal/client/routes.go`'s `readInstance`, and
-    `tests/unchanged_output_capture.py`, the harness that measures the claim.
+    `_instance_for` docstring, `internal/client/routes.go`'s `readInstance`,
+    `internal/client/state.go`'s `BannerNamed`, `tests/test_cairn_instances.py`,
+    and `tests/unchanged_output_capture.py`, the harness that measures the claim.
     Every one of them reads wider than it is, and every one carries this
-    narrowing. ⚠ The count said "all three", then "FIVE"; the ledger's GROW arm
-    caught the sixth **in the same PR that added the ledger**, about twenty
-    minutes after it went green. That is why the names are listed and the total
-    is not: a list a guard asserts cannot drift, a total in prose always has.
-    ⚠ The count said "all three" and was an undercount. ✅ **IT IS NOW ASSERTED,
-    AND THE RE-COUNT RECIPE THAT STOOD HERE IS DELETED RATHER THAN CORRECTED.**
-    `tests/test_narrowing_echo_sites.py` holds the five as a ledger failing on
-    GROW *or* SHRINK, so a site that is **reworded** — the case a grep for two
-    literal phrases structurally could not see, and the defect #48's ladder filed
-    against this recipe — now drops out of the discovered set and is named. It
-    matches over whitespace-NORMALISED text, because this file states the claim
-    across a line break and the old line-based recipe therefore missed the very
-    file it was written in. Do not re-add a recipe here: a second, weaker
-    instrument beside the assertion is how the count went stale the first time.
+    narrowing. ✅ **THE SET IS NOW ASSERTED, AND THE RE-COUNT RECIPE THAT STOOD
+    HERE IS DELETED RATHER THAN CORRECTED** — it matched two literal phrases, so
+    it could not see a REWORDED echo, which is what #48's ladder filed against it.
+    The ledger fails on GROW *or* SHRINK, and matches over whitespace-NORMALISED
+    text because this file states the claim across a line break and the old
+    line-based recipe therefore missed the very file it was written in. Do not
+    re-add a recipe here: a second, weaker instrument beside the assertion is how
+    the count went stale the first time.
+    ⚠ **AND THE TOTAL IS DELIBERATELY ABSENT, BECAUSE FOUR DRAFTS OF IT WERE
+    WRONG** — "all three", then "FIVE", then six, then seven. The ledger's GROW arm
+    caught one of those **in the same PR that added the ledger**; two audits caught
+    two more, both sites phrased differently from birth and therefore invisible to
+    the first version's spellings. A list a guard asserts cannot drift; a total in
+    prose always has.
     The
     scope-taking reads did not consult the table at all before;
     they do now, and `alias_for` row 3 REFUSES at ONE instance as well as at

@@ -279,9 +279,17 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # 101 measured on this tree (`grep -c 'Case(' tests/parity/harness.py`). The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
-    # narrowing cannot hide under it, loose enough that adding or dropping a handful of rows in a
-    # PR does not make it permanently red. The previous floor was 50 against 90, which could not
+    # narrowing cannot hide under it. The previous floor was 50 against 90, which could not
     # see a 44% narrowing — the same blindness that comment describes one layer up.
+    #
+    # ⚠ THIS USED TO ADD "loose enough that adding or dropping a handful of rows in a PR does not
+    # make it permanently red", AND THE DRIFT GUARD BELOW MADE THAT FALSE IN THE GROWTH
+    # DIRECTION — at m=101 the formula gives exactly this literal, so adding ONE case reds
+    # `pytest tests` until the literal moves. The clause is deleted rather than the guard
+    # loosened, and the asymmetry with `ci.yml`'s equivalent is deliberate: a parity CASE is
+    # added a few times a year, so an exact guard costs an edit nobody notices, while the
+    # collected count there moves on most PRs and an exact guard would red every one. Same
+    # formula, different movement rate, different tolerance — stated at both sites.
     # ⚠ AND IT WAS 85 AGAINST 101 UNTIL THIS COMMIT, because the measured `m` moved by eleven rows
     # and the floor did not — a floor left behind by its own formula loosens silently, which is
     # the same failure one size larger. Move BOTH when a row lands.

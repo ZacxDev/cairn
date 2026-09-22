@@ -66,11 +66,11 @@ jobs:
       # `tests/test_control_mutant_count_is_pinned.py`. The authz battery's
       # number went stale twice in this same file, once in a step NAME — which
       # is the copy a reader sees in the Actions UI — so this one is not left to
-      # prose. 19 mutants, each required to be killed by the test that NAMES its
+      # prose. 22 mutants, each required to be killed by the test that NAMES its
       # property; a kill by any other test is reported MISATTRIBUTED. It runs
       # BEFORE the suite because a suite green over an inert guard is the thing
       # it exists to rule out, and it takes about six seconds.
-      - name: prove every publish-workflow guard can go RED (19 mutants)
+      - name: prove every publish-workflow guard can go RED (22 mutants)
         run: python3 tests/publish_workflow_mutants.py
 
       # 🔴 READ THE COLLECTED COUNT, NOT JUST THE EXIT CODE. pytest can collect
@@ -178,22 +178,17 @@ jobs:
           # SEE a planted hazard, and an empty file does not read as agreement.
           #
           # Measured as the comment above requires — names on the base ref and on HEAD,
-          # one worktree each: base 1972, head 1992, 20 added, 0 removed.
+          # one worktree each: base 1989, head 1994, 5 added, 0 removed.
           #
-          # ⚠ IT WAS 1888 AGAINST A SUITE OF 1989, WHICH IS THE SECOND BLINDNESS THE
-          # PARAGRAPH ABOVE NAMES — 101 tests could have vanished silently. It went
-          # stale the ordinary way: every PR that adds tests and does not move this
-          # line widens the gap, and nothing reds. Re-derived from the file's own rule
-          # `m - min(50, max(1, m/20))` at m=1992. If you add tests, move this too.
+          # ⚠ THAT LINE READ "base 1972 … 20 added" AND WAS WRONG, IN THE ONE SENTENCE
+          # WHOSE ENTIRE PURPOSE IS A BASE-VS-HEAD COMPARISON. 1972 was carried over
+          # from an earlier PR's measurement, so "0 removed" was asserted against a
+          # base three PRs stale. Re-measured against `main` at `5d72bc5`.
           #
-          # ⚠ THE PARITY SUITE'S EQUIVALENT FLOOR IS NOW GUARDED AGAINST EXACTLY
-          # THIS DRIFT (`tests/test_parity_harness.py` asserts its literal has not
-          # loosened below the formula). This one is NOT, and the asymmetry is
-          # deliberate rather than an oversight: that floor's `m` is a Python
-          # expression the guard can evaluate in-process, while this one's `m` is
-          # a collected count that only exists after the suite has run — so a
-          # guard here would have to be a step reading its own job's output, which
-          # is a different instrument. Filed rather than built.
+          # ⚠ IT WAS 1888 AGAINST A SUITE OF 1989 — 101 tests could have vanished
+          # silently, the second blindness the paragraph above names. It went stale the
+          # ordinary way: every PR that adds tests and does not move this line widens
+          # the gap, and nothing red. Re-derived from `m - min(50, max(1, m/20))`.
           FLOOR = 1942
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
@@ -202,6 +197,30 @@ jobs:
           print(f"collected={ran} failed={fail} floor={FLOOR}")
           if ran < FLOOR:
               print(f"REFUSING: collected {ran} < floor {FLOOR} — the suite silently narrowed")
+              sys.exit(1)
+
+          # 🔴 AND THE DRIFT GUARD, WHICH A PREVIOUS COMMENT HERE SAID WAS IMPOSSIBLE.
+          # It claimed a guard would need "a step reading its own job's output, which is
+          # a different instrument" — this IS that step, and `ran` IS the `m` the formula
+          # takes. The claim was false about the file it was written in; the two lines it
+          # said could not be spent are below.
+          #
+          # ⚠ THE BOUND IS 2x THE FORMULA'S OWN MAXIMUM GAP, NOT THE FORMULA ITSELF, AND
+          # THE LOOSENING IS DELIBERATE. `tests/test_parity_harness.py`'s equivalent guard
+          # IS exact, and the difference is how often each `m` moves: a parity CASE is
+          # added a few times a year, so demanding the literal move with it costs nothing,
+          # while the collected count moves on most PRs — an exact guard here would red
+          # every test-adding PR until somebody edited a number, which is how a gate gets
+          # rubber-stamped. What actually failed historically was GROSS drift (a gap of
+          # 101), not a one-test lag, so that is what this catches.
+          MAX_GAP = 2 * 50
+          if ran - FLOOR > MAX_GAP:
+              print(
+                  f"REFUSING: the floor is {FLOOR} against {ran} collected, a gap of "
+                  f"{ran - FLOOR} — more than {MAX_GAP}, so it has drifted far enough to "
+                  f"hide a real narrowing. Re-derive it: m - min(50, max(1, m/20)) = "
+                  f"{int(ran - min(50, max(1, ran / 20)))}."
+              )
               sys.exit(1)
           sys.exit(1 if fail else 0)
           PY
