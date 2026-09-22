@@ -267,6 +267,56 @@ MUTANTS = [
         ),
         "test_every_control_step_is_pinned_WHOLE",
     ),
+    (
+        # 🔴 THE CREDENTIAL HAZARD ITSELF, not a cosmetic proxy for it. Swapping
+        # `--password-stdin` for `-p '<secret>'` puts a live `GITHUB_TOKEN` in
+        # argv, where it is readable from the process table and lands in any
+        # `set -x`/`RUNNER_DEBUG` trace. Every other assertion in the file stays
+        # green through it: the secret is still referenced, the step still logs
+        # in, the push still succeeds.
+        "move-the-token-into-argv",
+        lambda t: t.replace(
+            "          printf '%s' '${{ secrets.GITHUB_TOKEN }}' \\\n"
+            '            | "${{ steps.skopeo.outputs.bin }}" login ghcr.io \\\n'
+            "                -u '${{ github.actor }}' --password-stdin",
+            '          "${{ steps.skopeo.outputs.bin }}" login ghcr.io \\\n'
+            "                -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'",
+            1,
+        ),
+        "test_the_credential_step_is_pinned_WHOLE",
+    ),
+    (
+        # 🔴 AND THE GROW DIRECTION, WHICH THE PIN ABOVE CANNOT SEE. A SECOND
+        # step handling a secret leaves the pinned one untouched. Measured before
+        # the sweep existed: this exact addition passed all 21 tests.
+        "add-a-second-secret-handling-step",
+        lambda t: t.replace(
+            "      - name: log in to ghcr\n",
+            "      - name: annotate the release\n"
+            "        run: |\n"
+            "          set -euo pipefail\n"
+            "          curl -sS -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \\\n"
+            "            https://api.github.com/repos/${{ github.repository }} > /dev/null\n"
+            "      - name: log in to ghcr\n",
+            1,
+        ),
+        "test_NO_OTHER_run_STEP_HANDLES_A_SECRET",
+    ),
+    (
+        # 🔴 THE `if:` THE WHOLE-BODY PINS ARE STRUCTURALLY BLIND TO. Delete it and
+        # both version-tag steps run on every push to the default branch, where
+        # `version_tag` is empty — a push to `…/cairn-store:` on every commit, from
+        # a workflow whose contract is two IMMUTABLE tags. The bodies are untouched,
+        # so every body-reading assertion stays green.
+        "drop-the-tag-push-condition",
+        lambda t: t.replace(
+            "      - name: push the Go pod's version tag, on a tag push only\n"
+            "        if: steps.ref.outputs.version_tag != ''\n",
+            "      - name: push the Go pod's version tag, on a tag push only\n",
+            1,
+        ),
+        "test_the_conditional_pushes_keep_their_CONDITION",
+    ),
 ]
 
 

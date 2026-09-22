@@ -149,14 +149,28 @@ anyone editing that path:
     are unchanged, which the reader fixture measures (regenerating with the
     clause added 225 lines and changed none).
   - 🔴 **AND THAT GUARANTEE IS ABOUT *LABELLING*, NOT ABOUT *ROUTING* — the
-    sentence above is echoed in FIVE places, not three: here,
-    `internal/client/instances.go`, `tests/parity/README.md`, `cairn`'s
-    `_instance_for` docstring and `internal/client/routes.go`'s `readInstance`.
-    All five read wider than they are, and all five now carry this narrowing.**
-    ⚠ The count said "all three" and was an undercount; it is stated here only
-    so the next sweep knows how many sites to visit — nothing asserts on it, so
-    re-count (`grep` for `byte-for-byte what it was` and for
-    `bytes are unchanged`) rather than trusting this number. The
+    sentence above is echoed at SEVERAL sites, and the number is deliberately
+    not written here — `tests/test_narrowing_echo_sites.py` holds the set.** They
+    are: here, `internal/client/instances.go`, `tests/parity/README.md`, `cairn`'s
+    `_instance_for` docstring, `internal/client/routes.go`'s `readInstance`,
+    `internal/client/state.go`'s `BannerNamed`, `tests/test_cairn_instances.py`,
+    and `tests/unchanged_output_capture.py`, the harness that measures the claim.
+    Every one of them reads wider than it is, and every one carries this
+    narrowing. ✅ **THE SET IS NOW ASSERTED, AND THE RE-COUNT RECIPE THAT STOOD
+    HERE IS DELETED RATHER THAN CORRECTED** — it matched two literal phrases, so
+    it could not see a REWORDED echo, which is what #48's ladder filed against it.
+    The ledger fails on GROW *or* SHRINK, and matches over whitespace-NORMALISED
+    text because this file states the claim across a line break and the old
+    line-based recipe therefore missed the very file it was written in. Do not
+    re-add a recipe here: a second, weaker instrument beside the assertion is how
+    the count went stale the first time.
+    ⚠ **AND THE TOTAL IS DELIBERATELY ABSENT, BECAUSE FOUR DRAFTS OF IT WERE
+    WRONG** — "all three", then "FIVE", then six, then seven. The ledger's GROW arm
+    caught one of those **in the same PR that added the ledger**; two audits caught
+    two more, both sites phrased differently from birth and therefore invisible to
+    the first version's spellings. A list a guard asserts cannot drift; a total in
+    prose always has.
+    The
     scope-taking reads did not consult the table at all before;
     they do now, and `alias_for` row 3 REFUSES at ONE instance as well as at
     many. So exactly one single-instance case moved: a host whose table routes

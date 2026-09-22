@@ -279,13 +279,58 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # 101 measured on this tree (`grep -c 'Case(' tests/parity/harness.py`). The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
-    # narrowing cannot hide under it, loose enough that adding or dropping a handful of rows in a
-    # PR does not make it permanently red. The previous floor was 50 against 90, which could not
+    # narrowing cannot hide under it. The previous floor was 50 against 90, which could not
     # see a 44% narrowing — the same blindness that comment describes one layer up.
+    #
+    # ⚠ THIS USED TO ADD "loose enough that adding or dropping a handful of rows in a PR does not
+    # make it permanently red", AND THE DRIFT GUARD BELOW MADE THAT FALSE IN THE GROWTH
+    # DIRECTION — at m=101 the formula gives exactly this literal, so adding ONE case reds
+    # `pytest tests` until the literal moves. The clause is deleted rather than the guard
+    # loosened, and the asymmetry with `ci.yml`'s equivalent is deliberate: a parity CASE is
+    # added a few times a year, so an exact guard costs an edit nobody notices, while the
+    # collected count there moves on most PRs and an exact guard would red every one. Same
+    # formula, different movement rate, different tolerance — stated at both sites.
     # ⚠ AND IT WAS 85 AGAINST 101 UNTIL THIS COMMIT, because the measured `m` moved by eleven rows
     # and the floor did not — a floor left behind by its own formula loosens silently, which is
     # the same failure one size larger. Move BOTH when a row lands.
     floor = 95
+    # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
+    # The handoff filed this under "counts quoted in prose that nothing asserts
+    # on", closing condition "a decision to pin each or a written line saying why
+    # not". The measured history decides it: 50 against 90, then 85 against 101 —
+    # both times the floor stayed put while `m` moved, and a floor left behind by
+    # its own formula LOOSENS silently. The comment above says "Move BOTH when a
+    # row lands"; this is that sentence made mechanical.
+    #
+    # 🔴 THE ASSERTION BELOW CANNOT DO IT, AND THE REASON IS THE TRAP. Deriving
+    # `floor` from `declared` would make `declared >= floor` TRUE BY
+    # CONSTRUCTION — a vacuous guard wearing the name of a tripwire. The floor
+    # must stay a literal somebody edits; what is checked here is that the
+    # literal has not drifted BELOW what the formula prescribes for the current
+    # measurement. Adding a row therefore reds this until the floor moves, which
+    # is the intended cost and is what the two stale readings above bought.
+    # ⚠ REAL DIVISION, THEN FLOORED — AND THE FIRST DRAFT OF THIS LINE USED `//`,
+    # WHICH IS A DIFFERENT FORMULA. `ci.yml` writes it as `m - min(50, max(1,
+    # m / 20))`; at m=101 that is 95.95 → 95, which is the literal above, while
+    # integer division gives 96 and made this guard red on a correct tree. The
+    # guard caught its own transcription, which is the only reason the difference
+    # was ever visible — nothing else in the repo evaluates that sentence.
+    want_floor = int(declared - min(50, max(1, declared / 20)))
+    assert floor >= want_floor, (
+        f"the case floor is {floor} but the formula prescribes {want_floor} for "
+        f"{declared} declared cases, so it has loosened by {want_floor - floor}. "
+        f"It has gone stale this way twice (50/90, then 85/101). Move the literal."
+    )
+    # ⚠ AND THE OTHER HALF IS DECIDED THE OPPOSITE WAY — NO GUARD, BY CHOICE.
+    # The docstring above says "NOTHING ASSERTS THAT THE TWO NUMBERS AGREE",
+    # meaning this floor and the PASS count `.github/workflows/ci.yml` pins for
+    # the `parity` job. They must NOT be asserted equal: this one counts CASES
+    # DECLARED by `harness.cases()`, that one counts PASSES a run produced, and
+    # the two differ by design — `cache-mtime-parity` is a pass with no declared
+    # case behind it, which is why the run reports 102 passes over 101 cases. A
+    # guard equating them would be red on a correct tree and would train its
+    # reader to edit whichever number was handier. The docstring's instruction —
+    # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
         f"the parity gate declares only {declared} cases, and the floor is {floor} (101 were "
         f"measured on this tree, across nine verbs and every documented exit code). Two guards in "

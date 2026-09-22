@@ -824,6 +824,191 @@ def test_both_pods_are_published_and_every_push_step_is_pinned_WHOLE(text: str) 
     )
 
 
+#: The one credential-handling `run:` step in this workflow, pinned WHOLE.
+#:
+#: ✅ **DECIDED: PIN IT.** The handoff filed this as one of "three unpinned by
+#: construction" in `publish-image.yml`, closing condition "one PR each, or a
+#: written line saying why not". Of the three it is the one with a concrete
+#: failure scenario, so it gets the PR rather than the line.
+#:
+#: 🔴 WHAT THE PIN BUYS, CONCRETELY. `--password-stdin` keeps the token off the
+#: command line. The one-character-class edit that undoes it — `-p '${{
+#: secrets.GITHUB_TOKEN }}'` — is the obvious "simplification" for somebody
+#: debugging a login failure, and it puts a live credential in **argv**, where it
+#: is visible in the process table and in any `set -x` trace the step or a future
+#: `RUNNER_DEBUG` run produces. Nothing else in this file would notice: the
+#: secret is still referenced, the step still logs in, the push still succeeds,
+#: and every existing assertion stays green.
+#:
+#: Pinned whole for the reason `test_both_pods_are_published_and_every_push_step_
+#: is_pinned_WHOLE` gives: a guard on the WORD `--password-stdin` is satisfied by
+#: a step that also passes `-p`, and a guard on its absence is satisfied by a
+#: reword. The cost is the same one that test accepts — reformatting this step
+#: fails the test — and it buys a machine-readable claim about a credential.
+PINNED_CREDENTIAL_STEP = {
+    "log in to ghcr": (
+        "set -euo pipefail "
+        "printf '%s' '${{ secrets.GITHUB_TOKEN }}' "
+        '| "${{ steps.skopeo.outputs.bin }}" login ghcr.io '
+        "-u '${{ github.actor }}' --password-stdin"
+    ),
+}
+
+
+def test_the_credential_step_is_pinned_WHOLE(text: str) -> None:
+    """The only `run:` step that handles a secret, pinned by its entire text.
+
+    ⚠ ITS POSITIVE CONTROL IS THE STEP'S PRESENCE, asserted separately: a step
+    that had been renamed or deleted would otherwise make the comparison below
+    vacuous by having nothing on either side.
+    """
+    bodies = step_bodies(text)
+    missing = sorted(set(PINNED_CREDENTIAL_STEP) - set(bodies))
+    assert not missing, (
+        f"the credential step is absent under that name: {missing}\nthe file's "
+        f"steps are: {sorted(bodies)}\nIf the login moved, move this pin with it — "
+        f"an absent step makes the comparison below compare nothing."
+    )
+    actual = {name: bodies[name] for name in PINNED_CREDENTIAL_STEP}
+    assert actual == PINNED_CREDENTIAL_STEP, (
+        "the credential step's command text moved. pytest shows every difference "
+        "below. This is pinned WHOLE because the hazard is a SPELLING — swapping "
+        "`--password-stdin` for `-p '<secret>'` puts a live token in argv while "
+        "leaving every other assertion in this file green."
+    )
+
+
+# ── THE THREE "UNPINNED BY CONSTRUCTION" ENTRIES, ALL THREE ANSWERED ─────────────
+#
+# The handoff filed them together, closing condition *"one PR each, or a written
+# line saying why not"*. 🔴 IT NEVER NAMED THEM, so a reader could not identify
+# what was open. Named here, with the disposition:
+#
+#   1. `log in to ghcr` — the one `run:` step handling a secret.  → PINNED below,
+#      whole-body, plus a GROW arm refusing a SECOND secret-handling step.
+#   2. the step-level `if:` on the two version-tag pushes.        → PINNED below.
+#   3. `ci.yml`'s ARM-battery count — *"prove every ARM can go RED (7 mutants…)"*.
+#      → **A WRITTEN LINE, NOT A PR, AND HERE IT IS.**
+#
+# ⚠ ON (3), AND WHY IT IS THE ONE THAT GETS THE LINE. It is the same defect class
+# `tests/test_control_mutant_count_is_pinned.py` already closes twice — a count in
+# a CI step NAME that nothing derives from the battery it describes — and closing
+# it means extending that file's anchor ledger to a THIRD battery, in a different
+# job, whose module this file does not read. That is coherent work with a clear
+# shape and it is not this PR's: this file is about `publish-image.yml`, and the
+# ARM battery is about `ci.yml`'s ARM job. Doing it here would mean a second file
+# growing a third ledger as a side effect of a PR that names neither.
+# **Closing condition, so it reads as open rather than absent:** an entry in
+# `test_control_mutant_count_is_pinned.py`'s anchor ledger for the ARM battery,
+# derived from its own `len(MUTANTS)`, with the same GROW/SHRINK shape as the
+# control and publish ledgers beside it.
+
+
+#: `- name: <step>` → the step-level `if:` expression guarding it, for every step
+#: that has one. The whole-body pins above read the `run:` block and are
+#: STRUCTURALLY BLIND to this line.
+def step_conditions(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    name = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- name:"):
+            name = stripped[len("- name:"):].strip()
+        elif stripped.startswith("if:") and name is not None:
+            out.setdefault(name, stripped[len("if:"):].strip())
+        elif stripped.startswith("run:"):
+            # The `run:` block ends the step's key region for our purposes; a
+            # later `if:` inside a shell body is shell, not YAML.
+            name = name if name not in out else name
+    return out
+
+
+#: The two steps whose publication is CONDITIONAL, and the condition.
+#:
+#: ✅ **DECIDED: PIN IT** — the second of the three "unpinned by construction"
+#: entries. `step_bodies` normalises the `run:` block and never sees the `if:`,
+#: so the line that makes "a version tag is published on a TAG PUSH ONLY" true is
+#: unasserted, while the four push steps' bodies are pinned whole.
+#:
+#: 🔴 The failure it closes: delete the `if:` and both steps run on every push to
+#: `main`. `steps.ref.outputs.version_tag` is empty there, so the destination
+#: becomes `…/cairn-store:` — a push to an EMPTY tag, on every commit, from a
+#: workflow whose stated contract is two immutable tags. Every existing assertion
+#: stays green: the bodies are untouched, the tags they name are still the two
+#: immutable ones, and `test_every_published_tag_is_one_of_the_two_immutable_ones`
+#: reads the body it always read.
+PINNED_STEP_CONDITIONS = {
+    "push the Python pod's version tag, on a tag push only":
+        "steps.ref.outputs.version_tag != ''",
+    "push the Go pod's version tag, on a tag push only":
+        "steps.ref.outputs.version_tag != ''",
+}
+
+
+def test_the_conditional_pushes_keep_their_CONDITION(text: str) -> None:
+    """The `if:` the whole-body pins cannot see."""
+    conditions = step_conditions(text)
+    missing = sorted(set(PINNED_STEP_CONDITIONS) - set(conditions))
+    assert not missing, (
+        f"these steps no longer carry ANY step-level `if:`: {missing}\nA version "
+        f"tag would then be pushed on every commit to the default branch, with an "
+        f"empty tag value. Steps carrying a condition: {sorted(conditions)}"
+    )
+    actual = {name: conditions[name] for name in PINNED_STEP_CONDITIONS}
+    assert actual == PINNED_STEP_CONDITIONS, (
+        "a conditional push step's `if:` expression moved. pytest shows the "
+        "difference below. This is what makes 'on a tag push only' true; the step "
+        "NAME says so and nothing else asserted it."
+    )
+
+
+def test_NO_OTHER_run_STEP_HANDLES_A_SECRET(text: str) -> None:
+    """🔴 THE GROW ARM, AND WITHOUT IT THE PIN ABOVE GUARDS ONE MEMBER OF A SET
+    THAT CAN GROW.
+
+    The pin's own docstring calls its subject *"the one credential-handling `run:`
+    step"*. That is true today and nothing asserted it stays true — measured by an
+    audit, which appended a second step:
+
+        - name: annotate the release
+          run: |
+            curl -sS -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' …
+
+    and watched **all 21 tests pass**. A live `GITHUB_TOKEN` in argv — visible in
+    the process table and in any `RUNNER_DEBUG` trace, the precise hazard the pin
+    below describes — arrived green, because the pinned step was unchanged and the
+    pin has nothing to say about any other step.
+
+    This is the discipline the same commit applied to the echo sites and not here:
+    a ledger fails on GROW *or* SHRINK; a pin on one member fails only on SHRINK.
+
+    ⚠ SCOPE: `run:` bodies only, which is where a secret reaches **argv**. A
+    secret referenced from `env:` or a `with:` input is a different exposure with
+    a different shape, is not what this asserts, and is not covered by anything
+    here — said rather than left to be inferred from a green.
+    """
+    offenders = sorted(
+        name for name, body in step_bodies(text).items()
+        if "secrets." in body and name not in PINNED_CREDENTIAL_STEP
+    )
+    assert not offenders, (
+        f"these `run:` steps reference a secret and are not the pinned credential "
+        f"step: {offenders}. Every one is a place a token can reach argv. Either "
+        f"fold the work into the pinned step, or add it to `PINNED_CREDENTIAL_STEP` "
+        f"with its whole body — do not delete this assertion to make it quiet."
+    )
+    # The positive control: the pinned step itself MUST match the predicate, or
+    # the comparison above is over an empty universe and would pass on a workflow
+    # that handles no secrets at all — including one where the login was deleted.
+    bodies = step_bodies(text)
+    assert any(
+        "secrets." in bodies[name] for name in PINNED_CREDENTIAL_STEP if name in bodies
+    ), (
+        "no pinned credential step references a secret, so the sweep above ran "
+        "over nothing. The predicate or the login step has moved."
+    )
+
+
 def test_the_GO_pods_positive_control_is_its_ROUTE_LEDGER_not_the_Pythons(text: str) -> None:
     """MEASURED: the Python positive control does not transfer to the Go image.
 

@@ -507,6 +507,34 @@ Each of these refuses (rc 2) or fails rather than passing through:
 
 Named rather than omitted, because a green is a claim about what was asked.
 
+- 🔴 **THE DEPLOYED ARTEFACT — and the decision is that this gate WILL NOT OWN IT.** This
+  harness runs the *tree's* `server.py` against the *tree's* Go server. Nothing here compares
+  either against the image actually serving, so image drift is invisible to it. That gap was
+  filed with the closing condition *"decide whether a deployed-artefact arm is worth owning,
+  or write the line saying it is not."* **This is the line: it is not.**
+
+  Three reasons, and the first is the one that decides it. **(1) Such an arm could only run
+  where a live pod and a credential exist, which is not CI** — so it would either never run,
+  making it a permanently-unrun gate (worse than no gate, because it reads as coverage), or it
+  would make the merge gate depend on production being up, which is the same failure pointed
+  the other way. **(2) The check already has an owner, and it is not a gate.** `AGENTS.md`
+  instructs a reader to **diff the two pod images** for what the agreement test cannot read
+  *before swapping the deployed one* — a cutover-time step, performed once, by the person doing
+  the cutover, against the two artefacts in hand. A CI arm cannot be that, because at merge
+  time there is nothing to swap. **(3) There is nothing to drift from today.** `AGENTS.md`
+  records that `server-image-go` is *published and deployed by nothing*; the deployed pod is the
+  Python one. An arm comparing the Go server against the deployed artefact would be comparing it
+  against a different implementation on purpose, which is what `tests/conformance/` already does
+  over a declared corpus.
+
+  ⚠ **What this decision does NOT say.** It does not say image drift is impossible or
+  unimportant — `tests/test_flake_go_image_runtime_contract.py` exists because a blind spot of
+  exactly that shape once shipped an image that started, health-checked and served while every
+  documented operation against it failed. It says the instrument for it is a cutover step and a
+  runtime-contract test, not an arm of this harness. **Revisit if the Go pod is ever the
+  deployed one**, at which point "the tree's server versus the artefact" stops being a
+  cross-implementation question and becomes a same-implementation one, which is a different and
+  much cheaper thing to build.
 - **The gzip envelope.** Deliberate and measured; see the scoping section. Also `Content-Length`
   on `/api/v1/snapshot` alone.
 - **Concurrency.** Every target is one request at a time, in a declared order, and the two

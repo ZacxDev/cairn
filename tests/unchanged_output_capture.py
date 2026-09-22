@@ -24,6 +24,52 @@ shapes with NO `routes.json` anywhere — the one configuration in which the old
 `routes is not None or len(instances) > 1` predicate was `False` by construction, so it could not
 see the defect that predicate had. **Every shape is captured twice: without a table and WITH one**,
 because a one-instance host that has written a table is where the two answers differ.
+
+## 🔴 NOTHING TRIGGERS THIS, AND THAT IS DECIDED RATHER THAN OVERLOOKED
+
+**No CI job and no nix check runs this file** — measured, zero references in
+`.github/workflows/` and in `flake.nix`. An audit surfaced that as a gap: two of the call sites
+`testlib/env_pin` consolidated live here, and the only thing standing behind them is a human
+typing the command above.
+
+**The decision is that it stays MANUAL, with a named trigger — and the trigger names only what
+this file actually runs.** Every invocation here is `sys.executable`: `server/server.py` below,
+and `cairn` at the two client sites. It drives **the Python client against the Python pod, and
+nothing else.** So: run it before merging a change to `lib/`'s recall/search renderers, to
+`cairn` itself (`_instance_for`, the banner, the labelling), or to `server/server.py` — the
+changes whose compatibility claim is *"a one-instance host's bytes are unchanged"*.
+`tests/test_narrowing_echo_sites.py` holds the sites that claim is written at; this is the
+instrument that measures it.
+
+🔴 **THE FIRST DRAFT OF THIS TRIGGER NAMED `internal/report` AND `internal/client`'s ROUTING,
+AND THAT WAS FALSE.** This harness never executes a line of Go. A reader following that trigger
+would have got an "identical" that is a fact about the Python client and says nothing about
+either path they were changing — a worse outcome than no trigger, because it reads as coverage.
+The Go side's equivalents exist and are gated: `tests/parity/harness.py` compares the two
+CLIENTS, and `internal/report/testdata/reader_fixtures.json` holds the oracle's own bytes.
+
+🔴 **WHY NOT A CI JOB, WHICH IS THE OBVIOUS ANSWER AND IS WRONG HERE.** This is a BASE-versus-HEAD
+differential: it builds two trees and diffs the bytes. On a feature branch that legitimately
+changes rendered output — most feature work touching this path — a blanket job is RED by
+construction, and a permanently-red gate trains everyone to click through, which is worse than
+no gate. The thing that makes it valuable is that a human aims it at a *compatibility claim*;
+a job that ran it on everything would destroy exactly that.
+
+⚠ **AND P8 IS THIS FILE'S RETIREMENT CONDITION, NOT ITS JUSTIFICATION — THE FIRST DRAFT HAD THAT
+EXACTLY BACKWARDS.** It argued for keeping the harness *because* P8 retires the Python oracle and
+poses the largest byte-identity question left. But both of this file's operands ARE the Python
+oracle: P8 deletes `cairn` and `server/server.py`, after which this harness cannot run at all.
+Keeping a tool because of the event that removes its subject is not a reason. **The real reason
+to keep it is present-tense and much smaller: while the Python client ships, this is the only
+instrument that can make a base-versus-head byte claim about it, because a unit test runs one
+tree and this runs two.** When `packages.cairn` goes, this goes with it — and the two lines in
+`tests/test_env_pin.py` that name it as a consumer go too.
+
+⚠ **WHAT IT STILL CANNOT VOUCH FOR, so the trigger is not mistaken for coverage.** It compares
+the bytes of the shapes it declares, on one host, against one base ref. It is not a gate, nobody
+is required to run it, and a change that skips it leaves no trace. The static half — that this
+file's subprocess environments are built from the one predicate rather than a hand-listed copy —
+IS gated, by `tests/test_env_pin.py`'s consumer ledger.
 """
 from __future__ import annotations
 
