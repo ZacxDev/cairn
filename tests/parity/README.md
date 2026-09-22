@@ -47,7 +47,7 @@ the trees are compared as the *reader* sees them (`float(sec) + 1e-9*nsec`, whic
 *pins* it, because a rendered order can agree by accident of three files landing in the right
 sequence while every timestamp is wrong.
 
-## What this gate found — ten divergences in seven findings
+## What this gate found — eleven divergences in eight findings
 
 🔴 **Relocated here from `AGENTS.md`, which is loaded into every session in this repository
 and was 41.6 KB when this moved.** None of the below is decision input before acting; it is
@@ -131,6 +131,37 @@ That is the *default* instance's URL inside the *routed* instance's refusal — 
 the eager load — so the two fixes reshaped one region rather than one being the cause of the
 other. **What this round closed is the byte difference and the coverage hole**; the region was
 never byte-identical at any commit on this branch until now.
+
+**An eighth arrived with the `SUBSYSTEM_STORE_*` → `CAIRN_*` rename, and it is the one that
+best justifies the gate's existence** — because every other instrument in the tree stayed green
+while it was live. The rename put a resolver behind each environment read. `internal/client` had
+**two** spellings of *"where is the config file"*: `transport.go`'s `DefaultConfigPath` and
+`instances.go`'s `ConfigPath`. They agreed — both read the variable, both fell back to
+`~/.config/subsystem-store/env` — until the alias ledger landed in ONE of them, at which point
+the credential loader honoured `$SUBSYSTEM_STORE_CONFIG` and the ROUTING layer did not:
+
+```
+oracle  🔴 cairn: … SUBSYSTEM_STORE_TOKEN in <WORLD>/multi-config/instances/secondary.env is a deprecated alias …   (two instances, routed)
+go      🔴 cairn: REFUSING — the routing table … routes scope `gamma-notes` to instance `secondary`, which is not configured on this host (configured: personal)
+```
+
+Seven rows red, one root cause — `routes --check` twice, three routed READS, a routed `put`, and
+`recall-routed-to-the-DEFAULT-instance-is-still-labelled`, which lost its `[personal]` label
+because the instance COUNT came back as one. 🔴 **NONE OF IT LOOKED LIKE AN ENVIRONMENT BUG**, and
+that is the transferable part: the visible symptom was a routing refusal and a missing label, so a
+reader debugging it from the message would have gone to `routes.go`. `go vet`, `go test ./...`,
+the conformance corpus and `tests/dualrun/` were all green throughout.
+
+The instructive half is **why the second copy survived the change at all**: `instances.go`
+resolves through an injectable `func(string) string` rather than a `map[string]string`, and the
+first cut of `internal/envalias` offered only the map form — so the call site that could not use
+the resolver silently kept a plain single-name lookup. The remedy is the one the rules name, not
+a second patch: `envalias.ValueFrom` is now where the precedence rule lives and every other entry
+point delegates to it, `envalias.Resolving` wraps a getter for a call site that passes one
+around, and `DefaultConfigPath` is one line delegating to `ConfigPath`. ⚠ **The guard covers BOTH
+arms of `lookup` deliberately** — every unit test in the package injects a getter and no real run
+does, so wrapping only the process-environment arm would have left the guard asserting the case
+that was never broken.
 
 ## 🔴 An AUTHORISED exception to "do not change the oracle" — `cmd_validate`'s count
 
