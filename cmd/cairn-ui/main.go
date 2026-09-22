@@ -323,7 +323,7 @@ func envInt(name string, fallback int) int {
 // the second authority this function exists to avoid.
 func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error) {
 	if journal != "" {
-		// 🔴 THE PATH IS REQUIRED TO EXIST AND TO BE NON-EMPTY, BECAUSE `OpenFileStore`
+		// 🔴 THE PATH IS REQUIRED TO EXIST AND TO BE A FILE, BECAUSE `OpenFileStore`
 		// CREATES IT AND AN EMPTY JOURNAL REPLAYS CLEAN. `control.OpenFileStore` does
 		// `MkdirAll` then `O_CREATE`, so a TYPO or an unmounted volume is not an error to
 		// it: the file is created, `Refresh` replays zero events successfully, and this
@@ -411,14 +411,29 @@ func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error)
 //
 // 🔴 AND THE HONEST CONSEQUENCE, WHICH IS A GAP RATHER THAN A BUG: **no tool in this
 // repository writes `EventCredentialIssued` into a journal.** `-create-user` does not,
-// and there is no `-issue-credential`. So a journal-backed `cairn-ui` cannot authenticate
-// anybody by any path this repo provides, and this guard REFUSES TO START for that
-// reason rather than letting an operator discover it at the sign-in form. The remedy
-// named below is honest about it.
+// and there is no `-issue-credential`. So a journal-backed `cairn-ui` cannot be brought up
+// sign-in-capable BY ANY TOOL HERE, and this guard REFUSES TO START rather than letting an
+// operator discover it at the sign-in form.
+//
+// ⚠ "NO TOOL HERE CAN" IS NOT "IT CANNOT", AND AN EARLIER DRAFT SAID THE WIDER THING —
+// that the mode was "not a sign-in-capable deployment today". MEASURED FALSE: appending one
+// `{"kind":"credential-issued",…}` line to a `-create-user` journal makes this binary start
+// and a real browser sign-in succeed (303, then 200 on `/`). The gap is TOOLING, not
+// capability, and an operator who believed the wider sentence would abandon a mode that
+// works.
 //
 // ⚠ IT IS SCOPED TO THE JOURNAL BRANCH, DELIBERATELY. The token-file projection
 // synthesizes a credential per row, so this could never fire there — and `openAuthority`
 // already refuses an empty token table, which is that branch's equivalent.
+//
+// ⚠ AND IT EQUATES "NOBODY CAN SIGN IN" WITH "SERVES NOBODY", WHICH IS ONE PATH SHORT.
+// `identity.CookieSession` resolves a live browser session from the session table and
+// `PrincipalFor`, consulting NO credential — so a deployment mid-rotation (every credential
+// revoked, the replacement not yet issued) is still serving every signed-in browser, and
+// this guard turns the next restart into a refusal that ends those sessions. That is the
+// right trade for a surface nothing deploys — coming up unable to authenticate anybody is
+// the louder failure — but it is a state the refusal's wording does not weigh, and it is
+// named here rather than discovered during a rotation.
 func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string) error {
 	if journal == "" {
 		return nil
@@ -442,7 +457,7 @@ func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string
 		"would come up, announce itself writable and serve nobody. Refusing to start. ⚠ NOTE THAT "+
 		"`cairn-server -create-user` DOES NOT FIX THIS: it mints a user and no credential, and no "+
 		"tool in this repository writes a credential into a journal yet. A journal-backed cairn-ui "+
-		"is therefore not a sign-in-capable deployment today; run without -control-journal to serve "+
-		"the read-only share pages from the token file",
+		"cannot be made sign-in-capable BY ANY TOOL IN THIS REPOSITORY — hand-append a "+
+		"`credential-issued` record, or issue one from whatever provisions your control plane",
 		journal, len(m.Users), len(m.Credentials))
 }

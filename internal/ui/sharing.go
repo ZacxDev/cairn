@@ -211,8 +211,11 @@ func (s ControlSharing) Administrable(auth control.Authorization) []control.Name
 // was broken. It is 200x, and that row is where the model over-predicts MOST (200x against
 // 66.2x measured), not least.
 //
-// So the model OVER-predicts throughout and is a safe bound — by ~3x at the smallest step
-// and by a few percent at the largest, which is the direction a bound should err in. `control.Resolve` sorts the
+// So the model OVER-predicts throughout and is a safe bound — by ~3x at the SMALLEST
+// SIZES and by a few percent at the largest, which is the direction a bound should err in.
+// (By STEP it reads the other way: the 3x lands on the ten-fold 10->100 step and the few
+// percent on the 300->600 doubling. This table has already produced one reader who
+// re-derived it and concluded it was broken, so the axis is spelled out.) `control.Resolve` sorts the
 // whole grant table on every call (`sortedGrants`) and calls `ScopesIn` once per
 // membership — that is where the `G log G` comes from, and it is why one page render at
 // 600 principals allocates ~60 MB.

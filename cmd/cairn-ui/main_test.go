@@ -96,7 +96,7 @@ func TestAnAbsentOrUnusableControlJournalIsRefusedBeforeTheListener(t *testing.T
 // zero credentials, and could authenticate nobody. A `len(Users) == 0` check passes it.
 // Measured end to end on both built binaries before this test was written.
 func TestAJournalWithUsersAndNoCredentialIsRefused(t *testing.T) {
-	cache, journal := seededJournal(t, false)
+	cache, journal := seededJournal(t, noCredential)
 	err := refuseAnAuthorityNobodyCanSignInTo(cache, journal)
 	if err == nil {
 		t.Fatal("a journal with a user and NO credential was admitted. `control.Authenticate` matches " +
@@ -111,10 +111,35 @@ func TestAJournalWithUsersAndNoCredentialIsRefused(t *testing.T) {
 	}
 }
 
+// TestAJournalWhoseCredentialsAreALLREVOKEDIsRefused covers the one clause of the
+// predicate a mutation sweep found UNCOVERED.
+//
+// 🔴 DELETING `if !c.Live() { continue }` LEFT THIS PACKAGE GREEN — measured, in a sweep
+// whose two controls both moved (an always-refuse mutant and an always-admit mutant were
+// each killed). A journal whose every credential carries `credential-revoked` is a real
+// operational state — a rotation with the new credential not yet issued — and without
+// that clause the surface starts and can authenticate nobody.
+//
+// ⚠ THE OTHER CLAUSE, `PrincipalFor`, IS EQUIVALENT AND DELIBERATELY HAS NO TEST.
+// `control.FileStore` refuses a `credential-issued` naming a subject the model does not
+// hold (`event N (credential-issued): subject … does not exist`), and there is no
+// user-deletion event kind, so no journal can reach the state that clause guards. Writing
+// a test for it would mean writing a journal the store refuses to replay. Recorded here
+// rather than left as an uncovered line somebody later "fixes" with a fixture that cannot
+// exist.
+func TestAJournalWhoseCredentialsAreALLREVOKEDIsRefused(t *testing.T) {
+	cache, journal := seededJournal(t, credentialRevoked)
+	if err := refuseAnAuthorityNobodyCanSignInTo(cache, journal); err == nil {
+		t.Fatal("a journal whose only credential is REVOKED was admitted. `control.Authenticate` skips a " +
+			"revoked credential, so this deployment answers 401 to every sign-in while announcing " +
+			"itself writable.")
+	}
+}
+
 // TestAJournalWithALiveCredentialIsAdmitted is the POSITIVE CONTROL. Without it every
 // assertion above is satisfied by a guard that refuses everything.
 func TestAJournalWithALiveCredentialIsAdmitted(t *testing.T) {
-	cache, journal := seededJournal(t, true)
+	cache, journal := seededJournal(t, credentialLive)
 	if err := refuseAnAuthorityNobodyCanSignInTo(cache, journal); err != nil {
 		t.Fatalf("POSITIVE CONTROL FAILED: a journal with a live, attributable credential was refused "+
 			"(%v). Every refusal in this file would then be about a guard that admits nothing.", err)
@@ -126,8 +151,19 @@ func TestAJournalWithALiveCredentialIsAdmitted(t *testing.T) {
 	}
 }
 
-// seededJournal builds a real `control.FileStore` journal, with or without a credential.
-func seededJournal(t *testing.T, withCredential bool) (*control.Cache, string) {
+// credentialState is which of the three shapes a seeded journal carries. Named rather
+// than a bool, because the third state — a credential that exists and is REVOKED — is the
+// one a bool could not express and the one a mutation sweep found uncovered.
+type credentialState int
+
+const (
+	noCredential credentialState = iota
+	credentialLive
+	credentialRevoked
+)
+
+// seededJournal builds a real `control.FileStore` journal in the requested state.
+func seededJournal(t *testing.T, state credentialState) (*control.Cache, string) {
 	t.Helper()
 	at := time.Date(2000, 6, 1, 12, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "seeded.journal")
@@ -144,12 +180,17 @@ func seededJournal(t *testing.T, withCredential bool) (*control.Cache, string) {
 		{Kind: control.EventProjectCreated, At: at, ProjectID: project, Name: "startup", UserID: user},
 		{Kind: control.EventMemberSet, At: at, ProjectID: project, UserID: user, Role: control.RoleOwner},
 	}
-	if withCredential {
+	if state != noCredential {
 		events = append(events, control.Event{
 			Kind: control.EventCredentialIssued, At: at, CredentialID: "crd_startup",
 			SubjectKind: control.KindUser, SubjectID: user,
 			TokenHash: control.HashToken("fixture-startup-credential-not-a-real-token"),
 			Label:     "fixture",
+		})
+	}
+	if state == credentialRevoked {
+		events = append(events, control.Event{
+			Kind: control.EventCredentialRevoked, At: at, CredentialID: "crd_startup",
 		})
 	}
 	if _, err := store.Append(context.Background(), events...); err != nil {
