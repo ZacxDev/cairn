@@ -24,7 +24,9 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`f8a257e`**. Open: **#74** (rank 2, this session) and **#69** (the sibling's rename).
+- `main` @ **`f8a257e`**. Open: **#74** (ranked item 1 below — it is the rank-2 CLAIM's work, and
+  the two numbers differ because the list shifted up; read the subject, not the number), **#75**
+  (this doc) and **#69** (the sibling's rename).
 - ✅ **THE ARC IS CLOSED, AND THE VERDICT WAS TAKEN ON `main`.** #64 merged as **`7d7c9ea`**;
   all four clauses were then measured on `main` rather than inferred from the PR's six green
   checks, because the condition says "on `main`" and names the commands: authz matrix PASS ·
@@ -43,16 +45,9 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   missing and 0 duplicated**, every other section byte-identical and the archive append-only.
   The bulk of the size was DUPLICATION rather than history: `isolation: "worktree"` was
   recorded six times, `$?`-after-a-pipe three, MERGEABLE-but-conflicting four.
-- ⏳ **#74 IS OPEN AND ITS ROUND 0 IS IN FLIGHT AS THIS IS WRITTEN — READ THE PR, NOT THIS
-  LINE, FOR ITS OUTCOME.** It closes three batched defect entries. Per the standing operator
-  decision for PRs touching only tests, prose and CI config, its ladder is **round 0 + round 1
-  and then stops regardless of findings**.
-- 🔴 **ONE OF THOSE ENTRIES WAS NOT PROSE.** "Nine verbs" was **five** sites, not the four the
-  entry named, and the fifth was `tests/test_go_client_ledgers.py`'s `assert len(go_verbs) >= 9`
-  against **ten** verbs — a floor one below the count, so deleting a verb gives 9, which is not
-  `< 9`, and it passed. Identical shape to the `go` job's `ok` floor that was `-lt 16` against
-  seventeen packages. **A count filed as a prose defect can be a live gate defect; check which
-  before batching it.**
+- ⏳ **#74 IS OPEN** — it closes three batched defect entries, one of which turned out to be a
+  live gate defect rather than prose (recorded under `Gotchas`, which is the half that survives
+  this heading being replaced). Its ladder is round 0 + round 1 per the standing decision.
 - ⚠ **`cairn-control-plane-2` IS HELD** for rank 2. `cairn-control-plane-1` was released when
   the prune landed.
 - **No external-task-board field**: the resolver exited 5 again. Its positive control proves a
@@ -102,19 +97,36 @@ read the SUBJECT the claim prints rather than trusting the number.**
    `AGENTS.md`'s "Naming" section. ⚠ The repo is PUBLIC and consumers pin the flake, so the
    warning text and the removal version are a PUBLISHED CONTRACT.
    forcing: user — item 5 of the five approved with "proceed as recommended".
+8. 🔴 **MAKE `handoff_doc.py` RUN `leakscan` ON THE DELTA AND REFUSE ON rc≠0.** Appended at the END
+   deliberately: rank is half a claim's slug, so a new item may not push `cairn-control-plane-2`
+   off the work it names. Three `denied-identifier` events have now happened on handoff deltas and
+   the standing remedy is a SENTENCE in this document, written three times in three wordings — no
+   code runs it, and `~/.claude/skills/handoff/` does not mention `leakscan` at all. The write tool
+   commits and pushes in ONE call, so it is the only place a check can sit. ⚠ The script lives in
+   the repository that owns the handoff tooling, NOT this one, and it must find the scanner from
+   the TARGET repo rather than assume one — a repo with no `tests/leakscan.py` has to PASS, not
+   fail. 🔴 **A FOURTH EVENT OF THIS CLASS HAPPENED WHILE THIS VERY ITEM WAS BEING WRITTEN**: the
+   first draft named that repository outright and the gate refused it — this time BEFORE the push,
+   because the scan ran on the working tree rather than after a commit. That is the remedy working
+   by hand, and it is the argument for wiring it in. **Closing condition:** a delta
+   carrying a known-denied identifier is refused by the tool, watched.
+   forcing: incident — three leak events, one of which reached `main` (#68); the gate's own
+   refusals are the evidence, and the third happened with the lesson already written down.
 
 ## Defects (batched)
-- 🔴 **THIS DOC IS 99,059 B AGAINST ITS OWN 65,536 B GUIDELINE — 33,523 B OVER, AND THIS UPDATE ADDED
-  9,975 B OF THAT.** Five consecutive updates have now flagged it and grown it, this one by the most.
-  ⚠ The figure is the POST-update size, stated that way on purpose: the previous draft of this bullet
-  quoted the pre-update 89,084 and would have been stale on arrival, which is the failure this entry
-  is about. No test reads the number, so nothing goes red. The
-  archive (`claudedocs/handoff-cairn-control-plane-archive.md`) is where answered material goes.
-  🔴 **Do NOT satisfy this by deleting a claim or narrowing a rule** — that is the failure the
-  `AGENTS.md` budget already produced once, where the only reordering that fit deleted the word
-  "BYPASS" from the row describing an auth-bypass surface. **Closing condition:** a prune PR moving
-  answered Gotchas blocks to the archive and bringing this file under the guideline, or a written
-  line from a named reader saying the ceiling is wrong.
+- ✅ **CLOSED BY `f8a257e` — the byte-guideline entry.** It asked for a prune PR moving answered
+  `Gotchas` blocks to the archive and bringing this file under 65,536 B; `f8a257e` did that by
+  MOVING 125 of 174 bullets verbatim. 🔴 **IT STAYED 🔴-MARKED AND LIVE-LOOKING FOR TWO UPDATES
+  AFTER ITS CONDITION WAS MET, ASSERTING `99,059 B` ABOUT A FILE MEASURING 56,649 — 42,410 B
+  WRONG, at the top of the section ranked work is drawn from.** The mechanism is worth more than
+  the entry: this section REPLACES, so a bullet survives every update that does not retype it,
+  and the prune deliberately did not touch `Defects`. **A closing condition met by a PR closes
+  NOTHING until somebody edits this section**, and the update that measures the file is the one
+  holding the evidence — so close it THERE, in the same change, or it reads as open forever.
+  ⚠ **The guideline itself has NO author of record and NO instrument** — 65,536 appears in this
+  doc and its archive and nowhere else in the tree; `AGENTS.md`'s budget is enforced by
+  `tests/test_agent_instructions_weight.py` and this has no analogue. Report it as a self-imposed
+  target, never as a gate.
 - 🟡 **FOUR FILED BY #54's AND #57's LADDERS, none fixed.** (a) `internal/ui/README.md:341` says
   "`ui.AuthBackends` takes **two** backends"; `internal/ui/auth.go:44` takes **one** parameter —
   and `README.md` now points readers into that file. (b) `internal/control/tokenfile/source.go:21`
@@ -140,18 +152,27 @@ read the SUBJECT the claim prints rather than trusting the number.**
   `internal/doctor/render.go:99` — `Markers()` has one consumer and exports a rendering detail;
   separately, a state added to `markers` but not to `States` makes `doctorRow` silently skip those
   rows. (c) `lib/README.md` — the re-count recipe greps two literal phrases, so it is a SPELLED check
-  that cannot see a reworded echo. **Closing condition:** one PR correcting all three.
+  that cannot see a reworded echo. 🔴 **THE CONDITION SHOULD HAVE BEEN THREE CONDITIONS, AND SAYING
+  SO IS THE RULING RATHER THAN A COMPLAINT.** (a) and (b) share a package and a fixture; (c) shares
+  nothing with them but the ladder that filed it, and it overlaps the `COUNTS QUOTED IN PROSE` entry
+  above. Bundling unrelated findings under one "correct all three" forces either scope creep or a
+  condition nobody can honestly close. **Closing condition, SPLIT:** (a)+(b) by ZacxDev/cairn#74;
+  (c) by a separate change, and it is NOT covered by #74.
 - 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — `lib/README.md`'s echo-site count,
   `tests/test_parity_harness.py`'s floor. ⚠ **`README.md`'s 101/102/70/23/8 are GONE** — #54 deleted
   every count from that file rather than refreshing them, because the file itself recorded that they
   had already gone stale once. The repo owns the fix pattern
   (`tests/test_control_mutant_count_is_pinned.py`); applying it to what remains is separate work.
   **Closing condition:** a decision to pin each or a written line saying why not.
-- 🟡 **"NINE VERBS" SURVIVES AT FOUR SITES AND THE COUNT IS TEN.** `AGENTS.md`, `flake.nix:911`
-  (directly above its own `want-verbs.txt` listing **ten**), and `tests/test_parity_harness.py:32,291`.
+- 🟡 **"NINE VERBS" SURVIVES AT FIVE SITES AND THE COUNT IS TEN — AND THE FIFTH IS A GATE, NOT A
+  COMMENT.** `AGENTS.md`, `flake.nix:1019` (directly above its own `want-verbs.txt` listing **ten**),
+  `tests/test_parity_harness.py:32,336` — all comments, so nothing reddens — **and
+  `tests/test_go_client_ledgers.py`'s `assert len(go_verbs) >= 9`**, a floor one below the count,
+  which buys exactly one free deletion and PASSES for it. ⚠ **This entry said FOUR and named the
+  four comments; the fifth was found by measuring rather than by reading it**, which is why a count
+  filed as a prose defect gets grepped for in an `assert` or an `if` before it is batched as prose.
   Measured three ways: `cairn -verbs` prints 10, argparse lists 10, the parity harness exercises 10.
-  All four survivors are comments, so nothing reddens. #54 fixed only `README.md`'s copy.
-  **Closing condition:** one PR correcting all four.
+  #54 fixed only `README.md`'s copy. **Closing condition:** ZacxDev/cairn#74 merged.
 - 🟡 **FOUR FILED BY #44'S LADDER** in `tests/test_publish_workflow.py` and
   `tests/test_control_mutant_count_is_pinned.py`, plus **three unpinned by construction** in
   `publish-image.yml`. **Closing condition:** one PR each, or a written line saying why not.
@@ -331,16 +352,23 @@ read the SUBJECT the claim prints rather than trusting the number.**
   was badly chosen and did NOT go red** — reach was proven instead by the test run flagging the
   file directly. A control that fails to fire is not a passing control; say which one actually
   carried the proof.
-- 🔴 **AND THEN IT CAUGHT THE *NEXT* HANDOFF DELTA, AFTER THE PUSH — SECOND OCCURRENCE, SAME
-  IDENTIFIER, AND THE BULLET DIRECTLY ABOVE HAD ALREADY BEEN WRITTEN.** The offending line was a
-  ranked item naming the repository a cross-repo defect lives in, which is exactly the fact the
-  item needs and exactly the one this tree may not carry. 🔴 **The failure is a SEQUENCING one:
-  `handoff_doc.py --confirm --push` commits and pushes in ONE call, so there is no moment
-  between them to scan in — the scan has to run on the SCRATCH DELTA, before the tool is
-  invoked at all.** Scanning "the pushed tree" is scanning after the mistake is public.
-  Remedy adopted: `leakscan` runs against the delta file itself; the cross-repo defect is
-  described BY ROLE ("the deployment-manifest repository") and the name is resolved from the
-  operator, never from a doc in this tree.
+- 🔴 **AND THEN IT CAUGHT THE *NEXT* HANDOFF DELTA, AFTER THE PUSH — THIRD EVENT OF THE SAME
+  CLASS, WITH THE BULLET DIRECTLY ABOVE ALREADY WRITTEN.** ⚠ **Not the same identifier**, and
+  the distinction matters because it is what rules out "one remedy already covers this": the
+  first was an external tool's name, the second a repository name, both `denied-identifier`.
+  🔴 **The failure is a SEQUENCING one: `handoff_doc.py --confirm --push` commits and pushes in
+  ONE call, so there is no moment between them to scan in.** Scanning "the pushed tree" is
+  scanning after the mistake is public.
+- 🔴 **AND THE REMEDY I FIRST WROTE FOR THAT WAS A THIRD PHRASING OF ADVICE THAT HAD ALREADY
+  FAILED TWICE — RECORDED BECAUSE THE REACH FOR A BETTER WORDING IS THE ERROR, NOT THE WORDING.**
+  It said "scan the SCRATCH DELTA, before the tool is invoked at all". The bullet above it said
+  the same thing in different words, and the leak happened anyway. **There is no mechanism:
+  `~/.claude/skills/handoff/` contains no reference to `leakscan` at all, so nothing runs it and
+  nothing refuses on it.** A guard spelled as a sentence is walkable by forgetting, and three
+  events is enough evidence that it is being forgotten. **The deterministic fix is one line in
+  `handoff_doc.py`: run `leakscan` on the delta and refuse the write on rc≠0** — filed as ranked
+  work, in the repo that owns that script rather than this one. Until it exists, the honest
+  statement is that this hazard is UNGUARDED, not that it is handled.
 - ⚠ **`leakscan` EXIT 2 IS "COULD NOT VOUCH", AND A LEFTOVER AGENT WORKTREE CAUSES IT.** A removed
   agent's worktree directory under `.claude/worktrees/` made the scanner exit 2 with
   `COULD NOT READ … Is a directory`. Not a leak and not a pass. Check the worktree is clean and
@@ -479,11 +507,6 @@ read the SUBJECT the claim prints rather than trusting the number.**
   shipped a doc that was wrong on arrival; merging first and re-deriving the delta costs one
   rebase and produces a doc whose verdict was MEASURED rather than predicted. **When a doc's
   claim is about a state your next action changes, take the action first.**
-- 🔴 **THE ARC'S VERDICT WAS TAKEN BY RUNNING THE THREE COMMANDS THE CONDITION NAMES, ON
-  `main`, NOT BY READING SIX GREEN CHECKS.** Green CI on a PR is a claim about the PR's
-  branch; the condition said "on `main`". They agreed here — but the whole reason the clause
-  is worded that way is that they need not, and a session that reported "addressed" off the
-  PR's rollup would have been asserting rather than measuring.
 - **Decision (operator, this session): the credential gap is FILED, not built.** A
   credential-issuing command carries its own decisions — token generation, display-once,
   revocation UX — and the one hazard worth naming is that it is the single path where a
@@ -526,20 +549,13 @@ read the SUBJECT the claim prints rather than trusting the number.**
   renders `OK`, `UNMEASURED` and `NOT-OBSERVABLE` — never `PROBLEM`, whose marker `🔴` is a
   SINGLE RUNE where the other three are two. Closed with two guards rather than one: the
   fixture's states are a ledger that fails if it SHRINKS, and a separate unit case drives
-  `doctor.Markers()` for every state. **When a fixture cannot reach a case, the honest fix is
+  `doctor.ParseRow` over every state. **When a fixture cannot reach a case, the honest fix is
   a second guard, not a wider sentence.**
-- **Decision (operator, this session): the credential gap is FILED, not built** — a
-  credential-issuing command carries its own decisions and is the single path on which a
-  secret could reach the journal.
 - **Decision (operator, this session): the prune was chosen over feature work**, and its
   closing condition was met by MOVING rather than cutting. 🔴 **The safety property of a prune
   is assertable and was asserted**: every bullet verified present in exactly one of the two
   files, 0 missing and 0 duplicated, with every other section byte-identical. A prune that
   cannot prove it moved rather than cut is the `BYPASS`-deletion failure with a tidier diff.
-- ⚠ **A DUPLICATE IS NOT A REDUNDANCY WHEN THE SECOND ONE RECORDS THAT THE LESSON WAS READ AND
-  THEN HIT ANYWAY.** That is why the prune kept the LATEST instance of each tripwire rather
-  than the first: *"zsh ate `$var:` a third time, in the session that had just read the
-  warning"* carries the re-occurrence, which is the part that makes a tripwire credible.
 
 ## How to verify
 
