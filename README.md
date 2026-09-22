@@ -175,11 +175,11 @@ between the revision they are pinned to and the one they are moving to.
 
 ### 🔴 The environment variables are now `CAIRN_*`
 
-Every `SUBSYSTEM_STORE_*` variable has a `CAIRN_*` name. **Both work.** The new name
-wins; the old one is read only when the new one is unset or blank; and an old name that
-is *present* — including when the new one shadows it — prints one line per process on
-stderr naming its replacement. Nothing breaks on the day you upgrade, and nothing
-silently half-migrates.
+Every `SUBSYSTEM_STORE_*` variable has a `CAIRN_*` name. **Both work.** Within one
+source the new name wins: the old one is read only when the new one is unset or blank
+*there*. An old name that is *present* — including when the new one shadows it — prints
+one line per process on stderr naming its replacement. Nothing breaks on the day you
+upgrade, and nothing silently half-migrates.
 
 | set this | instead of | what it is |
 |---|---|---|
@@ -198,14 +198,31 @@ silently half-migrates.
 ⚠ **Two rows are not the mechanical prefix swap, and copying the pattern instead of the
 table will break a pod.** `CAIRN_HOST` was already taken — it is the human-readable
 machine *label* that appears in rendered output — so the pod's listen address is
-`CAIRN_LISTEN_HOST`. And `CAIRN_ROOT` would sit beside the client's `CAIRN_CACHE_ROOT`
-and `CAIRN_MIRROR_ROOT` and read as a third member of that family, so the pod's store
-root is `CAIRN_STORE_ROOT`.
+`CAIRN_LISTEN_HOST`. And `CAIRN_ROOT` would read as a sibling of the client-side
+`CAIRN_MIRROR_ROOT` when it is the *pod's* store root and belongs to neither side, so the
+pod's store root is `CAIRN_STORE_ROOT`.
 
 **The config file's KEYS count too.** `~/.config/subsystem-store/env` and
 `instances/<alias>.env` accept either spelling with the same precedence, and a deprecated
 key there warns with a line that names *the file* rather than a `$VAR`, because that is
 where you have to go to change it.
+
+🔴 **BUT NEW-BEATS-OLD IS A RULE WITHIN ONE SOURCE, AND THE SOURCES COMPOSE THE OTHER WAY
+ROUND. READ THIS BEFORE MIGRATING A CONFIG FILE.** For the **default** instance the whole
+environment is consulted first, and only if it yields nothing is the file read — so an
+**old name exported beats a new name in the file**:
+
+```
+~/.config/subsystem-store/env:   CAIRN_URL=https://new.example.invalid
+environment:                     SUBSYSTEM_STORE_URL=https://old.example.invalid
+→ the client uses old.example.invalid
+```
+
+Migrating the file alone therefore changes nothing while the old variable is still
+exported, and the deprecation line — which describes only its own source — will not tell
+you so. `unset SUBSYSTEM_STORE_URL` (and `SUBSYSTEM_STORE_TOKEN`) in the same change, or
+export the new names too. ⚠ For a **non-default** instance the environment is not
+consulted at all, so there the file is the only thing that decides.
 
 🔴 **The pod images deliberately still bake the OLD names, and that is the precedence
 rule protecting you rather than an unfinished rename.** `server/Dockerfile` and

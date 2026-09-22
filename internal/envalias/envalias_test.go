@@ -130,8 +130,62 @@ func TestAShadowedOldNameStillWarns(t *testing.T) {
 func TestABlankOldNameIsNotADeprecation(t *testing.T) {
 	// `FOO=` is how a caller UNSETS an alias for a child process. It changes no
 	// resolution, so warning about it would be noise on a correct configuration.
-	if lines := Deprecations(map[string]string{"SUBSYSTEM_STORE_URL": ""}); len(lines) != 0 {
-		t.Fatalf("a blank old name warned: %v", lines)
+	//
+	// 🔴 "CHANGES NO RESOLUTION" IS THE HALF THAT USED TO BE FALSE, AND IT IS WHY THE
+	// WHITESPACE ROW IS HERE. `Deprecations` tested blankness with `TrimSpace`; the
+	// resolver returned the old name's value RAW. So `SUBSYSTEM_STORE_ROOT="  "` resolved
+	// to `"  "` — a value the pod would have used as a store root — while emitting no
+	// warning at all, which is the one combination the sentence above rules out. The two
+	// halves now read blankness through the same `blank()` predicate; see
+	// `TestABlankOldNameResolvesAsABSENT`, which is the resolution half of this pair.
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"empty", ""},
+		{"whitespace", "  "},
+		{"tab", "\t"},
+	} {
+		if lines := Deprecations(map[string]string{"SUBSYSTEM_STORE_URL": tc.value}); len(lines) != 0 {
+			t.Errorf("%s: a blank old name warned: %v", tc.name, lines)
+		}
+	}
+}
+
+// TestABlankOldNameResolvesAsABSENT is the resolution half of the pair above, and it is
+// REGRESSION coverage rather than an invariant guard.
+//
+// Matrix: RED at `78679b9` (this branch's own pre-fix state) for the `whitespace` and
+// `tab` rows — `Value` returned `"  "` and `"\t"` — green here. The `empty` row was
+// already green, and is kept as the control that says the fix did not simply invert the
+// predicate.
+//
+// 🔴 THE FIXTURE VALUES ARE PAIRWISE DISTINCT AND NONE OF THEM IS THE FALLBACK. A mutant
+// that hardcoded `""` for every old-name read would satisfy this and die in
+// `TestTheOldNameIsReadWhenTheNewOneIsAbsentOrBlank`, whose expected value is `"old"`.
+func TestABlankOldNameResolvesAsABSENT(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"empty", ""},
+		{"whitespace", "  "},
+		{"tab", "\t"},
+	} {
+		if got := Value(map[string]string{"SUBSYSTEM_STORE_URL": tc.value}, "CAIRN_URL"); got != "" {
+			t.Errorf("%s: a blank OLD name resolved to %q; it must read as ABSENT, the "+
+				"same way a blank NEW name does, or `ValueOr`'s fallback never runs and "+
+				"the pod takes a whitespace store root", tc.name, got)
+		}
+		// And through `OSValueOr`, which is the shape `cmd/cairn-server` actually reads
+		// its store root with: the FALLBACK has to be what comes back, not the blank. A
+		// fix applied to `Value` alone but not reached by the `os.Getenv` path would pass
+		// the assertion above and still ship the defect.
+		t.Setenv("SUBSYSTEM_STORE_URL", tc.value)
+		t.Setenv("CAIRN_URL", "")
+		if got := OSValueOr("CAIRN_URL", "fallback"); got != "fallback" {
+			t.Errorf("%s: OSValueOr returned %q, want the fallback", tc.name, got)
+		}
 	}
 }
 

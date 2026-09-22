@@ -401,6 +401,28 @@ was chosen over reverting it on the oracle.
 ⚠ **THE EXCEPTION IS THAT RULE AND NOTHING ELSE.** It does not license editing the oracle
 anywhere else, and both spellings of the resolver carry the same statement in a comment.
 
+🔴 **"BLANK" MEANS WHITESPACE-ONLY TOO, AND THAT IS A WIDENING OF THIS EXCEPTION RATHER
+THAN A RESTATEMENT OF IT — DECLARED HERE FOR THE SAME REASON THE ORIGINAL WAS.** The rule
+first shipped with blankness spelled INLINE at each of two sites, and the two disagreed:
+`deprecations` tested `.strip()`, the resolver returned the OLD name's value raw. So
+`SUBSYSTEM_STORE_ROOT="  "` resolved to `"  "` — a pod would have taken a whitespace store
+root — *and* warned about nothing, contradicting this file's own "a blank value changes no
+resolution". Both implementations had the identical defect, so `tests/parity/` compared
+them equal and could not see it. It is closed by one named predicate per language
+(`blank` / `_blank`) read by both halves, and the half that MOVED is resolution:
+
+| a whitespace-only `SUBSYSTEM_STORE_ROOT` | oracle at `f74657d` | oracle+Go, before | oracle+Go, now |
+|---|---|---|---|
+| `--store` | `"  "` | `"  "` | falls through to `/data` |
+| a deprecation warning | n/a | none | none |
+
+The alternative — warn on any non-empty old value, whitespace included — was rejected
+because it keeps a resolved value no operator can have meant. **The cost is the same one
+the section below already records, one step wider:** a manifest that sets a store root to
+whitespace now relocates writes quietly rather than serving a nonsense path. Watched RED
+at `78679b9` on the `"  "` and `"\t"` rows in both languages, with the `""` row green
+throughout as the control that the predicate was not simply inverted.
+
 🔴 **THE COST, WHICH IS REAL AND WAS TAKEN DELIBERATELY.** A blank store root now resolves
 to a default instead of failing, so a manifest bug that BLANKS it relocates writes quietly
 rather than loudly. That is the trade: the old oracle's `""` and `ValueError` were at
@@ -432,8 +454,22 @@ would override the thing under test.
 
 | arm | guard | label | watched RED at |
 |---|---|---|---|
-| oracle | `tests/test_env_aliases.py::TestABlankValueIsTreatedAsAbsentByTheORACLE` | **regression coverage** | `--store` restored to `os.environ.get(...)` → `store=` empty; `--port` restored to `int(os.environ.get(...))` → `ValueError: invalid literal for int() with base 10: ''`. Two separate mutants, each killed by this guard's own message |
+| oracle | `tests/test_env_aliases.py::TestABlankOLDNameOnTheORACLE` | **regression coverage** — the only arm here that attributes | the real pre-change tree, `git show f74657d:server/server.py`, one half at a time and with the base-era `SUBSYSTEM_STORE_TRUSTED_PROXIES` supplied so nothing dies for a neighbour's reason: blank `SUBSYSTEM_STORE_ROOT` → base prints `store=` empty against the expected `store=/data`; blank `SUBSYSTEM_STORE_PORT` → `ValueError: invalid literal for int() with base 10: ''` while the parser is being BUILT, which a `--port` flag does not rescue |
+| oracle | `tests/test_env_aliases.py::TestABlankValueIsTreatedAsAbsentByTheORACLE` | **INVARIANT GUARD** — relabelled; see below | — |
 | Go | `cmd/cairn-server::TestABlankEnvironmentValueIsTreatedAsABSENT` | **INVARIANT GUARD** — Go never had the other behaviour, so it is not evidence that anything was fixed | `envOr` made to prefer a present-empty value → `listening on :<port> store=` ; `envInt` likewise → `CAIRN_PORT must be a number, got ""`. Two separate mutants, each killed by this guard's own message |
+
+🔴 **THE SECOND ROW WAS CLAIMED AS REGRESSION COVERAGE AND WAS NOT, AND THE CORRECTION IS
+WORTH MORE THAN THE ROW.** It blanks the CURRENT names and supplies the deprecated ones —
+but at `f74657d` the oracle has no `CAIRN_*` handling at all, so blanking `CAIRN_STORE_ROOT`
+there exercises nothing. Measured against the real base tree with the base-era trusted-proxy
+spelling supplied, it prints **exactly the string it asserts** — green. Its red appeared only
+because the fixture named `CAIRN_TRUSTED_PROXIES`, which base does not know, so the base
+oracle refused with `no trusted proxies` **before `main()` ever evaluated a store root or a
+port** — a mutant dying for the wrong reason, under a message that said "a present-but-empty
+value was NOT treated as absent". The earlier "RED ON THE PRE-CHANGE ORACLE" claim was
+measured against MUTANTS of HEAD, not against `f74657d`, and the two are not the same claim.
+The row stays, relabelled, because it still pins the deprecation window's own behaviour and
+because it is the control that stops a `/data`-hardcoding mutant surviving the first row.
 
 Every fixture value is one no constant under test can equal — a temporary directory
 against `/data`, a kernel-assigned port asserted unequal to 8102, `127.0.0.1` against a

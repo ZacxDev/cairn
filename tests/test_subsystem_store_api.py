@@ -7093,18 +7093,63 @@ def fetch_from(
         conn.close()
 
 
+def _env_alias_ledger():
+    """`lib/env_aliases.py`, loaded by PATH rather than by import.
+
+    This module does not put `lib/` on `sys.path` — 20k lines of tests in one file is
+    exactly where an extra `sys.path` entry shadows something by accident — so the one
+    thing needed from there is loaded explicitly.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "_env_aliases_for_api_tests", ROOT / "lib" / "env_aliases.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+#: EVERY spelling that configures the proxy allowlist, DERIVED from the rename ledger.
+#:
+#: 🔴 DERIVED, BECAUSE THE HAND-WRITTEN VERSION WENT HALF-TRUE THE DAY THE RENAME LANDED.
+#: `_child_env` listed `CAIRN_TRUSTED_PROXIES` alone while `SUBSYSTEM_STORE_TRUSTED_PROXIES`
+#: still configures the server. Measured: with the deprecated name exported,
+#: `TestTrustedProxyOverTheRealProcess::test_the_process_REFUSES_TO_START_with_the_variable_unset`
+#: fails — the child comes up with `trusted-proxies=127.0.0.1/32` instead of exiting 78, and
+#: the run takes 30 s instead of 0.3 s because it is waiting on a server that started. Loud
+#: rather than a false green, but the docstring's stated protection was only half there.
+#: A ledger-derived tuple cannot go half-true when the next name is renamed.
+#:
+#: ⚠ `tests/testlib/env_pin.py` deliberately scopes THIS FILE out of its sweep, so nothing
+#: else covers this. The assertion below is the positive control: a typo in the new name
+#: yields a one-element tuple, which is silently the very bug being fixed here.
+TRUSTED_PROXY_ENV = "CAIRN_TRUSTED_PROXIES"
+TRUSTED_PROXY_ENV_NAMES = tuple(
+    name
+    for name in (TRUSTED_PROXY_ENV, _env_alias_ledger().old_name(TRUSTED_PROXY_ENV))
+    if name
+)
+assert len(TRUSTED_PROXY_ENV_NAMES) == 2, (
+    f"the ledger knows no deprecated spelling for {TRUSTED_PROXY_ENV} — "
+    f"derived {TRUSTED_PROXY_ENV_NAMES}, which would leave `_child_env` popping one name "
+    f"while the other still configures the server"
+)
+
+
 def _child_env(trusted_proxies: str | None) -> dict[str, str]:
     """The spawned server's environment. `None` REMOVES the variable.
 
     🔴 It pops rather than skipping the set: `os.environ` is inherited, so a
-    developer who happens to export `CAIRN_TRUSTED_PROXIES` in their
+    developer who happens to export any spelling of the proxy allowlist in their
     shell would otherwise make the "unset" test pass for the wrong reason — and
     on the day it mattered it would be the CI runner's environment deciding.
+    BOTH spellings are popped, from `TRUSTED_PROXY_ENV_NAMES` above; the value is
+    set back under the CURRENT name only, which is what the server prefers anyway.
     """
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-    env.pop("CAIRN_TRUSTED_PROXIES", None)
+    for name in TRUSTED_PROXY_ENV_NAMES:
+        env.pop(name, None)
     if trusted_proxies is not None:
-        env["CAIRN_TRUSTED_PROXIES"] = trusted_proxies
+        env[TRUSTED_PROXY_ENV] = trusted_proxies
     return env
 
 

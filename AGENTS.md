@@ -449,7 +449,7 @@ only because `packages.cairn` cannot import `internal/`, pinned against each oth
 `tests/test_env_aliases.py`. **Never open-code a fallback at a call site**, and note the two
 pairs that are NOT the prefix swap: the pod's listen address is `CAIRN_LISTEN_HOST` because
 `CAIRN_HOST` already means the machine LABEL, and its store root is `CAIRN_STORE_ROOT` because
-`CAIRN_ROOT` would read as a third `CAIRN_CACHE_ROOT`/`CAIRN_MIRROR_ROOT`.
+`CAIRN_ROOT` would read as a sibling of the client-side `CAIRN_MIRROR_ROOT`.
 
 Other identifiers still read `subsystem_store` — the `lib/` module names,
 `~/.config/subsystem-store/`, `/run/secrets/subsystem-store/`, the `subsystem-recall` CLI

@@ -29,26 +29,41 @@
 //     `host_label()` and rendered into client output. The mechanical swap would make a
 //     pod try to bind to an operator's machine label, AND let a listen address hijack the
 //     label that lands in rendered output. Hence `CAIRN_LISTEN_HOST`.
-//   - `CAIRN_ROOT` would sit beside the live, client-side `CAIRN_CACHE_ROOT` and
-//     `CAIRN_MIRROR_ROOT` and read as a third member of that family, when it is the POD's
-//     store root and belongs to neither. Hence `CAIRN_STORE_ROOT`.
+//   - `CAIRN_ROOT` would read as a sibling of the client-side `*_ROOT` names when it is
+//     the POD's store root and belongs to none of them. Hence `CAIRN_STORE_ROOT`.
+//     ⚠ THE LIVE ONE IS `CAIRN_MIRROR_ROOT` ALONE — checked rather than listed from
+//     memory. An earlier draft of this paragraph, and the collision guard in
+//     `tests/test_env_aliases.py`, both named `CAIRN_CACHE_ROOT` as live; NOTHING in
+//     either language reads it (`internal/client/readstore.go` says the env override was
+//     deliberately not added, and `cli.go`'s cache-root refusal names it anyway — a
+//     pre-existing message defect, not this package's). The naming decision does not
+//     depend on the count, but the claim does.
 //
 // # The resolution rules, which are the same in both spellings
 //
-//  1. The NEW name wins. The old name is read only when the new one is absent or blank.
+//  1. The NEW name wins WITHIN ONE SOURCE — one environment, or one config file.
+//     The old name is read only when the new one is absent or blank THERE. This rule
+//     says nothing about which SOURCE supplies the value: that composes the other way
+//     round (environment before file, for the default instance only), which is why the
+//     two warning texts below are scoped to one source and `README.md` owns the
+//     composition.
 //  2. An old name that is PRESENT AND NON-BLANK warns once per process — including when
 //     it is shadowed by the new one, because "I set the new name" and "the old one is no
 //     longer reachable by anything" are different claims and an operator wants both.
 //     A blank value is how a caller UNSETS an alias; it changes no resolution, so it is
-//     not a deprecation and does not warn.
+//     not a deprecation and does not warn. 🔴 "BLANK" IS ONE PREDICATE — `blank`, below —
+//     AND IT IS READ BY BOTH HALVES. Spelled inline on each side, the two disagreed:
+//     a whitespace-only OLD value resolved AND did not warn, which is the one combination
+//     the sentence above rules out.
 //  3. Warnings are emitted sorted by NEW name. `tests/parity/harness.py` compares the two
 //     clients' stderr BYTE-FOR-BYTE, so "whatever order the lookups happened in" is not
 //     an option: the order has to be a property of the ledger, not of the call sequence.
 //
 // 🔴 ONE CONSEQUENCE OF RULE 1 THAT IS NOT OBVIOUS, AND IS WHY BOTH POD IMAGES STILL BAKE
-// THE OLD SPELLING. Rule 1 makes a NEW name beat an OLD one regardless of where each came
-// from — and a container image's `ENV` is a DEFAULT that is present whether or not the
-// manifest mentions it. So an image setting `CAIRN_STORE_ROOT` would outrank a Deployment
+// THE OLD SPELLING. An image's `ENV` and a Deployment's `env:` are not two sources: the
+// runtime merges them into the ONE process environment the pod starts with, so rule 1
+// decides between them — and the image half is a DEFAULT that is present whether or not
+// the manifest mentions it. So an image setting `CAIRN_STORE_ROOT` would outrank a Deployment
 // that explicitly sets `SUBSYSTEM_STORE_ROOT`: for those variables the old name would stop
 // working the day the image shipped, rather than at P8. `flake.nix`'s `serverEnv` and
 // `server/Dockerfile` therefore stay on `SUBSYSTEM_STORE_*`, and
@@ -115,21 +130,43 @@ const RemovalAnchor = "the Python client (packages.cairn) is retired"
 
 // envWarningFormat and fileWarningFormat are the two pinned warning texts.
 //
-// 🔴 ONE TEXT PER DESTINATION, USED WHETHER OR NOT THE NEW NAME SHADOWS THE OLD ONE.
-// A second "…and it is being ignored because you also set X" wording would double the
-// strings the cross-language gate has to pin and double the ways the two spellings can
-// drift, for a sentence that is already true in both cases as written: "read only when
-// … is unset" SAYS what happened when the new name is set.
+// 🔴 EACH LINE SPEAKS ONLY ABOUT ITS OWN SOURCE, AND THE EARLIER WORDING DID NOT —
+// MEASURED FALSE ON BOTH REAL CLIENTS RATHER THAN ARGUED. They used to end "…is read
+// only when $NEW is unset" / "…absent from that file", which reads as a claim about the
+// whole configuration. It is not one, because precedence COMPOSES: the environment is
+// consulted before the config file for the default instance, so
+//
+//	config file: CAIRN_URL=…:19001          (what README.md's quickstart tells you to write)
+//	environment: SUBSYSTEM_STORE_URL=…:19002
+//	=> both clients reach 19002, while the line said the old name is read
+//	   "only when $CAIRN_URL is unset" and $CAIRN_URL was set.
+//
+// The mirror case misleads the same way: the OLD key in the file plus the NEW name
+// exported reached the EXPORTED value while the file line said the file's old key is read
+// "only when CAIRN_URL is absent from that file", which it was. An operator who had just
+// migrated their file would read either line as "my migration is live" and be wrong.
+//
+// 🔴 SO THE LINES STATE THE WITHIN-SOURCE RULE, WHICH IS THE ONLY RULE A WARNING CAN
+// KNOW. No cross-source sentence can be written truthfully here: the environment beats
+// the file for the DEFAULT instance and is not consulted at all for a non-default one
+// (`cairn`'s `load_config`, whose own `where` text says so). The composition, with that
+// caveat, belongs in `README.md` where it has room — and is there.
+//
+// 🔴 STILL ONE TEXT PER DESTINATION, USED WHETHER OR NOT THE NEW NAME SHADOWS THE OLD
+// ONE, and now for a reason that holds: the sentence states the RULE rather than this
+// run's outcome, so it is true in both cases. A second "…and it is being ignored because
+// you also set X" wording would double the strings the cross-language gate has to pin and
+// double the ways the two spellings can drift.
 //
 // 🔴 `tests/test_env_aliases.py` EXTRACTS THESE TWO CONSTANTS FROM THIS FILE BY TEXT and
 // compares the rendered result against `lib/env_aliases.py`'s. Editing one of them alone
 // is a red test, which is the whole reason they are named constants rather than inline
 // format strings at the two call sites below.
 const (
-	envWarningFormat = "$%s is a deprecated alias for $%s and is read only when $%s is unset. " +
-		"Both are accepted until " + RemovalAnchor + "."
-	fileWarningFormat = "%s in %s is a deprecated alias for %s and is read only when %s is absent " +
-		"from that file. Both are accepted until " + RemovalAnchor + "."
+	envWarningFormat = "$%s is a deprecated alias for $%s. Where both are set in the " +
+		"environment, $%s is the one that is read. Both are accepted until " + RemovalAnchor + "."
+	fileWarningFormat = "%s in %s is a deprecated alias for %s. Where both appear in that " +
+		"file, %s is the one that is read. Both are accepted until " + RemovalAnchor + "."
 )
 
 // olds maps an old name to its replacement, for the reverse lookup `Deprecations` needs.
@@ -186,14 +223,39 @@ func Value(env map[string]string, newName string) string {
 // by diffing the two clients' bytes; nothing in the Go tree noticed. The remedy is the one
 // the rules name: not a second patch, but one predicate every shape delegates to.
 func ValueFrom(get func(string) string, newName string) string {
-	if v := get(newName); strings.TrimSpace(v) != "" {
+	if v := get(newName); !blank(v) {
 		return v
 	}
 	if old := news[newName]; old != "" {
-		return get(old)
+		if v := get(old); !blank(v) {
+			return v
+		}
 	}
 	return ""
 }
+
+// blank is the ONE definition of "this variable is not set", and it applies to BOTH
+// spellings.
+//
+// 🔴 IT IS A NAMED FUNCTION BECAUSE THE TWO HALVES OF THE RULE DISAGREED WHILE BOTH WERE
+// SPELLED INLINE, AND THE DISAGREEMENT WAS INVISIBLE TO THE PARITY GATE BECAUSE
+// `lib/env_aliases.py` HAD THE SAME ONE. `Deprecations` tested `TrimSpace(env[old]) != ""`;
+// `ValueFrom` returned the old name's value raw. So `SUBSYSTEM_STORE_ROOT="  "` resolved to
+// `"  "` — a pod would have taken a whitespace store root — and warned about nothing, while
+// the package doc said a blank value "changes no resolution, so it is not a deprecation".
+// Two clients failing identically compare equal, so only reading the two halves against
+// each other found it.
+//
+// ⚠ WHICH HALF WAS WRONG IS A DECISION, AND THIS IS IT: the RESOLUTION half. The
+// alternative — warn whenever an old name holds any non-empty string, whitespace included —
+// keeps a resolved value no operator can have meant. Treating it as absent instead makes
+// the old name behave exactly like the new one (which has been `TrimSpace`-tested since the
+// package was written) and lets `ValueOr`'s fallback, i.e. the code default, run.
+//
+// ⚠ IT TESTS BLANKNESS AND DOES NOT TRIM. A non-blank value is returned RAW, because
+// trimming a real value is the caller's business and doing it here would silently rewrite
+// a store root that legitimately ends in a space.
+func blank(v string) bool { return strings.TrimSpace(v) == "" }
 
 // Resolving wraps a getter so every lookup through it resolves aliases.
 //
@@ -244,7 +306,9 @@ func OSDeprecations() []string { return Deprecations(Environ()) }
 func Deprecations(env map[string]string) []string {
 	var present []Pair
 	for old, newName := range olds {
-		if strings.TrimSpace(env[old]) != "" {
+		// The SAME `blank` the resolver uses. Spelled inline on both sides once, the two
+		// disagreed; see `blank`'s own comment.
+		if !blank(env[old]) {
 			present = append(present, Pair{New: newName, Old: old})
 		}
 	}
@@ -275,7 +339,7 @@ func FileWarning(p Pair, path string) string {
 func FileDeprecations(fromFile map[string]string, path string) []string {
 	var present []Pair
 	for old, newName := range olds {
-		if strings.TrimSpace(fromFile[old]) != "" {
+		if !blank(fromFile[old]) {
 			present = append(present, Pair{New: newName, Old: old})
 		}
 	}

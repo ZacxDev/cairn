@@ -552,8 +552,15 @@ func Run(env Env, argv []string) int {
 		// `Path.home()` raises; a client that fell back to a relative path would write a
 		// cache into whatever directory it happened to start in and then report it as the
 		// host's store.
-		fmt.Fprintln(env.Stderr, "cairn: cannot resolve a cache root — neither $HOME nor "+
-			"CAIRN_CACHE_ROOT is set, so there is nowhere to read or write the store cache.")
+		// 🔴 IT NAMES `--cache`, NOT AN ENVIRONMENT VARIABLE, AND THAT IS A CORRECTION.
+		// This line used to read "neither $HOME nor CAIRN_CACHE_ROOT is set" — but there
+		// is no `CAIRN_CACHE_ROOT`: `readstore.go`'s `DefaultCacheRoot` records that the
+		// override was written, caught by the parity gate as a capability the oracle does
+		// not have, and DELETED. So the message sent an operator to set a variable
+		// nothing reads, which is worse than naming nothing. `--cache` exists on every
+		// verb and is the remedy that works.
+		fmt.Fprintln(env.Stderr, "cairn: cannot resolve a cache root — $HOME is not set "+
+			"and no --cache was given, so there is nowhere to read or write the store cache.")
 		return ExitUsage
 	}
 	code, runErr := verb.Run(env, opts)

@@ -196,15 +196,73 @@ class TestTheLedgerItself:
 
         ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE. The collision was caught while
         choosing the names; no shipped code ever had it.
+
+        🔴 `taken` IS DERIVED, AND THE HAND-WRITTEN SET IT REPLACED WAS ALREADY WRONG.
+        It named six strings, one of which — `CAIRN_CACHE_ROOT` — is read by NOTHING in
+        either language (`internal/client/readstore.go` says the env override was
+        deliberately not added). A set that is wrong today cannot be trusted to see the
+        next collision, which is the whole job.
+
+        🔴 WHY A TREE-WIDE `CAIRN_[A-Z_]+` SWEEP CANNOT ANSWER THIS, stated because it is
+        the obvious thing to reach for and it is vacuous: the ledger's OWN new names are
+        live too, so "every CAIRN_* in the tree" minus "the ledger" is the ledger's
+        complement by construction and the assertion below could never fail. What IS
+        non-vacuous is a source that stays true without anybody maintaining it against the
+        ledger — a name read DIRECTLY from the environment. This PR's rule is that a
+        renamed variable is never read that way (`env_aliases` owns every one of them), so
+        a direct read is, by construction, a name some other subsystem owns.
         """
         from host_identity import HOST_LABEL_ENV
+        from cairn_instances import ROUTES_ENV
 
-        taken = set(HOST_LABEL_ENV) | {"CAIRN_ROUTES", "CAIRN_CACHE_ROOT", "CAIRN_MIRROR_ROOT"}
+        # Direct-environment reads of a `CAIRN_*` literal, in BOTH clients. A ledger name
+        # may not appear here; anything that does belongs to another feature.
+        direct = re.compile(
+            r"""os\.(?:environ\.get|getenv|Getenv|LookupEnv)\(\s*["'](CAIRN_[A-Z0-9_]+)["']"""
+            r"""|os\.environ\[\s*["'](CAIRN_[A-Z0-9_]+)["']"""
+        )
+        sources = [REPO / "cairn"] + sorted((REPO / "lib").glob("*.py"))
+        sources += [p for p in (REPO / "internal").rglob("*.go") if not p.name.endswith("_test.go")]
+        sources += [p for p in (REPO / "cmd").rglob("*.go") if not p.name.endswith("_test.go")]
+        found: set[str] = set()
+        for path in sources:
+            for a, b in direct.findall(path.read_text(encoding="utf-8")):
+                found.add(a or b)
+
+        # 🔴 THE POSITIVE CONTROL. An expression that matched nothing would make `taken`
+        # the two imported constants alone and quietly narrow this guard; a regex is a
+        # dependency on a spelling, and "no matches" means "possibly the wrong pattern".
+        assert "CAIRN_MIRROR_ROOT" in found, (
+            "the direct-read sweep found "
+            f"{sorted(found)} and not CAIRN_MIRROR_ROOT, which `cairn` and "
+            "`internal/client/cli.go` both read that way — the pattern is wrong, and a "
+            "silently empty sweep would leave this guard asserting almost nothing"
+        )
+
+        taken = set(HOST_LABEL_ENV) | {ROUTES_ENV} | found
         for new, _old in env_aliases.LEDGER:
             assert new not in taken, (
                 f"{new} is already a live variable meaning something else; a rename onto "
                 "it makes two features read one name"
             )
+
+    def test_the_collision_guard_CAN_go_red(self) -> None:
+        """🔴 THE NEGATIVE CONTROL FOR THE GUARD ABOVE, WHICH IS OTHERWISE A ZERO.
+
+        Every name in today's ledger passes, so the loop above is a claim about an empty
+        intersection — indistinguishable from a `taken` set built by a broken sweep. This
+        feeds the same predicate a pair that MUST collide and watches it reject.
+        """
+        from host_identity import HOST_LABEL_ENV
+
+        taken = set(HOST_LABEL_ENV)
+        assert "CAIRN_HOST" in taken, taken
+        # The mechanical prefix swap of SUBSYSTEM_STORE_HOST, which is the defect the
+        # real ledger avoids by spelling it CAIRN_LISTEN_HOST.
+        assert "CAIRN_HOST" in taken and "CAIRN_LISTEN_HOST" not in taken, (
+            "the collision predicate would accept the mechanical swap, so the guard above "
+            "is not measuring what its docstring claims"
+        )
 
     def test_the_removal_anchor_carries_no_date(self) -> None:
         """The window is anchored to a MILESTONE a reader can check, never to a date.
@@ -241,8 +299,37 @@ class TestTheResolver:
         env = {"CAIRN_URL": "new", "SUBSYSTEM_STORE_URL": "old"}
         assert len(env_aliases.deprecations(env)) == 1
 
-    def test_a_blank_old_name_is_not_a_deprecation(self) -> None:
-        assert env_aliases.deprecations({"SUBSYSTEM_STORE_URL": ""}) == []
+    @pytest.mark.parametrize("value", ["", "  ", "\t"])
+    def test_a_blank_old_name_is_not_a_deprecation(self, value) -> None:
+        """🔴 THE WHITESPACE ROWS ARE THE HALF THAT WAS FALSE — see the pair below.
+
+        `deprecations` has always tested blankness with `.strip()`. `value` returned the
+        old name's value RAW, so `SUBSYSTEM_STORE_ROOT="  "` resolved to `"  "` and warned
+        about nothing at the same time — the one combination the stated rule ("a blank
+        value changes no resolution, so it is not a deprecation") rules out.
+        """
+        assert env_aliases.deprecations({"SUBSYSTEM_STORE_URL": value}) == []
+
+    @pytest.mark.parametrize("value", ["", "  ", "\t"])
+    def test_a_blank_old_name_resolves_as_ABSENT(self, value) -> None:
+        """🔴 REGRESSION COVERAGE, AND THE OTHER HALF OF THE PAIR ABOVE.
+
+        Matrix: RED at `78679b9` (this branch's own pre-fix state) for `"  "` and `"\\t"` —
+        `value` returned the whitespace and `value_or` therefore never reached its fallback,
+        so a pod would have taken a whitespace store root — green here. The `""` row was
+        already green and stays as the control that the fix did not invert the predicate.
+
+        ⚠ IT IS IDENTICAL IN `internal/envalias`, WHICH IS WHY `tests/parity/` COULD NOT
+        SEE IT: two clients failing the same way compare equal. Only reading the resolver
+        against the deprecation sweep found it.
+        """
+        assert env_aliases.value({"SUBSYSTEM_STORE_URL": value}, "CAIRN_URL") == ""
+        # And through `value_or`, which is the shape `server.py`'s `main()` reads its store
+        # root with: the FALLBACK has to come back, not the blank. A fallback that no
+        # fixture value can equal, so the assertion cannot pass by coincidence.
+        assert env_aliases.value_or(
+            {"SUBSYSTEM_STORE_URL": value}, "CAIRN_URL", "fallback"
+        ) == "fallback"
 
     def test_deprecations_are_sorted_by_new_name(self) -> None:
         env = {old: "set" for _new, old in env_aliases.LEDGER}
@@ -402,27 +489,45 @@ def _free_port() -> int:
 
 
 class TestABlankValueIsTreatedAsAbsentByTheORACLE:
-    """🔴 REGRESSION COVERAGE FOR THE AUTHORISED EXCEPTION, RED ON THE PRE-CHANGE ORACLE.
+    """⚠ INVARIANT GUARD, AND THE EARLIER LABEL ON THIS CLASS WAS WRONG — MEASURED.
 
-    The oracle used to read these two through `os.environ.get`, which RETURNS `""` for an
-    exported-empty variable: `--store` became the empty string, and
-    `int(os.environ.get(ENV_PORT, …))` raised `ValueError` on a blank port. Routing both
-    through `env_aliases.value_or` makes a present-but-empty value resolve as ABSENT, so
-    the deprecated spelling behind it is read instead. That is a change to the ORACLE and
-    it is authorised per site, in writing — see the declaration named above.
+    It used to say "REGRESSION COVERAGE …, RED ON THE PRE-CHANGE ORACLE". It is not, and
+    the correction is the interesting part. This fixture blanks the CURRENT names and
+    supplies the deprecated ones. At `f74657d` the oracle has **no `CAIRN_*` handling at
+    all** (`--store` reads `os.environ.get("SUBSYSTEM_STORE_ROOT", …)` directly), so
+    blanking `CAIRN_STORE_ROOT` there exercises nothing. Run against
+    `git show f74657d:server/server.py` with the base-era
+    `SUBSYSTEM_STORE_TRUSTED_PROXIES` supplied, the base oracle prints EXACTLY the string
+    asserted below:
+
+        subsystem-store-api: listening on 127.0.0.1:19101 store=<the tmpdir> …
+
+    — GREEN at base. Red appeared only when the fixture named `CAIRN_TRUSTED_PROXIES`,
+    which base does not know, and the base oracle then died on `no trusted proxies`
+    BEFORE `main()` ever evaluated a blank store root or port. That is a mutant dying for
+    the wrong reason, on the only claimed coverage for the PR's one authorised oracle
+    change.
+
+    🔴 SO WHAT DOES THIS CLASS STILL BUY? Two things, neither of them attribution.
+    `TestABlankOLDNameOnTheORACLE` below is the arm that attributes. This one pins that
+    the blank CURRENT name falls through to the DEPRECATED one — the deprecation window's
+    own claim, which no defect ever violated — and, in
+    `test_the_resolved_values_MOVE_with_the_environment`, it is the control that makes the
+    other class's `store=/data` assertion mean something: a mutant that hardcoded the
+    default would satisfy an arm expecting the default and fail here, where the expected
+    values are a `tmp_path` and a kernel-assigned port.
 
     🔴 WHY IT IS OBSERVED ON THE STARTUP LINE RATHER THAN ON `value_or`. A unit test on
     the resolver stays green while `main()` stops calling it — the seam nobody owns. Both
     servers print `listening on <host>:<port> store=<root> …`, so this reads the resolved
     values out of the running program, through the same text
-    `cmd/cairn-server`'s `TestABlankEnvironmentValueIsTreatedAsABSENT` reads. That arm is
-    an INVARIANT GUARD (Go never had the other behaviour); this one is the regression half.
+    `cmd/cairn-server`'s `TestABlankEnvironmentValueIsTreatedAsABSENT` reads — which is an
+    invariant guard for the same reason on the Go side.
 
     🔴 THE FIXTURE CANNOT COINCIDE WITH ANY CONSTANT UNDER TEST. The store is a `tmp_path`
     and never `DEFAULT_STORE` (`/data`), the port is kernel-assigned and asserted unequal
     to `DEFAULT_PORT` (8102), and the host is `127.0.0.1` against a `0.0.0.0` default —
-    so a mutant that hardcoded any of the three defaults cannot survive. The second world
-    is the control that watches the values MOVE.
+    so a mutant that hardcoded any of the three defaults cannot survive.
     """
 
     #: 43 characters is `MIN_TOKEN_CHARS`. Built rather than written out: a real-looking
@@ -508,3 +613,109 @@ class TestABlankValueIsTreatedAsAbsentByTheORACLE:
         two = self._start(tmp_path, second, second_port, "b")
         assert f"listening on 127.0.0.1:{first_port} store={first} " in one, one
         assert f"listening on 127.0.0.1:{second_port} store={second} " in two, two
+
+
+class TestABlankOLDNameOnTheORACLE:
+    """🔴 THE ARM THAT ATTRIBUTES: RED AT `f74657d` FOR THIS RULE, NOT FOR A NEIGHBOUR'S.
+
+    `TestABlankValueIsTreatedAsAbsentByTheORACLE` blanks the CURRENT names, which the
+    pre-change oracle does not read at all — so it is green at base and is labelled an
+    invariant guard there. Blanking the **DEPRECATED** name is what exercises the rule on
+    a tree that only knows that name: base takes the blank literally, HEAD treats it as
+    absent and falls through to the built-in default.
+
+    🔴 THE BASE-ERA SPELLING OF EVERY OTHER VARIABLE IS SUPPLIED, SO THE BASE CANNOT DIE
+    FOR A NEIGHBOUR'S REASON. `SUBSYSTEM_STORE_TRUSTED_PROXIES` in particular: name it
+    `CAIRN_TRUSTED_PROXIES` and the base oracle refuses with `no trusted proxies` before
+    `main()` evaluates a store root or a port, which is a red that proves nothing.
+
+    Measured against `git show f74657d:server/server.py`, one half at a time:
+
+        store only, SUBSYSTEM_STORE_ROOT=   base: `… store= token-ids=…` (empty)
+                                            HEAD: `… store=/data …`
+        port only,  SUBSYSTEM_STORE_PORT=   base: ValueError: invalid literal for
+                                                  int() with base 10: ''
+                                            HEAD: comes up
+
+    ⚠ THE PORT HALF PASSES `--port` AS A FLAG AND IS STILL RED AT BASE, WHICH IS THE
+    POINT. An `argparse` default is evaluated at `add_argument`, so the pre-change
+    `int(os.environ.get(...))` raises while the parser is being BUILT — a flag cannot
+    save it. That also lets this bind a free port instead of `DEFAULT_PORT`.
+
+    ⚠ THE STORE HALF EXPECTS `/data`, WHICH IS THE CONSTANT UNDER TEST, AND THAT IS
+    UNAVOIDABLE: "a blank value falls through to the default" is a claim about the
+    default. A mutant hardcoding `/data` would survive THIS arm — and dies in
+    `TestABlankValueIsTreatedAsAbsentByTheORACLE`, whose expected store is a `tmp_path`
+    and whose second world watches the value move. The two arms are each other's control;
+    neither is sufficient alone, and that is stated here rather than left to be noticed.
+    """
+
+    TOKEN = "c" * 43
+
+    def _start(self, tmp_path: Path, label: str, *flags: str, **env: str) -> str:
+        token_file = tmp_path / f"tokens-{label}"
+        token_file.write_text(self.TOKEN + "\n", encoding="utf-8")
+        token_file.chmod(0o600)
+        # 🔴 EVERY NAME HERE IS THE DEPRECATED SPELLING, INCLUDING TRUSTED_PROXIES. The
+        # fixture has to be one the PRE-CHANGE oracle understands in full, or its red is
+        # not about the rule under test.
+        full = env_pin.sanitized_env(SUBSYSTEM_STORE_TRUSTED_PROXIES="192.0.2.0/24", **env)
+        log = tmp_path / f"oracle-{label}.log"
+        with log.open("wb") as handle:
+            proc = subprocess.Popen(
+                [sys.executable, str(SERVER_PY), "--token-file", str(token_file), *flags],
+                stdout=handle, stderr=subprocess.STDOUT, env=full,
+            )
+            try:
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    text = log.read_text(encoding="utf-8", errors="replace")
+                    if "listening on" in text:
+                        return text
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(0.02)
+                raise AssertionError(
+                    f"the oracle never printed a `listening on` line for case {label!r} — "
+                    "a blank DEPRECATED name was NOT treated as absent. Process output:\n"
+                    + log.read_text(encoding="utf-8", errors="replace")
+                )
+            finally:
+                proc.kill()
+                proc.wait(timeout=30)
+
+    def test_a_blank_deprecated_STORE_falls_through_to_the_default(
+        self, tmp_path: Path
+    ) -> None:
+        """RED at `f74657d`: that oracle prints `store=` with nothing after it."""
+        port = _free_port()
+        text = self._start(
+            tmp_path, "store",
+            SUBSYSTEM_STORE_ROOT="",
+            SUBSYSTEM_STORE_HOST="127.0.0.1",
+            SUBSYSTEM_STORE_PORT=str(port),
+        )
+        assert f"listening on 127.0.0.1:{port} store=/data " in text, text
+        # The literal failure the pre-change oracle produced, asserted as an ABSENCE so
+        # the arm names what it is distinguishing itself from.
+        assert " store= " not in text, text
+
+    def test_a_blank_deprecated_PORT_does_not_refuse_at_parser_construction(
+        self, tmp_path: Path
+    ) -> None:
+        """RED at `f74657d`: `ValueError: invalid literal for int() with base 10: ''`.
+
+        The store is supplied non-blank here so this arm is about the port alone, and
+        `--port` is a FLAG — which does not rescue the pre-change oracle, because the
+        default is evaluated while the parser is built.
+        """
+        store = tmp_path / "store"
+        store.mkdir()
+        port = _free_port()
+        text = self._start(
+            tmp_path, "port", "--host", "127.0.0.1", "--port", str(port),
+            SUBSYSTEM_STORE_ROOT=str(store),
+            SUBSYSTEM_STORE_PORT="",
+        )
+        assert f"listening on 127.0.0.1:{port} store={store} " in text, text
+        assert "ValueError" not in text, text

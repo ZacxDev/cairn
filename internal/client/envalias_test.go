@@ -7,24 +7,77 @@ import (
 	"testing"
 
 	"github.com/ZacxDev/cairn/internal/envalias"
+	"github.com/ZacxDev/cairn/internal/hostid"
 )
 
 // clientConfigNames is every variable that configures THIS client, in BOTH spellings.
 //
-// 🔴 DERIVED FROM THE LEDGER, NEVER RESTATED. The hand-written list it replaced named four
-// names, and the rename would have left three of them pointing at a spelling the client no
-// longer reads FIRST — so a developer with `CAIRN_URL` exported would have had their live
-// store reach a test that believed it had cleared the environment. Deriving it means a
-// twelfth pair is cleared on the day it is added.
+// 🔴 SWEPT BY PREFIX, NOT LISTED — AND THE VERSION BEFORE THIS ONE CLAIMED THE SWEEP
+// WITHOUT DOING IT. Its comment called this "the Go-side sibling of
+// `tests/testlib/env_pin.py`, which does the same job". `env_pin` clears by PREFIX plus the
+// derived host-label names; this function hand-listed four extras beside the ledger and so
+// missed `CAIRN_MIRROR_ROOT`, which `cli.go` reads with a direct `os.Getenv`. A developer
+// with that exported reached a test that believed it had cleared the environment. The
+// docstring named a relationship while the body inspected one side of it.
 //
-// It is the Go-side sibling of `tests/testlib/env_pin.py`, which does the same job for the
-// Python suites and already swept both prefixes before this change.
+// Three sources, none of them a restatement:
+//   - every variable in the PROCESS environment under either prefix, which is what makes
+//     the claim above true and picks up a name nothing here knows about;
+//   - `hostid.HostLabelEnv`, because two of those (`ASIB_HOST`, `ACTIVITY_HOST`) carry
+//     NEITHER prefix and a prefix sweep structurally cannot see them;
+//   - the ledger, plus the four constants this package owns, so the clear does not depend
+//     on what the operator happens to have exported.
 func clientConfigNames() []string {
-	out := []string{ConfigEnv, RoutesEnv, EnvURL, EnvToken}
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	for _, entry := range os.Environ() {
+		if key, _, ok := strings.Cut(entry, "="); ok {
+			if strings.HasPrefix(key, "CAIRN_") || strings.HasPrefix(key, "SUBSYSTEM_STORE_") {
+				add(key)
+			}
+		}
+	}
+	for _, name := range hostid.HostLabelEnv {
+		add(name)
+	}
+	add(ConfigEnv)
+	add(RoutesEnv)
+	add(EnvURL)
+	add(EnvToken)
 	for _, p := range envalias.Ledger {
-		out = append(out, p.New, p.Old)
+		add(p.New)
+		add(p.Old)
 	}
 	return out
+}
+
+// TestTheHermeticSweepClearsWhatTheClientActuallyREADS is the positive control on
+// `clientConfigNames`, and it exists because the list it replaced was wrong in exactly the
+// way a list is wrong: quietly, and only about the name nobody re-checked.
+//
+// ⚠ AN INVARIANT GUARD. No shipped defect ever turned on it; it pins that the sweep covers
+// the names the client reads directly, which a hand-list stopped doing once.
+func TestTheHermeticSweepClearsWhatTheClientActuallyREADS(t *testing.T) {
+	// Exported so the prefix arm has something to find, and so this fails if that arm is
+	// deleted: `CAIRN_MIRROR_ROOT` is not in the ledger and not one of the four constants.
+	t.Setenv("CAIRN_MIRROR_ROOT", "/somewhere/an/operator/exported")
+	covered := map[string]bool{}
+	for _, name := range clientConfigNames() {
+		covered[name] = true
+	}
+	for _, name := range []string{"CAIRN_MIRROR_ROOT", "CAIRN_HOST", "ASIB_HOST", "ACTIVITY_HOST"} {
+		if !covered[name] {
+			t.Fatalf("clientConfigNames() does not clear %q, so a developer who exported it "+
+				"reaches every test in this file; got %v", name, clientConfigNames())
+		}
+	}
 }
 
 // hermetic points HOME at a fresh directory and clears every configuration pointer in both
@@ -39,9 +92,21 @@ func hermetic(t *testing.T) string {
 	return home
 }
 
-// TestTheNEWNamesConfigureTheDefaultInstance is REGRESSION coverage for the rename:
-// measured RED at `f74657d9` (the pre-change client does not read `CAIRN_URL` at all and
-// refuses with "config incomplete") and green at HEAD.
+// TestTheNEWNamesConfigureTheDefaultInstance is REGRESSION coverage for the rename.
+//
+// 🔴 HOW THE BASELINE WAS ACTUALLY OBTAINED, BECAUSE THE EARLIER SENTENCE CLAIMED A RUN
+// THAT CANNOT HAVE HAPPENED. It said "measured RED at `f74657d9`". This FILE does not
+// exist at `f74657d`, and neither do `EnvURL`/`EnvToken`, so the package does not compile
+// there and no run of this test at that commit is possible. What was measured instead —
+// and what the claim actually needs — is the pre-change BINARY: `git archive f74657d`,
+// `go build ./cmd/cairn`, then the same world this test builds:
+//
+//	CAIRN_URL / CAIRN_TOKEN set, nothing else
+//	base  => "config incomplete: SUBSYSTEM_STORE_URL, SUBSYSTEM_STORE_TOKEN not set"
+//	HEAD  => reaches the URL (connection refused at 127.0.0.1:19201)
+//
+// So the BEHAVIOUR is red at base and green at HEAD; the test file is not what was run
+// there. Those are different claims and only the second one was ever true.
 func TestTheNEWNamesConfigureTheDefaultInstance(t *testing.T) {
 	hermetic(t)
 	t.Setenv(EnvURL, "http://127.0.0.1:9999")
@@ -59,8 +124,8 @@ func TestTheNEWNamesConfigureTheDefaultInstance(t *testing.T) {
 // TestTheDEPRECATEDNamesStillConfigureTheDefaultInstance is the deprecation window's own
 // claim.
 //
-// ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE — it is green at `f74657d9` too, by
-// construction: that tree read only these names. It is here because the window is a
+// ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE — the pre-change binary honours these
+// names too, by construction: that tree read only these names. It is here because the window is a
 // PROMISE, and the thing that will eventually break it is somebody deleting the alias
 // before P8 rather than a defect.
 func TestTheDEPRECATEDNamesStillConfigureTheDefaultInstance(t *testing.T) {
@@ -77,8 +142,11 @@ func TestTheDEPRECATEDNamesStillConfigureTheDefaultInstance(t *testing.T) {
 	}
 }
 
-// TestTheNewNameWinsOverTheDeprecatedOne is REGRESSION coverage: measured RED at
-// `f74657d9`, where the old name is the ONLY one read and therefore wins by default.
+// TestTheNewNameWinsOverTheDeprecatedOne is REGRESSION coverage, with the baseline taken
+// the way the comment above describes — against the pre-change BINARY, not by running this
+// file at a commit where it does not exist. With both spellings exported, the base client
+// reaches the OLD name's URL (127.0.0.1:19202) because that is the only name it reads;
+// HEAD reaches the new one.
 func TestTheNewNameWinsOverTheDeprecatedOne(t *testing.T) {
 	hermetic(t)
 	t.Setenv(EnvURL, "http://127.0.0.1:9999")

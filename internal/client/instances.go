@@ -391,8 +391,11 @@ func lookup(env envLookup) envLookup {
 	return envalias.OSValue
 }
 
-// ConfigPath is the DEFAULT instance's config file — `$SUBSYSTEM_STORE_CONFIG` or the
+// ConfigPath is the DEFAULT instance's config file — `$CAIRN_CONFIG` or the
 // long-standing `~/.config/subsystem-store/env`.
+//
+// `$SUBSYSTEM_STORE_CONFIG` is still read, as the deprecated alias `envalias` resolves;
+// the CURRENT name is what this names, because the doc comment is what a reader copies.
 func ConfigPath(env envLookup) string {
 	if raw := strings.TrimSpace(lookup(env)(ConfigEnv)); raw != "" {
 		return expandUser(raw)
@@ -407,7 +410,7 @@ func ConfigPath(env envLookup) string {
 // InstanceDir is where additional instances live: `instances/` beside the config file.
 //
 // 🔴 DERIVED FROM THE CONFIG PATH, NOT A SECOND ENVIRONMENT VARIABLE. One variable moves the
-// whole configuration — which is what a test needs, and what keeps `$SUBSYSTEM_STORE_CONFIG`
+// whole configuration — which is what a test needs, and what keeps `$CAIRN_CONFIG`
 // pointing somewhere while the instances it should sit beside are read from the operator's real
 // home directory.
 func InstanceDir(env envLookup) (string, error) {
