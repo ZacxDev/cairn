@@ -23,62 +23,78 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `pytest tests -q`, `go test ./...` and reads `flake.nix`. ADDRESSED ⇒ arc CLOSED.
 
 ## State now
-- Branch `main` @ **`e15e331`**, clean, ↑0↓0. **One open PR: [#58](https://github.com/ZacxDev/cairn/pull/58)**
-  (`feat/ui-cookie-sessions`) — Phase B browser cookie sessions, a SIBLING session's work, not this one's.
-- **Four merges landed since this doc was last written at `0587ace`**, two of them this session:
-  **#55 → `91389ae`** (sibling: Phase A browser surface, the first third-party dependency,
-  `internal/depspolicy` replacing `vendorHash = null`), **#54 → `43a6f59`** (this session),
-  **#56 → `7234da1`** (sibling: `AGENTS.md` history eviction, 31,516 → 28,907 B),
-  **#57 → `e15e331`** (this session). Each verified BY CONTENT, never by ancestry.
-- 🔴 **THE ARC'S CLOSING CONDITION IS STILL 3 OF 4, AND THE UNMET CLAUSE IS UNCHANGED.** Re-measured
-  at `e15e331`, not inherited from the previous update: **the PWA's share flow with its
-  replica-honesty notice pinned by a test does not exist.** `internal/ui/doc.go:50` says it in as
-  many words — *"No cookie session, no sign-in, no share flow"* — the UI route table is one row
-  (`{"GET", "/"}`), and no test in the tree mentions a replica-honesty notice (the only `replica`
-  hit is `internal/snapshot/snapshot_test.go`, about tar). #55 and #58 are progress toward that
-  clause; neither delivers it. ⚠ **Do not read "a browser surface shipped" as the clause being met.**
-- ✅ **THE PUBLIC SURFACE NOW STATES THE POSITIONING, AND THE MECHANISM ALREADY DID.** Operator ask,
-  verbatim: *"i am positioning cairn as simple, scoped, sharable memory for ai agent swarms"*.
-  Measured before editing: `agent-swarm` occurred **exactly once** in the whole shipped tree
-  (`README.md:3`); every other `agent` match was the FILE `AGENTS.md`; `swarm`/`MCP`/`LLM` occurred
-  nowhere else; the GitHub description read *"per-subsystem engineering notes"* with
-  `repositoryTopics: null`. Now: description + 9 topics set and read back, and `README.md` leads with
-  the four properties that were already built and each surfaced as at most a table cell — scope
-  isolation, session attribution, `If-Match` concurrency, content-hash idempotency — plus a two-agent
-  quickstart. **"scalable" was dropped from the headline**: nothing measures throughput or concurrent
-  writers, and `tests/parity/README.md`'s blind set leads with concurrency.
-- ✅ **`CHANGELOG.md` EXISTS AND IS AN INDEX, NOT A SECOND COPY** — two rows (#50's default flip,
-  #55's first third-party dependency), each linking out. Its shape was twice a defect before it
-  settled; the rule is in its own header.
-- ✅ **`cairn-ui` IS DOCUMENTED IN `README.md`** — one read-only page, no write routes, deployed by
-  nothing, reads the store from disk, three measured ways to supply a credential.
-- **Operator decision this session: MCP is HELD.** No MCP server; agents integrate via the CLI and
-  the HTTP API. 🔴 **Do not cite the old blocker when revisiting it** — "a third-party dependency is
-  a BUILD FAILURE under `vendorHash = null`" stopped being true at #55. The hold rests on the
-  operator's call alone. Recorded in this session's memory as `mcp-server-on-hold`.
-- **Claims: `cairn-control-plane-1` is HELD by the sibling session** (13h, the web-UI slice).
-  `cairn-positioning-readme` and `cairn-readme-browser-surface` were taken and RELEASED by this one.
+
+- Branch `main` @ **`5d72bc5`**. **Four open PRs: [#64](https://github.com/ZacxDev/cairn/pull/64)**
+  (`feat/ui-share-flow`, THE SHARE FLOW — this session), [#62](https://github.com/ZacxDev/cairn/pull/62),
+  [#61](https://github.com/ZacxDev/cairn/pull/61) (README sign-in). **#63 → `5d72bc5`** and
+  **#60 → `c47636b`** merged since the last update.
+- 🔴 **#62 IS A HANDOFF PR THIS SESSION SUPERSEDED, AND IT NEEDS RE-DERIVING RATHER THAN
+  RESOLVING.** Its narrative says the share flow is the arc's unmet clause and names no PR for it;
+  that was true when written and is not now. This doc's update went onto a SEPARATE branch off
+  `main` rather than onto #62's, because amending another session's open doc PR is intrusive and
+  because the loser of a doc race needs its delta rebuilt, not merged. **Whoever lands second resets
+  onto the new base and rebuilds.**
+- 🔴 **THE ARC IS STILL 3 OF 4 *ON `main`*, AND THE FOURTH CLAUSE IS NOW PROPOSED RATHER THAN
+  ABSENT.** The closing condition says **"on `main`"**; #64 is open, green and unmerged, so the
+  honest reading is **not closed**. What #64 contains, measured rather than asserted: `GET /share`,
+  `POST /share`, `POST /unshare`; a scope granted from one user to another and **served through the
+  browser** end to end (`TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser` drives a real
+  `control.FileStore`, a real store on disk, a real sign-in and a real cookie); and
+  `ui.ReplicaHonesty` **pinned whole**. ⚠ **Do not read "#64 is green" as the arc being closed** —
+  re-measure on `main` after it merges, which is what the clause says.
+- ✅ **#64's SHAPE, for a reviewer who has not read it.** `Audience` answers "who can see this" from
+  `control.Resolve` over **every principal the model holds**; `Revocable` is the grant table, and
+  the two render as SEPARATE lists because grants are all the surface can take back. New seam
+  `ui.Sharing`; new `control.Authorization.NamedScopes` (one traversal, `VisibleScopes` derived from
+  it); new `control.Cache.Writable()` (one type assertion, two callers); new
+  `cairn-ui -control-journal`, which **switches** the authority rather than adding one.
+- 🔴 **A SKIP CHANGED THE DESIGN, AND IT IS THE MOST REUSABLE THING THIS SESSION PRODUCED.** The
+  first read-only test asserted a 501 on the write path and **skipped**: `tokenfile` confers no
+  `admin` to ANYBODY, so the authority check refuses first and that arm is unreachable there. A skip
+  nobody counts is a pass. Measured on a probe rather than reasoned: **0 admin grants across both
+  row shapes** (mapped `<tok> <identity> <scopes>` and bare/legacy), `memberships=0`. So the
+  condition is announced ON THE PAGE on every load, and two tests replace the one that skipped — the
+  second stating plainly that it drives the condition through a fixture.
+- ✅ **MEASURED FOR #64, each captured before any pipe:** `go vet`/`go test ./...` green; `-race`
+  clean on `internal/ui` and `internal/control`; `tests/ui_share_mutants.py` **8 mutants, 8 killed**,
+  each by its NAMED test, and the battery's own negative control (an inert edit) reports `SURVIVED`
+  and exits 1; `pytest tests -q` **1972 passed / 0 failed** on the branch and **1989 / 0** on the
+  tree merged with `5d72bc5`; `run_go.sh` 415 assertions / 0 failures / 4 skipped;
+  `parity/harness.py` 101 cases / 102 passes / 0 failures, `--break-pod` exit **2**;
+  `nix build .#cairn-ui` exit 0; `leakscan` rc 0. **All six CI checks present and SUCCESS**,
+  `mergeable=MERGEABLE state=CLEAN`.
+- 🔴 **THE MERGED-TREE GATE WAS RUN TWICE BECAUSE THE BASE MOVED.** First against #61+#62+#63 on
+  `c47636b`; then #63 merged mid-session, so it was re-run against `5d72bc5`. A merged-tree green is
+  a claim about the tree it ran on.
+- ⚠ **`cairn-control-plane-1` IS STILL HELD** — deliberately, not by oversight. #64 is open, and
+  releasing a claim while its PR is unmerged invites a sibling to take a rank that is in flight.
+  Release it when #64 merges.
+- **No task-board field is recorded** — the board-resolution helper exited **5** (nothing
+  resolved). Its positive control
+  proved the board reachable and the token accepted, which narrows the claim to "a correct id WOULD
+  have resolved" and is **not** a clean bill of health: a wrong id also answers 200 with an empty
+  array.
 
 ## Next steps (ranked)
-1. **P5 remainder — the PWA's SHARE FLOW.** This is the arc's ONLY unmet closing-condition clause:
-   a scope granted from one user to another, served through the browser, with the replica-honesty
-   notice **pinned by a test** (pin the whole normalised string — a guard on words is walkable by
-   rewording). `internal/ui` is phase A; #58 is phase B (cookie sessions). Neither is the share flow.
-   **IN FLIGHT: ZacxDev/cairn#58** — and `cairn-control-plane-1` is CLAIMED by that session; do not
-   take rank 1 without checking `claim-work --list`.
-   forcing: user — "a fully featured UI (PWA tailwind + gomponents + htmx webapp)".
-2. **The batched scaffolding defects** below. All test, harness or prose; none changes what CI does.
+
+1. **Merge #64, then RE-MEASURE the arc on `main`.** The closing condition says "on `main`", so the
+   verdict is not available until it lands. After merge: release `cairn-control-plane-1`, add the
+   `CHANGELOG.md` row (it needs the squash sha, which is why it is not in the PR), and fix
+   `README.md`'s browser-surface lead — it says *"phases A and B"*, *"Four routes"* and *"a single
+   read-only page"*, all three false once #61 and #64 are both in (see Gotchas).
+   forcing: gate — the arc's own closing condition names `main`, and a green PR does not satisfy it.
+2. **The batched defects below.** All test, harness or prose; none changes what CI does.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else will surface them.
 3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304. Key it
    on **principal + epoch** — `control.Authorization` already carries `Epoch`.
    forcing: none
-4. **P8 — retire the Python oracle.** Unblocked; gated on the flip holding over real use, which is a
-   waiting period rather than a task. `tests/parity/README.md`'s ledger is DECISIONS, not a script.
+4. **P8 — retire the Python oracle.** Unblocked; gated on the default flip holding over real use,
+   which is a waiting period rather than a task. `tests/parity/README.md`'s ledger is DECISIONS, not
+   a delete script.
    forcing: none
-5. **Rename `SUBSYSTEM_STORE_*` → `CAIRN_*` behind a migration path.** Deferred, not dropped: it was
-   item 5 of the five the operator approved with *"proceed as recommended"*, and this session
-   narrowed to 1–3 and said so at the time. `AGENTS.md` "Naming" is the standing alias policy, so the
-   quickstart documents `SUBSYSTEM_STORE_*` until this lands.
+5. **Rename `SUBSYSTEM_STORE_*` → `CAIRN_*` behind a migration path.** Deferred, not dropped: item 5
+   of the five the operator approved with *"proceed as recommended"*. `AGENTS.md` "Naming" is the
+   standing alias policy, so the quickstart documents `SUBSYSTEM_STORE_*` until this lands.
    forcing: user — item 5 of the approved list, explicitly deferred rather than declined.
 
 ## Defects (batched)
@@ -1059,23 +1075,81 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   adversarially re-read. Stated on the PR so it reads as *unreviewed*, not *reviewed-clean*; those
   are indistinguishable in a merged history.
 
+- 🔴 **A TEST THAT SKIPS IS THE FAILURE MODE THIS REPO'S RULES NAME, AND IT HAPPENED HERE IN THE
+  MOST ORDINARY WAY.** `TestAReadOnly…` asserted a 501 from the share write against a token-file
+  authority. It skipped every run, because `internal/control/tokenfile` grants **no `admin` verb to
+  anybody** — its own comment says the token file *"has no sharing to administer"* — so the
+  authority check refuses at 403 first and the 501 arm is structurally unreachable there. The suite
+  was green, the mutation battery was green, and the guard measured nothing. **Read `--- SKIP` lines
+  as failures of the TEST, not as absences of the case**, and `grep -c "^--- SKIP"` a verbose run
+  before believing a package's green. The fix was not to delete the test: it was to make the
+  condition REACHABLE — announce it on the page, where every load hits it — and to keep the status
+  mapping pinned through a fixture with a sentence saying it is a fixture.
+- 🔴 **TWO DEFECTS IN THIS SESSION'S OWN CODE, BOTH FOUND BY READING ITS PROSE AGAINST WHAT IT
+  DOES — the highest-yield review this repo documents, confirmed again.** (a) A comment reading
+  *"two type assertions would be two answers the day either grew a condition"* sat directly above
+  code that made exactly two; consolidated into `Cache.writer()`. (b) A fallback path would have
+  rendered *"No scope is administrable by this credential. That is an authority answer, not an empty
+  store."* to a caller who had just passed the `Allows` check — the exact shape
+  `TestEveryContentRouteConsultsTheAuthority` exists to refuse, one level along. **Both were written
+  by the change that also wrote the guard against them.**
+- 🔴 **A GUARD'S INSTRUMENT MUST WIDEN WITH THE THING IT GUARDS, OR ITS SENTENCE OUTGROWS ITS
+  BODY.** `TestEveryContentRouteConsultsTheAuthority` counted `Source.Visible` calls, which WAS the
+  claim while that was the only way to ask the authority. The share flow asks a different way, so a
+  guard still counting only the first would have gone green for a share page wired to nothing. The
+  instrument now counts either half of the seam. **When you add a second way to do the thing a guard
+  watches, the guard is part of the change.**
+- 🔴 **REDUNDANT GUARDS MAKE EVERY SINGLE-SITE MUTANT AN EQUIVALENT ONE, AND REPORTING THAT AS A
+  SURVIVOR IS A FINDING THAT IS NOT ONE.** The share write checks `Allows` in the handler (to choose
+  a status) and in `ControlSharing.Share` (because the interface is exported). Removing either alone
+  is observably identical — the other answers 403 with the same body — so the battery mutates
+  **both at once** and says why in the row's own comment. One rule, two call sites, not two rules.
+- 🔴 **A MUTANT ANCHOR WRITTEN WITH A LEADING SPACE WHERE THE SOURCE HAS A TAB REPORTED
+  `ANCHOR-COUNT-0`, NOT A FALSE `SURVIVED` — because the count was asserted before the edit.** That
+  assertion is the whole reason the battery is worth reading. Third instance of this trap in this
+  repository.
+- 🔴 **THE MUTATION BATTERY'S OWN NEGATIVE CONTROL IS CHEAP AND WAS WORTH RUNNING.** An inert edit
+  (a comment reworded) was fed through it: `SURVIVED`, exit 1. Without that, "8 killed" is
+  indistinguishable from a harness that scores every mutant KILLED.
+- 🔴 **A CLEAN `merge-tree` ON THREE PRs, ALL TESTS GREEN ON THE MERGED TREE, AND THE MERGED PROSE
+  WAS STILL FALSE.** #61 rewrites `README.md`'s browser-surface lead to say *"phases A and B"*,
+  *"Four routes"*, *"a single read-only page"*. Merged with #64 all three are wrong, with no
+  conflict markers and six green checks. Found only by BUILDING the merged tree and **reading the
+  paragraph**. #64 deliberately adds its section BELOW #61's hunk and quotes **no count of its own**,
+  which is the shape that does not need reconciling.
+- **Decision (this session): the share recipient picker is the actor's own collaborators, not every
+  user.** A picker over every user turns admin on one scope into a directory of everyone in the
+  deployment — the same enumeration the uniform 401 and the unguessable ids exist to deny. **The
+  cost is real and is stated in three places rather than hidden: you cannot share with somebody you
+  have no project in common with, and lifting that is an invite flow (P6).** Revisit it as a
+  product decision, not as a bug.
+- **Decision (this session): `-control-journal` SWITCHES the authority rather than adding one.** Two
+  authorities would be two answers to "who may see what", which is the thing `internal/control`
+  exists to have exactly one of.
+- **`control.Cache.Writable()` exists because the only other way to learn it was to TRY.** A surface
+  that discovers it cannot write at the first click is a surface that looks healthy and is not —
+  the same shape as `/healthz` answering `ok` while the session volume is gone.
+
 ## How to verify
+
 ```bash
 cd /home/zach/workspace/cairn
 python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
 uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
 go vet ./... && go test ./... && go test -race ./...
 python3 -u tests/control_mutants.py
+python3 -u tests/ui_share_mutants.py          # the SHARE FLOW's battery: 8 mutants, 8 killed
 uv run --python 3.12 --with pytest -- python -u tests/publish_workflow_mutants.py
 python3 tests/conformance/suite.py run       # oracle: 0 failures
 bash tests/conformance/run_go.sh             # Go: 0 failures, 4 skips
 python3 tests/dualrun/harness.py             # SUMMARY … differences=0
 python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
 ```
-⚠ **Expect `1 failed, 1969 passed` from pytest on THIS host** — the HOME-dependent doctor test in
-Open investigations, red on plain `main` too. CI is unaffected.
 
-🔴 **RUN THE MUTATION BATTERIES UNDER AN INTERPRETER THAT HAS `pytest`.** A bare `python3` has none.
+🔴 **RUN THE MUTATION BATTERIES UNDER AN INTERPRETER THAT HAS `pytest`.** A bare `python3` has none
+— except `tests/ui_share_mutants.py`, which shells out to `go test` and needs only a Go toolchain.
+It **REFUSES with exit 2** when there is no `go` on PATH rather than skipping, because a skip nobody
+counts is a pass.
 🔴 **`dualrun` and `parity` exit 2 for "COULD NOT VOUCH", which is NOT "failed"**.
 🔴 **VERIFY A DEPLOY BY THE RUNTIME SYMPTOM.** The discriminator is the rendered caveat: the retired
 image says the store is *"PER-HOST and unreplicated"*, the current one *"read through a PER-HOST
@@ -1084,11 +1158,14 @@ CACHE"*.
 🔴 **Reading CI: require SIX checks present AND all COMPLETED** — a rollup with zero incomplete
 checks is also what "no checks exist yet" looks like.
 
-**The browser surface, added this session:**
+**The share flow, by hand:**
 ```bash
 nix build github:ZacxDev/cairn#cairn-ui
-./result/bin/cairn-ui -store <store> -token-file <tokens> -port 8103
-# /healthz unauth 200 · GET / unauth 401 · GET / +bearer 200 · POST / +bearer 401 · "serving 1 route(s)"
+./result/bin/cairn-ui -store <store> -token-file <tokens> \
+  -control-journal <journal> -port 8103
+# GET /share unauth 401 · sign in · GET /share = the scopes you may administer
+# WITHOUT -control-journal the page SAYS it is read-only on every load — that is the
+# token-file deployment's normal state, not an error, because tokenfile confers no admin.
 ```
 
 ## Open investigations — live diagnosis state
