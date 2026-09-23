@@ -24,111 +24,93 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`a88f60b`** (#76 merged). This session's work landed in the **handoff-tooling
-  repository**, not here: **`c4490f07`** (its #1854).
-- ✅ **RANK 8 IS DONE, AND THE OPEN-PR SWEEP IS WHAT DID THE JOB.** `claim-work --list` showed
-  `cairn-control-plane-8` free, and the ranked item read as unbuilt — but
-  `gh pr list --state open` carried **#1854**, *"run the target repo's leak scanner on the
-  handoff delta, and refuse on non-zero"*, three commits, `MERGEABLE`/`CLEAN`, opened twelve
-  hours earlier and **claimed by nobody**. 🔴 **THE SWEEP IS NOT A FALLBACK TO THE LOCK — IT
-  IS THE ONLY THING THAT SEES AN UNCLAIMED DUPLICATE**, and this is the first measured
-  instance of it paying: taking the claim and building would have written the feature twice.
-- ✅ **RULE (o) IS MERGED AS `c4490f07`, VERIFIED BY CONTENT** (payload paths diff empty
-  between the PR head `977a7a99` and `origin/main`), and the base clone was fast-forwarded.
-  Exit **13** `leak-refused`; scanner resolved from the TARGET repo out of a closed set of
-  one path (`<target-repo>/tests/leakscan.py`); a repo with none PASSES as `PASS BY ABSENCE`;
-  **any** non-zero exit refuses; `--leak-pre-existing-approved` is the recorded operator
-  opt-in and does NOT cover a scanner that could not be RUN.
-- 🔴 **THE GATE IS LIVE; ITS PRINTED LEGEND IS NOT.** `SKILL.md` invokes
-  the handoff tool (`<handoff-tooling-repo>/scripts/lib/handoff_doc.py`) — the WORKING COPY — so the refusal was active
-  the moment the base clone synced. `~/.claude/skills/handoff/SKILL.md` resolves into
-  `/nix/store` (a `home.file` copy), so its `Seven refusals` legend needs a home-manager
-  switch. **Measured, not inferred:** `readlink -f` on the live file, and `grep -c leakscan`
-  on it = **0**. No switch was run — operator's call.
-- ⏳ **RANK 9 IS UP AND WAITING ON A HUMAN, AND `cairn-control-plane-9` IS DELIBERATELY STILL
-  HELD.** `cairn-ui` is serving the share flow on **`127.0.0.1:8103`** over a synthetic world
-  in this session's scratchpad. Releasing the claim while a server is up and a human is
-  mid-verification would advertise the item as free and invite a second instance onto the
-  same port. Recipe and what was verified: `## How to verify`.
-- 🔴 **`leakscan` ON THIS BASE CLONE EXITS 2 RIGHT NOW, AND IT IS NOT THE TREE.** A LIVE,
-  `locked` sibling agent worktree sits at `.claude/worktrees/agent-a2b34fb066b3e2ebc/`
-  (pid 355708), and the scanner's `--others` enumeration cannot read a directory:
-  `COULD NOT READ .claude/worktrees/…/: [Errno 21] Is a directory`. ⚠ **The documented
-  gotcha names a REMOVED agent's leftover; this one is a live worktree, so the remedy
-  "check it is clean, then remove it" does not apply** — it is not mine to remove. Discriminated
-  rather than assumed: a fresh worktree of `origin/main` scans **rc 0**, so the tree is clean
-  and the directory is the whole cause. **No clean-scan claim is made for the base clone.**
-- ⚠ **THE `result`/`result-1` SYMLINKS IN THE REPO ROOT ARE MINE AND ARE NOT GITIGNORED**
-  (`git check-ignore` prints nothing for either). They are the gcroots for the running
-  `cairn-ui`, kept until the human is done. leakscan reads them without complaint, so they are
-  NOT the exit-2 cause — measured, not assumed.
-- **No external-task-board field**: the resolver exited **5**, "0 tasks for this session". An unknown
-  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
-  task" from "wrong id". No field was written.
-- 📇 **THE ARC'S LANDED SHAs, CARRIED FORWARD BECAUSE `State now` REPLACES AND THIS UPDATE'S
-  DURABLE-DROP WARNING NAMED THEM.** #64 → **`7d7c9ea`** (the share flow) · #72 → **`6db7179`**
-  (the changelog row, which could not exist inside #64 because the file requires a MERGE SHA) ·
-  #71 → **`1659663`** (the handoff) · #73 → **`f8a257e`** (the prune) · #74 → **`93d0f03`** ·
-  #75 → `a41594c` · #78 → `8cd5108` · #69 → **`56cc56e`** (the rename) · #79 → `58dda11` ·
-  #76 → **`a88f60b`**. All ten re-resolved with `git log -1 --format=%s <sha>` while writing
-  this line rather than copied forward on faith. Each was verified
-  by CONTENT rather than ancestry at the time it landed. Kept as a one-line ledger because a
-  squash sha is not re-derivable from the branch and every one of these rows was a separate
-  `--is-ancestor` false positive waiting to happen.
+- `main` @ **`c89dc98`** (#81 merged). **FIVE PRs open**: #80 (handoff), #83 (`ls-entries`
+  README predicate), #84 (UI image), #85 (this session's sweep), #86 (member-set record).
+  Sibling sessions are active in this checkout — `main` was pulled under this session twice.
+- ✅ **THE DEPLOYED-POD FACT IS SETTLED BY THE OPERATOR: the cluster pulls `cairn-store-go`.**
+  This repo cannot establish it — no manifest lives here — and the tree had been internally
+  inconsistent about it at 19 sites. That was the blocker on every sweep; it is gone.
+- ✅ **#81 MERGED as `c89dc98`, verified BY CONTENT** (payload paths diff empty against
+  `origin/main`). It corrected `AGENTS.md`'s *"`server/Dockerfile` is what is deployed today"*,
+  which had survived **#78 — the commit whose entire subject was correcting which server is
+  deployed**. Its audit ladder ran round 0 + rounds 1–2 and found defects in every round, **all
+  of them in prose a previous round had written**, none visible to any gate.
+- ⏳ **#85 IS OPEN — the tree-wide sweep.** 19 sites classified; **6 are TRUE** (`cairn-ui`
+  genuinely is deployed by nothing) and untouched. Round 0 then found the sweep had **missed
+  five more sites**, **retracted a TRUE claim as never-true**, and **re-opened a decision already
+  closed with measurements**. All fixed in `08ccdb2`. **Round 1 has NOT been run.**
+- 🔴 **THE OPERATIONAL FINDING, AND IT IS THE SESSION'S MOST IMPORTANT:**
+  `server/README.md` said *"Every procedure below is still about `server.py`, which is what is
+  deployed"* — aiming the entire rotation/`exec` runbook at a pod that is not running. Corrected
+  in #85. ⚠ **Re-verifying each procedure against the Go pod is NOT done**; #85 ships a warning,
+  not a migration.
+- ✅ **RANK 8 LANDED as `c4490f07` (#82) DURING THIS SESSION** — `handoff_doc.py` now runs the
+  target repo's own leak scanner on the delta and refuses on rc≠0. This doc's earlier claim that
+  *"no code runs it"* is retired.
+- 🔴 **BUT THE GATE SCANS THE FILE DELTA ONLY — NOT THE COMMIT MESSAGE**, and a denied
+  identifier sits in **#78's commit message on public `main`**. `leakscan` scans the working
+  tree, so that channel is ungated by construction. Operator decision: **document + widen, do
+  NOT rewrite public history.** Filed as rank 11.
+- **No external-task-board field**: the resolver exited **5** — a REAL reading (its positive
+  control answered 2 links for another session), but a wrong id also answers 200 with an empty
+  array, so it cannot distinguish "touched no task" from "wrong id". Not a clean bill of health.
 
 ## Next steps (ranked)
 
-🔴 **THE NUMBERING IS STABLE AND RANK 9 IS NEW AT THE END.** Rank is half a claim's slug, so a
-shuffle re-points every live claim; ranks 1–8 keep their numbers and the DONE rows stay as
-rows. **A session taking an item must `claim-work` it first and read the SUBJECT the claim
-prints rather than trusting the number** — and must ALSO sweep `gh pr list --state open`,
-because this session measured the sweep catching an unclaimed duplicate the lock structurally
-cannot see.
+🔴 **NUMBERING IS STABLE — ranks 1–9 keep their meaning; 10 and 11 are appended.** Rank is half
+a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live claims.
 
-1. ✅ **DONE — #74 merged as `93d0f03`.** Kept as a numbered row rather than deleted, because
-   deleting it renumbers every item below and re-points every live `claim-work` slug.
+1. ✅ **DONE — #74 merged as `93d0f03`.** Kept as a numbered row rather than deleted.
    forcing: gate — the entries' own closing conditions, which named a PR.
 2. **The remaining batched defects.** Still open: #48's (c) `lib/README.md` (the re-count recipe
    greps two literal phrases, so it is a SPELLED check that cannot see a reworded echo); the
-   stale node-affinity comment, which lives in the **deployment-manifest repository** rather
-   than this one — 🔴 that repo's NAME is a denied identifier in THIS tree, so take it from the
-   operator rather than from a doc here; and the carried-forward list.
+   stale node-affinity comment, which lives in the deployment-manifest repository — 🔴 that
+   repo's NAME is a denied identifier here, so take it from the operator; and the carried list.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else surfaces them.
 3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
    Key it on principal + epoch; `control.Authorization` already carries `Epoch`.
    forcing: none
-4. **P8 — retire the Python oracle.** Gated on the default flip holding over real use, which
-   is a waiting period rather than a task.
+4. **P8 — retire the Python oracle. 🔴 IT NOW HAS A CLOSING CONDITION, CHOSEN BY THE OPERATOR,
+   AND THE OLD WORDING WAS THE DEFECT.** *"Gated on the default flip holding over real use"* is
+   an ABSENCE, and an absence cannot distinguish "the Go client is solid" from "nobody ran it" —
+   so it named no date, no metric and no observer, and was a wish rather than a task.
+   **Closing condition:** P8 opens when BOTH (a) the Go client has completed a real read AND a
+   real write against the live pod from **at least two distinct hosts**, recorded — the POSITIVE
+   CONTROL, which is what separates *held up* from *never ran*; and (b) no open defect names the
+   Go client or `packages.default`. **BACKSTOP:** if (a) has not happened by **2026-11-01**, P8
+   opens anyway and the residual risk is accepted EXPLICITLY, in writing, rather than by
+   continuing to wait. Checked by `cairn doctor` output from two hosts plus `gh issue list`.
+   ⚠ Sized, not measured: ~33,000 deletable lines (16,649 production + 16,235 differential
+   harness), 3 of 6 CI jobs, ~233 KB of prose, and ~10 paired-ledger guards that exist ONLY
+   because two implementations do. Treat as an estimate; `tests/parity/README.md`'s retirement
+   ledger is a list of DECISIONS, not a delete script.
    forcing: none
 5. ✅ **DONE — `cairn-server -issue-credential` over `control.IssueCredential`, in #76.**
-   ⚠ **`EventCredentialRevoked` still has no writer** — and this session measured that the gap
-   is SIX events wide, not one; see `## Defects (batched)`.
    forcing: gate — a shipped binary refused to start and named this as the missing piece.
 6. **Fold the new defect entries in and mark #60/#66 closed**, once the doc PRs have merged.
    forcing: user — the operator chose this sequencing explicitly.
-7. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` BEHIND A DEPRECATION WINDOW — ⚠ LANDED as
-   `56cc56e` (#69), so this row is now a DONE row rather than in-flight.** Both names work; the
-   old one warns once per process naming its replacement; the removal version is stated. ⚠ The
-   repo is PUBLIC and consumers pin the flake, so the warning text and the removal version are
-   a PUBLISHED CONTRACT.
+7. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` — ⚠ LANDED as `56cc56e` (#69).**
    forcing: user — item 5 of the five approved with "proceed as recommended".
-8. ✅ **DONE — rule (o) merged as `c4490f07` in the handoff-tooling repo (its #1854).** The
-   closing condition was *"a delta carrying a known-denied identifier is refused by the tool,
-   watched"*, and it was watched on the **MERGED** tree rather than the PR branch, because
-   `main` had moved two commits ahead. Four arms, all against cairn's REAL
-   `tests/leakscan.py` in a detached throwaway worktree: the canary delta → **13** with the
-   scanner's own `[denied-identifier]` line reproduced and the tree left `--porcelain` empty;
-   a clean delta → **0** `status=written` (the control that stops "refuses everything" reading
-   as "works"); an already-red tree with a CLEAN delta → **13** without the flag and **0**
-   with it, printing `LEAK GATE APPROVED THROUGH`. `cairn-control-plane-8` released.
+8. ✅ **DONE — rule (o) merged as `c4490f07` (#82).** The delta scan exists and refuses on any
+   non-zero exit, with a `NO SCANNER FOUND` path so a repo without one PASSES.
    forcing: incident — FOUR leak events, one of which reached `main` (#68).
-9. ⏳ **IN FLIGHT: drive the share flow's human verification on `127.0.0.1:8103`.** The surface
-   is up over a synthetic world and the read half plus the write half are both measured (see
-   `## How to verify`); what is left is a human exercising the share/revoke click path, which
-   is the half no curl proves. 🔴 **`cairn-control-plane-9` IS STILL HELD ON PURPOSE** — a
-   server is listening and a release would invite a second instance onto the same port. Release
-   it and stop the process when the human is done.
+9. ⏳ **IN FLIGHT: drive the share flow's human verification on `127.0.0.1:8103`.**
    forcing: user — the operator directed this item and reserved the browser step to a human.
+10. **DECIDE THE PUBLISH ORDERING — `tests/test_publish_workflow.py`'s `last_python < first_go`.**
+    Its rationale has INVERTED: it reads *"the Go image has never been run … leaves the deployed
+    pod unpublished when it goes red"*, and the Go image **is** the deployed pod, so the ordering
+    now publishes the DEPLOYED pod LAST and most exposed to an earlier red step. #85 leaves the
+    ordering UNCHANGED and writes the inversion into the assertion message deliberately —
+    reversing it is a CI behaviour change with its own blast radius, and the seven-failure
+    history still argues against putting a first-execution step first. **Decide it; do not drift
+    into it.** Touches `.github/workflows/publish-image.yml` and that test.
+    forcing: user — an operator decision #85 deliberately declined to take.
+11. **WIDEN THE LEAK GATE TO THE COMMIT MESSAGE.** `handoff_doc.py` scans the file delta after
+    the write and before `git add`; the message is built by `commit_message()` and is scanned by
+    NOTHING. That is the channel #78's denied identifier travelled on. ⚠ Smaller than it sounds:
+    one call site in the handoff-tooling repo, not a new subsystem. **Closing condition:** a
+    commit message carrying a known-denied identifier is refused by the tool, watched.
+    forcing: incident — a denied identifier is on public `main` in a commit message today.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section
@@ -664,6 +646,68 @@ cannot see.
   still where the reset was supposed to have moved it from, which reads exactly like a reset
   that silently failed. **After a blocked call, assume NOTHING in it ran**, and prefer
   `git checkout --detach <ref>` to a reset: it refuses rather than destroys.
+
+- 🔴 **A CLOSED BLOCK MOVED TO THE ARCHIVE IS INVISIBLE TO A SWEEP THAT READS THE TREE'S CURRENT
+  PROSE — AND THAT COST A FALSE SECURITY CLAIM.** #85 found the busybox/setuid deferral
+  (*"if this image is ever actually deployed, revisit that trade then"*), saw its trigger had
+  fired, and recorded the cutover as having INVERTED the comparison *"in the direction that reads
+  as reassurance"* — asserting a risk INCREASE nobody had measured. The measurement already
+  existed, in `claudedocs/handoff-cairn-control-plane-archive.md` under the 2026-09-19 CLOSED
+  block: `busybox --list` is **402 applets on BOTH nix images, zero difference**, and the image
+  actually replaced carried **11 setuid binaries and a CPython interpreter** against **zero and
+  zero**. It is a **NARROWING on both axes.** The draft also claimed to have "FILED" the item
+  while filing it nowhere. **Before recording a deferral as spent, search the ARCHIVE for its
+  discharge.**
+- 🔴 **A DEFERRAL WHOSE TRIGGER IS A STATE NOTHING ASSERTS ON IS A DECISION WITH A DELAY ON IT.**
+  Two were found spent by one unrelated sweep — the busybox trade and `tests/dualrun/README.md`'s
+  *"Revisit if the Go pod is ever the deployed one"*. Neither had anything watching its condition;
+  both were found only because somebody happened to read the paragraph.
+- 🔴 **RETRACTING A TRUE CLAIM AS NEVER-TRUE IS THE SAME DEFECT AS LEAVING A FALSE ONE, POINTED
+  THE OTHER WAY.** #85's first draft wrote *"`flake.nix` never said that about the GO image — a
+  cross-reference is a claim, and this one was never opened."* `flake.nix` DID say it, at the
+  `server-image-go` block. The sweep had missed that site **while editing that file**, then cited
+  its own miss as evidence the claim never existed. The sentence is self-refuting.
+- 🔴 **A CLAIM SCOPED TO "THIS COMMIT" STOPS BEING READ THAT WAY THE MOMENT THE COMMIT IS NOT THE
+  NEWEST.** `cmd/cairn-server/main.go` read *"IT IS NOT DEPLOYED BY THIS COMMIT, AND SAYING SO IS
+  PART OF THE COMMIT"* — true of its own commit, and read by everyone afterwards as "this is not
+  deployed". **Scope a claim to a STATE, not to the change that made it.**
+- 🔴 **A GUARD'S STATED PREMISE CAN DIE WHILE ITS ASSERTION STAYS CORRECT — AND ONLY THE PROSE
+  TELLS YOU.** Two instances, both found by #85's round 0, both in files a green suite runs:
+  `test_flake_go_image_runtime_contract.py`'s *"Nothing has ever published `server-image-go`"*,
+  and `test_publish_workflow.py`'s ordering rationale, whose BOTH legs are spent. The first
+  guard's one line is still worth keeping; the second is a live requirement now enforcing the
+  opposite of what it argues for.
+- 🔴 **LINE-ANCHORED `grep` FAILED FOUR TIMES ON ONE QUESTION IN ONE SESSION.** The claims WRAP.
+  `packages.cairn still ships` was invisible to the grep hunting it; the guard's own
+  `WHY THIS FILE EXISTS` docstring wraps *"is the build that is deployed"* / *"today."*.
+  **Normalise whitespace over a multi-line window before sweeping, and prove the sweep with a
+  positive control you watched HIT a known wrapped instance.**
+- 🔴 **RE-RUN A SWEEP *AFTER* EDITING — the edits falsify neighbouring prose.** #85's second pass
+  caught two claims its own first pass had created: a `flake.nix` cross-reference to a doc comment
+  the same commit had just changed, and #81's text calling the Go image one of the matches that
+  *"genuinely are deployed by nothing"*.
+- 🔴 **`:NN` CROSS-REFERENCES DRIFT INSIDE A SINGLE REVIEW.** Three line numbers written into
+  `server/README.md` had landed on BLANK LINES by the next round, broken by an insertion in the
+  same ladder. **Cite quoted strings in a file nothing pins.**
+- 🔴 **A `merge-tree` EXIT 0 IS NOT SAFETY WHEN NEITHER SIDE EDITS THE FALSIFIED LINE.** #84 adds
+  `packages.ui-image`, which makes `flake.nix`'s *"no image wraps it"* false — a comment neither
+  #84 nor #85 touches, so the merge is textually clean and semantically broken. Raised on #84.
+- **Decision (operator, this session): the deployed pod is `cairn-store-go`.** The tree asserted
+  it at 3 sites and the opposite at more; the repo holds no manifest, so nothing in it could
+  settle the question. **Sweeping without this would have propagated an unverified claim to every
+  site it touched** — which is why #81 deliberately recorded the inconsistency rather than
+  resolving it.
+- **Decision (operator, this session): document the commit-message leak, widen the gate, do NOT
+  rewrite public history.** A force-push breaks every existing clone and fork, the identifier may
+  already be indexed, and it would close #80/#83/#84/#85/#86's bases.
+- ⚠ **A PROSE-PAYLOAD LADDER CANNOT FIRE THE ATTRIBUTION GATE**, because the `.md` IS the payload
+  so every round scores non-zero by construction. #81's ladder stopped on the prose criterion with
+  the share MEASURED: **16/16 pre-image lines ladder-authored**, against a 2/3 threshold. Record
+  the measurement — a report that ends on the escape hatch is otherwise indistinguishable from one
+  that converged.
+- ⚠ **`server/README.md`'s ~50-line audit record was TRIMMED to 45 on the operator's call**, on
+  the line *a lesson binds a next edit; an account of which draft said what does not*. The
+  retracted THEORY stays (house style); the ladder's autobiography went.
 
 ## How to verify
 
