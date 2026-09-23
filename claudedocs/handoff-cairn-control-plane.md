@@ -711,6 +711,16 @@ cannot see.
   that silently failed. **After a blocked call, assume NOTHING in it ran**, and prefer
   `git checkout --detach <ref>` to a reset: it refuses rather than destroys.
 
+- 🔴 **A `STILL LIVE` INVESTIGATION BLOCK IS A CLAIM WITH NO EXPIRY, AND THIS DOC CARRIED ONE TWO
+  MERGES PAST ITS FIX.** The host-HOME doctor-test block was re-measured as live by a
+  later session, after `c47636b` (#60) had already applied the exact fix its own `Next probe` prescribed. The
+  section APPENDS, so nothing deletes a stale block and a second session re-measuring the symptom
+  reads as diligence rather than as a missed closure. ⚠ **The cheap check is one command and neither
+  session ran it**: `git log <the block's as-of ref>..origin/main -- <the paths the block names>`.
+  🔴 **And the tell that it was a real closure rather than a flake is that the blamed CONDITION was
+  still present** — same host, same `~/.config/subsystem-store/instances`, same mtime — so "it did
+  not reproduce" and "it was fixed" were distinguishable, and only by checking.
+
 ## How to verify
 
 ```bash
@@ -901,3 +911,36 @@ because a closed block's value is its measured values and eliminations. Read it 
   same ephemeral port gives exactly one failure with no timing signal. `via: assumed`
 - **Next probe:** run the file alone in a loop of 20 and watch for a single failure —
   `for i in $(seq 20); do uv run --with pytest python -m pytest tests/test_subsystem_store_api.py -q -p no:randomly | tail -1; done`
+
+### ✅ CLOSED — the host-HOME-dependent doctor test was fixed two merges before this doc still called it LIVE
+- as-of: 2026-09-23
+- **Symptom + exact repro:** the block above — *"STILL LIVE, re-measured at `e15e331`"* — records
+  `uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly` returning
+  **`1 failed, 1969 passed`**, the failure being
+  `tests/test_cairn_doctor.py::TestTheCliWiring::test_a_no_sync_run_still_reads_the_LOCAL_config`,
+  and its `Next probe` says *"the real defect is that the test inherits the operator's HOME instead
+  of pinning one; that is the fix when somebody wants it."*
+- **Observed (with values):** on `feat/ui-image` at `a88f60b` the full suite is
+  **2059 passed, 0 failed** in 525.86 s — that test among them, no failure, no skip.
+  🔴 **AND THE CONDITION THE BLOCK BLAMES IS STILL PRESENT, WHICH IS WHAT MAKES THIS A CLOSURE
+  RATHER THAN A DISAPPEARANCE**: `stat ~/.config/subsystem-store/instances` still reads mtime
+  **2026-09-17 22:00:43** with one `.env` inside — byte-for-byte the state the two earlier
+  blocks both name as the cause. Same host, same HOME, same config, test green.
+  `via: measurement`
+- **Ruled out:** that the symptom merely failed to reproduce. The fix is identifiable and dated:
+  `git log e15e331..origin/main -- tests/test_cairn_doctor.py lib/ cairn` names **`c47636b`**,
+  *"Pin the host configuration a doctor test inherited, and close three ladder-filed defects"*
+  (#60) — which is the `Next probe`'s own prescription, already landed. `via: measurement`
+- **Ruled out:** that this doc was merely behind by one merge. It is behind by **two** — `c47636b`
+  (#60) predates both `93d0f03` (#74) and `a88f60b` (#76) — and the LATER of the two blocks,
+  which re-measured it as LIVE, was written **after** the fix existed, which is the part worth recording.
+  `via: measurement` — the ordering was read off
+  `git log --oneline e15e331..origin/main -- tests/test_cairn_doctor.py lib/ cairn`, which lists
+  `c47636b` below both later merges rather than inferred from the version numbers.
+- **Leading hypothesis:** none needed; closed.
+- **Next probe:** none. 🔴 **THE DURABLE LESSON IS ABOUT THIS DOCUMENT, NOT ABOUT THE TEST.** An
+  `Open investigations` block is APPEND-ONLY, so a block saying `STILL LIVE` survives every update
+  that does not retype it — including the update that lands its fix. Two sessions re-measured this
+  one as live; neither ran `git log <the-as-of-ref>..origin/main -- <the paths the block names>`,
+  which is one command and is what closed it. **Before re-measuring any `STILL LIVE` block, ask
+  what landed since its `as-of` ref.**
