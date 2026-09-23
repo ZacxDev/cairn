@@ -261,9 +261,10 @@ func FetchSnapshot(cfg Config, scope, etag string, timeout int) (
 		return nil, nil, false, unreachable("%s unreachable: %s", cfg.URL, err)
 	}
 	applyStandardHeaders(req, cfg.Token)
-	// Sent through `StorableETag` at BOTH ends: the stored value was filtered when it
-	// was written, and it is filtered again here, because the file on disk is a
-	// different trust boundary from the response that produced it.
+	// 🔴 THE ONE PLACE THE VALUE IS FILTERED ON ITS WAY OUT, and it is here because here
+	// is where it becomes a header. `etag` reaches this function from a FILE — which
+	// anything can edit — so it is not the same trust boundary as the response that
+	// produced it, and `http.Header.Set` will carry a newline straight into the request.
 	if validator := StorableETag(etag); validator != "" {
 		req.Header.Set("If-None-Match", validator)
 	}

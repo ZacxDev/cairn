@@ -731,3 +731,58 @@ ladder is a refusal.** This corpus cannot see it either; the runner builds its t
 `intParam`'s range is a change to the validation ladder, and P1b's whole claim was that the
 ladder did not move.
 
+
+## The conditional snapshot — five rows, and why one of them carries a hand-spelled digest
+
+`GET /api/v1/snapshot` answers a matching `If-None-Match` with `304`, and the corpus is
+where that contract is pinned for both implementations. The rows:
+
+| row | what it pins |
+|---|---|
+| `snapshot-conditional-not-modified` | a validator that MATCHES → `304`, no body, no `Content-Type`, no `Content-Length`, no `X-Store-Entries` |
+| `snapshot-conditional-stale-etag` | a validator that does NOT match → the whole archive, carrying the CURRENT tag |
+| `snapshot-conditional-star` | RFC 9110 §13.1.2's `*` → `304`, and it is the one conditional whose answer does not depend on the world's bytes |
+| `snapshot-conditional-other-principals-etag` | the WIDE principal's tag presented by the NARROW one → `200` with the narrow principal's own tag |
+| `snapshot-conditional-bad-scope` | `*` plus a `?scope=a.b` → still the `400`. A conditional is not a way past a refusal |
+
+Every pre-existing snapshot golden also gained an `ETag` header, and reading those seven
+side by side is the cross-tenant evidence the suite gets for free:
+
+```
+snapshot-authorized       "sha256:13db39a8…"   the wide principal, whole store
+snapshot-legacy-token     "sha256:13db39a8…"   a legacy row is unrestricted — same archive, same tag
+snapshot-narrow-principal "sha256:c0081c8c…"   a different visible set is a different tag
+snapshot-scope-filter     "sha256:5e0a70c8…"   a ?scope= filter is a different tag again
+snapshot-scope-refused    "sha256:86bd9826…"   ┐ a REFUSED scope and an ABSENT one produce the
+snapshot-scope-absent     "sha256:86bd9826…"   ┘ SAME tag, because they produce the same archive
+```
+
+🔴 **THE LAST PAIR IS THE ONE WORTH READING TWICE.** The `refused_equals_absent` relation
+says a refusal and an absence must be the same answer; a validator derived from anything
+store-wide — a revision counter, an epoch, a scope list — would have differed between them
+and made the tag a fifth enumeration channel. It does not, and that is a property of
+digesting the archive rather than a rule anyone had to remember.
+
+### The hand-spelled digest, and why it is allowed to be one
+
+`snapshot-conditional-not-modified` and `snapshot-conditional-other-principals-etag` carry
+the wide principal's tag as a LITERAL in `requests.json`, the same way the `If-Match`
+literals already do. That is a deliberate trade with a loud failure mode: if `world.json`
+changes, the literal stops matching and the first row answers `200` instead of `304` — in
+the diff, on both implementations, rather than silently.
+
+It is only tenable because the tag is REPRODUCIBLE, and that was measured rather than
+assumed. Every member's bytes and every mtime — including the seed stamp's — are declared
+by `world.json` to sub-second precision, which is the same fact that lets the extracted
+manifest be a golden. Two independent `suite.py build-store` invocations produced
+`"sha256:13db39a8…"` both times, and two consecutive `suite.py generate` runs wrote
+byte-identical goldens. ⚠ The GZIP envelope is still nondeterministic (its member header
+carries the compression time) and is still not asserted — the tag is over the tar INSIDE
+it, which is the whole reason the validator can be pinned at all.
+
+### What these rows still cannot see
+
+The corpus issues one request at a time against a freshly built world, so it cannot see the
+thing the feature is actually for: a client that syncs, stores the tag, and syncs again. The
+round trip is measured in `tests/dualrun/` (a `derive_if_none_match` target, asked of each
+server in turn) and in `tests/parity/` (`sync-again`, over two real clients and one cache).

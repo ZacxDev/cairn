@@ -646,12 +646,17 @@ def storable_etag(value: str | None) -> str:
 def stored_etag(cache: Path) -> str:
     """The validator recorded beside `cache`, or `""` for "there is none".
 
-    Read through `storable_etag` as well as written through it: a cache file
-    edited by hand, or left behind by a future format, must not be able to put
-    an arbitrary byte sequence into an outgoing request header.
+    🔴 IT DOES **NOT** FILTER, AND THE FILTER IS AT THE POINT OF USE INSTEAD —
+    `fetch_snapshot`, which is where the value becomes a header. A filter here
+    as WELL was written first and then deleted: it was a second copy of one
+    predicate, and a mutation sweep measured the consequence — removing it
+    changed nothing observable, because the surviving copy caught the same
+    value, so the guard could not be watched to fail and read as coverage it
+    did not provide. One rule, one place, at the boundary that is actually
+    crossed.
     """
     try:
-        return storable_etag((cache / SYNC_ETAG).read_text(encoding="utf-8").rstrip("\n"))
+        return (cache / SYNC_ETAG).read_text(encoding="utf-8").rstrip("\n")
     except (OSError, UnicodeDecodeError):
         return ""
 
@@ -690,9 +695,13 @@ def fetch_snapshot(
     # of this host is blocked, which is exactly the shape of bug that gets
     # diagnosed as "the store is broken".
     _apply_standard_headers(req, token)
-    # Passed through `storable_etag` at BOTH ends: the stored value was filtered
-    # when it was written, and it is filtered again here, because the file on
-    # disk is a different trust boundary from the response that produced it.
+    # 🔴 THE ONE PLACE THE VALUE IS FILTERED ON ITS WAY OUT, and it is here
+    # because here is where it becomes a header. `etag` reaches this function
+    # from a FILE — which anything can edit — so it is not the same trust
+    # boundary as the response that produced it, and without this line a stored
+    # value carrying a newline makes `http.client` raise `ValueError` out of
+    # every handler in this program: an unusable validator taking down a sync
+    # that would otherwise have worked.
     validator = storable_etag(etag)
     if validator:
         req.add_header("If-None-Match", validator)

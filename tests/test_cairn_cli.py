@@ -1941,6 +1941,37 @@ class TestTheConditionalSync:
         # changed.
         assert first.stdout == second.stdout
 
+    def test_fetch_snapshot_FILTERS_the_validator_it_is_HANDED(self, live_store):
+        """🔴 THE OUTGOING FILTER, ON ITS OWN, AND IT NEEDED ITS OWN TEST.
+
+        `stored_etag` used to filter too. A mutation sweep measured that copy
+        unable to fail — removing it changed nothing observable, because this
+        one caught the same value — so it was DELETED rather than left reading
+        as coverage it did not provide. This row hands `fetch_snapshot` the bad
+        value directly, which is the call the surviving filter exists for:
+        `etag` comes from a FILE, which anything can edit.
+
+        Without the filter, `http.client` refuses the request outright
+        (`_is_illegal_header_value` matches a newline not followed by
+        whitespace) and the `ValueError` escapes every handler here as a
+        traceback — an unusable validator taking down a sync that would
+        otherwise have worked.
+        """
+        spec = importlib.util.spec_from_loader(
+            "cairn_cli_conditional", loader=None, origin=str(CAIRN_CLI)
+        )
+        mod = importlib.util.module_from_spec(spec)
+        mod.__file__ = str(CAIRN_CLI)
+        exec(compile(CAIRN_CLI.read_text(encoding="utf-8"), str(CAIRN_CLI), "exec"),
+             mod.__dict__)
+        body, headers, not_modified = mod.fetch_snapshot(
+            live_store.base, GOOD_TOKEN, scope=None, timeout=5,
+            etag='"sha256:aaa"\nX-Injected: yes',
+        )
+        assert not_modified is False
+        assert body, "the archive must still arrive"
+        assert headers.get("etag"), "…and the pod must still have offered a validator"
+
     def test_a_MALFORMED_validator_on_disk_is_not_sent(
         self, live_store, tmp_path: Path
     ):

@@ -220,6 +220,36 @@ func TestAPodThatSendsNoValidatorIsUnaffected(t *testing.T) {
 	}
 }
 
+// 🔴 THE OUTGOING FILTER, ON ITS OWN — and it is the ONLY filter, deliberately.
+//
+// `StoredETag` used to run `StorableETag` too, and a mutation sweep measured that copy
+// unable to fail: removing it changed nothing observable, because this one caught the same
+// value. It was deleted rather than left reading as coverage. This row hands `FetchSnapshot`
+// the bad value directly, which is the call the surviving filter exists for — `etag` comes
+// from a FILE, and without the filter `http.Transport` refuses the request outright
+// ("invalid header field value"), so an unusable validator would take down a sync that would
+// otherwise have worked.
+func TestFetchSnapshotFiltersTheValidatorItIsHanded(t *testing.T) {
+	var sawHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawHeader = r.Header.Get("If-None-Match")
+		w.Header().Set("X-Store-Entries", "1")
+		_, _ = w.Write(tinyArchive(t, "alpha/one.md", "x\n"))
+	}))
+	defer srv.Close()
+	body, _, notModified, err := FetchSnapshot(
+		Config{URL: srv.URL, Token: "t"}, "", "\"sha256:aaa\"\nX-Injected: yes", 5)
+	if err != nil {
+		t.Fatalf("an unusable validator must mean NO conditional, not a failed fetch: %v", err)
+	}
+	if notModified || len(body) == 0 {
+		t.Fatalf("the archive must still arrive: notModified=%v bytes=%d", notModified, len(body))
+	}
+	if sawHeader != "" {
+		t.Fatalf("a malformed validator reached the wire as %q", sawHeader)
+	}
+}
+
 // 🔴 THE DOCTOR PROBE MUST NEVER BE CONDITIONAL. Its job is to count what the POD would
 // send; an answer of "nothing changed" would make it report the cache as the pod and
 // find the two in agreement by construction.

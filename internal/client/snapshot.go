@@ -91,15 +91,19 @@ func StorableETag(value string) string {
 
 // StoredETag is the validator recorded beside `cache`, or "" for "there is none".
 //
-// Read through `StorableETag` as well as written through it: a cache file edited by
-// hand, or left behind by a future format, must not be able to put an arbitrary byte
-// sequence into an outgoing request header.
+// 🔴 IT DOES **NOT** FILTER, AND THE FILTER IS AT THE POINT OF USE INSTEAD —
+// `FetchSnapshot`, which is where the value becomes a header. A filter here as WELL was
+// written first and then deleted: it was a second copy of one predicate, and a mutation
+// sweep measured the consequence — removing it changed nothing observable, because the
+// surviving copy caught the same value, so the guard could not be watched to fail and
+// read as coverage it did not provide. One rule, one place, at the boundary that is
+// actually crossed.
 func StoredETag(cache string) string {
 	data, err := os.ReadFile(filepath.Join(cache, SyncETagFile))
 	if err != nil {
 		return ""
 	}
-	return StorableETag(strings.TrimRight(string(data), "\n"))
+	return strings.TrimRight(string(data), "\n")
 }
 
 // safeMemberName is true when `name` stays inside the extraction root.

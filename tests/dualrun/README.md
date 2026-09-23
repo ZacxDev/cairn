@@ -191,6 +191,32 @@ builds 9 scopes and 123 entry files, and every one of these is served here and n
   openness markers, `tasks:`, an honoured `sensitivity:`, a duplicate heading, a fenced
   region, a present-but-empty section, a bare entry, and non-ASCII body content.
 
+### The conditional snapshot — five targets, and why one of them derives its own tag
+
+`snapshot-wide`'s `ETag` header is already compared literally, which is the claim that the
+two servers compute **one** validator over a store nobody wrote a fixture for. These five are
+the claim that they then make the same **decision** with it:
+
+- `snapshot-conditional-derived` — 🔴 **the production flow.** Each server is asked for its
+  OWN tag by an ordinary unconditional GET, and handed that tag back. Copying the oracle's
+  value to the Go server would have tested whether Go honours a tag it never minted; asking
+  each side for its own means a disagreement about the VALUE surfaces as a different ANSWER
+  — a 304 on one and a 200 on the other — which this harness reports rather than papers over.
+  The same reasoning `derive_if_match` already carries, one route over.
+- `snapshot-conditional-star` and `snapshot-conditional-narrow-star` — RFC 9110 §13.1.2's
+  `*`, which is the one validator whose answer does not depend on the store's bytes, so the
+  whole 304 header set is compared without deriving anything. The narrow one is where the
+  store-wide `X-Store-Snapshot` and the per-caller `ETag` are compared side by side.
+- `snapshot-conditional-stale` — a validator that matches nothing: the whole archive, with
+  the current tag on it. Without it a server that answered 304 to *everything* would pass.
+- `snapshot-conditional-bad-scope` — `*` against `?scope=%2e%2e`: still the 400 on both. A
+  conditional is not a way past a refusal, and `*` is the value that would prove it if it
+  were.
+
+⚠ **The `derive_if_none_match` probe falls back to comparing the PROBE's own answer** when a
+server returns no `ETag` at all, rather than skipping the target — a skip on one side is
+exactly how "this implementation emits no validator" would hide here.
+
 ### What mode 2 **cannot** stand in for
 
 The operator's real store is the only thing with the real store's **shape**: its scope count,
@@ -357,12 +383,21 @@ went red":
 |---|---|---|---|---|
 | `status-code-moved` | a write verb on a read-only route answers 403, not 405 | `status` | ✅ | 2 targets, only the `status` comparison |
 | `response-header-dropped` | `Cache-Control: no-store` gone from every response | `headers` | ✅ | **361 of 361** targets, only the `headers` comparison |
-| `tar-mtime-truncated` | the snapshot's member mtimes lose their fraction | `tar` | ✅ | 13 targets, only the `tar` comparison |
-| `tar-members-reordered` | the same members in the opposite order | `tar` | ✅ | 10 targets, only the `tar` comparison |
+| `tar-mtime-truncated` | the snapshot's member mtimes lose their fraction | `tar`, `headers` | ✅ | 18 targets, the `tar` **and** `headers` comparisons |
+| `tar-members-reordered` | the same members in the opposite order | `tar`, `headers` | ✅ | 15 targets, the `tar` **and** `headers` comparisons |
 | `audit-identity-field-dropped` | the audit line loses `identity=` | `audit` | ✅ | nothing on the wire changes; only the `audit` arm |
 | `startup-banner-field-dropped` | the banner loses `trusted-proxies=` | `process` | ✅ | only the `process` arm |
 | `resolver-tier-keyed-on-ref` | the filename tier matches `e.ref`, not `e.slug` | `body`, on the `entry` arm **alone** | ✅ | `entry:wide-writer:theta-ambiguous/plum` and nothing else |
-| *(control)* `unmutated_server` | the same copy mechanics, no edit | — | PASSES | 361 targets, 1,489 comparisons |
+| *(control)* `unmutated_server` | the same copy mechanics, no edit | — | PASSES | 366 targets, 1,510 comparisons |
+
+🔴 **THE TWO `tar` ROWS DECLARE `headers` TOO, AND THAT IS THE `ETag` EARNING ITS KEEP RATHER
+THAN A WIDENED LICENCE.** `/api/v1/snapshot` now carries a validator that is a digest of the
+**uncompressed tar**, so any mutation of the archive is visible in a HEADER as well as in the
+bytes — and the self-test's second assertion ("the failing comparisons EQUAL the declared
+set") turned that into a refusal to vouch the first time the sweep ran after the change,
+which is the guard working. Before the validator existed both mutants were caught by the
+`tar` arm alone; the note beside each mutation in `mutants.py` says so, so nobody reads the
+wider set as a claim that was loosened.
 
 **Nothing survived.** Three of the seven exist because the first four could not reach their
 arms: the audit stream, the process stream, and the per-entry sweep. `startup-banner-field-
