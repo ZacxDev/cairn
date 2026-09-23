@@ -102,9 +102,10 @@ These are the house style, and they are why the guards here are worth trusting:
 
 ## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
 
-`cmd/cairn-server` is the Go port. It is **not deployed by anything**: it exists so the
-conformance corpus can be replayed against both implementations on the same store and
-the difference MEASURED.
+`cmd/cairn-server` is the Go port, and 🔴 **IT IS NOW THE DEPLOYED POD** — the cluster
+pulls `cairn-store-go`. It also exists so the conformance corpus can be replayed against
+both implementations on one store and the difference MEASURED. ⚠ So the ORACLE now runs
+NOWHERE, and a divergence ships before any gate reading `server.py` sees it.
 
 📄 **P1'S HISTORY LIVES IN `tests/conformance/README.md` AND `tests/dualrun/README.md`,
 NOT HERE**: the measured corpus splits, the reader fixture's case list and its ancillary
@@ -258,7 +259,7 @@ goes red on stdout, on stderr, on the exit code **and** on `exit+stdout`). `--br
 negative control on the first. Read all three; a green without them is a green about nothing.
 
 📄 **READ ON DEMAND RATHER THAN HERE, all in `tests/parity/README.md`:** the worked example behind
-that green, what the gate FOUND (ten divergences in seven findings), the MUTATION BATTERY over P2,
+that green, what the gate FOUND (eleven divergences in eight findings), the MUTATION BATTERY over P2,
 and the **P8 RETIREMENT LEDGER** — every file, guard and row that exists only while the Python
 oracle does. Records of rounds, not decision input before acting. This file states the retirement
 condition for the `lib/` rule and for nothing else; the ledger is a list of DECISIONS, not a delete
@@ -345,7 +346,7 @@ nix run   github:ZacxDev/cairn -- doctor       # the DEFAULT client — the GO o
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client and the oracle — NOT the default
 nix build github:ZacxDev/cairn#cairn-go        # the Go client by name — same store path as default
 nix build github:ZacxDev/cairn#server-image    # the PYTHON pod image, as a loadable tarball
-nix build github:ZacxDev/cairn#server-image-go # the GO pod image — published, deployed by nothing
+nix build github:ZacxDev/cairn#server-image-go # the GO pod image — published, and DEPLOYED
 ```
 
 Consumers pin this flake as an input; that is the supported way to get a `cairn`
@@ -429,10 +430,10 @@ and DERIVES uid, port, exposed port and env from the same
 variable added for one pod reach both.
 `tests/test_flake_go_image_runtime_contract.py` pins that it stays derived, that
 it carries busybox and a `PATH`, and that its CA bundle is NAMED rather than
-merely present. 🔴 **IT IS NOW PUBLISHED AND STILL DEPLOYED BY NOTHING, AND THOSE
-ARE TWO CLAIMS.** `.github/workflows/publish-image.yml` pushes BOTH pods, to two
-ghcr packages (`cairn-store`, `cairn-store-go`) under one `sha-<40-hex>` scheme;
-the cutover of the DEPLOYED image remains a separate decision. ⚠ Both are
+merely present. 🔴 **IT IS PUBLISHED AND IT IS NOW THE DEPLOYED POD — THE
+CUTOVER HAPPENED.** `.github/workflows/publish-image.yml` pushes BOTH pods, to
+two ghcr packages (`cairn-store`, `cairn-store-go`) under one `sha-<40-hex>`
+scheme, and the cluster pulls the second. ⚠ Both are
 PUBLIC and anonymously pullable, verified against a negative control — including
 the retracted private-on-first-publish prediction, recorded in
 `server/README.md`.
@@ -445,7 +446,19 @@ Move all three together or not at all.
 
 ## Naming
 
-The project is **cairn**. Some identifiers still read `subsystem_store` / `SUBSYSTEM_STORE_*`
-— these are **accepted aliases**, kept so existing deployments do not need a coordinated
-cutover. New names should use `cairn` / `CAIRN_*`; do not mass-rename the aliases away without
-a migration path for people already running this.
+The project is **cairn**. 🔴 **THE ENVIRONMENT VARIABLES ARE RENAMED AND BOTH SPELLINGS
+WORK.** `CAIRN_*` is the name; every `SUBSYSTEM_STORE_*` still resolves, the new name WINS,
+and an old name that is present warns **once per process naming its replacement** — sorted by
+new name, because `tests/parity/` diffs the two clients' stderr byte-for-byte. It stops being
+read when **`packages.cairn` is retired (P8)**: a milestone, never a date. The ledger, the
+resolver and the warning text are `internal/envalias` and `lib/env_aliases.py` — two spellings
+only because `packages.cairn` cannot import `internal/`, pinned against each other by
+`tests/test_env_aliases.py`. **Never open-code a fallback at a call site**, and note the two
+pairs that are NOT the prefix swap: the pod's listen address is `CAIRN_LISTEN_HOST` because
+`CAIRN_HOST` already means the machine LABEL, and its store root is `CAIRN_STORE_ROOT` because
+`CAIRN_ROOT` would read as a sibling of the client-side `CAIRN_MIRROR_ROOT`.
+
+Other identifiers still read `subsystem_store` — the `lib/` module names,
+`~/.config/subsystem-store/`, `/run/secrets/subsystem-store/`, the `subsystem-recall` CLI
+alias. Those are **accepted aliases**, kept so existing deployments do not need a coordinated
+cutover; do not mass-rename them away without a migration path for people already running this.

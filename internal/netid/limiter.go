@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/ZacxDev/cairn/internal/envalias"
 )
 
 // The three rate-limit defaults live HERE, in code, so a deployment that sets no
@@ -17,10 +19,13 @@ const (
 	DefaultLockout       = 900 * time.Second
 )
 
+// The three names, in their CURRENT spelling. Each has a deprecated
+// `SUBSYSTEM_STORE_*` alias that `internal/envalias` resolves and warns about; nothing
+// in this file names an old spelling, which is what keeps the ledger in one place.
 const (
-	EnvMaxFailures   = "SUBSYSTEM_STORE_MAX_FAILURES"
-	EnvFailureWindow = "SUBSYSTEM_STORE_FAILURE_WINDOW_S"
-	EnvLockout       = "SUBSYSTEM_STORE_LOCKOUT_S"
+	EnvMaxFailures   = "CAIRN_MAX_FAILURES"
+	EnvFailureWindow = "CAIRN_FAILURE_WINDOW_S"
+	EnvLockout       = "CAIRN_LOCKOUT_S"
 )
 
 // REAL bounds on both tables. Active lockouts are NEVER evicted for space; the
@@ -49,7 +54,7 @@ func LimiterSettings(env map[string]string) (maxFailures int, window, lockout ti
 	window = DefaultFailureWindow
 	lockout = DefaultLockout
 
-	if raw, present := env[EnvMaxFailures]; present && raw != "" {
+	if raw := envalias.Value(env, EnvMaxFailures); raw != "" {
 		n, convErr := strconv.Atoi(raw)
 		if convErr != nil {
 			return 0, 0, 0, fmt.Errorf("%s must be a number, got '%s'", EnvMaxFailures, raw)
@@ -63,8 +68,8 @@ func LimiterSettings(env map[string]string) (maxFailures int, window, lockout ti
 		name   string
 		target *time.Duration
 	}{{EnvFailureWindow, &window}, {EnvLockout, &lockout}} {
-		raw, present := env[spec.name]
-		if !present || raw == "" {
+		raw := envalias.Value(env, spec.name)
+		if raw == "" {
 			continue
 		}
 		f, convErr := strconv.ParseFloat(raw, 64)

@@ -662,7 +662,7 @@ def server_env(break_both: bool) -> dict[str, str]:
         # after it compares two wrong answers to each other. This sweep issues several
         # deliberate refusals from one address, well over the production default of five
         # per minute.
-        "SUBSYSTEM_STORE_MAX_FAILURES": "1000000",
+        "CAIRN_MAX_FAILURES": "1000000",
         # 🔴 THE TRUSTED-PROXY SET MUST NOT CONTAIN THE HARNESS, AND COPYING THE
         # CONFORMANCE RUNNER'S VALUE IS WHAT MADE THE P2 PARITY GATE VACUOUS.
         # `127.0.0.1/32` tells the server the loopback peer is a PROXY, after which every
@@ -672,7 +672,7 @@ def server_env(break_both: bool) -> dict[str, str]:
         # 🔴 `--break-both` PUTS THE LOOPBACK BACK, WHICH IS THE INCIDENT. It exists as a
         # CONTROL and nothing else: with it every target compares two identical 401s, and
         # the pre-flight has to refuse to vouch instead of reporting that as a green.
-        "SUBSYSTEM_STORE_TRUSTED_PROXIES": "127.0.0.1/32" if break_both else "192.0.2.1/32",
+        "CAIRN_TRUSTED_PROXIES": "127.0.0.1/32" if break_both else "192.0.2.1/32",
         "CAIRN_HOST": DUALRUN_HOST,
     })
     return env

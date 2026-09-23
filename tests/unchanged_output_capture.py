@@ -55,6 +55,15 @@ construction, and a permanently-red gate trains everyone to click through, which
 no gate. The thing that makes it valuable is that a human aims it at a *compatibility claim*;
 a job that ran it on everything would destroy exactly that.
 
+⚠ **ONE KNOWN, EXPECTED DIFF: A BASE FROM BEFORE THE `SUBSYSTEM_STORE_*` -> `CAIRN_*` RENAME.**
+Every shape here exports the DEPRECATED spellings — it has to, because arm A runs the base
+tree and a pre-rename client and server know only those names. At HEAD those names still
+work and additionally print one `cairn: … is a deprecated alias for …` line per name on
+stderr, which this harness captures alongside stdout. So a run across that boundary reports a
+diff consisting of exactly those lines. **That is a true report of a real user-visible
+change, not a regression** — read the diff before dismissing it, because a REAL divergence
+would be mixed in with it.
+
 ⚠ **AND P8 IS THIS FILE'S RETIREMENT CONDITION, NOT ITS JUSTIFICATION — THE FIRST DRAFT HAD THAT
 EXACTLY BACKWARDS.** It argued for keeping the harness *because* P8 retires the Python oracle and
 poses the largest byte-identity question left. But both of this file's operands ARE the Python
@@ -234,6 +243,13 @@ def start_store(server_tree: Path, store: Path, work: Path, name: str):
         # harness is a PROXY, after which every direct request is refused `401
         # status=no-client-ip` — all three arms then capture the same refusal and compare equal.
         # That exact copied value once made the parity gate vacuous over 72 rows.
+        # 🔴 THE **DEPRECATED** SPELLINGS, AND THEY MUST STAY THAT WAY. This harness runs
+        # the BASE tree's `server.py` as well as HEAD's, and a base from before the
+        # `SUBSYSTEM_STORE_*` -> `CAIRN_*` rename does not know the new names at all — it
+        # would refuse to start with no trusted proxies and arm A would capture a dead
+        # server. Aliases resolve on HEAD, so one spelling serves both arms; the new
+        # spelling would serve only one. See the note at the top of this file about the
+        # diff the rename itself produces.
         "SUBSYSTEM_STORE_TRUSTED_PROXIES": "192.0.2.1/32",
         "SUBSYSTEM_STORE_MAX_FAILURES": "1000000",
         "CAIRN_HOST": CAPTURE_HOST,

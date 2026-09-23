@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"github.com/ZacxDev/cairn/internal/control"
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,58 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/ZacxDev/cairn/internal/control"
 )
-
-// syncBuffer collects a child's stderr from the goroutine `exec` writes it on while this
-// test polls it. A plain `bytes.Buffer` here is a data race `go test -race` reports.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf strings.Builder
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-// runUIEnv makes THIS TEST BINARY run `main()` instead of the test suite.
-//
-// 🔴 THE CHILD IS THE REAL `main`, NOT A SECOND COPY OF ITS WIRING, for the reason
-// `cmd/cairn-server/main_test.go` states at length: a test that re-assembled the startup
-// sequence would pass with the call it is about deleted. It is read HERE and nowhere in the
-// program, so it is not a configuration surface an operator can reach.
-const (
-	runUIEnv       = "CAIRN_UI_TEST_RUN_MAIN"
-	testRefreshEnv = "CAIRN_UI_TEST_REFRESH_INTERVAL"
-)
-
-func TestMain(m *testing.M) {
-	if os.Getenv(runUIEnv) != "1" {
-		os.Exit(m.Run())
-	}
-	// The child REFUSES an unusable interval rather than falling back to the production
-	// one: a child quietly running at 30 s would turn the refresh assertions below into a
-	// timeout whose message named the loop instead of the harness.
-	if raw, set := os.LookupEnv(testRefreshEnv); set {
-		interval, err := time.ParseDuration(raw)
-		if err != nil || interval <= 0 {
-			fmt.Fprintf(os.Stderr, "cairn-ui test child: %s must be a positive duration, got %q\n",
-				testRefreshEnv, raw)
-			os.Exit(2)
-		}
-		refreshInterval = interval
-	}
-	main()
-}
 
 // The startup refusals are the only thing standing between a misconfigured deployment and
 // a surface that passes its health check and can serve nobody. Until this file existed
@@ -69,10 +22,18 @@ func TestMain(m *testing.M) {
 // prose with no harness" defect an audit round had just filed against this PR's own cost
 // comment, repeated one commit later on the guard that round added. So: a test.
 //
-// 🔴 THIS DRIVES THE PREDICATE AND `openAuthority`, NOT THE PROCESS. The exit code is one
-// `os.Exit(exitConfig)` in `main`; what can be wrong is WHICH STATES the guard admits, and
-// that is exactly what these cases vary. A test that spawned the binary would measure the
-// same predicate through a slower door and would still not cover a state nobody thought of.
+// 🔴 ALMOST EVERYTHING HERE DRIVES THE PREDICATE AND `openAuthority`, NOT THE PROCESS.
+// What can be wrong is WHICH STATES the guard admits, and that is what these cases vary;
+// a test that spawned the binary would measure the same predicate through a slower door
+// and would still not cover a state nobody thought of.
+//
+// ⚠ THIS PARAGRAPH USED TO SAY "THE EXIT CODE IS ONE `os.Exit(exitConfig)` IN `main`" AND
+// READ AS A REASON NEVER TO SPAWN ANYTHING, AND ONE CASE NOW DOES. `main` carries TEN of
+// them, and whether it ACTS on a refusal is wiring rather than a predicate: a
+// mutation sweep replaced `if journalErr != nil { … }` with `_ = journalErr` and this
+// package stayed GREEN while the built binary served. `TestMain` and
+// `TestTheProcessExitsOnAWhitespaceControlJournalLine`, at the bottom of this file, are
+// the exception and say why they are one.
 
 func TestAnAbsentOrUnusableControlJournalIsRefusedBeforeTheListener(t *testing.T) {
 	dir := t.TempDir()
@@ -226,6 +187,379 @@ func TestAJournalWithALiveCredentialIsAdmitted(t *testing.T) {
 	}
 }
 
+// credentialState is which of the three shapes a seeded journal carries. Named rather
+// than a bool, because the third state — a credential that exists and is REVOKED — is the
+// one a bool could not express and the one a mutation sweep found uncovered.
+type credentialState int
+
+const (
+	noCredential credentialState = iota
+	credentialLive
+	credentialRevoked
+)
+
+// seededJournal builds a real `control.FileStore` journal in the requested state.
+func seededJournal(t *testing.T, state credentialState) (*control.Cache, string) {
+	t.Helper()
+	at := time.Date(2000, 6, 1, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "seeded.journal")
+	store, err := control.OpenFileStore(path)
+	if err != nil {
+		t.Fatalf("opening the journal: %v", err)
+	}
+	user := control.DerivedID(control.PrefixUser, "startup-user")
+	project := control.DerivedID(control.PrefixProject, "startup-project")
+	events := []control.Event{
+		{Kind: control.EventUserCreated, At: at, UserID: user,
+			Provider: "fixture-provider", Subject: "00000000-0000-4000-8000-000000000031",
+			Email: "startup@notes.example.invalid"},
+		{Kind: control.EventProjectCreated, At: at, ProjectID: project, Name: "startup", UserID: user},
+		{Kind: control.EventMemberSet, At: at, ProjectID: project, UserID: user, Role: control.RoleOwner},
+	}
+	if state != noCredential {
+		events = append(events, control.Event{
+			Kind: control.EventCredentialIssued, At: at, CredentialID: "crd_startup",
+			SubjectKind: control.KindUser, SubjectID: user,
+			TokenHash: control.HashToken("fixture-startup-credential-not-a-real-token"),
+			Label:     "fixture",
+		})
+	}
+	if state == credentialRevoked {
+		events = append(events, control.Event{
+			Kind: control.EventCredentialRevoked, At: at, CredentialID: "crd_startup",
+		})
+	}
+	if _, err := store.Append(context.Background(), events...); err != nil {
+		t.Fatalf("seeding the journal: %v", err)
+	}
+	cache := control.NewCache(store, control.CacheOptions{})
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("materializing: %v", err)
+	}
+	return cache, path
+}
+
+// TestAWhitespaceControlJournalLineIsRefusedRatherThanReadAsUnset drives the SEAM, and it
+// is the only test in this file that does.
+//
+// 🔴 EVERY OTHER CASE HERE CALLS `openAuthority` WITH A LITERAL PATH, WHICH IS EXACTLY WHY
+// NONE OF THEM COULD SEE THE DEFECT THIS ONE PINS. The two surfaces — `internal/envalias`'s
+// "blank means unset" rule and this program's "a journal switches the authority" rule —
+// were each tested hermetically and were each right. Together, a whitespace-only
+// `CAIRN_UI_CONTROL_JOURNAL` resolved to `""`, the flag default stayed `""`, and
+// `openAuthority` took the TOKEN-FILE branch: an authority `internal/control/tokenfile`
+// confers `admin` on nobody through, so every scope page answers 404 and no share can be
+// recorded — while `/healthz` answers 200 and the index renders. So this case starts at the
+// ENVIRONMENT and ends at the authority `openAuthority` actually returns.
+//
+// Measured on two built binaries over one world before the fix: `1659663` exited **78**
+// naming the journal; `68cf955` served, announcing `sharing read-only (no -control-journal:
+// no share can be recorded)`.
+//
+// ⚠ THE ARMS THAT ARE **NOT** REFUSED ARE HALF THE POINT. A guard that refused every
+// non-empty value would satisfy every whitespace arm below and break every deployment, so
+// the empty, absent and real-path arms are this case's positive controls.
+func TestAWhitespaceControlJournalLineIsRefusedRatherThanReadAsUnset(t *testing.T) {
+	_, journal := seededJournal(t, credentialLive)
+	storeRoot := t.TempDir()
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	// A bare row of at least `authz.MinTokenChars` runes, which is what makes the
+	// token-file branch reach a non-empty table rather than `openAuthority`'s own refusal.
+	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("s", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, arm := range []struct {
+		name string
+		// set=false is "the variable is not in the environment at all", which is a
+		// different input from the empty string and must resolve the same way.
+		set      bool
+		value    string
+		wantErr  bool
+		wantPath string
+		// wantWritable is which BRANCH of `openAuthority` the resolved default reaches,
+		// and it is the observation that makes this a seam test rather than a string test.
+		wantWritable bool
+	}{
+		{name: "absent", set: false, wantPath: "", wantWritable: false},
+		{name: "the empty string", set: true, value: "", wantPath: "", wantWritable: false},
+		{name: "one space", set: true, value: " ", wantErr: true},
+		{name: "three spaces", set: true, value: "   ", wantErr: true},
+		{name: "tabs and newlines", set: true, value: "\t\n ", wantErr: true},
+		// ⚠ THIS ROW IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND LABELLING IT IS
+		// THE POINT. `strings.TrimSpace` does not strip U+200B, so `envalias` already
+		// called this value PRESENT and `68cf955` already exited 78 on it — measured in
+		// the red run, where this row went red while the BEHAVIOUR it describes was never
+		// broken. What it pins is that the refusal stays HERE, naming the variable,
+		// instead of migrating back to `openAuthority`'s `stat …: no such file or
+		// directory`, which sends an operator to check a mount for a path made of
+		// invisible runes. It is also the reason the predicate is
+		// `identity.ValueReducesToNothing` rather than a fresh `TrimSpace`, which would
+		// admit it.
+		{name: "zero-width runes", set: true, value: strings.Repeat("\u200b", 8), wantErr: true},
+		{name: "a real journal path", set: true, value: journal, wantPath: journal, wantWritable: true},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			t.Setenv(EnvUIControlJournal, arm.value)
+			if !arm.set {
+				if err := os.Unsetenv(EnvUIControlJournal); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// This is `main`'s own resolution, reached the way `main` reaches it.
+			resolved, err := controlJournalDefault(os.Getenv)
+			if arm.wantErr {
+				if err == nil {
+					// Say what the green would have MEANT, because the failure is silent.
+					cache, openErr := openAuthority(resolved, storeRoot, tokenFile)
+					branch := "an error from openAuthority"
+					if openErr == nil {
+						branch = fmt.Sprintf("openAuthority writable=%v", cache.Writable())
+					}
+					t.Fatalf("%q resolved to %q with no refusal, so the flag default stays empty and "+
+						"this surface comes up on whatever %s gives it. A whitespace journal line is "+
+						"a line the operator wrote and this program would discard",
+						arm.value, resolved, branch)
+				}
+				for _, want := range []string{EnvUIControlJournal, "reduces to nothing", "404"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not mention %q, so an operator cannot tell which "+
+							"line to fix or what it cost them:\n%s", want, err)
+					}
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("POSITIVE CONTROL FAILED: %q was refused (%v). A guard that refuses this "+
+					"admits nothing, and every refusal above would be about nothing", arm.value, err)
+			}
+			if resolved != arm.wantPath {
+				t.Fatalf("resolved to %q, want %q", resolved, arm.wantPath)
+			}
+			cache, err := openAuthority(resolved, storeRoot, tokenFile)
+			if err != nil {
+				t.Fatalf("openAuthority(%q): %v", resolved, err)
+			}
+			if got := cache.Writable(); got != arm.wantWritable {
+				t.Errorf("openAuthority reached a writable=%v authority, want writable=%v — which is "+
+					"the branch this whole case is about: the token-file projection confers `admin` "+
+					"on nobody", got, arm.wantWritable)
+			}
+		})
+	}
+}
+
+// TestTheTwoArrivalPathsOfAControlJournalAgree pins the RELATIONSHIP the fix exists for,
+// not either side of it.
+//
+// 🔴 THE DEFECT WAS NEVER "A BAD VALUE IS ACCEPTED" — IT WAS "ONE VALUE BEHAVES OPPOSITELY
+// DEPENDING ON HOW IT ARRIVED". `-control-journal '   '` never went through `envalias` and
+// was refused at 78 by `openAuthority`'s `Stat` the whole time; only the environment path
+// silently dropped it. `README.md` tells the reader "every default is env-resolved", which
+// is the sentence that makes the two paths look interchangeable. So this asserts they
+// refuse the same set OVER THE VALUES BELOW — and it goes red if a later change makes the
+// ENV path lenient again OR makes the FLAG path lenient, which no single-sided test would.
+//
+// 🔴 "THE SAME SET" IS THE LOOP'S SET AND NOT EVERY STRING, AND THE DIFFERENCE IS A
+// MEASURED RESIDUAL RATHER THAN A CAVEAT. The two sides refuse for DIFFERENT REASONS: the
+// environment side by the blank policy, the flag side by `openAuthority`'s `stat`, which
+// asks the filesystem rather than the spelling. So a value that reduces to nothing AND
+// NAMES AN EXISTING FILE parts them — measured on the built binary with a live-credential
+// journal whose filename is three spaces: `-control-journal '   '` came up
+// `sharing writable (control journal    )` while `CAIRN_UI_CONTROL_JOURNAL='   '` exited
+// 78. No value in the loop below names a file, which is why it is green and honest at once.
+// The residual is left open on purpose — the flag is the LENIENT side, so the direction is
+// safe, and `README.md` carries the ruling.
+//
+// ⚠ IT IS AN AGREEMENT TEST AND AGREEMENT IS SATISFIED BY TWO LENIENT SIDES, SO IT IS HALF
+// A GUARD ON ITS OWN. What pins the ABSOLUTE answer is the case above, which requires the
+// environment path to refuse; this one exists to catch the asymmetry that case cannot see.
+// Read them as a pair.
+func TestTheTwoArrivalPathsOfAControlJournalAgree(t *testing.T) {
+	_, journal := seededJournal(t, credentialLive)
+	storeRoot := t.TempDir()
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("s", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// \ud83d\udd34 THE LAST VALUE IS A REAL PATH WEARING SPACES, AND IT IS THE ONLY THING PINNING
+	// "RETURNED RAW, NOT TRIMMED". A `strings.TrimSpace` in `controlJournalDefault` \u2014
+	// which is what the POD's reader does, so it is the obvious "consistency" edit \u2014
+	// survives every other case in this file: the env path would open the journal while
+	// `-control-journal "  <path>  "` still fails its `stat`, which is the SAME
+	// arrival-path divergence this change exists to close, pointing the other way.
+	for _, value := range []string{" ", "   ", "\t\n ", strings.Repeat("\u200b", 8), "  " + journal + "  "} {
+		t.Setenv(EnvUIControlJournal, value)
+		// 🔴 THE WHOLE CHAIN ON EACH SIDE, NOT ONE FUNCTION AGAINST ANOTHER. The
+		// environment path is `controlJournalDefault` AND THEN `openAuthority`; comparing
+		// only the first against the second is a category error that reports a divergence
+		// for every value the resolver passes through for `openAuthority` to judge.
+		envErr := func() error {
+			resolved, err := controlJournalDefault(os.Getenv)
+			if err != nil {
+				return err
+			}
+			_, err = openAuthority(resolved, storeRoot, tokenFile)
+			return err
+		}()
+		// The flag path: the value reaches `openAuthority` verbatim, because a flag is
+		// parsed by `flag` and never by `envalias`.
+		_, flagErr := openAuthority(value, storeRoot, tokenFile)
+		if (envErr == nil) != (flagErr == nil) {
+			t.Errorf("%q is refused by one arrival path and not the other — env=%v flag=%v. The same "+
+				"value must not mean two things depending on whether a manifest or a command line "+
+				"supplied it", value, envErr, flagErr)
+		}
+	}
+}
+
+// TestTheControlJournalVariableIsNotInTheAliasLedger is what makes `controlJournalDefault`'s
+// raw `os.Getenv` safe, and it is an INVARIANT GUARD rather than regression coverage: no bug
+// ever violated it.
+//
+// 🔴 READING RAW IS DELIBERATE — `envalias` treats a blank value as absent, which is the
+// defect — but it also means a deprecated spelling of this name would go unread. This name
+// has none. The day somebody adds one, this goes red at the ledger rather than leaving
+// `controlJournalDefault` quietly half-blind.
+func TestTheControlJournalVariableIsNotInTheAliasLedger(t *testing.T) {
+	if len(envalias.Ledger) == 0 {
+		t.Fatal("the ledger is empty, so the loop below asserts nothing at all")
+	}
+	for _, pair := range envalias.Ledger {
+		if pair.New == EnvUIControlJournal || pair.Old == EnvUIControlJournal {
+			t.Fatalf("%s is in the alias ledger as %+v, so `controlJournalDefault`'s raw os.Getenv "+
+				"cannot see its other spelling. Resolve it through envalias — but note that "+
+				"`envalias.blank` reads whitespace as absent, which is the very thing that "+
+				"function exists to refuse", EnvUIControlJournal, pair)
+		}
+	}
+}
+
+// reexecEnv is the switch `TestMain` reads to become `cairn-ui` instead of a test binary.
+const reexecEnv = "CAIRN_UI_TEST_REEXEC_AS_MAIN"
+
+// testRefreshEnv lets a re-exec'd child run its refresh loop fast enough to assert on.
+const testRefreshEnv = "CAIRN_UI_TEST_REFRESH_INTERVAL"
+
+// TestMain exists for ONE case, and it is here rather than in that case because Go allows
+// exactly one per package.
+//
+// 🔴 THE FILE ABOVE SAYS IT DRIVES THE PREDICATE AND NOT THE PROCESS, AND THAT REMAINS
+// RIGHT FOR EVERY OTHER CASE. It is wrong for one: `main` deciding whether to ACT on
+// `controlJournalDefault`'s refusal is wiring, not a predicate, and a mutation sweep
+// measured it — replacing `if journalErr != nil { … os.Exit(exitConfig) }` with
+// `_ = journalErr` left this package GREEN while the built binary served exactly the
+// surface the refusal exists to prevent. No in-process test can see that, because the
+// observable is a process exit. So one case re-execs this binary as `cairn-ui`.
+func TestMain(m *testing.M) {
+	if os.Getenv(reexecEnv) == "1" {
+		// ⚠ TWO BRANCHES ADDED A RE-EXEC HARNESS TO THIS FILE INDEPENDENTLY, under two env
+		// names, and the merge is where that became visible. They are consolidated onto this
+		// one; the INTERVAL override below has no equivalent on the other side and is kept,
+		// because the refresh assertions cannot wait 30 s per tick.
+		//
+		// The child REFUSES an unusable interval rather than falling back to the production
+		// one: a child quietly running at 30 s would turn a refresh assertion into a timeout
+		// whose message named the loop instead of the harness.
+		if raw, set := os.LookupEnv(testRefreshEnv); set {
+			interval, err := time.ParseDuration(raw)
+			if err != nil || interval <= 0 {
+				fmt.Fprintf(os.Stderr, "cairn-ui test child: %s must be a positive duration, got %q\n",
+					testRefreshEnv, raw)
+				os.Exit(2)
+			}
+			refreshInterval = interval
+		}
+		// ⚠ `flag.CommandLine` IS **NOT** CLEAN HERE, AND THE COMMENT THAT SAID IT WAS —
+		// "`testing.Init` has not run, so it holds only `main`'s flags" — WAS MEASURED
+		// FALSE. `testing.MainStart` calls `Init()` before it invokes this function, so the
+		// `-test.*` flags are already registered when `main()` adds its own: the child's
+		// `-h` printed **41** flags, `main`'s 7 plus 34 `-test.*` (go1.26.7; that 34 is a
+		// property of the toolchain, not of this file, so do not pin it).
+		//
+		// It is harmless TODAY for one reason only: no name `main` registers is also a
+		// registered `-test.*` name, so nothing collides and `flag.Parse` sees the arguments
+		// the case below passes. What it costs is that the child's usage output is not the
+		// real binary's, and that a `main` flag whose name EXACTLY matched one of them would
+		// panic with `flag redefined` rather than fail a comparison. Said here because the
+		// old sentence told a future editor the flag set was clean, which would make either
+		// surprise read as a defect somewhere else.
+		main()
+		return
+	}
+	os.Exit(m.Run())
+}
+
+// TestTheProcessExitsOnAWhitespaceControlJournalLine is the END of the chain the case above
+// starts: environment -> flag default -> refusal -> `os.Exit(exitConfig)`.
+//
+// 🔴 IT IS THE ONLY THING THAT KILLS THE `_ = journalErr` MUTANT, AND ITS NEGATIVE CONTROL
+// IS THE OTHER HALF. A child that exits 78 for ANY reason would satisfy a bare exit-code
+// assertion — `main` carries ten `os.Exit(exitConfig)` sites — so the arms below pin WHICH
+// refusal spoke, and the control arm reaches a DIFFERENT one with the same code.
+func TestTheProcessExitsOnAWhitespaceControlJournalLine(t *testing.T) {
+	storeRoot := t.TempDir()
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("s", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, arm := range []struct {
+		name    string
+		journal string
+		want    string
+	}{
+		{"whitespace", "   ", "reduces to nothing"},
+		// 🔴 THE NEGATIVE CONTROL: a value that is NOT blank still exits 78, from
+		// `openAuthority`'s `Stat` and with ITS message. Without this arm the assertion
+		// above is satisfied by a program that refuses every journal, and without the
+		// message comparison it is satisfied by either refusal firing for either input.
+		{"a path that does not exist", filepath.Join(storeRoot, "no", "such.journal"), "cannot be read"},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			// 🔴 A DEADLINE, BECAUSE THE FAILURE MODE OF THIS CASE IS A PROCESS THAT DOES
+			// NOT EXIT. The mutant it exists to kill makes the child SERVE, and a bare
+			// `cmd.Run()` then blocks until the whole suite is killed — a hang reads as
+			// infrastructure, not as a finding. Measured: the first draft of this case hung
+			// exactly that way on the `_ = journalErr` mutant.
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-store", storeRoot, "-token-file", tokenFile,
+				"-session-file", filepath.Join(t.TempDir(), "sessions"), "-port", "0")
+			cmd.Env = append(os.Environ(), reexecEnv+"=1", EnvUIControlJournal+"="+arm.journal)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+
+			if ctx.Err() != nil {
+				t.Fatalf("the process was STILL RUNNING after 30s, so it did not refuse: it bound a "+
+					"listener and is serving the surface this guard exists against.\n%s", stderr.String())
+			}
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) {
+				t.Fatalf("the process did not exit with a status (%v). It was expected to REFUSE; if it "+
+					"exited 0 it came up.\n%s", err, stderr.String())
+			}
+			if exit.ExitCode() != exitConfig {
+				t.Errorf("exit %d, want %d (EX_CONFIG)\n%s", exit.ExitCode(), exitConfig, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), arm.want) {
+				t.Errorf("stderr does not contain %q, so this arm cannot tell which refusal fired:\n%s",
+					arm.want, stderr.String())
+			}
+		})
+	}
+}
+
+// ⚠ THE THREE TESTS BELOW WERE ADDED BY #76 AND SPLICED BACK ON AFTER A MERGE WITH THE
+// `CAIRN_*` RENAME (#69). Recorded because the first resolution lost work SILENTLY in
+// both directions: `git merge` reported one CONFLICT covering a comment, and taking one
+// side of that hunk deleted four unrelated tests the other side had added further down
+// the file. The check that caught it is a DECLARATION-SET diff against both parents, not
+// a reading of the hunk — a clean textual resolution is not a clean merge.
+
 // TestAJournalAnIssuedCredentialMakesSignInCapableIsAdmitted is the regression test for
 // the DELIVERABLE rather than for a predicate: the refusal above IS the defect, and this
 // is the case that says an operator can now get out of it with a command.
@@ -309,58 +643,6 @@ func TestAJournalAnIssuedCredentialMakesSignInCapableIsAdmitted(t *testing.T) {
 	}
 }
 
-// credentialState is which of the three shapes a seeded journal carries. Named rather
-// than a bool, because the third state — a credential that exists and is REVOKED — is the
-// one a bool could not express and the one a mutation sweep found uncovered.
-type credentialState int
-
-const (
-	noCredential credentialState = iota
-	credentialLive
-	credentialRevoked
-)
-
-// seededJournal builds a real `control.FileStore` journal in the requested state.
-func seededJournal(t *testing.T, state credentialState) (*control.Cache, string) {
-	t.Helper()
-	at := time.Date(2000, 6, 1, 12, 0, 0, 0, time.UTC)
-	path := filepath.Join(t.TempDir(), "seeded.journal")
-	store, err := control.OpenFileStore(path)
-	if err != nil {
-		t.Fatalf("opening the journal: %v", err)
-	}
-	user := control.DerivedID(control.PrefixUser, "startup-user")
-	project := control.DerivedID(control.PrefixProject, "startup-project")
-	events := []control.Event{
-		{Kind: control.EventUserCreated, At: at, UserID: user,
-			Provider: "fixture-provider", Subject: "00000000-0000-4000-8000-000000000031",
-			Email: "startup@notes.example.invalid"},
-		{Kind: control.EventProjectCreated, At: at, ProjectID: project, Name: "startup", UserID: user},
-		{Kind: control.EventMemberSet, At: at, ProjectID: project, UserID: user, Role: control.RoleOwner},
-	}
-	if state != noCredential {
-		events = append(events, control.Event{
-			Kind: control.EventCredentialIssued, At: at, CredentialID: "crd_startup",
-			SubjectKind: control.KindUser, SubjectID: user,
-			TokenHash: control.HashToken("fixture-startup-credential-not-a-real-token"),
-			Label:     "fixture",
-		})
-	}
-	if state == credentialRevoked {
-		events = append(events, control.Event{
-			Kind: control.EventCredentialRevoked, At: at, CredentialID: "crd_startup",
-		})
-	}
-	if _, err := store.Append(context.Background(), events...); err != nil {
-		t.Fatalf("seeding the journal: %v", err)
-	}
-	cache := control.NewCache(store, control.CacheOptions{})
-	if err := cache.Refresh(context.Background()); err != nil {
-		t.Fatalf("materializing: %v", err)
-	}
-	return cache, path
-}
-
 // TestTheBINARYSaysSoWhenItsJournalLostARecordAtReplay is the gate on THIS PROGRAM'S drop
 // render, and nothing else in this package can be it.
 //
@@ -404,7 +686,7 @@ func TestTheBINARYSaysSoWhenItsJournalLostARecordAtReplay(t *testing.T) {
 			"-session-file", filepath.Join(t.TempDir(), "sessions"),
 			"-token-file", filepath.Join(t.TempDir(), "absent-token"),
 			"-port", "0")
-		child.Env = []string{runUIEnv + "=1"}
+		child.Env = []string{reexecEnv + "=1"}
 		body, _ := child.CombinedOutput()
 		if ctx.Err() != nil {
 			t.Fatalf("the child did not exit within 20s — it reached the listener over a journal it "+
@@ -468,17 +750,6 @@ func TestTheBINARYSaysSoWhenItsJournalLostARecordAtReplay(t *testing.T) {
 	}
 }
 
-// handAppendedRawTokenRecord is a `credential-issued` line an operator wrote by hand with
-// the RAW TOKEN pasted into `token_hash`. Synthetic and fixed: 64 characters, not hex, and
-// it has never authorised anything. The width is what matters — a value of any other length
-// was already refused by the length-only check this guard replaced.
-func handAppendedRawTokenRecord(credential string, subject control.ID) string {
-	notADigest := strings.Repeat("cairn-test-not-a-digest-", 3)[:64]
-	return `{"kind":"credential-issued","at":"2000-06-01T12:00:00Z","credential_id":"` + credential +
-		`","subject_kind":"user","subject_id":"` + string(subject) +
-		`","token_hash":"` + notADigest + `","label":"hand-appended"}` + "\n"
-}
-
 // TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup is the REFRESH half, and it is
 // a different claim from the startup half above.
 //
@@ -514,7 +785,7 @@ func TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup(t *testing.T) {
 		"-session-file", filepath.Join(t.TempDir(), "sessions"),
 		"-token-file", filepath.Join(t.TempDir(), "absent-token"),
 		"-host", "127.0.0.1", "-port", "0")
-	child.Env = []string{runUIEnv + "=1", testRefreshEnv + "=5ms"}
+	child.Env = []string{reexecEnv + "=1", testRefreshEnv + "=5ms"}
 	var body syncBuffer
 	child.Stdout, child.Stderr = &body, &body
 	if err := child.Start(); err != nil {
@@ -567,4 +838,34 @@ func TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup(t *testing.T) {
 		t.Fatalf("one standing drop was announced %d times. At the production interval that is "+
 			"~2,880 identical lines a day:\n%s", n, body.String())
 	}
+}
+
+// handAppendedRawTokenRecord is a `credential-issued` line an operator wrote by hand with
+// the RAW TOKEN pasted into `token_hash`. Synthetic and fixed: 64 characters, not hex, and
+// it has never authorised anything. The width is what matters — a value of any other length
+// was already refused by the length-only check this guard replaced.
+func handAppendedRawTokenRecord(credential string, subject control.ID) string {
+	notADigest := strings.Repeat("cairn-test-not-a-digest-", 3)[:64]
+	return `{"kind":"credential-issued","at":"2000-06-01T12:00:00Z","credential_id":"` + credential +
+		`","subject_kind":"user","subject_id":"` + string(subject) +
+		`","token_hash":"` + notADigest + `","label":"hand-appended"}` + "\n"
+}
+
+// syncBuffer collects a child's stderr from the goroutine `exec` writes it on while this
+// test polls it. A plain `bytes.Buffer` here is a data race `go test -race` reports.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

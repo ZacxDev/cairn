@@ -51,8 +51,9 @@ precedence, and becomes the alias `personal`. Additional instances are ADDITIVE
 files under `instances/<alias>.env` beside it. Nothing migrates; an upgrade
 that adds no file changes nothing.
 
-🔴 THE ENVIRONMENT OVERRIDES THE DEFAULT INSTANCE ONLY. `SUBSYSTEM_STORE_URL` /
-`SUBSYSTEM_STORE_TOKEN` have always pointed the client at a throwaway server,
+🔴 THE ENVIRONMENT OVERRIDES THE DEFAULT INSTANCE ONLY. `CAIRN_URL` /
+`CAIRN_TOKEN` — and their deprecated `SUBSYSTEM_STORE_*` aliases, which
+`env_aliases` resolves — have always pointed the client at a throwaway server,
 and every test relies on it. Applying them to EVERY instance would point all of
 them at one store — a fan-out that reads N instances and measures one, reporting
 agreement it never observed. A non-default alias reads its own file and nothing
@@ -67,6 +68,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+import env_aliases
 from subsystem_read_store import DEFAULT_ALIAS, valid_alias
 
 __all__ = [
@@ -88,8 +90,10 @@ __all__ = [
 ]
 
 #: The environment variable naming the DEFAULT instance's config file. It
-#: predates instances and keeps its meaning exactly.
-CONFIG_ENV = "SUBSYSTEM_STORE_CONFIG"
+#: predates instances and keeps its meaning exactly. `SUBSYSTEM_STORE_CONFIG`
+#: still resolves to it through `env_aliases`; this module never spells the old
+#: name, which is what keeps the ledger in one place.
+CONFIG_ENV = "CAIRN_CONFIG"
 
 #: The environment variable naming the routing table. Set it and the table is
 #: MANDATORY — a missing file is an error, never "routing is off". An operator
@@ -147,10 +151,10 @@ class Instance:
 
 
 def config_path(env: Mapping[str, str] | None = None) -> Path:
-    """The DEFAULT instance's config file — `$SUBSYSTEM_STORE_CONFIG` or the
-    long-standing `~/.config/subsystem-store/env`."""
+    """The DEFAULT instance's config file — `$CAIRN_CONFIG` or the long-standing
+    `~/.config/subsystem-store/env`."""
     env = os.environ if env is None else env
-    raw = env.get(CONFIG_ENV, "").strip()
+    raw = env_aliases.value(env, CONFIG_ENV).strip()
     if raw:
         return Path(raw).expanduser()
     return Path.home() / ".config" / "subsystem-store" / "env"
@@ -161,7 +165,7 @@ def instance_dir(env: Mapping[str, str] | None = None) -> Path:
 
     🔴 DERIVED FROM THE CONFIG PATH, NOT A SECOND ENVIRONMENT VARIABLE. One
     variable moves the whole configuration — which is what a test needs, and
-    what keeps `$SUBSYSTEM_STORE_CONFIG` pointing somewhere while the instances
+    what keeps `$CAIRN_CONFIG` pointing somewhere while the instances
     it should sit beside are read from the operator's real home directory.
     """
     return config_path(env).parent / INSTANCE_DIR_NAME

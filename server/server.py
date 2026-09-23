@@ -77,7 +77,7 @@ becomes internet-reachable is an auth layer nobody has watched deny anything.
     learn which scopes exist. An error that discriminates is an enumeration API.
   * the token is read from a FILE by default. Measured previously and recorded
     in memory: the agent exec sandbox strips env vars from agent-run commands,
-    so `$SUBSYSTEM_STORE_TOKEN` is the fallback, never the primary.
+    so `$CAIRN_TOKEN` is the fallback, never the primary.
 
 PHASE 1.5 — THE (B-REQUIRED) HARDENING, ADDED BEFORE ANY INGRESS EXISTS
 ------------------------------------------------------------------------
@@ -123,7 +123,7 @@ different repo, a different review, and cannot be exercised without a cluster.
 The rule this file lives by is that a guard you cannot watch fail is not a
 guard. So the primary fix is HERE, and it is hermetic:
 
-  * `SUBSYSTEM_STORE_TRUSTED_PROXIES` — an explicit allowlist of peer addresses
+  * `CAIRN_TRUSTED_PROXIES` — an explicit allowlist of peer addresses
     or CIDRs. **REQUIRED**: no default, and the process refuses to start
     without it (`EXIT_CONFIG`), for the same reason a short token does. A
     default would be a guess about somebody's cluster, and a guess that is
@@ -303,6 +303,12 @@ sys.path.insert(0, str(_LIB))
 
 import subsystem_recall as rc  # noqa: E402
 
+# 🔴 THE `SUBSYSTEM_STORE_*` → `CAIRN_*` LEDGER, IMPORTED RATHER THAN RESTATED.
+# `env_aliases` is the Python spelling of `internal/envalias`, and
+# `tests/test_env_aliases.py` pins the two against each other. Every environment read
+# below goes through it, so this file names only CURRENT spellings.
+import env_aliases  # noqa: E402
+
 # 🔴 `BULLET_TEXT_MAX` IS IMPORTED, NOT DEFINED HERE, BECAUSE THE CLIENT REFUSES
 # ON IT TOO. It used to be a module-level constant in this file, which made the
 # only way to learn the limit exceeding it: the client had no copy, so every
@@ -428,7 +434,7 @@ CLIENT_IP_HEADER = "CF-Connecting-IP"
 # trustworthy as the hop that overwrote it, so the header is honoured only when
 # the TCP peer is one of the proxies the operator named. No default value: see
 # `load_trusted_proxies`.
-ENV_TRUSTED_PROXIES = "SUBSYSTEM_STORE_TRUSTED_PROXIES"
+ENV_TRUSTED_PROXIES = "CAIRN_TRUSTED_PROXIES"
 
 # 🔴 A FLOOR ON HOW WIDE ONE ENTRY MAY BE, keyed by address family.
 #
@@ -464,9 +470,23 @@ DEFAULT_MAX_FAILURES = 5
 DEFAULT_FAILURE_WINDOW_S = 60.0
 DEFAULT_LOCKOUT_S = 900.0
 
-ENV_MAX_FAILURES = "SUBSYSTEM_STORE_MAX_FAILURES"
-ENV_FAILURE_WINDOW = "SUBSYSTEM_STORE_FAILURE_WINDOW_S"
-ENV_LOCKOUT = "SUBSYSTEM_STORE_LOCKOUT_S"
+# The four startup names, in their CURRENT spelling. Each has a deprecated
+# `SUBSYSTEM_STORE_*` alias `env_aliases` resolves and warns about; nothing in this file
+# spells an old name, which is what keeps the ledger in one place.
+#
+# 🔴 `CAIRN_LISTEN_HOST`, NOT `CAIRN_HOST`. `CAIRN_HOST` already exists and means the
+# human-readable machine LABEL (`host_identity.HOST_LABEL_ENV[0]`), so the mechanical
+# prefix swap would have made this pod try to BIND to an operator's machine label and let
+# a listen address hijack the label that lands in rendered output.
+ENV_STORE_ROOT = "CAIRN_STORE_ROOT"
+ENV_LISTEN_HOST = "CAIRN_LISTEN_HOST"
+ENV_PORT = "CAIRN_PORT"
+ENV_TOKEN_FILE = "CAIRN_TOKEN_FILE"
+ENV_TOKEN = "CAIRN_TOKEN"
+
+ENV_MAX_FAILURES = "CAIRN_MAX_FAILURES"
+ENV_FAILURE_WINDOW = "CAIRN_FAILURE_WINDOW_S"
+ENV_LOCKOUT = "CAIRN_LOCKOUT_S"
 
 # 🔴 REAL bounds on both tables, enforced in `RateLimiter._evict` — see the
 # note there for why the earlier version was a bound in name only. Active
@@ -1175,11 +1195,11 @@ def load_tokens(
             raw = path.read_text(encoding="utf-8")
         except OSError as exc:
             raise ValueError(f"token file unreadable: {path} ({exc})") from exc
-    elif env.get("SUBSYSTEM_STORE_TOKEN"):
-        raw = env["SUBSYSTEM_STORE_TOKEN"]
+    elif env_aliases.value(env, ENV_TOKEN):
+        raw = env_aliases.value(env, ENV_TOKEN)
     else:
         raise ValueError(
-            "no token source: pass --token-file, or set $SUBSYSTEM_STORE_TOKEN. "
+            f"no token source: pass --token-file, or set ${ENV_TOKEN}. "
             "The API is not served without one"
         )
 
@@ -1529,7 +1549,7 @@ def load_trusted_proxies(env: dict[str, str]) -> tuple[Any, ...]:
 
     Accepts addresses and CIDRs, comma- or whitespace-separated:
 
-        SUBSYSTEM_STORE_TRUSTED_PROXIES=10.0.0.1,10.1.0.0/24
+        CAIRN_TRUSTED_PROXIES=10.0.0.1,10.1.0.0/24
 
     Guard order — each reachable by an input no earlier guard rejects:
       1. the variable is set and non-blank -> "no trusted proxies"
@@ -1544,8 +1564,8 @@ def load_trusted_proxies(env: dict[str, str]) -> tuple[Any, ...]:
     matching the two spellings, so `0.0.0.0/0`, `::/0` and any future
     equivalent are one rule rather than a list somebody has to extend.
     """
-    raw = env.get(ENV_TRUSTED_PROXIES)
-    if raw is None or not raw.strip():
+    raw = env_aliases.value(env, ENV_TRUSTED_PROXIES)
+    if not raw.strip():
         raise ValueError(
             f"no trusted proxies: set ${ENV_TRUSTED_PROXIES} to the address(es) "
             f"or CIDR(s) of the proxy that terminates public traffic. The "
@@ -1733,15 +1753,15 @@ def limiter_settings(env: dict[str, str]) -> tuple[int, float, float]:
     """Read the three rate-limit knobs from env, or RAISE.
 
     🔴 It raises rather than silently defaulting, for the same reason
-    `_int_param` does: a typo'd `SUBSYSTEM_STORE_MAX_FAILURES=fve` that quietly
+    `_int_param` does: a typo'd `CAIRN_MAX_FAILURES=fve` that quietly
     became 5 is an operator believing a setting took effect. A misconfiguration
     at startup is `EXIT_CONFIG`, visible in a CrashLoopBackOff; a
     misconfiguration that defaults is invisible forever.
     """
 
     def _num(name: str, default: float, cast: Callable[[str], Any]) -> Any:
-        raw = env.get(name)
-        if raw is None or raw == "":
+        raw = env_aliases.value(env, name)
+        if raw == "":
             return default
         try:
             value = cast(raw)
@@ -5163,7 +5183,7 @@ def reload_tokens(
 
     ⚠ `env` IS A SNAPSHOT, AND THE ENV FALLBACK CANNOT ACTUALLY CHANGE. A
     process's own environment does not change under it, so reloading a server
-    configured from `$SUBSYSTEM_STORE_TOKEN` re-reads the same value and reports
+    configured from `$CAIRN_TOKEN` re-reads the same value and reports
     a successful no-op. That is honest rather than useful; the file is the thing
     a `kill -HUP` exists to re-read.
     """
@@ -5327,32 +5347,62 @@ def install_sighup_reload(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 🔴 FIRST, BECAUSE AN `argparse` DEFAULT IS EVALUATED AT `add_argument` AND THE
+    # NOTICE HAS TO PRECEDE THE VALUE IT IS ABOUT. Same stream, same
+    # `subsystem-store-api:` prefix and same `reload_safe` sanitiser as every other
+    # startup line this pod emits: an operator greps that prefix, and a deprecation
+    # notice outside it would not be in what they read. `cmd/cairn-server` does the
+    # same thing in the same position.
+    env_aliases.warn_once(
+        env_aliases.deprecations(os.environ),
+        lambda line: print(
+            reload_safe(f"subsystem-store-api: {line}"), file=sys.stderr
+        ),
+    )
+
     p = argparse.ArgumentParser(
         prog="subsystem-store-api",
         description="Read-only HTTP layer over the subsystem store. Phase 1.",
     )
-    p.add_argument("--store", default=os.environ.get("SUBSYSTEM_STORE_ROOT", DEFAULT_STORE))
-    p.add_argument("--host", default=os.environ.get("SUBSYSTEM_STORE_HOST", "0.0.0.0"))
+    # 🔴 `env_aliases.value_or`, NOT `os.environ.get` — AND THIS IS AN AUTHORISED CHANGE
+    # TO THE ORACLE. Decision: the operator, on PR #69. These four defaults used to read
+    # the environment directly, so an exported-EMPTY variable reached argparse as `""`
+    # (`--store`) or raised `ValueError` (`--port`); the resolver treats present-but-empty
+    # as ABSENT, which is what every Go call site and the Python client already did. It
+    # narrows the oracle toward the port rather than the other way round. 🔴 The
+    # conformance corpus cannot see this — it declares REQUESTS and the rule decides
+    # STARTUP — so the guards are `tests/test_env_aliases.py`'s
+    # `TestABlankValueIsTreatedAsAbsentByTheORACLE` and `cmd/cairn-server`'s
+    # `TestABlankEnvironmentValueIsTreatedAsABSENT`, and the declaration with its accepted
+    # cost is in `tests/conformance/README.md`.
+    p.add_argument(
+        "--store", default=env_aliases.value_or(os.environ, ENV_STORE_ROOT, DEFAULT_STORE)
+    )
+    p.add_argument(
+        "--host", default=env_aliases.value_or(os.environ, ENV_LISTEN_HOST, "0.0.0.0")
+    )
     p.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("SUBSYSTEM_STORE_PORT", DEFAULT_PORT)),
+        default=int(env_aliases.value_or(os.environ, ENV_PORT, str(DEFAULT_PORT))),
     )
     p.add_argument(
         "--token-file",
-        default=os.environ.get("SUBSYSTEM_STORE_TOKEN_FILE", DEFAULT_TOKEN_FILE),
+        default=env_aliases.value_or(os.environ, ENV_TOKEN_FILE, DEFAULT_TOKEN_FILE),
         help=(
             "file holding the bearer token SET, ONE ROW PER LINE, current first "
             "(mode 0600). A row is `<token>` (legacy: unrestricted scope) or "
             "`<token> <identity> <scope>,<scope>`. FILE FIRST: the agent exec "
-            "sandbox strips env vars, so $SUBSYSTEM_STORE_TOKEN is the fallback"
+            f"sandbox strips env vars, so ${ENV_TOKEN} is the fallback"
         ),
     )
     args = p.parse_args(argv)
 
     token_file = args.token_file
-    if token_file and not Path(token_file).is_file() and os.environ.get(
-        "SUBSYSTEM_STORE_TOKEN"
+    if (
+        token_file
+        and not Path(token_file).is_file()
+        and env_aliases.value(os.environ, ENV_TOKEN)
     ):
         # The default path does not exist and an env token does: use it, and SAY
         # SO. Falling back silently is how a deployment that lost its secret mount
@@ -5369,7 +5419,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             reload_safe(
                 f"subsystem-store-api: token file {token_file} absent; "
-                f"falling back to $SUBSYSTEM_STORE_TOKEN"
+                f"falling back to ${ENV_TOKEN}"
             ),
             file=sys.stderr,
         )
@@ -5419,7 +5469,7 @@ def main(argv: list[str] | None = None) -> int:
     # revocation procedure, which is written against the silent shape.
     #
     # The RESOLVED path — the local rebound above, not `args.token_file` — so a
-    # process that fell back to `$SUBSYSTEM_STORE_TOKEN` because the mount was
+    # process that fell back to `$CAIRN_TOKEN` because the mount was
     # absent keeps re-reading the source it is actually serving from, rather
     # than silently starting to read a file it deliberately ignored at startup.
     #

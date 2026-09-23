@@ -1064,7 +1064,7 @@ What a reload is and is not:
 | revocation | **yes** — a row removed from the file stops being accepted |
 | addition, and scope changes | yes, in both directions |
 | atomicity | the table is an immutable tuple, rebound in one assignment; a request in flight sees the whole old table or the whole new one |
-| the env fallback (`$SUBSYSTEM_STORE_TOKEN`) | reloads to the same value — a process's own environment does not change under it. The file is the thing SIGHUP exists to re-read |
+| the env fallback (`$CAIRN_TOKEN`) | reloads to the same value — a process's own environment does not change under it. The file is the thing SIGHUP exists to re-read |
 | `--store`, the proxy allowlist, the rate-limit knobs | **not** reloaded. Only the token table |
 
 ⚠ **The double dash is `server.py`'s and is not a typo for the single-dash spelling the
@@ -1155,9 +1155,13 @@ scope deleted with it, and replay is the only thing that decides what the pod be
 
 | knob | default | env |
 |---|---|---|
-| failed auths before a lockout | 5 | `SUBSYSTEM_STORE_MAX_FAILURES` |
-| window they must fall inside | 60 s | `SUBSYSTEM_STORE_FAILURE_WINDOW_S` |
-| lockout duration | 900 s | `SUBSYSTEM_STORE_LOCKOUT_S` |
+| failed auths before a lockout | 5 | `CAIRN_MAX_FAILURES` |
+| window they must fall inside | 60 s | `CAIRN_FAILURE_WINDOW_S` |
+| lockout duration | 900 s | `CAIRN_LOCKOUT_S` |
+
+The `SUBSYSTEM_STORE_*` spellings of all three still work and warn once at startup; the
+ledger and the removal anchor are `internal/envalias`, and the table a reader migrating
+from them wants is in [`README.md`](../README.md).
 
 A malformed value **exits 78** at startup rather than defaulting silently.
 
@@ -1174,7 +1178,7 @@ locks out the world.
 
 | knob | default | env |
 |---|---|---|
-| peers whose `CF-Connecting-IP` is read | **none — required** | `SUBSYSTEM_STORE_TRUSTED_PROXIES` |
+| peers whose `CF-Connecting-IP` is read | **none — required** | `CAIRN_TRUSTED_PROXIES` |
 
 `CF-Connecting-IP` is caller-supplied bytes. "Cloudflare overwrites it" is true
 of a request that *arrived from Cloudflare* and says nothing about one that did

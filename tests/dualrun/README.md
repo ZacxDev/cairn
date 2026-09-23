@@ -321,7 +321,7 @@ Measured on **each server separately**, because an equality cannot see a shared 
   window or the truncation notice. `search-by-ref` is what makes a hit reachable on any
   store; this is what proves one happened.
 
-Watched working: `--break-both` puts the loopback back into `SUBSYSTEM_STORE_TRUSTED_PROXIES`
+Watched working: `--break-both` puts the loopback back into `CAIRN_TRUSTED_PROXIES`
 — the exact P2 incident — and both servers then refuse every direct request
 `401 status=no-client-ip`. Every target would compare equal. Measured output:
 

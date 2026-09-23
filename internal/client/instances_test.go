@@ -441,7 +441,7 @@ func twoInstanceWorld(t *testing.T) (home string, hits map[string]*int32, urls m
 	// 🔴 EVERY INHERITED POINTER IS CLEARED. `SUBSYSTEM_STORE_URL` overrides the DEFAULT
 	// instance — the one path where the environment wins — so a developer's own value would
 	// point `personal` at their live store and this test would measure their machine.
-	for _, key := range []string{"SUBSYSTEM_STORE_URL", "SUBSYSTEM_STORE_TOKEN", ConfigEnv, RoutesEnv} {
+	for _, key := range clientConfigNames() {
 		t.Setenv(key, "")
 	}
 
@@ -601,7 +601,7 @@ func TestRoutesCheckReadsEACHInstanceFromITSOWNConfig(t *testing.T) {
 func TestAPutDerivesItsPreconditionFromTheROUTEDStore(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	for _, key := range []string{"SUBSYSTEM_STORE_URL", "SUBSYSTEM_STORE_TOKEN", ConfigEnv, RoutesEnv} {
+	for _, key := range clientConfigNames() {
 		t.Setenv(key, "")
 	}
 	stamp := time.Unix(946684800, 0)
@@ -712,7 +712,7 @@ func TestAPutDerivesItsPreconditionFromTheROUTEDStore(t *testing.T) {
 func TestAPutLoadsTheROUTEDCredentialsLAZILY(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	for _, key := range []string{"SUBSYSTEM_STORE_URL", "SUBSYSTEM_STORE_TOKEN", ConfigEnv, RoutesEnv} {
+	for _, key := range clientConfigNames() {
 		t.Setenv(key, "")
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

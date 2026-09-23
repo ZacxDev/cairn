@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/store"
 )
 
@@ -82,8 +83,9 @@ import (
 
 const (
 	// ConfigEnv names the DEFAULT instance's config file. It predates instances and keeps
-	// its meaning exactly.
-	ConfigEnv = "SUBSYSTEM_STORE_CONFIG"
+	// its meaning exactly. `SUBSYSTEM_STORE_CONFIG` still resolves to it through
+	// `internal/envalias`; this file never spells the old name.
+	ConfigEnv = "CAIRN_CONFIG"
 	// RoutesEnv names the routing table. 🔴 SET IT AND THE TABLE IS MANDATORY — a missing
 	// file is an error, never "routing is off". An operator who named a table meant to use
 	// one, and silently ignoring the name is how a typo'd path turns a fail-loud design into
@@ -368,15 +370,32 @@ func (r Routing) Check(scopes []string) ([]string, []string, error) {
 // process. nil means the real environment.
 type envLookup func(string) string
 
+// lookup resolves a caller-supplied getter (or the process environment) THROUGH THE ALIAS
+// LEDGER.
+//
+// 🔴 THE WRAP IS THE POINT, AND ITS ABSENCE WAS A MEASURED DEFECT. Every reader in this file
+// reaches the environment through here, so wrapping once covers `ConfigPath`, `InstanceDir`
+// and `RoutesFile` together. The version that did NOT wrap left `$SUBSYSTEM_STORE_CONFIG`
+// unreadable by the routing layer while `transport.go`'s separate copy still honoured it —
+// so a two-instance world collapsed to one, the routed scope refused as "not configured on
+// this host", and the recall banner lost its instance label. `tests/parity/harness.py` caught
+// it by diffing the two clients' bytes; every Go test stayed green.
+//
+// 🔴 BOTH ARMS, NOT JUST THE `nil` ONE. Every unit test in this package injects a getter and
+// no real run does, so wrapping only the process-environment arm would leave the guard
+// asserting the case that was never broken.
 func lookup(env envLookup) envLookup {
 	if env != nil {
-		return env
+		return envalias.Resolving(env)
 	}
-	return os.Getenv
+	return envalias.OSValue
 }
 
-// ConfigPath is the DEFAULT instance's config file — `$SUBSYSTEM_STORE_CONFIG` or the
+// ConfigPath is the DEFAULT instance's config file — `$CAIRN_CONFIG` or the
 // long-standing `~/.config/subsystem-store/env`.
+//
+// `$SUBSYSTEM_STORE_CONFIG` is still read, as the deprecated alias `envalias` resolves;
+// the CURRENT name is what this names, because the doc comment is what a reader copies.
 func ConfigPath(env envLookup) string {
 	if raw := strings.TrimSpace(lookup(env)(ConfigEnv)); raw != "" {
 		return expandUser(raw)
@@ -391,7 +410,7 @@ func ConfigPath(env envLookup) string {
 // InstanceDir is where additional instances live: `instances/` beside the config file.
 //
 // 🔴 DERIVED FROM THE CONFIG PATH, NOT A SECOND ENVIRONMENT VARIABLE. One variable moves the
-// whole configuration — which is what a test needs, and what keeps `$SUBSYSTEM_STORE_CONFIG`
+// whole configuration — which is what a test needs, and what keeps `$CAIRN_CONFIG`
 // pointing somewhere while the instances it should sit beside are read from the operator's real
 // home directory.
 func InstanceDir(env envLookup) (string, error) {

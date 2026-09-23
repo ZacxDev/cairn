@@ -42,6 +42,7 @@ COPY lib/subsystem_read_store.py /app/lib/
 COPY lib/subsystem_resolver.py   /app/lib/
 COPY lib/entry_shape.py          /app/lib/
 COPY lib/host_identity.py        /app/lib/
+COPY lib/env_aliases.py          /app/lib/
 COPY server/server.py            /app/server/
 
 # `subsystem_touch` evaluates `DEFAULT_STORE_ROOT = Path.home() / ".claude" / …`
@@ -49,12 +50,41 @@ COPY server/server.py            /app/server/
 # a passwd entry — which is the ordinary state of a numeric-UID container. The
 # value is never used here (every call passes `--store`), but the import would
 # fail before anything could say so.
+#
+# 🔴 THIS `ENV` SETS NO STORE VARIABLE, IN EITHER SPELLING, AND THAT IS A DECISION.
+# `SUBSYSTEM_STORE_ROOT=/data`, `SUBSYSTEM_STORE_PORT=8102` and
+# `SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token` were here, and are gone.
+# They configured NOTHING: each was byte-identical to the code default `server.py` falls
+# back to with the variable unset (`DEFAULT_STORE`, `DEFAULT_PORT`, `DEFAULT_TOKEN_FILE`) —
+# measured by running the server under `env -i`, which prints
+# `listening on 0.0.0.0:8102 store=/data`. What they DID do was trip the resolver's
+# whole-environment deprecation sweep at every pod start: three unactionable warnings that
+# a Deployment migrating its own `env:` to `CAIRN_*` could not clear, because the image
+# half was still there. Measured 3 before, 0 after.
+#
+# 🔴 AND IT CLOSES THE SHADOWING HAZARD AT THE ROOT. The note that used to sit here
+# explained why the image had to keep the OLD spelling: an image `ENV` is a DEFAULT present
+# whether or not the manifest mentions it, and new-name-wins would have let a
+# `CAIRN_STORE_ROOT` baked here outrank a Deployment that explicitly set the old name. That
+# was correct, and it is now moot — with no image default there is nothing to outrank a
+# manifest, so this image could adopt `CAIRN_*` later with no deprecation window at all.
+#
+# ⚠ THE ACCEPTED COST: `docker inspect` and this file no longer document where the store
+# lives, which port it binds, or where the token is read from. That moved to the code
+# defaults, which `tests/test_flake_image_matches_dockerfile.py` now pins against BOTH
+# implementations. Do not "restore" it here — a value stated in two places is the drift
+# this whole file's tests exist to refuse.
+#
+# ⚠ AND THE STARTUP LINE COVERS TWO OF THE THREE, NOT THREE. It prints
+# `listening on <host>:<port> store=<root> token-ids=…`, so port and store root are
+# readable from a running container's log; `token-ids=` is the credential FINGERPRINTS and
+# no startup line on either implementation prints the token PATH. This server's `--help`
+# does not print its default either (the Go server's `-h` does). The only place the path
+# reaches a log is the `token file <path> absent; falling back to $CAIRN_TOKEN` notice on
+# stderr, which is a failure notice rather than documentation.
 ENV HOME=/home/nonroot \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    SUBSYSTEM_STORE_ROOT=/data \
-    SUBSYSTEM_STORE_PORT=8102 \
-    SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token
+    PYTHONUNBUFFERED=1
 
 RUN mkdir -p /home/nonroot /data && chown -R 65532:65532 /home/nonroot /data
 

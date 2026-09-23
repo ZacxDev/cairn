@@ -72,8 +72,14 @@ LEGACY_PRINCIPAL = "legacy"
 # golden host-independent, because the machine-id prefix is appended regardless.
 # `suite.check_no_host_leak` is what proves both worked instead of assuming it.
 ORACLE_ENV = {
-    "SUBSYSTEM_STORE_TRUSTED_PROXIES": "127.0.0.1/32",
-    "SUBSYSTEM_STORE_MAX_FAILURES": "1000000",
+    # 🔴 THE **CURRENT** SPELLINGS, AND THAT IS PART OF WHAT THE CORPUS MEASURES.
+    # `SUBSYSTEM_STORE_*` still resolves on both servers through `internal/envalias` /
+    # `lib/env_aliases.py`, but this world is replayed against BOTH implementations, so
+    # naming the new spelling here is the one place a corpus run would notice if only one
+    # of them had learned it. The alias direction is covered by `tests/test_env_aliases.py`
+    # and, byte-for-byte across two languages, by `tests/parity/harness.py`.
+    "CAIRN_TRUSTED_PROXIES": "127.0.0.1/32",
+    "CAIRN_MAX_FAILURES": "1000000",
     "CAIRN_HOST": "conformance-oracle",
 }
 

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ZacxDev/cairn/internal/envalias"
 )
 
 // DefaultTimeout is the store commands' bound, in seconds. A DEFAULT, never a ceiling.
@@ -59,17 +61,54 @@ type Config struct {
 	Token string
 }
 
-// DefaultConfigPath is `~/.config/subsystem-store/env`, mode 0600.
-func DefaultConfigPath() string {
-	if override := strings.TrimSpace(os.Getenv("SUBSYSTEM_STORE_CONFIG")); override != "" {
-		return expandUser(override)
+// deprecationSink is where `internal/envalias` warnings are written, or nil for "nowhere".
+//
+// 🔴 A SINK RATHER THAN A `[]string` THREADED THROUGH `LoadConfigFor`'S SIGNATURE, AND THE
+// REASON IS THE CALL GRAPH RATHER THAN CONVENIENCE. `LoadConfigFor` is reached from every
+// verb, from `doctor`'s per-instance fan-out and from the routing layer; widening its
+// signature would put a `[]string` nobody reads through a dozen frames, and each of those
+// frames is a place a future edit can DROP it silently. `envalias.WarnOnce` already owns the
+// "at most once per process" rule, so the sink cannot duplicate a line no matter how many
+// frames reach it.
+//
+// ⚠ IT IS nil UNTIL `Run` SETS IT, WHICH MEANS A TEST CALLING `LoadConfigFor` DIRECTLY SEES
+// NO WARNING. That is deliberate — a library call should not write to a stream its caller
+// did not name — and it is why `tests/parity/harness.py`, which runs the real binary, is
+// what measures the emission rather than a unit test asserting on a captured writer.
+var deprecationSink func(string)
+
+// SetDeprecationSink names where alias deprecation warnings go. `Run` calls it.
+func SetDeprecationSink(emit func(string)) { deprecationSink = emit }
+
+// WarnDeprecations emits `lines` through the sink, at most once per process per line.
+func WarnDeprecations(lines []string) {
+	if deprecationSink == nil {
+		return
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".config", "subsystem-store", "env")
+	envalias.WarnOnce(lines, deprecationSink)
 }
+
+// EnvURL and EnvToken are the two names that configure the default instance, in their
+// current spelling. Each reads from an exported variable OR from a key of the config
+// file, and each has a deprecated `SUBSYSTEM_STORE_*` alias resolved by
+// `internal/envalias`. They are named constants rather than literals because the
+// "config incomplete" refusal interpolates them, and that refusal is compared
+// byte-for-byte against the Python client by `tests/parity/harness.py`.
+const (
+	EnvURL   = "CAIRN_URL"
+	EnvToken = "CAIRN_TOKEN"
+)
+
+// DefaultConfigPath is `~/.config/subsystem-store/env`, mode 0600.
+//
+// 🔴 ONE LINE, DELEGATING, BECAUSE THIS USED TO BE A SECOND COPY OF `ConfigPath` AND THE
+// COPY IS WHAT BROKE. Both spelled "$CONFIG or `~/.config/subsystem-store/env`" and agreed
+// — until the alias ledger landed in one of them and not the other, at which point the
+// credential loader honoured `$SUBSYSTEM_STORE_CONFIG` and the ROUTING layer did not, and a
+// two-instance host silently became a one-instance host. A predicate open-coded at two call
+// sites is wrong at one of them; consolidating is what makes the disagreement impossible
+// rather than merely fixed.
+func DefaultConfigPath() string { return ConfigPath(nil) }
 
 // LoadConfig is `(url, token)` from the env file, with the real environment taking priority.
 //
@@ -107,15 +146,20 @@ func LoadConfigFor(alias string) (Config, error) {
 			fromFile[strings.TrimSpace(key)] = strings.TrimSpace(value)
 		}
 	}
+	WarnDeprecations(envalias.FileDeprecations(fromFile, path))
+	// 🔴 BOTH LOOKUPS GO THROUGH `envalias`, AND THE FILE IS AS MUCH AN ALIAS SURFACE AS
+	// THE ENVIRONMENT IS. `SUBSYSTEM_STORE_URL=` is a KEY inside `~/.config/subsystem-store/env`
+	// as well as an exported variable, and an operator who renamed only one of the two would
+	// otherwise get a silent half-migration: the file key ignored, the environment honoured.
 	pick := func(name string) string {
 		if isDefault {
-			if v := os.Getenv(name); v != "" {
+			if v := envalias.OSValue(name); v != "" {
 				return v
 			}
 		}
-		return fromFile[name]
+		return envalias.Value(fromFile, name)
 	}
-	cfg := Config{URL: pick("SUBSYSTEM_STORE_URL"), Token: pick("SUBSYSTEM_STORE_TOKEN")}
+	cfg := Config{URL: pick(EnvURL), Token: pick(EnvToken)}
 	where := fmt.Sprintf("(looked in %s and the environment)", path)
 	if !isDefault {
 		where = fmt.Sprintf("(looked in %s; the environment is NOT consulted for a "+
@@ -124,10 +168,10 @@ func LoadConfigFor(alias string) (Config, error) {
 	}
 	var missing []string
 	if cfg.URL == "" {
-		missing = append(missing, "SUBSYSTEM_STORE_URL")
+		missing = append(missing, EnvURL)
 	}
 	if cfg.Token == "" {
-		missing = append(missing, "SUBSYSTEM_STORE_TOKEN")
+		missing = append(missing, EnvToken)
 	}
 	if len(missing) > 0 {
 		return Config{}, unreachable(
