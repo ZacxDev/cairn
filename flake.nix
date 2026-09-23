@@ -570,8 +570,10 @@
       # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
       # MODULE. `cmd/cairn-ui` now carries three phases — the entries page, cookie
       # sessions with a sign-in pair, and the SHARE FLOW — over one authentication
-      # chain and one rendering path. It is DEPLOYED BY NOTHING and no image wraps it
-      # — saying so is part of the change. ⚠ This used to add "the same way
+      # chain and one rendering path. It is DEPLOYED BY NOTHING — saying so is part
+      # of the change. ⚠ This also said "and no image wraps it", which stopped being
+      # true when `packages.ui-image` landed; PUBLISHED and DEPLOYED are two separate
+      # claims, and only the second still holds. ⚠ This used to add "the same way
       # `cmd/cairn-server`'s own doc comment says it for the Go pod", and that
       # cross-reference is dead: the Go pod IS deployed, and its doc comment now says
       # so. A cross-reference is a claim about ANOTHER file, and nothing tells you
@@ -927,9 +929,11 @@
           default = mkGoClient pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
-          # 🔴 THE BROWSER SURFACE IS A PACKAGE AND NOTHING ELSE — no `apps` entry, no
-          # image, and nothing in `default`. It is built by name or not at all, which
-          # is what "deployed by nothing" means concretely rather than as a promise.
+          # 🔴 THE BROWSER SURFACE HAS NO `apps` ENTRY AND IS NOT IN `default`. It is
+          # built by name or not at all, which is what "deployed by nothing" means
+          # concretely rather than as a promise. ⚠ This said "AND NOTHING ELSE — no
+          # `apps` entry, no image": there IS an image now (`packages.ui-image`), and it
+          # is PUBLISHED. Published is not deployed.
           cairn-ui = mkGoUI pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
