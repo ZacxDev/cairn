@@ -39,6 +39,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/ui"
 )
@@ -59,6 +60,14 @@ const (
 	// at startup if it did not, rather than discovering it at the first sign-in.
 	defaultSessionFile = "/var/lib/cairn-ui/sessions"
 
+	// EnvUIControlJournal is the `-control-journal` flag's environment spelling.
+	//
+	// 🔴 IT IS A CONSTANT AND ITS SIBLINGS ARE STRING LITERALS, BECAUSE THIS ONE IS READ
+	// TWICE — once for the value and once by the blank policy that refuses a value which
+	// reduces to nothing. Two spellings of a name a refusal quotes back at the operator is
+	// how a refusal ends up naming a variable nobody set.
+	EnvUIControlJournal = "CAIRN_UI_CONTROL_JOURNAL"
+
 	// exitConfig is sysexits.h EX_CONFIG, the same code `cmd/cairn-server` uses and
 	// for the same reason: a surface that came up misconfigured is worse than one
 	// that did not come up, because it looks healthy.
@@ -74,10 +83,18 @@ const (
 )
 
 func main() {
-	store := flag.String("store", envOr("SUBSYSTEM_STORE_ROOT", defaultStore), "store root")
+	// Same position and the same reason as `cmd/cairn-server`: a `flag.String` default is
+	// evaluated at the call, so the notice has to precede the value it is about. This
+	// surface has no reload stream and so no sanitiser to route it through — the line is
+	// the ledger's own text and interpolates nothing caller-supplied.
+	envalias.WarnOnce(envalias.OSDeprecations(), func(line string) {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+line)
+	})
+
+	store := flag.String("store", envOr("CAIRN_STORE_ROOT", defaultStore), "store root")
 	host := flag.String("host", envOr("CAIRN_UI_HOST", "0.0.0.0"), "listen address")
 	port := flag.Int("port", envInt("CAIRN_UI_PORT", defaultPort), "listen port")
-	tokenFile := flag.String("token-file", envOr("SUBSYSTEM_STORE_TOKEN_FILE", defaultTokenFile),
+	tokenFile := flag.String("token-file", envOr("CAIRN_TOKEN_FILE", defaultTokenFile),
 		"path to the token file this surface authenticates against")
 	sessionFile := flag.String("session-file", envOr("CAIRN_UI_SESSION_FILE", defaultSessionFile),
 		"path to the browser session table")
@@ -100,7 +117,14 @@ func main() {
 	// does still work and does carry the banner — that half is real. ⚠ This is the THIRD
 	// site of one retraction: the same claim was corrected in `README.md`, then in
 	// `internal/ui/server.go`, and left standing here both times.
-	controlJournal := flag.String("control-journal", envOr("CAIRN_UI_CONTROL_JOURNAL", ""),
+	//
+	// 🔴 AND ITS DEFAULT IS NOT `envOr`, BECAUSE `envOr` CANNOT SEE THE VALUE THIS GUARD
+	// IS ABOUT. `envalias.blank` is `TrimSpace(v) == ""`, so a whitespace-only
+	// `CAIRN_UI_CONTROL_JOURNAL` resolves to `""` — "not set" — and this surface would
+	// come up on the token-file projection, which confers `admin` on NOBODY. See
+	// `controlJournalDefault`; the error is reported after `flag.Parse` so `-h` still works.
+	journalDefault, journalErr := controlJournalDefault(os.Getenv)
+	controlJournal := flag.String("control-journal", journalDefault,
 		"path to the control journal; without one the authority is the token file and no share can be recorded")
 	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
 	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
@@ -111,6 +135,16 @@ func main() {
 	// only reader was a flake check printing the same list is a PATH entry with no
 	// caller, which this repository refuses elsewhere. It returns with a corpus.
 	flag.Parse()
+
+	// 🔴 AFTER `flag.Parse` SO `-h` STILL PRINTS, AND NOT CONDITIONAL ON WHETHER THE FLAG
+	// WAS ALSO GIVEN. The policy is about the LINE the operator wrote, not about which
+	// value won: a manifest emitting a whitespace journal path is broken whether or not
+	// something else supplies a good one, and `flag.Visit` machinery to let a flag rescue
+	// it would be a second rule about the same variable.
+	if journalErr != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+journalErr.Error())
+		os.Exit(exitConfig)
+	}
 
 	authority, err := openAuthority(*controlJournal, *store, *tokenFile)
 	if err != nil {
@@ -256,24 +290,74 @@ func main() {
 	}
 }
 
-func environ() map[string]string {
-	out := make(map[string]string)
-	for _, kv := range os.Environ() {
-		for i := 0; i < len(kv); i++ {
-			if kv[i] == '=' {
-				out[kv[:i]] = kv[i+1:]
-				break
-			}
-		}
-	}
-	return out
+// `envOr`, `envDuration` and `envInt` resolve through `internal/envalias`, so a name
+// passed to one is the CURRENT spelling and its deprecated alias is found for free.
+// `CAIRN_UI_*` has no alias and resolves as itself — `envalias.Value` gives plain
+// single-name behaviour for a name that was never renamed, which is why no call site has
+// to know which kind it holds.
+//
+// 🔴 `controlJournalDefault`, BELOW, IS THE ONE READER THAT DOES NOT, AND THE EXCEPTION IS
+// NAMED HERE RATHER THAN LEFT TO BE FOUND AT ITS DEFINITION. All three readers above
+// inherit `envalias.blank` — `TrimSpace(v) == ""` — so for every name they read, a
+// whitespace-only value is indistinguishable from an unset one and silently takes the code
+// default. For a listen address or a TTL that is the existing, accepted ruling. For the
+// control journal it is the difference between a surface that refuses to start and one
+// that starts on an authority conferring `admin` on nobody, so that name is read raw.
+func envOr(name, fallback string) string {
+	return envalias.OSValueOr(name, fallback)
 }
 
-func envOr(name, fallback string) string {
-	if v, set := os.LookupEnv(name); set && v != "" {
-		return v
+// controlJournalDefault is the `-control-journal` flag's default, and the ONE place this
+// surface's journal line meets the blank policy.
+//
+// 🔴 IT IS THE SAME RULING `cmd/cairn-server`'s `controlJournalPath` MAKES FOR THE POD'S
+// OWN `CAIRN_CONTROL_JOURNAL`, AND IT IS THE SAME PREDICATE RATHER THAN A SECOND
+// SPELLING. Absent, and present-with-the-EMPTY-string, are both "not set" — a manifest
+// that emits every variable with an empty default is a common shape. A value that
+// REDUCES TO NOTHING is a line the operator wrote and this program would discard, so it
+// is refused. `identity.ValueReducesToNothing` is the test rather than a fresh
+// `strings.TrimSpace`: 32 zero-width runes are not whitespace and `TrimSpace` calls them
+// content, which has already cost this repository a live bypass at a different setting.
+//
+// 🔴 WHAT A WHITESPACE LINE BOUGHT BEFORE THIS FUNCTION EXISTED, MEASURED ON TWO BUILT
+// BINARIES OVER ONE WORLD: `CAIRN_UI_CONTROL_JOURNAL='   '` with no flag exited **78**
+// naming the journal at `1659663` and **served** at `68cf955`, announcing
+// `sharing read-only (no -control-journal: no share can be recorded)`. That is the
+// token-file projection, which grants `admin` to NOBODY — so every scope page answers
+// 404, no share can be recorded, and `/healthz` stays 200. The regression arrived in a
+// MERGE: the branch that converted `envOr` to `envalias.OSValueOr` had no
+// `-control-journal`, and the branch that added `-control-journal` had no `envalias`, so
+// neither side's tests could see it.
+//
+// 🔴 IT READS `os.Getenv` RATHER THAN `envalias`, AND THAT IS THE POINT RATHER THAN AN
+// OVERSIGHT. `envalias.ValueFrom` treats a blank value as absent — that IS the defect
+// here — so resolving through it would hand this function a `""` it cannot distinguish
+// from an unset variable. `TestTheControlJournalVariableIsNotInTheAliasLedger` is what
+// keeps the raw read from silently losing a deprecated spelling: this name has none, and
+// the day it gains one that test goes red rather than this function going quiet.
+//
+// ⚠ A NON-BLANK VALUE IS RETURNED RAW, NOT TRIMMED, WHICH IS NARROWER THAN THE POD'S
+// READER AND DELIBERATELY SO. `controlJournalPath` returns `TrimSpace(raw)`; trimming
+// here would make `CAIRN_UI_CONTROL_JOURNAL="  /data/j  "` open a journal where
+// `-control-journal "  /data/j  "` is refused by `openAuthority`'s `Stat`. The whole
+// finding this function closes is a value that behaves differently by ARRIVAL PATH, so
+// the fix does not open a second one. Measured at `68cf955`: both spellings of that value
+// exit 78, and they still do.
+func controlJournalDefault(get func(string) string) (string, error) {
+	raw := get(EnvUIControlJournal)
+	if raw == "" {
+		return "", nil
 	}
-	return fallback
+	if identity.ValueReducesToNothing(raw) {
+		return "", fmt.Errorf(
+			"%s=%q reduces to nothing, so this surface would read it as UNSET and fall back to the "+
+				"token-file projection, which confers `admin` on nobody: every scope page would "+
+				"answer 404 and no share could be recorded, while /healthz answered 200 and the "+
+				"index still rendered. That is a surface that looks healthy and serves nobody. "+
+				"Refusing to start; give it a path or delete the line",
+			EnvUIControlJournal, raw)
+	}
+	return raw, nil
 }
 
 // envDuration falls back on an unparseable value rather than refusing, which matches
@@ -286,8 +370,8 @@ func envOr(name, fallback string) string {
 // the divergence between this program's ad-hoc environment reads and that package's
 // ledger is the thing to close, in one change, rather than here.
 func envDuration(name string, fallback time.Duration) time.Duration {
-	v, set := os.LookupEnv(name)
-	if !set || v == "" {
+	v := envalias.OSValue(name)
+	if v == "" {
 		return fallback
 	}
 	d, err := time.ParseDuration(v)
@@ -298,8 +382,8 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 }
 
 func envInt(name string, fallback int) int {
-	v, set := os.LookupEnv(name)
-	if !set || v == "" {
+	v := envalias.OSValue(name)
+	if v == "" {
 		return fallback
 	}
 	n, err := strconv.Atoi(v)
@@ -367,7 +451,7 @@ func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error)
 		return control.NewCache(src, control.CacheOptions{MaxAge: authorityMaxAge}), nil
 	}
 
-	tokens, err := authz.LoadTokens(tokenFile, environ(), func(line string) {
+	tokens, err := authz.LoadTokens(tokenFile, envalias.Environ(), func(line string) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+line)
 	})
 	if err != nil {

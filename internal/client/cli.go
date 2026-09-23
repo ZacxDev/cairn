@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/doctor"
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/report"
 )
 
@@ -523,6 +524,17 @@ func verbNames() []string {
 
 // Run is the whole client: parse, dispatch, and map every escaping error to its own exit code.
 func Run(env Env, argv []string) int {
+	// 🔴 BEFORE `Parse`, SO `--help` WARNS TOO, AND BECAUSE THE POSITION IS COMPARED.
+	// `tests/parity/harness.py` diffs the two clients' stderr byte-for-byte, so WHERE in the
+	// program the deprecation sweep runs is part of the contract rather than a detail: the
+	// Python client emits the same sweep at the top of its `main()`. Emitting it after
+	// `Parse` would order it differently against a usage error on the two sides.
+	//
+	// The FILE-key half of the sweep cannot happen here — the config path is not known until
+	// an alias has been resolved — so `LoadConfigFor` emits that half through the same sink.
+	SetDeprecationSink(func(line string) { fmt.Fprintln(env.Stderr, "cairn: "+line) })
+	WarnDeprecations(envalias.OSDeprecations())
+
 	verb, opts, err := Parse(argv)
 	if errors.Is(err, ErrHelpRequested) {
 		// 🔴 STDOUT AND EXIT 0. Help is an ANSWER, not a refusal — argparse does the same, and a
@@ -540,8 +552,15 @@ func Run(env Env, argv []string) int {
 		// `Path.home()` raises; a client that fell back to a relative path would write a
 		// cache into whatever directory it happened to start in and then report it as the
 		// host's store.
-		fmt.Fprintln(env.Stderr, "cairn: cannot resolve a cache root — neither $HOME nor "+
-			"CAIRN_CACHE_ROOT is set, so there is nowhere to read or write the store cache.")
+		// 🔴 IT NAMES `--cache`, NOT AN ENVIRONMENT VARIABLE, AND THAT IS A CORRECTION.
+		// This line used to read "neither $HOME nor CAIRN_CACHE_ROOT is set" — but there
+		// is no `CAIRN_CACHE_ROOT`: `readstore.go`'s `DefaultCacheRoot` records that the
+		// override was written, caught by the parity gate as a capability the oracle does
+		// not have, and DELETED. So the message sent an operator to set a variable
+		// nothing reads, which is worse than naming nothing. `--cache` exists on every
+		// verb and is the remedy that works.
+		fmt.Fprintln(env.Stderr, "cairn: cannot resolve a cache root — $HOME is not set "+
+			"and no --cache was given, so there is nowhere to read or write the store cache.")
 		return ExitUsage
 	}
 	code, runErr := verb.Run(env, opts)

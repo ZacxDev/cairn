@@ -96,6 +96,7 @@ import pytest
 # record in this project already. `conftest.py` puts `tests/` on `sys.path`, which is what
 # makes the bare-name import work.
 from test_flake_image_matches_dockerfile import (  # noqa: E402
+    STORE_DEFAULTS,
     dockerfile_env,
     flake_attrset,
     flake_cmd_script,
@@ -103,6 +104,10 @@ from test_flake_image_matches_dockerfile import (  # noqa: E402
     flake_image_block,
     flake_int,
 )
+
+# The rename ledger. Imported AFTER the line above, which is what puts `lib/` on
+# `sys.path` — so this cannot name a different ledger from the one the sibling checks.
+import env_aliases  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FLAKE = ROOT / "flake.nix"
@@ -113,15 +118,22 @@ DOCKERFILE = ROOT / "server" / "Dockerfile"
 #: second, weaker copy of its sibling — green, and about the wrong artefact.
 GO_MAKER = "mkGoServerImage"
 
-#: The variables a Deployment sets and a pod must therefore honour, whichever
-#: implementation is inside the image. Spelled out by hand rather than derived, because
-#: this is the claim: these three are what a manifest names, and a derivation that
-#: dropped one would satisfy any assertion computed from the derivation itself.
-DEPLOY_CONTRACT = (
-    "SUBSYSTEM_STORE_ROOT",
-    "SUBSYSTEM_STORE_PORT",
-    "SUBSYSTEM_STORE_TOKEN_FILE",
-)
+#: The contract a Deployment relies on — where the store is, which port the pod binds,
+#: where the bearer token is read from — now expressed as VALUES rather than as variable
+#: names, and imported rather than restated.
+#:
+#: 🔴 IT USED TO BE A TUPLE OF THREE `SUBSYSTEM_STORE_*` NAMES, AND THE CHANGE IS THE
+#: POINT. Both images set those three in their `ENV`; every value was byte-identical to
+#: the code default the server already falls back to, so they configured nothing while
+#: emitting three deprecation warnings at every pod start that no manifest could clear.
+#: They are gone from both images. A name-based contract therefore has no operand left —
+#: "the Go image sets SUBSYSTEM_STORE_ROOT" is now false by design — so the contract moved
+#: to the thing that is still true and still what a cluster depends on: the RESOLVED
+#: values, pinned against both implementations' own constants by
+#: `test_both_implementations_resolve_the_deployment_contract_with_no_env` in the sibling
+#: module. This alias exists so this file's assertions read in the same vocabulary; the
+#: declaration has ONE home.
+DEPLOY_CONTRACT = STORE_DEFAULTS
 
 #: The ONLY `Env` expression `mkGoServerImage` may hand `buildLayeredImage`,
 #: whitespace-normalised. The same guard as `PY_IMAGE_ENV_FORM` on the other image, and
@@ -136,9 +148,16 @@ GO_IMAGE_ENV_FORM = (
 #:
 #: 🔴 A WHOLE STRING RATHER THAN A WORD SEARCH, BECAUSE THE ARTEFACT UNDER TEST IS AN
 #: EXPRESSION AND A WORD IS WALKABLE BY WRITING A DIFFERENT EXPRESSION CONTAINING IT.
-#: `removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ]) serverEnvPythonOnly`
+#: `builtins.removeAttrs serverEnv serverEnvPythonOnly // { CAIRN_STORE_ROOT = "/wrong"; }`
 #: names both `serverEnv` and `serverEnvPythonOnly`, satisfies every other assertion in
-#: this module, and ships a pod that looks for its bearer token at a compiled-in default.
+#: this module, and ships a pod serving a store nobody mounted — the `//` is right-biased,
+#: so the correct subtraction is kept and overridden anyway.
+#: ⚠ THE EXAMPLE THAT USED TO STAND HERE WAS
+#: `removeAttrs (removeAttrs serverEnv [ "SUBSYSTEM_STORE_TOKEN_FILE" ]) serverEnvPythonOnly`,
+#: and it is no longer a hazard: that name is not in `serverEnv` any more, so subtracting
+#: it is a no-op and the pod reads its compiled-in token path BY DESIGN. Replaced rather
+#: than deleted, because the structural point — a word search cannot bound an expression —
+#: is unchanged and needs an example that is still true.
 #: ⚠ The cost is that a genuine change of shape fails here first. That is the point: it
 #: also invalidates `go_env()`, and the two must move together or the model silently stops
 #: describing what runs.
@@ -254,12 +273,28 @@ class TestTheExtractorsSeeSomething:
             "no `goServerTools` binding parsed"
         )
 
-    def test_the_computed_go_env_is_not_empty(self, flake):
+    def test_the_computed_go_env_parses_and_is_now_LEGITIMATELY_empty(self, flake):
+        """🔴 THE CONTROL CHANGED MEANING WITH ITS SUBJECT, AND `None` IS WHAT IT GUARDS.
+
+        It used to assert the computed env was NON-empty, because an empty one meant a
+        parse had silently failed. That reading is gone: `serverEnv` now holds only
+        `HOME` and CPython's two knobs, all three of which `serverEnvPythonOnly` removes,
+        so `{}` is the correct answer and asserting non-empty would fail on a working
+        tree. The failure it still has to separate from success is a BROKEN PARSE, and
+        `go_env` already distinguishes those — `None` when `serverEnv` or the removal list
+        did not parse, `{}` when both parsed and the subtraction consumed everything. So
+        the control asserts exactly that difference.
+        """
         env = go_env(flake)
-        assert env, (
-            "the computed Go env is EMPTY — `serverEnv` or `serverEnvPythonOnly` "
-            "stopped parsing, and the agreement assertions below would compare two "
-            "empty sets and report perfect agreement"
+        assert env is not None, (
+            "`go_env()` returned None — `serverEnv` or `serverEnvPythonOnly` stopped "
+            "parsing, and every assertion built on it below is a claim about nothing"
+        )
+        assert env == {}, (
+            f"the computed Go env is {env}. Every name in `serverEnv` is Python-only "
+            f"today, so the Go pod's env is its `//` override alone. A name here is not "
+            f"automatically wrong — but it is a variable reaching a pod with no "
+            f"interpreter, so say what reads it and move this assertion deliberately."
         )
 
     def test_the_controls_can_fail(self):
@@ -372,59 +407,42 @@ class TestTheGoImageRunsUnderTheSameContract:
             f"change this constant and say what reads it."
         )
 
-    def test_the_removal_list_drops_NOTHING_the_deployment_names(self, flake):
-        """🔴 THE SUBTRACTION CAN SUBTRACT TOO MUCH, AND THIS IS THE DANGEROUS DIRECTION.
+    def test_NEITHER_image_sets_a_variable_the_resolver_would_read(self, flake, dockerfile):
+        """🔴 THIS REPLACES TWO GUARDS THAT ITEM A EMPTIED, AND SAYING WHICH IS THE POINT.
 
-        A derivation that subtracts too much is still a derivation: adding
-        `SUBSYSTEM_STORE_TOKEN_FILE` to the list satisfies every structural assertion
-        above and ships a pod that looks for its bearer token at the compiled-in default
-        instead of the mounted path. So the list is checked against what a Deployment
-        actually sets, in the direction that matters.
+        `test_the_removal_list_drops_NOTHING_the_deployment_names` asserted that
+        `serverEnvPythonOnly` did not contain `SUBSYSTEM_STORE_ROOT`/`_PORT`/`_TOKEN_FILE`.
+        Those names are no longer in `serverEnv` at ALL, so the removal list cannot drop
+        them and the assertion could never fail again — a guard pinning an invariant the
+        change made unviolatable. `test_the_go_env_carries_the_deployment_contract_with_
+        the_python_values` was worse than empty: it asserted the Go env DOES contain them,
+        which is now false by design. Both are deleted rather than left reading as
+        coverage.
 
-        ⚠ AND THIS DOCSTRING NO LONGER ENUMERATES, BECAUSE THE ENUMERATION IS WHAT KEPT
-        BEING WRONG. It opened "🔴 THE ONE WAY THE SUBTRACTION CAN BE WRONG"; that became
-        "there is a SECOND way"; that became three — and three was short too, because a
-        `DEPLOY_CONTRACT` value can come out wrong in as many shapes as nix has syntax.
-        This test reads ONE site: the removal list. The other two sites are pinned as
-        WHOLE normalised expressions rather than enumerated — `SERVER_ENV_GO_FORM` for
-        the `serverEnvGo` binding, `GO_IMAGE_ENV_FORM` for the image's `Env`. Do not
-        re-open the list.
-        """
-        drop = flake_string_list(flake, "serverEnvPythonOnly")
-        assert drop, "no `serverEnvPythonOnly` entries — see the controls"
-        overlap = sorted(set(drop) & set(DEPLOY_CONTRACT))
-        assert not overlap, (
-            f"`serverEnvPythonOnly` drops {overlap} from the Go pod. Those are the "
-            f"variables a Deployment SETS — dropping one means the pod falls back to a "
-            f"compiled-in default while the manifest says otherwise, which is a pod that "
-            f"starts and serves the wrong store, or reads the wrong token."
-        )
+        What is true, and what a deployment actually needs, is the pair below. The VALUES
+        half lives in the sibling module (`…resolve_the_deployment_contract_with_no_env`),
+        pinned against both implementations' code defaults. The ABSENCE half is here,
+        against the artefact this file is about, and it is checked over BOTH columns of the
+        rename ledger — a CURRENT-spelling image default would outrank a Deployment that
+        sets the deprecated name, and a DEPRECATED-spelling one emits a deprecation warning
+        at every pod start that no manifest can clear.
 
-    def test_the_go_env_carries_the_deployment_contract_with_the_python_values(
-        self, flake, dockerfile
-    ):
-        """The values, against BOTH other statements of them, in both directions.
-
-        A subset check against `serverEnv` alone would pass while `serverEnv` itself
-        drifted from `server/Dockerfile`; that drift is its sibling's job, and pinning
-        the Dockerfile here too is what makes "swapping the image needs no manifest
-        edit" a claim about the deployed pod rather than about one nix binding.
+        ⚠ IT OVERLAPS ITS SIBLING'S `test_no_image_default_configures_the_store_in_EITHER_
+        spelling` DELIBERATELY. That one reads `serverEnv` and the Dockerfile; this one
+        reads the env the GO image computes, which is a third artefact and the one a green
+        `serverEnv` says nothing about — the seam this whole module exists for.
         """
         env = go_env(flake)
-        assert env, "the computed Go env is empty — see the controls"
-        docker = dockerfile_env(dockerfile)
-        assert docker, "the Dockerfile env parse is empty — see the sibling's controls"
-        for name in DEPLOY_CONTRACT:
-            assert name in env, (
-                f"the Go image does not set {name}. A cluster swapping the image would "
-                f"have to edit its Deployment, which is exactly what this contract exists "
-                f"to make unnecessary."
-            )
-            assert env[name] == docker[name], (
-                f"{name} is {env[name]!r} in the Go image and {docker[name]!r} in "
-                f"server/Dockerfile — the two pods disagree about where the store, the "
-                f"port or the token is"
-            )
+        assert env is not None, "`go_env()` returned None — see the controls"
+        banned = {new for new, _old in env_aliases.LEDGER}
+        banned |= {old for _new, old in env_aliases.LEDGER}
+        assert banned, "the ledger is empty — this guard would pass over nothing"
+        offenders = sorted(set(env) & banned)
+        assert not offenders, (
+            f"the Go image's env sets {offenders}. Neither image may configure the store, "
+            f"the port or the token path in either spelling; the values themselves are "
+            f"pinned as code defaults in the sibling module."
+        )
 
     def test_the_go_env_carries_NO_interpreter_variable(self, flake):
         """A Go binary reads none of CPython's knobs, and an env var nothing reads is a
@@ -433,9 +451,36 @@ class TestTheGoImageRunsUnderTheSameContract:
 
         ⚠ AN INVARIANT GUARD. Nothing ever shipped with them; this pins that the
         subtraction is doing its job in the other direction from the test above.
+
+        ⚠ IT IS STILL REACHABLE THOUGH THE COMPUTED ENV IS NOW `{}`, AND THAT IS WHY IT
+        SURVIVES ITEM A WHILE TWO NEIGHBOURS DID NOT. An empty set today is the
+        subtraction working, not the assertion having no operand.
+
+        🔴 MEASURED, ONE MUTANT — `"HOME"` deleted from `serverEnvPythonOnly` in
+        `flake.nix`, which puts `HOME` straight back into the Go pod's computed env:
+
+            2 failed, 11 passed
+              THIS test, at `assert "HOME" not in env` — its own message,
+                `assert 'HOME' not in {'HOME': '/home/nonroot'}`
+              test_the_computed_go_env_parses_and_is_now_LEGITIMATELY_empty
+
+        ⚠ READ THE TWO CLAUSES SEPARATELY, BECAUSE A ROUND-2 AUDIT READ ONLY THE FIRST AND
+        CONCLUDED THIS GUARD SURVIVED THAT MUTANT. The `leaked` clause below matches
+        `PYTHON*` and `HOME` does not start with `PYTHON`, so that clause alone is indeed
+        blind to it — but the `"HOME" not in env` clause underneath is what the mutant
+        hits, and it hits it with this guard's own assertion rather than a neighbour's.
+        The mutant is NOT isolated to this guard (the `env == {}` neighbour dies too), so
+        it is not a clean attribution test for this one; it IS a reachability proof for
+        the `HOME` clause, which is what the paragraph above claims.
+
+        🔴 SO `HOME` IS ASSERTED HERE AND NOT ONLY BY THAT NEIGHBOUR. The neighbour's own
+        message invites relaxing it ("a name here is not automatically wrong — say what
+        reads it and move this assertion deliberately"); if somebody takes that invitation,
+        `HOME` still has a guard. Do not delete the clause on the grounds that `env == {}`
+        already covers it.
         """
         env = go_env(flake)
-        assert env, "the computed Go env is empty — see the controls"
+        assert env is not None, "`go_env()` returned None — see the controls"
         leaked = sorted(k for k in env if k.startswith("PYTHON"))
         assert not leaked, (
             f"the Go image sets {leaked} — CPython environment variables in an image "
@@ -471,13 +516,20 @@ class TestTheGoImageRunsUnderTheSameContract:
         )
         assert uid != "0", "the Go image would run the pod as ROOT"
 
-    def test_the_exposed_port_derives_from_serverPort_and_matches_the_env(self, flake):
-        """🔴 `ExposedPorts` IS DOCUMENTATION; `SUBSYSTEM_STORE_PORT` IS THE BINDING.
+    def test_the_exposed_port_derives_from_serverPort_and_matches_what_the_server_binds(
+        self, flake
+    ):
+        """🔴 `ExposedPorts` IS DOCUMENTATION; THE CODE DEFAULT IS THE BINDING.
 
-        `cmd/cairn-server/main.go` takes its port from the env var and `ExposedPorts`
-        only annotates the image. They can disagree, and if they do the pod listens
-        somewhere the Service does not name — so both are pinned, to each other and to
-        the same `serverPort` the Python pod uses.
+        `ExposedPorts` only annotates the image. With no `CAIRN_PORT`/`SUBSYSTEM_STORE_PORT`
+        anywhere in it, the Go pod binds `defaultPort`. They can disagree, and if they do
+        the pod listens somewhere the Service does not name — so both are pinned, to each
+        other and to the same `serverPort` the Python pod uses.
+
+        ⚠ ITS THIRD OPERAND USED TO BE THE IMAGE `ENV`, WHICH NO LONGER EXISTS. The env
+        entry is gone from both images, so the comparison is against the resolved default
+        instead; the sibling module is what pins that default against
+        `cmd/cairn-server/main.go` itself, so this is not circular.
         """
         port = flake_int(flake, "serverPort")
         assert port is not None, "no serverPort parsed"
@@ -487,10 +539,10 @@ class TestTheGoImageRunsUnderTheSameContract:
             f"the Go image's `ExposedPorts` is {exposed!r} — a literal port here can "
             f"drift from the one the server binds"
         )
-        env = go_env(flake)
-        assert env and env["SUBSYSTEM_STORE_PORT"] == port, (
-            f"the Go pod binds {env['SUBSYSTEM_STORE_PORT'] if env else None!r} and the "
-            f"image exposes serverPort={port!r}"
+        assert port == DEPLOY_CONTRACT["port"], (
+            f"the image exposes serverPort={port!r} and the pod binds "
+            f"{DEPLOY_CONTRACT['port']!r} — an exposed port nothing listens on reads as a "
+            f"working route"
         )
 
     def test_the_entrypoint_is_the_GO_SERVER_and_not_an_interpreter(self, flake):

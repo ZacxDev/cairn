@@ -27,9 +27,15 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/pytext"
 	"github.com/ZacxDev/cairn/internal/store"
 )
+
+// EnvToken names the environment fallback for the token SET, in its current spelling.
+// `SUBSYSTEM_STORE_TOKEN` still resolves to it through `internal/envalias`; this file
+// never spells the old name, which is what keeps the ledger in one place.
+const EnvToken = "CAIRN_TOKEN"
 
 // 256 bits, base64url'd without padding, is 43 characters. A shorter token is
 // refused at STARTUP rather than served: a store that came up with a weak token is
@@ -478,11 +484,11 @@ func LoadTokens(tokenFile string, env map[string]string, warn func(string)) ([]T
 				tokenFile, problem, MinTokenChars)
 		}
 		raw = string(data)
-	case env["SUBSYSTEM_STORE_TOKEN"] != "":
-		raw = env["SUBSYSTEM_STORE_TOKEN"]
+	case envalias.Value(env, EnvToken) != "":
+		raw = envalias.Value(env, EnvToken)
 	default:
 		return nil, fmt.Errorf(
-			"no token source: pass --token-file, or set $SUBSYSTEM_STORE_TOKEN. The API is not served without one")
+			"no token source: pass --token-file, or set $%s. The API is not served without one", EnvToken)
 	}
 
 	// 🔴 THE INDEX CARRIED FORWARD IS THE PHYSICAL LINE NUMBER, NOT THE ROW'S

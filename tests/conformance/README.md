@@ -75,8 +75,8 @@ The goldens do not apply to a server started any other way:
 
 | env | value | why |
 |---|---|---|
-| `SUBSYSTEM_STORE_TRUSTED_PROXIES` | `127.0.0.1/32` | the suite connects over loopback, so loopback is the trusted proxy and `CF-Connecting-IP` is honoured |
-| `SUBSYSTEM_STORE_MAX_FAILURES` | a large number | **see below** |
+| `CAIRN_TRUSTED_PROXIES` | `127.0.0.1/32` | the suite connects over loopback, so loopback is the trusted proxy and `CF-Connecting-IP` is honoured |
+| `CAIRN_MAX_FAILURES` | a large number | **see below** |
 | `CAIRN_HOST` | `conformance-oracle` | keeps the real hostname out of a report body. Defence in depth only — the normalization is what makes a golden host-independent |
 
 🔴 **`MAX_FAILURES` is the one that would silently destroy a run.** The lockout
@@ -365,6 +365,218 @@ encodes:
 - **A hostname shorter than four characters**, for the leak guard: a
   three-character host name is a substring of ordinary English, so the short case
   is left uncovered rather than wrongly covered.
+- 🔴 **AN ENVIRONMENT VARIABLE THAT IS PRESENT BUT EMPTY**, which is the AUTHORISED
+  exception below. Two independent reasons, so closing one would not help: no key in
+  `requests.json` carries an environment at all — the corpus describes REQUESTS and the
+  rule decides STARTUP — and the three variables it is about never reach the server as
+  variables anyway, because `oracle.py` passes `--store`, `--host` and `--port` as FLAGS,
+  which override the defaults under test. `ORACLE_ENV`'s three entries are all non-empty.
+  So a green corpus is not evidence about that rule and never will be unless somebody
+  adds such a case. Its guards are named in the section below, one per implementation.
+
+## 🔴 An AUTHORISED exception to "do not change the oracle" — a present-but-empty value is ABSENT
+
+**Decision (operator, this session, on PR #69): `env_aliases.value` treats a variable
+that is PRESENT BUT EMPTY as ABSENT, in the oracle as well as in the client.** The
+standing P1 rule is that the oracle is the golden source and is never edited to make the
+port agree; the standing exception is a defect a contract cannot contain, granted by the
+operator, per site, in writing. The precedent is `seeded=UNREADABLE` on both servers —
+authorised "because a contract cannot include 'sometimes truncate the response
+mid-stream'"; `tests/parity/README.md` records the second, `cmd_validate`'s negative
+count. **Here: a contract cannot include "the same blank value means two different
+things in two implementations of one server".**
+
+**It NARROWS the oracle toward what Go already did.** Every Go call site tested `!= ""`
+before this PR existed (`envOr`, `envInt`, `netid.LimiterSettings`, `authz.LoadTokens`),
+and so did the Python client's `load_config`. The oracle's `main()` was the outlier:
+
+| a blank `CAIRN_PORT` / `CAIRN_STORE_ROOT` | oracle, before | Go, before and after | oracle, now |
+|---|---|---|---|
+| `--store` | `""` — serves a store root nothing named | falls through to the deprecated name, else `/data` | same as Go |
+| `--port` | `ValueError: invalid literal for int() with base 10: ''` | falls through, else 8102 | same as Go |
+
+So it removes a divergence rather than creating one, which is why "authorise and declare"
+was chosen over reverting it on the oracle.
+
+⚠ **THE EXCEPTION IS THAT RULE AND NOTHING ELSE.** It does not license editing the oracle
+anywhere else, and both spellings of the resolver carry the same statement in a comment.
+
+🔴 **"BLANK" MEANS WHITESPACE-ONLY TOO, AND THAT IS A WIDENING OF THIS EXCEPTION RATHER
+THAN A RESTATEMENT OF IT — DECLARED HERE FOR THE SAME REASON THE ORIGINAL WAS.** The rule
+first shipped with blankness spelled INLINE at each of two sites, and the two disagreed:
+`deprecations` tested `.strip()`, the resolver returned the OLD name's value raw. So
+`SUBSYSTEM_STORE_ROOT="  "` resolved to `"  "` — a pod would have taken a whitespace store
+root — *and* warned about nothing, contradicting this file's own "a blank value changes no
+resolution". Both implementations had the identical defect, so `tests/parity/` compared
+them equal and could not see it. It is closed by one named predicate per language
+(`blank` / `_blank`) read by both halves, and the half that MOVED is resolution:
+
+| a whitespace-only `SUBSYSTEM_STORE_ROOT` | oracle at `f74657d` | oracle+Go, before | oracle+Go, now |
+|---|---|---|---|
+| `--store` | `"  "` | `"  "` | falls through to `/data` |
+| a deprecation warning | n/a | none | none |
+
+🔴 **THE TABLE IS ONE WORKED EXAMPLE, NOT THE SCOPE — SIZE THE BLAST RADIUS FROM THE
+PREDICATE, NOT FROM THE ROW.** `blank`/`_blank` is read by `ValueFrom`/`value`, which is
+the single path every alias lookup goes through, so the widening governs **all 11 pairs in
+the ledger** — `CAIRN_CONFIG`, `CAIRN_FAILURE_WINDOW_S`, `CAIRN_LISTEN_HOST`,
+`CAIRN_LOCKOUT_S`, `CAIRN_MAX_FAILURES`, `CAIRN_PORT`, `CAIRN_STORE_ROOT`, `CAIRN_TOKEN`,
+`CAIRN_TOKEN_FILE`, `CAIRN_TRUSTED_PROXIES`, `CAIRN_URL` — across both clients and both
+servers, in the environment and in a config file alike. `SUBSYSTEM_STORE_ROOT` → `--store`
+is written out because it is the row with a store-relocating consequence; a reader who
+took it for the boundary would under-count the change by ten variables.
+
+🔴 **AND "ALL 11 PAIRS IN THE LEDGER" IS ITSELF AN UNDER-COUNT, WHICH IS THE SAME MISTAKE
+ONE LEVEL UP — SIZE IT FROM THE PREDICATE AGAIN.** `blank`/`_blank` is read by
+`ValueFrom`/`value` for **every name passed to them**, and a name with no alias is not a
+special case there: it is the `news[newName] == ""` branch, which returns `""`. So the
+widening governs every variable read through `envalias` **whether or not it is a renamed
+pair**. Six such names exist in this tree, all on the Go side —
+`CAIRN_ROUTES` (`internal/client/instances.go`) and `cmd/cairn-ui`'s `CAIRN_UI_HOST`,
+`CAIRN_UI_PORT`, `CAIRN_UI_SESSION_FILE`, `CAIRN_UI_SESSION_TTL` and
+`CAIRN_UI_CONTROL_JOURNAL`. The Python spelling has none: `cairn` and
+`lib/cairn_instances.py` pass `env_aliases.value` only ledger names, and read
+`CAIRN_ROUTES` off the map directly.
+
+⚠ **THE OTHER FIVE WERE MEASURED RATHER THAN REASONED ABOUT, AND THEY DO NOT ALL MOVE THE
+SAME WAY.** Same two binaries, same world, each name set to whitespace with no flag:
+
+| name | `1659663` | `68cf955` | moved? |
+|---|---|---|---|
+| `CAIRN_UI_PORT` | serves on `0.0.0.0:8103` | serves on `0.0.0.0:8103` | no |
+| `CAIRN_UI_SESSION_TTL` | serves | serves | no (`ParseDuration` refused it either way) |
+| `CAIRN_ROUTES` | `.strip()`ed at its call site | same | no |
+| `CAIRN_UI_HOST` | **exit 1**, `listen tcp: lookup    : no such host` | serves on `0.0.0.0` | loud → silent default |
+| `CAIRN_UI_SESSION_FILE` | **serves**, having created a session table named `"  "` in the process's CWD | takes `/var/lib/cairn-ui/sessions` | silent → the documented default |
+
+🔴 **`CAIRN_UI_SESSION_FILE` IS THE ROW THAT CONTRADICTS THE OBVIOUS SUMMARY, WHICH IS WHY
+IT IS HERE.** A draft of this paragraph said both changed rows went from "a loud failure"
+to "a silent default"; measured, that one went the other way — a live credential table
+silently written to a two-space filename beside whatever directory the pod was started
+from, now a named path a deployment must mount. The widening is an improvement there, a
+regression at `CAIRN_UI_HOST`, and neither is the reason this paragraph exists.
+
+🔴 **THE SIXTH IS WHY THIS PARAGRAPH EXISTS, AND IT SHIPPED AS A DEFECT.**
+`CAIRN_UI_CONTROL_JOURNAL` decides **which authority** `cairn-ui` serves from. Read as
+unset, the surface falls back to the token-file projection, which confers `admin` on
+nobody — every scope page 404s and no share can be recorded, while `/healthz` answers 200.
+Measured on two binaries, one world, `CAIRN_UI_CONTROL_JOURNAL='   '` and no flag:
+`1659663` exited **78** naming the journal, `68cf955` **served**. It arrived in a MERGE —
+the branch that routed `envOr` through `envalias` had no `-control-journal`, the branch
+that added `-control-journal` had no `envalias` — so no test on either side could see it.
+`cmd/cairn-ui`'s `controlJournalDefault` now reads that one name RAW and refuses a value
+that reduces to nothing, which is the ruling `cmd/cairn-server`'s `controlJournalPath`
+already made for the pod's own `CAIRN_CONTROL_JOURNAL`. ⚠ **The other five are left
+resolving through `envalias`**: a whitespace listen address or session path is a louder,
+smaller failure than a silently-swapped authority, and widening the refusal to all of them
+is a decision this change did not make.
+
+⚠ **AND THE CHANGE CLOSES A REAL CROSS-LANGUAGE DIVERGENCE, WHICH IS AN ARGUMENT FOR IT
+THAT NOTHING ELSE HERE STATES.** With `SUBSYSTEM_STORE_URL="   "` exported and no
+`CAIRN_*` set, measured on both clients built from `e878f4c`:
+
+| | at `e878f4c` | at HEAD |
+|---|---|---|
+| Python client | uncaught `ValueError: unknown url type: '/api/v1/snapshot'`, traceback, **exit 1** | `config incomplete: CAIRN_URL not set …`, exit 3 |
+| Go client | `store-unreachable, no cache —     unreachable: unsupported protocol scheme ""`, **exit 3** | byte-identical to the oracle, exit 3 |
+
+Both took the whitespace URL — the shared defect — but the *failure* differed in stdout,
+stderr AND the exit code, which is exactly what `tests/parity/` compares. It did not see
+it because no case exports a whitespace-only deprecated name; the blind set in
+`tests/parity/README.md` is where that belongs.
+
+⚠ **ONE THING THIS IS NOT.** A round-2 note described the divergence as the Go client
+`TrimSpace`ing config-FILE values where the oracle returned them raw. Measured, that is
+false: `internal/client/transport.go` and `cairn` both `strip`/`TrimSpace` a file value at
+parse time, and both base clients answer a whitespace-only file key byte-identically. The
+file path never diverged; the environment path did.
+
+The alternative — warn on any non-empty old value, whitespace included — was rejected
+because it keeps a resolved value no operator can have meant. **The cost is the same one
+the section below already records, one step wider:** a manifest that sets a store root to
+whitespace now relocates writes quietly rather than serving a nonsense path.
+
+🔴 **WATCHED RED, AND HERE IS THE METHOD RATHER THAN A BARE SHA, BECAUSE THE SHA THIS
+SENTENCE USED TO NAME DOES NOT EXIST.** It read "watched RED at `78679b9`", which was a
+local WIP commit made to preserve work across a session limit and discarded by a later
+soft reset — `git for-each-ref --contains 78679b9` returns nothing, so it is unreachable
+in this clone and will never exist in any other. Every matrix anchored to it was
+uncheckable.
+
+The base is **`e878f4c`** — *"Declare the present-but-empty rule as an AUTHORISED P1
+exception, and pin it on both sides"* — the last commit before the one predicate landed.
+The pre-change resolvers are its `lib/env_aliases.py` and `internal/envalias/envalias.go`.
+Re-measured rather than re-spelled, by replaying **today's** test files against that tree
+(`git archive e878f4c` into a scratch dir, copy in `tests/test_env_aliases.py` and
+`internal/envalias/envalias_test.go`, run both):
+
+| | at `e878f4c` | at HEAD |
+|---|---|---|
+| `tests/test_env_aliases.py` | **2 failed**, 35 passed — `test_a_blank_old_name_resolves_as_ABSENT[  ]` and `[\t]` | 37 passed |
+| `go test ./internal/envalias/ -run TestABlankOldName` | **FAIL** — `Value` returned `"  "` / `"\t"`, and `OSValueOr` returned them instead of the fallback | ok |
+
+The `""` row is green at both ends throughout, as the control that the predicate was not
+simply inverted. ⚠ What is being replayed is the CURRENT test against the OLD resolver;
+the test files at `e878f4c` do not carry the whitespace rows, so "run the suite at
+`e878f4c`" would be a different and weaker claim. Same shape as
+`internal/client/envalias_test.go`'s baseline note, and for the same reason.
+
+🔴 **THE COST, WHICH IS REAL AND WAS TAKEN DELIBERATELY.** A blank store root now resolves
+to a default instead of failing, so a manifest bug that BLANKS it relocates writes quietly
+rather than loudly. That is the trade: the old oracle's `""` and `ValueError` were at
+least loud on the pod's own startup line. Measured while proving the guards below can go
+red — with the rule removed on the Go side the server came up and printed `store=` with an
+empty value rather than refusing, so an empty store root is not loud on either
+implementation today. Nothing in either program treats "blank" as an operator error.
+
+⚠ **AND ONE INTERACTION THAT USED TO BE HERE IS GONE, WHICH IS WORTH MORE THAN THE
+INTERACTION WAS.** This paragraph read: both pod images bake the deprecated spelling on
+purpose, so in a container `CAIRN_STORE_ROOT=""` falls through not to the code default but
+to the image's `SUBSYSTEM_STORE_ROOT=/data`. **Neither image sets any store variable any
+more** (`README.md`, § *The environment variables are now `CAIRN_*`*; `flake.nix`'s
+`serverEnv`; `server/Dockerfile`'s `ENV`), so a blank resolves to the code default in a
+container exactly as it does anywhere else — and the values are the same `/data` and `8102`
+the image used to state, pinned against both implementations by
+`tests/test_flake_image_matches_dockerfile.py`. One fewer place where the rule means
+something different depending on where the process runs.
+
+🔴 **THE CORPUS IS BLIND TO THIS, AND THAT IS MEASURED RATHER THAN ASSUMED** — see the
+last bullet of *What this suite CANNOT see*: no `requests.json` key carries an
+environment, and `oracle.py` passes `--store`/`--host`/`--port` as flags, which override
+the very defaults the rule decides. **A green corpus is not evidence about this rule.**
+
+🔴 **WHAT COVERS IT, ON BOTH SIDES, BECAUSE THE CORPUS CANNOT.** Both servers print
+`listening on <host>:<port> store=<root> …`, so both guards read the RESOLVED values out
+of a running process rather than out of the resolver — a unit test on `value_or` stays
+green while `main()` stops calling it, which is the seam nobody owns. Each boots its
+server with the three current names present-but-EMPTY and the deprecated spellings
+carrying the real values, and passes no `--store`/`--host`/`--port` flag, since a flag
+would override the thing under test.
+
+| arm | guard | label | watched RED at |
+|---|---|---|---|
+| oracle | `tests/test_env_aliases.py::TestABlankOLDNameOnTheORACLE` | **regression coverage** — the only arm here that attributes | the real pre-change tree, `git show f74657d:server/server.py`, one half at a time and with the base-era `SUBSYSTEM_STORE_TRUSTED_PROXIES` supplied so nothing dies for a neighbour's reason: blank `SUBSYSTEM_STORE_ROOT` → base prints `store=` empty against the expected `store=/data`; blank `SUBSYSTEM_STORE_PORT` → `ValueError: invalid literal for int() with base 10: ''` while the parser is being BUILT, which a `--port` flag does not rescue |
+| oracle | `tests/test_env_aliases.py::TestABlankValueIsTreatedAsAbsentByTheORACLE` | **INVARIANT GUARD** — relabelled; see below | — |
+| Go | `cmd/cairn-server::TestABlankEnvironmentValueIsTreatedAsABSENT` | **INVARIANT GUARD** — Go never had the other behaviour, so it is not evidence that anything was fixed | `envOr` made to prefer a present-empty value → `listening on :<port> store=` ; `envInt` likewise → `CAIRN_PORT must be a number, got ""`. Two separate mutants, each killed by this guard's own message |
+
+🔴 **THE SECOND ROW WAS CLAIMED AS REGRESSION COVERAGE AND WAS NOT, AND THE CORRECTION IS
+WORTH MORE THAN THE ROW.** It blanks the CURRENT names and supplies the deprecated ones —
+but at `f74657d` the oracle has no `CAIRN_*` handling at all, so blanking `CAIRN_STORE_ROOT`
+there exercises nothing. Measured against the real base tree with the base-era trusted-proxy
+spelling supplied, it prints **exactly the string it asserts** — green. Its red appeared only
+because the fixture named `CAIRN_TRUSTED_PROXIES`, which base does not know, so the base
+oracle refused with `no trusted proxies` **before `main()` ever evaluated a store root or a
+port** — a mutant dying for the wrong reason, under a message that said "a present-but-empty
+value was NOT treated as absent". The earlier "RED ON THE PRE-CHANGE ORACLE" claim was
+measured against MUTANTS of HEAD, not against `f74657d`, and the two are not the same claim.
+The row stays, relabelled, because it still pins the deprecation window's own behaviour and
+because it is the control that stops a `/data`-hardcoding mutant surviving the first row.
+
+Every fixture value is one no constant under test can equal — a temporary directory
+against `/data`, a kernel-assigned port asserted unequal to 8102, `127.0.0.1` against a
+`0.0.0.0` default — and each arm runs a SECOND world and asserts the printed values MOVE.
+A fixture whose only possible output is the default's own value cannot see a mutant that
+hardcodes the default, and would survive a fully green suite.
 
 ## Validating the instrument
 

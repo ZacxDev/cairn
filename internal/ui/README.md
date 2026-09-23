@@ -50,16 +50,28 @@ over-claim respectively:
   deleting a file, and this one can. The `ok` floor in the `go` CI job is what notices a
   package's tests disappearing, and it does not notice one function disappearing.
 
-**Both halves measured, AT A TREE OF SEVENTEEN TEST PACKAGES** — the floor is now `-lt 18`
-(`cmd/cairn-ui` gained tests with the share flow's startup refusals). The numbers below are
-a RECORD OF THAT RUN and are not re-derived here; what survives the count moving is the
-shape, which is the row that matters:
+**Both halves measured, AT A TREE OF SEVENTEEN TEST PACKAGES** — the floor is now `-lt 19`.
+**Two** packages have been added since this battery ran, independently and on different
+branches: `cmd/cairn-ui` with the share flow's startup refusals, and `internal/envalias`
+with the `CAIRN_*` ledger. ⚠ Each of those branches measured EIGHTEEN correctly for its own
+tree; nineteen is a fact about the merge and about neither side, which is why the floor was
+re-measured there rather than carried forward from either. The numbers below are a RECORD OF
+THAT RUN and are not re-derived here — nobody has re-run this battery at nineteen, and
+re-spelling a number is not re-measuring it. What survives the count moving is the shape,
+which is the row that matters, and the dependency: the RED holds only while floor == count.
 
 | tree | `nix build .#cairn-go` | `ok` lines in its check phase | the `go` job's floor as it then stood (`-lt 17`) |
 |---|---|---|---|
-| unmutated | rc 0 | 17 | GREEN at 17 |
+| unmutated | rc 0 | 17 — the count | GREEN |
 | `internal/report` given `_ "maragu.dev/gomponents"` | **rc 1**, `THE IMPORT BAN FAILED for …/cmd/cairn: … internal/report -> maragu.dev/gomponents` | — | — |
-| the same import, **and `depspolicy_test.go` deleted** | **rc 0** — the HTML library is linked into the installed CLI and nix builds it | 16 | **RED at 16** |
+| the same import, **and `depspolicy_test.go` deleted** | **rc 0** — the HTML library is linked into the installed CLI and nix builds it | 16 — one below | **RED** |
+
+🔴 **The third row goes RED only while the floor EQUALS the package count**, and that is
+the fragile part rather than an aside. `-lt <count>` refuses the deletion; `-lt <count-1>`
+buys exactly one free deletion, which is the only deletion anybody would make. The floor
+has been left one behind twice — once inherited, once on the `CAIRN_*` rename branch that
+added `internal/envalias` — so the arithmetic is written out beside the number in
+`.github/workflows/ci.yml` and this row depends on it.
 
 The third row is the whole weakness in one line: the policy is deletable where
 `vendorHash = null` was not, and the only mechanism that observes the deletion is a
@@ -832,6 +844,15 @@ rather than stylistic.
 share can be recorded; without it the authority is the token-file projection and it cannot. The
 flag **switches** the authority rather than adding one — two authorities would be two answers to
 "who may see what".
+
+🔴 **BECAUSE IT SWITCHES THE AUTHORITY, `CAIRN_UI_CONTROL_JOURNAL` IS THE ONE VARIABLE THIS BINARY
+READS RAW RATHER THAN THROUGH `internal/envalias`.** `envalias` reads a whitespace-only value as
+ABSENT, which for a listen address is a default and for this name is a silently different
+authority — the token-file projection, which confers `admin` on nobody. `cmd/cairn-ui`'s
+`controlJournalDefault` refuses it instead, the ruling `cmd/cairn-server`'s `controlJournalPath`
+already makes for the pod. Numbers, the two-binary measurement and what the other four `CAIRN_UI_*`
+names do with whitespace: `tests/conformance/README.md`, the blank-policy section. No copy of them
+here, deliberately.
 
 The first version of this feature reported the read-only condition only when somebody clicked
 Share, and its test asserted a 501. **That test skipped, and the skip is why the design changed:**

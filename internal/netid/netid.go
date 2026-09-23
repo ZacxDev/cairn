@@ -24,6 +24,8 @@ import (
 	"net/netip"
 	"regexp"
 	"strings"
+
+	"github.com/ZacxDev/cairn/internal/envalias"
 )
 
 // ClientIPHeader is THE ONLY HEADER THIS SERVER WILL ACCEPT AS A CLIENT IDENTITY,
@@ -38,7 +40,7 @@ import (
 const ClientIPHeader = "CF-Connecting-IP"
 
 // EnvTrustedProxies names the peer allowlist that makes ClientIPHeader readable.
-const EnvTrustedProxies = "SUBSYSTEM_STORE_TRUSTED_PROXIES"
+const EnvTrustedProxies = "CAIRN_TRUSTED_PROXIES"
 
 // MinTrustedPrefix is A FLOOR ON HOW WIDE ONE ENTRY MAY BE, keyed by address
 // family.
@@ -128,8 +130,8 @@ var proxySeparators = regexp.MustCompile(`[,\s]+`)
 //     every spelling of a default route is one rule rather than a list somebody
 //     has to extend)
 func LoadTrustedProxies(env map[string]string) ([]netip.Prefix, error) {
-	raw, present := env[EnvTrustedProxies]
-	if !present || strings.TrimSpace(raw) == "" {
+	raw := envalias.Value(env, EnvTrustedProxies)
+	if strings.TrimSpace(raw) == "" {
 		return nil, fmt.Errorf(
 			"no trusted proxies: set $%s to the address(es) or CIDR(s) of the proxy that terminates public traffic. The %s header is only read from those peers, and there is deliberately no default",
 			EnvTrustedProxies, ClientIPHeader)

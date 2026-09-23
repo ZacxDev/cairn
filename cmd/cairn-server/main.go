@@ -28,6 +28,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/authz"
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
+	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
 )
@@ -153,14 +154,23 @@ const (
 var refreshInterval = api.AuthorityRefreshInterval
 
 func main() {
-	store := flag.String("store", envOr("SUBSYSTEM_STORE_ROOT", defaultStore), "store root")
-	host := flag.String("host", envOr("SUBSYSTEM_STORE_HOST", "0.0.0.0"), "listen address")
-	port := flag.Int("port", envInt("SUBSYSTEM_STORE_PORT", defaultPort), "listen port")
-	tokenFile := flag.String("token-file", envOr("SUBSYSTEM_STORE_TOKEN_FILE", defaultTokenFile),
+	// 🔴 FIRST, BECAUSE A `flag.String` DEFAULT IS EVALUATED AT THE CALL AND THE NOTICE
+	// HAS TO PRECEDE THE VALUE IT IS ABOUT. It goes to the same stream and through the same
+	// sanitiser as every other startup line this pod emits — an operator greps
+	// `subsystem-store-api:` and a deprecation notice that did not carry the prefix would
+	// not be in what they read.
+	envalias.WarnOnce(envalias.OSDeprecations(), func(line string) {
+		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+line))
+	})
+
+	store := flag.String("store", envOr("CAIRN_STORE_ROOT", defaultStore), "store root")
+	host := flag.String("host", envOr("CAIRN_LISTEN_HOST", "0.0.0.0"), "listen address")
+	port := flag.Int("port", envInt("CAIRN_PORT", defaultPort), "listen port")
+	tokenFile := flag.String("token-file", envOr("CAIRN_TOKEN_FILE", defaultTokenFile),
 		"file holding the bearer token SET, ONE ROW PER LINE, current first (mode 0600). "+
 			"A row is `<token>` (legacy: unrestricted scope) or "+
 			"`<token> <identity> <scope>,<scope>`. FILE FIRST: an agent exec sandbox "+
-			"strips environment variables, so $SUBSYSTEM_STORE_TOKEN is the fallback")
+			"strips environment variables, so $"+authz.EnvToken+" is the fallback")
 	routes := flag.Bool("routes", false,
 		"print the declared `<METHOD> <head>` route ledger and exit. 🔴 THIS IS THE "+
 			"LEDGER THE CONFORMANCE SUITE READS FOR A NON-PYTHON IMPLEMENTATION: the "+
@@ -192,22 +202,22 @@ func main() {
 		// chosen, and the store root is the only thing that can say whether that name
 		// already reaches somebody else's directory. `internal/control` holds no path and
 		// must not grow one; see `warnScopesThatAlreadyExistOnDisk`.
-		os.Exit(runCreateUser(environ(), *store, create, os.Stdout, os.Stderr))
+		os.Exit(runCreateUser(envalias.Environ(), *store, create, os.Stdout, os.Stderr))
 	}
 
-	env := environ()
+	env := envalias.Environ()
 	resolvedTokenFile := *tokenFile
 	// 🔴 `authz.IsTokenFile`, NOT A LOCAL COPY. This test and the loader's guard 2 decide
 	// the SAME question, and the local `!IsDir()` version they used to share accepted a
 	// character device — so `/dev/null` at the default path took this fallback away and
 	// exited 78 where the oracle falls back and serves. See authz.IsTokenFile.
-	if resolvedTokenFile != "" && !authz.IsTokenFile(resolvedTokenFile) && env["SUBSYSTEM_STORE_TOKEN"] != "" {
+	if resolvedTokenFile != "" && !authz.IsTokenFile(resolvedTokenFile) && envalias.Value(env, authz.EnvToken) != "" {
 		// The default path does not exist and an environment token does: use it, and SAY
 		// SO. Falling back silently is how a deployment that lost its secret mount keeps
 		// serving on a token nobody meant to be authoritative.
 		fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
-			"subsystem-store-api: token file %s absent; falling back to $SUBSYSTEM_STORE_TOKEN",
-			resolvedTokenFile)))
+			"subsystem-store-api: token file %s absent; falling back to $%s",
+			resolvedTokenFile, authz.EnvToken)))
 		resolvedTokenFile = ""
 	}
 
@@ -551,16 +561,16 @@ func reloadSafe(line string) string {
 	return b.String()
 }
 
+// envOr and envInt resolve through `internal/envalias`, so a name passed here is the
+// CURRENT spelling and its deprecated alias is found for free. Neither spells an old name
+// — one ledger, one place.
 func envOr(name, fallback string) string {
-	if value, present := os.LookupEnv(name); present && value != "" {
-		return value
-	}
-	return fallback
+	return envalias.OSValueOr(name, fallback)
 }
 
 func envInt(name string, fallback int) int {
-	raw, present := os.LookupEnv(name)
-	if !present || raw == "" {
+	raw := envalias.OSValue(name)
+	if raw == "" {
 		return fallback
 	}
 	value, err := strconv.Atoi(raw)
@@ -569,14 +579,4 @@ func envInt(name string, fallback int) int {
 		os.Exit(exitConfig)
 	}
 	return value
-}
-
-func environ() map[string]string {
-	out := map[string]string{}
-	for _, entry := range os.Environ() {
-		if key, value, found := strings.Cut(entry, "="); found {
-			out[key] = value
-		}
-	}
-	return out
 }

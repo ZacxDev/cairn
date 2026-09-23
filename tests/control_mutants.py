@@ -1823,6 +1823,57 @@ MUTANTS: tuple[Mutant, ...] = (
         "bounds check. `cairn-server -create-user` produces exactly this state — a user and "
         "no credential — so the mutant is the guard's own documented failure case.",
     ),
+    # ---- the THIRD startup refusal: `controlJournalDefault`'s blank policy ----------
+    #
+    # 🔴 THE TWO ROWS ABOVE COVER ONE REFUSAL (`refuseAnAuthorityNobodyCanSignInTo`), AND
+    # THE THREE BELOW WERE THE LEDGER'S GAP RATHER THAN AN UNCOVERED GUARD. The unit tests
+    # in `cmd/cairn-ui/main_test.go` already kill every mutation below — measured, not
+    # assumed — so what was missing was the ROW, not the test: the evidence that this
+    # refusal can go red existed only as a hand-run sweep recorded in a commit message,
+    # which is the exact form the `./cmd/cairn-ui/` entry in `PKGS` exists because of. A
+    # battery that runs in CI, attributes by killer and is count-pinned says it every push;
+    # a commit message says it once.
+    Mutant(
+        name="ui-startup-reads-a-blank-journal-line-as-unset",
+        path="cmd/cairn-ui/main.go",
+        # The CONDITION, not the refusal it guards: the `fmt.Errorf` below stays in the
+        # tree, so `raw` stays used and this is the narrowest expression that can be wrong.
+        old="\tif identity.ValueReducesToNothing(raw) {\n",
+        new="\tif false {\n",
+        killer="TestAWhitespaceControlJournalLineIsRefusedRatherThanReadAsUnset",
+        extra_killers=("TestTheProcessExitsOnAWhitespaceControlJournalLine",),
+        why="deleting the blank policy as belt-and-braces, on the reading that "
+        "`openAuthority`'s `Stat` refuses a whitespace path anyway. It does — with `stat "
+        "'   ': no such file or directory`, which sends an operator to check a mount for a "
+        "path made of spaces instead of to the manifest line they wrote. The process still "
+        "exits 78, so only a test that reads WHICH refusal spoke can see this.",
+    ),
+    Mutant(
+        name="ui-startup-refuses-an-explicitly-empty-journal-line",
+        path="cmd/cairn-ui/main.go",
+        old='\tif raw == "" {\n\t\treturn "", nil\n\t}',
+        new='\tif false {\n\t\treturn "", nil\n\t}',
+        killer="TestAWhitespaceControlJournalLineIsRefusedRatherThanReadAsUnset",
+        why="deleting the early return as redundant — `ValueReducesToNothing(\"\")` is true, "
+        "so the refusal below appears to cover it. The direction is the dangerous one for a "
+        "DEPLOYMENT rather than for authz: a manifest that emits every variable with an "
+        "empty default now stops the surface from starting at all, which is the shape "
+        "`controlJournalDefault`'s own comment declares must remain 'not set'.",
+    ),
+    Mutant(
+        name="ui-startup-does-not-act-on-the-journal-refusal",
+        path="cmd/cairn-ui/main.go",
+        old='\tif journalErr != nil {\n\t\tfmt.Fprintln(os.Stderr, "cairn-ui: "+journalErr.Error())\n'
+        "\t\tos.Exit(exitConfig)\n\t}",
+        new="\t_ = journalErr",
+        killer="TestTheProcessExitsOnAWhitespaceControlJournalLine",
+        why="the wiring, not the predicate: a refusal that is COMPUTED and then not acted "
+        "on. Every in-process test of `controlJournalDefault` stays green because the "
+        "function still returns its error — the observable is a process that BINDS A "
+        "LISTENER, which is why the one case that re-execs this binary as `cairn-ui` is the "
+        "only thing that can see it. It is also why this row costs ~30s: the killing test "
+        "kills it on its DEADLINE, the mutant having made the child serve rather than exit.",
+    ),
 )
 
 

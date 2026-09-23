@@ -78,8 +78,8 @@ bucket, a git repo or an NFS mount:
 # Each agent host: point at the pod and its own token.
 mkdir -p ~/.config/subsystem-store
 cat > ~/.config/subsystem-store/env <<'EOF'
-SUBSYSTEM_STORE_URL=https://store.example.invalid
-SUBSYSTEM_STORE_TOKEN=<this agent's token>
+CAIRN_URL=https://store.example.invalid
+CAIRN_TOKEN=<this agent's token>
 EOF
 
 # Agent A records a finding, attributed to its own session.
@@ -173,6 +173,91 @@ residual 7, and nowhere else on purpose. [`CHANGELOG.md`](CHANGELOG.md) indexes 
 and every later contract change by PR and sha, so a consumer can tell whether one sits
 between the revision they are pinned to and the one they are moving to.
 
+### 🔴 The environment variables are now `CAIRN_*`
+
+Every `SUBSYSTEM_STORE_*` variable has a `CAIRN_*` name. **Both work.** Within one
+source the new name wins: the old one is read only when the new one is unset or blank
+*there*. An old name that is *present* — including when the new one shadows it — prints
+one line per process on stderr naming its replacement. Nothing breaks on the day you
+upgrade, and nothing silently half-migrates.
+
+| set this | instead of | what it is |
+|---|---|---|
+| `CAIRN_URL` | `SUBSYSTEM_STORE_URL` | client: the pod's base URL |
+| `CAIRN_TOKEN` | `SUBSYSTEM_STORE_TOKEN` | client: the bearer token · pod: the token-SET fallback when no token file is readable |
+| `CAIRN_CONFIG` | `SUBSYSTEM_STORE_CONFIG` | client: where the config file lives |
+| `CAIRN_TOKEN_FILE` | `SUBSYSTEM_STORE_TOKEN_FILE` | pod and `cairn-ui`: the token file |
+| **`CAIRN_STORE_ROOT`** | `SUBSYSTEM_STORE_ROOT` | pod and `cairn-ui`: the store root |
+| **`CAIRN_LISTEN_HOST`** | `SUBSYSTEM_STORE_HOST` | pod: the listen address |
+| `CAIRN_PORT` | `SUBSYSTEM_STORE_PORT` | pod: the listen port |
+| `CAIRN_TRUSTED_PROXIES` | `SUBSYSTEM_STORE_TRUSTED_PROXIES` | pod: the peer allowlist that makes `CF-Connecting-IP` readable |
+| `CAIRN_MAX_FAILURES` | `SUBSYSTEM_STORE_MAX_FAILURES` | pod: failed auths before a lockout |
+| `CAIRN_FAILURE_WINDOW_S` | `SUBSYSTEM_STORE_FAILURE_WINDOW_S` | pod: the window they must fall inside |
+| `CAIRN_LOCKOUT_S` | `SUBSYSTEM_STORE_LOCKOUT_S` | pod: the lockout duration |
+
+⚠ **Two rows are not the mechanical prefix swap, and copying the pattern instead of the
+table will break a pod.** `CAIRN_HOST` was already taken — it is the human-readable
+machine *label* that appears in rendered output — so the pod's listen address is
+`CAIRN_LISTEN_HOST`. And `CAIRN_ROOT` would read as a sibling of the client-side
+`CAIRN_MIRROR_ROOT` when it is the *pod's* store root and not a client-side name at all,
+so the pod's store root is `CAIRN_STORE_ROOT`.
+
+**The config file's KEYS count too.** `~/.config/subsystem-store/env` and
+`instances/<alias>.env` accept either spelling with the same precedence, and a deprecated
+key there warns with a line that names *the file* rather than a `$VAR`, because that is
+where you have to go to change it.
+
+🔴 **BUT NEW-BEATS-OLD IS A RULE WITHIN ONE SOURCE, AND THE SOURCES COMPOSE THE OTHER WAY
+ROUND. READ THIS BEFORE MIGRATING A CONFIG FILE.** For the **default** instance the whole
+environment is consulted first, and only if it yields nothing is the file read — so an
+**old name exported beats a new name in the file**:
+
+```
+~/.config/subsystem-store/env:   CAIRN_URL=https://new.example.invalid
+environment:                     SUBSYSTEM_STORE_URL=https://old.example.invalid
+→ the client uses old.example.invalid
+```
+
+Migrating the file alone therefore changes nothing while the old variable is still
+exported, and the deprecation line — which describes only its own source — will not tell
+you so. `unset SUBSYSTEM_STORE_URL` (and `SUBSYSTEM_STORE_TOKEN`) in the same change, or
+export the new names too. ⚠ For a **non-default** instance the environment is not
+consulted at all, so there the file is the only thing that decides.
+
+🔴 **The pod images set NO store variable, in either spelling — so in a container there
+is no image default for your `env:` to argue with.** `server/Dockerfile` and
+`packages.server-image`/`server-image-go` used to bake `SUBSYSTEM_STORE_ROOT=/data`,
+`SUBSYSTEM_STORE_PORT=8102` and
+`SUBSYSTEM_STORE_TOKEN_FILE=/run/secrets/subsystem-store/token`. Every one of those
+values was identical to the default the server already falls back to, so they configured
+nothing — while tripping the deprecation sweep at every pod start with three lines no
+manifest could clear, because the sweep reads the *whole* process environment and an
+image `ENV` is part of it. They are gone. What this means for you:
+
+- **Either spelling works in a container, and neither is shadowed.** Set `CAIRN_STORE_ROOT`
+  or `SUBSYSTEM_STORE_ROOT` in your Deployment; whichever you set is what the pod reads.
+  Set neither and it resolves `/data`, port `8102`, token
+  `/run/secrets/subsystem-store/token` — the same three values the image used to state.
+- **Migrating your Deployment to `CAIRN_*` now silences the warnings.** It did not before:
+  the image's own `ENV` kept emitting them regardless of what your manifest said.
+- ⚠ **`docker inspect` no longer documents the store root, port or token path.** That is
+  the accepted cost, and **the startup line replaces two of the three, not all three.**
+  Both pods print `listening on <host>:<port> store=<root> token-ids=… …`, so the port and
+  the store root are readable from the log of a running container. `token-ids=` is the
+  credential FINGERPRINTS, not the file they came from — the token PATH appears in no
+  startup line on either implementation. Where it is observable: the Go server's
+  `cairn-server -h`, which prints `(default "/run/secrets/subsystem-store/token")`; the
+  oracle's `--help` does not print its default at all. Both also emit the path to stderr
+  in one case only — `token file <path> absent; falling back to $CAIRN_TOKEN` — which is a
+  failure notice, not documentation. What keeps the three from drifting is
+  `tests/test_flake_image_matches_dockerfile.py`, which pins them against both
+  implementations' code defaults.
+
+**When the old names stop being read:** when the Python client (`packages.cairn`) is
+retired, which is this arc's P8 milestone. Not a date — there is no semver here to hang
+one on (`flake.nix` sets `version = self.shortRev`), and a milestone is something you can
+check.
+
 ## The client — `cairn`
 
 | you want | run |
@@ -210,8 +295,10 @@ local one.
 ### One instance, or several
 
 The client is configured by `~/.config/subsystem-store/env` —
-`SUBSYSTEM_STORE_URL` and `SUBSYSTEM_STORE_TOKEN`, environment variables of the
-same name winning — and that instance is called `personal`. A second instance is
+`CAIRN_URL` and `CAIRN_TOKEN`, environment variables of the same name winning
+(and the old `SUBSYSTEM_STORE_*` spellings still accepted in both places, see
+the section *The environment variables are now `CAIRN_*`* above) —
+and that instance is called `personal`. A second instance is
 an **additive** file at `~/.config/subsystem-store/instances/<alias>.env` with its
 own cache root (`~/.cache/subsystem-store-<alias>`) and its own sync stamp; the
 default instance's cache root does not move. Which instance a scope belongs to is
@@ -284,16 +371,47 @@ nix build github:ZacxDev/cairn#cairn-ui
 `-token-file` defaults to the pod's secret mount
 (`/run/secrets/subsystem-store/token`), so on a machine without one the binary
 exits **78** and serves nothing. Three ways to supply it, all measured:
-`-token-file <path>`; `SUBSYSTEM_STORE_TOKEN_FILE=<path>` with no flag; or
-`-token-file=` (explicitly empty) plus `SUBSYSTEM_STORE_TOKEN=<row>`, which is the
+`-token-file <path>`; `CAIRN_TOKEN_FILE=<path>` with no flag; or
+`-token-file=` (explicitly empty) plus `CAIRN_TOKEN=<row>`, which is the
 env fallback the binary's own refusal names. Single-dash flags: this uses Go's
 stdlib `flag`, not the client's `--long` style. `-h` lists seven — `-store`
-(`SUBSYSTEM_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
-`-token-file` (`SUBSYSTEM_STORE_TOKEN_FILE`), `-session-file`
+(`CAIRN_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
+`-token-file` (`CAIRN_TOKEN_FILE`), `-session-file`
 (`CAIRN_UI_SESSION_FILE`), `-session-ttl` (`CAIRN_UI_SESSION_TTL`) and
 `-control-journal` (`CAIRN_UI_CONTROL_JOURNAL`) — and every default is env-resolved,
 so what `-h` prints depends on your environment. It reads the store **from disk**
 rather than over HTTP, and authenticates against the same token file as the pod.
+
+🔴 **"Env-resolved" does NOT mean "the variable and the flag are interchangeable", and
+`CAIRN_UI_CONTROL_JOURNAL` is where that matters.** An unset variable and an explicitly
+EMPTY one both mean "no control journal" — the shape a manifest that emits every variable
+with an empty default produces. A value that reduces to **nothing but whitespace** is
+refused at **78**, naming the variable, rather than read as unset: read as unset this
+surface would come up on the token-file projection, which confers `admin` on nobody, so
+every scope page answers 404 and no share can be recorded while `/healthz` still answers
+200. That is the same ruling the pod makes for its own `CAIRN_CONTROL_JOURNAL`. The **flag**
+path refuses the same value for a different reason — `-control-journal '   '` has always
+failed its `stat` — so the two arrival paths agree for every value that does **not name an
+existing file**, which they did not between `1659663` and `68cf955`.
+
+⚠ **THEY DO NOT AGREE ON A VALUE THAT DOES, AND THE FLAG IS THE LENIENT SIDE — MEASURED,
+NOT INFERRED.** With a control journal in the working directory whose filename is literally
+three spaces, `-control-journal '   '` **serves**, announcing
+`sharing writable (control journal    )`, while `CAIRN_UI_CONTROL_JOURNAL='   '` exits
+**78** naming the variable. The flag never meets the blank policy at all — it meets
+`openAuthority`'s `stat`, which is a question about the filesystem and not about the
+spelling — so "the two paths refuse the same set" is true of every value anyone would
+type and false in general. **It is left open, and the reason is a judgement rather than an
+argument from the mechanism**: the fix is available and obvious — run the same blank policy
+over the flag's value too — and it was not taken because the direction is safe (the flag is
+the LENIENT side, so nothing is refused that should be served), because naming a file with
+nothing but whitespace is not a thing an operator does, and because a check on the flag
+would refuse a path the filesystem resolves. Nothing gates it; the agreement test's own
+docstring says which values it covers.
+
+The other six variables above are resolved by
+`internal/envalias`, which reads a whitespace-only value as **absent** and silently takes
+the code default; `tests/conformance/README.md` measures what each one does with one.
 
 🔴 **Two backends are absent, for two different reasons, and conflating them is the
 misreading to avoid.** Supabase is simply *not wired yet* and returns with the
@@ -422,6 +540,8 @@ commit. The full rules agents work under live in [`AGENTS.md`](AGENTS.md).
 
 ## Naming
 
-The project is **cairn**. Some identifiers still read `subsystem_store` /
-`SUBSYSTEM_STORE_*` — accepted aliases, kept so existing deployments don't
-need a coordinated cutover. New names use `cairn` / `CAIRN_*`.
+The project is **cairn**. Identifiers that are not environment variables still read
+`subsystem_store` — the `lib/` module names, `~/.config/subsystem-store/`,
+`/run/secrets/subsystem-store/`, the `subsystem-recall` CLI alias. Those are accepted
+aliases, kept so existing deployments don't need a coordinated cutover. The
+environment variables have been renamed; see the migration note below.
