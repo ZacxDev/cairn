@@ -18,7 +18,7 @@ properties are load-bearing and none of them is visible in a green run:
     one condition the step exists to surface went invisible. The negative
     controls are COUNTED one per package and the positive half is pinned by the
     step's own `ref` and by its whole command text;
-  * both pods must be pushed, to their own packages, and each must carry ITS OWN
+  * every published image must go to its OWN package, and each must carry ITS OWN
     controls — the Python pod's positive control is an interpreter `-c` probe and
     the Go image's `Cmd[0]` is a server binary that has no `-c`;
   * the whole PYTHON half must complete before the first GO step. Nothing in this
@@ -66,19 +66,25 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-image.yml"
 # rather than failing against one it cannot write.
 PACKAGE = "cairn-store"
 PACKAGE_GO = "cairn-store-go"
+# 🔴 THE THIRD PACKAGE IS NOT A POD. `cairn-ui` serves no `/api/v1` route, so it is
+# not interchangeable with either pod and gets its own package rather than a tag of
+# one — a consumer who pulled the wrong one would get a container that starts,
+# health-checks and answers nothing they asked for.
+PACKAGE_UI = "cairn-ui"
 
 # Every push destination must name one of these two expressions, so the
 # assertion about what they RESOLVE to covers all of them rather than one.
 IMAGE_EXPRESSION = "${{ steps.ref.outputs.image }}"
 IMAGE_EXPRESSION_GO = "${{ steps.ref.outputs.image_go }}"
-IMAGE_EXPRESSIONS = {IMAGE_EXPRESSION, IMAGE_EXPRESSION_GO}
+IMAGE_EXPRESSION_UI = "${{ steps.ref.outputs.image_ui }}"
+IMAGE_EXPRESSIONS = {IMAGE_EXPRESSION, IMAGE_EXPRESSION_GO, IMAGE_EXPRESSION_UI}
 
 # The flake outputs this workflow is allowed to publish, as a SET of package
 # attribute names rather than a substring search. `server-image` is a PREFIX of
 # `server-image-go`, so `"…x86_64-linux.server-image" in text` is satisfied by a
 # file that builds only the Go one — a guard that reads as covering both while
 # covering neither.
-PUBLISHED_FLAKE_PACKAGES = {"server-image", "server-image-go"}
+PUBLISHED_FLAKE_PACKAGES = {"server-image", "server-image-go", "ui-image"}
 
 # The tag whose only job is to not exist. Written as a concatenation so the 40
 # zeros are produced by the code rather than counted by eye, and asserted to be
@@ -378,7 +384,7 @@ def absent_tag_inspects(text: str) -> list[str]:
     """Every anonymous inspect of the tag that must not exist — the negative control.
 
     🔴 A LIST, NOT A BOOLEAN. The earlier guard asked `ABSENT_TAG in text`, which
-    two published images turn into a guard on ONE of them: delete either
+    several published images turn into a guard on ONE of them: delete any
     package's control and the string is still there, so the mutant survives. A
     count against the number of published images cannot be satisfied by the
     other image's control.
@@ -491,7 +497,7 @@ def test_every_published_tag_is_one_of_the_two_immutable_ones(text: str) -> None
     images = {dest.rpartition(":")[0] for dest in pushed}
     assert images == IMAGE_EXPRESSIONS, (
         f"the push destinations name {sorted(images)}; every one of them must be "
-        f"one of {sorted(IMAGE_EXPRESSIONS)}. Two repositories, each computed "
+        f"one of {sorted(IMAGE_EXPRESSIONS)}. One repository per image, each computed "
         "once, is what makes the next assertion — about the registries those "
         "expressions resolve to — cover every push rather than one."
     )
@@ -613,7 +619,7 @@ def test_the_publish_builds_the_FLAKE_image_and_not_a_third_one(text: str) -> No
     assert built == PUBLISHED_FLAKE_PACKAGES, (
         f"this workflow builds {sorted(built)}; the ledger is "
         f"{sorted(PUBLISHED_FLAKE_PACKAGES)}. Every published artefact must come "
-        "from a flake output, and both pods must come from THIS file rather than "
+        "from a flake output, and every published image must come from THIS file rather than "
         "one of them quietly dropping out of the publish path."
     )
     builds = docker_build_invocations(text)
@@ -718,6 +724,25 @@ PINNED_PUSH_STEPS = {
         '"docker-archive:${{ steps.build-go.outputs.archive }}" '
         '"docker://${{ steps.ref.outputs.image_go }}:${{ steps.ref.outputs.version_tag }}"'
     ),
+    # 🔴 THE UI'S TWO PUSHES ARE PINNED HERE AND THAT CLOSED A GAP RATHER THAN
+    # FOLLOWING A CONVENTION. Adding the leg to the workflow left this dict at FOUR
+    # while SIX push steps existed, and every test in this file stayed GREEN: the
+    # membership check is `set(PINNED_PUSH_STEPS) - set(bodies)`, which asks whether
+    # the pinned ones are present and says nothing about a push nobody pinned. So an
+    # unpinned destination — the one thing this dict exists to make unrewordable —
+    # was invisible. Measured while adding the leg.
+    "push the UI image's immutable sha tag": (
+        "set -euo pipefail "
+        '"${{ steps.skopeo.outputs.bin }}" copy --all '
+        '"docker-archive:${{ steps.build-ui.outputs.archive }}" '
+        '"docker://${{ steps.ref.outputs.image_ui }}:${{ steps.ref.outputs.sha_tag }}"'
+    ),
+    "push the UI image's version tag, on a tag push only": (
+        "set -euo pipefail "
+        '"${{ steps.skopeo.outputs.bin }}" copy --all '
+        '"docker-archive:${{ steps.build-ui.outputs.archive }}" '
+        '"docker://${{ steps.ref.outputs.image_ui }}:${{ steps.ref.outputs.version_tag }}"'
+    ),
 }
 
 # The step whose body is the Go pod's own control set, and the Python one it must
@@ -730,6 +755,7 @@ IMAGE_CONTROL_STEPS = (PYTHON_CONTROL_STEP, GO_CONTROL_STEP)
 # holds no credential, which is the question this whole workflow exists for.
 PYTHON_PROOF_STEP = "PROVE the published image is pullable with NO credentials"
 GO_PROOF_STEP = "PROVE the published GO image is pullable with NO credentials"
+UI_PROOF_STEP = "PROVE the published UI image is pullable with NO credentials"
 
 # Each proof step's OWN image expression and OWN ghcr package. The mapping is
 # what `test_each_anonymous_proof_inspects_ITS_OWN_package` reads; a proof aimed
@@ -737,6 +763,7 @@ GO_PROOF_STEP = "PROVE the published GO image is pullable with NO credentials"
 PROOF_STEP_PACKAGES = {
     PYTHON_PROOF_STEP: (IMAGE_EXPRESSION, PACKAGE),
     GO_PROOF_STEP: (IMAGE_EXPRESSION_GO, PACKAGE_GO),
+    UI_PROOF_STEP: (IMAGE_EXPRESSION_UI, PACKAGE_UI),
 }
 
 # A line of `api.DeclaredRoutes()` is `"<METHOD> <head>"` — `internal/api/routes.go`
@@ -797,7 +824,11 @@ def test_the_whole_PYTHON_half_runs_before_the_first_GO_step(text: str) -> None:
 
 
 def test_both_pods_are_published_and_every_push_step_is_pinned_WHOLE(text: str) -> None:
-    """Four push steps, each pinned by its entire normalised command text.
+    """Every push step, pinned by its entire normalised command text.
+
+    ⚠ NO COUNT IN THIS DOCSTRING, DELIBERATELY. It said "Four", the UI leg made it six,
+    and nothing went red — the dict IS the count, and a number restated beside it is one
+    more thing to forget.
 
     A reword cannot walk past this, a deleted step cannot hide behind the other
     three, and a destination edited to a different package fails on the string
@@ -814,7 +845,7 @@ def test_both_pods_are_published_and_every_push_step_is_pinned_WHOLE(text: str) 
     assert actual == PINNED_PUSH_STEPS, (
         "a push step's command text moved. Every difference is shown by pytest "
         "below; this is pinned WHOLE rather than by keyword because a guard on "
-        "words is walkable by rewording, and what these four lines do — which "
+        "words is walkable by rewording, and what these lines do — which "
         "archive goes to which repository under which tag — is the contract."
     )
 
@@ -923,7 +954,7 @@ def step_conditions(text: str) -> dict[str, str]:
 #: ✅ **DECIDED: PIN IT** — the second of the three "unpinned by construction"
 #: entries. `step_bodies` normalises the `run:` block and never sees the `if:`,
 #: so the line that makes "a version tag is published on a TAG PUSH ONLY" true is
-#: unasserted, while the four push steps' bodies are pinned whole.
+#: unasserted, while every push step's body is pinned whole.
 #:
 #: 🔴 The failure it closes: delete the `if:` and both steps run on every push to
 #: `main`. `steps.ref.outputs.version_tag` is empty there, so the destination
@@ -1099,7 +1130,8 @@ def test_the_go_package_documents_that_its_FIRST_publish_will_fail(text: str) ->
 
 
 # ---------------------------------------------------------------------------
-# The four CONTROL steps, pinned the same way the four push steps are.
+# The CONTROL steps, pinned the same way the push steps are. ⚠ NO COUNT: this said
+# "four" of each and the UI leg made it six of each with nothing going red.
 #
 # 🔴 MEASURED: BEFORE THIS, THREE OF THE FILE'S MOST LOAD-BEARING STEPS WERE
 # PINNED BY NOTHING, AND ALL THREE MUTANTS SURVIVED A FULLY GREEN SUITE.
@@ -1126,7 +1158,7 @@ def test_the_go_package_documents_that_its_FIRST_publish_will_fail(text: str) ->
 # assertion: a variable that EXISTS is not a guard, only a branch on it is.
 #
 # 🔴 SO: THE WHOLE NORMALISED BODY, BY EQUALITY, AND THE COST IS ACCEPTED. A
-# cosmetic reformat of any of these four steps now fails this test. That is the
+# cosmetic reformat of any of these steps now fails this test. That is the
 # price of a machine-readable claim about what the step DOES, and it is this
 # repository's own recorded remedy: the `Env` guard was closed by pinning the
 # whole normalised expression and deleting the key parsing, because teaching a
@@ -1245,13 +1277,66 @@ PINNED_CONTROL_STEPS = {
         'YMOUS PULL OK: $ref" echo "digest: $digest" echo "pin this in a de'
         'ployment: $ref"'
     ),
+    # 🔴 THE UI LEG'S TWO STEPS, AND PINNING THEM CLOSED A GAP RATHER THAN FOLLOWING
+    # A CONVENTION. Adding the leg left this dict at FOUR while SIX control/proof
+    # steps existed, and every test in this file stayed GREEN — the membership check
+    # is `set(PINNED_CONTROL_STEPS) - set(bodies)`, which asks whether the pinned ones
+    # are present and says NOTHING about a control nobody pinned. So the two steps
+    # deciding whether a root-owned session dir or a private package reaches a PUBLIC
+    # registry were exactly the two this file could not see. Measured while adding
+    # them; the same blind spot exists in `PINNED_PUSH_STEPS` and is closed there too.
+    'control — the UI image owns its session dir, runs, and refuses by name': (
+        'set -euo pipefail archive="${{ steps.build-ui.outputs.archive }}" '
+        'ref=$(docker load -i "$archive" | sed -n \'s/^Loaded image: //p\' | head '
+        '-1) if [ -z "$ref" ]; then echo "REFUSING TO PUBLISH: docker load named '
+        'no image." exit 1 fi echo "loaded $ref" want_uid=$(docker image inspect '
+        '"$ref" --format \'{{.Config.User}}\' | cut -d: -f1) if [ -z "$want_uid" ] '
+        '|| [ "$want_uid" = "0" ]; then echo "REFUSING TO PUBLISH: the image '
+        'declares User \'$want_uid\'." echo " A browser surface holding a live '
+        'session table must not run as root." exit 1 fi owner=$(docker run --rm '
+        '--entrypoint /bin/busybox "$ref" stat -c \'%u\' /var/lib/cairn-ui) if [ '
+        '"$owner" != "$want_uid" ]; then echo "REFUSING TO PUBLISH: '
+        '/var/lib/cairn-ui is owned by $owner, not $want_uid." echo " The session '
+        'table cannot be written, so the surface refuses to start (78)." exit 1 '
+        'fi echo "control: /var/lib/cairn-ui is owned by $owner, and User is '
+        '$want_uid — OK" set +e out=$(docker run --rm "$ref" 2>&1) code=$? set -e '
+        'echo "$out" | head -20 if [ "$code" -eq 0 ]; then echo "REFUSING TO '
+        'PUBLISH: the UI image exited 0 with no configuration." echo " It must '
+        'refuse: a surface that comes up misconfigured looks healthy." exit 1 fi '
+        'case "$out" in *"cairn-ui:"*) echo "control: the UI image runs and '
+        'refuses by name — OK" ;; *) echo "REFUSING TO PUBLISH: it exited $code '
+        'without naming itself." echo " Expected a \'cairn-ui:\' prefixed refusal; '
+        'got the above." exit 1 ;; esac'
+    ),
+    'PROVE the published UI image is pullable with NO credentials': (
+        "set -euo pipefail ref='${{ steps.ref.outputs.image_ui }}:${{ "
+        "steps.ref.outputs.sha_tag }}' skopeo='${{ steps.skopeo.outputs.bin }}' "
+        'set +e $skopeo inspect --no-creds "docker://${{ '
+        'steps.ref.outputs.image_ui '
+        '}}:sha-0000000000000000000000000000000000000000" >/dev/null 2>&1 '
+        'control_rc=$? set -e if [ "$control_rc" -eq 0 ]; then echo "REFUSING: an '
+        'anonymous inspect of a tag that does not exist SUCCEEDED." echo " This '
+        'check cannot distinguish a public image from anything." exit 1 fi echo '
+        '"negative control: absent tag refused anonymously (rc=$control_rc) — OK" '
+        'set +e out=$($skopeo inspect --no-creds "docker://$ref" 2>&1) rc=$? set '
+        '-e if [ "$rc" -ne 0 ]; then echo "$out" echo echo "REFUSING: $ref was '
+        'PUSHED but cannot be pulled without credentials." echo echo " If this is '
+        'the FIRST publish of this package it may have been" echo " created '
+        'private. GitHub exposes no REST route for the flip, so" echo " this URL '
+        'is the whole remedy:" echo " https://github.com/users/${{ '
+        'github.repository_owner }}/packages/container/cairn-ui/settings" echo " '
+        '-> Danger Zone -> Change visibility -> Public" exit 1 fi echo "$out" | '
+        'head -20 digest=$(printf \'%s\' "$out" | sed -n \'s/.*"Digest": '
+        '"\\([^"]*\\)".*/\\1/p\' | head -1) echo echo "ANONYMOUS PULL OK: $ref" echo '
+        '"digest: $digest" echo "pin this in a deployment: $ref"'
+    ),
 }
 
 
 def test_every_control_step_is_pinned_WHOLE(text: str) -> None:
     """The two image controls and the two anonymous-pull proofs, by equality.
 
-    These four steps are the whole of what this workflow ASSERTS before it makes
+    These steps are the whole of what this workflow ASSERTS before it makes
     two images public, and until now none of them was pinned by anything. A
     deleted block, a re-aimed reference and a softened refusal all left the suite
     green; each is a different string here.
