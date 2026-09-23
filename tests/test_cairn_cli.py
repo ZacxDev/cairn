@@ -1164,7 +1164,18 @@ class TestLsEntriesListsENTRIES:
 
         `gizmo-notes` then holds one sheet (excluded), two lookalikes and two
         plain entries: five files, four listed, three README-shaped names, two
-        plain ones. No two of those numbers are equal.
+        plain ones — 5, 4, 3, 2, no two of them equal, so no blanket
+        subtract-one, fold or prefix match reproduces the asserted listing.
+
+        🔴 THE SECOND PLAIN ENTRY IS WHAT MAKES THAT ARITHMETIC TRUE, AND IT WAS
+        ADDED BECAUSE THE SENTENCE WAS FALSE FOR ITS OWN FIXTURE. Without
+        `second-thing.md` the scope held FOUR files, THREE listed and THREE
+        README-shaped — "listed" and "README-shaped" both 3, so a rule that
+        listed exactly the README-shaped names would have printed the same count
+        this docstring offered as proof that it could not. The Go twin
+        (`internal/client/lsentries_test.go::
+        TestLsEntriesListsAREADMELookalikeAsAnOrdinaryEntry`) always seeded the
+        second plain entry; only the prose had been copied across.
 
         ⚠ `README.md` AND `readme.md` IN ONE DIRECTORY IS TWO FILES ON LINUX AND
         ONE ON A CASE-FOLDING FILESYSTEM. CI is `ubuntu-latest`; the reachability
@@ -1182,6 +1193,9 @@ class TestLsEntriesListsENTRIES:
         (source_store / "gizmo-notes" / "README-old.md").write_text(
             _entry("readme-old", "gizmo-notes", "- 2026-01-07: also an entry.")
         )
+        (source_store / "gizmo-notes" / "second-thing.md").write_text(
+            _entry("second-thing", "gizmo-notes", "- 2026-01-08: the second plain one.")
+        )
         cache = tmp_path / "cache"
         assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
         landed = sorted(p.name for p in (cache / "gizmo-notes").iterdir())
@@ -1190,6 +1204,7 @@ class TestLsEntriesListsENTRIES:
             "README.md",
             "other-thing.md",
             "readme.md",
+            "second-thing.md",
         ], landed
 
         proc = run_cairn("ls-entries", "--no-sync", url=None, cache=cache)
@@ -1199,6 +1214,59 @@ class TestLsEntriesListsENTRIES:
             "gizmo-notes/README-old.md",
             "gizmo-notes/other-thing.md",
             "gizmo-notes/readme.md",
+            "gizmo-notes/second-thing.md",
+            "widget-cfg/thing-alpha.md",
+            "widget-cfg/thing-beta.md",
+        ], proc.stdout
+
+    def test_a_cache_ROOT_carrying_a_glob_METACHARACTER_still_lists_its_entries(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """⚠ AN INVARIANT GUARD ON THIS CLIENT, NOT REGRESSION COVERAGE — IT PASSES
+        AT `a41dd02`, AND ITS GO TWIN DOES NOT.
+
+        `cmd_ls_entries` globs `cache.glob("*/*.md")`, where `cache` is the ANCHOR
+        and only `*/*.md` is the pattern, so a `[` in the operator's own directory
+        name is matched literally. The Go client built the whole thing as one
+        pattern — `filepath.Glob(filepath.Join(cache, "*", "*.md"))` — so
+        `filepath.Match` returned `ErrBadPattern`, the error was discarded, and
+        `ls-entries` printed NOTHING at exit 0 over this same cache. This row is
+        what pins the oracle's half of that so a future rewrite cannot quietly
+        adopt the Go spelling; the behavioural red→green is
+        `internal/client/lsentries_test.go::
+        TestLsEntriesReadsACacheROOTCarryingAGlobMetacharacter`.
+
+        🔴 THE PARITY GATE CANNOT SEE THIS PAIR. No `world.py` cache root carries a
+        metacharacter, so both clients were compared over roots where the two
+        spellings agree.
+        """
+        cache = tmp_path / "wid[get"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 THE REACHABILITY CONTROLS. Two of them, because either alone leaves
+        # this row able to pass over a world the difference cannot reach: the
+        # root must actually carry the metacharacter, and the sync must actually
+        # have landed entries under it.
+        assert "[" in str(cache), cache
+        assert (cache / "widget-cfg" / "thing-alpha.md").is_file(), sorted(
+            str(p) for p in cache.rglob("*.md")
+        )
+        # The POSITIVE CONTROL for the mechanism, run here against this very
+        # root: the oracle's own call — the anchor as an OBJECT, `*/*.md` as the
+        # pattern — finds every entry under it, so the `[` is a character in a
+        # directory name and not the start of a character class. The Go client
+        # joined the two into one pattern and could not make that distinction;
+        # that is the entire difference between the two clients.
+        assert sorted(p.name for p in cache.glob("*/*.md")) == [
+            "other-thing.md",
+            "thing-alpha.md",
+            "thing-beta.md",
+        ], sorted(str(p) for p in cache.rglob("*.md"))
+
+        proc = run_cairn("ls-entries", "--no-sync", url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert sorted(proc.stdout.split()) == [
+            "gizmo-notes/other-thing.md",
             "widget-cfg/thing-alpha.md",
             "widget-cfg/thing-beta.md",
         ], proc.stdout

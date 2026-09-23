@@ -131,47 +131,89 @@ func LsEntries(env Env, opts Options) (int, error) {
 		if label != "" {
 			prefix = "[" + label + "] "
 		}
-		matches, _ := filepath.Glob(filepath.Join(cache, "*", "*.md"))
-		sort.Strings(matches)
-		for _, path := range matches {
-			// 🔴 A SCOPE'S `README.md` IS ITS POLICY SHEET, NOT AN ENTRY — AND THIS
-			// VERB IS THE ONE THAT ADVERTISES ITSELF AS "what the cache actually
-			// holds". The glob above is the bare `*.md` walk the loader deliberately
-			// does NOT use, so until this line existed `ls-entries` listed every
-			// scope's sheet as `<scope>/README.md` — measured twelve of them on a
-			// populated cache, under a banner naming the store they came from. The
-			// predicate is `store.IsEntryFileName`, the LOADER'S rule imported rather
-			// than respelled, because respelling it is how the two answers came apart.
-			//
-			// ⚠ FILTERED AFTER THE GLOB RATHER THAN BY WALKING SCOPE DIRECTORIES — AND
-			// THE ORDER IS *NOT* WHAT FORCES THAT, THOUGH AN EARLIER FORM OF THIS
-			// COMMENT SAID IT WAS. MEASURED on a cache holding `a/y.md`, `a-b/x.md`, a
-			// dot-named scope directory and a symlinked one: enumerating scope
-			// directories with `os.ReadDir`+`os.Stat`, calling `store.EntryFileNames`
-			// per scope and sorting the joined `scope/name` strings reproduces this
-			// listing EXACTLY — the same SET (both walks visit dot-named and symlinked
-			// scope directories) and the same ORDER (`sort.Strings` over `scope/name` is
-			// the same byte comparison as over the full paths, which share the cache
-			// prefix). So nothing measured forces the glob in THIS client; what keeps it
-			// is that the oracle globs and the parity row compares the two listings line
-			// for line.
-			//
-			// 🔴 IN THE ORACLE THE ORDER *IS* LOAD-BEARING — AND IN THE OPPOSITE
-			// DIRECTION TO WHAT THIS COMMENT USED TO CLAIM, WHICH IS A DIVERGENCE THE
-			// PARITY GATE CANNOT SEE. `cairn` sorts `Path` OBJECTS, which compare
-			// component by component, so it prints `a/y.md` BEFORE `a-b/x.md`;
-			// `sort.Strings` here compares bytes, where `-` (0x2d) sorts below `/`
-			// (0x2f), so this client prints `a-b/x.md` first. MEASURED end to end on
-			// both clients at this commit over a two-scope cache. No parity-corpus scope
-			// name is a prefix of another, so the gate has never been handed the
-			// discriminating input. PRE-EXISTING — both sorts predate this change — and
-			// deliberately NOT fixed here: it needs a corpus row and a decided
-			// direction, which is a behaviour change to a verb's stdout.
-			if !store.IsEntryFileName(filepath.Base(path)) {
+		// 🔴 THE CACHE ROOT IS ENUMERATED, NOT PATTERN-MATCHED — AND THAT IS A FIX, NOT A
+		// REFACTOR. This was `filepath.Glob(filepath.Join(cache, "*", "*.md"))`, which puts
+		// the CACHE ROOT inside the pattern: every metacharacter in the operator's own
+		// directory name (`[`, `?`, `*`, `\`) is interpreted rather than matched. MEASURED
+		// at `a41dd02` with a cache root `…/wid[get` holding `alpha-notes/y.md`:
+		// `filepath.Match` returned `ErrBadPattern`, `matches` was nil, the error was
+		// DISCARDED, and `ls-entries` printed NOTHING at exit 0 while the oracle printed
+		// `alpha-notes/y.md` — the verb that advertises itself as "what the cache actually
+		// holds" making a FALSE CLAIM OF ABSENCE. The oracle never had it: `cache.glob(
+		// "*/*.md")` treats its anchor literally. This branch closed the identical hazard in
+		// `Validate` (by moving to `os.ReadDir`) in the same commit that left it open here.
+		//
+		// 🔴 A SCOPE'S `README.md` IS ITS POLICY SHEET, NOT AN ENTRY. Until the filter
+		// existed `ls-entries` listed every scope's sheet as `<scope>/README.md` — measured
+		// twelve of them on a populated cache, under a banner naming the store they came
+		// from. The rule is `store.EntryFileNames`, the set helper `store.LoadIndex` and
+		// `Validate` enumerate with, so all three sites now answer from ONE walk and ONE
+		// predicate rather than from a glob filtered with a re-spelled rule.
+		//
+		// ⚠ THE SET AND THE ORDER ARE UNCHANGED, AND BOTH WERE MEASURED RATHER THAN
+		// ARGUED. Same SET: the glob's middle `*` matched dot-named scope directories and
+		// followed symlinked ones, and `os.ReadDir`+`os.Stat` does both (`Stat` follows the
+		// link; a symlink to a non-directory, a broken link and a plain file each yielded
+		// nothing under the glob too, because `Glob` could not read them as directories).
+		// Same ORDER: every path the glob produced shared the `cache` prefix, so
+		// `sort.Strings` over the full paths is byte-for-byte the same comparison as
+		// `sort.Strings` over the joined `scope/name` strings sorted here. The parity row
+		// compares this listing against the oracle's line for line, which is what makes
+		// "unchanged" a claim worth stating.
+		//
+		// ⚠ BOTH READ ERRORS ARE DISCARDED, WHICH IS THE PRE-EXISTING BEHAVIOUR KEPT ON
+		// PURPOSE. The glob swallowed its error too, and the oracle's `Path.glob` yields no
+		// paths rather than raising — MEASURED on the pinned interpreter (CPython 3.12.14)
+		// for BOTH shapes: a mode-000 CACHE ROOT gives `[]`, and a mode-000 SCOPE directory
+		// is skipped while its siblings still list. So surfacing either error here would be
+		// a divergence, not an improvement; an unreadable cache root or scope directory
+		// contributes no lines, on both clients.
+		//
+		// 🔴 THE TWO CLIENTS STILL DIVERGE ON SOME PREFIXED SCOPE NAMES, AND THE CONDITION
+		// IS NARROWER THAN "A PREFIX" — A SENTENCE HERE SAID "any cache where one scope name
+		// is a prefix of another" AND THAT IS MEASURABLY FALSE. The mechanism is BYTE-WISE vs
+		// COMPONENT-WISE: `sort.Strings` here compares the joined `scope/name` byte by byte,
+		// while the oracle sorts `Path` objects, whose `__lt__` compares `_parts_normcase` —
+		// a tuple, component by component (CPython 3.12.14). Where scope `S` is a proper
+		// prefix of scope `T`, the oracle always puts all of `S`'s files first (`S` < `T` as
+		// strings); this client compares `/` (0x2f) against `T`'s first byte PAST the prefix,
+		// so it agrees when that byte sorts ABOVE `/` and diverges when it sorts BELOW.
+		// MEASURED end to end on both clients over a two-scope cache: `a`/`a0` (`0`, 0x30)
+		// agree, `a`/`a_b` (`_`, 0x5f) agree, `a`/`aZ` (`Z`, 0x5a) agree; `a`/`a-b` (`-`,
+		// 0x2d), `a`/`a.b` (`.`, 0x2e) and `a`/`a+b` (`+`, 0x2b) diverge. A non-prefixed pair
+		// cannot diverge at all: the first differing byte then lies inside both scope names,
+		// where the two comparisons agree. Seeding `a`/`a0` — which the old sentence invites
+		// — yields a GREEN and leaves the gate exactly as blind. PRE-EXISTING (both sorts
+		// predate this branch) and deliberately NOT fixed here: it needs a corpus pair AND a
+		// decided direction, because agreeing means changing one client's stdout.
+		//
+		// ⚠ AN UNCLAIMED, MEASURED CONSEQUENCE OF THE WALK, RECORDED BECAUSE IT NAMES THE
+		// ONE-LINE REMEDY: `sort.Strings` below is now the ONLY thing producing the byte-wise
+		// order. `os.ReadDir` returns scope directories sorted and `EntryFileNames` returns
+		// names sorted, so the lines are ALREADY in component-wise (`scope`, then `name`)
+		// order — the ORACLE's. MEASURED by deleting that one line and re-running both
+		// clients over `a`/`a-b`, `a`/`a.b`, `a`/`a0` and an ordinary six-entry cache: the Go
+		// listing was byte-identical to the oracle's in all four. NOT applied here, for the
+		// reason in the paragraph above — it is a change to a verb's stdout.
+		var lines []string
+		scopeDirs, _ := os.ReadDir(cache)
+		for _, d := range scopeDirs {
+			scopePath := filepath.Join(cache, d.Name())
+			info, statErr := os.Stat(scopePath)
+			if statErr != nil || !info.IsDir() {
 				continue
 			}
-			fmt.Fprintf(env.Stdout, "%s%s/%s\n", prefix,
-				filepath.Base(filepath.Dir(path)), filepath.Base(path))
+			names, entryErr := store.EntryFileNames(scopePath)
+			if entryErr != nil {
+				continue
+			}
+			for _, name := range names {
+				lines = append(lines, d.Name()+"/"+name)
+			}
+		}
+		sort.Strings(lines)
+		for _, line := range lines {
+			fmt.Fprintf(env.Stdout, "%s%s\n", prefix, line)
 		}
 	}
 	return worst, nil
@@ -523,18 +565,47 @@ func Validate(env Env, opts Options) (int, error) {
 		// printed `1 of 2 … 1 malformed`, asserting that a file parsed when none had. This is
 		// the command whose whole job is making a zero mean something.
 		//
-		// 🔴 THE DENOMINATOR IS NOW THE LOADER'S OWN WALK, NOT A SECOND ONE SPELLED THE SAME
-		// WAY. The first fix filtered a `*.md` glob with an open-coded `!= "README.md"`, which
-		// closed the symptom and left the mechanism — two walks behind one line — intact.
+		// 🔴 THE DENOMINATOR NOW APPLIES THE LOADER'S OWN RULE FOR WHAT AN ENTRY IS, THROUGH
+		// THE LOADER'S OWN WALK FUNCTION — AND THAT IS ALL IT IS. The first fix filtered a
+		// `*.md` glob with an open-coded `!= "README.md"`, which closed the symptom and left
+		// the mechanism — two spellings of one rule behind one line — intact.
 		// `store.EntryFileNames` is the function `store.LoadIndex` enumerates with, so the
-		// numerator and the denominator cannot come to disagree about what an entry is.
+		// numerator and the denominator cannot come to disagree about what an ENTRY is.
+		//
+		// 🔴 THEY CAN STILL DISAGREE ABOUT WHICH DIRECTORIES TO COUNT, AND AN EARLIER FORM OF
+		// THIS COMMENT CLAIMED OTHERWISE — IT SAID "THE DENOMINATOR IS NOW THE LOADER'S OWN
+		// WALK", WHICH IS FALSE. It is the loader's RULE over a DIFFERENT DIRECTORY SET:
+		// `LoadIndex` selects scope directories through `ScopeSet.Allows`, which compares
+		// `NormalizeRef(name)` — FOLDED — so every directory whose name normalizes to
+		// `--scope`'s value feeds the numerator, while this line walks the ONE LITERAL
+		// `<cache>/<scope>` directory. MEASURED at this commit on both clients over a cache
+		// holding `kelp-forest/a.md` and `Kelp_Forest/b.md`, both unparseable:
+		//
+		//	cairn --cache <root> validate --scope kelp-forest --no-sync
+		//	  → cairn: kelp-forest: -1 of 1 entry file(s) parse, 2 malformed   (exit 5)
+		//
+		// A NEGATIVE count — which the oracle's own sibling block (`cairn`, the
+		// `cache`-not-`args.cache` paragraph) names as the thing a contract cannot include.
+		// PRE-EXISTING and IDENTICAL in both clients, so the parity gate is structurally blind
+		// to it. Deliberately NOT closed here: deciding whether `--scope kelp-forest` means
+		// the folded set or the literal directory changes a verb's stdout and needs its own
+		// change. CLOSING CONDITION — a merged PR carrying a test per client that seeds those
+		// two directories and asserts the printed line, shown RED at this commit; mechanically,
+		// `go test ./internal/client/ -run FoldVsLiteral -count=1 -v` and
+		// `python3 -m pytest tests -q -p no:randomly -k fold_vs_literal` each SELECT at least
+		// one test and exit 0.
 		//
 		// ⚠ THE READ ERROR IS DISCARDED, AND THAT IS THE PRE-EXISTING BEHAVIOUR KEPT
 		// DELIBERATELY. `LoadIndex` above has ALREADY walked this directory and RETURNED on
-		// any error, so a failure here is unreachable; and the oracle swallows it rather than
-		// raising, so surfacing it would be a divergence with nothing behind it — MEASURED on
-		// the pinned interpreter (CPython 3.12.14), `Path("<mode-000 dir>").glob("*.md")`
-		// yields `[]` rather than a `PermissionError`.
+		// any error, so ABSENT CONCURRENT MUTATION a failure here is unreachable — an earlier
+		// form of this sentence claimed that unconditionally, and the precondition is the
+		// whole of it: a scope directory removed, renamed or chmod'd BETWEEN the two walks, or
+		// an `EMFILE`/`ENOMEM` at this call, reaches it and yields `checked = 0` beside a
+		// non-zero malformed count, i.e. the same negative-count nonsense from the other
+		// direction. It is still swallowed because the oracle swallows it rather than raising,
+		// so surfacing it would be a divergence with nothing behind it — MEASURED on the
+		// pinned interpreter (CPython 3.12.14), `Path("<mode-000 dir>").glob("*.md")` yields
+		// `[]` rather than a `PermissionError`.
 		//
 		// ⚠ AN UNCLAIMED CONSEQUENCE, RECORDED BECAUSE NO FIXTURE COVERS IT: reading the
 		// directory (`EntryFileNames` → `os.ReadDir`) instead of globbing

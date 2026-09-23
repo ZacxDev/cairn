@@ -148,6 +148,9 @@ __all__ = [
     "associate_paths",
     "parse_front_matter",
     "entry_mapping",
+    "SCOPE_POLICY_SHEET",
+    "is_entry_filename",
+    "entry_files_in",
     "load_index",
     "visible_scope_set",
     "KIND_BROKEN_LINK",
@@ -2619,14 +2622,25 @@ def is_entry_filename(name: str) -> bool:
     NOT globbed ask the same question and get the same answer.
 
     🔴 AND IT COMPARES THE BASE NAME, BECAUSE THE SENTENCE ABOVE IS A PROMISE THE
-    FIRST CUT DID NOT KEEP. That cut compared the WHOLE argument, so the
-    un-globbed callers it invites got the opposite answer: an archive member list
-    in this repo is `scope + "/" + name` — the same shape `ls-entries` prints —
-    and `is_entry_filename("notes/README.md")` returned True, the policy sheet
-    classified as an entry, which is the exact defect the consolidation exists to
-    eliminate, regenerated inside the consolidated rule. Basing the comparison
-    makes the predicate TOTAL over its input rather than narrowing the promise to
-    "base names only": the answer is the same however a caller spells the path.
+    FIRST CUT DID NOT KEEP. That cut compared the WHOLE argument, so an un-globbed
+    caller holding `scope + "/" + name` — the same shape `ls-entries` prints — got
+    the opposite answer: `is_entry_filename("notes/README.md")` returned True, the
+    policy sheet classified as an entry, which is the exact defect the
+    consolidation exists to eliminate, regenerated inside the consolidated rule.
+    Basing the comparison makes the predicate TOTAL over its input rather than
+    narrowing the promise to "base names only": the answer is the same however a
+    caller spells the path.
+
+    🔴 THE SNAPSHOT WALK IS NOT THAT CALLER, AND AN EARLIER FORM OF THIS DOCSTRING
+    POINTED AT IT — it said "an archive member list IN THIS REPO", of which
+    `/snapshot` is the only one. `/snapshot` does build `scope + "/" + name`
+    arcnames, but it MUST SHIP every scope's policy sheet — that is how each cache
+    gets one — so routing its member list through this predicate would drop them
+    from the archive and break the thing `SCOPE_POLICY_SHEET`'s own first paragraph
+    depends on. MEASURED: neither `server.py`'s `_snapshot` nor
+    `internal/snapshot.chooseEntries` carries a README exclusion. The SHAPE is the
+    point; the snapshot/transfer walks are an explicit EXCLUSION from it, because
+    they compare against `X-Store-Entries` and must include sheets.
 
     ⚠ THIS CHANGES NOTHING FOR TODAY'S CALLERS, AND THAT WAS CHECKED RATHER THAN
     ASSUMED. `entry_files_in` below passes `p.name` and `cairn ls-entries` passes

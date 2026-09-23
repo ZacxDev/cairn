@@ -259,16 +259,45 @@ listed, and keeps `rubble-heap` README-free so "exclude `README.md`" is distingu
 "drop one file per scope". **The general form — ask what your corpus does NOT contain before
 reading a green byte-diff as coverage — is why this paragraph stays after the hole closed.**
 
-- **A scope name that is a PREFIX of another scope name — and this one is not hypothetical, the
-  two clients ALREADY DIVERGE there.** MEASURED on both clients over a cache holding `a/y.md` and
-  `a-b/x.md`: `cairn ls-entries` prints `a/y.md` first, `cmd/cairn` prints `a-b/x.md` first. The
-  oracle sorts `Path` OBJECTS, which compare component by component; the Go client sorts the full
-  path STRINGS, where `-` (0x2d) sorts below `/` (0x2f). Both sorts long predate the row that
-  found this. No scope in `world.py` is a prefix of another (`alpha-notes`, `beta-notes`,
-  `rubble-heap`, `hollow-set`, and the empty-scope names), so the gate has never been handed the
-  discriminating input and every `ls-entries` row compares equal — the SAME mechanism as the
-  closed README entry above, in a corpus dimension nobody had asked about. Closing it needs a
-  corpus pair AND a decided direction, because agreeing means changing one client's stdout.
+- **A scope name that is a prefix of another AND is followed there by a byte below `/` — and this
+  one is not hypothetical, the two clients ALREADY DIVERGE on it.** 🔴 **THE CONDITION IS NOT
+  "a prefix", AND THIS BULLET SAID IT WAS.** The mechanism is BYTE-WISE vs COMPONENT-WISE: the Go
+  client sorts the joined `scope/name` byte by byte (`sort.Strings`), while the oracle sorts
+  `Path` objects, whose `__lt__` compares `_parts_normcase` — a tuple, component by component
+  (CPython 3.12.14). Where scope `S` is a proper prefix of scope `T`, the oracle always puts all
+  of `S`'s files first (`S` < `T` as strings); the Go client compares `/` (0x2f) against `T`'s
+  first byte PAST the prefix, so it **agrees** when that byte sorts above `/` and **diverges**
+  when it sorts below. MEASURED end to end on both clients over a two-scope cache:
+
+  | scope pair | byte after the prefix | verdict |
+  |---|---|---|
+  | `a` / `a0` | `0` (0x30) | agree |
+  | `a` / `aZ` | `Z` (0x5a) | agree |
+  | `a` / `a_b` | `_` (0x5f) | agree |
+  | `a` / `a+b` | `+` (0x2b) | **diverge** — oracle `a/y.md` first, Go `a+b/x.md` first |
+  | `a` / `a-b` | `-` (0x2d) | **diverge** |
+  | `a` / `a.b` | `.` (0x2e) | **diverge** |
+
+  A pair that is NOT in a prefix relation cannot diverge at all: the first differing byte then
+  lies inside both scope names, where the two comparisons agree. 🔴 **So the old sentence was
+  not merely imprecise — it was a trap: somebody widening the corpus by it would seed `a`/`a0`,
+  get a GREEN, and leave the gate exactly as blind**, which is the failure this whole section
+  exists to warn about. Both sorts long predate the row that found this. No scope in `world.py`
+  is a prefix of another (`alpha-notes`, `beta-notes`, `rubble-heap`, `hollow-set`, and the
+  empty-scope names), so the gate has never been handed the discriminating input and every
+  `ls-entries` row compares equal — the SAME mechanism as the closed README entry above, in a
+  corpus dimension nobody had asked about. Closing it needs a corpus pair **whose second scope
+  name continues with a byte below `/`** AND a decided direction, because agreeing means changing
+  one client's stdout.
+
+  ⚠ **The remedy, if the decision goes the oracle's way, is one deleted line — MEASURED, not
+  designed.** Since `LsEntries` walks the cache root instead of globbing it, `os.ReadDir` returns
+  the scope directories sorted and `store.EntryFileNames` returns the names sorted, so the lines
+  are already in component-wise order; the Go client's final `sort.Strings` is the only thing
+  re-ordering them byte-wise. Deleting it and re-running both clients over `a`/`a-b`, `a`/`a.b`,
+  `a`/`a0` and an ordinary six-entry cache gave a byte-identical listing in all four. Recorded,
+  **not applied** — it is still a change to a verb's stdout and this bullet stays open until
+  somebody decides the direction and adds the corpus pair.
 - **Concurrency.** Both clients take the same `flock` around the cache swap, which is why they can
   share a root at all; nothing here runs them at the same instant.
 - **Real network failures.** An unreachable pod is a connect refusal to a closed port. A DNS

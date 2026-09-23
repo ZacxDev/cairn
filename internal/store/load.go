@@ -296,8 +296,13 @@ func LoadIndex(root string, onMalformed OnMalformed, visible ScopeSet) (*Index, 
 //
 // 🔴 THE SPELLING IS EXACT AND THAT IS THE WHOLE RULE — not a prefix, not a case fold.
 // `readme.md` and `README-old.md` are ORDINARY ENTRIES: the loader walks them, indexes them
-// and can reject them as malformed, so a consumer that excluded them would count a file the
-// loader counted too and drive a printed numerator below zero.
+// and can reject them as malformed, so a consumer that excluded them would DROP a file the
+// loader counted and drive a printed numerator below zero.
+//
+// ⚠ THAT SENTENCE USED TO READ "would count a file the loader counted too", WHICH IS THE
+// MECHANISM BACKWARDS and describes nothing that can go negative. The Python twin
+// (`subsystem_resolver.SCOPE_POLICY_SHEET`) has always had it the right way round; this is
+// the one that moved.
 const ScopePolicySheet = "README.md"
 
 // IsEntryFileName answers "is this filename an ENTRY in a cached scope" — the one rule, in
@@ -315,13 +320,22 @@ const ScopePolicySheet = "README.md"
 // directory walk, an archive member list) ask the same question and get the same answer.
 //
 // 🔴 AND IT COMPARES THE BASE NAME, BECAUSE THE SENTENCE ABOVE IS A PROMISE THE FIRST CUT
-// DID NOT KEEP. That cut compared the WHOLE argument, so the un-globbed callers it invites
-// got the opposite answer: an archive member list in this repo is `scope + "/" + name`
-// (`internal/snapshot`), the same shape `LsEntries` prints, and `IsEntryFileName(
-// "notes/README.md")` returned TRUE — the policy sheet classified as an entry, the exact
-// defect the consolidation exists to eliminate, regenerated inside the consolidated rule.
-// Basing the comparison makes the predicate TOTAL over its input rather than narrowing the
-// promise to "base names only": the answer is now the same however a caller spells the path.
+// DID NOT KEEP. That cut compared the WHOLE argument, so an un-globbed caller holding
+// `scope + "/" + name` — the shape `LsEntries` prints — got the opposite answer:
+// `IsEntryFileName("notes/README.md")` returned TRUE, the policy sheet classified as an
+// entry, the exact defect the consolidation exists to eliminate, regenerated inside the
+// consolidated rule. Basing the comparison makes the predicate TOTAL over its input rather
+// than narrowing the promise to "base names only": the answer is now the same however a
+// caller spells the path.
+//
+// 🔴 `internal/snapshot` IS NOT THAT CALLER, AND AN EARLIER FORM OF THIS COMMENT NAMED IT AS
+// THE EXAMPLE. It does build `scope + "/" + name` arcnames, but `/snapshot` MUST SHIP every
+// scope's policy sheet — that is how each cache gets one — so routing its member list through
+// this predicate would drop them from the archive and break the thing `ScopePolicySheet`'s
+// own first paragraph depends on. MEASURED: neither `internal/snapshot.chooseEntries` nor
+// `server.py`'s `_snapshot` carries a README exclusion. The SHAPE is the point; that package
+// is an explicit EXCLUSION from it, together with `WritableEntryFiles` and the other transfer
+// walks, which compare against `X-Store-Entries` and must include sheets.
 //
 // ⚠ THIS CHANGES NOTHING FOR TODAY'S CALLERS, AND THAT WAS CHECKED RATHER THAN ASSUMED.
 // `EntryFileNames` below passes `os.ReadDir` names and `LsEntries` passes `filepath.Base`,

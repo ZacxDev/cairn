@@ -1,6 +1,7 @@
 package client
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,8 +131,14 @@ func TestLsEntriesListsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
 	// file `recall --ref readme` will happily serve.
 	//
 	// This scope holds one sheet (excluded), two lookalikes and two plain entries: five
-	// files, four listed, three README-shaped names, two plain ones. No two of those
-	// numbers are equal, and none equals the four-line listing asserted below.
+	// files, four listed, three README-shaped names, two plain ones — 5, 4, 3, 2, no two of
+	// them equal, so no blanket subtract-one, fold or prefix match reproduces the four-line
+	// listing asserted below.
+	//
+	// ⚠ THE TAIL OF THAT SENTENCE USED TO READ "and none equals the four-line listing
+	// asserted below", WHICH WAS FALSE ABOUT ITS OWN NUMBERS: four listed IS the four-line
+	// listing. The distinctness that carries the argument is among the four counts, not
+	// between them and the line count.
 	//
 	// ⚠ `README.md` AND `readme.md` IN ONE DIRECTORY IS TWO FILES ON LINUX AND ONE ON A
 	// CASE-FOLDING FILESYSTEM. CI is `ubuntu-latest`; the reachability control below fails
@@ -161,6 +168,141 @@ func TestLsEntriesListsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("got %v, want %v — only `README.md` EXACTLY is excluded", got, want)
+	}
+}
+
+// TestLsEntriesReadsACacheROOTCarryingAGlobMetacharacter is the OTHER half of "what the
+// cache actually holds", and it is about the ANCHOR rather than about the filter.
+//
+// 🔴 A FALSE CLAIM OF ABSENCE, NOT A WRONG LINE. `LsEntries` built its pattern as
+// `filepath.Glob(filepath.Join(cache, "*", "*.md"))`, which puts the CACHE ROOT inside the
+// pattern — so a `[`, `?`, `*` or `\` anywhere in the operator's own directory name is
+// INTERPRETED. RED at `a41dd02` with this exact fixture: `filepath.Match` returned
+// `ErrBadPattern`, `matches` was nil, the error was discarded, and the verb printed NOTHING
+// at exit 0 over a cache holding one entry. The oracle never had it — `cache.glob("*/*.md")`
+// treats its anchor literally — so this was also a silent divergence the parity gate cannot
+// see, because no world builds a cache root with a metacharacter in it.
+//
+// ⚠ THE PYTHON TWIN OF THIS ROW IS AN INVARIANT GUARD, AND IS LABELLED AS ONE:
+// `tests/test_cairn_cli.py::TestLsEntriesListsENTRIES::
+// test_a_cache_ROOT_carrying_a_glob_METACHARACTER_still_lists_its_entries` PASSES at
+// `a41dd02`. Only this client was wrong; the oracle's row pins that it stays right.
+func TestLsEntriesReadsACacheROOTCarryingAGlobMetacharacter(t *testing.T) {
+	// `t.TempDir()` cannot be made to carry a metacharacter, so `$HOME` is a subdirectory of
+	// it that does — which makes the DEFAULT cache root (`$HOME/.cache/subsystem-store`) the
+	// thing under test, with no flag involved.
+	home := filepath.Join(t.TempDir(), "wid[get")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("CAIRN_MIRROR_ROOT", "")
+	t.Setenv("SUBSYSTEM_STORE_URL", "http://127.0.0.1:1")
+	t.Setenv("SUBSYSTEM_STORE_TOKEN", "x")
+	dir := configuredHost(t, filepath.Join(home, "config"))
+	writeTable(t, dir, `{"alpha-notes": "`+DefaultAlias+`"}`)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedCache(t, cache, "alpha-notes", "one")
+
+	// 🔴 THE REACHABILITY CONTROL, AND IT NAMES THE MECHANISM RATHER THAN THE SYMPTOM. A
+	// fixture whose root merely contains a `[` proves nothing unless the pattern the deleted
+	// code built is one `filepath.Match` actually refuses — otherwise this row is a second
+	// sample of the ordinary case and would pass at the broken commit.
+	if _, err := os.Stat(filepath.Join(cache, "alpha-notes", "one.md")); err != nil {
+		t.Fatalf("the fixture never wrote the entry: %v", err)
+	}
+	if _, err := filepath.Glob(filepath.Join(cache, "*", "*.md")); !errors.Is(err, filepath.ErrBadPattern) {
+		t.Fatalf("the fixture does not reach the defect — globbing %q gave err=%v, so the "+
+			"deleted code would have found the file anyway", cache, err)
+	}
+
+	code, stdout, stderr := capture(t, LsEntries, readOpts())
+
+	if code != ExitOK {
+		t.Fatalf("a readable host exits 0, got %d\n%s", code, stderr)
+	}
+	got := lsLines(stdout)
+	want := []string{"alpha-notes/one.md"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %v, want %v — a glob metacharacter in the CACHE ROOT emptied the "+
+			"listing, so the verb that advertises what the cache holds claimed it holds "+
+			"nothing", got, want)
+	}
+}
+
+// TestLsEntriesVisitsDotNamedAndSymlinkedScopeDirectories pins the SET the replaced glob
+// produced, which is the half "same listing, different walk" cannot be asserted without.
+//
+// 🔴 `d.IsDir()` OFF THE DIRENT IS THE OBVIOUS SPELLING AND IT IS WRONG. A `DirEntry` for a
+// symlinked scope directory reports `ModeSymlink`, not a directory, so every symlinked scope
+// would drop out of the listing silently; `os.Stat` FOLLOWS the link, which is what
+// `filepath.Glob` did when it read the middle `*`'s matches as directories. MEASURED as a
+// mutant (`_ = info` + `!d.IsDir()`): it compiles, and every other row in this file stays
+// GREEN — this row is the only thing that fails.
+//
+// ⚠ THE DOT-NAMED SCOPE IS THE SAME CLAIM ON THE OTHER AXIS. Go's `*` matches a leading dot,
+// so the glob visited `.hidden-notes`; `os.ReadDir` lists it too, and nothing here filters
+// dot-names.
+//
+// ⚠ THIS WHOLE ROW IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND IS LABELLED AS ONE:
+// it PASSES at `a41dd02`, because the glob visited both directories too. That is the point —
+// it pins that the replacement did not narrow the set. What it is for is the mutant above,
+// which no other row in this file catches.
+//
+// ⚠ NOT A CLAIM THAT SUCH A CACHE IS REACHABLE. `/snapshot` builds neither, and whether a
+// symlinked scope directory can arrive in a real cache is not established here. It is pinned
+// because the comment on `LsEntries` asserts the set is unchanged, and an unpinned assertion
+// about behaviour is a sentence, not a guard.
+func TestLsEntriesVisitsDotNamedAndSymlinkedScopeDirectories(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+
+	if err := os.MkdirAll(filepath.Join(cache, ".hidden-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedNamedEntry(t, cache, ".hidden-notes", "dotty.md", "dotty")
+
+	external := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(external, "linked-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedNamedEntry(t, external, "linked-notes", "viafile.md", "viafile")
+	if err := os.Symlink(filepath.Join(external, "linked-notes"),
+		filepath.Join(cache, "linked-notes")); err != nil {
+		t.Fatal(err)
+	}
+
+	// 🔴 THE REACHABILITY CONTROL, AND IT IS THE DISCRIMINATOR ITSELF: the dirent for
+	// `linked-notes` must report NOT-a-directory, or `d.IsDir()` and `os.Stat` agree here
+	// and this row measures nothing.
+	dirents, err := os.ReadDir(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var linked os.DirEntry
+	for _, d := range dirents {
+		if d.Name() == "linked-notes" {
+			linked = d
+		}
+	}
+	if linked == nil {
+		t.Fatalf("the fixture never created the symlinked scope: %v", dirents)
+	}
+	if linked.IsDir() {
+		t.Fatalf("the dirent for a symlinked scope reports a directory on this filesystem, "+
+			"so this row cannot tell `d.IsDir()` from `os.Stat`: type=%v", linked.Type())
+	}
+
+	code, stdout, stderr := capture(t, LsEntries, readOpts())
+
+	if code != ExitOK {
+		t.Fatalf("a readable host exits 0, got %d\n%s", code, stderr)
+	}
+	got := lsLines(stdout)
+	want := []string{".hidden-notes/dotty.md", "alpha-notes/one.md", "linked-notes/viafile.md"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %v, want %v — the walk visits fewer scope directories than the glob "+
+			"it replaced", got, want)
 	}
 }
 
