@@ -67,11 +67,20 @@ const (
 	// authorityMaxAge is the staleness BOUND the cache declares. It bounds the
 	// report, never the reads — see `control.CacheOptions.MaxAge`.
 	authorityMaxAge = 5 * time.Minute
-
-	// refreshInterval is how often the token-file projection is re-read, so a scope
-	// directory created out of band becomes visible without a restart.
-	refreshInterval = 30 * time.Second
 )
+
+// refreshInterval is how often the authority is re-read, so a scope directory created out
+// of band becomes visible — and a journal record dropped since the last read gets
+// announced — without a restart.
+//
+// ⚠ A `var` RATHER THAN A `const`, AND THE ONLY ASSIGNMENT IS IN `main_test.go`. The same
+// shape `cmd/cairn-server` uses and with the same discipline: the production value is 30 s,
+// a test child shortens it through an environment variable read in `_test.go` and NOWHERE
+// in this program, and it is deliberately not a flag — a knob whose only caller is a test
+// is a configuration surface an operator would find and nobody supports. What it buys is
+// that the refresh loop has a GATE at all: the loop is inside `main`, so a guard on it has
+// to run the binary, and a binary that took 30 s per observation would not have one.
+var refreshInterval = 30 * time.Second
 
 func main() {
 	store := flag.String("store", envOr("SUBSYSTEM_STORE_ROOT", defaultStore), "store root")
@@ -140,13 +149,15 @@ func main() {
 	// only credential in the journal was the dropped one; without this line that reads as
 	// an empty journal. `internal/control` holds no logger by design, so it carries the
 	// drops as data and the programs that load a journal render them.
-	for _, dropped := range authority.Model().Dropped {
-		fmt.Fprintf(os.Stderr,
-			"cairn-ui: WARNING the control journal %s: %s. The rest of the file loaded and this "+
-				"surface is serving an authority WITHOUT that credential. Delete or correct that "+
-				"line; nothing here rewrites an append-only journal\n",
-			*controlJournal, dropped)
-	}
+	//
+	// 🔴 AT LOAD AND AT EVERY REFRESH, FOR THE REASON `cmd/cairn-server`'s OWN ANNOUNCER
+	// STATES: the drop that matters most is the one that appears while the process is
+	// already up, and a startup-only render is structurally unable to see it. The announcer
+	// says each record ONCE — a standing drop repeated on every tick is noise an operator
+	// learns to filter, which is the same outcome as saying nothing.
+	announceNewDrops := newDropAnnouncer(*controlJournal, authority.Model,
+		func(line string) { fmt.Fprintln(os.Stderr, line) })
+	announceNewDrops()
 
 	if err := refuseAnAuthorityNobodyCanSignInTo(authority, *controlJournal); err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
@@ -235,7 +246,12 @@ func main() {
 				// a signal other than silence.
 				if err := authority.Refresh(ctx); err != nil {
 					fmt.Fprintln(os.Stderr, "cairn-ui: authority refresh failed, serving last-known-good: "+err.Error())
+					continue
 				}
+				// A refresh that SUCCEEDED can still have dropped a record — a
+				// `credential-issued` line somebody appended by hand since the last
+				// read — and that is the case the startup render above cannot see.
+				announceNewDrops()
 			}
 		}
 	}()
@@ -323,6 +339,43 @@ func envInt(name string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// newDropAnnouncer renders the records `control.Replay` skipped that it has NOT already
+// rendered — once at load, then after every successful refresh.
+//
+// 🔴 IT IS A SECOND COPY OF `cmd/cairn-server`'s FUNCTION OF THE SAME NAME, AND THAT IS A
+// COST PAID DELIBERATELY. The shared helper would have to live in a package both programs
+// import, and the only one is `internal/control`, which holds no logger by design — the
+// same boundary that makes the drops DATA rather than a log line in the first place. The
+// two differ in their prefix and their wording, so neither is a wrapper of the other.
+//
+// 🔴 ONLY WHAT IS NEW, BECAUSE A STANDING DROP RE-ANNOUNCED ON EVERY TICK IS NOISE. This
+// surface refreshes on the same timer the pod does; a line per refresh for one bad journal
+// line is thousands a day, and an operator who filters that stream has lost the warning
+// that matters. The identity is the whole rendered claim — position, kind, credential and
+// reason — so a record whose position MOVES is said again: a repeat, never a silence.
+//
+// ⚠ IN TOKEN-FILE MODE THIS NEVER SAYS ANYTHING, BECAUSE `tokenfile.Source` REPLAYS NO
+// JOURNAL AND CARRIES NO DROPS. It is called unconditionally anyway rather than guarded on
+// `journal != ""`, so there is one code path and no second place to get the condition
+// wrong.
+func newDropAnnouncer(journal string, model func() control.Model, warn func(string)) func() {
+	announced := map[string]struct{}{}
+	return func() {
+		for _, d := range model().Dropped {
+			line := fmt.Sprintf(
+				"cairn-ui: WARNING the control journal %s: %s. The rest of the file loaded and this "+
+					"surface is serving an authority WITHOUT that credential. Delete or correct that "+
+					"line; nothing here rewrites an append-only journal",
+				journal, d)
+			if _, said := announced[line]; said {
+				continue
+			}
+			announced[line] = struct{}{}
+			warn(line)
+		}
+	}
 }
 
 // openAuthority builds the ONE control-plane authority this surface reads.
@@ -480,8 +533,14 @@ func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string
 	// hand-appended journal line; that was true when written and is false now, and a
 	// refusal that sends somebody to hand-edit an append-only authority — with a live
 	// secret in their clipboard — when a command exists is the worst of the two.
+	// 🔴 THE COUNT SAYS WHAT IT COUNTS, BECAUSE THE BARE ONE UNDERCOUNTED IN EXACTLY THE
+	// CASE THIS REFUSAL FIRES FOR. `len(m.Credentials)` is records LOADED; a journal whose
+	// three credential lines were all dropped at replay reported "0 credential record(s)",
+	// which reads as a journal nobody ever issued into and sends the operator to mint
+	// another rather than to the line above naming the three that were skipped.
 	return fmt.Errorf("the control journal %s materialized an authority with NO USABLE CREDENTIAL "+
-		"(%d user(s), %d credential record(s), 0 of them live and attributable), so "+
+		"(%d user(s), %d credential record(s) LOADED, 0 of them live and attributable, and %d "+
+		"record(s) DROPPED at replay and named on the WARNING line(s) above), so "+
 		"`control.Authenticate` can match nothing and every sign-in would answer 401 — this program "+
 		"would come up, announce itself writable and serve nobody. Refusing to start. ⚠ NOTE THAT "+
 		"`cairn-server -create-user` DOES NOT FIX THIS: it mints a user and no credential. What "+
@@ -489,9 +548,11 @@ func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string
 		"journal, which mints a token, writes only its SHA-256 digest, and emits the token once — "+
 		"to stdout, or with -token-out <path> to a file it creates at mode 0600. ⚠ If you instead "+
 		"hand-append a `credential-issued` record, note that `token_hash` is the SHA-256 HEX DIGEST "+
-		"of the token and NEVER the token — a raw secret pasted there is refused as 'not a "+
-		"64-character hex digest' rather than persisted, which it was at 64 characters before that "+
-		"check was widened. Either case of hex is accepted and the model lowercases it, so a digest "+
-		"as `Get-FileHash` or `certutil -hashfile` spells it works as written",
-		journal, len(m.Users), len(m.Credentials))
+		"of the token and NEVER the token — a raw secret pasted there is written to the file like "+
+		"any other line (nothing validates a journal you edit by hand) and then DROPPED at every "+
+		"replay as 'not a 64-character hex digest', so the credential simply does not exist while "+
+		"the secret sits in an append-only file that cannot be rewritten. Either case of hex is "+
+		"accepted and the model lowercases it, so a digest as `Get-FileHash` or `certutil "+
+		"-hashfile` spells it works as written",
+		journal, len(m.Users), len(m.Credentials), len(m.Dropped))
 }

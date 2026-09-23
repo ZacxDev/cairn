@@ -265,30 +265,39 @@ type NewCredential struct {
 // happens to contain one — in an error path, a debug line, a test failure message — which
 // is the shape `authz.RedactedField` exists for on the token-file side.
 //
-// 🔴 AND `Stringer` ALONE WAS MEASURED INSUFFICIENT, WHICH IS WHY `Format` EXISTS BESIDE
-// IT RATHER THAN A COMMENT SAYING SO. `fmt` consults `Stringer` for `%v %s %q %x %X` and
-// `GoStringer` for `%#v`, and REFLECTS the operand for every other verb — and a reflected
-// struct prints its unexported field's VALUE, inside `%!d(string=…)`. Measured over
-// `Issued` and `*Issued` at the commit that shipped the `Stringer`-only redaction:
-// **14 of 22 verbs rendered the raw token** (`%d %b %o %O %c %U %e %E %f %F %g %G %t %p`).
-// `fmt` consults a `Formatter` BEFORE `Stringer` and for EVERY verb, so implementing it is
-// what makes the redaction as wide as its own description.
+// 🔴 AND `Stringer` ALONE WAS MEASURED INSUFFICIENT. `fmt` consults `Stringer` for
+// `%v %s %q %x %X` and `GoStringer` for `%#v`, and REFLECTS the operand for every other
+// verb — and a reflected struct prints its unexported field's VALUE, inside
+// `%!d(string=…)`. Measured over `Issued` and `*Issued` at the commit that shipped the
+// `Stringer`-only redaction, where `token` was a plain `string`: **14 of 22 verbs rendered
+// the raw token** (`%d %b %o %O %c %U %e %E %f %F %g %G %t %p`).
 //
 // 🔴 A `Format` METHOD ON THE *FIELD'S* TYPE WOULD NOT HAVE WORKED, AND THAT IS THE SAME
 // MECHANISM THAT PRODUCED THE LEAK. `fmt`'s reflection walker consults a value's
 // formatting methods only when it can `Interface()` that value, and a field reached by
 // reflection through an UNEXPORTED name cannot be interfaced — so no method on the field's
-// type is ever called, whatever the type is. The defence has to sit on the STRUCT, which
-// `fmt` receives as a whole operand.
+// type is ever called, whatever the type is.
 //
-// 🔴 AND THE TOKEN LIVES BEHIND A POINTER FOR THE ONE VERB `Formatter` DOES NOT REACH.
-// `fmt` handles `%T` and `%p` before any formatting interface, and `%p` of a NON-pointer
-// operand falls into `badVerb`, which sets `erroring` and then re-renders the operand as
-// `%v` — and the method dispatch returns early while `erroring`, so `Format` is skipped and
-// the struct is reflected. Measured: `Format` alone leaves `%p` leaking, 1 of 22. A pointer
-// FIELD is rendered as an ADDRESS rather than followed (`fmt` dereferences only at depth
-// 0), so `*string` closes it: 0 of 22. Both halves are load-bearing, and
-// `TestNoRenderingOfIssuedContainsTheToken` is the sweep that measures all three numbers.
+// 🔴 THAT SAME MECHANISM IS WHY **THE POINTER, NOT `Format`, IS THE HALF THAT CLOSES THE
+// HOLE** — and three sites here said the opposite until the sweep was widened past depth 0.
+// A method on the STRUCT is consulted only where `fmt` can `Interface()` the STRUCT, which
+// an `Issued` sitting in another type's unexported field never is; `Format` is then skipped
+// exactly as a method on `string` would be, and the walker reads the field. A POINTER field
+// has no such hole: `fmt` follows a pointer only at depth 0, so at any depth ≥ 1 a `*string`
+// renders as an ADDRESS and its bytes are unreachable by reflection whatever the verb.
+// Measured by `TestNoRenderingOfIssuedContainsTheToken` over 7 operand shapes × 22 verbs =
+// 154 pairs, on this tree:
+//
+//   - pointer + `Format` (this file): **0 of 154**.
+//   - `Format` kept, `token` reverted to a plain `string`: **24 of 154** — 21 verbs (every
+//     one but `%T`) through an `Issued` in another struct's UNEXPORTED field, plus `%p` on
+//     the value, on an exported field and on an interface field.
+//   - pointer kept, `Format` DELETED entirely: **0 of 154**.
+//
+// 🔴 SO DO NOT DELETE THE POINTER AS THE REDUNDANT HALF. What `Format` buys is stated where
+// it is defined and it is real — a readable redacted line instead of a bare address under
+// the sixteen verbs `Stringer` never reached, and defence in depth for the depth-0 operand —
+// but the number that goes to 24 when it is removed is the pointer's, not its.
 //
 // ⚠ `go vet` IS A REAL MITIGATION AND NOT A SUFFICIENT ONE, WHICH IS WHY THE TYPE HAS TO
 // DEFEND ITSELF. Measured: vet's printf check flags `fmt.Sprintf("%d", issued)` when the
@@ -327,9 +336,11 @@ type Issued struct {
 
 	// token is the raw bearer token. Unexported so that no struct literal comparison in a
 	// test failure and no encoder can reach it without going through `Token()`, and a
-	// POINTER so that `fmt`'s reflection walker renders it as an address — see this type's
-	// own comment for the `%p` measurement that makes the indirection load-bearing rather
-	// than a style choice. nil is the zero value, and `Token()` answers "" for it.
+	// POINTER because that indirection — not `Format` — is what makes the redaction hold at
+	// every depth: `fmt` follows a pointer only at depth 0, so a nested `Issued` renders
+	// this field as an ADDRESS even where no formatting method of any kind is consulted.
+	// See this type's own comment for the 0 / 24 / 0 measurement. nil is the zero value, and
+	// `Token()` answers "" for it.
 	token *string
 }
 
@@ -365,29 +376,38 @@ func (i Issued) GoString() string {
 	return "control.Issued{" + i.String() + "}"
 }
 
-// Format is the redaction that covers EVERY verb, which `String` and `GoString` between
-// them do not.
+// Format renders a redacted `Issued` under EVERY verb, which `String` and `GoString`
+// between them do not.
 //
-// 🔴 IT EXISTS BECAUSE `Stringer`/`GoStringer` ARE CONSULTED FOR SIX VERBS AND EVERY OTHER
-// VERB REFLECTS THE OPERAND — **14 of 22 rendered the raw token** before this method
-// existed. (`%T` is the one of the remaining sixteen that never could: it prints a type
-// name and nothing else.) The type's own comment carries that measurement, why a `Format`
-// on the FIELD's type could not have worked, and why the token additionally lives behind a
-// pointer.
+// 🔴 WHAT IT IS AND IS NOT FOR. `Stringer`/`GoStringer` are consulted for six verbs and
+// every other verb reflects the operand, so before this method existed **14 of 22 verbs
+// rendered the raw token** at depth 0. (`%T` is the one of the remaining sixteen that never
+// could: it prints a type name and nothing else.) ⚠ BUT IT IS NOT WHAT CLOSES THE LEAK, AND
+// THE TYPE'S OWN COMMENT CARRIES THE MEASUREMENT THAT SAYS SO: deleting this method with
+// `token *string` in place leaves **0 of 154** (shape, verb) pairs leaking, because `fmt`
+// never follows a pointer field below depth 0. What this method buys is a READABLE redacted
+// line — `credential=… digest=… epoch=… token=<redacted>` instead of a bare struct dump
+// carrying an address — under the sixteen verbs `Stringer` never reached, plus defence in
+// depth at depth 0. Both are worth having; neither is the hole.
 //
-// ⚠ THE SIX VERBS `Stringer`/`GoStringer` ALREADY HANDLED KEEP THEIR EXACT OUTPUT, AND
-// THAT IS DELIBERATE RATHER THAN INCIDENTAL. `fmt` hands a `Stringer`'s result back to the
-// SAME verb — so `%q` of an `Issued` was a quoted string and `%x` was the hex of one — and
-// a `Format` that wrote the plain rendering under every verb would silently change six
-// call sites' output while closing sixteen. `%q`, `%x` and `%X` are therefore re-rendered
-// through `fmt` rather than written raw.
+// ⚠ "THE SIX VERBS `Stringer`/`GoStringer` ALREADY HANDLED KEEP THEIR EXACT OUTPUT" STOOD
+// HERE AND IS FALSE FOR FLAGGED SPELLINGS — measured, not argued. The unflagged six do keep
+// it, which is why `%q`, `%x` and `%X` are re-rendered through `fmt` rather than written
+// raw: `fmt` hands a `Stringer`'s result back to the same verb, so `%q` of an `Issued` was a
+// quoted string and `%x` the hex of one, and a `Format` that wrote the plain rendering
+// everywhere would have changed those six call sites while closing sixteen.
 //
-// ⚠ WIDTH AND PRECISION FLAGS ARE DROPPED, WHICH IS A REAL NARROWING AND IS ACCEPTED —
-// MEASURED, NOT ASSUMED: `%20v` of a `Stringer` pads to twenty columns and `%20v` of this
-// type does not. Reproducing every flag means rebuilding the format
-// string out of `fmt.State`, which is a second implementation of `fmt`'s own parser living
-// inside a redaction; what this type is formatted into is a log line, and no caller in
-// this repository pads one.
+// 🔴 NO FLAG, WIDTH OR PRECISION REACHES THE OUTPUT — the switch below rebuilds a BARE
+// verb, and the default arm writes the string with `fmt.State` consulted for nothing.
+// Measured against the `Stringer`-only rendering of the same value: `%#q` goes from
+// backquoted to double-quoted, `%#x` loses its `0x` prefix, `% x` loses its byte
+// separators, `%.5s` stops truncating, and a width wider than the rendered line stops
+// padding. That is a real narrowing and it is ACCEPTED: reproducing the flags means
+// rebuilding the format string out of `fmt.State`, which is a second implementation of
+// `fmt`'s own parser living inside a redaction. What this type is formatted into is a log
+// line, and no caller in this repository flags or pads one —
+// `TestIssuedFormatDropsEveryFlagAndWidth` pins the narrowing so the sentence stays
+// machine-checked rather than remembered.
 func (i Issued) Format(f fmt.State, verb rune) {
 	rendered := i.String()
 	if verb == 'v' && f.Flag('#') {
@@ -401,7 +421,13 @@ func (i Issued) Format(f fmt.State, verb rune) {
 	}
 }
 
-// A compile-time proof that the redaction is the WIDE one. `Stringer` is consulted for six
-// verbs and `Formatter` for every verb, so losing this interface is a silent return to a
-// 14-of-22 leak that every existing call site still renders "correctly".
+// A compile-time proof that `Issued` still satisfies `Formatter` — that a `Format` method
+// renamed or given a wrong signature fails the BUILD rather than silently reverting every
+// verb but six to a reflected struct dump.
+//
+// ⚠ IT IS NOT A PROOF THAT THE TOKEN IS SAFE, AND SAYING SO USED TO BE THIS COMMENT'S WHOLE
+// CLAIM ("losing this interface is a silent return to a 14-of-22 leak"). Measured: with
+// `token *string` in place, deleting `Format` outright leaks at 0 of 154 (shape, verb)
+// pairs. What losing it costs is legibility under sixteen verbs; what keeps the secret out
+// of the output is the pointer.
 var _ fmt.Formatter = Issued{}

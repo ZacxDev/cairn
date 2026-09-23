@@ -262,10 +262,33 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 	// the token is `base64.RawURLEncoding` output, whose alphabet is 64 printable ASCII
 	// characters — and a sanitiser on a value that cannot contain what it sanitises is a
 	// mechanism that can only ever damage the good case.
+	//
+	// 🔴 BOTH SINKS ARE CHECKED, AND THE DEFAULT ONE WAS NOT — WHICH MADE THE EXIT CODE
+	// BELOW A CLAIM ABOUT THE PATH FEWER OPERATORS TAKE. This line was
+	// `fmt.Fprintln(out, issued.Token())` with its error discarded and `delivered` left
+	// true. Measured with an always-failing writer: **exit 0**, no warning, and one
+	// credential durably live in the journal. The real input is not exotic —
+	// `cairn-server -issue-credential > /path/on/a/full/fs` returns ENOSPC from a one-line
+	// write (it does not SIGPIPE), and the operator gets a truncated token file, an
+	// unrevocable live credential, exit 0, and a closing line telling them the token is on
+	// stdout and will never be shown again.
+	//
+	// ⚠ A FAILED WRITE HERE MAY STILL HAVE EMITTED SOME BYTES, and `fmt.Fprintln` does not
+	// say how many usefully. A partial token on a stream is not a credential, and it is not
+	// removable either; the warning says the record is live and unrecoverable, which is the
+	// part that decides what the operator does next.
+	sinkName := "stdout"
+	if sink != nil {
+		sinkName = tokenOut
+	}
 	delivered := true
+	var deliveryErr error
 	if sink == nil {
-		fmt.Fprintln(out, issued.Token())
-	} else if err := deliverToken(sink, issued.Token()); err != nil {
+		_, deliveryErr = fmt.Fprintln(out, issued.Token())
+	} else {
+		deliveryErr = deliverToken(sink, issued.Token())
+	}
+	if deliveryErr != nil {
 		delivered = false
 		// 🔴 THE CREDENTIAL EXISTS AND ITS SECRET DOES NOT. Said in full, because this is the
 		// one outcome of this command that cannot be retried into a good state: the record is
@@ -277,11 +300,15 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 				"nothing in this repository can derive a token from a digest. Retire it by appending a "+
 				"`credential-revoked` record naming that id, then issue another. ⚠ DO NOT RETRY THIS "+
 				"COMMAND BLINDLY: every attempt appends another live credential nobody holds, which is "+
-				"why this outcome exits %d rather than the %d every other refusal uses. The file %s may "+
-				"exist and may hold a partial or complete token; it is NOT removed, because a token "+
-				"written and then lost at flush is the only copy of a secret this program cannot "+
-				"produce again — inspect it before deleting it",
-			tokenOut, err, issued.Credential, exitTokenUndelivered, exitConfig, tokenOut))
+				"why this outcome exits %d rather than the %d every other refusal uses",
+			sinkName, deliveryErr, issued.Credential, exitTokenUndelivered, exitConfig))
+		if sink != nil {
+			warn(fmt.Sprintf(
+				"subsystem-store-api: the file %s may exist and may hold a partial or complete token; "+
+					"it is NOT removed, because a token written and then lost at flush is the only copy "+
+					"of a secret this program cannot produce again — inspect it before deleting it",
+				tokenOut))
+		}
 	}
 
 	// The record line, on stderr, keeping `-create-user`'s `cairn-control:` prefix so a
@@ -301,7 +328,11 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 	lost := "if it is lost, issue another and retire this one by appending a `credential-revoked` " +
 		"record to the journal BY HAND — nothing in this repository writes that event yet, so there " +
 		"is no -revoke-credential to reach for"
-	if sink == nil {
+	// 🔴 GUARDED ON `delivered` ON BOTH ARMS. "The token is on stdout and this is the only
+	// time it will ever be shown" is the single most misleading sentence this command can
+	// print when the write that was supposed to put it there failed — the operator goes
+	// looking through scrollback for a token that is not in it.
+	if sink == nil && delivered {
 		warn("subsystem-store-api: THE TOKEN IS ON STDOUT AND THIS IS THE ONLY TIME IT WILL EVER BE " +
 			"SHOWN. Only its SHA-256 digest was written to the journal, and nothing in this repository " +
 			"can recover a token from a digest — " + lost)

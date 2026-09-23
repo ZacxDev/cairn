@@ -703,13 +703,16 @@ MUTANTS: tuple[Mutant, ...] = (
         # RATHER THAN AN OVERSIGHT. Reverting it (`*string` back to `string`) is three
         # coordinated edits — the field, `Token()`'s nil arm, and the `&token` at the
         # return — and this battery replaces ONE expression per row on purpose. It was
-        # measured by hand instead: with `Format` present and the field a plain string the
-        # sweep reports 1 of 22 leaking (`%p` of a non-pointer operand, which `fmt` routes
-        # around every formatting interface), which is the number that makes the
-        # indirection load-bearing rather than stylistic.
-        why="the debugging edit at the NEW site. `Format` covers the sixteen verbs "
-        "`Stringer` never reached, so it is also the one place where putting the field "
-        "back into the output leaks under sixteen verbs at once.",
+        # measured by hand instead, and the number is the one that says which half of the
+        # redaction is load-bearing: with `Format` present and the field a plain string the
+        # widened sweep reports **24 of 154 (shape, verb) pairs** leaking — 21 verbs through
+        # an `Issued` in another struct's UNEXPORTED field, where no formatting method is
+        # consulted at all, plus `%p` on three shapes — while DELETING `Format` and keeping
+        # the pointer reports 0. An earlier note here said "1 of 22", measured by a sweep
+        # that only rendered depth 0.
+        why="the debugging edit at the NEW site. It is caught at depth 0, where `Format` IS "
+        "consulted; what it does not measure is the pointer, which is the half that holds "
+        "at every depth below that.",
     ),
     Mutant(
         name="token-undelivered-shares-the-refusal-exit-code",
@@ -724,6 +727,22 @@ MUTANTS: tuple[Mutant, ...] = (
         # that nothing in this repository can revoke.
         why="'one program, one refusal code' — the tidying edit that reinstates the "
         "collision, since 78 genuinely is what every other failure here returns.",
+    ),
+    Mutant(
+        name="the-DEFAULT-sinks-delivery-error-is-discarded",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\t\t_, deliveryErr = fmt.Fprintln(out, issued.Token())",
+        new="\t\tfmt.Fprintln(out, issued.Token())",
+        killer="TestAFailedDeliveryToTheDEFAULTSinkExitsItsOwnCodeToo",
+        # 🔴 THE STATE THIS RESTORES IS THE ONE THAT SHIPPED, AND IT MADE THE 74 A CLAIM
+        # ABOUT THE PATH FEWER OPERATORS TAKE. Measured with an always-failing writer:
+        # exit 0, no warning, and one credential durably live and unrevocable. The input is
+        # ordinary — `cairn-server -issue-credential > /path/on/a/full/fs` returns ENOSPC
+        # from a one-line write rather than SIGPIPE — and the operator was then told the
+        # token was on stdout and would never be shown again.
+        why="the idiomatic 'print it and move on', which is what the line was. Every "
+        "assertion about the -token-out path stays green: that arm has its own seam, its "
+        "own test and its own mutant, and none of them touch the DEFAULT sink.",
     ),
     Mutant(
         name="dropped-records-are-not-rendered-to-the-operator",
@@ -1964,7 +1983,13 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="the-journal-refresh-failure-is-never-reported",
         path="cmd/cairn-server/createuser.go",
-        old="\t\tInterval:  refreshInterval,\n\t\tOnRefresh: journalRefreshReporter(journal, warn),",
+        # ⚠ THE PATTERN CARRIES THE REPORTER'S THIRD ARGUMENT, AND THE BATTERY'S OWN
+        # HARNESS CHECK IS WHAT CAUGHT IT GOING STALE. When `journalRefreshReporter` grew
+        # the new-drop announcer, this row's `old` matched 0 times — which the runner
+        # reports as a HARNESS ERROR rather than scoring the mutant SURVIVED, because a
+        # pattern that matches nothing never runs and would otherwise read as a guard that
+        # cannot go red.
+        old="\t\tInterval:  refreshInterval,\n\t\tOnRefresh: journalRefreshReporter(journal, warn, announceNewDrops),",
         new="\t\tInterval: refreshInterval,",
         killer="TestTheRunningPodSAYSSoWhenItsControlJournalGoesBad",
         why="the WIRING of the only signal a running pod gives about a control journal "
@@ -1977,6 +2002,76 @@ MUTANTS: tuple[Mutant, ...] = (
         "`journalRefreshReporter` DIRECTLY and stays GREEN under this mutant — the same "
         "'a capability in a function nobody routes to' shape as the row below, which is "
         "why this row exists rather than trusting that one.",
+    ),
+    # ---- the drop announcement: three render sites, and the one that runs on a TIMER ---
+    #
+    # 🔴 EACH SITE FAILS ALONE, WHICH IS WHY THERE ARE FIVE ROWS AND NOT ONE. `control`
+    # decides to DROP a record and can only carry it as data — the package holds no logger
+    # by design — so "an operator is told" is a property of a wire neither side's own tests
+    # can see, at each of the places a program reads a model. An audit round measured it:
+    # stubbing out `cmd/cairn-server/createuser.go`'s render and `cmd/cairn-ui/main.go`'s
+    # left `go test ./cmd/... ./internal/control/...` fully green, because the only guard
+    # targeted the THIRD site.
+    Mutant(
+        name="the-pods-startup-never-announces-its-dropped-records",
+        path="cmd/cairn-server/createuser.go",
+        old="\tannounceNewDrops := newDropAnnouncer(journal, cache.Model, warn)\n\tannounceNewDrops()",
+        new="\tannounceNewDrops := newDropAnnouncer(journal, cache.Model, warn)",
+        killer="TestADropAlreadyInTheJournalIsAnnouncedWhenTheAuTHORITYOPENS",
+        why="the render deleted at the site a pod reaches FIRST. A pod started over a "
+        "journal that already holds a bad line comes up serving an authority quietly "
+        "shorter than the file, and the person who cannot sign in is the signal.",
+    ),
+    Mutant(
+        name="the-pods-refresh-never-announces-a-NEW-drop",
+        path="cmd/cairn-server/createuser.go",
+        old="\t\tOnRefresh: journalRefreshReporter(journal, warn, announceNewDrops),",
+        new="\t\tOnRefresh: journalRefreshReporter(journal, warn, nil),",
+        killer="TestADropAppearingWhileThePodIsRunningReachesTheOperator",
+        # 🔴 THIS IS THE STATE THE PR SHIPPED, AND IT IS WHY THE ROW IS NOT A HYPOTHETICAL.
+        # `warnAboutDroppedRecords` ran once, before `Cache.Run` started, and `OnRefresh`
+        # takes an `error` and cannot see a model — so a `credential-issued` line appended
+        # to a LIVE pod's journal with a raw token in `token_hash` was dropped with an
+        # EMPTY operator stream. The round that introduced it had traded a loud outage for
+        # a silent no-op and reported only the first half.
+        why="the announcer unwired from the only per-refresh hook. The startup row above "
+        "stays green under it, which is exactly how the silence shipped.",
+    ),
+    Mutant(
+        name="a-standing-drop-is-re-announced-on-every-refresh",
+        path="cmd/cairn-server/createuser.go",
+        old="\t\t\tif _, said := announced[line]; said {\n\t\t\t\tcontinue\n\t\t\t}",
+        new="\t\t\tif false {\n\t\t\t\tcontinue\n\t\t\t}",
+        killer="TestADropIsAnnouncedOnceNoMatterHowOftenTheJournalIsREAD",
+        extra_killers=("TestADropAppearingWhileThePodIsRunningReachesTheOperator",),
+        why="the ledger dropped, which reads as a simplification and is the OTHER way to "
+        "lose this warning. The refresh is 30 s, so one bad journal line becomes ~2,880 "
+        "identical lines a day — a stream an operator filters, which is the same outcome "
+        "as never warning. The same arithmetic `journalRefreshReporter`'s edge detector "
+        "exists for, reintroduced one hook over.",
+    ),
+    Mutant(
+        name="the-UIs-startup-never-renders-its-dropped-records",
+        path="cmd/cairn-ui/main.go",
+        old="\t\tfunc(line string) { fmt.Fprintln(os.Stderr, line) })\n\tannounceNewDrops()",
+        new="\t\tfunc(line string) { fmt.Fprintln(os.Stderr, line) })",
+        killer="TestTheBINARYSaysSoWhenItsJournalLostARecordAtReplay",
+        # 🔴 THE RENDER IS INSIDE `main`, SO ITS GUARD HAS TO RUN THE BINARY. Every other
+        # test in that package drives `openAuthority` and the refusal predicate directly
+        # and stays green with this applied — the "a capability nobody routes to" shape.
+        why="the render deleted on the surface whose own comment says it feels a dropped "
+        "credential FIRST: the startup refusal may fire BECAUSE the only credential in the "
+        "journal was the dropped one, and without this line that reads as an empty journal.",
+    ),
+    Mutant(
+        name="the-UIs-refresh-never-announces-a-NEW-drop",
+        path="cmd/cairn-ui/main.go",
+        old="\t\t\t\t// read — and that is the case the startup render above cannot see.\n\t\t\t\tannounceNewDrops()",
+        new="\t\t\t\t// read — and that is the case the startup render above cannot see.",
+        killer="TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup",
+        why="the same unwiring as the pod's refresh row, on the surface where a dropped "
+        "credential is a person failing to sign in RIGHT NOW. Its killer is the only test "
+        "in this repository that runs `cairn-ui` as a long-lived process.",
     ),
     Mutant(
         name="main-never-dispatches-create-user",

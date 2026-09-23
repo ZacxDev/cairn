@@ -380,8 +380,14 @@ func TestAnUnusableDigestDropsOnlyItsOwnRecord(t *testing.T) {
 // string compare — able to see one secret written in two case spellings, and a journal
 // carrying that loaded **0** credentials. The refusal is right about the ambiguity and was
 // wrong about the blast radius: what has no defined precedence is TWO principals for one
-// digest, and dropping the later record removes exactly that while leaving the secret
-// working as the credential it was first recorded as.
+// digest, and dropping the later record removes exactly that.
+//
+// 🔴 AND THE SECOND ARM IS THE CASE THE JUSTIFICATION WAS WRITTEN WITHOUT. "The secret
+// keeps working, as the credential it was FIRST recorded as" — `ErrDuplicateTokenDigest`'s
+// own sentence — holds only while the first record is LIVE. Revoke it and the later record
+// is still dropped, so the secret authenticates as NOTHING. That is the safe direction and
+// it is announced at load, but it is not the no-op the sentence implied, and an operator
+// re-issuing a rotated secret is exactly who walks into it.
 func TestOneSecretRecordedTwiceDropsTheLaterRecord(t *testing.T) {
 	digest := HashToken(carolToken)
 	m, err := Replay(append(worldEvents(),
@@ -416,6 +422,48 @@ func TestOneSecretRecordedTwiceDropsTheLaterRecord(t *testing.T) {
 	if len(m.Dropped) != 1 || m.Dropped[0].CredentialID != "crd_dup1" ||
 		!strings.Contains(m.Dropped[0].Reason, "same token digest") {
 		t.Fatalf("Dropped = %v, want exactly crd_dup1 with the duplicate reason", m.Dropped)
+	}
+
+	// 🔴 THE REVOKED-FIRST ARM. Same three records with a revocation of the first between
+	// them — the ordinary shape of a rotation done in the wrong order, or of an operator
+	// re-issuing a secret they had already retired. The later record is dropped for the same
+	// reason, and there is now no live record carrying the digest at all.
+	revoked, err := Replay(append(worldEvents(),
+		Event{Kind: EventCredentialIssued, At: at(40), CredentialID: "crd_dup0",
+			SubjectKind: KindUser, SubjectID: uCarol, TokenHash: digest, Label: "carol laptop"},
+		Event{Kind: EventCredentialRevoked, At: at(41), CredentialID: "crd_dup0"},
+		Event{Kind: EventCredentialIssued, At: at(42), CredentialID: "crd_dup1",
+			SubjectKind: KindUser, SubjectID: uDave, TokenHash: digest,
+			Label: "the same secret again, after the first was retired"},
+		Event{Kind: EventCredentialIssued, At: at(43), CredentialID: "crd_other",
+			SubjectKind: KindUser, SubjectID: uDave, TokenHash: HashToken(atlasToken),
+			Label: "an unrelated credential"},
+	))
+	if err != nil {
+		t.Fatalf("the journal did not load at all (%v) — the duplicate is still a dropped RECORD "+
+			"and not a reason to empty an authority, whether or not the first one is live", err)
+	}
+	if _, held := revoked.Credentials["crd_dup1"]; held {
+		t.Fatal("the later record entered the model. A revoked first record does not make the " +
+			"digest free: `apply`'s duplicate refusal compares every recorded credential, live or " +
+			"not, because a revocation is a state on a row rather than its deletion")
+	}
+	if _, _, err := Authenticate(revoked, carolToken); err == nil {
+		t.Fatal("the secret STILL authenticates after its only live record was dropped, which " +
+			"would mean the drop had not happened")
+	}
+	// 🔴 AND THIS IS THE ASSERTION THE SENTINEL'S OLD SENTENCE WOULD HAVE FAILED: the claim
+	// was that the secret keeps working as the FIRST credential. Here the first is revoked,
+	// so it does not work at all — a narrowing, in the safe direction, and loud at load.
+	if len(revoked.Dropped) != 1 || revoked.Dropped[0].CredentialID != "crd_dup1" ||
+		!strings.Contains(revoked.Dropped[0].Reason, "same token digest") {
+		t.Fatalf("Dropped = %v, want exactly crd_dup1 with the duplicate reason — a secret that "+
+			"silently stops working is precisely what the drop record exists to announce",
+			revoked.Dropped)
+	}
+	// The unrelated credential is unaffected here too, which is the whole-file claim.
+	if _, _, err := Authenticate(revoked, atlasToken); err != nil {
+		t.Fatalf("an unrelated credential in the same file no longer authenticates: %v", err)
 	}
 }
 

@@ -524,10 +524,20 @@ var ErrUnusableTokenDigest = errors.New("control: token_hash is not a usable sha
 // ErrDuplicateTokenDigest marks a `credential-issued` record whose digest another record
 // already carries.
 //
-// 🔴 DROPPING THE LATER ONE IS ALSO A NARROWING: the secret keeps working, as the
-// credential it was FIRST recorded as. What is removed is the ambiguity — two principals
-// for one digest, with no defined precedence at authentication time — which is exactly
-// what the refusal in `apply` exists to prevent reaching `Resolve`.
+// 🔴 DROPPING THE LATER ONE IS A NARROWING, WHICH IS THE LICENCE — AND IT IS NOT "PROVABLY
+// INERT", WHICH IS WHAT THIS COMMENT USED TO IMPLY. It said "the secret keeps working, as
+// the credential it was FIRST recorded as". That holds only while the first record is LIVE.
+// Measured on `issue crd_0(D)` / `revoke crd_0` / `issue crd_1(D)`: the later record is
+// dropped, `crd_0` is revoked, and `Authenticate(D)` answers `unauthorized` — so the secret
+// stops working entirely rather than resolving to the first credential. That is still the
+// safe direction (a credential nobody can use, not an authority nobody intended) and it is
+// still announced at load by `Model.Dropped`, which is what makes it acceptable; what it is
+// not is a no-op. The case is `TestOneSecretRecordedTwiceDropsTheLaterRecord`'s
+// revoked-first arm.
+//
+// What the drop removes either way is the ambiguity — two principals for one digest, with
+// no defined precedence at authentication time — which is exactly what the refusal in
+// `apply` exists to prevent reaching `Resolve`.
 var ErrDuplicateTokenDigest = errors.New("control: this token digest is already recorded")
 
 // replayDroppable is the CLOSED table of "which event kind may a replay drop a record of,
@@ -611,8 +621,18 @@ func (d DroppedRecord) String() string {
 // 🔴 WITH ONE EXEMPTION, WHICH IS A TABLE RATHER THAN A CONDITION: the two
 // `credential-issued` failures listed in `replayDroppable` drop THAT RECORD and load the
 // rest. Read that table for why those two and only those two, and why the reasoning does
-// not transfer to any other kind. A dropped record is reported on `Model.Dropped`; it is
-// never silent.
+// not transfer to any other kind.
+//
+// ⚠ A DROPPED RECORD IS RECORDED ON `Model.Dropped`; WHETHER IT IS SILENT IS THE CALLER'S
+// PROPERTY, NOT THIS FUNCTION'S — AND A STRONGER SENTENCE HERE ("it is never silent") WAS
+// MEASURED FALSE. This package holds no logger by design, so all it can do is carry the
+// drop as data; a caller that renders `Dropped` once at startup and then re-reads the
+// journal on a timer announces nothing about a record dropped at the tenth read. That is
+// exactly what the pod did, and closing it was a change in `cmd/cairn-server`, not here.
+// Both programs that load a journal now render at load AND after every refresh
+// (`newDropAnnouncer`); a THIRD caller inherits nothing from that and has to do the same,
+// because the licence for skipping a record instead of refusing the file is that somebody
+// is told.
 //
 // ⚠ A DROPPED RECORD DOES NOT ADVANCE THE EPOCH, because the epoch counts events APPLIED
 // and this one was not. So a journal with drops has an epoch below its line count, which is

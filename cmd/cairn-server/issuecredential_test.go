@@ -784,6 +784,97 @@ func TestAFailedTokenDeliveryExitsItsOwnCode(t *testing.T) {
 	}
 }
 
+// refusingWriter fails every write, which is what a full device does to a one-line write.
+//
+// ⚠ IT REPORTS A SHORT WRITE AS WELL AS AN ERROR, matching `write(2)` on ENOSPC: the
+// partial bytes are already out and the count says how many. A writer that returned
+// `(len(p), err)` would be a shape the kernel does not produce.
+type refusingWriter struct{ err error }
+
+func (w refusingWriter) Write(p []byte) (int, error) { return 0, w.err }
+
+// TestAFailedDeliveryToTheDEFAULTSinkExitsItsOwnCodeToo is REGRESSION COVERAGE for the
+// half the previous round's exit-74 claim did not actually cover.
+//
+// 🔴 MEASURED BEFORE THE FIX: `if sink == nil { fmt.Fprintln(out, issued.Token()) }`
+// discarded the error and left `delivered` true, so a failing stdout produced **exit 0**,
+// no warning, and one credential durably live in the journal — on the path the command
+// DEFAULTS to. `-token-out` had the 74; the default sink had nothing.
+//
+// 🔴 AND THE INPUT IS ORDINARY, WHICH IS WHY THIS IS NOT A CONTRIVED WRITER.
+// `cairn-server -issue-credential > /path/on/a/full/fs` returns ENOSPC from `Fprintln`; it
+// does not SIGPIPE, so the process is alive to report it and did not. What the operator got
+// was a truncated token file, an unrevocable live credential, exit 0, and a closing line
+// saying the token was on stdout and would never be shown again.
+//
+// ⚠ THE FAILURE IS INJECTED THROUGH THE `out` PARAMETER, WITH NO SEAM — `runIssueCredential`
+// already takes its stdout as an `io.Writer`, so unlike the `-token-out` path this one can
+// be provoked without a `var` in production code.
+func TestAFailedDeliveryToTheDEFAULTSinkExitsItsOwnCodeToo(t *testing.T) {
+	journal, env, made := aJournalWithAnOwner(t)
+
+	out := refusingWriter{err: errors.New("simulated: no space left on device")}
+	var errOut bytes.Buffer
+	// No `-token-out`: this is the DEFAULT sink, which is the whole point of the case.
+	code := runIssueCredential(env, issueFlagsFor("user", string(made.User), "", ""), out, &errOut)
+
+	if code == 0 {
+		t.Fatalf("a credential was minted, its token was NOT delivered, and the command exited 0. "+
+			"A script reads that as 'I hold a working token'; what exists is a live, unrevocable "+
+			"record and no secret:\n%s", errOut.String())
+	}
+	if code == exitConfig {
+		t.Fatalf("a failed DELIVERY exited %d, the same code as every refusal that wrote nothing. "+
+			"A wrapper retrying on that mints another live, unrevocable credential each time:\n%s",
+			code, errOut.String())
+	}
+	if code != exitTokenUndelivered {
+		t.Fatalf("exit %d, want %d (EX_IOERR) — the same code the -token-out path takes, because "+
+			"the operator's next action is the same on both", code, exitTokenUndelivered)
+	}
+
+	body := errOut.String()
+	if !strings.Contains(body, "COULD NOT BE DELIVERED") || !strings.Contains(body, "DO NOT RETRY") {
+		t.Errorf("the failure line does not tell an operator not to retry:\n%s", body)
+	}
+	if !strings.Contains(body, "stdout") {
+		t.Errorf("the failure line does not name the sink that failed:\n%s", body)
+	}
+	// 🔴 AND THE CLOSING LINE MUST NOT STILL CLAIM THE TOKEN IS THERE. That sentence sends
+	// an operator hunting through scrollback for a secret no write ever emitted.
+	if strings.Contains(body, "THE TOKEN IS ON STDOUT AND THIS IS THE ONLY TIME") {
+		t.Errorf("after a failed delivery the command still announced the token as shown:\n%s", body)
+	}
+
+	// The credential really is in the journal, which is what makes the code necessary
+	// rather than cosmetic — the same assertion the -token-out arm carries.
+	reread, err := control.OpenFileStore(journal)
+	if err != nil {
+		t.Fatalf("re-opening the journal: %v", err)
+	}
+	m, err := reread.Model(context.Background())
+	if err != nil {
+		t.Fatalf("replaying: %v", err)
+	}
+	if len(m.Credentials) != 1 {
+		t.Fatalf("the journal holds %d credential(s), want 1", len(m.Credentials))
+	}
+
+	// The POSITIVE CONTROL on the injection: a writer that ACCEPTS the write exits 0 on the
+	// same path. Without it, "the default sink exits 74 when it fails" is equally satisfied
+	// by a build that exits 74 on the default sink always.
+	var out2, errOut2 bytes.Buffer
+	if code := runIssueCredential(env, issueFlagsFor("user", string(made.User), "", ""),
+		&out2, &errOut2); code != 0 {
+		t.Fatalf("POSITIVE CONTROL FAILED: with an ordinary writer the same call exited %d:\n%s",
+			code, errOut2.String())
+	}
+	if !strings.Contains(errOut2.String(), "THE TOKEN IS ON STDOUT") {
+		t.Errorf("the successful default-sink run no longer says the token is on stdout:\n%s",
+			errOut2.String())
+	}
+}
+
 // principalIDFrom pulls a `usr_…` id out of a captured stream.
 //
 // A helper rather than a regexp inline, so the two places that need it cannot drift into

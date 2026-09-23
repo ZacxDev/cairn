@@ -2,14 +2,66 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
 )
+
+// syncBuffer collects a child's stderr from the goroutine `exec` writes it on while this
+// test polls it. A plain `bytes.Buffer` here is a data race `go test -race` reports.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// runUIEnv makes THIS TEST BINARY run `main()` instead of the test suite.
+//
+// 🔴 THE CHILD IS THE REAL `main`, NOT A SECOND COPY OF ITS WIRING, for the reason
+// `cmd/cairn-server/main_test.go` states at length: a test that re-assembled the startup
+// sequence would pass with the call it is about deleted. It is read HERE and nowhere in the
+// program, so it is not a configuration surface an operator can reach.
+const (
+	runUIEnv       = "CAIRN_UI_TEST_RUN_MAIN"
+	testRefreshEnv = "CAIRN_UI_TEST_REFRESH_INTERVAL"
+)
+
+func TestMain(m *testing.M) {
+	if os.Getenv(runUIEnv) != "1" {
+		os.Exit(m.Run())
+	}
+	// The child REFUSES an unusable interval rather than falling back to the production
+	// one: a child quietly running at 30 s would turn the refresh assertions below into a
+	// timeout whose message named the loop instead of the harness.
+	if raw, set := os.LookupEnv(testRefreshEnv); set {
+		interval, err := time.ParseDuration(raw)
+		if err != nil || interval <= 0 {
+			fmt.Fprintf(os.Stderr, "cairn-ui test child: %s must be a positive duration, got %q\n",
+				testRefreshEnv, raw)
+			os.Exit(2)
+		}
+		refreshInterval = interval
+	}
+	main()
+}
 
 // The startup refusals are the only thing standing between a misconfigured deployment and
 // a surface that passes its health check and can serve nobody. Until this file existed
@@ -307,4 +359,206 @@ func seededJournal(t *testing.T, state credentialState) (*control.Cache, string)
 		t.Fatalf("materializing: %v", err)
 	}
 	return cache, path
+}
+
+// TestTheBINARYSaysSoWhenItsJournalLostARecordAtReplay is the gate on THIS PROGRAM'S drop
+// render, and nothing else in this package can be it.
+//
+// 🔴 THE RENDER LIVES IN `main`, SO EVERY TEST ABOVE IS STRUCTURALLY BLIND TO IT. They
+// drive `openAuthority` and `refuseAnAuthorityNobodyCanSignInTo` directly; deleting the
+// announcement from `main` leaves all of them green and leaves this surface serving an
+// authority quietly shorter than its journal. That is the "a capability nobody routes to"
+// shape `main-never-dispatches-create-user` exists for — measured on this tree: stubbing
+// out this render and `cmd/cairn-server`'s left `go test ./cmd/... ./internal/control/...`
+// fully green.
+//
+// 🔴 AND IT IS THE STATE WHERE THE MISSING LINE IS WORST. The refusal below fires BECAUSE
+// the only credential in the journal was the dropped one; without the warning it reports a
+// journal that simply has no credential, and the operator issues a second one rather than
+// deleting the line they pasted a raw token into.
+//
+// ⚠ THE CHILD EXITS 78 AND THAT IS THE POINT, NOT A LIMITATION: the drop is announced on
+// the way up, before the refusal and before any listener, so this test needs no port and no
+// timing. It carries its own NEGATIVE CONTROL — the same binary over a journal with no
+// dropped record must print no WARNING — because "stderr contains a warning" is otherwise
+// satisfied by a program that warns unconditionally.
+func TestTheBINARYSaysSoWhenItsJournalLostARecordAtReplay(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(journal string) (int, string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		child := exec.CommandContext(ctx, self,
+			"-control-journal", journal,
+			"-store", t.TempDir(),
+			"-session-file", filepath.Join(t.TempDir(), "sessions"),
+			"-token-file", filepath.Join(t.TempDir(), "absent-token"),
+			"-port", "0")
+		child.Env = []string{runUIEnv + "=1"}
+		body, _ := child.CombinedOutput()
+		if ctx.Err() != nil {
+			t.Fatalf("the child did not exit within 20s — it reached the listener over a journal it "+
+				"should have refused:\n%s", body)
+		}
+		if child.ProcessState == nil {
+			t.Fatalf("no process state:\n%s", body)
+		}
+		return child.ProcessState.ExitCode(), string(body)
+	}
+
+	// The NEGATIVE CONTROL first: a journal with a user, no credential and NOTHING dropped.
+	// It is refused for the ordinary reason and must say nothing about a dropped record.
+	_, clean := seededJournal(t, noCredential)
+	if code, body := run(clean); code != exitConfig {
+		t.Fatalf("the control journal with no credential exited %d, want %d:\n%s", code, exitConfig, body)
+	} else if strings.Contains(body, "WARNING the control journal") {
+		t.Fatalf("NEGATIVE CONTROL FAILED: a journal with no dropped record produced a drop "+
+			"warning, so the assertion below is about a program that warns unconditionally:\n%s", body)
+	}
+
+	// …and the case: the same journal with a hand-appended `credential-issued` whose
+	// `token_hash` is a pasted RAW TOKEN. Synthetic, fixed, 64 characters and not hex — the
+	// width is what matters, because any other length was refused by the check this one
+	// replaced.
+	_, journal := seededJournal(t, noCredential)
+	fh, err := os.OpenFile(journal, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notADigest := strings.Repeat("cairn-test-not-a-digest-", 3)[:64]
+	line := `{"kind":"credential-issued","at":"2000-06-01T12:00:00Z","credential_id":"crd_pastedraw",` +
+		`"subject_kind":"user","subject_id":"` + string(control.DerivedID(control.PrefixUser, "startup-user")) +
+		`","token_hash":"` + notADigest + `","label":"hand-appended"}` + "\n"
+	if _, err := fh.WriteString(line); err != nil {
+		t.Fatal(err)
+	}
+	if err := fh.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body := run(journal)
+	if !strings.Contains(body, "crd_pastedraw") {
+		t.Fatalf("the binary started over a journal whose credential record was DROPPED at replay "+
+			"and said nothing about it. The authority it serves is short of what the file describes, "+
+			"silently, and that silence is the whole cost of the replay leniency:\n%s", body)
+	}
+	if !strings.Contains(body, "hex digest") {
+		t.Fatalf("the drop is announced without its reason, so an operator cannot tell a pasted "+
+			"secret from a duplicate record:\n%s", body)
+	}
+	if code != exitConfig {
+		t.Fatalf("exit %d, want %d — the refusal still fires, because the dropped record was the "+
+			"only credential:\n%s", code, exitConfig, body)
+	}
+	// And the refusal's own count now says what it counts, rather than reporting the
+	// dropped record as an absent one.
+	if !strings.Contains(body, "1 record(s) DROPPED") {
+		t.Fatalf("the refusal does not report the dropped record in its count, so 'credential "+
+			"record(s)' reads as 'nobody ever issued one':\n%s", body)
+	}
+}
+
+// handAppendedRawTokenRecord is a `credential-issued` line an operator wrote by hand with
+// the RAW TOKEN pasted into `token_hash`. Synthetic and fixed: 64 characters, not hex, and
+// it has never authorised anything. The width is what matters — a value of any other length
+// was already refused by the length-only check this guard replaced.
+func handAppendedRawTokenRecord(credential string, subject control.ID) string {
+	notADigest := strings.Repeat("cairn-test-not-a-digest-", 3)[:64]
+	return `{"kind":"credential-issued","at":"2000-06-01T12:00:00Z","credential_id":"` + credential +
+		`","subject_kind":"user","subject_id":"` + string(subject) +
+		`","token_hash":"` + notADigest + `","label":"hand-appended"}` + "\n"
+}
+
+// TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup is the REFRESH half, and it is
+// a different claim from the startup half above.
+//
+// 🔴 THE TWO RENDER CALLS FAIL INDEPENDENTLY, WHICH IS WHY THERE ARE TWO TESTS. Deleting
+// the announcement from the refresh loop leaves the startup test green and leaves this
+// surface silent about exactly the drop that matters most: the one that appears while a
+// person is trying to sign in. It is the same measured shape as the pod's — there,
+// `warnAboutDroppedRecords` ran once before `Cache.Run` and a record appended afterwards
+// produced an EMPTY operator stream.
+//
+// 🔴 AND THE SECOND ASSERTION IS "ONCE". The loop ticks on a timer, so an announcement per
+// refresh is thousands of identical lines a day for one bad journal line — a stream an
+// operator filters, which is the same outcome as saying nothing.
+//
+// ⚠ IT RUNS A LONG-LIVED CHILD AND BINDS AN EPHEMERAL PORT (`-port 0`), which is a
+// dimension: the same two points `cmd/cairn-server`'s binary tests are measured at, an
+// ordinary `go test` and the nix sandbox's `checkPhase`, and the child is killed by
+// cancelling its context.
+func TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A LIVE credential, because this arm needs the binary to get PAST the startup refusal
+	// and reach its refresh loop.
+	_, journal := seededJournal(t, credentialLive)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	child := exec.CommandContext(ctx, self,
+		"-control-journal", journal,
+		"-store", t.TempDir(),
+		"-session-file", filepath.Join(t.TempDir(), "sessions"),
+		"-token-file", filepath.Join(t.TempDir(), "absent-token"),
+		"-host", "127.0.0.1", "-port", "0")
+	child.Env = []string{runUIEnv + "=1", testRefreshEnv + "=5ms"}
+	var body syncBuffer
+	child.Stdout, child.Stderr = &body, &body
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cancel(); _ = child.Wait() })
+
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			if cond() {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %s. Child output so far:\n%s", what, body.String())
+	}
+	count := func(sub string) int { return strings.Count(body.String(), sub) }
+
+	waitFor("the surface to come up", func() bool { return strings.Contains(body.String(), "serving") })
+
+	// 🔴 THE NEGATIVE CONTROL. Many refreshes over a clean journal must produce no drop
+	// line, or the assertion below is about a program that warns unconditionally.
+	time.Sleep(200 * time.Millisecond)
+	if n := count("WARNING the control journal"); n != 0 {
+		t.Fatalf("a clean journal produced %d drop line(s) while running:\n%s", n, body.String())
+	}
+
+	fh, err := os.OpenFile(journal, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fh.WriteString(handAppendedRawTokenRecord("crd_appearedlater",
+		control.DerivedID(control.PrefixUser, "startup-user"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := fh.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor("the drop to reach the operator", func() bool { return count("crd_appearedlater") > 0 })
+	if !strings.Contains(body.String(), "hex digest") {
+		t.Fatalf("the announced line does not carry the refusal's own reason:\n%s", body.String())
+	}
+
+	// …and ONCE, across many further refreshes over the same unchanged file.
+	time.Sleep(200 * time.Millisecond)
+	if n := count("crd_appearedlater"); n != 1 {
+		t.Fatalf("one standing drop was announced %d times. At the production interval that is "+
+			"~2,880 identical lines a day:\n%s", n, body.String())
+	}
 }

@@ -586,7 +586,12 @@ func TestABrokenControlJournalIsSaidONCEAndItsRecoverySaidONCE(t *testing.T) {
 	journal := filepath.Join(t.TempDir(), "control.journal")
 
 	var said []string
-	report := journalRefreshReporter(journal, func(line string) { said = append(said, line) })
+	// The announcer is counted rather than stubbed to a no-op: this reporter is the only
+	// per-refresh hook, so it carries the new-drop announcement too, and "called on the
+	// SUCCESS side" is a property of this function rather than of the announcer.
+	announcements := 0
+	report := journalRefreshReporter(journal, func(line string) { said = append(said, line) },
+		func() { announcements++ })
 
 	broken := errors.New("control journal " + journal + ": line 3: unexpected end of JSON input")
 	// 🔴 THE SEQUENCE IS THE TEST. Two failures in a row must produce ONE line; two
@@ -610,18 +615,83 @@ func TestABrokenControlJournalIsSaidONCEAndItsRecoverySaidONCE(t *testing.T) {
 	if !strings.Contains(said[2], "no longer loads") {
 		t.Fatalf("the second failure was not reported as a failure:\n%s", said[2])
 	}
+	// Two of the six refreshes succeeded, and a model can only be READ after one that did:
+	// a refresh that failed left `Cache` serving last-known-good, whose drops were already
+	// announced when it was last read successfully.
+	if announcements != 2 {
+		t.Fatalf("the new-drop announcer ran %d times across 6 refreshes (2 of them successful). "+
+			"Running it on a FAILED refresh re-reads a model nothing reloaded; not running it on a "+
+			"successful one is the silent drop this hook exists to close", announcements)
+	}
 
 	// 🔴 THE NEGATIVE CONTROL, AND WITHOUT IT A REPORTER THAT PRINTED ON EVERY CALL WOULD
 	// STILL FAIL THE COUNT ABOVE FOR THE WRONG REASON. A reporter that has never seen a
 	// failure must say NOTHING about a run of successes — that is the ordinary state of
 	// every pod in the fleet, and a line there would be noise on every refresh forever.
 	said = nil
-	quiet := journalRefreshReporter(journal, func(line string) { said = append(said, line) })
+	quiet := journalRefreshReporter(journal, func(line string) { said = append(said, line) }, nil)
 	for range 5 {
 		quiet(nil)
 	}
 	if len(said) != 0 {
 		t.Fatalf("a healthy journal produced %d lines:\n%s", len(said), strings.Join(said, "\n"))
+	}
+}
+
+// TestADropIsAnnouncedOnceNoMatterHowOftenTheJournalIsREAD is the announcer's own unit, and
+// the count is the assertion.
+//
+// 🔴 BOTH HALVES MATTER AND THEY PULL OPPOSITE WAYS. A drop that appears at refresh time
+// must be SAID — that is the leniency's precondition, and a startup-only render cannot
+// satisfy it — and a drop already said must not be said AGAIN, because the pod re-reads the
+// journal every 30 s and 2,880 identical lines a day is a stream an operator filters. A
+// reporter that gets either half wrong looks identical from the code.
+//
+// ⚠ IT DRIVES THE ANNOUNCER DIRECTLY AND IS THEREFORE BLIND TO THE WIRING, exactly as
+// `TestABrokenControlJournalIsSaidONCEAndItsRecoverySaidONCE` is. The wiring is
+// `TestADropAppearingWhileThePodIsRunningReachesTheOperator` below, which is a different
+// claim and has its own mutant row.
+func TestADropIsAnnouncedOnceNoMatterHowOftenTheJournalIsREAD(t *testing.T) {
+	var model control.Model
+	var said []string
+	announce := newDropAnnouncer("/journal", func() control.Model { return model }, func(l string) { said = append(said, l) })
+
+	// A clean model says nothing, however many times it is read. Without this arm an
+	// announcer that printed a header on every call would still pass the counts below.
+	for range 5 {
+		announce()
+	}
+	if len(said) != 0 {
+		t.Fatalf("a model with no drops produced %d line(s):\n%s", len(said), strings.Join(said, "\n"))
+	}
+
+	first := control.DroppedRecord{Position: 4, Kind: control.EventCredentialIssued,
+		CredentialID: "crd_first", Reason: "token_hash is not a 64-character hex digest"}
+	model = control.Model{Dropped: []control.DroppedRecord{first}}
+	for range 5 {
+		announce()
+	}
+	if len(said) != 1 {
+		t.Fatalf("one drop read five times produced %d line(s) — a standing drop re-announced "+
+			"every refresh is noise an operator filters:\n%s", len(said), strings.Join(said, "\n"))
+	}
+	if !strings.Contains(said[0], "crd_first") || !strings.Contains(said[0], "/journal") {
+		t.Fatalf("the line names neither the credential nor the journal: %s", said[0])
+	}
+
+	// 🔴 THE HALF THE STARTUP-ONLY RENDER COULD NOT DO: a SECOND drop, appearing in a model
+	// read later, is announced — and the first is not repeated beside it.
+	second := control.DroppedRecord{Position: 9, Kind: control.EventCredentialIssued,
+		CredentialID: "crd_appeared_later", Reason: "carries the same token digest as crd_first"}
+	model = control.Model{Dropped: []control.DroppedRecord{first, second}}
+	announce()
+	if len(said) != 2 {
+		t.Fatalf("a drop that appeared AFTER the first read produced %d total line(s), want 2. "+
+			"A record dropped while the pod is running is the case the replay leniency's own "+
+			"precondition is about:\n%s", len(said), strings.Join(said, "\n"))
+	}
+	if !strings.Contains(said[1], "crd_appeared_later") {
+		t.Fatalf("the second line is not about the new record: %s", said[1])
 	}
 }
 
@@ -714,6 +784,188 @@ func TestTheRunningPodSAYSSoWhenItsControlJournalGoesBad(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor("the recovery to be reported", func() bool { return saw("loads again") })
+}
+
+// handAppendedCredentialLine is a `credential-issued` record an operator wrote by hand with
+// the RAW TOKEN pasted into `token_hash` — the mistake the field's own refusal text names,
+// and the one that produces a dropped record rather than a refused file.
+//
+// ⚠ THE DIGEST IS SYNTHETIC AND IS NOT HEX: a fixed 64-character pattern, which is the
+// width that matters (a value of any other length was already refused by the length check
+// this guard replaced) and a value that has never authorised anything anywhere.
+func handAppendedCredentialLine(credential, subject string) string {
+	notADigest := strings.Repeat("cairn-test-not-a-digest-", 3)[:64]
+	return `{"kind":"credential-issued","at":"2000-01-01T00:00:00Z","credential_id":"` + credential +
+		`","subject_kind":"user","subject_id":"` + subject +
+		`","token_hash":"` + notADigest + `","label":"hand-appended"}` + "\n"
+}
+
+// TestADropAppearingWhileThePodIsRunningReachesTheOperator is the WIRING half of the
+// new-drop announcement, and it is REGRESSION COVERAGE for a silence this PR introduced.
+//
+// 🔴 MEASURED BEFORE THE FIX, ON THIS EXACT SEQUENCE: with the pod running, appending a
+// `credential-issued` line whose `token_hash` is a pasted raw token produced an EMPTY
+// operator stream after the next refresh. `warnAboutDroppedRecords` ran ONCE, before
+// `Cache.Run` started, and the only per-refresh hook takes an `error` and cannot see a
+// model — so the record was dropped, the operator's new credential simply did not exist,
+// and nothing said so until a restart. With the replay exemption disabled the same input
+// produced the loud `no longer loads` line, which is what makes this a trade of a loud
+// outage for a silent no-op rather than an improvement.
+//
+// 🔴 AND THE SECOND ASSERTION IS THAT IT IS SAID ONCE. The refresh is 30 s in production,
+// so a re-announcement of a standing drop is thousands of identical lines a day — the
+// failure mode `journalRefreshReporter`'s edge detector exists against, reintroduced one
+// hook over.
+//
+// ⚠ IT SHORTENS `refreshInterval`, exactly as the test above does, and restores it.
+func TestADropAppearingWhileThePodIsRunningReachesTheOperator(t *testing.T) {
+	saved := refreshInterval
+	refreshInterval = 5 * time.Millisecond
+	t.Cleanup(func() { refreshInterval = saved })
+
+	journal := filepath.Join(t.TempDir(), "control.journal")
+	env := map[string]string{EnvControlJournal: journal}
+	var out, errOut bytes.Buffer
+	if code := runCreateUser(env, "", flagsFor("supabase", "subject-0001", "", "quarry", "quarry-notes"), &out, &errOut); code != 0 {
+		t.Fatalf("provisioning a starting world: %d / %s", code, errOut.String())
+	}
+
+	var mu sync.Mutex
+	var lines []string
+	warn := func(line string) { mu.Lock(); lines = append(lines, line); mu.Unlock() }
+	count := func(sub string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, l := range lines {
+			if strings.Contains(l, sub) {
+				n++
+			}
+		}
+		return n
+	}
+	dump := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Join(lines, "\n")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	authority, err := openSessionAuthority(ctx, env, warn)
+	if err != nil {
+		t.Fatalf("opening the session authority: %v", err)
+	}
+	model := authority.Model()
+	user, held := model.UserByProviderSubject("supabase", "subject-0001")
+	if !held {
+		t.Fatal("the authority does not hold the user just created")
+	}
+
+	// 🔴 THE NEGATIVE CONTROL. A journal with no drops must stay silent across many
+	// refreshes, or the line below is a fact about a reporter that prints on every tick.
+	time.Sleep(40 * refreshInterval)
+	if n := count("WARNING the control journal"); n != 0 {
+		t.Fatalf("a clean journal produced %d drop line(s):\n%s", n, dump())
+	}
+
+	fh, err := os.OpenFile(journal, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fh.WriteString(handAppendedCredentialLine("crd_pastedraw", string(user.ID))); err != nil {
+		t.Fatal(err)
+	}
+	if err := fh.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(20 * time.Second)
+	for count("crd_pastedraw") == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("20s after a record was DROPPED from a running pod's journal, the operator "+
+				"stream says nothing about it. The credential does not exist and no restart is due; "+
+				"stream so far:\n%s", dump())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := count("hex digest"); n == 0 {
+		t.Fatalf("the announced line does not carry the refusal's own reason:\n%s", dump())
+	}
+
+	// …and then ONCE, across many more refreshes over the same unchanged file.
+	time.Sleep(60 * refreshInterval)
+	if n := count("crd_pastedraw"); n != 1 {
+		t.Fatalf("one standing drop was announced %d times. At the production interval that is "+
+			"~2,880 identical lines a day, which is the stream an operator filters:\n%s", n, dump())
+	}
+}
+
+// TestADropAlreadyInTheJournalIsAnnouncedWhenTheAuTHORITYOPENS is the STARTUP half, and it
+// is a separate claim from the refresh half above.
+//
+// 🔴 THE TWO RENDER SITES FAIL INDEPENDENTLY. The announcer is one function called from two
+// places, so deleting either call leaves the other's test green — the "a capability nobody
+// routes to" shape `main-never-dispatches-create-user` exists for. A pod started over a
+// journal that ALREADY holds a bad line must say so before it serves a request, because
+// that is the state in which a person cannot sign in and the journal looks fine.
+func TestADropAlreadyInTheJournalIsAnnouncedWhenTheAuTHORITYOPENS(t *testing.T) {
+	saved := refreshInterval
+	refreshInterval = 5 * time.Millisecond
+	t.Cleanup(func() { refreshInterval = saved })
+
+	journal := filepath.Join(t.TempDir(), "control.journal")
+	env := map[string]string{EnvControlJournal: journal}
+	var out, errOut bytes.Buffer
+	if code := runCreateUser(env, "", flagsFor("supabase", "subject-0001", "", "quarry", "quarry-notes"), &out, &errOut); code != 0 {
+		t.Fatalf("provisioning a starting world: %d / %s", code, errOut.String())
+	}
+	seeded, err := control.OpenFileStore(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := seeded.Model(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, held := m.UserByProviderSubject("supabase", "subject-0001")
+	if !held {
+		t.Fatal("the seeded journal holds no user")
+	}
+	fh, err := os.OpenFile(journal, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fh.WriteString(handAppendedCredentialLine("crd_alreadythere", string(user.ID))); err != nil {
+		t.Fatal(err)
+	}
+	if err := fh.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var lines []string
+	warn := func(line string) { mu.Lock(); lines = append(lines, line); mu.Unlock() }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := openSessionAuthority(ctx, env, warn); err != nil {
+		t.Fatalf("opening the session authority: %v", err)
+	}
+
+	// Read immediately: the claim is that this is said on the way UP, before any refresh
+	// could have reported it. A sleep here would make a refresh-only implementation pass.
+	mu.Lock()
+	said := strings.Join(lines, "\n")
+	mu.Unlock()
+	if !strings.Contains(said, "crd_alreadythere") {
+		t.Fatalf("a journal whose bad line was ALREADY there produced nothing at startup. The "+
+			"replay dropped it and the pod is serving an authority short of what the file "+
+			"describes, silently. Stream:\n%s", said)
+	}
+	if !strings.Contains(said, journal) || !strings.Contains(said, "hex digest") {
+		t.Fatalf("the startup line names neither the journal nor the reason:\n%s", said)
+	}
 }
 
 // TestTheBinaryActuallyDispatchesCreateUser is the half the in-process tests cannot reach:

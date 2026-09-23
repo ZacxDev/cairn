@@ -369,7 +369,21 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 	// short of what the journal describes, and the skipped line needs deleting or
 	// correcting. `internal/control` holds no logger by design, so it carries the drops as
 	// data and this is one of the two programs that renders them.
-	warnAboutDroppedRecords(cache.Model(), journal, warn)
+	//
+	// 🔴 AND IT IS ANNOUNCED AT EVERY REFRESH, NOT ONLY AT STARTUP, BECAUSE A DROP THAT
+	// APPEARS WHILE THE POD IS RUNNING IS THE CASE THE LENIENCY'S OWN PRECONDITION COVERS
+	// AND THE ONE A STARTUP-ONLY RENDER CANNOT SEE. Measured on the startup-only version:
+	// with the pod up, hand-appending a `credential-issued` line whose `token_hash` is a
+	// pasted raw token produced an EMPTY operator stream — the record dropped, the
+	// operator's new credential simply not existing, and nothing saying so until a restart.
+	// With the replay exemption disabled the same input produced the loud
+	// `no longer loads` line, so the round that added the exemption had traded a loud
+	// outage for a silent no-op. `newDropAnnouncer` is shared between this call and the
+	// refresh hook precisely so the announcement is ONCE PER RECORD rather than once per
+	// refresh: a 30-second re-announcement of a standing drop is how an operator learns to
+	// filter the stream, which is the same outcome as not warning at all.
+	announceNewDrops := newDropAnnouncer(journal, cache.Model, warn)
+	announceNewDrops()
 	if len(cache.Model().Users) == 0 {
 		// ⚠ A WARNING RATHER THAN A REFUSAL, AND THE ASYMMETRY IS ABOUT THE ORDER AN
 		// OPERATOR CAN ACTUALLY WORK IN. `control.OpenFileStore` CREATES the file if it is
@@ -413,7 +427,7 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 	// where it is rather than moving into the goroutine as a "simplification".
 	triggers := control.RefreshTriggers{
 		Interval:  refreshInterval,
-		OnRefresh: journalRefreshReporter(journal, warn),
+		OnRefresh: journalRefreshReporter(journal, warn, announceNewDrops),
 	}
 	go func() {
 		if err := cache.Run(ctx, triggers); err != nil && !errors.Is(err, context.Canceled) {
@@ -440,13 +454,65 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 //
 // ⚠ AND IT IS SILENT WHEN NOTHING WAS DROPPED, WHICH IS THE NORMAL CASE AND KEEPS THIS OFF
 // THE STARTUP OUTPUT `tests/dualrun/` COMPARES BETWEEN THE TWO SERVERS.
+//
+// ⚠ IT IS THE ONE-SHOT SPELLING, FOR `-issue-credential`, WHICH READS THE JOURNAL ONCE AND
+// EXITS. A process that keeps reading it wants `newDropAnnouncer` instead — same line, said
+// once per RECORD rather than once per read.
 func warnAboutDroppedRecords(m control.Model, journal string, warn func(string)) {
 	for _, d := range m.Dropped {
-		warn(fmt.Sprintf(
-			"subsystem-store-api: WARNING the control journal %s: %s. The rest of the file loaded and "+
-				"this pod is serving an authority WITHOUT that credential. Delete or correct that line; "+
-				"nothing here rewrites an append-only journal",
-			journal, d))
+		warn(droppedRecordLine(journal, d))
+	}
+}
+
+// droppedRecordLine is the ONE spelling of the operator-facing drop line.
+//
+// Three call sites render a drop — this command's one-shot read, the pod's authority (at
+// startup and at every refresh) and `cmd/cairn-ui` — and a second wording of it would be a
+// second description of a trade `internal/control` decides. `cairn-ui` is a different
+// program with a different prefix and keeps its own; these two do not.
+func droppedRecordLine(journal string, d control.DroppedRecord) string {
+	return fmt.Sprintf(
+		"subsystem-store-api: WARNING the control journal %s: %s. The rest of the file loaded and "+
+			"this pod is serving an authority WITHOUT that credential. Delete or correct that line; "+
+			"nothing here rewrites an append-only journal",
+		journal, d)
+}
+
+// newDropAnnouncer renders the drops a model carries that it has NOT already rendered.
+//
+// 🔴 IT EXISTS BECAUSE A DROP THAT APPEARS AT REFRESH TIME WAS SILENT, AND SILENT IS THE
+// ONE THING THE REPLAY LENIENCY IS NOT ALLOWED TO BE. `control.Replay`'s licence to skip a
+// record rather than refuse the file rests on somebody being told; the render ran once,
+// before `Cache.Run` started, and the only per-refresh hook takes an `error` and cannot see
+// a model. So a `credential-issued` line appended to a live pod's journal with a raw token
+// in `token_hash` was dropped at the next refresh with NOTHING on stderr — the operator's
+// new credential not existing, and no signal until a restart.
+//
+// 🔴 ONLY WHAT IS NEW, WHICH IS THE OTHER HALF AND NOT AN OPTIMISATION. The refresh runs
+// every 30 s, so re-announcing a standing drop is 2,880 identical lines a day: a volume of
+// repeated warnings is how an operator learns to filter the stream this warning arrives on,
+// which is the same outcome as not warning. The same arithmetic `journalRefreshReporter`
+// records for the failure edge.
+//
+// ⚠ THE IDENTITY IS THE WHOLE RENDERED CLAIM — position, kind, credential id and reason —
+// rather than the credential id alone, and the trade is stated because it is not free: a
+// record whose POSITION moves is announced a second time. That needs somebody to rewrite an
+// append-only file, and the direction is the safe one (a repeat, never a silence), where
+// keying on the id alone would swallow a DIFFERENT failure later arising for the same id.
+func newDropAnnouncer(journal string, model func() control.Model, warn func(string)) func() {
+	// Closed over rather than package state, for the reason `journalRefreshReporter` gives:
+	// two authorities in one process would otherwise share one ledger and each silence the
+	// other's drops.
+	announced := map[string]struct{}{}
+	return func() {
+		for _, d := range model().Dropped {
+			line := droppedRecordLine(journal, d)
+			if _, said := announced[line]; said {
+				continue
+			}
+			announced[line] = struct{}{}
+			warn(line)
+		}
 	}
 }
 
@@ -490,11 +556,23 @@ func warnAboutDroppedRecords(m control.Model, journal string, warn func(string))
 // trusting a tally.
 // **Closing condition:** when that surface lands, this line renders `Staleness()` with it
 // and every one of those sentences moves with it.
-func journalRefreshReporter(journal string, warn func(string)) func(error) {
+// 🔴 IT ALSO CARRIES THE NEW-DROP ANNOUNCEMENT, BECAUSE `OnRefresh` IS THE ONLY PER-REFRESH
+// HOOK AND A SECOND ONE WOULD BE A SECOND ANSWER TO "WHAT DOES THIS POD SAY AFTER A
+// REFRESH". A refresh that SUCCEEDS can still have dropped a record — that is precisely the
+// case a startup-only render cannot see — so the announcer is called on the success side.
+// It is passed in rather than built here so that its ledger is shared with the startup
+// render: built here, the first refresh would repeat everything said at startup.
+func journalRefreshReporter(journal string, warn func(string), announceNewDrops func()) func(error) {
 	// Closed over rather than package state: two authorities in one process would
 	// otherwise share one edge detector and each silence the other's transitions.
 	failing := false
 	return func(err error) {
+		// Nil-checked rather than required: this runs on the refresh goroutine, where a
+		// panic takes the loop — and with it last-known-good's only mechanism for ever
+		// becoming good again — over a reporting surface.
+		if err == nil && announceNewDrops != nil {
+			announceNewDrops()
+		}
 		switch {
 		case err != nil && !failing:
 			failing = true

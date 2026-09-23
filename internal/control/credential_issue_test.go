@@ -249,25 +249,77 @@ func tokenSpellings(token string) map[string]string {
 // 🔴 WITHOUT IT, "NO VERB LEAKED" IS INDISTINGUISHABLE FROM A SWEEP WIRED TO NOTHING — a
 // misspelled verb list, a `Sprintf` whose result is discarded, a `Contains` with the
 // operands the wrong way round. The control must move the number: it is required to leak at
-// SOME verb, and the pair is what the failure message reports.
+// SOME (shape, verb) pair, and the pair is what the failure message reports.
 type leakyTwin struct{ Token string }
 
-// leakingVerbs renders `operand` (and a pointer to it) through every verb and returns the
-// verbs whose output carries the secret in any spelling.
+// hiddenIn holds its operand in an UNEXPORTED field, which is the shape that made the
+// previous version of this sweep structurally blind.
+//
+// 🔴 `fmt` CALLS A VALUE'S FORMATTING METHODS ONLY WHEN IT CAN `Interface()` THAT VALUE,
+// AND A FIELD REACHED BY REFLECTION THROUGH AN UNEXPORTED NAME CANNOT BE INTERFACED. So an
+// `Issued` sitting here is NEVER handed to `Issued.Format`, `String` or `GoString` however
+// wide those are: `fmt` walks into its fields directly. That is the same mechanism that
+// produced the original leak one level down, and it is why the redaction that actually
+// closes the hole is the POINTER on the token field rather than any method.
+type hiddenIn[T any] struct{ hidden T }
+
+// shapedOperand is one way an operand can reach `fmt`, with the name the failure message
+// reports it by.
+type shapedOperand struct {
+	shape   string
+	operand any
+}
+
+// leakShapes is every SHAPE this sweep hands to `fmt`, and the list is the whole point of
+// the widening.
+//
+// 🔴 THE PREVIOUS SWEEP RENDERED AT DEPTH 0 ONLY — the value and a pointer to it — while
+// its own docstring called the nested case "the realistic leak". `fmt` dispatches to a
+// `Formatter` only for a value it can `Interface()`, and it follows a POINTER only at depth
+// 0; both of those facts are invisible to a depth-0 sweep, and between them they decide
+// which half of this type's defence is load-bearing. Measured with the sweep widened to
+// these seven shapes: reverting `token *string` to `token string` leaks at **22 (shape,
+// verb) pairs** — 19 of them through an `Issued` in an unexported field, where no method of
+// any kind is consulted — while removing `Format` entirely and keeping the pointer leaks at
+// **0**. The depth-0 sweep could see neither number.
+//
+// ⚠ SEVEN SHAPES, NOT AN EXHAUSTIVE SET. `fmt`'s reflection walker recurses without a depth
+// limit, so no finite list is complete; what these cover is one representative of each way
+// the walker can reach a value — addressable and not, interfaceable and not, through a
+// struct field, a slice element, a map value and an interface. A shape nobody wrote here is
+// a shape this sweep does not measure, which is a declared limit rather than a claim.
+func leakShapes[T any](v T) []shapedOperand {
+	return []shapedOperand{
+		{"the value", v},
+		{"a pointer to it", &v},
+		// The two that decide the question, and they answer differently: `fmt` can
+		// `Interface()` an exported field and cannot an unexported one.
+		{"an UNEXPORTED field of another struct", hiddenIn[T]{hidden: v}},
+		{"an exported field of another struct", struct{ Shown T }{Shown: v}},
+		{"a slice element", []T{v}},
+		{"a map value", map[string]T{"k": v}},
+		{"an interface field", struct{ Held any }{Held: v}},
+	}
+}
+
+// leakingRenderings renders every shape through every verb and returns the (shape, verb)
+// pairs whose output carries the secret in any spelling.
 //
 // ⚠ IT NEVER RETURNS THE RENDERED TEXT, AND THAT IS DELIBERATE RATHER THAN TERSE. A failure
 // here means a live credential is in the formatted output; interpolating it into
 // `t.Errorf` would re-stage the secret into the test log, the CI transcript and any agent
 // session capturing the run — the guard against printing a token, printing the token.
-func leakingVerbs(operand any, pointer any, token string) []string {
+func leakingRenderings(shapes []shapedOperand, token string) []string {
 	spellings := tokenSpellings(token)
 	var leaked []string
-	for _, verb := range everyFormattingVerb {
-		rendered := fmt.Sprintf(verb, operand) + "\x00" + fmt.Sprintf(verb, pointer)
-		for name, spelling := range spellings {
-			if strings.Contains(rendered, spelling) {
-				leaked = append(leaked, verb+" ("+name+")")
-				break
+	for _, s := range shapes {
+		for _, verb := range everyFormattingVerb {
+			rendered := fmt.Sprintf(verb, s.operand)
+			for name, spelling := range spellings {
+				if strings.Contains(rendered, spelling) {
+					leaked = append(leaked, s.shape+" "+verb+" ("+name+")")
+					break
+				}
 			}
 		}
 	}
@@ -283,13 +335,21 @@ func leakingVerbs(operand any, pointer any, token string) []string {
 // precisely when they want every field, and a redaction that only implemented `String()`
 // would leak there.
 //
-// 🔴 AND THE VERBS THE OLD LIST DID NOT COVER ARE WHERE THE MEASURED LEAK WAS. `fmt`
+// 🔴 AND THE VERBS THE OLD LIST DID NOT COVER ARE WHERE THE FIRST MEASURED LEAK WAS. `fmt`
 // consults `Stringer` only for `%v %s %q %x %X` and `GoStringer` only for `%#v`; every
 // other verb reflects the operand and prints the unexported field's value inside
-// `%!d(string=…)`. 14 of 22 leaked at `0fb61d4`. `Issued.Format` is what closes them,
-// because `fmt` consults `Formatter` for EVERY verb — with one measured exception, `%p` of
-// a non-pointer operand, which is closed by the token living behind a pointer instead. Both
-// halves are load-bearing and this test is what says so.
+// `%!d(string=…)`. 14 of 22 leaked at `0fb61d4`, at depth 0.
+//
+// 🔴 AND THE SWEEP IS NOW SHAPED AS WELL AS VERBED, BECAUSE THE DEPTH-0 VERSION CREDITED
+// THE WRONG HALF. It rendered only the value and a pointer to it, so it could not see an
+// `Issued` nested inside another struct — the case its own docstring called realistic — and
+// on that evidence three sites said `Format` closed 21 of 22 and the pointer the
+// twenty-second. Re-measured over seven shapes × 22 verbs: with `Format` present and
+// `token` reverted to a plain `string`, **22 (shape, verb) pairs leak**, 19 of them verbs
+// reached through an UNEXPORTED field where `fmt` consults no method at all; with the
+// pointer present and `Format` deleted entirely, **0**. 🔴 **THE POINTER IS WHAT CLOSES THE
+// HOLE.** `Format` earns its place by rendering a redacted line instead of a raw address,
+// and as defence in depth — not as the half that makes this test pass.
 //
 // ⚠ IT IS A CLAIM ABOUT FORMATTING, NOT A CONFIDENTIALITY BOUNDARY. `Token()` still
 // returns the secret, which is the whole point; `Issued`'s own comment enumerates what
@@ -308,24 +368,44 @@ func TestNoRenderingOfIssuedContainsTheToken(t *testing.T) {
 		t.Fatal("Token() does not return the token")
 	}
 
+	shapes := leakShapes(issued)
+	pairs := len(shapes) * len(everyFormattingVerb)
+
 	// The positive control on the SWEEP: an unredacted twin must be seen leaking, or a
 	// clean result below is a fact about the instrument rather than about `Issued`.
-	twin := leakyTwin{Token: token}
-	control := leakingVerbs(twin, &twin, token)
+	//
+	// 🔴 IT IS SWEPT THROUGH THE SAME SHAPES, WHICH IS WHAT MAKES IT A CONTROL ON THE
+	// WIDENING AND NOT ONLY ON THE VERB LIST. A twin rendered at depth 0 alone would leak
+	// loudly while saying nothing about whether the nested shapes are wired to anything.
+	twinShapes := leakShapes(leakyTwin{Token: token})
+	control := leakingRenderings(twinShapes, token)
 	if len(control) == 0 {
 		t.Fatal("POSITIVE CONTROL FAILED: the sweep found no leak in a struct that holds the raw " +
 			"token in an EXPORTED field, so it cannot see one anywhere and every clean result it " +
 			"reports is about nothing")
 	}
+	// And it must leak through the NESTED shapes specifically, or the widening is inert: a
+	// builder that returned seven copies of the depth-0 value would satisfy the count above.
+	nested := 0
+	for _, pair := range control {
+		if strings.HasPrefix(pair, "the value ") || strings.HasPrefix(pair, "a pointer to it ") {
+			continue
+		}
+		nested++
+	}
+	if nested == 0 {
+		t.Fatal("POSITIVE CONTROL FAILED: the twin leaks only at depth 0, so the five nested shapes " +
+			"are rendering something the sweep cannot see and the widening measures nothing")
+	}
 
-	if leaked := leakingVerbs(issued, &issued, token); len(leaked) > 0 {
-		t.Errorf("%d of %d formatting verbs render the RAW TOKEN of an Issued: %v\n"+
-			"(the control twin leaked at %d of %d, so the sweep works)\n"+
-			"`fmt` consults `Stringer`/`GoStringer` for only six verbs and REFLECTS the operand "+
-			"for the rest, which prints the unexported field's value. The redaction has to be "+
-			"`Formatter`, which `fmt` consults for every verb. The rendered text is deliberately "+
-			"NOT printed here: it holds a live credential.",
-			len(leaked), len(everyFormattingVerb), leaked, len(control), len(everyFormattingVerb))
+	if leaked := leakingRenderings(shapes, token); len(leaked) > 0 {
+		t.Errorf("%d of %d (shape, verb) pairs render the RAW TOKEN of an Issued: %v\n"+
+			"(the control twin leaked at %d of %d, %d of them nested, so the sweep works)\n"+
+			"A method-based redaction is consulted only where `fmt` can `Interface()` the value, "+
+			"which an UNEXPORTED field never is — so the half that closes the hole is `token` "+
+			"being a POINTER, which `fmt` renders as an address and follows only at depth 0. The "+
+			"rendered text is deliberately NOT printed here: it holds a live credential.",
+			len(leaked), pairs, leaked, len(control), pairs, nested)
 	}
 
 	// A rendering that contained nothing at all would satisfy the sweep above, so pin that
@@ -361,6 +441,54 @@ func TestNoRenderingOfIssuedContainsTheToken(t *testing.T) {
 	}
 	if strings.Contains(string(marshalled), token) {
 		t.Error("json.Marshal of an Issued contains the raw token")
+	}
+}
+
+// stringerOnly renders exactly what `Issued.String()` does, through `Stringer` and nothing
+// else. It is the CONTROL for the test below: what `fmt` would have done with these
+// spellings if `Format` were not in the way.
+type stringerOnly struct{ rendered string }
+
+func (s stringerOnly) String() string { return s.rendered }
+
+// TestIssuedFormatDropsEveryFlagAndWidth pins the narrowing `Format`'s own comment declares.
+//
+// ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No caller in this repository flags or pads
+// an `Issued`, so no defect ever came of this. It exists because the sentence beside the
+// method was WRONG about it for two rounds — it said the six verbs `Stringer` already
+// handled "keep their EXACT output", which is true unflagged and false for `%#q`, `%#x`,
+// `% x` and `%.5s` — and a claim that cannot go red is a claim nobody re-measures.
+//
+// 🔴 EACH ARM CARRIES ITS OWN POSITIVE CONTROL, WHICH IS THE WHOLE INSTRUMENT. "The flagged
+// spelling equals the unflagged one" is satisfied by a flag that does nothing to THIS
+// string — a width narrower than the line, say — so every arm first requires the same two
+// spellings to DIFFER on a `Stringer` carrying identical text. Without that pair the test
+// would be green against a `Format` that honoured every flag perfectly.
+func TestIssuedFormatDropsEveryFlagAndWidth(t *testing.T) {
+	store, _, made := aProvisionedOwner(t)
+	issued := issueTo(t, store, KindUser, made.User, nil)
+	control := stringerOnly{rendered: issued.String()}
+
+	for _, tc := range []struct{ flagged, bare string }{
+		{"%#q", "%q"},
+		{"%#x", "%x"},
+		{"% x", "%x"},
+		{"%.5s", "%s"},
+		{"%200s", "%s"},
+	} {
+		t.Run(tc.flagged, func(t *testing.T) {
+			if fmt.Sprintf(tc.flagged, control) == fmt.Sprintf(tc.bare, control) {
+				t.Fatalf("POSITIVE CONTROL FAILED: %s and %s of a plain Stringer carrying the same "+
+					"text are already identical, so this arm cannot tell a dropped flag from a flag "+
+					"that never did anything", tc.flagged, tc.bare)
+			}
+			flagged, bare := fmt.Sprintf(tc.flagged, issued), fmt.Sprintf(tc.bare, issued)
+			if flagged != bare {
+				t.Fatalf("%s of an Issued is not %s of one, so `Format` now honours a flag its own "+
+					"comment declares dropped:\n %s => %q\n %s => %q",
+					tc.flagged, tc.bare, tc.flagged, flagged, tc.bare, bare)
+			}
+		})
 	}
 }
 
