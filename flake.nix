@@ -34,7 +34,11 @@
       version = self.shortRev or self.dirtyShortRev or "unknown";
 
       # 🔴 THE RUNTIME CONTRACT, IN ONE PLACE, BECAUSE THERE ARE NOW TWO BUILDS.
-      # `server/Dockerfile` is what is deployed today; the image below is a
+      # ⚠ This read "`server/Dockerfile` is what is deployed today" until the Go
+      # cutover. NEITHER Python image is deployed now — the cluster pulls
+      # `cairn-store-go`. The pin below still earns its place, because both
+      # builds state the contract and can still disagree.
+      # The image below is a
       # second way to produce the same pod, and two build paths that can
       # disagree about env/port/user is the whole hazard of adding one. These
       # values are the single nix-side authority for it, and
@@ -543,8 +547,11 @@
       # MODULE. `cmd/cairn-ui` now carries three phases — the entries page, cookie
       # sessions with a sign-in pair, and the SHARE FLOW — over one authentication
       # chain and one rendering path. It is DEPLOYED BY NOTHING and no image wraps it
-      # — saying so is part of the change, the same way `cmd/cairn-server`'s own doc
-      # comment says it for the Go pod.
+      # — saying so is part of the change. ⚠ This used to add "the same way
+      # `cmd/cairn-server`'s own doc comment says it for the Go pod", and that
+      # cross-reference is dead: the Go pod IS deployed, and its doc comment now says
+      # so. A cross-reference is a claim about ANOTHER file, and nothing tells you
+      # when that file moves.
       #
       # ⚠ THIS COMMENT SAID "PHASE A: one page" THROUGH TWO PHASES THAT ADDED ROUTES,
       # WHICH IS WHY THE PHASE COUNT IS NOT REPEATED AS A NUMBER ANYWHERE ELSE HERE.

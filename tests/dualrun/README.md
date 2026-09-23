@@ -521,18 +521,29 @@ Named rather than omitted, because a green is a claim about what was asked.
   instructs a reader to **diff the two pod images** for what the agreement test cannot read
   *before swapping the deployed one* — a cutover-time step, performed once, by the person doing
   the cutover, against the two artefacts in hand. A CI arm cannot be that, because at merge
-  time there is nothing to swap. **(3) There is nothing to drift from today.** `AGENTS.md`
-  records that `server-image-go` is *published and deployed by nothing*; the deployed pod is the
-  Python one. An arm comparing the Go server against the deployed artefact would be comparing it
-  against a different implementation on purpose, which is what `tests/conformance/` already does
-  over a declared corpus.
+  time there is nothing to swap. 🔴 **(3) IS DEAD — ITS PREMISE WAS "THERE IS NOTHING TO DRIFT
+  FROM TODAY", AND THERE NOW IS.** It read: *`AGENTS.md` records that `server-image-go` is
+  published and deployed by nothing; the deployed pod is the Python one* — so an arm comparing
+  the Go server against the deployed artefact would be comparing two different
+  implementations on purpose. **The cutover happened. The deployed pod IS the Go server, so
+  "the tree's server versus the artefact actually serving" is now a same-implementation
+  comparison — exactly the question reason (3) said could not be asked.**
+
+  ⚠ **This does NOT reinstate the arm, and reasons (1) and (2) are untouched** — a gate
+  needing a live pod and a credential still cannot run in CI, and the cutover-diff still has
+  an owner. What died is the third leg, and the decision was taken on three. **Re-argue it on
+  two, or find a third; do not let a dead premise keep holding up a conclusion.** The handoff
+  already carries this as an open defect (*"`tests/dualrun/` cannot see image drift,
+  structurally"*), and this is the measurement that makes it live rather than theoretical.
 
   ⚠ **What this decision does NOT say.** It does not say image drift is impossible or
   unimportant — `tests/test_flake_go_image_runtime_contract.py` exists because a blind spot of
   exactly that shape once shipped an image that started, health-checked and served while every
   documented operation against it failed. It says the instrument for it is a cutover step and a
-  runtime-contract test, not an arm of this harness. **Revisit if the Go pod is ever the
-  deployed one**, at which point "the tree's server versus the artefact" stops being a
+  runtime-contract test, not an arm of this harness. 🔴 **THIS SENTENCE'S OWN TRIGGER HAS
+  FIRED — it said "Revisit if the Go pod is ever the deployed one", and it is.** Second
+  condition-triggered deferral in this repo found spent by the same sweep; neither had
+  anything watching its condition. **Revisit** — at which point "the tree's server versus the artefact" stops being a
   cross-implementation question and becomes a same-implementation one, which is a different and
   much cheaper thing to build.
 - **The gzip envelope.** Deliberate and measured; see the scoping section. Also `Content-Length`

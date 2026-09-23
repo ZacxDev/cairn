@@ -1,12 +1,18 @@
 // Command cairn-server is the Go port of `server/server.py`: the pod that serves
 // scoped, per-token-authorised entries.
 //
-// 🔴 IT IS NOT DEPLOYED BY THIS COMMIT, AND SAYING SO IS PART OF THE COMMIT. The
-// Python server remains the oracle; this binary exists so the conformance corpus can
+// 🔴 IT IS THE DEPLOYED POD. ⚠ This read "IT IS NOT DEPLOYED BY THIS COMMIT, AND
+// SAYING SO IS PART OF THE COMMIT" — true of the commit that wrote it, and read by
+// everyone afterwards as "this is not deployed". A claim scoped to "this commit"
+// stops being read that way the moment the commit is not the newest one; scope a
+// claim to a STATE, not to the change that made it.
+//
+// The Python server remains the oracle; this binary exists so the conformance corpus can
 // be replayed against both on the same store and the difference measured. The
 // sequence is: this passes the corpus, then both run over one store and byte-identity
 // is compared, then the client is ported, then Python is retired — in that order,
-// never by declaring one of the steps done early.
+// never by declaring one of the steps done early. Steps one through three are done;
+// retirement is P8.
 package main
 
 import (

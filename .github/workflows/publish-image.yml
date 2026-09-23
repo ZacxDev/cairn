@@ -413,11 +413,16 @@ jobs:
       # image nothing in this repository has ever run.
       # ─────────────────────────────────────────────────────────────────────────
 
-      # 🔴 THE GO POD IS BUILT HERE AND PUBLISHED BELOW; NOTHING DEPLOYS IT YET.
-      # `flake.nix` says the Go image is deployed by nothing, and `ci.yml` asserts
-      # only that it BUILDS. What changes here is publication, not deployment:
+      # 🔴 THE GO POD IS BUILT HERE AND PUBLISHED BELOW, AND IT IS WHAT RUNS.
+      # ⚠ This read "NOTHING DEPLOYS IT YET" and cited `flake.nix` as saying the
+      # Go image is deployed by nothing. BOTH halves were wrong by the time they
+      # were read: the cluster pulls `cairn-store-go`, and `flake.nix` never said
+      # that about the GO image — its "deployed by nothing" comments are about
+      # `cairn-ui`. A cross-reference is a claim, and this one was never opened.
+      # `ci.yml` does still assert only that it BUILDS. What changes HERE is
+      # publication, not deployment:
       # `cairn-store-go` gets the same immutable tags as the Python package so
-      # that pointing a pod at it later is a manifest edit rather than a build,
+      # that pointing a pod at it is a manifest edit rather than a build,
       # and so the two pods over one revision can be pulled and compared.
       #
       # `buildLayeredImage` is single-output, so `--print-out-paths` prints one

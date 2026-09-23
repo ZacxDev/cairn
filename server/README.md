@@ -55,10 +55,12 @@ and are what an operator needs: manifests live at
 `~/.claude/<mirror-root>/`, the mounted credential at
 `/run/secrets/subsystem-store/token`. Substitute your own names.
 
-🔴 **THERE IS NOW A SECOND IMPLEMENTATION, AND `server.py` IS THE ORACLE.**
-`cmd/cairn-server` (Go, stdlib only) is a port of **everything in this document**; it is
-**not deployed by anything** and nothing in this runbook targets it. Its purpose is to be
-MEASURED against this file, by two instruments that make different claims:
+🔴 **THERE IS NOW A SECOND IMPLEMENTATION, `server.py` IS THE ORACLE, AND ⚠ THE GO PORT IS
+WHAT IS DEPLOYED.** `cmd/cairn-server` (Go, stdlib only) is a port of **everything in this
+document**. This line read *"it is not deployed by anything and nothing in this runbook
+targets it"* until the cutover; both halves are now false, and the cluster pulls
+`cairn-store-go`. Its purpose is still to be MEASURED against this file, by two instruments
+that make different claims:
 
 - `tests/conformance/` — the HTTP contract below, recorded as generated golden fixtures and
   replayed against both servers. Green for both.
@@ -74,9 +76,16 @@ over TWO stores. `tests/dualrun/` is TWO servers over ONE store. The two scripts
 method (per-scope render, then entry set, then each entry's own single-ref render) and answer
 different questions; neither substitutes for the other.
 
-**Every procedure below is still about `server.py`**, which is what is deployed. See
-`AGENTS.md` → "TWO SERVERS ARE ALIVE" for the sequence, and `tests/dualrun/README.md` for
-what the byte-identity gate cannot see.
+🔴 **EVERY PROCEDURE BELOW IS WRITTEN AGAINST `server.py`, AND `server.py` IS NOT WHAT RUNS.**
+This line read *"which is what is deployed"*, and an operator who believed it ran the
+rotation and `exec` procedures below against the wrong artefact. The pod is
+`cairn-store-go`. **Before following anything below, check it against the Go server** — the
+HTTP contract is the same by construction (`tests/conformance/`, `tests/dualrun/`), but
+anything touching the *filesystem, process model or image* — `exec`ing a shell, naming an
+interpreter, expecting `python3` or `lib/` inside the container — is a claim about the
+PYTHON image and does not transfer. ⚠ Re-verifying each procedure against the deployed pod
+is NOT done; this notice is a warning, not a migration. See `AGENTS.md` → "TWO SERVERS ARE
+ALIVE", and `tests/dualrun/README.md` for what the byte-identity gate cannot see.
 
 ## Endpoints
 
@@ -445,8 +454,11 @@ not a remedy.** `tests/test_flake_image_matches_dockerfile.py`'s own
 `WHY THIS FILE EXISTS` docstring wraps the claim across a line break (*"…is the
 build that is deployed"* / *"today."*) and **neither command finds it**.
 Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
-some name `cairn-ui` and the Go image, which genuinely are deployed by nothing.
-**Read the matches; do not count them.**
+some name `cairn-ui`, which genuinely is deployed by nothing. 🔴 **This clause
+used to say "and the Go image" alongside it. That was false when written and the
+sweep that fixed the rest of this file is what caught it** — the Go image is the
+deployed pod. **Read the matches; do not count them, and do not trust a list of
+exceptions either.**
 
 🔴 **THE PIN IS TWO GUARDS AND ONLY ONE PREMISE DIED.** Neither Python image is
 deployed, so the Dockerfile↔flake agreement half stands on a contract
@@ -481,11 +493,13 @@ port, exposed port and every environment variable are derived from the same
 -deps ./cmd/cairn-server` reaches no package that reads `$HOME`).
 `tests/test_flake_go_image_runtime_contract.py` is what keeps it derived, because
 "it is derived" is a property of today's source and a copy is one edit away.
-**It is published, and deployed by nothing** — two separate claims.
-`publish-image.yml` pushes both pods: `packages.server-image` to the
-`cairn-store` ghcr package and `packages.server-image-go` to `cairn-store-go`,
-under one `sha-<40-hex>` tag scheme so a revision names one artefact in each. No
-manifest references the Go one; pointing a pod at it is a separate decision.
+🔴 **IT IS PUBLISHED AND IT IS DEPLOYED.** This paragraph read *"It is published, and
+deployed by nothing — two separate claims"* and *"No manifest references the Go one;
+pointing a pod at it is a separate decision"*. That decision has been taken: the cluster
+pulls `cairn-store-go`. `publish-image.yml` pushes both pods — `packages.server-image` to
+the `cairn-store` ghcr package and `packages.server-image-go` to `cairn-store-go`, under one
+`sha-<40-hex>` tag scheme so a revision names one artefact in each — and **the second is the
+one that runs**, which makes `packages.server-image` a build nothing consumes.
 ⚠ **THAT PARAGRAPH USED TO PREDICT A RED FIRST RUN, AND THE PREDICTION WAS
 WRONG.** It said a ghcr package is PRIVATE on first publish, so the Go package's
 first run was EXPECTED to fail at the anonymous-pull proof. Measured on the run
@@ -530,7 +544,14 @@ matters is the `wget`/`nc`/`httpd`/`telnetd` one** — not the size row. busybox
 ships its applets at `/bin` (with `/sbin` a SYMLINK to it, so one directory, not
 two), and that set includes network **servers**, network **clients**, and
 notably **`ssl_client`**, in a pod that mounts a credential at
-`/run/secrets/subsystem-store/token` — none of which the deployed image has.
+`/run/secrets/subsystem-store/token`.
+
+🔴 **THAT SENTENCE USED TO END "— none of which the deployed image has", AND THE
+CUTOVER INVERTED IT.** The deployed pod is now `cairn-store-go`, which carries the
+same busybox `serverTools` set, so the applet surface beside the mounted
+credential is no longer hypothetical: **it is what runs.** The comparison did not
+merely go stale — it pointed the opposite way, which is the direction that reads
+as reassurance.
 
 🔴 **THIS PARAGRAPH DELIBERATELY DOES NOT SAY HOW MANY, AND THE ABSENCE IS THE
 RECORD. FOUR SUCCESSIVE DRAFTS GAVE A COUNT AND ALL FOUR WERE UNDERCOUNTS**, each
@@ -549,15 +570,22 @@ count for the question you are actually asking.** Do not write a fifth number
 here. A reader told to "revisit the trade with the threat model in front of you"
 needs the real set, and `ssl_client` is the one that matters for a token.
 
-Against that: the pod runs as uid 65532, no applet is setuid, and the deployed
+Against that: the pod runs as uid 65532, no applet is setuid, and the **Dockerfile**
 image ships `bash`, `apt-get` and **8 setuid binaries including `su` and
-`passwd`** — so neither is meaningfully "hardened" relative to the other. **This
+`passwd`** — so neither is meaningfully "hardened" relative to the other. ⚠ That
+clause read *"the deployed image ships…"*, which named the right image only while
+the Python pod ran; it is now the image that does **not** run, so the sentence is
+re-anchored to the build rather than to deployment status. **This
 is recorded rather than fixed, deliberately** — trimming means
 `pkgs.busybox.override { extraConfig = "CONFIG_HTTPD n\n…"; }`, which rebuilds
 busybox from source with no cache hit, and the applets are not reachable without
-execution the attacker would already need. If this image is ever actually
-deployed, revisit that trade **then**, with the threat model in front of you; do
-not read this as settled.
+execution the attacker would already need.
+
+🔴 **THIS PARAGRAPH USED TO DEFER ON "IF THIS IMAGE IS EVER ACTUALLY DEPLOYED,
+REVISIT THAT TRADE THEN" — AND THAT CONDITION HAS FIRED.** A busybox image IS the
+deployed pod. **The deferral is therefore spent, and it is now FILED rather than
+left reading as open.** It has not been re-argued here, because re-arguing it
+needs the threat model, not a docs edit.
 
 ⚠ **`packages.server-image-go` INHERITS THE BUSYBOX ROW AND ADDS ONE.** It
 carries the same `serverTools` plus `pkgs.cacert`, so it has an `/etc/ssl/certs`
@@ -566,17 +594,19 @@ where the Python flake image has no `/etc` at all — needed because
 no roots otherwise. The same trade applies to its applets and it has not been
 re-argued here.
 
-🔴 **AND THE DEFERRAL DIRECTLY ABOVE HAS HAD ITS TRIGGER FIRE, UNNOTICED.** It
-reads *"If this image is ever actually deployed, revisit that trade **then**,
-with the threat model in front of you; do not read this as settled."* Per
-`AGENTS.md`, the Go image **is** the deployed pod — and the paragraph directly
-above records that it inherits the same applet set. **So the condition is met and
-nobody revisited.** The trade may well still be the right one; what is not
-defensible is that it now reads as deferred when it has in fact been decided by
-default. ⚠ This is what a condition-triggered deferral costs when nothing
-watches the condition: the sentence is honest, dated, correct when written, and
-silently became a decision. Re-argue it or record that it was accepted — do not
-leave it reading as open.
+🔴 **THE SPENT DEFERRAL IS FILED AS RANKED WORK, WITH A CLOSING CONDITION.** The
+applet surface — network servers, network clients and `ssl_client` — now runs
+beside a mounted credential, which is the state the deferral said to revisit on.
+**Closing condition:** the operator reads `busybox --list` from the built
+`cairn-store-go` image against a stated threat model, and either trims
+`serverTools` or records the trade as ACCEPTED with its reasoning — a named human
+judgement over named evidence, not a command exiting 0.
+
+⚠ **This is what a condition-triggered deferral costs when nothing watches the
+condition.** The sentence was honest, dated and correct when written, and silently
+became a decision. **A deferral whose trigger is a state nothing asserts on is a
+decision with a delay on it** — the only reason this one was caught is that an
+unrelated sweep read the paragraph.
 
 🔴 **AND `/etc/ssl/certs` — NOT THE `SSL_CERT_FILE` THE IMAGE ALSO DECLARES — IS
 WHAT MAKES THOSE ROOTS REACHABLE.** `crypto/x509` walks its `certDirectories`
