@@ -132,13 +132,25 @@ func TestLsEntriesListsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
 	//
 	// This scope holds one sheet (excluded), two lookalikes and two plain entries: five
 	// files, four listed, three README-shaped names, two plain ones — 5, 4, 3, 2, no two of
-	// them equal, so no blanket subtract-one, fold or prefix match reproduces the four-line
-	// listing asserted below.
+	// them equal.
 	//
-	// ⚠ THE TAIL OF THAT SENTENCE USED TO READ "and none equals the four-line listing
-	// asserted below", WHICH WAS FALSE ABOUT ITS OWN NUMBERS: four listed IS the four-line
-	// listing. The distinctness that carries the argument is among the four counts, not
-	// between them and the line count.
+	// 🔴 DISTINCTNESS AMONG THOSE FOUR REFUTES A FOLD RULE AND A PREFIX RULE; IT DOES NOT
+	// REFUTE A BLANKET SUBTRACT-ONE, AND THIS SENTENCE SAID IT DID. THIRD CORRECTION TO IT.
+	// Worked through: a FOLD rule (drop every name that case-folds to `readme.md`) drops
+	// `README.md` and `readme.md` and lists 3; a PREFIX rule (drop every name starting
+	// `README`) drops `README.md` and `README-old.md` and also lists 3 — both refuted,
+	// because 3 != 4. A blanket SUBTRACT-ONE lists 5-1 = 4, which IS the listed count, so no
+	// comparison among these four numbers can separate it from the real rule. What refutes it
+	// is the assertion below, which pins the four NAMES: sorted, this scope's first file is
+	// `README-old.md` and the rule under test LISTS it, so any subtract-one dropping anything
+	// other than `README.md` yields a different set. The conclusion stands; its stated reason
+	// did not.
+	//
+	// ⚠ AN EARLIER TAIL READ "and none equals the four-line listing asserted below", WHICH
+	// WAS FALSE ABOUT ITS OWN NUMBERS: four listed IS the four-line listing. The round after
+	// that moved the claim to "distinctness among the four counts" — correct as far as it
+	// went, and still not enough to carry the subtract-one half, which is the paragraph
+	// above.
 	//
 	// ⚠ `README.md` AND `readme.md` IN ONE DIRECTORY IS TWO FILES ON LINUX AND ONE ON A
 	// CASE-FOLDING FILESYSTEM. CI is `ubuntu-latest`; the reachability control below fails

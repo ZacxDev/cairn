@@ -143,6 +143,25 @@ func LsEntries(env Env, opts Options) (int, error) {
 		// "*/*.md")` treats its anchor literally. This branch closed the identical hazard in
 		// `Validate` (by moving to `os.ReadDir`) in the same commit that left it open here.
 		//
+		// 🔴 THE CLASS IS NOT CLOSED, AND TWO SITES OF IT ARE STILL LIVE IN THIS FILE. `Put`
+		// derives a revision with `filepath.Glob(filepath.Join(cache, scope, ref+".md"))`
+		// and, on no match, `…+".*.md"` — the same anchor-inside-the-pattern shape, the same
+		// discarded error. MEASURED end to end against one pod, both real binaries, with a
+		// CONTROL: over a cache root with no metacharacter both clients answered `replaced`
+		// at exit 0 off the same derived If-Match; over a root named `cache[bad` the oracle
+		// still answered `replaced` at exit 0 while this client refused —
+		// `cannot derive a revision — 0 cached file(s) match alpha-notes/widget-cfg`, exit 2.
+		// `filepath.Glob` returns `ErrBadPattern` and n=0 for BOTH patterns there, where
+		// `Path.glob` finds the file, so the count is 0 rather than 1 and the `!= 1` arm
+		// fires.
+		//
+		// ⚠ IT IS A REFUSAL, NOT A FALSE CLAIM OF ABSENCE, WHICH IS WHY IT IS RECORDED HERE
+		// RATHER THAN FIXED HERE. `ls-entries` printed an empty listing at exit 0 and was
+		// believed; `put` stops, names the count and tells the operator to pass `--if-match`.
+		// PRE-EXISTING, out of this branch's range, and fixing it here would regrow a PR that
+		// was already split once. Declared as residual 9 in `tests/parity/README.md`, with
+		// its closing condition.
+		//
 		// 🔴 A SCOPE'S `README.md` IS ITS POLICY SHEET, NOT AN ENTRY. Until the filter
 		// existed `ls-entries` listed every scope's sheet as `<scope>/README.md` — measured
 		// twelve of them on a populated cache, under a banner naming the store they came
@@ -164,10 +183,32 @@ func LsEntries(env Env, opts Options) (int, error) {
 		// ⚠ BOTH READ ERRORS ARE DISCARDED, WHICH IS THE PRE-EXISTING BEHAVIOUR KEPT ON
 		// PURPOSE. The glob swallowed its error too, and the oracle's `Path.glob` yields no
 		// paths rather than raising — MEASURED on the pinned interpreter (CPython 3.12.14)
-		// for BOTH shapes: a mode-000 CACHE ROOT gives `[]`, and a mode-000 SCOPE directory
-		// is skipped while its siblings still list. So surfacing either error here would be
-		// a divergence, not an improvement; an unreadable cache root or scope directory
-		// contributes no lines, on both clients.
+		// for BOTH shapes: `Path("<mode-000 root>").glob("*/*.md")` gives `[]`, and with a
+		// mode-000 SCOPE directory the same call gives `['alpha/y.md']` — the unreadable
+		// child is skipped while its siblings still list. So surfacing either error here
+		// would be a divergence, not an improvement.
+		//
+		// 🔴 THAT IS A MEASUREMENT ABOUT `Path.glob`, NOT ABOUT THE CLIENTS, AND A SENTENCE
+		// HERE GENERALISED IT INTO "an unreadable cache root or scope directory contributes
+		// no lines, ON BOTH CLIENTS" — TRUE OF ONE SHAPE AND FALSE OF THE OTHER. Re-measured
+		// end to end with both real binaries over one cache root holding `alpha/y.md` and
+		// `beta/z.md`, `ls-entries --no-sync`:
+		//
+		//	mode-000 SCOPE dir (`beta`)  go → `alpha/y.md`, exit 0   py → `alpha/y.md`, exit 0
+		//	mode-000 CACHE ROOT          go → exit 3, no lines       py → exit 1, TRACEBACK
+		//
+		// The cache-root row does not reach this walk on EITHER client. `ResolveState` runs
+		// first and reads `.sync-stamp`: the Go client turns that into a state whose
+		// `ExitHint` is `ExitUnreachableNoCache`, banners `store-unreachable, no cache`, and
+		// the loop `continue`s above — so this code never runs. The oracle raises an UNCAUGHT
+		// `PermissionError` out of `resolve_state`'s `(cache / SYNC_STAMP).exists()` and
+		// exits 1 with a traceback, which is `tests/parity/README.md` residual 4's route, not
+		// a quiet empty listing.
+		//
+		// So the claim this paragraph is entitled to is the narrow one: an unreadable SCOPE
+		// DIRECTORY contributes no lines and its siblings still list, on both clients. An
+		// unreadable CACHE ROOT is not this walk's case at all, and the two clients diverge
+		// on it — above this code rather than in it.
 		//
 		// 🔴 THE TWO CLIENTS STILL DIVERGE ON SOME PREFIXED SCOPE NAMES, AND THE CONDITION
 		// IS NARROWER THAN "A PREFIX" — A SENTENCE HERE SAID "any cache where one scope name
@@ -594,6 +635,19 @@ func Validate(env Env, opts Options) (int, error) {
 		// `go test ./internal/client/ -run FoldVsLiteral -count=1 -v` and
 		// `python3 -m pytest tests -q -p no:randomly -k fold_vs_literal` each SELECT at least
 		// one test and exit 0.
+		//
+		// 🔴 A ZERO-SELECTION RUN IS **NOT** THE MET STATE, AND ON THE GO HALF IT IS
+		// INDISTINGUISHABLE FROM ONE BY EXIT CODE ALONE. MEASURED at this head, with no such
+		// test in the tree: `go test ./internal/client/ -run FoldVsLiteral -count=1 -v` prints
+		// `testing: warning: no tests to run`, `PASS`, `ok … [no tests to run]` and EXITS 0 —
+		// so an operator checking `$?` reads this row as already closed. The condition's text
+		// says "SELECT at least one test AND exit 0", which is well formed; the exit code
+		// alone cannot witness the first half. Require a `--- PASS: TestFoldVsLiteral…` line
+		// in the `-v` output, or run `go test -json` and require at least one `"Action":"pass"`
+		// carrying a `"Test"` field. `[no tests to run]` is the UNMET state.
+		// ⚠ The PYTHON half does not share the hazard — measured the same way, the `-k` filter
+		// selecting nothing prints `2050 deselected` and exits **5**, not 0. The two commands
+		// therefore need different checks, which is why this paragraph names both.
 		//
 		// ⚠ THE READ ERROR IS DISCARDED, AND THAT IS THE PRE-EXISTING BEHAVIOUR KEPT
 		// DELIBERATELY. `LoadIndex` above has ALREADY walked this directory and RETURNED on

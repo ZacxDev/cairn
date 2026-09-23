@@ -332,8 +332,25 @@ const ScopePolicySheet = "README.md"
 // THE EXAMPLE. It does build `scope + "/" + name` arcnames, but `/snapshot` MUST SHIP every
 // scope's policy sheet — that is how each cache gets one — so routing its member list through
 // this predicate would drop them from the archive and break the thing `ScopePolicySheet`'s
-// own first paragraph depends on. MEASURED: neither `internal/snapshot.chooseEntries` nor
-// `server.py`'s `_snapshot` carries a README exclusion. The SHAPE is the point; that package
+// own first paragraph depends on.
+//
+// 🔴 THE CITATION IS RE-DERIVED, BECAUSE THE NAME THAT STOOD HERE HAS NEVER EXISTED. This
+// line named `internal/snapshot.chooseEntries`; `find … -print0 | xargs -0 grep` over the
+// tree returns it ONLY from this comment and its Python twin, `git log -S chooseEntries --
+// internal/snapshot/` is empty, and the same grep DOES return `Build`, `Freshness` and
+// `RootAction` from that package — so the zero is the grep working, not a broken pattern. A
+// maintainer greps a name like this to decide whether `/snapshot` may route through
+// `IsEntryFileName`, and a name with no hits leaves them unable to tell a stale citation
+// from a measurement never taken.
+//
+// There is no such function: the archive's member list is built INLINE inside
+// `internal/snapshot.Build`, whose per-scope name filter is `strings.HasSuffix(name, ".md")
+// && !strings.HasPrefix(name, ".")`. The oracle's is `server.py`'s `_snapshot`, filtering
+// `p.name.endswith(".md") and not p.name.startswith(".")`. MEASURED at this head by READING
+// both, and then BEHAVIOURALLY over a scope holding `README.md` beside one ordinary entry:
+// `Build` shipped `<scope>/README.md` and `<scope>/<entry>.md` (entries=2), and `GET
+// /api/v1/snapshot` shipped `widget-cfg/README.md` among its four members. Neither carries a
+// README exclusion. The SHAPE is the point; that package
 // is an explicit EXCLUSION from it, together with `WritableEntryFiles` and the other transfer
 // walks, which compare against `X-Store-Entries` and must include sheets.
 //

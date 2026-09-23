@@ -1164,8 +1164,21 @@ class TestLsEntriesListsENTRIES:
 
         `gizmo-notes` then holds one sheet (excluded), two lookalikes and two
         plain entries: five files, four listed, three README-shaped names, two
-        plain ones — 5, 4, 3, 2, no two of them equal, so no blanket
-        subtract-one, fold or prefix match reproduces the asserted listing.
+        plain ones — 5, 4, 3, 2, no two of them equal.
+
+        🔴 DISTINCTNESS AMONG THOSE FOUR REFUTES A FOLD RULE AND A PREFIX RULE; IT
+        DOES NOT REFUTE A BLANKET SUBTRACT-ONE, AND THIS SENTENCE SAID IT DID. THAT
+        IS THE THIRD CORRECTION TO IT. Worked through: a FOLD rule (drop every name
+        that case-folds to `readme.md`) drops `README.md` and `readme.md` and lists
+        3; a PREFIX rule (drop every name starting `README`) drops `README.md` and
+        `README-old.md` and also lists 3 — both refuted, because 3 != 4. A blanket
+        SUBTRACT-ONE lists 5 - 1 = **4**, which IS the listed count, so no comparison
+        among these four numbers can tell it apart from the real rule. What refutes
+        it is the assertion below, which pins the four NAMES: sorted, this scope's
+        first file is `README-old.md` and the rule under test LISTS it, so any
+        subtract-one dropping something other than `README.md` yields a different
+        set. The conclusion stands; its stated reason did not, and the counts do
+        less work than three drafts of this docstring credited them with.
 
         🔴 THE SECOND PLAIN ENTRY IS WHAT MAKES THAT ARITHMETIC TRUE, AND IT WAS
         ADDED BECAUSE THE SENTENCE WAS FALSE FOR ITS OWN FIXTURE. Without

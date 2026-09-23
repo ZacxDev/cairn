@@ -2637,8 +2637,27 @@ def is_entry_filename(name: str) -> bool:
     arcnames, but it MUST SHIP every scope's policy sheet — that is how each cache
     gets one — so routing its member list through this predicate would drop them
     from the archive and break the thing `SCOPE_POLICY_SHEET`'s own first paragraph
-    depends on. MEASURED: neither `server.py`'s `_snapshot` nor
-    `internal/snapshot.chooseEntries` carries a README exclusion. The SHAPE is the
+    depends on.
+
+    🔴 THE CITATION IS RE-DERIVED, BECAUSE THE NAME THAT STOOD HERE HAS NEVER
+    EXISTED. This paragraph named `internal/snapshot.chooseEntries`;
+    `find … -print0 | xargs -0 grep` over the tree returns it ONLY from this
+    docstring and its Go twin, `git log -S chooseEntries -- internal/snapshot/` is
+    empty, and the same grep DOES return `Build`, `Freshness` and `RootAction` from
+    that package — so the zero is the grep working, not a broken pattern. A
+    maintainer greps a name like this to decide whether the snapshot walk may route
+    through this predicate, and a name with no hits leaves them unable to tell a
+    stale citation from a measurement never taken.
+
+    There is no such function. The two member lists are `server.py`'s `_snapshot`,
+    filtering `p.name.endswith(".md") and not p.name.startswith(".")`, and — built
+    INLINE, not in a helper — `internal/snapshot.Build`, filtering
+    `strings.HasSuffix(name, ".md") && !strings.HasPrefix(name, ".")`. MEASURED at
+    this head by READING both, and then BEHAVIOURALLY over a scope holding
+    `README.md` beside one ordinary entry: `GET /api/v1/snapshot` shipped
+    `widget-cfg/README.md` among its four members, and `Build` shipped
+    `<scope>/README.md` beside `<scope>/<entry>.md` (entries=2). Neither carries a
+    README exclusion. The SHAPE is the
     point; the snapshot/transfer walks are an explicit EXCLUSION from it, because
     they compare against `X-Store-Entries` and must include sheets.
 
