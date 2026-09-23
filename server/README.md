@@ -447,9 +447,9 @@ manifest, so nothing in it could establish which pod a cluster pulls, and a swee
 would therefore *"propagate an unverified claim to every site it touched"*. That
 was the right call **while the fact was unverified**. The operator has since
 settled it — the cluster pulls `cairn-store-go` — and the sweep ran on that
-authority. ⚠ **A draft of this sentence LISTED the swept sites, five lines above
-the instruction below that forbids exactly that, and the list was already wrong
-about one of them.** Run the sweep; do not read a list here.
+authority. ⚠ **A draft of this sentence LISTED the swept sites — a few lines
+above the instruction below that forbids exactly that — and the list was already
+wrong about one of them.** Run the sweep; do not read a list here.
 
 ⚠ **AND THE "NOT SWEPT" NOTICE ITSELF SURVIVED THE SWEEP THAT DISCHARGED IT,
 WHICH IS THE FAILURE THIS PARAGRAPH NOW RECORDS.** `AGENTS.md` — paid by every
@@ -461,6 +461,14 @@ it in the commit that does the work.**
 **Do not enumerate the sites here — run the sweep.** A list in prose goes stale
 and reads as complete; three were written into this paragraph and each was wrong.
 
+🔴 **AND DO NOT WRITE A LINE DISTANCE EITHER — "N lines above/below" — WHICH IS
+THE SAME DEFECT WITH A SHORTER SHELF LIFE.** Five were written into this file
+during one review: three were wrong when written, and the other two were *made*
+wrong by the edits that corrected the first three. **Any edit above a distance
+claim invalidates it — including the edit fixing a different distance claim.**
+Write "above", "below", or "in the same block": a reader can still find it, and
+the sentence cannot rot.
+
 ```bash
 git ls-files -z | xargs -0 grep -nE 'is what is deployed|deployed today'
 git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
@@ -470,8 +478,9 @@ git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
 not a remedy.** Before this sweep ran,
 `tests/test_flake_image_matches_dockerfile.py`'s own `WHY THIS FILE EXISTS`
 docstring wrapped the claim as *"…is the build that is deployed"* / *"today."*,
-and **neither command found it**. ⚠ **Both commands find it today, and that is
-not a fix — editing the docstring simply moved the wrap.** The claim was
+and **neither command found it**. ⚠ **The FIRST command finds it today — the
+second never can, its pattern is for a different claim — and that is not a fix:
+editing the docstring simply moved the wrap.** The claim was
 invisible to a line-anchored sweep for as long as it mattered, and the next
 wrapped claim will be too. Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
 some name `cairn-ui`, which genuinely is deployed by nothing. 🔴 **This clause
@@ -581,7 +590,8 @@ either direction** — the Python image CI already published carried the identic
 set — while the image actually replaced (Debian-slim) had **11 setuid/setgid
 binaries** (`su`, `passwd`, `mount`, …) and **two** interpreters — CPython 3.12
 and Perl; a draft of this sentence said "a CPython interpreter", undercounting by
-one **six lines ABOVE the paragraph recording four successive undercounts** — against **zero
+one **in the same breath as the paragraph recording four successive
+undercounts** — against **zero
 setuid and zero interpreters** on the Go one. **A narrowing on both axes.**
 ⚠ Busybox stays load-bearing — seeding needs `tar`, revocation needs
 `sh -c 'kill -HUP 1'` — which is why a distroless variant was not pursued.
@@ -620,8 +630,8 @@ OPERATOR DECIDED — recorded in
 `claudedocs/handoff-cairn-control-plane-archive.md`.** The deferral is DISCHARGED,
 not open: both images measured at 402 applets, the replaced image carried 11
 setuid binaries and **two** interpreters, the Go one carries neither. ⚠ This said
-"an interpreter" — the same undercount the paragraph above corrects, thirty-nine
-lines away, both inside the block this review was already editing.
+"an interpreter" — the same undercount the paragraph above corrects, both
+inside the block this review was already editing.
 **Do not re-run its probes.**
 
 ⚠ **AND AN EARLIER DRAFT OF THIS SWEEP FILED IT AS OPEN RANKED WORK WITH A NEW
@@ -639,13 +649,15 @@ no roots otherwise. The same trade applies to its applets and it has not been
 re-argued here.
 
 ⚠ **A DRAFT OF THIS SWEEP PUT A SECOND BLOCK HERE SAYING THE DEFERRAL WAS "FILED
-AS RANKED WORK, WITH A CLOSING CONDITION" — nineteen lines below the block that
+AS RANKED WORK, WITH A CLOSING CONDITION" — a short scroll below the block that
 declares it DISCHARGED, in the same commit.** It asked the operator to read
 `busybox --list` against a threat model and record the trade as ACCEPTED, which
 the archive shows was already done. Deleted rather than reworded. 🔴 **The
 shape is worth more than the fix: a correction applied at ONE of TWO sites reads
-as complete at whichever site you land on, and the two disagree.** Three findings
-in this one review had exactly that shape — five, counting the two the next round found.
+as complete at whichever site you land on, and the two disagree.** ⚠ Every
+round of this review found more of that shape than the round before, so **any
+total written here is an undercount by construction** — three drafts of this
+sentence proved it. Count them in the PR's rounds, not here.
 
 ⚠ **This is what a condition-triggered deferral costs when nothing watches the
 condition.** The sentence was honest, dated and correct when written, and silently
