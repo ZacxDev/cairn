@@ -865,6 +865,23 @@ jobs:
       - name: the Go server declares exactly the routes the ledger names
         run: nix build .#checks.x86_64-linux.go-server-declares-its-routes --no-link --print-build-logs
 
+      # 🔴 THE UI IMAGE, AND THE TWO STEPS ARE LOAD-BEARING FOR DIFFERENT REASONS.
+      # `tests/test_flake_ui_image_runtime_contract.py` reads `flake.nix` as TEXT and pins
+      # it against `cmd/cairn-ui/main.go`'s own constants, so like its Go-pod sibling it
+      # cannot tell a declaration that builds from one that does not. This step is that half.
+      - name: the UI image builds
+        run: nix build .#packages.x86_64-linux.ui-image --no-link --print-build-logs
+
+      # …and this is the assertion NOTHING in the `tests` job can make. That job has Python
+      # and pytest and NO nix, so the pytest copy of this assertion can only ever SKIP
+      # there — a skip nobody counts is a pass. This reads the session directory's OWNERSHIP
+      # out of the built layers, which is exactly what the Go pod's own `chown` comment
+      # records as having survived three smoke runs that all structurally ignored it.
+      # Measured on the commit that added it: a `chown`-less image reports `(0, 0)` and this
+      # step exits 1.
+      - name: the UI image owns its session directory
+        run: nix build .#checks.x86_64-linux.ui-image-owns-its-session-dir --no-link --print-build-logs
+
       # The Go CLIENT is packaged too, and for the same reasons: a consumer will eventually pin
       # it, and its build runs the unit tests under the PINNED toolchain rather than the one
       # `setup-go` installed. Two tiers, both read.

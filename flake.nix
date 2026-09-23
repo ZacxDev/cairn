@@ -104,6 +104,30 @@
       serverUid = 65532;
       serverPort = 8102;
 
+      # 🔴 THE UI'S PORT AND SESSION DIRECTORY ARE THEIR OWN BINDINGS, AND THEY ARE
+      # PINNED AGAINST THE GO SOURCE RATHER THAN DERIVED FROM THE POD'S.
+      #
+      # They cannot come from `serverPort`: the UI binds a DIFFERENT port (the pod is
+      # 8102, this is 8103), and collapsing them is the collision the separate number
+      # exists to avoid. So this IS a second statement of a value — the exact hazard
+      # `mkGoServerImage`'s header warns about — and the answer is not to pretend it is
+      # derived but to make the duplication MEASURED:
+      # `tests/test_flake_ui_image_runtime_contract.py` reads `defaultPort` and
+      # `defaultSessionFile` out of `cmd/cairn-ui/main.go` and fails when either side
+      # moves alone. There is no Dockerfile for this surface, so the Go source is the
+      # only other statement of these values and is therefore what to pin against.
+      #
+      # ⚠ `uiSessionDir` IS THE *DIRECTORY* WHILE THE SOURCE DECLARES A *FILE*
+      # (`/var/lib/cairn-ui/sessions`). An image can create and own a directory, not a
+      # file the process has yet to write, and the deployment mounts a volume there — so
+      # the binding is the dirname and the test derives it from the source constant
+      # rather than carrying the path twice. 🔴 IT IS DELIBERATELY NOT UNDER `/data`:
+      # `cmd/cairn-ui/main.go` gives the long reason, and the short one is that `/data`'s
+      # documented operations are "enumerate" and "overwrite wholesale", which is not
+      # where a table of live session credentials goes.
+      uiPort = 8103;
+      uiSessionDir = "/var/lib/cairn-ui";
+
       # 🔴 THE GO POD'S ENV IS `serverEnv` MINUS A NAMED SET — A SUBTRACTION, NEVER
       # A SECOND LITERAL. There are now THREE builds of a pod and only ONE statement
       # of the contract: `serverEnv` above. Deriving the Go image's env from it means
@@ -812,6 +836,68 @@
             WorkingDir = "/";
           };
         };
+
+      # A FOURTH IMAGE, AND THE FIRST THAT IS NOT A POD: `cmd/cairn-ui` is the browser
+      # surface. It reuses `mkGoServerImage`'s shape wherever the shape is genuinely the
+      # same thing — the nonroot uid, the busybox toolchain, the named CA bundle, an
+      # absolute-store-path `Cmd`, `WorkingDir = "/"` — and diverges in exactly two
+      # places, both of which are properties of what this program IS rather than
+      # preferences:
+      #
+      # 🔴 (1) IT HAS A SECOND WRITABLE PATH, AND THAT IS THE WHOLE DIFFERENCE. The pod
+      # writes nothing: its `/data` is a read path and its token file is a mounted
+      # secret. This surface OWNS A SESSION TABLE — `identity.FileSessionStore` rewrites
+      # it under an exclusive `flock` on every sign-in, sign-out and expiry sweep — so
+      # `uiSessionDir` is created AND chowned here. ⚠ The `chown` is what the pod's
+      # equivalent comment calls an unguarded mutant; here it is NOT, because
+      # `OpenFileSessionStore` refuses at startup (exit 78) when the directory is not
+      # writable by this uid, which is a control that reads the effect of ownership
+      # rather than the ownership bit. A `chown`-less image therefore fails to start
+      # instead of serving — the loud direction.
+      #
+      # 🔴 (2) IT DECLARES NO STORE OR JOURNAL PATH, DELIBERATELY. Both are compiled-in
+      # defaults the program already falls back to (`/data`, and a control journal that
+      # REFUSES rather than defaults), and `mkGoServerImage`'s env history is the reason
+      # not to restate them: three `SUBSYSTEM_STORE_*` variables were set to values
+      # byte-identical to the code defaults, so they configured nothing while emitting a
+      # deprecation warning at every pod start that no manifest could clear. The env here
+      # is `PATH` and the CA bundle and nothing else; everything operational arrives as a
+      # flag or an env var from the Deployment.
+      #
+      # ⚠ THE CA BUNDLE IS CARRIED WITHOUT A MEASURED CONSUMER, AND SAYING SO IS THE
+      # POINT. Nothing in this binary completes a TLS handshake today — the JWKS fetch
+      # that would is `internal/identity`'s Supabase backend, which the handoff records as
+      # never having been exercised against a real issuer. It is here because the surface
+      # this image exists to publish is the one that will do it, and because the pod's
+      # own bundle was measured INERT IN BOTH DIRECTIONS (121 roots with the variable set,
+      # unset, and pointed at `/nonexistent`) — so its presence is cheap and its absence
+      # would be discovered by a handshake failure in production. Do not read it as
+      # evidence that TLS egress works here.
+      mkGoUIImage = pkgs:
+        let goUI = mkGoUI pkgs;
+        in
+        pkgs.dockerTools.buildLayeredImage {
+          name = "cairn-ui";
+          tag = version;
+          contents = [ goUI ] ++ goServerTools pkgs;
+
+          fakeRootCommands = ''
+            mkdir -p .${uiSessionDir}
+            chown -R ${toString serverUid}:${toString serverUid} .${uiSessionDir}
+          '';
+          enableFakechroot = true;
+
+          config = {
+            Cmd = [ "${pkgs.lib.getExe goUI}" ];
+            Env = pkgs.lib.mapAttrsToList (k: v: "${k}=${v}") {
+              PATH = serverPath;
+              SSL_CERT_FILE = goServerCaBundle pkgs;
+            };
+            User = "${toString serverUid}:${toString serverUid}";
+            ExposedPorts = { "${toString uiPort}/tcp" = { }; };
+            WorkingDir = "/";
+          };
+        };
     in
     {
       packages = forAll (pkgs:
@@ -842,6 +928,13 @@
           # decision and not a build. `server-image-go` is published under its OWN
           # package name (`cairn-store-go`), which is what keeps that true.
           server-image-go = mkGoServerImage pkgs;
+
+          # 🔴 `ui-image`, NOT `ui-image-go`. The `-go` suffix on the pod distinguishes
+          # it from a PYTHON sibling that exists and is still published; this surface has
+          # no second implementation and never had one, so a suffix would imply a
+          # counterpart a reader would then go looking for. It publishes to its own ghcr
+          # package (`cairn-ui`), which is what keeps it off the pods' names.
+          ui-image = mkGoUIImage pkgs;
         });
 
       # 🔴 `apps.default` MOVES WITH `packages.default` OR NOT AT ALL — AND TODAY THAT
@@ -1195,6 +1288,33 @@
           echo "ok: $(wc -l < routes.txt) declared routes, matching the ledger"
           cp routes.txt $out
         '';
+
+        # 🔴 THE UI IMAGE'S SESSION DIRECTORY, READ OUT OF THE BUILT LAYERS — AND THIS
+        # IS A `checks.*` ENTRY RATHER THAN A PYTEST ASSERTION FOR ONE MEASURED REASON.
+        # `tests/test_flake_ui_image_runtime_contract.py` carries the same assertion, and
+        # in CI it can only ever SKIP: the `tests` job installs Python and pytest and has
+        # NO nix, so that test's own `nix build` fails and it skips — and a skip nobody
+        # counts is a pass. This runs in the `nix` job, where a built image exists by
+        # construction.
+        #
+        # 🔴 IT IS THE ASSERTION THE CONFIG BLOCK CANNOT MAKE. Everything else about this
+        # image — uid, port, env, entrypoint — is a metadata field whose only statement is
+        # `flake.nix` itself, so reading the text proves as much as reading the artefact.
+        # Ownership of a DIRECTORY is not: it is produced by `fakeRootCommands` under
+        # `enableFakechroot`, and the sibling pod's comment records its own `chown` mutant
+        # SURVIVING three smoke runs because none of them read ownership. This reads it.
+        #
+        # ⚠ OPERATIONALLY: `identity.OpenFileSessionStore` refuses to start (78) when it
+        # cannot write the session table, so a root-owned directory here does not degrade
+        # the surface — it produces a pod that never comes up. Loud, but only if somebody
+        # notices before the deploy.
+        ui-image-owns-its-session-dir =
+          pkgs.runCommand "cairn-ui-image-owns-its-session-dir"
+            { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            set -o pipefail
+            python3 "${./tests/ui_image_session_dir_check.py}" \
+              "${mkGoUIImage pkgs}" "${uiSessionDir}" ${toString serverUid} | tee $out
+          '';
 
         # ⚠ THERE IS NO `go-ui-declares-its-routes` HERE, AND ITS ABSENCE IS A
         # DECISION RATHER THAN A GAP — a draft of this file carried one, modelled on
