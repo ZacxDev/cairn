@@ -755,7 +755,7 @@ func TestANonPositiveTimeoutIsREFUSEDOnBothPaths(t *testing.T) {
 	// request may already have been applied.
 	cfg := Config{URL: "http://127.0.0.1:1", Token: "t"}
 	for _, timeout := range []int{0, -1} {
-		if _, _, err := FetchSnapshot(cfg, "", timeout); err == nil ||
+		if _, _, _, err := FetchSnapshot(cfg, "", "", timeout); err == nil ||
 			!strings.Contains(err.Error(), "refusing to fetch") {
 			t.Errorf("read, timeout=%d: %v", timeout, err)
 		}
@@ -766,7 +766,7 @@ func TestANonPositiveTimeoutIsREFUSEDOnBothPaths(t *testing.T) {
 	}
 	// The positive control: a POSITIVE bound gets PAST the refusal and fails for a transport
 	// reason instead, which is what proves the guard is the bound and not the arguments around it.
-	_, _, err := FetchSnapshot(cfg, "", 1)
+	_, _, _, err := FetchSnapshot(cfg, "", "", 1)
 	if err == nil || strings.Contains(err.Error(), "refusing to fetch") {
 		t.Fatalf("a positive bound must reach the transport: %v", err)
 	}

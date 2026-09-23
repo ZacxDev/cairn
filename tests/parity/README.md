@@ -47,7 +47,7 @@ the trees are compared as the *reader* sees them (`float(sec) + 1e-9*nsec`, whic
 *pins* it, because a rendered order can agree by accident of three files landing in the right
 sequence while every timestamp is wrong.
 
-## What this gate found — eleven divergences in eight findings
+## What this gate found — twelve divergences in nine findings
 
 🔴 **Relocated here from `AGENTS.md`, which is loaded into every session in this repository
 and was 41.6 KB when this moved.** None of the below is decision input before acting; it is
@@ -209,6 +209,46 @@ where `args.cache` and the routed `cache` are the *same object* — so the chang
 there and the guard is not emptied. That is also exactly why it never saw the defect: the
 dimension it fixes is the one the defect lives on.
 
+## Finding 9 — the shared cache root was wiped ONCE PER CASE, not once per client
+
+🔴 **THE SAME DEFECT `once()` ALREADY CARRIED A COMMENT ABOUT, ONE ROOT OVER, AND ONLY THE
+CONDITIONAL SYNC MADE IT OBSERVABLE.** `case.wipe_cache` removed `<work>/cache` at the top of
+the case loop — **outside** both `once()` calls — so the ORACLE ran against an empty cache and
+the Go client ran against the one the oracle had just installed. That is verbatim the shape
+the derived-root wipe was fixed for, and it was harmless for the same accidental reason the
+comment there names: a sync was UNCONDITIONAL, so `install_snapshot` replaced the root
+wholesale and the starting state could not reach the output.
+
+`GET /api/v1/snapshot` gaining an `ETag` removed the accident. The second client to run now
+presents the validator the first one stored and is answered `304`, so four rows compared a
+client that DOWNLOADED against a client that was told nothing had changed:
+
+```
+FAIL sync-live
+    -cairn: live — fetched from http://…:39315 just now — 7 entries, snapshot seeded=…
+    +cairn: live — already current at http://…:39315 — not modified, snapshot seeded=…
+```
+
+`sync-live`, `ls-entries`, `recall-digest` and `validate-all-scopes` all failed that way, and
+`cache-mtime-parity` failed separately on `.sync-etag` — a file each client writes at sync
+time, so its mtime is a clock reading, which is exactly why `.sync-stamp` was already
+excluded. **Neither failure was a difference between the two clients.** Both were the harness
+putting them in different situations and then comparing the answers.
+
+The fix is structural rather than per-row: the wipe moved **inside** `once()`, which is what
+`wipe_cache` always meant, and `.sync-etag` joined `.sync-stamp` in the mtime exclusion — its
+CONTENT is not excluded, because the two clients store the same bytes and a disagreement
+there would surface as a differing file set or as a parity failure on the next sync.
+
+⚠ **AND ONE ROW'S SUBJECT CHANGED, WHICH IS RECORDED RATHER THAN QUIETLY ABSORBED.**
+`sync-again`'s `why` said it "exercises the retire-and-rename swap rather than the create
+path". A second sync over an UNCHANGED store no longer downloads anything, so no swap
+happens — on either client, which is what the row still measures byte for byte. The retire
+branch is covered where it can be made deterministic instead:
+`internal/client`'s `TestTheValidatorIsInstalledWithTheContentItDescribes` installs into one
+cache twice, and `tests/test_cairn_cli.py`'s `test_a_second_sync_after_a_CHANGE_downloads_again`
+drives the oracle through it end to end.
+
 ## Declared differences — the residuals, named rather than normalised away
 
 ⚠ **ROW 8 IS GONE AND ITS NUMBER IS NOT REUSED.** It declared that the Go client routed WRITES and refused READS at exit 11; the read verbs route now, so the difference it declared does not exist and the row was deleted with the guard that asserted it (`RefuseUnportedMultiInstance`). What replaced it is coverage rather than prose: `recall-routed-to-a-NON-DEFAULT-instance`, `recall-routed-to-the-DEFAULT-instance-is-still-labelled` and `ls-entries-walks-EVERY-instance` compare stdout, stderr and the exit code on a two-instance host, and the reader fixture carries four instance-bearing rows. **The numbering is left with a hole on purpose** — this file's rows are referred to by number from `AGENTS.md`, `lib/README.md`, `flake.nix` and the handoff docs, and renumbering would silently re-point every one of those at a different difference.
@@ -247,6 +287,12 @@ happens when it is a VALUE? The rule is argparse's, and both halves are measured
 
 - **Concurrency.** Both clients take the same `flock` around the cache swap, which is why they can
   share a root at all; nothing here runs them at the same instant.
+- **A CONDITIONAL sync whose validator was minted by the OTHER implementation.** Every row wipes
+  the shared root per client (finding 9), so each client only ever presents a tag it stored
+  itself. That the two mint the SAME tag for one store is `tests/dualrun/`'s claim — the `ETag`
+  header is compared literally on every snapshot target there, and `snapshot-conditional-derived`
+  round-trips it — not this gate's. What this gate does measure is that both RENDER a `304`
+  identically, which is the half a human reads.
 - **Real network failures.** An unreachable pod is a connect refusal to a closed port. A DNS
   failure, a mid-transfer reset and a half-open socket are not built, and see difference 2.
 - **A narrowed credential.** The token's allowlist names every scope the world holds. The

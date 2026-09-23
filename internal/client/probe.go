@@ -20,8 +20,14 @@ import (
 //
 // 🔴 IT NEVER CALLS `InstallSnapshot`. A diagnostic that repaired the cache would destroy the
 // staleness it was run to measure — and it would be the one command you must not run twice.
+// 🔴 IT SENDS NO VALIDATOR, AND THE EMPTY ARGUMENT IS THE WHOLE STATEMENT. A conditional
+// probe could be answered 304, and this function's entire job is to COUNT WHAT THE POD
+// WOULD SEND — visible scopes and visible entries, read out of the archive itself. A
+// diagnostic that accepted "nothing changed" would report the cache's contents as the
+// pod's and call the two in agreement by construction, which is the shape of check that
+// agrees with itself.
 func ProbeStore(cfg Config, timeout int) doctor.PodFacts {
-	body, headers, err := FetchSnapshot(cfg, "", timeout)
+	body, headers, _, err := FetchSnapshot(cfg, "", "", timeout)
 	if err != nil {
 		facts := doctor.PodFacts{Reason: err.Error()}
 		var unreachableErr *StoreUnreachable

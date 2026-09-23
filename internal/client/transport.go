@@ -238,9 +238,19 @@ func httpClient(timeoutSeconds int) *http.Client {
 // 🔴 A NON-POSITIVE TIMEOUT IS REFUSED RATHER THAN TRUSTED. The annotation is a type, and a
 // type is not a code path; on the Python side mutating either the caller's or the socket
 // call's argument to `None` survived the whole suite.
-func FetchSnapshot(cfg Config, scope string, timeout int) ([]byte, http.Header, error) {
+//
+// 🔴 `notModified` IS A RETURN VALUE AND NOT A SENTINEL ERROR, SO NO CALLER CAN FORGET
+// IT. A 304 is a SUCCESS with no body, and the shape that loses it is the one where it
+// travels as an error: every caller here already has an `err != nil` arm that degrades
+// to the cache, so a 304 spelled as an error would have rendered as an outage on the
+// path whose whole purpose is to say the cache is CURRENT. As a fourth result it is a
+// compile error at every call site until it is handled.
+//
+// `etag` is the validator this host already holds, or "" for "ask for the whole thing".
+func FetchSnapshot(cfg Config, scope, etag string, timeout int) (
+	body []byte, header http.Header, notModified bool, err error) {
 	if bad := UnboundedTimeoutReason(timeout); bad != "" {
-		return nil, nil, unreachable("refusing to fetch %s: %s", cfg.URL, bad)
+		return nil, nil, false, unreachable("refusing to fetch %s: %s", cfg.URL, bad)
 	}
 	target := cfg.URL + "/api/v1/snapshot"
 	if scope != "" {
@@ -248,9 +258,16 @@ func FetchSnapshot(cfg Config, scope string, timeout int) ([]byte, http.Header, 
 	}
 	req, err := http.NewRequest(http.MethodGet, target, nil)
 	if err != nil {
-		return nil, nil, unreachable("%s unreachable: %s", cfg.URL, err)
+		return nil, nil, false, unreachable("%s unreachable: %s", cfg.URL, err)
 	}
 	applyStandardHeaders(req, cfg.Token)
+	// 🔴 THE ONE PLACE THE VALUE IS FILTERED ON ITS WAY OUT, and it is here because here
+	// is where it becomes a header. `etag` reaches this function from a FILE — which
+	// anything can edit — so it is not the same trust boundary as the response that
+	// produced it, and `http.Header.Set` will carry a newline straight into the request.
+	if validator := StorableETag(etag); validator != "" {
+		req.Header.Set("If-None-Match", validator)
+	}
 	resp, err := httpClient(timeout).Do(req)
 	if err != nil {
 		// ⚠ ONE ARM WHERE THE ORACLE HAS TWO. `urllib` raises `URLError` (whose
@@ -258,10 +275,19 @@ func FetchSnapshot(cfg Config, scope string, timeout int) ([]byte, http.Header, 
 		// for a socket timeout, and the two sentences differ in their tail only. Go
 		// returns one `*url.Error` for both, so the tail is Go's. The PREFIX — the host
 		// and the word `unreachable` — is what a reader greps and what is preserved.
-		return nil, nil, unreachable("%s unreachable: %s", cfg.URL, urlErrorReason(err))
+		return nil, nil, false, unreachable("%s unreachable: %s", cfg.URL, urlErrorReason(err))
 	}
 	defer resp.Body.Close()
 	body, readErr := io.ReadAll(resp.Body)
+	// 🔴 CHECKED BEFORE THE `!= 200` ARM, WHICH WOULD OTHERWISE REPORT THE POD AS
+	// UNREACHABLE. 304 is the one non-200 on this route that means the fetch SUCCEEDED,
+	// and the arm below turns every other one into "answered HTTP n" — a sentence that
+	// degrades a healthy, confirmed-current cache into `⚠ SERVED FROM CACHE` with a
+	// scary reason attached. The headers ride along because the 304 carries `ETag` and
+	// `X-Store-Snapshot`, both of which the caller states in its banner.
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, resp.Header, true, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		// 🔴 CARRY THE BODY. The server's 503 names WHICH scope it could not read;
 		// reporting only "answered HTTP 503" throws that away and leaves the operator
@@ -272,13 +298,13 @@ func FetchSnapshot(cfg Config, scope string, timeout int) ([]byte, http.Header, 
 				detail = " — " + line
 			}
 		}
-		return nil, nil, &StoreUnreachable{
+		return nil, nil, false, &StoreUnreachable{
 			Reason:     fmt.Sprintf("%s answered HTTP %d%s", cfg.URL, resp.StatusCode, detail),
 			HTTPStatus: resp.StatusCode,
 		}
 	}
 	if readErr != nil {
-		return nil, nil, unreachable("%s unreachable: %s", cfg.URL, readErr)
+		return nil, nil, false, unreachable("%s unreachable: %s", cfg.URL, readErr)
 	}
 	// 🔴 THE HEADER MAP IS RETURNED, NOT A `map[string]string` BUILT FROM IT. `http.Header`
 	// canonicalises on `Get`, so `X-Store-Entries` and `x-store-entries` are one key —
@@ -286,7 +312,7 @@ func FetchSnapshot(cfg Config, scope string, timeout int) ([]byte, http.Header, 
 	// lowercases every header name under HTTP/2, a hand-built dict asked for the mixed-case
 	// spelling and got `None`, and the count cross-check against `X-Store-Entries` was
 	// therefore INERT in the only environment that matters.
-	return body, resp.Header, nil
+	return body, resp.Header, false, nil
 }
 
 // urlErrorReason unwraps Go's `*url.Error` to the thing that actually failed, so the

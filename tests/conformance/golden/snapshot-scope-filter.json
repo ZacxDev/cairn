@@ -91,6 +91,10 @@
       "application/gzip"
     ],
     [
+      "ETag",
+      "\"sha256:5e0a70c8e5966287ecf3f2aa1f70bc428240842c003953a8a57b548f2f869f96\""
+    ],
+    [
       "Server",
       "subsystem-store"
     ],

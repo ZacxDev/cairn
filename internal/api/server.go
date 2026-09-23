@@ -846,8 +846,18 @@ func (rq *request) respond(code int, body []byte, contentType string, headers ma
 	// what stops an unauthenticated request reading the runtime version off the wire,
 	// and it is what the goldens pin.
 	setHeader(h, "Server", serverBanner)
-	setHeader(h, "Content-Type", contentType)
-	setHeader(h, "Content-Length", strconv.Itoa(len(body)))
+	// 🔴 A 304 DESCRIBES A BODY IT DOES NOT SEND, SO IT CARRIES NEITHER FRAMING
+	// HEADER. RFC 9110 §15.4.5 forbids the content, and a `Content-Length` naming the
+	// 200's length with no bytes behind it is a framing lie an HTTP/1.1 peer would read
+	// as the start of the next response. `net/http` strips both for this status by
+	// itself (`suppressedHeaders304`), so this branch changes nothing on the wire here
+	// — it is written out because the ORACLE has no framework doing it, the two
+	// responses are compared header by header, and a rule that is implicit on one side
+	// and explicit on the other is a rule with one place left to break.
+	if code != 304 {
+		setHeader(h, "Content-Type", contentType)
+		setHeader(h, "Content-Length", strconv.Itoa(len(body)))
+	}
 	setHeader(h, "Cache-Control", "no-store")
 	if code != 200 {
 		// ⚠ READ AS "NOT 200", NOT AS "REJECTED": the create route answers 201, so a
@@ -1314,11 +1324,64 @@ func (s *Server) snapshot(rq *request, _ []string, params url.Values) error {
 		return nil
 	}
 	freshHeader, _ := snapshot.Freshness(s.StoreRoot)
+	// 🔴 THE CONDITIONAL IS EVALUATED **AFTER** EVERY REFUSAL AND NEVER BEFORE ONE.
+	// The bad-`?scope=` 400 above, the unreadable-store 503 and the partial-snapshot
+	// 503 all run first, so an `If-None-Match` cannot become a way past them: a
+	// conditional request against a store this server could not read is still the 503
+	// it would have been, not a reassuring "nothing changed".
+	//
+	// ⚠ THE ARCHIVE IS ALREADY BUILT BY THE TIME WE GET HERE, AND SAYING SO IS THE
+	// POINT: the validator is a digest of the tar, so the server still walks the store
+	// and assembles every member to compute it. What a 304 saves is the client's
+	// DOWNLOAD and its EXTRACTION — the tar is the thing a timer re-transfers every
+	// tick and re-unpacks into a staging tree. It saves this server no work at all,
+	// and a reader who assumed otherwise would be sizing a pod against a number this
+	// route does not deliver.
+	if raw, ok := soleHeader(rq.r.Header, "If-None-Match"); ok &&
+		snapshot.ETagMatches(raw, result.ETag) {
+		rq.audit(304, "not-modified")
+		// 🔴 WHAT A 304 CARRIES, DECIDED RATHER THAN INHERITED. RFC 9110 §15.4.5 says
+		// to send the header fields a 200 would have sent where they still apply, so
+		// each of the four is a separate judgement:
+		//
+		//   ETag             YES — it is the validator, and a 304 without one leaves
+		//                    the caller unable to revalidate again.
+		//   X-Store-Snapshot YES — it dates the COPY this pod serves and is true of
+		//                    this response whether or not bytes went with it. It is
+		//                    also independent of the tag: a re-seed with identical
+		//                    content moves this and not the ETag.
+		//   X-Store-Status   YES, as its OWN name. `not-modified` is a fourth state
+		//                    beside `snapshot`, `bad-request` and `store-unreachable`,
+		//                    because every outcome on this route says which it is; a
+		//                    304 spelled `snapshot` would claim an archive it did not
+		//                    send.
+		//   X-Store-Entries  🔴 NO, AND THIS IS THE TRAP. It is the server's count of
+		//                    what it put IN THE BODY, and the client refuses a
+		//                    disagreement between it and its own extracted count. On a
+		//                    304 there is no body and nothing was extracted, so the
+		//                    only thing a client could compare it against is a cache
+		//                    this response never described. A count describing a body
+		//                    you did not send is worse than no count.
+		//
+		// `X-Store-Exit` rides along as `0` for the same reason it does on the 200: it
+		// is the exit code a reader should end with, and a confirmed-current cache is
+		// a successful read.
+		rq.respond(304, nil, "", map[string]string{
+			"X-Store-Status":   "not-modified",
+			"X-Store-Exit":     "0",
+			"X-Store-Snapshot": freshHeader,
+			"ETag":             result.ETag,
+		})
+		return nil
+	}
 	rq.audit(200, "snapshot")
 	rq.respond(200, result.Archive, "application/gzip", map[string]string{
 		"X-Store-Status":   "snapshot",
 		"X-Store-Exit":     "0",
 		"X-Store-Snapshot": freshHeader,
+		// 🔴 THE VALIDATOR, AND IT IS A DIGEST OF THE UNCOMPRESSED TAR — see
+		// `snapshot.ETagFor` for why it may not be a digest of the bytes on the wire.
+		"ETag": result.ETag,
 		// The SERVER's count of what it put in. The client compares its own extracted
 		// count against this and refuses a mismatch. ⚠ On a `?scope=` request the
 		// counts still describe the same filtered set, so the check holds there too.

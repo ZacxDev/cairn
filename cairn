@@ -614,10 +614,70 @@ def _apply_standard_headers(req: "urllib.request.Request", token: str) -> None:
     req.add_header("User-Agent", "subsystem-store-client/1")
 
 
+SYNC_ETAG = ".sync-etag"
+
+#: An entity-tag longer than this is already pathological. The cap is here so a
+#: hostile server cannot make this client write an unbounded file or emit an
+#: unbounded request header.
+MAX_ETAG_BYTES = 128
+
+
+def storable_etag(value: str | None) -> str:
+    """`value` if it is safe to write to disk and send back, else `""`.
+
+    🔴 THE VALIDATOR COMES FROM THE SERVER, WHICH IS THE PARTY THIS CLIENT
+    ALREADY DOES NOT FULLY TRUST — the same threat model as the link, traversal,
+    duplicate and size guards in `install_snapshot`. The rule is the RFC 9110
+    `etagc` character set plus the quotes: every byte printable ASCII and none of
+    them a space. That is exactly what makes the value round-trip as ONE line of
+    a file and as ONE header, so a server cannot use it to inject a second
+    header or a second stamp field.
+
+    ⚠ IT IS A FILTER, NOT A REFUSAL. An unusable tag means "this cache has no
+    validator", never "this response is corrupt": the content arrived fine and
+    the only cost is that the next sync cannot be conditional. Refusing here
+    would let a malformed header break a sync that otherwise worked.
+    """
+    if not value or len(value) > MAX_ETAG_BYTES:
+        return ""
+    return value if all("\x21" <= ch <= "\x7e" for ch in value) else ""
+
+
+def stored_etag(cache: Path) -> str:
+    """The validator recorded beside `cache`, or `""` for "there is none".
+
+    🔴 IT DOES **NOT** FILTER, AND THE FILTER IS AT THE POINT OF USE INSTEAD —
+    `fetch_snapshot`, which is where the value becomes a header. A filter here
+    as WELL was written first and then deleted: it was a second copy of one
+    predicate, and a mutation sweep measured the consequence — removing it
+    changed nothing observable, because the surviving copy caught the same
+    value, so the guard could not be watched to fail and read as coverage it
+    did not provide. One rule, one place, at the boundary that is actually
+    crossed.
+    """
+    try:
+        return (cache / SYNC_ETAG).read_text(encoding="utf-8").rstrip("\n")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
 def fetch_snapshot(
-    url: str, token: str, *, scope: str | None, timeout: int
-) -> tuple[bytes, dict[str, str]]:
-    """GET the tar. Every failure becomes a StoreUnreachable NAMING the host."""
+    url: str, token: str, *, scope: str | None, timeout: int, etag: str = ""
+) -> tuple[bytes | None, dict[str, str], bool]:
+    """GET the tar. Every failure becomes a StoreUnreachable NAMING the host.
+
+    🔴 THE THIRD ELEMENT IS `not_modified`, AND IT IS A RETURN VALUE RATHER THAN
+    AN EXCEPTION SO NO CALLER CAN FORGET IT. A 304 is a SUCCESS with no body,
+    and the shape that loses it is the one where it travels as a
+    `StoreUnreachable`: every caller here already has an arm that degrades to
+    the cache on that exception, so a 304 raised would have rendered as an
+    OUTAGE on the one path whose whole purpose is to say the cache is CURRENT.
+    As a widened tuple it breaks any caller that has not been updated, loudly,
+    at the unpack.
+
+    `etag` is the validator this host already holds, or `""` for "ask for the
+    whole thing". When it is sent and matches, `body` is `None`.
+    """
     # 🔴 `timeout=None` REACHES `urlopen` AS *NO* TIMEOUT, NOT AS A DEFAULT, so
     # this refuses it rather than trusting the annotation above — `timeout: int`
     # is a type hint, and a hint is not a code path. The sibling `who` side of
@@ -635,6 +695,16 @@ def fetch_snapshot(
     # of this host is blocked, which is exactly the shape of bug that gets
     # diagnosed as "the store is broken".
     _apply_standard_headers(req, token)
+    # 🔴 THE ONE PLACE THE VALUE IS FILTERED ON ITS WAY OUT, and it is here
+    # because here is where it becomes a header. `etag` reaches this function
+    # from a FILE — which anything can edit — so it is not the same trust
+    # boundary as the response that produced it, and without this line a stored
+    # value carrying a newline makes `http.client` raise `ValueError` out of
+    # every handler in this program: an unusable validator taking down a sync
+    # that would otherwise have worked.
+    validator = storable_etag(etag)
+    if validator:
+        req.add_header("If-None-Match", validator)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             # 🔴 RETURN THE MESSAGE, NEVER A DICT BUILT FROM IT.
@@ -661,8 +731,18 @@ def fetch_snapshot(
             # and its rule is REFUSE a duplicate, not quietly pick the other
             # end. Handing back the Message keeps ONE semantics rather than
             # inventing a second — caught in review, not shipped.
-            return resp.read(), resp.headers
+            return resp.read(), resp.headers, False
     except urllib.error.HTTPError as exc:
+        # 🔴 CHECKED BEFORE THE REASON IS BUILT, BECAUSE `urllib` ROUTES A 304
+        # HERE. `HTTPErrorProcessor` raises for everything outside 2xx, so the
+        # one non-200 on this route that means the fetch SUCCEEDED arrives as an
+        # exception — and the arm below would turn it into "answered HTTP 304",
+        # degrading a healthy, confirmed-current cache into `⚠ SERVED FROM
+        # CACHE` with a scary reason attached. `exc.headers` is the same
+        # `email.message.Message` the success path returns, so the caller reads
+        # `ETag` and `X-Store-Snapshot` off it identically.
+        if exc.code == 304:
+            return None, exc.headers, True
         # 🔴 CARRY THE BODY. The server's 503 names WHICH scope it could not
         # read; reporting only "answered HTTP 503" throws that away and leaves
         # the operator with a code and no cause — the opposite of "UNMEASURED
@@ -865,6 +945,23 @@ def install_snapshot(body: bytes, cache: Path, headers: dict[str, str]) -> int:
             encoding="utf-8",
         )
 
+        # 🔴 ITS OWN FILE, BESIDE `.sync-stamp` RATHER THAN A LINE INSIDE IT, AND
+        # THE REASON IS THE READER. Every non-blank line of `.sync-stamp` is
+        # RENDERED, as `  stamp: <line>`, in the header of every report both
+        # clients print — so an `etag=` field there would put a 78-character
+        # digest on every recall, search and validate a human or an agent ever
+        # reads, for a value neither of them can act on. The two files cannot
+        # disagree: both are written into this staging directory and installed
+        # by the same atomic swap below, so a cache has both or has neither.
+        #
+        # ⚠ AND ITS ABSENCE IS NOT AN ERROR. A cache written by an older client,
+        # or by a pod that sends no `ETag`, simply has no validator: the next
+        # sync sends no `If-None-Match` and is answered the full 200 it always
+        # was.
+        validator = storable_etag(headers.get("etag"))
+        if validator:
+            (staging / SYNC_ETAG).write_text(validator + "\n", encoding="utf-8")
+
         lock_path = cache.parent / f"{cache.name}.lock"
         with open(lock_path, "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -959,7 +1056,43 @@ def resolve_state(
 
     try:
         url, token = load_config(instance=instance)
-        body, headers = fetch_snapshot(url, token, scope=scope, timeout=timeout)
+        # 🔴 THE VALIDATOR IS OFFERED ONLY WHEN THERE IS A CACHE TO VALIDATE. A
+        # 304 answered to a host holding nothing would be a confirmation of an
+        # absence, and this client would have no content and no error — the one
+        # outcome the four-state design exists to make impossible. The file is
+        # written into the cache by the install that produced it, so it cannot
+        # outlive its tree; the stamp check is the belt to that braces, covering
+        # a cache root half-deleted by hand.
+        validator = stored_etag(cache) if (cache / SYNC_STAMP).exists() else ""
+        body, headers, not_modified = fetch_snapshot(
+            url, token, scope=scope, timeout=timeout, etag=validator
+        )
+        if not_modified:
+            # 🔴 A 304 IS A FOURTH THING AND IT SAYS SO. The cache is not merely
+            # being served — it has just been CONFIRMED CURRENT against the pod,
+            # which is a stronger claim than `⚠ cached` (the pod could not be
+            # reached) and a different one from `live — fetched … just now`
+            # (bytes arrived). Both are `live` because every consumer of that
+            # name is asking "did we reach the store", and the answer is yes;
+            # the DETAIL is where what happened lives, exactly as it already
+            # distinguishes `--no-sync given` from `SERVED FROM CACHE` within
+            # `cached`. A fifth state name would have to be handled at each of
+            # the call sites that compare against STATE_LIVE, and the one missed
+            # would report a successful sync as a failure.
+            #
+            # ⚠ NOTHING IS WRITTEN. The cache is not touched, so `synced=` still
+            # dates the last DOWNLOAD rather than this confirmation — which
+            # makes a later offline banner say the cache is older than it has
+            # been proven to be. That is the safe direction (freshness may never
+            # be OVER-claimed here) and it is stated rather than fixed, because
+            # re-stamping means writing into a live cache that a concurrent sync
+            # may be renaming out from under it.
+            return (
+                STATE_LIVE,
+                f"already current at {url} — not modified, "
+                f"snapshot {headers.get('x-store-snapshot', 'UNSTAMPED')}",
+                None,
+            )
         try:
             count = install_snapshot(body, cache, headers)
         except (EOFError, zlib.error) as exc:
@@ -1861,7 +1994,16 @@ def probe_store(url: str, token: str, *, timeout: int):
     """
     doctor = _cairn_doctor()
     try:
-        body, headers = fetch_snapshot(url, token, scope=None, timeout=timeout)
+        # 🔴 IT SENDS NO VALIDATOR, AND THE OMISSION IS THE WHOLE STATEMENT. A
+        # conditional probe could be answered 304, and this function's entire
+        # job is to COUNT WHAT THE POD WOULD SEND — visible scopes and visible
+        # entries, read out of the archive itself. A diagnostic that accepted
+        # "nothing changed" would report the cache's contents as the pod's and
+        # call the two in agreement by construction, which is the shape of check
+        # that agrees with itself.
+        body, headers, _not_modified = fetch_snapshot(
+            url, token, scope=None, timeout=timeout
+        )
     except StoreUnreachable as exc:
         return doctor.PodFacts(
             reached=False, reason=str(exc), http_status=exc.http_status

@@ -292,6 +292,34 @@ least one check could not look* — which is not a clean bill of health.
 stale write, so an unreachable store is a refused write at `7`, never a queued or
 local one.
 
+### A sync that is already current does not re-download
+
+`GET /api/v1/snapshot` carries an **`ETag`** — `"sha256:<64 hex>"` over the
+*uncompressed* tar — and both clients store it beside the cache in `.sync-etag`
+and offer it back as `If-None-Match` on the next sync. A pod that has nothing new
+answers **`304`** with no body, and the client keeps the cache it already has:
+
+```
+$ cairn sync            # first run
+cairn: live — fetched from https://store.example.invalid just now — 7 entries, snapshot seeded=…
+$ cairn sync            # nothing changed since
+cairn: live — already current at https://store.example.invalid — not modified, snapshot seeded=…
+```
+
+Read that line as its own thing. It is still the **`live`** state — the pod was
+reached and answered — and it is neither `fetched … just now` (bytes arrived) nor
+`⚠ … SERVED FROM CACHE` (the pod could **not** be reached). Exit code, cache and
+subsequent reads are unchanged.
+
+⚠ **What it buys, exactly:** the client's download and its extraction. The server
+still walks the store and builds the archive to compute the digest, so this is
+bandwidth and client CPU, not pod CPU. Nothing is written on a `304`, so a later
+`cached` banner still dates the last **download** — it under-states freshness
+rather than over-stating it.
+
+You need nothing for this. An older client against a new pod simply sends no
+validator; a new client against an older pod stores none.
+
 ### One instance, or several
 
 The client is configured by `~/.config/subsystem-store/env` —

@@ -529,6 +529,55 @@
       "why": "?scope= reaches the filesystem, so it is charset-checked exactly like a path component."
     },
     {
+      "id": "snapshot-conditional-not-modified",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot",
+      "principal": "wide-reader",
+      "headers": [["If-None-Match", "\"sha256:13db39a86d3e6edf465cae907fa1ab9b4c9da7f82227ee0e7c5297a1890b406f\""]],
+      "why": "the conditional sync: a validator that MATCHES is answered 304 with no body, no Content-Type and no Content-Length. The literal is sha256 of the UNCOMPRESSED tar this world produces for this principal, SPELLED BY HAND like the If-Match literals above - if world.json changes it stops matching and this case answers 200, loudly, in the diff."
+    },
+    {
+      "id": "snapshot-conditional-stale-etag",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot",
+      "principal": "wide-reader",
+      "headers": [["If-None-Match", "\"sha256:0000000000000000000000000000000000000000000000000000000000000000\""]],
+      "why": "a validator that does NOT match is answered the whole archive, with the current ETag on it. The half a 304-only corpus could not tell from a route that answers 304 to everything.",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"]
+    },
+    {
+      "id": "snapshot-conditional-star",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot",
+      "principal": "wide-reader",
+      "headers": [["If-None-Match", "*"]],
+      "why": "RFC 9110 13.1.2's `*` - any current representation. Pinned because it is the one conditional whose answer does not depend on the world's bytes, so it stays a 304 across every fixture change."
+    },
+    {
+      "id": "snapshot-conditional-other-principals-etag",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot",
+      "principal": "narrow-reader",
+      "headers": [["If-None-Match", "\"sha256:13db39a86d3e6edf465cae907fa1ab9b4c9da7f82227ee0e7c5297a1890b406f\""]],
+      "why": "THE WIDE PRINCIPAL'S VALIDATOR, PRESENTED BY THE NARROW ONE - answered 200, because the tag digests the archive THIS caller gets and the two callers do not get the same archive. A validator keyed on anything store-wide would answer 304 here and hand a narrowed caller a cache it may not hold.",
+      "body_kind": "snapshot",
+      "normalize": ["snapshot-content-length"]
+    },
+    {
+      "id": "snapshot-conditional-bad-scope",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/snapshot?scope=a.b",
+      "principal": "wide-reader",
+      "headers": [["If-None-Match", "*"]],
+      "why": "A CONDITIONAL REQUEST IS NOT A WAY PAST A REFUSAL. The `*` above is the one validator that always matches, and this row is still the 400 `snapshot-bad-scope` is: the charset check runs before the conditional is even read."
+    },
+    {
       "id": "snapshot-unauthenticated",
       "phase": "read",
       "method": "GET",

@@ -259,7 +259,7 @@ goes red on stdout, on stderr, on the exit code **and** on `exit+stdout`). `--br
 negative control on the first. Read all three; a green without them is a green about nothing.
 
 📄 **READ ON DEMAND RATHER THAN HERE, all in `tests/parity/README.md`:** the worked example behind
-that green, what the gate FOUND (eleven divergences in eight findings), the MUTATION BATTERY over P2,
+that green, what the gate FOUND (twelve divergences in nine findings), the MUTATION BATTERY over P2,
 and the **P8 RETIREMENT LEDGER** — every file, guard and row that exists only while the Python
 oracle does. Records of rounds, not decision input before acting. This file states the retirement
 condition for the `lib/` rule and for nothing else; the ledger is a list of DECISIONS, not a delete

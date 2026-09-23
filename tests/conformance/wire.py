@@ -266,10 +266,16 @@ NOT_NORMALIZED: tuple[tuple[str, str], ...] = (
     ),
     (
         "ETag (everywhere but the append)",
-        "CONTENT-DERIVED: sha256 of the entry file's bytes, truncated to 16 hex. "
-        "A create and a replace hash the bytes the request sent; a duplicate and "
-        "a failed precondition hash a fixture file nothing in the run writes to. "
-        "All four are reproducible, so all four are pinned literally.",
+        "CONTENT-DERIVED, in two shapes. On an ENTRY route: sha256 of the entry "
+        "file's bytes, truncated to 16 hex — a create and a replace hash the bytes "
+        "the request sent; a duplicate and a failed precondition hash a fixture file "
+        "nothing in the run writes to. On `/snapshot`: `\"sha256:<64 hex>\"` over the "
+        "UNCOMPRESSED tar, which is deterministic for the same reason the extracted "
+        "manifest beside it is — every member's bytes and every mtime are DECLARED by "
+        "world.json, to sub-second precision. 🔴 IT IS NOT A DIGEST OF THE BODY ON THE "
+        "WIRE: the gzip envelope carries the compression time and differs on every run "
+        "and between implementations, which is why `snapshot-content-length` exists one "
+        "table up. All of them are reproducible, so all of them are pinned literally.",
     ),
     (
         "X-Cairn-Bullet",
