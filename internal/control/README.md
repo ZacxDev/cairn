@@ -258,12 +258,23 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 132 mutants, over SEVEN packages
+python3 tests/control_mutants.py          # 141 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 132 mutants, 130 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 141 mutants, 139 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
+
+⚠ **AND THE RUN BEFORE THAT ONE REPORTED A HARNESS ERROR, WHICH IS WORTH KEEPING BECAUSE
+IT IS THE INSTRUMENT CATCHING A CHANGE NOBODY WOULD HAVE LOOKED FOR.** Closing the `%p`
+leak made `Issued.token` a `*string`, and `issued-renders-its-token` — a row written long
+before, which puts the field back into the log line as `%s` — then failed `go vet` inside
+`go test`: `format %s has arg i.token of wrong type *string`. The tree DID NOT BUILD, so
+the row measured nothing rather than exercising its guard, and a mutant that dies at the
+build is a false green about the test it names. The row now interpolates `Token()`, which
+compiles and is the more plausible edit anyway. Two lessons, both already rules here: a
+harness error is not a kill, and every row's anchor and TYPES are part of the tree it is
+pinned against.
 
 🔴 **THE THIRD EQUIVALENT LABEL WAS MEASURED FALSE AND IS NOW A KILL, WHICH IS WHY THE
 SPLIT MOVED WITHOUT A ROW BEING ADDED.** `ui-share-write-authority-check-removed-in-the-
@@ -337,7 +348,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 132 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 141 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -735,11 +746,38 @@ and the refusal names the command instead**; the guard is unchanged, because
    holds no configuration and must not import the token-file parser — so the agreement is a
    SEAM GUARD, `TestTheMintedWidthAgreesWithTheTokenFileFloor`, which imports both.
 2. **The raw token leaves through `Issued.Token()` and nothing else.** The field is
-   unexported and `String`/`GoString` redact, so `%v`, `%+v`, `%s`, `%q` and `%#v` cannot
-   reach it. ⚠ That is a property of FORMATTING, not a confidentiality boundary: `Token()`
-   still returns the secret (which is the point — the command emits it once), an encoder
-   that skips unexported fields DROPS it rather than leaking it, and a debugger reads it
-   anyway. `Issued`'s own comment enumerates the four things it does not cover.
+   unexported, `Issued` implements `fmt.Formatter`, and the field is a POINTER. ⚠ That is
+   a property of FORMATTING, not a confidentiality boundary: `Token()` still returns the
+   secret (which is the point — the command emits it once), an encoder that skips
+   unexported fields DROPS it rather than leaking it, and a debugger reads it anyway.
+   `Issued`'s own comment enumerates the five things it does not cover.
+
+   🔴 **THE FIRST VERSION OF THIS RULE WAS `Stringer`-ONLY AND WAS 14 OF 22 VERBS SHORT —
+   MEASURED, NOT ARGUED.** It read "`String`/`GoString` redact, so `%v`, `%+v`, `%s`, `%q`
+   and `%#v` cannot reach it", which is true, and is a list of the verbs `fmt` routes
+   through those two interfaces. `fmt` REFLECTS the operand for every other verb, and a
+   reflected struct prints its unexported field's value inside `%!d(string=…)`: over
+   `Issued` and `*Issued` at `0fb61d4`, **`%d %b %o %O %c %U %e %E %f %F %g %G %t %p` all
+   rendered the raw token**. `TestNoRenderingOfIssuedContainsTheToken` ranged over exactly
+   the five verbs that already worked while its own docstring claimed "across every verb
+   that can reach a struct" — a guard narrower than its description, which is the class
+   this repository keeps closing. It now sweeps all 22 in four spellings (raw, hex, HEX,
+   decimal bytes), over the value AND a pointer, with an unredacted twin as its positive
+   control.
+
+   🔴 **`Formatter` CLOSES 21 OF 22 AND THE POINTER CLOSES THE TWENTY-SECOND.** `fmt`
+   consults a `Formatter` before `Stringer` and for every verb — except `%T` and `%p`,
+   which it answers before any formatting interface. `%p` of a NON-pointer operand falls
+   into `badVerb`, which sets `erroring` and then re-renders the operand as `%v`, and
+   method dispatch returns early while `erroring` — so the struct is reflected and the
+   field printed. Measured on this type: `Format` alone leaves **1 of 22** leaking; with
+   `token *string` it is **0 of 22**, because `fmt` renders a pointer FIELD as an address
+   and follows a pointer only at depth 0. ⚠ A `Format` method on the FIELD's type would
+   have done nothing: `fmt` calls a value's formatting methods only when it can
+   `Interface()` it, and a field reached through an unexported name cannot be — the same
+   mechanism that produced the leak. ⚠ And `go vet` flags `fmt.Sprintf("%d", issued)` with
+   a CONSTANT format string and says nothing about the same call with the format in a
+   variable, which is why the type has to defend itself rather than rely on the linter.
 3. **The principal is checked before the mint, and what it buys is the refusal's first
    line.** `apply` refuses the same batch under the `flock`, so as a correctness check this
    is redundant and is not claimed otherwise. `ErrNoSuchPrincipal` is a sentinel
@@ -798,6 +836,72 @@ measurement saying it could never see this case (its fixture is 26 characters).
 `token-hash-checked-by-LENGTH-only` is the mutant, and it is a *second* row rather than a
 widening of `raw-token-accepted-as-a-digest`: that one deletes the guard's operand, so a
 guard that is present and too NARROW survives it.
+
+🔴 **AND BOTH OF THOSE CORRECTIONS WERE STILL AN OUTAGE ON UPGRADE, WHICH IS WHAT THE
+REPLAY EXEMPTION CLOSES.** The two fixes above narrowed what `validate` and `apply` accept,
+and both checks run on REPLAY — so a journal an older build had already written met a newer
+build's refusal and the whole file stopped loading. Measured at `0fb61d4`, each against a
+journal that also held a perfectly good credential:
+
+| the journal holds | credentials loaded at `0fb61d4` |
+|---|---|
+| a 64-character **non-hex** `token_hash` (what the pre-widening length-only check accepted) | **0** — `token_hash is not a 64-character hex digest` |
+| one secret recorded in **two case spellings** (what the normalisation fix made visible) | **0** — `crd_dup1 carries the same token digest as crd_dup0` |
+
+In both cases `FileStore.Reload` then serves `lastKnownGood()`, empty on a cold start: the
+operator loses their entire control-plane authority on upgrade, and the only remedy is
+hand-editing an append-only file. The second case was *introduced by the previous round's
+own fix*, which is the tell that this is a shape rather than two accidents.
+
+🔴 **SO REPLAY AND APPEND ARE SPLIT, AND THE EXEMPTION IS A TABLE RATHER THAN A CONDITION.**
+`replayDroppable` (`journal.go`) maps an event KIND to the failures a replay may drop that
+record for, and it has exactly one entry: `credential-issued`, for `ErrUnusableTokenDigest`
+and `ErrDuplicateTokenDigest`. `Replay` looks the kind up; a kind with no entry cannot be
+dropped whatever error it raises, so a revocation or a kind from a newer build still fails
+the journal whole. **`Append` never consults it** — it validates a batch by calling `apply`
+on a clone directly — so a writer trying to CREATE either record is refused exactly as
+before.
+
+🔴 **THE JUSTIFICATION IS DIRECTIONAL, AND THAT IS WHY IT DOES NOT CONTRADICT THE
+`default:` ARM THREE PARAGRAPHS OF THIS FILE REST ON.** That arm refuses an unknown kind
+whole *"because a dropped revocation is a grant that keeps working"* — reasoning about the
+WIDENING direction. Dropping a `credential-issued` record NARROWS: one fewer credential.
+And each of the two exempted failures is provably inert on its own terms — a `token_hash`
+that is not lowercase-or-uppercase hex is byte-unequal to every value `HashToken` can emit,
+so it authenticates nobody; a duplicate keeps working as the record it was FIRST written
+as, and what is removed is the two-principals-one-digest ambiguity `Resolve` would otherwise
+settle by map order. So the exemption is exactly `credential-issued`, exactly in the
+narrowing direction, and never a revocation or an unknown kind.
+
+🔴 **A DROPPED RECORD IS DATA ON THE MODEL, BECAUSE THIS PACKAGE HOLDS NO LOGGER.**
+`Model.Dropped` carries a `DroppedRecord` per skipped line — position, kind, credential id
+and the refusal's own text — and `cmd/cairn-server` (at pod startup and on
+`-issue-credential`) and `cmd/cairn-ui` (at startup) render them on stderr. Without that the
+leniency would be a silent narrowing of an authority, which is the one thing that would make
+it worse than the outage it replaces. The renderer never echoes a `token_hash`: the refusal
+texts are written not to, because the field may be holding a live secret.
+
+⚠ **ONE INTERACTION IS ANSWERED WITH A MESSAGE RATHER THAN A SECOND EXEMPTION.** A journal
+that hand-appends an unusable `credential-issued` record AND a `credential-revoked` for it
+now has the issue dropped, so the revocation names a credential the model does not hold and
+the file is refused whole — pointing at the line the operator got right. `dropHint` adds a
+sentence naming the dropped issue and its position. Widening `replayDroppable` to cover that
+revocation was considered and refused: it is the "never a revocation" rule being
+reinterpreted by whoever hits the case next.
+
+The guards: `TestAnUnusableDigestDropsOnlyItsOwnRecord` and
+`TestOneSecretRecordedTwiceDropsTheLaterRecord` (regression coverage, both measured red at
+`0fb61d4` — 0 credentials loaded); `TestOnlyCredentialIssuedMayBeDroppedAtReplay` (the
+ledger over `AllEventKinds`) and `TestAKindWithNoDroppableEntryStillRefusesTheWholeJournal`
+(its behavioural half — a structural assertion about a map type-checks past a `Replay` that
+ignores it); `TestARevocationOfADroppedCredentialRefusesTheFileAndSaysWhy`; and
+`TestAppendStillRefusesWhatReplayWouldDrop`, which is the claim that the write path did not
+inherit any of it. The mutants are
+`replay-refuses-the-whole-file-on-an-unusable-digest`,
+`replay-refuses-the-whole-file-on-a-duplicate-digest`, `replay-may-drop-a-revocation`,
+`replay-drops-every-failed-event`, `a-dropped-record-does-not-name-its-credential`,
+`append-inherits-the-replay-exemption` and
+`dropped-records-are-not-rendered-to-the-operator`.
 
 ⚠ **WHAT THIS PATH DOES NOT DO, ENUMERATED RATHER THAN GESTURED AT.** It does not GRANT —
 a credential carries its principal's authority, computed at the moment it is asked, so one

@@ -132,6 +132,22 @@ func main() {
 		os.Exit(exitConfig)
 	}
 
+	// 🔴 A DROPPED RECORD IS SAID OUT LOUD OR IT IS A SILENT NARROWING, AND THIS SURFACE
+	// FEELS IT FIRST. `control.Replay` skips a `credential-issued` record it cannot use — an
+	// unusable digest, a digest another record already carries — and loads the rest of the
+	// file rather than refusing the operator's whole control plane. A credential dropped
+	// here is a person who cannot sign in, and the refusal below may even fire because the
+	// only credential in the journal was the dropped one; without this line that reads as
+	// an empty journal. `internal/control` holds no logger by design, so it carries the
+	// drops as data and the programs that load a journal render them.
+	for _, dropped := range authority.Model().Dropped {
+		fmt.Fprintf(os.Stderr,
+			"cairn-ui: WARNING the control journal %s: %s. The rest of the file loaded and this "+
+				"surface is serving an authority WITHOUT that credential. Delete or correct that "+
+				"line; nothing here rewrites an append-only journal\n",
+			*controlJournal, dropped)
+	}
+
 	if err := refuseAnAuthorityNobodyCanSignInTo(authority, *controlJournal); err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)

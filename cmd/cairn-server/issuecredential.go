@@ -88,9 +88,10 @@ func registerIssueCredentialFlags() *issueCredentialFlags {
 				"-principal-kind project). NOT a provider subject and not an email: a credential "+
 				"binds to the control plane's own immutable id"),
 		label: flag.String("label", "",
-			"what a human calls this credential in a rotation runbook. Stored VERBATIM in the "+
+			"what a human calls this credential in a rotation runbook. Stored UNEXAMINED in the "+
 				"journal, which an operator reads, so it must never be secret and never derived "+
-				"from the token"),
+				"from the token. Not byte-exact: the journal is JSON, so a label that is not valid "+
+				"UTF-8 is recorded with each bad byte replaced"),
 		narrowScopes: flag.String("narrow-scopes", "",
 			"comma-separated scope IDS (`scp_…`) this credential is restricted to, INTERSECTED "+
 				"with whatever its principal can reach at the moment it is asked. Empty means NO "+
@@ -194,10 +195,20 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 		return exitConfig
 	}
 
+	ctx := context.Background()
 	store, err := control.OpenFileStore(journal)
 	if err != nil {
 		warn("subsystem-store-api: " + err.Error())
 		return exitConfig
+	}
+	// 🔴 SAID BEFORE THE MINT, BECAUSE AN OPERATOR ISSUING A CREDENTIAL IS THE PERSON MOST
+	// LIKELY TO BE FIXING THE JOURNAL THAT PRODUCED THE DROP. `control.Replay` skips a
+	// `credential-issued` record it cannot use and loads the rest of the file; this command
+	// reads the model on the way in, so it is the earliest surface that can say so. A read
+	// FAILURE is deliberately not handled here — `control.IssueCredential` reads the same
+	// store a moment later and reports it with the message an operator can act on.
+	if m, err := store.Model(ctx); err == nil {
+		warnAboutDroppedRecords(m, journal, warn)
 	}
 
 	// 🔴 THE SINK IS OPENED BEFORE THE MINT, FOR THE REASON THE PRINCIPAL CHECK HAPPENS
@@ -212,7 +223,6 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 		return exitConfig
 	}
 
-	ctx := context.Background()
 	issued, err := control.IssueCredential(ctx, store, control.NewCredential{
 		SubjectKind:    kind,
 		SubjectID:      principal,
@@ -255,7 +265,7 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 	delivered := true
 	if sink == nil {
 		fmt.Fprintln(out, issued.Token())
-	} else if err := writeTokenSink(sink, issued.Token()); err != nil {
+	} else if err := deliverToken(sink, issued.Token()); err != nil {
 		delivered = false
 		// 🔴 THE CREDENTIAL EXISTS AND ITS SECRET DOES NOT. Said in full, because this is the
 		// one outcome of this command that cannot be retried into a good state: the record is
@@ -265,8 +275,13 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 			"subsystem-store-api: ⚠ THE CREDENTIAL WAS WRITTEN AND ITS TOKEN COULD NOT BE DELIVERED "+
 				"to %s (%v). credential=%s is live in the journal and its token is UNRECOVERABLE — "+
 				"nothing in this repository can derive a token from a digest. Retire it by appending a "+
-				"`credential-revoked` record naming that id, then issue another",
-			tokenOut, err, issued.Credential))
+				"`credential-revoked` record naming that id, then issue another. ⚠ DO NOT RETRY THIS "+
+				"COMMAND BLINDLY: every attempt appends another live credential nobody holds, which is "+
+				"why this outcome exits %d rather than the %d every other refusal uses. The file %s may "+
+				"exist and may hold a partial or complete token; it is NOT removed, because a token "+
+				"written and then lost at flush is the only copy of a secret this program cannot "+
+				"produce again — inspect it before deleting it",
+			tokenOut, err, issued.Credential, exitTokenUndelivered, exitConfig, tokenOut))
 	}
 
 	// The record line, on stderr, keeping `-create-user`'s `cairn-control:` prefix so a
@@ -318,7 +333,15 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 		// A credential exists and its token does not, which is a failure of this command even
 		// though the journal write succeeded. Exiting 0 here would let a script conclude it
 		// holds a working token file.
-		return exitConfig
+		//
+		// 🔴 AND IT IS ITS OWN CODE RATHER THAN THE REFUSAL CODE, BECAUSE THE TWO DEMAND
+		// OPPOSITE ACTIONS FROM A WRAPPER. Every `exitConfig` return above happens BEFORE the
+		// append: nothing was minted, and re-running after fixing the flag is exactly right.
+		// This one happens AFTER a durable, unrevocable `credential-issued` record, so a
+		// wrapper retrying on non-zero mints a fresh live credential per attempt and fills the
+		// authority with tokens nobody holds. See `exitTokenUndelivered` in `main.go` for why
+		// this distinction earns a code where the deleted `exitDataErr` did not.
+		return exitTokenUndelivered
 	}
 	return 0
 }
@@ -354,6 +377,23 @@ func openTokenSink(path string) (*os.File, error) {
 	return fh, nil
 }
 
+// deliverToken is `writeTokenSink`, indirected so that a test can make the delivery fail.
+//
+// 🔴 A SEAM FOR THE ONE OUTCOME THAT CANNOT BE PROVOKED FROM OUTSIDE THE PROCESS, AND IT
+// IS ALSO THE ONE OUTCOME WITH ITS OWN EXIT CODE. `openTokenSink` creates the file with
+// `O_CREATE|O_EXCL` a moment earlier, so by the time this runs the descriptor is open on a
+// path the test chose: there is no filesystem state a test can set up that makes THAT write
+// fail without also breaking the journal write beside it (a full device, a read-only mount
+// and `RLIMIT_FSIZE` all hit both). The alternative to this seam is asserting the exit code
+// from the constant rather than from a run, which is precisely the "a test that passes by
+// accident of the environment" shape — the code would be pinned and the branch that
+// RETURNS it would never execute.
+//
+// ⚠ IT IS A `var` IN PRODUCTION CODE, WHICH IS A REAL COST AND IS THE SMALLER ONE. The
+// same shape as `refreshInterval` in this package, and with the same discipline: exactly
+// one assignment, in a test, restored by `t.Cleanup`.
+var deliverToken = writeTokenSink
+
 // writeTokenSink writes the token and CLOSES the file, reporting either failure.
 //
 // 🔴 THE CLOSE ERROR IS RETURNED, NOT DISCARDED. A buffered write that fails at flush time
@@ -371,8 +411,27 @@ func writeTokenSink(fh *os.File, token string) error {
 // discardTokenSink removes a token file this command created but never wrote to.
 //
 // A zero-byte file named `token` left behind by a refused issue is how an operator
-// concludes the command worked; the removal is safe precisely because `openTokenSink`
-// created the path with `O_EXCL` moments earlier, so nothing else has ever had it.
+// concludes the command worked, so it is removed.
+//
+// ⚠ THE REMOVAL IS BY PATH AND THE `O_EXCL` GUARANTEE IS ABOUT THE DESCRIPTOR, WHICH IS
+// NARROWER THAN WHAT THIS COMMENT USED TO CLAIM. It said the removal was safe "precisely
+// because `openTokenSink` created the path with `O_EXCL` moments earlier, so nothing else
+// has ever had it". `O_CREATE|O_EXCL` does establish that THIS PROCESS created the inode it
+// is holding open; it says nothing about what the NAME refers to at the instant `os.Remove`
+// runs, because the two are separate lookups. Anything that can write the containing
+// directory — another run of this command, an operator, a cleanup job — can replace the
+// name in between, and this call would then unlink whatever is there. That is a small
+// hazard in a directory an operator chose, and it is stated rather than closed: closing it
+// means `unlinkat`-by-fd machinery for a zero-byte file. What is true is the narrow claim:
+// the file this command is removing is one it created empty and never wrote to.
+//
+// 🔴 AND IT IS NOT CALLED AFTER A FAILED *WRITE*, WHICH IS A DECISION RATHER THAN A GAP.
+// `writeTokenSink` returns both the write error and the `Close` error, and a token that was
+// fully written but failed at flush is indistinguishable here from one that was never
+// written — so the file may hold a complete, usable bearer token for a credential that is
+// already live in the journal and that nothing in this repository can revoke. Deleting it
+// would destroy the only copy of a secret this program cannot produce again. The file stays
+// at 0600, the failure message names it, and the operator decides.
 func discardTokenSink(fh *os.File, path string, warn func(string)) {
 	if fh == nil {
 		return

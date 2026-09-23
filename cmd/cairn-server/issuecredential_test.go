@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -656,6 +657,130 @@ func TestAPrincipalThatIsNotThereIsRefusedInThisCommandsOwnWords(t *testing.T) {
 	if strings.Contains(errOut2.String(), "holds no user with id") {
 		t.Errorf("an I/O failure produced the missing-principal refusal, so the two are not "+
 			"distinguishable after all:\n%s", errOut2.String())
+	}
+}
+
+// TestADroppedJournalRecordReachesTheOperatorsStderr is the SEAM guard on the replay
+// leniency: `internal/control` decides to drop a record and can only record it as data, so
+// the claim "an operator is told" is about a wire nothing in that package can test.
+//
+// 🔴 EACH SIDE IS GREEN ALONE WHILE THE PROPERTY IS ABSENT. `internal/control`'s tests
+// prove `Model.Dropped` is populated; this program's tests prove it starts and issues. A
+// drop that nothing renders is a pod serving an authority quietly shorter than its journal,
+// which is the exact failure the leniency is only acceptable without.
+//
+// ⚠ IT ASSERTS THE CREDENTIAL ID AND THE REASON, NOT A WORDING. Those are what an operator
+// greps the journal with; the sentence around them is free to be reworded.
+func TestADroppedJournalRecordReachesTheOperatorsStderr(t *testing.T) {
+	journal, env, made := aJournalWithAnOwner(t)
+
+	// A hand-appended record whose `token_hash` this build cannot use — the shape an
+	// earlier, length-only check accepted. Appended to the FILE, because `Append` refuses
+	// to create one and that refusal is not what this test is about.
+	fh, err := os.OpenFile(journal, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("opening the journal to hand-append: %v", err)
+	}
+	line := `{"kind":"credential-issued","at":"2000-06-01T12:00:00Z","credential_id":"crd_handwritten",` +
+		`"subject_kind":"user","subject_id":"` + string(made.User) + `","token_hash":` +
+		`"cairn-test-not-a-digest-cairn-test-not-a-digest-cairn-test-not-",` +
+		`"label":"hand-appended"}` + "\n"
+	if _, err := fh.WriteString(line); err != nil {
+		t.Fatalf("hand-appending: %v", err)
+	}
+	if err := fh.Close(); err != nil {
+		t.Fatalf("closing: %v", err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := runIssueCredential(env, issueFlagsFor("user", string(made.User), "", ""), &out, &errOut); code != 0 {
+		t.Fatalf("exit %d, want 0 — one unusable record is dropped, the journal still loads:\n%s",
+			code, errOut.String())
+	}
+	body := errOut.String()
+	if !strings.Contains(body, "crd_handwritten") {
+		t.Fatalf("the dropped record is not named on stderr, so the authority is one credential "+
+			"short of the journal and nothing said so:\n%s", body)
+	}
+	if !strings.Contains(body, "hex digest") {
+		t.Fatalf("the drop is announced without its reason, so an operator cannot tell a corrupt "+
+			"line from a duplicate one:\n%s", body)
+	}
+}
+
+// TestAFailedTokenDeliveryExitsItsOwnCode is REGRESSION COVERAGE for a retry hazard rather
+// than for a crash.
+//
+// 🔴 THE SHAPE: THE CREDENTIAL IS DURABLE AND ITS SECRET IS GONE. The append succeeded and
+// was `Sync`ed, nothing here can derive a token from a digest, and `EventCredentialRevoked`
+// has no writer — so the record is live and unrevocable by any tool in this repository.
+// Every OTHER failure of this command happens BEFORE the append. Sharing one non-zero code
+// across both means a wrapper that retries on failure mints a fresh live credential per
+// attempt and fills the authority with tokens nobody holds; the wrapper is behaving
+// correctly and the program is lying to it.
+//
+// 🔴 THE EXIT CODE IS READ FROM A RUN, NOT FROM THE CONSTANT. Asserting
+// `exitTokenUndelivered != exitConfig` would be green on a build whose `!delivered` arm
+// still returned 78 — the code pinned and the branch that returns it never executed. That
+// is what the `deliverToken` seam is for; its comment says why no filesystem state can
+// provoke this from outside the process.
+//
+// ⚠ AND THE JOURNAL IS ASSERTED TO HOLD THE CREDENTIAL, because "the delivery failed" is
+// only the dangerous outcome if the record really is there. A version that rolled the
+// append back would want a different code and a different message.
+func TestAFailedTokenDeliveryExitsItsOwnCode(t *testing.T) {
+	journal, env, made := aJournalWithAnOwner(t)
+	path := filepath.Join(t.TempDir(), "token")
+
+	restore := deliverToken
+	t.Cleanup(func() { deliverToken = restore })
+	deliverToken = func(fh *os.File, _ string) error {
+		fh.Close()
+		return errors.New("simulated: the device went away mid-write")
+	}
+
+	var out, errOut bytes.Buffer
+	code := runIssueCredential(env, issueToFile("user", string(made.User), path), &out, &errOut)
+
+	if code == exitConfig {
+		t.Fatalf("a failed token DELIVERY exited %d, the same code as every refusal that wrote "+
+			"nothing. A wrapper retrying on that mints another live, unrevocable credential each "+
+			"time:\n%s", code, errOut.String())
+	}
+	if code != exitTokenUndelivered {
+		t.Fatalf("exit %d, want %d (EX_IOERR)", code, exitTokenUndelivered)
+	}
+	if body := errOut.String(); !strings.Contains(body, "COULD NOT BE DELIVERED") ||
+		!strings.Contains(body, "DO NOT RETRY") {
+		t.Errorf("the failure line does not tell an operator not to retry:\n%s", body)
+	}
+
+	// The credential really is in the journal, which is what makes the distinct code
+	// necessary rather than cosmetic.
+	reread, err := control.OpenFileStore(journal)
+	if err != nil {
+		t.Fatalf("re-opening the journal: %v", err)
+	}
+	m, err := reread.Model(context.Background())
+	if err != nil {
+		t.Fatalf("replaying: %v", err)
+	}
+	if len(m.Credentials) != 1 {
+		t.Fatalf("the journal holds %d credential(s), want 1 — if the append had not happened this "+
+			"outcome would be an ordinary refusal and would not need a code of its own",
+			len(m.Credentials))
+	}
+
+	// The POSITIVE CONTROL on the seam: with the real writer restored, the same call exits
+	// 0. Without it, "the failure path exits 74" is equally satisfied by a build that never
+	// delivers anything.
+	deliverToken = restore
+	var out2, errOut2 bytes.Buffer
+	if code := runIssueCredential(env,
+		issueToFile("user", string(made.User), filepath.Join(t.TempDir(), "token2")),
+		&out2, &errOut2); code != 0 {
+		t.Fatalf("POSITIVE CONTROL FAILED: with the real writer the same call exited %d:\n%s",
+			code, errOut2.String())
 	}
 }
 

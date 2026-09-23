@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -148,12 +149,23 @@ func IssueCredential(ctx context.Context, s Store, req NewCredential) (Issued, e
 	}
 
 	// 🔴 `crypto/rand`, AND THE FAILURE IS FATAL TO THE CALL RATHER THAN FALLING BACK.
-	// `rand.Read` on modern Go cannot partially fill — it either returns the full read or
-	// an error — but a caller-visible refusal is the only safe answer either way: a token
-	// assembled from a short or absent entropy read is a credential whose secrecy nobody
-	// measured, written into an append-only authority with no undo. The same reasoning as
-	// `NewID`, one level up in consequence: an id is an unguessable handle, this is the
-	// secret itself.
+	//
+	// ⚠ ON THE PINNED TOOLCHAIN THIS BRANCH IS UNREACHABLE, AND THE PREVIOUS DESCRIPTION OF
+	// IT WAS WRONG RATHER THAN MERELY OPTIMISTIC. It said `rand.Read` "cannot partially
+	// fill — it either returns the full read or an error". Since Go 1.24 `crypto/rand.Read`
+	// ALWAYS fills the buffer and ALWAYS returns a nil error: an irrecoverable failure of
+	// the system source is a PANIC inside the package, not a value this call can inspect.
+	// `go.mod` says 1.25 and `flake.nix` builds with `buildGo125Module`, so on every
+	// toolchain this repository pins, `err` here is nil.
+	//
+	// 🔴 THE BRANCH STAYS, AND NOT AS DECORATION. `rand.Read` keeps the `(int, error)`
+	// signature, so dropping the check means writing `_, _ = rand.Read(buf)` — a line that
+	// silently accepts a short fill on any build where the guarantee does not hold, which
+	// includes an older toolchain somebody vendors this into. A caller-visible refusal is
+	// the only safe answer either way: a token assembled from a short or absent entropy
+	// read is a credential whose secrecy nobody measured, written into an append-only
+	// authority with no undo. The same reasoning as `NewID`, one level up in consequence:
+	// an id is an unguessable handle, this is the secret itself.
 	buf := make([]byte, TokenEntropyBytes)
 	if _, err := rand.Read(buf); err != nil {
 		return Issued{}, fmt.Errorf("minting a credential token: %w", err)
@@ -170,7 +182,9 @@ func IssueCredential(ctx context.Context, s Store, req NewCredential) (Issued, e
 		CredentialID: credentialID,
 		SubjectKind:  req.SubjectKind, SubjectID: req.SubjectID,
 		TokenHash: digest,
-		Label:     req.Label,
+		// The label is passed through unexamined; see `NewCredential.Label` for what
+		// `encoding/json` then does to a value that is not valid UTF-8.
+		Label: req.Label,
 		// `copyIDs`, NOT `append([]ID(nil), …)`: the latter flattens a non-nil EMPTY
 		// narrowing into nil, which means NO narrowing and is its exact opposite. A
 		// credential issued to see nothing would see everything its principal does, and the
@@ -184,7 +198,7 @@ func IssueCredential(ctx context.Context, s Store, req NewCredential) (Issued, e
 		Credential: credentialID,
 		TokenHash:  digest,
 		Epoch:      after.Epoch,
-		token:      token,
+		token:      &token,
 	}, nil
 }
 
@@ -202,8 +216,30 @@ type NewCredential struct {
 	SubjectKind Kind
 	SubjectID   ID
 	// Label is what a human calls this credential in a UI or a rotation runbook. NEVER
-	// secret, and never derived from the token: it is stored verbatim in the journal, which
-	// is an operator-readable file.
+	// secret, and never derived from the token: it is stored UNEXAMINED in the journal,
+	// which is an operator-readable file.
+	//
+	// ⚠ "VERBATIM" IS WHAT THIS COMMENT USED TO SAY AND IT IS FALSE, MEASURED RATHER THAN
+	// REASONED. The journal is newline-delimited JSON and `encoding/json` COERCES a string
+	// that is not valid UTF-8, replacing each bad byte with U+FFFD: measured on the pinned
+	// toolchain, `"a\xff\xfeb"` is written as `"a��b"` and reads back as the
+	// two-replacement-character string, which is NOT the value that was passed. Every other
+	// operator-supplied string in the journal — a project name, a scope display name, an
+	// email — travels the same encoder and is coerced the same way.
+	//
+	// ⚠ AND THE COERCION IS IDEMPOTENT ON THE VALUE, NOT ON THE BYTES. Re-encoding what
+	// came back yields the same STRING, so replaying a journal repeatedly never drifts
+	// further; the JSON bytes do differ (the first encode escapes as `�`, the second
+	// writes the character literally), which matters only to a byte-for-byte comparison of
+	// two files written by different paths.
+	//
+	// 🔴 IT IS NOT REJECTED HERE, AND THAT IS A DECISION. A refusal at issue time would be
+	// a rule about the DURABLE FORMAT spelled at one of the several string fields that
+	// format carries — the one-rule-many-places shape this package exists to refuse — and
+	// what it would buy is nothing an authority depends on: no code branches on a label,
+	// `Authenticate` never reads one, and a coerced label cannot widen or narrow what any
+	// credential reaches. If a byte-exact label ever matters, the check belongs in
+	// `Event.validate` over every string field at once, not at this one caller.
 	Label string
 	// NarrowedScopes restricts this credential to a subset of what its principal can reach.
 	//
@@ -223,14 +259,42 @@ type NewCredential struct {
 // ever holds a raw bearer token, and it holds it for exactly as long as the caller keeps
 // the value.
 //
-// 🔴 THE TOKEN IS AN UNEXPORTED FIELD BEHIND `Token()`, AND `String`/`GoString` REDACT,
-// BECAUSE "REMEMBER NOT TO PRINT THIS" IS NOT A MECHANISM. The realistic leak is not a
-// caller deciding to log a secret; it is `%v` or `%+v` of a struct that happens to contain
-// one — in an error path, a debug line, a test failure message — which is the shape
-// `authz.RedactedField` exists for on the token-file side. Implementing `Stringer` means
-// `%v`, `%+v`, `%s` and `%q` all route through a redacted rendering, and `GoStringer`
-// covers `%#v`, which is the verb a reader reaches for precisely when they want to see
-// everything.
+// 🔴 THE TOKEN IS AN UNEXPORTED FIELD BEHIND `Token()`, AND THE REDACTION IS
+// `fmt.Formatter`, BECAUSE "REMEMBER NOT TO PRINT THIS" IS NOT A MECHANISM. The realistic
+// leak is not a caller deciding to log a secret; it is `%v` or `%+v` of a struct that
+// happens to contain one — in an error path, a debug line, a test failure message — which
+// is the shape `authz.RedactedField` exists for on the token-file side.
+//
+// 🔴 AND `Stringer` ALONE WAS MEASURED INSUFFICIENT, WHICH IS WHY `Format` EXISTS BESIDE
+// IT RATHER THAN A COMMENT SAYING SO. `fmt` consults `Stringer` for `%v %s %q %x %X` and
+// `GoStringer` for `%#v`, and REFLECTS the operand for every other verb — and a reflected
+// struct prints its unexported field's VALUE, inside `%!d(string=…)`. Measured over
+// `Issued` and `*Issued` at the commit that shipped the `Stringer`-only redaction:
+// **14 of 22 verbs rendered the raw token** (`%d %b %o %O %c %U %e %E %f %F %g %G %t %p`).
+// `fmt` consults a `Formatter` BEFORE `Stringer` and for EVERY verb, so implementing it is
+// what makes the redaction as wide as its own description.
+//
+// 🔴 A `Format` METHOD ON THE *FIELD'S* TYPE WOULD NOT HAVE WORKED, AND THAT IS THE SAME
+// MECHANISM THAT PRODUCED THE LEAK. `fmt`'s reflection walker consults a value's
+// formatting methods only when it can `Interface()` that value, and a field reached by
+// reflection through an UNEXPORTED name cannot be interfaced — so no method on the field's
+// type is ever called, whatever the type is. The defence has to sit on the STRUCT, which
+// `fmt` receives as a whole operand.
+//
+// 🔴 AND THE TOKEN LIVES BEHIND A POINTER FOR THE ONE VERB `Formatter` DOES NOT REACH.
+// `fmt` handles `%T` and `%p` before any formatting interface, and `%p` of a NON-pointer
+// operand falls into `badVerb`, which sets `erroring` and then re-renders the operand as
+// `%v` — and the method dispatch returns early while `erroring`, so `Format` is skipped and
+// the struct is reflected. Measured: `Format` alone leaves `%p` leaking, 1 of 22. A pointer
+// FIELD is rendered as an ADDRESS rather than followed (`fmt` dereferences only at depth
+// 0), so `*string` closes it: 0 of 22. Both halves are load-bearing, and
+// `TestNoRenderingOfIssuedContainsTheToken` is the sweep that measures all three numbers.
+//
+// ⚠ `go vet` IS A REAL MITIGATION AND NOT A SUFFICIENT ONE, WHICH IS WHY THE TYPE HAS TO
+// DEFEND ITSELF. Measured: vet's printf check flags `fmt.Sprintf("%d", issued)` when the
+// format is a CONSTANT, and says nothing about the same call with the format in a variable
+// — and a format string assembled or passed at runtime is exactly what a logging helper
+// has.
 //
 // 🔴 AND HERE IS WHAT IT DOES NOT COVER, BECAUSE A GUARD'S DESCRIPTION HAS TO BE AS WIDE
 // AS ITS BODY:
@@ -247,6 +311,10 @@ type NewCredential struct {
 //   - The journal, which never sees it at all — that is enforced upstream, by
 //     `IssueCredential` passing `HashToken(token)` and by `Event.validate` refusing a
 //     `token_hash` that is not a 64-character hex digest.
+//   - Any formatter that is not `fmt`. `Format` is an agreement with one package; a
+//     structured logger, a template engine or a debugger's pretty-printer that walks
+//     fields by reflection is bound only by the pointer indirection, which hides the
+//     value behind an address rather than refusing to render it.
 type Issued struct {
 	// Credential is the id of the record written to the journal.
 	Credential ID
@@ -257,10 +325,12 @@ type Issued struct {
 	// decide whether a pod is serving this credential yet.
 	Epoch uint64
 
-	// token is the raw bearer token. Unexported so that no formatting verb, no struct
-	// literal comparison in a test failure and no encoder can reach it without going
-	// through `Token()`.
-	token string
+	// token is the raw bearer token. Unexported so that no struct literal comparison in a
+	// test failure and no encoder can reach it without going through `Token()`, and a
+	// POINTER so that `fmt`'s reflection walker renders it as an address — see this type's
+	// own comment for the `%p` measurement that makes the indirection load-bearing rather
+	// than a style choice. nil is the zero value, and `Token()` answers "" for it.
+	token *string
 }
 
 // Token returns the raw bearer token, which exists in this process and nowhere else.
@@ -269,7 +339,16 @@ type Issued struct {
 // Nothing in this repository can recover a token from a `credential-issued` record —
 // that is the property the whole design rests on — so a caller that loses it has to
 // issue another one and revoke this.
-func (i Issued) Token() string { return i.token }
+//
+// ⚠ A ZERO `Issued` ANSWERS "" RATHER THAN PANICKING. Every failure return in this file is
+// `Issued{}, err`, so the zero value is a shape callers genuinely hold; a nil dereference
+// there would turn a refusal into a crash.
+func (i Issued) Token() string {
+	if i.token == nil {
+		return ""
+	}
+	return *i.token
+}
 
 // String renders an Issued for a log line, WITHOUT the token.
 //
@@ -285,3 +364,44 @@ func (i Issued) String() string {
 func (i Issued) GoString() string {
 	return "control.Issued{" + i.String() + "}"
 }
+
+// Format is the redaction that covers EVERY verb, which `String` and `GoString` between
+// them do not.
+//
+// 🔴 IT EXISTS BECAUSE `Stringer`/`GoStringer` ARE CONSULTED FOR SIX VERBS AND EVERY OTHER
+// VERB REFLECTS THE OPERAND — **14 of 22 rendered the raw token** before this method
+// existed. (`%T` is the one of the remaining sixteen that never could: it prints a type
+// name and nothing else.) The type's own comment carries that measurement, why a `Format`
+// on the FIELD's type could not have worked, and why the token additionally lives behind a
+// pointer.
+//
+// ⚠ THE SIX VERBS `Stringer`/`GoStringer` ALREADY HANDLED KEEP THEIR EXACT OUTPUT, AND
+// THAT IS DELIBERATE RATHER THAN INCIDENTAL. `fmt` hands a `Stringer`'s result back to the
+// SAME verb — so `%q` of an `Issued` was a quoted string and `%x` was the hex of one — and
+// a `Format` that wrote the plain rendering under every verb would silently change six
+// call sites' output while closing sixteen. `%q`, `%x` and `%X` are therefore re-rendered
+// through `fmt` rather than written raw.
+//
+// ⚠ WIDTH AND PRECISION FLAGS ARE DROPPED, WHICH IS A REAL NARROWING AND IS ACCEPTED —
+// MEASURED, NOT ASSUMED: `%20v` of a `Stringer` pads to twenty columns and `%20v` of this
+// type does not. Reproducing every flag means rebuilding the format
+// string out of `fmt.State`, which is a second implementation of `fmt`'s own parser living
+// inside a redaction; what this type is formatted into is a log line, and no caller in
+// this repository pads one.
+func (i Issued) Format(f fmt.State, verb rune) {
+	rendered := i.String()
+	if verb == 'v' && f.Flag('#') {
+		rendered = i.GoString()
+	}
+	switch verb {
+	case 'q', 'x', 'X':
+		fmt.Fprintf(f, "%"+string(verb), rendered)
+	default:
+		io.WriteString(f, rendered)
+	}
+}
+
+// A compile-time proof that the redaction is the WIDE one. `Stringer` is consulted for six
+// verbs and `Formatter` for every verb, so losing this interface is a silent return to a
+// 14-of-22 leak that every existing call site still renders "correctly".
+var _ fmt.Formatter = Issued{}

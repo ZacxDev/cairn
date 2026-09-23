@@ -407,8 +407,11 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="failed-replay-returns-a-partial-model",
         path="internal/control/journal.go",
-        old='return Model{}, fmt.Errorf("event %d (%s): %w", i+1, e.Kind, err)',
-        new='return m, fmt.Errorf("event %d (%s): %w", i+1, e.Kind, err)',
+        # ⚠ THE ANCHOR MOVED WHEN `Replay` GAINED `dropHint`, AND A STALE ANCHOR IS A
+        # HARNESS ERROR RATHER THAN A SURVIVOR — which is the right direction, but it is
+        # also why every row here is checked against the tree before a run is believed.
+        old='return Model{}, fmt.Errorf("event %d (%s): %w%s", i+1, e.Kind, err, dropHint(e, m.Dropped))',
+        new='return m, fmt.Errorf("event %d (%s): %w%s", i+1, e.Kind, err, dropHint(e, m.Dropped))',
         killer="TestAFailedReplayReturnsNoModelAtAll",
         why="returning what you have alongside the error reads as helpful and hands the "
         "caller an authority missing every event after the failure.",
@@ -523,7 +526,14 @@ MUTANTS: tuple[Mutant, ...] = (
         name="issued-renders-its-token",
         path="internal/control/credential_issue.go",
         old='\treturn fmt.Sprintf("credential=%s digest=%s epoch=%d token=<redacted: shown once, on issue>",\n\t\ti.Credential, i.TokenHash, i.Epoch)',
-        new='\treturn fmt.Sprintf("credential=%s digest=%s epoch=%d token=%s",\n\t\ti.Credential, i.TokenHash, i.Epoch, i.token)',
+        # ⚠ `i.Token()` RATHER THAN `i.token`, AND THE REASON IS A MEASUREMENT RATHER THAN
+        # A STYLE CHOICE. The field became a `*string` when the `%p` leak was closed, so
+        # `%s` of it is `fmt.Sprintf format %s has arg i.token of wrong type *string` —
+        # `go vet` runs inside `go test`, the tree DOES NOT BUILD, and the row scores a
+        # harness error instead of exercising the guard. A mutant that dies at the build
+        # proves nothing about any test. The accessor is also the more plausible edit now:
+        # it is what somebody adding the field back to a log line would reach for.
+        new='\treturn fmt.Sprintf("credential=%s digest=%s epoch=%d token=%s",\n\t\ti.Credential, i.TokenHash, i.Epoch, i.Token())',
         killer="TestNoRenderingOfIssuedContainsTheToken",
         why="the single most likely edit anybody makes to this type — putting the field "
         "back in the log line while debugging. The realistic leak is not a deliberate "
@@ -589,6 +599,144 @@ MUTANTS: tuple[Mutant, ...] = (
             "reader finding it SURVIVED does not read that as 'the comparison does not "
             "matter'."
         ),
+    ),
+    # ---- the REPLAY exemption: the one place a bad record is dropped rather than -----
+    #      refusing a file, and every direction it must not grow in
+    #
+    # 🔴 THE GUARD BEING MEASURED HERE IS A TRADE RATHER THAN A CHECK, WHICH IS WHY IT
+    # NEEDS SIX ROWS. `Replay` drops a `credential-issued` record it cannot use and loads
+    # the rest; a refusal there costs the operator their whole control plane, because
+    # `Model.apply` fails a journal WHOLE and `FileStore.Reload` falls back to a
+    # `lastKnownGood()` that is empty on a cold start. Both halves can be wrong: too
+    # STRICT is an outage on upgrade (measured twice, on shipped builds), and too LOOSE is
+    # a dropped revocation, which is the widening `validate`'s default arm refuses by
+    # name. The rows below break it in both directions, plus the reporting that is the
+    # only reason the loose direction is acceptable at all, plus the APPEND path that must
+    # not inherit any of it.
+    Mutant(
+        name="replay-refuses-the-whole-file-on-an-unusable-digest",
+        path="internal/control/journal.go",
+        old="\tEventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},",
+        new="\tEventCredentialIssued: {ErrDuplicateTokenDigest},",
+        killer="TestAnUnusableDigestDropsOnlyItsOwnRecord",
+        why="reverting to the shipped behaviour: one `token_hash` an older build's "
+        "length-only check accepted loads ZERO credentials on upgrade, and the only remedy "
+        "is hand-editing an append-only authority. Measured at `0fb61d4`.",
+    ),
+    Mutant(
+        name="replay-refuses-the-whole-file-on-a-duplicate-digest",
+        path="internal/control/journal.go",
+        old="\tEventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},",
+        new="\tEventCredentialIssued: {ErrUnusableTokenDigest},",
+        killer="TestOneSecretRecordedTwiceDropsTheLaterRecord",
+        # 🔴 A SEPARATE ROW FROM THE ONE ABOVE BECAUSE THE TWO FAILURES ARRIVE BY DIFFERENT
+        # ROUTES AND NEITHER IMPLIES THE OTHER: the first is `Event.validate` refusing a
+        # field's SHAPE, the second is `apply` refusing a MODEL-level ambiguity that only
+        # exists once another record is present.
+        why="reverting the half the PREVIOUS round's own normalisation fix created: "
+        "lowering the digest at `apply` made the duplicate compare able to see one secret "
+        "written in two case spellings, and a journal holding that then loaded zero "
+        "credentials. Measured at `0fb61d4`.",
+    ),
+    Mutant(
+        name="replay-may-drop-a-revocation",
+        path="internal/control/journal.go",
+        old="\tEventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},",
+        new="\tEventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},\n"
+        "\tEventCredentialRevoked: {ErrUnusableTokenDigest},",
+        killer="TestOnlyCredentialIssuedMayBeDroppedAtReplay",
+        # 🔴 THE MUTANT IS A TABLE ENTRY, WHICH IS EXACTLY HOW THIS WOULD ACTUALLY GO
+        # WRONG. The exemption reads as a list of tolerated failures, so widening it is a
+        # one-line edit with no visible consequence — and "a dropped revocation is a grant
+        # that keeps working" is the sentence the rest of this file is built around. It
+        # changes no BEHAVIOUR today (no revocation raises that sentinel), which is why the
+        # guard has to be a LEDGER over the table rather than a behavioural case.
+        why="'this failure is harmless, so tolerate it wherever it shows up' — the "
+        "exemption growing along the KIND axis instead of the direction axis.",
+    ),
+    Mutant(
+        name="replay-drops-every-failed-event",
+        path="internal/control/journal.go",
+        old="\t\tif droppable(e, err) {",
+        new="\t\tif true {",
+        killer="TestAKindWithNoDroppableEntryStillRefusesTheWholeJournal",
+        why="the forward-compatibility 'fix' one level in from the `default:` arm: having "
+        "decided that one bad record need not fail a file, apply it to all of them. A "
+        "journal from a newer build then replays with its unrecognised records — possibly "
+        "revocations — silently skipped.",
+    ),
+    Mutant(
+        name="a-dropped-record-does-not-name-its-credential",
+        path="internal/control/journal.go",
+        old="\t\t\t\tPosition: i + 1, Kind: e.Kind, CredentialID: e.CredentialID, Reason: err.Error(),",
+        new="\t\t\t\tPosition: i + 1, Kind: e.Kind, Reason: err.Error(),",
+        killer="TestAnUnusableDigestDropsOnlyItsOwnRecord",
+        # 🔴 THE REPORT IS WHAT MAKES DROPPING ACCEPTABLE, SO ITS CONTENT IS A GUARD RATHER
+        # THAN A CONVENIENCE. Without the id an operator is told their authority is short
+        # and not which line to delete — in a file whose refusal texts deliberately do NOT
+        # echo the `token_hash`, so there is nothing else in the line to grep by.
+        why="'the reason already describes it' — dropping the one field that identifies "
+        "the record, from a diagnostic whose whole job is to let somebody find that line.",
+    ),
+    Mutant(
+        name="append-inherits-the-replay-exemption",
+        path="internal/control/filestore.go",
+        old="\t\tif err := next.apply(e); err != nil {",
+        new="\t\tif err := next.apply(e); err != nil && !droppable(e, err) {",
+        killer="TestAppendStillRefusesWhatReplayWouldDrop",
+        # 🔴 THE MOST PLAUSIBLE EDIT OF THE WHOLE SET: the two paths now answer the same
+        # failure differently, which reads as an inconsistency somebody will "fix". It is
+        # the difference between tolerating a file that already exists and CREATING one —
+        # and through this arm the event is WRITTEN to the journal as well as skipped, so
+        # the file gains a permanent record no replay will ever apply.
+        why="making the write path agree with the read path. A caller can then append a "
+        "raw secret into the append-only authority and be told it succeeded.",
+    ),
+    # ---- the credential-issuing COMMAND: the redaction, and the one unretryable exit --
+    Mutant(
+        name="issued-format-renders-the-token-for-unlisted-verbs",
+        path="internal/control/credential_issue.go",
+        old="\tdefault:\n\t\tio.WriteString(f, rendered)",
+        new="\tdefault:\n\t\tio.WriteString(f, i.Token())",
+        killer="TestNoRenderingOfIssuedContainsTheToken",
+        # ⚠ THE POINTER INDIRECTION ON `Issued.token` HAS NO ROW HERE, AND THAT IS A LIMIT
+        # RATHER THAN AN OVERSIGHT. Reverting it (`*string` back to `string`) is three
+        # coordinated edits — the field, `Token()`'s nil arm, and the `&token` at the
+        # return — and this battery replaces ONE expression per row on purpose. It was
+        # measured by hand instead: with `Format` present and the field a plain string the
+        # sweep reports 1 of 22 leaking (`%p` of a non-pointer operand, which `fmt` routes
+        # around every formatting interface), which is the number that makes the
+        # indirection load-bearing rather than stylistic.
+        why="the debugging edit at the NEW site. `Format` covers the sixteen verbs "
+        "`Stringer` never reached, so it is also the one place where putting the field "
+        "back into the output leaks under sixteen verbs at once.",
+    ),
+    Mutant(
+        name="token-undelivered-shares-the-refusal-exit-code",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\t\treturn exitTokenUndelivered\n",
+        new="\t\treturn exitConfig\n",
+        killer="TestAFailedTokenDeliveryExitsItsOwnCode",
+        # 🔴 THE DANGER IS IN THE CALLER, NOT IN THIS PROGRAM. Every other non-zero exit
+        # here happens BEFORE the journal append; this one happens after a durable,
+        # unrevocable `credential-issued` record. A wrapper that retries on non-zero then
+        # mints a fresh live credential per attempt, and each one is a token nobody holds
+        # that nothing in this repository can revoke.
+        why="'one program, one refusal code' — the tidying edit that reinstates the "
+        "collision, since 78 genuinely is what every other failure here returns.",
+    ),
+    Mutant(
+        name="dropped-records-are-not-rendered-to-the-operator",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\tif m, err := store.Model(ctx); err == nil {\n\t\twarnAboutDroppedRecords(m, journal, warn)\n\t}",
+        new="\tif m, err := store.Model(ctx); err == nil {\n\t\t_ = m\n\t}",
+        killer="TestADroppedJournalRecordReachesTheOperatorsStderr",
+        # 🔴 THE SEAM ROW. `internal/control` decides to drop and can only record it as
+        # DATA — that package holds no logger by design — so "an operator is told" is a
+        # property of a wire neither side's own tests can see. Both halves stay green with
+        # this applied: `Model.Dropped` is still populated and this command still issues.
+        why="deleting a read whose result is 'only' printed. What it removes is the sole "
+        "reason a silently shorter authority was an acceptable trade.",
     ),
     # ---- the materialized cache: staleness, the triggers, and the two write paths --
     #

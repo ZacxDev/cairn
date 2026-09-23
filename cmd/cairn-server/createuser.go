@@ -361,6 +361,15 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 	if err := cache.Refresh(ctx); err != nil {
 		return nil, err
 	}
+	// 🔴 A DROPPED RECORD IS SAID OUT LOUD OR IT IS A SILENT NARROWING. `control.Replay`
+	// drops a `credential-issued` record this build cannot use — an unusable digest, a
+	// digest another record already carries — and loads the rest of the file rather than
+	// refusing the operator's entire control plane (see `control.replayDroppable`). That
+	// trade is only defensible while somebody is TOLD: the authority this pod serves is
+	// short of what the journal describes, and the skipped line needs deleting or
+	// correcting. `internal/control` holds no logger by design, so it carries the drops as
+	// data and this is one of the two programs that renders them.
+	warnAboutDroppedRecords(cache.Model(), journal, warn)
 	if len(cache.Model().Users) == 0 {
 		// ⚠ A WARNING RATHER THAN A REFUSAL, AND THE ASYMMETRY IS ABOUT THE ORDER AN
 		// OPERATOR CAN ACTUALLY WORK IN. `control.OpenFileStore` CREATES the file if it is
@@ -412,6 +421,33 @@ func openSessionAuthority(ctx context.Context, env map[string]string, warn func(
 		}
 	}()
 	return cache, nil
+}
+
+// warnAboutDroppedRecords renders the records `control.Replay` skipped, one stderr line
+// each.
+//
+// 🔴 IT IS WHAT MAKES THE REPLAY LENIENCY HONEST, AND IT IS A RENDERER RATHER THAN A RULE.
+// `internal/control` decides WHICH records may be dropped and why (`replayDroppable`); it
+// cannot print, because that package deliberately holds no logger and no `net/http` — the
+// same library boundary its package doc states. So the model carries the drops as data and
+// the programs that load a journal say them out loud. `cmd/cairn-ui` has the same three
+// lines for the same reason; a shared helper would have to live in a package both import,
+// and the only such package is the one that must not print.
+//
+// ⚠ ONE LINE PER RECORD, NOT A SUMMARY COUNT. The remedy is per-line — find `credential=…`
+// in the journal and delete or correct it — and a count tells an operator that something is
+// wrong without telling them what to edit.
+//
+// ⚠ AND IT IS SILENT WHEN NOTHING WAS DROPPED, WHICH IS THE NORMAL CASE AND KEEPS THIS OFF
+// THE STARTUP OUTPUT `tests/dualrun/` COMPARES BETWEEN THE TWO SERVERS.
+func warnAboutDroppedRecords(m control.Model, journal string, warn func(string)) {
+	for _, d := range m.Dropped {
+		warn(fmt.Sprintf(
+			"subsystem-store-api: WARNING the control journal %s: %s. The rest of the file loaded and "+
+				"this pod is serving an authority WITHOUT that credential. Delete or correct that line; "+
+				"nothing here rewrites an append-only journal",
+			journal, d))
+	}
 }
 
 // journalRefreshReporter turns the refresh result this loop used to DISCARD into one

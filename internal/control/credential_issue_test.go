@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -201,13 +202,94 @@ func TestTwoIssuedCredentialsGetDifferentTokens(t *testing.T) {
 	}
 }
 
+// everyFormattingVerb is every `fmt` verb an `Issued` can be handed to.
+//
+// 🔴 THE LIST IS THE WHOLE POINT, AND THE PREVIOUS VERSION OF THIS TEST NAMED FIVE. It
+// ranged over `%v %+v %#v %s %q` — exactly the verbs `fmt` routes through `Stringer` and
+// `GoStringer` — under a name and a docstring claiming "across every verb that can reach a
+// struct". Measured on the tree that shipped it: **14 of these 22 rendered the raw token**
+// (`%d %b %o %O %c %U %e %E %f %F %g %G %t %p`), because `fmt` consults `Stringer` for that
+// handful and REFLECTS the operand for everything else — and a reflected struct prints its
+// unexported field's value inside `%!d(string=…)`. A guard narrower than its own
+// description is the shape this repository keeps closing; this is the list that makes the
+// sentence true.
+//
+// ⚠ `%w` IS ABSENT AND IS NOT AN OMISSION: it is `fmt.Errorf`'s wrapping verb, valid only
+// there and only for an `error`, which `Issued` is not.
+var everyFormattingVerb = []string{
+	"%v", "%+v", "%#v", "%s", "%q", "%d", "%b", "%o", "%O", "%x", "%X",
+	"%c", "%U", "%e", "%E", "%f", "%F", "%g", "%G", "%t", "%p", "%T",
+}
+
+// tokenSpellings is every rendering of a secret this sweep can recognise.
+//
+// 🔴 A SUBSTRING SEARCH FOR THE RAW TOKEN IS BLIND TO AN ENCODED COPY, AND `fmt` HAS TWO
+// THAT MATTER. `%x`/`%X` of a string emit its bytes as hex and `%d` of a byte slice emits
+// them as decimal — both are the secret, and neither contains it as a substring. The sweep
+// is only as wide as the spellings it knows, which is itself a declared limit rather than a
+// claim of completeness.
+func tokenSpellings(token string) map[string]string {
+	hexed := hex.EncodeToString([]byte(token))
+	decimal := make([]string, 0, len(token))
+	for i := 0; i < len(token); i++ {
+		decimal = append(decimal, fmt.Sprintf("%d", token[i]))
+	}
+	return map[string]string{
+		"raw":            token,
+		"hex":            hexed,
+		"HEX":            strings.ToUpper(hexed),
+		"decimal bytes":  strings.Join(decimal, " "),
+		"quoted decimal": "[" + strings.Join(decimal, " ") + "]",
+	}
+}
+
+// leakyTwin is this sweep's POSITIVE CONTROL: a struct that holds the same secret with no
+// redaction at all.
+//
+// 🔴 WITHOUT IT, "NO VERB LEAKED" IS INDISTINGUISHABLE FROM A SWEEP WIRED TO NOTHING — a
+// misspelled verb list, a `Sprintf` whose result is discarded, a `Contains` with the
+// operands the wrong way round. The control must move the number: it is required to leak at
+// SOME verb, and the pair is what the failure message reports.
+type leakyTwin struct{ Token string }
+
+// leakingVerbs renders `operand` (and a pointer to it) through every verb and returns the
+// verbs whose output carries the secret in any spelling.
+//
+// ⚠ IT NEVER RETURNS THE RENDERED TEXT, AND THAT IS DELIBERATE RATHER THAN TERSE. A failure
+// here means a live credential is in the formatted output; interpolating it into
+// `t.Errorf` would re-stage the secret into the test log, the CI transcript and any agent
+// session capturing the run — the guard against printing a token, printing the token.
+func leakingVerbs(operand any, pointer any, token string) []string {
+	spellings := tokenSpellings(token)
+	var leaked []string
+	for _, verb := range everyFormattingVerb {
+		rendered := fmt.Sprintf(verb, operand) + "\x00" + fmt.Sprintf(verb, pointer)
+		for name, spelling := range spellings {
+			if strings.Contains(rendered, spelling) {
+				leaked = append(leaked, verb+" ("+name+")")
+				break
+			}
+		}
+	}
+	return leaked
+}
+
 // TestNoRenderingOfIssuedContainsTheToken pins the redaction, across every verb that can
-// reach a struct.
+// reach a struct — which is now what it measures rather than what it said.
 //
 // 🔴 THE REALISTIC LEAK IS NOT A DELIBERATE PRINT; IT IS `%v` OF A VALUE THAT HAPPENS TO
 // HOLD A SECRET — in an error path, a debug line, a test failure message. `%#v` is the one
-// worth naming: it is the verb a reader reaches for precisely when they want every field,
-// and a redaction that only implemented `String()` would leak there.
+// worth naming among the five the old list covered: it is the verb a reader reaches for
+// precisely when they want every field, and a redaction that only implemented `String()`
+// would leak there.
+//
+// 🔴 AND THE VERBS THE OLD LIST DID NOT COVER ARE WHERE THE MEASURED LEAK WAS. `fmt`
+// consults `Stringer` only for `%v %s %q %x %X` and `GoStringer` only for `%#v`; every
+// other verb reflects the operand and prints the unexported field's value inside
+// `%!d(string=…)`. 14 of 22 leaked at `0fb61d4`. `Issued.Format` is what closes them,
+// because `fmt` consults `Formatter` for EVERY verb — with one measured exception, `%p` of
+// a non-pointer operand, which is closed by the token living behind a pointer instead. Both
+// halves are load-bearing and this test is what says so.
 //
 // ⚠ IT IS A CLAIM ABOUT FORMATTING, NOT A CONFIDENTIALITY BOUNDARY. `Token()` still
 // returns the secret, which is the whole point; `Issued`'s own comment enumerates what
@@ -217,22 +299,59 @@ func TestNoRenderingOfIssuedContainsTheToken(t *testing.T) {
 	issued := issueTo(t, store, KindUser, made.User, nil)
 	token := issued.Token()
 
-	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
-		rendered := fmt.Sprintf(verb, issued)
-		if strings.Contains(rendered, token) {
-			t.Errorf("%s of an Issued contains the raw token", verb)
+	// The positive control on the FIXTURE, first: every assertion below is satisfied by a
+	// mint that returned the empty string, and `strings.Contains(x, "")` is always true.
+	if token == "" {
+		t.Fatal("POSITIVE CONTROL FAILED: the token is empty, so 'no rendering contains it' is vacuous")
+	}
+	if issued.Token() != token {
+		t.Fatal("Token() does not return the token")
+	}
+
+	// The positive control on the SWEEP: an unredacted twin must be seen leaking, or a
+	// clean result below is a fact about the instrument rather than about `Issued`.
+	twin := leakyTwin{Token: token}
+	control := leakingVerbs(twin, &twin, token)
+	if len(control) == 0 {
+		t.Fatal("POSITIVE CONTROL FAILED: the sweep found no leak in a struct that holds the raw " +
+			"token in an EXPORTED field, so it cannot see one anywhere and every clean result it " +
+			"reports is about nothing")
+	}
+
+	if leaked := leakingVerbs(issued, &issued, token); len(leaked) > 0 {
+		t.Errorf("%d of %d formatting verbs render the RAW TOKEN of an Issued: %v\n"+
+			"(the control twin leaked at %d of %d, so the sweep works)\n"+
+			"`fmt` consults `Stringer`/`GoStringer` for only six verbs and REFLECTS the operand "+
+			"for the rest, which prints the unexported field's value. The redaction has to be "+
+			"`Formatter`, which `fmt` consults for every verb. The rendered text is deliberately "+
+			"NOT printed here: it holds a live credential.",
+			len(leaked), len(everyFormattingVerb), leaked, len(control), len(everyFormattingVerb))
+	}
+
+	// A rendering that contained nothing at all would satisfy the sweep above, so pin that
+	// the redacted form still identifies the record it describes. Not every verb can: `%T`
+	// renders a type name and `%p` an address-or-error, both by `fmt`'s own design.
+	//
+	// ⚠ AND `%x`/`%X` CARRY THE ID HEX-ENCODED RATHER THAN NOT AT ALL, WHICH IS WHAT `fmt`
+	// DOES WITH A `Stringer`'S RESULT UNDER THOSE VERBS AND IS THEREFORE WHAT `Format` HAS
+	// TO REPRODUCE. Measured before this test was widened: `%x` of an `Issued` was already
+	// the hex of `String()`, so accepting only the raw spelling here would red on
+	// unchanged, correct behaviour.
+	id := string(issued.Credential)
+	idHex := hex.EncodeToString([]byte(id))
+	for _, verb := range everyFormattingVerb {
+		if verb == "%T" || verb == "%p" {
+			continue
 		}
-		// A rendering that contained nothing at all would also pass the line above, so pin
-		// that the redacted form still identifies the record it describes.
-		if !strings.Contains(rendered, string(issued.Credential)) {
+		rendered := fmt.Sprintf(verb, issued)
+		if !strings.Contains(rendered, id) &&
+			!strings.Contains(rendered, idHex) &&
+			!strings.Contains(rendered, strings.ToUpper(idHex)) {
 			t.Errorf("%s of an Issued does not name its credential id, so the redaction has taken "+
 				"the log line's usefulness with it: %s", verb, rendered)
 		}
 	}
-	// The same for a POINTER, which is what a caller holds more often than not.
-	if strings.Contains(fmt.Sprintf("%v/%+v/%#v", &issued, &issued, &issued), token) {
-		t.Error("a rendering of *Issued contains the raw token")
-	}
+
 	// And for an encoder, which reaches fields rather than methods. Unexported means this
 	// drops the token rather than leaking it — the safe direction, pinned so that
 	// "promoting" the field to exported for convenience is a red test.
@@ -242,14 +361,6 @@ func TestNoRenderingOfIssuedContainsTheToken(t *testing.T) {
 	}
 	if strings.Contains(string(marshalled), token) {
 		t.Error("json.Marshal of an Issued contains the raw token")
-	}
-	// The positive control on THIS test: the token must be findable somewhere, or every
-	// assertion above is satisfied by a mint that returned the empty string.
-	if token == "" {
-		t.Fatal("POSITIVE CONTROL FAILED: the token is empty, so 'no rendering contains it' is vacuous")
-	}
-	if !strings.Contains(issued.Token(), token) {
-		t.Fatal("Token() does not return the token")
 	}
 }
 
@@ -384,6 +495,14 @@ func TestIssuingToAPrincipalTheJournalDoesNotHoldIsRefusedBeforeAnythingIsWritte
 // it a real case — exactly `HashHexLen` characters, and not hex — are asserted before the
 // guard is exercised.
 //
+// 🔴 AND WHAT "REFUSED" MEANS AT REPLAY MOVED, WHICH IS WHY THIS TEST ASSERTS THE RECORD
+// AND NOT THE ERROR. `Event.validate` still refuses the value from every writer — that is
+// the boundary claim, and it is what `Append` enforces — but `Replay` now DROPS the record
+// and loads the rest of the file rather than refusing it whole, because a replay refusal
+// takes the operator's entire control plane with it and this record can authenticate
+// nobody. The property this test exists for is unchanged: the raw secret never enters the
+// authority model.
+//
 // ⚠ AND IT IS SYNTHETIC. The bytes are a fixed pattern, not a captured or generated
 // credential; nothing here has ever authorised anything.
 func TestA64CharacterRawTokenIsRefusedAsADigest(t *testing.T) {
@@ -412,13 +531,38 @@ func TestA64CharacterRawTokenIsRefusedAsADigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the line did not even decode: %v", err)
 	}
-	if _, err := Replay(events); err == nil {
-		t.Fatal("a 64-character RAW TOKEN was accepted as a token digest and replayed into the " +
-			"authority model. The journal is append-only and operator-readable, so a secret that " +
-			"reaches it cannot be taken back.")
+	// The BOUNDARY refusal, which is what every WRITER meets — `Append` validates a batch
+	// before a byte reaches disk, so this is the check that keeps such a value out of the
+	// file in the first place.
+	if err := events[0].validate(); err == nil {
+		t.Fatal("a 64-character RAW TOKEN was accepted as a token digest. The journal is " +
+			"append-only and operator-readable, so a secret that reaches it cannot be taken back.")
 	} else if !strings.Contains(err.Error(), "hex digest") {
 		t.Fatalf("refusal = %v, want one naming the hex requirement — a refusal for some other "+
 			"reason would leave this guard unmeasured", err)
+	} else if !errors.Is(err, ErrUnusableTokenDigest) {
+		t.Fatalf("refusal = %v, want it to wrap ErrUnusableTokenDigest — that sentinel is what "+
+			"`Replay` matches on to drop the record rather than the file, and a refusal that only "+
+			"reads right is a refusal `replayDroppable` cannot see", err)
+	}
+
+	// And at REPLAY the record is dropped, not the file — the property that keeps a pod's
+	// whole authority from disappearing over one bad line somebody already wrote.
+	m, err := Replay(events)
+	if err != nil {
+		t.Fatalf("replay = %v, want the file loaded with that one record dropped. A replay-time "+
+			"refusal is reached through `Model.apply` and fails the journal WHOLE, so through "+
+			"`FileStore.Reload` it is every credential in the file, falling back to a "+
+			"`lastKnownGood()` that is empty on a cold start", err)
+	}
+	if len(m.Credentials) != 0 {
+		t.Fatal("the raw token was replayed INTO the authority model. Dropping the record is what " +
+			"this is about; admitting it is the defect the widened guard exists for.")
+	}
+	if len(m.Dropped) != 1 || m.Dropped[0].CredentialID != "crd_x" ||
+		!strings.Contains(m.Dropped[0].Reason, "hex digest") {
+		t.Fatalf("Dropped = %v, want exactly crd_x with the hex reason — a record dropped silently "+
+			"is an authority quietly narrower than the file it claims to project", m.Dropped)
 	}
 
 	// The positive control: a REAL digest of the same width must still be accepted, or the
@@ -431,6 +575,67 @@ func TestA64CharacterRawTokenIsRefusedAsADigest(t *testing.T) {
 	if err := goodEvents[0].validate(); err != nil {
 		t.Fatalf("POSITIVE CONTROL FAILED: a genuine sha256 hex digest was refused (%v), so every "+
 			"refusal above is about a guard that admits nothing", err)
+	}
+}
+
+// TestAppendStillRefusesWhatReplayWouldDrop is the APPEND half of the replay exemption, and
+// it is the assertion that says the exemption did not widen into a write path.
+//
+// 🔴 THE SPLIT IS THE WHOLE DESIGN: a replay answers for a file somebody ALREADY wrote, an
+// append decides whether one more line goes in. `FileStore.Append` validates a batch against
+// a clone by calling `apply` directly and never consults `replayDroppable`, so a writer
+// trying to CREATE either of the droppable records is refused outright — and the journal on
+// disk is unchanged, which is the second assertion here.
+//
+// ⚠ AN INVARIANT GUARD FOR THE DUPLICATE ROW AND REGRESSION-ADJACENT FOR THE DIGEST ROW:
+// neither refusal is new, and what is new is the possibility of losing one by accident while
+// making `Replay` lenient. `TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate` covers the
+// case-folded spelling of the duplicate through the same path.
+func TestAppendStillRefusesWhatReplayWouldDrop(t *testing.T) {
+	store, path, made := aProvisionedOwner(t)
+	issued := issueTo(t, store, KindUser, made.User, nil)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the journal: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		event Event
+		want  string
+	}{
+		{
+			"a token_hash this build cannot use",
+			Event{Kind: EventCredentialIssued, At: issueClock, CredentialID: "crd_unusable",
+				SubjectKind: KindUser, SubjectID: made.User,
+				TokenHash: strings.Repeat("cairn-test-not-a-digest-", 3)[:HashHexLen]},
+			"hex digest",
+		},
+		{
+			"a digest the journal already carries",
+			Event{Kind: EventCredentialIssued, At: issueClock, CredentialID: "crd_duplicate",
+				SubjectKind: KindUser, SubjectID: made.User, TokenHash: issued.TokenHash},
+			"same token digest",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := store.Append(context.Background(), tc.event); err == nil {
+				t.Fatal("the append was ACCEPTED. `Replay` drops these records for a file that " +
+					"already holds them; a writer creating one is a different question and is still " +
+					"refused, because nothing forces anybody to write it")
+			} else if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("refusal = %v, want one naming %q", err, tc.want)
+			}
+		})
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("re-reading the journal: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("a refused append changed the journal. `Append` validates against a CLONE before a " +
+			"byte reaches disk, and a refusal that writes is a record no replay can take back.")
 	}
 }
 

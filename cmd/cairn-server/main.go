@@ -42,7 +42,29 @@ const (
 	// that did not come up at all, because it looks healthy.
 	exitConfig = 78
 
-	// 🔴 THERE IS NO SECOND FAILURE CODE, AND THE ONE THAT WAS HERE WAS DELETED RATHER
+	// exitTokenUndelivered is sysexits.h EX_IOERR — and it is the ONE outcome of this
+	// program that must not be retried.
+	//
+	// 🔴 IT EXISTS BECAUSE SHARING 78 MADE A RETRY LOOP MINT LIVE CREDENTIALS. Every other
+	// failure of `-issue-credential` happens BEFORE the journal is written: nothing was
+	// minted, nothing is durable, and a wrapper that re-runs the command on a non-zero exit
+	// is doing the right thing. This one is the opposite — the `credential-issued` record is
+	// already appended and `Sync`ed, the token was lost on the way to `-token-out`, and
+	// nothing in this repository can recover a token from a digest or revoke the record. A
+	// wrapper retrying on 78 therefore appends ANOTHER live, unrecoverable, unrevocable
+	// credential on every attempt, and the journal fills with authority nobody holds.
+	//
+	// 🔴 SO THE DISTINCTION HAS A CONSUMER, WHICH IS EXACTLY WHAT `exitDataErr` BELOW
+	// LACKED. That code was deleted because nothing could branch on it and its
+	// classification was measurably wrong; this one names a hazard a caller must branch on,
+	// and the comment on the emitting site says so in the same words.
+	//
+	// ⚠ IT IS NOT A CLAIM THAT THE JOURNAL IS BROKEN. The append succeeded; what failed is
+	// the delivery of a secret that existed for one instant. The remedy is to read the
+	// stderr line, which names the credential id to retire by hand.
+	exitTokenUndelivered = 74
+
+	// 🔴 THERE IS NO *THIRD* FAILURE CODE, AND THE ONE THAT WAS HERE WAS DELETED RATHER
 	// THAN NARROWED. `exitDataErr = 65` (sysexits.h EX_DATAERR) was defined as "the pod is
 	// configured correctly and the REQUEST was refused" — a typo in a `-subject`, a scope
 	// name already taken — so that an operator reading exit codes could tell that from a
@@ -65,7 +87,14 @@ const (
 	// tree (positive control: the same sweep hits `-routes` in three of them). So this
 	// program declares its exit codes to nothing, and no runbook, test or script branches
 	// on 65. A distinction with no consumer, no gate and a known-wrong classification is
-	// worth less than the two true codes left: 0, and 78 for every refusal to act.
+	// worth less than the codes left: 0, 78 for every refusal to act, and
+	// `exitTokenUndelivered` above.
+	//
+	// 🔴 AND THAT THIRD CODE IS WHY THE ARGUMENT IS ABOUT CONSUMERS AND NOT ABOUT COUNTING
+	// CODES. `exitTokenUndelivered` was added for the one outcome where a caller MUST
+	// branch — retrying it appends another live, unrevocable credential — which is exactly
+	// what 65 could never claim. Read that comment before adding a fourth: the bar is a
+	// named hazard a caller must act on differently, not a finer taxonomy of failure.
 	//
 	// ⚠ THE CLAIM IS ABOUT WHAT THE PROGRAM **REGISTERS**, AND IT IS A COUNT IN PROSE WITH
 	// NO GATE — WHICH IS WHY IT HAS NOW BEEN WRONG TWICE. It read "plus `-create-user`'s

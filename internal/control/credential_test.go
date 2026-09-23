@@ -205,15 +205,46 @@ func TestACredentialNarrowedAtIssueTimeIsAppliedAtAuthenticateTime(t *testing.T)
 	}
 }
 
+// TestTwoCredentialsCannotShareOneDigest pins the ambiguity rule, and since the replay
+// leniency landed it pins WHICH of the two survives as well.
+//
+// 🔴 THE AMBIGUITY IS WHAT IS REFUSED, NOT THE FILE. `Replay` drops the LATER record and
+// loads the rest (`replayDroppable`), so the model holds exactly one credential for that
+// digest and `Authenticate` has nothing to choose between — which is the property this test
+// has always been about. Its earlier spelling asserted a whole-journal error, which is the
+// same property expressed as an outage: one duplicated line cost the operator every
+// credential in the file. `Append` still refuses outright — see
+// `TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate`, which goes through it.
 func TestTwoCredentialsCannotShareOneDigest(t *testing.T) {
-	_, err := Replay(append(worldEvents(),
+	m, err := Replay(append(worldEvents(),
 		Event{Kind: EventCredentialIssued, At: at(40), CredentialID: "crd_a",
 			SubjectKind: KindUser, SubjectID: uCarol, TokenHash: HashToken(carolToken)},
 		Event{Kind: EventCredentialIssued, At: at(41), CredentialID: "crd_b",
 			SubjectKind: KindUser, SubjectID: uDave, TokenHash: HashToken(carolToken)},
 	))
-	if err == nil {
-		t.Fatal("two credentials sharing one digest replayed cleanly — at authentication time there is no defined precedence between them, so the ambiguity has to be refused here")
+	if err != nil {
+		t.Fatalf("a journal carrying one duplicated digest did not load at all (%v) — the duplicate "+
+			"record is dropped, the file is not", err)
+	}
+	if _, held := m.Credentials["crd_b"]; held {
+		t.Fatal("both credentials sharing one digest entered the model — at authentication time there " +
+			"is no defined precedence between them, so the ambiguity has to be refused here")
+	}
+	if _, held := m.Credentials["crd_a"]; !held {
+		t.Fatal("the FIRST record carrying the digest was dropped. The later one is the one with no " +
+			"place to go: dropping the earlier one would retire a secret that was already working")
+	}
+	p, _, err := Authenticate(m, carolToken)
+	if err != nil {
+		t.Fatalf("the surviving credential does not authenticate: %v", err)
+	}
+	if p.CredentialID != "crd_a" || p.ID != uCarol {
+		t.Fatalf("the token authenticated as %+v, want crd_a for %s — the FIRST record is the one "+
+			"that keeps the secret", p, uCarol)
+	}
+	if len(m.Dropped) != 1 || m.Dropped[0].CredentialID != "crd_b" {
+		t.Fatalf("Dropped = %v, want exactly crd_b — a dropped record nothing can report is a "+
+			"silent narrowing of an authority", m.Dropped)
 	}
 }
 

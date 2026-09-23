@@ -304,6 +304,19 @@ type Model struct {
 	// scanned at every resolve.
 	Memberships map[ID]map[ID]Membership
 	userProject map[ID]map[ID]Membership
+
+	// Dropped lists the journal records this Model was built WITHOUT.
+	//
+	// 🔴 IT IS HOW A DROPPED RECORD STOPS BEING SILENT, AND SILENT IS THE PART THAT WOULD
+	// MAKE THE LENIENCY WRONG. `Replay` drops exactly the two `credential-issued`
+	// failures `replayDroppable` lists — both provably narrowing — and records each one
+	// here; every other failure still refuses the journal whole. A caller that never asks
+	// gets today's behaviour, and one that does can tell "this authority is complete"
+	// from "this authority is missing a credential the file describes".
+	//
+	// ⚠ EMPTY IS THE NORMAL CASE AND IS NOT THE SAME CLAIM AS "THE JOURNAL IS GOOD". It
+	// says nothing was dropped; a journal that fails whole returns no Model at all.
+	Dropped []DroppedRecord
 }
 
 // NewModel returns an empty, usable Model. Every map is non-nil, so a caller never
@@ -341,6 +354,12 @@ func (m Model) clone() Model {
 	out := NewModel()
 	out.Epoch = m.Epoch
 	out.At = m.At
+	// `append` onto a fresh nil slice rather than sharing the header: a clone that shared
+	// the backing array would let `Append`'s scratch model write into the live cache's
+	// list, which is the same aliasing this function exists for one type over. Nil stays
+	// nil — "nothing was dropped" and "no list" are the same statement here, unlike
+	// `NarrowedScopes`.
+	out.Dropped = append(out.Dropped, m.Dropped...)
 	maps.Copy(out.Users, m.Users)
 	maps.Copy(out.Projects, m.Projects)
 	maps.Copy(out.Scopes, m.Scopes)
