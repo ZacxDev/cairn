@@ -2612,13 +2612,17 @@ class TestTheConditionalSnapshot:
         """A conditional request that went unrecorded would make "the client
         stopped syncing" and "the client is syncing and being told 304"
         indistinguishable in the pod log."""
+        # 🔴 `await_audit`'s RETURN VALUE, never the live list. The handler
+        # threads are never joined, so indexing `audit` itself is the race
+        # `test_no_test_INDEXES_a_live_audit_list` bans — and it caught the
+        # first draft of this test. The waits are INTERLEAVED because the read
+        # below is POSITIONAL: the helper guarantees a count, never an order.
         with running(store) as (base, audit):
             tag = self._tag(base)
             await_audit(audit, 1)
             fetch(f"{base}/api/v1/snapshot", token=GOOD_TOKEN,
                   extra_headers={"If-None-Match": tag})
-            await_audit(audit, 2)
-            lines = list(audit)
+            lines = await_audit(audit, 2)
         assert "result=200 status=snapshot" in lines[0], lines[0]
         assert "result=304 status=not-modified" in lines[1], lines[1]
 
