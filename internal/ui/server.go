@@ -4,11 +4,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/store"
 )
 
@@ -96,6 +98,15 @@ type Server struct {
 	ttl         time.Duration
 	now         func() time.Time
 	log         io.Writer
+
+	// trustedProxies and limiter are the client-identity pair, and they are one pair
+	// rather than two settings: the limiter's key IS what `netid.ResolveClient` returns,
+	// so a lockout without a trusted-proxy allowlist would bucket every request behind an
+	// edge under that edge's own address — one shared key, and the first abuser locks
+	// everybody out. `internal/netid`'s own comment calls that the failure the whole
+	// client-IP design exists to avoid.
+	trustedProxies []netip.Prefix
+	limiter        *netid.RateLimiter
 }
 
 // Config is what [New] needs. A struct rather than seven positional parameters,
@@ -116,6 +127,24 @@ type Config struct {
 	// for a credential that was refused. Taking a string makes that unrepresentable
 	// rather than avoided by care.
 	Credentials identity.TokenAuthority
+	// TrustedProxies is the peer allowlist that makes `netid.ClientIPHeader` readable,
+	// and it is REQUIRED whenever this surface is reachable by anybody but the local
+	// host — `cmd/cairn-ui` refuses to start otherwise, mirroring the pod.
+	//
+	// 🔴 EMPTY IS NOT "TRUST NOBODY'S HEADER AND CARRY ON" — it is "there is no proxy",
+	// which is correct only for a loopback bind. `netid.ResolveClient` then keys on the
+	// TCP peer, which for a loopback listener is always the local host, so the limiter
+	// would have exactly one bucket. That is fine on a developer's machine and wrong
+	// anywhere else, which is why the refusal lives at the bind address rather than here.
+	TrustedProxies []netip.Prefix
+	// Limiter throttles failed sign-ins. Nil disables it, which is what the unit tests
+	// use and what a loopback bring-up gets.
+	//
+	// ⚠ A NIL LIMITER IS A REAL ABSENCE AND THE HANDLER SAYS SO RATHER THAN PRETENDING:
+	// `POST /sign-in` is then unbounded. It is nil-able because the alternative is a
+	// mandatory dependency in every test that never signs in, which is how a guard ends
+	// up constructed wrongly in fifty places.
+	Limiter *netid.RateLimiter
 	// Source is the store read, narrowed by the caller's authority.
 	Source Source
 	// Sharing is the control-plane read and write the share flow needs.
@@ -229,6 +258,9 @@ func New(cfg Config) (*Server, error) {
 		ttl:         ttl,
 		now:         now,
 		log:         out,
+
+		trustedProxies: cfg.TrustedProxies,
+		limiter:        cfg.Limiter,
 	}, nil
 }
 

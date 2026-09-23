@@ -2,14 +2,17 @@ package ui
 
 import (
 	"bytes"
+	"github.com/ZacxDev/cairn/internal/netid"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 )
 
@@ -22,15 +25,43 @@ const testHost = "cairn.invalid"
 // live is a server plus the world around it: one credential, one session store, one
 // clock. Every session test drives this rather than assembling its own, so a test that
 // varies ONE thing varies exactly one.
+// countingAuthority records how many times a credential was actually resolved, which is
+// the only observable that distinguishes "metered before the token" from "after it".
+type countingAuthority struct {
+	inner identity.TokenAuthority
+	calls int
+}
+
+func (c *countingAuthority) Authenticate(token string) (control.Principal, control.Authorization, error) {
+	c.calls++
+	return c.inner.Authenticate(token)
+}
+
 type live struct {
-	srv      *Server
-	sessions *identity.FileSessionStore
-	log      *bytes.Buffer
-	now      time.Time
-	t        *testing.T
+	srv       *Server
+	authCalls *countingAuthority
+	sessions  *identity.FileSessionStore
+	log       *bytes.Buffer
+	now       time.Time
+	t         *testing.T
 }
 
 func newLive(t *testing.T) *live {
+	t.Helper()
+	return newLiveMetered(t, nil, nil)
+}
+
+// newLiveMetered is `newLive` plus the client-identity pair, and `newLive` now DELEGATES
+// to it rather than the two existing side by side.
+//
+// 🔴 ONE CONSTRUCTOR, BECAUSE `live`'s OWN COMMENT IS WHY. It says every session test
+// drives this "rather than assembling its own, so a test that varies ONE thing varies
+// exactly one" — and a second constructor is exactly how the wiring under test starts
+// differing between files. `nil, nil` is the pre-existing behaviour: no allowlist, no
+// limiter, which is what every test written before the lockout existed assumes.
+func newLiveMetered(
+	t *testing.T, trusted []netip.Prefix, limiter *netid.RateLimiter,
+) *live {
 	t.Helper()
 	l := &live{
 		sessions: mustSessions(t),
@@ -41,6 +72,13 @@ func newLive(t *testing.T) *live {
 	l.sessions.Now = func() time.Time { return l.now }
 
 	authority := fixtureCache(t)
+	// 🔴 ONLY THE `Credentials` ROLE IS COUNTED, AND THAT IS NOT A SHORTCUT. `authority` is
+	// also the cookie backend's `ModelSource` and `ControlSharing`'s authority; wrapping it
+	// for all three does not compile, and wrapping it for all three IF it did would count
+	// reads that have nothing to do with the sign-in exchange. `Credentials` is the one
+	// `handleSignIn` calls, which is the call whose absence proves the metering ran first.
+	counted := &countingAuthority{inner: authority}
+	l.authCalls = counted
 	cookie, err := identity.NewCookieSession(l.sessions, authority)
 	if err != nil {
 		t.Fatalf("the cookie backend did not build: %v", err)
@@ -56,17 +94,19 @@ func newLive(t *testing.T) *live {
 
 	srv, err := New(Config{
 		Auth:        chain,
-		Credentials: authority,
+		Credentials: counted,
 		Source:      staticSource{scopes: benignWorld()},
 		// The REAL sharing implementation over the SAME authority the chain reads,
 		// which is what `cmd/cairn-ui` wires. A static fixture here would let a defect
 		// in which world the share flow consults pass unseen — the same reason
 		// `fixtureCache` is one cache for all three of the wirings above.
-		Sharing:  ControlSharing{Authority: authority, Now: func() time.Time { return l.now }},
-		Sessions: l.sessions,
-		TTL:      time.Hour,
-		Now:      func() time.Time { return l.now },
-		Log:      l.log,
+		Sharing:        ControlSharing{Authority: authority, Now: func() time.Time { return l.now }},
+		Sessions:       l.sessions,
+		TTL:            time.Hour,
+		Now:            func() time.Time { return l.now },
+		Log:            l.log,
+		TrustedProxies: trusted,
+		Limiter:        limiter,
 	})
 	if err != nil {
 		t.Fatalf("the server did not build: %v", err)
