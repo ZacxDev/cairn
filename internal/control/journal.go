@@ -3,6 +3,7 @@ package control
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -173,10 +174,44 @@ func (e Event) validate() error {
 		if !e.SubjectKind.Valid() {
 			return fmt.Errorf("%s: unknown subject_kind %q", e.Kind, e.SubjectKind)
 		}
-		if len(e.TokenHash) != HashHexLen {
+		// 🔴 A HEX DIGEST, NOT MERELY 64 CHARACTERS — AND THE LENGTH-ONLY VERSION THIS
+		// REPLACES WAS A GUARD THE HAZARD WALKED AROUND. It read
+		// `len(e.TokenHash) != HashHexLen` and its own message said a short hash "is the
+		// shape a raw token takes", which is true and is not the shape that gets here: a
+		// raw secret of exactly 64 characters PASSED and was persisted into the authority
+		// journal verbatim. That is not a contrived width. `base64.RawURLEncoding` of 48
+		// random bytes is exactly 64 characters, and 48 bytes is an entirely ordinary
+		// choice for a machine-minted token — so the one input the field must never hold
+		// had a natural spelling that cleared the check. `Event.validate` is the LAST
+		// boundary before `WriteEvents` puts the value in an append-only, operator-readable
+		// file with no undo, which is why the check belongs here rather than at each writer.
+		//
+		// 🔴 AND IT ACCEPTS BOTH CASES, WHICH IS A CORRECTION TO THIS GUARD'S FIRST DRAFT
+		// RATHER THAN A CONCESSION. That draft required LOWERCASE and said the narrowing
+		// "costs nothing that was ever alive"; that was measured false in the direction
+		// that matters. It is a REPLAY check, so it fails the journal WHOLE: one
+		// hand-written uppercase digest loads zero credentials and drops a pod's entire
+		// control-plane authority, where the value it refuses could only ever have been a
+		// single dead credential. `isHexDigest`'s own comment carries the alphabet
+		// argument — a raw token is excluded by `-`, `_` and `g`..`z`, never by case — and
+		// `apply` lowers the accepted value so that a record written in either spelling
+		// authenticates.
+		//
+		// 🔴 THE MESSAGE REPORTS THE LENGTH AND NEVER THE VALUE. The whole premise of this
+		// branch is that the field may be holding a live secret, so interpolating it would
+		// re-stage that secret into the pod's stderr, the operator's scrollback and any
+		// transcript capturing the run — the guard against writing a token to disk,
+		// printing the token.
+		//
+		// ⚠ AND THE REFUSAL IS WRAPPED IN `ErrUnusableTokenDigest`, WHICH IS WHAT LETS
+		// `Replay` DROP THIS RECORD RATHER THAN THE FILE. The refusal itself is unchanged
+		// and still applies to EVERY writer, `Append` included; the sentinel exists so that
+		// one caller — the replay of a file somebody has ALREADY written — can answer it
+		// differently. See `replayDroppable`.
+		if !isHexDigest(e.TokenHash) {
 			return fmt.Errorf(
-				"%s: token_hash is %d characters, want %d — a short hash here is the shape a raw token takes when it is written to the field that was supposed to hold its digest, and this journal is not a place a credential may ever land",
-				e.Kind, len(e.TokenHash), HashHexLen)
+				"%s: token_hash is not a %d-character hex digest (it is %d character(s)) — the field holds the SHA-256 DIGEST of a credential and never the credential, and a value that is the right length but not hex is the shape a raw token takes when it is written to the field that was supposed to hold its digest. This journal is not a place a credential may ever land, and it is append-only: there is no undo. The value is deliberately not echoed here, because if that is what happened it is a live secret: %w",
+				e.Kind, HashHexLen, len(e.TokenHash), ErrUnusableTokenDigest)
 		}
 		return nil
 	case EventCredentialRevoked:
@@ -348,22 +383,48 @@ func (m *Model) apply(e Event) error {
 		if err := m.checkSubject(e.SubjectKind, e.SubjectID); err != nil {
 			return err
 		}
+		// 🔴 THE DIGEST IS LOWERED HERE, AND EVERY USE BELOW READS THE NORMALISED
+		// VALUE RATHER THAN THE RECORDED ONE. `validate` accepts either case
+		// because case does not discriminate the hazard it guards (see
+		// `isHexDigest`); this is the half that makes accepting it correct rather
+		// than merely permissive, and there are TWO independent reasons, so
+		// closing one does not remove the need for it:
+		//
+		//   - THE DUPLICATE REFUSAL BELOW IS A STRING COMPARE. Without lowering
+		//     first, the SAME secret issued twice in two spellings is two rows
+		//     this arm accepts — and the loop's own comment says two principals
+		//     sharing a digest have no defined precedence at authentication time.
+		//     A case difference must not be the thing that reaches that state.
+		//   - `EqualHash` IS BYTE-EXACT and `HashToken` emits lowercase (`%x`), so
+		//     an uppercase digest stored verbatim matches no presented token
+		//     EVER. Lowering it turns a hand-appended credential that replayed
+		//     clean and authenticated nobody into one that works — a fix, not
+		//     merely compatibility.
+		//
+		// ⚠ THE JOURNAL LINE IS NOT REWRITTEN, AND CANNOT BE. The file is
+		// append-only; this normalises what the MODEL holds, which is what
+		// `Resolve` and `Authenticate` read.
+		digest := normalizedDigest(e.TokenHash)
 		// 🔴 A HASH COLLISION HERE IS A SHARED TOKEN, NOT A HASH FAILURE. sha256
 		// does not collide by accident; two rows carrying one digest means one
 		// secret was issued twice, and `Resolve` would then have to choose which
 		// principal a request belongs to. There is no defined precedence, so the
 		// journal refuses the second issue rather than storing an ambiguity the
 		// authenticator would resolve arbitrarily.
+		//
+		// ⚠ WRAPPED IN `ErrDuplicateTokenDigest` FOR THE REASON THE DIGEST-SHAPE REFUSAL IS
+		// WRAPPED: the rule is unchanged for every writer, and the sentinel is what lets
+		// `Replay` drop the LATER record instead of the whole file. See `replayDroppable`.
 		for id, c := range m.Credentials {
-			if c.TokenHash == e.TokenHash {
+			if c.TokenHash == digest {
 				return fmt.Errorf(
-					"credential %s carries the same token digest as %s — one secret issued to two principals has no defined precedence at authentication time, so it is refused here rather than resolved arbitrarily there",
-					e.CredentialID, id)
+					"credential %s carries the same token digest as %s — one secret issued to two principals has no defined precedence at authentication time, so it is refused here rather than resolved arbitrarily there: %w",
+					e.CredentialID, id, ErrDuplicateTokenDigest)
 			}
 		}
 		m.Credentials[e.CredentialID] = Credential{
 			ID: e.CredentialID, PrincipalKind: e.SubjectKind, PrincipalID: e.SubjectID,
-			TokenHash: e.TokenHash, Label: e.Label,
+			TokenHash: digest, Label: e.Label,
 			// `copyIDs`, NOT `append([]ID(nil), …)` — the latter flattens a
 			// non-nil empty narrowing into nil, which is its opposite. See the
 			// function's own comment; this is the site that motivates it.
@@ -449,6 +510,106 @@ func (m *Model) checkObject(kind ObjectKind, id ID) error {
 	return nil
 }
 
+// ErrUnusableTokenDigest marks a `credential-issued` record whose `token_hash` is not a
+// sha256 hex digest.
+//
+// 🔴 SUCH A RECORD PROVABLY CANNOT AUTHENTICATE ANYBODY, WHICH IS THE ENTIRE LICENCE FOR
+// DROPPING IT AT REPLAY. `Authenticate` compares `EqualHash(HashToken(presented), stored)`,
+// and `HashToken` emits 64 lowercase hex characters via `%x`; a stored value that is not
+// hex of that width is byte-unequal to every digest that function can ever produce. So the
+// record confers no authority whether it is kept or dropped, and dropping it is a strict
+// NARROWING of what the file describes.
+var ErrUnusableTokenDigest = errors.New("control: token_hash is not a usable sha256 hex digest")
+
+// ErrDuplicateTokenDigest marks a `credential-issued` record whose digest another record
+// already carries.
+//
+// 🔴 DROPPING THE LATER ONE IS A NARROWING, WHICH IS THE LICENCE — AND IT IS NOT "PROVABLY
+// INERT", WHICH IS WHAT THIS COMMENT USED TO IMPLY. It said "the secret keeps working, as
+// the credential it was FIRST recorded as". That holds only while the first record is LIVE.
+// Measured on `issue crd_0(D)` / `revoke crd_0` / `issue crd_1(D)`: the later record is
+// dropped, `crd_0` is revoked, and `Authenticate(D)` answers `unauthorized` — so the secret
+// stops working entirely rather than resolving to the first credential. That is still the
+// safe direction (a credential nobody can use, not an authority nobody intended) and it is
+// still announced at load by `Model.Dropped`, which is what makes it acceptable; what it is
+// not is a no-op. The case is `TestOneSecretRecordedTwiceDropsTheLaterRecord`'s
+// revoked-first arm.
+//
+// What the drop removes either way is the ambiguity — two principals for one digest, with
+// no defined precedence at authentication time — which is exactly what the refusal in
+// `apply` exists to prevent reaching `Resolve`.
+var ErrDuplicateTokenDigest = errors.New("control: this token digest is already recorded")
+
+// replayDroppable is the CLOSED table of "which event kind may a replay drop a record of,
+// and for which failures".
+//
+// 🔴 A TABLE, NOT A CONDITION, SO THE EXEMPTION CANNOT REACH ANOTHER EVENT KIND BY
+// ACCIDENT. `Replay` looks its event's kind up here and there is nothing to find for any
+// kind but `credential-issued`; a revocation, a grant, a membership change or a kind from a
+// newer build has no entry, so the lookup fails and the journal is refused WHOLE exactly as
+// before. `TestOnlyCredentialIssuedMayBeDroppedAtReplay` asserts the membership of this map
+// against `AllEventKinds`, which is what stops a future row being added quietly.
+//
+// 🔴 AND THE JUSTIFICATION IS DIRECTIONAL, WHICH IS WHY IT DOES NOT CONTRADICT
+// `validate`'s `default:` ARM. That arm refuses an unknown kind whole "because a dropped
+// revocation is a grant that keeps working" — reasoning about the WIDENING direction.
+// Dropping a `credential-issued` record NARROWS: one fewer credential, and (see the two
+// sentinels) one that provably authenticates nobody or is a second name for a secret that
+// already works. The exemption is therefore exactly `credential-issued`, exactly in the
+// narrowing direction, and never a revocation or an unknown kind.
+//
+// 🔴 WHY IT EXISTS AT ALL: A REPLAY-TIME REFUSAL'S BLAST RADIUS IS THE OPERATOR'S ENTIRE
+// CONTROL PLANE. `Model.apply` is reached from `Replay`, which fails a journal WHOLE, and
+// `FileStore.Reload` then serves `lastKnownGood()` — empty on a cold start. Measured on the
+// commit before this table existed: a journal holding one 64-character NON-HEX `token_hash`
+// beside a perfectly good credential loaded **0** credentials, and so did one holding a
+// single secret recorded in two case spellings. Both are shapes an earlier build of this
+// package ACCEPTED, so both are states a real upgrade walks into, and the only remedy was
+// hand-editing an append-only file. That is an outage produced by a guard, which is the
+// same trade the case-insensitivity of `isHexDigest` was corrected for.
+//
+// ⚠ APPEND IS UNTOUCHED, AND THAT IS THE POINT OF PUTTING THIS IN `Replay` RATHER THAN IN
+// `apply`. `FileStore.Append` validates a batch by calling `apply` on a clone directly, so
+// it never consults this table: a writer trying to CREATE one of these records is still
+// refused outright. This is only about a file that already exists.
+var replayDroppable = map[EventKind][]error{
+	EventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},
+}
+
+// DroppedRecord is one journal record a replay skipped, and why.
+//
+// 🔴 IT IS A VALUE ON THE MODEL RATHER THAN A LOG LINE, BECAUSE THIS PACKAGE HOLDS NO
+// LOGGER AND MUST NOT GROW ONE. `internal/control` stops at the library boundary — no
+// `net/http`, no `log`, no configuration — so the diagnostic is DATA a caller can render;
+// `cmd/cairn-server` and `cmd/cairn-ui` print it on their own stderr at startup. A dropped
+// record that nothing could report would be a silent narrowing of an authority, which is
+// the failure this whole package is shaped against.
+type DroppedRecord struct {
+	// Position is the event's 1-based index in the sequence replayed, which for a
+	// `FileStore` journal is its line number ignoring blank lines.
+	Position int
+	// Kind is the record's event kind. Always `credential-issued` today; carried anyway so
+	// a reader of a rendered line never has to assume that.
+	Kind EventKind
+	// CredentialID names the record, so an operator can find the line and delete it.
+	CredentialID ID
+	// Reason is the refusal's own text — the one this package would have failed the whole
+	// journal with.
+	Reason string
+}
+
+// String renders a dropped record for an operator's stderr.
+//
+// ⚠ IT NAMES THE RECORD AND REPEATS THE REFUSAL, AND IT CARRIES NO FIELD VALUES FROM THE
+// EVENT. The refusal texts it relays are written to avoid echoing a `token_hash` that may
+// be a live secret; a renderer that added "the value was …" here would undo that at the one
+// place the record is most likely to be read aloud.
+func (d DroppedRecord) String() string {
+	return fmt.Sprintf(
+		"journal event %d (%s, credential=%s) was DROPPED at replay and the rest of the file was loaded: %s",
+		d.Position, d.Kind, d.CredentialID, d.Reason)
+}
+
 // Replay folds a sequence of events into a Model.
 //
 // 🔴 IT FAILS WHOLE ON THE FIRST BAD EVENT, RETURNING NO MODEL. Returning a
@@ -456,14 +617,90 @@ func (m *Model) checkObject(kind ObjectKind, id ID) error {
 // logs the error and serves the model, and the model is missing every event after
 // the failure — which, if one of them was a revocation, is an authority WIDER than
 // the journal describes. There is no partial answer here, on purpose.
+//
+// 🔴 WITH ONE EXEMPTION, WHICH IS A TABLE RATHER THAN A CONDITION: the two
+// `credential-issued` failures listed in `replayDroppable` drop THAT RECORD and load the
+// rest. Read that table for why those two and only those two, and why the reasoning does
+// not transfer to any other kind.
+//
+// ⚠ A DROPPED RECORD IS RECORDED ON `Model.Dropped`; WHETHER IT IS SILENT IS THE CALLER'S
+// PROPERTY, NOT THIS FUNCTION'S — AND A STRONGER SENTENCE HERE ("it is never silent") WAS
+// MEASURED FALSE. This package holds no logger by design, so all it can do is carry the
+// drop as data; a caller that renders `Dropped` once at startup and then re-reads the
+// journal on a timer announces nothing about a record dropped at the tenth read. That is
+// exactly what the pod did, and closing it was a change in `cmd/cairn-server`, not here.
+// Both programs that load a journal now render at load AND after every refresh
+// (`newDropAnnouncer`); a THIRD caller inherits nothing from that and has to do the same,
+// because the licence for skipping a record instead of refusing the file is that somebody
+// is told.
+//
+// ⚠ A DROPPED RECORD DOES NOT ADVANCE THE EPOCH, because the epoch counts events APPLIED
+// and this one was not. So a journal with drops has an epoch below its line count, which is
+// consistent with what `Model.Epoch` documents and is what `control.Cache` compares.
 func Replay(events []Event) (Model, error) {
 	m := NewModel()
 	for i, e := range events {
-		if err := m.apply(e); err != nil {
-			return Model{}, fmt.Errorf("event %d (%s): %w", i+1, e.Kind, err)
+		err := m.apply(e)
+		if err == nil {
+			continue
 		}
+		if droppable(e, err) {
+			// ⚠ NOTHING HAS TO BE ROLLED BACK HERE, AND THAT IS A PROPERTY OF THE ARM
+			// RATHER THAN OF THIS LOOP. Both droppable failures are raised by
+			// `EventCredentialIssued` BEFORE it writes to `m.Credentials` and before
+			// `m.Epoch++`, so a refused credential event leaves the model untouched. A
+			// future droppable failure raised after a mutation would need a clone, and
+			// this comment is where that would be noticed.
+			m.Dropped = append(m.Dropped, DroppedRecord{
+				Position: i + 1, Kind: e.Kind, CredentialID: e.CredentialID, Reason: err.Error(),
+			})
+			continue
+		}
+		return Model{}, fmt.Errorf("event %d (%s): %w%s", i+1, e.Kind, err, dropHint(e, m.Dropped))
 	}
 	return m, nil
+}
+
+// droppable answers whether a replay may skip THIS record for THIS failure.
+//
+// 🔴 THE KIND LOOKUP COMES FIRST AND IS THE STRUCTURAL HALF. An event kind with no entry in
+// `replayDroppable` returns false before any error is examined, so no sentinel — present
+// today or added later — can make a revocation or an unknown kind droppable.
+func droppable(e Event, err error) bool {
+	for _, sentinel := range replayDroppable[e.Kind] {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
+	return false
+}
+
+// dropHint adds a sentence to a whole-journal refusal that this replay's OWN drops explain.
+//
+// 🔴 THE CASE IT NAMES IS REACHABLE AND WOULD OTHERWISE READ AS A DIFFERENT BUG: a journal
+// that hand-appends a `credential-issued` record with an unusable digest AND a
+// `credential-revoked` for it. The issue is dropped, so the revocation then names a
+// credential the model does not hold and the file is refused whole — with a message about a
+// missing credential, pointing at a line the operator wrote correctly.
+//
+// 🔴 THE REVOCATION IS STILL NOT DROPPED, AND THAT IS DELIBERATE RATHER THAN AN OVERSIGHT.
+// `replayDroppable` is the whole exemption and it has one member; widening it to revocations
+// — even revocations of records this replay dropped — is a rule about the direction the
+// `default:` arm of `validate` refuses, and a second reader of that rule is how it gets
+// applied one case too far. What an operator gets instead is a refusal that says exactly
+// which two lines to reconcile.
+func dropHint(e Event, dropped []DroppedRecord) string {
+	if e.Kind != EventCredentialRevoked {
+		return ""
+	}
+	for _, d := range dropped {
+		if d.CredentialID == e.CredentialID {
+			return fmt.Sprintf(
+				" — and note that the record ISSUING %s was itself dropped at event %d of this same replay (%s), so this revocation names a credential the model does not hold. Remove this line as well: the credential it retires never entered the authority",
+				e.CredentialID, d.Position, d.Reason)
+		}
+	}
+	return ""
 }
 
 // WriteEvents appends events to w, one JSON object per line.

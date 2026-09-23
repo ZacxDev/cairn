@@ -89,11 +89,15 @@ number** — the number is what went stale.
 4. **P8 — retire the Python oracle.** Gated on the default flip holding over real use, which
    is a waiting period rather than a task.
    forcing: none
-5. **A CREDENTIAL-ISSUING COMMAND for the control journal.** Without one the `-control-journal`
-   mode cannot authenticate anybody, which `cmd/cairn-ui` refuses at startup and explains.
-   ⚠ It is the one path on which a raw token could reach the journal — `Event.validate` checks
-   `token_hash`'s LENGTH ONLY — so it mints, prints once, and stores only the digest.
-   forcing: gate — a shipped binary refuses to start and names this as the missing piece.
+5. ✅ **DONE — `cairn-server -issue-credential` over `control.IssueCredential`, in #76.** Marked
+   rather than deleted: the rank is half a live `claim-work` slug, and this session measured a
+   renumber re-pointing two claims at work they did not name. `cairn-control-plane-5` released.
+   ⚠ **The hazard this item named was REAL and is closed structurally**: `Event.validate` checked
+   `token_hash`'s LENGTH ONLY, so a 64-character raw secret was accepted and persisted verbatim
+   into an append-only authority. It now requires a hex digest, normalised to lowercase on store.
+   ⚠ **`EventCredentialRevoked` still has no writer**, so rotation is "issue, then hand-append the
+   revocation" — the same shape as the gap this closed, one event over.
+   forcing: gate — a shipped binary refused to start and named this as the missing piece.
 6. **Fold the new defect entries in and mark #60/#66 closed**, once the doc PRs have merged.
    forcing: user — the operator chose this sequencing explicitly.
 7. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` BEHIND A DEPRECATION WINDOW — SHAPE ALREADY
@@ -445,10 +449,13 @@ number** — the number is what went stale.
   ALWAYS BE WALKED AROUND — ask the question the code asks.**
 - 🔴 **AN OPERATOR-FACING REMEDY CAN INVITE A SECRET INTO A DURABLE STORE.** "Hand-append a
   `credential-issued` record" named neither the shape nor that `token_hash` is the SHA-256
-  digest. `Event.validate` checks that field's **LENGTH ONLY** — under a message reading
-  "this journal is not a place a credential may ever land" — so a 64-character token is
-  accepted and persisted, and sign-in then fails on a digest mismatch with no signal why.
+  digest. `Event.validate` checked that field's **LENGTH ONLY** at the time — under a message
+  reading "this journal is not a place a credential may ever land" — so a 64-character token
+  was accepted and persisted, and sign-in then failed on a digest mismatch with no signal why.
   **When you tell somebody to hand-write a record, name the field that holds a digest.**
+  ✅ The check now requires hex, in either case, and `Model.apply` lowercases what it stores;
+  the tense here is past deliberately, because the lesson is the remedy's shape rather than
+  the guard's state.
 - 🔴 **A COMMENT THAT WOULD HAVE INSTRUCTED THE NEXT MAINTAINER TO UNDO THE GATE IT
   EXPLAINS.** A commit moved the `go` job's `ok` floor to `-lt 18` and left three claims at
   17 beside it, including in bold *"So: `ok < 17` refuses. 17 passes (today's tree)."*

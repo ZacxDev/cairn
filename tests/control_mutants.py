@@ -334,16 +334,71 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="raw-token-accepted-as-a-digest",
         path="internal/control/journal.go",
-        old="\t\tif len(e.TokenHash) != HashHexLen {",
+        old="\t\tif !isHexDigest(e.TokenHash) {",
         new="\t\tif false {",
         killer="TestTheJournalRefusesWhatItCannotEnforce",
         why="the guard standing between a caller's mistake and a credential written in "
         "clear text into a durable, operator-readable file.",
+        extra_killers=("TestA64CharacterRawTokenIsRefusedAsADigest",),
+    ),
+    Mutant(
+        name="token-hash-checked-by-LENGTH-only",
+        path="internal/control/journal.go",
+        old="\t\tif !isHexDigest(e.TokenHash) {",
+        new="\t\tif len(e.TokenHash) != HashHexLen {",
+        killer="TestA64CharacterRawTokenIsRefusedAsADigest",
+        # 🔴 THIS MUTANT IS THE PRE-CHANGE CODE VERBATIM, WHICH IS WHY IT IS A SEPARATE ROW
+        # FROM THE ONE ABOVE RATHER THAN A WIDENING OF IT. `raw-token-accepted-as-a-digest`
+        # deletes the guard's operand entirely; a guard that is PRESENT and too NARROW
+        # survives that edit, and "too narrow" is the state this field was actually shipped
+        # in. The row's killer is deliberately NOT the table test: under this mutant
+        # `TestTheJournalRefusesWhatItCannotEnforce` stays GREEN, because its raw-token row
+        # is 26 characters and a length check still catches that — which is the measurement
+        # that says the table could not see the real case.
+        why="reverting to the length-only check that shipped: `base64.RawURLEncoding` of 48 "
+        "random bytes is exactly 64 characters, so a raw secret had a natural spelling "
+        "that cleared it and was persisted verbatim into the append-only authority.",
+    ),
+    Mutant(
+        name="digest-shape-check-refuses-UPPERCASE-hex",
+        path="internal/control/ids.go",
+        old="\t\tif (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {",
+        new="\t\tif (c < '0' || c > '9') && (c < 'a' || c > 'f') {",
+        killer="TestAnUppercaseDigestReplaysAndTheCredentialItNamesAuthenticates",
+        extra_killers=("TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate",),
+        # 🔴 THIS MUTANT IS A SHIPPED DEFECT TOO, ONE ROUND LATER THAN THE ROW ABOVE, AND AT
+        # THE OPPOSITE END OF THE SAME GUARD. The widening that closed the raw-token hole
+        # was first written LOWERCASE-ONLY, which refuses a value that is unambiguously a
+        # digest — and it refuses it on REPLAY, so `Model.apply` fails the journal WHOLE:
+        # one hand-written uppercase row loads zero credentials and a pod falls back to an
+        # empty `lastKnownGood()`. Narrowing a guard is not a safe direction when the guard
+        # runs over a durable file somebody else already wrote.
+        why="'a spelling `HashToken` never emits cannot be a real digest' — true about the "
+        "spelling, false about the risk. Case does not discriminate a raw token (`-`, `_` "
+        "and `g`..`z` do), so requiring lowercase buys no hazard coverage and costs every "
+        "credential in any journal holding a hand-written uppercase row.",
+    ),
+    Mutant(
+        name="credential-digest-not-normalised-on-replay",
+        path="internal/control/journal.go",
+        old="\t\tdigest := normalizedDigest(e.TokenHash)",
+        new="\t\tdigest := e.TokenHash",
+        killer="TestAnUppercaseDigestReplaysAndTheCredentialItNamesAuthenticates",
+        extra_killers=("TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate",),
+        # 🔴 ACCEPTING BOTH SPELLINGS WITHOUT THIS LINE IS WORSE THAN REFUSING ONE, WHICH IS
+        # WHY IT IS A SEPARATE ROW: the two halves fail differently and neither implies the
+        # other. Without normalisation an uppercase record replays CLEAN and authenticates
+        # nobody (`EqualHash` is byte-exact, `HashToken` emits lowercase), and the duplicate
+        # refusal — a string compare — stops seeing one secret recorded twice in two cases,
+        # which is the ambiguity that loop exists to refuse.
+        why="the obvious half of the fix taken alone: widen what `validate` accepts and "
+        "store whatever arrived. It reads as compatibility and produces a credential that "
+        "loads, looks right in the journal, and matches no token ever presented.",
     ),
     Mutant(
         name="duplicate-digest-accepted",
         path="internal/control/journal.go",
-        old="\t\tfor id, c := range m.Credentials {\n\t\t\tif c.TokenHash == e.TokenHash {",
+        old="\t\tfor id, c := range m.Credentials {\n\t\t\tif c.TokenHash == digest {",
         new="\t\tfor id, c := range m.Credentials {\n\t\t\tif false {\n\t\t\t\t_ = id\n\t\t\t\t_ = c",
         killer="TestTwoCredentialsCannotShareOneDigest",
         why="one secret bound to two principals, resolved arbitrarily by whichever the "
@@ -352,8 +407,11 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="failed-replay-returns-a-partial-model",
         path="internal/control/journal.go",
-        old='return Model{}, fmt.Errorf("event %d (%s): %w", i+1, e.Kind, err)',
-        new='return m, fmt.Errorf("event %d (%s): %w", i+1, e.Kind, err)',
+        # ⚠ THE ANCHOR MOVED WHEN `Replay` GAINED `dropHint`, AND A STALE ANCHOR IS A
+        # HARNESS ERROR RATHER THAN A SURVIVOR — which is the right direction, but it is
+        # also why every row here is checked against the tree before a run is believed.
+        old='return Model{}, fmt.Errorf("event %d (%s): %w%s", i+1, e.Kind, err, dropHint(e, m.Dropped))',
+        new='return m, fmt.Errorf("event %d (%s): %w%s", i+1, e.Kind, err, dropHint(e, m.Dropped))',
         killer="TestAFailedReplayReturnsNoModelAtAll",
         why="returning what you have alongside the error reads as helpful and hands the "
         "caller an authority missing every event after the failure.",
@@ -463,6 +521,64 @@ MUTANTS: tuple[Mutant, ...] = (
         "The damage is fail-CLOSED (every unnarrowed credential would see nothing), "
         "which is why it needs a guard rather than being dismissed as harmless.",
     ),
+    # ---- the credential-ISSUING path: the only thing here that holds a raw secret ----
+    Mutant(
+        name="issued-renders-its-token",
+        path="internal/control/credential_issue.go",
+        old='\treturn fmt.Sprintf("credential=%s digest=%s epoch=%d token=<redacted: shown once, on issue>",\n\t\ti.Credential, i.TokenHash, i.Epoch)',
+        # ⚠ `i.Token()` RATHER THAN `i.token`, AND THE REASON IS A MEASUREMENT RATHER THAN
+        # A STYLE CHOICE. The field became a `*string` when the `%p` leak was closed, so
+        # `%s` of it is `fmt.Sprintf format %s has arg i.token of wrong type *string` —
+        # `go vet` runs inside `go test`, the tree DOES NOT BUILD, and the row scores a
+        # harness error instead of exercising the guard. A mutant that dies at the build
+        # proves nothing about any test. The accessor is also the more plausible edit now:
+        # it is what somebody adding the field back to a log line would reach for.
+        new='\treturn fmt.Sprintf("credential=%s digest=%s epoch=%d token=%s",\n\t\ti.Credential, i.TokenHash, i.Epoch, i.Token())',
+        killer="TestNoRenderingOfIssuedContainsTheToken",
+        why="the single most likely edit anybody makes to this type — putting the field "
+        "back in the log line while debugging. The realistic leak is not a deliberate "
+        "print of a secret; it is `%v` of a value that happens to hold one, in an error "
+        "path or a test failure message.",
+    ),
+    Mutant(
+        name="token-entropy-narrowed",
+        path="internal/control/credential_issue.go",
+        old="const TokenEntropyBytes = 32",
+        new="const TokenEntropyBytes = 16",
+        killer="TestTheMintedTokenIsExactlyTheDeclaredWidthAndAlphabet",
+        # The width is the one property two packages have to agree on without being able
+        # to see each other, so this row is also what stands on the seam guard beside it.
+        extra_killers=("TestTheMintedWidthAgreesWithTheTokenFileFloor",),
+        why="'128 bits is plenty for an id, so it is plenty here' — the reasoning "
+        "`NewID` states for an id and that does not transfer to the secret itself. A "
+        "narrower mint renders below `authz.MinTokenChars`, so the pod and `cairn-ui` "
+        "would refuse at STARTUP a token this command had just told an operator to use.",
+    ),
+    Mutant(
+        name="credential-issued-without-a-principal-check",
+        path="internal/control/credential_issue.go",
+        old="\tif err := current.checkSubject(req.SubjectKind, req.SubjectID); err != nil {",
+        new="\tif err := current.checkSubject(req.SubjectKind, req.SubjectID); err != nil && false {",
+        killer="TestIssuingToAPrincipalTheJournalDoesNotHoldIsRefusedBeforeAnythingIsWritten",
+        # 🔴 THE KILL IS BY THE SENTINEL, NOT BY "IT ERRORED", AND THE ROW EXISTS TO PIN
+        # THAT DISTINCTION. `apply` refuses the same batch under the lock, so the call still
+        # fails with the mutant applied — a test that accepted any error would score this
+        # SURVIVED while the two things the pre-check buys (no secret minted for a doomed
+        # request; a message that separates a typo from a broken mount) went unguarded.
+        why="deleting a check that looks redundant because the journal enforces the same "
+        "rule — true of the refusal, false of WHEN it happens and of what it says.",
+    ),
+    Mutant(
+        name="narrowing-flattened-on-issue",
+        path="internal/control/credential_issue.go",
+        old="\t\tNarrowedScopes: copyIDs(req.NarrowedScopes),",
+        new="\t\tNarrowedScopes: append([]ID(nil), req.NarrowedScopes...),",
+        killer="TestANarrowingRoundTripsThroughTheJournal",
+        why="the idiomatic defensive copy, which flattens a non-nil EMPTY narrowing into "
+        "nil — turning 'this credential sees nothing' into 'this credential is not "
+        "narrowed at all', a silent WIDENING inside a line that reads like hygiene. The "
+        "same defect `copyIDs` exists for, at the second site that has to reach for it.",
+    ),
     Mutant(
         name="constant-time-compare-becomes-equality",
         path="internal/control/ids.go",
@@ -483,6 +599,163 @@ MUTANTS: tuple[Mutant, ...] = (
             "reader finding it SURVIVED does not read that as 'the comparison does not "
             "matter'."
         ),
+    ),
+    # ---- the REPLAY exemption: the one place a bad record is dropped rather than -----
+    #      refusing a file, and every direction it must not grow in
+    #
+    # 🔴 THE GUARD BEING MEASURED HERE IS A TRADE RATHER THAN A CHECK, WHICH IS WHY IT
+    # NEEDS SIX ROWS. `Replay` drops a `credential-issued` record it cannot use and loads
+    # the rest; a refusal there costs the operator their whole control plane, because
+    # `Model.apply` fails a journal WHOLE and `FileStore.Reload` falls back to a
+    # `lastKnownGood()` that is empty on a cold start. Both halves can be wrong: too
+    # STRICT is an outage on upgrade (measured twice, on shipped builds), and too LOOSE is
+    # a dropped revocation, which is the widening `validate`'s default arm refuses by
+    # name. The rows below break it in both directions, plus the reporting that is the
+    # only reason the loose direction is acceptable at all, plus the APPEND path that must
+    # not inherit any of it.
+    Mutant(
+        name="replay-refuses-the-whole-file-on-an-unusable-digest",
+        path="internal/control/journal.go",
+        old="\tEventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},",
+        new="\tEventCredentialIssued: {ErrDuplicateTokenDigest},",
+        killer="TestAnUnusableDigestDropsOnlyItsOwnRecord",
+        why="reverting to the shipped behaviour: one `token_hash` an older build's "
+        "length-only check accepted loads ZERO credentials on upgrade, and the only remedy "
+        "is hand-editing an append-only authority. Measured at `0fb61d4`.",
+    ),
+    Mutant(
+        name="replay-refuses-the-whole-file-on-a-duplicate-digest",
+        path="internal/control/journal.go",
+        old="\tEventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},",
+        new="\tEventCredentialIssued: {ErrUnusableTokenDigest},",
+        killer="TestOneSecretRecordedTwiceDropsTheLaterRecord",
+        # 🔴 A SEPARATE ROW FROM THE ONE ABOVE BECAUSE THE TWO FAILURES ARRIVE BY DIFFERENT
+        # ROUTES AND NEITHER IMPLIES THE OTHER: the first is `Event.validate` refusing a
+        # field's SHAPE, the second is `apply` refusing a MODEL-level ambiguity that only
+        # exists once another record is present.
+        why="reverting the half the PREVIOUS round's own normalisation fix created: "
+        "lowering the digest at `apply` made the duplicate compare able to see one secret "
+        "written in two case spellings, and a journal holding that then loaded zero "
+        "credentials. Measured at `0fb61d4`.",
+    ),
+    Mutant(
+        name="replay-may-drop-a-revocation",
+        path="internal/control/journal.go",
+        old="\tEventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},",
+        new="\tEventCredentialIssued: {ErrUnusableTokenDigest, ErrDuplicateTokenDigest},\n"
+        "\tEventCredentialRevoked: {ErrUnusableTokenDigest},",
+        killer="TestOnlyCredentialIssuedMayBeDroppedAtReplay",
+        # 🔴 THE MUTANT IS A TABLE ENTRY, WHICH IS EXACTLY HOW THIS WOULD ACTUALLY GO
+        # WRONG. The exemption reads as a list of tolerated failures, so widening it is a
+        # one-line edit with no visible consequence — and "a dropped revocation is a grant
+        # that keeps working" is the sentence the rest of this file is built around. It
+        # changes no BEHAVIOUR today (no revocation raises that sentinel), which is why the
+        # guard has to be a LEDGER over the table rather than a behavioural case.
+        why="'this failure is harmless, so tolerate it wherever it shows up' — the "
+        "exemption growing along the KIND axis instead of the direction axis.",
+    ),
+    Mutant(
+        name="replay-drops-every-failed-event",
+        path="internal/control/journal.go",
+        old="\t\tif droppable(e, err) {",
+        new="\t\tif true {",
+        killer="TestAKindWithNoDroppableEntryStillRefusesTheWholeJournal",
+        why="the forward-compatibility 'fix' one level in from the `default:` arm: having "
+        "decided that one bad record need not fail a file, apply it to all of them. A "
+        "journal from a newer build then replays with its unrecognised records — possibly "
+        "revocations — silently skipped.",
+    ),
+    Mutant(
+        name="a-dropped-record-does-not-name-its-credential",
+        path="internal/control/journal.go",
+        old="\t\t\t\tPosition: i + 1, Kind: e.Kind, CredentialID: e.CredentialID, Reason: err.Error(),",
+        new="\t\t\t\tPosition: i + 1, Kind: e.Kind, Reason: err.Error(),",
+        killer="TestAnUnusableDigestDropsOnlyItsOwnRecord",
+        # 🔴 THE REPORT IS WHAT MAKES DROPPING ACCEPTABLE, SO ITS CONTENT IS A GUARD RATHER
+        # THAN A CONVENIENCE. Without the id an operator is told their authority is short
+        # and not which line to delete — in a file whose refusal texts deliberately do NOT
+        # echo the `token_hash`, so there is nothing else in the line to grep by.
+        why="'the reason already describes it' — dropping the one field that identifies "
+        "the record, from a diagnostic whose whole job is to let somebody find that line.",
+    ),
+    Mutant(
+        name="append-inherits-the-replay-exemption",
+        path="internal/control/filestore.go",
+        old="\t\tif err := next.apply(e); err != nil {",
+        new="\t\tif err := next.apply(e); err != nil && !droppable(e, err) {",
+        killer="TestAppendStillRefusesWhatReplayWouldDrop",
+        # 🔴 THE MOST PLAUSIBLE EDIT OF THE WHOLE SET: the two paths now answer the same
+        # failure differently, which reads as an inconsistency somebody will "fix". It is
+        # the difference between tolerating a file that already exists and CREATING one —
+        # and through this arm the event is WRITTEN to the journal as well as skipped, so
+        # the file gains a permanent record no replay will ever apply.
+        why="making the write path agree with the read path. A caller can then append a "
+        "raw secret into the append-only authority and be told it succeeded.",
+    ),
+    # ---- the credential-issuing COMMAND: the redaction, and the one unretryable exit --
+    Mutant(
+        name="issued-format-renders-the-token-for-unlisted-verbs",
+        path="internal/control/credential_issue.go",
+        old="\tdefault:\n\t\tio.WriteString(f, rendered)",
+        new="\tdefault:\n\t\tio.WriteString(f, i.Token())",
+        killer="TestNoRenderingOfIssuedContainsTheToken",
+        # ⚠ THE POINTER INDIRECTION ON `Issued.token` HAS NO ROW HERE, AND THAT IS A LIMIT
+        # RATHER THAN AN OVERSIGHT. Reverting it (`*string` back to `string`) is three
+        # coordinated edits — the field, `Token()`'s nil arm, and the `&token` at the
+        # return — and this battery replaces ONE expression per row on purpose. It was
+        # measured by hand instead, and the number is the one that says which half of the
+        # redaction is load-bearing: with `Format` present and the field a plain string the
+        # widened sweep reports **24 of 154 (shape, verb) pairs** leaking — 21 verbs through
+        # an `Issued` in another struct's UNEXPORTED field, where no formatting method is
+        # consulted at all, plus `%p` on three shapes — while DELETING `Format` and keeping
+        # the pointer reports 0. An earlier note here said "1 of 22", measured by a sweep
+        # that only rendered depth 0.
+        why="the debugging edit at the NEW site. It is caught at depth 0, where `Format` IS "
+        "consulted; what it does not measure is the pointer, which is the half that holds "
+        "at every depth below that.",
+    ),
+    Mutant(
+        name="token-undelivered-shares-the-refusal-exit-code",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\t\treturn exitTokenUndelivered\n",
+        new="\t\treturn exitConfig\n",
+        killer="TestAFailedTokenDeliveryExitsItsOwnCode",
+        # 🔴 THE DANGER IS IN THE CALLER, NOT IN THIS PROGRAM. Every other non-zero exit
+        # here happens BEFORE the journal append; this one happens after a durable,
+        # unrevocable `credential-issued` record. A wrapper that retries on non-zero then
+        # mints a fresh live credential per attempt, and each one is a token nobody holds
+        # that nothing in this repository can revoke.
+        why="'one program, one refusal code' — the tidying edit that reinstates the "
+        "collision, since 78 genuinely is what every other failure here returns.",
+    ),
+    Mutant(
+        name="the-DEFAULT-sinks-delivery-error-is-discarded",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\t\t_, deliveryErr = fmt.Fprintln(out, issued.Token())",
+        new="\t\tfmt.Fprintln(out, issued.Token())",
+        killer="TestAFailedDeliveryToTheDEFAULTSinkExitsItsOwnCodeToo",
+        # 🔴 THE STATE THIS RESTORES IS THE ONE THAT SHIPPED, AND IT MADE THE 74 A CLAIM
+        # ABOUT THE PATH FEWER OPERATORS TAKE. Measured with an always-failing writer:
+        # exit 0, no warning, and one credential durably live and unrevocable. The input is
+        # ordinary — `cairn-server -issue-credential > /path/on/a/full/fs` returns ENOSPC
+        # from a one-line write rather than SIGPIPE — and the operator was then told the
+        # token was on stdout and would never be shown again.
+        why="the idiomatic 'print it and move on', which is what the line was. Every "
+        "assertion about the -token-out path stays green: that arm has its own seam, its "
+        "own test and its own mutant, and none of them touch the DEFAULT sink.",
+    ),
+    Mutant(
+        name="dropped-records-are-not-rendered-to-the-operator",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\tif m, err := store.Model(ctx); err == nil {\n\t\twarnAboutDroppedRecords(m, journal, warn)\n\t}",
+        new="\tif m, err := store.Model(ctx); err == nil {\n\t\t_ = m\n\t}",
+        killer="TestADroppedJournalRecordReachesTheOperatorsStderr",
+        # 🔴 THE SEAM ROW. `internal/control` decides to drop and can only record it as
+        # DATA — that package holds no logger by design — so "an operator is told" is a
+        # property of a wire neither side's own tests can see. Both halves stay green with
+        # this applied: `Model.Dropped` is still populated and this command still issues.
+        why="deleting a read whose result is 'only' printed. What it removes is the sole "
+        "reason a silently shorter authority was an acceptable trade.",
     ),
     # ---- the materialized cache: staleness, the triggers, and the two write paths --
     #
@@ -1058,7 +1331,78 @@ MUTANTS: tuple[Mutant, ...] = (
         "outage of the authority would stop every read, which is the promise cairn "
         "makes about an offline orient-me.",
     ),
-    # ---- the program: the only thing that bounds the declared divergence ----------
+    # ---- the program: the modes that EXIT, which is where a credential is minted ----
+    Mutant(
+        name="issue-credential-mode-is-not-dispatched",
+        path="cmd/cairn-server/main.go",
+        old="\tif *issue.enabled {",
+        new="\tif false && *issue.enabled {",
+        killer="TestTheBinaryActuallyDispatchesIssueCredential",
+        # 🔴 KILLED BY A DEADLINE, NOT AN ASSERTION, AND THAT IS THE OBSERVABLE THE DEFECT
+        # ACTUALLY HAS. A mode that is registered and never dispatched falls through into
+        # the SERVER path: the command does not refuse, it starts listening. The child in
+        # that test runs under a 20s context for exactly this shape.
+        why="the flags registered and the dispatch forgotten — a capability that exists in "
+        "`-help`, is exercised by every in-process test of `runIssueCredential`, and "
+        "cannot be reached from the command line at all.",
+    ),
+    Mutant(
+        name="two-modes-at-once-picks-a-precedence",
+        path="cmd/cairn-server/main.go",
+        old="\tif len(asked) > 1 {",
+        new="\tif false {",
+        killer="TestTheBinaryActuallyDispatchesIssueCredential",
+        extra_killers=("TestTheBinaryActuallyDispatchesCreateUser",),
+        why="the ledger replaced three pairwise `&&` checks, and a ledger can be wrong in "
+        "a way a pair cannot — it governs every combination or none. Without it the "
+        "FIRST mode in the dispatch order wins silently: `-routes -issue-credential` "
+        "prints the route table and exits 0 having minted nothing, which is the worst of "
+        "the three outcomes because the operator has a plausible success and no token.",
+    ),
+    Mutant(
+        name="token-out-writes-a-world-readable-credential",
+        path="cmd/cairn-server/issuecredential.go",
+        old="const tokenFileMode = 0o600",
+        new="const tokenFileMode = 0o644",
+        killer="TestTokenOutWritesA0600FileAndNothingOnStdout",
+        # 🔴 0644 IS NOT A TYPO HERE, IT IS THE DEFAULT THIS FLAG EXISTS TO REPLACE. The
+        # command's own printed remedy was a shell redirection, which creates its file at
+        # the umask — 022 on an ordinary host — so the state this mutant restores is
+        # exactly the one that shipped, beside a journal that is 0600 by construction.
+        why="reaching for the mode a redirection would have produced, on a file holding a "
+        "live bearer credential no tool in this repository can revoke.",
+    ),
+    Mutant(
+        name="token-out-clobbers-a-path-that-already-exists",
+        path="cmd/cairn-server/issuecredential.go",
+        old="os.O_WRONLY|os.O_CREATE|os.O_EXCL, tokenFileMode",
+        new="os.O_WRONLY|os.O_CREATE|os.O_TRUNC, tokenFileMode",
+        killer="TestTokenOutRefusesAPathThatAlreadyExistsAndMintsNothing",
+        # 🔴 O_EXCL IS WHAT MAKES THE MODE A CLAIM AT ALL, which is why this row is separate
+        # from the one above rather than a second spelling of it: `OpenFile`'s perm applies
+        # only to a file the call CREATES, so with O_TRUNC a pre-existing 0644 path keeps
+        # its mode and the 0600 constant becomes decorative. It also destroys whatever
+        # credential that file held, and it starts following symlinks.
+        why="the idiomatic 'overwrite the output file' flags, which read as convenience "
+        "and silently turn the mode guarantee into a property of the lucky case.",
+    ),
+    Mutant(
+        name="missing-principal-refusal-loses-its-branch",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\t\tif errors.Is(err, control.ErrNoSuchPrincipal) {",
+        new="\t\tif false && errors.Is(err, control.ErrNoSuchPrincipal) {",
+        killer="TestAPrincipalThatIsNotThereIsRefusedInThisCommandsOwnWords",
+        extra_killers=("TestAnIssueThatCannotSucceedIsRefusedAndWritesNothing",),
+        # 🔴 THE MUTANT STILL REFUSES, WITH THE MODEL'S OWN TEXT, WHICH IS WHY THE KILLER
+        # ASSERTS THE WORDING RATHER THAN THE EXIT CODE. Deleting this branch is how
+        # `ErrNoSuchPrincipal` goes back to being a sentinel with no consumer outside its
+        # own test — the state an audit measured, and the reason the pre-check's two other
+        # stated justifications did not survive.
+        why="deleting a branch that looks decorative because the command refuses either "
+        "way. What is lost is the only thing the pre-check buys: an operator reading "
+        "'this journal holds no user with id …' instead of a sentence about a batch that "
+        "would not replay.",
+    ),
     Mutant(
         name="the-cold-start-refusal-loses-its-operator-message",
         path="cmd/cairn-server/main.go",
@@ -1639,7 +1983,13 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="the-journal-refresh-failure-is-never-reported",
         path="cmd/cairn-server/createuser.go",
-        old="\t\tInterval:  refreshInterval,\n\t\tOnRefresh: journalRefreshReporter(journal, warn),",
+        # ⚠ THE PATTERN CARRIES THE REPORTER'S THIRD ARGUMENT, AND THE BATTERY'S OWN
+        # HARNESS CHECK IS WHAT CAUGHT IT GOING STALE. When `journalRefreshReporter` grew
+        # the new-drop announcer, this row's `old` matched 0 times — which the runner
+        # reports as a HARNESS ERROR rather than scoring the mutant SURVIVED, because a
+        # pattern that matches nothing never runs and would otherwise read as a guard that
+        # cannot go red.
+        old="\t\tInterval:  refreshInterval,\n\t\tOnRefresh: journalRefreshReporter(journal, warn, announceNewDrops),",
         new="\t\tInterval: refreshInterval,",
         killer="TestTheRunningPodSAYSSoWhenItsControlJournalGoesBad",
         why="the WIRING of the only signal a running pod gives about a control journal "
@@ -1652,6 +2002,76 @@ MUTANTS: tuple[Mutant, ...] = (
         "`journalRefreshReporter` DIRECTLY and stays GREEN under this mutant — the same "
         "'a capability in a function nobody routes to' shape as the row below, which is "
         "why this row exists rather than trusting that one.",
+    ),
+    # ---- the drop announcement: three render sites, and the one that runs on a TIMER ---
+    #
+    # 🔴 EACH SITE FAILS ALONE, WHICH IS WHY THERE ARE FIVE ROWS AND NOT ONE. `control`
+    # decides to DROP a record and can only carry it as data — the package holds no logger
+    # by design — so "an operator is told" is a property of a wire neither side's own tests
+    # can see, at each of the places a program reads a model. An audit round measured it:
+    # stubbing out `cmd/cairn-server/createuser.go`'s render and `cmd/cairn-ui/main.go`'s
+    # left `go test ./cmd/... ./internal/control/...` fully green, because the only guard
+    # targeted the THIRD site.
+    Mutant(
+        name="the-pods-startup-never-announces-its-dropped-records",
+        path="cmd/cairn-server/createuser.go",
+        old="\tannounceNewDrops := newDropAnnouncer(journal, cache.Model, warn)\n\tannounceNewDrops()",
+        new="\tannounceNewDrops := newDropAnnouncer(journal, cache.Model, warn)",
+        killer="TestADropAlreadyInTheJournalIsAnnouncedWhenTheAuTHORITYOPENS",
+        why="the render deleted at the site a pod reaches FIRST. A pod started over a "
+        "journal that already holds a bad line comes up serving an authority quietly "
+        "shorter than the file, and the person who cannot sign in is the signal.",
+    ),
+    Mutant(
+        name="the-pods-refresh-never-announces-a-NEW-drop",
+        path="cmd/cairn-server/createuser.go",
+        old="\t\tOnRefresh: journalRefreshReporter(journal, warn, announceNewDrops),",
+        new="\t\tOnRefresh: journalRefreshReporter(journal, warn, nil),",
+        killer="TestADropAppearingWhileThePodIsRunningReachesTheOperator",
+        # 🔴 THIS IS THE STATE THE PR SHIPPED, AND IT IS WHY THE ROW IS NOT A HYPOTHETICAL.
+        # `warnAboutDroppedRecords` ran once, before `Cache.Run` started, and `OnRefresh`
+        # takes an `error` and cannot see a model — so a `credential-issued` line appended
+        # to a LIVE pod's journal with a raw token in `token_hash` was dropped with an
+        # EMPTY operator stream. The round that introduced it had traded a loud outage for
+        # a silent no-op and reported only the first half.
+        why="the announcer unwired from the only per-refresh hook. The startup row above "
+        "stays green under it, which is exactly how the silence shipped.",
+    ),
+    Mutant(
+        name="a-standing-drop-is-re-announced-on-every-refresh",
+        path="cmd/cairn-server/createuser.go",
+        old="\t\t\tif _, said := announced[line]; said {\n\t\t\t\tcontinue\n\t\t\t}",
+        new="\t\t\tif false {\n\t\t\t\tcontinue\n\t\t\t}",
+        killer="TestADropIsAnnouncedOnceNoMatterHowOftenTheJournalIsREAD",
+        extra_killers=("TestADropAppearingWhileThePodIsRunningReachesTheOperator",),
+        why="the ledger dropped, which reads as a simplification and is the OTHER way to "
+        "lose this warning. The refresh is 30 s, so one bad journal line becomes ~2,880 "
+        "identical lines a day — a stream an operator filters, which is the same outcome "
+        "as never warning. The same arithmetic `journalRefreshReporter`'s edge detector "
+        "exists for, reintroduced one hook over.",
+    ),
+    Mutant(
+        name="the-UIs-startup-never-renders-its-dropped-records",
+        path="cmd/cairn-ui/main.go",
+        old="\t\tfunc(line string) { fmt.Fprintln(os.Stderr, line) })\n\tannounceNewDrops()",
+        new="\t\tfunc(line string) { fmt.Fprintln(os.Stderr, line) })",
+        killer="TestTheBINARYSaysSoWhenItsJournalLostARecordAtReplay",
+        # 🔴 THE RENDER IS INSIDE `main`, SO ITS GUARD HAS TO RUN THE BINARY. Every other
+        # test in that package drives `openAuthority` and the refusal predicate directly
+        # and stays green with this applied — the "a capability nobody routes to" shape.
+        why="the render deleted on the surface whose own comment says it feels a dropped "
+        "credential FIRST: the startup refusal may fire BECAUSE the only credential in the "
+        "journal was the dropped one, and without this line that reads as an empty journal.",
+    ),
+    Mutant(
+        name="the-UIs-refresh-never-announces-a-NEW-drop",
+        path="cmd/cairn-ui/main.go",
+        old="\t\t\t\t// read — and that is the case the startup render above cannot see.\n\t\t\t\tannounceNewDrops()",
+        new="\t\t\t\t// read — and that is the case the startup render above cannot see.",
+        killer="TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup",
+        why="the same unwiring as the pod's refresh row, on the surface where a dropped "
+        "credential is a person failing to sign in RIGHT NOW. Its killer is the only test "
+        "in this repository that runs `cairn-ui` as a long-lived process.",
     ),
     Mutant(
         name="main-never-dispatches-create-user",

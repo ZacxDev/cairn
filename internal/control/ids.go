@@ -105,6 +105,66 @@ func HashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// isHexDigest answers whether s has the SHAPE `HashToken` produces: HashHexLen
+// characters, every one of them a hex digit — in EITHER case.
+//
+// 🔴 IT IS THE SHAPE CHECK `Event.validate` APPLIES TO `token_hash`, AND IT IS WIDER THAN
+// A LENGTH CHECK FOR ONE MEASURED REASON: a 64-character raw secret is a realistic value,
+// not a contrived one. `base64.RawURLEncoding` of 48 random bytes is exactly 64
+// characters. A length-only check accepted that and wrote it into the append-only journal.
+//
+// 🔴 AND CASE IS NOT WHAT DISCRIMINATES THAT HAZARD, WHICH IS WHY BOTH CASES ARE ACCEPTED
+// — A LOWERCASE-ONLY VERSION OF THIS FUNCTION SHIPPED IN AN EARLIER DRAFT AND IS
+// RETRACTED. A raw base64url token is excluded by the characters it carries: `-`, `_`,
+// and every letter from `g` to `z`. It is never excluded by their CASE, so requiring
+// lowercase buys ZERO additional hazard coverage. What it costs is a retroactive refusal,
+// and the blast radius is the whole file rather than the row: this check runs on REPLAY,
+// through `Model.apply`, which fails a journal WHOLE — so one hand-written uppercase
+// digest loads zero credentials, and `FileStore.Reload` then falls back to
+// `lastKnownGood()`, which is empty on a cold start. The population that holds such a row
+// is exactly the one the older `cmd/cairn-ui` refusal text created by prescribing a
+// hand-appended record, and `Get-FileHash` and `certutil -hashfile` both emit uppercase.
+//
+// ⚠ ACCEPTING THE SPELLING IS ONLY HALF; `apply` NORMALISES IT. A digest that is stored
+// uppercase can never match a presented token — `EqualHash` is byte-exact and `HashToken`
+// emits lowercase via `%x` — so admitting the row without lowering it at the model
+// boundary would replay clean and authenticate nobody. See the `EventCredentialIssued`
+// arm of `Model.apply`, which is where that is done and why.
+//
+// ⚠ IT IS A SHAPE CHECK AND NOT AN AUTHENTICITY CHECK, WHICH IS ALL THAT IS AVAILABLE. It
+// cannot tell a real sha256 digest from 64 random hex characters, because nothing can — a
+// digest has no structure to verify. What it removes is the class of values that are not
+// digests at all, which is the class a raw token is in.
+//
+// ⚠ NOT `hex.DecodeString`, WHICH WOULD ANSWER THE SAME QUESTION. The explicit range is
+// allocation-free on the hot replay path, where every credential event runs it, and it
+// states the accepted alphabet where a reader deciding about case can see it.
+func isHexDigest(s string) bool {
+	if len(s) != HashHexLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizedDigest is the ONE spelling of a token digest the model holds.
+//
+// 🔴 IT EXISTS BECAUSE THE JOURNAL IS DURABLE AND THE MODEL IS NOT. What an operator
+// hand-wrote stays in the append-only file forever, in whatever case they wrote it; what
+// `Resolve` compares against, and what the duplicate-digest refusal compares, is the map
+// `apply` builds. Normalising at that boundary is what makes one secret have one spelling
+// everywhere it is USED without rewriting a byte of what was RECORDED.
+//
+// ⚠ ASCII ONLY BY CONSTRUCTION, AND THAT IS `isHexDigest`'S DOING RATHER THAN THIS
+// FUNCTION'S: `strings.ToLower` is Unicode-aware, and every input that reaches here has
+// already been refused unless all 64 of its bytes are `[0-9a-fA-F]`.
+func normalizedDigest(s string) string { return strings.ToLower(s) }
+
 // EqualHash compares two digests in constant time.
 //
 // 🔴 `subtle.ConstantTimeCompare`, NOT `==`, FOR THE SAME REASON `authz.Authorize`
