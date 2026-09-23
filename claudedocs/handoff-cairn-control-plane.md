@@ -24,106 +24,88 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`93d0f03`** (#74 merged). Open: **#75** (this doc) and **#69** (the rename, ranked
-  item 7).
-- ✅ **THE ARC IS CLOSED, AND THE VERDICT WAS TAKEN ON `main`.** #64 merged as **`7d7c9ea`**;
-  all four clauses were then measured on `main` rather than inferred from the PR's six green
-  checks, because the condition says "on `main`" and names the commands: authz matrix PASS ·
-  share flow + replica-honesty notice PASS · identity through both backends PASS ·
-  `packages.default` the Go client PASS · `pytest tests -q` **1997 passed / 0 failed** ·
-  `go test ./...` **18 ok**. **ADDRESSED ⇒ ARC CLOSED.** Verified BY CONTENT: the payload
-  paths diff empty between the PR head and `main`.
-- ✅ **FOUR MERGED THIS SESSION, EACH VERIFIED BY CONTENT:** **#64 → `7d7c9ea`** (the share
-  flow), **#72 → `6db7179`** (the changelog row, which could not exist inside #64 because the
-  file requires a MERGE SHA), **#71 → `1659663`** (the handoff), **#73 → `f8a257e`** (the
-  prune). **Closed: #61** (subsumed by #64's README lead), **#62** and **#65** (superseded),
-  each with its reason posted rather than a bare close.
-- ✅ **THE DOC IS PRUNED: 115,483 B → 52,228 B**, under its own 65,536 B guideline for the
-  first time in eight updates. 🔴 **PRUNED MEANT MOVED — 125 of 174 `Gotchas` bullets went to
-  the archive VERBATIM and 49 stayed, with all 174 verified present in exactly one file, 0
-  missing and 0 duplicated**, every other section byte-identical and the archive append-only.
-  The bulk of the size was DUPLICATION rather than history: `isolation: "worktree"` was
-  recorded six times, `$?`-after-a-pipe three, MERGEABLE-but-conflicting four.
-- ⏳ **#74 IS OPEN** — it closes three batched defect entries, one of which turned out to be a
-  live gate defect rather than prose (recorded under `Gotchas`, which is the half that survives
-  this heading being replaced). Its ladder is round 0 + round 1 per the standing decision.
-- 🔴 **TWO LIVE CLAIMS WERE POINTING AT THE WRONG ITEMS, AND BOTH ARE NOW REPAIRED — THE
-  MEASUREMENT IS WORTH MORE THAN THE REPAIR.** `claim-work --list` said `-2` carried the subject
-  *"#48's two, the nine-verbs count, #44's four"*, which is ranked item **1**, not 2; and `-5`
-  carried the **rename**, which this list ranks at **7**. A session taking the credential command
-  (item 5) would have derived `-5`, been told *"ALREADY YOURS — carry on"*, and worked it under a
-  claim telling every other session the rename was in hand. ⚠ **`rc 12` IS THE DANGEROUS CODE, NOT
-  `rc 10`**: a stranger's claim stops you, your own waves you through, and only the SUBJECT says
-  what it is for. Now: `-1` land #74 · `-2` the defects still open after it · `-5` the credential
-  command · `-7` the rename. `cairn-control-plane-1` had been released when the prune landed and
-  is re-taken.
-- **No external-task-board field**: the resolver exited 5 again. Its positive control proves a
-  CORRECT id would have resolved, which is narrower than a clean bill of health.
+- `main` @ **`a88f60b`**. **No open PRs.** No `cairn-control-plane-*` claim is held — rank 8 was
+  released at the end of this session precisely so the next one can take it.
+- ✅ **THE BROWSER'S WRITE HALF WORKS, AND IT WAS DRIVEN END TO END ON `main` RATHER THAN
+  INFERRED.** `cairn-server -issue-credential` (#76, `a88f60b`) is the tool that did not exist
+  this morning. Measured loop, all against `origin/main`:
+  `-create-user` ×2 → `-issue-credential -token-out` (file mode **600**) → `cairn-ui
+  -control-journal` starts and prints **"sharing writable"** (it REFUSED to start before) →
+  `POST /sign-in` **303** → `GET /share` lists **"Scopes you can share: alpha-notes"** (it said
+  "No scope is administrable by this credential" before) → `POST /share` **303**, journal 8 → 9
+  lines, `GRANTED grt_hw7c… → project prj_ktsg… verbs=[read write]`.
+  Both cross-site gates hold on the live binary: **wrong CSRF → 403**, **missing `Origin` → 403**.
+- 🔴 **AND IT IS STILL DEPLOYED BY NOTHING — THAT HAS NOT CHANGED.** No image derivation, no
+  manifest; `publish-image.yml` pushes the two POD images only. "Usable from a browser" means
+  *you run the binary yourself*. Two further limits, both by design and both named on the page:
+  sharing reaches only principals you already share a project with (invite flow is P6), and
+  `EventCredentialRevoked` **still has no writer**, so rotation is issue-then-hand-append.
+- ✅ **FOUR MERGED THIS SESSION, EACH VERIFIED BY CONTENT** (a squash makes ancestry false
+  forever, so content and merge-state are checked separately): **#74 → `93d0f03`**,
+  **#75 → `a41594c`**, **#76 → `a88f60b`**. A sibling landed **#69 → `56cc56e`** (the
+  `CAIRN_*` rename), **#78** and **#79** alongside.
+- 🔴 **#76 RAN A FOUR-ROUND LADDER AND EVERY ROUND FOUND WHAT THE PREVIOUS FIX INTRODUCED.**
+  Round 0: the new hex guard refused an EXISTING journal **whole** on replay. Round 1: the token
+  leaked through **14 of 22 `fmt` verbs**, and the drop leniency broke its own "never silent"
+  precondition. Round 2: the prose credited the wrong half of the redaction. Round 3: three stale
+  claims, **no behaviour defect**. The ladder was stopped by operator decision at round 3, not by
+  a clean round — stated because those are different claims.
+- **No external-task-board field**: the resolver exited **5** — 0 tasks for this session, which
+  cannot distinguish "touched none" from "wrong id". Not a clean bill of health. The doc's
+  existing field was left untouched.
 
 ## Next steps (ranked)
 
-🔴 **THE NUMBERING MOVED, DELIBERATELY, AND THE CLAIM MOVED WITH IT.** Rank is half a claim's
-slug, so a shuffle silently re-points every live one. The old rank 1 (prune this document)
-CLOSED as `f8a257e`, so ranks 1 and 2 moved (3–7 did not). 🔴 **RE-RANKING IS HALF THE JOB:
-RE-SUBJECT THE CLAIMS IN THE SAME BREATH.** This document already carried that rule and did not
-apply it to its own list — two claims were left pointing at work they did not name, and the
-audit that found it read the live queue rather than this file. **A session taking an item must
-`claim-work` it first, and must read the SUBJECT the claim prints rather than trusting the
-number** — the number is what went stale.
+🔴 **THE NUMBERING IS STABLE AND DONE ITEMS ARE MARKED, NOT DELETED.** Rank is half a
+`claim-work` slug; this session measured a renumber re-pointing **two** live claims at work they
+did not name, and `rc 12` ("ALREADY YOURS — carry on") waving it through. **Read the SUBJECT the
+claim prints, never the number.**
 
-1. ✅ **DONE — #74 merged as `93d0f03` and its entries are closed in `## Defects (batched)`.**
-   Kept as a numbered row rather than deleted, because deleting it renumbers every item below and
-   re-points every live `claim-work` slug — which this session measured going wrong twice in one
-   day. `cairn-control-plane-1` is released.
+1. ✅ **DONE — #74 merged as `93d0f03`**, entries closed in `## Defects (batched)`.
    forcing: gate — the entries' own closing conditions, which named a PR.
-2. **The remaining batched defects.** Still open after #74: #48's (c) `lib/README.md` (the
-   re-count recipe greps two literal phrases, so it is a SPELLED check that cannot see a
-   reworded echo); the stale node-affinity comment, which lives in the **deployment-manifest
-   repository** rather than this one and needs its own change THERE — 🔴 that repo's NAME is a
-   denied identifier in THIS tree, and writing it here is what `leakscan` refused, so take it
-   from the operator rather than from a doc in this repo; and the carried-forward list.
+2. **The remaining batched defects.** Still open: #48's (c) `lib/README.md` (the re-count recipe
+   greps two literal phrases, so it is a SPELLED check that cannot see a reworded echo); the
+   stale node-affinity comment, which lives in the **deployment-manifest repository** rather than
+   this one — 🔴 that repo's NAME is a denied identifier here, so take it from the operator; and
+   the carried-forward list.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else surfaces them.
 3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
    Key it on principal + epoch; `control.Authorization` already carries `Epoch`.
    forcing: none
-4. **P8 — retire the Python oracle.** Gated on the default flip holding over real use, which
-   is a waiting period rather than a task.
+4. **P8 — retire the Python oracle.** Gated on the default flip holding over real use, which is a
+   waiting period rather than a task.
    forcing: none
-5. ✅ **DONE — `cairn-server -issue-credential` over `control.IssueCredential`, in #76.** Marked
-   rather than deleted: the rank is half a live `claim-work` slug, and this session measured a
-   renumber re-pointing two claims at work they did not name. `cairn-control-plane-5` released.
-   ⚠ **The hazard this item named was REAL and is closed structurally**: `Event.validate` checked
-   `token_hash`'s LENGTH ONLY, so a 64-character raw secret was accepted and persisted verbatim
-   into an append-only authority. It now requires a hex digest, normalised to lowercase on store.
-   ⚠ **`EventCredentialRevoked` still has no writer**, so rotation is "issue, then hand-append the
-   revocation" — the same shape as the gap this closed, one event over.
+5. ✅ **DONE — `cairn-server -issue-credential` over `control.IssueCredential`, in #76**
+   (`a88f60b`). ⚠ **`EventCredentialRevoked` STILL HAS NO WRITER** — the same shape as the gap
+   this closed, one event over.
    forcing: gate — a shipped binary refused to start and named this as the missing piece.
-6. **Fold the new defect entries in and mark #60/#66 closed**, once the doc PRs have merged.
+6. **Fold the new defect entries in and mark #60/#66 closed.**
    forcing: user — the operator chose this sequencing explicitly.
-7. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` BEHIND A DEPRECATION WINDOW — SHAPE ALREADY
-   DECIDED, AND ⚠ IN FLIGHT as ZacxDev/cairn#69.** Check `claim-work --list` before taking it.
-   Both names work; the old one logs a warning **naming its replacement**; the removal version
-   is **stated**. Explicitly NOT aliases-forever and NOT a clean break folded into P8 — both
-   offered and declined. Touches `lib/cairn_instances.py`, `cairn`,
-   `lib/subsystem_read_store.py`, `server/server.py`, the `internal/` env readers, and
-   `AGENTS.md`'s "Naming" section. ⚠ The repo is PUBLIC and consumers pin the flake, so the
-   warning text and the removal version are a PUBLISHED CONTRACT.
+7. ✅ **DONE BY A SIBLING — `SUBSYSTEM_STORE_*` → `CAIRN_*` landed as #69 (`56cc56e`)**, with
+   `internal/envalias` as the resolver. ⚠ Merging it into an in-flight branch is what produced
+   this session's worst damage — see the Gotchas bullet on declaration-set diffs.
    forcing: user — item 5 of the five approved with "proceed as recommended".
-8. 🔴 **MAKE `handoff_doc.py` RUN `leakscan` ON THE DELTA AND REFUSE ON rc≠0.** Appended at the END
-   deliberately: rank is half a claim's slug, so a new item may not push `cairn-control-plane-2`
-   off the work it names. Three `denied-identifier` events have now happened on handoff deltas and
-   the standing remedy is a SENTENCE in this document, written three times in three wordings — no
-   code runs it, and `~/.claude/skills/handoff/` does not mention `leakscan` at all. The write tool
-   commits and pushes in ONE call, so it is the only place a check can sit. ⚠ The script lives in
-   the repository that owns the handoff tooling, NOT this one, and it must find the scanner from
-   the TARGET repo rather than assume one — a repo with no `tests/leakscan.py` has to PASS, not
-   fail. 🔴 **A FOURTH EVENT OF THIS CLASS HAPPENED WHILE THIS VERY ITEM WAS BEING WRITTEN**: the
-   first draft named that repository outright and the gate refused it — this time BEFORE the push,
-   because the scan ran on the working tree rather than after a commit. That is the remedy working
-   by hand, and it is the argument for wiring it in. **Closing condition:** a delta
-   carrying a known-denied identifier is refused by the tool, watched.
-   forcing: incident — FOUR leak events, one of which reached `main` (#68); the gate's own
-   refusals are the evidence, and the last two happened with the lesson already written down.
+8. 🔴 **MAKE `handoff_doc.py` RUN `leakscan` ON THE DELTA AND REFUSE ON rc≠0.** **Released, and
+   the recommended next item.** Four `denied-identifier` events have now happened on handoff
+   deltas, one reaching `main` as #68; the standing remedy is a SENTENCE, written four times in
+   four wordings, and `~/.claude/skills/handoff/` mentions `leakscan` nowhere. The write tool
+   commits and pushes in ONE call, so the delta file is the only place a check can sit. ⚠ It
+   lives in the repository that owns the handoff tooling, NOT this one, and must find the scanner
+   from the TARGET repo — a repo with no `tests/leakscan.py` has to PASS, not fail.
+   **Closing condition:** a delta carrying a known-denied identifier is refused by the tool,
+   watched.
+   forcing: incident — four leak events, one of which reached `main`; the gate's own refusals are
+   the evidence, and the last two happened with the lesson already written down.
+9. 🔴 **MANUAL BROWSER VALIDATION OF THE SHARE FLOW, DRIVEN BY A HUMAN IN A REAL BROWSER.**
+   Everything in `State now` was measured with `curl`, which is a different instrument: it sends
+   no `Origin` unless told, runs no JavaScript, keeps no cookie jar semantics, and cannot see
+   layout, focus order, or whether the replica-honesty notice is actually READ. **Bring the
+   surface up with the `How to verify` recipe below and click it.** ⚠ 🔴 **DO NOT RAISE OR FOCUS
+   A WINDOW FROM AN AGENT** — that is a `pkill`-class action on the operator's screen; hand the
+   URL over and let the human open it.
+   **Closing condition:** a named person reports the click path worked in a real browser, naming
+   what they saw on `/share` before and after the grant.
+   forcing: user — asked for explicitly at this session's handoff.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** Three went there
@@ -574,39 +556,100 @@ number** — the number is what went stale.
   files, 0 missing and 0 duplicated, with every other section byte-identical. A prune that
   cannot prove it moved rather than cut is the `BYPASS`-deletion failure with a tidier diff.
 
+- 🔴 **A CLEAN TEXTUAL MERGE DELETED FOUR TESTS, AND THE CONFLICT IT REPORTED WAS ABOUT A
+  COMMENT.** Merging #69 into #76: `git` reported ONE conflict in `cmd/cairn-ui/main_test.go`,
+  covering a comment; taking one side of that hunk removed four unrelated tests the other side
+  had added further down the same file. No marker, no error, and reading the hunk could never
+  have shown it. 🔴 **What caught it is a DECLARATION-SET DIFF AGAINST BOTH PARENTS** —
+  `comm -23 <(git show <parent>:<f> | grep -oE '^func [A-Za-z][A-Za-z0-9_]*' | sort) <(… the
+  merged file …)`, run for each parent. Do that on every merge where both sides touched one file;
+  "no conflict markers left" is not the same claim.
+- 🔴 **AND THE SAME MERGE LEFT A TREE THAT DID NOT COMPILE, FROM FILES THAT NEVER CONFLICTED.**
+  The rename replaced an env helper; the new command's call site — added on the other branch, in
+  a hunk the rename never touched — still called the old name. **Disjoint files are not safety:
+  one side widened how something is read, the other added a caller.** The mutation battery is
+  what said so first, by REFUSING TO VOUCH: *"the unedited copy is not green, so every mutant
+  below would score KILLED for a reason that has nothing to do with its guard."* A non-compiling
+  tree would otherwise have reported a perfect score.
+- 🔴 **TWO COUNTED THINGS COLLIDED IN THAT MERGE AND NEITHER SIDE'S NUMBER SURVIVED.** The
+  battery went 120→123 on one side and 120→147 on the other; the answer is **150**, and adding
+  them is a guess. **Take a merged count from the gate that owns it** — here
+  `tests/test_control_mutant_count_is_pinned.py` — and take the KILLED figure from an actual run
+  (`150/148/2, 0 misattributed, 0 harness-errors`), never carry it forward.
+- 🔴 **A REDACTION'S PROSE CREDITED THE HALF THAT DOES NOT WORK, AND I REPEATED IT BEFORE
+  MEASURING.** `Issued` hid its token behind `String()`/`GoString()` plus a `*string` field. The
+  code, the README and my own report said `Format` closed 21 of 22 verbs and the pointer closed
+  the last. Measured over 7 shapes × 21 verbs: **pointer alone → 0 leaks; `Format` alone → 22**,
+  19 of them through an `Issued` in an **unexported field of another struct**. `fmt` follows a
+  pointer only at depth 0, so the field renders as an ADDRESS at any depth; `Format` is never
+  consulted for a value `fmt` cannot `Interface()`, which is exactly what an unexported field is.
+  🔴 **The sweep that "proved" the wrong attribution rendered at depth 0 only** — it structurally
+  could not see the case its own docstring called realistic. **Ask what depth your sweep reaches
+  before believing which half it credits.**
+- 🔴 **A GUARD OVER A DURABLE FILE IS TWO DECISIONS — APPEND-TIME AND REPLAY-TIME — AND ONLY ONE
+  IS USUALLY REASONED ABOUT.** Tightening `token_hash` to lowercase hex refused an EXISTING
+  journal **whole** on replay: one bad record, zero credentials loaded, authority falls back to
+  empty on a cold start. The population was the one the old docs created, since the pre-change
+  text told operators to hand-append. **Narrowing a guard is not a safe direction when the guard
+  runs over a file somebody else already wrote.** Operator decision: replay DROPS an unusable or
+  duplicate `credential-issued` with a diagnostic, append still refuses outright — safe only
+  because a dropped ISSUE narrows authority while a dropped REVOCATION would widen it, so the
+  exemption is a kind-keyed table that structurally cannot reach any other event.
+- 🔴 **"IT IS NEVER SILENT" IS A CLAIM ABOUT EVERY PATH, INCLUDING THE BACKGROUND ONE.** That
+  same leniency announced drops at startup only, so a record hand-appended to a RUNNING pod
+  produced an empty operator stream — the change had traded a loud outage for a silent no-op and
+  reported only the first half. **When you make a failure quieter, ask which surface stops seeing
+  it.**
+- ⚠ **A LONG-RUNNING READER IS AS UNSAFE AS A WRITER IN A SHARED WORKTREE.** A full mutation
+  battery was backgrounded in a tree that was then handed to a mutating agent; its result was
+  meaningless and was discarded rather than quoted. The worktree-isolation rule is written about
+  two writers; it applies to a reader whose answer you intend to believe.
+- **Decision (operator, this session): the audit ladder on #76 STOPS AT ROUND 3**, with round 3's
+  three stale-claim findings fixed. Not a clean round — a clean round would have ENDED it, and
+  saying which happened is the point.
+- ⚠ **`curl` IS NOT A BROWSER, AND THE DIFFERENCE IS A GATE.** `POST /sign-in` answers **403**
+  from `curl` with no `Origin` header and **303** with one, because the same-origin gate runs
+  BEFORE auth and a real browser always sends it. A session measuring the sign-in path without
+  that header would file a working gate as a broken flow.
+
 ## How to verify
 
+🔴 **THE BROWSER LOOP, END TO END, ON `main`.** Every step below was run at `a88f60b`; the
+`curl` half is what an agent can do and the click half is ranked item 9's, for a human.
+
 ```bash
-cd /home/zach/workspace/cairn
-python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
-uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
-go vet ./... && go test ./... && go test -race ./...
-python3 -u tests/control_mutants.py          # 120 mutants over SEVEN packages
-uv run --python 3.12 --with pytest -- python -u tests/publish_workflow_mutants.py
-python3 tests/conformance/suite.py run       # oracle: 0 failures
-bash tests/conformance/run_go.sh             # Go: 0 failures, 4 skips
-python3 tests/dualrun/harness.py             # SUMMARY … differences=0
-python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
+R=/home/zach/workspace/cairn; T=$(mktemp -d); mkdir -p $T/store/alpha-notes
+printf '# Alpha notes\n\nSynthetic.\n' > $T/store/alpha-notes/index.md
+nix develop $R -c bash -c "cd $R && go build -o $T/srv ./cmd/cairn-server && go build -o $T/ui ./cmd/cairn-ui"
+export CAIRN_CONTROL_JOURNAL=$T/journal.jsonl; : > $T/journal.jsonl
+
+$T/srv -create-user -provider p -subject alice -email Alice -project "Alice Notes" -scopes alpha-notes
+ALICE=$(python3 -c "import json;[print(e['user_id']) for e in map(json.loads,open('$T/journal.jsonl')) if e['kind']=='user-created']" | head -1)
+$T/srv -issue-credential -principal $ALICE -principal-kind user -label browser -token-out $T/tok
+stat -c %a $T/tok            # 600 — NOT a shell redirect, which is 0644 at the default umask
+
+$T/ui -store $T/store -control-journal $T/journal.jsonl -session-file $T/sessions.json \
+      -host 127.0.0.1 -port 18821 &   # must print: sharing writable
 ```
 
-🔴 **RUN THE MUTATION BATTERIES UNDER AN INTERPRETER THAT HAS `pytest`.** A bare `python3`
-has none. `control_mutants.py` itself needs only a Go toolchain and **REFUSES with exit 2**
-when there is none, rather than skipping.
-🔴 **`dualrun` and `parity` exit 2 for "COULD NOT VOUCH", which is NOT "failed"**.
-🔴 **Verify a squash merge BY CONTENT, never by ancestry.**
-🔴 **Reading CI: require SIX checks present AND all COMPLETED.** ⚠ And `mergeable` can read
-`UNKNOWN` for minutes after the last check goes green — that is GitHub computing lazily, a
-property of the API rather than of the PR. Re-read until it settles.
+Then hand `http://127.0.0.1:18821/` to a human — **do not open or raise it from an agent.**
+Expected: sign-in form → paste `$(cat $T/tok)` → the entries page names the signed-in user →
+`/share` lists *"Scopes you can share: alpha-notes"* → the scope page shows *"Who has access:
+… via project membership"* → sharing with the project adds a `granted` line to the journal and a
+row under *"Shares you can take back"*.
 
-**The share flow, by hand (after #64):**
+**The gates, which `curl` CAN check and which a browser will not show you:**
+
 ```bash
-nix build github:ZacxDev/cairn#cairn-ui
-./result/bin/cairn-ui -store <store> -token-file <tokens> -control-journal <journal> -port 8103
-# WITHOUT a journal: the share index says on every load that no share can be recorded, and
-#   every scope page 404s — the token-file projection confers `admin` on NOBODY.
-# WITH a journal that has no live credential: exit 78, naming the cause. `-create-user`
-#   does NOT fix that; it mints a user and no credential.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -d "token=$(cat $T/tok)" http://127.0.0.1:18821/sign-in   # 403 — no Origin
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Origin: http://127.0.0.1:18821' \
+     -d "token=$(cat $T/tok)" http://127.0.0.1:18821/sign-in                                               # 303
 ```
+
+A `POST /share` with a wrong `csrf` field answers **403**; with no `Origin` header, **403**.
+
+🔴 **Kill the UI by RESOLVED PID, never by a `-f` pattern** — `pgrep -x ui`, then confirm
+`/proc/<pid>/exe` is the binary you built, then `kill`.
 
 ## Open investigations — live diagnosis state
 
