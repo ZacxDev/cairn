@@ -441,13 +441,21 @@ deployed. `#78` moved three of those sites and missed one more **in the very fil
 it was editing** — nothing greps prose, so a sweep is the only thing that finds
 the copy you were not looking at.
 
-🔴 **AND THAT RETRACTION IS INCOMPLETE — MORE SITES STILL CARRY THE CLAIM,
-INCLUDING `flake.nix` VERBATIM, THIS GUARD'S OWN "WHY THIS FILE EXISTS"
-DOCSTRING, AND SEVERAL IN THIS FILE.** They are NOT swept, on purpose: this repo
-holds no manifest, so nothing in it can establish which pod a cluster actually
-pulls — the Go side's whole evidence is a commit message. **A sweep would
-propagate an unverified claim to every site it touched.** The operator settles
-which pod is deployed; until then the inconsistency is RECORDED, not resolved.
+✅ **THE RETRACTION WAS INCOMPLETE AND THE SWEEP IS NOW DONE.** This block used to
+say the other sites were *"NOT swept, on purpose"* — that this repo holds no
+manifest, so nothing in it could establish which pod a cluster pulls, and a sweep
+would therefore *"propagate an unverified claim to every site it touched"*. That
+was the right call **while the fact was unverified**. The operator has since
+settled it: the cluster pulls `cairn-store-go`, and `flake.nix`, this guard's
+`WHY THIS FILE EXISTS` docstring, `README.md`, the publish workflow and the sites
+in this file were all swept on that authority.
+
+⚠ **AND THE "NOT SWEPT" NOTICE ITSELF SURVIVED THE SWEEP THAT DISCHARGED IT,
+WHICH IS THE FAILURE THIS PARAGRAPH NOW RECORDS.** `AGENTS.md` — paid by every
+session — points here for *"the retraction"*, so a stale notice at this address
+tells every future agent the tree is knowingly inconsistent pending a decision
+that has already been taken. **A notice that licenses work is itself work: retire
+it in the commit that does the work.**
 
 **Do not enumerate the sites here — run the sweep.** A list in prose goes stale
 and reads as complete; three were written into this paragraph and each was wrong.
@@ -563,11 +571,13 @@ a hypothetical.
 THAT IS MEASURED.** A first draft of this very paragraph said the comparison had
 "inverted … the direction that reads as reassurance", which asserted a risk
 increase nobody had measured. The measurement already existed, in
-`claudedocs/handoff-cairn-control-plane-archive.md` under the 2026-09-19 CLOSED
-block: `busybox --list` on **both** nix images is **402 applets, zero difference in
+`claudedocs/handoff-cairn-control-plane-archive.md`, in the CLOSED block whose
+heading begins "RANK 1'S REMAINDER: the DEPLOY decision": `busybox --list` on **both** nix images is **402 applets, zero difference in
 either direction** — the Python image CI already published carried the identical
 set — while the image actually replaced (Debian-slim) had **11 setuid/setgid
-binaries** (`su`, `passwd`, `mount`, …) and a CPython interpreter, against **zero
+binaries** (`su`, `passwd`, `mount`, …) and **two** interpreters — CPython 3.12
+and Perl; a draft of this sentence said "a CPython interpreter", undercounting by
+one **five lines below the paragraph about four successive undercounts** — against **zero
 setuid and zero interpreters** on the Go one. **A narrowing on both axes.**
 ⚠ Busybox stays load-bearing — seeding needs `tar`, revocation needs
 `sh -c 'kill -HUP 1'` — which is why a distroless variant was not pursued.
@@ -602,7 +612,7 @@ execution the attacker would already need.
 
 ✅ **THIS PARAGRAPH USED TO DEFER ON "IF THIS IMAGE IS EVER ACTUALLY DEPLOYED,
 REVISIT THAT TRADE THEN". THE CONDITION FIRED, THE REVISIT HAPPENED, AND THE
-OPERATOR DECIDED — 2026-09-19, recorded in
+OPERATOR DECIDED — recorded in
 `claudedocs/handoff-cairn-control-plane-archive.md`.** The deferral is DISCHARGED,
 not open: both images measured at 402 applets, the replaced image carried 11
 setuid binaries and an interpreter, the Go one carries neither.
@@ -622,13 +632,14 @@ where the Python flake image has no `/etc` at all — needed because
 no roots otherwise. The same trade applies to its applets and it has not been
 re-argued here.
 
-🔴 **THE SPENT DEFERRAL IS FILED AS RANKED WORK, WITH A CLOSING CONDITION.** The
-applet surface — network servers, network clients and `ssl_client` — now runs
-beside a mounted credential, which is the state the deferral said to revisit on.
-**Closing condition:** the operator reads `busybox --list` from the built
-`cairn-store-go` image against a stated threat model, and either trims
-`serverTools` or records the trade as ACCEPTED with its reasoning — a named human
-judgement over named evidence, not a command exiting 0.
+⚠ **A DRAFT OF THIS SWEEP PUT A SECOND BLOCK HERE SAYING THE DEFERRAL WAS "FILED
+AS RANKED WORK, WITH A CLOSING CONDITION" — nineteen lines below the block that
+declares it DISCHARGED, in the same commit.** It asked the operator to read
+`busybox --list` against a threat model and record the trade as ACCEPTED, which
+the archive shows was already done. Deleted rather than reworded. 🔴 **The
+shape is worth more than the fix: a correction applied at ONE of TWO sites reads
+as complete at whichever site you land on, and the two disagree.** Three findings
+in this one review had exactly that shape.
 
 ⚠ **This is what a condition-triggered deferral costs when nothing watches the
 condition.** The sentence was honest, dated and correct when written, and silently

@@ -546,11 +546,13 @@ Named rather than omitted, because a green is a claim about what was asked.
   exactly that shape once shipped an image that started, health-checked and served while every
   documented operation against it failed. It says the instrument for it is a cutover step and a
   runtime-contract test, not an arm of this harness. 🔴 **THIS SENTENCE'S OWN TRIGGER HAS
-  FIRED — it said "Revisit if the Go pod is ever the deployed one", and it is.** Second
-  condition-triggered deferral in this repo found spent by the same sweep; neither had
-  anything watching its condition. **Revisit** — at which point "the tree's server versus the artefact" stops being a
-  cross-implementation question and becomes a same-implementation one, which is a different and
-  much cheaper thing to build.
+  FIRED — it said "Revisit if the Go pod is ever the deployed one", and it is. SO REVISIT: "the
+  tree's server versus the artefact actually serving" is now a SAME-implementation question,
+  which is a different and much cheaper thing to build than the cross-implementation one this
+  harness was scoped against.** ⚠ Second condition-triggered deferral in this repo found spent
+  by one unrelated sweep, and **nothing was watching THIS one's condition** — the busybox trade's
+  condition, by contrast, WAS acted on and decided (see the archive's CLOSED block); a draft of this
+  sentence said "neither had anything watching its condition" and was wrong about that half.
 - **The gzip envelope.** Deliberate and measured; see the scoping section. Also `Content-Length`
   on `/api/v1/snapshot` alone.
 - **Concurrency.** Every target is one request at a time, in a declared order, and the two

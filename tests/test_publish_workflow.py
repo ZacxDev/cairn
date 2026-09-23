@@ -766,12 +766,23 @@ GO_HALF_STEPS = (
 def test_the_whole_PYTHON_half_runs_before_the_first_GO_step(text: str) -> None:
     """🔴 A RELATION BETWEEN TWO GROUPS, NOT A PROPERTY OF ONE STEP.
 
-    Nothing in this repository has ever RUN the Go image — `ci.yml` asserts only
-    that it BUILDS — so every Go step in this workflow is a FIRST execution. A
-    first execution placed in front of the Python publish gates the pod that is
-    actually deployed on a path nobody has exercised, which is the exact shape of
-    the failure this workflow was rewritten to fix: seven consecutive runs where
-    nothing published because one unexercised step went red.
+    ⚠ THIS DOCSTRING'S RATIONALE IS SPENT — see the assertion message below,
+    which carries the correction. It read: "Nothing in this repository has ever
+    RUN the Go image … A first execution placed in front of the Python publish
+    gates the pod that is actually deployed on a path nobody has exercised."
+    The Go image IS the deployed pod now, so the Python publish gates a pod
+    NOTHING runs, and this ordering exposes the deployed one to an earlier red
+    step. `ci.yml` does still assert only that the Go image BUILDS.
+
+    🔴 THE ORDERING IS UNCHANGED AND THAT IS DELIBERATE — reversing it is a CI
+    behaviour change, and seven consecutive runs where nothing published because
+    one unexercised step went red is still the reason a first-execution step is
+    not put first. Decide it; do not drift into it.
+
+    ⚠ The correction first went into the assertion message ONLY, leaving this
+    docstring asserting the spent version — the message renders on failure, the
+    docstring renders in `pytest -v` and to anyone opening the file. A correction
+    applied at one of two sites reads as complete at whichever site you land on.
 
     The earlier draft had the Go BUILD and the Go CONTROLS before the Python
     push, and carried a comment claiming "it runs last" — true of the Go
