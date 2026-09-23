@@ -159,6 +159,20 @@ func safeMemberName(name string) bool {
 // `[ge]` as a character class, so both miss `wid[ge]t.old-…` and both would reap a
 // `widgt.old-…` belonging to a different cache. This client now does neither; the oracle still
 // does both. Narrow, in the safe direction, and the price of the fix above.
+//
+// ⚠ `[ge]` IS ONE MEMBER OF THE FAMILY AND NOT THE FAMILY: A `*` OR A `?` IN THE CACHE'S
+// BASENAME IS THE SAME DIVERGENCE IN THE SAME DIRECTION, and naming only the balanced class
+// read as though they were covered. MEASURED on CPython 3.12.14 over one directory holding
+// `wid*t.old-mine`, `wid?et.old-mine2`, `widget.old-sibling`, `widIt.old-sibling2` and
+// `widXet.old-other`: for a cache named `wid*t`, `Path.glob("wid*t.old-*")` and
+// `fnmatch("wid*t.old-*")` each return ALL FIVE, and for `wid?et` each returns the three whose
+// fourth character is anything at all; `strings.HasPrefix` returns exactly the one tree the
+// cache created, in both cases. So the oracle offers a SIBLING cache's staging trees for
+// removal and this client does not. ⚠ The direction is not identical to the `[ge]` case and the
+// difference is worth the clause: with a balanced class the oracle MISSES its own trees, while
+// with `*`/`?` it finds its own AND over-reaps its neighbours'. And unlike an UNTERMINATED `[`
+// there is no `ErrBadPattern` on either side to make it visible — it is the quiet arm of the
+// class `anchor.go`'s header names.
 func ReapOrphans(cache string) int {
 	cutoff := time.Now().Add(-OrphanGraceSeconds * time.Second)
 	parent, name := filepath.Dir(cache), filepath.Base(cache)

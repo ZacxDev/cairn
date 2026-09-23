@@ -2,6 +2,7 @@ package client
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -121,18 +122,40 @@ var _ = unicode.IsSpace
 // read a path window from)"* while the doc is sitting in `claudedocs/`. A FALSE CLAIM OF
 // ABSENCE on the DEFAULT path of `cairn recall --repo <path>`, and the failure the type's own
 // doc comment says it exists to prevent. The oracle never had it: `Path(repo).glob(pattern)`
-// treats its anchor literally. `anchoredGlob` is the one rule; see `anchor.go`.
+// treats its anchor literally. `anchoredNames` is the one mechanism; see `anchor.go`.
+//
+// 🔴 THE PATTERN'S DIRECTORY PREFIX IS **JOINED**, NOT ENUMERATED, AND THE DIFFERENCE IS
+// OBSERVABLE. `filepath.Glob` splits its argument at the LAST separator and only reads the
+// directory it ends up with, so `<repo>/claudedocs/handoff-*.md` never lists `<repo>` — it
+// lists `<repo>/claudedocs`. A repo that is SEARCHABLE but not READABLE (mode `--x`) therefore
+// resolved fine before this change, and resolves fine on the oracle, whose `_PreciseSelector`
+// asks `is_dir()` rather than scandir'ing the parent. Enumerating `<repo>` to find `claudedocs`
+// would find nothing there — a silent narrowing, in the same "empty result" shape as the defect
+// this function fixed. `TestFocusDoesNotREADADirectoryTheGlobOnlyDESCENDSTHROUGH` is the row.
+//
+// ⚠ THAT JOIN IS CORRECT ONLY WHILE THE PREFIX CARRIES NO METACHARACTER, AND THE PRECONDITION
+// IS PINNED RATHER THAN ASSUMED: `TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS`
+// goes red if a pattern with a `*`, `?`, `[` or `\` before its last `/` is added to
+// `HandoffGlobs`, because this loop would then treat it literally and quietly match nothing.
 func Focus(repo string) FocusWindow {
 	var doc string
 	var docInfo os.FileInfo
 	for _, pattern := range HandoffGlobs {
-		matches := anchoredGlob(repo, pattern)
+		dir, base := path.Split(pattern)
+		anchor := filepath.Join(repo, filepath.FromSlash(dir))
 		type candidate struct {
 			path string
 			info os.FileInfo
 		}
 		var found []candidate
-		for _, m := range matches {
+		for _, name := range anchoredNames(anchor, func(name string) bool {
+			// A `Match` error cannot happen for `HandoffGlobs`' members and is still
+			// checked: `base` comes from a pattern this package wrote, but "no match" is
+			// the answer `Glob` gave for an ill-formed one too.
+			ok, err := filepath.Match(base, name)
+			return err == nil && ok
+		}) {
+			m := filepath.Join(anchor, name)
 			info, err := os.Stat(m)
 			if err != nil || !info.Mode().IsRegular() {
 				continue

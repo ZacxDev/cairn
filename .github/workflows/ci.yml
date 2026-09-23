@@ -275,10 +275,17 @@ jobs:
           #
           # ⚠ 1987 -> 2036, AND THE REASON IS THE GAP RATHER THAN THE TWO ROWS THIS BRANCH
           # ADDS. `m` had reached 2084 on `e293c6e` with the floor still at 1987 — a gap of
-          # 97 against a MAX_GAP of 100, i.e. three tests from the drift guard below going
-          # red on whoever added them next. That is the "floor left behind by its own
-          # formula" failure the comments above describe, caught here by arithmetic rather
-          # than by a red run. 2036 = 2086 - min(50, max(1, 2086/20)).
+          # 97 against a MAX_GAP of 100, i.e. FOUR tests from the drift guard below going
+          # red on whoever added them next, and TWO at this branch's head. 🔴 THIS LINE SAID
+          # "three" AND WAS WRONG IN THE REASSURING DIRECTION ON THE BASE AND WRONG IN THE
+          # OTHER ON HEAD. The guard is `ran - FLOOR > MAX_GAP`, STRICTLY greater, so a gap
+          # of exactly 100 is still green and the first red gap is 101: from the base's 97
+          # that is +4, and from HEAD's 99 (2086 - 1987) it is +2. Read the guard's own
+          # operator before quoting a headroom. The decision to raise is right either way,
+          # and two tests of room is more urgent than three. That is the "floor left behind
+          # by its own formula" failure the comments above describe, caught here by
+          # arithmetic rather than by a red run.
+          # 2036 = 2086 - min(50, max(1, 2086/20)).
           #
           # Measured with names on the base ref and on HEAD, one collect-only run each, the
           # `sed`-less pipeline above: base 2084, head 2086, 2 added, 0 removed. The base

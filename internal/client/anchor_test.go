@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +30,11 @@ import (
 // pass at `e293c6e` too. They exist because each fix replaced a pattern match with an
 // enumeration, and "same results for ordinary paths" is the half a metacharacter fixture
 // structurally cannot assert.
+//
+// ⚠ AND THEY ARE AIMED AT THE THREE CALLERS, NOT AT A SHARED HELPER. A round-1 audit removed a
+// general `anchoredGlob` walker whose only production caller was `Focus` and whose only
+// multi-component-wildcard case had none at all; the two rows that had covered it moved onto
+// `Focus`, where the property is on a path the program takes. `anchor.go` carries the argument.
 
 // metacharacterHome is a `$HOME` whose own name carries an unterminated `[`.
 //
@@ -255,7 +261,19 @@ func TestReapOrphansStillDiscriminatesByPrefixAgeAndKind(t *testing.T) {
 	}
 }
 
-// TestPutDerivesARevisionUnderACacheRootCarryingAGlobMetacharacter is the third site.
+// TestPutDerivesARevisionUnderAMetacharacterCacheRoot is the third site.
+//
+// 🔴 THE NAME IS PINNED BY `tests/parity/README.md`'s RETIRED RESIDUAL 9, WHICH IS WHY IT IS
+// NOT SPELLED LIKE ITS TWO SIBLINGS. That row's closing condition is a command —
+// `go test ./internal/client/ -run PutDerivesARevisionUnderAMetacharacterCacheRoot -count=1 -v`
+// must print a `--- PASS:` line — and the row spends a paragraph warning that a zero-selection
+// `-run` exits 0, so the exit code cannot tell an unwritten test from a met condition. Measured
+// at `6696a17`: the first cut of this row was called
+// `…UnderACacheRootCarryingAGlobMetacharacter`, that filter selected NOTHING, printed
+// `testing: warning: no tests to run` / `PASS` / `ok … [no tests to run]` and exited **0** —
+// the exact state the row warned about, with the row retired over it. Renaming was the cheap
+// half of keeping the prior round's check honest. Do not rename it back without moving the
+// pinned command in the same commit.
 //
 // 🔴 A REFUSAL RATHER THAN A WRONG ANSWER, WHICH IS WHY IT WAS RECORDED BEFORE IT WAS FIXED —
 // and it is still a write the operator cannot make. RED at `e293c6e`: `put` derived its
@@ -263,7 +281,7 @@ func TestReapOrphansStillDiscriminatesByPrefixAgeAndKind(t *testing.T) {
 // root took BOTH that pattern and the `<ref>.*.md` fallback to `ErrBadPattern` and n=0, the
 // `!= 1` arm fired, and this client exited 2 with `cannot derive a revision — 0 cached file(s)
 // match …` over a cache that holds exactly one. The oracle answers `replaced` at exit 0.
-func TestPutDerivesARevisionUnderACacheRootCarryingAGlobMetacharacter(t *testing.T) {
+func TestPutDerivesARevisionUnderAMetacharacterCacheRoot(t *testing.T) {
 	home := metacharacterHome(t)
 	t.Setenv("HOME", home)
 	t.Setenv("CAIRN_MIRROR_ROOT", "")
@@ -415,79 +433,84 @@ func TestPutStillResolvesTheDottedVariantAndItsBoundaries(t *testing.T) {
 	}
 }
 
-// TestAnchoredGlobTreatsItsAnchorLiterallyAndItsPatternAsAPattern is the helper's own row.
+// TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS pins the ONE precondition
+// `Focus`'s collapse rests on, so it cannot be lost by editing a variable in another file.
 //
-// 🔴 IT IS NOT REDUNDANT WITH THE THREE ABOVE, AND THE DIRECTION IT ADDS IS THE SECOND HALF. A
-// fix that made the anchor literal by making the PATTERN literal too would satisfy every
-// metacharacter row in this file and would silently break `Focus`, whose patterns are globs by
-// design. This asserts both halves at once, in one tree.
-func TestAnchoredGlobTreatsItsAnchorLiterallyAndItsPatternAsAPattern(t *testing.T) {
-	root := metacharacterHome(t)
-	for _, rel := range []string{
-		filepath.Join("claudedocs", "handoff-a.md"),
-		filepath.Join("claudedocs", "handoff-b.md"),
-		filepath.Join("claudedocs", "notes.md"),
-		filepath.Join("elsewhere", "handoff-c.md"),
-	} {
-		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(rel)), 0o755); err != nil {
-			t.Fatal(err)
+// 🔴 `Focus` SPLITS EACH PATTERN AT ITS LAST `/` AND **JOINS** THE LEFT HALF ONTO THE REPO,
+// interpreting only the right half. That is exactly `filepath.Glob`'s own behaviour — and
+// exactly WRONG for a pattern whose directory prefix is itself a wildcard, which `Glob` would
+// have expanded and this would match literally. The failure direction is the one this whole
+// file exists to refuse: no error, an empty match set, and a confident sentence saying the repo
+// has no handoff doc. A general component-by-component walk used to cover that case; it had no
+// caller and was deleted (`anchor.go`), so this row is what stops the case arriving unnoticed.
+//
+// ⚠ IT IS A GUARD ON THE DATA, NOT ON A SPELLING: it reads `HandoffGlobs` itself and asks
+// `strings.ContainsAny` over the prefix, so any pattern added in any wording is measured.
+func TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS(t *testing.T) {
+	if len(HandoffGlobs) == 0 {
+		t.Fatal("HandoffGlobs is empty — this row would pass while measuring nothing")
+	}
+	for _, pattern := range HandoffGlobs {
+		dir, base := path.Split(pattern)
+		if strings.ContainsAny(dir, `*?[\`) {
+			t.Fatalf("HandoffGlobs member %q has a glob metacharacter in its DIRECTORY prefix "+
+				"%q. `Focus` joins that prefix onto the repo literally, so it would match "+
+				"nothing and report the repo has no handoff doc. Either drop the "+
+				"metacharacter or give `Focus` back a component-by-component walk.",
+				pattern, dir)
 		}
-		if err := os.WriteFile(filepath.Join(root, rel), []byte("x\n"), 0o644); err != nil {
-			t.Fatal(err)
+		// …and the other half: the part `Focus` DOES interpret has to be interpretable, or
+		// the pattern silently matches nothing for the opposite reason.
+		if _, err := filepath.Match(base, "handoff-x.md"); err != nil {
+			t.Fatalf("HandoffGlobs member %q has an ill-formed final component %q: %v",
+				pattern, base, err)
 		}
-	}
-
-	got := anchoredGlob(root, "claudedocs/handoff-*.md")
-	want := []string{
-		filepath.Join(root, "claudedocs", "handoff-a.md"),
-		filepath.Join(root, "claudedocs", "handoff-b.md"),
-	}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("got %v, want %v — the anchor must be a path and the pattern must still be a "+
-			"pattern, in `os.ReadDir`'s sorted order", got, want)
-	}
-
-	// A pattern whose DIRECTORY component is a wildcard, which `Focus`'s own patterns are not
-	// and a future one could be: the walk has to descend through every match.
-	got = anchoredGlob(root, "*/handoff-c.md")
-	want = []string{filepath.Join(root, "elsewhere", "handoff-c.md")}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("got %v, want %v — an intermediate component is a pattern too", got, want)
-	}
-
-	// An anchor that is not a directory at all yields nothing rather than an error, which is
-	// what every caller's `Glob` did.
-	if got = anchoredGlob(filepath.Join(root, "claudedocs", "notes.md"), "*.md"); got != nil {
-		t.Fatalf("got %v, want nil for an anchor that is not a directory", got)
 	}
 }
 
-// TestAnchoredGlobDoesNotREADADirectoryThePatternOnlyDESCENDSTHROUGH is the row for the one
-// branch "same results for ordinary paths" rests on that no other row reaches.
+// TestFocusDoesNotREADADirectoryTheGlobOnlyDESCENDSTHROUGH is the row for the one branch "same
+// results for ordinary paths" rests on that no other row reaches.
 //
 // 🔴 `filepath.Glob` SPLITS AT THE LAST SEPARATOR AND READS ONE DIRECTORY. For
 // `<repo>/claudedocs/handoff-*.md` that is `<repo>/claudedocs`; `<repo>` itself is never listed.
 // So a repo that is SEARCHABLE but not READABLE (mode `--x`) resolved fine before this change,
 // and resolves fine on the oracle, whose `_PreciseSelector` asks `is_dir()` rather than
-// scandir'ing the parent. A walk that enumerated every component would find nothing there — a
-// silent narrowing, in the same "empty result" shape as the defect this branch fixed.
+// scandir'ing the parent. A `Focus` that enumerated `<repo>` to find `claudedocs` would find
+// nothing there — a silent narrowing, in the same "empty result" shape as the defect this
+// branch fixed.
 //
-// ⚠ IT SKIPS UNDER EUID 0, AND THE SKIP IS COUNTED RATHER THAN LEFT TO LOOK LIKE A PASS. Root
-// bypasses the missing read bit, so the fixture cannot construct the state at all; a silent pass
-// there would be the reassuring zero this repository keeps warning about.
-func TestAnchoredGlobDoesNotREADADirectoryThePatternOnlyDESCENDSTHROUGH(t *testing.T) {
+// ⚠ IT IS AIMED AT `Focus` RATHER THAN AT A HELPER, AND THAT IS THE POINT. An earlier cut
+// asserted this against `anchoredGlob`, a general walker with no general caller; the property is
+// only worth anything on the path `cairn recall --repo <path>` actually takes, so it is asserted
+// there.
+//
+// ⚠ IT SKIPS UNDER EUID 0, AND THE SKIP IS LOUD BUT **NOT COUNTED** — AN EARLIER FORM OF THIS
+// COMMENT SAID "THE SKIP IS COUNTED RATHER THAN LEFT TO LOOK LIKE A PASS", AND NOTHING COUNTS
+// IT. Root bypasses the missing read bit, so the fixture cannot construct the state at all; the
+// skip is LOUD in the sense that its reason is printed under `-v` and the row is not silently
+// green. That is all it is. The `go` job's only floor is `ok=$(grep -c '^ok  ' …)` over
+// PACKAGES (`.github/workflows/ci.yml`), and `go test` without `-v` prints nothing about skips,
+// so this row disappearing into a skip moves no number CI reads. The repo does own a real skip
+// counter — twice, over the pytest ledger job and the conformance corpus, both reading a
+// `skipped=` count and REFUSING on it — which is precisely why "COUNTED" read as a mechanism
+// that exists here. It does not.
+//
+// ⚠ THE GAP IS PRE-EXISTING AND REPO-WIDE, AND IS NOT CLOSED HERE. Measured at this head: ten
+// `t.Skip*` call sites in the tree, nine of them other than this one, four `os.Geteuid() == 0`
+// guards of which three are other rows. A counter for the Go tier is a whole-tier change
+// (`go test -json`, or `-v` plus a parser, on the one invocation the `ok` floor covers) and
+// does not belong in this file. What BOUNDS the exposure is that this arm cannot fire in CI:
+// every job in `ci.yml` is a bare `runs-on: ubuntu-latest` with no `container:`, and a hosted
+// runner's job user is not root. ⚠ That last half is read from the workflow file and from
+// GitHub's documented runner user — it is not a measurement taken on a runner.
+func TestFocusDoesNotREADADirectoryTheGlobOnlyDESCENDSTHROUGH(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("euid 0 bypasses the missing read bit, so the fixture cannot be built — this " +
 			"row measures nothing here and says so rather than passing")
 	}
 	root := t.TempDir()
-	docs := filepath.Join(root, "claudedocs")
-	if err := os.MkdirAll(docs, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(docs, "handoff-a.md"), []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeHandoff(t, root, "handoff-a.md", "# a\n\nthe work is in `apps/a/values.yaml`.\n",
+		time.Unix(946684800, 0))
 	if err := os.Chmod(root, 0o111); err != nil {
 		t.Fatal(err)
 	}
@@ -498,10 +521,14 @@ func TestAnchoredGlobDoesNotREADADirectoryThePatternOnlyDESCENDSTHROUGH(t *testi
 		t.Fatalf("the fixture does not reach the branch — %q is still readable", root)
 	}
 
-	got := anchoredGlob(root, "claudedocs/handoff-*.md")
-	want := []string{filepath.Join(docs, "handoff-a.md")}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("got %v, want %v — a component the pattern only DESCENDS through must be "+
-			"resolved by name, not by listing its parent", got, want)
+	got := Focus(root)
+
+	want := []string{"claudedocs/handoff-a.md", "apps/a/values.yaml"}
+	if got.Source != "claudedocs/handoff-a.md" ||
+		strings.Join(got.Paths, "|") != strings.Join(want, "|") {
+		t.Fatalf("Focus over a SEARCHABLE-but-not-READABLE repo gave Source=%q Paths=%v, want "+
+			"%q and %v — the directory prefix a pattern only DESCENDS through must be JOINED "+
+			"onto the repo, not found by listing the repo", got.Source, got.Paths,
+			"claudedocs/handoff-a.md", want)
 	}
 }

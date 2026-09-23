@@ -2,8 +2,6 @@ package client
 
 import (
 	"os"
-	"path/filepath"
-	"strings"
 )
 
 // 🔴 ONE RULE, IN ONE PLACE: **AN ANCHOR IS A PATH, NEVER PART OF A PATTERN.**
@@ -26,14 +24,28 @@ import (
 // THE ORIGINAL MISTAKE AGAIN. `Focus` matches a fixed GLOB pattern against names, `ReapOrphans`
 // matches a literal PREFIX, and `Put` matches one exact name plus a `<ref>.*.md` family. What
 // they share is the MECHANISM — enumerate the anchor, then decide per entry NAME — so that is
-// what is shared here: `anchoredNames` does the enumeration, `anchoredGlob` layers the one
-// pattern walk that needs it, and each caller keeps its own predicate beside its own reasons.
-// The class is named once, here, rather than three times in three comments.
+// what is shared here: `anchoredNames` does the enumeration and each caller keeps its own
+// predicate beside its own reasons. The class is named once, here, rather than three times in
+// three comments.
 //
-// ⚠ `filepath.Glob` HAS NO `QuoteMeta`, WHICH IS WHY THIS IS A WALK AND NOT AN ESCAPE. There
-// is no supported way to spell "this part of the pattern is literal", and hand-escaping the
-// anchor would have to reproduce `Match`'s own grammar — a second copy of the rule, which is
-// the shape this file exists to remove.
+// 🔴 THERE IS DELIBERATELY NO GENERAL `Path(anchor).glob(pattern)` WALKER IN THIS FILE, AND ONE
+// WAS WRITTEN AND THEN DELETED TO PUT THAT SENTENCE HERE. `anchoredGlob` walked a pattern
+// component by component so that an INTERMEDIATE component could itself be a wildcard. It had
+// exactly one production caller — `Focus` — and `Focus`'s only patterns are `HandoffGlobs`,
+// both of which have a metacharacter-free directory prefix (`claudedocs/`). For every input the
+// program can actually present, the walk therefore collapsed to a single `anchoredNames` call
+// against `filepath.Join(repo, "claudedocs")`, which is the shape the other two sites already
+// use. The multi-component-wildcard branch had no caller and could not get one from
+// `HandoffGlobs`, so its two test rows were the only thing exercising ~55 lines of production
+// code — a generality nobody had asked for, pinned by tests written to cover it. The
+// precondition the collapse rests on is not left to a comment:
+// `TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS` fails if a pattern with a
+// metacharacter before its last `/` is ever added, because `Focus` would then narrow silently.
+//
+// ⚠ `filepath.Glob` HAS NO `QuoteMeta`, WHICH IS WHY EVERY SITE ENUMERATES AND NONE ESCAPES.
+// There is no supported way to spell "this part of the pattern is literal", and hand-escaping
+// the anchor would have to reproduce `Match`'s own grammar — a second copy of the rule, which
+// is the shape this file exists to remove.
 
 // anchoredNames is the entry names directly under `dir` for which `keep` is true, in
 // `os.ReadDir` order — which is sorted by name.
@@ -51,82 +63,6 @@ func anchoredNames(dir string, keep func(name string) bool) []string {
 	for _, entry := range entries {
 		if keep(entry.Name()) {
 			out = append(out, entry.Name())
-		}
-	}
-	return out
-}
-
-// hasGlobMeta is `filepath.Match`'s own metacharacter set on this platform.
-//
-// ⚠ `\` IS IN IT BECAUSE IT IS `Match`'s ESCAPE CHARACTER everywhere except Windows, where
-// `Match` treats it as the separator and escaping is disabled. This client is built for the
-// same platforms the rest of the port is; the set is stated here so a reader does not have to
-// re-derive it from `path/filepath`'s source.
-func hasGlobMeta(part string) bool {
-	return strings.ContainsAny(part, `*?[\`)
-}
-
-// anchoredGlob is `Path(anchor).glob(pattern)`: `anchor` is a literal directory path and ONLY
-// `pattern` is interpreted, component by component, exactly as the oracle does it.
-//
-// The returned paths are in `filepath.Glob`'s own order — parent directories in the order they
-// were matched, and names within each in `os.ReadDir`'s sorted order — so a caller that used to
-// sort or index into `Glob`'s result gets the same sequence.
-//
-// ⚠ A COMPONENT WITH NO METACHARACTER IS RESOLVED BY `Lstat`, NOT BY ENUMERATING ITS PARENT,
-// AND THE DIFFERENCE IS OBSERVABLE. `filepath.Glob` splits its argument at the LAST separator
-// and only reads the directory it ends up with, so `<repo>/claudedocs/handoff-*.md` never reads
-// `<repo>` at all — it lists `<repo>/claudedocs`. A walk that enumerated every component would
-// therefore find nothing where `<repo>` is searchable but not readable (mode `--x`), which both
-// the old code and the oracle's `_PreciseSelector` handle fine. Same results for ordinary paths
-// is the requirement; this is the branch that keeps it.
-func anchoredGlob(anchor, pattern string) []string {
-	dirs := []string{anchor}
-	parts := strings.Split(filepath.ToSlash(pattern), "/")
-	for i, part := range parts {
-		last := i == len(parts)-1
-		var next []string
-		for _, dir := range dirs {
-			next = appendAnchoredMatches(next, dir, part, last)
-		}
-		dirs = next
-	}
-	return dirs
-}
-
-// appendAnchoredMatches is one component of `anchoredGlob`'s walk.
-//
-// `last` decides the kind check: an INTERMEDIATE component must resolve to a directory, because
-// the walk has to descend through it, and `os.Stat` is what asks — it FOLLOWS a symlink, which
-// is what `Glob` does when it reads a matched middle component as a directory, and what the
-// oracle's `dironly` selectors do. A FINAL component is kept whatever it is, for the same
-// reason `Glob` keeps it: deciding is the caller's job.
-func appendAnchoredMatches(out []string, dir, part string, last bool) []string {
-	usable := func(child string) bool {
-		if last {
-			return true
-		}
-		info, err := os.Stat(child)
-		return err == nil && info.IsDir()
-	}
-	if !hasGlobMeta(part) {
-		child := filepath.Join(dir, part)
-		if _, err := os.Lstat(child); err != nil || !usable(child) {
-			return out
-		}
-		return append(out, child)
-	}
-	for _, name := range anchoredNames(dir, func(name string) bool {
-		// 🔴 A `Match` ERROR CANNOT HAPPEN HERE AND IS STILL CHECKED. `part` comes from a
-		// pattern a caller wrote, not from a path a caller was handed — that is the whole
-		// separation this file draws — but a future caller could pass an ill-formed one, and
-		// "no match" is the answer `Glob` gives for it too.
-		ok, err := filepath.Match(part, name)
-		return err == nil && ok
-	}) {
-		child := filepath.Join(dir, name)
-		if usable(child) {
-			out = append(out, child)
 		}
 	}
 	return out
