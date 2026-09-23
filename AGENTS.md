@@ -102,9 +102,10 @@ These are the house style, and they are why the guards here are worth trusting:
 
 ## 🔴 TWO SERVERS ARE ALIVE, AND `server/server.py` IS THE ORACLE
 
-`cmd/cairn-server` is the Go port. It is **not deployed by anything**: it exists so the
-conformance corpus can be replayed against both implementations on the same store and
-the difference MEASURED.
+`cmd/cairn-server` is the Go port, and 🔴 **IT IS NOW THE DEPLOYED POD** — the cluster
+pulls `cairn-store-go`. It also exists so the conformance corpus can be replayed against
+both implementations on one store and the difference MEASURED. ⚠ So the ORACLE now runs
+NOWHERE, and a divergence ships before any gate reading `server.py` sees it.
 
 📄 **P1'S HISTORY LIVES IN `tests/conformance/README.md` AND `tests/dualrun/README.md`,
 NOT HERE**: the measured corpus splits, the reader fixture's case list and its ancillary
@@ -345,7 +346,7 @@ nix run   github:ZacxDev/cairn -- doctor       # the DEFAULT client — the GO o
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client and the oracle — NOT the default
 nix build github:ZacxDev/cairn#cairn-go        # the Go client by name — same store path as default
 nix build github:ZacxDev/cairn#server-image    # the PYTHON pod image, as a loadable tarball
-nix build github:ZacxDev/cairn#server-image-go # the GO pod image — published, deployed by nothing
+nix build github:ZacxDev/cairn#server-image-go # the GO pod image — published, and DEPLOYED
 ```
 
 Consumers pin this flake as an input; that is the supported way to get a `cairn`
@@ -429,10 +430,10 @@ and DERIVES uid, port, exposed port and env from the same
 variable added for one pod reach both.
 `tests/test_flake_go_image_runtime_contract.py` pins that it stays derived, that
 it carries busybox and a `PATH`, and that its CA bundle is NAMED rather than
-merely present. 🔴 **IT IS NOW PUBLISHED AND STILL DEPLOYED BY NOTHING, AND THOSE
-ARE TWO CLAIMS.** `.github/workflows/publish-image.yml` pushes BOTH pods, to two
-ghcr packages (`cairn-store`, `cairn-store-go`) under one `sha-<40-hex>` scheme;
-the cutover of the DEPLOYED image remains a separate decision. ⚠ Both are
+merely present. 🔴 **IT IS PUBLISHED AND IT IS NOW THE DEPLOYED POD — THE
+CUTOVER HAPPENED.** `.github/workflows/publish-image.yml` pushes BOTH pods, to
+two ghcr packages (`cairn-store`, `cairn-store-go`) under one `sha-<40-hex>`
+scheme, and the cluster pulls the second. ⚠ Both are
 PUBLIC and anonymously pullable, verified against a negative control — including
 the retracted private-on-first-publish prediction, recorded in
 `server/README.md`.
