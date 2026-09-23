@@ -60,22 +60,59 @@ anyone editing that path:
   `DEFAULT_CACHE_ROOT` unchanged for `personal` and a SIBLING directory for every
   other alias. A child directory would look exactly like a SCOPE to every reader
   that enumerates `<root>/<dir>`.
-- 🔴 **`STORE_IS_PER_HOST` IS BYTE-MIRRORED INTO 25 TRACKED FILES, NOT FOUR
-  PLACES.** Enumerated over `git ls-files` at `38b358d`: **25 files, 92
-  occurrences** — `internal/hostid/hostid.go`,
-  `internal/report/testdata/reader_fixtures.json` (64 of them), **20 of the 98**
-  `tests/conformance/golden/*.json` (24), `lib/entry_shape.py`,
+- 🔴 **`STORE_IS_PER_HOST` IS BYTE-MIRRORED INTO TENS OF TRACKED FILES, NOT FOUR
+  PLACES.** The kinds are what matter and they are stable —
+  `internal/hostid/hostid.go`,
+  `internal/report/testdata/reader_fixtures.json` (the bulk of them), **20 of the
+  98** `tests/conformance/golden/*.json` (24), `lib/entry_shape.py`,
   `server/README.md` and `tests/test_subsystem_recall.py`. Two are
   regenerate-and-diff gates; `server/README.md` is prose no gate covers. That is
   why the multi-instance caveat is a clause `entry_shape.store_caveat` ADDS at
-  render time rather than an edit to the constant. ⚠ **The earlier wording here
+  render time rather than an edit to the constant. ⚠ **The earliest wording here
   was "a four-place change", wrong by 2× in the direction that makes the edit
-  look cheap** — it counted mirror KINDS and read as a count of SITES. Re-derive
-  rather than quoting this number; it moves whenever a golden is regenerated:
+  look cheap** — it counted mirror KINDS and read as a count of SITES.
+
+  🔴 **AND THE TOTALS THAT REPLACED IT WENT STALE TOO, WHICH IS WHY NO TOTAL IS
+  QUOTED HERE ANY MORE.** This bullet carried "25 files, 92 occurrences"; measured
+  later, the tree held **29 and 105**. The prose even named the wrong cause — it
+  said the number moves when a golden is regenerated, and the golden figures above
+  are still exact to the file; what moved was the **reader fixture**. A count that
+  drifts and explains its own drift wrongly is worse than no count, because it
+  reads as maintained. Re-derive when you need a total, and do not write the answer
+  down:
 
   ```bash
-  git ls-files | xargs grep -c 'PER-HOST CACHE' 2>/dev/null | grep -v ':0$' | wc -l
+  python3 - <<'PY'
+  import pathlib, subprocess, sys
+  sys.path.insert(0, "lib")
+  from entry_shape import STORE_IS_PER_HOST          # the needle, never a literal
+  files = subprocess.run(["git", "ls-files"], capture_output=True,
+                         text=True, check=True).stdout.split()
+  hits = {f: pathlib.Path(f).read_text(errors="replace").count(STORE_IS_PER_HOST)
+          for f in files if pathlib.Path(f).is_file()}
+  hits = {f: n for f, n in hits.items() if n}
+  print(len(hits), "files,", sum(hits.values()), "occurrences")
+  PY
   ```
+
+  🔴 **THE NEEDLE IS IMPORTED, NOT SPELLED, AND THAT IS THE WHOLE POINT.** The
+  recipe this replaces grepped the 14-character fragment `PER-HOST CACHE` out of a
+  ~130-character constant. Reword the constant anywhere outside that fragment and
+  the count does not move; reword the fragment itself and the count collapses
+  toward zero — which reads as *few mirrors, cheap edit*, the exact direction this
+  bullet already records being wrong in once. Importing the constant means the
+  needle changes when the mirrored text does.
+
+  ⚠ **THE IMPORTED VERSION ALSO PRINTS ZERO WHEN YOU REWORD THE CONSTANT, AND
+  THERE ZERO IS THE ANSWER YOU WANT** — measured: rewording one word of
+  `STORE_IS_PER_HOST` takes the count from 22/96 to **0/0**, because every mirror
+  still holds the old text. That is the tree telling you what the edit costs. The
+  fragment grep answered the same edit by drifting quietly from 92 to 105.
+
+  ⚠ **ITS LIMIT, SO NOBODY READS IT AS EXHAUSTIVE:** it is an exact-substring
+  count, so it undercounts any site that WRAPS the constant across lines or escapes
+  it. That is a narrower blindness than the fragment grep's, not the absence of
+  one.
 - **A read is labelled only when there is more than one instance; a WRITE names
   its instance always.** "Where did that bullet go" is a question about a durable
   record, asked later, by someone who no longer has the terminal.
