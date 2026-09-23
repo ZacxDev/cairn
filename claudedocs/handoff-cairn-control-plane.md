@@ -24,47 +24,55 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`a88f60b`** (#76 merged). This session's work landed in the **handoff-tooling
-  repository**, not here: **`c4490f07`** (its #1854).
-- ✅ **RANK 8 IS DONE, AND THE OPEN-PR SWEEP IS WHAT DID THE JOB.** `claim-work --list` showed
-  `cairn-control-plane-8` free, and the ranked item read as unbuilt — but
-  `gh pr list --state open` carried **#1854**, *"run the target repo's leak scanner on the
-  handoff delta, and refuse on non-zero"*, three commits, `MERGEABLE`/`CLEAN`, opened twelve
-  hours earlier and **claimed by nobody**. 🔴 **THE SWEEP IS NOT A FALLBACK TO THE LOCK — IT
-  IS THE ONLY THING THAT SEES AN UNCLAIMED DUPLICATE**, and this is the first measured
-  instance of it paying: taking the claim and building would have written the feature twice.
-- ✅ **RULE (o) IS MERGED AS `c4490f07`, VERIFIED BY CONTENT** (payload paths diff empty
-  between the PR head `977a7a99` and `origin/main`), and the base clone was fast-forwarded.
-  Exit **13** `leak-refused`; scanner resolved from the TARGET repo out of a closed set of
-  one path (`<target-repo>/tests/leakscan.py`); a repo with none PASSES as `PASS BY ABSENCE`;
-  **any** non-zero exit refuses; `--leak-pre-existing-approved` is the recorded operator
-  opt-in and does NOT cover a scanner that could not be RUN.
-- 🔴 **THE GATE IS LIVE; ITS PRINTED LEGEND IS NOT.** `SKILL.md` invokes
-  the handoff tool (`<handoff-tooling-repo>/scripts/lib/handoff_doc.py`) — the WORKING COPY — so the refusal was active
-  the moment the base clone synced. `~/.claude/skills/handoff/SKILL.md` resolves into
-  `/nix/store` (a `home.file` copy), so its `Seven refusals` legend needs a home-manager
-  switch. **Measured, not inferred:** `readlink -f` on the live file, and `grep -c leakscan`
-  on it = **0**. No switch was run — operator's call.
-- ⏳ **RANK 9 IS UP AND WAITING ON A HUMAN, AND `cairn-control-plane-9` IS DELIBERATELY STILL
-  HELD.** `cairn-ui` is serving the share flow on **`127.0.0.1:8103`** over a synthetic world
-  in this session's scratchpad. Releasing the claim while a server is up and a human is
-  mid-verification would advertise the item as free and invite a second instance onto the
-  same port. Recipe and what was verified: `## How to verify`.
-- 🔴 **`leakscan` ON THIS BASE CLONE EXITS 2 RIGHT NOW, AND IT IS NOT THE TREE.** A LIVE,
-  `locked` sibling agent worktree sits at `.claude/worktrees/agent-a2b34fb066b3e2ebc/`
-  (pid 355708), and the scanner's `--others` enumeration cannot read a directory:
-  `COULD NOT READ .claude/worktrees/…/: [Errno 21] Is a directory`. ⚠ **The documented
-  gotcha names a REMOVED agent's leftover; this one is a live worktree, so the remedy
-  "check it is clean, then remove it" does not apply** — it is not mine to remove. Discriminated
-  rather than assumed: a fresh worktree of `origin/main` scans **rc 0**, so the tree is clean
-  and the directory is the whole cause. **No clean-scan claim is made for the base clone.**
-- ⚠ **THE `result`/`result-1` SYMLINKS IN THE REPO ROOT ARE MINE AND ARE NOT GITIGNORED**
-  (`git check-ignore` prints nothing for either). They are the gcroots for the running
-  `cairn-ui`, kept until the human is done. leakscan reads them without complaint, so they are
-  NOT the exit-2 cause — measured, not assumed.
+- `main` @ **`5775b98`** (#95 merged), clean. The DoD was **re-measured on `main` twelve commits
+  after the session that first met it**, rather than carried forward: authz matrix, share flow
+  with its replica-honesty notice, identity through both backends, `packages.default =
+  mkGoClient` (`flake.nix:916`), `go test ./...` **19 ok / 0 FAIL**, `pytest tests -q`
+  **2076 passed**. **ADDRESSED ⇒ the arc stays CLOSED**, now on evidence from this tree rather
+  than from `7d7c9ea`'s.
+- 🔴 **RANK 9 WAS RE-BROUGHT-UP, BECAUSE THE INSTANCE WAITING FOR THE HUMAN WAS TWELVE COMMITS
+  STALE — AND IT WAS STALE IN EXACTLY THE SURFACE UNDER TEST.** The old `cairn-ui` (pid 3942268)
+  was `…-cairn-ui-**a88f60b**`, predating **#91 `fc79070`** *"give the browser surface the client
+  identity and sign-in lockout the pod already has"* (`internal/ui/session.go` +70,
+  `server.go` +32, a new 301-line `clientidentity_test.go` — the very sign-in path a human is
+  asked to exercise) and **#86 `d6fe1c3`**, which added `-set-member`. A human clicking it would
+  have been verifying the deployed copy, not `main`: the time-axis form of that hazard.
+  **Replaced with a build of `1838b82`** (pid **2728234**, same port), world rebuilt from the
+  parity `world.build_store` + `-create-user` ×2 + **`-set-member`** + `-issue-credential`.
+  🔴 **`cairn-control-plane-9` IS STILL HELD ON PURPOSE.** The tell that the new code is live is
+  its own startup line, which the old binary does not print: *"no `$CAIRN_TRUSTED_PROXIES`, and
+  this is a loopback bind … the sign-in limiter will key on the local peer, which is ONE bucket."*
+- ✅ **THE SHARE FLOW IS READY AND UNCONSUMED**, verified read-only so the human's click is still
+  theirs to take: `GET /` anonymous **401** · `/sign-in` **200** with a `token` password field ·
+  `POST /sign-in` +`Origin` **303** → `/` · signed-in `GET /` **200** showing `alpha-notes` and
+  `beta-notes` and **not** `rubble-heap`/`hollow-set` · `/share?scope=…` **200** carrying the
+  csrf field, the verb checkboxes and **`blake@example.invalid (user)` in the candidate select**.
+  Journal is **10 lines with no `granted` event**.
+- ✅ **`leakscan` ON THIS BASE CLONE NOW EXITS 0, AND THE PREVIOUS ENTRY'S ACQUITTAL OF
+  `result` WAS WRONG.** That entry said the gcroot symlinks are *"NOT the exit-2 cause —
+  measured, not assumed"*. Measured again here, they were the **only** cause named:
+  `IsADirectoryError … '/home/zach/workspace/cairn/result'` at `tests/leakscan.py:466`. They
+  are symlinks to `/nix/store` **directories**, which is the same `[Errno 21]` the agent-worktree
+  entry describes — one class, two instances. Building this session's binaries with
+  `--out-link` into a scratchpad instead, and removing the two stale symlinks, took the base
+  clone to **rc 0** with the tree unchanged.
+- 🔴 **AND IT WAS NEVER COSMETIC: THE SAME SYMLINK PUT EIGHT OF THE REPO'S OWN TESTS RED**, which
+  no entry recorded. `tests/test_leakscan_covers_every_tracked_file.py` (4) and
+  `tests/test_no_scrubbed_identifiers.py` (4) walk the same enumeration. Discriminated rather
+  than assumed: the identical tree in a fresh worktree of `origin/main` ran those two files
+  **27 passed**, and `go test ./internal/envalias/` — red in the base clone on a *nested agent
+  worktree's* copy of `envalias.go` — was **ok** there too. After the cleanup both are green in
+  the base clone.
 - **No external-task-board field**: the resolver exited **5**, "0 tasks for this session". An unknown
   session id answers 200 with an empty array, so that zero cannot distinguish "touched no
   task" from "wrong id". No field was written.
+- ✅ **CARRIED FORWARD — RANK 8 / RULE (o), because `State now` REPLACES.** The leak gate is
+  merged in the handoff-tooling repo as **`c4490f07`**, verified by content. Exit **13**
+  `leak-refused`; the scanner is resolved from the TARGET repo out of a closed set of one path;
+  a repo with none PASSES as `PASS BY ABSENCE`; **any** non-zero exit refuses;
+  `--leak-pre-existing-approved` is the operator opt-in and does NOT cover a scanner that could
+  not be RUN. ⚠ Its printed legend still resolves into `/nix/store` and needs a home-manager
+  switch — the gate is live, the legend is not.
 - 📇 **THE ARC'S LANDED SHAs, CARRIED FORWARD BECAUSE `State now` REPLACES AND THIS UPDATE'S
   DURABLE-DROP WARNING NAMED THEM.** #64 → **`7d7c9ea`** (the share flow) · #72 → **`6db7179`**
   (the changelog row, which could not exist inside #64 because the file requires a MERGE SHA) ·
@@ -110,7 +118,16 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
    forcing: user — item 5 of the five approved with "proceed as recommended".
 8. ✅ **DONE — rule (o) merged as `c4490f07` in the handoff-tooling repo (its #1854).**
    forcing: incident — FOUR leak events, one of which reached `main` (#68).
-9. ⏳ **IN FLIGHT: drive the share flow's human verification on `127.0.0.1:8103`.**
+9. ⏳ **IN FLIGHT: drive the share flow's human verification on `127.0.0.1:8103`** — now against a
+   build of `1838b82` (pid 2728234), the stale `a88f60b` instance having been replaced; see
+   `State now`. Everything a `curl` can reach is green and the write half is **unconsumed**.
+   🔴 **AND `curl` STRUCTURALLY CANNOT FINISH THIS CHAIN, WHICH SHARPENS WHY THE ITEM IS A
+   HUMAN'S.** The session cookie is `__Host-cairn-session; Secure`, and curl will not send a
+   `Secure` cookie over `http://` — so a correct sign-in (303, session opened in the log)
+   is followed by a **401** on the next `GET /`, which reads exactly like a broken sign-in.
+   A real browser treats `http://127.0.0.1` as a secure context and sends it. Forcing the
+   header by hand (`-H "Cookie: __Host-cairn-session=…"`) is the control that separates the
+   two and returns **200**. ⚠ Do not "fix" the cookie to make `curl` happy.
    forcing: user — the operator directed this item and reserved the browser step to a human.
 10. **DECIDE THE PUBLISH ORDERING — `tests/test_publish_workflow.py`'s `last_python < first_go`.**
     Its rationale has INVERTED: it read *"the Go image has never been run … leaves the deployed
@@ -135,28 +152,31 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   closed entry belong under `Gotchas`, which appends; the entry itself belongs in the archive.
   ⚠ **#74's ✅ entry was DROPPED by this update rather than retyped** — its lessons are already
   under `Gotchas` in their own bullets, which is the condition for dropping one.
-- 🔴 **SIX OF ELEVEN JOURNAL EVENT KINDS HAVE NO WRITER, AND THAT IS WIDER THAN THE ENTRY IT
-  GENERALISES.** Rank 5 recorded `EventCredentialRevoked` as the one gap. Measured against
-  `control.AllEventKinds` this session: only `user-created`, `project-created`,
-  `scope-created` (all three via `-create-user`) and `credential-issued` have a command behind
-  them. **`member-set`, `member-removed`, `scope-renamed`, `scope-moved`, `granted`,
-  `grant-revoked` and `credential-revoked` are reachable only by HAND-APPENDING JSON** — and
-  `granted`/`grant-revoked` at least have the browser surface as a writer, which the other five
-  do not. 🔴 **`member-set` is the one that bit**: the share flow's candidate list narrows to
-  co-members, `-create-user` creates a NEW project per invocation even for an identical
-  `-project` name, so there is no supported path to the two-users-one-project state the flow
-  needs. ⚠ Hand-appending is the exact shape that let a 64-character secret into the journal
-  (rank 5) — an operator told to hand-write a record is an operator guessing at a schema.
-  **Closing condition:** a `-set-member` command, or a written line saying hand-append is the
-  intended interface and naming where its schema is documented.
-- 🔴 **`leakscan` EXITS 2 ON A DIRECTORY IN ITS OWN ENUMERATION, AND RULE (o) HAS JUST MADE
-  THAT CONSEQUENTIAL.** `git ls-files --others` yields `.claude/worktrees/agent-…/` and the
-  scanner tries to read it: `COULD NOT READ … [Errno 21] Is a directory` → exit 2, "could not
-  vouch". Any agent worktree makes the base clone unvouchable. ⚠ **Until today that was
-  cosmetic; now `handoff_doc.py` refuses a handoff write on ANY non-zero exit**, so every
-  handoff into this repo while an agent worktree exists lands on `leak-refused` 13 and has to
-  be cleared with `--leak-pre-existing-approved` — an operator flag being spent on a
-  scanner artefact rather than on a real finding, which is how an override becomes reflexive.
+- 🟡 **FIVE OF ELEVEN JOURNAL EVENT KINDS HAVE NO WRITER — DOWN FROM SIX, AND THE ONE THAT BIT
+  IS THE ONE THAT CLOSED.** ✅ **`member-set` now has `-set-member`, landed by #86 (`d6fe1c3`),
+  and the entry that called it the blocker is retired by measurement**: this session built the
+  rank-9 world with it and watched `blake@example.invalid (user)` appear in the share flow's
+  candidate select, which is the state the hand-append existed to fake. Still writer-less:
+  `member-removed`, `scope-renamed`, `scope-moved`, `credential-revoked`, and — with the browser
+  surface as their only writer — `granted`/`grant-revoked`. ⚠ Hand-appending is the exact shape
+  that let a 64-character secret into the journal (rank 5): an operator told to hand-write a
+  record is an operator guessing at a schema, and `-issue-credential`'s own output still says
+  *"append a `credential-revoked` record BY HAND — nothing in this repository writes that event
+  yet"*. **Closing condition:** a writer for `credential-revoked`, or a written line saying
+  hand-append is the intended interface and naming where its schema is documented.
+- 🔴 **`leakscan` EXITS 2 ON ANY UNTRACKED *DIRECTORY-LIKE* PATH IN ITS OWN ENUMERATION — THE
+  CLASS IS WIDER THAN THE AGENT WORKTREE IT WAS FILED FOR, AND THIS ARC'S OWN BUILD ARTEFACTS
+  ARE IN IT.** `git ls-files --others` yields the path and the scanner reads it:
+  `[Errno 21] Is a directory` → exit 2, "could not vouch". Two instances measured:
+  `.claude/worktrees/agent-…/` (a live sibling worktree, **not yours to remove**) and
+  **`result`/`result-1`, nix gcroot symlinks pointing at store DIRECTORIES**, which a previous
+  entry explicitly acquitted — *"leakscan reads them without complaint"* — and which were in
+  fact the only cause named at the time it was re-measured. 🔴 **It is not cosmetic: the same
+  enumeration puts EIGHT of this repo's own tests red** (`test_leakscan_covers_every_tracked_file.py`,
+  `test_no_scrubbed_identifiers.py`), which nothing recorded, and `handoff_doc.py` now refuses a
+  handoff write on ANY non-zero exit — so an operator override gets spent on a scanner artefact,
+  which is how an override becomes reflexive. **Workaround that costs nothing:** build with
+  `nix build --out-link <scratchpad>/…` so no gcroot lands in the repo root.
   **Closing condition:** the scanner skips directory entries (or names them as skipped rather
   than unreadable), with a control proving a genuinely unreadable FILE still exits 2.
 - 🟡 **FOUR FILED BY #54's AND #57's LADDERS — AND (a) AND (b) WERE RE-MEASURED AND ARE WRONG AS
@@ -750,6 +770,86 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   rewrite public history.** A force-push breaks every clone and fork and would close every open
   PR's base.
 
+- 🔴 **A CLEAN TEXTUAL MERGE DELETED FOUR TESTS, AND THE CONFLICT IT REPORTED WAS ABOUT A
+  COMMENT.** *(Re-derived from #80, which lost the doc race and carried this nowhere else.)*
+  Merging #69 into #76: `git` reported ONE conflict in `cmd/cairn-ui/main_test.go`, covering a
+  comment; taking one side of that hunk removed four unrelated tests the other side had added
+  further down the same file. No marker, no error, and reading the hunk could never have shown
+  it. 🔴 **What caught it is a DECLARATION-SET DIFF AGAINST BOTH PARENTS** —
+  `comm -23 <(git show <parent>:<f> | grep -oE '^func [A-Za-z][A-Za-z0-9_]*' | sort) <(… the
+  merged file …)`, run for each parent. Do that on every merge where both sides touched one
+  file; "no conflict markers left" is not the same claim.
+- 🔴 **AND THE SAME MERGE LEFT A TREE THAT DID NOT COMPILE, FROM FILES THAT NEVER CONFLICTED.**
+  *(Also re-derived from #80.)* The rename replaced an env helper; the new command's call site —
+  added on the other branch, in a hunk the rename never touched — still called the old name.
+  **Disjoint files are not safety: one side widened how something is read, the other added a
+  caller.** The mutation battery said so first, by REFUSING TO VOUCH: *"the unedited copy is not
+  green, so every mutant below would score KILLED for a reason that has nothing to do with its
+  guard."* A non-compiling tree would otherwise have reported a perfect score.
+- 🔴 **A SWEEP FOR THE PHRASINGS YOU HAVE SEEN IS A SPELLED CHECK, AND IT MISSED A CLAIM IN THE
+  COMMIT WHOSE WHOLE SUBJECT WAS THAT CLAIM.** #78 corrected "which pod is deployed" at three
+  sites, found by grepping three wordings (`deployed by nothing`, `not deployed by anything`,
+  `DEPLOYED BY NOTHING`). A **fourth** claim — `AGENTS.md:399`, *"`server/Dockerfile` is what is
+  deployed today"* — used none of them and survived; #81 had to finish the job. The right
+  question is **"what else in this file asserts this?"**, never "where else does this phrase
+  appear". A grep over wordings you already know cannot find the one you do not.
+- 🔴 **TWO FALSE ZEROS ON ONE CLAIM, BOTH READING AS CONFIRMATION, IN UNDER A MINUTE.**
+  Verifying that the handoff skill never mentions `leakscan`: (a) `grep -lc` combines two
+  conflicting flags and prints **nothing at all** — not an error, just silence; (b)
+  `find ~/.claude/skills/handoff -type f` returns **0 files**, because home-manager makes those
+  entries **symlinks** and `-type f` does not follow them, while `grep` on the same path reads
+  them fine. Both produced an empty result that looked like the answer. **`find -L` is the fix**,
+  and a positive control on the same invocation is what exposed both.
+- 🔴 **`gh pr checks` REPORTS THE LATEST RUN PER CHECK *NAME*, NOT PER COMMIT** — so after a
+  rebase or a base move it can show a job's verdict from an older head. Read
+  `gh api repos/<o>/<r>/commits/<sha>/check-runs` for the head you are actually merging.
+  ⚠ And read BOTH surfaces: the same head answered `state=pending statuses=0` on the commit-
+  status API while all six check-runs were `success` — this repo posts check-runs and no
+  statuses, so a zero there is an ABSENCE, not a red.
+- 🔴 **A MUTANT THAT DOES NOT COMPILE DIES AT THE BUILD AND PROVES NOTHING.** Replacing the
+  ETag's digest with a constant left `hex` and `sha256Sum` unused, so `go test` reported
+  `[build failed]` and the guard never ran. Rebuilt so the mutant still USES both symbols while
+  being content-independent, it reached the guard and died with the guard's own message.
+  **Mutate the narrowest expression that can be wrong**, and check the mutant compiles before
+  reading its verdict.
+- ⚠ **`mergeStateStatus: UNKNOWN` IS THE API COMPUTING LAZILY, NOT A PROBLEM WITH THE PR.**
+  Seen immediately after a sibling PR merged and moved the base; it resolved to `CLEAN` on a
+  re-read seconds later. Do not treat it as a conflict signal, and do not merge through it.
+- **THE QUEUE WAS STALE IN TWO INDEPENDENT PLACES, BOTH ABOUT WORK ALREADY FINISHED**, and each
+  cost real time before the work could start: rank 2 named a defect
+  `tests/test_narrowing_echo_sites.py` had already closed, and rank 6 asked to close entries an
+  earlier session had already moved to the archive. Neither was careless — it is what happens
+  when sessions that cannot see each other write the same list. **Before acting on a ranked
+  item, check whether it is already done**; the entry is a claim like any other.
+- 🔴 **THE DOC RACE WAS MEASURED HAPPENING, NOT JUST REMEMBERED — TWO PRs, `MERGEABLE` AND
+  `CLEAN` AGAINST `main`, THAT CONFLICTED WITH *EACH OTHER*.** #95 and #96 were opened two
+  minutes apart, both editing only this file, both with the full six-check set green.
+  `git merge-tree --write-tree` exited **0** for each against `main` and **1** between them;
+  twenty minutes later, with #95 merged, #96's own rc against `main` had flipped 0 → 1.
+  🔴 **GitHub's `MERGEABLE` compares each branch against a `main` where the other has not
+  landed, so it can never see this.** The tie-break that picked the merge order was not
+  seniority: **#96's `State now` asserted facts a sibling session's work had just falsified**
+  (*"pid 3942268 … still true"*, *"leakscan exits 2 … still true"*), while #95 deliberately
+  omitted `State now` — so #95 could land unchanged and #96 needed re-deriving anyway.
+  **Prefer the PR whose claims are still true, not the one that was opened first.**
+- 🔴 **AN INSTRUMENT THE DOC TOLD ME TO USE CANNOT REACH THE THING IT WAS POINTED AT, AND THE
+  FAILURE LOOKS EXACTLY LIKE THE DEFECT.** The share flow's session cookie is
+  `__Host-cairn-session; Secure`; **curl will not send a `Secure` cookie over `http://`**, so a
+  sign-in that genuinely succeeded (303, *"a session was opened for …"* in the server log) is
+  followed by **401** on the next `GET /` with the jar attached. Read as a server bug that is a
+  whole false arc; read as a cookie-policy difference it is one forced header. A browser treats
+  `http://127.0.0.1` as a secure context and does send it — so *"curl is a different
+  instrument"* is not a caution here, it is a **structural inability**. The discriminating
+  control is `-H "Cookie: __Host-cairn-session=…"` → **200**.
+- 🔴 **A `nix build` IN THE REPO ROOT ARMS A GATE AGAINST YOU, AND AN ENTRY HAD ALREADY
+  ACQUITTED IT.** `result`/`result-1` are untracked symlinks to store **directories**; the leak
+  scanner's `--others` enumeration reads them and dies `[Errno 21]`, taking eight of the repo's
+  own tests red with it. A previous `State now` said they were *"NOT the exit-2 cause —
+  measured, not assumed"*; re-measured, they were the **only** cause named. **Build with
+  `--out-link <scratchpad>/…`.** ⚠ And do not remove a gcroot without checking what still runs
+  from it — here it was the gcroot of the very server a human was queued to verify, so the order
+  had to be replace-then-remove.
+
 ## How to verify
 
 ```bash
@@ -792,34 +892,49 @@ else holds.**
 
 **The share flow, by hand (rank 9's bring-up, reproducible):**
 ```bash
-nix build .#cairn-ui .#cairn-server-go      # local flake; main == origin/main
+# 🔴 --out-link INTO A SCRATCHPAD, NEVER THE REPO ROOT: a bare `nix build` leaves
+#    `result`/`result-1`, untracked symlinks to store DIRECTORIES, which take leakscan
+#    to exit 2 and eight of this repo's own tests red. See `Defects (batched)`.
+nix build .#cairn-ui        --out-link <s>/gc-ui
+nix build .#cairn-server-go --out-link <s>/gc-server
 # 1. a synthetic store + token row, straight from the parity world builder:
 #    python3 -c 'import sys; sys.path.insert(0,"tests/parity"); import world; …'
 #    world.build_store(<root>) and world.TOKEN_ROW  → four scopes, one malformed entry
-# 2. two users. 🔴 THE SAME -project NAME CREATES A SECOND PROJECT, so they are NOT
-#    co-members and the share flow's candidate narrowing finds nobody:
+# 2. two users. 🔴 THE SAME -project NAME CREATES A SECOND PROJECT, so give them
+#    DIFFERENT ones and join them in step 3; a shared name buys nothing:
 export CAIRN_CONTROL_JOURNAL=<w>/journal.jsonl
-./result-1/bin/cairn-server -create-user -provider supabase -subject sub-a \
+<s>/gc-server/bin/cairn-server -create-user -provider supabase -subject sub-a \
   -email a@example.invalid -project orbit-works -scopes alpha-notes,beta-notes -store <w>/store
-./result-1/bin/cairn-server -create-user -provider supabase -subject sub-b \
-  -email b@example.invalid -project orbit-works -scopes "" -store <w>/store
-# 3. 🔴 HAND-APPEND a `member-set` event putting B in A's project — NOTHING WRITES IT.
-#    Required fields: kind, at, actor, user_id, project_id, role (owner|admin|member),
-#    and `narrowed_scopes` which must be PRESENT (null), never omitted.
+<s>/gc-server/bin/cairn-server -create-user -provider supabase -subject sub-b \
+  -email b@example.invalid -project drift-lab -scopes "" -store <w>/store
+# 3. ✅ -set-member PUTS B IN A'S PROJECT. #86 (`d6fe1c3`) added it; the hand-append this
+#    step used to prescribe is retired. Ids, never display names — both are printed above:
+<s>/gc-server/bin/cairn-server -set-member -member-project <prj_…> \
+  -member-user <usr_…> -member-role member
 # 4. a live credential for A. WITHOUT one the surface exits 78; `-create-user` does NOT
 #    fix that, it mints a user and no credential:
-./result-1/bin/cairn-server -issue-credential -principal <usr_…> -principal-kind user \
+<s>/gc-server/bin/cairn-server -issue-credential -principal <usr_…> -principal-kind user \
   -label '…' -token-out <w>/a.token -store <w>/store
-./result/bin/cairn-ui -store <w>/store -token-file <w>/tokens \
+<s>/gc-ui/bin/cairn-ui -store <w>/store -token-file <w>/tokens \
   -control-journal <w>/journal.jsonl -session-file <w>/sessions.jsonl \
   -host 127.0.0.1 -port 8103
 ```
+🔴 **CHECK WHAT REVISION THE RUNNING BINARY IS, NOT JUST THAT SOMETHING IS LISTENING.**
+`readlink -f /proc/<pid>/exe` carries the revision in the store path. An instance left up for a
+human across sessions goes stale in the surface under test — one sat on `a88f60b` while `main`
+had moved twelve commits, including the sign-in path #91 rewrote.
 🔴 **`sharing writable` IN THE STARTUP LINE IS NOT EVIDENCE SIGN-IN WORKS** — the doc already
 records a journal that printed it while refusing every sign-in. **Exercise the chain**: `GET /`
 anonymous → **401**; `GET /sign-in` → a `password` field named `token`; `POST /sign-in` with an
 `Origin` header → **303** to `/`; `GET /` with the cookie → only the scopes that principal can
-reach. Measured this session: 401 · 200 · 303 · `alpha-notes` and `beta-notes` and **not**
-`rubble-heap`/`hollow-set`.
+reach. Re-measured on the `1838b82` instance: 401 · 200 · 303 · `alpha-notes` and `beta-notes`
+and **not** `rubble-heap`/`hollow-set`; `/share?scope=…` **200** with the csrf field, the verb
+checkboxes and the co-member in the candidate select.
+🔴 **STEP 4 WILL ANSWER 401 UNDER `curl` EVEN WHEN SIGN-IN SUCCEEDED, AND THAT IS THE
+INSTRUMENT, NOT THE SERVER.** The cookie is `__Host-cairn-session; Secure` and curl declines to
+send a `Secure` cookie over `http://`; a browser treats `http://127.0.0.1` as a secure context
+and does. Force it — `-H "Cookie: __Host-cairn-session=<value from Set-Cookie>"` — and read
+**200**. Check the server log for *"a session was opened for …"* before suspecting the refusal.
 🔴 **AND VERIFY THE WRITE HALF ON A *COPY*, NOT ON THE WORLD YOU ARE HANDING OVER** — a share
 POST is durable in an append-only journal, so probing the live one consumes the very action the
 human was asked to take. `cp -a` the world, run a second instance on another port, POST
