@@ -38,6 +38,22 @@ from pathlib import Path
 
 import pytest
 
+# 🔴 THE FIELD-SCOPED READER IS IMPORTED, NOT RE-WRITTEN, AND AN AUDIT IS WHY. This module
+# first asserted `User` with a BLOCK-WIDE substring search, which `mkGoUIImage`'s own
+# `chown -R ${toString serverUid}:${toString serverUid} …` line satisfies on its own —
+# measured: `User = "0:0";` left all 17 tests GREEN and the built image reported
+# `Config.User: 0:0`. The sibling module records that identical mutation as a defect it had
+# already shipped and closed with this very function, so the substring form was a
+# regression to a pre-fix shape under the same test name. One reader, one place.
+from test_flake_image_matches_dockerfile import flake_image_arg
+
+# 🔴 AND THE LAYER PREDICATE COMES FROM THE CHECK'S OWN SCRIPT, for the same reason. This
+# module had its own copy of "which of the four `dockerTools` spellings names this
+# directory, newest layer wins" — the identical predicate `checks.ui-image-owns-its-session-dir`
+# runs. Two copies of one rule regenerate the same bug at both sites; `claude/RULES.md`
+# calls that out by name, and an audit found it here before it could.
+from ui_image_session_dir_check import owner_in_image, owner_in_layer
+
 ROOT = Path(__file__).resolve().parents[1]
 FLAKE = ROOT / "flake.nix"
 UI_MAIN = ROOT / "cmd" / "cairn-ui" / "main.go"
@@ -219,16 +235,24 @@ class TestTheUIImageRunsUnderTheSameContractAsThePod:
     def test_the_uid_derives_from_serverUid_and_is_not_root(
         self, flake: str, ui_block: str
     ) -> None:
-        assert "${toString serverUid}:${toString serverUid}" in _norm(ui_block), (
-            "the UI image must DERIVE its uid from serverUid rather than restate a "
-            "number — a second literal is how one image ends up running as root"
+        user = flake_image_arg(flake, "User", UI_MAKER)
+        assert user is not None, "the UI image declares no User"
+        assert _norm(user) == '"${toString serverUid}:${toString serverUid}"', (
+            f"User is {user!r}. It must DERIVE from serverUid rather than restate a "
+            f"number, and it is read FIELD-SCOPED because the maker block also contains "
+            f"that exact string in its chown — a block-wide search passes on User = "
+            f'"0:0".'
         )
         uid = flake_int(flake, "serverUid")
         assert uid is not None and uid != 0
 
-    def test_the_exposed_port_derives_from_uiPort(self, ui_block: str) -> None:
-        assert '"${toString uiPort}/tcp"' in _norm(ui_block), (
-            "ExposedPorts must be derived from uiPort, not written as a literal"
+    def test_the_exposed_port_derives_from_uiPort(
+        self, flake: str, ui_block: str
+    ) -> None:
+        ports = flake_image_arg(flake, "ExposedPorts", UI_MAKER)
+        assert ports is not None, "the UI image declares no ExposedPorts"
+        assert '"${toString uiPort}/tcp"' in _norm(ports), (
+            f"ExposedPorts is {ports!r}; it must be derived from uiPort, not a literal"
         )
         assert "serverPort" not in ui_block, (
             "the UI image names serverPort — that is the POD's port (8102) and exposing "
@@ -254,10 +278,11 @@ class TestTheUIImageRunsUnderTheSameContractAsThePod:
         )
 
     def test_the_entrypoint_is_the_UI_BINARY_by_absolute_store_path(
-        self, ui_block: str
+        self, flake: str, ui_block: str
     ) -> None:
-        norm = _norm(ui_block)
-        assert 'Cmd = [ "${pkgs.lib.getExe goUI}" ]' in norm, (
+        cmd = flake_image_arg(flake, "Cmd", UI_MAKER)
+        assert cmd is not None, "the UI image declares no Cmd"
+        assert _norm(cmd) == '[ "${pkgs.lib.getExe goUI}" ]', (
             "Cmd must name the UI binary by absolute store path. `/bin/cairn-ui` also "
             "resolves, which is the reason not to use it: the entrypoint would then "
             "depend on `contents` placing bin/ at the image root AND on PATH."
@@ -314,16 +339,21 @@ class TestTheSessionDirectoryIsCreatedAndOwned:
         empty = tmp_path / "empty.tar"
         with tarfile.open(empty, "w"):
             pass
-        assert _owner_of_dir_in_tar(empty, "var/lib/cairn-ui") is None
+        assert owner_in_layer(empty, "var/lib/cairn-ui") is None
 
     def test_the_built_image_owns_the_session_dir(self, flake: str) -> None:
         session_dir = flake_str(flake, "uiSessionDir")
         uid = flake_int(flake, "serverUid")
         assert session_dir is not None and uid is not None
-        tarball = _build_ui_image()
-        if tarball is None:
-            pytest.skip("nix build .#ui-image unavailable in this environment")
-        assert tarball is not None
+        try:
+            tarball = _build_ui_image()
+        except _NixUnavailable as exc:
+            pytest.skip(f"nix cannot be run here: {exc}")
+        assert tarball is not None, (
+            "`nix build .#ui-image` RAN and FAILED. That is a broken image, not an "
+            "unavailable environment — it is reported as a failure rather than a skip "
+            "because a skip nobody counts is a pass."
+        )
         owner = _owner_in_image(tarball, session_dir.lstrip("/"))
         assert owner is not None, (
             f"{session_dir} appears in NO layer of the built image. The deployment would "
@@ -339,23 +369,21 @@ class TestTheSessionDirectoryIsCreatedAndOwned:
 # Helpers that touch the filesystem, kept below the pure ones.
 # ---------------------------------------------------------------------------
 
-def _owner_of_dir_in_tar(tar_path: Path, member: str) -> tuple[int, int] | None:
-    """`(uid, gid)` of `member` in one layer tar, or None if it is not there."""
-    wanted = {member, member + "/", "./" + member, "./" + member + "/"}
-    try:
-        with tarfile.open(tar_path) as tf:
-            for info in tf:
-                if info.name in wanted or info.name.rstrip("/") in {
-                    member,
-                    "./" + member,
-                }:
-                    return (info.uid, info.gid)
-    except tarfile.TarError:
-        return None
-    return None
+
+class _NixUnavailable(Exception):
+    """`nix` itself could not be run here — the only honest reason to SKIP."""
 
 
 def _build_ui_image() -> Path | None:
+    """The built image, or None when the BUILD FAILED.
+
+    🔴 A FAILED BUILD IS NOT A SKIP, AND IT WAS ONE — MEASURED. This returned None for a
+    non-zero exit too, so an image that genuinely could not be built reported
+    "16 passed, 1 skipped" with a reason blaming the environment. An audit inserted
+    `exit 1` into `fakeRootCommands` and watched exactly that. The distinction now has two
+    channels: `_NixUnavailable` (nix is absent or timed out — skip, and that is the only
+    case this module cannot judge) versus None (nix ran and the build FAILED — fail).
+    """
     try:
         out = subprocess.run(
             ["nix", "build", ".#ui-image", "--no-link", "--print-out-paths"],
@@ -364,8 +392,8 @@ def _build_ui_image() -> Path | None:
             text=True,
             timeout=1800,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise _NixUnavailable(str(exc)) from None
     if out.returncode != 0:
         return None
     # 🔴 READ THE LAST LINE, NOT THE WHOLE CAPTURE. A derivation with several outputs
@@ -379,26 +407,17 @@ def _build_ui_image() -> Path | None:
 
 
 def _owner_in_image(tarball: Path, member: str) -> tuple[int, int] | None:
-    """Walk every layer of an OCI tarball for `member`, newest layer wins."""
+    """Extract an OCI tarball and delegate to the CHECK'S OWN reader."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         try:
             with tarfile.open(tarball) as tf:
-                # `filter="data"` because 3.14 changes the default and warns here now.
-                # ⚠ IT DOES NOT WEAKEN THE OWNERSHIP ASSERTION, and the reason is worth
-                # stating because "data drops uid/gid" is true and reads as fatal: what
-                # this extracts is the OUTER tarball, whose members are `layer.tar` FILES.
-                # The ownership read below opens each layer and reads `info.uid` out of
-                # its own tar headers — bytes inside the file, untouched by how the file
-                # itself was extracted.
+                # `filter="data"` for 3.14's changed default; it cannot weaken the result,
+                # because these members are layer.tar FILES and the ownership read below
+                # comes from tar headers INSIDE them.
                 tf.extractall(root, filter="data")  # noqa: S202 — our own build output
         except tarfile.TarError:
             return None
-        found: tuple[int, int] | None = None
-        for layer in sorted(root.rglob("layer.tar")):
-            owner = _owner_of_dir_in_tar(layer, member)
-            if owner is not None:
-                found = owner
-        return found
+        return owner_in_image(root, member)

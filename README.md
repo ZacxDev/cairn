@@ -359,8 +359,8 @@ not served by B until B's cache refreshes, which is what the replica-honesty not
 on every share page exists to say. Putting only the session file on shared storage
 buys two replicas that keep people signed in and silently disagree about who can
 see what. Multi-replica is a later arc, not a configuration. And **nothing
-deploys it**: there is no image and no manifest in this repository — it is built
-and run by hand.
+deploys it**: `packages.ui-image` builds an image, but nothing publishes that
+image and there is no manifest in this repository — it is built and run by hand.
 
 ```bash
 nix build github:ZacxDev/cairn#cairn-ui

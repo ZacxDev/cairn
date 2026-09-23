@@ -803,7 +803,7 @@ Each of its three clauses is a fact measured elsewhere in this tree:
 
 | clause | what makes it true |
 |---|---|
-| "one replica's answer, read from a cached copy of the authority" | `control.Cache` is stale by design up to its declared `MaxAge`; `cairn-ui` is single-replica (no `ui-image` derivation, no manifest in this repo) |
+| "one replica's answer, read from a cached copy of the authority" | `control.Cache` is stale by design up to its declared `MaxAge`; `cairn-ui` is single-replica — see `identity.FileSessionStore`, whose own comment states it; the `ui-image` derivation now exists but nothing publishes or deploys it |
 | "another reader gains or loses the scope when their own cache next refreshes" | `control.Cache.ApplyNow`'s promise is explicitly about THIS process |
 | "does not recall entries already copied onto somebody's machine" | `ApplyNow` says it in as many words |
 
@@ -934,5 +934,6 @@ Everything Phase A's and Phase B's lists say still applies, plus:
   it from a page about one scope would silently withdraw every other scope that project owns. There
   is no project page, so today there is **nowhere in this surface** to revoke one. Stated as a gap
   rather than left for somebody to find by hunting for a button.
-- **Nothing measures a real deployment.** There is still no `ui-image` derivation and no manifest,
+- **Nothing measures a real deployment.** `packages.ui-image` now BUILDS an image — and a
+  build is not a deploy: nothing publishes it and there is still no manifest,
   so `-control-journal` has been exercised by tests and by nothing else.

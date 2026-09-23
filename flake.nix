@@ -864,10 +864,12 @@
       # is `PATH` and the CA bundle and nothing else; everything operational arrives as a
       # flag or an env var from the Deployment.
       #
-      # ⚠ THE CA BUNDLE IS CARRIED WITHOUT A MEASURED CONSUMER, AND SAYING SO IS THE
-      # POINT. Nothing in this binary completes a TLS handshake today — the JWKS fetch
-      # that would is `internal/identity`'s Supabase backend, which the handoff records as
-      # never having been exercised against a real issuer. It is here because the surface
+      # ⚠ THE CA BUNDLE IS CARRIED WITHOUT A CONSUMER OF ANY KIND, AND THE HONEST VERSION
+      # IS BLUNTER THAN "UNTESTED". This binary has NO WIRED TLS-EGRESS PATH AT ALL:
+      # `internal/ui/auth.go` passes `nil` in the Supabase slot of `identity.Backends`, and
+      # there is no `http.Client` or `http.Get` anywhere under `cmd/cairn-ui` or
+      # `internal/ui` — measured. So this is not a fetch that has never been exercised
+      # against a real issuer; it is a fetch that cannot currently happen. It is here because the surface
       # this image exists to publish is the one that will do it, and because the pod's
       # own bundle was measured INERT IN BOTH DIRECTIONS (121 roots with the variable set,
       # unset, and pointed at `/nonexistent`) — so its presence is cheap and its absence
@@ -932,8 +934,12 @@
           # 🔴 `ui-image`, NOT `ui-image-go`. The `-go` suffix on the pod distinguishes
           # it from a PYTHON sibling that exists and is still published; this surface has
           # no second implementation and never had one, so a suffix would imply a
-          # counterpart a reader would then go looking for. It publishes to its own ghcr
-          # package (`cairn-ui`), which is what keeps it off the pods' names.
+          # counterpart a reader would then go looking for. ⚠ NOTHING PUBLISHES IT YET —
+          # `publish-image.yml` pushes `server-image` and `server-image-go` and no third
+          # leg exists, so the OCI name below is what it WOULD be published as, not a
+          # package anybody can pull. An earlier wording here read "It publishes to its
+          # own ghcr package", present tense, for a leg the same change deliberately
+          # excluded.
           ui-image = mkGoUIImage pkgs;
         });
 
@@ -1310,7 +1316,15 @@
         # notices before the deploy.
         ui-image-owns-its-session-dir =
           pkgs.runCommand "cairn-ui-image-owns-its-session-dir"
-            { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            # 🔴 `(python pkgs)`, NEVER `pkgs.python3`. The bare attribute follows nixpkgs
+            # — measured 3.14.7 against this lock, where `python` is 3.12.14 and CI pins
+            # 3.12 — so a check written with it would take its verdict from an interpreter
+            # nothing else in this repository runs. `AGENTS.md` records that exact incident
+            # ("A bare `pkgs.python3` followed nixpkgs to 3.14 and shipped an interpreter
+            # NOTHING in this repo had ever run the suite under"), and this line was
+            # written with it anyway, ~1100 lines below the comment recording it. An audit
+            # caught it before merge.
+            { nativeBuildInputs = [ (python pkgs) ]; } ''
             set -o pipefail
             python3 "${./tests/ui_image_session_dir_check.py}" \
               "${mkGoUIImage pkgs}" "${uiSessionDir}" ${toString serverUid} | tee $out
