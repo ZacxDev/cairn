@@ -417,20 +417,48 @@ are stated in both files and neither can move alone. Do not add a third
 STATEMENT of the runtime contract: it would be outside that pin, and it would be
 the one that actually ships.
 
-⚠ **AND THE PIN'S JUSTIFICATION IS NOT WHAT `AGENTS.md` SAID IT WAS — THE
-RETRACTED WORDING IS KEPT HERE SO NOBODY RE-DERIVES IT.** That file read
+⚠ **THE RETRACTED WORDING, KEPT HERE SO NOBODY RE-DERIVES IT.** `AGENTS.md` read
 *"`server/Dockerfile` is what is deployed today"* from before the Go cutover
-until well after it, while two other claims in the SAME file already said the Go
-pod is deployed and the cluster pulls `cairn-store-go`. It survived `#78`, whose
-entire subject was correcting which server is deployed — a one-line prose claim
-is exactly what a commit aimed at prose claims can miss, because nothing greps
-it. **Neither Python image is deployed anywhere.** What still justifies the pin
-is narrower and worth stating plainly: `packages.cairn` ships a runtime contract
-two files state independently, so they can still disagree — a real hazard with
-no running pod behind it. Whether that is worth the size of guard it currently
-buys is a P8 question, not a settled one, and it is open. ⚠ A line count belongs
-in the measurement that motivates the decision, never here: an unpinned number in
-prose is the defect class this repository already tracks.
+until well after it, while three other claims in the SAME file said the Go pod is
+deployed. `#78` moved three of those sites and **missed a fourth in the very file
+it was editing** — that is the lesson, and it is sharper than "a commit missed a
+claim": nothing greps prose, so a sweep is the only thing that finds the copy you
+were not looking at.
+
+🔴 **AND THAT RETRACTION IS ITSELF INCOMPLETE — MORE SITES STILL CARRY THE CLAIM,
+INCLUDING `flake.nix` VERBATIM AND THIS GUARD'S OWN "WHY THIS FILE EXISTS"
+DOCSTRING.** They are NOT swept here on purpose, and the reason is not laziness:
+this repo holds no manifest, so nothing in it can establish which pod a cluster
+actually pulls — the Go side's whole evidence is a commit message. **A sweep
+would propagate an unverified claim to every site it touched.** The operator
+settles which pod is deployed; until then the inconsistency is RECORDED, not
+resolved. Re-derive the sites rather than trusting a number here — a count in
+prose is the defect class this repo tracks, and two were introduced while writing
+this very paragraph:
+
+```bash
+git ls-files -z | xargs -0 grep -nE 'is what is deployed|deployed today'
+git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
+```
+
+⚠ The second pattern also matches `cairn-ui`, which genuinely is deployed by
+nothing — read the matches, do not count them.
+
+🔴 **AND THE PIN IS TWO GUARDS, ONLY ONE OF WHOSE PREMISES DIED.** Neither Python
+image is deployed, so the Dockerfile↔flake agreement half stands on a contract
+`packages.cairn` still ships rather than on a running pod. But
+`test_both_implementations_resolve_the_deployment_contract_with_no_env` reads
+`cmd/cairn-server/main.go` — the **Go** pod — and pins its defaults against what a
+Deployment assumes, so that half is LIVE and is the only written-down statement of
+that contract. ⚠ An earlier draft of this very paragraph said the guard rested on
+"no running pod" **at all**; that was false, and it is the shape this repo keeps
+finding — a fix round's own prose asserting more than it checked. **P8 splits this
+file; it does not delete it.**
+
+The module set is deliberately *not* duplicated: the Dockerfile enumerates its
+`COPY`s (kept honest by `test_the_image_copies_every_module_it_needs`) while the
+flake copies all of `lib/`, so there is nothing there for the two to disagree
+about.
 
 ⚠ **That sentence used to read "do not add a third WAY to produce this pod", and
 there is now a third build.** `packages.server-image-go` wraps the Go server.

@@ -396,15 +396,14 @@ example, and why the parity harness is what measures behaviour instead, are in
 `tests/parity/README.md`.
 
 🔴 **TWO WAYS TO BUILD THE *PYTHON* POD, THEY MUST NOT DIVERGE — AND ⚠ NEITHER IS
-DEPLOYED.** `packages.server-image` is the reproducible build of
-`server/Dockerfile`, so the guard below stands on a contract `packages.cairn`
-still ships, never on a running pod; whether it outlives P8 is OPEN. The runtime
-contract — env, port, uid, entrypoint — is written in both, so
-`tests/test_flake_image_matches_dockerfile.py` pins them against each other.
-Change one, change the other, in the same commit. The module set is deliberately
-*not* duplicated: the Dockerfile enumerates its `COPY`s (kept honest by
-`test_the_image_copies_every_module_it_needs`) while the flake copies all of
-`lib/`, so there is nothing there for the two to disagree about.
+DEPLOYED** (the retraction, and the module-set detail, are in `server/README.md`).
+`packages.server-image` is a second way to produce that pod, **not** a build of
+`server/Dockerfile`. The runtime contract — env, port, uid, entrypoint — is
+written in both, so `tests/test_flake_image_matches_dockerfile.py` pins them
+against each other. Change one, change the other, in the same commit. 🔴 **AND
+THAT FILE IS TWO GUARDS, ONLY ONE OF WHOSE PREMISES DIED — it also pins
+`cmd/cairn-server/main.go`'s defaults against what a Deployment assumes, which is
+the GO pod. That half is LIVE. P8 must SPLIT it, never delete it.**
 
 🔴 **AND THE AGREEMENT TEST IS NARROWER THAN "THE TWO IMAGES ARE THE SAME" —
 KNOW WHAT IT DOES NOT SEE.** It pins env, uid, port and entrypoint, and it is
