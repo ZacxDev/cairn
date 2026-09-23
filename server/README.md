@@ -420,10 +420,11 @@ the one that actually ships.
 ⚠ **THE RETRACTED WORDING, KEPT HERE SO NOBODY RE-DERIVES IT.** `AGENTS.md` read
 *"`server/Dockerfile` is what is deployed today"* from before the Go cutover
 until well after it, while three other claims in the SAME file said the Go pod is
-deployed. `#78` moved three of those sites and **missed a fourth in the very file
+deployed. `#78` moved three of those sites and **missed one more in the very file
 it was editing** — that is the lesson, and it is sharper than "a commit missed a
 claim": nothing greps prose, so a sweep is the only thing that finds the copy you
-were not looking at.
+were not looking at. ⚠ Not to be read as `#78`'s own "a fourth site", which names
+a different site it left alone deliberately, and correctly.
 
 🔴 **AND THAT RETRACTION IS ITSELF INCOMPLETE — MORE SITES STILL CARRY THE CLAIM,
 INCLUDING `flake.nix` VERBATIM AND THIS GUARD'S OWN "WHY THIS FILE EXISTS"
@@ -432,36 +433,57 @@ this repo holds no manifest, so nothing in it can establish which pod a cluster
 actually pulls — the Go side's whole evidence is a commit message. **A sweep
 would propagate an unverified claim to every site it touched.** The operator
 settles which pod is deployed; until then the inconsistency is RECORDED, not
-resolved. Re-derive the sites rather than trusting a number here — a count in
-prose is the defect class this repo tracks, and two were introduced while writing
-this very paragraph:
+resolved.
+
+🔴 **TWO OF THE SURVIVING SITES ARE IN *THIS* FILE, ABOVE AND BELOW THIS
+PARAGRAPH** — `:60` (`cmd/cairn-server` *"not deployed by anything"*) and the
+*"published, and deployed by nothing … No manifest references the Go one"* block
+a few dozen lines down, which a reader reaches by scrolling. They are named here
+because an enumeration that lists `flake.nix` and omits the file it is written
+into is the same one-file-fix failure recorded above.
+
+Re-derive the sites rather than trusting a number — a count in prose is the
+defect class this repo tracks, and two were introduced while writing this:
 
 ```bash
 git ls-files -z | xargs -0 grep -nE 'is what is deployed|deployed today'
 git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
 ```
 
-⚠ The second pattern also matches `cairn-ui`, which genuinely is deployed by
-nothing — read the matches, do not count them.
+🔴 **BOTH PATTERNS ARE LINE-ANCHORED AND THEREFORE INCOMPLETE — this is a
+demonstration, not a remedy.** `tests/test_flake_image_matches_dockerfile.py`'s
+own `WHY THIS FILE EXISTS` docstring carries the claim across a line break
+(*"…is the build that is deployed"* / *"today."*) and **neither command finds
+it**. The author of this paragraph then missed a third wrapped instance —
+`packages.cairn`, above — by grepping for it exactly this way. Normalise before
+sweeping, or read the file. ⚠ The second pattern also matches `cairn-ui`, which
+genuinely is deployed by nothing — read the matches, do not count them.
 
 🔴 **AND THE PIN IS TWO GUARDS, ONLY ONE OF WHOSE PREMISES DIED.** Neither Python
 image is deployed, so the Dockerfile↔flake agreement half stands on a contract
-`packages.cairn` still ships rather than on a running pod. But
+that `packages.server-image` and `server/Dockerfile` state — **not**
+`packages.cairn`, which is the Python CLIENT and ships no pod contract at all, so
+retiring it retires nothing here. But
 `test_both_implementations_resolve_the_deployment_contract_with_no_env` reads
 `cmd/cairn-server/main.go` — the **Go** pod — and pins its defaults against what a
-Deployment assumes, so that half is LIVE and is the only written-down statement of
-that contract. ⚠ An earlier draft of this very paragraph said the guard rested on
-"no running pod" **at all**; that was false, and it is the shape this repo keeps
-finding — a fix round's own prose asserting more than it checked. **P8 splits this
-file; it does not delete it.**
+Deployment assumes, so that half is LIVE and is the only place that contract is
+ASSERTED. (It is *stated* in several: `:56`, `:591`, `:1280`, `flake.nix`,
+`server/Dockerfile`. Asserted-versus-stated is the guard's own distinction and
+dropping it widens the claim.) ⚠ An earlier draft of this paragraph said the
+guard rested on "no running pod" **at all**, and a later one pinned its lifetime
+to `packages.cairn` — the second survived a commit whose message said it had been
+dropped, because it was dropped from `AGENTS.md` only. That is the shape this repo
+keeps finding: a fix round's own prose asserting more than it checked, and a
+one-file fix reported as a sweep. **P8 splits this file; it does not delete it.**
 
 The module set is deliberately *not* duplicated: the Dockerfile enumerates its
 `COPY`s (kept honest by `test_the_image_copies_every_module_it_needs`) while the
 flake copies all of `lib/`, so there is nothing there for the two to disagree
 about.
 
-⚠ **That sentence used to read "do not add a third WAY to produce this pod", and
-there is now a third build.** `packages.server-image-go` wraps the Go server.
+⚠ **The "do not add a third STATEMENT of the runtime contract" sentence above
+used to read "do not add a third WAY to produce this pod", and there is now a
+third build.** `packages.server-image-go` wraps the Go server.
 The hazard the sentence names is a COPY, and that image is not one: its uid,
 port, exposed port and every environment variable are derived from the same
 `serverUid`/`serverPort`/`serverEnv` bindings this pin reads — minus a named
