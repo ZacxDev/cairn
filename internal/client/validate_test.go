@@ -118,3 +118,110 @@ func TestValidateStillReportsAMalformedEntryBesideAREADME(t *testing.T) {
 		t.Fatalf("the per-entry row is missing from stderr:\n%s", stderr)
 	}
 }
+
+// seedNamedEntry writes ONE ordinary entry under an arbitrary FILENAME. `seedCache` derives
+// the name from the ref, which cannot express a file whose name is README-shaped — and that
+// name is the whole subject of `TestValidateCountsAREADMELookalikeAsAnOrdinaryEntry`.
+//
+// ⚠ `service:` must normalize to the filename's own slug or the loader rejects the entry as
+// malformed ("a ref reaches the wrong file"), so a genuine entry at `readme.md` is
+// `service: readme`. That is the shape a real store carries, and it is what makes these
+// files entries rather than a second spelling of the policy sheet.
+func seedNamedEntry(t *testing.T, root, scope, filename, service string) {
+	t.Helper()
+	body := "---\nservice: " + service + "\nscope: " + scope + "\n---\n\n" +
+		"## What it is\n\nsynthetic.\n\n## Pointers\n\n- none\n\n" +
+		"## Nuance / work-history\n\n- 2000-01-01: synthetic.\n"
+	if err := os.WriteFile(filepath.Join(root, scope, filename), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateCountsEveryEntryInAScopeWithNoREADME(t *testing.T) {
+	// 🔴 THE CONTROL THAT SEPARATES "EXCLUDE README.md" FROM "SUBTRACT ONE". Each of the
+	// three rows above holds EXACTLY ONE `README.md`, so `checked--` written as a blanket
+	// `len(globbed) - 1` prints the same line as the rule it is meant to implement and
+	// survives all three. The arithmetic can only be told apart by a scope with NO README
+	// in it, where the correct count subtracts nothing and `- 1` loses a real entry.
+	//
+	// `oneInstanceHost` seeds one entry; two more are added so this row's numbers (3 of 3)
+	// are distinct from every other row's and from what `- 1` would print (2 of 2).
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedNamedEntry(t, cache, "alpha-notes", "two.md", "two")
+	seedNamedEntry(t, cache, "alpha-notes", "three.md", "three")
+	// 🔴 THE REACHABILITY CONTROL, IN THE DIRECTION THIS ROW NEEDS IT: three entries and NO
+	// README at all, or the row is a second sample of the README-bearing case above and
+	// discriminates nothing.
+	names, err := os.ReadDir(filepath.Join(cache, "alpha-notes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, n := range names {
+		got = append(got, n.Name())
+	}
+	if len(got) != 3 {
+		t.Fatalf("want a README-free scope holding exactly three entries, got %v", got)
+	}
+	for _, n := range got {
+		if strings.EqualFold(n, "README.md") {
+			t.Fatalf("this row must hold no README at all, got %v", got)
+		}
+	}
+
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+
+	if code != ExitOK {
+		t.Fatalf("a clean scope exits 0, got %d\n%s", code, stderr)
+	}
+	want := "cairn: alpha-notes: 3 of 3 entry file(s) parse, 0 malformed"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("got %q, want a line containing %q — the count is not the file count",
+			stdout, want)
+	}
+}
+
+func TestValidateCountsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
+	// 🔴 THE PREDICATE IS `== "README.md"` EXACTLY, AND THAT CLAIM IS ONLY A COMMENT UNTIL
+	// A ROW HOLDS A LOOKALIKE. Both clients say in prose that the spelling is the loader's
+	// — "not a prefix, not a fold". Nothing pinned it, and a case-folded prefix match
+	// passes every other row in this class: `readme.md` and `README-old.md` are ORDINARY
+	// ENTRIES to the loader, so excluding them from the count while the loader still walks
+	// them drives the printed numerator BELOW ZERO the moment one of them is malformed.
+	//
+	// This scope holds one real policy sheet (excluded), two lookalikes and two ordinary
+	// entries (four counted) — five files, four counted, three README-shaped names, two
+	// plain ones: no two of those numbers are equal, and none of them equals the `4 of 4`
+	// the assertion names.
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedREADME(t, cache, "alpha-notes")
+	seedNamedEntry(t, cache, "alpha-notes", "readme.md", "readme")
+	seedNamedEntry(t, cache, "alpha-notes", "README-old.md", "readme-old")
+	seedNamedEntry(t, cache, "alpha-notes", "two.md", "two")
+	// The reachability control: all five names must be on disk, or the assertion runs over
+	// the ordinary case and reads as coverage while providing none.
+	for _, name := range []string{
+		"README.md", "README-old.md", "one.md", "readme.md", "two.md",
+	} {
+		if _, err := os.Stat(filepath.Join(cache, "alpha-notes", name)); err != nil {
+			t.Fatalf("the fixture never wrote %s: %v", name, err)
+		}
+	}
+
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+
+	if code != ExitOK {
+		t.Fatalf("a clean scope exits 0, got %d\n%s", code, stderr)
+	}
+	want := "cairn: alpha-notes: 4 of 4 entry file(s) parse, 0 malformed"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("got %q, want a line containing %q — only `README.md` EXACTLY is excluded",
+			stdout, want)
+	}
+}
