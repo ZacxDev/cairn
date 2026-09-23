@@ -28,8 +28,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/ZacxDev/cairn/internal/netid"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strconv"
@@ -236,6 +238,51 @@ func main() {
 		os.Exit(exitConfig)
 	}
 
+	// 🔴 THE CLIENT-IDENTITY PAIR, AND THE REFUSAL IS DERIVED FROM THE BIND ADDRESS RATHER
+	// THAN FROM A FLAG. `POST /sign-in` had no throttle and no attribution; this wires the
+	// same `internal/netid` the pod uses. The allowlist is REQUIRED whenever this surface
+	// is reachable by anybody but the local host, because `netid.ClientIPHeader` is
+	// forgeable by every peer outside it — so a lockout without an allowlist behind a proxy
+	// buckets the whole internet under the proxy's own address, and one abuser locks out
+	// everybody.
+	//
+	// 🔴 WHY THE BIND ADDRESS AND NOT A FLAG: an operator cannot forget to set it, and it
+	// cannot disagree with reality. A loopback listener has no peers but this machine, and a
+	// local process that could forge the header already has the token file. Anything else —
+	// including the `0.0.0.0` DEFAULT — is reachable, so it refuses. An `--insecure` style
+	// flag was not added: `claude/RULES.md`'s objection to an unclearable gate does not
+	// apply, because setting the variable IS the clearing and it is one line of a manifest.
+	trustedProxies, proxyErr := netid.LoadTrustedProxies(envalias.Environ())
+	if bindIsReachable(*host) {
+		if proxyErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"cairn-ui: refusing to serve on %s: %v\n", *host, proxyErr)
+			fmt.Fprintf(os.Stderr,
+				"cairn-ui: this surface is reachable from outside this machine, so the %s "+
+					"header cannot be trusted from an unlisted peer and a sign-in lockout "+
+					"would have exactly one bucket for every caller behind your proxy. Set "+
+					"$%s, or bind to a loopback address for a local run.\n",
+				netid.ClientIPHeader, netid.EnvTrustedProxies)
+			os.Exit(exitConfig)
+		}
+	} else if proxyErr != nil {
+		// 🔴 A PASS BY ABSENCE, AND IT SAYS SO — the same reasoning the leak gate's
+		// `PASS BY ABSENCE` note is built on. Silence here would be indistinguishable from
+		// a configured allowlist.
+		fmt.Fprintf(os.Stderr,
+			"cairn-ui: no $%s, and this is a loopback bind (%s) — the sign-in limiter will "+
+				"key on the local peer, which is ONE bucket. That is fine for a hand-run "+
+				"bring-up and wrong anywhere else; it is not a configured allowlist.\n",
+			netid.EnvTrustedProxies, *host)
+	}
+
+	maxFailures, window, lockout, limErr := netid.LimiterSettings(envalias.Environ())
+	if limErr != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+limErr.Error())
+		os.Exit(exitConfig)
+	}
+	limiter := netid.NewRateLimiter(maxFailures, window, lockout)
+
 	srv, err := ui.New(ui.Config{
 		Auth: chain,
 		// ⚠ THE SAME `authority` THE MACHINE-TOKEN BACKEND HOLDS, WHICH IS THE POINT.
@@ -252,6 +299,10 @@ func main() {
 		Sharing:  ui.ControlSharing{Authority: authority},
 		Sessions: sessions,
 		TTL:      *sessionTTL,
+		// Both from the block above. A nil limiter would be an unbounded sign-in, which is
+		// the defect; there is no path here that produces one.
+		TrustedProxies: trustedProxies,
+		Limiter:        limiter,
 		// One clock for the server and the store. `FileSessionStore.Now` is left nil,
 		// which means `time.Now().UTC()`, and `ui.Config.Now` defaults to the same
 		// thing — so they agree by both taking the default rather than by one being
@@ -639,4 +690,23 @@ func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string
 		"accepted and the model lowercases it, so a digest as `Get-FileHash` or `certutil "+
 		"-hashfile` spells it works as written",
 		journal, len(m.Users), len(m.Credentials), len(m.Dropped))
+}
+
+// bindIsReachable answers whether this listen address admits anybody but the local host.
+//
+// 🔴 IT FAILS TOWARDS REACHABLE, WHICH IS THE SAFE DIRECTION. An address this cannot parse
+// — a hostname, an empty string, something malformed — is treated as reachable, so the
+// trusted-proxy refusal applies. The alternative fails towards "loopback", which would let
+// a typo'd bind silently serve the internet with a one-bucket limiter.
+//
+// ⚠ `0.0.0.0` AND `::` ARE REACHABLE, and they are the DEFAULT for `-host`. That is
+// deliberate: an unconfigured run of this binary is a run that refuses until somebody has
+// thought about the allowlist, which is the same posture `cmd/cairn-server` takes on its
+// token file.
+func bindIsReachable(host string) bool {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return true
+	}
+	return !addr.IsLoopback()
 }

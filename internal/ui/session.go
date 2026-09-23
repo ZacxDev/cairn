@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/netid"
 )
 
 // The two form fields and the one header this surface reads from a request body.
@@ -164,11 +165,61 @@ func (s *Server) handleSignInForm(w http.ResponseWriter, r *http.Request, _ iden
 // ordering costs nothing and the other ordering is a live hazard if gate (2) is ever
 // relaxed.
 func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
+	// 🔴 THE CLIENT IS RESOLVED AND METERED BEFORE THE CREDENTIAL IS READ, and the reason
+	// is narrower than the one written here first. WHAT IT BUYS: a locked-out client causes
+	// NO credential work — no SHA-256 over the presented value, no authority read — which
+	// is the entire point of throttling a path whose cost is exactly that work.
+	//
+	// ⚠ TWO REASONS WERE CLAIMED HERE AND BOTH ARE RETRACTED, recorded rather than swapped
+	// because a mutation SURVIVED against them. (1) "A lockout checked after the token is
+	// one a valid credential walks through" — false: moving the check below
+	// `Authenticate` still refuses, because the check still precedes the session mint. The
+	// mutant was measured surviving the test written to catch it. (2) "An attacker who
+	// guesses a token mid-run must not get the failure record wiped" — false for THIS
+	// limiter: `netid.RateLimiter.RecordSuccess` is a deliberate no-op, and its own comment
+	// explains that a success-resets-counter design is the defect, so there is no record to
+	// wipe. `internal/api` states reason (1) for itself; it does not transfer here
+	// unexamined, and this is what examining it produced.
+	//
+	// 🔴 `netid.ResolveClient` IS REUSED RATHER THAN REIMPLEMENTED, because the trust
+	// boundary is the whole difficulty and it is already decided there: the header is
+	// read ONLY from a peer inside the allowlist, and every other peer is keyed on its
+	// own address. A local re-implementation is how a surface ends up trusting a
+	// forgeable header from anybody.
+	client, trusted, ok := netid.ResolveClient(r.Header, r.RemoteAddr, s.trustedProxies)
+	if !ok {
+		// 🔴 FAIL CLOSED, AND COUNT NOTHING. There is no bucket to count into, and the
+		// alternative — one shared key for every unidentifiable request — is the failure
+		// `internal/netid` exists to avoid: a single abuser locks out everybody.
+		s.logf("sign-in refused: no client identity could be resolved from peer %q", r.RemoteAddr)
+		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+		return
+	}
+	if s.limiter != nil && s.limiter.LockedOut(client) {
+		// ⚠ THE BODY IS THE SAME SENTENCE AS EVERY OTHER REFUSAL, AND THE COST IS REAL
+		// AND ACCEPTED. `signInRefused`'s own comment rules that a refusal which
+		// discriminates is an enumeration API; a lockout that announced itself would be a
+		// second thing a failed sign-in can say. So a human who mistyped five times sees
+		// no hint that waiting is the remedy — the reason goes to the OPERATOR's log,
+		// which is where the pod puts its own `locked-out` verdict. Relaxing this is a
+		// decision about that ruling, not about this handler.
+		s.logf("sign-in refused: %s is locked out (client identity %s)",
+			client, peerState(trusted))
+		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+		return
+	}
 	presented := r.PostFormValue(FieldToken)
 	principal, _, err := s.credentials.Authenticate(presented)
 	if err != nil {
 		// No token, no digest, no reason — and no principal, because there is not one.
-		s.logf("sign-in refused")
+		// What IS recorded is the client, because a refusal nobody can attribute is a
+		// refusal nobody can act on, and this surface is reachable from the internet.
+		if s.limiter != nil && s.limiter.RecordFailure(client) {
+			s.logf("sign-in refused: %s — LOCKOUT TRIGGERED (client identity %s)",
+				client, peerState(trusted))
+		} else {
+			s.logf("sign-in refused: %s (client identity %s)", client, peerState(trusted))
+		}
 		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
 		return
 	}
@@ -210,7 +261,8 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 	http.SetCookie(w, identity.SessionCookie(id, rec.ExpiresAt))
 	// The principal's DISPLAY, which is what every audit line in this system carries,
 	// and nothing about the credential or the session.
-	s.logf("sign-in: a session was opened for %s", principal)
+	s.logf("sign-in: a session was opened for %s from %s (client identity %s)",
+		principal, client, peerState(trusted))
 	// 303, not 302: the browser must follow it with a GET. A 302 leaves the method
 	// up to the client, and a client that re-POSTs to `/` gets the uniform 401.
 	http.Redirect(w, r, RootPath, http.StatusSeeOther)
@@ -250,4 +302,18 @@ func (s *Server) renderSignIn(w http.ResponseWriter, code int, message string) {
 // the "no secret reaches a log" claim.
 func (s *Server) logf(format string, args ...any) {
 	fmt.Fprintf(s.log, "cairn-ui: "+format+"\n", args...)
+}
+
+// peerState names WHERE a client identity came from, because the two are different
+// evidence and a log line that omits which is unreadable after the fact.
+//
+// 🔴 "trusted-header" MEANS THE PEER WAS IN THE ALLOWLIST AND THE HEADER WAS READ.
+// "peer-address" means it was not, so the TCP peer is the identity. An operator
+// debugging a lockout needs to know which, because behind a proxy every peer-address
+// line is the PROXY and means the allowlist is wrong.
+func peerState(trusted bool) string {
+	if trusted {
+		return "trusted-header"
+	}
+	return "peer-address"
 }
