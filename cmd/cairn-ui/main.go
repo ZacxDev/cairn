@@ -3,8 +3,9 @@
 //
 // 🔴 IT IS DEPLOYED BY NOTHING, AND IT NOW CARRIES THREE PHASES. Seven routes over one
 // authentication chain and one rendering path: the entries page, the sign-in pair with
-// server-side revocable cookie sessions, and the share flow. No image wraps this binary,
-// `apps` has no entry for it, and no manifest in this repository deploys it.
+// server-side revocable cookie sessions, and the share flow. `apps` has no entry for it,
+// and no manifest in this repository deploys it. ⚠ This also said "No image wraps this
+// binary"; `packages.ui-image` wraps it now and publishes it. Published is not deployed.
 //
 // ⚠ THIS COMMENT SAID "IT IS PHASE A … Cookie sessions, the sign-in flow and the screens
 // are later phases; none of them are here" THROUGH THE TWO PHASES THAT ADDED THEM. It is

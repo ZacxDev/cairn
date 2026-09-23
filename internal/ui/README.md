@@ -6,9 +6,12 @@ everything below.
 ## What Phase A is, and what it deliberately is not
 
 One page, one authentication chain, one rendering path — enough to prove the wiring, the
-rendering, and the gate. `cmd/cairn-ui` is **deployed by nothing**: no image wraps it,
-`apps` has no entry for it, and `packages.default` does not point at it. It is built by
-name (`nix build .#cairn-ui`) or not at all.
+rendering, and the gate. `cmd/cairn-ui` is **deployed by nothing**: `apps` has no entry
+for it, and `packages.default` does not point at it. It is built by name
+(`nix build .#cairn-ui`) or not at all. ⚠ **This said "no image wraps it" as well, and
+an image now exists** — `packages.ui-image`, published to its own ghcr package.
+**PUBLISHED IS NOT DEPLOYED**, which is the same distinction `server/README.md` draws for
+the Go pod; only the deployment half of this sentence survived.
 
 There is **no sign-in**, **no cookie session**, **no share flow** and none of the nine
 screens. Those are later phases with their own decisions. What exists is:
