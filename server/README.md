@@ -417,8 +417,62 @@ are stated in both files and neither can move alone. Do not add a third
 STATEMENT of the runtime contract: it would be outside that pin, and it would be
 the one that actually ships.
 
-⚠ **That sentence used to read "do not add a third WAY to produce this pod", and
-there is now a third build.** `packages.server-image-go` wraps the Go server.
+⚠ **THE RETRACTED WORDING, KEPT HERE SO NOBODY RE-DERIVES IT.** `AGENTS.md` read
+*"`server/Dockerfile` is what is deployed today"* from before the Go cutover
+until well after it, while three other claims in the SAME file said the Go pod is
+deployed. `#78` moved three of those sites and missed one more **in the very file
+it was editing** — nothing greps prose, so a sweep is the only thing that finds
+the copy you were not looking at.
+
+🔴 **AND THAT RETRACTION IS INCOMPLETE — MORE SITES STILL CARRY THE CLAIM,
+INCLUDING `flake.nix` VERBATIM, THIS GUARD'S OWN "WHY THIS FILE EXISTS"
+DOCSTRING, AND SEVERAL IN THIS FILE.** They are NOT swept, on purpose: this repo
+holds no manifest, so nothing in it can establish which pod a cluster actually
+pulls — the Go side's whole evidence is a commit message. **A sweep would
+propagate an unverified claim to every site it touched.** The operator settles
+which pod is deployed; until then the inconsistency is RECORDED, not resolved.
+
+**Do not enumerate the sites here — run the sweep.** A list in prose goes stale
+and reads as complete; three were written into this paragraph and each was wrong.
+
+```bash
+git ls-files -z | xargs -0 grep -nE 'is what is deployed|deployed today'
+git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
+```
+
+🔴 **BOTH PATTERNS ARE LINE-ANCHORED AND THEREFORE INCOMPLETE — a demonstration,
+not a remedy.** `tests/test_flake_image_matches_dockerfile.py`'s own
+`WHY THIS FILE EXISTS` docstring wraps the claim across a line break (*"…is the
+build that is deployed"* / *"today."*) and **neither command finds it**.
+Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
+some name `cairn-ui` and the Go image, which genuinely are deployed by nothing.
+**Read the matches; do not count them.**
+
+🔴 **THE PIN IS TWO GUARDS AND ONLY ONE PREMISE DIED.** Neither Python image is
+deployed, so the Dockerfile↔flake agreement half stands on a contract
+`packages.server-image` and `server/Dockerfile` state — **not** `packages.cairn`,
+which is the Python CLIENT and ships no pod contract, so retiring it retires
+nothing here. But
+`test_both_implementations_resolve_the_deployment_contract_with_no_env` reads
+`cmd/cairn-server/main.go` — the **Go** pod — and pins its defaults against what a
+Deployment assumes. **That half is LIVE. P8 SPLITS this file; it does not delete
+it.**
+
+⚠ Two things bind an edit here. **Cite quoted strings, never `:NN`** — three line
+numbers in this paragraph drifted onto blank lines inside a single review. And
+**the guard's own message overstates**: it says *"the only place the contract is
+written down"*, when the contract is also written in this file, in `flake.nix` and
+in `server/Dockerfile`. What is unique to the guard is that it ASSERTS it. Narrow
+the message there, or it stays wider than what is true.
+
+The module set is deliberately *not* duplicated: the Dockerfile enumerates its
+`COPY`s (kept honest by `test_the_image_copies_every_module_it_needs`) while the
+flake copies all of `lib/`, so there is nothing there for the two to disagree
+about.
+
+⚠ **The "do not add a third STATEMENT of the runtime contract" sentence above
+used to read "do not add a third WAY to produce this pod", and there is now a
+third build.** `packages.server-image-go` wraps the Go server.
 The hazard the sentence names is a COPY, and that image is not one: its uid,
 port, exposed port and every environment variable are derived from the same
 `serverUid`/`serverPort`/`serverEnv` bindings this pin reads — minus a named
@@ -511,6 +565,18 @@ where the Python flake image has no `/etc` at all — needed because
 `internal/identity/jwks.go` fetches a JWKS over https and Go's `crypto/x509` has
 no roots otherwise. The same trade applies to its applets and it has not been
 re-argued here.
+
+🔴 **AND THE DEFERRAL DIRECTLY ABOVE HAS HAD ITS TRIGGER FIRE, UNNOTICED.** It
+reads *"If this image is ever actually deployed, revisit that trade **then**,
+with the threat model in front of you; do not read this as settled."* Per
+`AGENTS.md`, the Go image **is** the deployed pod — and the paragraph directly
+above records that it inherits the same applet set. **So the condition is met and
+nobody revisited.** The trade may well still be the right one; what is not
+defensible is that it now reads as deferred when it has in fact been decided by
+default. ⚠ This is what a condition-triggered deferral costs when nothing
+watches the condition: the sentence is honest, dated, correct when written, and
+silently became a decision. Re-argue it or record that it was accepted — do not
+leave it reading as open.
 
 🔴 **AND `/etc/ssl/certs` — NOT THE `SSL_CERT_FILE` THE IMAGE ALSO DECLARES — IS
 WHAT MAKES THOSE ROOTS REACHABLE.** `crypto/x509` walks its `certDirectories`
