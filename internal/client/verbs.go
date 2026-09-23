@@ -134,6 +134,23 @@ func LsEntries(env Env, opts Options) (int, error) {
 		matches, _ := filepath.Glob(filepath.Join(cache, "*", "*.md"))
 		sort.Strings(matches)
 		for _, path := range matches {
+			// 🔴 A SCOPE'S `README.md` IS ITS POLICY SHEET, NOT AN ENTRY — AND THIS
+			// VERB IS THE ONE THAT ADVERTISES ITSELF AS "what the cache actually
+			// holds". The glob above is the bare `*.md` walk the loader deliberately
+			// does NOT use, so until this line existed `ls-entries` listed every
+			// scope's sheet as `<scope>/README.md` — measured twelve of them on a
+			// populated cache, under a banner naming the store they came from. The
+			// predicate is `store.IsEntryFileName`, the LOADER'S rule imported rather
+			// than respelled, because respelling it is how the two answers came apart.
+			//
+			// ⚠ FILTERED AFTER THE GLOB RATHER THAN BY WALKING SCOPE DIRECTORIES,
+			// BECAUSE THE ORDER IS THE CLAIM. Sorting full paths is NOT the same order
+			// as sorting scope names and then entry names — `/` sorts above `-`, so
+			// `a-b/x.md` precedes `a/y.md` — and this verb's parity row compares the
+			// listing line for line.
+			if !store.IsEntryFileName(filepath.Base(path)) {
+				continue
+			}
 			fmt.Fprintf(env.Stdout, "%s%s/%s\n", prefix,
 				filepath.Base(filepath.Dir(path)), filepath.Base(path))
 		}
@@ -485,16 +502,22 @@ func Validate(env Env, opts Options) (int, error) {
 		// its policy sheet printed `3 of 3`, a scope holding ONLY a policy sheet printed
 		// `1 of 1`, and — the direction that misleads — one BROKEN entry beside a README
 		// printed `1 of 2 … 1 malformed`, asserting that a file parsed when none had. This is
-		// the command whose whole job is making a zero mean something. The predicate below is
-		// the LOADER'S, spelled the same way (`== "README.md"` exactly — not a prefix, not a
-		// fold), so the numerator and the denominator come from one rule rather than two.
-		globbed, _ := filepath.Glob(filepath.Join(cache, scope, "*.md"))
-		checked := 0
-		for _, path := range globbed {
-			if filepath.Base(path) != "README.md" {
-				checked++
-			}
-		}
+		// the command whose whole job is making a zero mean something.
+		//
+		// 🔴 THE DENOMINATOR IS NOW THE LOADER'S OWN WALK, NOT A SECOND ONE SPELLED THE SAME
+		// WAY. The first fix filtered a `*.md` glob with an open-coded `!= "README.md"`, which
+		// closed the symptom and left the mechanism — two walks behind one line — intact.
+		// `store.EntryFileNames` is the function `store.LoadIndex` enumerates with, so the
+		// numerator and the denominator cannot come to disagree about what an entry is.
+		//
+		// ⚠ THE READ ERROR IS DISCARDED, AND THAT IS THE PRE-EXISTING BEHAVIOUR KEPT
+		// DELIBERATELY. `LoadIndex` above has ALREADY walked this directory and RETURNED on
+		// any error, so a failure here is unreachable; and the oracle swallows it rather than
+		// raising, so surfacing it would be a divergence with nothing behind it — MEASURED on
+		// the pinned interpreter (CPython 3.12.14), `Path("<mode-000 dir>").glob("*.md")`
+		// yields `[]` rather than a `PermissionError`.
+		entryNames, _ := store.EntryFileNames(filepath.Join(cache, scope))
+		checked := len(entryNames)
 		fmt.Fprintf(env.Stdout, "cairn: %s: %d of %d entry file(s) parse, %d malformed\n",
 			scope, checked-len(index.Malformed), checked, len(index.Malformed))
 		if len(index.Malformed) > 0 && ExitCorrupt > worst {

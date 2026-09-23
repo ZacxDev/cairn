@@ -1328,6 +1328,88 @@ class TestLoader:
         assert len(loaded) == 1
         assert sr.resolve_ref("readme", loaded, "gamma-cluster") is None
 
+
+class TestTheEntryFilePredicateIsOneRule:
+    """🔴 THE CONSOLIDATION'S OWN GUARD, AND A DIFFERENT CLAIM FROM `TestLoader`'s.
+
+    `TestLoader` pins the LOADER's behaviour. This pins that there is ONE RULE
+    behind it. "Is this an entry file in a cached scope" was open-coded at FOUR
+    production sites — `load_index`, `cairn validate`, `cairn ls-entries` and the
+    Go client's three twins — and was answered differently at two of them, in the
+    same direction: both listed or counted the scope's own `README.md`, which
+    every loader skips. `cairn ls-entries` is the verb the top-level `README.md`
+    describes as *"what the cache actually holds"*, so it was asserting that a
+    policy sheet is an entry.
+
+    🔴 A BEHAVIOURAL ROW CANNOT SEE A RE-SPELLING. Every fixture that holds
+    exactly ONE `README.md` is satisfied by `startswith("README")`, by a
+    `.lower()` compare, and by a blanket subtract-one. So this feeds the
+    predicate itself the inputs that tell those spellings apart, and asserts the
+    SET helper the call sites actually use cannot disagree with it.
+    """
+
+    #: 🔴 PAIRWISE DISTINCT, AND DISTINCT FROM THE ONE CONSTANT THE RULE NAMES.
+    #: A table whose only excluded name is the constant cannot separate "exclude
+    #: `README.md`" from "exclude anything README-shaped".
+    CASES = {
+        "README.md": False,        # the policy sheet itself
+        "readme.md": True,         # a CASE fold would swallow this
+        "README-old.md": True,     # a PREFIX match would swallow this
+        "aREADME.md": True,        # a name-SUFFIX match would swallow this
+        "README.markdown": False,  # `.markdown` is not `.md`
+        "flux.md": True,           # the ordinary shape
+        "notes/README.md": True,   # a NAME predicate, not a path one
+        "README": False,           # no `.md` suffix at all
+        "README.md.bak": False,    # no `.md` suffix, and not the sheet either
+        ".#flux.md": True,         # a dot-file IS in the set; `classify_path` refuses it
+        "": False,
+    }
+
+    def test_only_the_exact_spelling_is_excluded(self) -> None:
+        for name, want in self.CASES.items():
+            assert sr.is_entry_filename(name) is want, name
+
+    def test_the_SET_helper_and_the_predicate_cannot_disagree(self, tmp_path: Path) -> None:
+        """🔴 A PREDICATE NOTHING CALLS IS A DECLARATION, NOT A RULE.
+
+        `entry_files_in` is the function `load_index` and `cairn validate`
+        enumerate with, so its answer over a real directory has to be the
+        predicate's answer, name for name — including the ORDER, because
+        `ls-entries` compares its listing line for line against the Go client.
+        """
+        scope = tmp_path / "gamma-cluster"
+        scope.mkdir()
+        names = ["README.md", "readme.md", "README-old.md", "flux.md", "not-md.txt"]
+        for name in names:
+            (scope / name).write_text("x\n", encoding="utf-8")
+
+        got = [p.name for p in sr.entry_files_in(scope)]
+
+        assert got == ["README-old.md", "flux.md", "readme.md"], got
+        assert got == sorted(n for n in names if sr.is_entry_filename(n)), got
+
+    def test_the_constant_is_the_only_excluded_name_the_loader_knows(self) -> None:
+        """🔴 THE STRUCTURAL HALF: the loader must carry NO second spelling.
+
+        A consolidation that leaves the old literal behind at one site is the
+        defect it was meant to close, wearing a green test. `load_index`'s body
+        must not name `README.md` itself — the only place that string may appear
+        as a rule is `SCOPE_POLICY_SHEET`.
+        """
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        body = source.split("def load_index(", 1)[1].split("\ndef ", 1)[0]
+        # 🔴 COMMENTS STRIPPED, BECAUSE THIS IS A CLAIM ABOUT CODE. `load_index`'s
+        # own comment QUOTES the literal it no longer executes — that is the
+        # record of what moved, and a guard that could not tell the two apart
+        # would force the record to be deleted to stay green. The first cut of
+        # this assertion did exactly that and failed on its own explanation.
+        body = "\n".join(line.split("#", 1)[0] for line in body.splitlines())
+        assert '"README.md"' not in body and "'README.md'" not in body, (
+            "`load_index` spells the policy sheet itself again — the rule is "
+            "`is_entry_filename`, and a second spelling is free to drift from it"
+        )
+        assert sr.SCOPE_POLICY_SHEET == "README.md"
+
     def test_empty_scope_dir_is_registered_not_dropped(self, tmp_path: Path) -> None:
         (tmp_path / "brand-new-scope").mkdir()
         _write_entry(
@@ -1793,13 +1875,20 @@ class TestMutationKillMatrix:
         assert mod.resolve_ref("alpha", idx, SCOPE_A).filename == "beta.md"
 
     def test_kills_the_readme_exclusion(self, tmp_path: Path) -> None:
+        # ⚠ THE ANCHOR MOVED WHEN THE RULE WAS CONSOLIDATED, AND THAT IS THE POINT
+        # OF ANCHORING ON SOURCE. The exclusion used to be open-coded inside
+        # `load_index` (`if md.name == "README.md": continue`); four production
+        # sites spelled the same rule and two spelled it wrong, so it now lives
+        # ONCE in `is_entry_filename` and every site routes through it. Mutating
+        # the single rule is therefore a mutation of all four call sites at once,
+        # which is strictly wider than what this row used to reach.
         mod = _load_mutant(
             tmp_path,
             "m_readme",
             [
                 (
-                    '            if md.name == "README.md":\n                continue',
-                    "            if False:\n                continue",
+                    '    return name.endswith(".md") and name != SCOPE_POLICY_SHEET',
+                    '    return name.endswith(".md")',
                 )
             ],
         )

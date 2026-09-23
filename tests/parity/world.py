@@ -16,7 +16,14 @@ what `tests/leakscan.py` allows and what makes a real date in here unambiguous.
   * a scope directory that exists and is EMPTY, so `scope-empty` is reachable;
   * a git repo with a handoff doc quoting one entry's path, so the focus-window selector
     RESOLVES — the code path P1b refused and P2 had to port. Without this the parity run
-    would measure the fallback on both sides and prove nothing about the matcher.
+    would measure the fallback on both sides and prove nothing about the matcher;
+  * 🔴 SCOPE-POLICY SHEETS (`README.md`) AND TWO LOOKALIKES, because without them this gate
+    was STRUCTURALLY BLIND to an entire defect class. `README.md` is a scope's policy sheet
+    and not an entry — both loaders skip it — but the rule was open-coded at four production
+    sites and WRONG at two of them, so `cairn ls-entries` listed every scope's sheet as an
+    entry. Both clients did it IDENTICALLY, so a byte-identity gate sat green over the
+    miscount for as long as the corpus seeded no README anywhere. The corpus never presented
+    the discriminating input. It does now, and a one-sided fix is RED.
 """
 from __future__ import annotations
 
@@ -68,11 +75,45 @@ ENTRIES: list[tuple[str, int, str]] = [
      "---\nservice: broken-four\nscope: alpha-notes\n"
      "aliases: a bare string, which the schema refuses\n---\n\n"),
     ("beta-notes/spindle-cfg.md", 6_000_000_000, _entry("spindle-cfg", "beta-notes",
-                                                        body="the second scope's only entry")),
+                                                        body="the second scope's plain entry")),
     # A scope holding files and NOT ONE indexable: `scope-unreadable`, exit 3, warning line.
+    # 🔴 IT IS ALSO THE README-FREE CONTROL. Both its files are listed by `ls-entries`, so a
+    # client that implemented "not an entry" as "drop one file per scope" — the arithmetic a
+    # corpus of README-bearing scopes alone cannot tell apart from the rule — loses one of
+    # these and diverges here.
     ("rubble-heap/rubble-one.md", 7_000_000_000, "this is not an entry\n"),
     ("rubble-heap/rubble-two.md", 8_000_000_000, "neither is this\n"),
+    # --- the scope-policy sheets, and the lookalikes that are NOT sheets ----------------
+    #
+    # 🔴 A SHEET IS SKIPPED BY BOTH LOADERS AND MUST NOT BE LISTED BY `ls-entries`. Two of
+    # them, in two different scopes, so a client that special-cased one scope is visible.
+    # They are deliberately NOT entry-shaped: the loader never opens them, and a sheet that
+    # parsed would make this row a second sample of the ordinary entry case.
+    ("alpha-notes/README.md", 9_000_000_000,
+     "# alpha-notes — the scope's own policy sheet, not an entry\n"),
+    ("beta-notes/README.md", 10_000_000_000,
+     "# beta-notes — the scope's own policy sheet, not an entry\n"),
+    # 🔴 THE LOOKALIKES, AND THEY ARE ORDINARY ENTRIES THAT MUST BE LISTED. The rule is
+    # `== "README.md"` EXACTLY — not a prefix, not a case fold — and that claim is only a
+    # comment until a corpus holds a file that a prefix or a fold would swallow. `service:`
+    # is each file's own slug, or the loader rejects the entry ("a ref reaches the wrong
+    # file") and the row stops being about listing at all.
+    #
+    # ⚠ `README.md` AND `readme.md` SHARE `beta-notes`, WHICH IS TWO FILES ON LINUX AND ONE
+    # ON A CASE-FOLDING FILESYSTEM. CI is `ubuntu-latest`; `build_store` asserts both landed
+    # rather than leaving a silently-collapsed corpus to score a pass.
+    ("beta-notes/readme.md", 11_000_000_000, _entry("readme", "beta-notes",
+                                                    body="a lookalike that IS an entry")),
+    ("beta-notes/README-old.md", 12_000_000_000, _entry("readme-old", "beta-notes",
+                                                        body="a prefix lookalike, also an entry")),
 ]
+
+#: The sheets above, as store-relative paths. A sheet is NOT an entry: `ls-entries` must not
+#: print it, `validate` must not count it, and the loader must not index it.
+POLICY_SHEETS = ("alpha-notes/README.md", "beta-notes/README.md")
+
+#: The lookalikes, which ARE entries and must appear everywhere an entry appears.
+POLICY_SHEET_LOOKALIKES = ("beta-notes/readme.md", "beta-notes/README-old.md")
 
 #: A scope directory that EXISTS and holds nothing. `scope-empty` must not read like
 #: `scope-unreadable`, and only an empty directory reaches it.
@@ -125,6 +166,25 @@ def build_store(root: Path) -> Path:
     for rel, offset, _text in ENTRIES:
         ns = EPOCH_NS + offset
         os.utime(root / rel, ns=(ns, ns))
+    # 🔴 THE REACHABILITY CONTROL FOR THE POLICY-SHEET ROWS, AND IT IS NOT CEREMONY.
+    # `beta-notes` holds BOTH `README.md` and `readme.md`; on a case-folding filesystem those
+    # are ONE file, the second write silently replaces the first, and the corpus goes back to
+    # holding no discriminating input while every row still compares equal. A gate that
+    # cannot see the class it was widened for must say so rather than score a pass.
+    for rel in POLICY_SHEETS + POLICY_SHEET_LOOKALIKES:
+        if not (root / rel).is_file():
+            raise AssertionError(
+                f"the world never materialised {rel!r} — on a case-folding filesystem "
+                f"`README.md` and `readme.md` collapse into one file and this corpus stops "
+                f"discriminating the policy-sheet rule from a case fold"
+            )
+    seen = {(root / rel).read_text(encoding="utf-8") for rel
+            in POLICY_SHEETS + POLICY_SHEET_LOOKALIKES}
+    if len(seen) != len(POLICY_SHEETS) + len(POLICY_SHEET_LOOKALIKES):
+        raise AssertionError(
+            "two policy-sheet fixtures hold the same bytes, so one of them overwrote the "
+            "other — the filesystem folded case"
+        )
     # The seed stamp the pod dates itself from. A fixed ASCII value, so `X-Store-Snapshot` is
     # byte-stable across requests and the LIVE banner is comparable at all.
     (root / ".seed-stamp").write_text("2000-01-01T00:00:00Z\n", encoding="utf-8")

@@ -240,7 +240,15 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              ["sync"], env=unreachable, compare=COMPARE_EXIT, wipe_cache=True),
 
         # --- ls-entries -------------------------------------------------------
-        Case("ls-entries", "one `<scope>/<entry>.md` per line, and the ORDER is the claim",
+        # 🔴 THESE TWO ROWS ARE THE POLICY-SHEET ROWS, AND THEY BECAME SO WHEN `world.py`
+        # GREW ONE. A `README.md` is a scope's policy sheet, not an entry — both loaders skip
+        # it — and this verb listed every one of them. Both clients did, IDENTICALLY, so
+        # these rows compared equal over the miscount for as long as the world seeded no
+        # README. The world now holds two sheets, two lookalikes that ARE entries, and a
+        # README-free scope; a one-sided fix is red here, and so is "drop one file per
+        # scope".
+        Case("ls-entries", "one `<scope>/<entry>.md` per line, the ORDER is the claim, and a "
+             "scope's `README.md` is NOT one of them",
              ["ls-entries"], wipe_cache=True),
         Case("ls-entries-no-sync", "the cached banner and the same listing, off the network",
              ["ls-entries", "--no-sync"]),

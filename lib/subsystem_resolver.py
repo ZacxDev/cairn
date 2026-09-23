@@ -2590,6 +2590,53 @@ _LOADER_REFUSAL_REASON: dict[str, str] = {
 }
 
 
+#: The ONE filename a scope directory carries that is not an entry: each scope
+#: dir holds one as its store-policy sheet, and `/snapshot` ships it, so every
+#: real cache has them.
+#:
+#: 🔴 THE SPELLING IS EXACT AND THAT IS THE WHOLE RULE — not a prefix, not a case
+#: fold. `readme.md` and `README-old.md` are ORDINARY ENTRIES: the loader walks
+#: them, indexes them and can reject them as malformed, so a consumer that
+#: excluded them would drop a file the loader counted and drive a printed
+#: numerator below zero.
+SCOPE_POLICY_SHEET = "README.md"
+
+
+def is_entry_filename(name: str) -> bool:
+    """Is this filename an ENTRY in a cached scope — the one rule, in one place.
+
+    🔴 IT EXISTS BECAUSE THE RULE WAS OPEN-CODED AT FOUR PRODUCTION SITES AND WAS
+    WRONG AT TWO OF THEM, IN THE SAME DIRECTION. `load_index` below skipped the
+    sheet; `cairn validate` did not (fixed separately — it printed `3 of 3` over
+    two entries beside one sheet); `cairn ls-entries` did not either, and that is
+    the verb `README.md` advertises as *"what the cache actually holds"*, so it
+    asserted every scope's policy sheet was an entry. A predicate open-coded at N
+    sites is typically wrong at N-1 of them; consolidating it is what made the
+    disagreement audible.
+
+    ⚠ THE `.md` HALF IS NOT REDUNDANT WITH A CALLER'S GLOB EVEN WHERE THE GLOB HAS
+    ALREADY APPLIED IT. Stating the whole rule here is what lets a caller that has
+    NOT globbed ask the same question and get the same answer.
+    """
+    return name.endswith(".md") and name != SCOPE_POLICY_SHEET
+
+
+def entry_files_in(scope_dir: Path) -> list[Path]:
+    """The ENTRY files in ONE cached scope directory, sorted.
+
+    🔴 THE LOADER AND `cairn validate` BOTH GO THROUGH THIS, WHICH IS THE POINT.
+    The original defect was two walks behind one printed line: the numerator came
+    from `load_index` and the denominator from a bare `*.md` glob, so the two
+    could disagree about what an entry is. They now cannot.
+
+    ⚠ `Path.glob("*.md")` DOES match a leading dot — measured, not assumed — so a
+    dangling `.#entry.md` editor lock file IS in this set. That is deliberate:
+    `classify_path` is what refuses it, and refusing it is a REPORTED rejection
+    rather than a silent drop.
+    """
+    return sorted(p for p in Path(scope_dir).glob("*.md") if is_entry_filename(p.name))
+
+
 def load_index(
     root: Path,
     *,
@@ -2599,7 +2646,9 @@ def load_index(
     """Read `<root>/<scope>/*.md` into a `SubsystemIndex`. READ-ONLY.
 
     `README.md` is skipped in every scope — each scope dir carries one as its
-    store-policy sheet, and it is not an entry.
+    store-policy sheet, and it is not an entry. The skip is `entry_files_in`'s,
+    not this function's: three other sites answer the same question and two of
+    them answered it differently until the rule was consolidated there.
 
     A scope dir with no entries is REGISTERED, not dropped: "Lazy — a scope dir
     or service file may not exist yet". An existing empty scope must resolve to
@@ -2765,9 +2814,11 @@ def load_index(
             # caller's OWN scope, silently emptied.
             continue
         scopes.append(scope_dir.name)
-        for md in sorted(scope_dir.glob("*.md")):
-            if md.name == "README.md":
-                continue
+        # 🔴 THE ENTRY SET COMES FROM ONE FUNCTION, NOT FROM A README TEST
+        # OPEN-CODED HERE. This loop used to spell `if md.name == "README.md":
+        # continue` itself; three other sites spelled the same rule, and two of
+        # them spelled it WRONG. See `entry_files_in`.
+        for md in entry_files_in(scope_dir):
             # 🔴 WHAT IS THIS PATH — ASKED BEFORE IT IS OPENED, AND ASKED ONCE.
             # `classify_path` is the same function `/snapshot` uses; only the
             # action table differs, because the action is a property of the

@@ -139,6 +139,15 @@ SHAPES: list[tuple[str, list[str]]] = [
     ("recall-list", ["recall", "--scope", SCOPE, "--list", "--no-sync"]),
     ("recall-unnamed-scope", ["recall", "--scope", UNNAMED_SCOPE, "--no-sync"]),
     ("search", ["search", "--scope", SCOPE, "probe", "--no-sync"]),
+    # ⚠ THE CAPTURED WORLD SEEDS NO `README.md`, SO THIS SHAPE IS BLIND TO THE ONE CHANGE
+    # `ls-entries` HAS HAD. A scope's `README.md` is its policy sheet and not an entry; this
+    # verb listed them until the entry-file predicate was consolidated, which is a REAL
+    # change to the bytes a reader sees — and a run of this harness across that commit
+    # reports the shape IDENTICAL, because `build_world` below writes one entry per scope and
+    # no sheet. Read that identity as "the world held no sheet", never as "the output did not
+    # move". Same shape of blindness as `tests/parity/world.py` had, recorded rather than
+    # closed: widening this world changes what a compatibility claim is made OVER, and no
+    # gate runs this file, so the widening would be unobserved either way.
     ("ls-entries", ["ls-entries", "--no-sync"]),
     ("validate", ["validate", "--scope", SCOPE, "--no-sync"]),
 ]

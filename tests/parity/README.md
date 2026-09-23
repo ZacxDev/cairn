@@ -245,6 +245,20 @@ happens when it is a VALUE? The rule is argparse's, and both halves are measured
 
 ## What the gate structurally cannot see
 
+🔴 **AND THE FIRST ENTRY IS A CLOSED ONE, KEPT BECAUSE THE MECHANISM IS GENERAL: A BYTE-IDENTITY
+GATE IS BLIND TO EVERY DEFECT BOTH CLIENTS COMMIT IDENTICALLY, AND THE CORPUS IS WHAT DECIDES
+WHICH THOSE ARE.** `world.py` seeded **no `README.md` in any scope**. A scope's `README.md` is its
+policy sheet and not an entry — both loaders skip it, and `/snapshot` ships it, so every real
+cache has them — but the rule was open-coded at four production sites and wrong at two. `cairn
+ls-entries`, the verb the top-level `README.md` describes as *"what the cache actually holds"*,
+listed every scope's sheet as an entry: **12 of them on a populated cache**, on BOTH clients, so
+every row here compared equal and this gate was green over the miscount for its whole existence.
+Nothing about the differ was broken; it was never handed the discriminating input. The world now
+seeds two sheets, two lookalikes (`readme.md`, `README-old.md`) that ARE entries and must be
+listed, and keeps `rubble-heap` README-free so "exclude `README.md`" is distinguishable from
+"drop one file per scope". **The general form — ask what your corpus does NOT contain before
+reading a green byte-diff as coverage — is why this paragraph stays after the hole closed.**
+
 - **Concurrency.** Both clients take the same `flock` around the cache swap, which is why they can
   share a root at all; nothing here runs them at the same instant.
 - **Real network failures.** An unreachable pod is a connect refusal to a closed port. A DNS

@@ -1096,6 +1096,22 @@ def cmd_ls_entries(args: argparse.Namespace) -> int:
             continue
         prefix = "" if label is None else f"[{label}] "
         for path in sorted(cache.glob("*/*.md")):
+            # 🔴 A SCOPE'S `README.md` IS ITS POLICY SHEET, NOT AN ENTRY — AND
+            # THIS VERB IS THE ONE THAT ADVERTISES ITSELF AS "what the cache
+            # actually holds". The glob above is the bare `*.md` walk `load_index`
+            # deliberately does NOT use, so until this line existed `ls-entries`
+            # listed every scope's sheet as `<scope>/README.md` — measured twelve
+            # of them on a populated cache, under a banner naming the store they
+            # came from. The predicate is the LOADER'S, imported rather than
+            # respelled, because respelling it is how the two answers came apart.
+            #
+            # ⚠ FILTERED AFTER THE GLOB RATHER THAN BY WALKING SCOPE DIRECTORIES,
+            # BECAUSE THE ORDER IS THE CLAIM. Sorting full paths is NOT the same
+            # order as sorting scope names and then entry names — `/` sorts above
+            # `-`, so `a-b/x.md` precedes `a/y.md` — and this verb's parity row
+            # compares the listing line for line.
+            if not subsystem_resolver.is_entry_filename(path.name):
+                continue
             print(f"{prefix}{path.parent.name}/{path.name}")
     return worst
 
@@ -1411,12 +1427,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # a policy sheet printed `1 of 1`, and — the direction that misleads — one
         # BROKEN entry beside a README printed `1 of 2 … 1 malformed`, asserting that
         # a file parsed when none had. This is the command whose whole job is making
-        # a zero mean something. The predicate below is the LOADER'S, spelled the
-        # same way (`name == "README.md"` exactly — not a prefix, not a fold), so the
-        # numerator and the denominator come from one rule rather than two.
-        checked = sum(
-            1 for p in (cache / scope).glob("*.md") if p.name != "README.md"
-        )
+        # a zero mean something.
+        #
+        # 🔴 THE DENOMINATOR IS NOW THE LOADER'S OWN WALK, NOT A SECOND ONE SPELLED
+        # THE SAME WAY. The first fix filtered a `*.md` glob with an open-coded
+        # `p.name != "README.md"`, which closed the symptom and left the mechanism —
+        # two walks behind one line — intact. `entry_files_in` is the function
+        # `load_index` enumerates with, so the numerator and the denominator cannot
+        # come to disagree about what an entry is.
+        checked = len(subsystem_resolver.entry_files_in(cache / scope))
         print(
             f"cairn: {scope}: {checked - len(malformed)} of {checked} "
             f"entry file(s) parse, {len(malformed)} malformed"
