@@ -446,9 +446,10 @@ say the other sites were *"NOT swept, on purpose"* — that this repo holds no
 manifest, so nothing in it could establish which pod a cluster pulls, and a sweep
 would therefore *"propagate an unverified claim to every site it touched"*. That
 was the right call **while the fact was unverified**. The operator has since
-settled it: the cluster pulls `cairn-store-go`, and `flake.nix`, this guard's
-`WHY THIS FILE EXISTS` docstring, `README.md`, the publish workflow and the sites
-in this file were all swept on that authority.
+settled it — the cluster pulls `cairn-store-go` — and the sweep ran on that
+authority. ⚠ **A draft of this sentence LISTED the swept sites, five lines above
+the instruction below that forbids exactly that, and the list was already wrong
+about one of them.** Run the sweep; do not read a list here.
 
 ⚠ **AND THE "NOT SWEPT" NOTICE ITSELF SURVIVED THE SWEEP THAT DISCHARGED IT,
 WHICH IS THE FAILURE THIS PARAGRAPH NOW RECORDS.** `AGENTS.md` — paid by every
@@ -466,10 +467,13 @@ git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
 ```
 
 🔴 **BOTH PATTERNS ARE LINE-ANCHORED AND THEREFORE INCOMPLETE — a demonstration,
-not a remedy.** `tests/test_flake_image_matches_dockerfile.py`'s own
-`WHY THIS FILE EXISTS` docstring wraps the claim across a line break (*"…is the
-build that is deployed"* / *"today."*) and **neither command finds it**.
-Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
+not a remedy.** Before this sweep ran,
+`tests/test_flake_image_matches_dockerfile.py`'s own `WHY THIS FILE EXISTS`
+docstring wrapped the claim as *"…is the build that is deployed"* / *"today."*,
+and **neither command found it**. ⚠ **Both commands find it today, and that is
+not a fix — editing the docstring simply moved the wrap.** The claim was
+invisible to a line-anchored sweep for as long as it mattered, and the next
+wrapped claim will be too. Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
 some name `cairn-ui`, which genuinely is deployed by nothing. 🔴 **This clause
 used to say "and the Go image" alongside it. That was false when written and the
 sweep that fixed the rest of this file is what caught it** — the Go image is the
@@ -577,7 +581,7 @@ either direction** — the Python image CI already published carried the identic
 set — while the image actually replaced (Debian-slim) had **11 setuid/setgid
 binaries** (`su`, `passwd`, `mount`, …) and **two** interpreters — CPython 3.12
 and Perl; a draft of this sentence said "a CPython interpreter", undercounting by
-one **five lines below the paragraph about four successive undercounts** — against **zero
+one **six lines ABOVE the paragraph recording four successive undercounts** — against **zero
 setuid and zero interpreters** on the Go one. **A narrowing on both axes.**
 ⚠ Busybox stays load-bearing — seeding needs `tar`, revocation needs
 `sh -c 'kill -HUP 1'` — which is why a distroless variant was not pursued.
@@ -615,7 +619,9 @@ REVISIT THAT TRADE THEN". THE CONDITION FIRED, THE REVISIT HAPPENED, AND THE
 OPERATOR DECIDED — recorded in
 `claudedocs/handoff-cairn-control-plane-archive.md`.** The deferral is DISCHARGED,
 not open: both images measured at 402 applets, the replaced image carried 11
-setuid binaries and an interpreter, the Go one carries neither.
+setuid binaries and **two** interpreters, the Go one carries neither. ⚠ This said
+"an interpreter" — the same undercount the paragraph above corrects, thirty-nine
+lines away, both inside the block this review was already editing.
 **Do not re-run its probes.**
 
 ⚠ **AND AN EARLIER DRAFT OF THIS SWEEP FILED IT AS OPEN RANKED WORK WITH A NEW
@@ -639,7 +645,7 @@ declares it DISCHARGED, in the same commit.** It asked the operator to read
 the archive shows was already done. Deleted rather than reworded. 🔴 **The
 shape is worth more than the fix: a correction applied at ONE of TWO sites reads
 as complete at whichever site you land on, and the two disagree.** Three findings
-in this one review had exactly that shape.
+in this one review had exactly that shape — five, counting the two the next round found.
 
 ⚠ **This is what a condition-triggered deferral costs when nothing watches the
 condition.** The sentence was honest, dated and correct when written, and silently

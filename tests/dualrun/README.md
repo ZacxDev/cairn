@@ -550,9 +550,12 @@ Named rather than omitted, because a green is a claim about what was asked.
   tree's server versus the artefact actually serving" is now a SAME-implementation question,
   which is a different and much cheaper thing to build than the cross-implementation one this
   harness was scoped against.** ⚠ Second condition-triggered deferral in this repo found spent
-  by one unrelated sweep, and **nothing was watching THIS one's condition** — the busybox trade's
-  condition, by contrast, WAS acted on and decided (see the archive's CLOSED block); a draft of this
-  sentence said "neither had anything watching its condition" and was wrong about that half.
+  by one unrelated sweep, and **nothing was watching either one's condition.** ⚠ A draft of this
+  sentence retracted that as wrong about the busybox half — it is not. The busybox TRADE was
+  decided, on a separate track (the deploy decision recorded in the archive's CLOSED block); its
+  DEFERRAL SENTENCE still had no watcher, which is why a sweep reading the paragraph is what
+  found it. **Retracting a true claim is the same defect as leaving a false one, pointed the
+  other way** — recorded here because this review committed it twice.
 - **The gzip envelope.** Deliberate and measured; see the scoping section. Also `Content-Length`
   on `/api/v1/snapshot` alone.
 - **Concurrency.** Every target is one request at a time, in a declared order, and the two

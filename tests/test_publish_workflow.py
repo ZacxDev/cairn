@@ -21,10 +21,12 @@ properties are load-bearing and none of them is visible in a green run:
   * both pods must be pushed, to their own packages, and each must carry ITS OWN
     controls — the Python pod's positive control is an interpreter `-c` probe and
     the Go image's `Cmd[0]` is a server binary that has no `-c`;
-  * the whole PYTHON half must complete before the first GO step. Nothing in this
-    repository has ever RUN the Go image, so every Go step is a first execution;
-    in front of the Python publish, one of them going red keeps the pod that IS
-    deployed unpublished — which is exactly what the seven failed runs did;
+  * the whole PYTHON half must complete before the first GO step. ⚠ This read
+    "Nothing in this repository has ever RUN the Go image … keeps the pod that IS
+    deployed unpublished" — spent at the cutover: the Go image IS the deployed
+    pod, so the ordering now exposes the DEPLOYED pod to an earlier red step.
+    Unchanged deliberately; see the assertion's own message. The seven failed
+    runs are still why a first-execution step is not put first;
   * the `nix build` that resolves skopeo must name an OUTPUT. `nixpkgs#skopeo` is
     multi-output, so `--print-out-paths` prints two paths with the `-man` one
     FIRST; the step that appended `/bin/skopeo` to that value ran a two-line

@@ -24,14 +24,17 @@
 #
 # 🔴 AND THE PYTHON HALF RUNS FIRST, WHOLE. Build, controls, both pushes and the
 # anonymous-pull proof for `cairn-store` all complete before the FIRST Go-image
-# step. Nothing in this repository has ever RUN the Go image — `ci.yml` asserts
-# only that it BUILDS, and `flake.nix` says so about its own `fakeRootCommands` —
-# so every Go step here is a FIRST execution. Ordering a first execution in front
-# of the Python publish would gate the pod that is actually deployed on a path
-# that has never run once, which is the same shape as the failure this file was
-# written to fix: seven runs in a row where nothing published because one step
-# nobody had exercised went red. `tests/test_publish_workflow.py` pins the ORDER,
-# not only the membership.
+# step. `ci.yml` asserts only that the Go image BUILDS, so every Go step here is
+# a FIRST execution, and a first execution in front of the Python publish gates
+# that publish on a path that has never run once — the same shape as the failure
+# this file was written to fix: seven runs in a row where nothing published
+# because one step nobody had exercised went red.
+# ⚠ THIS USED TO SAY THAT ORDERING "would gate the pod that is actually deployed",
+# AND THAT INVERTED AT THE CUTOVER: `cairn-store-go` IS the deployed pod, so the
+# ordering now publishes the DEPLOYED pod LAST and most exposed. The ordering is
+# UNCHANGED deliberately — reversing it is a behaviour change with its own blast
+# radius — and the decision is filed rather than drifted into.
+# `tests/test_publish_workflow.py` pins the ORDER, not only the membership.
 #
 # 🔴 WHY THIS EXISTS, AND WHAT WAS ACTUALLY MEASURED. `ci.yml`'s `nix` job builds
 # `packages.server-image` and asserts nothing further — its own comment says so:
@@ -589,9 +592,11 @@ jobs:
       # 🔴 AND THAT EXPECTED FAILURE IS WHY THE WHOLE GO HALF RUNS AFTER THE WHOLE
       # PYTHON ONE, NOT ONLY THIS STEP. An earlier draft put the Go build and the
       # Go controls in front of the Python push and claimed "it runs last" on the
-      # strength of this step alone — which left the pod that IS deployed unable
-      # to publish if any first-execution Go step went red, the exact failure mode
-      # of the seven runs this file was written to fix.
+      # strength of this step alone — which left the THEN-deployed Python pod
+      # unable to publish if any first-execution Go step went red, the exact
+      # failure mode of the seven runs this file was written to fix.
+      # ⚠ Said "the pod that IS deployed"; that named the right pod only before
+      # the cutover. Third copy of one claim in this file; see the 🔴 at the top.
       - name: PROVE the published GO image is pullable with NO credentials
         run: |
           set -euo pipefail
