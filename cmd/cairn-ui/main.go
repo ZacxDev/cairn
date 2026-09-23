@@ -415,7 +415,7 @@ func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error)
 // `EventCredentialIssued` into a journal.** `-create-user` does not, and there is no
 // `-issue-credential`. So a journal-backed `cairn-ui` cannot be brought up sign-in-capable
 // BY ANY TOOL HERE." All three sentences are now false. `cairn-server -issue-credential`
-// mints a token, writes only its digest, and prints the token once; a journal it has been
+// mints a token, writes only its digest, and emits the token once; a journal it has been
 // run against passes this guard, which is pinned by
 // `TestAJournalAnIssuedCredentialMakesSignInCapableIsAdmitted` below.
 //
@@ -470,10 +470,12 @@ func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string
 		"would come up, announce itself writable and serve nobody. Refusing to start. ⚠ NOTE THAT "+
 		"`cairn-server -create-user` DOES NOT FIX THIS: it mints a user and no credential. What "+
 		"does fix it is `cairn-server -issue-credential -principal <usr_… or prj_…>` against THIS "+
-		"journal, which mints a token, writes only its SHA-256 digest, and prints the token once "+
-		"to stdout. ⚠ If you instead hand-append a `credential-issued` record, note that "+
-		"`token_hash` is the SHA-256 HEX DIGEST of the token and NEVER the token — a raw secret "+
-		"pasted there is refused as 'not a lowercase hex digest' rather than persisted, which it "+
-		"was at 64 characters before that check was widened",
+		"journal, which mints a token, writes only its SHA-256 digest, and emits the token once — "+
+		"to stdout, or with -token-out <path> to a file it creates at mode 0600. ⚠ If you instead "+
+		"hand-append a `credential-issued` record, note that `token_hash` is the SHA-256 HEX DIGEST "+
+		"of the token and NEVER the token — a raw secret pasted there is refused as 'not a "+
+		"64-character hex digest' rather than persisted, which it was at 64 characters before that "+
+		"check was widened. Either case of hex is accepted and the model lowercases it, so a digest "+
+		"as `Get-FileHash` or `certutil -hashfile` spells it works as written",
 		journal, len(m.Users), len(m.Credentials))
 }

@@ -25,13 +25,34 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/control"
 )
+
+// tokenFileMode is the mode `-token-out` creates its file with.
+//
+// 🔴 0600, AND THE FILE IS CREATED RATHER THAN OPENED, WHICH IS WHAT MAKES THE MODE A
+// CLAIM. `OpenFile`'s perm argument applies only to a file the call CREATES, so a write
+// into an existing path would put a live credential into whatever mode that path already
+// had. `main.go` documents the pod's token file as 0600 and nothing enforced it; the
+// command's own prescribed remedy was `… -issue-credential … > token`, which at the
+// default umask of 022 produces a **0644** file holding a bearer credential no tool here
+// can revoke. Every other durable secret this repository writes already does this:
+// `control.OpenFileStore` creates the journal 0600 under a 0700 directory
+// (`internal/control/filestore.go`) and `identity.OpenFileSessionStore` the session table
+// the same way — the token file was the one this command produced, and the exception.
+//
+// ⚠ A UMASK CAN ONLY CLEAR BITS, SO THE RESULT IS AT MOST THIS. That direction is the safe
+// one and is why no `Chmod` follows: a umask that strips owner bits produces a narrower
+// file, never a wider one, and re-widening it to exactly 0600 would be this command
+// overriding an operator's deliberate setting.
+const tokenFileMode = 0o600
 
 // issueCredentialFlags is the mode's own flag set, registered by `main` before
 // `flag.Parse` — the same shape `createUserFlags` has, and for the same reason: a
@@ -43,6 +64,7 @@ type issueCredentialFlags struct {
 	principal     *string
 	label         *string
 	narrowScopes  *string
+	tokenOut      *string
 }
 
 // registerIssueCredentialFlags declares the mode's flags.
@@ -54,9 +76,9 @@ func registerIssueCredentialFlags() *issueCredentialFlags {
 	return &issueCredentialFlags{
 		enabled: flag.Bool("issue-credential", false,
 			"MINT A BEARER TOKEN for an existing principal in the control journal named by "+
-				"$"+EnvControlJournal+", write only its SHA-256 digest there, print the token ONCE "+
-				"to stdout, and exit. The token cannot be recovered afterwards by anything in this "+
-				"repository. Requires -principal"),
+				"$"+EnvControlJournal+", write only its SHA-256 digest there, emit the token ONCE "+
+				"— to stdout, or to the file -token-out names at mode 0600 — and exit. The token "+
+				"cannot be recovered afterwards by anything in this repository. Requires -principal"),
 		principalKind: flag.String("principal-kind", string(control.KindUser),
 			"`user` or `project` — which kind of principal this credential authenticates AS. A "+
 				"project principal is the service-account case, and note that a project is NOT a "+
@@ -73,6 +95,12 @@ func registerIssueCredentialFlags() *issueCredentialFlags {
 			"comma-separated scope IDS (`scp_…`) this credential is restricted to, INTERSECTED "+
 				"with whatever its principal can reach at the moment it is asked. Empty means NO "+
 				"narrowing — the credential carries its principal's full authority"),
+		tokenOut: flag.String("token-out", "",
+			"write the token to this PATH at mode 0600, creating it and refusing if it already "+
+				"exists, instead of printing it. `-` means stdout explicitly. The file is one token "+
+				"per line, which is what the pod's -token-file expects. A shell redirection cannot "+
+				"do this: it creates its file at the umask, which is 0644 by default for a value "+
+				"that is a live bearer credential"),
 	}
 }
 
@@ -81,24 +109,36 @@ func registerIssueCredentialFlags() *issueCredentialFlags {
 // 🔴 IT RETURNS A CODE RATHER THAN CALLING `os.Exit`, so a test can run it in-process and
 // read the journal back in the same function — the same ruling `runCreateUser` records.
 //
-// 🔴 THE TOKEN GOES TO STDOUT **ALONE**, AND EVERY WORD OF PROSE GOES TO STDERR. That is a
-// deliberate divergence from `-create-user`, which puts a machine-readable `cairn-control:`
-// line on stdout, and the reason is that here the machine-readable thing IS the secret:
+// 🔴 THE TOKEN GOES TO ONE SINK **ALONE**, AND EVERY WORD OF PROSE GOES TO STDERR. That is
+// a deliberate divergence from `-create-user`, which puts a machine-readable
+// `cairn-control:` line on stdout, and the reason is that here the machine-readable thing
+// IS the secret:
 //
-//   - `cairn-server -issue-credential … > token` has to produce a usable credential file
-//     and nothing else. The pod's token file is one token per line, so a stdout carrying
-//     prose alongside the token would produce a file the pod then refuses to parse — and
-//     the operator's remedy would be to hand-edit a file containing a live secret.
+//   - the sink has to be a usable credential file and nothing else. The pod's token file is
+//     one token per line, so prose alongside the token would produce a file the pod then
+//     refuses to parse — and the operator's remedy would be to hand-edit a file containing
+//     a live secret.
 //   - Prose on the same stream is what makes a human select-and-copy MORE than the token,
 //     and a token with a stray line around it fails authentication in a way that looks like
 //     a bad credential rather than a bad paste.
 //
-// ⚠ AND PRINTING IT AT ALL IS A REAL COST, SAID WHERE THE OPERATOR READS IT RATHER THAN
-// ONLY HERE. A secret on stdout is re-staged in every transcript that captures the run:
-// shell scrollback, `script`, a CI log, a `kubectl exec` recording, an agent session.
-// There is no alternative that keeps this a single command — the token exists for one
-// instant in one process by construction — so the honest move is to name the exposure and
-// say what to do about it, which the stderr block below does.
+// 🔴 AND THE SINK IS `-token-out <path>` AT MODE 0600 WHENEVER THE OPERATOR NAMES ONE,
+// BECAUSE THE REMEDY THIS COMMAND USED TO PRESCRIBE PRODUCED A WORLD-READABLE CREDENTIAL.
+// It said `… -issue-credential … > token`; a shell redirection creates its file at the
+// umask, so at the default 022 that is a **0644** file holding a bearer token nothing in
+// this repository can revoke. On that path the re-staging warning is not printed at all
+// rather than reworded: there is nothing to apologise for once the secret never reaches a
+// stream — see `tokenFileMode` for why the command CREATING the file is what makes the
+// mode a claim.
+//
+// ⚠ STDOUT REMAINS THE DEFAULT, AND PRINTING A SECRET THERE IS A REAL COST SAID WHERE THE
+// OPERATOR READS IT. A secret on stdout is re-staged in every transcript that captures the
+// run: shell scrollback, `script`, a CI log, a `kubectl exec` recording, an agent session.
+// The default is kept because a pipe is a legitimate destination (a secret store's stdin
+// reads one), `-token-out -` says so explicitly, and a default that wrote a file would put
+// a credential on disk for an operator who asked for none. What the guidance must never
+// again do is recommend a redirect: it names `-token-out`, and `umask 077` for anybody who
+// redirects anyway.
 func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, errOut io.Writer) int {
 	warn := func(line string) { fmt.Fprintln(errOut, reloadSafe(line)) }
 
@@ -160,6 +200,18 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 		return exitConfig
 	}
 
+	// 🔴 THE SINK IS OPENED BEFORE THE MINT, FOR THE REASON THE PRINCIPAL CHECK HAPPENS
+	// BEFORE IT — AND HERE THE REASON IS NOT WEAK. The journal record is durable and
+	// append-only and the token exists for one instant; a path that cannot be created,
+	// discovered AFTER the append, is a credential in the authority whose secret nobody
+	// ever saw, and the only way to retire it is a hand-appended revocation.
+	tokenOut := strings.TrimSpace(*f.tokenOut)
+	sink, err := openTokenSink(tokenOut)
+	if err != nil {
+		warn("subsystem-store-api: -issue-credential refused: " + err.Error())
+		return exitConfig
+	}
+
 	ctx := context.Background()
 	issued, err := control.IssueCredential(ctx, store, control.NewCredential{
 		SubjectKind:    kind,
@@ -168,21 +220,54 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 		NarrowedScopes: narrowed,
 	})
 	if err != nil {
-		// The journal's own message names the event and the field, so it is passed through
-		// rather than re-worded — a second wording here would be a second description of a
-		// rule that lives in `internal/control`. 78 is this program's one refusal code; see
-		// `exitConfig` for why the second one was deleted rather than narrowed.
+		// The file this command created is removed again: it is empty, nothing else can have
+		// opened it (it was created with O_EXCL a moment ago), and leaving a zero-byte file
+		// named `token` behind is how an operator concludes the issue worked.
+		discardTokenSink(sink, tokenOut, warn)
+		// 🔴 A TYPO IS NOT AN I/O FAILURE, AND THIS IS THE BRANCH THAT MAKES THE SENTINEL A
+		// GUARD RATHER THAN A DECLARATION. `control.ErrNoSuchPrincipal` had exactly one
+		// `errors.Is` consumer tree-wide — its own test — and a sentinel nothing branches on
+		// buys nothing. The relayed message is about a batch that would not replay, which is
+		// true and is not what the operator needs to read first.
+		if errors.Is(err, control.ErrNoSuchPrincipal) {
+			warn(fmt.Sprintf(
+				"subsystem-store-api: -issue-credential refused: this control journal holds no %s with "+
+					"id %q, so nothing was written and no token was minted. A credential binds to the "+
+					"control plane's own immutable id: `-create-user` prints it as `user=usr_…` on stdout, "+
+					"and it is neither a provider subject nor an email. Journal: %s",
+				kind, principal, journal))
+			return exitConfig
+		}
+		// Every other failure keeps the journal's own message, which names the event and the
+		// field — a second wording here would be a second description of a rule that lives in
+		// `internal/control`. 78 is this program's one refusal code; see `exitConfig` for why
+		// the second one was deleted rather than narrowed.
 		warn("subsystem-store-api: -issue-credential refused: " + err.Error())
 		return exitConfig
 	}
 
-	// 🔴 THE TOKEN, ALONE, ON STDOUT. Nothing is interpolated around it and `reloadSafe` is
+	// 🔴 THE TOKEN, ALONE, ON ITS SINK. Nothing is interpolated around it and `reloadSafe` is
 	// deliberately NOT applied: it maps control characters to `?`, which would silently
 	// CORRUPT a value the operator is about to authenticate with. It cannot be needed here —
 	// the token is `base64.RawURLEncoding` output, whose alphabet is 64 printable ASCII
 	// characters — and a sanitiser on a value that cannot contain what it sanitises is a
 	// mechanism that can only ever damage the good case.
-	fmt.Fprintln(out, issued.Token())
+	delivered := true
+	if sink == nil {
+		fmt.Fprintln(out, issued.Token())
+	} else if err := writeTokenSink(sink, issued.Token()); err != nil {
+		delivered = false
+		// 🔴 THE CREDENTIAL EXISTS AND ITS SECRET DOES NOT. Said in full, because this is the
+		// one outcome of this command that cannot be retried into a good state: the record is
+		// durable, nothing here can recover a token from a digest, and an operator who reads
+		// only "failed" would leave a live credential nobody holds in the authority.
+		warn(fmt.Sprintf(
+			"subsystem-store-api: ⚠ THE CREDENTIAL WAS WRITTEN AND ITS TOKEN COULD NOT BE DELIVERED "+
+				"to %s (%v). credential=%s is live in the journal and its token is UNRECOVERABLE — "+
+				"nothing in this repository can derive a token from a digest. Retire it by appending a "+
+				"`credential-revoked` record naming that id, then issue another",
+			tokenOut, err, issued.Credential))
+	}
 
 	// The record line, on stderr, keeping `-create-user`'s `cairn-control:` prefix so a
 	// script greps the same shape. Only the stream differs, and the stream differs because
@@ -191,15 +276,35 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 		"cairn-control: issued credential=%s principal=%s:%s epoch=%d digest=%s label=%q narrowed=%s",
 		issued.Credential, kind, principal, issued.Epoch, issued.TokenHash,
 		*f.label, renderNarrowing(narrowed)))
-	warn("subsystem-store-api: THE TOKEN IS ON STDOUT AND THIS IS THE ONLY TIME IT WILL EVER BE " +
-		"SHOWN. Only its SHA-256 digest was written to the journal, and nothing in this repository " +
-		"can recover a token from a digest — if it is lost, issue another and revoke this one by " +
-		"its credential id")
-	warn("subsystem-store-api: ⚠ printing a secret to stdout RE-STAGES IT in anything that captured " +
-		"this run — shell scrollback, a CI log, a `kubectl exec` recording, a terminal multiplexer's " +
-		"buffer. Prefer redirecting stdout straight to a file or a secret store " +
-		"(`… -issue-credential … > token`), which is also exactly the one-token-per-line shape the " +
-		"pod's -token-file expects")
+
+	// 🔴 REVOCATION IS A HAND-APPEND TODAY, AND THE PREVIOUS WORDING PROMISED AN ACTION NO
+	// TOOL HERE CAN PERFORM. It said to "revoke this one by its credential id";
+	// `EventCredentialRevoked` is in the closed event set and has NO WRITER, so an operator
+	// following that sentence looks for a flag that does not exist and leaves the old
+	// credential live. The code comments and `internal/control/README.md` already say this;
+	// the surface the operator actually reads now says it too.
+	lost := "if it is lost, issue another and retire this one by appending a `credential-revoked` " +
+		"record to the journal BY HAND — nothing in this repository writes that event yet, so there " +
+		"is no -revoke-credential to reach for"
+	if sink == nil {
+		warn("subsystem-store-api: THE TOKEN IS ON STDOUT AND THIS IS THE ONLY TIME IT WILL EVER BE " +
+			"SHOWN. Only its SHA-256 digest was written to the journal, and nothing in this repository " +
+			"can recover a token from a digest — " + lost)
+		warn("subsystem-store-api: ⚠ printing a secret to stdout RE-STAGES IT in anything that captured " +
+			"this run — shell scrollback, a CI log, a `kubectl exec` recording, a terminal multiplexer's " +
+			"buffer. Use `-token-out <path>`, which creates the file itself at mode 0600 and refuses a " +
+			"path that already exists; a shell redirection creates its file at the umask instead, " +
+			"which is 0644 by default — a live bearer credential nothing here can revoke, readable by " +
+			"anyone on the host. If you redirect anyway, run `umask 077` first or write through " +
+			"`install -m600 /dev/stdin <path>`")
+	} else if delivered {
+		warn(fmt.Sprintf(
+			"subsystem-store-api: the token is in %s at mode %#o (one token per line, which is the shape "+
+				"the pod's -token-file expects) and THIS IS THE ONLY TIME IT COULD HAVE BEEN WRITTEN. "+
+				"Only its SHA-256 digest is in the journal, and nothing in this repository can recover a "+
+				"token from a digest — %s",
+			tokenOut, tokenFileMode, lost))
+	}
 
 	reportWhatTheCredentialCanReach(ctx, store, issued, narrowed, warn)
 
@@ -209,7 +314,76 @@ func runIssueCredential(env map[string]string, f *issueCredentialFlags, out, err
 	// the difference between an operator who waits and one who concludes the token is broken
 	// and issues a second.
 	warn(fmt.Sprintf("subsystem-store-api: the running server picks this up within %s", refreshInterval))
+	if !delivered {
+		// A credential exists and its token does not, which is a failure of this command even
+		// though the journal write succeeded. Exiting 0 here would let a script conclude it
+		// holds a working token file.
+		return exitConfig
+	}
 	return 0
+}
+
+// openTokenSink opens the file `-token-out` names, or returns nil for the stdout default.
+//
+// 🔴 `O_EXCL`, NOT `O_TRUNC`, AND THE MODE ARGUMENT IS WHY. `OpenFile`'s perm applies only
+// to a file this call CREATES, so opening an existing path would write a live credential
+// at whatever mode that path already carries — and silently destroy whatever credential
+// was in it, which for a token file is an outage nobody can undo. Refusing is also what
+// makes the 0600 in `tokenFileMode` a property of every file this flag produces rather
+// than of the lucky case.
+//
+// ⚠ AND IT REFUSES TO FOLLOW A SYMLINK, WHICH IS THE SECOND REASON AND NOT AN ACCIDENT OF
+// THE FIRST. `O_CREATE|O_EXCL` fails on an existing link even when its target does not
+// exist, so a pre-planted link cannot redirect a freshly-minted bearer token into a path
+// the operator did not name.
+func openTokenSink(path string) (*os.File, error) {
+	// `""` is the flag's zero value and `-` is the explicit spelling of the same choice;
+	// both mean stdout, which is what a pipe into a secret store's stdin needs.
+	if path == "" || path == "-" {
+		return nil, nil
+	}
+	fh, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, tokenFileMode)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"-token-out %s could not be created (%w). It is created with O_EXCL at mode %#o and is "+
+				"never opened or truncated: a path that already exists would be written at ITS mode, "+
+				"not this one, and would lose whatever credential it holds. Name a path that does not "+
+				"exist yet",
+			path, err, tokenFileMode)
+	}
+	return fh, nil
+}
+
+// writeTokenSink writes the token and CLOSES the file, reporting either failure.
+//
+// 🔴 THE CLOSE ERROR IS RETURNED, NOT DISCARDED. A buffered write that fails at flush time
+// is reported by `Close` and nowhere else, and the value being written is the one thing
+// this command cannot produce twice — a silent short write would leave a live credential
+// whose token exists nowhere.
+func writeTokenSink(fh *os.File, token string) error {
+	if _, err := fmt.Fprintln(fh, token); err != nil {
+		fh.Close()
+		return err
+	}
+	return fh.Close()
+}
+
+// discardTokenSink removes a token file this command created but never wrote to.
+//
+// A zero-byte file named `token` left behind by a refused issue is how an operator
+// concludes the command worked; the removal is safe precisely because `openTokenSink`
+// created the path with `O_EXCL` moments earlier, so nothing else has ever had it.
+func discardTokenSink(fh *os.File, path string, warn func(string)) {
+	if fh == nil {
+		return
+	}
+	fh.Close()
+	if err := os.Remove(path); err != nil {
+		warn(fmt.Sprintf(
+			"subsystem-store-api: WARNING the empty token file %s could not be removed after the "+
+				"refusal (%v). It holds no credential — this command never wrote to it — but a file by "+
+				"that name reads as a token nobody can authenticate with", path, err))
+	}
 }
 
 // reportWhatTheCredentialCanReach says out loud what this credential will actually see.

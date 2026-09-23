@@ -258,11 +258,11 @@ last-known-good keeps answering:
 ## The mutation battery
 
 ```bash
-python3 tests/control_mutants.py          # 127 mutants, over SEVEN packages
+python3 tests/control_mutants.py          # 132 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 127 mutants, 125 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 132 mutants, 130 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
 
 🔴 **THE THIRD EQUIVALENT LABEL WAS MEASURED FALSE AND IS NOW A KILL, WHICH IS WHY THE
@@ -337,7 +337,7 @@ now moves its clock 20s between the two, and the test says why.
 timing figure here is a DELTA measured back to back on a single host and is not a current
 runtime: **2m46s at 62 mutants over four packages, against 2m01s for the same battery at
 61 mutants over three** — same host, same idle machine, which is what makes the ~45s the
-fourth package costs a measurement rather than an impression. ⚠ The battery is 127 mutants
+fourth package costs a measurement rather than an impression. ⚠ The battery is 132 mutants
 now, so neither number describes what a run takes today, and a run on a loaded box is
 several times either. (It costs that much because a
 mutant in `internal/api` or `internal/control` forces `cmd/cairn-server` and its test
@@ -725,7 +725,7 @@ surface's entire write half was unreachable by any path here. **That sentence is
 and the refusal names the command instead**; the guard is unchanged, because
 `-create-user` still mints a user and no credential.
 
-**Three rules this path carries, each with its own reason:**
+**Four rules this path carries, each with its own reason:**
 
 1. **The width is not chosen here.** `TokenEntropyBytes` is 32, which renders as 43
    base64url characters, because `authz.MinTokenChars` is 43 and the pod refuses to START
@@ -737,14 +737,31 @@ and the refusal names the command instead**; the guard is unchanged, because
 2. **The raw token leaves through `Issued.Token()` and nothing else.** The field is
    unexported and `String`/`GoString` redact, so `%v`, `%+v`, `%s`, `%q` and `%#v` cannot
    reach it. ⚠ That is a property of FORMATTING, not a confidentiality boundary: `Token()`
-   still returns the secret (which is the point — the command prints it once), an encoder
+   still returns the secret (which is the point — the command emits it once), an encoder
    that skips unexported fields DROPS it rather than leaking it, and a debugger reads it
    anyway. `Issued`'s own comment enumerates the four things it does not cover.
-3. **The principal is checked before the mint, not merely before the append.** `apply`
-   refuses the same batch under the `flock`, so as a correctness check this is redundant and
-   is not claimed otherwise. What it buys is that a request which cannot succeed never
-   causes a secret to EXIST, and a sentinel (`ErrNoSuchPrincipal`) an operator surface can
-   tell from "the volume is gone" — which through `Append` are one opaque `fmt.Errorf`.
+3. **The principal is checked before the mint, and what it buys is the refusal's first
+   line.** `apply` refuses the same batch under the `flock`, so as a correctness check this
+   is redundant and is not claimed otherwise. `ErrNoSuchPrincipal` is a sentinel
+   `cmd/cairn-server -issue-credential` BRANCHES on, printing "this control journal holds no
+   user with id …" instead of relaying a sentence about a batch that would not replay.
+   🔴 **TWO STRONGER JUSTIFICATIONS STOOD HERE AND ARE RETRACTED.** "Through `Append` a bad
+   subject and a failed `write(2)` are one opaque `fmt.Errorf`" is FALSE — they are plainly
+   different text (`… subject user usr_x does not exist` against `control journal append:
+   <errno>`); what they were not is different by TYPE, which is what a caller needs to
+   branch. And "a request that cannot succeed never causes a secret to EXIST" is true and
+   WEAK: a token that never reached the journal authenticates to nothing. ⚠ A sentinel
+   nothing branches on is not a guard — this one had exactly one `errors.Is` consumer
+   tree-wide (its own test) until the command's branch landed.
+4. **The token is emitted once, and `-token-out <path>` is the sink that is not
+   world-readable.** The command used to print `… -issue-credential … > token` as its
+   remedy; a shell redirection creates its file at the umask, so at the default 022 that is
+   a **0644** file holding a bearer credential nothing here can revoke — beside a journal
+   that is 0600 by construction. `-token-out` creates the file itself with `O_CREATE|O_EXCL`
+   at 0600 (`O_EXCL` is what makes the mode a claim: `OpenFile`'s perm applies only to a
+   file it CREATES, and it refuses to follow a symlink), it is opened BEFORE the mint so a
+   bad path cannot leave a credential whose secret nobody saw, and `-token-out -` is stdout
+   explicitly.
 
 🔴 **AND THE DIGEST FIELD'S GUARD WAS WIDENED IN THE SAME CHANGE, BECAUSE A LENGTH CHECK
 WAS NOT THE GUARD IT READ AS.** `Event.validate` required `len(e.TokenHash) == HashHexLen`
@@ -752,9 +769,30 @@ and its message said a short hash "is the shape a raw token takes" — true of t
 caught and false of the case that matters: **`base64.RawURLEncoding` of 48 random bytes is
 exactly 64 characters**, and 48 bytes is an ordinary width for a machine-minted token, so a
 raw secret had a natural spelling that cleared the check and was persisted verbatim into
-the append-only authority. It now requires a lowercase hex digest.
-`TestA64CharacterRawTokenIsRefusedAsADigest` is the regression test — **red at
-`origin/main`'s `journal.go`, green at HEAD** — and the pre-existing table test
+the append-only authority. It now requires a 64-character hex digest.
+
+🔴 **AND THE FIRST WIDENING WENT TOO FAR IN THE OTHER DIRECTION — IT REQUIRED *LOWERCASE*,
+AND THAT IS A RETRACTED CLAIM RATHER THAN A TIGHTENING WORTH KEEPING.** Case does not
+discriminate the hazard: a raw base64url token is excluded by `-`, `_` and every letter
+from `g` to `z`, never by case, so requiring lowercase bought **zero** additional coverage.
+What it cost was a retroactive refusal *on replay* — `Event.validate` runs through
+`Model.apply`, which fails a journal **whole**, so one hand-written uppercase digest loads
+**zero** credentials and `FileStore.Reload` falls back to `lastKnownGood()`, empty on a cold
+start. The population holding such a row is exactly the one an older `cairn-ui` refusal text
+created by prescribing a hand-appended record, and `Get-FileHash` / `certutil -hashfile`
+emit uppercase. So the check takes either case and **`Model.apply` lowercases what it
+stores** — two reasons, both load-bearing: the duplicate-digest refusal is a string compare
+(without it, one secret in two spellings is two accepted rows), and `EqualHash` is
+byte-exact against a lowercase `HashToken`, so normalising turns a record that replayed
+clean and authenticated **nobody** into one that works.
+`TestAnUppercaseDigestReplaysAndTheCredentialItNamesAuthenticates` and
+`TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate` are the regression tests, each
+measured red against both halves separately; the mutants are
+`digest-shape-check-refuses-UPPERCASE-hex` and
+`credential-digest-not-normalised-on-replay`.
+
+`TestA64CharacterRawTokenIsRefusedAsADigest` is the regression test for the length-only
+guard — **red at `origin/main`'s `journal.go`, green at HEAD** — and the pre-existing table test
 `TestTheJournalRefusesWhatItCannotEnforce` stays GREEN under that revert, which is the
 measurement saying it could never see this case (its fixture is 26 characters).
 `token-hash-checked-by-LENGTH-only` is the mutant, and it is a *second* row rather than a

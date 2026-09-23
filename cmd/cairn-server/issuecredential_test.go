@@ -22,13 +22,23 @@ import (
 // `TestTheBinaryActuallyDispatchesIssueCredential` runs the real `main` for that half.
 func issueFlagsFor(kind, principal, label, narrow string) *issueCredentialFlags {
 	enabled := true
+	stdout := ""
 	return &issueCredentialFlags{
 		enabled:       &enabled,
 		principalKind: &kind,
 		principal:     &principal,
 		label:         &label,
 		narrowScopes:  &narrow,
+		// The zero value, which is the stdout default every case below reads from.
+		tokenOut: &stdout,
 	}
+}
+
+// issueToFile is `issueFlagsFor` with `-token-out` pointed at a path.
+func issueToFile(kind, principal, path string) *issueCredentialFlags {
+	f := issueFlagsFor(kind, principal, "fixture", "")
+	f.tokenOut = &path
+	return f
 }
 
 // aJournalWithAnOwner writes the world every case below issues against, using the other
@@ -56,7 +66,8 @@ func aJournalWithAnOwner(t *testing.T) (journal string, env map[string]string, m
 }
 
 // TestTheTokenIsALONEOnStdoutAndTheProseIsOnStderr is the stream-split claim, and it is
-// the one an operator's `> token` redirection depends on.
+// the one an operator piping stdout into a secret store depends on (a file destination is
+// `-token-out`, which is the case `TestTokenOutWritesA0600FileAndNothingOnStdout` covers).
 //
 // 🔴 BOTH HALVES ARE LOAD-BEARING AND THEY FAIL DIFFERENTLY. Prose leaking onto stdout
 // produces a "token file" the pod then refuses to parse, and the operator's remedy is to
@@ -78,8 +89,9 @@ func TestTheTokenIsALONEOnStdoutAndTheProseIsOnStderr(t *testing.T) {
 		t.Fatalf("stdout carries %d lines, want exactly one (the token):\n%q", len(lines), out.String())
 	}
 	token := lines[0]
-	// 43 as a LITERAL rather than `control.TokenChars`: deriving the expectation from the
-	// constant under test would make this true for any value of it.
+	// 43 as a LITERAL rather than the width constant `internal/control` derives (which is
+	// unexported, and would be the wrong thing to reach for even if it were not): deriving
+	// the expectation from the constant under test would make this true for any value of it.
 	if len(token) != 43 {
 		t.Fatalf("stdout's line is %d characters, want a 43-character token — anything else means "+
 			"prose or a prefix reached the stream a redirection captures", len(token))
@@ -187,10 +199,13 @@ func TestAnIssueThatCannotSucceedIsRefusedAndWritesNothing(t *testing.T) {
 			want:  "expects an id starting usr_",
 		},
 		{
+			// 🔴 THE MESSAGE IS THE COMMAND'S OWN, NOT THE MODEL'S RELAYED. See
+			// `TestAPrincipalThatIsNotThereIsRefusedInThisCommandsOwnWords` for why the
+			// branch exists and what it replaced.
 			name:  "a principal the journal does not hold",
 			env:   env,
 			flags: issueFlagsFor("user", "usr_nobody0000000000000000", "", ""),
-			want:  "no such principal",
+			want:  "holds no user with id",
 		},
 		{
 			name:  "a narrowing named by display name rather than id",
@@ -394,6 +409,253 @@ func TestTheBinaryActuallyDispatchesIssueCredential(t *testing.T) {
 	code, out, errOut = run("-routes")
 	if code != 0 || !strings.Contains(out, "GET recall") {
 		t.Fatalf("`-routes` alone must still print the ledger: exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+}
+
+// TestTokenOutWritesA0600FileAndNothingOnStdout is the mechanism that replaced a printed
+// remedy, and the mode is the whole point of it.
+//
+// 🔴 THE REMEDY THIS COMMAND USED TO PRESCRIBE PRODUCED A WORLD-READABLE CREDENTIAL. Its
+// stderr said `… -issue-credential … > token`; a shell redirection creates its file at the
+// process umask, so at the default 022 that is a 0644 file holding a bearer token nothing
+// in this repository can revoke — beside a journal that is 0600 by construction and a
+// session store that is 0600/0700.
+//
+// ⚠ THE ASSERTION IS "NO BIT OUTSIDE OWNER-RW", NOT "EXACTLY 0600", AND THE DIFFERENCE IS
+// A MEASURED PROPERTY OF `open(2)` RATHER THAN A WEAKER TEST. A umask can only CLEAR bits,
+// so a host with a stricter one legitimately yields 0400 — while the defect this pins,
+// any group or other bit, is unreachable from a 0600 create under every umask. A test
+// demanding exactly 0600 would fail on a correctly-configured host and pass on none that
+// this one does not.
+func TestTokenOutWritesA0600FileAndNothingOnStdout(t *testing.T) {
+	journal, env, made := aJournalWithAnOwner(t)
+	path := filepath.Join(t.TempDir(), "token")
+	var out, errOut bytes.Buffer
+
+	code := runIssueCredential(env, issueToFile("user", string(made.User), path), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0:\nstderr: %s", code, errOut.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout carries %q — with -token-out the secret goes to the file and stdout stays "+
+			"empty, or a redirection captures it as well and the 0600 buys nothing", out.String())
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("the token file was not created: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&^0o600 != 0 {
+		t.Fatalf("the token file is mode %#o: it carries a bit outside owner read/write, so a live "+
+			"bearer credential is readable by somebody who is not the operator who issued it", perm)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the token file: %v", err)
+	}
+	// One token per line, which is the shape the pod's -token-file parses.
+	lines := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
+	if len(lines) != 1 || len(lines[0]) != 43 {
+		t.Fatalf("the token file holds %d line(s), first one %d characters — want exactly one "+
+			"43-character token:\n%q", len(lines), len(lines[0]), string(body))
+	}
+	if strings.Contains(errOut.String(), lines[0]) {
+		t.Fatal("the token is on stderr as well as in the file, which re-stages it in exactly the " +
+			"stream -token-out exists to keep it out of")
+	}
+
+	// The credential is real, or every assertion above is about 43 random characters.
+	reread, err := control.OpenFileStore(journal)
+	if err != nil {
+		t.Fatalf("re-opening the journal: %v", err)
+	}
+	m, err := reread.Model(context.Background())
+	if err != nil {
+		t.Fatalf("replaying: %v", err)
+	}
+	if _, _, err := control.Authenticate(m, lines[0]); err != nil {
+		t.Fatalf("the token in the file does not authenticate against the journal: %v", err)
+	}
+}
+
+// TestTokenOutRefusesAPathThatAlreadyExistsAndMintsNothing.
+//
+// 🔴 O_EXCL IS WHAT MAKES THE MODE A CLAIM, AND OVERWRITING WOULD BE A SECOND DEFECT ON
+// ITS OWN. `OpenFile`'s perm applies only to a file it CREATES, so writing into an
+// existing path puts a live credential at whatever mode that path already had — and
+// destroys whatever credential was in it, which for a pod's token file is an outage with
+// no undo.
+//
+// 🔴 AND THE REFUSAL HAPPENS BEFORE THE MINT, WHICH THE JOURNAL ASSERTION IS THE EVIDENCE
+// FOR. A sink opened after the append would mean a credential in the durable authority
+// whose token nobody ever saw.
+func TestTokenOutRefusesAPathThatAlreadyExistsAndMintsNothing(t *testing.T) {
+	journal, env, made := aJournalWithAnOwner(t)
+	before, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatalf("reading the journal: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "token")
+	existing := "a credential this test must not destroy\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	code := runIssueCredential(env, issueToFile("user", string(made.User), path), &out, &errOut)
+	if code != exitConfig {
+		t.Fatalf("exit %d, want %d:\nstderr: %s", code, exitConfig, errOut.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("a refused issue put %q on stdout", out.String())
+	}
+	if !strings.Contains(errOut.String(), "-token-out") {
+		t.Fatalf("the refusal does not name the flag that caused it:\n%s", errOut.String())
+	}
+
+	if body, err := os.ReadFile(path); err != nil || string(body) != existing {
+		t.Fatalf("the existing file was modified (err=%v, contents %q) — O_EXCL is what stops this "+
+			"command clobbering a token file that is in use", err, string(body))
+	}
+	after, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatalf("re-reading the journal: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("the journal grew even though the token had nowhere to go: that is a credential in " +
+			"an append-only authority whose secret nobody ever saw, and no tool here can revoke it")
+	}
+}
+
+// TestTokenOutDashIsStdoutExplicitly pins the one spelling that keeps a pipe available.
+//
+// ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE: no bug ever mapped `-` to a file called
+// `-`. What it pins is that the flag has an explicit spelling for the default, which is
+// what lets the guidance recommend `-token-out` without taking a secret store's stdin away.
+func TestTokenOutDashIsStdoutExplicitly(t *testing.T) {
+	dir := t.TempDir()
+	_, env, made := aJournalWithAnOwner(t)
+	var out, errOut bytes.Buffer
+
+	f := issueToFile("user", string(made.User), "-")
+	// Run with the temp dir as the working directory so that a `-` interpreted as a path
+	// would leave an observable file rather than writing into the repository.
+	t.Chdir(dir)
+	if code := runIssueCredential(env, f, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d, want 0:\nstderr: %s", code, errOut.String())
+	}
+	if got := len(strings.TrimRight(out.String(), "\n")); got != 43 {
+		t.Fatalf("stdout carries %d characters, want the 43-character token:\n%q", got, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "-")); err == nil {
+		t.Fatal("`-token-out -` created a file literally named `-` instead of writing to stdout")
+	}
+}
+
+// TestTheStdoutGuidanceDoesNotPrescribeAWorldReadableRedirect.
+//
+// 🔴 THE PRINTED REMEDY IS PART OF THE SURFACE, AND THIS ONE TOLD THE OPERATOR TO CREATE A
+// 0644 SECRET. It read "Prefer redirecting stdout straight to a file … (`… > token`)",
+// which at the default umask of 022 is exactly that. The guard is on the CLAIM the text
+// makes rather than on its wording: the mechanism must be named, and if a redirect is
+// mentioned at all it must carry the umask remedy with it.
+func TestTheStdoutGuidanceDoesNotPrescribeAWorldReadableRedirect(t *testing.T) {
+	_, env, made := aJournalWithAnOwner(t)
+	var out, errOut bytes.Buffer
+	if code := runIssueCredential(env, issueFlagsFor("user", string(made.User), "", ""), &out, &errOut); code != 0 {
+		t.Fatalf("exit %d, want 0:\nstderr: %s", code, errOut.String())
+	}
+	stderr := errOut.String()
+
+	for _, want := range []string{"-token-out", "0600", "umask 077"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the stdout guidance does not name %q — the operator's whole instruction for "+
+				"where to put a live credential is this text:\n%s", want, stderr)
+		}
+	}
+	// ⚠ AND THE NEGATIVE HALF IS A SPELLED GUARD, SAID RATHER THAN IMPLIED: `> token` is the
+	// exact string the falsified text prescribed, and a reworded redirect (`>tok`, `>>`) would
+	// walk past it. It is kept because it pins the sentence that was actually wrong; the
+	// load-bearing half is the three positive claims above, which a rewording cannot satisfy
+	// without saying the true thing.
+	if idx := strings.Index(stderr, "> token"); idx >= 0 {
+		t.Errorf("the guidance still shows `> token` as a remedy at offset %d; a redirection creates "+
+			"its file at the umask, so the prescribed remedy produces a 0644 bearer credential:\n%s",
+			idx, stderr)
+	}
+}
+
+// TestTheLostTokenAdviceDoesNotPROMISEAREVOCATIONCOMMAND.
+//
+// 🔴 THE TEXT PROMISED AN ACTION NO TOOL HERE CAN PERFORM: "issue another and revoke this
+// one by its credential id". `control.EventCredentialRevoked` is in the closed event set
+// and has NO WRITER in this repository, so an operator following that sentence hunts for a
+// flag that does not exist and leaves the old credential live. Shipping issuance before
+// revocation is the right scope; saying so on the surface the operator reads is the fix.
+func TestTheLostTokenAdviceDoesNotPromiseARevocationCommand(t *testing.T) {
+	_, env, made := aJournalWithAnOwner(t)
+	var out, errOut bytes.Buffer
+	if code := runIssueCredential(env, issueFlagsFor("user", string(made.User), "", ""), &out, &errOut); code != 0 {
+		t.Fatalf("exit %d, want 0:\nstderr: %s", code, errOut.String())
+	}
+	stderr := errOut.String()
+	if !strings.Contains(stderr, "credential-revoked") || !strings.Contains(stderr, "BY HAND") {
+		t.Errorf("the lost-token advice does not say that revoking is a hand-appended "+
+			"`credential-revoked` record today:\n%s", stderr)
+	}
+	// And the positive control on this arm: the advice is still THERE. A text that said
+	// nothing about a lost token would satisfy a check for the absence of a false promise.
+	if !strings.Contains(stderr, "issue another") {
+		t.Errorf("the advice no longer tells the operator to issue another credential:\n%s", stderr)
+	}
+}
+
+// TestAPrincipalThatIsNotThereIsRefusedInThisCommandsOwnWords is what gives
+// `control.ErrNoSuchPrincipal` a reason to exist.
+//
+// 🔴 A SENTINEL NOTHING BRANCHES ON IS NOT A GUARD. `errors.Is(…, ErrNoSuchPrincipal)` had
+// exactly one consumer tree-wide — `internal/control`'s own test — while the two
+// justifications the pre-check's comment gave were measured: one false (a bad subject and
+// a failed `write(2)` produce plainly different TEXT through `Append`) and one weak (a
+// token that never reached the journal authenticates to nothing). What survives is that
+// the caller can BRANCH, and this test is the branch.
+//
+// 🔴 THE ASSERTION IS THE DISTINCTION, NOT THE WORDS. An I/O failure must not produce this
+// message, so the second arm points the command at a journal path that cannot be opened
+// and requires a DIFFERENT refusal — without it, a command that printed "no such
+// principal" for everything would pass.
+func TestAPrincipalThatIsNotThereIsRefusedInThisCommandsOwnWords(t *testing.T) {
+	_, env, _ := aJournalWithAnOwner(t)
+	var out, errOut bytes.Buffer
+
+	code := runIssueCredential(env, issueFlagsFor("user", "usr_nobodymadethisone00000", "", ""), &out, &errOut)
+	if code != exitConfig {
+		t.Fatalf("exit %d, want %d:\n%s", code, exitConfig, errOut.String())
+	}
+	typo := errOut.String()
+	for _, want := range []string{"holds no user with id", "usr_nobodymadethisone00000", "no token was minted"} {
+		if !strings.Contains(typo, want) {
+			t.Errorf("the refusal does not carry %q:\n%s", want, typo)
+		}
+	}
+	if strings.Contains(typo, "would not replay") {
+		t.Errorf("the refusal relays the model's replay wording, which is what the branch exists to "+
+			"replace as the operator's first line:\n%s", typo)
+	}
+
+	// The I/O arm: a journal path that is a DIRECTORY cannot be opened, and that failure
+	// must read differently. Same flags, same principal spelling — only the world differs.
+	var out2, errOut2 bytes.Buffer
+	dir := t.TempDir()
+	code = runIssueCredential(map[string]string{EnvControlJournal: dir},
+		issueFlagsFor("user", "usr_nobodymadethisone00000", "", ""), &out2, &errOut2)
+	if code != exitConfig {
+		t.Fatalf("exit %d on an unopenable journal, want %d:\n%s", code, exitConfig, errOut2.String())
+	}
+	if strings.Contains(errOut2.String(), "holds no user with id") {
+		t.Errorf("an I/O failure produced the missing-principal refusal, so the two are not "+
+			"distinguishable after all:\n%s", errOut2.String())
 	}
 }
 

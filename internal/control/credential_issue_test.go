@@ -143,7 +143,7 @@ func TestTheMintedTokenIsExactlyTheDeclaredWidthAndAlphabet(t *testing.T) {
 	issued := issueTo(t, store, KindUser, made.User, nil)
 	token := issued.Token()
 
-	// 43 as a LITERAL, never `TokenChars`: deriving the expectation from the constant under
+	// 43 as a LITERAL, never `tokenChars`: deriving the expectation from the constant under
 	// test makes this assertion true by construction for any value of it.
 	if len(token) != 43 {
 		t.Fatalf("the minted token is %d characters, want 43 — 256 bits of base64url without padding", len(token))
@@ -165,15 +165,15 @@ func TestTheMintedTokenIsExactlyTheDeclaredWidthAndAlphabet(t *testing.T) {
 // guessable by the pod and by `cairn-ui` at startup, and both halves would be individually
 // green.
 func TestTheMintedWidthAgreesWithTheTokenFileFloor(t *testing.T) {
-	if TokenChars != authz.MinTokenChars {
-		t.Fatalf("control.TokenChars = %d and authz.MinTokenChars = %d. A credential minted here "+
+	if tokenChars != authz.MinTokenChars {
+		t.Fatalf("control.tokenChars = %d and authz.MinTokenChars = %d. A credential minted here "+
 			"must clear the floor every token-consuming surface in this repository refuses below; "+
-			"move the entropy, not this assertion", TokenChars, authz.MinTokenChars)
+			"move the entropy, not this assertion", tokenChars, authz.MinTokenChars)
 	}
 	// And the derivation itself, so that a future `TokenEntropyBytes` cannot satisfy the
 	// line above by accident while rendering to a different width.
-	if got := len(base64.RawURLEncoding.EncodeToString(make([]byte, TokenEntropyBytes))); got != TokenChars {
-		t.Fatalf("%d entropy bytes render as %d characters, but TokenChars says %d", TokenEntropyBytes, got, TokenChars)
+	if got := len(base64.RawURLEncoding.EncodeToString(make([]byte, TokenEntropyBytes))); got != tokenChars {
+		t.Fatalf("%d entropy bytes render as %d characters, but tokenChars says %d", TokenEntropyBytes, got, tokenChars)
 	}
 }
 
@@ -400,8 +400,8 @@ func TestA64CharacterRawTokenIsRefusedAsADigest(t *testing.T) {
 			"other length was already refused by the length check this test is about",
 			len(plausibleRawToken), HashHexLen)
 	}
-	if isLowerHexDigest(plausibleRawToken) {
-		t.Fatal("the fixture happens to be valid lowercase hex, so it is not a case the widened " +
+	if isHexDigest(plausibleRawToken) {
+		t.Fatal("the fixture happens to be valid hex, so it is not a case the widened " +
 			"guard can distinguish from a real digest — pick another pattern")
 	}
 
@@ -416,7 +416,7 @@ func TestA64CharacterRawTokenIsRefusedAsADigest(t *testing.T) {
 		t.Fatal("a 64-character RAW TOKEN was accepted as a token digest and replayed into the " +
 			"authority model. The journal is append-only and operator-readable, so a secret that " +
 			"reaches it cannot be taken back.")
-	} else if !strings.Contains(err.Error(), "lowercase hex digest") {
+	} else if !strings.Contains(err.Error(), "hex digest") {
 		t.Fatalf("refusal = %v, want one naming the hex requirement — a refusal for some other "+
 			"reason would leave this guard unmeasured", err)
 	}
@@ -431,5 +431,140 @@ func TestA64CharacterRawTokenIsRefusedAsADigest(t *testing.T) {
 	if err := goodEvents[0].validate(); err != nil {
 		t.Fatalf("POSITIVE CONTROL FAILED: a genuine sha256 hex digest was refused (%v), so every "+
 			"refusal above is about a guard that admits nothing", err)
+	}
+}
+
+// handAppendedToken is the secret the two cases below pretend an operator hashed by hand.
+//
+// ⚠ SYNTHETIC AND FIXED: it is a literal in a public repository, so it has never
+// authorised anything anywhere. Its width matches what the mint produces only so that the
+// fixture looks like the thing it stands for.
+const handAppendedToken = "cairn-test-hand-appended-credential-0000000"
+
+// TestAnUppercaseDigestReplaysAndTheCredentialItNamesAuthenticates is the REGRESSION TEST
+// for a refusal an earlier draft of the digest guard introduced, and the arm that matters
+// is the WHOLE JOURNAL rather than the one row.
+//
+// 🔴 THE CHECK RUNS ON REPLAY, SO ITS BLAST RADIUS IS THE FILE AND NOT THE RECORD.
+// `Event.validate` is reached through `Model.apply` ← `Replay`, which fails a journal
+// WHOLE. Measured on the lowercase-only draft: a journal holding one hand-written
+// uppercase `credential-issued` record beside a perfectly good credential returned an
+// error from `Model()` and loaded ZERO credentials — and through `FileStore.Reload` that
+// is a pod's entire control-plane authority falling back to `lastKnownGood()`, which is
+// empty on a cold start. So the assertion that the OTHER credential still authenticates is
+// load-bearing rather than decorative.
+//
+// 🔴 AND THE SECOND LOAD-BEARING ASSERTION IS THAT THE UPPERCASE ONE AUTHENTICATES, NOT
+// MERELY THAT IT LOADS. Accepting the spelling without lowering it in `apply` satisfies
+// every "the journal replays" assertion while leaving the credential dead: `EqualHash` is
+// byte-exact and `HashToken` emits lowercase, so an uppercase digest stored verbatim
+// matches no presented token ever. That half is what makes this a FIX rather than a
+// widening.
+//
+// ⚠ THE RECORD IS HAND-APPENDED, WHICH IS THE ONLY WAY THIS POPULATION EXISTS. Nothing in
+// this repository has ever written an uppercase digest; the rows in the wild were written
+// by operators following a refusal text that prescribed a hand-appended record, and both
+// `Get-FileHash` and `certutil -hashfile` emit uppercase.
+func TestAnUppercaseDigestReplaysAndTheCredentialItNamesAuthenticates(t *testing.T) {
+	store, path, made := aProvisionedOwner(t)
+	good := issueTo(t, store, KindUser, made.User, nil)
+
+	upper := strings.ToUpper(HashToken(handAppendedToken))
+	line := fmt.Sprintf(
+		`{"kind":"credential-issued","at":"2000-01-01T00:00:00Z","credential_id":"crd_handappended","subject_kind":"user","subject_id":%q,"token_hash":%q,"label":"hand-appended by an operator"}`+"\n",
+		string(made.User), upper)
+	// Appended to the FILE rather than through `Append`, because the population this test
+	// is about did exactly that: `Append` runs `validate`, so a record written through it
+	// is a record this build already accepted.
+	fh, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("opening the journal to hand-append: %v", err)
+	}
+	if _, err := fh.WriteString(line); err != nil {
+		t.Fatalf("hand-appending: %v", err)
+	}
+	if err := fh.Close(); err != nil {
+		t.Fatalf("closing the journal: %v", err)
+	}
+
+	reread, err := OpenFileStore(path)
+	if err != nil {
+		t.Fatalf("re-opening the journal: %v", err)
+	}
+	m, err := reread.Model(context.Background())
+	if err != nil {
+		t.Fatalf("a journal holding ONE uppercase token_hash would not replay (%v). The check is "+
+			"reached through `Model.apply`, so this is not one refused record — it is every "+
+			"credential in the file, and through `FileStore.Reload` an authority that falls back "+
+			"to an empty `lastKnownGood()` on a cold start", err)
+	}
+	if len(m.Credentials) != 2 {
+		t.Fatalf("the model holds %d credential(s), want 2 — the issued one and the hand-appended one", len(m.Credentials))
+	}
+
+	p, _, err := Authenticate(m, handAppendedToken)
+	if err != nil {
+		t.Fatalf("the hand-appended credential does not AUTHENTICATE (%v). Admitting the uppercase "+
+			"spelling without lowering it in `apply` leaves the record replaying clean and matching "+
+			"no token, because `EqualHash` is byte-exact and `HashToken` emits lowercase", err)
+	}
+	if p.CredentialID != "crd_handappended" || p.ID != made.User {
+		t.Fatalf("it authenticated as %+v, want credential crd_handappended for %s", p, made.User)
+	}
+	if got := m.Credentials["crd_handappended"].TokenHash; got != HashToken(handAppendedToken) {
+		t.Fatalf("the model holds the digest as %q, want the lowercase spelling — the model is the "+
+			"one place a single secret may have a single spelling", got)
+	}
+
+	// 🔴 THE WHOLE-FILE CLAIM, which is the one the outage was about: the credential that
+	// was already there is unaffected.
+	if _, _, err := Authenticate(m, good.Token()); err != nil {
+		t.Fatalf("the credential issued BEFORE the hand-appended row no longer authenticates: %v", err)
+	}
+
+	// And the file itself was not rewritten: the journal is append-only, so the operator's
+	// own spelling is still what is on disk. Without this, "normalised" could mean the
+	// model quietly editing a durable record.
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the journal back: %v", err)
+	}
+	if !strings.Contains(string(body), upper) {
+		t.Fatal("the uppercase digest is no longer in the journal file, so something rewrote an " +
+			"append-only record rather than normalising what the model holds")
+	}
+}
+
+// TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate is the second half of the
+// normalisation, and it fails in the DANGEROUS direction if the first half is done alone.
+//
+// 🔴 THE DUPLICATE REFUSAL IN `apply` IS A STRING COMPARE. Accept both cases without
+// lowering, and the same secret recorded twice in two spellings is two rows the model
+// takes — the exact state that loop's own comment refuses, because two principals sharing
+// one digest have no defined precedence at authentication time and `Resolve` would pick by
+// iteration order.
+//
+// ⚠ AT THE LOWERCASE-ONLY DRAFT THIS CASE WAS REFUSED FOR A DIFFERENT REASON — the shape
+// check, not the duplicate rule — which is why the message is asserted rather than the
+// error's existence. A test that accepted any error here would be green on both the draft
+// and on an accept-both-cases build that had lost the duplicate rule entirely.
+func TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate(t *testing.T) {
+	store, _, made := aProvisionedOwner(t)
+	issued := issueTo(t, store, KindUser, made.User, nil)
+
+	_, err := store.Append(context.Background(), Event{
+		Kind: EventCredentialIssued, At: issueClock, CredentialID: "crd_thesamesecret",
+		SubjectKind: KindUser, SubjectID: made.User,
+		TokenHash: strings.ToUpper(issued.TokenHash), Label: "one secret, shouted",
+	})
+	if err == nil {
+		t.Fatal("a second credential carrying the SAME digest in uppercase was accepted. One secret " +
+			"bound to two principals has no defined precedence at authentication time, and a case " +
+			"difference must not be what reaches that state.")
+	}
+	if !strings.Contains(err.Error(), "same token digest") {
+		t.Fatalf("refusal = %v, want the DUPLICATE rule rather than some other refusal — the "+
+			"digest-shape check refuses this too, and a test satisfied by that would be green on a "+
+			"build whose duplicate rule could no longer see a spelling difference", err)
 	}
 }

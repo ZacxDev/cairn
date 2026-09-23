@@ -334,7 +334,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="raw-token-accepted-as-a-digest",
         path="internal/control/journal.go",
-        old="\t\tif !isLowerHexDigest(e.TokenHash) {",
+        old="\t\tif !isHexDigest(e.TokenHash) {",
         new="\t\tif false {",
         killer="TestTheJournalRefusesWhatItCannotEnforce",
         why="the guard standing between a caller's mistake and a credential written in "
@@ -344,7 +344,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="token-hash-checked-by-LENGTH-only",
         path="internal/control/journal.go",
-        old="\t\tif !isLowerHexDigest(e.TokenHash) {",
+        old="\t\tif !isHexDigest(e.TokenHash) {",
         new="\t\tif len(e.TokenHash) != HashHexLen {",
         killer="TestA64CharacterRawTokenIsRefusedAsADigest",
         # 🔴 THIS MUTANT IS THE PRE-CHANGE CODE VERBATIM, WHICH IS WHY IT IS A SEPARATE ROW
@@ -360,9 +360,45 @@ MUTANTS: tuple[Mutant, ...] = (
         "that cleared it and was persisted verbatim into the append-only authority.",
     ),
     Mutant(
+        name="digest-shape-check-refuses-UPPERCASE-hex",
+        path="internal/control/ids.go",
+        old="\t\tif (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {",
+        new="\t\tif (c < '0' || c > '9') && (c < 'a' || c > 'f') {",
+        killer="TestAnUppercaseDigestReplaysAndTheCredentialItNamesAuthenticates",
+        extra_killers=("TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate",),
+        # 🔴 THIS MUTANT IS A SHIPPED DEFECT TOO, ONE ROUND LATER THAN THE ROW ABOVE, AND AT
+        # THE OPPOSITE END OF THE SAME GUARD. The widening that closed the raw-token hole
+        # was first written LOWERCASE-ONLY, which refuses a value that is unambiguously a
+        # digest — and it refuses it on REPLAY, so `Model.apply` fails the journal WHOLE:
+        # one hand-written uppercase row loads zero credentials and a pod falls back to an
+        # empty `lastKnownGood()`. Narrowing a guard is not a safe direction when the guard
+        # runs over a durable file somebody else already wrote.
+        why="'a spelling `HashToken` never emits cannot be a real digest' — true about the "
+        "spelling, false about the risk. Case does not discriminate a raw token (`-`, `_` "
+        "and `g`..`z` do), so requiring lowercase buys no hazard coverage and costs every "
+        "credential in any journal holding a hand-written uppercase row.",
+    ),
+    Mutant(
+        name="credential-digest-not-normalised-on-replay",
+        path="internal/control/journal.go",
+        old="\t\tdigest := normalizedDigest(e.TokenHash)",
+        new="\t\tdigest := e.TokenHash",
+        killer="TestAnUppercaseDigestReplaysAndTheCredentialItNamesAuthenticates",
+        extra_killers=("TestOneSecretInTwoSpellingsIsStillRefusedAsADuplicate",),
+        # 🔴 ACCEPTING BOTH SPELLINGS WITHOUT THIS LINE IS WORSE THAN REFUSING ONE, WHICH IS
+        # WHY IT IS A SEPARATE ROW: the two halves fail differently and neither implies the
+        # other. Without normalisation an uppercase record replays CLEAN and authenticates
+        # nobody (`EqualHash` is byte-exact, `HashToken` emits lowercase), and the duplicate
+        # refusal — a string compare — stops seeing one secret recorded twice in two cases,
+        # which is the ambiguity that loop exists to refuse.
+        why="the obvious half of the fix taken alone: widen what `validate` accepts and "
+        "store whatever arrived. It reads as compatibility and produces a credential that "
+        "loads, looks right in the journal, and matches no token ever presented.",
+    ),
+    Mutant(
         name="duplicate-digest-accepted",
         path="internal/control/journal.go",
-        old="\t\tfor id, c := range m.Credentials {\n\t\t\tif c.TokenHash == e.TokenHash {",
+        old="\t\tfor id, c := range m.Credentials {\n\t\t\tif c.TokenHash == digest {",
         new="\t\tfor id, c := range m.Credentials {\n\t\t\tif false {\n\t\t\t\t_ = id\n\t\t\t\t_ = c",
         killer="TestTwoCredentialsCannotShareOneDigest",
         why="one secret bound to two principals, resolved arbitrarily by whichever the "
@@ -1155,6 +1191,50 @@ MUTANTS: tuple[Mutant, ...] = (
         "FIRST mode in the dispatch order wins silently: `-routes -issue-credential` "
         "prints the route table and exits 0 having minted nothing, which is the worst of "
         "the three outcomes because the operator has a plausible success and no token.",
+    ),
+    Mutant(
+        name="token-out-writes-a-world-readable-credential",
+        path="cmd/cairn-server/issuecredential.go",
+        old="const tokenFileMode = 0o600",
+        new="const tokenFileMode = 0o644",
+        killer="TestTokenOutWritesA0600FileAndNothingOnStdout",
+        # 🔴 0644 IS NOT A TYPO HERE, IT IS THE DEFAULT THIS FLAG EXISTS TO REPLACE. The
+        # command's own printed remedy was a shell redirection, which creates its file at
+        # the umask — 022 on an ordinary host — so the state this mutant restores is
+        # exactly the one that shipped, beside a journal that is 0600 by construction.
+        why="reaching for the mode a redirection would have produced, on a file holding a "
+        "live bearer credential no tool in this repository can revoke.",
+    ),
+    Mutant(
+        name="token-out-clobbers-a-path-that-already-exists",
+        path="cmd/cairn-server/issuecredential.go",
+        old="os.O_WRONLY|os.O_CREATE|os.O_EXCL, tokenFileMode",
+        new="os.O_WRONLY|os.O_CREATE|os.O_TRUNC, tokenFileMode",
+        killer="TestTokenOutRefusesAPathThatAlreadyExistsAndMintsNothing",
+        # 🔴 O_EXCL IS WHAT MAKES THE MODE A CLAIM AT ALL, which is why this row is separate
+        # from the one above rather than a second spelling of it: `OpenFile`'s perm applies
+        # only to a file the call CREATES, so with O_TRUNC a pre-existing 0644 path keeps
+        # its mode and the 0600 constant becomes decorative. It also destroys whatever
+        # credential that file held, and it starts following symlinks.
+        why="the idiomatic 'overwrite the output file' flags, which read as convenience "
+        "and silently turn the mode guarantee into a property of the lucky case.",
+    ),
+    Mutant(
+        name="missing-principal-refusal-loses-its-branch",
+        path="cmd/cairn-server/issuecredential.go",
+        old="\t\tif errors.Is(err, control.ErrNoSuchPrincipal) {",
+        new="\t\tif false && errors.Is(err, control.ErrNoSuchPrincipal) {",
+        killer="TestAPrincipalThatIsNotThereIsRefusedInThisCommandsOwnWords",
+        extra_killers=("TestAnIssueThatCannotSucceedIsRefusedAndWritesNothing",),
+        # 🔴 THE MUTANT STILL REFUSES, WITH THE MODEL'S OWN TEXT, WHICH IS WHY THE KILLER
+        # ASSERTS THE WORDING RATHER THAN THE EXIT CODE. Deleting this branch is how
+        # `ErrNoSuchPrincipal` goes back to being a sentinel with no consumer outside its
+        # own test — the state an audit measured, and the reason the pre-check's two other
+        # stated justifications did not survive.
+        why="deleting a branch that looks decorative because the command refuses either "
+        "way. What is lost is the only thing the pre-check buys: an operator reading "
+        "'this journal holds no user with id …' instead of a sentence about a batch that "
+        "would not replay.",
     ),
     Mutant(
         name="the-cold-start-refusal-loses-its-operator-message",

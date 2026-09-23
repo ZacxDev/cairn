@@ -173,8 +173,8 @@ func (e Event) validate() error {
 		if !e.SubjectKind.Valid() {
 			return fmt.Errorf("%s: unknown subject_kind %q", e.Kind, e.SubjectKind)
 		}
-		// 🔴 A LOWERCASE HEX DIGEST, NOT MERELY 64 CHARACTERS — AND THE LENGTH-ONLY
-		// VERSION THIS REPLACES WAS A GUARD THE HAZARD WALKED AROUND. It read
+		// 🔴 A HEX DIGEST, NOT MERELY 64 CHARACTERS — AND THE LENGTH-ONLY VERSION THIS
+		// REPLACES WAS A GUARD THE HAZARD WALKED AROUND. It read
 		// `len(e.TokenHash) != HashHexLen` and its own message said a short hash "is the
 		// shape a raw token takes", which is true and is not the shape that gets here: a
 		// raw secret of exactly 64 characters PASSED and was persisted into the authority
@@ -185,20 +185,25 @@ func (e Event) validate() error {
 		// boundary before `WriteEvents` puts the value in an append-only, operator-readable
 		// file with no undo, which is why the check belongs here rather than at each writer.
 		//
-		// ⚠ IT NARROWS UPPERCASE HEX OUT TOO, AND THAT COSTS NOTHING THAT WAS EVER ALIVE.
-		// `HashToken` is `hex.EncodeToString`, which emits lowercase, and `EqualHash` is a
-		// byte comparison — so an uppercase digest in a hand-edited journal could never
-		// have matched a presented token anyway. It was a credential record that replayed
-		// clean and authenticated nobody; refusing it names the problem at load instead.
+		// 🔴 AND IT ACCEPTS BOTH CASES, WHICH IS A CORRECTION TO THIS GUARD'S FIRST DRAFT
+		// RATHER THAN A CONCESSION. That draft required LOWERCASE and said the narrowing
+		// "costs nothing that was ever alive"; that was measured false in the direction
+		// that matters. It is a REPLAY check, so it fails the journal WHOLE: one
+		// hand-written uppercase digest loads zero credentials and drops a pod's entire
+		// control-plane authority, where the value it refuses could only ever have been a
+		// single dead credential. `isHexDigest`'s own comment carries the alphabet
+		// argument — a raw token is excluded by `-`, `_` and `g`..`z`, never by case — and
+		// `apply` lowers the accepted value so that a record written in either spelling
+		// authenticates.
 		//
 		// 🔴 THE MESSAGE REPORTS THE LENGTH AND NEVER THE VALUE. The whole premise of this
 		// branch is that the field may be holding a live secret, so interpolating it would
 		// re-stage that secret into the pod's stderr, the operator's scrollback and any
 		// transcript capturing the run — the guard against writing a token to disk,
 		// printing the token.
-		if !isLowerHexDigest(e.TokenHash) {
+		if !isHexDigest(e.TokenHash) {
 			return fmt.Errorf(
-				"%s: token_hash is not a %d-character lowercase hex digest (it is %d character(s)) — the field holds the SHA-256 DIGEST of a credential and never the credential, and a value that is the right length but not hex is the shape a raw token takes when it is written to the field that was supposed to hold its digest. This journal is not a place a credential may ever land, and it is append-only: there is no undo. The value is deliberately not echoed here, because if that is what happened it is a live secret",
+				"%s: token_hash is not a %d-character hex digest (it is %d character(s)) — the field holds the SHA-256 DIGEST of a credential and never the credential, and a value that is the right length but not hex is the shape a raw token takes when it is written to the field that was supposed to hold its digest. This journal is not a place a credential may ever land, and it is append-only: there is no undo. The value is deliberately not echoed here, because if that is what happened it is a live secret",
 				e.Kind, HashHexLen, len(e.TokenHash))
 		}
 		return nil
@@ -371,6 +376,28 @@ func (m *Model) apply(e Event) error {
 		if err := m.checkSubject(e.SubjectKind, e.SubjectID); err != nil {
 			return err
 		}
+		// 🔴 THE DIGEST IS LOWERED HERE, AND EVERY USE BELOW READS THE NORMALISED
+		// VALUE RATHER THAN THE RECORDED ONE. `validate` accepts either case
+		// because case does not discriminate the hazard it guards (see
+		// `isHexDigest`); this is the half that makes accepting it correct rather
+		// than merely permissive, and there are TWO independent reasons, so
+		// closing one does not remove the need for it:
+		//
+		//   - THE DUPLICATE REFUSAL BELOW IS A STRING COMPARE. Without lowering
+		//     first, the SAME secret issued twice in two spellings is two rows
+		//     this arm accepts — and the loop's own comment says two principals
+		//     sharing a digest have no defined precedence at authentication time.
+		//     A case difference must not be the thing that reaches that state.
+		//   - `EqualHash` IS BYTE-EXACT and `HashToken` emits lowercase (`%x`), so
+		//     an uppercase digest stored verbatim matches no presented token
+		//     EVER. Lowering it turns a hand-appended credential that replayed
+		//     clean and authenticated nobody into one that works — a fix, not
+		//     merely compatibility.
+		//
+		// ⚠ THE JOURNAL LINE IS NOT REWRITTEN, AND CANNOT BE. The file is
+		// append-only; this normalises what the MODEL holds, which is what
+		// `Resolve` and `Authenticate` read.
+		digest := normalizedDigest(e.TokenHash)
 		// 🔴 A HASH COLLISION HERE IS A SHARED TOKEN, NOT A HASH FAILURE. sha256
 		// does not collide by accident; two rows carrying one digest means one
 		// secret was issued twice, and `Resolve` would then have to choose which
@@ -378,7 +405,7 @@ func (m *Model) apply(e Event) error {
 		// journal refuses the second issue rather than storing an ambiguity the
 		// authenticator would resolve arbitrarily.
 		for id, c := range m.Credentials {
-			if c.TokenHash == e.TokenHash {
+			if c.TokenHash == digest {
 				return fmt.Errorf(
 					"credential %s carries the same token digest as %s — one secret issued to two principals has no defined precedence at authentication time, so it is refused here rather than resolved arbitrarily there",
 					e.CredentialID, id)
@@ -386,7 +413,7 @@ func (m *Model) apply(e Event) error {
 		}
 		m.Credentials[e.CredentialID] = Credential{
 			ID: e.CredentialID, PrincipalKind: e.SubjectKind, PrincipalID: e.SubjectID,
-			TokenHash: e.TokenHash, Label: e.Label,
+			TokenHash: digest, Label: e.Label,
 			// `copyIDs`, NOT `append([]ID(nil), …)` — the latter flattens a
 			// non-nil empty narrowing into nil, which is its opposite. See the
 			// function's own comment; this is the site that motivates it.

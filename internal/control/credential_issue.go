@@ -10,7 +10,7 @@ import (
 )
 
 // TokenEntropyBytes is 32 — 256 bits from `crypto/rand`, which
-// `base64.RawURLEncoding` renders as exactly `TokenChars` characters.
+// `base64.RawURLEncoding` renders as exactly `tokenChars` characters.
 //
 // 🔴 43 IS NOT A WIDTH CHOSEN HERE; IT IS THE FLOOR TWO OTHER SURFACES ALREADY REFUSE
 // BELOW, SO MINTING AT IT MAKES THE SURFACES AGREE BY CONSTRUCTION RATHER THAN BY
@@ -29,23 +29,34 @@ import (
 // a seam guard, since neither package can see the other's constant.
 const TokenEntropyBytes = 32
 
-// TokenChars is what `TokenEntropyBytes` renders to under `base64.RawURLEncoding`.
+// tokenChars is what `TokenEntropyBytes` renders to under `base64.RawURLEncoding`.
 //
 // DERIVED, NEVER A SECOND LITERAL: base64 emits one character per 6 bits and
 // `RawURLEncoding` adds no padding, so the width is ceil(bytes*8/6) and writing `43`
 // beside `32` would be two spellings of one fact that drift the first time the entropy
 // moves.
-const TokenChars = (TokenEntropyBytes*8 + 5) / 6
+//
+// ⚠ UNEXPORTED, BECAUSE NOTHING OUTSIDE THIS PACKAGE READS IT AND EXPORTING IT INVITED A
+// SECOND READING OF THE WIDTH. It was exported for the seam guard in
+// `credential_issue_test.go`, which lives in this package and needs no export, and every
+// other surface that cares about the floor reads `authz.MinTokenChars` — the constant the
+// seam guard compares this one to. An exported name with no production consumer reads as
+// a supported knob.
+const tokenChars = (TokenEntropyBytes*8 + 5) / 6
 
 // ErrNoSuchPrincipal refuses a credential aimed at an entity this journal does not hold.
 //
-// ⚠ IT IS AN EARLY REFUSAL, NOT A SECOND AUTHORITY, AND THE DISTINCTION IS THE WHOLE
-// REASON THE SENTINEL EXISTS RATHER THAN THE CHECK ALONE. `Model.apply` refuses the same
-// batch under `Append`'s `flock` — that is the authoritative rule and it holds for every
-// writer, including one that never comes through this function. What this buys is stated
-// at `IssueCredential`: the refusal happens BEFORE a secret is minted, and the caller can
-// tell "you named a principal that is not there" from "the journal would not write",
-// which through `Append` are one opaque `fmt.Errorf`.
+// ⚠ IT IS AN EARLY REFUSAL, NOT A SECOND AUTHORITY. `Model.apply` refuses the same batch
+// under `Append`'s `flock` — that is the authoritative rule and it holds for every writer,
+// including one that never comes through this function.
+//
+// 🔴 A SENTINEL IS ONLY A GUARD WHERE SOMETHING BRANCHES ON IT, AND FOR A WHILE NOTHING
+// DID — `errors.Is(…, ErrNoSuchPrincipal)` had exactly one consumer tree-wide and it was
+// this package's own test. The consumer that justifies it is
+// `cmd/cairn-server/issuecredential.go`, which branches here to print a refusal naming the
+// missing principal instead of passing through a message about replay. What it buys is a
+// better FIRST LINE for an operator; `IssueCredential`'s own comment states what it does
+// not buy, including two claims that were measured false.
 var ErrNoSuchPrincipal = errors.New("control: no such principal in this control journal")
 
 // IssueCredential mints a bearer token for an existing principal, records ONLY its
@@ -95,15 +106,26 @@ func IssueCredential(ctx context.Context, s Store, req NewCredential) (Issued, e
 	if err != nil {
 		return Issued{}, fmt.Errorf("reading the control journal: %w", err)
 	}
-	// 🔴 BEFORE THE MINT, NOT MERELY BEFORE THE APPEND, AND THAT ORDERING IS THE POINT.
-	// `apply` refuses this same batch under the lock, so as a CORRECTNESS check this is
-	// redundant and is not claimed otherwise. What it buys is that a request which cannot
-	// succeed never causes a secret to exist at all: a token minted for a doomed append
-	// lives in this process's heap, in whatever the caller does on its error path, and in
-	// any core dump taken afterwards — for a request the journal was always going to
-	// refuse. The second thing it buys is the SENTINEL: through `Append` a bad subject and
-	// a failed `write(2)` are both an opaque `fmt.Errorf`, and an operator surface needs to
-	// tell "you typed the wrong id" from "the volume is gone".
+	// 🔴 WHAT THIS PRE-CHECK BUYS IS A BETTER FIRST LINE OF THE REFUSAL, AND THAT IS THE
+	// WHOLE OF IT. `apply` refuses this same batch under the lock, so as a CORRECTNESS
+	// check it is redundant and is not claimed otherwise. It returns `ErrNoSuchPrincipal`,
+	// which `cmd/cairn-server -issue-credential` BRANCHES on to say "this journal holds no
+	// user with id …" — an answer an operator can act on — instead of relaying a sentence
+	// about a batch that would not replay.
+	//
+	// ⚠ TWO STRONGER CLAIMS STOOD HERE AND ARE RETRACTED, WRITTEN DOWN SO THE NEXT READER
+	// DOES NOT RE-DERIVE THEM:
+	//
+	//   - "through `Append` a bad subject and a failed `write(2)` are both an opaque
+	//     `fmt.Errorf`" is FALSE, measured on the two error paths: the first reads
+	//     `… would not replay: subject user usr_x does not exist` and the second
+	//     `control journal append: <errno>`. They were already plainly distinguishable as
+	//     TEXT. What they were not was distinguishable by TYPE, which is what a caller
+	//     needs to branch — and that, not legibility, is what the sentinel adds.
+	//   - "a request that cannot succeed never causes a secret to exist" is TRUE and WEAK.
+	//     A token that never reached the journal authenticates to nothing: there is no
+	//     record carrying its digest, so its worst case is bytes in one process's heap,
+	//     not an authority anybody can use.
 	//
 	// ⚠ `checkSubject`, NOT `PrincipalFor`, AND THE TWO ARE NOT THE SAME QUESTION.
 	// `Authenticate` additionally requires `PrincipalFor` to know the principal, which is
@@ -224,7 +246,7 @@ type NewCredential struct {
 //     is a hygiene property of one process's formatting, not a confidentiality boundary.
 //   - The journal, which never sees it at all — that is enforced upstream, by
 //     `IssueCredential` passing `HashToken(token)` and by `Event.validate` refusing a
-//     `token_hash` that is not a lowercase hex digest.
+//     `token_hash` that is not a 64-character hex digest.
 type Issued struct {
 	// Credential is the id of the record written to the journal.
 	Credential ID

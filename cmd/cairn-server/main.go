@@ -60,7 +60,7 @@ const (
 	// exit-code contract belongs to the CLIENT: `cmd/cairn` registers an `exit-codes`
 	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
 	// five flags in `main` — `store`, `host`, `port`, `token-file`, `routes` — plus
-	// `-create-user`'s six and `-issue-credential`'s five, and no exit-code flag among
+	// `-create-user`'s six and `-issue-credential`'s six, and no exit-code flag among
 	// them; measured at `e11c3a7` by reading every file under `cmd/cairn-server/` in that
 	// tree (positive control: the same sweep hits `-routes` in three of them). So this
 	// program declares its exit codes to nothing, and no runbook, test or script branches
@@ -68,12 +68,13 @@ const (
 	// worth less than the two true codes left: 0, and 78 for every refusal to act.
 	//
 	// ⚠ THE CLAIM IS ABOUT WHAT THE PROGRAM **REGISTERS**, AND IT IS A COUNT IN PROSE WITH
-	// NO GATE — WHICH IS WHY IT HAS NOW BEEN WRONG ONCE. It read "plus `-create-user`'s
+	// NO GATE — WHICH IS WHY IT HAS NOW BEEN WRONG TWICE. It read "plus `-create-user`'s
 	// six" and nothing else, and `-issue-credential` landing made it false the moment that
 	// file's `flag.Bool`/`flag.String` calls existed, with every test in the package still
-	// green. Re-derive it rather than trusting it: the registrations are the `flag.` calls
-	// in `main` and in each `register*Flags` function, and adding a mode means this sentence
-	// moves in the same commit.
+	// green; the correction that added it said FIVE, and `-token-out` made that false in the
+	// next round, the same way. Re-derive it rather than trusting it: the registrations are
+	// the `flag.` calls in `main` and in each `register*Flags` function, and adding a mode —
+	// or one flag to one — means this sentence moves in the same commit.
 	//
 	// ⚠ Do not re-run that sweep as a LITERAL search of this tree and expect zero: the
 	// sentence above names the flags, so those strings are now in this file.
