@@ -1,13 +1,23 @@
 """The two ways to build the pod must agree about how the pod RUNS.
 
-🔴 WHY THIS FILE EXISTS. `server/Dockerfile` is the build that is deployed
-today. `flake.nix` adds a second one (`packages.server-image`) so the image can
-be produced reproducibly and from a pinned revision. Two build paths for one
+🔴 WHY THIS FILE EXISTS. ⚠ This read "`server/Dockerfile` is the build that is
+deployed today" until the Go cutover, and that was the stated reason for the
+whole file. NEITHER Python image is deployed now — the cluster pulls
+`cairn-store-go`. The reason that survives is narrower and is stated here rather
+than inferred: `flake.nix` builds a second Python image (`packages.server-image`)
+reproducibly and from a pinned revision, and two build paths for one
 artefact is a real hazard: the runtime contract — which env vars are set, which
 port is exposed, which uid it drops to, which script is the entrypoint — is
 stated in BOTH, and nothing stops one from moving alone. A pod built one way
 then differs from the pod built the other way in a manner that is invisible
 until it is running in a cluster.
+
+🔴 AND THIS FILE IS TWO GUARDS, ONLY ONE OF WHOSE PREMISES DIED. The agreement
+half above is about two images nothing deploys. But
+`test_both_implementations_resolve_the_deployment_contract_with_no_env` reads
+`cmd/cairn-server/main.go` — the DEPLOYED pod — and pins its defaults against
+what a Deployment assumes. That half is LIVE. P8 SPLITS this file; it does not
+delete it.
 
 The MODULE SET is deliberately not checked here, because it cannot drift: the
 Dockerfile enumerates `COPY lib/<mod>.py` (and

@@ -556,20 +556,41 @@ Named rather than omitted, because a green is a claim about what was asked.
   instructs a reader to **diff the two pod images** for what the agreement test cannot read
   *before swapping the deployed one* — a cutover-time step, performed once, by the person doing
   the cutover, against the two artefacts in hand. A CI arm cannot be that, because at merge
-  time there is nothing to swap. **(3) There is nothing to drift from today.** `AGENTS.md`
-  records that `server-image-go` is *published and deployed by nothing*; the deployed pod is the
-  Python one. An arm comparing the Go server against the deployed artefact would be comparing it
-  against a different implementation on purpose, which is what `tests/conformance/` already does
-  over a declared corpus.
+  time there is nothing to swap. 🔴 **(3) IS DEAD — ITS PREMISE WAS "THERE IS NOTHING TO DRIFT
+  FROM TODAY", AND THERE NOW IS.** It read: *`AGENTS.md` records that `server-image-go` is
+  published and deployed by nothing; the deployed pod is the Python one* — so an arm comparing
+  the Go server against the deployed artefact would be comparing two different
+  implementations on purpose. **The cutover happened. The deployed pod IS the Go server, so
+  "the tree's server versus the artefact actually serving" is now a same-implementation
+  comparison — exactly the question reason (3) said could not be asked.**
+
+  ⚠ **This does NOT reinstate the arm. But only reason (1) is untouched** — a gate needing a
+  live pod and a credential still cannot run in CI. 🔴 **REASON (2) IS ALSO SPENT, AND AN
+  EARLIER DRAFT OF THIS RETRACTION SAID "(1) AND (2) ARE UNTOUCHED", WHICH OVER-PRESERVED
+  IT.** (2) names the owner as *"a cutover-time step, performed once, by the person doing the
+  cutover"* — **that cutover has happened**. The risk that is live now is not a one-off
+  pre-swap diff but continuous same-implementation drift between the tree's Go server and the
+  re-published Go image on every merge, which a step already in the past structurally cannot
+  own. **So the decision was taken on three legs and one survives.** Re-argue it on one, or
+  find new reasons; do not let dead premises keep holding up a conclusion. The handoff
+  already carries this as an open defect (*"`tests/dualrun/` cannot see image drift,
+  structurally"*), and this is the measurement that makes it live rather than theoretical.
 
   ⚠ **What this decision does NOT say.** It does not say image drift is impossible or
   unimportant — `tests/test_flake_go_image_runtime_contract.py` exists because a blind spot of
   exactly that shape once shipped an image that started, health-checked and served while every
   documented operation against it failed. It says the instrument for it is a cutover step and a
-  runtime-contract test, not an arm of this harness. **Revisit if the Go pod is ever the
-  deployed one**, at which point "the tree's server versus the artefact" stops being a
-  cross-implementation question and becomes a same-implementation one, which is a different and
-  much cheaper thing to build.
+  runtime-contract test, not an arm of this harness. 🔴 **THIS SENTENCE'S OWN TRIGGER HAS
+  FIRED — it said "Revisit if the Go pod is ever the deployed one", and it is. SO REVISIT: "the
+  tree's server versus the artefact actually serving" is now a SAME-implementation question,
+  which is a different and much cheaper thing to build than the cross-implementation one this
+  harness was scoped against.** ⚠ Second condition-triggered deferral in this repo found spent
+  by one unrelated sweep, and **nothing was watching either one's condition.** ⚠ A draft of this
+  sentence retracted that as wrong about the busybox half — it is not. The busybox TRADE was
+  decided, on a separate track (the deploy decision recorded in the archive's CLOSED block); its
+  DEFERRAL SENTENCE still had no watcher, which is why a sweep reading the paragraph is what
+  found it. **Retracting a true claim is the same defect as leaving a false one, pointed the
+  other way** — recorded here because this review committed it twice.
 - **The gzip envelope.** Deliberate and measured; see the scoping section. Also `Content-Length`
   on `/api/v1/snapshot` alone.
 - **Concurrency.** Every target is one request at a time, in a declared order, and the two

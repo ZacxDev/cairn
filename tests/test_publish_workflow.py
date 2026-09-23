@@ -21,10 +21,12 @@ properties are load-bearing and none of them is visible in a green run:
   * every published image must go to its OWN package, and each must carry ITS OWN
     controls — the Python pod's positive control is an interpreter `-c` probe and
     the Go image's `Cmd[0]` is a server binary that has no `-c`;
-  * the whole PYTHON half must complete before the first GO step. Nothing in this
-    repository has ever RUN the Go image, so every Go step is a first execution;
-    in front of the Python publish, one of them going red keeps the pod that IS
-    deployed unpublished — which is exactly what the seven failed runs did;
+  * the whole PYTHON half must complete before the first GO step. ⚠ This read
+    "Nothing in this repository has ever RUN the Go image … keeps the pod that IS
+    deployed unpublished" — spent at the cutover: the Go image IS the deployed
+    pod, so the ordering now exposes the DEPLOYED pod to an earlier red step.
+    Unchanged deliberately; see the assertion's own message. The seven failed
+    runs are still why a first-execution step is not put first;
   * the `nix build` that resolves skopeo must name an OUTPUT. `nixpkgs#skopeo` is
     multi-output, so `--print-out-paths` prints two paths with the `-man` one
     FIRST; the step that appended `/bin/skopeo` to that value ran a two-line
@@ -793,12 +795,23 @@ GO_HALF_STEPS = (
 def test_the_whole_PYTHON_half_runs_before_the_first_GO_step(text: str) -> None:
     """🔴 A RELATION BETWEEN TWO GROUPS, NOT A PROPERTY OF ONE STEP.
 
-    Nothing in this repository has ever RUN the Go image — `ci.yml` asserts only
-    that it BUILDS — so every Go step in this workflow is a FIRST execution. A
-    first execution placed in front of the Python publish gates the pod that is
-    actually deployed on a path nobody has exercised, which is the exact shape of
-    the failure this workflow was rewritten to fix: seven consecutive runs where
-    nothing published because one unexercised step went red.
+    ⚠ THIS DOCSTRING'S RATIONALE IS SPENT — see the assertion message below,
+    which carries the correction. It read: "Nothing in this repository has ever
+    RUN the Go image … A first execution placed in front of the Python publish
+    gates the pod that is actually deployed on a path nobody has exercised."
+    The Go image IS the deployed pod now, so the Python publish gates a pod
+    NOTHING runs, and this ordering exposes the deployed one to an earlier red
+    step. `ci.yml` does still assert only that the Go image BUILDS.
+
+    🔴 THE ORDERING IS UNCHANGED AND THAT IS DELIBERATE — reversing it is a CI
+    behaviour change, and seven consecutive runs where nothing published because
+    one unexercised step went red is still the reason a first-execution step is
+    not put first. Decide it; do not drift into it.
+
+    ⚠ The correction first went into the assertion message ONLY, leaving this
+    docstring asserting the spent version — the message renders on failure, the
+    docstring renders in `pytest -v` and to anyone opening the file. A correction
+    applied at one of two sites reads as complete at whichever site you land on.
 
     The earlier draft had the Go BUILD and the Go CONTROLS before the Python
     push, and carried a comment claiming "it runs last" — true of the Go
@@ -816,10 +829,18 @@ def test_the_whole_PYTHON_half_runs_before_the_first_GO_step(text: str) -> None:
         f"{names[first_go]!r} (step {first_go + 1}) runs before "
         f"{names[last_python]!r} (step {last_python + 1}).\n"
         "Every Python step — build, control, both pushes and the anonymous-pull "
-        "proof — must finish before the FIRST Go-image step. The Go image has "
-        "never been run by anything in this repository; a first execution in "
-        "front of the Python publish leaves the deployed pod unpublished when it "
-        "goes red, which is what the last seven runs of this workflow did."
+        "proof — must finish before the FIRST Go-image step.\n"
+        "⚠ THE ORIGINAL RATIONALE HAS INVERTED AND THE ORDERING IS NOT RE-ARGUED "
+        "HERE. It read: 'The Go image has never been run by anything in this "
+        "repository; a first execution in front of the Python publish leaves the "
+        "deployed pod unpublished when it goes red, which is what the last seven "
+        "runs of this workflow did.' Both legs are spent — the Go image IS the "
+        "deployed pod, so this ordering now publishes the DEPLOYED pod LAST and "
+        "most exposed to an earlier red step, which is the opposite of what the "
+        "rationale asked for. The ordering is left UNCHANGED deliberately: "
+        "reversing it is a CI behaviour change with its own blast radius, not a "
+        "docs edit, and the seven-failure history is still the reason a "
+        "first-execution step is not put first. Decide it, do not drift into it."
     )
 
 

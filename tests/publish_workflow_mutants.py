@@ -156,7 +156,11 @@ MUTANTS = [
     (
         # The Go BUILD moved in front of the Python build — the ordering the first
         # draft of this workflow shipped, where a first-execution Go step going red
-        # leaves the DEPLOYED pod unpublished.
+        # left the then-deployed PYTHON pod unpublished.
+        # ⚠ This said "the DEPLOYED pod", which inverted at the cutover: the Go
+        # image is the deployed pod now, so this mutant's ordering strands the
+        # PYTHON one. Still the right mutant — the ordering it breaks is still the
+        # ordering under test — but its stated COST named the wrong artefact.
         "run-the-GO-half-before-the-PYTHON-publish",
         _move_go_build_first,
         "test_the_whole_PYTHON_half_runs_before_the_first_GO_step",

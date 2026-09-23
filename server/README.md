@@ -55,10 +55,12 @@ and are what an operator needs: manifests live at
 `~/.claude/<mirror-root>/`, the mounted credential at
 `/run/secrets/subsystem-store/token`. Substitute your own names.
 
-🔴 **THERE IS NOW A SECOND IMPLEMENTATION, AND `server.py` IS THE ORACLE.**
-`cmd/cairn-server` (Go, stdlib only) is a port of **everything in this document**; it is
-**not deployed by anything** and nothing in this runbook targets it. Its purpose is to be
-MEASURED against this file, by two instruments that make different claims:
+🔴 **THERE IS NOW A SECOND IMPLEMENTATION, `server.py` IS THE ORACLE, AND ⚠ THE GO PORT IS
+WHAT IS DEPLOYED.** `cmd/cairn-server` (Go, stdlib only) is a port of **everything in this
+document**. This line read *"it is not deployed by anything and nothing in this runbook
+targets it"* until the cutover; both halves are now false, and the cluster pulls
+`cairn-store-go`. Its purpose is still to be MEASURED against this file, by two instruments
+that make different claims:
 
 - `tests/conformance/` — the HTTP contract below, recorded as generated golden fixtures and
   replayed against both servers. Green for both.
@@ -74,9 +76,24 @@ over TWO stores. `tests/dualrun/` is TWO servers over ONE store. The two scripts
 method (per-scope render, then entry set, then each entry's own single-ref render) and answer
 different questions; neither substitutes for the other.
 
-**Every procedure below is still about `server.py`**, which is what is deployed. See
-`AGENTS.md` → "TWO SERVERS ARE ALIVE" for the sequence, and `tests/dualrun/README.md` for
-what the byte-identity gate cannot see.
+🔴 **MOST PROCEDURES BELOW ARE WRITTEN AGAINST `server.py`, AND `server.py` IS NOT WHAT
+RUNS.** This line read *"Every procedure below is still about `server.py`, which is what is
+deployed"* — the second half was false and an operator who believed it ran procedures
+against the wrong artefact. The pod is `cairn-store-go`.
+
+⚠ **"EVERY" WOULD ALSO BE WRONG, AND AN EARLIER DRAFT OF THIS WARNING SAID IT.** The
+control-journal section below is written for the **Go** server explicitly (*"Only the Go
+server reads this"*) and its `kubectl exec … cairn-server -create-user` procedures are
+correct as written. A warning wider than the hazard tells a reader to distrust a correct
+procedure, which is the same defect as a false claim.
+
+**So: check each procedure, do not assume either way.** The HTTP contract transfers by
+construction (`tests/conformance/`, `tests/dualrun/`); anything touching the *filesystem,
+process model or image* — `exec`ing a shell, naming an interpreter, expecting `python3` or
+`lib/` inside the container — is a claim about the PYTHON image and does not. ⚠ Re-verifying
+each procedure against the deployed pod is NOT done; this notice is a warning, not a
+migration. See `AGENTS.md` → "TWO SERVERS ARE ALIVE", and `tests/dualrun/README.md` for what
+the byte-identity gate cannot see.
 
 ## Endpoints
 
@@ -424,16 +441,33 @@ deployed. `#78` moved three of those sites and missed one more **in the very fil
 it was editing** — nothing greps prose, so a sweep is the only thing that finds
 the copy you were not looking at.
 
-🔴 **AND THAT RETRACTION IS INCOMPLETE — MORE SITES STILL CARRY THE CLAIM,
-INCLUDING `flake.nix` VERBATIM, THIS GUARD'S OWN "WHY THIS FILE EXISTS"
-DOCSTRING, AND SEVERAL IN THIS FILE.** They are NOT swept, on purpose: this repo
-holds no manifest, so nothing in it can establish which pod a cluster actually
-pulls — the Go side's whole evidence is a commit message. **A sweep would
-propagate an unverified claim to every site it touched.** The operator settles
-which pod is deployed; until then the inconsistency is RECORDED, not resolved.
+✅ **THE RETRACTION WAS INCOMPLETE AND THE SWEEP IS NOW DONE.** This block used to
+say the other sites were *"NOT swept, on purpose"* — that this repo holds no
+manifest, so nothing in it could establish which pod a cluster pulls, and a sweep
+would therefore *"propagate an unverified claim to every site it touched"*. That
+was the right call **while the fact was unverified**. The operator has since
+settled it — the cluster pulls `cairn-store-go` — and the sweep ran on that
+authority. ⚠ **A draft of this sentence LISTED the swept sites — a few lines
+above the instruction below that forbids exactly that — and the list was already
+wrong about one of them.** Run the sweep; do not read a list here.
+
+⚠ **AND THE "NOT SWEPT" NOTICE ITSELF SURVIVED THE SWEEP THAT DISCHARGED IT,
+WHICH IS THE FAILURE THIS PARAGRAPH NOW RECORDS.** `AGENTS.md` — paid by every
+session — points here for *"the retraction"*, so a stale notice at this address
+tells every future agent the tree is knowingly inconsistent pending a decision
+that has already been taken. **A notice that licenses work is itself work: retire
+it in the commit that does the work.**
 
 **Do not enumerate the sites here — run the sweep.** A list in prose goes stale
 and reads as complete; three were written into this paragraph and each was wrong.
+
+🔴 **AND DO NOT WRITE A LINE DISTANCE EITHER — "N lines above/below" — WHICH IS
+THE SAME DEFECT WITH A SHORTER SHELF LIFE.** Five were written into this file
+during one review: three were wrong when written, and the other two were *made*
+wrong by the edits that corrected the first three. **Any edit above a distance
+claim invalidates it — including the edit fixing a different distance claim.**
+Write "above", "below", or "in the same block": a reader can still find it, and
+the sentence cannot rot.
 
 ```bash
 git ls-files -z | xargs -0 grep -nE 'is what is deployed|deployed today'
@@ -441,12 +475,19 @@ git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
 ```
 
 🔴 **BOTH PATTERNS ARE LINE-ANCHORED AND THEREFORE INCOMPLETE — a demonstration,
-not a remedy.** `tests/test_flake_image_matches_dockerfile.py`'s own
-`WHY THIS FILE EXISTS` docstring wraps the claim across a line break (*"…is the
-build that is deployed"* / *"today."*) and **neither command finds it**.
-Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
-some name `cairn-ui` and the Go image, which genuinely are deployed by nothing.
-**Read the matches; do not count them.**
+not a remedy.** Before this sweep ran,
+`tests/test_flake_image_matches_dockerfile.py`'s own `WHY THIS FILE EXISTS`
+docstring wrapped the claim as *"…is the build that is deployed"* / *"today."*,
+and **neither command found it**. ⚠ **The FIRST command finds it today — the
+second never can, its pattern is for a different claim — and that is not a fix:
+editing the docstring simply moved the wrap.** The claim was
+invisible to a line-anchored sweep for as long as it mattered, and the next
+wrapped claim will be too. Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
+some name `cairn-ui`, which genuinely is deployed by nothing. 🔴 **This clause
+used to say "and the Go image" alongside it. That was false when written and the
+sweep that fixed the rest of this file is what caught it** — the Go image is the
+deployed pod. **Read the matches; do not count them, and do not trust a list of
+exceptions either.**
 
 🔴 **THE PIN IS TWO GUARDS AND ONLY ONE PREMISE DIED.** Neither Python image is
 deployed, so the Dockerfile↔flake agreement half stands on a contract
@@ -481,11 +522,13 @@ port, exposed port and every environment variable are derived from the same
 -deps ./cmd/cairn-server` reaches no package that reads `$HOME`).
 `tests/test_flake_go_image_runtime_contract.py` is what keeps it derived, because
 "it is derived" is a property of today's source and a copy is one edit away.
-**It is published, and deployed by nothing** — two separate claims.
-`publish-image.yml` pushes both pods: `packages.server-image` to the
-`cairn-store` ghcr package and `packages.server-image-go` to `cairn-store-go`,
-under one `sha-<40-hex>` tag scheme so a revision names one artefact in each. No
-manifest references the Go one; pointing a pod at it is a separate decision.
+🔴 **IT IS PUBLISHED AND IT IS DEPLOYED.** This paragraph read *"It is published, and
+deployed by nothing — two separate claims"* and *"No manifest references the Go one;
+pointing a pod at it is a separate decision"*. That decision has been taken: the cluster
+pulls `cairn-store-go`. `publish-image.yml` pushes both pods — `packages.server-image` to
+the `cairn-store` ghcr package and `packages.server-image-go` to `cairn-store-go`, under one
+`sha-<40-hex>` tag scheme so a revision names one artefact in each — and **the second is the
+one that runs**, which makes `packages.server-image` a build nothing consumes.
 ⚠ **THAT PARAGRAPH USED TO PREDICT A RED FIRST RUN, AND THE PREDICTION WAS
 WRONG.** It said a ghcr package is PRIVATE on first publish, so the Go package's
 first run was EXPECTED to fail at the anonymous-pull proof. Measured on the run
@@ -530,7 +573,28 @@ matters is the `wget`/`nc`/`httpd`/`telnetd` one** — not the size row. busybox
 ships its applets at `/bin` (with `/sbin` a SYMLINK to it, so one directory, not
 two), and that set includes network **servers**, network **clients**, and
 notably **`ssl_client`**, in a pod that mounts a credential at
-`/run/secrets/subsystem-store/token` — none of which the deployed image has.
+`/run/secrets/subsystem-store/token`.
+
+⚠ **THAT SENTENCE USED TO END "— none of which the deployed image has", WHICH THE
+CUTOVER MADE FALSE**: the deployed pod is now `cairn-store-go` and it carries this
+applet set, so the surface beside the mounted credential is what RUNS rather than
+a hypothetical.
+
+🔴 **BUT DO NOT READ THAT AS THE CUTOVER WIDENING THE SURFACE — IT NARROWED IT, AND
+THAT IS MEASURED.** A first draft of this very paragraph said the comparison had
+"inverted … the direction that reads as reassurance", which asserted a risk
+increase nobody had measured. The measurement already existed, in
+`claudedocs/handoff-cairn-control-plane-archive.md`, in the CLOSED block whose
+heading begins "RANK 1'S REMAINDER: the DEPLOY decision": `busybox --list` on **both** nix images is **402 applets, zero difference in
+either direction** — the Python image CI already published carried the identical
+set — while the image actually replaced (Debian-slim) had **11 setuid/setgid
+binaries** (`su`, `passwd`, `mount`, …) and **two** interpreters — CPython 3.12
+and Perl; a draft of this sentence said "a CPython interpreter", undercounting by
+one **in the same breath as the paragraph recording four successive
+undercounts** — against **zero
+setuid and zero interpreters** on the Go one. **A narrowing on both axes.**
+⚠ Busybox stays load-bearing — seeding needs `tar`, revocation needs
+`sh -c 'kill -HUP 1'` — which is why a distroless variant was not pursued.
 
 🔴 **THIS PARAGRAPH DELIBERATELY DOES NOT SAY HOW MANY, AND THE ABSENCE IS THE
 RECORD. FOUR SUCCESSIVE DRAFTS GAVE A COUNT AND ALL FOUR WERE UNDERCOUNTS**, each
@@ -549,15 +613,33 @@ count for the question you are actually asking.** Do not write a fifth number
 here. A reader told to "revisit the trade with the threat model in front of you"
 needs the real set, and `ssl_client` is the one that matters for a token.
 
-Against that: the pod runs as uid 65532, no applet is setuid, and the deployed
+Against that: the pod runs as uid 65532, no applet is setuid, and the **Dockerfile**
 image ships `bash`, `apt-get` and **8 setuid binaries including `su` and
-`passwd`** — so neither is meaningfully "hardened" relative to the other. **This
+`passwd`** — so neither is meaningfully "hardened" relative to the other. ⚠ That
+clause read *"the deployed image ships…"*, which named the right image only while
+the Python pod ran; it is now the image that does **not** run, so the sentence is
+re-anchored to the build rather than to deployment status. **This
 is recorded rather than fixed, deliberately** — trimming means
 `pkgs.busybox.override { extraConfig = "CONFIG_HTTPD n\n…"; }`, which rebuilds
 busybox from source with no cache hit, and the applets are not reachable without
-execution the attacker would already need. If this image is ever actually
-deployed, revisit that trade **then**, with the threat model in front of you; do
-not read this as settled.
+execution the attacker would already need.
+
+✅ **THIS PARAGRAPH USED TO DEFER ON "IF THIS IMAGE IS EVER ACTUALLY DEPLOYED,
+REVISIT THAT TRADE THEN". THE CONDITION FIRED, THE REVISIT HAPPENED, AND THE
+OPERATOR DECIDED — recorded in
+`claudedocs/handoff-cairn-control-plane-archive.md`.** The deferral is DISCHARGED,
+not open: both images measured at 402 applets, the replaced image carried 11
+setuid binaries and **two** interpreters, the Go one carries neither. ⚠ This said
+"an interpreter" — the same undercount the paragraph above corrects, both
+inside the block this review was already editing.
+**Do not re-run its probes.**
+
+⚠ **AND AN EARLIER DRAFT OF THIS SWEEP FILED IT AS OPEN RANKED WORK WITH A NEW
+CLOSING CONDITION, WHICH WOULD HAVE RE-OPENED A SETTLED DECISION AND SENT THE NEXT
+READER TO RE-DERIVE AN ANSWER THE ARCHIVE ALREADY HELD.** It also claimed to have
+"FILED" it while filing it nowhere. **Before recording a deferral as spent, search
+the archive for its discharge** — a closed block moved out of the live handoff is
+invisible to a sweep that only reads the tree's current prose.
 
 ⚠ **`packages.server-image-go` INHERITS THE BUSYBOX ROW AND ADDS ONE.** It
 carries the same `serverTools` plus `pkgs.cacert`, so it has an `/etc/ssl/certs`
@@ -566,17 +648,22 @@ where the Python flake image has no `/etc` at all — needed because
 no roots otherwise. The same trade applies to its applets and it has not been
 re-argued here.
 
-🔴 **AND THE DEFERRAL DIRECTLY ABOVE HAS HAD ITS TRIGGER FIRE, UNNOTICED.** It
-reads *"If this image is ever actually deployed, revisit that trade **then**,
-with the threat model in front of you; do not read this as settled."* Per
-`AGENTS.md`, the Go image **is** the deployed pod — and the paragraph directly
-above records that it inherits the same applet set. **So the condition is met and
-nobody revisited.** The trade may well still be the right one; what is not
-defensible is that it now reads as deferred when it has in fact been decided by
-default. ⚠ This is what a condition-triggered deferral costs when nothing
-watches the condition: the sentence is honest, dated, correct when written, and
-silently became a decision. Re-argue it or record that it was accepted — do not
-leave it reading as open.
+⚠ **A DRAFT OF THIS SWEEP PUT A SECOND BLOCK HERE SAYING THE DEFERRAL WAS "FILED
+AS RANKED WORK, WITH A CLOSING CONDITION" — a short scroll below the block that
+declares it DISCHARGED, in the same commit.** It asked the operator to read
+`busybox --list` against a threat model and record the trade as ACCEPTED, which
+the archive shows was already done. Deleted rather than reworded. 🔴 **The
+shape is worth more than the fix: a correction applied at ONE of TWO sites reads
+as complete at whichever site you land on, and the two disagree.** ⚠ Every
+round of this review found more of that shape than the round before, so **any
+total written here is an undercount by construction** — three drafts of this
+sentence proved it. Count them in the PR's rounds, not here.
+
+⚠ **This is what a condition-triggered deferral costs when nothing watches the
+condition.** The sentence was honest, dated and correct when written, and silently
+became a decision. **A deferral whose trigger is a state nothing asserts on is a
+decision with a delay on it** — the only reason this one was caught is that an
+unrelated sweep read the paragraph.
 
 🔴 **AND `/etc/ssl/certs` — NOT THE `SSL_CERT_FILE` THE IMAGE ALSO DECLARES — IS
 WHAT MAKES THOSE ROOTS REACHABLE.** `crypto/x509` walks its `certDirectories`
