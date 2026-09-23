@@ -866,6 +866,177 @@ class TestValidateActuallyRuns:
             after.stdout + after.stderr
         ), after.stdout + after.stderr
 
+    def test_the_count_EXCLUDES_the_scopes_README(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE NUMERATOR AND THE DENOMINATOR CAME FROM TWO DIFFERENT WALKS.
+
+        Every scope directory carries a `README.md` as its policy sheet; the
+        loader skips it in every scope, and `/snapshot` ships it, so it IS in the
+        cache. This command took its rejections from the loader and its count
+        from a `*.md` glob that included the README — so `widget-cfg`, holding
+        two entries beside one policy sheet, printed `3 of 3 entry file(s)
+        parse`.
+
+        A count is the only evidence this command produces that anything was
+        checked at all. One inflated by a file nothing parsed is the reassuring
+        zero it exists to close, one layer up.
+        """
+        (source_store / "widget-cfg" / "README.md").write_text(
+            "# widget-cfg — the scope's own policy sheet, not an entry\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 THE REACHABILITY CONTROL. If the snapshot dropped the README the
+        # assertion below would pass over a cache the defect cannot reach, and
+        # read as coverage while providing none.
+        assert (cache / "widget-cfg" / "README.md").is_file(), sorted(
+            p.name for p in (cache / "widget-cfg").iterdir()
+        )
+
+        proc = run_cairn("validate", "--scope", "widget-cfg", "--no-sync",
+                         url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = proc.stdout + proc.stderr
+        assert "widget-cfg: 2 of 2 entry file(s) parse, 0 malformed" in out, out
+
+    def test_a_scope_holding_ONLY_a_README_reports_ZERO_walked(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """The sharpest form of the same defect: a directory with no entries in
+        it printed `1 of 1 entry file(s) parse` — a clean bill of health over a
+        scope the reader will render as empty."""
+        (source_store / "hollow-area" / "README.md").write_text(
+            "# hollow-area — a policy sheet and nothing else\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        assert (cache / "hollow-area" / "README.md").is_file()
+
+        proc = run_cairn("validate", "--scope", "hollow-area", "--no-sync",
+                         url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = proc.stdout + proc.stderr
+        assert "hollow-area: 0 of 0 entry file(s) parse, 0 malformed" in out, out
+
+    def test_the_MALFORMED_count_is_not_softened_by_a_README(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE DIRECTION THAT MISLEADS. With one entry and one README in a
+        scope, a broken entry printed `1 of 2 … 1 malformed` — asserting that a
+        file parsed when NONE had. The honest line is `0 of 1`.
+        """
+        (source_store / "gizmo-notes" / "README.md").write_text(
+            "# gizmo-notes — policy sheet\n"
+        )
+        (source_store / "gizmo-notes" / "other-thing.md").write_text(
+            "aliases: [wrapped,\n  list]\nno front matter at all\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        assert (cache / "gizmo-notes" / "README.md").is_file()
+
+        proc = run_cairn("validate", "--scope", "gizmo-notes", "--no-sync",
+                         url=None, cache=cache)
+
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        out = proc.stdout + proc.stderr
+        assert "gizmo-notes: 0 of 1 entry file(s) parse, 1 malformed" in out, out
+
+    def test_a_scope_with_NO_README_still_counts_every_entry(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE CONTROL THAT SEPARATES "EXCLUDE README.md" FROM "SUBTRACT ONE".
+
+        Each of the three rows above holds EXACTLY ONE `README.md`, so
+        `sum(...) - 1` prints the same line as the rule it is meant to
+        implement, and survives all three. The arithmetic can only be told
+        apart by a scope with NO README in it, where the correct count
+        subtracts nothing and `- 1` loses a real entry.
+
+        `widget-cfg` is seeded with two entries; a third is added here so this
+        row's numbers (3 of 3) are distinct from every other row's and from
+        what `- 1` would print (2 of 2) — which is also the constant the
+        README-bearing `widget-cfg` row asserts, so the two rows must not be
+        allowed to agree by arithmetic.
+        """
+        (source_store / "widget-cfg" / "thing-gamma.md").write_text(
+            _entry("thing-gamma", "widget-cfg", "- 2026-01-05: a third entry.")
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 THE REACHABILITY CONTROL, IN THE DIRECTION THIS ROW NEEDS IT: the
+        # scope must hold three entries and NO README at all, or the row is a
+        # second sample of the README-bearing case and discriminates nothing.
+        landed = sorted(p.name for p in (cache / "widget-cfg").iterdir())
+        assert landed == ["thing-alpha.md", "thing-beta.md", "thing-gamma.md"], landed
+
+        proc = run_cairn("validate", "--scope", "widget-cfg", "--no-sync",
+                         url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = proc.stdout + proc.stderr
+        assert "widget-cfg: 3 of 3 entry file(s) parse, 0 malformed" in out, out
+
+    def test_a_README_LOOKALIKE_is_an_ordinary_entry_and_is_COUNTED(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE PREDICATE IS `== "README.md"` EXACTLY, AND THAT CLAIM IS ONLY
+        A COMMENT UNTIL A ROW HOLDS A LOOKALIKE.
+
+        Both clients say in prose that the spelling is the loader's — "not a
+        prefix, not a fold". Nothing pinned it, and a case-folded prefix match
+        passes every other row in this class: `readme.md` and `README-old.md`
+        are ORDINARY ENTRIES to the loader, so excluding them from the count
+        while the loader still walks them drives the printed numerator BELOW
+        ZERO the moment one of them is malformed.
+
+        This scope holds one real policy sheet (excluded), two lookalikes and
+        two ordinary entries (four counted) — five files, four counted, three
+        README-shaped names, two plain ones: no two of those numbers are equal,
+        and none of them equals the `4 of 4` the assertion names.
+        """
+        (source_store / "gizmo-notes" / "README.md").write_text(
+            "# gizmo-notes — the scope's own policy sheet, not an entry\n"
+        )
+        # ⚠ `service:` must normalize to the filename's own slug or the loader
+        # rejects the entry as malformed ("a ref reaches the wrong file"), so a
+        # genuine entry at `readme.md` is `service: readme`. That is the shape a
+        # real store would carry, and it is what makes these two rows entries
+        # rather than a second spelling of the policy sheet.
+        (source_store / "gizmo-notes" / "readme.md").write_text(
+            _entry("readme", "gizmo-notes", "- 2026-01-06: a real entry.")
+        )
+        (source_store / "gizmo-notes" / "README-old.md").write_text(
+            _entry("readme-old", "gizmo-notes", "- 2026-01-07: also an entry.")
+        )
+        (source_store / "gizmo-notes" / "spare-thing.md").write_text(
+            _entry("spare-thing", "gizmo-notes", "- 2026-01-08: a plain entry.")
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 THE REACHABILITY CONTROL. `/snapshot` ships by name (`*.md`, no
+        # dotfiles), so the lookalikes must actually be in the cache — a
+        # snapshot that dropped them would leave this row asserting over the
+        # ordinary case and reading as coverage while providing none.
+        landed = sorted(p.name for p in (cache / "gizmo-notes").iterdir())
+        assert landed == [
+            "README-old.md",
+            "README.md",
+            "other-thing.md",
+            "readme.md",
+            "spare-thing.md",
+        ], landed
+
+        proc = run_cairn("validate", "--scope", "gizmo-notes", "--no-sync",
+                         url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = proc.stdout + proc.stderr
+        assert "gizmo-notes: 4 of 4 entry file(s) parse, 0 malformed" in out, out
+
     def test_validate_exits_NONZERO_on_a_malformed_cache(
         self, source_store: Path, live_store, tmp_path: Path
     ):
