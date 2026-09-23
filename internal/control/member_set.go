@@ -43,12 +43,24 @@ var ErrNoSuchMember = errors.New("control: no such user in this control journal"
 // create. The pre-check refuses the path people actually take; `apply` keeps replaying
 // what is already written.
 //
-// 🔴 WHAT THE ORPHANED STATE ACTUALLY COSTS, so the refusal is not read as fussiness.
-// `MayAdministerProject` is true only for an owner or an admin and `MayDeleteProject`
-// only for an owner. A project whose last owner has been demoted to `member` therefore
-// has nobody who may change its membership and nobody who may delete it — through any
-// authorised surface. It is recoverable only by an operator with direct write access to
-// the journal file, which is the same privilege level as the mistake.
+// 🔴 WHAT THE ORPHANED STATE ACTUALLY COSTS, AND IT DIFFERS BY TARGET ROLE — an earlier
+// version of this paragraph gave one answer for both and was FALSE for one of them.
+// `MayAdministerProject` is true for an owner OR AN ADMIN; `MayDeleteProject` only for an
+// owner. So demoting the last owner to `member` leaves a project nobody may administer and
+// nobody may delete, while demoting them to `admin` leaves one that is merely UNDELETABLE
+// — they can still change its membership. Both are refused; the message says which.
+//
+// ⚠ AND IT IS RECOVERABLE THROUGH THIS VERY COMMAND, which the old wording denied by
+// claiming it needed "direct write access to the journal file". `-set-member -member-role
+// owner` restores an owner at rc 0 — MEASURED — because this operator path is not itself
+// gated by `MayAdministerProject`. The claim that matters is narrower and still holds: no
+// AUTHORISED IN-PRODUCT surface can repair it, because the predicates above are what such
+// a surface would ask.
+//
+// ⚠ NEITHER PREDICATE HAS A NON-TEST CALLER TODAY — measured tree-wide. That does not make
+// the rule premature: it makes the rule the thing that is true before the surface exists,
+// and it is why the cost above is written as what those predicates WOULD answer rather
+// than as an outage anybody can currently observe.
 //
 // ⚠ AND THERE IS NO OVERRIDE FLAG, WHICH IS A JUDGEMENT ABOUT THIS PARTICULAR REFUSAL
 // RATHER THAN A HOUSE RULE. `claude/RULES.md`'s objection to an unclearable gate applies
@@ -180,7 +192,7 @@ func SetMember(ctx context.Context, s Store, req NewMembership) (MembershipSet, 
 	}
 
 	prior, wasMember := current.Memberships[req.ProjectID][req.UserID]
-	if err := refuseOrphaning(current, req, prior, wasMember); err != nil {
+	if err := refuseOrphaning(current, req, prior); err != nil {
 		return MembershipSet{}, err
 	}
 
@@ -211,17 +223,43 @@ func SetMember(ctx context.Context, s Store, req NewMembership) (MembershipSet, 
 
 // refuseOrphaning is the last-owner rule, in one place so the condition is stated once.
 //
-// 🔴 THE CONDITION IS NARROWER THAN "THE USER IS AN OWNER", AND EACH CLAUSE MATTERS.
-// It fires only when this user is CURRENTLY an owner, the requested role is NOT owner,
-// and no OTHER owner exists. Dropping any one of them refuses something legitimate:
-// without the first, promoting a member to admin in a project whose owner is somebody
-// else; without the second, re-asserting owner on the sole owner, which changes nothing;
-// without the third, demoting one of two owners, which is the ordinary way a handover
-// finishes.
-func refuseOrphaning(
-	m Model, req NewMembership, prior Membership, wasMember bool,
-) error {
-	if !wasMember || prior.Role != RoleOwner || req.Role == RoleOwner {
+// 🔴 TWO CLAUSES, NOT THREE — AND AN EARLIER COMMENT HERE CLAIMED THREE AND THAT "EACH
+// CLAUSE MATTERS". THAT WAS FALSE, MEASURED BY MUTATION, AND THE RETRACTION IS KEPT
+// RATHER THAN TIDIED AWAY. The dropped clause was `!wasMember`, and it was not merely
+// untested: it is EQUIVALENT. `prior` comes from a map lookup, so a non-member's value is
+// the zero `Membership` whose `Role` is `""` — and `"" != RoleOwner` already returns nil
+// one clause later. Deleting it leaves both packages' suites fully green because there is
+// no behaviour behind it. The old comment justified it with "promoting a member to admin
+// in a project whose owner is somebody else", which is the case the SECOND clause handles.
+//
+// What is left, and what each one actually buys:
+//
+//   - `prior.Role != RoleOwner` — the user must currently BE an owner. ⚠ ITS OWN CONTROL
+//     IS NARROW AND SAYS SO: dropping it is observable only in a project that ALREADY has
+//     no owner, where changing a member's role would then be refused with a message
+//     naming them as "the only owner" of a project they do not own.
+//     `TestAnAlreadyOrphanedProjectStillAcceptsAMembershipChange` is that case.
+//   - `req.Role == RoleOwner` — re-asserting owner on the sole owner changes nothing and
+//     must not be refused. `TestReassertingOwnerOnTheSoleOwnerIsNotRefused`.
+//   - the loop's `userID != req.UserID` — demoting one of TWO owners is the ordinary end
+//     of a handover. `TestASECONDOwnerMakesTheDemotionLEGITIMATE`.
+//
+// 🔴 IT IS A CHECK-THEN-ACT AND THE WINDOW IS REAL, NOT THEORETICAL — DECLARED HERE
+// BECAUSE THE ALTERNATIVE IS TO IMPLY A GUARANTEE THIS DOES NOT GIVE. `SetMember` reads
+// the model OUTSIDE the `flock` that `Append` takes, and `apply` carries no last-owner
+// rule to re-check under it, so two concurrent demotions of a two-owner project can each
+// pass this against the same pre-state and both land. MEASURED: reproduced on the second
+// attempt of a naive two-process race, leaving a project with zero owners. This is the
+// same window `internal/control/README.md` already declares for
+// `checkScopeNamesAreFree`, and it is declared rather than closed for the same reason: the
+// `Writer` interface takes events, not a caller-supplied precondition, so closing it means
+// either a rule in `apply` — which would make an already-written journal unreplayable, see
+// `ErrWouldOrphanProject` — or a new seam in `Store`. Neither belongs in the change that
+// introduces the command. **The operator-facing consequence is bounded**: the state is
+// recoverable with one `-set-member -member-role owner`, which is the remedy the refusal
+// names anyway.
+func refuseOrphaning(m Model, req NewMembership, prior Membership) error {
+	if prior.Role != RoleOwner || req.Role == RoleOwner {
 		return nil
 	}
 	for userID, ms := range m.Memberships[req.ProjectID] {
@@ -229,11 +267,20 @@ func refuseOrphaning(
 			return nil
 		}
 	}
+	// 🔴 THE COST IS STATED PER TARGET ROLE, BECAUSE ONE SENTENCE FOR BOTH WAS FALSE FOR
+	// ONE OF THEM. An earlier version said "a project whose membership nobody may change
+	// and which nobody may delete" for every demotion. `MayAdministerProject` returns true
+	// for an ADMIN, so the first half is wrong when the target role is `admin` — and the
+	// `-member-role` flag's own help text says so one file over, which is exactly the
+	// contradiction `AGENTS.md` warns leads a maintainer to delete the guard.
+	cost := "whose membership nobody may change and which nobody may delete"
+	if req.Role == RoleAdmin {
+		cost = "that nobody may delete — an admin may still change its membership, " +
+			"but `MayDeleteProject` is true only for an owner"
+	}
 	return fmt.Errorf(
-		"%w: %s is the only owner of %s, and `MayAdministerProject` is true only for an "+
-			"owner or an admin while `MayDeleteProject` is true only for an owner — so "+
-			"demoting them to %q leaves a project whose membership nobody may change and "+
-			"which nobody may delete, recoverable only by editing the journal file by "+
-			"hand. Promote somebody else to owner first, then re-run this",
-		ErrWouldOrphanProject, req.UserID, req.ProjectID, req.Role)
+		"%w: %s is the only owner of %s, so making them %q leaves a project %s. Promote "+
+			"somebody else to owner first, then re-run this — that is a supported two-step "+
+			"and it is also how this state is recovered if it is ever reached another way",
+		ErrWouldOrphanProject, req.UserID, req.ProjectID, req.Role, cost)
 }

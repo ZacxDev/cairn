@@ -244,6 +244,118 @@ func TestASECONDOwnerMakesTheDemotionLEGITIMATE(t *testing.T) {
 	}
 }
 
+// TestAnAlreadyOrphanedProjectStillAcceptsAMembershipChange is the control for
+// `prior.Role != RoleOwner`, and it exists because an audit measured that clause SURVIVING
+// deletion with both packages' suites green.
+//
+// 🔴 THE STATE IT NEEDS CANNOT BE BUILT THROUGH `SetMember`, which is the point. A
+// zero-owner project is exactly what the guard refuses to create, so the fixture reaches it
+// by appending the demotion DIRECTLY — the same route a hand-edited journal or the
+// check-then-act window `refuseOrphaning` declares would take. Without this case the clause
+// is unfalsifiable: dropping it refuses a legitimate change in a world no other test builds.
+//
+// ⚠ IT ALSO PINS THE RECOVERY PATH the refusal message now promises. If this went red, the
+// message's "that is also how this state is recovered" would be a claim with nothing behind it.
+func TestAnAlreadyOrphanedProjectStillAcceptsAMembershipChange(t *testing.T) {
+	store, _, owner := aProvisionedOwner(t)
+	second := aSecondUser(t, store)
+	ctx := context.Background()
+
+	if _, err := SetMember(ctx, store, NewMembership{
+		ProjectID: owner.Project, UserID: second.User,
+		Role: RoleMember, At: provisionClock,
+	}); err != nil {
+		t.Fatalf("joining the second user: %v", err)
+	}
+	// Straight to `Append`, bypassing the guard, to reach the state it prevents.
+	if _, err := store.Append(ctx, Event{
+		Kind: EventMemberSet, At: provisionClock.Add(1),
+		ProjectID: owner.Project, UserID: owner.User, Role: RoleMember,
+	}); err != nil {
+		t.Fatalf("hand-appending the demotion the guard refuses: %v", err)
+	}
+
+	m, err := store.Model(ctx)
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	for userID, ms := range m.Memberships[owner.Project] {
+		if ms.Role == RoleOwner {
+			t.Fatalf("the fixture failed to orphan the project — %s is still owner, so "+
+				"the assertion below cannot distinguish this clause from its neighbours",
+				userID)
+		}
+	}
+
+	// A membership change in an ALREADY orphaned project must not be refused: nobody is
+	// being demoted from owner, so this rule has nothing to say about it.
+	got, err := SetMember(ctx, store, NewMembership{
+		ProjectID: owner.Project, UserID: second.User,
+		Role: RoleAdmin, At: provisionClock.Add(2),
+	})
+	if err != nil {
+		t.Fatalf("changing a MEMBER's role in an already-orphaned project must be "+
+			"allowed — this rule is about demoting an owner, and %s is not one. Got: %v",
+			second.User, err)
+	}
+	if got.Previous != RoleMember || got.Role != RoleAdmin {
+		t.Errorf("want member->admin, got %+v", got)
+	}
+
+	// …and the recovery the refusal message names actually works.
+	if _, err := SetMember(ctx, store, NewMembership{
+		ProjectID: owner.Project, UserID: second.User,
+		Role: RoleOwner, At: provisionClock.Add(3),
+	}); err != nil {
+		t.Fatalf("restoring an owner must be allowed — the refusal message promises it "+
+			"as the recovery path: %v", err)
+	}
+}
+
+// setMemberErr runs a call expected to fail with the orphan sentinel and returns its text.
+func setMemberErr(
+	t *testing.T, s Store, project, user ID, role Role,
+) string {
+	t.Helper()
+	_, err := SetMember(context.Background(), s, NewMembership{
+		ProjectID: project, UserID: user, Role: role, At: provisionClock,
+	})
+	if !errors.Is(err, ErrWouldOrphanProject) {
+		t.Fatalf("want ErrWouldOrphanProject for role %q, got %v", role, err)
+	}
+	return err.Error()
+}
+
+// TestTheRefusalSaysWHICHCostApplies — the message was measured FALSE for one target role.
+//
+// 🔴 `MayAdministerProject` RETURNS TRUE FOR AN ADMIN, so "nobody may change its
+// membership" is wrong when the sole owner is being made an admin — and the `-member-role`
+// help text one file over already says as much, which is the contradiction that gets a
+// guard deleted. This pins the two messages APART, because one sentence for both is
+// exactly what was wrong.
+func TestTheRefusalSaysWHICHCostApplies(t *testing.T) {
+	store, _, owner := aProvisionedOwner(t)
+
+	toMember := setMemberErr(t, store, owner.Project, owner.User, RoleMember)
+	if !strings.Contains(toMember, "whose membership nobody may change") {
+		t.Errorf("the member-demotion refusal lost its administration cost: %s", toMember)
+	}
+
+	toAdmin := setMemberErr(t, store, owner.Project, owner.User, RoleAdmin)
+	if strings.Contains(toAdmin, "membership nobody may change") {
+		t.Errorf("the ADMIN refusal still claims nobody may change membership, which is "+
+			"false — an admin may: %s", toAdmin)
+	}
+	if !strings.Contains(toAdmin, "an admin may still change its membership") {
+		t.Errorf("the ADMIN refusal does not say what is actually lost: %s", toAdmin)
+	}
+	for _, msg := range []string{toMember, toAdmin} {
+		if !strings.Contains(msg, "Promote somebody else to owner first") {
+			t.Errorf("a refusal lost the remedy: %s", msg)
+		}
+	}
+}
+
 // TestReassertingOwnerOnTheSoleOwnerIsNotRefused — the third clause of the condition.
 //
 // A blanket "the sole owner may not be touched" would refuse this, and it changes nothing.

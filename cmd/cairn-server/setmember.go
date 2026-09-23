@@ -222,6 +222,10 @@ func runSetMember(env map[string]string, f *setMemberFlags, out, errOut io.Write
 			"A scope shared INTO this project from elsewhere still needs its own grant, and "+
 			"a scope this project owns is reachable by every member without one",
 		got.Role, got.ProjectID))
-	warn("subsystem-store-api: the running server picks this up within 30s")
+	// INTERPOLATED, not spelled — `createuser.go` and `issuecredential.go` both do this
+	// and a hardcoded "30s" here would be the ungated prose count this PR's own new test
+	// exists to stop, reintroduced one file over.
+	warn(fmt.Sprintf(
+		"subsystem-store-api: the running server picks this up within %s", refreshInterval))
 	return 0
 }

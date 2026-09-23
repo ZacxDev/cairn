@@ -361,4 +361,32 @@ func TestTheRegisteredFlagCountInProseMatchesTheCode(t *testing.T) {
 	if counted != len(spelled) {
 		t.Fatalf("checked %d of %d modes", counted, len(spelled))
 	}
+
+	// 🔴 AND `main`'s OWN COUNT, WHICH THIS TEST DID NOT COVER AND AN AUDIT MEASURED
+	// MISSING. The sentence claims FOUR numbers — "five flags in `main`" plus one per
+	// `register*Flags` — and the loop above checked only the latter three. Measured: a
+	// sixth `flag.Bool` added inside `main()` left this whole package green while the
+	// prose still said five. A guard covering three of the four things its own sentence
+	// asserts reads as coverage while providing three quarters of it, which is the
+	// narrower-body-than-docstring defect `AGENTS.md` names.
+	mainStart := strings.Index(prose, "\nfunc main() {")
+	if mainStart < 0 {
+		t.Fatal("func main() not found — the reader below would count zero and pass")
+	}
+	mainBody := prose[mainStart:]
+	// `flag.Parse()` ends the registration block; flags cannot be declared after it.
+	if end := strings.Index(mainBody, "flag.Parse()"); end >= 0 {
+		mainBody = mainBody[:end]
+	} else {
+		t.Fatal("flag.Parse() not found in main — the body below is unbounded")
+	}
+	inMain := len(flagCall.FindAllString(mainBody, -1))
+	if inMain == 0 {
+		t.Fatal("zero flags registered in main by this reader — it is wired to nothing")
+	}
+	if want := words[inMain] + " flags in `main`"; !strings.Contains(prose, want) {
+		t.Errorf("main.go's prose does not say %q, but main() registers %d flag(s) before "+
+			"flag.Parse(). That sentence has been wrong twice; move it in the same commit "+
+			"as the flag.", want, inMain)
+	}
 }
