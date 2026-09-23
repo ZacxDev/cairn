@@ -137,6 +137,38 @@ func seedNamedEntry(t *testing.T, root, scope, filename, service string) {
 	}
 }
 
+// requireDistinctFiles is the fold-detecting reachability control: every name must be on
+// disk AND hold its own bytes.
+//
+// 🔴 `os.Stat` IS NOT THAT CONTROL, AND BOTH LOOKALIKE ROWS USED IT. `README.md` and
+// `readme.md` are ONE FILE on a case-folding filesystem: the second `os.WriteFile`
+// (`O_CREATE|O_TRUNC`) silently replaces the first's contents, and `os.Stat` of BOTH names
+// then succeeds — same inode. So the control passed while the fixture had stopped
+// discriminating the exact-spelling rule from a case fold, and the row went on to fail on
+// its main assertion with a message pointing at the FILTER rather than at the filesystem.
+// `tests/parity/world.py`'s `build_store` already compares CONTENT for exactly this reason;
+// this is that check on this side of the gate, so a fold fails here and says so.
+//
+// ⚠ IT ASSERTS DISTINCTNESS, WHICH IS A CLAIM ABOUT THE FIXTURES TOO. Every caller seeds
+// bodies that differ (`seedNamedEntry` writes the ref into `service:`, `seedREADME` writes a
+// sheet), so equal bytes can only mean two names reached one file.
+func requireDistinctFiles(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	seen := map[string]string{}
+	for _, name := range names {
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("the fixture never wrote %s: %v", name, err)
+		}
+		if other, dup := seen[string(body)]; dup {
+			t.Fatalf("%s and %s hold the same bytes, so one overwrote the other — the "+
+				"filesystem folded case and this fixture no longer tells the "+
+				"exact-spelling rule apart from a fold", other, name)
+		}
+		seen[string(body)] = name
+	}
+}
+
 func TestValidateCountsEveryEntryInAScopeWithNoREADME(t *testing.T) {
 	// 🔴 THE CONTROL THAT SEPARATES "EXCLUDE README.md" FROM "SUBTRACT ONE". Each of the
 	// three rows above holds EXACTLY ONE `README.md`, so `checked--` written as a blanket
@@ -202,15 +234,11 @@ func TestValidateCountsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
 	seedNamedEntry(t, cache, "alpha-notes", "readme.md", "readme")
 	seedNamedEntry(t, cache, "alpha-notes", "README-old.md", "readme-old")
 	seedNamedEntry(t, cache, "alpha-notes", "two.md", "two")
-	// The reachability control: all five names must be on disk, or the assertion runs over
-	// the ordinary case and reads as coverage while providing none.
-	for _, name := range []string{
-		"README.md", "README-old.md", "one.md", "readme.md", "two.md",
-	} {
-		if _, err := os.Stat(filepath.Join(cache, "alpha-notes", name)); err != nil {
-			t.Fatalf("the fixture never wrote %s: %v", name, err)
-		}
-	}
+	// The reachability control: all five names must be on disk AS FIVE FILES, or the
+	// assertion runs over the ordinary case and reads as coverage while providing none.
+	// Content-distinct rather than `os.Stat` — see `requireDistinctFiles`.
+	requireDistinctFiles(t, filepath.Join(cache, "alpha-notes"),
+		"README.md", "README-old.md", "one.md", "readme.md", "two.md")
 
 	opts := readOpts()
 	opts.Scope = "alpha-notes"

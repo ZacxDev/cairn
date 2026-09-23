@@ -143,11 +143,30 @@ func LsEntries(env Env, opts Options) (int, error) {
 			// predicate is `store.IsEntryFileName`, the LOADER'S rule imported rather
 			// than respelled, because respelling it is how the two answers came apart.
 			//
-			// ⚠ FILTERED AFTER THE GLOB RATHER THAN BY WALKING SCOPE DIRECTORIES,
-			// BECAUSE THE ORDER IS THE CLAIM. Sorting full paths is NOT the same order
-			// as sorting scope names and then entry names — `/` sorts above `-`, so
-			// `a-b/x.md` precedes `a/y.md` — and this verb's parity row compares the
-			// listing line for line.
+			// ⚠ FILTERED AFTER THE GLOB RATHER THAN BY WALKING SCOPE DIRECTORIES — AND
+			// THE ORDER IS *NOT* WHAT FORCES THAT, THOUGH AN EARLIER FORM OF THIS
+			// COMMENT SAID IT WAS. MEASURED on a cache holding `a/y.md`, `a-b/x.md`, a
+			// dot-named scope directory and a symlinked one: enumerating scope
+			// directories with `os.ReadDir`+`os.Stat`, calling `store.EntryFileNames`
+			// per scope and sorting the joined `scope/name` strings reproduces this
+			// listing EXACTLY — the same SET (both walks visit dot-named and symlinked
+			// scope directories) and the same ORDER (`sort.Strings` over `scope/name` is
+			// the same byte comparison as over the full paths, which share the cache
+			// prefix). So nothing measured forces the glob in THIS client; what keeps it
+			// is that the oracle globs and the parity row compares the two listings line
+			// for line.
+			//
+			// 🔴 IN THE ORACLE THE ORDER *IS* LOAD-BEARING — AND IN THE OPPOSITE
+			// DIRECTION TO WHAT THIS COMMENT USED TO CLAIM, WHICH IS A DIVERGENCE THE
+			// PARITY GATE CANNOT SEE. `cairn` sorts `Path` OBJECTS, which compare
+			// component by component, so it prints `a/y.md` BEFORE `a-b/x.md`;
+			// `sort.Strings` here compares bytes, where `-` (0x2d) sorts below `/`
+			// (0x2f), so this client prints `a-b/x.md` first. MEASURED end to end on
+			// both clients at this commit over a two-scope cache. No parity-corpus scope
+			// name is a prefix of another, so the gate has never been handed the
+			// discriminating input. PRE-EXISTING — both sorts predate this change — and
+			// deliberately NOT fixed here: it needs a corpus row and a decided
+			// direction, which is a behaviour change to a verb's stdout.
 			if !store.IsEntryFileName(filepath.Base(path)) {
 				continue
 			}
@@ -516,6 +535,16 @@ func Validate(env Env, opts Options) (int, error) {
 		// raising, so surfacing it would be a divergence with nothing behind it — MEASURED on
 		// the pinned interpreter (CPython 3.12.14), `Path("<mode-000 dir>").glob("*.md")`
 		// yields `[]` rather than a `PermissionError`.
+		//
+		// ⚠ AN UNCLAIMED CONSEQUENCE, RECORDED BECAUSE NO FIXTURE COVERS IT: reading the
+		// directory (`EntryFileNames` → `os.ReadDir`) instead of globbing
+		// `<cache>/<scope>/*.md` also removes a latent divergence for scope names carrying
+		// glob metacharacters. The scope name used to be part of the PATTERN, while the
+		// oracle's `Path(scope_dir).glob("*.md")` globs only the pattern and treats the
+		// directory literally. MEASURED: a directory literally named `wid[get` gave Go `[]`
+		// plus `syntax error in pattern` — `validate` would have printed `0 of 0` — where the
+		// oracle listed the file. NOT claimed as a fix: nothing here exercises such a scope
+		// name, and whether one can reach a cache at all is not established.
 		entryNames, _ := store.EntryFileNames(filepath.Join(cache, scope))
 		checked := len(entryNames)
 		fmt.Fprintf(env.Stdout, "cairn: %s: %d of %d entry file(s) parse, %d malformed\n",

@@ -98,7 +98,7 @@ import stat
 from collections.abc import Sequence as _AbcSequence
 from dataclasses import dataclass
 from datetime import date as _date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Sequence
 
 __all__ = [
@@ -2617,8 +2617,25 @@ def is_entry_filename(name: str) -> bool:
     ⚠ THE `.md` HALF IS NOT REDUNDANT WITH A CALLER'S GLOB EVEN WHERE THE GLOB HAS
     ALREADY APPLIED IT. Stating the whole rule here is what lets a caller that has
     NOT globbed ask the same question and get the same answer.
+
+    🔴 AND IT COMPARES THE BASE NAME, BECAUSE THE SENTENCE ABOVE IS A PROMISE THE
+    FIRST CUT DID NOT KEEP. That cut compared the WHOLE argument, so the
+    un-globbed callers it invites got the opposite answer: an archive member list
+    in this repo is `scope + "/" + name` — the same shape `ls-entries` prints —
+    and `is_entry_filename("notes/README.md")` returned True, the policy sheet
+    classified as an entry, which is the exact defect the consolidation exists to
+    eliminate, regenerated inside the consolidated rule. Basing the comparison
+    makes the predicate TOTAL over its input rather than narrowing the promise to
+    "base names only": the answer is the same however a caller spells the path.
+
+    ⚠ THIS CHANGES NOTHING FOR TODAY'S CALLERS, AND THAT WAS CHECKED RATHER THAN
+    ASSUMED. `entry_files_in` below passes `p.name` and `cairn ls-entries` passes
+    `path.name`, so both were already handing it base names, for which
+    `PurePosixPath(...).name` is the identity. `PurePosixPath("").name` is `""`,
+    which carries no `.md` suffix, so the empty name stays False.
     """
-    return name.endswith(".md") and name != SCOPE_POLICY_SHEET
+    base = PurePosixPath(name).name
+    return base.endswith(".md") and base != SCOPE_POLICY_SHEET
 
 
 def entry_files_in(scope_dir: Path) -> list[Path]:

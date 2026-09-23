@@ -1351,6 +1351,14 @@ class TestTheEntryFilePredicateIsOneRule:
     #: 🔴 PAIRWISE DISTINCT, AND DISTINCT FROM THE ONE CONSTANT THE RULE NAMES.
     #: A table whose only excluded name is the constant cannot separate "exclude
     #: `README.md`" from "exclude anything README-shaped".
+    #:
+    #: 🔴 TWO ROWS ARE PATH-SHAPED, IN BOTH DIRECTIONS. The docstring promises
+    #: that a caller which has NOT globbed — a directory walk, an archive member
+    #: list — asks the same question and gets the same answer; the snapshot
+    #: builds its member names as `scope + "/" + name`, the shape `ls-entries`
+    #: prints, so that caller is real. `notes/README.md` must be REFUSED and
+    #: `notes/flux.md` TAKEN, or the promise holds in one direction only and the
+    #: sheet is classified as an entry the moment somebody keeps the path.
     CASES = {
         "README.md": False,        # the policy sheet itself
         "readme.md": True,         # a CASE fold would swallow this
@@ -1358,7 +1366,8 @@ class TestTheEntryFilePredicateIsOneRule:
         "aREADME.md": True,        # a name-SUFFIX match would swallow this
         "README.markdown": False,  # `.markdown` is not `.md`
         "flux.md": True,           # the ordinary shape
-        "notes/README.md": True,   # a NAME predicate, not a path one
+        "notes/README.md": False,  # the sheet, however it is ADDRESSED: base name
+        "notes/flux.md": True,     # and an ordinary entry addressed by path still is one
         "README": False,           # no `.md` suffix at all
         "README.md.bak": False,    # no `.md` suffix, and not the sheet either
         ".#flux.md": True,         # a dot-file IS in the set; `classify_path` refuses it
@@ -1887,8 +1896,8 @@ class TestMutationKillMatrix:
             "m_readme",
             [
                 (
-                    '    return name.endswith(".md") and name != SCOPE_POLICY_SHEET',
-                    '    return name.endswith(".md")',
+                    '    return base.endswith(".md") and base != SCOPE_POLICY_SHEET',
+                    '    return base.endswith(".md")',
                 )
             ],
         )

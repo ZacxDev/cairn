@@ -1106,10 +1106,27 @@ def cmd_ls_entries(args: argparse.Namespace) -> int:
             # respelled, because respelling it is how the two answers came apart.
             #
             # ⚠ FILTERED AFTER THE GLOB RATHER THAN BY WALKING SCOPE DIRECTORIES,
-            # BECAUSE THE ORDER IS THE CLAIM. Sorting full paths is NOT the same
-            # order as sorting scope names and then entry names — `/` sorts above
-            # `-`, so `a-b/x.md` precedes `a/y.md` — and this verb's parity row
-            # compares the listing line for line.
+            # AND THE ORDER IS THE REASON — BUT NOT THE ONE AN EARLIER FORM OF
+            # THIS COMMENT GAVE, WHICH HAD IT BACKWARDS. `sorted()` over `Path`
+            # OBJECTS compares component by component, so this client prints
+            # `a/y.md` BEFORE `a-b/x.md`; a per-scope walk whose joined
+            # `scope/name` strings are sorted compares BYTES, where `-` (0x2d)
+            # sorts below `/` (0x2f), and would print `a-b/x.md` first. So the
+            # glob IS load-bearing here — it just orders the opposite way round
+            # from what was written. MEASURED end to end on this client.
+            #
+            # ⚠ THE VISITED SET IS NOT A REASON: measured over a cache holding a
+            # dot-named scope directory and a symlinked one, `cache.glob("*/*.md")`
+            # and a per-scope `iterdir()`+`is_dir()` walk return the SAME files.
+            #
+            # 🔴 AND THE GO CLIENT PRINTS THE OTHER ORDER — `sort.Strings` over
+            # the full paths — so the two diverge on any cache where one scope
+            # name is a prefix of another. MEASURED on both clients at this
+            # commit; no parity-corpus scope name is a prefix of another, so the
+            # gate has never been handed the discriminating input. PRE-EXISTING
+            # (both sorts predate this change) and deliberately NOT fixed here:
+            # it needs a corpus row and a decided direction, which is a behaviour
+            # change to a verb's stdout.
             if not subsystem_resolver.is_entry_filename(path.name):
                 continue
             print(f"{prefix}{path.parent.name}/{path.name}")

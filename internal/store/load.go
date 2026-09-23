@@ -313,8 +313,23 @@ const ScopePolicySheet = "README.md"
 // ⚠ THE `.md` HALF IS NOT REDUNDANT WITH THE CALLER'S GLOB EVEN WHERE THE GLOB ALREADY
 // APPLIED IT. Stating the whole rule here is what lets a caller that has NOT globbed (a
 // directory walk, an archive member list) ask the same question and get the same answer.
+//
+// 🔴 AND IT COMPARES THE BASE NAME, BECAUSE THE SENTENCE ABOVE IS A PROMISE THE FIRST CUT
+// DID NOT KEEP. That cut compared the WHOLE argument, so the un-globbed callers it invites
+// got the opposite answer: an archive member list in this repo is `scope + "/" + name`
+// (`internal/snapshot`), the same shape `LsEntries` prints, and `IsEntryFileName(
+// "notes/README.md")` returned TRUE — the policy sheet classified as an entry, the exact
+// defect the consolidation exists to eliminate, regenerated inside the consolidated rule.
+// Basing the comparison makes the predicate TOTAL over its input rather than narrowing the
+// promise to "base names only": the answer is now the same however a caller spells the path.
+//
+// ⚠ THIS CHANGES NOTHING FOR TODAY'S CALLERS, AND THAT WAS CHECKED RATHER THAN ASSUMED.
+// `EntryFileNames` below passes `os.ReadDir` names and `LsEntries` passes `filepath.Base`,
+// so both were already handing it base names, for which `filepath.Base` is the identity.
+// `filepath.Base("")` is `"."`, which carries no `.md` suffix, so the empty name stays false.
 func IsEntryFileName(name string) bool {
-	return strings.HasSuffix(name, ".md") && name != ScopePolicySheet
+	base := filepath.Base(name)
+	return strings.HasSuffix(base, ".md") && base != ScopePolicySheet
 }
 
 // EntryFileNames is the ENTRY files in ONE cached scope directory, sorted — `mdNamesIn`

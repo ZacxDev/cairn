@@ -135,20 +135,17 @@ func TestLsEntriesListsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
 	//
 	// ⚠ `README.md` AND `readme.md` IN ONE DIRECTORY IS TWO FILES ON LINUX AND ONE ON A
 	// CASE-FOLDING FILESYSTEM. CI is `ubuntu-latest`; the reachability control below fails
-	// loudly rather than letting a folded fixture score a pass.
+	// loudly rather than letting a folded fixture score a pass — and it compares CONTENT,
+	// because `os.Stat` of both names succeeds against ONE folded inode and could not make
+	// that claim. See `requireDistinctFiles`.
 	home := oneInstanceHost(t)
 	cache := filepath.Join(home, ".cache", "subsystem-store")
 	seedREADME(t, cache, "alpha-notes")
 	seedNamedEntry(t, cache, "alpha-notes", "readme.md", "readme")
 	seedNamedEntry(t, cache, "alpha-notes", "README-old.md", "readme-old")
 	seedNamedEntry(t, cache, "alpha-notes", "two.md", "two")
-	for _, name := range []string{
-		"README.md", "README-old.md", "one.md", "readme.md", "two.md",
-	} {
-		if _, err := os.Stat(filepath.Join(cache, "alpha-notes", name)); err != nil {
-			t.Fatalf("the fixture never wrote %s: %v", name, err)
-		}
-	}
+	requireDistinctFiles(t, filepath.Join(cache, "alpha-notes"),
+		"README.md", "README-old.md", "one.md", "readme.md", "two.md")
 
 	code, stdout, stderr := capture(t, LsEntries, readOpts())
 
@@ -177,6 +174,13 @@ func TestLsEntriesListsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
 // sheet. So this table feeds the predicate itself the inputs that tell those spellings
 // apart, and its cases are pairwise distinct AND distinct from the one constant the rule
 // names.
+//
+// 🔴 TWO OF THE ROWS ARE PATH-SHAPED, IN BOTH DIRECTIONS. The predicate's doc comment
+// promises that a caller which has NOT globbed — a directory walk, an archive member list —
+// asks the same question and gets the same answer; `internal/snapshot` builds its member
+// names as `scope + "/" + name`, the shape `ls-entries` prints, so that caller is real.
+// `notes/README.md` must be REFUSED and `notes/widget-cfg.md` TAKEN, or the promise holds in
+// one direction only and the sheet is classified as an entry the moment somebody keeps it.
 func TestTheEntryFilePredicateIsOneRuleAtEveryCallSite(t *testing.T) {
 	cases := []struct {
 		name string
@@ -189,7 +193,13 @@ func TestTheEntryFilePredicateIsOneRuleAtEveryCallSite(t *testing.T) {
 		{"README.markdown", false, "`.markdown` is not `.md`, so the suffix half rejects it"},
 		{"aREADME.md", true, "a SUFFIX match on the name would swallow this; it is an entry"},
 		{"widget-cfg.md", true, "the ordinary shape"},
-		{"notes/README.md", true, "a NAME predicate, not a path one — callers pass a base name"},
+		{"notes/README.md", false,
+			"the policy sheet is NOT an entry however it is addressed — an un-globbed " +
+				"caller holds `scope/name` (an archive member list is exactly that shape), " +
+				"so the rule compares the BASE name"},
+		{"notes/widget-cfg.md", true,
+			"the same path shape in the OTHER direction: an ordinary entry addressed by " +
+				"path is still an entry, so base-name handling is pinned both ways"},
 		{"README", false, "no `.md` suffix, so not an entry file at all"},
 		{"README.md.bak", false, "no `.md` suffix either, and it is not the sheet"},
 		{".#widget-cfg.md", true, "a dot-file IS in the set; `ClassifyPath` is what refuses it"},

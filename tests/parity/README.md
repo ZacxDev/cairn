@@ -259,6 +259,16 @@ listed, and keeps `rubble-heap` README-free so "exclude `README.md`" is distingu
 "drop one file per scope". **The general form — ask what your corpus does NOT contain before
 reading a green byte-diff as coverage — is why this paragraph stays after the hole closed.**
 
+- **A scope name that is a PREFIX of another scope name — and this one is not hypothetical, the
+  two clients ALREADY DIVERGE there.** MEASURED on both clients over a cache holding `a/y.md` and
+  `a-b/x.md`: `cairn ls-entries` prints `a/y.md` first, `cmd/cairn` prints `a-b/x.md` first. The
+  oracle sorts `Path` OBJECTS, which compare component by component; the Go client sorts the full
+  path STRINGS, where `-` (0x2d) sorts below `/` (0x2f). Both sorts long predate the row that
+  found this. No scope in `world.py` is a prefix of another (`alpha-notes`, `beta-notes`,
+  `rubble-heap`, `hollow-set`, and the empty-scope names), so the gate has never been handed the
+  discriminating input and every `ls-entries` row compares equal — the SAME mechanism as the
+  closed README entry above, in a corpus dimension nobody had asked about. Closing it needs a
+  corpus pair AND a decided direction, because agreeing means changing one client's stdout.
 - **Concurrency.** Both clients take the same `flock` around the cache swap, which is why they can
   share a root at all; nothing here runs them at the same instant.
 - **Real network failures.** An unreachable pod is a connect refusal to a closed port. A DNS
