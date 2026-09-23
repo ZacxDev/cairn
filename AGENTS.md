@@ -395,13 +395,14 @@ either, so each exercises a LEDGER and nothing about behaviour. The worked
 example, and why the parity harness is what measures behaviour instead, are in
 `tests/parity/README.md`.
 
-🔴 **THERE ARE TWO WAYS TO BUILD THE *PYTHON* POD AND THEY MUST NOT DIVERGE.**
-`server/Dockerfile` is what is deployed today; `packages.server-image` is the
-reproducible alternative. The runtime contract — env, port, uid, entrypoint — is
-written in both, so `tests/test_flake_image_matches_dockerfile.py` pins them
-against each other and goes red when one moves alone. Change one, change the
-other, in the same commit. The module set is deliberately *not* duplicated: the
-Dockerfile enumerates its `COPY`s (kept honest by
+🔴 **TWO WAYS TO BUILD THE *PYTHON* POD, THEY MUST NOT DIVERGE — AND ⚠ NEITHER IS
+DEPLOYED.** `packages.server-image` is the reproducible build of
+`server/Dockerfile`, so the guard below stands on a contract `packages.cairn`
+still ships, never on a running pod; whether it outlives P8 is OPEN. The runtime
+contract — env, port, uid, entrypoint — is written in both, so
+`tests/test_flake_image_matches_dockerfile.py` pins them against each other.
+Change one, change the other, in the same commit. The module set is deliberately
+*not* duplicated: the Dockerfile enumerates its `COPY`s (kept honest by
 `test_the_image_copies_every_module_it_needs`) while the flake copies all of
 `lib/`, so there is nothing there for the two to disagree about.
 

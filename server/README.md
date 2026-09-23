@@ -417,6 +417,21 @@ are stated in both files and neither can move alone. Do not add a third
 STATEMENT of the runtime contract: it would be outside that pin, and it would be
 the one that actually ships.
 
+⚠ **AND THE PIN'S JUSTIFICATION IS NOT WHAT `AGENTS.md` SAID IT WAS — THE
+RETRACTED WORDING IS KEPT HERE SO NOBODY RE-DERIVES IT.** That file read
+*"`server/Dockerfile` is what is deployed today"* from before the Go cutover
+until well after it, while two other claims in the SAME file already said the Go
+pod is deployed and the cluster pulls `cairn-store-go`. It survived `#78`, whose
+entire subject was correcting which server is deployed — a one-line prose claim
+is exactly what a commit aimed at prose claims can miss, because nothing greps
+it. **Neither Python image is deployed anywhere.** What still justifies the pin
+is narrower and worth stating plainly: `packages.cairn` ships a runtime contract
+two files state independently, so they can still disagree — a real hazard with
+no running pod behind it. Whether that is worth the size of guard it currently
+buys is a P8 question, not a settled one, and it is open. ⚠ A line count belongs
+in the measurement that motivates the decision, never here: an unpinned number in
+prose is the defect class this repository already tracks.
+
 ⚠ **That sentence used to read "do not add a third WAY to produce this pod", and
 there is now a third build.** `packages.server-image-go` wraps the Go server.
 The hazard the sentence names is a COPY, and that image is not one: its uid,
