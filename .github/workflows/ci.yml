@@ -654,8 +654,16 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 102 PASS lines measured on the multi-instance branch: 101 cases plus
-          # `cache-mtime-parity`. It was 91 (90 cases) at `871e6ff`; the eleven new rows are the
+          # 104 PASS lines measured on this head: 102 cases plus TWO structural checks —
+          # `cache-mtime-parity` and `orphan-reap-parity`. 🔴 THE SECOND STRUCTURAL CHECK IS
+          # WHY THIS MOVED BY TWO WHILE ONLY ONE CASE LANDED: the reap returns a count no
+          # client prints, so it is unreachable from any stdout/stderr/exit row and has to be
+          # read off the filesystem. The one new case is
+          # `recall-focus-resolved-through-an-explicit-repo-PATH`, which hands `--repo` an
+          # ABSOLUTE path — the three focus rows beside it default it to `.`, so no world's
+          # glob metacharacter can reach the anchor through them.
+          # It was 102 (101 cases) before that, and 91 (90 cases) at `871e6ff`; the eleven rows
+          # added between those two are the
           # `routes` verb, which the verb ledger requires a case for, `exit 11`, which the
           # exit-code ledger requires a row to reach, TWO MULTI-INSTANCE rows that stand up
           # a second pod — the shape every other row is blind to by construction, and the one
@@ -668,8 +676,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 102 ]; then
-            echo "REFUSING: $passes passes, and 102 were measured — the gate got smaller"
+          if [ "$passes" -lt 104 ]; then
+            echo "REFUSING: $passes passes, and 104 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then

@@ -112,14 +112,21 @@ var _ = unicode.IsSpace
 // An absent or unreadable doc is an ORDINARY outcome — most repos have no handoff at the
 // moment they are resumed — and returns an empty window rather than an error: the caller's
 // fallback is a real answer, not a degraded one.
+//
+// 🔴 THE REPO PATH IS AN ANCHOR, NOT PART OF THE PATTERN — AND THAT IS A FIX, NOT A REFACTOR.
+// This was `filepath.Glob(filepath.Join(repo, pattern))`, which put the caller's own `--repo`
+// value inside a glob: a repo under a directory called `wid[get` made `filepath.Match` return
+// `ErrBadPattern`, the error was discarded, `matches` was nil, and this function answered
+// `FocusWindow{}` — which the caller renders as *"most-recent fallback … (no handoff doc to
+// read a path window from)"* while the doc is sitting in `claudedocs/`. A FALSE CLAIM OF
+// ABSENCE on the DEFAULT path of `cairn recall --repo <path>`, and the failure the type's own
+// doc comment says it exists to prevent. The oracle never had it: `Path(repo).glob(pattern)`
+// treats its anchor literally. `anchoredGlob` is the one rule; see `anchor.go`.
 func Focus(repo string) FocusWindow {
 	var doc string
 	var docInfo os.FileInfo
 	for _, pattern := range HandoffGlobs {
-		matches, err := filepath.Glob(filepath.Join(repo, pattern))
-		if err != nil {
-			matches = nil
-		}
+		matches := anchoredGlob(repo, pattern)
 		type candidate struct {
 			path string
 			info os.FileInfo

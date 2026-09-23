@@ -84,6 +84,35 @@ W_SYNC_ETAG = ".sync-etag"
 #: the two implementations' `this_host()` comparable without either of them being patched.
 PARITY_HOST = "parity-harness"
 
+#: 🔴 THE WORLD ROOT CARRIES A GLOB METACHARACTER, AND IT IS A GATE WIDENING RATHER THAN A CUTE
+#: DIRECTORY NAME. The Go client builds `filepath.Glob` patterns by joining an ANCHOR — a cache
+#: root, a repo path, a cache's own basename — onto a pattern, and `filepath.Match` INTERPRETS
+#: `*`, `?`, `[` and `\` wherever they appear. An unterminated `[` is `ErrBadPattern`, every one
+#: of those call sites discarded the error, and the result was an empty match set: a false claim
+#: of absence. The oracle's `Path(anchor).glob(pattern)` treats its anchor literally and has
+#: never had any of it — so this is a whole DIVERGENCE CLASS, and until this constant existed
+#: THIS GATE COULD NOT SEE A SINGLE MEMBER OF IT, because every world it built was named out of
+#: `[A-Za-z0-9_-]`.
+#:
+#: 🔴 IT IS SEEDED IN THE ROOT, NOT IN ONE FIXTURE, BECAUSE THE ANCHORS ARE PLURAL. The shared
+#: cache root, the roots the structural checks below build, the repo's PARENT and the store all
+#: hang off `work`; naming any one of them would have covered one site and left the others
+#: exactly as blind. The repo's own basename cannot carry it — `world.build_repo` documents why
+#: that directory must be named `alpha-notes` — which is the second reason it belongs here.
+#:
+#: ⚠ IT IS A `mkdtemp` SUFFIX SO THE `temp-root` NORMALIZATION STILL SPANS THE WHOLE PATH. A
+#: metacharacter directory NESTED under the temp root would leave `<WORLD>/<name>/…` in every
+#: rendered report — stable across runs, but a second token for a human diffing two logs to
+#: hold. As a suffix the whole root collapses to one. The normalization escapes this constant
+#: with `re.escape`, which is what stops it being read as a character class a second time, in a
+#: second language.
+#:
+#: ⚠ AND IT IS `[` RATHER THAN `*` OR `?` ON PURPOSE. `*` and `?` in an anchor produce a WRONG
+#: match set rather than an error — quieter, and not reproducible from one fixture, since it
+#: needs a sibling directory to match instead. `[` is the shape that reaches `ErrBadPattern`,
+#: which is what every affected site turned into "nothing is here".
+WORLD_METACHARACTER_SUFFIX = "-wid[get"
+
 BOOT_TIMEOUT_S = 30.0
 
 #: The negative control, by case id. 🔴 A REASSURING GREEN FROM THIS HARNESS IS INDISTINGUISHABLE
@@ -155,9 +184,15 @@ def normalizations() -> list[Normalization]:
                 "Every run builds its world under a fresh mktemp directory and the rendered "
                 "report names the store path it read. The path is IDENTICAL for both clients "
                 "within one run, so this does not hide a difference between them — it makes a "
-                "run's output comparable to a previous run's when a human diffs two logs."
+                "run's output comparable to a previous run's when a human diffs two logs. "
+                "⚠ THE PATTERN CARRIES `WORLD_METACHARACTER_SUFFIX` AND MUST: the root's name "
+                "ends in one, `\\w+` does not reach it, and a pattern that stopped at the "
+                "random component would leave the suffix in the compared text — harmless, and "
+                "exactly the kind of half-normalized token that makes a reader think the "
+                "licence is wider than it is."
             ),
-            pattern=re.compile(re.escape(str(Path(tempfile.gettempdir()))) + r"/cairn-parity-\w+"),
+            pattern=re.compile(re.escape(str(Path(tempfile.gettempdir()))) + r"/cairn-parity-\w+"
+                               + re.escape(WORLD_METACHARACTER_SUFFIX)),
             replacement="<WORLD>",
         ),
     ]
@@ -321,6 +356,17 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "`resolved via claudedocs/handoff-parity.md`, and a client that fell back would "
              "feature the NEWEST entry instead and say so",
              ["recall"], in_repo=True),
+        Case("recall-focus-resolved-through-an-explicit-repo-PATH",
+             "🔴 THE SAME WINDOW, REACHED BY `--repo <ABSOLUTE PATH>` RATHER THAN BY CWD — and "
+             "that is the whole point of the row, not a second sample. `Focus` used to build "
+             "`filepath.Glob(filepath.Join(repo, pattern))`; with cwd-relative `--repo .` the "
+             "anchor is `.` and no metacharacter can reach the pattern, so the three rows above "
+             "are STRUCTURALLY unable to see it. This world root carries a `[`, so this row "
+             "hands the Go client an anchor `filepath.Match` refuses outright — the basis must "
+             "still read `resolved via claudedocs/handoff-parity.md`, where the defect answered "
+             "`most-recent fallback … (no handoff doc to read a path window from)` over a doc "
+             "that is sitting there",
+             ["recall", "--repo", "<REPO>"]),
         Case("recall-focus-suppressed-by-scope",
              "the same repo with `--scope` given: the window is meaningless once the caller "
              "names a scope, so the basis must be the FALLBACK's",
@@ -896,7 +942,8 @@ def main(argv: list[str] | None = None) -> int:
                              "refuse unless the differ reports each one")
     args = parser.parse_args(argv)
 
-    work = Path(tempfile.mkdtemp(prefix="cairn-parity-", dir=tempfile.gettempdir()))
+    work = Path(tempfile.mkdtemp(prefix="cairn-parity-", suffix=WORLD_METACHARACTER_SUFFIX,
+                                 dir=tempfile.gettempdir()))
     norms = normalizations()
     try:
         store = W.build_store(work / "store")
@@ -1129,6 +1176,11 @@ def main(argv: list[str] | None = None) -> int:
                     a.replace("<PUTFILE>", str(put_file))
                      .replace("<NEWFILE>", str(new_file))
                      .replace("<ABSENT>", str(work / "no-such-file.md"))
+                     # 🔴 THE REPO AS AN ABSOLUTE PATH, WHICH IS THE ONLY WAY THE WORLD ROOT'S
+                     # METACHARACTER REACHES `--repo`. `in_repo=True` rows run with cwd set to
+                     # the repo and both clients default `--repo` to `.`, so their anchor is
+                     # one character long and carries nothing.
+                     .replace("<REPO>", str(repo))
                     for a in case.argv
                 ]
                 cwd = repo if case.in_repo else work
@@ -1335,6 +1387,68 @@ def main(argv: list[str] | None = None) -> int:
                         passes += 1
                         mtime_note = (f" mtime-files={len(oracle_stat)} "
                                       f"worst-mtime-delta-ns={worst}")
+
+            # 🔴 THE ORPHAN REAP, MADE STRUCTURALLY — BECAUSE NO ROW CAN SEE IT. `ReapOrphans` /
+            # `_reap_orphans` runs at the top of every `install_snapshot`, removes stale
+            # `<cache>.new-*` / `<cache>.old-*` trees, and RETURNS A COUNT NOTHING PRINTS. So the
+            # entire mechanism is invisible to a gate that compares stdout, stderr and the exit
+            # code — which is how a client that reaped NOTHING went on comparing equal to one
+            # that reaped everything, run after run, for as long as both clients' cache paths
+            # were spelled out of `[A-Za-z0-9_-]`.
+            #
+            # 🔴 THE METACHARACTER IS IN THE PARENT, NOT IN THE STAGING NAME, AND THAT IS THE
+            # REACHABILITY CONTROL RATHER THAN A DETAIL. Both clients interpolate the cache's
+            # BASENAME into their pattern, and there `fnmatch` and `filepath.Match` agree; what
+            # they disagree about is the ANCHOR, so the `[` has to sit above the cache root for
+            # this check to be about the class at all. `work` carries it — see
+            # `WORLD_METACHARACTER_SUFFIX` — so `<work>/cache-reap-<client>` is anchored under a
+            # directory `filepath.Match` refuses and `Path.glob` does not look at.
+            #
+            # ⚠ THE SEEDED TREES ARE DATED YEAR 2000, NOT "NOW MINUS THE GRACE PERIOD". The
+            # grace is one hour and it is a constant in two languages; a fixture that computed
+            # its own offset from it would be a third copy, and a fixture that used a wall-clock
+            # subtraction would be a clock reading in a comparison that has no other one.
+            if wanted is None:
+                reaped_by = {}
+                for label, argv0 in (("oracle", [sys.executable, str(ROOT / "cairn")]),
+                                     ("go", [go_binary])):
+                    root = work / f"cache-reap-{label}"
+                    shutil.rmtree(root, ignore_errors=True)
+                    seeded = []
+                    for kind in (".new-", ".old-"):
+                        orphan = work / (root.name + kind + "stale")
+                        shutil.rmtree(orphan, ignore_errors=True)
+                        orphan.mkdir(parents=True)
+                        (orphan / "alpha-notes").mkdir()
+                        (orphan / "alpha-notes" / "left.md").write_text("x\n", encoding="utf-8")
+                        # The directory's OWN mtime is what the grace check reads, so it is set
+                        # last — writing the child above bumped it to now.
+                        os.utime(orphan, ns=(W.EPOCH_NS, W.EPOCH_NS))
+                        seeded.append(orphan)
+                    restore_store(pristine, store)
+                    run_client(argv0 + ["--cache", str(root), "sync"], work, base_env)
+                    reaped_by[label] = [o for o in seeded if not o.exists()]
+                oracle_reaped, go_reaped = reaped_by["oracle"], reaped_by["go"]
+                if len(oracle_reaped) != 2:
+                    # 🔴 THE POSITIVE CONTROL, READ RATHER THAN ASSUMED. If the ORACLE did not
+                    # reap both trees the fixture never reached the mechanism — a stale grace
+                    # constant, a sync that never installed, a root the client did not use — and
+                    # "both clients agree" would then be a fact about the fixture.
+                    failures.append("orphan-reap-parity")
+                    print(f"FAIL orphan-reap-parity — the ORACLE reaped {len(oracle_reaped)} of "
+                          f"2 seeded staging trees, so this comparison would agree with "
+                          f"anything. The fixture did not reach the reap.")
+                elif len(go_reaped) != len(oracle_reaped):
+                    failures.append("orphan-reap-parity")
+                    print(f"FAIL orphan-reap-parity — the oracle reaped "
+                          f"{[o.name for o in oracle_reaped]} and the Go client reaped "
+                          f"{[o.name for o in go_reaped]}. A staging tree that is never "
+                          f"collected is a leak nothing prints and no rendered row can see.")
+                else:
+                    print(f"PASS orphan-reap-parity (both clients reaped {len(go_reaped)} of 2 "
+                          f"seeded trees under a parent named "
+                          f"{WORLD_METACHARACTER_SUFFIX.lstrip('-')!r})")
+                    passes += 1
 
             if args.self_test:
                 # 🔴 THE CONTROL IS READ AS A SET, NOT AS "SOMETHING WENT RED". Each sabotaged

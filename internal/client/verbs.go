@@ -143,24 +143,15 @@ func LsEntries(env Env, opts Options) (int, error) {
 		// "*/*.md")` treats its anchor literally. This branch closed the identical hazard in
 		// `Validate` (by moving to `os.ReadDir`) in the same commit that left it open here.
 		//
-		// 🔴 THE CLASS IS NOT CLOSED, AND TWO SITES OF IT ARE STILL LIVE IN THIS FILE. `Put`
-		// derives a revision with `filepath.Glob(filepath.Join(cache, scope, ref+".md"))`
-		// and, on no match, `…+".*.md"` — the same anchor-inside-the-pattern shape, the same
-		// discarded error. MEASURED end to end against one pod, both real binaries, with a
-		// CONTROL: over a cache root with no metacharacter both clients answered `replaced`
-		// at exit 0 off the same derived If-Match; over a root named `cache[bad` the oracle
-		// still answered `replaced` at exit 0 while this client refused —
-		// `cannot derive a revision — 0 cached file(s) match alpha-notes/widget-cfg`, exit 2.
-		// `filepath.Glob` returns `ErrBadPattern` and n=0 for BOTH patterns there, where
-		// `Path.glob` finds the file, so the count is 0 rather than 1 and the `!= 1` arm
-		// fires.
-		//
-		// ⚠ IT IS A REFUSAL, NOT A FALSE CLAIM OF ABSENCE, WHICH IS WHY IT IS RECORDED HERE
-		// RATHER THAN FIXED HERE. `ls-entries` printed an empty listing at exit 0 and was
-		// believed; `put` stops, names the count and tells the operator to pass `--if-match`.
-		// PRE-EXISTING, out of this branch's range, and fixing it here would regrow a PR that
-		// was already split once. Declared as residual 9 in `tests/parity/README.md`, with
-		// its closing condition.
+		// ✅ THE CLASS IS NOW CLOSED, AND THIS PARAGRAPH USED TO SAY IT WAS NOT. It declared
+		// two further sites live in this file — `Put`'s pair of `filepath.Glob` calls — and
+		// named a third outside it; all of them are fixed, and the one rule they now share is
+		// `anchor.go`. The measurements that were recorded here have moved beside the code
+		// that carries them (`Put` below, `Focus` in `focus.go`, `ReapOrphans` in
+		// `snapshot.go`), because a comment describing a hazard as OPEN is a claim like any
+		// other and this one would now be false. Residual 9 in `tests/parity/README.md` is
+		// retired with it; what remains there are the two NARROW divergences the fix chose
+		// deliberately, which are a different statement.
 		//
 		// 🔴 A SCOPE'S `README.md` IS ITS POLICY SHEET, NOT AN ENTRY. Until the filter
 		// existed `ls-entries` listed every scope's sheet as `<scope>/README.md` — measured
@@ -883,12 +874,48 @@ func Put(env Env, opts Options) (int, error) {
 				"explicitly if you already hold it.\n", state.Detail)
 			return ExitWriteUnreachable, nil
 		}
-		matches, _ := filepath.Glob(filepath.Join(cache, scope, opts.Ref+".md"))
-		sort.Strings(matches)
+		// 🔴 THE SCOPE DIRECTORY IS ENUMERATED AND THE REF IS MATCHED LITERALLY — AND THAT
+		// IS THE FIX THE `LsEntries` COMMENT ABOVE DECLARED AS RESIDUAL 9. This was
+		// `filepath.Glob(filepath.Join(cache, scope, opts.Ref+".md"))` and, on no match,
+		// `…+".*.md"`, which put the CACHE ROOT inside the pattern. Measured end to end
+		// against one pod with both real binaries: over a root with no metacharacter both
+		// clients answered `replaced` at exit 0 off the same derived `If-Match`; over a root
+		// named `cache[bad` `filepath.Glob` returned `ErrBadPattern` and n=0 for BOTH
+		// patterns, so the `!= 1` arm fired and this client refused —
+		// `cannot derive a revision — 0 cached file(s) match …`, exit 2 — while the oracle
+		// still answered `replaced` at exit 0. See `anchor.go` for the class.
+		//
+		// ⚠ `opts.Ref` IS NOW LITERAL TOO, AND THAT IS A SECOND DECLARED DIVERGENCE
+		// (`tests/parity/README.md` residual 9). The oracle interpolates the ref into its
+		// pattern, so `--ref 'wid*'` is a WILDCARD there: it can match exactly one file and
+		// derive a precondition from `widget-cfg.md` while the `PUT` that follows addresses
+		// an entry literally named `wid*` — a precondition taken from bytes the request is
+		// not addressing, which is the one thing this block exists to prevent. Here it finds
+		// nothing and refuses with the count. Unreachable from the parity corpus (no row
+		// passes a metacharacter `--ref`), reachable from a keyboard, and the refusal is the
+		// safe side.
+		//
+		// The `<ref>.*.md` family keeps its ONE wildcard, spelled as the bounds it means:
+		// `fnmatch` does NOT match `<ref>.md` with that pattern — measured — because the `*`
+		// sits between two literal dots, which is what the length floor below asserts.
+		scopeDir := filepath.Join(cache, scope)
+		exact := opts.Ref + ".md"
+		matches := anchoredNames(scopeDir, func(name string) bool { return name == exact })
 		if len(matches) == 0 {
-			matches, _ = filepath.Glob(filepath.Join(cache, scope, opts.Ref+".*.md"))
-			sort.Strings(matches)
+			matches = anchoredNames(scopeDir, func(name string) bool {
+				return strings.HasPrefix(name, opts.Ref+".") &&
+					strings.HasSuffix(name, ".md") &&
+					len(name) >= len(opts.Ref)+len(".")+len(".md")
+			})
 		}
+		for i, name := range matches {
+			matches[i] = filepath.Join(scopeDir, name)
+		}
+		// `os.ReadDir` already returns sorted names and they all share one directory, so this
+		// is a no-op today. It stays because the ORACLE sorts, the index below is `[0]`, and
+		// an ordering that holds only by accident of another package's documented behaviour is
+		// not the kind of claim the parity gate should rest on.
+		sort.Strings(matches)
 		if len(matches) != 1 {
 			fmt.Fprintf(env.Stderr, "cairn: cannot derive a revision — %d cached file(s) "+
 				"match %s/%s. Pass --if-match, or use the entry's exact filename stem as "+

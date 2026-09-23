@@ -140,16 +140,34 @@ func safeMemberName(name string) bool {
 // bug) but was self-healing. Unique names fixed the race and removed the healing: an audit
 // SIGKILLed three syncs mid-run and the orphaned trees were still there afterwards. A
 // `defer` covers a panic; it does not cover SIGKILL, a power cut, or an OOM.
+//
+// 🔴 THE CACHE'S PARENT IS ENUMERATED AND THE PREFIX IS MATCHED LITERALLY — AND THAT IS A FIX,
+// NOT A REFACTOR. This was `filepath.Glob(filepath.Join(parent, prefix+"*"))`, which put BOTH
+// the parent directory AND the cache's own basename inside a pattern. With a `[` anywhere in
+// the cache path `filepath.Match` returned `ErrBadPattern`, the error went to `continue`, and
+// this function reaped NOTHING while reporting 0 — so the staging trees this mechanism exists
+// to remove accumulate without bound, on exactly the hosts whose directory names are least
+// ordinary. The oracle reaps them: `cache.parent.glob(...)` treats its anchor literally, and
+// `fnmatch` reads an UNTERMINATED `[` as a literal character where `filepath.Match` refuses the
+// whole pattern. See `anchor.go` for the class.
+//
+// ⚠ AND THE PREFIX IS NOW LITERAL, WHICH IS A DECLARED DIVERGENCE RATHER THAN A SIDE EFFECT —
+// `tests/parity/README.md` residual 9. The name searched for is one this code CREATED, with
+// `os.MkdirTemp(parent, base+".new-")`, so a literal prefix is what it always meant and the
+// glob spelling was incidental on both clients. Measured, both directions: with a BALANCED
+// class in the cache's basename (`wid[ge]t`) `fnmatch` and `filepath.Match` AGREE — both read
+// `[ge]` as a character class, so both miss `wid[ge]t.old-…` and both would reap a
+// `widgt.old-…` belonging to a different cache. This client now does neither; the oracle still
+// does both. Narrow, in the safe direction, and the price of the fix above.
 func ReapOrphans(cache string) int {
 	cutoff := time.Now().Add(-OrphanGraceSeconds * time.Second)
 	parent, name := filepath.Dir(cache), filepath.Base(cache)
 	reaped := 0
 	for _, prefix := range []string{name + ".new-", name + ".old-"} {
-		matches, err := filepath.Glob(filepath.Join(parent, prefix+"*"))
-		if err != nil {
-			continue
-		}
-		for _, path := range matches {
+		for _, entry := range anchoredNames(parent, func(candidate string) bool {
+			return strings.HasPrefix(candidate, prefix)
+		}) {
+			path := filepath.Join(parent, entry)
 			// `Lstat`, not `Stat`: a SYMLINK named like a staging dir dereferences under
 			// a following stat, and removing a symlink's TARGET tree is not what this
 			// means — while `RemoveAll` on the link itself removes only the link. Getting

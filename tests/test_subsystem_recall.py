@@ -2739,6 +2739,38 @@ class TestFocusWindow:
         )
         assert rc.focus_window(repo).source == "claudedocs/handoff-lower.md"
 
+    def test_a_repo_PATH_carrying_a_glob_METACHARACTER_still_resolves(
+        self, tmp_path: Path
+    ) -> None:
+        """⚠ AN INVARIANT GUARD ON THIS CLIENT, NOT REGRESSION COVERAGE — IT PASSES
+        AT `e293c6e`, AND ITS GO TWIN DID NOT.
+
+        `focus_window` calls `Path(repo).glob(pattern)`, where the repo is the ANCHOR
+        and only `HANDOFF_GLOBS`' members are patterns, so a `[` in the caller's own
+        `--repo` value is a character in a directory name. The Go client joined the
+        two into one argument — `filepath.Glob(filepath.Join(repo, pattern))` — so
+        `filepath.Match` returned `ErrBadPattern`, the error was discarded, and the
+        window came back EMPTY: `recall` then printed `most-recent fallback … (no
+        handoff doc to read a path window from)` over a doc sitting in `claudedocs/`.
+        A false claim of absence on the default read path, not a refusal.
+
+        This row pins the oracle's half so a future rewrite cannot quietly adopt the
+        Go spelling. The behavioural red→green is its Go twin
+        `TestFocusResolvesUnderARepoPathCarryingAGlobMetacharacter`; the cross-client
+        one is `tests/parity/harness.py`'s
+        `recall-focus-resolved-through-an-explicit-repo-PATH`.
+        """
+        repo = _make_repo(tmp_path / "wid[get", "handoff-parity.md",
+                          "the work is in `apps/widget-cfg/values.yaml` today\n")
+        # 🔴 THE REACHABILITY CONTROL: the anchor has to actually carry the character
+        # whose interpretation is the entire difference between the two clients.
+        assert "[" in str(repo), repo
+
+        w = rc.focus_window(repo)
+
+        assert w.source == "claudedocs/handoff-parity.md"
+        assert w.paths == ("claudedocs/handoff-parity.md", "apps/widget-cfg/values.yaml")
+
     def test_no_handoff_is_an_ORDINARY_empty_window(self, tmp_path: Path) -> None:
         """Most repos have no handoff at the moment they are resumed. It must not
         raise: the caller's mtime fallback is a real answer, not a degraded one."""
