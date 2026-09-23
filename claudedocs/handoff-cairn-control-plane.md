@@ -24,8 +24,12 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`5775b98`** (#95 merged), clean. The DoD was **re-measured on `main` twelve commits
-  after the session that first met it**, rather than carried forward: authz matrix, share flow
+- `main` @ **`899b4cb`** (#99), clean — and ⚠ **this line is the one most likely to be stale by
+  the time you read it**: four PRs landed here in the hour this update was written. Re-read it
+  rather than quoting it. The DoD was **re-measured on `main` well after the session that first
+  met it** — `git rev-list --count 7d7c9ea..origin/main` was **24** at the time, and is stated as
+  a command rather than a number because it grows with every merge — rather than carried
+  forward: authz matrix, share flow
   with its replica-honesty notice, identity through both backends, `packages.default =
   mkGoClient` (in `flake.nix`'s `packages` block — deliberately **not** a line number: that
   binding read 916, then 927, then 929 inside one session as siblings edited the file), and
@@ -47,13 +51,15 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   🔴 **`cairn-control-plane-9` IS STILL HELD ON PURPOSE.** The tell that the new code is live is
   its own startup line, which the old binary does not print: *"no `$CAIRN_TRUSTED_PROXIES`, and
   this is a loopback bind … the sign-in limiter will key on the local peer, which is ONE bucket."*
-  ⚠ **`main` has since moved past `1838b82`, and the running binary is STILL behaviourally
-  current — measured, because this entry's own rule demands it.** `git diff 1838b82 origin/main`
-  over `internal/ui cmd/cairn-ui internal/identity internal/control internal/report
-  internal/store` reaches exactly one file, `cmd/cairn-ui/main.go`, and its whole delta is a
-  **doc comment** (a "no image wraps this binary" retraction). No executable line moved, so the
-  human's click still measures `main`. 🔴 **Re-run that diff before handing the URL over again —
-  "docs-only files" is the wrong test; read the hunks.**
+  ⚠ **`main` has since moved past `1838b82`, and the running binary was STILL behaviourally
+  current when this was written — measured, because this entry's own rule demands it.** The check
+  is `git diff 1838b82 origin/main -- internal/ui cmd/cairn-ui internal/identity internal/control
+  internal/report internal/store`. At `899b4cb` it reached **two** files — `cmd/cairn-ui/main.go`
+  and `internal/ui/README.md` — and **both hunks are prose** (a *"no image wraps this binary"*
+  retraction). No executable line moved, so the human's click still measures `main`.
+  🔴 **RE-RUN IT AND READ THE HUNKS; DO NOT MATCH THE FILE COUNT.** The count grows with every
+  merge and is recorded only to date this reading — "docs-only *files*" is the wrong test and
+  would wave through a real change sitting beside a comment edit.
 - ✅ **THE SHARE FLOW IS READY AND UNCONSUMED**, verified read-only so the human's click is still
   theirs to take: `GET /` anonymous **401** · `/sign-in` **200** with a `token` password field ·
   `POST /sign-in` +`Origin` **303** → `/` · signed-in `GET /` **200** showing `alpha-notes` and
@@ -137,10 +143,14 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
 9. ⏳ **IN FLIGHT: drive the share flow's human verification on `127.0.0.1:8103`** — now against a
    build of `1838b82` (pid 2728234), the stale `a88f60b` instance having been replaced; see
    `State now`. Everything a `curl` can reach is green and the write half is **unconsumed**.
-   🔴 **AND `curl` STRUCTURALLY CANNOT FINISH THIS CHAIN, WHICH SHARPENS WHY THE ITEM IS A
-   HUMAN'S** — the `Secure` cookie it will not send over `http://`, the forced-header control
-   that separates instrument from server, and the warning not to "fix" the cookie to suit
-   curl, are under `Gotchas` and in `How to verify`. Not restated here.
+   🔴 **WHAT IS LEFT IS GENUINELY A HUMAN'S, BUT NOT FOR THE REASON THIS ENTRY FIRST GAVE.**
+   `curl` reaches the whole chain fine (the *"structurally cannot"* claim here was **retracted**
+   — see `Gotchas`). What it cannot do is run JavaScript, see layout or focus order, or tell you
+   whether the replica-honesty notice is actually READ. **That is the remaining half.**
+   ⚠ **THE WORLD AND THE TOKEN ARE SESSION-SCOPED AND THE DOC MUST NAME THEM OR THE HANDOVER IS
+   DEAD ON ARRIVAL**: world root `<scratchpad>/shareflow2/`, token `…/shareflow2/avery.token`
+   (mode 0600, one line). **The world was REBUILT when the instance was replaced**, so any token
+   handed over before that is worthless — re-read the file rather than re-using a pasted value.
    forcing: user — the operator directed this item and reserved the browser step to a human.
 10. **DECIDE THE PUBLISH ORDERING — `tests/test_publish_workflow.py`'s `last_python < first_go`.**
     Its rationale has INVERTED: it read *"the Go image has never been run … leaves the deployed
@@ -667,12 +677,18 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   invokes the handoff tool (`<handoff-tooling-repo>/scripts/lib/handoff_doc.py`), the WORKING COPY, so the gate itself went
   live on the base clone's fast-forward. **`readlink -f` answers only for the file you point it
   at; read what the skill EXECUTES as well as what it says.**
-- 🔴 **AN EMPTY RESULT COULD NOT DISTINGUISH TWO CAUSES OF A `leakscan` EXIT 2, AND THE CHEAP
-  CONTROL SETTLED IT IN ONE COMMAND.** The base clone exited 2 with untracked `result` symlinks
-  AND a live agent worktree both present, either a plausible culprit. A fresh worktree of
-  `origin/main` — same tree, neither artefact — scanned **rc 0**, and the scanner's single
-  `COULD NOT READ` line named the worktree directory. **The rival mechanism was named before
-  concluding, and the discriminating control cost less than reasoning about it would have.**
+- 🔴 **A CONTROL THAT SETTLED "IS THE TREE DIRTY" WAS READ AS SETTLING "WHICH ARTEFACT DID IT",
+  AND THE INSTRUMENT COULD NOT ANSWER THE SECOND QUESTION AT ALL.** ❌ **RETRACTED:** *"the
+  scanner's single `COULD NOT READ` line named the worktree directory … the rival mechanism was
+  named before concluding."* The base clone exited 2 with untracked `result` symlinks **and** a
+  live agent worktree both present. The fresh-worktree scan (**rc 0**, same tree) is a valid
+  control for *"the tracked tree is clean"* — and for nothing else. 🔴 **`tests/leakscan.py`
+  `raise SystemExit(2)` on the FIRST `OSError`, and `git ls-files` is lexicographic, so
+  `.claude/worktrees/…` is reached before `result` every time.** The scanner can therefore name
+  exactly **one** artefact no matter how many are unreadable, and naming the worktree was
+  evidence about **ordering**, not about `result` — which was separately measured to be a cause
+  the moment the worktree was gone. **Ask what your instrument is capable of REPORTING before
+  reading its output as an elimination.**
 - ⚠ **THE DOCUMENTED `leakscan`-EXIT-2 GOTCHA NAMES A *REMOVED* AGENT'S LEFTOVER, AND MINE WAS
   A LIVE ONE — SO ITS REMEDY DID NOT APPLY.** The recorded fix is "check the worktree is clean
   and its commits are on `origin` before removing it". `git worktree list --porcelain` showed
@@ -815,15 +831,25 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   key; staleness is the right one.** 🔴 **AND A THIRD PR CAN OPEN WHILE YOU DECIDE** — #97
   arrived four minutes after #95 merged, clean against `main` and conflicting with the branch
   written to replace #96. Run the open-PR sweep **again** immediately before `gh pr create`.
-- 🔴 **AN INSTRUMENT THE DOC TOLD ME TO USE CANNOT REACH THE THING IT WAS POINTED AT, AND THE
-  FAILURE LOOKS EXACTLY LIKE THE DEFECT.** The share flow's session cookie is
-  `__Host-cairn-session; Secure`; **curl will not send a `Secure` cookie over `http://`**, so a
-  sign-in that genuinely succeeded (303, *"a session was opened for …"* in the server log) is
-  followed by **401** on the next `GET /` with the jar attached. Read as a server bug that is a
-  whole false arc; read as a cookie-policy difference it is one forced header. A browser treats
-  `http://127.0.0.1` as a secure context and does send it — so *"curl is a different
-  instrument"* is not a caution here, it is a **structural inability**. The discriminating
-  control is `-H "Cookie: __Host-cairn-session=…"` → **200**.
+- 🔴 **MY PROBE REVOKED THE SESSION IT WAS ABOUT TO TEST, AND I FILED THE 401 AS AN INSTRUMENT
+  QUIRK — THE RETRACTED DIAGNOSIS IS KEPT HERE BECAUSE IT WOULD HAVE TAUGHT THE NEXT READER TO
+  PAPER OVER A REAL REVOCATION.** ❌ **RETRACTED:** *"the cookie is `__Host-…; Secure` and curl
+  will not send a `Secure` cookie over `http://`, so a post-sign-in 401 is the instrument, not
+  the server; force the header."* **Measured false in both directions.** curl 8.21.0 treats
+  loopback as a secure context exactly as a browser does: sign in, `GET /` with the jar → **200**.
+  The positive control that the Secure rule *can* withhold (a `secure` cookie for a non-loopback
+  host over `http://`) was watched to fire, so the instrument was working.
+  ✅ **THE REAL MECHANISM IS A SECURITY GUARD DOING ITS JOB.** `internal/ui/session.go` revokes
+  the presented session before minting the new one — session-fixation defence, and the code says
+  so. My chain re-ran `POST /sign-in` mid-probe with `-b <jar>` to read a `Location`, and threw
+  the replacement cookie away with `-c /dev/null`; that call **revoked the jar's own session**,
+  so the next `GET /` was a correct 401. Isolated: a second sign-in **without** presenting the
+  cookie leaves the first session at 200; **presenting** it takes the first session to 401.
+  🔴 **THE LESSON IS THE CONTROL I DID NOT RUN.** A 401 is the observable the most mechanisms
+  share, and I picked the one I already suspected. The forced-header "control" changed **two**
+  variables — it also re-signed-in, so it minted a fresh session; it could never have
+  discriminated. **Never re-run an authenticating request inside a chain you are measuring**, and
+  when an auth probe fails, suspect your own previous request before the server.
 - 🔴 **A `nix build` IN THE REPO ROOT ARMS A GATE AGAINST YOU, AND AN ENTRY HAD ALREADY
   ACQUITTED IT.** `result`/`result-1` are untracked symlinks to store **directories**; the leak
   scanner's `--others` enumeration reads them and dies `[Errno 21]`, taking eight of the repo's
@@ -913,11 +939,13 @@ anonymous → **401**; `GET /sign-in` → a `password` field named `token`; `POS
 reach. Re-measured on the `1838b82` instance: 401 · 200 · 303 · `alpha-notes` and `beta-notes`
 and **not** `rubble-heap`/`hollow-set`; `/share?scope=…` **200** with the csrf field, the verb
 checkboxes and the co-member in the candidate select.
-🔴 **STEP 4 WILL ANSWER 401 UNDER `curl` EVEN WHEN SIGN-IN SUCCEEDED, AND THAT IS THE
-INSTRUMENT, NOT THE SERVER.** The cookie is `__Host-cairn-session; Secure` and curl declines to
-send a `Secure` cookie over `http://`; a browser treats `http://127.0.0.1` as a secure context
-and does. Force it — `-H "Cookie: __Host-cairn-session=<value from Set-Cookie>"` — and read
-**200**. Check the server log for *"a session was opened for …"* before suspecting the refusal.
+🔴 **DO NOT RE-RUN `POST /sign-in` INSIDE THIS CHAIN — IT REVOKES THE SESSION YOU ARE HOLDING.**
+`internal/ui/session.go` revokes the presented session before minting the new one (fixation
+defence), so a second sign-in sent with `-b <jar>` kills that jar's session and step 4 answers a
+perfectly correct **401**. Sign in ONCE, keep the jar, and do not fetch the `Location` with a
+second POST. ⚠ An earlier revision of this file blamed that 401 on curl declining to send a
+`Secure` cookie over `http://`. **That is false** — curl treats loopback as a secure context, and
+`GET /` with the jar attached is **200**. The retraction is under `Gotchas`; do not re-derive it.
 🔴 **AND VERIFY THE WRITE HALF ON A *COPY*, NOT ON THE WORLD YOU ARE HANDING OVER** — a share
 POST is durable in an append-only journal, so probing the live one consumes the very action the
 human was asked to take. `cp -a` the world, run a second instance on another port, POST
