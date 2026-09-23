@@ -88,15 +88,34 @@ cannot see.
 1. ✅ **DONE — #74 merged as `93d0f03`.** Kept as a numbered row rather than deleted, because
    deleting it renumbers every item below and re-points every live `claim-work` slug.
    forcing: gate — the entries' own closing conditions, which named a PR.
-2. **The remaining batched defects.** Still open: #48's (c) `lib/README.md` (the re-count recipe
-   greps two literal phrases, so it is a SPELLED check that cannot see a reworded echo); the
-   stale node-affinity comment, which lives in the **deployment-manifest repository** rather
-   than this one — 🔴 that repo's NAME is a denied identifier in THIS tree, so take it from the
-   operator rather than from a doc here; and the carried-forward list.
+2. ✅ **DONE — merged as `562a4f6f`.** ⚠ **AND THIS ENTRY WAS STALE WHEN IT WAS ACTED ON, WHICH
+   COST A SESSION TWENTY MINUTES.** It named #48's (c) — *"the re-count recipe greps two literal
+   phrases"* — as open. It was **already closed**: `tests/test_narrowing_echo_sites.py` is on
+   `main`, green, and its own docstring closes that item AND the unpinned echo-site count by
+   name, replacing the recipe with a site ledger that fails on GROW *or* SHRINK. What WAS open
+   was a **different** recipe in the same file, which nothing had covered: `lib/README.md`'s
+   `STORE_IS_PER_HOST` bullet quoted "25 files, 92 occurrences" against a tree holding **29 and
+   105**, blamed the drift on golden regeneration when the goldens were the half that had not
+   moved, and re-derived with a grep for a 14-character fragment of a ~130-character constant.
+   It now imports the constant. **The lesson is the staleness, not the recipe**: a queue entry
+   that names a closed defect sends the next reader hunting something that is not there.
+   ⚠ **STILL OPEN from this entry:** the stale node-affinity comment, which lives in the
+   **deployment-manifest repository** rather than this one — 🔴 that repo's NAME is a denied
+   identifier in THIS tree, so take it from the operator rather than from a doc here — and the
+   carried-forward list.
    forcing: gate — filed BY attribution gates rather than fixed, so nothing else surfaces them.
-3. **P7 — conditional snapshot sync.** `/api/v1/snapshot` ships a full tar with no ETag/304.
-   Key it on principal + epoch; `control.Authorization` already carries `Epoch`.
-   forcing: none
+3. ✅ **DONE — merged as `c0f5b06`.** 🔴 **AND THE KEY THIS ENTRY SPECIFIED WOULD HAVE SHIPPED A
+   SILENT BUG, WHICH IS WHY THE SPEC WAS CHECKED BEFORE IT WAS BUILT.** It said *"key it on
+   principal + epoch; `control.Authorization` already carries `Epoch`"*. Measured: all fourteen
+   journal event kinds are AUTHORIZATION events and `internal/write/write.go` makes no
+   `control.` call, so **an append moves no epoch** — that key answers `304` to a client missing
+   new bullets. The validator is instead a digest of the **UNCOMPRESSED** tar: it covers content,
+   the visible set and the `?scope=` filter at once, and it is the only form both servers can
+   agree on, because `AGENTS.md` records gzip identity between them as unattainable while
+   `tests/dualrun/` compares the uncompressed tar byte-for-byte. `TestAnAppendMovesTheETag`
+   pins it with the mtime restored, so it is a claim about CONTENT and not the clock.
+   forcing: none — as filed. Nothing unclaimed ranked above it; what made the round worth
+   running was the spec defect above, found by checking the entry before building it.
 4. **P8 — retire the Python oracle.** Gated on the default flip holding over real use, which
    is a waiting period rather than a task.
    forcing: none
@@ -104,7 +123,12 @@ cannot see.
    ⚠ **`EventCredentialRevoked` still has no writer** — and this session measured that the gap
    is SIX events wide, not one; see `## Defects (batched)`.
    forcing: gate — a shipped binary refused to start and named this as the missing piece.
-6. **Fold the new defect entries in and mark #60/#66 closed**, once the doc PRs have merged.
+6. ✅ **DONE — this update is it.** ⚠ **HALF OF IT WAS ALREADY DONE AND THE ENTRY DID NOT KNOW.**
+   The #60/#66 defect entries are not in this list; they are in
+   `claudedocs/handoff-cairn-control-plane-archive.md`, moved by an earlier session. Only the
+   instruction to close them survived, which is the second stale row in this queue — see rank 2.
+   What this update actually did: marked ranks 2, 3 and 6 done, corrected rank 2's dead
+   reference, and folded in the two defects below that this arc produced.
    forcing: user — the operator chose this sequencing explicitly.
 7. 🔴 **RENAME `SUBSYSTEM_STORE_*` → `CAIRN_*` BEHIND A DEPRECATION WINDOW — ⚠ LANDED as
    `56cc56e` (#69), so this row is now a DONE row rather than in-flight.** Both names work; the
@@ -182,11 +206,33 @@ cannot see.
 - 🟡 **`checks.default-is-the-go-client` IS INSENSITIVE ON THE PYTHON SIDE.** `mkCairn`'s pname is
   already `cairn`, so a `meta.mainProgram` removed *there* leaves the base-name assertions green.
   **Closing condition:** a decision to close it or a written line saying why not.
-- 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — `lib/README.md`'s echo-site count,
-  `tests/test_parity_harness.py`'s floor. ⚠ **`README.md`'s 101/102/70/23/8 are GONE** — #54 deleted
-  every count from that file rather than refreshing them. The repo owns the fix pattern
-  (`tests/test_control_mutant_count_is_pinned.py`); applying it to what remains is separate work.
-  **Closing condition:** a decision to pin each or a written line saying why not.
+- 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — now **`tests/test_parity_harness.py`'s
+  floor alone**. ⚠ `lib/README.md`'s counts are closed twice over: the echo-site count by
+  `tests/test_narrowing_echo_sites.py`, and the `STORE_IS_PER_HOST` total by `562a4f6f`, which
+  **deleted** it rather than refreshing it — the same ruling #54 took for `README.md`'s
+  101/102/70/23/8. The pattern is now settled for this repo and worth stating once: a count that
+  moves whenever an artefact is regenerated gets DELETED, and one that should never move gets
+  PINNED (`tests/test_control_mutant_count_is_pinned.py`). Deciding which a number is, is the work.
+  **Closing condition:** a decision to pin the parity floor or a written line saying why not.
+- 🔴 **A CHANGELOG ROW IS BORN WITH THE WRONG ANCHOR, STRUCTURALLY, AND IT HAS NOW HAPPENED
+  TWICE IN ONE ARC.** `CHANGELOG.md`'s header states the anchor exists so
+  `git log <your-rev>..<target-rev>` answers *"does this change sit between the revision I am
+  pinned to and the one I am moving to"*. That anchor is the SQUASH commit — which cannot be
+  known while the PR carrying the row is open. So every row is written wrong and is only
+  correctable by a follow-up after the merge that makes it true. #69 shipped anchored to
+  `4d1787d`, a branch commit the squash discarded, corrected in #78; #90 shipped a visible
+  `<UNFILLED>` placeholder — the honest choice, a wrong sha being worse than a hole — corrected
+  in #92. ⚠ **Nothing gates it**: a row with a placeholder or a dead sha is green in every
+  suite. **Closing condition:** a check that refuses a `CHANGELOG.md` anchor which is not an
+  ancestor-free commit present on `main`, or a written line saying the two-step is accepted.
+- 🟡 **P7's TWO BINDING CLAIMS ARE NOT IN `AGENTS.md`, AND THE REASON IS THE BUDGET.** The
+  conditional-sync work (`c0f5b06`) put its record in four READMEs because `AGENTS.md` has
+  **73 bytes** free against its enforced ceiling, and that file's own rule forbids paying for
+  a new claim by deleting an existing one. The two that belong there: the validator is a digest
+  of the **uncompressed** tar (not gzip, not an authorization epoch), and a `304` is a FOURTH
+  read state beside `live`/`cached`/`scope-empty`/`store-unreachable`. **Closing condition:** an
+  eviction PR frees ≥400 B, then both sentences land and
+  `tests/test_agent_instructions_weight.py` exits 0 with both present.
 - 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE.** It keeps the pod off the off-LAN
   burst node *because the LAN registry does not resolve there*; the pod now pulls from ghcr, so that
   reason is void while the affinity may still be wanted (the PVC is ReadWriteOnce local-path).
