@@ -435,15 +435,13 @@ would propagate an unverified claim to every site it touched.** The operator
 settles which pod is deployed; until then the inconsistency is RECORDED, not
 resolved.
 
-🔴 **TWO OF THE SURVIVING SITES ARE IN *THIS* FILE, ABOVE AND BELOW THIS
-PARAGRAPH** — `:60` (`cmd/cairn-server` *"not deployed by anything"*) and the
-*"published, and deployed by nothing … No manifest references the Go one"* block
-a few dozen lines down, which a reader reaches by scrolling. They are named here
-because an enumeration that lists `flake.nix` and omits the file it is written
-into is the same one-file-fix failure recorded above.
-
-Re-derive the sites rather than trusting a number — a count in prose is the
-defect class this repo tracks, and two were introduced while writing this:
+🔴 **SEVERAL OF THE SURVIVING SITES ARE IN *THIS* FILE, AND THIS PARAGRAPH DOES
+NOT LIST THEM — DELIBERATELY, BECAUSE IT GOT THE LIST WRONG TWICE.** It first
+named none, then named exactly two (*"not deployed by anything"* and *"published,
+and deployed by nothing"*) while the commands printed below return a third in
+this same file — *"Every procedure below is still about `server.py`, which is
+what is deployed"* — and a whitespace-normalised sweep finds more still. **An
+enumeration here is a claim that goes stale and reads as complete. Run the sweep.**
 
 ```bash
 git ls-files -z | xargs -0 grep -nE 'is what is deployed|deployed today'
@@ -454,10 +452,11 @@ git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
 demonstration, not a remedy.** `tests/test_flake_image_matches_dockerfile.py`'s
 own `WHY THIS FILE EXISTS` docstring carries the claim across a line break
 (*"…is the build that is deployed"* / *"today."*) and **neither command finds
-it**. The author of this paragraph then missed a third wrapped instance —
-`packages.cairn`, above — by grepping for it exactly this way. Normalise before
-sweeping, or read the file. ⚠ The second pattern also matches `cairn-ui`, which
-genuinely is deployed by nothing — read the matches, do not count them.
+it**. The author of this paragraph then missed the `packages.cairn` claim BELOW,
+which also wraps, by grepping for it exactly this way. Normalise before sweeping,
+or read the file. ⚠ The second pattern's matches are not all stale — some name
+`cairn-ui` and the Go image, which genuinely are deployed by nothing. **Read the
+matches; do not count them.**
 
 🔴 **AND THE PIN IS TWO GUARDS, ONLY ONE OF WHOSE PREMISES DIED.** Neither Python
 image is deployed, so the Dockerfile↔flake agreement half stands on a contract
@@ -467,9 +466,14 @@ retiring it retires nothing here. But
 `test_both_implementations_resolve_the_deployment_contract_with_no_env` reads
 `cmd/cairn-server/main.go` — the **Go** pod — and pins its defaults against what a
 Deployment assumes, so that half is LIVE and is the only place that contract is
-ASSERTED. (It is *stated* in several: `:56`, `:591`, `:1280`, `flake.nix`,
-`server/Dockerfile`. Asserted-versus-stated is the guard's own distinction and
-dropping it widens the claim.) ⚠ An earlier draft of this paragraph said the
+ASSERTED. It is merely *stated* in several — this file's `Substitute your own
+names.` token path, `flake.nix`'s `serverPort`, and `server/Dockerfile`'s
+`EXPOSE`. ⚠ **The guard's own message does NOT draw that asserted/stated
+distinction — it says flatly "the only place the contract is written down", which
+is wider than what is true.** Narrow it there, or this paragraph and that
+assertion disagree. ⚠ **And the three line numbers this sentence used to cite had
+already drifted onto blank lines**, broken by an insertion in this very ladder:
+**cite quoted strings, never `:NN`, in a file nothing pins.** ⚠ An earlier draft of this paragraph said the
 guard rested on "no running pod" **at all**, and a later one pinned its lifetime
 to `packages.cairn` — the second survived a commit whose message said it had been
 dropped, because it was dropped from `AGENTS.md` only. That is the shape this repo
@@ -576,6 +580,18 @@ where the Python flake image has no `/etc` at all — needed because
 `internal/identity/jwks.go` fetches a JWKS over https and Go's `crypto/x509` has
 no roots otherwise. The same trade applies to its applets and it has not been
 re-argued here.
+
+🔴 **AND THE DEFERRAL DIRECTLY ABOVE HAS HAD ITS TRIGGER FIRE, UNNOTICED.** It
+reads *"If this image is ever actually deployed, revisit that trade **then**,
+with the threat model in front of you; do not read this as settled."* Per
+`AGENTS.md`, the Go image **is** the deployed pod — and the paragraph directly
+above records that it inherits the same applet set. **So the condition is met and
+nobody revisited.** The trade may well still be the right one; what is not
+defensible is that it now reads as deferred when it has in fact been decided by
+default. ⚠ This is what a condition-triggered deferral costs when nothing
+watches the condition: the sentence is honest, dated, correct when written, and
+silently became a decision. Re-argue it or record that it was accepted — do not
+leave it reading as open.
 
 🔴 **AND `/etc/ssl/certs` — NOT THE `SSL_CERT_FILE` THE IMAGE ALSO DECLARES — IS
 WHAT MAKES THOSE ROOTS REACHABLE.** `crypto/x509` walks its `certDirectories`
