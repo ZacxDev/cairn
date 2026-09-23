@@ -529,10 +529,15 @@ Named rather than omitted, because a green is a claim about what was asked.
   "the tree's server versus the artefact actually serving" is now a same-implementation
   comparison — exactly the question reason (3) said could not be asked.**
 
-  ⚠ **This does NOT reinstate the arm, and reasons (1) and (2) are untouched** — a gate
-  needing a live pod and a credential still cannot run in CI, and the cutover-diff still has
-  an owner. What died is the third leg, and the decision was taken on three. **Re-argue it on
-  two, or find a third; do not let a dead premise keep holding up a conclusion.** The handoff
+  ⚠ **This does NOT reinstate the arm. But only reason (1) is untouched** — a gate needing a
+  live pod and a credential still cannot run in CI. 🔴 **REASON (2) IS ALSO SPENT, AND AN
+  EARLIER DRAFT OF THIS RETRACTION SAID "(1) AND (2) ARE UNTOUCHED", WHICH OVER-PRESERVED
+  IT.** (2) names the owner as *"a cutover-time step, performed once, by the person doing the
+  cutover"* — **that cutover has happened**. The risk that is live now is not a one-off
+  pre-swap diff but continuous same-implementation drift between the tree's Go server and the
+  re-published Go image on every merge, which a step already in the past structurally cannot
+  own. **So the decision was taken on three legs and one survives.** Re-argue it on one, or
+  find new reasons; do not let dead premises keep holding up a conclusion. The handoff
   already carries this as an open defect (*"`tests/dualrun/` cannot see image drift,
   structurally"*), and this is the measurement that makes it live rather than theoretical.
 

@@ -415,10 +415,13 @@ jobs:
 
       # 🔴 THE GO POD IS BUILT HERE AND PUBLISHED BELOW, AND IT IS WHAT RUNS.
       # ⚠ This read "NOTHING DEPLOYS IT YET" and cited `flake.nix` as saying the
-      # Go image is deployed by nothing. BOTH halves were wrong by the time they
-      # were read: the cluster pulls `cairn-store-go`, and `flake.nix` never said
-      # that about the GO image — its "deployed by nothing" comments are about
-      # `cairn-ui`. A cross-reference is a claim, and this one was never opened.
+      # Go image is deployed by nothing. The first half was stale — the cluster
+      # pulls `cairn-store-go`. 🔴 THE SECOND HALF WAS TRUE, AND AN EARLIER DRAFT
+      # OF THIS SWEEP RETRACTED IT AS NEVER-TRUE: `flake.nix` DID say it, at the
+      # `server-image-go` block ("PUBLISHED IS NOT DEPLOYED — no manifest
+      # references it"), which that draft had not opened while editing the same
+      # file. Both are corrected now. Retracting a TRUE claim is the same defect
+      # as leaving a false one, pointed the other way.
       # `ci.yml` does still assert only that it BUILDS. What changes HERE is
       # publication, not deployment:
       # `cairn-store-go` gets the same immutable tags as the Python package so

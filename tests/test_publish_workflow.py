@@ -789,10 +789,18 @@ def test_the_whole_PYTHON_half_runs_before_the_first_GO_step(text: str) -> None:
         f"{names[first_go]!r} (step {first_go + 1}) runs before "
         f"{names[last_python]!r} (step {last_python + 1}).\n"
         "Every Python step — build, control, both pushes and the anonymous-pull "
-        "proof — must finish before the FIRST Go-image step. The Go image has "
-        "never been run by anything in this repository; a first execution in "
-        "front of the Python publish leaves the deployed pod unpublished when it "
-        "goes red, which is what the last seven runs of this workflow did."
+        "proof — must finish before the FIRST Go-image step.\n"
+        "⚠ THE ORIGINAL RATIONALE HAS INVERTED AND THE ORDERING IS NOT RE-ARGUED "
+        "HERE. It read: 'The Go image has never been run by anything in this "
+        "repository; a first execution in front of the Python publish leaves the "
+        "deployed pod unpublished when it goes red, which is what the last seven "
+        "runs of this workflow did.' Both legs are spent — the Go image IS the "
+        "deployed pod, so this ordering now publishes the DEPLOYED pod LAST and "
+        "most exposed to an earlier red step, which is the opposite of what the "
+        "rationale asked for. The ordering is left UNCHANGED deliberately: "
+        "reversing it is a CI behaviour change with its own blast radius, not a "
+        "docs edit, and the seven-failure history is still the reason a "
+        "first-execution step is not put first. Decide it, do not drift into it."
     )
 
 

@@ -76,16 +76,24 @@ over TWO stores. `tests/dualrun/` is TWO servers over ONE store. The two scripts
 method (per-scope render, then entry set, then each entry's own single-ref render) and answer
 different questions; neither substitutes for the other.
 
-🔴 **EVERY PROCEDURE BELOW IS WRITTEN AGAINST `server.py`, AND `server.py` IS NOT WHAT RUNS.**
-This line read *"which is what is deployed"*, and an operator who believed it ran the
-rotation and `exec` procedures below against the wrong artefact. The pod is
-`cairn-store-go`. **Before following anything below, check it against the Go server** — the
-HTTP contract is the same by construction (`tests/conformance/`, `tests/dualrun/`), but
-anything touching the *filesystem, process model or image* — `exec`ing a shell, naming an
-interpreter, expecting `python3` or `lib/` inside the container — is a claim about the
-PYTHON image and does not transfer. ⚠ Re-verifying each procedure against the deployed pod
-is NOT done; this notice is a warning, not a migration. See `AGENTS.md` → "TWO SERVERS ARE
-ALIVE", and `tests/dualrun/README.md` for what the byte-identity gate cannot see.
+🔴 **MOST PROCEDURES BELOW ARE WRITTEN AGAINST `server.py`, AND `server.py` IS NOT WHAT
+RUNS.** This line read *"Every procedure below is still about `server.py`, which is what is
+deployed"* — the second half was false and an operator who believed it ran procedures
+against the wrong artefact. The pod is `cairn-store-go`.
+
+⚠ **"EVERY" WOULD ALSO BE WRONG, AND AN EARLIER DRAFT OF THIS WARNING SAID IT.** The
+control-journal section below is written for the **Go** server explicitly (*"Only the Go
+server reads this"*) and its `kubectl exec … cairn-server -create-user` procedures are
+correct as written. A warning wider than the hazard tells a reader to distrust a correct
+procedure, which is the same defect as a false claim.
+
+**So: check each procedure, do not assume either way.** The HTTP contract transfers by
+construction (`tests/conformance/`, `tests/dualrun/`); anything touching the *filesystem,
+process model or image* — `exec`ing a shell, naming an interpreter, expecting `python3` or
+`lib/` inside the container — is a claim about the PYTHON image and does not. ⚠ Re-verifying
+each procedure against the deployed pod is NOT done; this notice is a warning, not a
+migration. See `AGENTS.md` → "TWO SERVERS ARE ALIVE", and `tests/dualrun/README.md` for what
+the byte-identity gate cannot see.
 
 ## Endpoints
 
@@ -546,12 +554,23 @@ two), and that set includes network **servers**, network **clients**, and
 notably **`ssl_client`**, in a pod that mounts a credential at
 `/run/secrets/subsystem-store/token`.
 
-🔴 **THAT SENTENCE USED TO END "— none of which the deployed image has", AND THE
-CUTOVER INVERTED IT.** The deployed pod is now `cairn-store-go`, which carries the
-same busybox `serverTools` set, so the applet surface beside the mounted
-credential is no longer hypothetical: **it is what runs.** The comparison did not
-merely go stale — it pointed the opposite way, which is the direction that reads
-as reassurance.
+⚠ **THAT SENTENCE USED TO END "— none of which the deployed image has", WHICH THE
+CUTOVER MADE FALSE**: the deployed pod is now `cairn-store-go` and it carries this
+applet set, so the surface beside the mounted credential is what RUNS rather than
+a hypothetical.
+
+🔴 **BUT DO NOT READ THAT AS THE CUTOVER WIDENING THE SURFACE — IT NARROWED IT, AND
+THAT IS MEASURED.** A first draft of this very paragraph said the comparison had
+"inverted … the direction that reads as reassurance", which asserted a risk
+increase nobody had measured. The measurement already existed, in
+`claudedocs/handoff-cairn-control-plane-archive.md` under the 2026-09-19 CLOSED
+block: `busybox --list` on **both** nix images is **402 applets, zero difference in
+either direction** — the Python image CI already published carried the identical
+set — while the image actually replaced (Debian-slim) had **11 setuid/setgid
+binaries** (`su`, `passwd`, `mount`, …) and a CPython interpreter, against **zero
+setuid and zero interpreters** on the Go one. **A narrowing on both axes.**
+⚠ Busybox stays load-bearing — seeding needs `tar`, revocation needs
+`sh -c 'kill -HUP 1'` — which is why a distroless variant was not pursued.
 
 🔴 **THIS PARAGRAPH DELIBERATELY DOES NOT SAY HOW MANY, AND THE ABSENCE IS THE
 RECORD. FOUR SUCCESSIVE DRAFTS GAVE A COUNT AND ALL FOUR WERE UNDERCOUNTS**, each
@@ -581,11 +600,20 @@ is recorded rather than fixed, deliberately** — trimming means
 busybox from source with no cache hit, and the applets are not reachable without
 execution the attacker would already need.
 
-🔴 **THIS PARAGRAPH USED TO DEFER ON "IF THIS IMAGE IS EVER ACTUALLY DEPLOYED,
-REVISIT THAT TRADE THEN" — AND THAT CONDITION HAS FIRED.** A busybox image IS the
-deployed pod. **The deferral is therefore spent, and it is now FILED rather than
-left reading as open.** It has not been re-argued here, because re-arguing it
-needs the threat model, not a docs edit.
+✅ **THIS PARAGRAPH USED TO DEFER ON "IF THIS IMAGE IS EVER ACTUALLY DEPLOYED,
+REVISIT THAT TRADE THEN". THE CONDITION FIRED, THE REVISIT HAPPENED, AND THE
+OPERATOR DECIDED — 2026-09-19, recorded in
+`claudedocs/handoff-cairn-control-plane-archive.md`.** The deferral is DISCHARGED,
+not open: both images measured at 402 applets, the replaced image carried 11
+setuid binaries and an interpreter, the Go one carries neither.
+**Do not re-run its probes.**
+
+⚠ **AND AN EARLIER DRAFT OF THIS SWEEP FILED IT AS OPEN RANKED WORK WITH A NEW
+CLOSING CONDITION, WHICH WOULD HAVE RE-OPENED A SETTLED DECISION AND SENT THE NEXT
+READER TO RE-DERIVE AN ANSWER THE ARCHIVE ALREADY HELD.** It also claimed to have
+"FILED" it while filing it nowhere. **Before recording a deferral as spent, search
+the archive for its discharge** — a closed block moved out of the live handoff is
+invisible to a sweep that only reads the tree's current prose.
 
 ⚠ **`packages.server-image-go` INHERITS THE BUSYBOX ROW AND ADDS ONE.** It
 carries the same `serverTools` plus `pkgs.cacert`, so it has an `/etc/ssl/certs`

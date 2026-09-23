@@ -640,8 +640,13 @@ class TestTheGoImageRunsUnderTheSameContract:
         """Two images with one `name` is a tag collision in whatever registry gets both,
         and `docker load` of the second silently replaces the first.
 
-        ⚠ AN INVARIANT GUARD. Nothing has ever published `server-image-go`; this pins
-        that the day something does, it does not publish over the pod that is deployed.
+        ⚠ AN INVARIANT GUARD — and ⚠ ITS STATED PREMISE IS DEAD. It read "Nothing has
+        ever published `server-image-go`; this pins that the day something does, it
+        does not publish over the pod that is deployed." `publish-image.yml` publishes
+        it, and `server-image-go` IS the deployed pod — so the collision this guards
+        against would now land on the Python image, not on the running one. The guard
+        is still worth its one line: a shared `name` is a collision whichever way it
+        points. The premise moved; the assertion did not need to.
         """
         py = flake_image_arg(flake, "name", "mkServerImage")
         go = flake_image_arg(flake, "name", GO_MAKER)

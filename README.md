@@ -109,7 +109,8 @@ supervising process.
 nix run   github:ZacxDev/cairn -- doctor       # the default client — the GO one — uninstalled
 nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client — no longer the default
-nix build github:ZacxDev/cairn#server-image    # the pod image, as a loadable tarball
+nix build github:ZacxDev/cairn#server-image    # the PYTHON pod image — built, published, NOT deployed
+nix build github:ZacxDev/cairn#server-image-go # the GO pod image — this is what the cluster runs
 nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — deployed by nothing
 ```
 
@@ -475,8 +476,8 @@ those claims have one home each and a correction belongs there.
 |---|---|
 | `cairn` | the Python client CLI, and the ORACLE the Go one is measured against |
 | `lib/` | the Python reader: cache resolution, recall rendering, scope/ref resolution, doctor |
-| `server/` | the pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` |
-| `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, not deployed |
+| `server/` | the ORACLE pod: `server.py`, `Dockerfile`, `seed.sh`, `verify-byte-identity.sh` — no longer what runs |
+| `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, and **the deployed pod** |
 | `cmd/cairn`, `internal/client` | the Go port of the CLIENT, and **the default** — diffed against the Python one by `tests/parity/`, which declares both its residuals and the rows that compare only the exit code |
 | `internal/report` | the ONE renderer, shared by the pod and the CLI |
 | `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — pages, sign-in, the share flow, gomponents, deployed by nothing |
@@ -487,7 +488,8 @@ those claims have one home each and a correction belongs there.
 ## How the agreement is measured, and why two of everything is alive
 
 `server/server.py` is the **oracle**; `cmd/cairn-server` is a stdlib-only Go port of
-it, deployed by nothing. Rewriting the server alone would have left two renderers in
+it, **and it is what the cluster runs** — this line read "deployed by nothing" until
+the cutover. Rewriting the server alone would have left two renderers in
 two languages that must agree byte-for-byte forever, with drift arriving as "a
 different order that reads as a stale cache" — no error, no missing entry. So both
 land on the same `internal/report`: one renderer, two consumers — the pod and the CLI.

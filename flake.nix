@@ -737,8 +737,12 @@
       # GO SERVER IMAGE AT ALL — `packages.cairn-server-go` is a bare binary package.
       # ⚠ IT IS NOW PUBLISHED: `.github/workflows/publish-image.yml` pushes this output
       # to the `cairn-store-go` ghcr package beside the Python pod's `cairn-store`,
-      # under the same `sha-<40-hex>` tag scheme. PUBLISHED IS NOT DEPLOYED — no
-      # manifest references it, and the cutover is a separate decision.
+      # under the same `sha-<40-hex>` tag scheme. 🔴 AND IT IS NOW DEPLOYED: the
+      # cluster pulls `cairn-store-go`. ⚠ This read "PUBLISHED IS NOT DEPLOYED — no
+      # manifest references it, and the cutover is a separate decision"; the cutover
+      # was taken and both halves went false. It is the site an earlier draft of the
+      # sweep MISSED while editing this very file — and then cited, from
+      # `publish-image.yml`, as proof `flake.nix` had never made the claim.
       #
       # 🔴 A THIRD BUILD, NOT A THIRD STATEMENT OF THE CONTRACT, AND THAT DISTINCTION
       # IS THE WHOLE DESIGN. `server/README.md` says "do not add a third way to produce
