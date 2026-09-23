@@ -27,9 +27,14 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 - `main` @ **`5775b98`** (#95 merged), clean. The DoD was **re-measured on `main` twelve commits
   after the session that first met it**, rather than carried forward: authz matrix, share flow
   with its replica-honesty notice, identity through both backends, `packages.default =
-  mkGoClient` (`flake.nix:916`), `go test ./...` **19 ok / 0 FAIL**, `pytest tests -q`
-  **2076 passed**. **ADDRESSED ⇒ the arc stays CLOSED**, now on evidence from this tree rather
-  than from `7d7c9ea`'s.
+  mkGoClient` (in `flake.nix`'s `packages` block — deliberately **not** a line number: that
+  binding read 916, then 927, then 929 inside one session as siblings edited the file), and
+  `go test ./...` **19 ok / 0 FAIL** over 20 packages, one with no test files. ⚠ **The `pytest`
+  total is deliberately NOT quoted** — it was 2076 here and 2084 one commit later with **zero**
+  `def test_` added between them, so its selection is unstated and the figure is
+  unreproducible. This doc's own settled ruling is that such a count gets DELETED rather than
+  refreshed. Run it and read **0 failed**. **ADDRESSED ⇒ the arc stays CLOSED**, now on
+  evidence from this tree rather than from `7d7c9ea`'s.
 - 🔴 **RANK 9 WAS RE-BROUGHT-UP, BECAUSE THE INSTANCE WAITING FOR THE HUMAN WAS TWELVE COMMITS
   STALE — AND IT WAS STALE IN EXACTLY THE SURFACE UNDER TEST.** The old `cairn-ui` (pid 3942268)
   was `…-cairn-ui-**a88f60b**`, predating **#91 `fc79070`** *"give the browser surface the client
@@ -42,20 +47,31 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   🔴 **`cairn-control-plane-9` IS STILL HELD ON PURPOSE.** The tell that the new code is live is
   its own startup line, which the old binary does not print: *"no `$CAIRN_TRUSTED_PROXIES`, and
   this is a loopback bind … the sign-in limiter will key on the local peer, which is ONE bucket."*
+  ⚠ **`main` has since moved past `1838b82`, and the running binary is STILL behaviourally
+  current — measured, because this entry's own rule demands it.** `git diff 1838b82 origin/main`
+  over `internal/ui cmd/cairn-ui internal/identity internal/control internal/report
+  internal/store` reaches exactly one file, `cmd/cairn-ui/main.go`, and its whole delta is a
+  **doc comment** (a "no image wraps this binary" retraction). No executable line moved, so the
+  human's click still measures `main`. 🔴 **Re-run that diff before handing the URL over again —
+  "docs-only files" is the wrong test; read the hunks.**
 - ✅ **THE SHARE FLOW IS READY AND UNCONSUMED**, verified read-only so the human's click is still
   theirs to take: `GET /` anonymous **401** · `/sign-in` **200** with a `token` password field ·
   `POST /sign-in` +`Origin` **303** → `/` · signed-in `GET /` **200** showing `alpha-notes` and
   `beta-notes` and **not** `rubble-heap`/`hollow-set` · `/share?scope=…` **200** carrying the
   csrf field, the verb checkboxes and **`blake@example.invalid (user)` in the candidate select**.
   Journal is **10 lines with no `granted` event**.
-- ✅ **`leakscan` ON THIS BASE CLONE NOW EXITS 0, AND THE PREVIOUS ENTRY'S ACQUITTAL OF
-  `result` WAS WRONG.** That entry said the gcroot symlinks are *"NOT the exit-2 cause —
-  measured, not assumed"*. Measured again here, they were the **only** cause named:
-  `IsADirectoryError … '/home/zach/workspace/cairn/result'` at `tests/leakscan.py:466`. They
-  are symlinks to `/nix/store` **directories**, which is the same `[Errno 21]` the agent-worktree
-  entry describes — one class, two instances. Building this session's binaries with
-  `--out-link` into a scratchpad instead, and removing the two stale symlinks, took the base
-  clone to **rc 0** with the tree unchanged.
+- 🔴 **THE PREVIOUS ENTRY'S ACQUITTAL OF `result` WAS WRONG — AND NO `leakscan` VERDICT ON THE
+  BASE CLONE IS WORTH RECORDING HERE, BECAUSE IT IS UNREPRODUCIBLE BY CONSTRUCTION.** That entry
+  said the gcroot symlinks are *"NOT the exit-2 cause — measured, not assumed"*. Measured again,
+  they were the **only** cause named: `IsADirectoryError … '/home/zach/workspace/cairn/result'`,
+  raised by the scanner's own `open()` over the `--others` enumeration. They are symlinks to
+  `/nix/store` **directories** — the same `[Errno 21]` the agent-worktree entry describes, one
+  class and two instances. Building with `--out-link` into a scratchpad and removing the two
+  stale symlinks clears *that* instance. ⚠ **But an rc for this clone dates instantly**: every
+  file-modifying agent gets a worktree under `.claude/worktrees/` by standing rule, so the clone
+  is unvouchable whenever one is running, and a ✅ written here was rc 2 within the hour and rc 0
+  again after. **Scan a fresh worktree of `origin/main` for a verdict you can quote.** The
+  durable half is the class, filed under `Defects (batched)`.
 - 🔴 **AND IT WAS NEVER COSMETIC: THE SAME SYMLINK PUT EIGHT OF THE REPO'S OWN TESTS RED**, which
   no entry recorded. `tests/test_leakscan_covers_every_tracked_file.py` (4) and
   `tests/test_no_scrubbed_identifiers.py` (4) walk the same enumeration. Discriminated rather
@@ -122,12 +138,9 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
    build of `1838b82` (pid 2728234), the stale `a88f60b` instance having been replaced; see
    `State now`. Everything a `curl` can reach is green and the write half is **unconsumed**.
    🔴 **AND `curl` STRUCTURALLY CANNOT FINISH THIS CHAIN, WHICH SHARPENS WHY THE ITEM IS A
-   HUMAN'S.** The session cookie is `__Host-cairn-session; Secure`, and curl will not send a
-   `Secure` cookie over `http://` — so a correct sign-in (303, session opened in the log)
-   is followed by a **401** on the next `GET /`, which reads exactly like a broken sign-in.
-   A real browser treats `http://127.0.0.1` as a secure context and sends it. Forcing the
-   header by hand (`-H "Cookie: __Host-cairn-session=…"`) is the control that separates the
-   two and returns **200**. ⚠ Do not "fix" the cookie to make `curl` happy.
+   HUMAN'S** — the `Secure` cookie it will not send over `http://`, the forced-header control
+   that separates instrument from server, and the warning not to "fix" the cookie to suit
+   curl, are under `Gotchas` and in `How to verify`. Not restated here.
    forcing: user — the operator directed this item and reserved the browser step to a human.
 10. **DECIDE THE PUBLISH ORDERING — `tests/test_publish_workflow.py`'s `last_python < first_go`.**
     Its rationale has INVERTED: it read *"the Go image has never been run … leaves the deployed
@@ -152,18 +165,25 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   closed entry belong under `Gotchas`, which appends; the entry itself belongs in the archive.
   ⚠ **#74's ✅ entry was DROPPED by this update rather than retyped** — its lessons are already
   under `Gotchas` in their own bullets, which is the condition for dropping one.
-- 🟡 **FIVE OF ELEVEN JOURNAL EVENT KINDS HAVE NO WRITER — DOWN FROM SIX, AND THE ONE THAT BIT
-  IS THE ONE THAT CLOSED.** ✅ **`member-set` now has `-set-member`, landed by #86 (`d6fe1c3`),
-  and the entry that called it the blocker is retired by measurement**: this session built the
-  rank-9 world with it and watched `blake@example.invalid (user)` appear in the share flow's
-  candidate select, which is the state the hand-append existed to fake. Still writer-less:
-  `member-removed`, `scope-renamed`, `scope-moved`, `credential-revoked`, and — with the browser
-  surface as their only writer — `granted`/`grant-revoked`. ⚠ Hand-appending is the exact shape
-  that let a 64-character secret into the journal (rank 5): an operator told to hand-write a
-  record is an operator guessing at a schema, and `-issue-credential`'s own output still says
-  *"append a `credential-revoked` record BY HAND — nothing in this repository writes that event
-  yet"*. **Closing condition:** a writer for `credential-revoked`, or a written line saying
-  hand-append is the intended interface and naming where its schema is documented.
+- 🟡 **FOUR OF ELEVEN JOURNAL EVENT KINDS HAVE NO WRITER, AND THE SELECTION RULE IS STATED SO
+  THE NUMBER IS REPRODUCIBLE.** 🔴 **The previous two spellings of this entry were both wrong in
+  the same way — they listed more names than the headline counted, because each round
+  DECREMENTED the figure instead of recounting.** The rule: a kind has a writer iff non-test Go
+  constructs it. Re-derive with
+  `find . -name '*.go' -not -name '*_test.go' -not -path './.claude/*' -print0 | xargs -0 grep -ohE 'Kind:\s*(control\.)?Event[A-Za-z]+'`
+  against `control.AllEventKinds` (11). **Constructed (7):** `user-created`, `project-created`,
+  `scope-created`, `member-set`, `credential-issued`, `granted`, `grant-revoked`.
+  **Writer-less (4):** `member-removed`, `scope-renamed`, `scope-moved`, `credential-revoked`.
+  ⚠ `granted`/`grant-revoked` are constructed only by the browser surface; `tokenfile/source.go`
+  also builds an `EventGranted` but as an in-memory projection, never a journal append — so
+  *"the surface is their only writer"* stands. ✅ **`member-set` — the one that bit — closed by
+  #86 (`d6fe1c3`), retired by measurement**: the rank-9 world was built with `-set-member` and
+  `blake@example.invalid (user)` appeared in the share flow's candidate select, which is the
+  state the hand-append existed to fake. ⚠ Hand-appending is the shape that let a 64-character
+  secret into the journal (rank 5), and `-issue-credential`'s own output still says *"append a
+  `credential-revoked` record BY HAND — nothing in this repository writes that event yet"*.
+  **Closing condition:** a writer for `credential-revoked`, or a written line saying hand-append
+  is the intended interface and naming where its schema is documented.
 - 🔴 **`leakscan` EXITS 2 ON ANY UNTRACKED *DIRECTORY-LIKE* PATH IN ITS OWN ENUMERATION — THE
   CLASS IS WIDER THAN THE AGENT WORKTREE IT WAS FILED FOR, AND THIS ARC'S OWN BUILD ARTEFACTS
   ARE IN IT.** `git ls-files --others` yields the path and the scanner reads it:
@@ -786,52 +806,15 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   caller.** The mutation battery said so first, by REFUSING TO VOUCH: *"the unedited copy is not
   green, so every mutant below would score KILLED for a reason that has nothing to do with its
   guard."* A non-compiling tree would otherwise have reported a perfect score.
-- 🔴 **A SWEEP FOR THE PHRASINGS YOU HAVE SEEN IS A SPELLED CHECK, AND IT MISSED A CLAIM IN THE
-  COMMIT WHOSE WHOLE SUBJECT WAS THAT CLAIM.** #78 corrected "which pod is deployed" at three
-  sites, found by grepping three wordings (`deployed by nothing`, `not deployed by anything`,
-  `DEPLOYED BY NOTHING`). A **fourth** claim — `AGENTS.md:399`, *"`server/Dockerfile` is what is
-  deployed today"* — used none of them and survived; #81 had to finish the job. The right
-  question is **"what else in this file asserts this?"**, never "where else does this phrase
-  appear". A grep over wordings you already know cannot find the one you do not.
-- 🔴 **TWO FALSE ZEROS ON ONE CLAIM, BOTH READING AS CONFIRMATION, IN UNDER A MINUTE.**
-  Verifying that the handoff skill never mentions `leakscan`: (a) `grep -lc` combines two
-  conflicting flags and prints **nothing at all** — not an error, just silence; (b)
-  `find ~/.claude/skills/handoff -type f` returns **0 files**, because home-manager makes those
-  entries **symlinks** and `-type f` does not follow them, while `grep` on the same path reads
-  them fine. Both produced an empty result that looked like the answer. **`find -L` is the fix**,
-  and a positive control on the same invocation is what exposed both.
-- 🔴 **`gh pr checks` REPORTS THE LATEST RUN PER CHECK *NAME*, NOT PER COMMIT** — so after a
-  rebase or a base move it can show a job's verdict from an older head. Read
-  `gh api repos/<o>/<r>/commits/<sha>/check-runs` for the head you are actually merging.
-  ⚠ And read BOTH surfaces: the same head answered `state=pending statuses=0` on the commit-
-  status API while all six check-runs were `success` — this repo posts check-runs and no
-  statuses, so a zero there is an ABSENCE, not a red.
-- 🔴 **A MUTANT THAT DOES NOT COMPILE DIES AT THE BUILD AND PROVES NOTHING.** Replacing the
-  ETag's digest with a constant left `hex` and `sha256Sum` unused, so `go test` reported
-  `[build failed]` and the guard never ran. Rebuilt so the mutant still USES both symbols while
-  being content-independent, it reached the guard and died with the guard's own message.
-  **Mutate the narrowest expression that can be wrong**, and check the mutant compiles before
-  reading its verdict.
-- ⚠ **`mergeStateStatus: UNKNOWN` IS THE API COMPUTING LAZILY, NOT A PROBLEM WITH THE PR.**
-  Seen immediately after a sibling PR merged and moved the base; it resolved to `CLEAN` on a
-  re-read seconds later. Do not treat it as a conflict signal, and do not merge through it.
-- **THE QUEUE WAS STALE IN TWO INDEPENDENT PLACES, BOTH ABOUT WORK ALREADY FINISHED**, and each
-  cost real time before the work could start: rank 2 named a defect
-  `tests/test_narrowing_echo_sites.py` had already closed, and rank 6 asked to close entries an
-  earlier session had already moved to the archive. Neither was careless — it is what happens
-  when sessions that cannot see each other write the same list. **Before acting on a ranked
-  item, check whether it is already done**; the entry is a claim like any other.
-- 🔴 **THE DOC RACE WAS MEASURED HAPPENING, NOT JUST REMEMBERED — TWO PRs, `MERGEABLE` AND
-  `CLEAN` AGAINST `main`, THAT CONFLICTED WITH *EACH OTHER*.** #95 and #96 were opened two
-  minutes apart, both editing only this file, both with the full six-check set green.
-  `git merge-tree --write-tree` exited **0** for each against `main` and **1** between them;
-  twenty minutes later, with #95 merged, #96's own rc against `main` had flipped 0 → 1.
-  🔴 **GitHub's `MERGEABLE` compares each branch against a `main` where the other has not
-  landed, so it can never see this.** The tie-break that picked the merge order was not
-  seniority: **#96's `State now` asserted facts a sibling session's work had just falsified**
-  (*"pid 3942268 … still true"*, *"leakscan exits 2 … still true"*), while #95 deliberately
-  omitted `State now` — so #95 could land unchanged and #96 needed re-deriving anyway.
-  **Prefer the PR whose claims are still true, not the one that was opened first.**
+- 🔴 **WHICH DOC PR TO MERGE FIRST: PREFER THE ONE WHOSE CLAIMS ARE STILL TRUE, NOT THE ONE
+  OPENED FIRST.** The MERGEABLE-but-conflicting mechanism is already recorded twice above — this
+  is only the tie-break, which was missing. Measured on #95 vs #96: #96's `State now` asserted
+  facts a sibling session's work had just falsified (*"pid 3942268 … still true"*, *"leakscan
+  exits 2 … still true"*), while #95 deliberately omitted `State now`. #95 could therefore land
+  unchanged, and #96 needed re-deriving whichever order was chosen. **Seniority is the wrong
+  key; staleness is the right one.** 🔴 **AND A THIRD PR CAN OPEN WHILE YOU DECIDE** — #97
+  arrived four minutes after #95 merged, clean against `main` and conflicting with the branch
+  written to replace #96. Run the open-PR sweep **again** immediately before `gh pr create`.
 - 🔴 **AN INSTRUMENT THE DOC TOLD ME TO USE CANNOT REACH THE THING IT WAS POINTED AT, AND THE
   FAILURE LOOKS EXACTLY LIKE THE DEFECT.** The share flow's session cookie is
   `__Host-cairn-session; Secure`; **curl will not send a `Secure` cookie over `http://`**, so a
