@@ -126,12 +126,17 @@ MUTATIONS: tuple[Mutation, ...] = (
         old="info.mtime = st.st_mtime  # float",
         new="info.mtime = int(st.st_mtime)  # float",
         kind="tar",
-        expect=frozenset({"tar"}),
+        expect=frozenset({"tar", "headers"}),
         only_target_arm=None,
         why="the snapshot's member mtimes lose their FRACTION — the usual move for "
             "reproducibility, and the one that makes two entries written in the same "
             "second tie, so an extracted copy orders its index differently with the same "
-            "bytes and no error. `X-Store-Entries` and the member NAMES are unchanged.",
+            "bytes and no error. `X-Store-Entries` and the member NAMES are unchanged. "
+            "⚠ `headers` JOINED THE DECLARED SET WHEN THE SNAPSHOT GREW AN `ETag`, AND "
+            "THAT IS THE VALIDATOR EARNING ITS KEEP RATHER THAN A WIDENED LICENCE: the "
+            "tag is a digest of the UNCOMPRESSED tar, so any mutation of the archive is "
+            "now visible in a HEADER as well as in the bytes. Before the ETag this "
+            "mutant was caught by the `tar` arm alone.",
     ),
     Mutation(
         name="tar-members-reordered",
@@ -139,11 +144,14 @@ MUTATIONS: tuple[Mutation, ...] = (
         old="for entry, arcname in selected:",
         new="for entry, arcname in reversed(selected):",
         kind="tar",
-        expect=frozenset({"tar"}),
+        expect=frozenset({"tar", "headers"}),
         only_target_arm=None,
         why="the same members in the opposite order. Every name, every byte and every "
             "mtime is present, so an extracted-TREE comparison keyed on member name "
-            "normalises it away; only the archive's own byte order shows it.",
+            "normalises it away; the archive's own byte order shows it — and, since the "
+            "snapshot grew an `ETag` over exactly those bytes, so does a header. Same "
+            "note as `tar-mtime-truncated`: `headers` is in the declared set because the "
+            "validator makes it so, not because the claim was loosened.",
     ),
     Mutation(
         name="audit-identity-field-dropped",

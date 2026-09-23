@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 27,
+    "kind": "text_lines",
+    "sha256": "f099cf35a5c24a0c5bd4172103c075f02db744764488257c53853ffe38d6667d",
+    "text_lines": [
+      "bad request: invalid scope",
+      ""
+    ]
+  },
+  "case": "snapshot-conditional-bad-scope",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "27"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

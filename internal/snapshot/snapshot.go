@@ -3,6 +3,8 @@ package snapshot
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -267,10 +269,80 @@ type Result struct {
 	// Entries is the SERVER's own count of what it put in, which the client compares
 	// against its extracted count and refuses a mismatch.
 	Entries int
+	// ETag is the validator for this archive — see ETagFor. Empty when the snapshot
+	// could not be built.
+	ETag string
 	// Unreadable is non-empty when the store was NOT fully read. A partial snapshot
 	// served as 200 is worse than no snapshot, so any entry here makes the whole
 	// response a 503 carrying the same store-unreachable state a report uses.
 	Unreadable []string
+}
+
+// ETagFor is the snapshot validator: sha256 of the UNCOMPRESSED tar, as a strong
+// entity-tag.
+//
+// 🔴 UNCOMPRESSED, AND THAT IS THE WHOLE DESIGN RATHER THAN AN IMPLEMENTATION
+// DETAIL. Gzip byte-identity between this server and the oracle is UNATTAINABLE —
+// measured, for two independent reasons, which is why `tests/dualrun/` compares the
+// EXTRACTED tar and `wire.py` drops `Content-Length` on this route. A validator over
+// the compressed bytes would therefore differ per implementation: two pods serving one
+// store would hand a client two different tags for the same content, every failover
+// would re-download, and the cross-implementation comparison this repository is built
+// on would have to grow a licence to differ for the one header whose entire job is to
+// be equal. The uncompressed tar is compared byte-for-byte across both servers today,
+// so a digest of it is equal by construction.
+//
+// 🔴 IT IS A DIGEST OF THE CONTENT, NEVER OF A COUNTER. The obvious alternative —
+// key it on the caller's principal plus the authorization epoch — was MEASURED wrong
+// before it was written: `internal/write` makes no `control.` call, so appending a
+// bullet moves no epoch, and that key would answer 304 to a client missing new
+// content. Silent staleness, on the sync path, which is the one place this repository's
+// whole freshness discipline says an answer may never be.
+//
+// What it covers, because the tar already holds exactly what the caller may see: the
+// entry BYTES, their mtimes to sub-second precision, the member NAMES, the seed stamp,
+// the caller's VISIBLE SET (a narrowed principal's archive holds fewer members) and the
+// `?scope=` filter. There is no second definition to drift out of step with the first.
+//
+// ⚠ IT LEAKS NOTHING THE BODY DOES NOT. The digest is a pure function of bytes the
+// caller is about to receive in full, so a narrow principal learns nothing about a
+// scope it cannot see — which is NOT true of `X-Store-Snapshot`, a store-wide signal
+// this repository documents as a known cross-tenant leak and that this tag does not
+// widen.
+func ETagFor(uncompressedTar []byte) string {
+	return fmt.Sprintf("%q", "sha256:"+hex.EncodeToString(sha256Sum(uncompressedTar)))
+}
+
+func sha256Sum(data []byte) []byte {
+	sum := sha256.Sum256(data)
+	return sum[:]
+}
+
+// ETagMatches is the `If-None-Match` evaluation, and it is deliberately the SAME
+// three-line rule on both implementations.
+//
+// RFC 9110 §13.1.2: a comma-separated list of entity-tags, or `*` meaning "any current
+// representation". `raw` is the header value iff it appeared EXACTLY ONCE — a duplicated
+// header is read as absent by `soleHeader`, which makes a smuggled second value a full
+// 200 rather than a 304.
+//
+// ⚠ NO WEAK-COMPARISON UNWRAPPING, AND THE NARROWING IS DELIBERATE. §13.1.2 specifies
+// the weak comparison function, under which `W/"x"` matches `"x"`; this server never
+// emits a weak tag, so the only way a `W/`-prefixed value can arrive is from a cache
+// that rewrote ours. Such a value simply does not match here and the caller is answered
+// 200 — an extra transfer, never a stale cache, which is the only direction this route
+// is allowed to be wrong in.
+func ETagMatches(raw, etag string) bool {
+	if raw == "" {
+		return false
+	}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "*" || item == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // Build assembles the archive.
@@ -394,9 +466,15 @@ func Build(storeRoot, scopeFilter string, visible store.ScopeSet) (Result, error
 		return Result{Unreadable: unreadable}, nil
 	}
 
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := newPaxWriter(gz)
+	// 🔴 THE TAR IS ASSEMBLED UNCOMPRESSED FIRST, AND IT IS THE VALIDATOR THAT
+	// REQUIRES IT rather than a preference for two buffers. `ETagFor` digests these
+	// bytes; streaming straight into the gzip writer would leave nothing to digest but
+	// the compressed stream, which is the one thing the two implementations are
+	// measured UNABLE to agree about. The price is one extra copy of an archive that
+	// was already held in memory twice (tar and gzip), on a route whose members are
+	// tiny and whose whole point is that the CLIENT stops paying for it.
+	var tarBuf bytes.Buffer
+	tw := newPaxWriter(&tarBuf)
 	count := 0
 
 	stampPath := filepath.Join(storeRoot, SeedStampName)
@@ -414,10 +492,16 @@ func Build(storeRoot, scopeFilter string, visible store.ScopeSet) (Result, error
 	if err := tw.Close(); err != nil {
 		return Result{}, err
 	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(tarBuf.Bytes()); err != nil {
+		return Result{}, err
+	}
 	if err := gz.Close(); err != nil {
 		return Result{}, err
 	}
-	return Result{Archive: buf.Bytes(), Entries: count}, nil
+	return Result{Archive: buf.Bytes(), Entries: count, ETag: ETagFor(tarBuf.Bytes())}, nil
 }
 
 func addFile(tw *paxWriter, path, arcname string) error {

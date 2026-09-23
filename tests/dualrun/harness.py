@@ -219,6 +219,16 @@ class Target:
     #: OWN, so a disagreement about the revision shows up as a different answer to the real
     #: PUT rather than being papered over by one side's value.
     derive_if_match: bool = False
+    #: Derive `If-None-Match` from THIS server's own current snapshot validator before
+    #: issuing.
+    #:
+    #: 🔴 THE SAME REASONING AS `derive_if_match`, ONE ROUTE OVER. Copying the oracle's
+    #: tag to the Go server would test that Go honours a tag it never minted; asking each
+    #: side for its own means a disagreement about the VALUE shows up as a different
+    #: answer to the conditional — a 304 on one and a 200 on the other — which is a
+    #: difference this harness reports rather than one it papers over. The probe is an
+    #: ordinary unconditional GET, which changes nothing.
+    derive_if_none_match: bool = False
 
 
 TOKENS = {WIDE: WIDE_TOKEN, NARROW: NARROW_TOKEN, LEGACY: LEGACY_TOKEN}
@@ -405,6 +415,32 @@ def store_targets(scopes: list[str], narrow_scopes: tuple[str, ...]) -> list[Tar
         Target("snapshot-scope-unsafe", "a `?scope=` value that reaches the filesystem: "
                "refused, because the caller is authenticated and may be told",
                "GET", "/api/v1/snapshot?scope=%2e%2e", WIDE, arm="refusal"),
+        # 🔴 THE CONDITIONAL SYNC, OVER A STORE NOBODY WROTE A FIXTURE FOR. The `ETag` on
+        # `snapshot-wide` above is already compared header-for-header, which is the claim
+        # that the two servers compute ONE validator; these four are the claim that they
+        # then make the same DECISION with it. The derived row is the production flow:
+        # each server is asked for its OWN tag and handed it back, so a disagreement about
+        # the tag becomes a different answer here rather than being hidden by one side's
+        # value.
+        Target("snapshot-conditional-derived", "the real conditional sync: this server's "
+               "own validator, presented back to it", "GET", "/api/v1/snapshot", WIDE,
+               arm="tar", derive_if_none_match=True),
+        Target("snapshot-conditional-star", "RFC 9110 13.1.2's `*` — the one validator "
+               "whose answer does not depend on the store's bytes, so the 304's whole "
+               "header set is compared without deriving anything",
+               "GET", "/api/v1/snapshot", WIDE, headers={"If-None-Match": "*"}, arm="tar"),
+        Target("snapshot-conditional-narrow-star", "…and through a NARROWED allowlist, "
+               "where the freshness block is store-wide and the validator is not",
+               "GET", "/api/v1/snapshot", NARROW, headers={"If-None-Match": "*"},
+               arm="tar"),
+        Target("snapshot-conditional-stale", "a validator that matches nothing: both "
+               "servers must answer the whole archive, with the CURRENT tag on it",
+               "GET", "/api/v1/snapshot", WIDE, compare=CMP_TAR, arm="tar",
+               headers={"If-None-Match": '"sha256:' + "0" * 64 + '"'}),
+        Target("snapshot-conditional-bad-scope", "🔴 A CONDITIONAL IS NOT A WAY PAST A "
+               "REFUSAL, on either server: `*` always matches and this is still the 400",
+               "GET", "/api/v1/snapshot?scope=%2e%2e", WIDE,
+               headers={"If-None-Match": "*"}, arm="refusal"),
         Target("recall-scope-absent", "a scope that never existed, with the known-scope "
                "list the report prints", "GET", f"/api/v1/recall/{absent}", WIDE,
                arm="refusal"),
@@ -761,6 +797,24 @@ def issue(port: int, target: Target) -> Answer:
             return Answer(presp.status, presp.reason,
                           tuple(sorted((k, v) for k, v in presp.getheaders())), b"")
         headers["If-Match"] = etag
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+    if target.derive_if_none_match:
+        # An ordinary unconditional GET, asked of THIS server, purely to learn the tag it
+        # would mint. It changes nothing on disk.
+        conn.close()
+        probe = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+        probe.request(target.method, target.path, headers=headers)
+        presp = probe.getresponse()
+        presp.read()
+        etag = presp.getheader("ETag") or ""
+        probe.close()
+        if not etag:
+            # No validator to derive: return the probe's own answer so the two servers are
+            # still COMPARED rather than one of them silently skipping the target — which
+            # is exactly how "this server emits no ETag at all" would hide here.
+            return Answer(presp.status, presp.reason,
+                          tuple(sorted((k, v) for k, v in presp.getheaders())), b"")
+        headers["If-None-Match"] = etag
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
     conn.request(target.method, target.path, body=target.body, headers=headers)
     resp = conn.getresponse()

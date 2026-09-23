@@ -82,7 +82,7 @@
       ".seed-stamp"
     ]
   },
-  "case": "snapshot-narrow-principal",
+  "case": "snapshot-conditional-other-principals-etag",
   "headers": [
     [
       "Cache-Control",

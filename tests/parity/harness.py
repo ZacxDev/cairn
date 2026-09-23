@@ -70,6 +70,14 @@ from testlib import env_pin  # noqa: E402
 #: two clocks.
 W_SYNC_STAMP = ".sync-stamp"
 
+#: The conditional-sync validator, excluded from that comparison FOR THE SAME REASON and no
+#: other: it is written by the client at the moment of the sync, so its mtime is a clock reading
+#: rather than anything the archive carried. 🔴 ITS CONTENT IS *NOT* EXCLUDED — the two clients
+#: store the same bytes because they were handed the same `ETag`, and a disagreement there would
+#: show up as a differing FILE SET or as a parity failure on the next conditional sync, neither of
+#: which this exclusion touches.
+W_SYNC_ETAG = ".sync-etag"
+
 #: The host identity both clients must print. 🔴 SET EXPLICITLY, FOR TWO REASONS: the rendered
 #: report names the machine it read, so an unset label would make the output carry this host's
 #: real name into a PUBLIC repository's test log; and `CAIRN_HOST` is the one input that makes
@@ -225,8 +233,22 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
         # --- sync -------------------------------------------------------------
         Case("sync-live", "the LIVE banner: host, count and the pod's own freshness stamp",
              ["sync"], wipe_cache=True),
-        Case("sync-again", "a second sync over an existing cache, which exercises the "
-             "retire-and-rename swap rather than the create path", ["sync"]),
+        # 🔴 THIS ROW'S SUBJECT CHANGED WHEN THE SYNC BECAME CONDITIONAL, AND THE `why` IS
+        # REWRITTEN RATHER THAN LEFT TO READ AS COVERAGE IT NO LONGER PROVIDES. It used to
+        # say "exercises the retire-and-rename swap rather than the create path"; a second
+        # sync over an UNCHANGED store now presents the validator the first one stored and
+        # is answered `304`, so no archive arrives and no swap happens — on either client,
+        # which is what this row still measures byte for byte. The swap's RETIRE branch
+        # (rename the live cache aside, rename staging into place) is covered where it can
+        # be made deterministic instead: `internal/client`'s
+        # `TestTheValidatorIsInstalledWithTheContentItDescribes` installs into one cache
+        # twice, and `tests/test_cairn_cli.py`'s
+        # `test_a_second_sync_after_a_CHANGE_downloads_again` drives the oracle through it
+        # end to end.
+        Case("sync-again", "🔴 THE CONDITIONAL SECOND SYNC: both clients hold the validator "
+             "their first sync stored, both present it, and both must render the pod's "
+             "`304` as `live — already current` rather than as an outage or an empty store",
+             ["sync"]),
         Case("sync-scope-is-accepted-and-IGNORED",
              "🔴 `--scope` must NOT narrow the shared cache. Both clients accept the flag and "
              "pass `scope=None`; a client that threaded it through would fetch a one-scope "
@@ -1088,13 +1110,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"REFUSING: --only {args.only!r} selected no case", file=sys.stderr)
                 return 2
             for case in selected:
-                if case.wipe_cache:
-                    shutil.rmtree(cache, ignore_errors=True)
-                    for leftover in work.glob("cache.*"):
-                        if leftover.is_dir():
-                            shutil.rmtree(leftover, ignore_errors=True)
-                        else:
-                            leftover.unlink()
                 env = dict(base_env)
                 for key, value in case.env.items():
                     env[key] = (value
@@ -1130,6 +1145,25 @@ def main(argv: list[str] | None = None) -> int:
                     if case.no_cache_flag:
                         for root in (home / ".cache").glob("subsystem-store*"):
                             shutil.rmtree(root, ignore_errors=True)
+                    # 🔴 THE SHARED ROOT IS WIPED PER CLIENT TOO, AND IT IS THE SAME BUG THE
+                    # COMMENT ABOVE DESCRIBES, ONE ROOT OVER. This wipe used to sit OUTSIDE
+                    # both `once()` calls, so the ORACLE ran against an empty cache and the Go
+                    # client ran against the one the oracle had just installed. It was
+                    # harmless only because a sync was UNCONDITIONAL — `install_snapshot`
+                    # replaced the root wholesale, so the starting state could not reach the
+                    # output. Conditional sync removed that accident: the second client now
+                    # presents the validator the first one stored and is answered `304`, so
+                    # `sync-live` compared a client that DOWNLOADED against a client that was
+                    # told nothing changed, and reported a difference that was an artifact of
+                    # the harness rather than of either client. Per-client is the structural
+                    # fix, and it is what `wipe_cache` already meant.
+                    if case.wipe_cache:
+                        shutil.rmtree(cache, ignore_errors=True)
+                        for leftover in work.glob("cache.*"):
+                            if leftover.is_dir():
+                                shutil.rmtree(leftover, ignore_errors=True)
+                            else:
+                                leftover.unlink()
                     restore_store(pristine, store)
                     restore_store(second_pristine, second_store)
                     if case.presync:
@@ -1251,7 +1285,7 @@ def main(argv: list[str] | None = None) -> int:
                     return {
                         str(f.relative_to(root)): f.stat().st_mtime_ns
                         for f in sorted(root.rglob("*"))
-                        if f.is_file() and f.name != W_SYNC_STAMP
+                        if f.is_file() and f.name not in (W_SYNC_STAMP, W_SYNC_ETAG)
                     }
 
                 def as_double(ns: int) -> float:

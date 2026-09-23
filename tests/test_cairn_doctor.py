@@ -988,7 +988,10 @@ class TestTheCliWiring:
         headers = Message()
         headers["x-store-entries"] = "1"
         headers["x-store-snapshot"] = "seeded=X newest=Y entry-files=4"
-        monkeypatch.setattr(cli, "fetch_snapshot", lambda *a, **k: (body, headers))
+        # ⚠ THE THIRD ELEMENT IS `not_modified`, AND IT IS FALSE HERE BY
+        # CONSTRUCTION: `probe_store` sends no validator, so the pod has nothing
+        # to match and this shim must not pretend otherwise.
+        monkeypatch.setattr(cli, "fetch_snapshot", lambda *a, **k: (body, headers, False))
 
         facts = cli.probe_store("https://example.invalid", "tok", timeout=5)
         assert installed == [], "doctor installed a snapshot"
@@ -1015,7 +1018,9 @@ class TestTheCliWiring:
             tar.addfile(info, io.BytesIO(data))
         headers = Message()
         headers["x-store-snapshot"] = "entry-files=9"
-        monkeypatch.setattr(cli, "fetch_snapshot", lambda *a, **k: (buf.getvalue(), headers))
+        monkeypatch.setattr(
+            cli, "fetch_snapshot", lambda *a, **k: (buf.getvalue(), headers, False)
+        )
 
         facts = cli.probe_store("https://example.invalid", "tok", timeout=5)
         assert facts.reached is True

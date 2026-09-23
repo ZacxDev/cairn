@@ -120,9 +120,45 @@ func ResolveState(cache string, noSync bool, scope string, timeout int, instance
 
 	cfg, err := LoadConfigFor(aliasOrDefault(instance))
 	if err == nil {
-		body, h, fetchErr := FetchSnapshot(cfg, scope, timeout)
+		// 🔴 THE VALIDATOR IS OFFERED ONLY WHEN THERE IS A CACHE TO VALIDATE. A `304`
+		// answered to a host holding nothing would be a confirmation of an absence, and
+		// this client would have no content and no error — the one outcome the
+		// four-state design exists to make impossible. `StoredETag` is written into the
+		// cache by the install that produced it, so it cannot outlive its tree; the
+		// `StampExists` guard is the belt to that braces, covering a cache root that was
+		// half-deleted by hand.
+		validator := ""
+		if StampExists(cache) {
+			validator = StoredETag(cache)
+		}
+		body, h, notModified, fetchErr := FetchSnapshot(cfg, scope, validator, timeout)
 		err = fetchErr
-		if fetchErr == nil {
+		switch {
+		case fetchErr != nil:
+			// fall through to the degrade-to-cache ladder below
+		case notModified:
+			// 🔴 A 304 IS A FOURTH THING AND IT SAYS SO. The cache is not merely being
+			// served — it has just been CONFIRMED CURRENT against the pod, which is a
+			// stronger claim than `⚠ cached` (the pod could not be reached) and a
+			// different one from `live — fetched … just now` (bytes arrived). Both are
+			// `live` because every consumer of that name is asking "did we reach the
+			// store", and the answer is yes; the DETAIL is where what happened lives,
+			// exactly as it already distinguishes `--no-sync given` from `SERVED FROM
+			// CACHE` within `cached`. A fifth state name would have to be handled at
+			// each of the call sites that compare against `StateLive`, and the one
+			// missed would report a successful sync as a failure.
+			//
+			// ⚠ NOTHING IS WRITTEN. The cache is not touched, so `synced=` still dates
+			// the last DOWNLOAD rather than this confirmation — which makes a later
+			// offline banner say the cache is older than it has been proven to be.
+			// That is the safe direction (this repository's rule is that freshness may
+			// never be OVER-claimed) and it is stated rather than fixed, because
+			// re-stamping means writing into a live cache that a concurrent sync may be
+			// renaming out from under it.
+			return State{StateLive, fmt.Sprintf(
+				"already current at %s — not modified, snapshot %s",
+				cfg.URL, headerOr(h, "X-Store-Snapshot", "UNSTAMPED")), 0}, nil
+		default:
 			count, installErr := InstallSnapshot(body, cache, h)
 			if installErr == nil {
 				return State{StateLive, fmt.Sprintf(

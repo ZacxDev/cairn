@@ -7,15 +7,15 @@
       ""
     ]
   },
-  "case": "snapshot-authorized-head",
+  "case": "snapshot-conditional-star",
   "headers": [
     [
       "Cache-Control",
       "no-store"
     ],
     [
-      "Content-Type",
-      "application/gzip"
+      "Connection",
+      "close"
     ],
     [
       "ETag",
@@ -24,10 +24,6 @@
     [
       "Server",
       "subsystem-store"
-    ],
-    [
-      "X-Store-Entries",
-      "5"
     ],
     [
       "X-Store-Exit",
@@ -39,9 +35,9 @@
     ],
     [
       "X-Store-Status",
-      "snapshot"
+      "not-modified"
     ]
   ],
-  "reason": "OK",
-  "status": 200
+  "reason": "Not Modified",
+  "status": 304
 }

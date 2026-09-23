@@ -55,6 +55,7 @@ from collections.abc import Iterator, Sequence
 
 import ast
 import errno
+import gzip
 import hashlib
 import http.client
 import importlib.util
@@ -2409,6 +2410,217 @@ class TestSnapshotRoute:
         assert whole == 200, (whole, whole_body)
         assert scoped == 200, (scoped, scoped_body)
         assert tree_hash(store) == before
+
+
+class TestTheConditionalSnapshot:
+    """`GET /api/v1/snapshot` with `If-None-Match` — a sync that stops shipping a
+    tar when nothing changed.
+
+    🔴 THE VALIDATOR IS A DIGEST OF THE UNCOMPRESSED TAR, AND EVERY CLAIM HERE IS
+    ABOUT THAT CHOICE. The key first proposed for this route — the caller's
+    principal plus the authorization epoch — was measured wrong before it was
+    written: nothing on the write path moves the epoch, so an appended bullet
+    would have left it unchanged and a conditional sync would have been told
+    `304` while the client was missing new content.
+    """
+
+    @staticmethod
+    def _tag(base: str, path: str = "/api/v1/snapshot", token: str = GOOD_TOKEN) -> str:
+        code, headers, _body = fetch(f"{base}{path}", token=token)
+        assert code == 200, code
+        tag = headers["ETag"]
+        assert re.fullmatch(r'"sha256:[0-9a-f]{64}"', tag), tag
+        return tag
+
+    def test_the_ETag_is_sha256_of_the_UNCOMPRESSED_tar(self, store: Path):
+        """🔴 NOT OF THE BYTES ON THE WIRE, and the negative half is what says
+        so: gzip identity between the two implementations is unattainable, so a
+        validator over the compressed stream would differ per pod. The expected
+        value is computed here rather than read back from the server."""
+        with running(store) as (base, _):
+            code, headers, body = fetch(f"{base}/api/v1/snapshot", token=GOOD_TOKEN)
+        assert code == 200
+        raw = gzip.decompress(body)
+        assert headers["ETag"] == f'"sha256:{hashlib.sha256(raw).hexdigest()}"'
+        assert headers["ETag"] != f'"sha256:{hashlib.sha256(body).hexdigest()}"', (
+            "the validator digests the bytes on the wire, which two implementations "
+            "cannot agree about"
+        )
+        assert len(raw) != len(body), (
+            "the fixture did not compress, so this test cannot tell the two digests apart"
+        )
+
+    def test_a_matching_validator_is_304_with_no_body_and_no_framing(self, store: Path):
+        with running(store) as (base, _):
+            tag = self._tag(base)
+            code, headers, body = fetch(
+                f"{base}/api/v1/snapshot", token=GOOD_TOKEN,
+                extra_headers={"If-None-Match": tag},
+            )
+        assert code == 304
+        assert body == b""
+        assert headers["ETag"] == tag
+        assert headers["X-Store-Status"] == "not-modified"
+        assert headers["X-Store-Exit"] == "0"
+        assert headers["X-Store-Snapshot"].startswith("seeded=")
+        # 🔴 THE NAMED TRAP. `X-Store-Entries` counts what went IN THE BODY, and
+        # the client refuses a disagreement between it and its own extracted
+        # count. There is no body, so there is nothing for it to describe.
+        assert headers.get("X-Store-Entries") is None
+        # RFC 9110 §15.4.5: no content, and therefore neither framing header —
+        # Go's `net/http` strips both for this status, so the oracle must too or
+        # the two responses differ in a field the corpus compares.
+        assert headers.get("Content-Length") is None
+        assert headers.get("Content-Type") is None
+
+    def test_a_stale_or_weak_validator_gets_the_whole_archive(self, store: Path):
+        with running(store) as (base, _):
+            tag = self._tag(base)
+            for spelling in ('"sha256:' + "0" * 64 + '"', f"W/{tag}", tag.strip('"')):
+                code, headers, body = fetch(
+                    f"{base}/api/v1/snapshot", token=GOOD_TOKEN,
+                    extra_headers={"If-None-Match": spelling},
+                )
+                assert code == 200, (spelling, code)
+                assert headers["ETag"] == tag, spelling
+                assert body, spelling
+
+    def test_star_matches_any_current_representation(self, store: Path):
+        with running(store) as (base, _):
+            code, _h, _b = fetch(
+                f"{base}/api/v1/snapshot", token=GOOD_TOKEN,
+                extra_headers={"If-None-Match": "*"},
+            )
+        assert code == 304
+
+    def test_a_LIST_matches_on_any_member(self, store: Path):
+        with running(store) as (base, _):
+            tag = self._tag(base)
+            code, _h, _b = fetch(
+                f"{base}/api/v1/snapshot", token=GOOD_TOKEN,
+                extra_headers={"If-None-Match": f'"sha256:{"0" * 64}", {tag}'},
+            )
+        assert code == 304
+
+    def test_a_conditional_is_NOT_a_way_past_a_refusal(self, store: Path):
+        """🔴 `*` is the one validator that always matches, so if the conditional
+        were read before the refusals every one of these would become a
+        reassuring 304 over a request the server declined to answer.
+
+        ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE: a server that never read
+        `If-None-Match` could not be walked past a refusal by one. It pins the
+        ORDERING this handler chose against the obvious future "optimisation" of
+        hoisting the cheap check to the top."""
+        with running(store) as (base, _):
+            for target in ("/api/v1/snapshot?scope=a.b", "/api/v1/snapshot?scope=%2e%2e"):
+                code, _h, _b = fetch(
+                    f"{base}{target}", token=GOOD_TOKEN,
+                    extra_headers={"If-None-Match": "*"},
+                )
+                assert code == 400, (target, code)
+            code, _h, _b = fetch(
+                f"{base}/api/v1/snapshot", token=None,
+                extra_headers={"If-None-Match": "*"},
+            )
+        assert code == 401
+
+    def test_an_APPEND_moves_the_validator(self, store: Path):
+        """🔴 THE LOAD-BEARING CONTROL, AND THE EXACT FAILURE THE REJECTED KEY
+        WOULD HAVE SHIPPED. The mtime is restored afterwards, so this is a claim
+        about CONTENT rather than about the clock."""
+        entry = store / SCOPE / "thing-alpha.md"
+        with running(store) as (base, _):
+            before = self._tag(base)
+            stat = entry.stat()
+            entry.write_text(entry.read_text() + "- 2000-01-06: a new bullet.\n")
+            os.utime(entry, (stat.st_atime, stat.st_mtime))
+            after = self._tag(base)
+            assert before != after, "an append left the validator unchanged"
+            code, _h, _b = fetch(
+                f"{base}/api/v1/snapshot", token=GOOD_TOKEN,
+                extra_headers={"If-None-Match": before},
+            )
+        assert code == 200, "the stale validator was answered 304, i.e. silent staleness"
+
+    def test_two_visible_sets_do_not_share_a_validator(self, tmp_path: Path):
+        """🔴 BESIDE THE LEAK IT MUST NOT WIDEN. `X-Store-Snapshot` is store-wide
+        by design and the two principals share it; the validator digests the
+        archive THIS caller receives, so it must not be shared — otherwise a
+        narrowed caller could present a wide caller's tag and be told its own,
+        smaller cache is current."""
+        root = _build_store(tmp_path / "s", {ALLOW_SCOPE: "a", DENY_SCOPE: "b"})
+        with running(root, tokens=(ZACH, DANA)) as (base, _):
+            wide = self._tag(base, token=ZACH_TOKEN)
+            narrow = self._tag(base, token=DANA_TOKEN)
+            assert wide != narrow
+            code, headers, _b = fetch(
+                f"{base}/api/v1/snapshot", token=DANA_TOKEN,
+                extra_headers={"If-None-Match": wide},
+            )
+            assert code == 200, "one principal's validator matched another's archive"
+            assert headers["ETag"] == narrow
+            # …and the documented store-wide leak is unchanged by any of it.
+            wide_headers = fetch(f"{base}/api/v1/snapshot", token=ZACH_TOKEN)[1]
+            narrow_headers = fetch(f"{base}/api/v1/snapshot", token=DANA_TOKEN)[1]
+        assert wide_headers["X-Store-Snapshot"] == narrow_headers["X-Store-Snapshot"]
+
+    def test_a_scope_FILTER_moves_the_validator_and_a_refusal_does_not(self, tmp_path: Path):
+        """A `?scope=` that narrows the archive gets its own tag; a REFUSED scope
+        and an ABSENT one get the SAME tag, because they get the same archive —
+        so the validator does not become a fifth enumeration channel."""
+        root = _build_store(tmp_path / "s", {ALLOW_SCOPE: "a", DENY_SCOPE: "b"})
+        # ⚠ A principal that can see BOTH scopes, deliberately: with ZACH's
+        # one-scope allowlist the unfiltered archive and the `?scope=<that one>`
+        # archive are the same bytes, so the inequality below would be a claim
+        # about the fixture rather than about the filter. Measured — the first
+        # spelling of this test used ZACH and compared a tag to itself.
+        wide = _scoped_record(SECOND_TOKEN, "wide", ALLOW_SCOPE, DENY_SCOPE)
+        with running(root, tokens=(wide,)) as (base, _):
+            whole = self._tag(base, token=SECOND_TOKEN)
+            filtered = self._tag(
+                base, f"/api/v1/snapshot?scope={ALLOW_SCOPE}", SECOND_TOKEN)
+        # The refused-vs-absent half needs a principal that CANNOT see the scope
+        # it asks for, which is ZACH against `DENY_SCOPE`.
+        with running(root, tokens=(ZACH,)) as (base, _):
+            refused = self._tag(base, f"/api/v1/snapshot?scope={DENY_SCOPE}", ZACH_TOKEN)
+            absent = self._tag(base, "/api/v1/snapshot?scope=nothing-here", ZACH_TOKEN)
+        assert whole != filtered
+        assert refused == absent, (
+            "a refused scope and an absent one produced different validators, which "
+            "makes the tag an enumeration channel"
+        )
+
+    def test_a_DUPLICATED_If_None_Match_is_read_as_absent(self, store: Path):
+        """`sole_header`'s rule, because a bare `.get()` takes the FIRST value
+        and a working smuggle was built out of exactly that. The consequence
+        here is a full 200: the safe direction."""
+        with running(store) as (base, _):
+            tag = self._tag(base)
+            conn = http.client.HTTPConnection(*base.split("//", 1)[1].split(":"))
+            conn.putrequest("GET", "/api/v1/snapshot", skip_accept_encoding=True)
+            conn.putheader("Authorization", f"Bearer {GOOD_TOKEN}")
+            conn.putheader("CF-Connecting-IP", CLIENT_IP)
+            conn.putheader("If-None-Match", tag)
+            conn.putheader("If-None-Match", tag)
+            conn.endheaders()
+            resp = conn.getresponse()
+            resp.read()
+            conn.close()
+        assert resp.status == 200
+
+    def test_the_304_is_AUDITED_under_its_own_status(self, store: Path):
+        """A conditional request that went unrecorded would make "the client
+        stopped syncing" and "the client is syncing and being told 304"
+        indistinguishable in the pod log."""
+        with running(store) as (base, audit):
+            tag = self._tag(base)
+            await_audit(audit, 1)
+            fetch(f"{base}/api/v1/snapshot", token=GOOD_TOKEN,
+                  extra_headers={"If-None-Match": tag})
+            await_audit(audit, 2)
+            lines = list(audit)
+        assert "result=200 status=snapshot" in lines[0], lines[0]
+        assert "result=304 status=not-modified" in lines[1], lines[1]
 
 
 class TestSearchOverHTTP:
@@ -19225,7 +19437,12 @@ _AUDITS_AFTER_RESPONDING = frozenset({"_backstop"})
 # home and are not part of the delta. 🔴 EVERY REQUEST THAT CAN NOW BE ANSWERED
 # IS STILL AUDITED — the point of this census is that a route added without a
 # record fails here rather than going quiet in production.
-_AUDIT_BEFORE_RESPOND_PAIRS = 42
+# 42 -> 43: the ONE new pair is `_snapshot`'s `304`/`not-modified`, which is a
+# new ANSWER on an existing route and therefore a new record. A conditional
+# request that went unaudited would make "the client stopped syncing" and "the
+# client is syncing and getting 304s" indistinguishable in the pod log, which is
+# the operational question this route's whole freshness story turns on.
+_AUDIT_BEFORE_RESPOND_PAIRS = 43
 
 
 def _respond_names() -> "frozenset[str]":

@@ -21,6 +21,62 @@
         "gid": 0,
         "gname": "",
         "mode": "0o644",
+        "mtime": "946684800.25",
+        "name": "alpha-notes/gadget-one.md",
+        "sha256": "309f24c8216cd5683a0573d716c6600520b1bc61281fd51fb1791632ada1ab49",
+        "size": 310,
+        "text_lines": [
+          "---",
+          "service: gadget-one",
+          "scope: alpha-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "A synthetic entry that exists so the suite has something to recall.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - invoke it for restarts",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the readiness probe reports ready 40s before it is.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946684800.75",
+        "name": "alpha-notes/gadget-two.md",
+        "sha256": "4aaf25e31b6ab6c44f950f8e60c83e3ee55ba35a134ef277f0c9728afbf5b8a5",
+        "size": 312,
+        "text_lines": [
+          "---",
+          "service: gadget-two",
+          "scope: alpha-notes",
+          "sensitivity: internal",
+          "---",
+          "",
+          "## What it is",
+          "A second synthetic entry, newer than gadget-one by 500ms and no more.",
+          "",
+          "## Pointers",
+          "- ops skill `manage-gadget` - the same skill, deliberately",
+          "",
+          "## Nuance / work-history",
+          "- 2000-01-02: the sidecar drops its lease during a rollout.",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
         "mtime": "946771200.25",
         "name": "beta-notes/spare-six.md",
         "sha256": "e3cedc8844f84a314ad260fa2296f7aec01cabb445947a8862562c354983b5b6",
@@ -74,15 +130,33 @@
         ],
         "uid": 0,
         "uname": ""
+      },
+      {
+        "gid": 0,
+        "gname": "",
+        "mode": "0o644",
+        "mtime": "946857600.125",
+        "name": "rubble-heap/broken-four.md",
+        "sha256": "db990bc7e89344971b325c29931dea494fcaa30259914f2a4ee49c0ebd32ead0",
+        "size": 63,
+        "text_lines": [
+          "no front matter here, so the loader collects this as MALFORMED",
+          ""
+        ],
+        "uid": 0,
+        "uname": ""
       }
     ],
     "mtime_order": [
+      "rubble-heap/broken-four.md",
       "beta-notes/widget-three.md",
       "beta-notes/spare-six.md",
+      "alpha-notes/gadget-two.md",
+      "alpha-notes/gadget-one.md",
       ".seed-stamp"
     ]
   },
-  "case": "snapshot-narrow-principal",
+  "case": "snapshot-conditional-stale-etag",
   "headers": [
     [
       "Cache-Control",
@@ -94,7 +168,7 @@
     ],
     [
       "ETag",
-      "\"sha256:c0081c8cab0bf71568d08ac332b00fc7db3d6541be6b1c43cec6956beb1c8c7b\""
+      "\"sha256:13db39a86d3e6edf465cae907fa1ab9b4c9da7f82227ee0e7c5297a1890b406f\""
     ],
     [
       "Server",
@@ -102,7 +176,7 @@
     ],
     [
       "X-Store-Entries",
-      "2"
+      "5"
     ],
     [
       "X-Store-Exit",

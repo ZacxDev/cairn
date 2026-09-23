@@ -275,6 +275,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import gzip
 import hashlib
 import hmac
 import io
@@ -1996,6 +1997,64 @@ def scope_revision(
 SEED_STAMP_NAME = ".seed-stamp"
 
 
+def snapshot_etag(uncompressed_tar: bytes) -> str:
+    """The snapshot validator: sha256 of the UNCOMPRESSED tar, as a strong ETag.
+
+    🔴 UNCOMPRESSED, AND THAT IS THE WHOLE DESIGN RATHER THAN AN IMPLEMENTATION
+    DETAIL. Gzip byte-identity between this server and the Go port is
+    UNATTAINABLE — measured, for two independent reasons, which is why
+    `tests/dualrun/` compares the EXTRACTED tar and `wire.py` drops
+    `Content-Length` on this route. A validator over the compressed bytes would
+    differ per implementation: two pods serving one store would hand a client
+    two different tags for the same content, every failover would re-download,
+    and the cross-implementation comparison this repository is built on would
+    have to grow a licence to differ for the one header whose entire job is to
+    be equal. The uncompressed tar is compared byte-for-byte across both servers
+    today, so a digest of it is equal by construction.
+
+    🔴 IT IS A DIGEST OF THE CONTENT, NEVER OF A COUNTER. The obvious
+    alternative — key it on the caller's principal plus the authorization epoch
+    — was MEASURED wrong before it was written: the write path makes no
+    authorization call, so appending a bullet moves no epoch, and that key would
+    answer 304 to a client MISSING NEW CONTENT. Silent staleness, on the sync
+    path, which is the one place this repository's whole freshness discipline
+    says an answer may never be.
+
+    What it covers, because the tar already holds exactly what the caller may
+    see: the entry BYTES, their mtimes to sub-second precision, the member
+    NAMES, the seed stamp, the caller's VISIBLE SET (a narrowed principal's
+    archive holds fewer members) and the `?scope=` filter. There is no second
+    definition to drift out of step with the first.
+
+    ⚠ IT LEAKS NOTHING THE BODY DOES NOT. The digest is a pure function of bytes
+    the caller is about to receive in full, so a narrow principal learns nothing
+    about a scope it cannot see — which is NOT true of `X-Store-Snapshot`, a
+    store-wide signal this repository documents as a known cross-tenant leak and
+    that this tag does not widen.
+    """
+    return f'"sha256:{hashlib.sha256(uncompressed_tar).hexdigest()}"'
+
+
+def etag_matches(raw: str | None, etag: str) -> bool:
+    """`If-None-Match` evaluation — the SAME three-line rule on both servers.
+
+    RFC 9110 §13.1.2: a comma-separated list of entity-tags, or `*` meaning "any
+    current representation". `raw` is the header value iff it appeared EXACTLY
+    ONCE (`sole_header`), so a duplicated header is read as absent and a
+    smuggled second value gets a full 200 rather than a 304.
+
+    ⚠ NO WEAK-COMPARISON UNWRAPPING, AND THE NARROWING IS DELIBERATE. §13.1.2
+    specifies the weak comparison function, under which `W/"x"` matches `"x"`;
+    this server never emits a weak tag, so the only way a `W/`-prefixed value
+    can arrive is from a cache that rewrote ours. Such a value does not match
+    here and the caller is answered 200 — an extra transfer, never a stale
+    cache, which is the only direction this route is allowed to be wrong in.
+    """
+    if not raw:
+        return False
+    return any(item.strip() in ("*", etag) for item in raw.split(","))
+
+
 # =============================================================================
 # 🔴 THE WRITE PRIMITIVES (phase 3, criteria 4-6). The store is NOT RE-DERIVABLE
 # — it records gotchas, retracted theories and measurements that were true at a
@@ -3237,8 +3296,18 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
             # walks twice.
             self.close_connection = True
         self.send_response(code)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+        # 🔴 A 304 DESCRIBES A BODY IT DOES NOT SEND, SO IT CARRIES NEITHER
+        # FRAMING HEADER. RFC 9110 §15.4.5 forbids the content, and a
+        # `Content-Length` naming the 200's length with no bytes behind it is a
+        # framing lie an HTTP/1.1 peer would read as the start of the next
+        # response. Go's `net/http` strips both for this status by itself
+        # (`suppressedHeaders304`), and the two servers' headers are compared
+        # name by name — so this branch is what makes the oracle agree, and it
+        # is spelled here rather than in `_snapshot` because the rule is about
+        # the STATUS, not about the route that happens to use it today.
+        if code != 304:
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         if self.close_connection:
             # Setting the flag alone closes the socket but tells the PEER
@@ -4310,17 +4379,14 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
         buf = io.BytesIO()
         count = 0
         try:
-            # 🔴 GZIPPED, because PAX is expensive per member and these members
-            # are tiny. MEASURED: 305 entries totalling 62,821 bytes of markdown
-            # produced a 634,880-byte uncompressed tar — **10.1x the payload** —
-            # since PAX spends ~2 KB of headers on a ~200-byte entry. The whole
-            # tar is held in memory here and again on the client, and a timer
-            # re-transfers the entire store every tick, so the multiplier is the
-            # thing that matters, not the absolute size. The client opens with
-            # mode="r", which auto-detects, so this needs no client change.
-            with tarfile.open(
-                fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT
-            ) as tar:
+            # 🔴 THE TAR IS ASSEMBLED UNCOMPRESSED FIRST, AND IT IS THE VALIDATOR
+            # THAT REQUIRES IT rather than a preference for two buffers.
+            # `snapshot_etag` digests THESE bytes; writing straight through
+            # `mode="w:gz"` would leave nothing to digest but the compressed
+            # stream, which is the one thing the two implementations are
+            # measured UNABLE to agree about. The price is one extra copy of an
+            # archive already held in memory twice.
+            with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as tar:
                 stamp = root / SEED_STAMP_NAME
                 if stamp.is_file() and not stamp.is_symlink():
                     with stamp.open("rb") as fh:
@@ -4329,6 +4395,28 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
                     with entry.open("rb") as fh:
                         tar.addfile(_member(entry, arcname), fh)
                     count += 1
+            tar_bytes = buf.getvalue()
+            etag = snapshot_etag(tar_bytes)
+            # 🔴 GZIPPED, because PAX is expensive per member and these members
+            # are tiny. MEASURED: 305 entries totalling 62,821 bytes of markdown
+            # produced a 634,880-byte uncompressed tar — **10.1x the payload** —
+            # since PAX spends ~2 KB of headers on a ~200-byte entry. The whole
+            # tar is held in memory here and again on the client, and a timer
+            # re-transfers the entire store every tick, so the multiplier is the
+            # thing that matters, not the absolute size. The client opens with
+            # mode="r", which auto-detects, so this needs no client change.
+            #
+            # ⚠ `filename=""` AND `compresslevel=9` ARE `tarfile`'s OWN
+            # `mode="w:gz"` SETTINGS, SPELLED. `gzopen` builds exactly this
+            # `GzipFile`, so splitting the two steps apart changes what is
+            # digested and NOT what goes on the wire — and an FNAME field
+            # smuggled in from a filename would have been a new byte in a body
+            # the conformance corpus records.
+            compressed = io.BytesIO()
+            with gzip.GzipFile(
+                filename="", mode="wb", compresslevel=9, fileobj=compressed
+            ) as gz:
+                gz.write(tar_bytes)
         except OSError as exc:
             self._audit(urlsplit(self.path).path, 503, "store-unreachable")
             self._respond(
@@ -4339,15 +4427,75 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
             return
 
         fresh_header, _prose = snapshot_freshness(self.store_root)
+        # 🔴 THE CONDITIONAL IS EVALUATED **AFTER** EVERY REFUSAL AND NEVER
+        # BEFORE ONE. The bad-`?scope=` 400 above, the unreadable-store 503 and
+        # the partial-snapshot 503 all run first, so an `If-None-Match` cannot
+        # become a way past them: a conditional request against a store this
+        # server could not read is still the 503 it would have been, not a
+        # reassuring "nothing changed".
+        #
+        # ⚠ THE ARCHIVE IS ALREADY BUILT BY THE TIME WE GET HERE, AND SAYING SO
+        # IS THE POINT: the validator is a digest of the tar, so the server
+        # still walks the store and assembles every member to compute it. What a
+        # 304 saves is the client's DOWNLOAD and its EXTRACTION — the tar is
+        # what a timer re-transfers every tick and re-unpacks into a staging
+        # tree. It saves this server no work at all, and a reader who assumed
+        # otherwise would be sizing a pod against a number this route does not
+        # deliver.
+        if etag_matches(sole_header(self.headers, "If-None-Match"), etag):
+            self._audit(urlsplit(self.path).path, 304, "not-modified")
+            # 🔴 WHAT A 304 CARRIES, DECIDED RATHER THAN INHERITED. RFC 9110
+            # §15.4.5 says to send the header fields a 200 would have sent where
+            # they still apply, so each of the four is a separate judgement:
+            #
+            #   ETag             YES — it is the validator, and a 304 without one
+            #                    leaves the caller unable to revalidate again.
+            #   X-Store-Snapshot YES — it dates the COPY this pod serves and is
+            #                    true of this response whether or not bytes went
+            #                    with it. It is also independent of the tag: a
+            #                    re-seed with identical content moves this and
+            #                    not the ETag.
+            #   X-Store-Status   YES, as its OWN name. `not-modified` is a fourth
+            #                    state beside `snapshot`, `bad-request` and
+            #                    `store-unreachable`, because every outcome on
+            #                    this route says which it is; a 304 spelled
+            #                    `snapshot` would claim an archive it did not send.
+            #   X-Store-Entries  🔴 NO, AND THIS IS THE TRAP. It is the server's
+            #                    count of what it put IN THE BODY, and the client
+            #                    refuses a disagreement between it and its own
+            #                    extracted count. On a 304 there is no body and
+            #                    nothing was extracted, so the only thing a client
+            #                    could compare it against is a cache this response
+            #                    never described. A count describing a body you
+            #                    did not send is worse than no count.
+            #
+            # `X-Store-Exit` rides along as `0` for the same reason it does on
+            # the 200: it is the exit code a reader should end with, and a
+            # confirmed-current cache is a successful read.
+            self._respond(
+                304,
+                b"",
+                headers={
+                    "X-Store-Status": "not-modified",
+                    "X-Store-Exit": "0",
+                    "X-Store-Snapshot": fresh_header,
+                    "ETag": etag,
+                },
+            )
+            return
         self._audit(urlsplit(self.path).path, 200, "snapshot")
         self._respond(
             200,
-            buf.getvalue(),
+            compressed.getvalue(),
             content_type="application/gzip",
             headers={
                 "X-Store-Status": "snapshot",
                 "X-Store-Exit": "0",
                 "X-Store-Snapshot": fresh_header,
+                # 🔴 THE VALIDATOR, AND IT IS A DIGEST OF THE UNCOMPRESSED TAR —
+                # see `snapshot_etag` for why it may not be a digest of the
+                # bytes on the wire.
+                "ETag": etag,
                 # The SERVER's count of what it put in. The client compares its
                 # own extracted count against this and refuses a mismatch —
                 # `scripts/cairn::install_snapshot`. (An earlier version of this

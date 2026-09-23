@@ -41,7 +41,66 @@ const (
 	// would reintroduce the very race the unique names removed. Anything older cannot be
 	// live — the whole operation takes well under a second.
 	OrphanGraceSeconds = 3600
+
+	// SyncETagFile holds the validator for the archive this cache was built from, so
+	// the next sync can ask "still this?" instead of re-downloading it.
+	//
+	// 🔴 ITS OWN FILE, BESIDE `.sync-stamp` RATHER THAN A LINE INSIDE IT, AND THE
+	// REASON IS THE READER. Every non-blank line of `.sync-stamp` is RENDERED, as
+	// `  stamp: <line>`, in the header of every report both clients print — so an
+	// `etag=` field there would put a 78-character digest on every recall, search and
+	// validate a human or an agent ever reads, for a value neither of them can act on.
+	// The two files cannot disagree: they are written into the same staging directory
+	// and installed by the same atomic swap, so a cache either has both or has neither.
+	//
+	// ⚠ AND ITS ABSENCE IS NOT AN ERROR. A cache written by an older client, or by a
+	// pod that sends no `ETag`, simply has no validator: the next sync sends no
+	// `If-None-Match` and is answered the full 200 it always was.
+	SyncETagFile = ".sync-etag"
+
+	// maxETagBytes bounds what this client will store or re-send. An entity-tag this
+	// long is already pathological; the cap is here so a hostile server cannot make the
+	// client write an unbounded file or emit an unbounded request header.
+	maxETagBytes = 128
 )
+
+// StorableETag is `value` if it is safe to write to disk and send back, else "".
+//
+// 🔴 THE VALIDATOR COMES FROM THE SERVER, WHICH IS THE PARTY THIS CLIENT ALREADY DOES
+// NOT FULLY TRUST — the same threat model as the link, traversal, duplicate and size
+// guards a few lines down. The rule is the RFC 9110 `etagc` character set plus the
+// quotes: every byte printable ASCII and none of them a space. That is exactly what
+// makes the value round-trip as ONE line of a file and as ONE header, so a server
+// cannot use it to inject a second header or a second stamp field.
+//
+// ⚠ IT IS A FILTER, NOT A REFUSAL. An unusable tag means "this cache has no validator",
+// never "this response is corrupt": the content arrived fine and the only cost is that
+// the next sync cannot be conditional. Refusing here would let a malformed header
+// break a sync that otherwise worked.
+func StorableETag(value string) string {
+	if value == "" || len(value) > maxETagBytes {
+		return ""
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x21 || value[i] > 0x7e {
+			return ""
+		}
+	}
+	return value
+}
+
+// StoredETag is the validator recorded beside `cache`, or "" for "there is none".
+//
+// Read through `StorableETag` as well as written through it: a cache file edited by
+// hand, or left behind by a future format, must not be able to put an arbitrary byte
+// sequence into an outgoing request header.
+func StoredETag(cache string) string {
+	data, err := os.ReadFile(filepath.Join(cache, SyncETagFile))
+	if err != nil {
+		return ""
+	}
+	return StorableETag(strings.TrimRight(string(data), "\n"))
+}
 
 // safeMemberName is true when `name` stays inside the extraction root.
 //
@@ -358,6 +417,17 @@ func InstallSnapshot(body []byte, cache string, headers http.Header) (int, error
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(staging, SyncStamp), []byte(stamp), 0o644); err != nil {
 		return 0, err
+	}
+	// 🔴 WRITTEN INTO THE STAGING TREE, SO IT MOVES WITH THE SWAP. A validator written
+	// into the LIVE cache afterwards could survive a failed install and describe a tree
+	// that was never put there — which is the direction that answers 304 for content
+	// this host does not hold. Here it is installed by the same rename as the content it
+	// describes, or not at all.
+	if validator := StorableETag(headers.Get("ETag")); validator != "" {
+		if err := os.WriteFile(filepath.Join(staging, SyncETagFile),
+			[]byte(validator+"\n"), 0o644); err != nil {
+			return 0, err
+		}
 	}
 
 	if err := swapIntoPlace(staging, cache); err != nil {

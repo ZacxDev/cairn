@@ -1831,3 +1831,132 @@ class TestTheDigestFooterPrescribesFlagsTheClientMustHave:
             f"the client did not build a focus window, so the pick fell back:\n{line}"
         )
         assert "most-recent fallback" not in line, line
+
+
+class TestTheConditionalSync:
+    """`sync` offers the validator it stored, and a `304` is a FOURTH thing.
+
+    🔴 THE STATE VOCABULARY IS THE POINT. `scope-empty`, `cached` and
+    `store-unreachable, no cache` are kept apart by this client's whole design;
+    "reached the pod, nothing changed" is a new situation and it has to read as
+    itself rather than borrowing one of theirs. It stays inside the `live` state
+    because every consumer of that name is asking "did we reach the store" — the
+    DETAIL is where what happened lives, exactly as it already separates
+    `--no-sync given` from `SERVED FROM CACHE` inside `cached`.
+    """
+
+    SYNC_ETAG = ".sync-etag"
+    SYNC_STAMP = ".sync-stamp"
+
+    def test_the_first_sync_stores_a_validator_BESIDE_the_stamp(
+        self, live_store, tmp_path: Path
+    ):
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        tag = (cache / self.SYNC_ETAG).read_text().strip()
+        assert re.fullmatch(r'"sha256:[0-9a-f]{64}"', tag), tag
+        # 🔴 AND NOT INSIDE THE STAMP, WHICH IS RENDERED LINE BY LINE AS
+        # `  stamp: <line>` IN EVERY REPORT HEADER. That is the whole reason it
+        # is its own file: a stamp field would print a 78-character digest on
+        # every recall a human or an agent ever reads.
+        assert "sha256:" not in (cache / self.SYNC_STAMP).read_text()
+
+    def test_a_second_sync_over_an_UNCHANGED_store_is_NOT_MODIFIED(
+        self, live_store, tmp_path: Path
+    ):
+        cache = tmp_path / "cache"
+        first = run_cairn("sync", url=live_store.base, cache=cache)
+        assert first.returncode == 0
+        assert "fetched from" in first.stdout
+        before = (cache / self.SYNC_STAMP).stat().st_mtime_ns
+
+        second = run_cairn("sync", url=live_store.base, cache=cache)
+        assert second.returncode == 0, second.stderr
+        assert "live — already current at" in second.stdout, second.stdout
+        assert "not modified" in second.stdout
+        assert "snapshot seeded=" in second.stdout
+        # 🔴 IT MUST NOT BORROW ANOTHER STATE'S SENTENCE. `SERVED FROM CACHE`
+        # means the pod could NOT be reached; `fetched … just now` means bytes
+        # arrived. Neither happened.
+        assert "SERVED FROM CACHE" not in second.stdout
+        assert "fetched from" not in second.stdout
+        assert not second.stdout.startswith(("⚠", "🔴"))
+        # Nothing was re-extracted: the cache is the same tree, untouched.
+        assert (cache / self.SYNC_STAMP).stat().st_mtime_ns == before
+
+    def test_a_second_sync_after_a_CHANGE_downloads_again(
+        self, live_store, source_store: Path, tmp_path: Path
+    ):
+        """🔴 THE LOAD-BEARING CONTROL, END TO END THROUGH THE REAL CLI: a
+        validator that stops matching must produce a real download, which is
+        also the only path that exercises `install_snapshot`'s
+        retire-and-rename swap over an EXISTING cache.
+
+        The key first proposed for this route — the caller's principal plus the
+        authorization epoch — would have failed exactly here: nothing on the
+        write path moves the epoch, so this second sync would have been told 304
+        and the client would never have seen the new bullet.
+        """
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        first_tag = (cache / self.SYNC_ETAG).read_text().strip()
+
+        entry = source_store / "widget-cfg" / "thing-alpha.md"
+        entry.write_text(entry.read_text() + "- 2026-01-04: a bullet nobody had.\n")
+
+        second = run_cairn("sync", url=live_store.base, cache=cache)
+        assert second.returncode == 0, second.stderr
+        assert "fetched from" in second.stdout, second.stdout
+        assert "already current" not in second.stdout
+        assert (cache / self.SYNC_ETAG).read_text().strip() != first_tag
+        assert "a bullet nobody had" in (
+            cache / "widget-cfg" / "thing-alpha.md"
+        ).read_text()
+
+    def test_a_read_after_a_304_still_renders_the_store(
+        self, live_store, tmp_path: Path
+    ):
+        """🔴 A 304 MUST NOT RENDER AS AN EMPTY OR UNREACHABLE STORE. The cache
+        it confirms is the one the reader then reads, so the report is the same
+        report — this is the assertion that the confirmation did not quietly
+        cost the content.
+
+        ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND THE LABEL IS
+        MEASURED: it is GREEN at the pre-change base, where the second recall
+        simply fetched again. What it pins is that the new 304 path did not
+        change the answer — which is the failure mode a reader would never think
+        to look for, because a stale-but-present cache renders perfectly."""
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        first = run_cairn("recall", "--scope", "widget-cfg", url=live_store.base,
+                          cache=cache)
+        second = run_cairn("recall", "--scope", "widget-cfg", url=live_store.base,
+                           cache=cache)
+        assert first.returncode == 0 and second.returncode == 0, second.stderr
+        assert "thing-alpha" in second.stdout
+        assert "scope-empty" not in second.stderr
+        assert "store-unreachable" not in second.stderr
+        # The BODY is the same report; only the banner's state line differs,
+        # because the first recall fetched and the second was told nothing
+        # changed.
+        assert first.stdout == second.stdout
+
+    def test_a_MALFORMED_validator_on_disk_is_not_sent(
+        self, live_store, tmp_path: Path
+    ):
+        """A file this client writes is still a file anything can edit, so the
+        stored value is filtered on the way OUT as well as on the way in. A
+        value carrying a newline would otherwise split the outgoing header.
+
+        ⚠ GREEN AT THE PRE-CHANGE BASE, WHERE NOTHING READ THE FILE AT ALL — so
+        it is not regression coverage either. It is MUTATION-VERIFIED instead:
+        dropping `storable_etag` from `fetch_snapshot`'s outgoing path makes it
+        fail, which is the claim it is here to make."""
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        (cache / self.SYNC_ETAG).write_text('"sha256:aaa"\nX-Injected: yes\n')
+        again = run_cairn("sync", url=live_store.base, cache=cache)
+        assert again.returncode == 0, again.stderr
+        assert "fetched from" in again.stdout, (
+            "an unusable validator must mean NO conditional, not a broken one"
+        )
