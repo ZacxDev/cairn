@@ -278,10 +278,15 @@ type shapedOperand struct {
 // `Formatter` only for a value it can `Interface()`, and it follows a POINTER only at depth
 // 0; both of those facts are invisible to a depth-0 sweep, and between them they decide
 // which half of this type's defence is load-bearing. Measured with the sweep widened to
-// these seven shapes: reverting `token *string` to `token string` leaks at **22 (shape,
-// verb) pairs** — 19 of them through an `Issued` in an unexported field, where no method of
-// any kind is consulted — while removing `Format` entirely and keeping the pointer leaks at
-// **0**. The depth-0 sweep could see neither number.
+// these seven shapes: reverting `token *string` to `token string` leaks at **24 of 154
+// (shape, verb) pairs** — 21 verbs (every one but `%T`) through an `Issued` in an unexported
+// field, where no method of any kind is consulted, plus `%p` on the value, on an exported
+// field and on an interface field — while removing `Format` entirely and keeping the pointer
+// leaks at **0**. The depth-0 sweep could see neither number.
+//
+// ⚠ EARLIER DRAFTS OF THIS DOCSTRING SAID 22 AND 19, WHICH WAS A NARROWER SWEEP'S NUMBER AND
+// NOT THIS ONE'S. Run the revert and read what this test PRINTS; every other site quoting it
+// says 24/21/3, and a docstring disagreeing with the test it documents is the worse copy.
 //
 // ⚠ SEVEN SHAPES, NOT AN EXHAUSTIVE SET. `fmt`'s reflection walker recurses without a depth
 // limit, so no finite list is complete; what these cover is one representative of each way
@@ -345,8 +350,8 @@ func leakingRenderings(shapes []shapedOperand, token string) []string {
 // `Issued` nested inside another struct — the case its own docstring called realistic — and
 // on that evidence three sites said `Format` closed 21 of 22 and the pointer the
 // twenty-second. Re-measured over seven shapes × 22 verbs: with `Format` present and
-// `token` reverted to a plain `string`, **22 (shape, verb) pairs leak**, 19 of them verbs
-// reached through an UNEXPORTED field where `fmt` consults no method at all; with the
+// `token` reverted to a plain `string`, **24 of 154 (shape, verb) pairs leak**, 21 of them
+// verbs reached through an UNEXPORTED field where `fmt` consults no method at all; with the
 // pointer present and `Format` deleted entirely, **0**. 🔴 **THE POINTER IS WHAT CLOSES THE
 // HOLE.** `Format` earns its place by rendering a redacted line instead of a raw address,
 // and as defence in depth — not as the half that makes this test pass.

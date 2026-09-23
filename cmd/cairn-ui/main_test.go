@@ -368,9 +368,15 @@ func seededJournal(t *testing.T, state credentialState) (*control.Cache, string)
 // drive `openAuthority` and `refuseAnAuthorityNobodyCanSignInTo` directly; deleting the
 // announcement from `main` leaves all of them green and leaves this surface serving an
 // authority quietly shorter than its journal. That is the "a capability nobody routes to"
-// shape `main-never-dispatches-create-user` exists for — measured on this tree: stubbing
-// out this render and `cmd/cairn-server`'s left `go test ./cmd/... ./internal/control/...`
-// fully green.
+// shape `main-never-dispatches-create-user` exists for. ⚠ **THAT WAS MEASURED AT `ddb74dc`,
+// AND THIS TEST IS WHAT FALSIFIED IT.** Stubbing out both startup renders left
+// `go test ./cmd/... ./internal/control/...` fully green THEN. Re-measured here, stubbing
+// exactly those two call sites and nothing else, it now fails THREE: this one,
+// `TestTheRUNNINGBinarySaysSoWhenARecordIsDroppedAfterStartup` (this binary's startup and
+// refresh renders are one loop, so one stub takes both), and `cmd/cairn-server`'s
+// `TestADropAlreadyInTheJournalIsAnnouncedWhenTheAuTHORITYOPENS` — while
+// `internal/control/...` still passes, which is the half that shows the coverage is in the
+// right package. The green was the defect; do not reproduce it and conclude the tree broke.
 //
 // 🔴 AND IT IS THE STATE WHERE THE MISSING LINE IS WORST. The refusal below fires BECAUSE
 // the only credential in the journal was the dropped one; without the warning it reports a

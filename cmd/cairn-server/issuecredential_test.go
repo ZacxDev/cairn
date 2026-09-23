@@ -786,9 +786,12 @@ func TestAFailedTokenDeliveryExitsItsOwnCode(t *testing.T) {
 
 // refusingWriter fails every write, which is what a full device does to a one-line write.
 //
-// ⚠ IT REPORTS A SHORT WRITE AS WELL AS AN ERROR, matching `write(2)` on ENOSPC: the
-// partial bytes are already out and the count says how many. A writer that returned
-// `(len(p), err)` would be a shape the kernel does not produce.
+// ⚠ IT REPORTS **ZERO** BYTES WRITTEN, WHICH IS THE CASE THIS TEST NEEDS AND NOT THE ONLY
+// ONE `write(2)` PRODUCES. A real ENOSPC can also return a SHORT count with bytes already
+// out; this fixture does not model that, and the distinction does not matter here because
+// the code under test branches on the error alone. 🔴 Do not "fix" this to `(len(p), err)`:
+// a full write plus an error is the shape the kernel does NOT produce, and it would make the
+// guard pass for the wrong reason.
 type refusingWriter struct{ err error }
 
 func (w refusingWriter) Write(p []byte) (int, error) { return 0, w.err }
