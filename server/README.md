@@ -420,65 +420,50 @@ the one that actually ships.
 ⚠ **THE RETRACTED WORDING, KEPT HERE SO NOBODY RE-DERIVES IT.** `AGENTS.md` read
 *"`server/Dockerfile` is what is deployed today"* from before the Go cutover
 until well after it, while three other claims in the SAME file said the Go pod is
-deployed. `#78` moved three of those sites and **missed one more in the very file
-it was editing** — that is the lesson, and it is sharper than "a commit missed a
-claim": nothing greps prose, so a sweep is the only thing that finds the copy you
-were not looking at. ⚠ Not to be read as `#78`'s own "a fourth site", which names
-a different site it left alone deliberately, and correctly.
+deployed. `#78` moved three of those sites and missed one more **in the very file
+it was editing** — nothing greps prose, so a sweep is the only thing that finds
+the copy you were not looking at.
 
-🔴 **AND THAT RETRACTION IS ITSELF INCOMPLETE — MORE SITES STILL CARRY THE CLAIM,
-INCLUDING `flake.nix` VERBATIM AND THIS GUARD'S OWN "WHY THIS FILE EXISTS"
-DOCSTRING.** They are NOT swept here on purpose, and the reason is not laziness:
-this repo holds no manifest, so nothing in it can establish which pod a cluster
-actually pulls — the Go side's whole evidence is a commit message. **A sweep
-would propagate an unverified claim to every site it touched.** The operator
-settles which pod is deployed; until then the inconsistency is RECORDED, not
-resolved.
+🔴 **AND THAT RETRACTION IS INCOMPLETE — MORE SITES STILL CARRY THE CLAIM,
+INCLUDING `flake.nix` VERBATIM, THIS GUARD'S OWN "WHY THIS FILE EXISTS"
+DOCSTRING, AND SEVERAL IN THIS FILE.** They are NOT swept, on purpose: this repo
+holds no manifest, so nothing in it can establish which pod a cluster actually
+pulls — the Go side's whole evidence is a commit message. **A sweep would
+propagate an unverified claim to every site it touched.** The operator settles
+which pod is deployed; until then the inconsistency is RECORDED, not resolved.
 
-🔴 **SEVERAL OF THE SURVIVING SITES ARE IN *THIS* FILE, AND THIS PARAGRAPH DOES
-NOT LIST THEM — DELIBERATELY, BECAUSE IT GOT THE LIST WRONG TWICE.** It first
-named none, then named exactly two (*"not deployed by anything"* and *"published,
-and deployed by nothing"*) while the commands printed below return a third in
-this same file — *"Every procedure below is still about `server.py`, which is
-what is deployed"* — and a whitespace-normalised sweep finds more still. **An
-enumeration here is a claim that goes stale and reads as complete. Run the sweep.**
+**Do not enumerate the sites here — run the sweep.** A list in prose goes stale
+and reads as complete; three were written into this paragraph and each was wrong.
 
 ```bash
 git ls-files -z | xargs -0 grep -nE 'is what is deployed|deployed today'
 git ls-files -z | xargs -0 grep -nE 'deployed by nothing|not deployed by'
 ```
 
-🔴 **BOTH PATTERNS ARE LINE-ANCHORED AND THEREFORE INCOMPLETE — this is a
-demonstration, not a remedy.** `tests/test_flake_image_matches_dockerfile.py`'s
-own `WHY THIS FILE EXISTS` docstring carries the claim across a line break
-(*"…is the build that is deployed"* / *"today."*) and **neither command finds
-it**. The author of this paragraph then missed the `packages.cairn` claim BELOW,
-which also wraps, by grepping for it exactly this way. Normalise before sweeping,
-or read the file. ⚠ The second pattern's matches are not all stale — some name
-`cairn-ui` and the Go image, which genuinely are deployed by nothing. **Read the
-matches; do not count them.**
+🔴 **BOTH PATTERNS ARE LINE-ANCHORED AND THEREFORE INCOMPLETE — a demonstration,
+not a remedy.** `tests/test_flake_image_matches_dockerfile.py`'s own
+`WHY THIS FILE EXISTS` docstring wraps the claim across a line break (*"…is the
+build that is deployed"* / *"today."*) and **neither command finds it**.
+Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
+some name `cairn-ui` and the Go image, which genuinely are deployed by nothing.
+**Read the matches; do not count them.**
 
-🔴 **AND THE PIN IS TWO GUARDS, ONLY ONE OF WHOSE PREMISES DIED.** Neither Python
-image is deployed, so the Dockerfile↔flake agreement half stands on a contract
-that `packages.server-image` and `server/Dockerfile` state — **not**
-`packages.cairn`, which is the Python CLIENT and ships no pod contract at all, so
-retiring it retires nothing here. But
+🔴 **THE PIN IS TWO GUARDS AND ONLY ONE PREMISE DIED.** Neither Python image is
+deployed, so the Dockerfile↔flake agreement half stands on a contract
+`packages.server-image` and `server/Dockerfile` state — **not** `packages.cairn`,
+which is the Python CLIENT and ships no pod contract, so retiring it retires
+nothing here. But
 `test_both_implementations_resolve_the_deployment_contract_with_no_env` reads
 `cmd/cairn-server/main.go` — the **Go** pod — and pins its defaults against what a
-Deployment assumes, so that half is LIVE and is the only place that contract is
-ASSERTED. It is merely *stated* in several — this file's `Substitute your own
-names.` token path, `flake.nix`'s `serverPort`, and `server/Dockerfile`'s
-`EXPOSE`. ⚠ **The guard's own message does NOT draw that asserted/stated
-distinction — it says flatly "the only place the contract is written down", which
-is wider than what is true.** Narrow it there, or this paragraph and that
-assertion disagree. ⚠ **And the three line numbers this sentence used to cite had
-already drifted onto blank lines**, broken by an insertion in this very ladder:
-**cite quoted strings, never `:NN`, in a file nothing pins.** ⚠ An earlier draft of this paragraph said the
-guard rested on "no running pod" **at all**, and a later one pinned its lifetime
-to `packages.cairn` — the second survived a commit whose message said it had been
-dropped, because it was dropped from `AGENTS.md` only. That is the shape this repo
-keeps finding: a fix round's own prose asserting more than it checked, and a
-one-file fix reported as a sweep. **P8 splits this file; it does not delete it.**
+Deployment assumes. **That half is LIVE. P8 SPLITS this file; it does not delete
+it.**
+
+⚠ Two things bind an edit here. **Cite quoted strings, never `:NN`** — three line
+numbers in this paragraph drifted onto blank lines inside a single review. And
+**the guard's own message overstates**: it says *"the only place the contract is
+written down"*, when the contract is also written in this file, in `flake.nix` and
+in `server/Dockerfile`. What is unique to the guard is that it ASSERTS it. Narrow
+the message there, or it stays wider than what is true.
 
 The module set is deliberately *not* duplicated: the Dockerfile enumerates its
 `COPY`s (kept honest by `test_the_image_copies_every_module_it_needs`) while the
