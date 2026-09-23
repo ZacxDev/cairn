@@ -382,21 +382,35 @@ func TestPutStillResolvesTheDottedVariantAndItsBoundaries(t *testing.T) {
 	if want := `"` + hex.EncodeToString(sum[:])[:16] + `"`; sentIfMatch != want {
 		t.Fatalf("If-Match %s, want %s", sentIfMatch, want)
 	}
-	// …and the boundary the length floor draws, asserted directly rather than inferred from
-	// the run above: `gauge-api.md` is NOT a member of the `gauge-api.*.md` family.
-	for name, member := range map[string]bool{
-		"gauge-api.md":         false,
-		"gauge-api..md":        true,
-		"gauge-api.runbook.md": true,
-		"gauge-apis.md":        false,
+	// 🔴 …AND THE PREDICATE ITSELF, AGAINST THE GLOB IT REPLACED, WHICH IS THE ONLY PLACE
+	// `refVariantName`'s LENGTH FLOOR IS OBSERVABLE. Inside `Put` that floor is unreachable:
+	// the exact-name arm runs first over the same directory, so the family arm never sees a
+	// `<ref>.md`. Two independent operands here — this table, which says what the family
+	// MEANS, and `filepath.Match`, which is the pattern the code used to build — so a wrong
+	// bound has to be wrong in the same direction twice to pass.
+	const ref = "gauge-api"
+	for _, row := range []struct {
+		name   string
+		member bool
+	}{
+		{"gauge-api.md", false},         // the exact name is NOT a member
+		{"gauge-api..md", true},         // `*` matching the empty string IS
+		{"gauge-api.runbook.md", true},  //
+		{"gauge-api.a.b.md", true},      // `*` spans dots
+		{"gauge-apis.md", false},        // the `.` after the ref is literal
+		{"gauge-api.runbook.txt", false} /* the suffix is literal too */, {"gauge-api", false},
 	} {
-		ok, err := filepath.Match("gauge-api.*.md", name)
+		if got := refVariantName(row.name, ref); got != row.member {
+			t.Fatalf("refVariantName(%q, %q) = %v, want %v", row.name, ref, got, row.member)
+		}
+		glob, err := filepath.Match(ref+".*.md", row.name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok != member {
-			t.Fatalf("`gauge-api.*.md` vs %q: Match says %v, this test's model says %v — the "+
-				"length floor in `Put` is derived from that model", name, ok, member)
+		if glob != row.member {
+			t.Fatalf("`%s.*.md` vs %q: Match says %v where this table says %v — the table is "+
+				"the model `refVariantName` implements, so one of the two is wrong",
+				ref, row.name, glob, row.member)
 		}
 	}
 }
@@ -445,5 +459,49 @@ func TestAnchoredGlobTreatsItsAnchorLiterallyAndItsPatternAsAPattern(t *testing.
 	// what every caller's `Glob` did.
 	if got = anchoredGlob(filepath.Join(root, "claudedocs", "notes.md"), "*.md"); got != nil {
 		t.Fatalf("got %v, want nil for an anchor that is not a directory", got)
+	}
+}
+
+// TestAnchoredGlobDoesNotREADADirectoryThePatternOnlyDESCENDSTHROUGH is the row for the one
+// branch "same results for ordinary paths" rests on that no other row reaches.
+//
+// 🔴 `filepath.Glob` SPLITS AT THE LAST SEPARATOR AND READS ONE DIRECTORY. For
+// `<repo>/claudedocs/handoff-*.md` that is `<repo>/claudedocs`; `<repo>` itself is never listed.
+// So a repo that is SEARCHABLE but not READABLE (mode `--x`) resolved fine before this change,
+// and resolves fine on the oracle, whose `_PreciseSelector` asks `is_dir()` rather than
+// scandir'ing the parent. A walk that enumerated every component would find nothing there — a
+// silent narrowing, in the same "empty result" shape as the defect this branch fixed.
+//
+// ⚠ IT SKIPS UNDER EUID 0, AND THE SKIP IS COUNTED RATHER THAN LEFT TO LOOK LIKE A PASS. Root
+// bypasses the missing read bit, so the fixture cannot construct the state at all; a silent pass
+// there would be the reassuring zero this repository keeps warning about.
+func TestAnchoredGlobDoesNotREADADirectoryThePatternOnlyDESCENDSTHROUGH(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("euid 0 bypasses the missing read bit, so the fixture cannot be built — this " +
+			"row measures nothing here and says so rather than passing")
+	}
+	root := t.TempDir()
+	docs := filepath.Join(root, "claudedocs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docs, "handoff-a.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	// The reachability control: the state really is "cannot list, can traverse".
+	if _, err := os.ReadDir(root); err == nil {
+		t.Fatalf("the fixture does not reach the branch — %q is still readable", root)
+	}
+
+	got := anchoredGlob(root, "claudedocs/handoff-*.md")
+	want := []string{filepath.Join(docs, "handoff-a.md")}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %v, want %v — a component the pattern only DESCENDS through must be "+
+			"resolved by name, not by listing its parent", got, want)
 	}
 }

@@ -813,6 +813,25 @@ func Append(env Env, opts Options) (int, error) {
 	return ExitOK, nil
 }
 
+// refVariantName is `fnmatch(name, ref + ".*.md")` with `ref` taken LITERALLY — the one
+// wildcard `Put`'s revision derivation keeps after `anchor.go`'s rule took the anchor out of
+// the pattern. `<ref>.runbook.md` is a member; `<ref>.md` is not, because the `*` sits between
+// two literal dots.
+//
+// 🔴 IT IS A NAMED FUNCTION SO IT CAN BE MUTATED AND PINNED ON ITS OWN, and the length floor is
+// why that matters. Inline, the floor is UNREACHABLE in production: the exact-name arm runs
+// first over the SAME directory and this arm is only reached when no `<ref>.md` exists, so
+// nothing in `Put` can ever present the floor with the one name it excludes. A condition no
+// caller can execute cannot be watched to fail, and an untestable condition that READS as a
+// guard is worse than no condition at all. Here the model it implements — "exactly the names
+// `filepath.Match(ref+".*.md", …)` accepts, for a `ref` with no metacharacter in it" — is a
+// claim a test can make against the glob itself, which is what `anchor_test.go` does.
+func refVariantName(name, ref string) bool {
+	return strings.HasPrefix(name, ref+".") &&
+		strings.HasSuffix(name, ".md") &&
+		len(name) >= len(ref)+len(".")+len(".md")
+}
+
 // Put replaces a whole entry behind an `If-Match` precondition.
 //
 // 🔴 THE REVISION IS DERIVED FROM A **LIVE** SYNC, NEVER FROM `--no-sync`. The entry revision is
@@ -895,17 +914,13 @@ func Put(env Env, opts Options) (int, error) {
 		// passes a metacharacter `--ref`), reachable from a keyboard, and the refusal is the
 		// safe side.
 		//
-		// The `<ref>.*.md` family keeps its ONE wildcard, spelled as the bounds it means:
-		// `fnmatch` does NOT match `<ref>.md` with that pattern — measured — because the `*`
-		// sits between two literal dots, which is what the length floor below asserts.
+		// The `<ref>.*.md` family keeps its ONE wildcard, in `refVariantName` above.
 		scopeDir := filepath.Join(cache, scope)
 		exact := opts.Ref + ".md"
 		matches := anchoredNames(scopeDir, func(name string) bool { return name == exact })
 		if len(matches) == 0 {
 			matches = anchoredNames(scopeDir, func(name string) bool {
-				return strings.HasPrefix(name, opts.Ref+".") &&
-					strings.HasSuffix(name, ".md") &&
-					len(name) >= len(opts.Ref)+len(".")+len(".md")
+				return refVariantName(name, opts.Ref)
 			})
 		}
 		for i, name := range matches {
