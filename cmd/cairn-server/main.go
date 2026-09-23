@@ -83,7 +83,8 @@ const (
 	// exit-code contract belongs to the CLIENT: `cmd/cairn` registers an `exit-codes`
 	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
 	// five flags in `main` — `store`, `host`, `port`, `token-file`, `routes` — plus
-	// `-create-user`'s six and `-issue-credential`'s six, and no exit-code flag among
+	// `-create-user`'s six, `-issue-credential`'s six and `-set-member`'s four, and no
+	// exit-code flag among
 	// them; measured at `e11c3a7` by reading every file under `cmd/cairn-server/` in that
 	// tree (positive control: the same sweep hits `-routes` in three of them). So this
 	// program declares its exit codes to nothing, and no runbook, test or script branches
@@ -216,6 +217,7 @@ func main() {
 			"TABLES, never a restatement of them")
 	create := registerCreateUserFlags()
 	issue := registerIssueCredentialFlags()
+	setMember := registerSetMemberFlags()
 	flag.Parse()
 
 	// 🔴 TWO MODES AT ONCE IS A REFUSAL, NOT A PRECEDENCE. Checking `-routes` first and
@@ -237,6 +239,7 @@ func main() {
 		{"-routes", *routes},
 		{"-create-user", *create.enabled},
 		{"-issue-credential", *issue.enabled},
+		{"-set-member", *setMember.enabled},
 	}
 	var asked []string
 	for _, m := range modes {
@@ -246,10 +249,16 @@ func main() {
 	}
 	if len(asked) > 1 {
 		fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
-			"subsystem-store-api: %s are both/all set. Each one does its thing and EXITS — one prints a "+
-				"ledger, one writes a user to the control journal, one mints a credential and prints it "+
-				"ONCE — so running any of them silently while ignoring the others is how an operator "+
-				"concludes a user was created or a token was issued",
+			// 🔴 NO PER-MODE ENUMERATION, AND ITS DELETION IS THE POINT. This sentence
+			// used to list what each mode does — "one prints a ledger, one writes a user,
+			// one mints a credential" — and `-set-member` made it a list of three for a
+			// ledger of four, stale in the same commit that added the mode. It is the
+			// `-create-user`'s-six shape one file up, which has now been wrong twice. The
+			// enumeration was decoration; the rule is what an operator needs.
+			"subsystem-store-api: %s are both/all set. EVERY one of these modes does its "+
+				"thing and EXITS, so running one while silently ignoring the others is how "+
+				"an operator concludes a user was created, a credential was issued or "+
+				"somebody was given access when none of it happened. Re-run with one",
 			strings.Join(asked, " and "))))
 		os.Exit(exitConfig)
 	}
@@ -265,6 +274,13 @@ func main() {
 		// already reaches somebody else's directory. `internal/control` holds no path and
 		// must not grow one; see `warnScopesThatAlreadyExistOnDisk`.
 		os.Exit(runCreateUser(envalias.Environ(), *store, create, os.Stdout, os.Stderr))
+	}
+	if *setMember.enabled {
+		// No `*store`, for `-issue-credential`'s reason: this mode chooses no scope
+		// display name, so there is nothing the store root could answer about it. It
+		// addresses a project and a user by id, and an id that names nothing is reported
+		// from the JOURNAL rather than from disk.
+		os.Exit(runSetMember(envalias.Environ(), setMember, os.Stdout, os.Stderr))
 	}
 	if *issue.enabled {
 		// No `*store` here, unlike `-create-user`: this mode chooses no scope display name,
