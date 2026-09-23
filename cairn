@@ -1401,7 +1401,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # 🔴 AND AN EXIT-CODE-ONLY PARITY ROW WOULD HAVE SEEN NEITHER SYMPTOM: both clients
         # exit 0 on the clean store and 5 on the malformed one. The count lives on stdout, so
         # `validate-routed-to-a-NON-DEFAULT-instance` compares stdout, stderr AND the code.
-        checked = sum(1 for _ in (cache / scope).glob("*.md"))
+        #
+        # 🔴 `README.md` IS NOT AN ENTRY, AND THE NUMERATOR ALREADY KNEW THAT. The
+        # rejections come from `load_index`, which skips `README.md` in every scope
+        # ("each scope dir carries one as its store-policy sheet"); this count came
+        # from a bare `*.md` glob that did not. Two walks, one line — and `/snapshot`
+        # ships those READMEs, so this fired against the real store: a scope holding
+        # two entries beside its policy sheet printed `3 of 3`, a scope holding ONLY
+        # a policy sheet printed `1 of 1`, and — the direction that misleads — one
+        # BROKEN entry beside a README printed `1 of 2 … 1 malformed`, asserting that
+        # a file parsed when none had. This is the command whose whole job is making
+        # a zero mean something. The predicate below is the LOADER'S, spelled the
+        # same way (`name == "README.md"` exactly — not a prefix, not a fold), so the
+        # numerator and the denominator come from one rule rather than two.
+        checked = sum(
+            1 for p in (cache / scope).glob("*.md") if p.name != "README.md"
+        )
         print(
             f"cairn: {scope}: {checked - len(malformed)} of {checked} "
             f"entry file(s) parse, {len(malformed)} malformed"

@@ -476,9 +476,27 @@ func Validate(env Env, opts Options) (int, error) {
 		// files at all — and this command is the post-write check the write protocol
 		// MANDATES, so that zero was being read as "the entry I just wrote is fine". A count
 		// that MOVES with the store is what makes the zero mean something.
-		checked, _ := filepath.Glob(filepath.Join(cache, scope, "*.md"))
+		//
+		// 🔴 `README.md` IS NOT AN ENTRY, AND THE NUMERATOR ALREADY KNEW THAT. The rejections
+		// come from `store.LoadIndex`, which skips `README.md` in every scope ("each scope
+		// directory carries one as its store-policy sheet"); this count came from a bare
+		// `*.md` glob that did not. Two walks, one line — and `/snapshot` ships those
+		// READMEs, so this fired against the real store: a scope holding two entries beside
+		// its policy sheet printed `3 of 3`, a scope holding ONLY a policy sheet printed
+		// `1 of 1`, and — the direction that misleads — one BROKEN entry beside a README
+		// printed `1 of 2 … 1 malformed`, asserting that a file parsed when none had. This is
+		// the command whose whole job is making a zero mean something. The predicate below is
+		// the LOADER'S, spelled the same way (`== "README.md"` exactly — not a prefix, not a
+		// fold), so the numerator and the denominator come from one rule rather than two.
+		globbed, _ := filepath.Glob(filepath.Join(cache, scope, "*.md"))
+		checked := 0
+		for _, path := range globbed {
+			if filepath.Base(path) != "README.md" {
+				checked++
+			}
+		}
 		fmt.Fprintf(env.Stdout, "cairn: %s: %d of %d entry file(s) parse, %d malformed\n",
-			scope, len(checked)-len(index.Malformed), len(checked), len(index.Malformed))
+			scope, checked-len(index.Malformed), checked, len(index.Malformed))
 		if len(index.Malformed) > 0 && ExitCorrupt > worst {
 			worst = ExitCorrupt
 		}
