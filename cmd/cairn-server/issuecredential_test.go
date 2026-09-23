@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -383,14 +384,43 @@ func TestTheBinaryActuallyDispatchesIssueCredential(t *testing.T) {
 		t.Fatal("the child echoed the token on stderr as well as stdout")
 	}
 
-	// 🔴 THREE MODES, PAIRWISE, BECAUSE THE LEDGER IN `main` IS WHAT REPLACED THREE `&&`
-	// CHECKS AND A LEDGER CAN BE WRONG IN A WAY A PAIR CANNOT: it could refuse the pair it
-	// was written for and admit the one it was not.
-	for _, combo := range [][]string{
-		{"-routes", "-issue-credential", "-principal", user},
-		{"-create-user", "-issue-credential", "-principal", user, "-provider", "x", "-subject", "y", "-project", "z"},
-		{"-routes", "-create-user", "-provider", "x", "-subject", "y", "-project", "z"},
-	} {
+	// 🔴 EVERY MODE, PAIRWISE, BECAUSE THE LEDGER IN `main` IS WHAT REPLACED THE PAIRWISE
+	// `&&` CHECKS AND A LEDGER CAN BE WRONG IN A WAY A PAIR CANNOT: it could refuse the
+	// pair it was written for and admit the one it was not.
+	//
+	// 🔴 THE PAIRS ARE DERIVED, NOT LISTED, AND THAT IS THE FIX FOR A MEASURED DEFECT. This
+	// was a hand-written list of three, correct for three modes; `-set-member` made four
+	// modes and therefore SIX pairs, and the list silently covered three of them — the
+	// three new ones went unmeasured while the test still read as a pairwise sweep. A list
+	// that has to be extended by hand every time a mode lands is the same staleness class
+	// as the enumeration `main`'s own refusal message just lost twice. Add a mode to
+	// `modeArgs` and its pairs appear here by construction.
+	modeArgs := map[string][]string{
+		"-routes":           {"-routes"},
+		"-create-user":      {"-create-user", "-provider", "x", "-subject", "y", "-project", "z"},
+		"-issue-credential": {"-issue-credential", "-principal", user},
+		"-set-member":       {"-set-member", "-member-project", "prj_x", "-member-user", "usr_y", "-member-role", "member"},
+	}
+	// Sorted, so a failure names the same pair on every run rather than a map-order one.
+	names := make([]string, 0, len(modeArgs))
+	for name := range modeArgs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var pairs [][]string
+	for i := 0; i < len(names); i++ {
+		for j := i + 1; j < len(names); j++ {
+			pairs = append(pairs, append(append([]string{}, modeArgs[names[i]]...), modeArgs[names[j]]...))
+		}
+	}
+	// 🔴 ASSERT THE COUNT THE DERIVATION SHOULD PRODUCE. Without this, a `modeArgs` that
+	// silently lost an entry would sweep fewer pairs and still pass everything below —
+	// which is the defect this derivation exists to end, one level up.
+	if want := len(names) * (len(names) - 1) / 2; len(pairs) != want {
+		t.Fatalf("derived %d pairs from %d modes, want %d", len(pairs), len(names), want)
+	}
+	for _, combo := range pairs {
 		code, out, errOut := run(combo...)
 		if code != exitConfig {
 			t.Errorf("`%v` exited %d, want %d:\n%s", combo, code, exitConfig, errOut)
