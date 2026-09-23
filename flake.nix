@@ -929,9 +929,11 @@
           default = mkGoClient pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
-          # 🔴 THE BROWSER SURFACE HAS NO `apps` ENTRY AND IS NOT IN `default`. It is
-          # built by name or not at all, which is what "deployed by nothing" means
-          # concretely rather than as a promise. ⚠ This said "AND NOTHING ELSE — no
+          # 🔴 THE BROWSER SURFACE IS BUILT BY NAME OR NOT AT ALL, which is what
+          # "deployed by nothing" means concretely rather than as a promise.
+          # ⚠ WHAT IT IS PACKAGED AS IS NOT RESTATED HERE — ask `tests/facts.py`'s
+          # `packages` and `apps` commands. A previous draft stated it, and the
+          # statement went false. ⚠ It also said "AND NOTHING ELSE — no
           # `apps` entry, no image": there IS an image now (`packages.ui-image`), and it
           # is PUBLISHED. Published is not deployed.
           cairn-ui = mkGoUI pkgs;

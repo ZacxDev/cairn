@@ -6,12 +6,23 @@ everything below.
 ## What Phase A is, and what it deliberately is not
 
 One page, one authentication chain, one rendering path — enough to prove the wiring, the
-rendering, and the gate. `cmd/cairn-ui` is **deployed by nothing**: `apps` has no entry
-for it, and `packages.default` does not point at it. It is built by name
-(`nix build .#cairn-ui`) or not at all. ⚠ **This said "no image wraps it" as well, and
-an image now exists** — `packages.ui-image`, published to its own ghcr package.
-**PUBLISHED IS NOT DEPLOYED**, which is the same distinction `server/README.md` draws for
-the Go pod; only the deployment half of this sentence survived.
+rendering, and the gate. `cmd/cairn-ui` is **deployed by nothing** — no manifest in this
+repository points a pod at it.
+
+🔴 **WHAT IT IS PACKAGED AS IS NOT WRITTEN HERE ANY MORE — ASK.** `tests/facts.py` carries
+the commands (`packages`, `apps`); run them rather than trusting a sentence:
+
+```bash
+nix eval --raw .#packages.x86_64-linux --apply 's: builtins.concatStringsSep "\n" (builtins.attrNames s)'
+nix eval --raw .#apps.x86_64-linux     --apply 's: builtins.concatStringsSep "\n" (builtins.attrNames s)'
+```
+
+⚠ **This paragraph used to state the packaging in prose — "no image wraps it, `apps` has no
+entry for it, `packages.default` does not point at it" — and the first clause went FALSE at
+four sites at once** when `packages.ui-image` landed. The claim is deleted
+rather than corrected, because a corrected claim rots on the next packaging change and the
+command does not. **PUBLISHED IS NOT DEPLOYED** remains the distinction that matters, and it
+is the half prose still carries because no command answers it.
 
 There is **no sign-in**, **no cookie session**, **no share flow** and none of the nine
 screens. Those are later phases with their own decisions. What exists is:

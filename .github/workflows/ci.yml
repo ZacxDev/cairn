@@ -371,6 +371,17 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # 🔴 THE FACT LEDGER'S GO TIER, AND IT REFUSES A SKIP. `tests/facts.py` holds
+      # the questions this repo answers with a COMMAND instead of a sentence; the
+      # `go`-tier rows need a toolchain the `tests` job does not ship, so they skip
+      # there — and a skip nobody counts is indistinguishable from a pass.
+      # `CAIRN_FACTS_REQUIRE` turns that skip into a FAILURE here, which is the only
+      # job that can ask these questions at all.
+      - name: every go-tier fact is still answerable
+        env:
+          CAIRN_FACTS_REQUIRE: go
+        run: python3 -m pytest tests/test_facts_are_answerable.py -q -p no:randomly
+
       # 🔴 READ THE PER-PACKAGE RESULT LINES, NOT JUST THE EXIT CODE. `go test`
       # over a module with no test files exits 0 — and that is not hypothetical
       # here: the flake's own check phase was measured running ZERO tests while
@@ -894,6 +905,15 @@ jobs:
       # other stays unobservable moves a bug rather than removing it.
       - name: the Go client declares exactly the verbs and codes the ledger names
         run: nix build .#checks.x86_64-linux.go-client-declares-its-verbs --no-link --print-build-logs
+
+      # 🔴 THE FACT LEDGER'S NIX TIER, SAME REFUSAL, DIFFERENT DEPENDENCY. The
+      # `packages`/`apps` rows ask a nix evaluator what artefacts exist — the question
+      # four prose sites got wrong at once when `packages.ui-image` landed. This job is
+      # the only one with an evaluator, so a skip here is the whole gate.
+      - name: every nix-tier fact is still answerable
+        env:
+          CAIRN_FACTS_REQUIRE: nix
+        run: python3 -m pytest tests/test_facts_are_answerable.py -q -p no:randomly
 
       # 🔴 WHICH CLIENT THE UNQUALIFIED NAMES RESOLVE TO — AND THIS JOB IS THE ONLY ONE
       # THAT CAN ASSERT IT. The claim is about flake ATTRIBUTES, so reading it needs a
