@@ -257,6 +257,15 @@ drives the oracle through it end to end.
 
 🔴 **AND THAT LAST CLAUSE USED TO GIVE A REASON `--help` FALSIFIES: "take no scope".** `cairn sync` and `cairn ls-entries` both DECLARE `--scope` — only `doctor` has none. What makes the three untouched is that they pass `scope=""` and fan out over every configured instance (`Sync`, `LsEntries`, and `cmd_sync`'s measured reason the cache may never be narrowed), not that there is no scope to route. Re-measured over the same `{"alpha-notes": "nowhere"}` world at this head: `sync --scope alpha-notes` exits **4** and `ls-entries --scope alpha-notes` exits **0** on BOTH clients, byte-identical to the unscoped runs — so the CONCLUSION is unchanged and only its reason moved. 🔴 The reason is load-bearing rather than pedantic: this paragraph is what the `packages.default` flip's announcement is written from, and a later change that routed `ls-entries --scope` through `AliasFor` would falsify the conclusion while the old reason still read as covering it. The correction was applied at all five sites that carried the clause (`cairn`, `internal/client/instances.go`, `internal/client/verbs.go`, `lib/README.md`, here).
 
+🔴 **A CLOSING CONDITION IN THIS TABLE THAT IS A *COMMAND* MUST SAY WHAT ITS ZERO-SELECTION RUN
+LOOKS LIKE, BECAUSE `$?` CANNOT TELL YOU.** Measured at `38f2b1f`: `go test <pkg> -run <NameThatMatchesNothing> -count=1 -v`
+prints `testing: warning: no tests to run`, `PASS`, `ok … [no tests to run]` and **exits 0**, so an
+operator checking the exit code alone reads an unwritten test as a met condition. (`python3 -m pytest … -k <filterThatMatchesNothing>`
+does not share it — it exits **5**.) So every command-shaped condition below states the
+zero-selection state explicitly and names a check that is not the exit code. Rows whose condition
+is an EVENT rather than a command — row 7's *"the day the oracle is deleted"* — have nothing to
+state here; rows 1–6 declare no closing condition at all.
+
 | # | difference | why it is not closed |
 |---|---|---|
 | 1 | **argparse's usage and help text.** Unknown flag, missing required flag, unknown subcommand, non-integer `--limit`, `doctor --scope`, bare invocation — and `--help` / `-h` / `<verb> --help`: the oracle prints argparse's `usage:` block and its wording; the Go client prints its own. | Reproducing argparse's layout, its prefix abbreviation (`--sc` → `--scope`) and its exact phrasing in Go is a second implementation of a library nobody reads twice. **The exit code matches on all of them** — 2 for the refusals, **0 for the help rows** — and that is the half a caller branches on. Refusal rows are `compare="exit"`; help rows are `compare="exit+stdout"`, which also asserts BOTH sides put something on stdout, because a client that printed nothing and exited 0 would pass an exit-only row while telling the reader nothing. 🔴 Before those four rows existed the Go client exited **2 with an empty stdout** on all of them — on the single most common invocation there is. |
@@ -266,6 +275,7 @@ drives the oracle through it end to end.
 | 5 | **A `SyntaxError` in the reader's own modules.** On the oracle a present-but-unparseable `lib/cairn_doctor.py` takes every verb down at exit 1; the Go client has no such failure mode. | It is a property of loading Python at runtime and cannot exist in a single binary. The oracle's own comment says widening its `except ImportError` is *not* the obvious fix. |
 | 6 | **`ReadStamp` has no "is not text" arm.** The oracle distinguishes an unreadable stamp from one that is not valid UTF-8, because `read_text` raises; Go's `ReadFile` returns bytes and cannot fail on encoding. | The stamp is written by this program and is ASCII, so the arm is unreachable in practice. Re-validating the bytes to manufacture the distinction would be inventing a check the oracle only has by accident of its API. |
 | 7 | **The Go client's own ledger flags, `-verbs` and `-exit-codes`.** Measured on both binaries: each exits **0** with its table on **stdout** on the Go client, and **2** with argparse's `usage:` block on **stderr** on the oracle. This is the same family as the four `--help`/argument-shape divergences above — the Go client *succeeding* where the oracle refuses — and no row covers it, because the flags were added **for** the gate's sibling ledger (`tests/test_go_client_ledgers.py`) and the gate is therefore structurally blind to them. | **Not closable while both clients ship, and mirroring it into the oracle is the mistake this repo already paid for and deleted.** The Python-side ledgers read the argparse parser (`testlib.capability_ledger`) and the `cairn` script's AST directly, so a printed table on the oracle would have no reader — which is residual finding 3 above (`CAIRN_CACHE_ROOT`) exactly: a second mechanism reaching one value leaves the first silently dead. What IS gated is that the set cannot move unnoticed: `test_the_GO_ONLY_ledger_flags_are_exactly_the_declared_set` compares THREE operands, two of them discovered — the `switch argv[0]` dispatch in `cmd/cairn/main.go` read as source, its own declared tuple, and what both binaries actually do when handed each probe — and fails if a third Go-only flag appears, if a declared one stops diverging, or if the dispatch moves out of the file the discovery greps. ⚠ Its first cut built the probe set out of the declaration, so shrinking the tuple shrank what was measured and the mutant SURVIVED; that is why the probes come from the source. 🔴 **THE WIDENING BELONGED TO THE DEFAULT CUTOVER, NOT TO P8 — AND IT HAS NOW HAPPENED.** This row once said P8 ("the CLI contract *widens* at that moment [when the oracle is deleted]"), which was the wrong moment. `packages.default`/`apps.default` are the Go client as of the flip, so `nix run github:…/cairn -verbs` — refused at exit 2 before it — answers 0 on stdout from that commit, for every consumer who does not name `#cairn`. **Measured at BOTH points on the flip's own branch, because one point is not a general claim:** `nix run .# -- -verbs` → **rc 0**, 134 B on stdout, 0 B on stderr; `nix run .#cairn -- -verbs` → **rc 2**, 0 B on stdout, argparse's `usage:` on stderr. `-exit-codes` has the same shape (rc 0 / 353 B against rc 2 / 0 B). The announcement it was owed is `README.md`'s *"The default client is now the Go one"* section. ⚠ **WHAT LICENSED THE FLIP WAS AN OPERATOR DECISION, AND THAT PHRASING OUTLIVES THE FLIP.** A branch took it because the gate was green and was REVERTED; the gate being green never licensed it and does not now — this row is the record so nobody re-derives the licence from a green run. The decision was taken after residual 8 closed, which removed the flip's one MEASURED blocker: every READ verb refused at exit 11 on a multi-instance host, so the documented `nix run … -- doctor` quickstart would have refused there. That closure is a PRECONDITION, not the licence. What P8 owns is unchanged and is a DECISION, not a deletion: either document `-verbs`/`-exit-codes` as public surface in `README.md`'s verb table, or move them behind an undocumented gate the ledger tests still reach. **Closing condition, owned by P8:** the day the oracle is deleted there is nothing left to diverge from, so this row and that guard are deleted with it — together with that decision. |
+| 9 | **`put` derives its revision by globbing a pattern built out of the CACHE ROOT, so a metacharacter in the operator's own directory name makes the Go client refuse a write the oracle performs.** `internal/client/verbs.go`'s `Put` calls `filepath.Glob(filepath.Join(cache, scope, ref+".md"))` and, on no match, `…+".*.md"` — the anchor inside the pattern, the error discarded. The oracle's `cache.glob(f"{scope}/{ref}.md")` anchors on `cache` and treats it literally. **MEASURED end to end against one pod, both real binaries, `put --scope alpha-notes --ref widget-cfg --file <f>` with NO `--if-match`, and with a CONTROL:** over a cache root carrying no metacharacter both clients answered `cairn: replaced …` at **exit 0** off the same derived `If-Match ae0d9b72e16dd40b`; over a root named `cache[bad` the oracle still answered `replaced` at **exit 0** while the Go client refused — `cairn: cannot derive a revision — 0 cached file(s) match alpha-notes/widget-cfg. Pass --if-match, or use the entry's exact filename stem as --ref.`, **exit 2**. The mechanism, measured separately with a control root: `filepath.Glob` returns `ErrBadPattern` and n=0 for BOTH patterns under a `[`-bearing root and n=1 under a plain one, where `Path.glob` returns n=1 under both. ⚠ **This is a REFUSAL, not a false claim of absence, so it is strictly less severe than the `ls-entries` case the branch fixed** — `put` stops, names the count and tells the operator the two ways out; `ls-entries` printed an empty listing at exit 0 and was believed. | **PRE-EXISTING and deliberately not fixed on this branch** — it is out of the branch's range and fixing it here would regrow a PR that was split once already. It is recorded because the branch's own framing (*"THE CACHE ROOT IS ENUMERATED… THAT IS A FIX, NOT A REFACTOR"*, *"closed the identical hazard in `Validate`"*) reads as class closure, and the class is **not** closed while these two lines stand. 🔴 The parity gate is structurally blind to it for the same reason it is blind to the `ls-entries` case: no `world.py` cache root carries a metacharacter, so both clients are only ever compared over roots where the two spellings agree. **CLOSING CONDITION** — a merged PR that makes `Put` derive the revision without putting `cache` inside a glob pattern (the shape `LsEntries` and `Validate` already moved to: enumerate the directory, match the base name), carrying a Go test that seeds a cache root whose name contains `[` and asserts the derived `If-Match`, shown **RED at `38f2b1f`**. Mechanically: `go test ./internal/client/ -run PutDerivesARevisionUnderAMetacharacterCacheRoot -count=1 -v` selects **at least one test** and exits 0. 🔴 **A ZERO-SELECTION RUN IS NOT THE MET STATE, and `go test -run` cannot tell you which you got from `$?`:** measured at `38f2b1f`, a `-run` filter matching nothing prints `testing: warning: no tests to run` / `PASS` / `ok … [no tests to run]` and **exits 0**. Require a `--- PASS: TestPutDerives…` line in the `-v` output, or `go test -json` with at least one `"Action":"pass"` carrying a `"Test"` field. ⚠ The same hazard applies to the fold-vs-literal closing condition recorded in `internal/client/verbs.go`'s `Validate`, whose Go half was measured to exit 0 on zero selection at this head; its **pytest** half does not share it (`-k` selecting nothing exits **5**). |
 
 ## Argument-shape rows
 
@@ -285,6 +295,59 @@ happens when it is a VALUE? The rule is argparse's, and both halves are measured
 
 ## What the gate structurally cannot see
 
+🔴 **AND THE FIRST ENTRY IS A CLOSED ONE, KEPT BECAUSE THE MECHANISM IS GENERAL: A BYTE-IDENTITY
+GATE IS BLIND TO EVERY DEFECT BOTH CLIENTS COMMIT IDENTICALLY, AND THE CORPUS IS WHAT DECIDES
+WHICH THOSE ARE.** `world.py` seeded **no `README.md` in any scope**. A scope's `README.md` is its
+policy sheet and not an entry — both loaders skip it, and `/snapshot` ships it, so every real
+cache has them — but the rule was open-coded at four production sites and wrong at two. `cairn
+ls-entries`, the verb the top-level `README.md` describes as *"what the cache actually holds"*,
+listed every scope's sheet as an entry: **12 of them on a populated cache**, on BOTH clients, so
+every row here compared equal and this gate was green over the miscount for its whole existence.
+Nothing about the differ was broken; it was never handed the discriminating input. The world now
+seeds two sheets, two lookalikes (`readme.md`, `README-old.md`) that ARE entries and must be
+listed, and keeps `rubble-heap` README-free so "exclude `README.md`" is distinguishable from
+"drop one file per scope". **The general form — ask what your corpus does NOT contain before
+reading a green byte-diff as coverage — is why this paragraph stays after the hole closed.**
+
+- **A scope name that is a prefix of another AND is followed there by a byte below `/` — and this
+  one is not hypothetical, the two clients ALREADY DIVERGE on it.** 🔴 **THE CONDITION IS NOT
+  "a prefix", AND THIS BULLET SAID IT WAS.** The mechanism is BYTE-WISE vs COMPONENT-WISE: the Go
+  client sorts the joined `scope/name` byte by byte (`sort.Strings`), while the oracle sorts
+  `Path` objects, whose `__lt__` compares `_parts_normcase` — a tuple, component by component
+  (CPython 3.12.14). Where scope `S` is a proper prefix of scope `T`, the oracle always puts all
+  of `S`'s files first (`S` < `T` as strings); the Go client compares `/` (0x2f) against `T`'s
+  first byte PAST the prefix, so it **agrees** when that byte sorts above `/` and **diverges**
+  when it sorts below. MEASURED end to end on both clients over a two-scope cache:
+
+  | scope pair | byte after the prefix | verdict |
+  |---|---|---|
+  | `a` / `a0` | `0` (0x30) | agree |
+  | `a` / `aZ` | `Z` (0x5a) | agree |
+  | `a` / `a_b` | `_` (0x5f) | agree |
+  | `a` / `a+b` | `+` (0x2b) | **diverge** — oracle `a/y.md` first, Go `a+b/x.md` first |
+  | `a` / `a-b` | `-` (0x2d) | **diverge** |
+  | `a` / `a.b` | `.` (0x2e) | **diverge** |
+
+  A pair that is NOT in a prefix relation cannot diverge at all: the first differing byte then
+  lies inside both scope names, where the two comparisons agree. 🔴 **So the old sentence was
+  not merely imprecise — it was a trap: somebody widening the corpus by it would seed `a`/`a0`,
+  get a GREEN, and leave the gate exactly as blind**, which is the failure this whole section
+  exists to warn about. Both sorts long predate the row that found this. No scope in `world.py`
+  is a prefix of another (`alpha-notes`, `beta-notes`, `rubble-heap`, `hollow-set`, and the
+  empty-scope names), so the gate has never been handed the discriminating input and every
+  `ls-entries` row compares equal — the SAME mechanism as the closed README entry above, in a
+  corpus dimension nobody had asked about. Closing it needs a corpus pair **whose second scope
+  name continues with a byte below `/`** AND a decided direction, because agreeing means changing
+  one client's stdout.
+
+  ⚠ **The remedy, if the decision goes the oracle's way, is one deleted line — MEASURED, not
+  designed.** Since `LsEntries` walks the cache root instead of globbing it, `os.ReadDir` returns
+  the scope directories sorted and `store.EntryFileNames` returns the names sorted, so the lines
+  are already in component-wise order; the Go client's final `sort.Strings` is the only thing
+  re-ordering them byte-wise. Deleting it and re-running both clients over `a`/`a-b`, `a`/`a.b`,
+  `a`/`a0` and an ordinary six-entry cache gave a byte-identical listing in all four. Recorded,
+  **not applied** — it is still a change to a verb's stdout and this bullet stays open until
+  somebody decides the direction and adds the corpus pair.
 - **Concurrency.** Both clients take the same `flock` around the cache swap, which is why they can
   share a root at all; nothing here runs them at the same instant.
 - **A CONDITIONAL sync whose validator was minted by the OTHER implementation.** Every row wipes

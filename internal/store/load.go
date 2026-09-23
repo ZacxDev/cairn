@@ -235,14 +235,15 @@ func LoadIndex(root string, onMalformed OnMalformed, visible ScopeSet) (*Index, 
 		}
 		scopes = append(scopes, name)
 
-		entryNames, readErr := mdNamesIn(scopePath)
+		// 🔴 THE ENTRY SET COMES FROM ONE FUNCTION, NOT FROM A README TEST OPEN-CODED
+		// HERE. This loop used to spell `if entryName == "README.md" { continue }`
+		// itself; three other sites spelled the same rule, and two of them spelled it
+		// WRONG. See `EntryFileNames`.
+		entryNames, readErr := EntryFileNames(scopePath)
 		if readErr != nil {
 			return nil, readErr
 		}
 		for _, entryName := range entryNames {
-			if entryName == "README.md" {
-				continue
-			}
 			mdPath := filepath.Join(scopePath, entryName)
 			// 🔴 WHAT IS THIS PATH — ASKED BEFORE IT IS OPENED, AND ASKED ONCE.
 			// The same classifier `/snapshot` uses; only the action table differs,
@@ -287,6 +288,103 @@ func LoadIndex(root string, onMalformed OnMalformed, visible ScopeSet) (*Index, 
 	// policy would be a second, silent policy site.
 	index.Malformed = append(index.Malformed, refused...)
 	return index, nil
+}
+
+// ScopePolicySheet is the ONE filename a cached scope directory carries that is not an
+// entry: each scope dir holds one as its store-policy sheet, `/snapshot` ships it, so every
+// real cache has them.
+//
+// 🔴 THE SPELLING IS EXACT AND THAT IS THE WHOLE RULE — not a prefix, not a case fold.
+// `readme.md` and `README-old.md` are ORDINARY ENTRIES: the loader walks them, indexes them
+// and can reject them as malformed, so a consumer that excluded them would DROP a file the
+// loader counted and drive a printed numerator below zero.
+//
+// ⚠ THAT SENTENCE USED TO READ "would count a file the loader counted too", WHICH IS THE
+// MECHANISM BACKWARDS and describes nothing that can go negative. The Python twin
+// (`subsystem_resolver.SCOPE_POLICY_SHEET`) has always had it the right way round; this is
+// the one that moved.
+const ScopePolicySheet = "README.md"
+
+// IsEntryFileName answers "is this filename an ENTRY in a cached scope" — the one rule, in
+// one place.
+//
+// 🔴 IT EXISTS BECAUSE THE RULE WAS OPEN-CODED AT FOUR PRODUCTION SITES AND WAS WRONG AT TWO
+// OF THEM, IN THE SAME DIRECTION. The loader below skipped the sheet; `Validate` did not
+// (fixed separately, and it printed `3 of 3` over two entries); `LsEntries` did not either,
+// and `cairn ls-entries` — the verb `README.md` advertises as "what the cache actually
+// holds" — listed every scope's policy sheet as an entry. A predicate open-coded at N sites
+// is typically wrong at N-1 of them; consolidating it is what made the disagreement audible.
+//
+// ⚠ THE `.md` HALF IS NOT REDUNDANT WITH THE CALLER'S GLOB EVEN WHERE THE GLOB ALREADY
+// APPLIED IT. Stating the whole rule here is what lets a caller that has NOT globbed (a
+// directory walk, an archive member list) ask the same question and get the same answer.
+//
+// 🔴 AND IT COMPARES THE BASE NAME, BECAUSE THE SENTENCE ABOVE IS A PROMISE THE FIRST CUT
+// DID NOT KEEP. That cut compared the WHOLE argument, so an un-globbed caller holding
+// `scope + "/" + name` — the shape `LsEntries` prints — got the opposite answer:
+// `IsEntryFileName("notes/README.md")` returned TRUE, the policy sheet classified as an
+// entry, the exact defect the consolidation exists to eliminate, regenerated inside the
+// consolidated rule. Basing the comparison makes the predicate TOTAL over its input rather
+// than narrowing the promise to "base names only": the answer is now the same however a
+// caller spells the path.
+//
+// 🔴 `internal/snapshot` IS NOT THAT CALLER, AND AN EARLIER FORM OF THIS COMMENT NAMED IT AS
+// THE EXAMPLE. It does build `scope + "/" + name` arcnames, but `/snapshot` MUST SHIP every
+// scope's policy sheet — that is how each cache gets one — so routing its member list through
+// this predicate would drop them from the archive and break the thing `ScopePolicySheet`'s
+// own first paragraph depends on.
+//
+// 🔴 THE CITATION IS RE-DERIVED, BECAUSE THE NAME THAT STOOD HERE HAS NEVER EXISTED. This
+// line named `internal/snapshot.chooseEntries`; `find … -print0 | xargs -0 grep` over the
+// tree returns it ONLY from this comment and its Python twin, `git log -S chooseEntries --
+// internal/snapshot/` is empty, and the same grep DOES return `Build`, `Freshness` and
+// `RootAction` from that package — so the zero is the grep working, not a broken pattern. A
+// maintainer greps a name like this to decide whether `/snapshot` may route through
+// `IsEntryFileName`, and a name with no hits leaves them unable to tell a stale citation
+// from a measurement never taken.
+//
+// There is no such function: the archive's member list is built INLINE inside
+// `internal/snapshot.Build`, whose per-scope name filter is `strings.HasSuffix(name, ".md")
+// && !strings.HasPrefix(name, ".")`. The oracle's is `server.py`'s `_snapshot`, filtering
+// `p.name.endswith(".md") and not p.name.startswith(".")`. MEASURED at this head by READING
+// both, and then BEHAVIOURALLY over a scope holding `README.md` beside one ordinary entry:
+// `Build` shipped `<scope>/README.md` and `<scope>/<entry>.md` (entries=2), and `GET
+// /api/v1/snapshot` shipped `widget-cfg/README.md` among its four members. Neither carries a
+// README exclusion. The SHAPE is the point; that package
+// is an explicit EXCLUSION from it, together with `WritableEntryFiles` and the other transfer
+// walks, which compare against `X-Store-Entries` and must include sheets.
+//
+// ⚠ THIS CHANGES NOTHING FOR TODAY'S CALLERS, AND THAT WAS CHECKED RATHER THAN ASSUMED.
+// `EntryFileNames` below passes `os.ReadDir` names and `LsEntries` passes `filepath.Base`,
+// so both were already handing it base names, for which `filepath.Base` is the identity.
+// `filepath.Base("")` is `"."`, which carries no `.md` suffix, so the empty name stays false.
+func IsEntryFileName(name string) bool {
+	base := filepath.Base(name)
+	return strings.HasSuffix(base, ".md") && base != ScopePolicySheet
+}
+
+// EntryFileNames is the ENTRY files in ONE cached scope directory, sorted — `mdNamesIn`
+// with `IsEntryFileName` applied.
+//
+// 🔴 THE LOADER AND `validate` BOTH GO THROUGH THIS, WHICH IS THE POINT. The original defect
+// was two walks behind one printed line: the numerator came from `LoadIndex` and the
+// denominator from a bare `*.md` glob, so they could disagree about what an entry is. They
+// now cannot, because there is one walk function and one rule.
+//
+// ⚠ THE ERROR IS THE DIRECTORY READ'S, PROPAGATED. A scope directory that cannot be read is
+// NOT an empty scope — see `mdNamesIn`'s caller in `LoadIndex`, which fails closed on it.
+func EntryFileNames(dir string) ([]string, error) {
+	names, err := mdNamesIn(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if IsEntryFileName(name) {
+			out = append(out, name)
+		}
+	}
+	return out, nil
 }
 
 // mdNamesIn is the `*.md` glob, sorted.

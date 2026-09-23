@@ -374,10 +374,17 @@ MUTANTS: list[Mutant] = [
         go_package="./internal/client/",
     ),
     Mutant(
+        # ⚠ THE ANCHOR MOVED WITH THE FIX AND THE MUTANT IS THE SAME ONE. `LsEntries`
+        # built its pattern out of the cache root (`filepath.Glob(filepath.Join(cache,
+        # "*", "*.md"))`), which interpreted a metacharacter in the operator's own
+        # directory name; it now enumerates the root instead. The line that names
+        # `cache` is what this mutant re-points at `opts.Cache`, exactly as before.
+        # `Validate` spells its own root read `entries, readErr := os.ReadDir(cache)`,
+        # so this anchor stays unique in the file.
         id="go-a-fan-out-reads-ONE-instance",
         target="internal/client/verbs.go",
-        old="\t\tmatches, _ := filepath.Glob(filepath.Join(cache, \"*\", \"*.md\"))",
-        new="\t\tmatches, _ := filepath.Glob(filepath.Join(opts.Cache, \"*\", \"*.md\"))",
+        old="\t\tscopeDirs, _ := os.ReadDir(cache)",
+        new="\t\tscopeDirs, _ := os.ReadDir(opts.Cache)",
         why="`ls-entries` walks every instance and lists the DEFAULT one's cache N times — the "
             "entries that exist only on the second store vanish, under a banner that names it.",
         kills="TestLsEntriesWALKSEveryInstanceAndPrefixesTheLINE",

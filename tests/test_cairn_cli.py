@@ -1050,6 +1050,241 @@ class TestValidateActuallyRuns:
         assert proc.returncode != 0, proc.stdout + proc.stderr
 
 
+class TestLsEntriesListsENTRIES:
+    """🔴 THE README MISCOUNT AT THE OTHER VERB, AND THE ONE `README.md` DESCRIBES
+    AS *"what the cache actually holds"*.
+
+    `cmd_validate`'s count was fixed by filtering its own `*.md` glob;
+    `cmd_ls_entries` globbed `<cache>/*/*.md` and printed every match, so a
+    scope's policy sheet was listed as `<scope>/README.md`. A listing is not a
+    count: a consumer opens what this verb prints, and it was being handed paths
+    to files `load_index` will never index. Measured twelve of them on a
+    populated cache.
+
+    🔴 EVERY TEST IN THIS CLASS IS RED AT THE COMMIT BEFORE THE FIX, WITH THE
+    README IN THE LISTING rather than with an error. The Go client's coverage for
+    the same rows is `internal/client/lsentries_test.go`; the two clients are
+    compared byte-for-byte by `tests/parity/harness.py`, whose world now seeds
+    policy sheets and lookalikes, so a one-sided fix is a divergence.
+    """
+
+    def test_the_listing_EXCLUDES_the_scopes_README(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        (source_store / "widget-cfg" / "README.md").write_text(
+            "# widget-cfg — the scope's own policy sheet, not an entry\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 THE REACHABILITY CONTROL. `/snapshot` ships policy sheets, and this
+        # row is about a cache that HAS one — a snapshot that dropped it would
+        # leave the assertion passing over a world the defect cannot reach.
+        assert (cache / "widget-cfg" / "README.md").is_file(), sorted(
+            p.name for p in (cache / "widget-cfg").iterdir()
+        )
+
+        proc = run_cairn("ls-entries", "--no-sync", url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert sorted(proc.stdout.split()) == [
+            "gizmo-notes/other-thing.md",
+            "widget-cfg/thing-alpha.md",
+            "widget-cfg/thing-beta.md",
+        ], proc.stdout
+
+    def test_a_scope_holding_ONLY_a_README_contributes_NO_line(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """The sharpest form: a scope with no entries in it produced a line, so
+        `ls-entries` reported content for a scope the reader renders as empty."""
+        (source_store / "hollow-area" / "README.md").write_text(
+            "# hollow-area — a policy sheet and nothing else\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        assert (cache / "hollow-area" / "README.md").is_file()
+
+        proc = run_cairn("ls-entries", "--no-sync", url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        listed = sorted(proc.stdout.split())
+        assert not [line for line in listed if line.startswith("hollow-area/")], listed
+        # The negative control for that absence: the run must have listed
+        # SOMETHING, or an empty stdout would satisfy the assertion above while
+        # proving the verb never read the cache.
+        assert listed == [
+            "gizmo-notes/other-thing.md",
+            "widget-cfg/thing-alpha.md",
+            "widget-cfg/thing-beta.md",
+        ], listed
+
+    def test_a_scope_with_NO_README_still_lists_every_entry(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE CONTROL THAT SEPARATES "EXCLUDE README.md" FROM "DROP ONE FILE
+        PER SCOPE".
+
+        Every other row here holds EXACTLY ONE `README.md`, so a blanket
+        subtract-one prints the same listing as the rule it is meant to
+        implement and survives all of them. Only a scope with NO README tells
+        them apart, and this row's line count (4) is distinct from every other
+        row's.
+        """
+        (source_store / "widget-cfg" / "thing-gamma.md").write_text(
+            _entry("thing-gamma", "widget-cfg", "- 2026-01-05: a third entry.")
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 THE REACHABILITY CONTROL IN THE DIRECTION THIS ROW NEEDS IT: no
+        # README anywhere in the cache, or this is a second sample of the
+        # README-bearing case and discriminates nothing.
+        landed = sorted(p.name for p in cache.glob("*/*.md"))
+        assert "README.md" not in landed, landed
+
+        proc = run_cairn("ls-entries", "--no-sync", url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert sorted(proc.stdout.split()) == [
+            "gizmo-notes/other-thing.md",
+            "widget-cfg/thing-alpha.md",
+            "widget-cfg/thing-beta.md",
+            "widget-cfg/thing-gamma.md",
+        ], proc.stdout
+
+    def test_a_README_LOOKALIKE_is_LISTED(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE PREDICATE IS `== "README.md"` EXACTLY, AND A LISTING IS WHERE A
+        FOLD OR A PREFIX MATCH SHOWS UP AS A MISSING FILE RATHER THAN A WRONG
+        NUMBER.
+
+        `readme.md` and `README-old.md` are ORDINARY ENTRIES — the loader walks
+        and indexes them — so a client that hid them here would tell a reader the
+        cache does not hold a file `recall --ref readme` will happily serve.
+
+        `gizmo-notes` then holds one sheet (excluded), two lookalikes and two
+        plain entries: five files, four listed, three README-shaped names, two
+        plain ones — 5, 4, 3, 2, no two of them equal.
+
+        🔴 DISTINCTNESS AMONG THOSE FOUR REFUTES A FOLD RULE AND A PREFIX RULE; IT
+        DOES NOT REFUTE A BLANKET SUBTRACT-ONE, AND THIS SENTENCE SAID IT DID. THAT
+        IS THE THIRD CORRECTION TO IT. Worked through: a FOLD rule (drop every name
+        that case-folds to `readme.md`) drops `README.md` and `readme.md` and lists
+        3; a PREFIX rule (drop every name starting `README`) drops `README.md` and
+        `README-old.md` and also lists 3 — both refuted, because 3 != 4. A blanket
+        SUBTRACT-ONE lists 5 - 1 = **4**, which IS the listed count, so no comparison
+        among these four numbers can tell it apart from the real rule. What refutes
+        it is the assertion below, which pins the four NAMES: sorted, this scope's
+        first file is `README-old.md` and the rule under test LISTS it, so any
+        subtract-one dropping something other than `README.md` yields a different
+        set. The conclusion stands; its stated reason did not, and the counts do
+        less work than three drafts of this docstring credited them with.
+
+        🔴 THE SECOND PLAIN ENTRY IS WHAT MAKES THAT ARITHMETIC TRUE, AND IT WAS
+        ADDED BECAUSE THE SENTENCE WAS FALSE FOR ITS OWN FIXTURE. Without
+        `second-thing.md` the scope held FOUR files, THREE listed and THREE
+        README-shaped — "listed" and "README-shaped" both 3, so a rule that
+        listed exactly the README-shaped names would have printed the same count
+        this docstring offered as proof that it could not. The Go twin
+        (`internal/client/lsentries_test.go::
+        TestLsEntriesListsAREADMELookalikeAsAnOrdinaryEntry`) always seeded the
+        second plain entry; only the prose had been copied across.
+
+        ⚠ `README.md` AND `readme.md` IN ONE DIRECTORY IS TWO FILES ON LINUX AND
+        ONE ON A CASE-FOLDING FILESYSTEM. CI is `ubuntu-latest`; the reachability
+        control below fails loudly rather than letting a folded fixture pass.
+        """
+        (source_store / "gizmo-notes" / "README.md").write_text(
+            "# gizmo-notes — the scope's own policy sheet, not an entry\n"
+        )
+        # ⚠ `service:` must normalize to the filename's own slug or the loader
+        # rejects the entry ("a ref reaches the wrong file"), so an entry at
+        # `readme.md` carries `service: readme`.
+        (source_store / "gizmo-notes" / "readme.md").write_text(
+            _entry("readme", "gizmo-notes", "- 2026-01-06: a real entry.")
+        )
+        (source_store / "gizmo-notes" / "README-old.md").write_text(
+            _entry("readme-old", "gizmo-notes", "- 2026-01-07: also an entry.")
+        )
+        (source_store / "gizmo-notes" / "second-thing.md").write_text(
+            _entry("second-thing", "gizmo-notes", "- 2026-01-08: the second plain one.")
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        landed = sorted(p.name for p in (cache / "gizmo-notes").iterdir())
+        assert landed == [
+            "README-old.md",
+            "README.md",
+            "other-thing.md",
+            "readme.md",
+            "second-thing.md",
+        ], landed
+
+        proc = run_cairn("ls-entries", "--no-sync", url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert sorted(proc.stdout.split()) == [
+            "gizmo-notes/README-old.md",
+            "gizmo-notes/other-thing.md",
+            "gizmo-notes/readme.md",
+            "gizmo-notes/second-thing.md",
+            "widget-cfg/thing-alpha.md",
+            "widget-cfg/thing-beta.md",
+        ], proc.stdout
+
+    def test_a_cache_ROOT_carrying_a_glob_METACHARACTER_still_lists_its_entries(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """⚠ AN INVARIANT GUARD ON THIS CLIENT, NOT REGRESSION COVERAGE — IT PASSES
+        AT `a41dd02`, AND ITS GO TWIN DOES NOT.
+
+        `cmd_ls_entries` globs `cache.glob("*/*.md")`, where `cache` is the ANCHOR
+        and only `*/*.md` is the pattern, so a `[` in the operator's own directory
+        name is matched literally. The Go client built the whole thing as one
+        pattern — `filepath.Glob(filepath.Join(cache, "*", "*.md"))` — so
+        `filepath.Match` returned `ErrBadPattern`, the error was discarded, and
+        `ls-entries` printed NOTHING at exit 0 over this same cache. This row is
+        what pins the oracle's half of that so a future rewrite cannot quietly
+        adopt the Go spelling; the behavioural red→green is
+        `internal/client/lsentries_test.go::
+        TestLsEntriesReadsACacheROOTCarryingAGlobMetacharacter`.
+
+        🔴 THE PARITY GATE CANNOT SEE THIS PAIR. No `world.py` cache root carries a
+        metacharacter, so both clients were compared over roots where the two
+        spellings agree.
+        """
+        cache = tmp_path / "wid[get"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 THE REACHABILITY CONTROLS. Two of them, because either alone leaves
+        # this row able to pass over a world the difference cannot reach: the
+        # root must actually carry the metacharacter, and the sync must actually
+        # have landed entries under it.
+        assert "[" in str(cache), cache
+        assert (cache / "widget-cfg" / "thing-alpha.md").is_file(), sorted(
+            str(p) for p in cache.rglob("*.md")
+        )
+        # The POSITIVE CONTROL for the mechanism, run here against this very
+        # root: the oracle's own call — the anchor as an OBJECT, `*/*.md` as the
+        # pattern — finds every entry under it, so the `[` is a character in a
+        # directory name and not the start of a character class. The Go client
+        # joined the two into one pattern and could not make that distinction;
+        # that is the entire difference between the two clients.
+        assert sorted(p.name for p in cache.glob("*/*.md")) == [
+            "other-thing.md",
+            "thing-alpha.md",
+            "thing-beta.md",
+        ], sorted(str(p) for p in cache.rglob("*.md"))
+
+        proc = run_cairn("ls-entries", "--no-sync", url=None, cache=cache)
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert sorted(proc.stdout.split()) == [
+            "gizmo-notes/other-thing.md",
+            "widget-cfg/thing-alpha.md",
+            "widget-cfg/thing-beta.md",
+        ], proc.stdout
+
+
 class TestArchiveSizeAndTruncation:
     def test_a_truncated_GZIP_serves_the_cache_instead_of_a_traceback(
         self, live_store, tmp_path: Path

@@ -265,7 +265,7 @@ check.
 | refresh the local cache from the pod | `cairn sync` |
 | a scope's digest | `cairn recall --scope X` (`--ref R`, `--list`, `--limit N`, `--page N`) |
 | find a hunk by text | `cairn search 'query'` (`--all-scopes`) |
-| what the cache actually holds | `cairn ls-entries` |
+| what the cache actually holds — the ENTRY files, never a scope's `README.md` | `cairn ls-entries` |
 | parse-check the cached entries | `cairn validate` |
 | one call of diagnostics | `cairn doctor` (`--json`, `--no-sync`) |
 | append one dated, attributed bullet | `cairn append --scope S --ref R --text '…' --session ID` |

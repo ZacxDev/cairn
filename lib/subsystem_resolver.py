@@ -98,7 +98,7 @@ import stat
 from collections.abc import Sequence as _AbcSequence
 from dataclasses import dataclass
 from datetime import date as _date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Sequence
 
 __all__ = [
@@ -148,6 +148,9 @@ __all__ = [
     "associate_paths",
     "parse_front_matter",
     "entry_mapping",
+    "SCOPE_POLICY_SHEET",
+    "is_entry_filename",
+    "entry_files_in",
     "load_index",
     "visible_scope_set",
     "KIND_BROKEN_LINK",
@@ -2590,6 +2593,100 @@ _LOADER_REFUSAL_REASON: dict[str, str] = {
 }
 
 
+#: The ONE filename a scope directory carries that is not an entry: each scope
+#: dir holds one as its store-policy sheet, and `/snapshot` ships it, so every
+#: real cache has them.
+#:
+#: 🔴 THE SPELLING IS EXACT AND THAT IS THE WHOLE RULE — not a prefix, not a case
+#: fold. `readme.md` and `README-old.md` are ORDINARY ENTRIES: the loader walks
+#: them, indexes them and can reject them as malformed, so a consumer that
+#: excluded them would drop a file the loader counted and drive a printed
+#: numerator below zero.
+SCOPE_POLICY_SHEET = "README.md"
+
+
+def is_entry_filename(name: str) -> bool:
+    """Is this filename an ENTRY in a cached scope — the one rule, in one place.
+
+    🔴 IT EXISTS BECAUSE THE RULE WAS OPEN-CODED AT FOUR PRODUCTION SITES AND WAS
+    WRONG AT TWO OF THEM, IN THE SAME DIRECTION. `load_index` below skipped the
+    sheet; `cairn validate` did not (fixed separately — it printed `3 of 3` over
+    two entries beside one sheet); `cairn ls-entries` did not either, and that is
+    the verb `README.md` advertises as *"what the cache actually holds"*, so it
+    asserted every scope's policy sheet was an entry. A predicate open-coded at N
+    sites is typically wrong at N-1 of them; consolidating it is what made the
+    disagreement audible.
+
+    ⚠ THE `.md` HALF IS NOT REDUNDANT WITH A CALLER'S GLOB EVEN WHERE THE GLOB HAS
+    ALREADY APPLIED IT. Stating the whole rule here is what lets a caller that has
+    NOT globbed ask the same question and get the same answer.
+
+    🔴 AND IT COMPARES THE BASE NAME, BECAUSE THE SENTENCE ABOVE IS A PROMISE THE
+    FIRST CUT DID NOT KEEP. That cut compared the WHOLE argument, so an un-globbed
+    caller holding `scope + "/" + name` — the same shape `ls-entries` prints — got
+    the opposite answer: `is_entry_filename("notes/README.md")` returned True, the
+    policy sheet classified as an entry, which is the exact defect the
+    consolidation exists to eliminate, regenerated inside the consolidated rule.
+    Basing the comparison makes the predicate TOTAL over its input rather than
+    narrowing the promise to "base names only": the answer is the same however a
+    caller spells the path.
+
+    🔴 THE SNAPSHOT WALK IS NOT THAT CALLER, AND AN EARLIER FORM OF THIS DOCSTRING
+    POINTED AT IT — it said "an archive member list IN THIS REPO", of which
+    `/snapshot` is the only one. `/snapshot` does build `scope + "/" + name`
+    arcnames, but it MUST SHIP every scope's policy sheet — that is how each cache
+    gets one — so routing its member list through this predicate would drop them
+    from the archive and break the thing `SCOPE_POLICY_SHEET`'s own first paragraph
+    depends on.
+
+    🔴 THE CITATION IS RE-DERIVED, BECAUSE THE NAME THAT STOOD HERE HAS NEVER
+    EXISTED. This paragraph named `internal/snapshot.chooseEntries`;
+    `find … -print0 | xargs -0 grep` over the tree returns it ONLY from this
+    docstring and its Go twin, `git log -S chooseEntries -- internal/snapshot/` is
+    empty, and the same grep DOES return `Build`, `Freshness` and `RootAction` from
+    that package — so the zero is the grep working, not a broken pattern. A
+    maintainer greps a name like this to decide whether the snapshot walk may route
+    through this predicate, and a name with no hits leaves them unable to tell a
+    stale citation from a measurement never taken.
+
+    There is no such function. The two member lists are `server.py`'s `_snapshot`,
+    filtering `p.name.endswith(".md") and not p.name.startswith(".")`, and — built
+    INLINE, not in a helper — `internal/snapshot.Build`, filtering
+    `strings.HasSuffix(name, ".md") && !strings.HasPrefix(name, ".")`. MEASURED at
+    this head by READING both, and then BEHAVIOURALLY over a scope holding
+    `README.md` beside one ordinary entry: `GET /api/v1/snapshot` shipped
+    `widget-cfg/README.md` among its four members, and `Build` shipped
+    `<scope>/README.md` beside `<scope>/<entry>.md` (entries=2). Neither carries a
+    README exclusion. The SHAPE is the
+    point; the snapshot/transfer walks are an explicit EXCLUSION from it, because
+    they compare against `X-Store-Entries` and must include sheets.
+
+    ⚠ THIS CHANGES NOTHING FOR TODAY'S CALLERS, AND THAT WAS CHECKED RATHER THAN
+    ASSUMED. `entry_files_in` below passes `p.name` and `cairn ls-entries` passes
+    `path.name`, so both were already handing it base names, for which
+    `PurePosixPath(...).name` is the identity. `PurePosixPath("").name` is `""`,
+    which carries no `.md` suffix, so the empty name stays False.
+    """
+    base = PurePosixPath(name).name
+    return base.endswith(".md") and base != SCOPE_POLICY_SHEET
+
+
+def entry_files_in(scope_dir: Path) -> list[Path]:
+    """The ENTRY files in ONE cached scope directory, sorted.
+
+    🔴 THE LOADER AND `cairn validate` BOTH GO THROUGH THIS, WHICH IS THE POINT.
+    The original defect was two walks behind one printed line: the numerator came
+    from `load_index` and the denominator from a bare `*.md` glob, so the two
+    could disagree about what an entry is. They now cannot.
+
+    ⚠ `Path.glob("*.md")` DOES match a leading dot — measured, not assumed — so a
+    dangling `.#entry.md` editor lock file IS in this set. That is deliberate:
+    `classify_path` is what refuses it, and refusing it is a REPORTED rejection
+    rather than a silent drop.
+    """
+    return sorted(p for p in Path(scope_dir).glob("*.md") if is_entry_filename(p.name))
+
+
 def load_index(
     root: Path,
     *,
@@ -2599,7 +2696,9 @@ def load_index(
     """Read `<root>/<scope>/*.md` into a `SubsystemIndex`. READ-ONLY.
 
     `README.md` is skipped in every scope — each scope dir carries one as its
-    store-policy sheet, and it is not an entry.
+    store-policy sheet, and it is not an entry. The skip is `entry_files_in`'s,
+    not this function's: three other sites answer the same question and two of
+    them answered it differently until the rule was consolidated there.
 
     A scope dir with no entries is REGISTERED, not dropped: "Lazy — a scope dir
     or service file may not exist yet". An existing empty scope must resolve to
@@ -2765,9 +2864,11 @@ def load_index(
             # caller's OWN scope, silently emptied.
             continue
         scopes.append(scope_dir.name)
-        for md in sorted(scope_dir.glob("*.md")):
-            if md.name == "README.md":
-                continue
+        # 🔴 THE ENTRY SET COMES FROM ONE FUNCTION, NOT FROM A README TEST
+        # OPEN-CODED HERE. This loop used to spell `if md.name == "README.md":
+        # continue` itself; three other sites spelled the same rule, and two of
+        # them spelled it WRONG. See `entry_files_in`.
+        for md in entry_files_in(scope_dir):
             # 🔴 WHAT IS THIS PATH — ASKED BEFORE IT IS OPENED, AND ASKED ONCE.
             # `classify_path` is the same function `/snapshot` uses; only the
             # action table differs, because the action is a property of the
