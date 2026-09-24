@@ -422,6 +422,17 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "never a clean 0", ["validate", "--scope", "ghost-void"]),
         Case("validate-no-sync", "the same over the cache, off the network",
              ["validate", "--no-sync"]),
+        # 🔴 THE WRITE-PROTOCOL HALF, AND IT IS THE DISCRIMINATING INPUT THE CORPUS DID NOT
+        # HAVE. Every other scope's entries have a well-formed nuance section, so both
+        # advisories print their ZERO branch everywhere and a client that implemented
+        # neither would compare equal. `crag-notes` carries a dropped line that IS a
+        # declaration and an out-of-reach marker, so this row compares the FINDINGS
+        # branches — the quoted line, the per-file offsets and the `carries_marker` flag —
+        # rather than two identical zeros. A one-sided fix is RED here.
+        Case("validate-write-protocol-advisories",
+             "a scope whose entries PARSE and still hold content no reader can reach: the "
+             "`dropped lines:` and `marker reachability:` blocks, with findings",
+             ["validate", "--scope", "crag-notes"]),
 
         # --- doctor -----------------------------------------------------------
         Case("doctor-live", "seven checks, four states, the count line and the exit legend",
@@ -1448,6 +1459,86 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"PASS orphan-reap-parity (both clients reaped {len(go_reaped)} of 2 "
                           f"seeded trees under a parent named "
                           f"{WORLD_METACHARACTER_SUFFIX.lstrip('-')!r})")
+                    passes += 1
+
+            # 🔴 A NON-REGULAR PATH IN THE CACHE, MADE STRUCTURALLY — BECAUSE NO `Case` ROW
+            # CAN CARRY ONE, AND THE CORPUS'S INABILITY TO IS WHY THIS DIVERGENCE SHIPPED.
+            # `world.build_store` writes files that the pod tars and each client unpacks, and
+            # neither a fifo nor a device node survives that pipe: the snapshot walker refuses
+            # them, `install_snapshot` replaces the cache root wholesale, and `tarfile`'s
+            # `filter="data"` would drop the member even if one arrived. So the world CANNOT
+            # represent this shape — saying so rather than faking it is the point — and the
+            # only place it can be presented to both clients is a cache root built by hand.
+            #
+            # 🔴 THE FIFO IS THE ONE TO SEED, NOT A DEVICE. Both are `open()`-before-classify
+            # hazards and the same table arm refuses both, but a character device's failure is
+            # an OOM whose blast radius is the harness's own box, while a fifo's is a HANG the
+            # timeout below bounds exactly. `link-to-other` is covered by the unit tests in
+            # both clients; what this check is for is the CROSS-CLIENT claim — that the two
+            # agree on the exit code and the bytes for a shape no row can reach.
+            #
+            # ⚠ THE TIMEOUT IS PART OF THE ASSERTION. Before the classifier gate, BOTH clients
+            # wedged here forever; a run without a timeout would hang this harness rather than
+            # report, which is the failure mode that makes a gate get disabled.
+            if wanted is None:
+                nonregular = work / "cache-nonregular"
+                shutil.rmtree(nonregular, ignore_errors=True)
+                restore_store(pristine, store)
+                run_client([sys.executable, str(ROOT / "cairn"), "--cache", str(nonregular),
+                            "sync"], work, base_env)
+                wedge = nonregular / "crag-notes" / "aaa-wedge.md"
+                os.mkfifo(wedge)
+                seen = {}
+                wedged = []
+                for label, argv0 in (("oracle", [sys.executable, str(ROOT / "cairn")]),
+                                     ("go", [go_binary])):
+                    cmd = argv0 + ["--cache", str(nonregular), "validate", "--no-sync"]
+                    try:
+                        # ⚠ NOT `proc` — that name holds the POD HANDLE in this scope, and
+                        # shadowing it made the `finally` reaper call `.terminate()` on a
+                        # `CompletedProcess` and take down a green run.
+                        done = subprocess.run(cmd, cwd=str(work), env=base_env,
+                                              capture_output=True, timeout=30)
+                    except subprocess.TimeoutExpired:
+                        wedged.append(label)
+                        continue
+                    seen[label] = Outcome(
+                        rc=done.returncode,
+                        stdout=done.stdout.decode("utf-8", "replace"),
+                        stderr=done.stderr.decode("utf-8", "replace"))
+                wedge.unlink()
+                if wedged:
+                    failures.append("nonregular-path-parity")
+                    print(f"FAIL nonregular-path-parity — {', '.join(wedged)} did NOT RETURN "
+                          f"within 30s over a cache holding a fifo named `*.md`. Reading one "
+                          f"blocks until somebody writes; the advisories must decide the "
+                          f"path's KIND before `open()`, as the loader does.")
+                elif seen["oracle"].rc != seen["go"].rc:
+                    failures.append("nonregular-path-parity")
+                    print(f"FAIL nonregular-path-parity — exit {seen['oracle'].rc} (oracle) vs "
+                          f"{seen['go'].rc} (go) over a cache holding a fifo named `*.md`.")
+                elif seen["oracle"].stdout != seen["go"].stdout:
+                    # stdout is compared RAW: `validate` puts only `cairn: <scope>: ` lines
+                    # there, and the one time-dependent string — the cached banner's
+                    # `cache <N>s old` — is on stderr, which this row does not compare (the
+                    # rows above already do, under `cache-age-seconds`).
+                    failures.append("nonregular-path-parity")
+                    print("FAIL nonregular-path-parity — stdout differs over a cache holding a "
+                          "fifo named `*.md`:\n" +
+                          unified(seen["oracle"].stdout, seen["go"].stdout, "oracle", "go"))
+                elif seen["oracle"].rc != 5 or "malformed" not in seen["oracle"].stdout:
+                    # 🔴 THE POSITIVE CONTROL, READ RATHER THAN ASSUMED. Two clients that both
+                    # skipped the scope, or both crashed the same way, compare equal. The fifo
+                    # must land as a MALFORMED entry at exit 5 — the loader's own refusal —
+                    # or this row is agreement about nothing.
+                    failures.append("nonregular-path-parity")
+                    print(f"FAIL nonregular-path-parity — both clients agreed at exit "
+                          f"{seen['oracle'].rc}, but the fifo was not reported as a malformed "
+                          f"entry at exit 5, so the fixture never reached the loader's refusal "
+                          f"and this comparison would agree with anything.")
+                else:
+                    print("PASS nonregular-path-parity (both clients exit 5, byte-identical "
+                          "stdout, over a cache holding a fifo named `*.md`)")
                     passes += 1
 
             if args.self_test:

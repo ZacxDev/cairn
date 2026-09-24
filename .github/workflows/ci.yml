@@ -311,7 +311,25 @@ jobs:
           #     test_a_repo_PATH_carrying_a_glob_METACHARACTER_still_resolves
           # The behavioural red->green for this branch is in `go test` and in the parity
           # job, neither of which is in THIS number — see the note above about why.
-          FLOOR = 2036
+          #
+          # ⚠ 2036 -> 2091, AND AGAIN IT IS THE GAP, NOT THE EIGHT ROWS. `m` reached 2133 on
+          # this branch's base (`cc1242a`) with the floor still at 2036 — a gap of 97, four
+          # tests from the drift guard below, and the round-2 audit fixes add EIGHT. At 2141
+          # the gap would be 105 and the guard would have gone red on this change rather
+          # than on a narrowing. 2091 = 2141 - min(50, max(1, 2141/20)).
+          #
+          # Measured with names on the base ref and on HEAD, one collect-only run each, the
+          # `sed`-less pipeline above: base 2133, head 2141, 8 added, 0 removed. Six are the
+          # ORACLE half of the marker differential sweep (`tests/test_marker_oracle_sweep.py`),
+          # which keeps `internal/store/testdata/marker_oracle_sweep.json` a record of the
+          # LIVE
+          # patterns rather than a golden; two are the advisory-denominator guards in
+          # `test_entry_shape_validate.py`. The denominator pair is a genuine red->green on
+          # this suite. The six sweep rows are guards on the FIXTURE and on the interpreter,
+          # not on the transcription: the differential comparison they feed lives in
+          # `go test` (`internal/store/markersweep_test.go`), which is the other job and is
+          # NOT in this number — so a green here is no evidence the Go walk matches anything.
+          FLOOR = 2091
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -721,8 +739,19 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 104 PASS lines measured on this head: 102 cases plus TWO structural checks —
-          # `cache-mtime-parity` and `orphan-reap-parity`. 🔴 THE SECOND STRUCTURAL CHECK IS
+          # 106 PASS lines measured on this head: 103 cases plus THREE structural checks —
+          # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`. The
+          # last of those seeds a FIFO named `*.md` into a synced cache and runs both
+          # clients' `validate --no-sync` under a timeout: the world CANNOT carry a
+          # non-regular path (the pod tars it, and neither a fifo nor a device node
+          # survives that pipe), so no `Case` row can present the shape, and both clients
+          # wedged forever on it until the advisories were gated on the loader's own path
+          # classifier. The newest case is
+          # `validate-write-protocol-advisories`, a scope whose entries PARSE and still hold
+          # content no reader can reach — every other scope in the world parses cleanly, so
+          # both of `validate`'s advisories print their ZERO branch everywhere else and a
+          # client implementing neither would compare equal.
+          # It was 104 (102 cases) before that. 🔴 THE STRUCTURAL CHECK IS
           # WHY THIS MOVED BY TWO WHILE ONLY ONE CASE LANDED: the reap returns a count no
           # client prints, so it is unreachable from any stdout/stderr/exit row and has to be
           # read off the filesystem. The one new case is
@@ -743,8 +772,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 104 ]; then
-            echo "REFUSING: $passes passes, and 104 were measured — the gate got smaller"
+          if [ "$passes" -lt 106 ]; then
+            echo "REFUSING: $passes passes, and 106 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then

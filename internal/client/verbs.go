@@ -496,7 +496,17 @@ func emptyState(state State) State {
 	}
 }
 
-// Validate parse-checks the cached entries with the READER'S OWN parser.
+// Validate is the POST-WRITE check over the cached entries, and the parse count is
+// only its first half. It parse-checks with the READER'S OWN parser, then reports the
+// two write-protocol advisories — dropped lines and marker reachability — which answer
+// a different question: not "would the loader accept this file?" but "does it hold text
+// no reader will ever surface?". Neither advisory moves the exit code — the write
+// protocol branches on that code to mean "write NOTHING", and failing here would stop
+// a session recording anything into an entry whose only defect is that an OLDER write
+// lost a line. ⚠ "It does not move the exit code" is a claim about the ADVISORY, never
+// about the command: a non-regular path in the cache is still a malformed entry and
+// still exits 5, and a round of this PR briefly made that a crash instead — see
+// `store.nuanceBody`.
 //
 // 🔴 THE RESOLVER IS THE PARSER, so `validate` and `recall` cannot disagree about what
 // "malformed" means. The Python version once shelled a separate authoring tool's `--validate`,
@@ -665,6 +675,53 @@ func Validate(env Env, opts Options) (int, error) {
 		checked := len(entryNames)
 		fmt.Fprintf(env.Stdout, "cairn: %s: %d of %d entry file(s) parse, %d malformed\n",
 			scope, checked-len(index.Malformed), checked, len(index.Malformed))
+		// 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE TWO
+		// BLOCKS IT WAS THE WHOLE OF WHAT THIS COMMAND REPORTED. "Would the loader
+		// accept this file?" is answered by the line above; an entry can pass it while
+		// holding text NO reader will ever surface. `dropped lines:` is the half that
+		// means content is ALREADY LOST — the file holds it, the store holds it, and
+		// `--ref`, `--search`, the digest and every openness count skip it. A
+		// post-write check that cannot see that is checking the parser, not the write.
+		//
+		// 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: both
+		// scanners are tolerant by construction (an unreadable file or a missing nuance
+		// section contributes nothing), and a file the loader rejected can still hold
+		// lost content that a later fix to its front matter would not restore. The
+		// rejection above is still the finding that matters, which is why these print
+		// BELOW it and change no verdict.
+		//
+		// 🔴 NEITHER MOVES `worst`. The write protocol branches on this command's EXIT
+		// CODE to mean "write NOTHING", so failing here would stop a session recording
+		// anything into an entry whose only defect is that an OLDER write lost a line —
+		// which makes the store lossier, not safer.
+		entryPaths := make([]string, 0, len(entryNames))
+		for _, name := range entryNames {
+			entryPaths = append(entryPaths, filepath.Join(cache, scope, name))
+		}
+		// 🔴 THE ADVISORIES' DENOMINATOR IS `ScannedEntryCount`, NOT `checked`, AND
+		// THAT IS A THIRD SET. `checked` is the LISTING — every `*.md` name in the
+		// scope directory, which is the right denominator for the parse line above
+		// because the loader tries every one of them. The scanners do not: they read
+		// only the kinds the loader's own table TAKES, refusing a FIFO, a device, a
+		// directory or a dangling link before `open()`. Handing them `checked`
+		// therefore printed a zero over files nothing had opened — MEASURED on a scope
+		// holding one entry beside a FIFO: `dropped lines: 0 across 2 entry file(s)`,
+		// with one of the two never read. The FIFO is not lost from the output; it is
+		// reported malformed on stderr by the line above and drives the exit to 5.
+		for _, line := range store.ValidationAdvisoryLines(
+			store.ScannedEntryCount(entryPaths),
+			store.ScanDroppedLines(entryPaths),
+			store.ScanUnreachableMarkers(entryPaths),
+		) {
+			// A blank separator stays blank — prefixing it would print a trailing
+			// `cairn: <scope>: ` with nothing after it, and the parity gate would then
+			// pin that noise in both clients forever.
+			if line == "" {
+				fmt.Fprintln(env.Stdout)
+				continue
+			}
+			fmt.Fprintf(env.Stdout, "cairn: %s: %s\n", scope, line)
+		}
 		if len(index.Malformed) > 0 && ExitCorrupt > worst {
 			worst = ExitCorrupt
 		}

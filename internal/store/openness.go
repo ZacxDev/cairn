@@ -3,6 +3,7 @@ package store
 import (
 	"regexp"
 	"time"
+	"unicode"
 
 	"github.com/ZacxDev/cairn/internal/pytext"
 )
@@ -246,6 +247,32 @@ func hasFoldedPrefix(rs []rune, want string) bool {
 // caller with no output. The oracle closed that with a lookahead on the hex atom; keying
 // the walk on the position makes it linear in states here, which closes the same hole by
 // construction.
+//
+// ⚠ ITS OWN NARROWING LEDGER, BECAUSE IT DOES NOT INHERIT `LineMentionsMarker`'S. The
+// two share `refRunThenColon`, `refAtomEnds` and `hasFoldedPrefix`, and a round that
+// converged a SHARED helper wrote that the fix landed "for BOTH callers" — which was
+// false, because this transcription has grammar the other one does not (the `^[-*][ \t]+`
+// prefix, the optional date, the shouted branch) and each of those can carry a narrowing
+// of its own. It did: the date prefix's `\d{4}-\d{2}-\d{2}` stayed ASCII-only in
+// `looksISODate` through that round, 1,020 divergent lines in the committed sweep's
+// corpus, while the comment one function over read as though it were closed. Read a
+// convergence claim as being about the RUN it was measured on, never about a caller.
+//
+// The ledger, measured by `internal/store/markersweep_test.go` over the corpus
+// `tests/marker_corpus.py` generates:
+//
+//	`\d` in the date prefix (`looksISODate`)    CLOSED — `unicode.IsDigit`
+//	`\d` in the ref atoms (`refAtomEnds`)       CLOSED — `unicode.IsDigit`
+//	`PR#` folding, the class folds              N/A — `_NEAR_MISS_MARKER` carries no
+//	                                            `re.I` outside `(?i:OPEN|RESOLVED)`,
+//	                                            so ASCII IS the faithful reading here
+//	`hasFoldedPrefix`'s ASCII-only fold          OPEN, 210 divergences, all
+//	                                            oracle-wider — the SAME residual
+//	                                            `LineMentionsMarker` declares, because
+//	                                            `(?i:…)` folds U+017F too
+//
+// So this function has exactly ONE residual and it is the shared one; there is no
+// second, and the closing condition is `marker.go`'s.
 func nearMissMarker(firstLine string) bool {
 	rs := []rune(firstLine)
 	if len(rs) == 0 || (rs[0] != '-' && rs[0] != '*') {
@@ -293,6 +320,29 @@ func datePrefixEnds(rs []rune, i int) []int {
 	return ends
 }
 
+// looksISODate is `\d{4}-\d{2}-\d{2}` at `i`.
+//
+// 🔴 `\d` IS THE UNICODE `Nd` CATEGORY HERE TOO, AND READING IT AS `[0-9]` WAS A
+// NARROWING THE ROUND THAT CONVERGED `refAtomEnds` WALKED PAST. `_NEAR_MISS_MARKER` is
+// not compiled `re.ASCII`, so its date prefix takes every decimal digit in Unicode,
+// exactly as its `PR#\d+` does. An ASCII-only reading made `nearMissMarker` blind to
+// every dated bullet written in a non-ASCII numeral system. MEASURED by the committed
+// sweep (`internal/store/markersweep_test.go`) with this line still ASCII-only: 1,020
+// lines matched on the oracle and not here, every one of them carrying an
+// Arabic-Indic date, and none the other way.
+//
+// 🔴 THE DENOMINATOR IS DELIBERATELY ABSENT, NOT CORRECTED. It read "of 10,816"
+// and was stale IN THE COMMIT THAT WROTE IT — six corpus rows were appended by a
+// sibling edit in the same change — the third number in this arc to go stale the
+// moment another line moved. Correcting the digits regenerates the class. The corpus
+// size is `corpus_lines` in `internal/store/testdata/marker_oracle_sweep.json`, and
+// BOTH clients re-derive it from the generator and fail on a mismatch, so a prose
+// copy duplicates a machine-checked fact and is the only copy nothing checks. The
+// numerator stays because it is a MUTATION measurement — reproducible only by
+// reverting this function — and no artifact in the tree carries it.
+//
+// ⚠ THE HYPHENS STAY ASCII. `-` is a literal in the pattern, not a class, so no
+// Unicode dash is accepted on either side.
 func looksISODate(rs []rune, i int) bool {
 	if i+10 > len(rs) {
 		return false
@@ -305,7 +355,7 @@ func looksISODate(rs []rune, i int) bool {
 			}
 			continue
 		}
-		if c < '0' || c > '9' {
+		if !unicode.IsDigit(c) {
 			return false
 		}
 	}
@@ -326,7 +376,10 @@ func markerAlternation(rs []rune, p int) bool {
 		if !hasFoldedPrefix(rs[p:], word) {
 			continue
 		}
-		if refRunThenColon(rs, p+len(word), map[int]bool{}) {
+		// `false`: `_NEAR_MISS_MARKER` scopes `(?i:…)` to the marker word alone, so
+		// everything after it — the `PR#` literal AND the two character classes — is
+		// read case-sensitively. See `refRunThenColon`.
+		if refRunThenColon(rs, p+len(word), map[int]bool{}, false) {
 			return true
 		}
 	}
@@ -335,12 +388,37 @@ func markerAlternation(rs []rune, p int) bool {
 
 // refRunThenColon is `(?:[ \t]*(?:<ref>))*[^A-Za-z0-9\n]{0,4}:` — memoized on the
 // position, which is the whole state, so the walk cannot blow up.
-func refRunThenColon(rs []rune, p int, seen map[int]bool) bool {
+//
+// 🔴 `ignoreCase` IS NOT A CONVENIENCE FLAG: IT IS *WHETHER THE ORACLE PATTERN THIS
+// CALLER TRANSCRIBES WAS COMPILED `re.IGNORECASE` AS A WHOLE*, AND A SHARED WALK WITH
+// ONE ANSWER WAS WRONG FOR ONE OF THEM. `_MARKER_ANYWHERE` is `re.IGNORECASE` over the
+// WHOLE pattern; `_NEAR_MISS_MARKER` puts only the marker word inside a scoped
+// `(?i:OPEN|RESOLVED)` and leaves everything after it OUTSIDE.
+//
+// 🔴 IT GOVERNS THREE THINGS, NOT ONE, AND AN EARLIER VERSION OF THIS PARAGRAPH NAMED
+// ONLY THE FIRST — under the name `foldPR`, which is how the other two stayed invisible:
+//
+//	(1) the `PR#` LITERAL — `pr#`, `Pr#` and `pR#` match on `_MARKER_ANYWHERE` and not
+//	    on `_NEAR_MISS_MARKER`. Passing `false` from both (a single `hasExactPrefix`)
+//	    made `LineMentionsMarker` narrower than its oracle on every lowercase spelling:
+//	    540 divergent lines in the committed sweep's corpus, all of them `pr#`.
+//	(2) `[^A-Za-z0-9\n]{0,4}` — the terminator run, in `terminatorColon`. Under `re.I`
+//	    that NEGATED class also excludes the four non-ASCII runes that fold onto an
+//	    ASCII letter, so the oracle's run cannot span them and an ASCII-only reading
+//	    here spans them happily. That direction is WIDER than the oracle.
+//	(3) `[A-Za-z0-9_]` — the word-boundary lookahead, at `LineMentionsMarker`'s own
+//	    call site rather than in this walk. Same four runes, same widening: `OPENſ:`
+//	    matched here and not on the oracle.
+//
+// See `foldsToASCIILetter` for the enumeration and how it was measured.
+//
+// `seen` stays one map per top-level call because `ignoreCase` is constant within one.
+func refRunThenColon(rs []rune, p int, seen map[int]bool, ignoreCase bool) bool {
 	if seen[p] {
 		return false
 	}
 	seen[p] = true
-	if terminatorColon(rs, p) {
+	if terminatorColon(rs, p, ignoreCase) {
 		return true
 	}
 	// `[ \t]*` is taken maximally: every ref atom below begins with a character that
@@ -349,8 +427,8 @@ func refRunThenColon(rs []rune, p int, seen map[int]bool) bool {
 	for q < len(rs) && (rs[q] == ' ' || rs[q] == '\t') {
 		q++
 	}
-	for _, next := range refAtomEnds(rs, q) {
-		if refRunThenColon(rs, next, seen) {
+	for _, next := range refAtomEnds(rs, q, ignoreCase) {
+		if refRunThenColon(rs, next, seen, ignoreCase) {
 			return true
 		}
 	}
@@ -360,7 +438,12 @@ func refRunThenColon(rs []rune, p int, seen map[int]bool) bool {
 // refAtomEnds is every position one `<ref>` atom can end at, starting from q:
 // `[0-9a-fA-F]{7,40}(?![0-9a-fA-F])`, `PR#\d+`, `#\d+`, `\([^)]{1,30}\)` or
 // `\[[^\]]{1,30}\]`.
-func refAtomEnds(rs []rune, q int) []int {
+//
+// `ignoreCase` folds the `PR` literal here, and only that — see `refRunThenColon` for
+// the other two things the same flag governs, and for which caller wants which. The hex
+// atom is already both cases by its own class, and MEASURED to gain nothing under
+// `re.I`: no non-ASCII rune folds into `[0-9a-fA-F]`.
+func refAtomEnds(rs []rune, q int, ignoreCase bool) []int {
 	var ends []int
 	// The hex atom's lookahead forces the WHOLE maximal hex run to be consumed, so the
 	// run's length is what decides: 7..40 matches, anything else does not.
@@ -373,15 +456,35 @@ func refAtomEnds(rs []rune, q int) []int {
 	}
 	// `PR#\d+` and `#\d+`, with every length of the digit run — a greedy engine would
 	// backtrack into them, and a later atom can begin with a digit.
+	//
+	// 🔴 `\d` IS A UNICODE CLASS IN BOTH ORACLE PATTERNS, NOT `[0-9]`. Neither is
+	// compiled with `re.ASCII`, so CPython's `\d` on a `str` pattern is category `Nd`
+	// — every decimal digit in Unicode, of which ASCII is one block of about 700.
+	// `unicode.IsDigit` is that same category, so THIS RUN transcribes the oracle for
+	// both callers rather than a narrower reading of it.
+	//
+	// 🔴 AND THAT IS A CLAIM ABOUT THIS RUN, NOT ABOUT EITHER CALLER. An earlier
+	// version of this paragraph said the fix landed "for BOTH callers: the narrowing
+	// was shared, so `nearMissMarker` carried it too" — the sharing is real and the
+	// conclusion was false. `_NEAR_MISS_MARKER` has a SECOND `\d` run this atom cannot
+	// reach, the optional date prefix `\d{4}-\d{2}-\d{2}`; it is transcribed in
+	// `looksISODate`, which that round did not touch and which stayed ASCII-only.
+	// MEASURED at the commit that wrote the sentence: `- ٢٠٠٠-٠١-٠٤: OPEN:` matched
+	// `_NEAR_MISS_MARKER` and not `nearMissMarker`, one of 1,020 such lines in the
+	// committed sweep's corpus, all oracle-wider and none the other way. Both runs read
+	// `unicode.IsDigit` now — but the claim is per-RUN either way, because "a shared
+	// helper was fixed" says nothing about the other places the same class is spelled.
 	digitsFrom := -1
 	switch {
-	case hasExactPrefix(rs[q:], "PR#"):
+	case ignoreCase && hasFoldedPrefix(rs[q:], "pr#"):
+		digitsFrom = q + 3
+	case !ignoreCase && hasExactPrefix(rs[q:], "PR#"):
 		digitsFrom = q + 3
 	case q < len(rs) && rs[q] == '#':
 		digitsFrom = q + 1
 	}
 	if digitsFrom >= 0 {
-		for j := digitsFrom; j < len(rs) && rs[j] >= '0' && rs[j] <= '9'; j++ {
+		for j := digitsFrom; j < len(rs) && unicode.IsDigit(rs[j]); j++ {
 			ends = append(ends, j+1)
 		}
 	}
@@ -402,12 +505,19 @@ func refAtomEnds(rs []rune, q int) []int {
 }
 
 // terminatorColon is `[^A-Za-z0-9\n]{0,4}:`.
-func terminatorColon(rs []rune, p int) bool {
+//
+// ⚠ THE NEGATED CLASS NARROWS UNDER `re.I`, WHICH IS THE OPPOSITE OF THE INTUITION.
+// `re.IGNORECASE` widens `[A-Za-z0-9]`, so NEGATING it takes those extra runes AWAY:
+// on `_MARKER_ANYWHERE` this run cannot span `ſ`, while on `_NEAR_MISS_MARKER` — no
+// flags — it can. Reading it ASCII-only for both made `LineMentionsMarker` WIDER than
+// its oracle, which is the direction that manufactures a declaration nobody typed.
+func terminatorColon(rs []rune, p int, ignoreCase bool) bool {
 	for k := 0; ; k++ {
 		if p < len(rs) && rs[p] == ':' {
 			return true
 		}
-		if k == 4 || p >= len(rs) || isASCIIAlnum(rs[p]) || rs[p] == '\n' {
+		if k == 4 || p >= len(rs) || rs[p] == '\n' ||
+			isASCIIAlnum(rs[p]) || (ignoreCase && foldsToASCIILetter(rs[p])) {
 			return false
 		}
 		p++
@@ -430,6 +540,54 @@ func hasExactPrefix(rs []rune, want string) bool {
 func isASCIILetter(r rune) bool { return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') }
 func isASCIIAlnum(r rune) bool  { return isASCIILetter(r) || (r >= '0' && r <= '9') }
 func isWordish(r rune) bool     { return isASCIIAlnum(r) || r == '_' }
+
+// foldsToASCIILetter is the complete set of NON-ASCII runes that CPython's
+// `re.IGNORECASE` folds into an ASCII letter, so that `[A-Za-z0-9_]` matches them and
+// `[^A-Za-z0-9\n]` does NOT.
+//
+// 🔴 A CHARACTER CLASS CHANGES MEANING UNDER `re.I`, NOT JUST A LITERAL — AND THAT IS
+// THE HALF THE `foldPR` ROUND MISSED. It converged the `PR` LITERAL and left the two
+// CLASSES around it ASCII-only, which made this walk WIDER than `_MARKER_ANYWHERE`:
+// the word-boundary lookahead stopped guarding and the terminator run spanned runes
+// the oracle's negated class excludes. Wider is the dangerous direction — it
+// manufactures a declaration nobody typed.
+//
+// MEASURED on the committed sweep's corpus, by reverting each site in turn:
+//
+//	both ASCII (the state before this)  7 lines wider than the oracle
+//	terminator run ASCII only           3 — `OPEN ſ:`, `RESOLVED abc1234 K:`, `OPEN ſſſ:`
+//	boundary lookahead ASCII only       0 — see `LineMentionsMarker`, which declares
+//	                                    that site as UNREACHABLE rather than as a guard
+//
+// 🔴 ENUMERATED BY MEASUREMENT, NOT BY REASONING ABOUT UNICODE. Every codepoint below
+// U+110000 was tested against `re.compile("[A-Za-z0-9_]", re.I)` on the pinned
+// interpreter (CPython 3.12.14); FOUR matched outside ASCII and these are they. Note
+// there is no digit relative: `0-9` gains nothing under `re.I`, and neither does
+// `[0-9a-fA-F]` — the hex atom was already correct.
+//
+// ⚠ IT DOES NOT APPLY TO `_NEAR_MISS_MARKER`. That pattern is compiled with NO flags
+// and scopes its fold to `(?i:OPEN|RESOLVED)`, so its `[A-Za-z0-9_]`, `[^A-Za-z0-9\n]`
+// and `[^A-Za-z]` are literally ASCII. Which caller gets which is the `ignoreCase`
+// argument threaded through `refRunThenColon`.
+func foldsToASCIILetter(r rune) bool {
+	// ⚠ SPELLED AS ESCAPES ON PURPOSE. U+212A KELVIN SIGN renders identically to an
+	// ASCII `K` in almost every font, so a literal here reads as a no-op clause and is
+	// exactly the sort of thing a later "simplification" deletes; U+0130/U+0131 have
+	// the same problem against `I` and `i`.
+	switch r {
+	case '\u0130', // LATIN CAPITAL LETTER I WITH DOT ABOVE
+		'\u0131', // LATIN SMALL LETTER DOTLESS I
+		'\u017f', // LATIN SMALL LETTER LONG S
+		'\u212a': // KELVIN SIGN
+		return true
+	}
+	return false
+}
+
+// isWordishUnder is `[A-Za-z0-9_]`, read the way the oracle pattern's flags read it.
+func isWordishUnder(r rune, ignoreCase bool) bool {
+	return isWordish(r) || (ignoreCase && foldsToASCIILetter(r))
+}
 func isHexDigit(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 }

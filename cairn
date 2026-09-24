@@ -1624,11 +1624,53 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # `python3 -m pytest tests -q -p no:randomly -k fold_vs_literal` and
         # `go test ./internal/client/ -run FoldVsLiteral -count=1 -v` each SELECT at
         # least one test and exit 0.
-        checked = len(subsystem_resolver.entry_files_in(cache / scope))
+        entry_paths = subsystem_resolver.entry_files_in(cache / scope)
+        checked = len(entry_paths)
         print(
             f"cairn: {scope}: {checked - len(malformed)} of {checked} "
             f"entry file(s) parse, {len(malformed)} malformed"
         )
+        # 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE TWO
+        # BLOCKS IT WAS THE WHOLE OF WHAT THIS COMMAND REPORTED. "Would the loader
+        # accept this file?" is answered by the line above; an entry can pass it
+        # while holding text NO reader will ever surface. `dropped lines:` is the
+        # half that means content is ALREADY LOST — the file holds it, the store
+        # holds it, and `--ref`, `--search`, the digest and every openness count
+        # skip it. A post-write check that cannot see that is checking the parser,
+        # not the write.
+        #
+        # 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: both
+        # scanners are tolerant by construction (an unreadable file or a missing
+        # nuance section contributes nothing), and a file the loader rejected can
+        # still hold lost content that a later fix to its front matter would not
+        # restore. The rejection above is still the finding that matters, which is
+        # why these print BELOW it and change no verdict.
+        #
+        # 🔴 NEITHER MOVES `worst`. The write protocol branches on this command's
+        # EXIT CODE to mean "write NOTHING", so failing here would stop a session
+        # recording anything into an entry whose only defect is that an OLDER
+        # write lost a line — which makes the store lossier, not safer. A gate an
+        # author cannot turn green by fixing the file they are writing is worse
+        # than no gate.
+        # 🔴 THE ADVISORIES' DENOMINATOR IS `scanned_entry_count`, NOT `checked`,
+        # AND THAT IS A THIRD SET. `checked` is the LISTING — every `*.md` name in
+        # the scope directory — which is right for the parse line above, because
+        # the loader tries every one of them. The scanners do not: they read only
+        # the kinds the loader's table TAKES, refusing a FIFO, a device, a
+        # directory or a dangling link before `open()`. Handing them `checked`
+        # printed a zero over files nothing opened — MEASURED on a scope holding
+        # one entry beside a FIFO: `dropped lines: 0 across 2 entry file(s)`, one
+        # of them never read. The FIFO is not lost from the output; the line above
+        # reports it malformed and drives the exit to 5.
+        for line in entry_shape.validation_advisory_lines(
+            n_scanned=entry_shape.scanned_entry_count(entry_paths),
+            dropped=entry_shape.scan_dropped_lines(entry_paths),
+            unreachable=entry_shape.scan_unreachable_markers(entry_paths),
+        ):
+            # A blank separator stays blank — prefixing it would print a trailing
+            # `cairn: <scope>: ` with nothing after it, and the parity gate would
+            # then pin that noise in both clients forever.
+            print(f"cairn: {scope}: {line}" if line else "")
         worst = max(worst, EXIT_CORRUPT if malformed else EXIT_OK)
     return worst
 
@@ -2488,7 +2530,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--all-scopes", action="store_true")
     q.set_defaults(func=cmd_search)
 
-    v = common(sub.add_parser("validate", help="parse-check the cached entries"))
+    v = common(sub.add_parser("validate", help="the post-write check: parse, dropped lines, marker reachability"))
     v.set_defaults(func=cmd_validate)
 
     e = common(sub.add_parser("ls-entries", help="one `<scope>/<entry>.md` per line"))
