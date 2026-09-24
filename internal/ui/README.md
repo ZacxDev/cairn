@@ -6,12 +6,20 @@ everything below.
 ## What Phase A is, and what it deliberately is not
 
 One page, one authentication chain, one rendering path — enough to prove the wiring, the
-rendering, and the gate. `cmd/cairn-ui` is **deployed by nothing**: `apps` has no entry
-for it, and `packages.default` does not point at it. It is built by name
-(`nix build .#cairn-ui`) or not at all. ⚠ **This said "no image wraps it" as well, and
-an image now exists** — `packages.ui-image`, published to its own ghcr package.
-**PUBLISHED IS NOT DEPLOYED**, which is the same distinction `server/README.md` draws for
-the Go pod; only the deployment half of this sentence survived.
+rendering, and the gate. `cmd/cairn-ui` is **deployed by nothing** — no manifest in this
+repository points a pod at it.
+
+🔴 **HOW IT IS PACKAGED IS NOT STATED HERE. ASK:**
+
+```bash
+nix eval --raw .#packages.x86_64-linux \
+  --apply 's: builtins.concatStringsSep "\n" (builtins.attrNames s)'
+```
+
+A sentence here used to state it, and went false when `packages.ui-image` landed. It is
+DELETED rather than corrected: a corrected sentence rots on the next packaging change and
+the command does not. **PUBLISHED IS NOT DEPLOYED** stays in prose because no command
+answers it.
 
 There is **no sign-in**, **no cookie session**, **no share flow** and none of the nine
 screens. Those are later phases with their own decisions. What exists is:
