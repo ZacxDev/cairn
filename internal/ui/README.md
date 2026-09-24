@@ -1085,17 +1085,18 @@ make this process perform.
   *asking* the browser to delete it, so a client that declines cannot be made to; a map entry
   MARKED consumed by the server cannot be presented twice whatever the client does. ⚠ This bullet
   said "a map entry **removed** on read", which was the mechanism for exactly one commit: deleting
-  freed the caller's rate slot at the start of the token exchange, which is the defect the next
-  bullet describes. The argument never rested on the delete — it rests on the decision being the
-  server's.
+  freed the caller's rate slot at the start of the token exchange. The argument never rested on
+  the delete — it rests on the decision being the server's.
 - **Why there are TWO caps, and why one is not enough.** `POST /sign-in/github` is reachable by
   anybody who can open a socket, and every request writes a record that lives five minutes.
   Without `maxOpenFlights` the route is a memory-exhaustion endpoint. But a **global cap alone
   is a denial of service with extra steps**: one anonymous caller reaches 1024 on its own,
   refreshed every five minutes, and everybody else's button then refuses until the oldest
   expire. `maxFlightsPerClient` is what stops one caller spending everybody else's share —
-  `netid`'s own comment makes the same ruling about a limiter with one bucket. The global number
-  bounds this process's **memory**; the per-client number bounds one caller's **share**.
+  `netid`'s own comment makes the same ruling about a limiter with one bucket. Because a spent
+  record holds its slot until expiry, **both** numbers bound a RATE: `maxOpenFlights` bounds total
+  sign-in starts across all clients per `FlightTTL`, and `maxFlightsPerClient` bounds one
+  caller's.
   ⚠ The residual cost: callers behind a shared egress address share a client identity, so a busy
   office reaches 8 between them. That delays a GitHub sign-in and never a credential one — the
   token form touches this table not at all.

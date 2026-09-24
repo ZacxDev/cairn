@@ -16,6 +16,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
+	"github.com/ZacxDev/cairn/internal/testcookie"
 )
 
 // stubOAuth is a provider that records what it was asked and answers what it was told to.
@@ -264,9 +265,9 @@ func TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire(t *testing.T) {
 		// the whole suite. A conforming browser refuses a `__Host-` cookie whose path is not
 		// exactly `/`, so the cookie is DROPPED and every provider sign-in fails with nothing
 		// naming why — the identical consequence this test already asserts correctly for
-		// `Domain`. The attribute is compared as a whole field: `Path=/` must be followed by
-		// the end of the header or by the `;` that starts the next attribute.
-		if !hasExactCookieAttr(header, "Path=/") {
+		// `Domain`. `testcookie.HasExactAttr` is the ONE predicate; three other sites had the
+		// same defect and now share it.
+		if !testcookie.HasExactAttr(header, "Path=/") {
 			t.Errorf("%s does not carry an exact `Path=/`: %q. A `__Host-` cookie with any other path is "+
 				"refused outright by a conforming browser, so this would not weaken the guard — it would "+
 				"delete the cookie.", tc.name, header)
@@ -454,8 +455,9 @@ func TestTheFlightTableIsBoundedGloballyAndPerClient(t *testing.T) {
 			"decision taken HERE.", maxFlightsPerClient)
 	}
 	if maxOpenFlights < 64 || maxOpenFlights > 8192 {
-		t.Errorf("maxOpenFlights is %d, outside [64, 8192]. This is the MEMORY bound on an unauthenticated "+
-			"endpoint; raising it is a decision taken HERE.", maxOpenFlights)
+		t.Errorf("maxOpenFlights is %d, outside [64, 8192]. Because a spent record holds its slot until "+
+			"expiry, this bounds BOTH memory and the total rate of sign-in starts across all clients per "+
+			"FlightTTL; raising it is a decision taken HERE.", maxOpenFlights)
 	}
 	// And the relationship: the global bound must admit many distinct clients, or the
 	// per-client bound is the only one that ever fires and the global one is decoration.
@@ -601,6 +603,100 @@ func TestOneClientCannotAmplifyRequestsAtTheProvider(t *testing.T) {
 // real bound is `identity.supabaseOAuthTimeout`, which is unexported. Named rather than
 // inlined so a reader does not mistake it for a second source of truth.
 const supabaseOAuthTimeoutForTest = 10 * time.Second
+
+// TestTheStartRowSaysNOTHINGAboutWhyItRefusedToBegin pins `oauthNotStarted`, which nothing
+// asserted: three mutants survived both suites — rendering the lockout sentence at the lockout
+// site, reverting the constant to `signInRefused`, and emptying it.
+//
+// 🔴 THE FIRST MUTANT IS THE ONE THAT MATTERS: a distinct sentence at the lockout site turns
+// the PUBLIC start row into a lockout oracle in words, which is what the constant's own comment
+// forbids. So the two observable sites must render the SAME body, and it must be this one.
+//
+// ⚠ THE OTHER TWO SITES ARE THE UNREACHABLE ENTROPY BRANCHES (see `flightRefusedNoID`), so no
+// test can drive them and none pretends to.
+func TestTheStartRowSaysNOTHINGAboutWhyItRefusedToBegin(t *testing.T) {
+	cfg := testConfig(t, refusingAuth{})
+	cfg.OAuth = &stubOAuth{}
+	limiter := netid.NewRateLimiter(netid.DefaultMaxFailures, time.Minute, time.Hour)
+	cfg.Limiter = limiter
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("the server did not build: %v", err)
+	}
+
+	// POSITIVE CONTROL: this request SUCCEEDS, so a refusal below is the arm's doing.
+	warm := httptest.NewRequest("POST", OAuthStartPath, nil)
+	warm.Header.Set("Origin", "https://"+warm.Host)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, warm)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POSITIVE CONTROL FAILED: an ordinary start answered %d, not 303", rec.Code)
+	}
+
+	// (a) NO RESOLVABLE CLIENT — a peer address `netid.PeerAddress` cannot parse. Nothing
+	// drove this path before.
+	unresolvable := httptest.NewRequest("POST", OAuthStartPath, nil)
+	unresolvable.Header.Set("Origin", "https://"+unresolvable.Host)
+	unresolvable.RemoteAddr = "not-an-address"
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, unresolvable)
+	unresolvableBody := rec.Body.String()
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("an unresolvable client answered %d, want 401", rec.Code)
+	}
+
+	// (b) LOCKED OUT.
+	probe := httptest.NewRequest("POST", OAuthStartPath, nil)
+	client, _, ok := netid.ResolveClient(probe.Header, probe.RemoteAddr, nil)
+	if !ok {
+		t.Fatal("PRECONDITION FAILED: the fixture request has no resolvable client identity")
+	}
+	for i := 0; i < netid.DefaultMaxFailures; i++ {
+		limiter.RecordFailure(client)
+	}
+	locked := httptest.NewRequest("POST", OAuthStartPath, nil)
+	locked.Header.Set("Origin", "https://"+locked.Host)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, locked)
+	lockedBody := rec.Body.String()
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("a locked-out client answered %d, want 401", rec.Code)
+	}
+
+	// Both must carry `oauthNotStarted` — non-empty, and NOT the credential sentence.
+	if oauthNotStarted == "" || oauthNotStarted == signInRefused {
+		t.Fatalf("oauthNotStarted is %q; it must be a THIRD non-empty sentence. Empty renders a refusal that "+
+			"says nothing at all, and reusing %q tells somebody who typed no credential that theirs was "+
+			"rejected.", oauthNotStarted, signInRefused)
+	}
+	for _, arm := range []struct {
+		name string
+		body string
+	}{
+		{"no resolvable client", unresolvableBody},
+		{"locked out", lockedBody},
+	} {
+		if !strings.Contains(arm.body, oauthNotStarted) {
+			t.Errorf("%s did not render %q", arm.name, oauthNotStarted)
+		}
+		if strings.Contains(arm.body, signInRefused) {
+			t.Errorf("%s rendered the CREDENTIAL refusal %q to somebody who presented none",
+				arm.name, signInRefused)
+		}
+		if strings.Contains(arm.body, oauthIncomplete) {
+			t.Errorf("%s rendered %q, which is for an abandoned FLIGHT rather than a refusal to begin",
+				arm.name, oauthIncomplete)
+		}
+	}
+
+	// 🔴 AND THE TWO ARMS ARE INDISTINGUISHABLE, which is what stops the row being a lockout
+	// oracle. A mutant rendering a distinct sentence at the lockout site fails HERE.
+	if unresolvableBody != lockedBody {
+		t.Error("the two refusals to BEGIN rendered DIFFERENT bodies, so the public start row discloses " +
+			"which check fired — a caller can tell a lockout from an unidentifiable peer, which is the " +
+			"lockout oracle `signInRefused`'s own ruling refuses")
+	}
+}
 
 // TestALockedOutClientOpensNoFlight pins that the existing sign-in lockout covers the
 // provider door too.
@@ -1094,23 +1190,6 @@ func TestTheCredentialFormSURVIVESTheProviderButton(t *testing.T) {
 		t.Error("the credential sign-in minted no session on a server with a provider configured, so adding " +
 			"the provider degraded the door it was meant to sit beside")
 	}
-}
-
-// hasExactCookieAttr answers whether a rendered `Set-Cookie` carries `attr` as a WHOLE
-// attribute rather than as a prefix of one.
-//
-// 🔴 IT EXISTS BECAUSE `strings.Contains` IS THE WRONG TOOL FOR A COOKIE ATTRIBUTE AND THAT
-// COST A GUARD. `Contains(header, "Path=/")` is true of `Path=/sign-in`, `Path=/anything` and
-// `Path=/`, so the assertion admitted every value it was written to refuse. An attribute ends
-// at the header's end or at the `; ` before the next one, and that is the whole of this
-// function.
-func hasExactCookieAttr(header, attr string) bool {
-	for _, field := range strings.Split(header, ";") {
-		if strings.TrimSpace(field) == attr {
-			return true
-		}
-	}
-	return false
 }
 
 // sessionCookieFrom returns the session cookie a response set, or nil.

@@ -86,7 +86,7 @@ func TestTheProviderFlowDecisionTable(t *testing.T) {
 		// on the check. A fixture that cannot reach the code under test measures nothing. This
 		// one is also the realistic shape: a broken template substitution.
 		{"a URL that does not parse", "https://notes.example.invalid/%zz/sign-in/github/callback",
-			true, false, true, EnvSupabaseRedirectURL},
+			true, false, true, "does not parse as a URL"},
 
 		// 🔴 AND THE ROW THE EQUALITY VERSION OF THIS CHECK REFUSED: a surface behind a
 		// path-prefixing proxy. It served `/sign-in/github/callback` after the prefix was
@@ -181,7 +181,7 @@ func TestAWhitespaceRedirectURLIsRefusedRatherThanReadAsUnset(t *testing.T) {
 //
 // ⚠ AND THE CLAIM THE OLD NAME MADE IS COVERED ELSEWHERE, WHICH IS WHY IT IS NOT REBUILT
 // HERE. "A refusal names the variable that unblocks it" is asserted against the real error
-// text by `TestTheProviderFlowHasTHREEStatesAndTheMIDDLEOneIsNotAnError` (which requires
+// text by `TestTheProviderFlowDecisionTable` (which requires
 // `identity.EnvSupabaseJWKSURL` in the half-configured refusal) and by
 // `TestAWhitespaceRedirectURLIsRefusedRatherThanReadAsUnset` (which requires
 // `EnvSupabaseRedirectURL` in every blank refusal). Restating it over the constants would be
