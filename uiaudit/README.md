@@ -323,6 +323,29 @@ Three states, three outcomes, and they are distinguished rather than collapsed:
 | some present, some absent | **hard failure** naming the absent variables — a half-configured push is the silent-green shape |
 | all four present | push attempted; `verify-push` requires the confirmation line |
 
+**It is two guards, and both have been watched to go red.** A grep that reports success over a
+needle nothing can produce is the shape this repository refuses, so the step first asserts that
+`uiaudit/main.go` still DEFINES the needle, then searches the log for it. Measured:
+
+| case | outcome |
+|---|---|
+| the real `main.go` + a log carrying the line | **ACCEPTED** (the positive control — without it a red result cannot be told from an unmatchable needle) |
+| the real `main.go` + a log where the push FAILED | REFUSED: *no push was confirmed* |
+| the CONSTANT renamed, log still carrying the old line | REFUSED: *the constant no longer says this; the control would match nothing* |
+| both wrong | REFUSED, by the constant guard — it runs first |
+| a real walk log from a credential-less run | REFUSED: *no push was confirmed* |
+
+⚠ The last row is why the step is gated on `credentialed == 'yes'`: without that gate the
+fork-PR case, which is *supposed* to skip, would fail the control instead.
+
+**The test-count floors carry the same treatment.** `^--- PASS` counts top-level functions
+only, because `go test -v` indents a subtest's line — so both counts are floors (16 top-level,
+28 including subtests), and `FAIL`/`SKIP` are matched with `^[[:space:]]*` so an *indented*
+failure is seen. Seven controls, each refusing for its own reason: the real log ACCEPTED; empty
+log → *no result lines*; a top-level test removed → *15 < 16*; a **subtest row** removed →
+*27 < 28* (which the top-level count structurally cannot see); an appended `FAIL` → *1 failing*;
+an appended `SKIP` → *1 skipped*; an appended **indented** `FAIL` → *1 failing*.
+
 ## Public-repo constraints
 
 ### 🔴 The hub's project name is a DENIED IDENTIFIER, env-var spellings included
