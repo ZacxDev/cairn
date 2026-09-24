@@ -271,8 +271,38 @@ jobs:
           # the gap, and nothing red. Re-derived from `m - min(50, max(1, m/20))`.
           #
           # 1987 = 2037 - min(50, max(1, 2037/20)), the formula above, for the m measured
-          # on this branch.
-          FLOOR = 1987
+          # on that branch.
+          #
+          # ⚠ 1987 -> 2036, AND THE REASON IS THE GAP RATHER THAN THE TWO ROWS THIS BRANCH
+          # ADDS. `m` had reached 2084 on `e293c6e` with the floor still at 1987 — a gap of
+          # 97 against a MAX_GAP of 100, i.e. FOUR tests from the drift guard below going
+          # red on whoever added them next, and TWO at this branch's head. 🔴 THIS LINE SAID
+          # "three", AND THE ROUND THAT CORRECTED THE NUMBERS GOT THE **DIRECTIONS** BACKWARDS
+          # — it read "wrong in the reassuring direction on the base and wrong in the other on
+          # head", which is the inversion. The guard is `ran - FLOOR > MAX_GAP`, STRICTLY
+          # greater, so a gap of exactly 100 is still green and the first red gap is 101:
+          # from the base's 97 that is +4, and from HEAD's 99 (2086 - 1987) it is +2. So on
+          # the BASE, "three" claimed red arrives SOONER than it does — the ALARMING
+          # direction; on HEAD it claimed MORE room than exists — the REASSURING one, which
+          # is the dangerous half. Read the guard's own operator before quoting a headroom.
+          # The decision to raise is right either way, and two tests of room is more urgent
+          # than three. That is the "floor left behind by its own formula" failure the
+          # comments above describe, caught here by arithmetic rather than by a red run.
+          # 2036 = 2086 - min(50, max(1, 2086/20)).
+          #
+          # Measured with names on the base ref and on HEAD, one collect-only run each, the
+          # `sed`-less pipeline above: base 2084, head 2086, 2 added, 0 removed. The base
+          # ref is whatever the merge-base command above prints at the moment the
+          # measurement is taken, per the rule there. Both additions are INVARIANT GUARDS on
+          # the ORACLE, labelled as such in their own docstrings — they pass at the base and
+          # their GO twins do not:
+          #   test_cairn_cli.py::TestOrphanStagingIsReaped::
+          #     test_an_orphan_under_a_PARENT_carrying_a_glob_METACHARACTER_is_still_reaped
+          #   test_subsystem_recall.py::TestFocusWindow::
+          #     test_a_repo_PATH_carrying_a_glob_METACHARACTER_still_resolves
+          # The behavioural red->green for this branch is in `go test` and in the parity
+          # job, neither of which is in THIS number — see the note above about why.
+          FLOOR = 2036
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -545,6 +575,34 @@ jobs:
           sys.exit(1 if fail else 0)
           PY
 
+      # 🔴 THE THIRD MUTATION BATTERY, WIRED IN BECAUSE ITS OWN RATIONALE DEPENDED ON IT
+      # BEING WIRED IN. `tests/routing_mutants.py` argues that its anchor-rule mutants live
+      # there rather than in a fourth file partly to avoid "a fourth command in whatever
+      # gate list the next reader reads — and a battery nobody runs measures nothing".
+      # MEASURED at the commit that added those mutants: `publish_workflow_mutants.py` and
+      # `control_mutants.py` were each run by this workflow and `routing_mutants.py` was
+      # invoked by NOTHING — not this file, not `publish-image.yml`, not `flake.nix`, not
+      # `AGENTS.md`/`CLAUDE.md`, not any test; every other mention of it in the tree is
+      # prose. It was the only UN-GATED battery of the three, chosen on a rationale about
+      # avoiding un-gated batteries. This step is what makes that sentence true.
+      #
+      # ⚠ IT BELONGS IN **THIS** JOB AND NOT A NEW ONE. The battery mutates Go sources and
+      # Python sources and kills the mutants with `go test` and `pytest` respectively, so it
+      # needs both toolchains; this job is the only one that has both, and the `pip install
+      # pytest` in the ledger step above is what puts the Python half on the runner. A
+      # separate job would mean a third toolchain setup for no isolation anyone reads.
+      #
+      # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
+      # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
+      # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
+      # `control_mutants.py` above (150 mutants; its own comment measures ~3 min at 62 on an
+      # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
+      # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
+      # half. If this step becomes the job's critical path, split it out; do not delete it
+      # and leave the rationale asserting it runs.
+      - name: prove every routing and ANCHOR guard can go RED (57 mutants)
+        run: python3 tests/routing_mutants.py
+
       # 🔴 THE P1 GATE ITSELF: the conformance corpus, replayed against the Go
       # server. At P1a it was expected to be PARTIAL — the `/recall` and `/search`
       # rendering was P1b's — so this asserted a SPLIT. P1b landed the renderer and
@@ -654,8 +712,16 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 102 PASS lines measured on the multi-instance branch: 101 cases plus
-          # `cache-mtime-parity`. It was 91 (90 cases) at `871e6ff`; the eleven new rows are the
+          # 104 PASS lines measured on this head: 102 cases plus TWO structural checks —
+          # `cache-mtime-parity` and `orphan-reap-parity`. 🔴 THE SECOND STRUCTURAL CHECK IS
+          # WHY THIS MOVED BY TWO WHILE ONLY ONE CASE LANDED: the reap returns a count no
+          # client prints, so it is unreachable from any stdout/stderr/exit row and has to be
+          # read off the filesystem. The one new case is
+          # `recall-focus-resolved-through-an-explicit-repo-PATH`, which hands `--repo` an
+          # ABSOLUTE path — the three focus rows beside it default it to `.`, so no world's
+          # glob metacharacter can reach the anchor through them.
+          # It was 102 (101 cases) before that, and 91 (90 cases) at `871e6ff`; the eleven rows
+          # added between those two are the
           # `routes` verb, which the verb ledger requires a case for, `exit 11`, which the
           # exit-code ledger requires a row to reach, TWO MULTI-INSTANCE rows that stand up
           # a second pod — the shape every other row is blind to by construction, and the one
@@ -668,8 +734,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 102 ]; then
-            echo "REFUSING: $passes passes, and 102 were measured — the gate got smaller"
+          if [ "$passes" -lt 104 ]; then
+            echo "REFUSING: $passes passes, and 104 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then

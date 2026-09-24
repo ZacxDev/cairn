@@ -255,6 +255,177 @@ def test_the_publish_battery_CI_anchors_match_its_own_count(publish_count: int) 
     )
 
 
+# ── The ROUTING-and-ANCHOR battery ───────────────────────────────────────────────────
+#
+# 🔴 THE THIRD BATTERY, ADDED IN THE SAME STATE THE SECOND ONE WAS FOUND IN: a count in a CI
+# step NAME, a count in the battery's own header, and NOTHING in the tree reading either.
+# Measured on the tree this arm was added to: `git grep -n routing_mutants` matched the battery
+# itself, one `run:` line and one comment in `ci.yml`, and prose — `routing_mutants` appeared
+# NOWHERE in this file. That is bit-for-bit the state the module docstring above records for
+# the publish battery, whose count moved 8 -> 14 -> 19 while nothing read it.
+#
+# ⚠ THIS BATTERY HAS NO `PKGS` AND NO README, so — like the publish one — only the
+# mutant-count half of this file applies to it. Its sites are a ledger of exact strings for
+# the same reason: `ci.yml` carries SIX `N mutants` claims across three batteries, so a
+# file-wide sweep there would have to discriminate among them by phrasing, which is the
+# walkable discriminator this file already declares as a limit.
+ROUTING_BATTERY = REPO_ROOT / "tests" / "routing_mutants.py"
+
+ROUTING_ANCHORS = (
+    (CI, "- name: prove every routing and ANCHOR guard can go RED ({n} mutants)"),
+    (ROUTING_BATTERY, "The battery is {n} mutants"),
+)
+
+# The battery's own wiring claim, and the job it names. Pinned as a ledger entry so that
+# REWORDING or DELETING it fails too: the sentence is only true while the step exists, and the
+# battery's header says so in as many words.
+ROUTING_WIRING_CLAIM = "the `go` job now runs this file"
+ROUTING_JOB = "go"
+ROUTING_RUN = "python3 tests/routing_mutants.py"
+
+
+@pytest.fixture(scope="module")
+def routing_count() -> int:
+    return len(_battery(ROUTING_BATTERY, "cairn_routing_mutants").MUTANTS)
+
+
+def test_the_routing_battery_declares_a_plausible_number_of_mutants(routing_count: int) -> None:
+    """A POSITIVE CONTROL on this file's fifth instrument, in the shape of the first two.
+
+    Every assertion below searches for a number. A `routing_count` of 0 would send a reader
+    to edit correct prose in `ci.yml` and in the battery's own header rather than to fix the
+    instrument. Only an EMPTIED `MUTANTS` produces it — a rename raises `AttributeError`
+    while the fixture is being set up, so this control never runs at all, which is the
+    measurement the two controls above already record.
+    """
+    assert routing_count > 1, (
+        f"the routing battery declares {routing_count} mutant(s) — this file's instrument "
+        "is broken, and the failures below would blame the documents for it"
+    )
+
+
+def test_the_routing_battery_anchors_match_its_own_count(routing_count: int) -> None:
+    """🔴 A COUNT IN A CI STEP NAME AND IN A DOCSTRING, READ BY NOTHING — TWICE OVER NOW.
+
+    The step NAME is first because it is the copy a reader sees in the Actions UI, and it is
+    the copy that carried a stale number for a whole round in the authz battery's history.
+    """
+    missing = []
+    for path, anchor in ROUTING_ANCHORS:
+        wanted = anchor.format(n=routing_count)
+        if wanted not in path.read_text(encoding="utf-8"):
+            missing.append(f"{path.relative_to(REPO_ROOT)}: {wanted!r}")
+    assert not missing, (
+        f"these present-tense claims do not read as {routing_count} mutants:\n  "
+        + "\n  ".join(missing)
+        + "\n"
+        "Either the count moved and the prose did not, or an anchor was reworded/deleted. "
+        "Re-derive it from `len(MUTANTS)` in `tests/routing_mutants.py` rather than editing "
+        "the number to match — and note that the kill/survivor split is NOT pinned by "
+        "anything, exactly as for the two batteries above."
+    )
+
+    # And nothing ELSE in the battery's own source may state a different count in the present
+    # tense. Scoped to that file, NOT to `ci.yml`: the workflow carries every battery's count.
+    text = ROUTING_BATTERY.read_text(encoding="utf-8")
+    stale = sorted(
+        {
+            m.group(1)
+            for m in re.finditer(r"(\d+) mutants", text)
+            if int(m.group(1)) != routing_count
+            # A window wide enough to hold `at` plus a line wrap plus the number.
+            and not HISTORICAL.search(text[max(0, m.start() - 8) : m.end()])
+        }
+    )
+    assert not stale, (
+        f"{ROUTING_BATTERY.relative_to(REPO_ROOT)} states {stale} mutants outside a "
+        f"historical `at N mutants` phrasing; the battery declares {routing_count}. If the "
+        "sentence is a correct measurement of an OLDER battery, write it as `… at <N> "
+        "mutants …`, which is the form the exemption recognises."
+    )
+
+
+def _job_spans(text: str) -> dict[str, tuple[int, int]]:
+    """Line spans of each top-level job in `ci.yml`, derived rather than transcribed.
+
+    🔴 ANCHORED TO THE `jobs:` KEY, BECAUSE THE INDENT ALONE IS AMBIGUOUS. `on:` carries
+    `push:`, `pull_request:` and `merge_group:` at the SAME two-space indent as a job name,
+    so a bare indent scan invents three jobs that do not exist and would happily place a
+    step inside one of them.
+    """
+    lines = text.splitlines()
+    try:
+        start = lines.index("jobs:") + 1
+    except ValueError:  # pragma: no cover - the assertion below reports it
+        return {}
+    keys = [
+        (i, ln[2:-1])
+        for i, ln in enumerate(lines[start:], start)
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:", ln)
+    ]
+    bounds = [i for i, _ in keys] + [len(lines)]
+    return {name: (bounds[k], bounds[k + 1]) for k, (_, name) in enumerate(keys)}
+
+
+def test_the_routing_battery_is_RUN_BY_THE_JOB_ITS_HEADER_NAMES(routing_count: int) -> None:
+    """🔴 THE WIRING CLAIM IS A CLAIM LIKE ANY OTHER, AND IT IS THE ONE THAT WENT FALSE.
+
+    `tests/routing_mutants.py` argues that placing the anchor mutants in it is acceptable
+    *because* the `go` job runs it — and its own header records that the same argument was
+    FALSE of this file when it was written: the battery was invoked by nothing. Its header
+    then says "correct this paragraph in the SAME commit" if the step ever comes out. That
+    instruction is prose, and prose is what this module exists to stop relying on.
+
+    So: the claim must be present, and it must be true — the `go` job must actually carry a
+    `run:` for the battery. Deleting the step now fails here rather than leaving a rationale
+    asserting a step that does not exist.
+    """
+    battery_text = _flatten(ROUTING_BATTERY.read_text(encoding="utf-8"))
+    occurrences = battery_text.count(ROUTING_WIRING_CLAIM)
+    # 🔴 EXACTLY ONE, AND THE `== 1` HALF IS NOT TIDINESS — IT IS WHAT MAKES THIS PIN WORK.
+    # MEASURED while this arm was being written: a paragraph elsewhere in the battery QUOTED
+    # the sentence to explain that it was pinned, and the mutation "reword the real sentence"
+    # then SURVIVED a fully green run, because the ledger found the quotation instead. A
+    # guard satisfied by a copy of the claim is a guard that stops reading the claim.
+    assert occurrences == 1, (
+        f"{ROUTING_BATTERY.relative_to(REPO_ROOT)} carries the wiring claim "
+        f"{ROUTING_WIRING_CLAIM!r} {occurrences} time(s); exactly 1 is required.\n"
+        "0 — if the step really was removed, the battery's whole 'it is acceptable to put "
+        "the anchor mutants here' argument is void: fix that argument and this arm together, "
+        "in the same commit. If it was merely reworded, update `ROUTING_WIRING_CLAIM` so the "
+        "pin keeps reading the sentence it names.\n"
+        "2+ — a second copy (a quotation, a changelog line) makes this pin satisfiable "
+        "without the real sentence being there at all. Paraphrase the copy."
+    )
+
+    ci_text = CI.read_text(encoding="utf-8")
+    spans = _job_spans(ci_text)
+    assert ROUTING_JOB in spans, (
+        f"{CI.relative_to(REPO_ROOT)} declares no `{ROUTING_JOB}:` job; "
+        f"jobs found: {sorted(spans)}"
+    )
+    lo, hi = spans[ROUTING_JOB]
+    lines = ci_text.splitlines()
+    span = lines[lo:hi]
+
+    # A NEGATIVE CONTROL on the span finder, derived rather than hardcoded: a span that
+    # swallowed the rest of the file would contain another job's key line, and then the
+    # assertion below would be green for a `run:` belonging to a different job entirely.
+    intruders = [name for name, (other_lo, _) in spans.items() if name != ROUTING_JOB and lo < other_lo < hi]
+    assert not intruders, (
+        f"the derived span for `{ROUTING_JOB}` (lines {lo + 1}-{hi}) swallows {intruders}, "
+        "so a `run:` found inside it would prove nothing about which job runs it"
+    )
+
+    assert any(ROUTING_RUN in ln for ln in span), (
+        f"{ROUTING_BATTERY.relative_to(REPO_ROOT)} says {ROUTING_WIRING_CLAIM!r}, but the "
+        f"`{ROUTING_JOB}` job (lines {lo + 1}-{hi} of "
+        f"{CI.relative_to(REPO_ROOT)}) carries no `{ROUTING_RUN}`. The battery declares "
+        f"{routing_count} mutants that nothing would then run — which is the exact state its "
+        "own header says it was fixed out of."
+    )
+
+
 # ── The PACKAGE count ────────────────────────────────────────────────────────────────
 #
 # 🔴 SPELLED AS A WORD IN EVERY SITE, WHICH IS WHY THE MAPPING IS EXPLICIT AND WHY A

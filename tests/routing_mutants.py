@@ -1,5 +1,42 @@
 #!/usr/bin/env python3
-"""THE MUTATION BATTERY OVER THE ROUTING GUARDS — break each one on purpose, watch it die.
+"""THE MUTATION BATTERY OVER THE ROUTING GUARDS **AND THE ANCHOR RULE** — break each one on
+purpose, watch it die.
+
+⚠ THE FILENAME UNDER-DESCRIBES THE CONTENTS, AND THAT IS A CHOICE RATHER THAN A DRIFT. The
+second section below covers `internal/client/anchor.go`'s rule — an anchor is a PATH, never part
+of a PATTERN — across `Focus`, `ReapOrphans` and `Put`. It lives here because the alternative is
+a fourth battery file carrying a fourth copy of the runner at the bottom of this module, a fourth
+positive control, and a fourth command in whatever list the next reader reads; a battery nobody
+runs measures nothing. Split it out the day a fourth subject arrives and extracting the runner is
+worth doing properly.
+
+🔴 THAT LAST CLAUSE WAS FALSE OF **THIS FILE** WHEN IT WAS WRITTEN, WHICH IS THE ONE WAY THE
+ARGUMENT COULD FAIL. Measured at the commit that added the anchor section: `.github/workflows/ci.yml`
+ran `tests/publish_workflow_mutants.py` and `tests/control_mutants.py`, and `tests/routing_mutants.py`
+was invoked by NOTHING — not that workflow, not `publish-image.yml`, not `flake.nix`, not
+`AGENTS.md`/`CLAUDE.md`, not any test; every other mention of it in the tree is prose. So the
+anchor mutants were placed in the ONLY un-gated battery of the three, on a rationale about not
+creating un-gated batteries. Fixed by wiring rather than by rewording: the `go` job now runs this
+file (it is the one job carrying both a Go toolchain and `pytest`, which this battery needs
+because it mutates and kills on both sides). The battery is 57 mutants. Timing behind that
+decision, so the trade is re-derivable rather than asserted, measured at 57 mutants: 614.75 s
+wall / 152.21 s user + 21.00 s sys on a 24-core host at load ~6.5, 57 killed / 0 survived / 0
+misattributed — the same order as `control_mutants.py`, which that job already pays for. If this
+ever has to come back out of CI, correct this paragraph in the SAME commit; the sentence above is
+only true while the step exists.
+
+🔴 AND BOTH OF THOSE ARE NOW READ BY SOMETHING, WHICH THEY WERE NOT WHEN THEY WERE WRITTEN.
+`tests/test_control_mutant_count_is_pinned.py` pins the inventory count above against
+`.github/workflows/ci.yml`'s step NAME, and pins the wiring sentence above — the one naming the
+job — against that job actually carrying a `run:` for this battery. ⚠ DO NOT RE-QUOTE THAT
+SENTENCE VERBATIM ANYWHERE IN THIS FILE. Measured: an earlier draft of this paragraph quoted it,
+and the ledger then found the quotation after the real sentence had been reworded away — the
+mutant SURVIVED a fully green run. The pin now refuses a second occurrence for that reason.
+The `at 57 mutants` timing figure beside the count is deliberately NOT pinned: it is a
+measurement of a 57-mutant battery and stays exactly as true as the day it was taken, so a guard
+demanding it be relabelled with a new count would be demanding a falsehood. That is the same
+historical-versus-present-tense split that file already draws for the authz battery, in the same
+phrasing.
 
 ```bash
 python3 tests/routing_mutants.py             # the whole battery
@@ -595,6 +632,225 @@ MUTANTS: list[Mutant] = [
             "as many as the slice holds here. ⚠ An ALIGNMENT — `Routes` deduplicates upstream, "
             "so no CLI input reaches it today.",
         kills="TestDirectionOneCountsAScopeONCEHoweverOftenTheCallerNamesIt",
+        go_package="./internal/client/",
+    ),
+
+    # --- the ANCHOR rule: an anchor is a PATH, never part of a PATTERN -------
+    #
+    # 🔴 THESE LIVE HERE RATHER THAN IN A FOURTH BATTERY FILE, AND THE REASON IS THE
+    # POSITIVE CONTROL. `control_mutants.py` and `publish_workflow_mutants.py` each carry
+    # their own ~200-line copy of this runner; a third copy would also need its own control
+    # row, its own `collected == 0` refusal and its own command in whatever gate list the
+    # next reader reads — and a battery nobody runs measures nothing, which is the failure
+    # one level up from the one this file exists to prevent. ⚠ AND THAT LAST CLAUSE WAS
+    # FALSE OF THIS FILE WHEN IT WAS WRITTEN: measured, `routing_mutants.py` was the only
+    # one of the three batteries `ci.yml` did NOT run, so the mutants were placed in the
+    # un-gated file on a rationale about avoiding un-gated files. The module docstring
+    # carries the measurement; the `go` job now runs this battery, which is what makes the
+    # sentence above true. Do not remove that step without rewriting this. The Go arm already targets
+    # `./internal/client/` for twenty rows above, so hosting these costs one section header.
+    # ⚠ THE COST IS THAT THIS FILE'S NAME NOW UNDER-DESCRIBES IT; the module docstring says
+    # so. Move them out the day a fourth subject arrives and the runner is worth extracting.
+    #
+    # 🔴 WHAT THEY GUARD. `internal/client/anchor.go` states one rule — a directory the
+    # OPERATOR named is a PATH, and only a pattern this package wrote is a PATTERN — and
+    # three call sites implement it with three different predicates. The defect class is an
+    # EMPTY RESULT reported as an ordinary answer, which no exit code distinguishes from a
+    # true absence, so every row below has to die by a named assertion rather than by
+    # "something went red". A round-1 audit then DELETED the general `anchoredGlob` walker
+    # these had been written against, because its only production caller was `Focus` and its
+    # only multi-component-wildcard case had no caller at all; the rows moved onto `Focus`
+    # with it, which is where the property is now reachable.
+    Mutant(
+        id="go-focus-enumerates-the-literal-prefix",
+        target="internal/client/focus.go",
+        old="\t\tanchor := filepath.Join(repo, filepath.FromSlash(dir))",
+        new="\t\tanchor := \"\"\n"
+            "\t\tfor _, d := range anchoredNames(repo, func(n string) bool {\n"
+            "\t\t\treturn n == strings.TrimSuffix(filepath.FromSlash(dir), "
+            "string(filepath.Separator))\n"
+            "\t\t}) {\n"
+            "\t\t\tanchor = filepath.Join(repo, d)\n"
+            "\t\t}",
+        why="the silent NARROWING the deleted walker's own comment warned about. "
+            "`filepath.Glob` splits at the LAST separator and reads one directory, so "
+            "`<repo>/claudedocs/handoff-*.md` never lists `<repo>`; finding `claudedocs` by "
+            "ENUMERATING `<repo>` instead gives the same answer everywhere except a repo that "
+            "is searchable but not readable (mode `--x`), where it finds nothing and `recall` "
+            "says the repo has no handoff doc. Identical on every ordinary fixture, which is "
+            "why exactly one row may die.",
+        kills="TestFocusDoesNotREADADirectoryTheGlobOnlyDESCENDSTHROUGH",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-focus-puts-the-anchor-back-in-the-pattern",
+        target="internal/client/focus.go",
+        old="\t\t\tok, err := filepath.Match(base, name)\n\t\t\treturn err == nil && ok",
+        # ⚠ `_ = base` IS NOT PADDING. Putting the WHOLE pattern back means `base` stops
+        # being read, and Go refuses to compile an unused local — a mutant that does not
+        # build produces no `--- FAIL:` line at all, so the runner scores it
+        # KILLED-BY-THE-WRONG-TEST rather than crediting it. Measured here, first cut.
+        new="\t\t\t_ = base\n"
+            "\t\t\tok, err := filepath.Match(filepath.Join(repo, pattern), "
+            "filepath.Join(anchor, name))\n\t\t\treturn err == nil && ok",
+        why="THE ORIGINAL DEFECT, restored at its site: the caller's own `--repo` value back "
+            "inside the pattern. A repo under a directory called `wid[get` takes "
+            "`filepath.Match` to `ErrBadPattern`, the error is discarded, and `Focus` answers "
+            "an empty window — which `recall` renders as `most-recent fallback … (no handoff "
+            "doc to read a path window from)` while the doc is sitting in `claudedocs/`. A "
+            "FALSE CLAIM OF ABSENCE on the default read path, not a refusal.",
+        kills="TestFocusResolvesUnderARepoPathCarryingAGlobMetacharacter",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-focus-matches-its-pattern-LITERALLY",
+        target="internal/client/focus.go",
+        old="\t\t\tok, err := filepath.Match(base, name)\n\t\t\treturn err == nil && ok",
+        new="\t\t\treturn name == base",
+        why="THE OPPOSITE DIRECTION, and the half a metacharacter fixture structurally cannot "
+            "assert. A fix that made the ANCHOR literal by making the PATTERN literal too "
+            "satisfies every `wid[get` row in the tree and silently breaks `Focus`, whose "
+            "patterns are globs by design: nothing is named `handoff-*.md` on disk, so every "
+            "repo loses its handoff doc. This is the property the deleted `anchoredGlob` row "
+            "used to carry.",
+        kills="TestFocusKeepsItsFamilyOrderAndItsTieBreakForAnOrdinaryRepo",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-focus-consults-the-CAPS-family-first",
+        target="internal/client/focus.go",
+        old='var HandoffGlobs = []string{"claudedocs/handoff-*.md", "claudedocs/*HANDOFF*.md"}',
+        new='var HandoffGlobs = []string{"claudedocs/*HANDOFF*.md", "claudedocs/handoff-*.md"}',
+        why="the RESOLUTION ORDER, which is data rather than code and is therefore the half a "
+            "reader assumes is safe. `HandoffGlobs` is an ordered chain — lowercase family "
+            "first, caps family second — so a NEWER `*HANDOFF*.md` must lose to an older "
+            "`handoff-*.md`. Reversed, a repo resumes against a different initiative's doc "
+            "and nothing anywhere says so.",
+        kills="TestFocusKeepsItsFamilyOrderAndItsTieBreakForAnOrdinaryRepo",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-focus-breaks-a-same-second-tie-BACKWARDS",
+        target="internal/client/focus.go",
+        old="\t\t\treturn filepath.Base(found[i].path) < filepath.Base(found[j].path)",
+        new="\t\t\treturn filepath.Base(found[i].path) > filepath.Base(found[j].path)",
+        why="the TIE-BREAK, which only two docs written in the same SECOND can observe. The "
+            "oracle picks `max` over `(mtime, name)`; reversing the name comparison makes the "
+            "pick depend on nothing the caller can see, so the same repo resolves differently "
+            "on two runs of the same command. ⚠ Mutating this to `return false` would SURVIVE "
+            "— `sort.SliceStable` then preserves `os.ReadDir`'s already-ascending order and "
+            "the answer is unchanged — which is why the comparison is INVERTED rather than "
+            "removed.",
+        kills="TestFocusKeepsItsFamilyOrderAndItsTieBreakForAnOrdinaryRepo",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-handoffglobs-gains-a-WILDCARD-directory",
+        target="internal/client/focus.go",
+        old='var HandoffGlobs = []string{"claudedocs/handoff-*.md", "claudedocs/*HANDOFF*.md"}',
+        new='var HandoffGlobs = []string{"claudedocs/handoff-*.md", "*/*HANDOFF*.md"}',
+        why="the PRECONDITION the walker's deletion rests on, mutated directly. `Focus` splits "
+            "each pattern at its last `/` and JOINS the left half onto the repo literally, so "
+            "a wildcard directory component would be matched as a literal and quietly find "
+            "nothing. Nothing in the behavioural rows can see this — the caps family is only "
+            "consulted when the lowercase one misses — so the guard that catches it has to be "
+            "structural, and this is what proves that guard is REACHABLE rather than merely "
+            "present.",
+        kills="TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-reap-loses-its-PREFIX-BOUNDARY",
+        target="internal/client/snapshot.go",
+        old="\t\t\treturn strings.HasPrefix(candidate, prefix)",
+        new="\t\t\treturn strings.HasPrefix(candidate, strings.TrimSuffix(prefix, \"-\"))",
+        why="`…old-` is not `…older-`. The fix replaced `filepath.Match(name+\".old-*\", …)` "
+            "with a literal prefix, and the boundary is the part a rewrite moves without "
+            "noticing: dropping the trailing `-` makes `<cache>.older-thing` — an ordinary "
+            "directory nobody staged — a reapable orphan, and `RemoveAll` is what runs next.",
+        kills="TestReapOrphansStillDiscriminatesByPrefixAgeAndKind",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-reap-requires-SOMETHING-after-the-prefix",
+        target="internal/client/snapshot.go",
+        old="\t\t\treturn strings.HasPrefix(candidate, prefix)",
+        new="\t\t\treturn strings.HasPrefix(candidate, prefix) && len(candidate) > len(prefix)",
+        why="the EMPTY SUFFIX, in the other direction. `Glob`'s `*` matches the empty string "
+            "and so does `HasPrefix`, so a bare `<cache>.old-` IS a staging tree; a predicate "
+            "written as the intuitive \"prefix AND something after it\" leaks exactly that "
+            "one, for ever, while the count keeps reporting success.",
+        kills="TestReapOrphansStillDiscriminatesByPrefixAgeAndKind",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-reap-globs-its-PARENT-again",
+        target="internal/client/snapshot.go",
+        old="\t\tfor _, entry := range anchoredNames(parent, func(candidate string) bool {\n"
+            "\t\t\treturn strings.HasPrefix(candidate, prefix)\n"
+            "\t\t}) {",
+        new="\t\tglobbed, globErr := filepath.Glob(filepath.Join(parent, prefix+\"*\"))\n"
+            "\t\tif globErr != nil {\n"
+            "\t\t\tcontinue\n"
+            "\t\t}\n"
+            "\t\tfor _, full := range globbed {\n"
+            "\t\t\tentry := filepath.Base(full)\n"
+            "\t\t\t_ = strings.HasPrefix",
+        why="A LEAK NOTHING PRINTS, restored. `ReapOrphans` returns a count no caller renders, "
+            "so the filesystem is the only evidence it ran: with a `[` anywhere above the "
+            "cache root `filepath.Glob` returns `ErrBadPattern`, the `continue` skips BOTH "
+            "prefixes, and every interrupted sync's staging tree survives every later sync — "
+            "on exactly the hosts whose directory names are least ordinary.",
+        kills="TestReapOrphansCollectsUnderACacheParentCarryingAGlobMetacharacter",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-put-family-LOSES-ITS-LENGTH-FLOOR",
+        target="internal/client/verbs.go",
+        old='\t\tlen(name) >= len(ref)+len(".")+len(".md")',
+        new='\t\tlen(name) >= len(ref)+len(".md")',
+        why="🔴 ONE OF THE TWO MUTANTS THAT MOTIVATED EXTRACTING `refVariantName` AS A NAMED "
+            "FUNCTION. `fnmatch` does NOT match `<ref>.md` against `<ref>.*.md` — the `*` sits "
+            "between two literal dots — so the floor is what keeps the exact name OUT of the "
+            "family. Lose it and a cache holding `gauge-api.md` alone counts TWO matches, the "
+            "`!= 1` arm fires, and `put` refuses a write the oracle performs. ⚠ INSIDE `Put` "
+            "the floor is UNREACHABLE: the exact-name arm runs first over the same directory, "
+            "so nothing in the verb can present the family arm with a `<ref>.md`. That is the "
+            "whole reason the predicate is a function with its own table-driven row rather "
+            "than three inline conjuncts — an untestable condition that READS as a guard.",
+        kills="TestPutStillResolvesTheDottedVariantAndItsBoundaries",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-put-family-DISJOINS-its-bounds",
+        target="internal/client/verbs.go",
+        old='\t\tstrings.HasSuffix(name, ".md") &&\n',
+        new='\t\tstrings.HasSuffix(name, ".md") ||\n',
+        why="🔴 THE SECOND OF THE PAIR, and a one-token edit: `a && b && c` becomes "
+            "`(a && b) || c`, so the length floor alone admits a name that shares neither the "
+            "ref prefix nor the `.md` suffix. `gauge-apis.md` — where the `.` after the ref is "
+            "supposed to be LITERAL — becomes a family member, and `put` derives its "
+            "`If-Match` from a sibling entry's bytes while the `PUT` addresses a different "
+            "one. That is the precondition-from-the-wrong-bytes hazard the whole revision "
+            "block exists to prevent.",
+        kills="TestPutStillResolvesTheDottedVariantAndItsBoundaries",
+        go_package="./internal/client/",
+    ),
+    Mutant(
+        id="go-put-drops-its-EXACT-NAME-arm",
+        target="internal/client/verbs.go",
+        # ⚠ THE MUTATION IS ON `exact`, NOT ON THE PREDICATE. Replacing the closure body
+        # with `return false` leaves `exact` declared and unread, which Go refuses to
+        # compile — and a mutant that does not build emits no `--- FAIL:` line, so it is
+        # scored KILLED-BY-THE-WRONG-TEST instead of proving anything. Measured, first cut.
+        old='\t\texact := opts.Ref + ".md"',
+        new='\t\texact := opts.Ref + ".markdown"',
+        why="the ORDER of the two arms, which is what makes the exact spelling win over the "
+            "family. With the exact arm dead, a cache holding `gauge-api.md` falls through to "
+            "the `<ref>.*.md` family, which correctly EXCLUDES it, so `put` refuses at exit 2 "
+            "over a cache holding exactly one match — the same refusal the metacharacter "
+            "defect produced, reached by a different route.",
+        kills="TestPutDerivesARevisionUnderAMetacharacterCacheRoot",
         go_package="./internal/client/",
     ),
 ]

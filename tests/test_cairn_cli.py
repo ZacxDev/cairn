@@ -1494,6 +1494,48 @@ class TestOrphanStagingIsReaped:
         assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
         assert not orphan.exists(), ".old- orphan survived a clean sync"
 
+    def test_an_orphan_under_a_PARENT_carrying_a_glob_METACHARACTER_is_still_reaped(
+        self, live_store, tmp_path: Path
+    ):
+        """⚠ AN INVARIANT GUARD ON THIS CLIENT, NOT REGRESSION COVERAGE — IT PASSES
+        AT `e293c6e`, AND ITS GO TWIN DID NOT.
+
+        `_reap_orphans` calls `cache.parent.glob(f"{prefix}*")`, where the parent is
+        the ANCHOR and only `{prefix}*` is the pattern, so a `[` in the operator's own
+        directory name is a character rather than the start of a class. The Go client
+        built the whole thing as one pattern —
+        `filepath.Glob(filepath.Join(parent, prefix + "*"))` — so `filepath.Match`
+        returned `ErrBadPattern`, the call site's error arm skipped BOTH prefixes, and
+        every abandoned staging tree survived every later sync while the reaper
+        reported 0. Nothing prints that count, so the only evidence either way is the
+        filesystem.
+
+        This row pins the oracle's half so a future rewrite cannot quietly adopt the
+        Go spelling; the behavioural red→green is `internal/client/anchor_test.py`'s
+        Go twin `TestReapOrphansCollectsUnderACacheParentCarryingAGlobMetacharacter`,
+        and the cross-client one is `tests/parity/harness.py`'s `orphan-reap-parity`.
+        """
+        parent = tmp_path / "wid[get"
+        cache = parent / "cache"
+        orphan = parent / f"{cache.name}.old-deadbeef"
+        orphan.mkdir(parents=True)
+        (orphan / "junk.md").write_text("left behind by a SIGKILL")
+        old = time.time() - (ORPHAN_GRACE + 60)
+        os.utime(orphan, (old, old))
+
+        # 🔴 THE REACHABILITY CONTROL, AND IT NAMES THE MECHANISM RATHER THAN THE
+        # SYMPTOM. The `[` has to be in the PARENT: both clients interpolate the
+        # cache's own BASENAME into their pattern, and there `fnmatch` and
+        # `filepath.Match` agree — an unterminated `[` is literal to the first and
+        # fatal to the second, but a BALANCED one is a character class to both. The
+        # ANCHOR is the only half the two languages disagree about.
+        assert "[" in str(parent) and "[" not in cache.name, (parent, cache.name)
+
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        assert (
+            not orphan.exists()
+        ), "an orphan under a metacharacter-bearing parent survived a clean sync"
+
     def test_a_symlinked_orphan_is_UNLINKED_not_counted_as_reaped(
         self, live_store, tmp_path: Path
     ):

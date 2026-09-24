@@ -264,7 +264,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     and no duplicate id. So the floor covers those two, and nothing else in this file does.
 
     ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below the
-    PASS count `.github/workflows/ci.yml` pins — **102 at this head**, not the 91 this docstring
+    PASS count `.github/workflows/ci.yml` pins — **104 at this head**, not the 91 this docstring
     still carried — but that job needs a Go toolchain and a running pod; a developer
     running `pytest tests` reaches this one and not that one. 🔴 NOTHING ASSERTS THAT THE TWO
     NUMBERS AGREE, which is exactly how this one went stale: read `ci.yml`'s `-lt` comparison
@@ -277,7 +277,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
     declared = len(harness.cases(1))
-    # 101 measured on this tree (`grep -c 'Case(' tests/parity/harness.py`). The floor is the
+    # 102 measured on this tree (`grep -c 'Case(' tests/parity/harness.py`). The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
     # narrowing cannot hide under it. The previous floor was 50 against 90, which could not
@@ -285,7 +285,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     #
     # ⚠ THIS USED TO ADD "loose enough that adding or dropping a handful of rows in a PR does not
     # make it permanently red", AND THE DRIFT GUARD BELOW MADE THAT FALSE IN THE GROWTH
-    # DIRECTION — at m=101 the formula gives exactly this literal, so adding ONE case reds
+    # DIRECTION — at m=102 the formula gives exactly this literal, so adding ONE case reds
     # `pytest tests` until the literal moves. The clause is deleted rather than the guard
     # loosened, and the asymmetry with `ci.yml`'s equivalent is deliberate: a parity CASE is
     # added a few times a year, so an exact guard costs an edit nobody notices, while the
@@ -294,7 +294,11 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # ⚠ AND IT WAS 85 AGAINST 101 UNTIL THIS COMMIT, because the measured `m` moved by eleven rows
     # and the floor did not — a floor left behind by its own formula loosens silently, which is
     # the same failure one size larger. Move BOTH when a row lands.
-    floor = 95
+    # ⚠ 95 -> 96 WHEN `recall-focus-resolved-through-an-explicit-repo-PATH` LANDED: `m` moved
+    # 101 -> 102 and this is the literal the formula prescribes for it. That row is what makes
+    # the gate able to see a glob metacharacter in a `--repo` ANCHOR; the three focus rows beside
+    # it default `--repo` to `.` and are structurally unable to.
+    floor = 96
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
@@ -312,8 +316,8 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # is the intended cost and is what the two stale readings above bought.
     # ⚠ REAL DIVISION, THEN FLOORED — AND THE FIRST DRAFT OF THIS LINE USED `//`,
     # WHICH IS A DIFFERENT FORMULA. `ci.yml` writes it as `m - min(50, max(1,
-    # m / 20))`; at m=101 that is 95.95 → 95, which is the literal above, while
-    # integer division gives 96 and made this guard red on a correct tree. The
+    # m / 20))`; at m=102 that is 96.9 → 96, which is the literal above, while
+    # integer division gives 97 and made this guard red on a correct tree. The
     # guard caught its own transcription, which is the only reason the difference
     # was ever visible — nothing else in the repo evaluates that sentence.
     want_floor = int(declared - min(50, max(1, declared / 20)))
@@ -328,12 +332,13 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # the `parity` job. They must NOT be asserted equal: this one counts CASES
     # DECLARED by `harness.cases()`, that one counts PASSES a run produced, and
     # the two differ by design — `cache-mtime-parity` is a pass with no declared
-    # case behind it, which is why the run reports 102 passes over 101 cases. A
+    # case behind it, which is why the run reports 104 passes over 102 cases —
+    # `cache-mtime-parity` and `orphan-reap-parity`, two structural checks. A
     # guard equating them would be red on a correct tree and would train its
     # reader to edit whichever number was handier. The docstring's instruction —
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (101 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (102 were "
         f"measured on this tree, across every verb and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."
