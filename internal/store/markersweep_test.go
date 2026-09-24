@@ -142,12 +142,43 @@ func runMarkerSweep(lines []string, bits string, fn func(string) bool) []markerS
 // whether a line CONTAINS one of four runes passes for any divergence merely SPELLED
 // with one, whatever caused it — so a narrowing introduced anywhere on a line
 // carrying a long s was absorbed into the declared bucket and the sweep stayed green.
-// MEASURED on this corpus: drop the `ignoreCase &&` guard from `terminatorColon` — a
-// plausible "simplify" edit on code the previous round introduced — and
-// `- Open ſ: ...` diverges from `_NEAR_MISS_MARKER` in the NARROW direction; with the
-// gate spelled, the ledger printed `211 on the declared residual, 0 outside it` and
-// PASSED. `divergenceIsTheDeclaredFold` is the gate now; this is only what the failure
-// message prints, so a human reading one can see which axes were in play.
+// 🔴 MEASURED — AND NAME WHICH MUTATION, BECAUSE "DROP THE `ignoreCase &&` GUARD" HAS
+// TWO READINGS THAT MOVE DIFFERENT PROBES IN OPPOSITE DIRECTIONS. An earlier wording
+// said only "drop the guard", and a round-1 auditor ran the other one, compared it
+// against this sentence and reported the sentence wrong on probe, direction and number.
+// It was not; the two readings are both real and both measured on the 10,824-line
+// corpus at this commit:
+//
+//	(a) drop the CONJUNCT — `(ignoreCase && foldsToASCIILetter(rs[p]))` becomes
+//	    `foldsToASCIILetter(rs[p])`, so the run is fold-aware for BOTH callers. THIS is
+//	    the mutation this paragraph is about. `_MARKER_ANYWHERE` is unaffected (480, 0
+//	    outside); `_NEAR_MISS_MARKER` goes to 212 with 2 OUTSIDE the declared residual,
+//	    in the NARROW direction — `- Open ſ: …` among them, the pattern carrying no
+//	    flags so its `[^A-Za-z0-9\n]` run spans `ſ` quite happily.
+//	(b) delete the CLAUSE — the run is ASCII-only for both callers. Mirror image:
+//	    `_NEAR_MISS_MARKER` is unaffected (211, 0 outside); `_MARKER_ANYWHERE` goes to
+//	    484 with 4 WALK-WIDER rows. That is the mutation `tests/test_marker_oracle_
+//	    sweep.py`'s `FOLDING_RUNE_EXTRA` ledger describes, and it is right about it.
+//
+// Under (a) with the gate SPELLED, those 2 undeclared divergences are absorbed and the
+// ledger prints `212 on the declared residual, 0 outside it` — MEASURED — which is the
+// failure this paragraph exists for: the spelled gate cannot see them.
+//
+// ⚠ IT NO LONGER "PASSES", AND THE EARLIER WORDING SAYING SO WAS WRITTEN BEFORE CLAUSE
+// (d) EXISTED. Back then (d) was `> 0`, so an absorbed divergence left the run green and
+// nothing in the tree pinned the number. Today (d) is a literal, so the spelled gate's
+// 212 fails on the COUNT instead — the two clauses are complementary, and a spelled
+// gate's absorption is only invisible again if somebody loosens (d) back to `> 0`. Say
+// which clause is doing the catching; "and PASSED" is now false of this tree.
+//
+// 🔴 The absorbed count read `211` until the corpus gained a row, and that number is now a
+// TRAP rather than merely stale: 211 is what the healthy near-miss ledger prints at this
+// commit, so the anomaly and the correct reading had become the same digits. 211 was
+// correct on the corpus as it then stood, one row shorter; the absorbed count moves with
+// the corpus, so re-derive it here rather than trusting it.
+//
+// `divergenceIsTheDeclaredFold` is the gate now; this is only what the failure message
+// prints, so a human reading one can see which axes were in play.
 func hasFoldingRune(line string) bool {
 	return strings.ContainsAny(line, "İıſK")
 }
@@ -190,6 +221,19 @@ func hasFoldingRune(line string) bool {
 // alternation ever gains a word containing `i` or `k`, a trimmed map would silently
 // under-respell. That failure is LOUD (a declared divergence reported as undeclared, not
 // a narrowing absorbed), so completeness here is cheap insurance rather than a guard.
+//
+// 🔴 BUT THE MAP IS THE SECOND THING TO EDIT IN THAT SCENARIO, NOT THE FIRST — AND THE
+// FIRST IS PINNED BY NOTHING. `asReadUnderReI` hardcodes `{"open", "resolved"}`, a THIRD
+// copy of the oracle's alternation beside `LineMentionsMarker`'s and
+// `markerAlternation`'s, and it is the one this file added: before the marker-word
+// scoping, the respelling was indifferent to what the alternation contained. If
+// `_MARKER_ANYWHERE` ever gains `CLOSED` and only the production walks are updated, then
+// `- Cloſed:` diverges for the declared ASCII-only-fold reason, the respelling is the
+// identity on it, and the sweep reports `1 divergence(s) outside the ONE declared
+// residual` — the SAME false alarm on the SAME clause this whole change exists to fix.
+// It fails LOUD, which is why the list is left duplicated rather than consolidated here
+// (one rule/one place across a test/production boundary is a bigger change than this
+// one). Edit all three sites together; nothing will tell you if you miss this one.
 //
 // ⚠ `unicode.SimpleFold` IS NOT A SUBSTITUTE. Go's simple-fold orbit connects U+017F
 // to `s` and U+212A to `k`, but U+0130 and U+0131 have no simple fold at all — their
