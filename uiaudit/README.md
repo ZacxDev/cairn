@@ -172,14 +172,34 @@ assert the ledger contains them — a compile-time claim the moment the constant
 expressible before. `mergedLedger` in `targets_test.go` should be **deleted** at the same time,
 not updated: it is a transcription, and the real ledger supersedes it.
 
-⚠ **This walk was exercised PRE-MERGE, against the older ledger** — 7 rows, 3 targets, 4 skips,
-6 pages. The merged ledger's behaviour is measured through `mergedLedger` and not through a
-browser. What the walk has not yet seen live: `script-src 'self'` with the stylesheet as a real
+### Measured LIVE on the merged tree, not only through the fixture
+
+An integration branch off current `main` with the auth change and this one merged (**zero files
+in common; `git merge-tree` exits 0**) was built and run in full:
+
+| | result |
+|---|---|
+| root module | `go vet` clean, **19 `ok`**, 0 FAIL — the floor, unmoved |
+| `uiaudit` module | **21 top-level / 23 subtests / 44 total, 0 FAIL** |
+| the walk itself | exit **0**; `ledger has 10 row(s); 3 target(s) derived, 7 row(s) skipped` |
+| `/static/app.css` | `answers 200 text/css with a non-empty body` |
+| sign-in | `__Host-cairn-session secure=true httpOnly=true sameSite=Lax path=/` |
+| `/sign-in` tap targets | **2 → 3** — the new OAuth button, caught with no change to the walk |
+
+🔴 **And the walk found a defect in ITSELF on that tree, which is why this section is not just a
+green tick.** See *"The walk could not sign in"* above: the merged sign-in page grew a second
+form, the OAuth button precedes the token form in document order, and `chromedp.ByQuery` takes
+the first match — so the walk started a provider flight and its success check (the *absence* of
+`id="token"`) read the resulting page as a pass. Both halves are fixed: the selector names the
+form by `ui.SignInPath`, and the verdict is now the cookie rather than the absence of a word.
+
+⚠ **What the walk has still not seen live:** `script-src 'self'` with the stylesheet as a real
 subresource (so `network` stops being zero by construction — a signal worth having), an
 undeclared path answering **404** rather than 401, and `GET /` **303**ing to `/sign-in` for
-`Accept: text/html`.
+`Accept: text/html` — the last of which is now covered by the redirect guard below rather than
+by a live capture, because a signed-in walk does not trigger it.
 
-✅ **That last one WAS a hazard for the document-status gate, and it is now CLOSED.** A redirect
+✅ **That 303 WAS a hazard for the document-status gate, and it is now CLOSED.** A redirect
 lands on a 2xx, so every other check here passes on it — and the bytes measured would be filed
 under this target's push identity, which is what the hub matches its P2 diff on, so one page's
 violations would be attributed to another forever with nothing reporting an error.
