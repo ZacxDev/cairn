@@ -379,7 +379,7 @@
           # 🔴 AND A THIRD ONE, FOUND BY A RED SANDBOX BUILD RATHER THAN BY ANYONE
           # READING THE PARAGRAPH ABOVE. `internal/store/markersweep_test.go` is the
           # differential sweep behind `marker.go`'s narrowing ledger: it replays the
-          # ORACLE's verdicts for 10,822 generated lines against two hand-rolled
+          # ORACLE's verdicts for every generated line against two hand-rolled
           # transcriptions of CPython regexes. Its fixture was first written to
           # `tests/fixtures/`, which this allowlist does not carry — so the sweep was
           # green on the dev host and RED here, which is the two-tier split the

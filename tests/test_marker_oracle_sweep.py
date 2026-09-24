@@ -7,8 +7,11 @@
 the verdicts that fixture carries; if nothing re-derived those verdicts from the LIVE
 patterns, an edit to `_MARKER_ANYWHERE` or `_NEAR_MISS_MARKER` would leave Go measured
 against a regex that no longer exists — green, and about nothing. Every run here
-recomputes all 10,822 x 2 verdicts from `lib/subsystem_resolver` and requires the
-fixture to match bit for bit.
+recomputes every verdict — both patterns, every corpus line — from
+`lib/subsystem_resolver` and requires the fixture to match bit for bit. The corpus
+size is not written down here on purpose: `corpus_lines` in the fixture carries it,
+this file asserts it against a freshly assembled corpus, and the last prose copy of
+that number went stale inside the commit that wrote it.
 
 🔴 AND IT IS THE ONLY SIDE THAT CAN SEE AN ORACLE CHANGE. The Go side has no CPython;
 the fixture is the whole of what it knows about the oracle. So a failure here is never
@@ -156,6 +159,70 @@ def test_the_re_I_folding_runes_are_exactly_the_four_the_code_names():
     excluded = {c for c in (0x0130, 0x0131, 0x017F, 0x212A)
                 if negated.fullmatch(chr(c))}
     assert excluded == set(), sorted(hex(c) for c in excluded)
+
+    # 🔴 AND THE TARGET EACH ONE FOLDS ONTO, because a SET is not enough for the
+    # sweep's attribution clause. `internal/store/markersweep_test.go`'s `reIFoldsOnto`
+    # respells a divergent line the way `re.I` reads it and requires the divergence to
+    # vanish; a wrong target there fails CLOSED (the divergence is reported as
+    # undeclared) but for a reason no message would explain. Measured, not argued.
+    #
+    # ⚠ A LIST PER RUNE, NEVER A SINGLE VALUE: a rune folding onto TWO ASCII
+    # letters would make `reIFoldsOnto` ambiguous, and a dict comprehension would hide
+    # that by keeping whichever came last.
+    folds_onto = {
+        c: [t for t in "abcdefghijklmnopqrstuvwxyz0123456789_"
+            if re.compile(re.escape(t), re.I).fullmatch(chr(c))]
+        for c in (0x0130, 0x0131, 0x017F, 0x212A)
+    }
+    assert folds_onto == {0x0130: ["i"], 0x0131: ["i"],
+                          0x017F: ["s"], 0x212A: ["k"]}, folds_onto
+
+
+#: 🔴 THE `EXTRA` ROWS NO COUNT CAN SEE, PINNED TWO-WAY SO THEY CANNOT BE DELETED
+#: IN SILENCE. Every other axis of the corpus is a cross product, so dropping a value
+#: moves `corpus_lines` and the checksum. These are literal rows, and at HEAD they
+#: produce ZERO divergences — that is the POINT of them, not a reason to prune them:
+#: they exist to observe the two class positions `re.IGNORECASE` narrows, and a
+#: population whose healthy reading is zero is exactly the population a "prune the dead
+#: weight" pass deletes. MEASURED by reverting `internal/store/openness.go` two ways:
+#: with `terminatorColon` read ASCII-only for BOTH callers, FOUR of these rows go
+#: WIDER than `_MARKER_ANYWHERE`, and they are the only lines in the corpus that do;
+#: with the sentence-cased row removed, dropping that function's `ignoreCase` guard
+#: produces ZERO divergences over the ENTIRE corpus and the Go sweep stays green.
+#:
+#: ⚠ TWO-WAY ON PURPOSE. Adding a folding-rune row fails this too, which is the
+#: intent: a new one belongs in the ledger with its own reason, beside the others.
+FOLDING_RUNE_EXTRA = (
+    "- OPENſ: a long s immediately after the marker word.",
+    "- OPENK: the Kelvin sign immediately after the marker word.",
+    "- OPENı: a dotless i immediately after the marker word.",
+    "- OPENİ: a dotted capital I immediately after the marker word.",
+    "- OPEN ſ: a long s inside the terminator run.",
+    "- RESOLVED abc1234 K: a Kelvin sign inside the terminator run.",
+    "- OPEN ſſſ: three of them, still inside the run's bound.",
+    "- Open ſ: a long s inside the terminator run, sentence-cased.",
+)
+
+
+def test_the_folding_rune_EXTRA_rows_are_pinned_because_NO_COUNT_CAN_SEE_THEM():
+    """🔴 THE ONE POPULATION A PASSING SWEEP IS BLIND TO.
+
+    `internal/store/markersweep_test.go` pins the size of the declared residual, so a
+    corpus row that DIVERGES is covered by that number. These rows do not diverge at
+    HEAD, so deleting all eight leaves both counts at 480/210 and every test green —
+    while removing the only lines that can catch a revert of `terminatorColon`'s
+    fold-awareness, in EITHER direction. The ledger above is the guard; this asserts
+    the corpus still carries exactly it.
+    """
+    present = tuple(
+        line for line in marker_corpus.EXTRA
+        if any(ch in line for ch in "İıſK")
+    )
+    assert present == FOLDING_RUNE_EXTRA, (
+        "the folding-rune rows of `marker_corpus.EXTRA` have moved. They produce no "
+        "divergence, so no count in either client can see them go; if a row is "
+        "genuinely obsolete, say in the commit which revert stops being observable."
+    )
 
 
 def test_the_hex_atom_class_gains_nothing_under_re_I():

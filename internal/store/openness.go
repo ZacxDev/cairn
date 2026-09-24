@@ -258,8 +258,8 @@ func hasFoldedPrefix(rs []rune, want string) bool {
 // corpus, while the comment one function over read as though it were closed. Read a
 // convergence claim as being about the RUN it was measured on, never about a caller.
 //
-// The ledger, measured by `internal/store/markersweep_test.go` over
-// `tests/marker_corpus.py`'s 10,822-line corpus:
+// The ledger, measured by `internal/store/markersweep_test.go` over the corpus
+// `tests/marker_corpus.py` generates:
 //
 //	`\d` in the date prefix (`looksISODate`)    CLOSED — `unicode.IsDigit`
 //	`\d` in the ref atoms (`refAtomEnds`)       CLOSED — `unicode.IsDigit`
@@ -328,8 +328,18 @@ func datePrefixEnds(rs []rune, i int) []int {
 // exactly as its `PR#\d+` does. An ASCII-only reading made `nearMissMarker` blind to
 // every dated bullet written in a non-ASCII numeral system. MEASURED by the committed
 // sweep (`internal/store/markersweep_test.go`) with this line still ASCII-only: 1,020
-// of 10,816 corpus lines matched on the oracle and not here, every one of them
-// carrying an Arabic-Indic date, and none the other way.
+// lines matched on the oracle and not here, every one of them carrying an
+// Arabic-Indic date, and none the other way.
+//
+// 🔴 THE DENOMINATOR IS DELIBERATELY ABSENT, NOT CORRECTED. It read "of 10,816"
+// and was stale IN THE COMMIT THAT WROTE IT — six corpus rows were appended by a
+// sibling edit in the same change — the third number in this arc to go stale the
+// moment another line moved. Correcting the digits regenerates the class. The corpus
+// size is `corpus_lines` in `internal/store/testdata/marker_oracle_sweep.json`, and
+// BOTH clients re-derive it from the generator and fail on a mismatch, so a prose
+// copy duplicates a machine-checked fact and is the only copy nothing checks. The
+// numerator stays because it is a MUTATION measurement — reproducible only by
+// reverting this function — and no artifact in the tree carries it.
 //
 // ⚠ THE HYPHENS STAY ASCII. `-` is a literal in the pattern, not a class, so no
 // Unicode dash is accepted on either side.

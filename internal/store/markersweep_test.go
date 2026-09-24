@@ -134,12 +134,73 @@ func runMarkerSweep(lines []string, bits string, fn func(string) bool) []markerS
 // each line is labelled with every axis it carries, and the label is a diagnosis aid,
 // never a causal claim.
 
-// hasFoldingRune is the DECLARED residual's population: the four non-ASCII runes
-// CPython's `re.IGNORECASE` folds onto an ASCII letter (see `foldsToASCIILetter`).
-// `hasFoldedPrefix` folds ASCII only, so a marker word spelled with one of them is
-// matched by the oracle and not here.
+// hasFoldingRune is a DIAGNOSIS LABEL: does this line contain one of the four
+// non-ASCII runes CPython's `re.IGNORECASE` folds onto an ASCII letter (see
+// `foldsToASCIILetter`)?
+//
+// 🔴 IT IS NOT THE LEDGER'S GATE, AND USING IT AS ONE WAS A SPELLED GUARD. Asking
+// whether a line CONTAINS one of four runes passes for any divergence merely SPELLED
+// with one, whatever caused it — so a narrowing introduced anywhere on a line
+// carrying a long s was absorbed into the declared bucket and the sweep stayed green.
+// MEASURED on this corpus: drop the `ignoreCase &&` guard from `terminatorColon` — a
+// plausible "simplify" edit on code the previous round introduced — and
+// `- Open ſ: ...` diverges from `_NEAR_MISS_MARKER` in the NARROW direction; with the
+// gate spelled, the ledger printed `211 on the declared residual, 0 outside it` and
+// PASSED. `divergenceIsTheDeclaredFold` is the gate now; this is only what the failure
+// message prints, so a human reading one can see which axes were in play.
 func hasFoldingRune(line string) bool {
 	return strings.ContainsAny(line, "İıſK")
+}
+
+// reIFoldsOnto pairs each of `foldsToASCIILetter`'s four runes with the ASCII letter
+// CPython's `re.IGNORECASE` folds it onto.
+//
+// ⚠ SPELLED AS ESCAPES, for the reason `foldsToASCIILetter` gives: U+212A renders
+// identically to an ASCII `K` in almost every font, and U+0130/U+0131 to `I`/`i`.
+//
+// 🔴 THE TARGETS ARE A CLAIM ABOUT CPYTHON, SO THEY ARE MEASURED THERE, NOT ARGUED
+// HERE. `tests/test_marker_oracle_sweep.py` sweeps the codepoint space for the SET and
+// checks this MAP's targets against `re.I` on the pinned interpreter, the same way it
+// already pins the set `foldsToASCIILetter` hardcodes.
+//
+// ⚠ `unicode.SimpleFold` IS NOT A SUBSTITUTE. Go's simple-fold orbit connects U+017F
+// to `s` and U+212A to `k`, but U+0130 and U+0131 have no simple fold at all — their
+// CaseFolding entries are full/Turkic — so a SimpleFold-based widening would silently
+// fail to attribute a divergence spelled with either of them, and fail CLOSED-looking:
+// the divergence would be reported as undeclared, which is at least the safe direction.
+var reIFoldsOnto = map[rune]rune{
+	'\u0130': 'i', // LATIN CAPITAL LETTER I WITH DOT ABOVE
+	'\u0131': 'i', // LATIN SMALL LETTER DOTLESS I
+	'\u017f': 's', // LATIN SMALL LETTER LONG S
+	'\u212a': 'k', // KELVIN SIGN
+}
+
+// asReadUnderReI respells a line the way `re.IGNORECASE` reads it: every folding rune
+// replaced by the ASCII letter it folds onto. That substitution is the WHOLE of the
+// difference between the oracle's view of such a line and a walk that folds ASCII only
+// — at the marker word, at the `[A-Za-z0-9_]` lookahead and inside the negated
+// `[^A-Za-z0-9\n]` run alike.
+func asReadUnderReI(line string) string {
+	return strings.Map(func(r rune) rune {
+		if a, ok := reIFoldsOnto[r]; ok {
+			return a
+		}
+		return r
+	}, line)
+}
+
+// divergenceIsTheDeclaredFold attributes one divergence to the declared residual by
+// REMOVING its cause and requiring the divergence to VANISH: re-run the same predicate
+// on the line as `re.I` reads it and demand it now agrees with the oracle. A
+// divergence that survives the respelling is by construction not the ASCII-only fold,
+// whatever runes it happens to be spelled with.
+//
+// ⚠ STRICTLY NARROWER THAN `hasFoldingRune`, NEVER WIDER: on a line carrying none of
+// the four runes the respelling is the identity, so it can never rescue a divergence
+// the spelled gate would have rejected. Swapping one for the other can therefore only
+// move lines OUT of the declared bucket.
+func divergenceIsTheDeclaredFold(fn func(string) bool, d markerSweepDivergence) bool {
+	return fn(asReadUnderReI(d.line)) == d.oracle
 }
 
 // hasNonASCIIDigit is the population round 1 closed in `refAtomEnds` and round 2 found
@@ -183,13 +244,14 @@ func summarise(divs []markerSweepDivergence) map[string]int {
 	return counts
 }
 
-// 🔴 THE LEDGER, IN THREE CLAUSES. (a) Every divergence between either Go
-// transcription and its oracle must be a line whose MARKER WORD could carry one of the
-// four `re.I`-folding runes — the one residual `marker.go` declares. (b) Every
-// divergence must be ORACLE-WIDER: the reverse is the dangerous direction, because a
+// 🔴 THE LEDGER, IN FOUR CLAUSES. (a) Every divergence between either Go
+// transcription and its oracle must be ATTRIBUTABLE to the one residual `marker.go`
+// declares — the ASCII-only fold — by `divergenceIsTheDeclaredFold`, which removes
+// that cause and requires the divergence to vanish. (b) Every divergence must be
+// ORACLE-WIDER: the reverse is the dangerous direction, because a
 // walk wider than its oracle manufactures a declaration nobody typed, and two such
 // populations were live and undeclared until this sweep existed. (c) The residual must
-// be NON-EMPTY.
+// be NON-EMPTY. (d) It must be EXACTLY the size the ledger records, per probe.
 //
 // ⚠ (c) IS NOT PEDANTRY. A sweep reporting zero everywhere is indistinguishable from a
 // sweep wired to nothing — an axis silently dropped from the corpus, a bit-string read
@@ -200,6 +262,13 @@ func summarise(divs []markerSweepDivergence) map[string]int {
 //
 // ⚠ WHEN THE RESIDUAL CLOSES, (c) IS WHAT FAILS, AND THAT IS THE DESIGNED EXIT. The
 // message says so: delete the clause here and the paragraph in `marker.go` together.
+//
+// ⚠ (d) IS A LITERAL, AND A LITERAL IS BRITTLE ON PURPOSE HERE. `> 0` let the
+// residual GROW silently: the spelled gate above absorbed a whole extra divergence
+// (210 -> 211) from a mutant and the run stayed green, because nothing in the tree
+// pinned either number. A count that must be re-derived when the corpus moves is the
+// cost of a residual that cannot grow behind a passing test. Do NOT do arithmetic on
+// the two sides when this fails — re-run the sweep and copy the number it prints.
 func TestTheGoMarkerTranscriptionsMatchTheOracleExceptTheDeclaredResidual(t *testing.T) {
 	const residual = "re.I-folding rune (U+0130/0131/017F/212A)"
 	fx, lines := loadMarkerSweep(t)
@@ -207,14 +276,17 @@ func TestTheGoMarkerTranscriptionsMatchTheOracleExceptTheDeclaredResidual(t *tes
 		name string
 		bits string
 		fn   func(string) bool
+		// want is clause (d): the residual's EXACT size on this corpus, measured by
+		// this test and copied from what it prints.
+		want int
 	}{
-		{"LineMentionsMarker vs _MARKER_ANYWHERE", fx.Anywhere, LineMentionsMarker},
-		{"nearMissMarker vs _NEAR_MISS_MARKER", fx.NearMiss, nearMissMarker},
+		{"LineMentionsMarker vs _MARKER_ANYWHERE", fx.Anywhere, LineMentionsMarker, 480},
+		{"nearMissMarker vs _NEAR_MISS_MARKER", fx.NearMiss, nearMissMarker, 210},
 	} {
 		divs := runMarkerSweep(lines, probe.bits, probe.fn)
 		declared, undeclared := 0, 0
 		for _, d := range divs {
-			if hasFoldingRune(d.line) {
+			if divergenceIsTheDeclaredFold(probe.fn, d) {
 				declared++
 			} else {
 				undeclared++
@@ -235,6 +307,13 @@ func TestTheGoMarkerTranscriptionsMatchTheOracleExceptTheDeclaredResidual(t *tes
 				"residual paragraph in marker.go in the same change — or this sweep "+
 				"is measuring nothing, which reads identically.",
 				probe.name, len(lines))
+		} else if declared != probe.want {
+			t.Errorf("%s: the declared residual is %d divergence(s), and this ledger "+
+				"records %d. It MOVED, and a residual that moves silently is the whole "+
+				"failure this clause exists for. If the corpus changed, put %d here and "+
+				"say in the commit which lines were added or dropped; if it did not, "+
+				"something in the walk did. counts by axis: %v",
+				probe.name, declared, probe.want, declared, summarise(divs))
 		}
 		t.Logf("%s: %d divergence(s) over %d lines — %d on the declared residual, "+
 			"%d outside it", probe.name, len(divs), len(lines), declared, undeclared)

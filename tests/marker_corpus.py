@@ -147,6 +147,17 @@ EXTRA = (
     "- OPEN ſ: a long s inside the terminator run.",
     "- RESOLVED abc1234 K: a Kelvin sign inside the terminator run.",
     "- OPEN ſſſ: three of them, still inside the run's bound.",
+    # 🔴 SENTENCE-CASED, AND THAT IS THE WHOLE POINT — the three rows above cannot
+    # reach `terminatorColon`'s `ignoreCase` argument on the `_NEAR_MISS_MARKER` side.
+    # They SHOUT, so `nearMissMarker` answers them from the shouted branch, which
+    # returns before the terminator run is ever walked; that run is only reachable
+    # from the sentence-cased branch. With no row of this shape, dropping the
+    # `ignoreCase &&` guard in `terminatorColon` — a plausible "simplify" edit on
+    # code a previous round introduced — produced ZERO divergences over the whole
+    # corpus and the sweep stayed green. MEASURED: with this row present that mutant
+    # makes `nearMissMarker` FALSE where `_NEAR_MISS_MARKER` matches — the pattern
+    # carries no flags, so its `[^A-Za-z0-9\n]` run spans `ſ` quite happily.
+    "- Open ſ: a long s inside the terminator run, sentence-cased.",
 )
 
 
