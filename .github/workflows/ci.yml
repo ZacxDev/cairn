@@ -46,7 +46,7 @@ jobs:
       # no pull-request event reaches a job holding `packages: write`, that every
       # published tag is immutable, that the anonymous-pull check is actually
       # anonymous, that BOTH pods are pushed and each carries its OWN controls,
-      # that the whole PYTHON half runs before the first GO step, and that the
+      # that the whole GO half runs before the first PYTHON step, and that the
       # `nix build` resolving skopeo names an OUTPUT rather than the bare
       # multi-output attribute whose `-man` path prints FIRST (which is what made
       # every run of this workflow exit 127) — and it pins them with regular
@@ -59,8 +59,17 @@ jobs:
       # measured SURVIVED against a fully green suite: the Go anonymous-pull
       # proof re-aimed at the PYTHON package, the `/data`-is-empty control
       # deleted from EITHER pod, and a refusal whose `exit 1` became `exit 0`
-      # while both its words survived. The four control steps are now pinned by
-      # their whole normalised command text, the way the four push steps are.
+      # while both its words survived. Every control step is now pinned by its
+      # whole normalised command text, the way every push step is. (⚠ This said
+      # "the four control steps … the four push steps"; the UI leg made it six of
+      # each and nothing went red. The pinned dicts are the count.)
+      #
+      # ⚠ THE ORDERING CLAIM ABOVE USED TO READ "the whole PYTHON half runs before
+      # the first GO step", AND IT REVERSED. `cairn-store-go` is the DEPLOYED pod,
+      # so it publishes FIRST and is the leg least exposed to an earlier red step;
+      # the retracted rationale — the Go half as an unexercised first execution —
+      # and the run-history measurement that retired it are recorded once, in
+      # `tests/test_publish_workflow.py`'s ordering test, rather than restated here.
       #
       # 🔴 THE COUNT ON THE STEP NAME IS PINNED TO `MUTANTS` BY
       # `tests/test_control_mutant_count_is_pinned.py`. The authz battery's

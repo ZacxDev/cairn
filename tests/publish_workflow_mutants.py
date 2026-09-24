@@ -35,21 +35,36 @@ WF = WT / ".github" / "workflows" / "publish-image.yml"
 TEST = "tests/test_publish_workflow.py"
 
 
-def _move_go_build_first(text: str) -> str:
-    """Relocate the Go image build to in front of the Python one.
+def _move_python_build_first(text: str) -> str:
+    """Relocate the Python image build to in front of the Go one.
 
     A step's BLOCK is `- name: …` through the next blank line; the comment above
     it is left where it was, which does not matter — the order guard reads step
     names out of the command text with comments already dropped.
+
+    🔴 THIS IS THE MIRROR OF `_move_go_build_first`, WHICH IT REPLACES, AND THE
+    DIRECTION IS THE WHOLE POINT. The ordering under test reversed — the GO half
+    publishes first now, because `cairn-store-go` is the deployed pod — so the
+    mutation that makes `last_go < first_python` false is the one that puts a
+    PYTHON step in front of a GO one. The retired helper moved the Go build in
+    front of the Python one, which is the ordering this file now SHIPS: kept as a
+    mutant it would have been a no-op against a green suite, scored KILLED by
+    nothing and reported as a pass.
+
+    ⚠ AND IT MUST MOVE A STEP THAT CHANGES THE EXTREMUM THE ASSERTION READS.
+    `last_go < first_python` compares max(go) with min(python), so moving the
+    Python BUILD — min(python) — is a mutation the assertion can see. Moving a
+    Python step that is not the minimum, or a Go step that is not the maximum,
+    leaves both extrema where they were and survives.
     """
     found = re.search(
-        r"      - name: build the Go server image from the flake\n(?:.*\n)*?\n", text
+        r"      - name: build the Python server image from the flake\n(?:.*\n)*?\n", text
     )
     if not found:
         return text
     block = found.group(0)
-    python_build = "      - name: build the Python server image from the flake\n"
-    return text.replace(block, "", 1).replace(python_build, block + python_build, 1)
+    go_build = "      - name: build the Go server image from the flake\n"
+    return text.replace(block, "", 1).replace(go_build, block + go_build, 1)
 
 
 # The `/data`-is-empty control, as it appears in BOTH image-control steps: the
@@ -64,7 +79,16 @@ _DATA_BLOCK = re.compile(
 
 
 def _drop_data_block(text: str, index: int) -> str:
-    """Delete the `index`-th `/data` emptiness control (0 = Python, 1 = Go)."""
+    """Delete the `index`-th `/data` emptiness control (0 = Go, 1 = Python).
+
+    🔴 THE INDEX IS FILE ORDER, SO IT FLIPPED WITH THE HALVES. `finditer` walks
+    the file, and the GO half now comes first, so index 0 is the GO control and
+    index 1 is the PYTHON one — the reverse of what this said before the
+    reordering. Both mutants still kill the same test, so nothing would have gone
+    red: the two rows below would simply have named the wrong pod each. A row
+    whose NAME states which site it deletes is the only thing that makes "a guard
+    that covered one of them would read as covering both" checkable.
+    """
     matches = list(_DATA_BLOCK.finditer(text))
     if len(matches) <= index:
         return text
@@ -141,8 +165,15 @@ MUTANTS = [
     # multi-output; nothing published the Go pod at all; the Python pod's positive
     # control cannot work on the Go image, which is the copy-paste this change was
     # most likely to ship; a hardcoded route name here is a FIFTH route ledger
-    # that the four in `AGENTS.md` cannot see; and the Go half in front of the
-    # Python publish is the ordering that made the original failure total.
+    # that the four in `AGENTS.md` cannot see; and a PYTHON step in front of the
+    # GO half is the ordering that publishes the DEPLOYED pod last and most
+    # exposed to an earlier red step.
+    # ⚠ THAT LAST CLAUSE READ "the Go half in front of the Python publish is the
+    # ordering that made the original failure total", WHICH WAS TRUE OF THE
+    # ORDERING THIS FILE USED TO TEST AND IS NOW BACKWARDS. The workflow reversed:
+    # `cairn-store-go` is the deployed pod, so it publishes FIRST. The retracted
+    # reasoning and the measurement that retired it are in
+    # `tests/test_publish_workflow.py`'s ordering test.
     (
         "build-the-BARE-multi-output-skopeo-attribute",
         lambda t: t.replace(
@@ -154,16 +185,19 @@ MUTANTS = [
         "test_the_skopeo_build_names_an_OUTPUT_and_not_the_bare_derivation",
     ),
     (
-        # The Go BUILD moved in front of the Python build — the ordering the first
-        # draft of this workflow shipped, where a first-execution Go step going red
-        # left the then-deployed PYTHON pod unpublished.
-        # ⚠ This said "the DEPLOYED pod", which inverted at the cutover: the Go
-        # image is the deployed pod now, so this mutant's ordering strands the
-        # PYTHON one. Still the right mutant — the ordering it breaks is still the
-        # ordering under test — but its stated COST named the wrong artefact.
-        "run-the-GO-half-before-the-PYTHON-publish",
-        _move_go_build_first,
-        "test_the_whole_PYTHON_half_runs_before_the_first_GO_step",
+        # The Python BUILD moved in front of the Go build — which strands the
+        # DEPLOYED pod behind a leg nothing pulls: any red step in the Python half
+        # then stops `cairn-store-go` publishing at all.
+        # ⚠ THIS ROW WAS `run-the-GO-half-before-the-PYTHON-publish` OVER
+        # `_move_go_build_first`, AND THE REVERSAL MADE IT A NO-OP-SHAPED MUTANT —
+        # it would have produced the ordering the workflow now ships, so the suite
+        # would stay green and the row would score SURVIVED for a reason that is
+        # not a gap in the guard. Its stated cost had also already inverted at the
+        # cutover: it said the mutant strands "the DEPLOYED pod" when what it
+        # stranded was the Python one.
+        "run-the-PYTHON-half-before-the-GO-publish",
+        _move_python_build_first,
+        "test_the_whole_GO_half_runs_before_the_first_PYTHON_step",
     ),
     (
         "hardcode-route-names-as-a-FIFTH-ledger",
@@ -236,7 +270,7 @@ MUTANTS = [
         # most here", deleted from the PYTHON pod — in a PUBLIC repository
         # publishing to a PUBLIC registry.
         "delete-the-PYTHON-pods-/data-emptiness-control",
-        lambda t: _drop_data_block(t, 0),
+        lambda t: _drop_data_block(t, 1),
         "test_both_image_controls_REFUSE_on_a_non_empty_data_directory",
     ),
     (
@@ -244,7 +278,7 @@ MUTANTS = [
         # of them would read as covering both, which is the defect the split
         # exists to make visible.
         "delete-the-GO-pods-/data-emptiness-control",
-        lambda t: _drop_data_block(t, 1),
+        lambda t: _drop_data_block(t, 0),
         "test_both_image_controls_REFUSE_on_a_non_empty_data_directory",
     ),
     (
