@@ -132,16 +132,31 @@ var _ = unicode.IsSpace
 // would find nothing there — a silent narrowing, in the same "empty result" shape as the defect
 // this function fixed. `TestFocusDoesNotREADADirectoryTheGlobOnlyDESCENDSTHROUGH` is the row.
 //
-// 🔴 THAT CHOICE HAS **NO PARITY JUSTIFICATION**, AND AN EARLIER FORM OF THIS COMMENT INVENTED
-// ONE. It said the `--x` case *"resolves fine on the oracle, whose `_PreciseSelector` asks
-// `is_dir()` rather than scandir'ing the parent."* MEASURED against the pinned interpreter
-// (`flake.nix` → `python312`, 3.12.14): **`_PreciseSelector` DOES NOT EXIST** in that
-// `pathlib`. `_make_selector` falls through to `_WildcardSelector` for a literal component
-// too, and that selector `scandir`s its parent — so at mode `0111` `os.listdir` raises
-// `PermissionError`, `focus_window`'s own `except OSError` swallows it, and the oracle answers
-// `FocusWindow(paths=(), source=None)` where this function answers the doc. Positive control
-// for the grep that found the absence: `_make_selector` and `_WildcardSelector` are both
-// PRESENT in that same file, so it can see what is there.
+// 🔴 THAT CHOICE HAS **NO PARITY JUSTIFICATION**, AND EARLIER FORMS OF THIS COMMENT INVENTED
+// ONE TWICE — EACH TIME BY NAMING A CPython INTERNAL, EACH TIME WRONGLY. The first said the
+// `--x` case *"resolves fine on the oracle, whose `_PreciseSelector` asks `is_dir()` rather
+// than scandir'ing the parent"*; that selector does not exist in the pinned `pathlib`. The
+// second said that at mode `0111` *"`os.listdir` raises `PermissionError`, `focus_window`'s
+// own `except OSError` swallows it"*; also false, see below.
+//
+// 🔴 SO THIS COMMENT NOW MAKES ONE CLAIM, AND IT IS BEHAVIOURAL: **FOR A REPO AT MODE `0111`,
+// THIS FUNCTION RETURNS THE DOC AND THE ORACLE RETURNS AN EMPTY WINDOW.** MEASURED end to end
+// on one synthetic fixture, same repo, mode flipped between the two reads: readable → both
+// sides `claudedocs/handoff-demo.md`; at `0111` → `Focus` →
+// `Source="claudedocs/handoff-demo.md"`, `focus_window` → `FocusWindow(paths=(), source=None)`.
+// It is CPython's own globbing that produces the empty side: `Path(repo).glob(pattern)` returns
+// `[]` and does **not** raise. That sentence is version-independent; a selector name is not,
+// which is why every wording of this paragraph that named a mechanism has been wrong.
+//
+// 🔴 A CONSEQUENCE THE PREVIOUS WORDING GOT BACKWARDS: `focus_window`'s OWN `except OSError`
+// ARM IS **NOT** WHAT TURNS THIS INTO AN ORDINARY EMPTY ANSWER — IT NEVER EXECUTES IN THIS
+// SCENARIO. Measured with an `os.scandir`/`os.listdir` spy on the pinned interpreter
+// (`flake.nix` → `python312`, **3.12.14**), not read: at `0111`, `os.listdir` is called **0**
+// times and `Path.glob` raises nothing; control, the same fixture readable, finds the doc. So
+// an auditor asking whether that arm is dead code gets no evidence from here, and anyone
+// trying to close `tests/parity/README.md` residual 10 by adjusting it would change nothing.
+// Do not restate a mechanism you have not measured yourself; if you keep one, pin the
+// interpreter version beside it and say it was measured.
 //
 // ⚠ SO THE `--x` REPO IS A REAL DIVERGENCE, NOW DECLARED RATHER THAN ASSERTED AWAY —
 // `tests/parity/README.md` residual **10**, which also records that the parity harness

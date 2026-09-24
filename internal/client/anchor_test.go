@@ -545,17 +545,46 @@ func TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS(t *testing.T) {
 // `_PreciseSelector` asks `is_dir()` rather than scandir'ing the parent."* MEASURED on the
 // pinned interpreter (`flake.nix` → `python312`, 3.12.14): `_PreciseSelector` is absent from
 // `pathlib` — `_make_selector` falls through to `_WildcardSelector` even for a literal
-// component, and that selector `scandir`s its parent. End to end on one fixture, repo at mode
-// `0111`: `Focus` → `Source="claudedocs/handoff-demo.md"`, `focus_window` →
-// `FocusWindow(paths=(), source=None)`. So this row pins a GO property and a DECLARED
-// divergence (`tests/parity/README.md` residual 10), not a parity property. The direction is
-// still the right one — the Go side answers the doc where the oracle claims absence — but that
-// is a choice, not agreement. 🔴 PROVENANCE, MEASURED with `git log -S_PreciseSelector` and a
+// component, and that selector `scandir`s its parent — all three re-measured at 3.12.14 before
+// this sentence was allowed to stay: `hasattr(pathlib, …)` for the two names, a direct
+// `_make_selector(("claudedocs", "handoff-*.md"), …)` call returning `_WildcardSelector` for
+// the fall-through, and an `os.scandir`/`os.listdir` spy for the read (1 `scandir` at `0111`,
+// 2 when readable).
+//
+// 🔴 THE CLAIM THIS ROW ACTUALLY RESTS ON IS THE BEHAVIOUR, NOT THAT MECHANISM. End to end on
+// one fixture, repo at mode `0111`: `Focus` → `Source="claudedocs/handoff-demo.md"`,
+// `focus_window` → `FocusWindow(paths=(), source=None)`. So this row pins a GO property and a
+// DECLARED divergence (`tests/parity/README.md` residual 10), not a parity property. The
+// direction is still the right one — the Go side answers the doc where the oracle claims
+// absence — but that is a choice, not agreement.
+//
+// 🔴 AND THE SIBLING COPIES WENT WRONG A SECOND TIME, WHICH IS WHY THE MECHANISM HALF IS KEPT
+// SHORT HERE. Round 3 (`39e3977`) replaced the dead `_PreciseSelector` sentence in `focus.go`
+// and in `tests/parity/README.md` with *"at mode `0111` `os.listdir` raises `PermissionError`,
+// `focus_window`'s own `except OSError` turns that into an ordinary empty answer"* — also
+// false: measured with the spy above, `os.listdir` is called **0** times and `Path.glob` does
+// not raise, so that arm never executes in this scenario. Both sites are corrected to the
+// behavioural claim. Every wording of this paragraph that named a mechanism has been wrong —
+// two distinct false mechanisms, each of which travelled between files before anyone measured
+// it (provenance of both is below and was derived, not recalled) — so do not write a third. If
+// you keep a
+// mechanism detail anywhere in this family, measure it with a spy, pin the interpreter version
+// beside it, and say it was measured rather than read.
+//
+// 🔴 PROVENANCE OF THE FIRST ONE, MEASURED with `git log -S_PreciseSelector` and a
 // per-commit `git show <c>:<file> | grep -c`, because the round that fixed it guessed: the
 // sentence entered in `anchor.go` at `7348820`, was COPIED into this file at `6696ad1`, and
 // round 1 (`b91c4ed`) deleted the `anchor.go` copy while writing a THIRD into `focus.go` — a
-// false claim MOVED, not removed, twice. All remaining copies are deleted here. Do not restate
-// it; if a parity reason is ever wanted for this case, measure one first.
+// false claim MOVED, not removed, twice. No copy of it survives as an assertion anywhere in the
+// tree; the remaining occurrences are quoted retractions, and a tree-wide grep for `listdir`,
+// `except OSError` and `_WildcardSelector` is how that was checked.
+//
+// 🔴 PROVENANCE OF THE SECOND ONE, DERIVED THE SAME WAY rather than taken from the round that
+// wrote it: `git show <c>:<file> | grep -c` for the `os.listdir`-raises sentence over
+// `anchor.go`, `anchor_test.go`, `focus.go` and `tests/parity/README.md` at `6696ad1`,
+// `b91c4ed` and `39e3977` answers 0 everywhere until `39e3977`, where it is 1 in `focus.go`
+// and 1 in `tests/parity/README.md` and still 0 here. So the second false mechanism was born
+// in two files at once, in the very commit that retracted the first.
 //
 // ⚠ IT IS AIMED AT `Focus` RATHER THAN AT A HELPER, AND THAT IS THE POINT. An earlier cut
 // asserted this against `anchoredGlob`, a general walker with no general caller; the property is

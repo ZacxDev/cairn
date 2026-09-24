@@ -18,11 +18,25 @@ was invoked by NOTHING — not that workflow, not `publish-image.yml`, not `flak
 anchor mutants were placed in the ONLY un-gated battery of the three, on a rationale about not
 creating un-gated batteries. Fixed by wiring rather than by rewording: the `go` job now runs this
 file (it is the one job carrying both a Go toolchain and `pytest`, which this battery needs
-because it mutates and kills on both sides). Timing behind that decision, so the trade is
-re-derivable rather than asserted: 57 mutants, 614.75 s wall / 152.21 s user + 21.00 s sys on a
-24-core host at load ~6.5, 57 killed / 0 survived / 0 misattributed — the same order as
-`control_mutants.py`, which that job already pays for. If this ever has to come back out of CI,
-correct this paragraph in the SAME commit; the sentence above is only true while the step exists.
+because it mutates and kills on both sides). The battery is 57 mutants. Timing behind that
+decision, so the trade is re-derivable rather than asserted, measured at 57 mutants: 614.75 s
+wall / 152.21 s user + 21.00 s sys on a 24-core host at load ~6.5, 57 killed / 0 survived / 0
+misattributed — the same order as `control_mutants.py`, which that job already pays for. If this
+ever has to come back out of CI, correct this paragraph in the SAME commit; the sentence above is
+only true while the step exists.
+
+🔴 AND BOTH OF THOSE ARE NOW READ BY SOMETHING, WHICH THEY WERE NOT WHEN THEY WERE WRITTEN.
+`tests/test_control_mutant_count_is_pinned.py` pins the inventory count above against
+`.github/workflows/ci.yml`'s step NAME, and pins the wiring sentence above — the one naming the
+job — against that job actually carrying a `run:` for this battery. ⚠ DO NOT RE-QUOTE THAT
+SENTENCE VERBATIM ANYWHERE IN THIS FILE. Measured: an earlier draft of this paragraph quoted it,
+and the ledger then found the quotation after the real sentence had been reworded away — the
+mutant SURVIVED a fully green run. The pin now refuses a second occurrence for that reason.
+The `at 57 mutants` timing figure beside the count is deliberately NOT pinned: it is a
+measurement of a 57-mutant battery and stays exactly as true as the day it was taken, so a guard
+demanding it be relabelled with a new count would be demanding a falsehood. That is the same
+historical-versus-present-tense split that file already draws for the authz battery, in the same
+phrasing.
 
 ```bash
 python3 tests/routing_mutants.py             # the whole battery
