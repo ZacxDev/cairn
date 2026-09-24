@@ -1,11 +1,18 @@
 // Command cairn-ui is the browser surface: the SECOND binary the pod's control
 // plane serves, and the one that renders HTML.
 //
-// 🔴 IT IS DEPLOYED BY NOTHING, AND IT NOW CARRIES THREE PHASES. Seven routes over one
-// authentication chain and one rendering path: the entries page, the sign-in pair with
-// server-side revocable cookie sessions, and the share flow. `apps` has no entry for it,
-// and no manifest in this repository deploys it. ⚠ This also said "No image wraps this
-// binary"; `packages.ui-image` wraps it now and publishes it. Published is not deployed.
+// 🔴 IT IS DEPLOYED, AND THE CLAIM THAT IT WAS NOT IS RETRACTED RATHER THAN EDITED AWAY.
+// This comment read "IT IS DEPLOYED BY NOTHING … `apps` has no entry for it, and no manifest
+// in this repository deploys it", and both halves of the second sentence are still true and
+// no longer add up to the first: the manifest lives in the operator's GitOps repository, not
+// here, so "no manifest HERE" was never evidence about what is running. `packages.ui-image`
+// publishes it and a cluster pulls it. ⚠ The route COUNT is deliberately not restated here
+// either — it was "Seven routes" across two changes that added rows. The number is whatever
+// `ui.DeclaredRoutes()` says, which the startup line prints.
+//
+// It carries the entries page, the sign-in pair with server-side revocable cookie sessions,
+// a GitHub sign-in through the operator's Supabase/GoTrue, one static stylesheet, and the
+// share flow — over ONE authentication chain and one rendering path.
 //
 // ⚠ THIS COMMENT SAID "IT IS PHASE A … Cookie sessions, the sign-in flow and the screens
 // are later phases; none of them are here" THROUGH THE TWO PHASES THAT ADDED THEM. It is
@@ -36,6 +43,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -62,6 +70,36 @@ const (
 	// to mount a second writable volume — which `OpenFileSessionStore` refuses loudly
 	// at startup if it did not, rather than discovering it at the first sign-in.
 	defaultSessionFile = "/var/lib/cairn-ui/sessions"
+
+	// EnvSupabaseRedirectURL is the absolute URL of THIS surface's OAuth callback route,
+	// and it is what arms the provider sign-in.
+	//
+	// 🔴 IT IS READ HERE RATHER THAN IN `internal/identity`'s LEDGER, AND THAT IS A DECISION
+	// WITH A COST. The ledger's `armed` question is "is this BACKEND half-configured", and
+	// the backend is `SupabaseJWT` — a verifier that needs no callback URL and is wanted by
+	// the POD, which has no sign-in flow at all. A row in `supabaseEnv` would therefore arm
+	// the pod's Supabase backend from a variable the pod cannot use, and
+	// `supabaseFromEnv` would have to read a value `SupabaseConfig` has no field for. The
+	// cost is that this name is outside the blank-policy sweep, and it is paid the same way
+	// `EnvUIControlJournal` pays it: read raw, and judged with
+	// `identity.ValueReducesToNothing` — the exported predicate, never a fresh
+	// `strings.TrimSpace`, because 32 zero-width runes are not whitespace and this
+	// repository has already measured a live bypass at that spelling.
+	//
+	// ⚠ IT MUST ALSO APPEAR IN THE PROVIDER'S `GOTRUE_URI_ALLOW_LIST`. The path half is
+	// `ui.OAuthCallbackPath`; the origin half is this deployment's and nothing in this
+	// process can derive it — see `identity.ErrSupabaseOAuthNoRedirect`.
+	EnvSupabaseRedirectURL = "CAIRN_SUPABASE_REDIRECT_URL"
+
+	// EnvSupabaseAnonKey and EnvSupabaseAnonKeyFile are the project's anonymous key, which
+	// a HOSTED Supabase project's API gateway requires on the token endpoint and a
+	// SELF-HOSTED GoTrue does not. Optional; see `identity.SupabaseOAuthConfig.APIKey`.
+	//
+	// 🔴 THE `_FILE` SPELLING EXISTS BECAUSE THE INLINE ONE IS READABLE IN `/proc`. The same
+	// pair `CAIRN_TRUSTED_HEADER_SECRET`/`_FILE` offers, for the same reason, and the file
+	// form is the one a Kubernetes Secret mounts.
+	EnvSupabaseAnonKey     = "CAIRN_SUPABASE_ANON_KEY"
+	EnvSupabaseAnonKeyFile = "CAIRN_SUPABASE_ANON_KEY_FILE"
 
 	// EnvUIControlJournal is the `-control-journal` flag's environment spelling.
 	//
@@ -225,17 +263,41 @@ func main() {
 		os.Exit(exitConfig)
 	}
 
+	// 🔴 THE SUPABASE BACKEND, BUILT FROM ITS OWN LEDGER AND FROM THE AUTHORITY THIS WHOLE
+	// SURFACE AUTHORISES FROM. `identity.SupabaseBackendFromEnvironment` reads
+	// `CAIRN_SUPABASE_*` through the SAME blank policy `cmd/cairn-server` gets, which is
+	// why this program does not read those variables itself: a second reader of that ledger
+	// is the duplicated predicate `internal/identity/config.go`'s whole history is about.
+	//
+	// ⚠ `armed == false` IS A DEPLOYMENT WITH NO PROVIDER AND IS NOT AN ERROR. It is the
+	// deployment that exists today — one credential token in a token file — and it keeps
+	// working with the GitHub button simply absent from the page.
+	supabase, supabaseArmed, err := identity.SupabaseBackendFromEnvironment(envalias.Environ(), authority)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: identity: "+err.Error())
+		os.Exit(exitConfig)
+	}
+
 	// 🔴 `ui.AuthBackends`, NOT `identity.FromEnvironment`. The environment builder
 	// arms the trusted-header backend when an operator declares the deployment
 	// proxy-fronted, and this surface must not have that backend at any setting —
 	// see `internal/ui/auth.go` for why a browser endpoint cannot carry that trade.
 	// The chain's membership is pinned by `TestTheUIChainHasNoTrustedHeaderMember`
-	// rather than by this call site. It takes the machine token and the cookie
-	// backend: the Supabase backend is still not wired, and a parameter every caller
-	// passed `nil` to was removed rather than kept as a promise.
-	chain, err := ui.AuthBackends(machine, cookie)
+	// rather than by this call site.
+	chain, err := ui.AuthBackends(machine, supabase, cookie)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: identity: "+err.Error())
+		os.Exit(exitConfig)
+	}
+
+	// 🔴 THE SIGN-IN FLOW IS A SEPARATE OBJECT FROM THE BACKEND AND IT IS BUILT SECOND,
+	// BECAUSE IT BORROWS THE BACKEND. `internal/identity`'s own comment says why they are
+	// two types: the backend verifies locally on every request and makes no network call,
+	// while the flow makes one per sign-in. A deployment may therefore have the backend
+	// (a bearer JWT authenticates) and NOT the flow (no redirect URL, so no button).
+	oauth, oauthErr := providerSignIn(supabase, supabaseArmed)
+	if oauthErr != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+oauthErr.Error())
 		os.Exit(exitConfig)
 	}
 
@@ -300,6 +362,9 @@ func main() {
 		Sharing:  ui.ControlSharing{Authority: authority},
 		Sessions: sessions,
 		TTL:      *sessionTTL,
+		// nil when no provider is configured, which is a legitimate deployment and is why
+		// this field is the one on `ui.Config` that may be nil. See its own comment.
+		OAuth: oauth,
 		// Both from the block above. A nil limiter would be an unbounded sign-in, which is
 		// the defect; there is no path here that produces one.
 		TrustedProxies: trustedProxies,
@@ -317,6 +382,32 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if supabase != nil {
+		// 🔴 THE FIRST FETCH IS AT STARTUP AND ITS FAILURE IS FATAL, WHERE EVERY LATER ONE
+		// IS NOT — the same asymmetry `cmd/cairn-server` draws, for the same reason. A key
+		// set that has never fetched can verify nothing, so a surface that came up that way
+		// would refuse every provider sign-in while looking healthy, and the operator's
+		// only signal would be people reporting a button that does not work. After one
+		// success there is last-known-good to serve, and a provider outage must not stop
+		// reads for sessions already issued.
+		//
+		// ⚠ IT IS FATAL EVEN WHEN NO BUTTON IS RENDERED, AND THAT IS DELIBERATE. An armed
+		// Supabase ledger with no redirect URL still means a deployment that expects a
+		// BEARER JWT to authenticate; a key set that never fetched refuses those too.
+		if err := supabase.RefreshKeys(ctx); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"cairn-ui: identity: the Supabase key set could not be fetched at startup (%s), so no "+
+					"provider session could be verified and every such sign-in would be refused. "+
+					"Refusing to start\n", err.Error())
+			os.Exit(exitConfig)
+		}
+		go func() {
+			if err := supabase.RunKeyRefresh(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, "cairn-ui: identity: the JWKS refresh loop stopped: "+err.Error())
+			}
+		}()
+	}
 
 	go func() {
 		ticker := time.NewTicker(refreshInterval)
@@ -366,8 +457,22 @@ func main() {
 	if *controlJournal != "" {
 		sharingMode = "writable (control journal " + *controlJournal + ")"
 	}
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s\n",
-		len(ui.DeclaredRoutes()), addr, *store, sharingMode)
+	// 🔴 THE LINE SAYS WHETHER THE PROVIDER BUTTON IS THERE, FOR THE SAME REASON IT SAYS
+	// WHETHER A SHARE CAN BE RECORDED: the answer is decided at startup and discovered at
+	// the first click otherwise. The three states are `providerSignIn`'s three, and the
+	// middle one is the one worth naming out loud — a deployment whose Supabase variables
+	// are set and whose redirect URL is not gets JWT authentication and NO button, which
+	// reads as a broken sign-in page if nothing says so.
+	signInMode := "credential form only (no $" + EnvSupabaseRedirectURL + ": no " + ui.GitHubLabel + " button)"
+	switch {
+	case oauth != nil:
+		signInMode = "credential form and " + ui.GitHubLabel + " (callback " + oauth.RedirectURL() + ")"
+	case supabaseArmed:
+		signInMode = "credential form, plus bearer-JWT authentication but no " + ui.GitHubLabel +
+			" button (no $" + EnvSupabaseRedirectURL + ")"
+	}
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s\n",
+		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode)
 	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
@@ -442,6 +547,88 @@ func controlJournalDefault(get func(string) string) (string, error) {
 			EnvUIControlJournal, raw)
 	}
 	return raw, nil
+}
+
+// providerSignIn builds the GitHub sign-in flow, or reports that this deployment has none.
+//
+// 🔴 THREE STATES AND THEY ARE NOT TWO. (a) No `CAIRN_SUPABASE_*` at all: no backend, no
+// flow, no button — the deployment that exists today. (b) The backend armed and NO redirect
+// URL: a bearer JWT authenticates but there is no browser flow, so no button. That is a real
+// configuration — a deployment that wants JWT API access and keeps the credential form for
+// humans — and it is why the redirect URL and not the backend is what arms the button.
+// (c) Both: the button is rendered. Returning `nil, nil` for (a) and (b) is what makes the
+// row-level refusal in `internal/ui` the ONE place a missing provider is reported.
+//
+// 🔴 AND A REDIRECT URL SET WITHOUT A BACKEND IS A REFUSAL RATHER THAN A SILENT (a). It is
+// the half-configuration shape `internal/identity`'s ledgers exist against: the operator
+// wrote down a callback URL, so they expect a button, and the surface would come up healthy
+// with none. The message names the variable that unblocks it.
+func providerSignIn(backend *identity.SupabaseJWT, armed bool) (*identity.SupabaseOAuth, error) {
+	raw := os.Getenv(EnvSupabaseRedirectURL)
+	if raw != "" && identity.ValueReducesToNothing(raw) {
+		return nil, fmt.Errorf(
+			"%s=%q reduces to nothing, so this surface would read it as UNSET and serve a sign-in page with "+
+				"no %s button while the line you wrote said otherwise. Refusing to start; give it the absolute "+
+				"URL of %s on this deployment, or delete the line",
+			EnvSupabaseRedirectURL, raw, ui.GitHubLabel, ui.OAuthCallbackPath)
+	}
+	redirect := strings.TrimSpace(raw)
+	if redirect == "" {
+		return nil, nil
+	}
+	if !armed || backend == nil {
+		return nil, fmt.Errorf(
+			"%s is set but no Supabase verifier is configured, so an exchanged token could never be checked "+
+				"and the %s button would refuse every sign-in. Refusing to start; set $%s and $%s (the issuer "+
+				"is also the URL /authorize and /token hang off), or delete $%s",
+			EnvSupabaseRedirectURL, ui.GitHubLabel, identity.EnvSupabaseJWKSURL, identity.EnvSupabaseIssuer,
+			EnvSupabaseRedirectURL)
+	}
+	key, keyErr := anonKey()
+	if keyErr != nil {
+		return nil, keyErr
+	}
+	// 🔴 THE AUTH BASE IS THE VERIFIER'S OWN ISSUER, NOT A SECOND VARIABLE. See
+	// `identity.SupabaseJWT.Issuer`: two places to name the project is a deployment that
+	// verifies tokens from one and starts sign-ins at another, with nothing naming the
+	// disagreement.
+	return identity.NewSupabaseOAuth(identity.SupabaseOAuthConfig{
+		Verifier:    backend,
+		AuthBaseURL: backend.Issuer(),
+		RedirectURL: redirect,
+		APIKey:      key,
+	})
+}
+
+// anonKey resolves the optional anonymous key, inline or from a file.
+//
+// 🔴 THE FILE IS READ WITH NO TRIM EXCEPT A TRAILING NEWLINE, WHICH IS THE ONE EDIT A FILE
+// GETS FOR FREE. `echo "$KEY" > file` appends one; every other byte may legitimately be part
+// of the value, and trimming more would silently change a credential — the ruling
+// `setting.keepWhitespace` records one package over.
+//
+// ⚠ BOTH SPELLINGS SET IS A REFUSAL, NOT A PRECEDENCE RULE. A precedence would make the
+// value depend on which line the manifest emitted last, and the operator who wrote two
+// cannot be told from the one who forgot to delete the first.
+func anonKey() (string, error) {
+	inline := os.Getenv(EnvSupabaseAnonKey)
+	path := strings.TrimSpace(os.Getenv(EnvSupabaseAnonKeyFile))
+	if inline != "" && path != "" {
+		return "", fmt.Errorf("both $%s and $%s are set, and this program will not choose between two "+
+			"spellings of one credential. Refusing to start; delete one", EnvSupabaseAnonKey, EnvSupabaseAnonKeyFile)
+	}
+	if path != "" {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			// The path is named and the CONTENT never is: this line reaches an operator's
+			// log, and the content is the credential.
+			return "", fmt.Errorf("$%s names %s, which cannot be read (%w). Refusing to start; the "+
+				"token exchange against a hosted Supabase project is refused without it",
+				EnvSupabaseAnonKeyFile, path, err)
+		}
+		return strings.TrimSuffix(string(body), "\n"), nil
+	}
+	return inline, nil
 }
 
 // envDuration falls back on an unparseable value rather than refusing, which matches

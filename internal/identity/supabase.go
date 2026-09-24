@@ -198,6 +198,28 @@ func (s *SupabaseJWT) Authenticate(r *http.Request) (Identity, error) {
 	if presented == "" {
 		return Identity{}, refuse(SupabaseBackend, "no bearer token")
 	}
+	return s.AuthenticateToken(presented)
+}
+
+// AuthenticateToken is the whole of [SupabaseJWT.Authenticate] except for reading the
+// header, and it is exported because the SIGN-IN EXCHANGE has no header to read.
+//
+// 🔴 A STRING IN, AN `Identity` OUT, AND NO `*http.Request` ANYWHERE NEAR IT — the same
+// shape, for the same reason, as `ui.Config.Credentials` being a `TokenAuthority` rather
+// than an `Authenticator`. A browser completing an OAuth callback holds an access token it
+// got from the provider, not a request that carries one; handing this function the REQUEST
+// instead would put the caller's own session cookie and `Authorization` header back in
+// scope, so a callback whose exchanged token was refused could "succeed" as whatever the
+// browser already held. Taking a string makes that unrepresentable rather than avoided by
+// care.
+//
+// ⚠ IT IS NOT A SECOND IMPLEMENTATION OF THE BACKEND. `Authenticate` is now a header read
+// and a call to this; there is one verification path, so a check added to one cannot be
+// missing from the other.
+func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
+	if presented == "" {
+		return Identity{}, refuse(SupabaseBackend, "no bearer token")
+	}
 	claims, err := Verify(presented, s.verify)
 	if err != nil {
 		// 🔴 THE VERIFIER'S REASON IS KEPT HERE AND GOES NOWHERE NEAR THE WIRE. It is

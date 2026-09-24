@@ -350,10 +350,21 @@ assertion above is satisfied by a page with no links at all.
 ### Response hardening, which is a second barrier and not the guard
 
 `X-Content-Type-Options: nosniff` and a CSP of
-`default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'` — no
-script permitted at all. The stylesheet is a Go constant in `render.go` that no input
-reaches, which is what makes `style-src 'unsafe-inline'` buy an attacker nothing. The
-escaping is the guard; these are behind it.
+`default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'`.
+The escaping is the guard; these are behind it.
+
+⚠ **THIS PARAGRAPH WAS WRONG ABOUT THE POLICY IT DESCRIBED, AND IN TWO DIFFERENT WAYS — the
+record is the point.** It read *"a CSP of `default-src 'none'; style-src 'unsafe-inline';
+base-uri 'none'; form-action 'none'` — no script permitted at all. The stylesheet is a Go
+constant in `render.go` that no input reaches, which is what makes `style-src 'unsafe-inline'`
+buy an attacker nothing."* The `form-action 'none'` half had been **stale since Phase B**, when
+the constant moved to `'self'` so the forms would work — so the README asserted a stricter
+policy than the code shipped, for two phases, in the section whose whole job is to state what
+the response promises. And the `'unsafe-inline'` half was true and is now **gone**: the
+stylesheet is served from `/static/app.css`, so an inline `<style>` does not apply at all.
+Which direction each clause moved, and why there is deliberately **no `img-src`**, is in
+`ContentSecurityPolicy`'s own comment in `server.go` — read it there rather than restating it
+here, because that is the string the header test pins as a literal.
 
 ## 🔴 `TrustedHeader` is not in this binary's identity chain
 
@@ -559,19 +570,38 @@ the METHOD** (`stateChanging`), never opted into by a row:
 somebody forgets to opt a new row into, silently. Each class is spelled out in the hand-written
 ledger in `routes_test.go`, so adding a row means writing its class by hand.
 
-⚠ **A stated narrowing.** Before Phase B every path but `/healthz` answered the same uniform 401,
-so an unauthenticated caller could not tell a route from a typo. `GET /sign-in` answers 200 to
-anybody — the URL space is now mappable **to the extent of the two public rows**, which a sign-in
-flow has to advertise anyway. The property still holds in full for every authenticated row.
-`GET /` was **not** made to redirect to `/sign-in`, though that is the browser-friendly thing: a
-303 for `/` beside a 401 for `/admin` is exactly the enumeration the uniform answer prevents.
+🔴 **THE "URL SPACE IS NOT MAPPABLE" PROPERTY IS RETRACTED, AND THE RETRACTED TEXT IS KEPT
+BECAUSE IT WAS THE STATED REASON FOR A DESIGN.** It read: *"Before Phase B every path but
+`/healthz` answered the same uniform 401, so an unauthenticated caller could not tell a route
+from a typo. `GET /sign-in` answers 200 to anybody — the URL space is now mappable to the extent
+of the two public rows … `GET /` was not made to redirect to `/sign-in`, though that is the
+browser-friendly thing: a 303 for `/` beside a 401 for `/admin` is exactly the enumeration the
+uniform answer prevents."*
 
-**CSP moved `form-action 'none'` → `'self'`.** `'none'` forbids form submission outright, so both
-forms would have been inert in a conforming browser — the policy would have silently disabled the
-feature rather than refusing to ship it. `'self'` still refuses a form posting anywhere else, so an
-injected `<form action="//elsewhere">` cannot exfiltrate what a user types. Nothing else moved;
-there is still no `script-src`. The header test pins the policy as a **literal**, not against the
-constant the handler reads, because the latter is a test that `a == a`.
+The premise is void, and it was void when it was written: **this repository is PUBLIC and
+`routes.go` publishes every row.** The map is the source file, and `cairn-ui`'s startup line
+already counts it. So the guard was paying a real cost — a browser landing on a mistyped path was
+told it was *unauthorized*, and "this is not a route" was indistinguishable from "your credential
+is wrong" in this surface's own tests — for a property an attacker could get by reading the repo.
+
+What replaced it, and what was deliberately kept:
+
+- an undeclared path is now **404 with the `noSuchRoute` body**, and
+  `TestEveryServedPathComesFromTheLedger` asserts both. That is a *stronger*
+  anti-stale-handler assertion than the 401 was: a stale handler renders HTML, redirects, or
+  answers 200, and cannot produce either of those. The `GET /entries` probe — a path that WAS a
+  row — is still in the list, and it is why the test exists.
+- **the uniform refusal for a BAD CREDENTIAL stays**, and that was always the half worth its
+  cost: it is an oracle over the credential TABLE, not over the URL space. No refusal on this
+  surface says which part of a credential was wrong.
+- an unauthenticated caller *still* cannot tell a route from a typo, because gate (4) runs before
+  gate (5) — but that is now a consequence of the gate ORDER rather than a guard anybody
+  maintains.
+- **`GET /` DOES redirect a browser now**, 303 to `/sign-in`, on an operator decision. It is
+  scoped to one path, one method and an `Accept` carrying `text/html`; every other path, method
+  and client keeps the uniform 401 byte for byte, so the machine contract is unmoved.
+  `TestTheRootRedirectsABrowserAndRefusesEverythingElse` probes each of those three dimensions
+  with the other two held at the redirecting value.
 
 ## 🔴 The CSRF token is derived, not stored
 
@@ -945,6 +975,200 @@ Everything Phase A's and Phase B's lists say still applies, plus:
   it from a page about one scope would silently withdraw every other scope that project owns. There
   is no project page, so today there is **nowhere in this surface** to revoke one. Stated as a gap
   rather than left for somebody to find by hunting for a button.
-- **Nothing measures a real deployment.** `packages.ui-image` now BUILDS an image — and a
-  build is not a deploy: nothing publishes it and there is still no manifest,
-  so `-control-journal` has been exercised by tests and by nothing else.
+- 🔴 **THIS BULLET IS RETRACTED, AND THE RETRACTION IS THE ENTRY.** It read: *"Nothing measures a
+  real deployment. `packages.ui-image` now BUILDS an image — and a build is not a deploy: nothing
+  publishes it and there is still no manifest, so `-control-journal` has been exercised by tests and
+  by nothing else."* **All three clauses are now false.** The image is PUBLISHED, a manifest deploys
+  it from the operator's GitOps repository (not this one — which is why "there is still no manifest"
+  was never a measurement of anything), and the surface is LIVE and public, serving a cookie session
+  against a real store. What survives as a genuine gap is narrower and is worth keeping separately:
+  **no test in this repository drives the deployed instance**, so every guard here is a claim about
+  the code and none is a claim about what is running. The distance between those two is what
+  `AGENTS.md`'s "deployed ≠ verified" rule is about.
+
+# Phase D — GitHub sign-in through the operator's Supabase/GoTrue
+
+The sign-in page grows a **second door**. The credential form is unchanged and is not
+optional; what is new is a `Sign in with GitHub` button, an authorization-code flow with
+PKCE, and two rows in the ledger.
+
+## 🔴 The credential form SURVIVES, and that is a requirement rather than a courtesy
+
+Three independent reasons, and any one of them is enough:
+
+- **It is the door that verified this deployment.** The surface went live and served its scopes
+  to a cookie session minted by pasting a credential token into `[name=token]`.
+- **It is the only door that works when the identity provider is down.** The JWKS is cached
+  and an already-issued session survives an outage — `SupabaseJWT`'s own comment measures
+  that — but a *new* sign-in through the provider does not.
+- **A browser evaluation harness drives it, and cannot drive OAuth.** The provider flow is
+  cross-origin to a third party with MFA, so nothing automated completes it. The alternative
+  — a test-only authentication bypass — is exactly what `identity.SessionCookie`'s comment
+  argues against: *"an env var to turn it off for local development is a variable that ends up
+  set in production."*
+
+`TestTheCredentialFormSURVIVESTheProviderButton` pins the **selector**, not the word: exactly
+one field named `token`, a `password` input, a form posting to `SignInPath` — on a deployment
+with a provider and on one without — and then it drives a real credential through to a 303 plus
+a session cookie.
+
+## 🔴 PKCE with a server-side exchange, and NO `state` parameter
+
+The flow is: `POST /sign-in/github` → 303 to GoTrue's `/authorize` carrying
+`code_challenge` + `code_challenge_method=s256` + `flow_type=pkce` → the provider redirects to
+`GET /sign-in/github/callback?code=…` → this process POSTs `/token?grant_type=pkce` with the
+code and the verifier → the returned access token is **verified through
+`identity.SupabaseJWT`** → the SAME cookie session the token form mints.
+
+Two decisions inside that are worth reading twice.
+
+**`flow_type=pkce` is what keeps the flow scriptless.** Without it GoTrue returns the access
+token in the URL **fragment**, which no server ever receives: the page would need script to
+read `location.hash` and post it back. That is more code, a second way in, and a token in the
+browser's history. `script-src 'self'` would have permitted such a script — the flow was
+available and was refused.
+
+**There is no `state` parameter, and its absence is a decision with a reason.** GoTrue does not
+pass an arbitrary `state` through to the callback; it manages its own and appends only `code`.
+Carrying one would mean smuggling it into the redirect URL's query, which changes the string the
+operator's `GOTRUE_URI_ALLOW_LIST` has to match. What `state` buys is a binding between the
+callback and the browser that started the flow, and that binding is supplied instead by the
+**flight cookie** plus the **PKCE verifier behind it**:
+
+> An attacker who obtains a code of their own and makes a victim's browser open the callback
+> loses twice. With no flight cookie there is nothing to exchange with. With the victim's OWN
+> flight cookie, the exchange presents the VICTIM's verifier against the ATTACKER's code, which
+> the token endpoint refuses.
+
+`TestAFlightIsSingleUseAndBoundToItsBrowser` drives all three arms of that — a replay, a
+callback with no cookie, and a planted flight id — and asserts the provider was reached
+**once** in total, because a refusal that still costs a network round trip is one anybody can
+make this process perform.
+
+## 🔴 Where the PKCE verifier lives, and why it is NOT the durable session store
+
+`internal/ui`'s `flights` table: in memory, keyed by a 32-byte flight id carried in a
+`__Host-cairn-oauth` cookie (`HttpOnly`, `Secure`, `SameSite=Lax`, `MaxAge` = the flight TTL),
+**single use** (the record is deleted on read), **expiring** (5 minutes), and **bounded**
+(`maxOpenFlights`).
+
+- **Why not the session store.** `identity/session.go` rejects in-memory storage *for
+  sessions* because a restart signs everybody out and a second replica has no shared truth.
+  Neither cost lands on a flight: a restart mid-flight costs ONE person ONE retry of a button
+  they are looking at. And the durable store would be **worse** — it would write a live PKCE
+  verifier to disk, where the whole reason the session table holds `sha256(id)` rather than the
+  id is that a file of live credentials is a file worth stealing.
+- **Why not the cookie alone.** Carrying the verifier in the browser's own `HttpOnly` cookie
+  needs no table at all, and it was refused on ONE property: single use. A cookie is deleted by
+  *asking* the browser to delete it, so a client that declines cannot be made to; a map entry
+  removed on read cannot be presented twice whatever the client does.
+- **Why the cap exists.** `POST /sign-in/github` is reachable by anybody who can open a socket,
+  and every request writes a record that lives five minutes. Without `maxOpenFlights` the route
+  is a memory-exhaustion endpoint. ⚠ The cap's cost is a denial of service on the **button**:
+  with the table full a legitimate provider sign-in is refused until flights expire. The token
+  form touches this table not at all, which is one more reason that door is kept.
+- ⚠ **`SameSite=Lax` is load-bearing here, not a convenience.** The callback is a top-level GET
+  navigation from the PROVIDER's origin, which is cross-site: `Strict` would withhold the cookie
+  and every provider sign-in would be refused.
+
+## 🔴 The callback is the ONE state-changing handler behind a safe method
+
+`stateChanging` calls `GET` safe, so **neither cross-site gate covers the callback** — and it
+cannot be a POST, because the provider chooses the method and a redirect is a GET. What covers
+it is the flight, as above. The **start** row is a POST for the mirror reason: as a GET it would
+be reachable by any `<img src>` in the world and by every link prefetcher, each of which would
+mint a flight and overwrite the visitor's flight cookie. So the button is a form, not a link,
+and `TestTheStartRowIsRefusedCrossSite` pins that gate (2) covers it and that a refused request
+opens **zero** flights.
+
+## Configuration, and the three states a deployment can be in
+
+Everything is in the `CAIRN_SUPABASE_*` namespace. The verifier's settings
+(`JWKS_URL`, `ISSUER`, `AUDIENCE`, `PROVIDER`, `REQUIRE_ROLE`, `LEEWAY`, `MAX_AGE`) are read
+through `identity.SupabaseBackendFromEnvironment`, which is the **same ledger and the same blank
+policy** `cmd/cairn-server` gets — a second reader of that ledger is the duplicated predicate
+`internal/identity/config.go`'s whole history is about.
+
+Two names are read by `cmd/cairn-ui` itself, outside the ledger, and the cost is stated where
+they are declared: `CAIRN_SUPABASE_REDIRECT_URL` (required; what arms the button, judged with
+`identity.ValueReducesToNothing` rather than a fresh `TrimSpace`) and
+`CAIRN_SUPABASE_ANON_KEY`/`_FILE` (optional; a hosted Supabase project's gateway refuses the
+token endpoint without it, a self-hosted GoTrue needs none).
+
+🔴 **There is no `CAIRN_SUPABASE_AUTH_URL`.** `/authorize` and `/token` hang off the verifier's
+own **issuer**, which for Supabase *is* the GoTrue base URL. Two places to name the project is a
+deployment that verifies tokens from one and starts sign-ins at another — every sign-in would
+complete at the provider and be refused here, with nothing naming the disagreement.
+
+| state | what it means | what the surface does |
+|---|---|---|
+| no `CAIRN_SUPABASE_*` | the deployment that existed before this change | credential form only; the two OAuth rows answer **501** |
+| the ledger armed, no redirect URL | a bearer JWT authenticates; no browser flow | credential form only; rows answer 501; the startup line says so |
+| both | the button is live | both doors |
+| a redirect URL and no verifier | half-configured | **refuses to start**, naming the variable that unblocks it |
+
+The startup line reports which of the three it is, for the reason it already reports whether a
+share can be recorded: the answer is decided at startup and discovered at the first click
+otherwise.
+
+## The stylesheet is now a route
+
+`style-src 'self'` forbids an inline `<style>`, so all three pages link `/static/app.css` and
+`handleStylesheet` serves the same Go constant. It is `classPublic` because the sign-in page
+links it and that page answers anybody — a stylesheet behind the chain renders the way in as
+unstyled text. It serves a **constant**, not a directory: an `http.FileServer` would need a
+prefix match, which is a second way for a request to reach a handler and one
+`TestEveryServedPathComesFromTheLedger` structurally cannot probe.
+`TestTheStylesheetIsServedAsItsOwnRoute` pins the RELATIONSHIP rather than either side — it
+reads each page's `<link href>` and then fetches that exact href, because two separate
+assertions would both pass for a route nobody links or a link nobody serves.
+
+## The mutation rows — 15 mutants, 15 killed
+
+Each reverts ONE decision to its pre-change behaviour, or breaks one guard, and names the test
+that must go red. Run before the battery: a baseline proving all 15 named tests GREEN, so a test
+that was already red could not be reported as a kill.
+
+| mutant | test that KILLED it |
+|---|---|
+| the CSP reverted to the Phase A/B policy | `TestTheHTMLResponseCarriesItsHardeningHeaders` |
+| an undeclared path answers the old uniform 401 | `TestEveryServedPathComesFromTheLedger` |
+| the root redirect deleted | `TestTheRootRedirectsABrowserAndRefusesEverythingElse` |
+| the root redirect WIDENED to every client (`Accept` ignored) | the same test |
+| the entries page inlines its stylesheet again | `TestTheStylesheetIsServedAsItsOwnRoute` |
+| the ambient cookie tried before the Supabase header credential | `TestTheUIChainTriesEveryHeaderCREDENTIALBeforeTheAmBIENTCookie` |
+| a flight is not consumed on read (replayable sign-in) | `TestAFlightIsSingleUseAndBoundToItsBrowser` |
+| the flight table has no size bound | `TestTheFlightTableIsBounded` |
+| the same-origin gate always passes | `TestTheStartRowIsRefusedCrossSite` |
+| the exchanged token trusted because of the CHANNEL it arrived on | `TestTheExchangeVERIFIESWhatTheProviderReturned` |
+| the PKCE challenge is the verifier itself (no S256) | `TestTheGitHubButtonMintsAFlightAndRedirectsToTheProvider` |
+| a failed exchange discriminates its reason | `TestAFailedExchangeSaysNothingAboutTheCredentialTable` |
+| the provider's `error_description` reflected into the page | `TestTheProviderErrorIsNotReflectedIntoThePage` |
+| the credential field renamed, breaking the harness selector | `TestTheCredentialFormSURVIVESTheProviderButton` |
+| the credential form rewired to post at the provider route | the same test |
+
+🔴 **ONE OF THOSE MUTANTS SURVIVED ITS FIRST RUN, AND THE SURVIVAL WAS A DEFECT IN THE TEST
+RATHER THAN IN THE CODE.** The S256 assertion first read
+`pkceChallenge(stub.verifiers[0]) == stub.challenges[0]` — both sides of a comparison derived
+from the implementation under test. A mutant making `pkceChallenge` return its argument
+**verbatim** (PKCE switched off, the verifier travelling in the authorize URL) passed that
+spelling, because both sides moved together. The fix computes `base64url(sha256(verifier))`
+independently in the test, and adds an assertion that the challenge and the verifier are not the
+same string. That is the "never derive a test's expectation from the implementation it tests"
+rule, caught by the battery rather than by review.
+
+## What Phase D's tests still structurally cannot see
+
+- **No real provider.** Every test here stubs the exchange or stands up a local HTTP handler
+  answering as the token endpoint. Nothing measures GoTrue's actual `/authorize` parameter
+  handling, its allow-list matching, or whether `flow_type=pkce` behaves as documented on the
+  operator's version. The first real sign-in is the measurement.
+- **No browser.** `SameSite`, `__Host-`, and whether a browser follows the 303 with the flight
+  cookie attached are all claims *about browsers* that no test here drives. The failure
+  direction for the cookie prefixes is the safe one (an unsupporting browser treats the name as
+  ordinary); the failure direction for `SameSite=Lax` on the callback is **not** — a browser
+  that withheld it would refuse every provider sign-in.
+- **No concurrency on the flight table.** It is mutex-guarded and the guard is not measured
+  under contention.
+- **Nothing measures the deployed instance**, which is the gap the retracted bullet at the end
+  of Phase C's section now states honestly.
