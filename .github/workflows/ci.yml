@@ -1084,7 +1084,7 @@ jobs:
           # 🔴 TWO COUNTS, BECAUSE THE ANCHOR DECIDES WHICH QUESTION IS ASKED — AND A DRAFT
           # OF THIS STEP GOT IT WRONG IN THE DIRECTION THAT FAILS THE HONEST TREE. `go test
           # -v` indents a SUBTEST's result line, so `^--- PASS` counts only top-level
-          # functions (16 here) while an unanchored pattern also counts every table row (28).
+          # functions (16 here) while an unanchored pattern also counts every table row (29).
           # The draft measured 28 by hand with a leading-space alternative and then gated on
           # `^--- PASS`, so the floor refused a green tree. Both numbers are now counted and
           # both are floors: the top-level one notices a `func Test…` deleted, the total one
@@ -1120,8 +1120,8 @@ jobs:
             echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 16 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 28 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 28 — a table row was deleted"
+          if [ "$total" -lt 29 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 29 — a table row was deleted"
             exit 1
           fi
 

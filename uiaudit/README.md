@@ -340,10 +340,10 @@ fork-PR case, which is *supposed* to skip, would fail the control instead.
 
 **The test-count floors carry the same treatment.** `^--- PASS` counts top-level functions
 only, because `go test -v` indents a subtest's line — so both counts are floors (16 top-level,
-28 including subtests), and `FAIL`/`SKIP` are matched with `^[[:space:]]*` so an *indented*
+29 including subtests), and `FAIL`/`SKIP` are matched with `^[[:space:]]*` so an *indented*
 failure is seen. Seven controls, each refusing for its own reason: the real log ACCEPTED; empty
 log → *no result lines*; a top-level test removed → *15 < 16*; a **subtest row** removed →
-*27 < 28* (which the top-level count structurally cannot see); an appended `FAIL` → *1 failing*;
+*28 < 29* (which the top-level count structurally cannot see); an appended `FAIL` → *1 failing*;
 an appended `SKIP` → *1 skipped*; an appended **indented** `FAIL` → *1 failing*.
 
 ## Public-repo constraints

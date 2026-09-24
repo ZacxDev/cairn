@@ -137,6 +137,33 @@ func TestValidateREFUSESEachShapeDefectTheServerWouldRejectWith400(t *testing.T)
 			wantSub: "an empty digest is a 400 on the WHOLE push",
 		},
 		{
+			// 🔴 REACHABILITY IS THE POINT OF THIS CASE, NOT THE CAP. The digest cap
+			// (256 KiB) is checked in the same loop as the per-file cap (16 MiB) and AFTER
+			// it, so a mutation that overshot both would die on the per-file check and this
+			// guard's own assertion would never execute — green for the wrong reason, and
+			// still green with the digest check deleted. The size below is deliberately
+			// BETWEEN the two caps, which is the only band in which this guard can speak,
+			// and the asserted substring is one only it emits.
+			name: "an a11y digest over its own 256 KiB cap but UNDER the 16 MiB per-file cap",
+			mutate: func(p *PushPayload, f map[string][]byte) {
+				big := make([]byte, MaxDigest+1)
+				if MaxDigest+1 >= MaxFileBytes {
+					panic("the digest cap is no longer below the per-file cap; this case can no longer reach its guard")
+				}
+				// Still valid, non-empty digest JSON — padded inside a string field so the
+				// refusal is about SIZE and not about the shape.
+				prefix := `{"interactive":[{"tag":"button","selector":"#x","focusable":true}],"form_controls":[],"landmarks":[],"pad":"`
+				copy(big, prefix)
+				for i := len(prefix); i < len(big)-2; i++ {
+					big[i] = 'x'
+				}
+				big[len(big)-2] = '"'
+				big[len(big)-1] = '}'
+				f[p.Pages[0].A11yDigest] = big
+			},
+			wantSub: "the a11y digest",
+		},
+		{
 			name: "a hand-authored layout finding, which the server would drop anyway",
 			mutate: func(p *PushPayload, f map[string][]byte) {
 				p.Pages[0].Findings = append(p.Pages[0].Findings,
