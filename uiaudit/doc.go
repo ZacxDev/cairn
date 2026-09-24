@@ -37,18 +37,31 @@
 // reporting them as green would be the "reassuring zero" this repository's own evidence
 // rules name:
 //
-//   - CONSOLE AND NETWORK. The hermetic page has no scripts and no subresources — the
-//     stylesheet is inline, and `internal/ui`'s own XSS guard asserts that `"<img"` can
-//     never render. So a console count of 0 and a first-party network-failure count of 0
-//     are facts about the page's shape, not about its correctness. `control_test.go`
-//     serves a page that MUST produce non-zero counts and watches them move; that pair,
-//     never the zero alone, is what the README reports.
-//   - THE A11Y DIGEST'S REACH. `report.ConcreteKeys` in the hub indexes only `#id` and
-//     `[name=…]` anchors, and every button on this surface carries neither. The digest is
-//     therefore captured, validated and pushed while anchoring almost nothing. That is a
-//     declared residual with a proposed diff, in `README.md`; it is not a bug in this
-//     program and this program cannot fix it, because `internal/ui/render.go` is owned by
-//     other work in flight.
+//   - CONSOLE, AND NETWORK ONLY OVER SUBRESOURCES THE PAGE ASKED FOR. The hermetic page
+//     has no scripts and no subresources — the stylesheet is inline, and `internal/ui`'s
+//     own XSS guard asserts that `"<img"` can never render. So a console count of 0 and a
+//     page-subresource failure count of 0 are facts about the page's shape, not about its
+//     correctness. `control_test.go` serves a page that MUST produce non-zero counts and
+//     watches them move; that pair, never the zero alone, is what the README reports.
+//
+//     ⚠ AND THE SECOND HALF OF THAT SENTENCE IS NARROWER THAN AN EARLIER DRAFT'S, WHICH
+//     WAS MEASURED FALSE RATHER THAN MERELY IMPRECISE. The draft claimed a first-party
+//     NETWORK count of 0 was structural, and a walk printed that claim on a line whose
+//     network count was non-zero: Chromium requests `/favicon.ico` on its own initiative,
+//     no ledger row carries it, and the dispatcher's uniform refusal answers it. That
+//     refusal is counted at walk level instead (`Browser.FaviconRefusals`) — its page
+//     attribution is arbitrary, and whether Chromium asks at all is itself run-dependent,
+//     measured non-zero on one walk and zero on another over the same tree.
+//
+//   - THE A11Y DIGEST'S REACH, AND THE NUMBER IS ONE. `report.ConcreteKeys` in the hub
+//     indexes only `#id` and `[name=…]` anchors. Measured across the digests this walk
+//     captures: `/` yields the selector `button`, `/share` yields `button`, and `/sign-in`
+//     yields `input#token` — so exactly ONE element on the whole surface can be anchored,
+//     and it is the sign-in credential field. The digest is captured, validated and pushed
+//     while the deterministic grounding gate can refute claims about that one field and
+//     nothing else. A declared residual with a proposed six-line diff, in `README.md`; it
+//     is not a bug in this program and this program cannot fix it, because
+//     `internal/ui/render.go` is owned by other work in flight.
 //
 // # GATING
 //
