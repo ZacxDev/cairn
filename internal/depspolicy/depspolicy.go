@@ -83,6 +83,51 @@
 // third-party module is ever dropped, the right move is to restore `vendorHash = null`
 // and delete this package, not to keep a weaker gate for its own sake.
 //
+// # 🔴 WHAT A NESTED MODULE ESCAPES, AND THE ONE THAT EXISTS
+//
+// 🔴 A SECOND `go.mod` ANYWHERE IN THIS TREE IS INVISIBLE TO EVERY GUARD DESCRIBED ABOVE,
+// AND NO TEST IN THIS REPOSITORY COUNTS `go.mod` FILES. The escape is total, it is
+// mechanical, and it is declared here because an escape nobody wrote down reads as coverage
+// while providing none — which is the one thing this package exists to refuse. Each surface
+// fails for its own reason:
+//
+//   - [DeclaredModules] versus the module set. [ModulesInGoMod] and [ModulesInGoSum] read the
+//     VERIFIED-ROOT pair ([RepoRoot]) and nothing else, so a nested module's `require` block is not
+//     in the set it compares. `TestTheModuleSetIsExactlyTheAllowlist` fails on GROW or
+//     SHRINK of a list the nested module never appears in.
+//   - The import ban. [ImportGraph] walks `cmd/` and `internal/`. A top-level directory is
+//     outside both, so nothing in it is a node in the graph and no edge out of it is
+//     checked. (It would be unreachable ANYWAY — a package in another module cannot be
+//     imported by `cmd/cairn` without a `require` in the root `go.mod`, which the allowlist
+//     WOULD see. So this surface is belt-and-braces; the two above are the real holes.)
+//   - The `ok` floor. `go build ./...` and `go test ./...` do not descend into a nested
+//     module, so its packages never report `ok`, the count does not move, and the floor in
+//     `.github/workflows/ci.yml`'s `go` job is blind to the module existing, to its tests
+//     being deleted, and to its dependencies.
+//   - `flake.nix`'s `onlyGo` filter. That filter is an ALLOWLIST — `cmd`, `internal`,
+//     `tests`, `tests/conformance` and four named files — so a new top-level directory
+//     reaches no Go derivation at all. Nothing in it is built or tested by any `nix build`.
+//
+// ONE nested module exists today: `uiaudit/`, the browser-surface audit harness, which
+// requires `github.com/chromedp/chromedp` and a small graph under it. It was taken
+// DELIBERATELY and for a reason this package's own trade makes clear: chromedp is a large
+// dependency whose only consumer is a CI harness, and the alternative — a `require` in the
+// root `go.mod` — would put it in the module graph every one of the three Go derivations
+// resolves, force an allowlist entry, and make the import ban the only thing standing
+// between a browser automation library and the pod. A dependency that cannot reach the pod
+// because it is in a DIFFERENT MODULE is a stronger claim than one that cannot reach it
+// because a test says so.
+//
+// ⚠ WHAT THAT COSTS, STATED RATHER THAN TRADED AWAY SILENTLY: `uiaudit/`'s dependencies are
+// governed by nothing in this repository. No allowlist, no import ban, no `ok` floor, no nix
+// build. Whoever adds a module there is the whole review. The mitigation is only that it
+// builds nothing that ships — it is not packaged, not in any flake output, and not on any
+// deploy path — so the blast radius is a CI job rather than a binary. If a second nested
+// module is ever added, the right response is to make `go.mod` files COUNTED here (an
+// allowlist of module roots, failing on grow or shrink, the same shape as
+// [DeclaredModules]), because the argument above is about ONE harness and does not
+// generalise to a habit.
+//
 // # HOW THE GRAPH IS BUILT, AND WHAT IT DELIBERATELY EXCLUDES
 //
 // [ImportGraph] walks every directory under `cmd/` and `internal/` with
