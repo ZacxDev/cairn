@@ -17,11 +17,16 @@ import (
 // 🔴 THIS FILE IS THE POSITIVE CONTROL, AND WITHOUT IT EVERY ZERO THIS HARNESS REPORTS IS
 // INDISTINGUISHABLE FROM AN INSTRUMENT WIRED TO NOTHING.
 //
-// The walk over `cairn-ui` reports small numbers, and two of its signals are zero BY
-// CONSTRUCTION rather than by passing: the hermetic page carries no scripts and no
-// subresources — the stylesheet is inline and `internal/ui`'s own XSS guard asserts `"<img"`
-// can never render — so the console and network collectors cannot count there whatever the
-// code does. Reporting those zeros alone would be a claim about nothing.
+// The walk over `cairn-ui` reports small numbers, and some are zero BY CONSTRUCTION rather than
+// by passing: the page ships no script and `internal/ui`'s own XSS guard asserts `"<img"` can
+// never render, so the console collector cannot count there whatever the code does. Reporting
+// that zero alone would be a claim about nothing.
+//
+// ⚠ THE NETWORK ZERO IS STRUCTURAL ONLY WHILE THE STYLESHEET IS INLINE. The auth change gives it
+// its own route, which makes it a real blocking subresource — so that zero stops being about the
+// page's shape and starts meaning "every subresource succeeded". The assertion below reads the
+// LEDGER rather than assuming, because the version that assumed failed on the merged tree and it
+// was the assertion that was stale, not the walk.
 //
 // So this test serves a page built to make EVERY collector non-zero and watches each number
 // move. What gets reported is the PAIR — "N on the control, M under test" — never the M

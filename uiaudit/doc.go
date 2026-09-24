@@ -37,11 +37,19 @@
 // reporting them as green would be the "reassuring zero" this repository's own evidence
 // rules name:
 //
-//   - CONSOLE, AND NETWORK ONLY OVER SUBRESOURCES THE PAGE ASKED FOR. The hermetic page
-//     has no scripts and no subresources — the stylesheet is inline, and `internal/ui`'s
-//     own XSS guard asserts that `"<img"` can never render. So a console count of 0 and a
-//     page-subresource failure count of 0 are facts about the page's shape, not about its
-//     correctness. `control_test.go` serves a page that MUST produce non-zero counts and
+//   - CONSOLE, WHICH IS STRUCTURAL; AND NETWORK, WHICH IS ONLY STRUCTURAL ON SOME TREES.
+//     The page ships no script, and `internal/ui`'s own XSS guard asserts that `"<img"` can
+//     never render, so a console count of 0 is a fact about the page's shape rather than
+//     about its correctness — on every tree.
+//
+//     ⚠ THE NETWORK HALF IS NARROWER, AND IT IS THE SECOND TIME A DRAFT OF THIS SENTENCE
+//     OVERREACHED. It rested on the stylesheet being INLINE, which made a page with no
+//     subresources at all. The auth change gives the stylesheet its own ROUTE — so on that
+//     tree every page has a real blocking subresource and a zero means "it was fetched
+//     successfully", which is a STRONGER statement than the structural one. Measured by
+//     running this walk against the merged tree, where the hardcoded claim printed beside a
+//     page that had just fetched one. `printSignalSummary` therefore reads the ledger and
+//     says which of the two it means; `control_test.go` does the same. `control_test.go` serves a page that MUST produce non-zero counts and
 //     watches them move; that pair, never the zero alone, is what the README reports.
 //
 //     ⚠ AND THE SECOND HALF OF THAT SENTENCE IS NARROWER THAN AN EARLIER DRAFT'S, WHICH

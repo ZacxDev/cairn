@@ -351,8 +351,21 @@ func printSignalSummary(captures []*Capture, faviconRefusals int) {
 		tap, text, overflow, noViewport)
 	fmt.Printf("uiaudit:   a11y digests attached: %d of %d page(s) — any shortfall is a page whose digest came back EMPTY, whose ref is therefore omitted (an empty digest is a 400 on the WHOLE push)\n",
 		digests, len(captures))
-	fmt.Printf("uiaudit:   console=%d — 🔴 STRUCTURAL, NOT A PASS: this surface ships an inline stylesheet and NO script, and an existing XSS guard asserts \"<img\" can never render, so the console collector has nothing to observe here whatever the code does. control_test.go counts 2 on a page that does.\n", console)
-	fmt.Printf("uiaudit:   network=%d over subresources the PAGES asked for — same structural caveat: there are none.\n", netw)
+	// 🔴 THE STRUCTURAL CLAIM IS DERIVED FROM THE LEDGER, BECAUSE A HARDCODED ONE WENT FALSE ON A
+	// TREE THAT ALREADY EXISTS. The earlier wording said "this surface ships an inline stylesheet
+	// and NO script … there are none" over BOTH numbers. The auth change moves the stylesheet to
+	// its own route, so on that tree the page has a real blocking subresource and the sentence is
+	// simply untrue — measured by running this walk against the merged tree, where it printed the
+	// claim beside a page that had just fetched one. A claim about the surface has to read the
+	// surface.
+	fmt.Printf("uiaudit:   console=%d — 🔴 STRUCTURAL, NOT A PASS: this surface ships NO script, and an existing XSS guard asserts \"<img\" can never render, so the console collector has nothing to observe here whatever the code does. control_test.go counts 2 on a page that does.\n", console)
+	if hasRow(ui.DeclaredRouteLedger(), "GET "+StylesheetPath) {
+		fmt.Printf("uiaudit:   network=%d FAILED subresource request(s) — and this is NOT a structural zero: %s is a route on this tree, so every page has a real blocking subresource. Zero here means it was FETCHED SUCCESSFULLY on every page, which is a stronger statement than the structural one it replaces.\n",
+			netw, StylesheetPath)
+	} else {
+		fmt.Printf("uiaudit:   network=%d over subresources the PAGES asked for — same structural caveat: this ledger has no %s row, so there are none.\n",
+			netw, StylesheetPath)
+	}
 	// ⚠ THE COUNT IS RUN-DEPENDENT, WHICH IS THE WHOLE REASON IT IS NOT ATTRIBUTED TO A PAGE.
 	// Measured on this tree at two points: one walk recorded a `401 /favicon.ico` (attached,
 	// arbitrarily, to whichever page happened to be loading when the browser asked); a later
