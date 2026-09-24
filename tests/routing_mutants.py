@@ -10,6 +10,20 @@ positive control, and a fourth command in whatever list the next reader reads; a
 runs measures nothing. Split it out the day a fourth subject arrives and extracting the runner is
 worth doing properly.
 
+🔴 THAT LAST CLAUSE WAS FALSE OF **THIS FILE** WHEN IT WAS WRITTEN, WHICH IS THE ONE WAY THE
+ARGUMENT COULD FAIL. Measured at the commit that added the anchor section: `.github/workflows/ci.yml`
+ran `tests/publish_workflow_mutants.py` and `tests/control_mutants.py`, and `tests/routing_mutants.py`
+was invoked by NOTHING — not that workflow, not `publish-image.yml`, not `flake.nix`, not
+`AGENTS.md`/`CLAUDE.md`, not any test; every other mention of it in the tree is prose. So the
+anchor mutants were placed in the ONLY un-gated battery of the three, on a rationale about not
+creating un-gated batteries. Fixed by wiring rather than by rewording: the `go` job now runs this
+file (it is the one job carrying both a Go toolchain and `pytest`, which this battery needs
+because it mutates and kills on both sides). Timing behind that decision, so the trade is
+re-derivable rather than asserted: 57 mutants, 614.75 s wall / 152.21 s user + 21.00 s sys on a
+24-core host at load ~6.5, 57 killed / 0 survived / 0 misattributed — the same order as
+`control_mutants.py`, which that job already pays for. If this ever has to come back out of CI,
+correct this paragraph in the SAME commit; the sentence above is only true while the step exists.
+
 ```bash
 python3 tests/routing_mutants.py             # the whole battery
 python3 tests/routing_mutants.py --only row3-refusal-deleted
@@ -614,7 +628,12 @@ MUTANTS: list[Mutant] = [
     # their own ~200-line copy of this runner; a third copy would also need its own control
     # row, its own `collected == 0` refusal and its own command in whatever gate list the
     # next reader reads — and a battery nobody runs measures nothing, which is the failure
-    # one level up from the one this file exists to prevent. The Go arm already targets
+    # one level up from the one this file exists to prevent. ⚠ AND THAT LAST CLAUSE WAS
+    # FALSE OF THIS FILE WHEN IT WAS WRITTEN: measured, `routing_mutants.py` was the only
+    # one of the three batteries `ci.yml` did NOT run, so the mutants were placed in the
+    # un-gated file on a rationale about avoiding un-gated files. The module docstring
+    # carries the measurement; the `go` job now runs this battery, which is what makes the
+    # sentence above true. Do not remove that step without rewriting this. The Go arm already targets
     # `./internal/client/` for twenty rows above, so hosting these costs one section header.
     # ⚠ THE COST IS THAT THIS FILE'S NAME NOW UNDER-DESCRIBES IT; the module docstring says
     # so. Move them out the day a fourth subject arrives and the runner is worth extracting.

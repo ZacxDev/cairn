@@ -128,10 +128,27 @@ var _ = unicode.IsSpace
 // OBSERVABLE. `filepath.Glob` splits its argument at the LAST separator and only reads the
 // directory it ends up with, so `<repo>/claudedocs/handoff-*.md` never lists `<repo>` — it
 // lists `<repo>/claudedocs`. A repo that is SEARCHABLE but not READABLE (mode `--x`) therefore
-// resolved fine before this change, and resolves fine on the oracle, whose `_PreciseSelector`
-// asks `is_dir()` rather than scandir'ing the parent. Enumerating `<repo>` to find `claudedocs`
+// resolved fine before this change, and still does. Enumerating `<repo>` to find `claudedocs`
 // would find nothing there — a silent narrowing, in the same "empty result" shape as the defect
 // this function fixed. `TestFocusDoesNotREADADirectoryTheGlobOnlyDESCENDSTHROUGH` is the row.
+//
+// 🔴 THAT CHOICE HAS **NO PARITY JUSTIFICATION**, AND AN EARLIER FORM OF THIS COMMENT INVENTED
+// ONE. It said the `--x` case *"resolves fine on the oracle, whose `_PreciseSelector` asks
+// `is_dir()` rather than scandir'ing the parent."* MEASURED against the pinned interpreter
+// (`flake.nix` → `python312`, 3.12.14): **`_PreciseSelector` DOES NOT EXIST** in that
+// `pathlib`. `_make_selector` falls through to `_WildcardSelector` for a literal component
+// too, and that selector `scandir`s its parent — so at mode `0111` `os.listdir` raises
+// `PermissionError`, `focus_window`'s own `except OSError` swallows it, and the oracle answers
+// `FocusWindow(paths=(), source=None)` where this function answers the doc. Positive control
+// for the grep that found the absence: `_make_selector` and `_WildcardSelector` are both
+// PRESENT in that same file, so it can see what is there.
+//
+// ⚠ SO THE `--x` REPO IS A REAL DIVERGENCE, NOW DECLARED RATHER THAN ASSERTED AWAY —
+// `tests/parity/README.md` residual **10**, which also records that the parity harness
+// cannot build such a world. The Go behaviour is kept because it is the NON-NARROWING
+// direction and because it is what `filepath.Glob` did here before the fix: the same "answer
+// the doc rather than claim absence" direction this function exists to protect. It is NOT
+// kept because the oracle agrees. It does not.
 //
 // ⚠ THAT JOIN IS CORRECT ONLY WHILE THE PREFIX CARRIES NO METACHARACTER, AND THE PRECONDITION
 // IS PINNED RATHER THAN ASSUMED: `TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS`

@@ -268,12 +268,20 @@ func TestReapOrphansStillDiscriminatesByPrefixAgeAndKind(t *testing.T) {
 // `go test ./internal/client/ -run PutDerivesARevisionUnderAMetacharacterCacheRoot -count=1 -v`
 // must print a `--- PASS:` line — and the row spends a paragraph warning that a zero-selection
 // `-run` exits 0, so the exit code cannot tell an unwritten test from a met condition. Measured
-// at `6696a17`: the first cut of this row was called
+// at `6696ad1`: the first cut of this row was called
 // `…UnderACacheRootCarryingAGlobMetacharacter`, that filter selected NOTHING, printed
 // `testing: warning: no tests to run` / `PASS` / `ok … [no tests to run]` and exited **0** —
 // the exact state the row warned about, with the row retired over it. Renaming was the cheap
 // half of keeping the prior round's check honest. Do not rename it back without moving the
 // pinned command in the same commit.
+//
+// ⚠ THAT SHA WAS CITED AS `6696a17` IN THE ROUND THAT WROTE THIS, AND IT RESOLVES TO NOTHING —
+// `git rev-parse --verify 6696a17` is `fatal: Needed a single revision`, so the whole
+// bookkeeping argument was unreproducible. The commit is
+// `6696ad17ea094be1f49a666eab77c7f8b0008381`. Corrected here and in residual 9, each verified
+// with `git cat-file -e <sha>^{commit}`, with `deadbee` as the control that the check can fail.
+// The same lesson is already written down at `internal/envalias/envalias_test.go`; quote a sha
+// only after resolving it.
 //
 // 🔴 A REFUSAL RATHER THAN A WRONG ANSWER, WHICH IS WHY IT WAS RECORDED BEFORE IT WAS FIXED —
 // and it is still a write the operator cannot make. RED at `e293c6e`: `put` derived its
@@ -444,8 +452,41 @@ func TestPutStillResolvesTheDottedVariantAndItsBoundaries(t *testing.T) {
 // has no handoff doc. A general component-by-component walk used to cover that case; it had no
 // caller and was deleted (`anchor.go`), so this row is what stops the case arriving unnoticed.
 //
+// 🔴 BUT THE METACHARACTER ARM REFUSES AN **AMBIGUITY**, NOT A DEFECT, AND AN EARLIER FORM OF
+// ITS MESSAGE GOT THAT BACKWARDS — it claimed `Focus` "would match nothing" and prescribed
+// restoring the walk, which is the change that would BREAK the other reading. MEASURED on
+// go1.25.14 against a repo holding a directory literally named `claudedocs[v2]`:
+//
+//	walker:  filepath.Match("claudedocs[v2]", "claudedocs[v2]")            = false, err=<nil>
+//	pre-fix: filepath.Glob(<repo>/claudedocs[v2]/handoff-*.md)             = [],    err=<nil>
+//	today:   Focus with HandoffGlobs=["claudedocs[v2]/handoff-*.md"]       = the doc
+//
+// i.e. the literal-directory reading is the one the JOIN gets RIGHT and a component walk gets
+// WRONG. The two intents are indistinguishable from the string, they want opposite remedies,
+// so this arm refuses rather than guesses and its message now says which is which.
+//
 // ⚠ IT IS A GUARD ON THE DATA, NOT ON A SPELLING: it reads `HandoffGlobs` itself and asks
 // `strings.ContainsAny` over the prefix, so any pattern added in any wording is measured.
+//
+// 🔴 AND THE WELL-FORMEDNESS HALF PROBES A **SET** OF NAMES, BECAUSE ONE FIXED NAME IS BLIND TO
+// HALF THE PATTERNS. `filepath.Match` reports `ErrBadPattern` only for a chunk it actually
+// REACHES. MEASURED on go1.25.14:
+//
+//	Match("*HANDOFF*[.md", "handoff-x.md")             = false, err=<nil>          ← BLIND
+//	Match("*HANDOFF*[.md", "PROJECT-HANDOFF-NOTES.md") = false, err=syntax error
+//	Match("handoff-*[.md", "handoff-x.md")             = false, err=syntax error
+//	Match("handoff-*[.md", "PROJECT-HANDOFF-NOTES.md") = false, err=<nil>          ← BLIND
+//
+// The first cut probed `"handoff-x.md"` alone, which cannot see the CAPS family — the member
+// actually spelled `*HANDOFF*.md`, where a stray `[` is the realistic typo. Demonstrated by
+// mutation at this head: `HandoffGlobs[1] = "claudedocs/*HANDOFF*[.md"` left this row PASSING
+// while production silently lost that family.
+//
+// ⚠ REACHABILITY IS ASSERTED, NOT ASSUMED, AND THAT IS WHAT MAKES THE CHECK SUFFICIENT RATHER
+// THAN MERELY TWO-FAMILY: a probe that MATCHES (`ok == true`, `err == nil`) proves `Match`
+// consumed the whole pattern, so every chunk was scanned and none was ill-formed. A member no
+// probe name reaches is therefore a FAILURE here, not a quiet pass — it means this row measured
+// NOTHING about that member, and the fix is to add a name the new family matches.
 func TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS(t *testing.T) {
 	if len(HandoffGlobs) == 0 {
 		t.Fatal("HandoffGlobs is empty — this row would pass while measuring nothing")
@@ -454,16 +495,38 @@ func TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS(t *testing.T) {
 		dir, base := path.Split(pattern)
 		if strings.ContainsAny(dir, `*?[\`) {
 			t.Fatalf("HandoffGlobs member %q has a glob metacharacter in its DIRECTORY prefix "+
-				"%q. `Focus` joins that prefix onto the repo literally, so it would match "+
-				"nothing and report the repo has no handoff doc. Either drop the "+
-				"metacharacter or give `Focus` back a component-by-component walk.",
+				"%q, and `Focus` JOINS that prefix onto the repo literally. Which of the two "+
+				"intents this is cannot be read off the string, and they want OPPOSITE "+
+				"remedies: if the prefix was meant as a WILDCARD (`*/handoff-*.md`), `Focus` "+
+				"matches nothing and reports the repo has no handoff doc — drop it, or give "+
+				"`Focus` back a component-by-component walk. If it names a directory "+
+				"LITERALLY (`claudedocs[v2]`), `Focus` already resolves it and a walk would "+
+				"BREAK it — measured, the walk misses that directory and `Focus` finds it. "+
+				"This row refuses the ambiguity rather than guessing; decide which you meant.",
 				pattern, dir)
 		}
 		// …and the other half: the part `Focus` DOES interpret has to be interpretable, or
-		// the pattern silently matches nothing for the opposite reason.
-		if _, err := filepath.Match(base, "handoff-x.md"); err != nil {
-			t.Fatalf("HandoffGlobs member %q has an ill-formed final component %q: %v",
-				pattern, base, err)
+		// the pattern silently matches nothing for the opposite reason. One probe name cannot
+		// do this — see the reachability note above.
+		probes := []string{"handoff-x.md", "PROJECT-HANDOFF-NOTES.md"}
+		reached := false
+		for _, name := range probes {
+			ok, err := filepath.Match(base, name)
+			if err != nil {
+				t.Fatalf("HandoffGlobs member %q has an ill-formed final component %q: "+
+					"filepath.Match(%q, %q) = %v. `Focus` discards that error, so this "+
+					"family would match nothing and the repo would be reported as having "+
+					"no handoff doc.", pattern, base, base, name, err)
+			}
+			if ok {
+				reached = true
+			}
+		}
+		if !reached {
+			t.Fatalf("no probe name in %v matches HandoffGlobs member %q's final component "+
+				"%q, so `filepath.Match` never scanned the whole pattern and this row "+
+				"measured NOTHING about that member's well-formedness. Add a name the new "+
+				"family matches to `probes`.", probes, pattern, base)
 		}
 	}
 }
@@ -474,10 +537,25 @@ func TestHandoffGlobsKeepTheLiteralDIRECTORYPrefixThatFocusJOINS(t *testing.T) {
 // 🔴 `filepath.Glob` SPLITS AT THE LAST SEPARATOR AND READS ONE DIRECTORY. For
 // `<repo>/claudedocs/handoff-*.md` that is `<repo>/claudedocs`; `<repo>` itself is never listed.
 // So a repo that is SEARCHABLE but not READABLE (mode `--x`) resolved fine before this change,
-// and resolves fine on the oracle, whose `_PreciseSelector` asks `is_dir()` rather than
-// scandir'ing the parent. A `Focus` that enumerated `<repo>` to find `claudedocs` would find
-// nothing there — a silent narrowing, in the same "empty result" shape as the defect this
-// branch fixed.
+// and still does. A `Focus` that enumerated `<repo>` to find `claudedocs` would find nothing
+// there — a silent narrowing, in the same "empty result" shape as the defect this branch fixed.
+//
+// 🔴 THE ORACLE DOES **NOT** SHARE THE PROPERTY, AND AN EARLIER FORM OF THIS COMMENT SAID IT
+// DID, ON A CPython INTERNAL THAT DOES NOT EXIST. It read *"resolves fine on the oracle, whose
+// `_PreciseSelector` asks `is_dir()` rather than scandir'ing the parent."* MEASURED on the
+// pinned interpreter (`flake.nix` → `python312`, 3.12.14): `_PreciseSelector` is absent from
+// `pathlib` — `_make_selector` falls through to `_WildcardSelector` even for a literal
+// component, and that selector `scandir`s its parent. End to end on one fixture, repo at mode
+// `0111`: `Focus` → `Source="claudedocs/handoff-demo.md"`, `focus_window` →
+// `FocusWindow(paths=(), source=None)`. So this row pins a GO property and a DECLARED
+// divergence (`tests/parity/README.md` residual 10), not a parity property. The direction is
+// still the right one — the Go side answers the doc where the oracle claims absence — but that
+// is a choice, not agreement. 🔴 PROVENANCE, MEASURED with `git log -S_PreciseSelector` and a
+// per-commit `git show <c>:<file> | grep -c`, because the round that fixed it guessed: the
+// sentence entered in `anchor.go` at `7348820`, was COPIED into this file at `6696ad1`, and
+// round 1 (`b91c4ed`) deleted the `anchor.go` copy while writing a THIRD into `focus.go` — a
+// false claim MOVED, not removed, twice. All remaining copies are deleted here. Do not restate
+// it; if a parity reason is ever wanted for this case, measure one first.
 //
 // ⚠ IT IS AIMED AT `Focus` RATHER THAN AT A HELPER, AND THAT IS THE POINT. An earlier cut
 // asserted this against `anchoredGlob`, a general walker with no general caller; the property is
