@@ -108,6 +108,9 @@ type Server struct {
 	// empty map.
 	oauth   OAuthAuthority
 	flights *flights
+	// oauthReady answers whether the provider can be reached at all RIGHT NOW. nil means
+	// "no readiness signal was supplied", which is ARMED — see [Server.providerArmed].
+	oauthReady func() bool
 
 	// trustedProxies and limiter are the client-identity pair, and they are one pair
 	// rather than two settings: the limiter's key IS what `netid.ResolveClient` returns,
@@ -155,6 +158,14 @@ type Config struct {
 	// cannot work teaches a user that sign-in is unreliable — the same ruling [Page] makes
 	// about the sign-out button it withholds from a caller with no session.
 	OAuth OAuthAuthority
+	// OAuthReady answers whether the provider's key set has ever been fetched. nil means
+	// "no readiness signal", which is ARMED — see [Server.providerArmed] for why the
+	// alternative was a startup fatality that took the credential form down with it.
+	//
+	// ⚠ IT IS A PREDICATE AND NOT A BOOLEAN, SO THE DOOR RE-ARMS WITHOUT A RESTART. The
+	// caller's background refresh loop keeps trying; the first success flips this and the
+	// next render carries the button.
+	OAuthReady func() bool
 	// TrustedProxies is the peer allowlist that makes `netid.ClientIPHeader` readable,
 	// and it is REQUIRED whenever this surface is reachable by anybody but the local
 	// host — `cmd/cairn-ui` refuses to start otherwise, mirroring the pod.
@@ -287,7 +298,8 @@ func New(cfg Config) (*Server, error) {
 		now:         now,
 		log:         out,
 
-		oauth: cfg.OAuth,
+		oauth:      cfg.OAuth,
+		oauthReady: cfg.OAuthReady,
 		// The SAME clock the server and the session store take, for the reason
 		// `Config.Now` records: a flight live to one and dead to the other is a sign-in
 		// that fails at the last step for no visible reason.
@@ -563,6 +575,22 @@ func (s *Server) handleStylesheet(w http.ResponseWriter, _ *http.Request, _ iden
 //     URL on the page, and `form-action 'self'` admits this surface's own forms while
 //     refusing an injected `<form action="//elsewhere">` that would exfiltrate what
 //     somebody types.
+//   - 🔴 `frame-ancestors 'none'` IS NEW, IT IS A RESTRICTION, AND IT CLOSES A HOLE BOTH
+//     CROSS-SITE GATES ARE STRUCTURALLY BLIND TO. `frame-ancestors` has NO `default-src`
+//     fallback — that is the trap, and an earlier version of this comment read as though
+//     `default-src 'none'` covered framing. It does not, and nothing else here did: this
+//     surface sent no `X-Frame-Options` either, so any site could frame it.
+//     The concrete path is CLICKJACKING a state change: frame `GET /share?scope=…` for an
+//     authenticated victim, overlay the Revoke button, and let them click. The submit then
+//     ORIGINATES INSIDE THE PAGE, so `Origin` equals `Host` and the CSRF token rendered into
+//     it is the victim's own — **gate (2) and gate (6) are both satisfied**, because both
+//     ask whether the request came from this origin and a clickjacked submit genuinely did.
+//     Framing is the one cross-site vector neither gate can see, and the only defence is to
+//     refuse being framed at all.
+//     ⚠ IT DOES NOT CONTRADICT THE DELETE-WHAT-THE-CODE-FORBIDS RULE BELOW. `script-src` and
+//     `img-src` were PERMISSIONS for things this package cannot emit; this is a REFUSAL of
+//     something any third party can do to a page that serves nothing to arrange it. The two
+//     directions are not the same decision, and conflating them would delete a guard.
 //
 // 🔴 THERE IS NO `script-src` AND NO `img-src`, AND BOTH ABSENCES ARE THE SAME RULE: A
 // CLAUSE THAT PERMITS SOMETHING THE CODE FORBIDS IS A POLICY NOBODY CAN READ AS A CLAIM
@@ -596,4 +624,4 @@ func (s *Server) handleStylesheet(w http.ResponseWriter, _ *http.Request, _ iden
 // comment, `safeHref`, and `TestNoRawNodeConstructorAppearsInTheUIPackage`. The policy is
 // the barrier BEHIND that.
 const ContentSecurityPolicy = "default-src 'none'; style-src 'self'; " +
-	"base-uri 'none'; form-action 'self'"
+	"base-uri 'none'; form-action 'self'; frame-ancestors 'none'"

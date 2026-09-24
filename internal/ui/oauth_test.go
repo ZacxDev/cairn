@@ -133,9 +133,27 @@ func TestTheGitHubButtonMintsAFlightAndRedirectsToTheProvider(t *testing.T) {
 			"from the PROVIDER's origin, which is cross-site: Strict would withhold the cookie from it and "+
 			"every provider sign-in would be refused.", cookie.SameSite)
 	}
-	if cookie.MaxAge <= 0 || time.Duration(cookie.MaxAge)*time.Second > FlightTTL {
-		t.Errorf("the flight cookie's MaxAge is %d s, want a positive value no greater than the flight TTL (%s)",
-			cookie.MaxAge, FlightTTL)
+	// 🔴 THE LIFETIME IS PINNED AGAINST A LITERAL BOUND AND NOT AGAINST `FlightTTL`, BECAUSE
+	// COMPARING IT TO THE CONSTANT IS A TEST THAT `a == a`. Measured: with the comparison
+	// written as `MaxAge <= FlightTTL`, setting `FlightTTL = 720 * time.Hour` — a thirty-day
+	// window in which a planted flight stays completable — passed this whole suite. The
+	// relationship is still asserted below; what the literals add is a claim about the
+	// MAGNITUDE, which is the thing a reader of `FlightTTL`'s own comment ("short because a
+	// flight is a live credential-in-waiting") is being promised.
+	const (
+		floor   = 30 * time.Second
+		ceiling = 15 * time.Minute
+	)
+	if FlightTTL < floor || FlightTTL > ceiling {
+		t.Errorf("FlightTTL is %s, outside [%s, %s]. It is a window in which a planted flight stays "+
+			"completable, and its own comment promises it is 'longer than any provider round trip a person "+
+			"will sit through and far shorter than the session lifetime'. Widening it is a decision taken "+
+			"HERE, not a constant edit.", FlightTTL, floor, ceiling)
+	}
+	if got, want := time.Duration(cookie.MaxAge)*time.Second, FlightTTL; got != want {
+		t.Errorf("the flight cookie's MaxAge is %s and the flight TTL is %s. A cookie that outlived its "+
+			"record would be a browser holding a key to a lock that no longer exists; one that died first "+
+			"would refuse a sign-in the server was still willing to complete.", got, want)
 	}
 	if cookie.Value == "" {
 		t.Error("the flight cookie carries no value, so nothing binds the flight to this browser")
@@ -189,6 +207,73 @@ func TestTheGitHubButtonMintsAFlightAndRedirectsToTheProvider(t *testing.T) {
 		len(stub.challenges[0]), len(stub.verifiers[0]), srv.flights.openCount())
 }
 
+// TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire guards the `__Host-` prefix, which
+// nothing guarded.
+//
+// 🔴 RENAMING `oauthFlightCookieName` TO `"cairn-oauth"` PASSED THE ENTIRE SUITE, AND THAT
+// PREFIX IS THE LOAD-BEARING HALF OF THE NO-`state` DESIGN. Without it, any sibling host under
+// the registrable domain can set a cookie this origin will send — so a sibling could PLANT a
+// flight id of its own choosing, and a flight id it chose is one it can complete. That is
+// precisely the subdomain attack a `state` parameter would otherwise close, and this flow
+// deliberately does not carry one. The prefix is therefore not a naming convention here; it is
+// the guard, and it was asserted nowhere.
+//
+// 🔴 IT ASSERTS THE RENDERED `Set-Cookie`, NOT THE STRUCT, WHICH IS THE SAME SHAPE
+// `identity.TestTheSessionCookieCarriesItsFlagsOnTheWire` TAKES AND FOR THE SAME REASON:
+// `http.SetCookie` SILENTLY DROPS a cookie it considers invalid, so a struct-level assertion
+// can pass for a cookie no browser will ever receive. The empty-header check below is what
+// makes every assertion after it non-vacuous.
+//
+// ⚠ THE `Domain=` ABSENCE IS ASSERTED, NOT ASSUMED. A `__Host-` cookie carrying one is refused
+// outright by a conforming browser — so a well-meaning edit adding `Domain` would not weaken
+// the guard, it would delete the cookie, and every provider sign-in would fail with nothing
+// naming why.
+func TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cookie *http.Cookie
+	}{
+		{"the flight cookie", oauthFlightCookie("a-flight-id", FlightTTL)},
+		{"the cleared flight cookie", clearedOAuthFlightCookie()},
+	} {
+		rec := httptest.NewRecorder()
+		http.SetCookie(rec, tc.cookie)
+		header := rec.Header().Get("Set-Cookie")
+		if header == "" {
+			t.Errorf("%s: NO Set-Cookie HEADER WAS RENDERED. `http.SetCookie` silently drops a cookie it "+
+				"considers invalid — an unacceptable name is the usual cause — so every assertion below "+
+				"would be over an empty string.", tc.name)
+			continue
+		}
+		if !strings.HasPrefix(header, "__Host-") {
+			t.Errorf("%s is not a `__Host-` cookie: %q. That prefix is what stops a sibling host under the "+
+				"registrable domain planting a flight id — the subdomain attack a `state` parameter would "+
+				"otherwise close, and this flow deliberately carries no `state`.", tc.name, header)
+		}
+		if !strings.HasPrefix(header, oauthFlightCookieName+"=") {
+			t.Errorf("%s is not named %s: %q", tc.name, oauthFlightCookieName, header)
+		}
+		for _, want := range []string{"HttpOnly", "Secure", "SameSite=Lax", "Path=/"} {
+			if !strings.Contains(header, want) {
+				t.Errorf("%s does not carry %s: %q", tc.name, want, header)
+			}
+		}
+		if strings.Contains(header, "Domain=") {
+			t.Errorf("%s carries a Domain attribute: %q. A `__Host-` cookie with one is refused outright by "+
+				"a conforming browser, so this would not weaken the guard — it would delete the cookie, and "+
+				"every provider sign-in would fail with nothing naming why.", tc.name, header)
+		}
+	}
+
+	// 🔴 AND IT IS NOT THE SESSION COOKIE'S NAME. Reusing that name would mean a signed-in
+	// person who clicks the GitHub button and abandons the flow is signed out by the click —
+	// and the cleared flight cookie at the callback would clear their session.
+	if oauthFlightCookieName == identity.SessionCookieName {
+		t.Errorf("the flight cookie and the session cookie share the name %q, so starting a provider "+
+			"sign-in overwrites an existing session and abandoning one destroys it", oauthFlightCookieName)
+	}
+}
+
 // TestAFlightIsSingleUseAndBoundToItsBrowser is the security core of the flow, and it is
 // three claims over one fixture.
 //
@@ -212,9 +297,22 @@ func TestAFlightIsSingleUseAndBoundToItsBrowser(t *testing.T) {
 		t.Fatalf("PRECONDITION FAILED: the first callback answered %d, not 303, so the replay below is not a "+
 			"replay of anything", rec.Code)
 	}
-	if n := srv.flights.openCount(); n != 0 {
-		t.Errorf("the flight table holds %d record(s) after the callback consumed the flight, want 0. A record "+
-			"left behind is a replayable sign-in.", n)
+	// 🔴 THE TABLE DOES *NOT* EMPTY, AND THAT IS THE MECHANISM RATHER THAN A LEAK. This
+	// assertion used to require `openCount() == 0`, which encoded the OLD implementation:
+	// `take` deleted the record, which freed the caller's per-client slot at the start of the
+	// token exchange and made the cap bound concurrency instead of rate — measured, one client
+	// drove 200 exchanges. A consumed record now keeps its slot until it EXPIRES. So the
+	// property to assert is that the record is SPENT, not that it is gone; a second `take`
+	// below is what measures it, and `TestOneClientCannotAmplifyRequestsAtTheProvider` is what
+	// measures why it stays.
+	if n := srv.flights.openCount(); n != 1 {
+		t.Errorf("the flight table holds %d record(s) after the callback, want 1 — a SPENT record that keeps "+
+			"its slot until expiry, which is what bounds the rate of outbound exchanges", n)
+	}
+	if _, held := srv.flights.take(cookie.Value); held {
+		t.Error("a consumed flight was takeable a SECOND time straight from the table, so single use rests on " +
+			"nothing. This is the assertion that replaced an `openCount() == 0` check, which measured the old " +
+			"delete-on-read implementation rather than the property.")
 	}
 	// ...then again with the same cookie and a fresh code.
 	replay := httptest.NewRequest("GET", OAuthCallbackPath+"?code=code-two", nil)
@@ -312,6 +410,29 @@ func TestAnExpiredFlightIsRefused(t *testing.T) {
 func TestTheFlightTableIsBoundedGloballyAndPerClient(t *testing.T) {
 	fixed := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 
+	// 🔴 THE MAGNITUDES ARE PINNED AGAINST LITERALS FIRST, BECAUSE EVERY ASSERTION BELOW IS
+	// DERIVED FROM THE CONSTANTS AND THEREFORE CANNOT SEE THEM MOVE. Measured: WIDENING
+	// `maxOpenFlights` passed this whole suite, because the loop bound is written
+	// `maxOpenFlights+8` — only a NARROWED cap failed. A bound that can be raised without a
+	// test going red is not a bound, it is a variable. The same self-referential shape the
+	// S256 assertion had.
+	if maxFlightsPerClient < 2 || maxFlightsPerClient > 64 {
+		t.Errorf("maxFlightsPerClient is %d, outside [2, 64]. Below 2 an ordinary retry is refused; above 64 "+
+			"one caller can drive the identity provider harder than any person would. Changing it is a "+
+			"decision taken HERE.", maxFlightsPerClient)
+	}
+	if maxOpenFlights < 64 || maxOpenFlights > 8192 {
+		t.Errorf("maxOpenFlights is %d, outside [64, 8192]. This is the MEMORY bound on an unauthenticated "+
+			"endpoint; raising it is a decision taken HERE.", maxOpenFlights)
+	}
+	// And the relationship: the global bound must admit many distinct clients, or the
+	// per-client bound is the only one that ever fires and the global one is decoration.
+	if maxOpenFlights < 8*maxFlightsPerClient {
+		t.Errorf("maxOpenFlights (%d) admits fewer than 8 clients at their own cap (%d each), so a handful of "+
+			"callers reach the GLOBAL bound and the per-client bound stops protecting anybody",
+			maxOpenFlights, maxFlightsPerClient)
+	}
+
 	// PER-CLIENT: one key, many attempts.
 	perClient := newFlights(func() time.Time { return fixed })
 	opened, refusals := 0, map[flightRefusal]int{}
@@ -372,6 +493,82 @@ func TestTheFlightTableIsBoundedGloballyAndPerClient(t *testing.T) {
 		"still opened one while the first was at its cap",
 		opened, refusals[flightRefusedPerClient], openedGlobal, globalRefusals[flightRefusedGlobal])
 }
+
+// TestOneClientCannotAmplifyRequestsAtTheProvider is the REGRESSION test for a defect this
+// branch shipped into review: the per-client cap bounded CONCURRENCY and not RATE.
+//
+// 🔴 THE DEFECT, AS MEASURED BY PROBE BEFORE THE FIX: `flights.take` DELETED the record, so
+// the caller's slot freed at the START of the token exchange. One client key drove **200
+// completed exchanges, reached the provider 200 times, and left 0 open flights** — a public,
+// unauthenticated endpoint amplifying one inbound request into one outbound request against
+// the identity provider, each holding a socket for up to `supabaseOAuthTimeout`. The cap's own
+// comment claimed it bounded the rate. It did not.
+//
+// 🔴 WHAT THE FIX IS, AND WHY IT IS ONE WORD: `take` now MARKS the record consumed instead of
+// deleting it, so a spent flight keeps occupying its client's share until it EXPIRES. Single
+// use is preserved by refusing an already-consumed record. The bound becomes
+// `maxFlightsPerClient` starts — and therefore outbound exchanges — per client per
+// `FlightTTL`.
+//
+// ⚠ THE LOOP DRIVES FAR MORE ATTEMPTS THAN THE CAP, AND COUNTS THE PROVIDER'S CALLS RATHER
+// THAN THE RESPONSES. A test asserting "some requests were refused" would pass for a surface
+// that refused the wrong ones; what matters is the number of times THIS PROCESS TALKED TO THE
+// PROVIDER, which is the thing being amplified.
+func TestOneClientCannotAmplifyRequestsAtTheProvider(t *testing.T) {
+	stub := &stubOAuth{}
+	srv := providerServer(t, stub)
+
+	const attempts = 200
+	completed := 0
+	for i := 0; i < attempts; i++ {
+		start := httptest.NewRequest("POST", OAuthStartPath, nil)
+		start.Header.Set("Origin", "https://"+start.Host)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, start)
+		if rec.Code != http.StatusSeeOther {
+			continue
+		}
+		var cookie *http.Cookie
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == oauthFlightCookieName && c.Value != "" {
+				cookie = c
+			}
+		}
+		if cookie == nil {
+			continue
+		}
+		cb := httptest.NewRequest("GET", OAuthCallbackPath+"?code=fixture-code", nil)
+		cb.AddCookie(cookie)
+		rec2 := httptest.NewRecorder()
+		srv.ServeHTTP(rec2, cb)
+		if rec2.Code == http.StatusSeeOther {
+			completed++
+		}
+	}
+
+	// INSTRUMENT CONTROL: the loop really did complete sign-ins, so a low provider count is a
+	// bound and not a harness that never reached the handler.
+	if completed == 0 {
+		t.Fatal("NO sign-in completed across 200 attempts, so the provider count below measures a broken " +
+			"fixture rather than a bound")
+	}
+	if len(stub.codes) > maxFlightsPerClient {
+		t.Errorf("ONE client reached the provider %d time(s) from %d attempts, against a per-client cap of "+
+			"%d. A spent flight must keep its slot until it EXPIRES, or this endpoint amplifies one inbound "+
+			"request into one outbound request at the identity provider — each holding a socket for up to %s.",
+			len(stub.codes), attempts, maxFlightsPerClient, supabaseOAuthTimeoutForTest)
+	}
+	if completed > maxFlightsPerClient {
+		t.Errorf("%d sign-ins completed for one client against a cap of %d", completed, maxFlightsPerClient)
+	}
+	t.Logf("amplification: %d attempts, %d completed, provider reached %d time(s), cap %d",
+		attempts, completed, len(stub.codes), maxFlightsPerClient)
+}
+
+// supabaseOAuthTimeoutForTest is only the number this package can quote in a message — the
+// real bound is `identity.supabaseOAuthTimeout`, which is unexported. Named rather than
+// inlined so a reader does not mistake it for a second source of truth.
+const supabaseOAuthTimeoutForTest = 10 * time.Second
 
 // TestALockedOutClientOpensNoFlight pins that the existing sign-in lockout covers the
 // provider door too.
@@ -535,6 +732,107 @@ func TestTheProviderErrorIsNotReflectedIntoThePage(t *testing.T) {
 		t.Errorf("the page did not carry %q; a declined sign-in is an incomplete one, and that is what it says",
 			oauthIncomplete)
 	}
+
+	// 🔴 AND THE FLIGHT WAS CONSUMED BEFORE THE QUERY WAS READ, WHICH THIS TEST IS THE ONLY
+	// PLACE THAT CAN MEASURE. `handleOAuthCallback`'s comment asserts the flight is taken
+	// "before anything else is read, and unconditionally" — and moving the `error`/`code`
+	// checks ahead of `flights.take` passed the whole suite, so the property had no guard.
+	// It matters because a handler that checked the query first would leave a REPLAYABLE
+	// flight behind for every malformed callback, and a malformed callback is the cheapest
+	// request an attacker can send.
+	//
+	// The flight above was consumed, so it is spent — and a spent record keeps its slot until
+	// it expires (see `flights.take`), so "consumed" is read as `take` refusing a second
+	// presentation rather than as the table emptying.
+	if _, held := srv.flights.take(cookie.Value); held {
+		t.Error("the flight was still takeable after a callback that carried a provider ERROR, so the query " +
+			"was read before the flight was consumed. Every malformed callback would leave a replayable " +
+			"flight behind.")
+	}
+}
+
+// TestTheProviderDoorIsWITHHELDWhileItsKeySetHasNeverBeenFetched is the REGRESSION test for
+// the 🔴 finding of round 1: arming Supabase coupled the whole surface's ability to START to
+// the identity provider's uptime.
+//
+// 🔴 WHAT THE OLD SHAPE COST. `cmd/cairn-ui` exited 78 when the first JWKS fetch failed,
+// mirroring `cmd/cairn-server`. The pod can afford that — one door, so refusing to start and
+// refusing every request are the same outcome. THIS SURFACE HAS TWO, and the entire stated
+// reason the credential form is kept is that it works when the provider does not. A GoTrue
+// restarting while this pod was rescheduled meant CrashLoopBackOff: the entries page, the
+// share flow, the credential form and every already-issued cookie session unservable, because
+// a door nobody was using could not reach its key set.
+//
+// 🔴 AND IT IS STILL FAIL-CLOSED FOR AUTHENTICATION, which is the half a reader should check
+// rather than take on faith: the withheld thing is the BUTTON. No Supabase token can verify
+// without keys, so the backend refuses every one — that is `internal/identity`'s to enforce and
+// it is unchanged. This test pins the AVAILABILITY half: the other door still answers.
+func TestTheProviderDoorIsWITHHELDWhileItsKeySetHasNeverBeenFetched(t *testing.T) {
+	fetched := false
+	cfg := testConfig(t, refusingAuth{})
+	cfg.OAuth = &stubOAuth{}
+	cfg.OAuthReady = func() bool { return fetched }
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("a server whose provider is not ready must still BUILD — refusing to build is the failure "+
+			"this whole finding is about: %v", err)
+	}
+
+	// (1) NOT READY: the two provider rows answer 503, the button is absent, and the
+	// credential form is untouched.
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", SignInPath, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the sign-in page answered %d while the provider was unready; the page that offers the "+
+			"OTHER door must still render", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, OAuthStartPath) {
+		t.Error("the sign-in page offered the provider button while its key set had never been fetched, so " +
+			"the button leads to a 503")
+	}
+	if !strings.Contains(body, `name="`+FieldToken+`"`) {
+		t.Error("the CREDENTIAL FORM is missing while the provider is unready. That is the door whose whole " +
+			"purpose is to work when the provider does not.")
+	}
+
+	start := httptest.NewRequest("POST", OAuthStartPath, nil)
+	start.Header.Set("Origin", "https://"+start.Host)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, start)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("the start row answered %d while unready, want 503 (not 501: the route IS implemented here, "+
+			"it just cannot be served yet)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), oauthNotReady) {
+		t.Errorf("the refusal did not carry %q", oauthNotReady)
+	}
+	if n := srv.flights.openCount(); n != 0 {
+		t.Errorf("an unready start opened %d flight(s); it must cost nothing", n)
+	}
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", OAuthCallbackPath+"?code=x", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("the callback answered %d while unready, want 503", rec.Code)
+	}
+
+	// (2) AND IT RE-ARMS WITH NO RESTART, which is why readiness is a predicate rather than a
+	// value read once at construction. A boolean sampled at startup would leave the door shut
+	// until somebody noticed and restarted the pod.
+	fetched = true
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", SignInPath, nil))
+	if !strings.Contains(rec.Body.String(), OAuthStartPath) {
+		t.Error("the button did not come back after the key set became available, so the door needs a " +
+			"restart to re-arm — which is the failure mode a predicate exists to avoid")
+	}
+	start2 := httptest.NewRequest("POST", OAuthStartPath, nil)
+	start2.Header.Set("Origin", "https://"+start2.Host)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, start2)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("the start row answered %d once the key set was available, want 303", rec.Code)
+	}
 }
 
 // TestTheGitHubRowsAnswerAnHonestRefusalWhenTheProviderIsNotConfigured is what makes the two
@@ -660,9 +958,24 @@ func TestTheStylesheetIsServedAsItsOwnRoute(t *testing.T) {
 	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("the stylesheet's X-Content-Type-Options is %q, want nosniff", got)
 	}
-	if body := rec.Body.String(); body != stylesheet {
+	served := rec.Body.String()
+	if served != stylesheet {
 		t.Errorf("the served stylesheet is %d bytes and the constant is %d; they must be the same bytes",
-			len(body), len(stylesheet))
+			len(served), len(stylesheet))
+	}
+	// 🔴 AND THE BYTES ARE JUDGED INDEPENDENTLY OF THE CONSTANT, BECAUSE THE COMPARISON ABOVE
+	// IS `a == a`. Measured: `stylesheet = ""` shipped green — the route served nothing, every
+	// page linked it, and the equality held. So the served body is also checked for CONTENT it
+	// can only have if it is a real stylesheet, over selectors the pages actually use.
+	if len(served) < 200 {
+		t.Errorf("the served stylesheet is %d bytes, which is not a stylesheet. The equality above cannot see "+
+			"this: an EMPTY constant satisfies it while every page renders unstyled.", len(served))
+	}
+	for _, selector := range []string{".viewer", ".signin", ".replica-honesty", "body"} {
+		if !strings.Contains(served, selector) {
+			t.Errorf("the served stylesheet has no rule for %q, which the pages render; an equality against "+
+				"the constant would pass for a stylesheet that styled nothing", selector)
+		}
 	}
 	// 🔴 AND IT IS REACHABLE WITHOUT A CREDENTIAL, because the SIGN-IN page links it. A
 	// stylesheet behind the chain renders the way in as unstyled text.

@@ -778,7 +778,8 @@ func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 	// against the constant the handler sets is a test that `a == a`: it goes green for
 	// every edit of the constant, including one that deletes `default-src 'none'`.
 	// The literal below is the contract; changing it is a decision somebody takes here.
-	const want = "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'"
+	const want = "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; " +
+		"frame-ancestors 'none'"
 	if got := rec.Header().Get("Content-Security-Policy"); got == "" {
 		t.Error("no Content-Security-Policy was sent")
 	} else if got != want {
@@ -789,8 +790,11 @@ func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 			"never appear in a rendered page, and a clause permitting something the CODE forbids is a policy "+
 			"nobody can read as a claim about the code. Naming a directive is how one of those becomes "+
 			"POSSIBLE — `default-src 'none'` forbids them all today. A script or an image arriving later adds "+
-			"its clause in the COMMIT THAT ADDS IT. Editing this literal is a decision somebody takes here.",
-			got, want)
+			"its clause in the COMMIT THAT ADDS IT. `frame-ancestors 'none'` is the opposite direction and "+
+			"must NOT be deleted by that rule: it has no `default-src` fallback, so without it any site can "+
+			"frame this surface — and a clickjacked submit satisfies BOTH cross-site gates, because its "+
+			"Origin really is this origin and its CSRF token really is the victim's. Editing this literal "+
+			"is a decision somebody takes here.", got, want)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Errorf("Content-Type is %q", got)

@@ -40,6 +40,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -99,7 +100,7 @@ const (
 	// trailing-newline ruling and two tests and NO consumer — and the `_FILE` spelling would
 	// have been the FIRST secret this pod mounts. `identity.SupabaseOAuth.Exchange` records
 	// the symptom that would call for it back.
-	//
+
 	// EnvUIControlJournal is the `-control-journal` flag's environment spelling.
 	//
 	// 🔴 IT IS A CONSTANT AND ITS SIBLINGS ARE STRING LITERALS, BECAUSE THIS ONE IS READ
@@ -364,6 +365,17 @@ func main() {
 		// nil when no provider is configured, which is a legitimate deployment and is why
 		// this field is the one on `ui.Config` that may be nil. See its own comment.
 		OAuth: oauth,
+		// 🔴 THE READINESS SIGNAL, AND IT IS A CLOSURE SO IT IS ASKED PER REQUEST RATHER
+		// THAN SAMPLED HERE. `KeyStatus().Fetched` is false until a JWKS fetch has
+		// succeeded at least once, which is exactly "a Supabase token could not be verified
+		// even if somebody presented one". Sampling it at construction would pin the answer
+		// to the instant before the first fetch and leave the button shut until a restart.
+		OAuthReady: func() bool {
+			if supabase == nil {
+				return false
+			}
+			return supabase.KeyStatus().Fetched
+		},
 		// Both from the block above. A nil limiter would be an unbounded sign-in, which is
 		// the defect; there is no path here that produces one.
 		TrustedProxies: trustedProxies,
@@ -383,23 +395,34 @@ func main() {
 	defer stop()
 
 	if supabase != nil {
-		// 🔴 THE FIRST FETCH IS AT STARTUP AND ITS FAILURE IS FATAL, WHERE EVERY LATER ONE
-		// IS NOT — the same asymmetry `cmd/cairn-server` draws, for the same reason. A key
-		// set that has never fetched can verify nothing, so a surface that came up that way
-		// would refuse every provider sign-in while looking healthy, and the operator's
-		// only signal would be people reporting a button that does not work. After one
-		// success there is last-known-good to serve, and a provider outage must not stop
-		// reads for sessions already issued.
+		// 🔴 A FAILED FIRST FETCH IS LOUD AND NOT FATAL, AND THAT IS WHERE THIS SURFACE
+		// DELIBERATELY DIVERGES FROM `cmd/cairn-server`. The pod exits: it has ONE way in, so
+		// refusing to start and refusing every request are the same outcome, and the loud one
+		// is better. THIS BINARY HAS TWO DOORS, and the entire stated reason the credential
+		// form is kept is that it works when the identity provider does not.
 		//
-		// ⚠ IT IS FATAL EVEN WHEN NO BUTTON IS RENDERED, AND THAT IS DELIBERATE. An armed
-		// Supabase ledger with no redirect URL still means a deployment that expects a
-		// BEARER JWT to authenticate; a key set that never fetched refuses those too.
+		// 🔴 WHAT EXITING HERE WOULD ACTUALLY COST, WHICH IS WHY IT WAS CHANGED: a GoTrue
+		// that is restarting while this pod is rescheduled would produce CrashLoopBackOff —
+		// the entries page, the share flow, the credential form and every already-issued
+		// cookie session all unservable, because a door nobody was using could not reach its
+		// key set. Two places in this tree promised the opposite in as many words
+		// (`internal/ui/README.md`, and the comment that stood here), and both were right
+		// about LATER fetches and wrong about the first.
+		//
+		// 🔴 IT IS STILL FAIL-CLOSED FOR AUTHENTICATION. Without keys `Verify` verifies
+		// nothing, so no Supabase token authenticates — the backend stays in the chain and
+		// refuses every one. What is withheld is the BUTTON: `ui.Config.OAuthReady` below
+		// reads `KeyStatus().Fetched`, so the two provider rows answer 503 and the sign-in
+		// page renders the credential form alone until a fetch succeeds. The refresh loop
+		// keeps trying, and the door re-arms with no restart.
 		if err := supabase.RefreshKeys(ctx); err != nil {
 			fmt.Fprintf(os.Stderr,
-				"cairn-ui: identity: the Supabase key set could not be fetched at startup (%s), so no "+
-					"provider session could be verified and every such sign-in would be refused. "+
-					"Refusing to start\n", err.Error())
-			os.Exit(exitConfig)
+				"cairn-ui: WARNING identity: the Supabase key set could not be fetched at startup (%s). "+
+					"No provider session can be verified until a fetch succeeds, so the %s button is "+
+					"WITHHELD and those routes answer 503 — the credential form, the entries page and "+
+					"every existing session are UNAFFECTED, which is why this is not a refusal to start. "+
+					"The refresh loop keeps trying and the button re-arms by itself\n",
+				err.Error(), ui.GitHubLabel)
 		}
 		go func() {
 			if err := supabase.RunKeyRefresh(ctx); err != nil {
@@ -583,6 +606,31 @@ func providerSignIn(backend *identity.SupabaseJWT, armed bool) (*identity.Supaba
 			EnvSupabaseRedirectURL, ui.GitHubLabel, identity.EnvSupabaseJWKSURL, identity.EnvSupabaseIssuer,
 			EnvSupabaseRedirectURL)
 	}
+	// 🔴 THE CONFIGURED CALLBACK'S *PATH* MUST BE THE ROUTE THIS BINARY SERVES, AND NOTHING
+	// CHECKED IT. A URL pointing anywhere else — a typo, a copied line from another app —
+	// builds cleanly, prints a confident startup line naming the button as live, and then
+	// every sign-in completes at the PROVIDER and lands on a 404 here. That is precisely the
+	// failure this whole startup path is designed against: an answer decided at startup and
+	// discovered at the first click. The constant is in scope; comparing it costs one line.
+	//
+	// ⚠ ONLY THE PATH IS CHECKED, DELIBERATELY. The scheme, host and port are the
+	// DEPLOYMENT's — this process cannot know its own external origin (see
+	// `identity.ErrSupabaseOAuthNoRedirect`) — so there is nothing here to compare them
+	// against. The path half is this repository's, which is exactly why it is checkable.
+	if parsed, parseErr := url.Parse(redirect); parseErr != nil {
+		return nil, fmt.Errorf("%s=%q does not parse as a URL (%w). Refusing to start",
+			EnvSupabaseRedirectURL, redirect, parseErr)
+	} else if parsed.Path != ui.OAuthCallbackPath {
+		return nil, fmt.Errorf(
+			"%s=%q has path %q, but this binary serves its callback at %q. Every %s sign-in would "+
+				"complete at the provider and then land on a 404 here, with nothing in this surface's own "+
+				"logs to say why — the provider would have redirected the browser to a path that is not a "+
+				"route. Refusing to start; set the path to %s (the ORIGIN half is yours, and it must match "+
+				"the entry in the provider's GOTRUE_URI_ALLOW_LIST)",
+			EnvSupabaseRedirectURL, redirect, parsed.Path, ui.OAuthCallbackPath, ui.GitHubLabel,
+			ui.OAuthCallbackPath)
+	}
+
 	// 🔴 THE AUTH BASE IS THE VERIFIER'S OWN ISSUER, NOT A SECOND VARIABLE. See
 	// `identity.SupabaseJWT.Issuer`: two places to name the project is a deployment that
 	// verifies tokens from one and starts sign-ins at another, with nothing naming the

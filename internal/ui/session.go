@@ -314,14 +314,24 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request, _ identit
 }
 
 // renderSignIn is the ONE place the sign-in page is rendered, so the button's presence
-// cannot differ between the form's own 200 and any of the five refusals that land here.
+// cannot differ between the form's own 200 and every refusal that lands here.
 //
-// 🔴 THE BUTTON IS RENDERED IFF A PROVIDER IS WIRED, AND THAT IS DERIVED FROM THE SERVER
-// RATHER THAN PASSED IN. A boolean parameter here would be a value five call sites could get
-// wrong, and the one that got it wrong would render a button whose route answers 501.
+// ⚠ THIS SENTENCE CARRIED A COUNT ("the five refusals") AND THE COUNT WENT STALE IN THE SAME
+// CHANGE THAT WROTE IT — there are now at least ten call sites, across the credential path, the
+// provider start row and the callback. The number is not restated: it is `git grep
+// 'renderSignIn('` and nothing here can keep it true. What matters is the property, which does
+// not move when a caller is added: every one of them renders through this function, so the
+// button's presence and the page's shape are decided in ONE place.
+//
+// 🔴 THE BUTTON IS RENDERED IFF THE PROVIDER DOOR CAN WORK RIGHT NOW, AND THAT IS DERIVED
+// FROM THE SERVER RATHER THAN PASSED IN. A boolean parameter here would be a value six call
+// sites could get wrong, and the one that got it wrong would render a button whose route
+// answers 501 or 503. `providerArmed` folds in BOTH questions — is a provider configured, and
+// has its key set ever been fetched — so a page rendered during a provider outage offers the
+// door that still works and not the one that does not.
 func (s *Server) renderSignIn(w http.ResponseWriter, code int, message string) {
 	var b strings.Builder
-	if err := SignInPage(message, s.oauth != nil).Render(&b); err != nil {
+	if err := SignInPage(message, s.providerArmed()).Render(&b); err != nil {
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}

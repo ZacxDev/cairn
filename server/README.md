@@ -482,11 +482,14 @@ and **neither command found it**. ⚠ **The FIRST command finds it today — the
 second never can, its pattern is for a different claim — and that is not a fix:
 editing the docstring simply moved the wrap.** The claim was
 invisible to a line-anchored sweep for as long as it mattered, and the next
-wrapped claim will be too. Normalise before sweeping, or read the file. ⚠ And the matches are not all stale —
-some name `cairn-ui`, which genuinely is deployed by nothing. 🔴 **This clause
-used to say "and the Go image" alongside it. That was false when written and the
-sweep that fixed the rest of this file is what caught it** — the Go image is the
-deployed pod. **Read the matches; do not count them, and do not trust a list of
+wrapped claim will be too. Normalise before sweeping, or read the file. ⚠ And the matches are not all stale — but the list of exceptions
+here has been wrong TWICE, which is the lesson rather than the list. 🔴 **It first said "and
+the Go image" alongside `cairn-ui`; that was false when written, and the sweep that fixed the
+rest of this file is what caught it** — the Go image is the deployed pod. 🔴 **It then said
+matches naming `cairn-ui` "genuinely is deployed by nothing", and that has now gone stale
+too**: the UI image is published by `publish-image.yml` and deployed from the operator's
+GitOps repository. **An exception list inside a warning about exception lists went stale on
+the same axis, twice.** There is no surviving exception to name. **Read the matches; do not count them, and do not trust a list of
 exceptions either.**
 
 🔴 **THE PIN IS TWO GUARDS AND ONLY ONE PREMISE DIED.** Neither Python image is

@@ -51,8 +51,15 @@ type SupabaseOAuth struct {
 	// `KeySet` has one: a package that shares `http.DefaultClient` inherits whatever
 	// timeout somebody else set on it, which is usually none.
 	client *http.Client
-	// now is the clock, injected so a test can pin expiry without sleeping.
-	now func() time.Time
+	// ⚠ THERE IS NO CLOCK FIELD, AND ITS ABSENCE IS A DELETION. A `now func() time.Time` was
+	// held here with a doc saying tests pinned expiry through it — and NOTHING read it: this
+	// type has no expiry of its own. Every time-bound in the flow belongs to somebody else:
+	// the flight's TTL is `ui.FlightTTL`, the token's claims are checked by
+	// `SupabaseJWT`/`VerifyOptions.Now`, and the request deadline is the HTTP client's. A
+	// field that is assigned and never read, under a comment claiming a purpose it does not
+	// serve, is worse than no field: it reads as an injection point somebody will try to use.
+	// `SupabaseOAuthConfig.Now` is kept, because the callers that set it are real and
+	// dropping a config field is a breaking change for no gain.
 }
 
 // SupabaseOAuthProviderGitHub is the one upstream provider this flow asks GoTrue for.
@@ -109,7 +116,11 @@ type SupabaseOAuthConfig struct {
 	RedirectURL string
 	// Client is the HTTP client. nil means one with a bounded timeout.
 	Client *http.Client
-	// Now is the clock. nil means `time.Now().UTC()`.
+	// Now is accepted and NOT READ, and saying so is better than letting a caller believe it
+	// does something. This type has no time-bound of its own — see the note on the struct
+	// above — so there is nothing here for a clock to decide. It stays only because callers
+	// set it and removing a config field to delete dead code inside would be a breaking
+	// change that buys nothing.
 	Now func() time.Time
 }
 
@@ -166,17 +177,12 @@ func NewSupabaseOAuth(cfg SupabaseOAuthConfig) (*SupabaseOAuth, error) {
 	if client == nil {
 		client = &http.Client{Timeout: supabaseOAuthTimeout}
 	}
-	now := cfg.Now
-	if now == nil {
-		now = func() time.Time { return time.Now().UTC() }
-	}
 	return &SupabaseOAuth{
 		verifier: cfg.Verifier,
 		authBase: base,
 		redirect: redirect,
 		provider: SupabaseOAuthProviderGitHub,
 		client:   client,
-		now:      now,
 	}, nil
 }
 

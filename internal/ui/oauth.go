@@ -79,10 +79,22 @@ const FlightTTL = 5 * time.Minute
 // share of it. `netid`'s own comment makes the same ruling about a limiter with one bucket:
 // a single shared key means the first abuser locks out everybody.
 //
-// ⚠ WHAT THEY STILL COST, STATED RATHER THAN HIDDEN: a caller behind a shared egress address
-// shares a client identity, so a busy office reaches `maxFlightsPerClient` between them. The
-// cost is a delayed GitHub sign-in, never a delayed one through the credential form — that
-// door does not touch this table at all, which is one more reason it is kept.
+// 🔴 WHAT THE PER-CLIENT NUMBER BOUNDS IS THE **RATE**, AND THAT IS TRUE ONLY BECAUSE A SPENT
+// FLIGHT KEEPS ITS SLOT — the mechanism is in [take] and the earlier version of this sentence
+// was FALSE. While the callback deleted the record, the slot freed at the start of the token
+// exchange, so this cap bounded concurrency alone: measured, one client key drove 200
+// completed exchanges and reached the provider 200 times with the table at 0. A consumed
+// record now occupies its client's share until it EXPIRES, so the honest statement is: at most
+// `maxFlightsPerClient` flight starts — and therefore at most that many outbound requests to
+// the identity provider — per client per `FlightTTL`.
+//
+// ⚠ WHAT THEY COST, STATED RATHER THAN HIDDEN, AND THE COST GREW WITH THE FIX. A caller
+// behind a shared egress address shares a client identity, so a busy office shares
+// `maxFlightsPerClient` sign-ins per `FlightTTL` between them — and a person who signs in,
+// signs out and signs in again spends one slot each time rather than reusing it. Eight starts
+// per five minutes is far above any human rate and well below an amplifier's. The cost is a
+// delayed GitHub sign-in, never a delayed one through the credential form — that door does not
+// touch this table at all, which is one more reason it is kept.
 const (
 	maxOpenFlights      = 1024
 	maxFlightsPerClient = 8
@@ -105,6 +117,11 @@ type flight struct {
 	// client would break every legitimate sign-in that changes address mid-flow — a phone
 	// moving from wifi to cellular between the button and the provider's redirect.
 	client string
+	// consumed marks a flight whose verifier has been handed to an exchange. It is what
+	// makes the record single-use, and — because a consumed record keeps occupying its
+	// client's share until it expires — it is also what turns `maxFlightsPerClient` into a
+	// bound on the RATE of outbound exchanges rather than on their concurrency. See [take].
+	consumed bool
 }
 
 // flights is the open-sign-in table.
@@ -204,13 +221,28 @@ func (f *flights) start(client, verifier string, ttl time.Duration) (string, fli
 	return id, flightOpened
 }
 
-// take removes and returns a flight's verifier. SINGLE USE: the record is deleted whether
-// or not it was still live, so a replay of the same id finds nothing.
+// take marks a flight CONSUMED and returns its verifier. SINGLE USE: a second presentation of
+// the same id finds a record that is already consumed and is refused.
 //
-// ⚠ THE DELETE HAPPENS BEFORE THE LIVENESS TEST, WHICH IS THE ORDER THAT MATTERS. Deleting
-// only live records would leave an expired one in the table for a replay to keep hitting,
-// and the answer would be the same either way — so nothing would be gained and the table
-// would grow at the rate of abandoned sign-ins.
+// 🔴 IT MARKS RATHER THAN DELETES, AND THAT ONE WORD IS WHAT MAKES THE PER-CLIENT BOUND A
+// BOUND. Deleting here freed the caller's slot at the START of the token exchange, so the
+// cap bounded CONCURRENCY and nothing else — measured by probe: one client key drove **200
+// completed exchanges, the provider was reached 200 times, and the table held 0 open
+// flights**. That is a public, unauthenticated endpoint amplifying one request into one
+// outbound request against the identity provider, each holding a socket for up to
+// `supabaseOAuthTimeout`. Because a consumed record keeps its slot until it EXPIRES, one
+// client now gets at most `maxFlightsPerClient` flight starts — and therefore at most that
+// many outbound exchanges — per `FlightTTL`. The bound is on the RATE, which is what the
+// comment on the cap claimed all along.
+//
+// ⚠ SO THE TABLE HOLDS SPENT RECORDS ON PURPOSE, AND `openCount` COUNTS THEM. A reader
+// expecting the table to empty after a successful sign-in will be surprised; that is the
+// mechanism, not a leak. The record is small, carries no secret once consumed (the verifier is
+// zeroed below), and is pruned by the same expiry sweep as everything else.
+//
+// ⚠ THE VERIFIER IS CLEARED WHEN THE RECORD IS CONSUMED. It has served its only purpose by
+// then, and a spent record that kept it would leave a live PKCE secret in memory for the rest
+// of the TTL for no reason.
 func (f *flights) take(id string) (string, bool) {
 	if id == "" {
 		return "", false
@@ -218,11 +250,14 @@ func (f *flights) take(id string) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, held := f.open[id]
-	delete(f.open, id)
-	if !held || !f.now().Before(rec.expires) {
+	if !held || rec.consumed || !f.now().Before(rec.expires) {
 		return "", false
 	}
-	return rec.verifier, true
+	verifier := rec.verifier
+	rec.consumed = true
+	rec.verifier = ""
+	f.open[id] = rec
+	return verifier, true
 }
 
 // openCount is the table's size. For a test's instrument control, never for a decision.
@@ -283,6 +318,12 @@ func pkceChallenge(verifier string) string {
 const (
 	oauthIncomplete  = "That sign-in did not complete. Start again from this page."
 	oauthUnavailable = "Signing in with GitHub is not configured on this deployment."
+	// oauthNotReady is the TRANSIENT sibling of `oauthUnavailable`, and they are two
+	// sentences because they need two different actions from two different people.
+	// "not configured" is for an operator who must set `CAIRN_SUPABASE_REDIRECT_URL`;
+	// this one is for a person who should use the other door and try again shortly.
+	oauthNotReady = "Signing in with " + GitHubLabel + " is temporarily unavailable. " +
+		"Use the credential form below, or try again shortly."
 )
 
 // oauthFlightCookie is the ONE place the flight cookie's attributes are chosen.
@@ -345,6 +386,10 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		s.refuseUnconfiguredOAuth(w)
 		return
 	}
+	if !s.providerArmed() {
+		s.refuseUnreadyOAuth(w)
+		return
+	}
 	// 🔴 THE CLIENT IS RESOLVED BEFORE ANY WORK, AND `netid.ResolveClient` IS REUSED RATHER
 	// THAN REIMPLEMENTED — the same ruling `handleSignIn` records, for the same reason: the
 	// trust boundary is the whole difficulty and it is already decided there. The header is
@@ -355,6 +400,15 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		// FAIL CLOSED, AND COUNT NOTHING. There is no bucket to count into, and the
 		// alternative — one shared key for every unidentifiable request — is the failure
 		// `internal/netid` exists to avoid.
+		//
+		// ⚠ IT RENDERS `signInRefused` AND NOT `oauthIncomplete`, WHICH LOOKS LIKE A
+		// CONTRADICTION OF THAT CONSTANT'S OWN COMMENT AND IS A DELIBERATE READING OF IT.
+		// `oauthIncomplete` is for a request that did not carry a completable FLIGHT — a
+		// stale tab, an abandoned flow — and says so to a person who should simply start
+		// again. Neither this refusal nor the lockout below is that: both are a refusal to
+		// BEGIN, and `handleSignIn` already rules that such refusals share one sentence so
+		// a lockout does not announce itself. Telling these two apart from a refused
+		// credential would be a second thing a failed sign-in can say.
 		s.logf("github sign-in refused: no client identity could be resolved from peer %q", r.RemoteAddr)
 		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
 		return
@@ -394,8 +448,17 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		// your own share" send an operator to completely different places — and a surface
 		// refusing every GitHub sign-in while the token form works is otherwise a silent
 		// half-outage.
-		s.logf("github sign-in refused: %s (%d open, per-client cap %d, global cap %d, client identity %s)",
-			outcome, s.flights.openCount(), maxFlightsPerClient, maxOpenFlights, peerState(trusted))
+		s.logf("github sign-in refused: %s (%s, %d open, per-client cap %d, global cap %d, client identity %s)",
+			outcome, client, s.flights.openCount(), maxFlightsPerClient, maxOpenFlights, peerState(trusted))
+		// 🔴 AN ENTROPY FAILURE IS A 500 AND A SPENT BOUND IS A 503, WHICH THE FIRST DRAFT
+		// CONFLATED. They are not the same fact: `crypto/rand` failing is this process being
+		// broken, and a cap being reached is this process working exactly as configured. The
+		// sibling `randomPKCEValue` failure above already answers 500, so answering 503 for
+		// the identical failure one line down was two codes for one condition.
+		if outcome == flightRefusedNoID {
+			s.renderSignIn(w, http.StatusInternalServerError, signInRefused)
+			return
+		}
 		s.renderSignIn(w, http.StatusServiceUnavailable, oauthIncomplete)
 		return
 	}
@@ -427,6 +490,26 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 		s.refuseUnconfiguredOAuth(w)
 		return
 	}
+	if !s.providerArmed() {
+		s.refuseUnreadyOAuth(w)
+		return
+	}
+
+	// 🔴 THE CLIENT IS RESOLVED FOR THE LOG, AND THAT IS NOT DECORATION HERE. Every
+	// `POST /sign-in` refusal carries a client identity because this surface is reachable
+	// from the internet and a refusal nobody can attribute is a refusal nobody can act on.
+	// The callback's refusals carried none — which is exactly the half an operator needs
+	// when the start row is being driven in bulk, since the start row's own refusals name a
+	// client and its callbacks did not. A failure to resolve one is NOT fatal here: unlike
+	// the start row this handler opens nothing, so there is no bucket to protect, and
+	// refusing a legitimate callback because a header was odd would break a sign-in that
+	// had already been authorised at the provider.
+	client, trusted, resolved := netid.ResolveClient(r.Header, r.RemoteAddr, s.trustedProxies)
+	who := "client identity " + peerState(trusted)
+	if !resolved {
+		client, who = "unresolved", "no client identity"
+	}
+
 	// The browser is asked to forget the flight id on every path through this handler,
 	// including the refusals: a stale id it keeps sending is a lookup per request and a
 	// reason to believe a sign-in is still in progress when it is not.
@@ -441,7 +524,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 		// No cookie, an expired flight, or a replay. All three are the same observable
 		// deliberately: a callback that said which would tell a caller whether a given
 		// flight id had ever existed.
-		s.logf("github sign-in refused: the callback carried no completable flight")
+		s.logf("github sign-in refused: the callback carried no completable flight (%s, %s)", client, who)
 		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete)
 		return
 	}
@@ -454,13 +537,13 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 	// declining is.
 	query := r.URL.Query()
 	if providerErr := query.Get("error"); providerErr != "" {
-		s.logf("github sign-in refused: the provider declined")
+		s.logf("github sign-in refused: the provider declined (%s, %s)", client, who)
 		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete)
 		return
 	}
 	code := query.Get("code")
 	if code == "" {
-		s.logf("github sign-in refused: the callback carried no authorization code")
+		s.logf("github sign-in refused: the callback carried no authorization code (%s, %s)", client, who)
 		s.renderSignIn(w, http.StatusBadRequest, oauthIncomplete)
 		return
 	}
@@ -472,7 +555,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 		// here matches that subject" are three different facts about the control plane, and
 		// the third one is the one that confirms a guess. The REASON goes to the operator's
 		// log, which is where the pod puts its own verdicts.
-		s.logf("github sign-in refused: %v", err)
+		s.logf("github sign-in refused: %v (%s, %s)", err, client, who)
 		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
 		return
 	}
@@ -504,4 +587,49 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 func (s *Server) refuseUnconfiguredOAuth(w http.ResponseWriter) {
 	s.logf("github sign-in refused: no provider is configured on this deployment")
 	s.renderSignIn(w, http.StatusNotImplemented, oauthUnavailable)
+}
+
+// providerArmed answers whether the GitHub door can work RIGHT NOW. It is asked per request
+// and per render, never once at construction.
+//
+// 🔴 THE SECOND HALF — READINESS — EXISTS BECAUSE THE ALTERNATIVE WAS A STARTUP FATALITY THAT
+// DELETED THE PROPERTY THE CREDENTIAL FORM EXISTS TO PROVIDE. `cmd/cairn-ui` used to `os.Exit`
+// when the first JWKS fetch failed, mirroring `cmd/cairn-server`. The pod can afford that: it
+// has one way in, so refusing to start and refusing every request are the same outcome. THIS
+// SURFACE HAS TWO DOORS, and the whole stated reason the credential form is kept is that it
+// works when the identity provider does not. A GoTrue that is restarting while this pod is
+// rescheduled would have produced CrashLoopBackOff — the entries page, the share flow, the
+// credential form and every already-issued cookie session all unservable, because a door
+// NOBODY WAS USING could not reach its key set. Two places in this tree asserted the opposite
+// in as many words, and they were right about later fetches and wrong about the first.
+//
+// 🔴 IT IS STILL FAIL-CLOSED FOR AUTHENTICATION, WHICH IS THE PART THAT MATTERS. Without keys
+// `Verify` can verify nothing, so no Supabase token authenticates — the backend stays in the
+// chain and refuses. What is withheld is the BUTTON, not a check: this predicate can only make
+// the surface offer LESS.
+//
+// ⚠ AND IT RE-ARMS WITHOUT A RESTART, WHICH IS WHY IT IS A PREDICATE AND NOT A BOOLEAN READ
+// ONCE. `cmd/cairn-ui`'s refresh loop keeps trying; the moment a fetch succeeds,
+// `KeySetStatus.Fetched` flips and the next render carries the button. A value sampled at
+// construction would have left the door shut until somebody noticed and restarted the pod.
+func (s *Server) providerArmed() bool {
+	if s.oauth == nil {
+		return false
+	}
+	// nil means "no readiness signal was supplied", which is every unit test and any caller
+	// that has no key set to wait on. It must mean ARMED: the alternative silently disables
+	// the flow for every configuration that did not opt in.
+	return s.oauthReady == nil || s.oauthReady()
+}
+
+// refuseUnreadyOAuth is what the two rows answer while the provider is configured but its key
+// set has never been fetched.
+//
+// ⚠ 503 RATHER THAN 501, AND THE DIFFERENCE IS THE ONE A CALLER CAN ACT ON. 501 says this
+// deployment does not implement the route; 503 says it does and cannot serve it yet. They are
+// different facts and a person retrying is only right about one of them.
+func (s *Server) refuseUnreadyOAuth(w http.ResponseWriter) {
+	s.logf("github sign-in refused: the provider's key set has never been fetched, so no token " +
+		"it issued could be verified — the credential form is unaffected")
+	s.renderSignIn(w, http.StatusServiceUnavailable, oauthNotReady)
 }

@@ -6,8 +6,15 @@ everything below.
 ## What Phase A is, and what it deliberately is not
 
 One page, one authentication chain, one rendering path — enough to prove the wiring, the
-rendering, and the gate. `cmd/cairn-ui` is **deployed by nothing** — no manifest in this
-repository points a pod at it.
+rendering, and the gate.
+
+⚠ **THIS PARAGRAPH SAID `cmd/cairn-ui` WAS "deployed by nothing — no manifest in this
+repository points a pod at it", AND IT IS RETRACTED.** The second clause is still true and
+never supported the first: the manifest lives in the operator's GitOps repository. The image
+is published by `.github/workflows/publish-image.yml` and the surface is live on a public
+hostname. ⚠ And the heading above is kept only as a record of where this file started — the
+package is four pages, a stylesheet route and two sign-in doors past "Phase A", and the
+sections below are the accumulated phases rather than a description of one.
 
 🔴 **HOW IT IS PACKAGED IS NOT STATED HERE. ASK:**
 
@@ -856,7 +863,7 @@ Each of its three clauses is a fact measured elsewhere in this tree:
 
 | clause | what makes it true |
 |---|---|
-| "one replica's answer, read from a cached copy of the authority" | `control.Cache` is stale by design up to its declared `MaxAge`; `cairn-ui` is single-replica — see `identity.FileSessionStore`, whose own comment states it; the `ui-image` derivation now exists but nothing publishes or deploys it |
+| "one replica's answer, read from a cached copy of the authority" | `control.Cache` is stale by design up to its declared `MaxAge`; `cairn-ui` is single-replica — see `identity.FileSessionStore`, whose own comment states it. ⚠ This cell ended "the `ui-image` derivation now exists but nothing publishes or deploys it"; the image is published and deployed, and the single-replica limit rests on the session table rather than on that |
 | "another reader gains or loses the scope when their own cache next refreshes" | `control.Cache.ApplyNow`'s promise is explicitly about THIS process |
 | "does not recall entries already copied onto somebody's machine" | `ApplyNow` says it in as many words |
 

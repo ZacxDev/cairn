@@ -124,10 +124,19 @@ func TestTheUIChainHasNoTrustedHeaderMember(t *testing.T) {
 // so; a test over the parameter list would go green for a local re-assembly that reversed
 // the order.
 //
-// ⚠ ITS MUTATION CONTROL IS RECORDED IN THE PR RATHER THAN RUN HERE: swapping the second and
-// third arguments of the `identity.Backends` call in `AuthBackends` makes this test report
-// the cookie at index 1 and fail. A test whose red has not been watched proves nothing, and
-// the watching is what that record is.
+// ⚠ THE MUTATION CONTROL THIS COMMENT FIRST RECORDED DOES NOT COMPILE, AND THE CORRECTION IS
+// KEPT RATHER THAN SWAPPED BECAUSE THE ERROR WAS IN THE EVIDENCE, NOT THE GUARD. It read
+// "swapping the second and third arguments of the `identity.Backends` call in `AuthBackends`
+// makes this test report the cookie at index 1 and fail" — but those parameters are
+// `*identity.SupabaseJWT` and `*identity.CookieSession`, so a swap is a TYPE ERROR and the
+// build fails. A mutant that does not compile kills every test in the package and proves
+// nothing about any of them, so this guard's red had never actually been watched.
+//
+// The control that DOES compile, and that has now been run: replace the `identity.Backends`
+// call in `AuthBackends` with a hand-built `identity.Chain{cookie, machine, supabase}` — all
+// three satisfy `Authenticator`, so it builds, and it is exactly the "second assembly of the
+// chain" this constructor's comment warns about. It fails here at index 0. That is the row in
+// the battery; the guard itself was sound all along.
 func TestTheUIChainTriesEveryHeaderCREDENTIALBeforeTheAmBIENTCookie(t *testing.T) {
 	authority := materializedAuthority(t)
 	machine, err := identity.NewMachineToken(authority)

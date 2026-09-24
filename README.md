@@ -111,7 +111,7 @@ nix build github:ZacxDev/cairn#cairn-go        # the Go client, by name
 nix build github:ZacxDev/cairn#cairn           # the PYTHON client — no longer the default
 nix build github:ZacxDev/cairn#server-image    # the PYTHON pod image — built, published, NOT deployed
 nix build github:ZacxDev/cairn#server-image-go # the GO pod image — this is what the cluster runs
-nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — deployed by nothing
+nix build github:ZacxDev/cairn#cairn-ui        # the BROWSER surface — published, and DEPLOYED
 ```
 
 Consumers pin this flake as an input. The version **is** the git revision —
@@ -372,13 +372,20 @@ rotation, rate limiting), is [`server/README.md`](server/README.md).
 
 ## The browser surface — `cairn-ui`
 
-There is one, and it is **three phases**: the entries page, a browser sign-in with
-server-side revocable sessions, and the share flow. **Seven routes**, which
-`cairn-ui` derives from its dispatcher rather than restating — `GET /` is the
-entries page; `GET`/`POST /sign-in` are reachable without a session, because they
-are how you get one; `POST /sign-out` revokes; and `GET /share`, `POST /share`,
-`POST /unshare` are the share flow. `/healthz` is the one unauthenticated route
-outside that set.
+There is one. It carries the entries page, a browser sign-in with server-side revocable
+sessions, the share flow, and a GitHub sign-in through the operator's GoTrue.
+
+⚠ **THE ROUTE COUNT AND THE PHASE COUNT ARE DELIBERATELY NOT WRITTEN HERE, AND THE DELETION IS
+THE FIX.** This paragraph said "**three phases**" and "**Seven routes**" and then enumerated
+them — and stayed at seven through the change that added three (`POST /sign-in/github`,
+`GET /sign-in/github/callback`, `GET /static/app.css`). `cmd/cairn-ui`'s own package comment
+identifies this exact hazard, fixed it there, and left the literal seven standing in the file
+the fix was about. A number in prose beside a ledger the program DERIVES is a second spelling
+that only ever goes stale, so: **`cairn-ui` prints its own count at startup, and
+`ui.DeclaredRoutes()` is the list.** What is worth stating instead is the SHAPE, which does not
+move when a row is added: `GET /` is the entries page; the sign-in rows and the stylesheet
+answer without a session, because they are how you get one; the share rows and `POST /sign-out`
+are behind it; and `/healthz` is answered before the chain and is outside the ledger entirely.
 
 🔴 **`cairn-ui` is a SINGLE-REPLICA surface, for TWO reasons and not one.** The
 session table is the loud one: each replica holds its own sessions, so a second
@@ -387,9 +394,16 @@ The quieter one is the **control-plane cache** — a share recorded on replica A
 not served by B until B's cache refreshes, which is what the replica-honesty notice
 on every share page exists to say. Putting only the session file on shared storage
 buys two replicas that keep people signed in and silently disagree about who can
-see what. Multi-replica is a later arc, not a configuration. And **nothing
-deploys it**: `packages.ui-image` builds an image, but nothing publishes that
-image and there is no manifest in this repository — it is built and run by hand.
+see what. Multi-replica is a later arc, not a configuration.
+
+⚠ **AND THE CLAIM THAT NOTHING DEPLOYED IT IS RETRACTED.** This paragraph read *"And **nothing
+deploys it**: `packages.ui-image` builds an image, but nothing publishes that image and there is
+no manifest in this repository — it is built and run by hand."* All three clauses are false.
+`.github/workflows/publish-image.yml` pushes the UI image to its own ghcr package and then
+proves it pullable with no credentials; a manifest deploys it from the operator's GitOps
+repository; and the surface is live on a public hostname. "No manifest **in this repository**"
+was never evidence about what is running — that is the inference this sweep exists to kill, and
+it stood in four places at once.
 
 ```bash
 nix build github:ZacxDev/cairn#cairn-ui
@@ -508,7 +522,7 @@ those claims have one home each and a correction belongs there.
 | `cmd/cairn-server`, `internal/api` | the Go port of the server — passes the corpus, and **the deployed pod** |
 | `cmd/cairn`, `internal/client` | the Go port of the CLIENT, and **the default** — diffed against the Python one by `tests/parity/`, which declares both its residuals and the rows that compare only the exit code |
 | `internal/report` | the ONE renderer, shared by the pod and the CLI |
-| `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — pages, sign-in, the share flow, gomponents, deployed by nothing |
+| `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — pages, sign-in (credential form **and** GitHub through the operator's GoTrue), the share flow, gomponents; published, and **DEPLOYED** |
 | `internal/depspolicy` | the allowlist and import ban that replaced `vendorHash = null` — the serving path is still stdlib-only, and this is what measures it |
 | `tests/` | the suites, plus `leakscan.py`, the HTTP conformance corpus, the server dual-run gate and the client parity gate |
 | `flake.nix` | both clients (`default` is the **Go** one, `#cairn` the Python one), the server image, the Go server, and the checks |
