@@ -1081,6 +1081,69 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
 - **Decision (operator, this session): the in-cluster seeding is done by the ASSISTANT next
   session, with an explicit go-ahead first**, rather than handed to the operator as a runbook.
 
+- 🔴 **THE ARCHITECTURE ANSWER TO "CAN FACT-ROT BE MADE STRUCTURALLY IMPOSSIBLE", AND IT IS
+  NARROWER THAN THE QUESTION.** Only **deletion** and **derivation-WITH-COMPARISON** do it.
+  Deletion is total: a claim that does not exist cannot rot. Derivation works only when a gate
+  DIFFS the derived value against a declared expectation — that is what `api.DeclaredRoutes()`,
+  `cairn -verbs` and `cairn -exit-codes` do, and why they have a zero rot rate while every
+  hand-written sentence in this repo rots. ⚠ **Derivation MINUS the comparison is not a
+  mechanism**, which is the whole finding of #101 below. A THIRD option — a TTL/staleness stamp
+  for facts no command can answer — was designed and **rejected before building**: a check that
+  reddens because a stamp aged goes red on a day nobody changed anything, and `RULES.md` is
+  explicit that a permanently-red gate is worse than none.
+- 🔴 **#101 WAS BUILT, AUDITED, AND CLOSED BY ITS OWN ROUND 0 — THE MOST USEFUL THING THIS ARC
+  PRODUCED, AND IT PRODUCED NO CODE.** It added a "fact ledger" whose design decision was *"it
+  asserts the question is still answerable, never the answer"*. That property was sold as what
+  made it deterministic and durable. **It is also what made it blind to both incidents it cited
+  as its basis**: through the "no image wraps it" rot (11 commits) and the "nine verbs" rot (39
+  commits, 5 sites, one a live `assert >= 9`), `nix eval .#packages…` and `cairn -verbs` answered
+  perfectly — the rot was in the ANSWER, which the design declined to look at. What actually
+  closed the second was `assert len(go_verbs) == 10` plus `flake.nix`'s `want-verbs.txt` DIFF.
+  **Ask of any proposed anti-rot gate: which of the incidents in its own rationale would it have
+  caught?**
+- 🔴 **A PROSE LINT FOR FACT-ROT IS REFUTED BY MEASUREMENT ON THIS TREE — do not re-derive it.**
+  Three candidate rules were written and counted before building: `line-distance` **15 hits**,
+  `bare-line-ref` **5**, `naive-count` **13**, and in each case the legitimate and the rotting
+  uses are spelled IDENTICALLY — *"to be ON the verdict rather than in a comment 200 lines away"*
+  is rhetoric about code placement; *"the paragraph N lines above"* is a navigation pointer that
+  rots. `bare-line-ref`'s only live hits were the ref-parsing code discussing its own edge cases.
+  **The defect lives in the relationship between the sentence and the world; a regex sees only the
+  sentence.** `via: measurement`
+- 🔴 **"BOTH CI TIERS SIMULATED GREEN" WAS A SIMULATION THAT COULD NOT REACH THE BRANCH IT
+  CLAIMED TO TEST.** The refuse-on-skip path only executes when a toolchain is ABSENT; the host
+  has `go` and `nix`, so `toolchain_missing` returned `None` and the `require` set was never
+  consulted. `CAIRN_FACTS_REQUIRE=go`, `=nix` and `=all` all printed an identical `20 passed`.
+  **Ask what a green simulation structurally cannot execute** — here, the only branch that
+  mattered.
+- 🔴 **I REPORTED `completed=6/6` AND NEVER READ THE CONCLUSIONS. THREE OF THE SIX HAD FAILED.**
+  `completed` and `success` are different fields on the same object, and the easier one to assert
+  is the one that says nothing. This happened while assembling an audit brief, in the session
+  that had been quoting *read the content, never the exit code* all day. **Read
+  `[.statusCheckRollup[]|select(.conclusion=="FAILURE")]|length`, not a completion count.**
+- ⚠ **AND THE CI BREAKS WERE STRUCTURAL, NOT FLAKY:** the new step sat at `ci.yml:380` while the
+  job's `pip install pytest` was at `:531`; the `nix` job installs pytest NOWHERE; and 20 added
+  tests took the `tests` job's drift guard from gap 97 to 117 against its `MAX_GAP = 100`. **A new
+  pytest step in the `go` or `nix` job must be placed after that job's own interpreter setup, and
+  adding tests in bulk must move `FLOOR`.**
+- 🔴 **A SPELLED READ-ONLY GUARD WALKED PAST EVERY DESTRUCTIVE COMMAND PUT THROUGH IT.**
+  `{tok.lstrip("-") for tok in cmd} & {"rm","write","commit",…}` accepts `git clean -fdx`, a hard
+  repo reset, and any `sh -c "…"` one-liner, because a shell string tokenises as ONE token.
+  Labelling it "a spelled check" in its own docstring was NOT enough — **it had no negative
+  control, and neither did its sibling**, in a PR whose other three controls all did.
+- ⚠ **A GUARD WHOSE BODY IS A WORD-COUNT WHILE ITS DOCSTRING CLAIMS A RELATIONSHIP.** #101's
+  `test_every_unanswerable_fact_names_who_CAN_answer_it` asserted `len(reason) > 80` and that one
+  of four words appeared. A reason saying the OPPOSITE — *"nobody knows who could"* — passes both.
+  Same shape as the guards-narrower-than-their-docstring family already recorded here.
+- ⚠ **THE SALVAGE IS THE SHAPE TO COPY, NOT THE MECHANISM.** #102 does the one part with a
+  measured incident behind it, in one file: delete the derivable claim, name the command once,
+  add no guard. Measured `+8 lines, -4 prose words, derivable claims asserted 3 -> 0` — the line
+  count ROSE because a fenced command costs lines, and the number that matters is the assertion
+  count. **Report both rather than the flattering one.**
+- ⚠ **`flake.nix` HAD ALREADY DECLINED #101'S SHAPE, IN WRITING** — *"a check that ran the binary
+  to print that list and diffed it against a third hand-written copy would restate one claim down
+  a longer path."* The repo's existing prose contained the refutation of the mechanism before it
+  was built. **Grep the tree for a rejected-alternative note before building a gate.**
+
 ## How to verify
 
 ```bash
