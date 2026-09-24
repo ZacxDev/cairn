@@ -106,6 +106,60 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   squash sha is not re-derivable from the branch and every one of these rows was a separate
   `--is-ancestor` false positive waiting to happen.
 
+- 🔴 **RE-DERIVED FROM #97 — A DIFFERENT SUBJECT THAN THE RANK-9 BULLETS ABOVE: the UI arc
+  shipping and the deploy.** ADDED rather than replacing, because the two sessions measured
+  different things and neither narrative supersedes the other. #97's `main` sha is dropped as
+  stale; its rank-9 handover lesson is KEPT — that handover was rebuilt, but the lesson holds
+  and two sessions reached it independently.
+- ✅ **THE IMAGE IS PUBLISHED AND ANONYMOUSLY PULLABLE, MEASURED TWICE WITH A NEGATIVE CONTROL
+  EACH TIME.** `ghcr.io/zacxdev/cairn-ui`, tag `sha-1838b824dab479cc9b7fcedc08305c0dee558874`,
+  digest `sha256:be8b92414f32733fa1d9b24c26c64dd8b3b92fb0c0cc66a7d6a0702f3aebaae1`. CI's own
+  proof AND an independent `skopeo inspect --no-creds` from this host, each preceded by an
+  absent-tag control that was refused — so the zero is a measurement rather than a
+  possibly-credentialed read. ⚠ **The Go pod's retracted private-on-first-publish prediction
+  held up a SECOND time**: Actions created this package public and no manual flip was needed.
+- ✅ **BOTH NEW PUBLISH CONTROLS RAN FOR REAL**, not just locally:
+  `control: /var/lib/cairn-ui is owned by 65532, and User is 65532 — OK` and
+  `control: the UI image runs and refuses by name — OK`.
+- 🔴 **RANK 9'S HANDOVER IS INVALID AND THE MECHANISM IS THE INTERESTING PART.** A URL on
+  `127.0.0.1:8103` was handed to the operator. That instance (pid 3942268) has since EXITED,
+  and the port is now held by **a different session's** `cairn-ui` — measured:
+  `/proc/<pid>/cmdline` carries session `e5d90670-…`, serving a `shareflow2` world with its own
+  journal, where the token handed over cannot authenticate because the credential digest lives
+  in a different file. 🔴 **Both sessions chose 8103 because `## How to verify` NAMES 8103**,
+  so the recipe itself funnels every session onto one port. A handed-over localhost URL is not
+  a handover; see `Gotchas`.
+- ⏳ **THE DEPLOY IS NOT STARTED, AND FOUR OPERATOR DECISIONS ARE NOW RECORDED FOR IT** (ranked
+  item 10). Nothing was written into the deployment-manifest repository — deliberately, because
+  that repo's own `CLAUDE.md` states **"Commit = live deploy. Trunk is reconciled by Flux —
+  committing IS deploying to a live cluster."**
+- 🔴 **TWO CONSTRAINTS ON THAT DEPLOY WERE MEASURED, NOT ASSUMED, AND BOTH NARROW IT.**
+  **(a)** `cairn-ui` reads the store from a FILESYSTEM (`ui.StoreSource{Root:}`; there is no
+  `http.Client` anywhere under `cmd/cairn-ui` or `internal/ui`), and the store's volume is
+  `ReadWriteOnce` on `local-path`. So the UI is forced onto the store's namespace AND node — a
+  cross-namespace PVC mount does not exist and RWO is one node. Not a design choice.
+  **(b)** 🔴 **THE DEPLOYED POD HAS NO CONTROL JOURNAL.** Its env is exactly
+  `SUBSYSTEM_STORE_{PORT,ROOT,TOKEN_FILE,TRUSTED_PROXIES}` — zero occurrences of
+  `CONTROL_JOURNAL`, measured. The UI REFUSES to start without one, and the token-file
+  projection confers `admin` on nobody, so a journal must be created and seeded IN-CLUSTER
+  before the surface serves anything but a refusal.
+- ✅ **THE FIVE AUTH CONTROLS WERE WATCHED FAILING CLOSED on the shipped binary**, because the
+  neighbouring app's manifests make that the written precondition for exposure: unauthenticated
+  `GET /` and `/share` → **401**; `POST /sign-in` with no Origin / a foreign Origin / the right
+  one → **403 / 403 / 303**; `POST /share` with no CSRF / a wrong CSRF / a valid CSRF but no
+  session → **403 / 403 / 401**; the cookie is
+  `__Host-cairn-session=…; Path=/; HttpOnly; Secure; SameSite=Lax` (every `__Host-` requirement
+  met); and after five failures a VALID credential answers **401, not 303** — the lockout is
+  not walkable. ⚠ **ALL OF IT IS LOOPBACK, NOT OFF-MESH, AND THAT IS THE GAP THE PRECONDITION
+  ACTUALLY NAMES.** What is measured is that each gate is derived from the REQUEST — Origin vs
+  Host, the session's own token, the cookie, the client key — and none branches on network
+  position, so there is no trusted-network path to bypass. That is a STRUCTURAL argument, not
+  the off-mesh measurement, and it cannot become one without deploying.
+- **No external-task-board field**: the resolver exited 5 again. Its positive control proves a
+  CORRECT id would have resolved, which is narrower than a clean bill of health.
+- ⚠ **FOUR OTHER HANDOFF PRs WERE OPEN WHILE THIS WAS WRITTEN** (#80, #85, #95, #96), all
+  editing this file. If this update lost that race it needed RE-DERIVING, not resolving.
+
 ## Next steps (ranked)
 
 🔴 **NUMBERING IS STABLE — ranks 1–9 keep their meaning; 10 and 11 are appended.** Rank is half
@@ -934,6 +988,98 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   the archive. Neither was careless — it is what happens when sessions that cannot see each
   other write the same list. **Before acting on a ranked item, check whether it is already
   done**; the entry is a claim like any other.
+
+- 🔴 **RE-DERIVED FROM #97**, which lost the doc race to #98 and then to #96. Three of its
+  bullets were deliberately not carried — its `SIX OF ELEVEN` event-kind count, its
+  `leakscan`-exits-2-on-a-directory entry, and its *"the cheap control settled it"* bullet —
+  each superseded or retracted above rather than merely reworded.
+- 🔴 **AN EMPTY RESULT COULD NOT DISTINGUISH TWO CAUSES OF A `leakscan` EXIT 2, AND THE CHEAP
+  CONTROL SETTLED IT IN ONE COMMAND.** The base clone exited 2 with untracked `result` symlinks
+  AND a live agent worktree both present, either a plausible culprit. A fresh worktree of
+  `origin/main` — same tree, neither artefact — scanned **rc 0**, and the scanner's single
+  `COULD NOT READ` line named the worktree directory. **The rival mechanism was named before
+  concluding, and the discriminating control cost less than reasoning about it would have.**
+- 🔴 **A HANDED-OVER `localhost:PORT` URL IS NOT A HANDOVER, AND THIS ONE WAS SILENTLY
+  INVALIDATED WITHIN THE SESSION THAT GAVE IT.** `127.0.0.1:8103` was handed to the operator
+  with a token path. That process later exited and **another session's `cairn-ui` took the
+  port**, serving a different store and a different journal — so the URL still answered `401`,
+  looking alive, while the handed-over token could not authenticate against it. Measured from
+  `/proc/<pid>/cmdline`, which carries the owning session's scratchpad id. 🔴 **THE RECIPE IS
+  THE CAUSE: `## How to verify` NAMES 8103, so every session that follows it collides.** Two
+  fixes, and the second is the one that generalises: pick a free port (`ss -ltn` first), and
+  **hand over the PID and the session id beside the URL** — a port answering 401 is
+  indistinguishable from yours until you read whose process holds it.
+- 🔴 **THE LEAK GATE BUILT THIS MORNING REFUSED THREE OF THIS SESSION'S OWN DELTAS, AND THE
+  THIRD WAS A DIFFERENT RULE FROM THE FIRST TWO.** Two `denied-identifier` (a repo name in a
+  `$`-variable spelling, which is why it did not LOOK like a name; and this repo's own
+  synthetic canary, pasted in while documenting how to probe the gate) and one
+  `dated-incident` (a real date in prose). ⚠ **A SYNTHETIC VALUE IS STILL A DENIED
+  IDENTIFIER** — the canary exists to be refused, so quoting it in a committed doc is a real
+  violation, not an exemption. The remedy every time was to describe by ROLE.
+- 🔴 **AND IT CAUGHT A PRIVATE IP IN A TEST FIXTURE — THEN CAUGHT THE BULLET DESCRIBING THAT
+  CATCH, BECAUSE THE BULLET QUOTED THE ADDRESS.** A new `internal/ui` test used an RFC1918 /24
+  as a trusted-proxy allowlist entry; the remedy is RFC5737 TEST-NET-1, applied at all three
+  sites together. ⚠ **THE SECOND REFUSAL IS THE ONE WORTH RECORDING**: this very bullet first
+  spelled the offending prefix in order to explain it, and the gate refused the explanation on
+  the line it added. `AGENTS.md`'s rule is *describe the shape, never instantiate it* — and the
+  handoff tool's own write-gate doc records the identical mistake being made while documenting
+  a different rule. **An example that IS the thing it forbids is the thing it forbids.**
+  Four refusals in one session, all before anything was pushed, which is the whole point of
+  the gate sitting inside the write tool rather than in a sentence.
+- 🔴 **A GUARD THAT ASSERTS A FIELD BY SEARCHING THE WHOLE BLOCK IS SATISFIED BY A NEIGHBOUR,
+  AND THIS REPOSITORY HAD ALREADY MEASURED IT ONCE.** `test_flake_ui_image_runtime_contract`'s
+  "not root" assertion searched the maker block for `${toString serverUid}:${toString
+  serverUid}` — a string the block's own `chown` line contains. MEASURED: `User = "0:0"` left
+  **all 17 tests green** and the built image reported `Config.User: 0:0`. The sibling module
+  records that identical mutation as a defect it had already shipped and closed, with a
+  FIELD-SCOPED reader; the new module regressed to the pre-fix shape under the same test name.
+  **Read a field, never a block.**
+- 🔴 **A MUTANT SURVIVED THE TEST WRITTEN TO CATCH IT, AND FINDING THAT IS WHAT MADE THE TEST
+  REAL.** `TestALockedOutClientIsRefusedBEFORETheCredentialIsRead` asserted the REFUSAL —
+  which is identical whether the lockout runs before or after `Authenticate`, because both
+  orders still precede the session mint. The mutant passed a green suite. It now counts
+  CREDENTIAL RESOLUTIONS through a wrapped `TokenAuthority` and requires zero while locked
+  out. **When a test's name says ORDER, assert something only the order changes.**
+- 🔴 **TWO REASONS FOR THAT ORDER WERE FALSE AND ARE RETRACTED IN THE CODE RATHER THAN
+  SWAPPED.** "A lockout checked after the token is one a valid credential walks through" —
+  false, measured. "An attacker must not get the failure record wiped" — false for THIS
+  limiter: `netid.RateLimiter.RecordSuccess` is a deliberate no-op whose own comment explains
+  that a success-resets-counter design is the defect. `internal/api` states the first reason
+  for ITSELF; **a reason does not transfer between packages unexamined**, and examining it is
+  what produced the retraction.
+- 🔴 **A BUCKET-SEPARATION TEST NEEDS A THRESHOLD ABOVE ONE, AND AT ONE IT FAILS AGAINST
+  CORRECT CODE.** `RecordFailure` reports the lockout when the count REACHES the threshold, so
+  at 1 every client trips on its own first failure — making "the second client's first failure
+  must not trip" unsatisfiable. The first draft asserted exactly that and went red against a
+  correct implementation.
+- 🔴 **A `PINNED_*_STEPS` DICT PINS WHAT IT NAMES AND IS BLIND TO WHAT IT DOES NOT.** Adding a
+  publish leg left both the push and control dicts at FOUR while SIX steps existed, and
+  **every test in the file stayed green**: the membership check is `set(PINNED) - set(bodies)`,
+  which asks whether the pinned ones are present. So the two steps deciding whether a
+  root-owned session dir or a private package reaches a PUBLIC registry were exactly the two
+  the file could not see. **A whole-text pin still needs a ledger of what must be pinned.**
+- 🔴 **AN ANCHOR INSIDE A STEP'S BODY IS NOT A BOUNDARY.** Inserting that leg anchored on a
+  comment line that occurs INSIDE the Go proof step, so the insert landed mid-step and a
+  follow-up rewrite truncated its tail. The whole-text pin caught it with a diff naming
+  exactly the missing lines; review would not have. Restored from `origin/main` and appended
+  at EOF, where the last step genuinely ends.
+- 🔴 **`$?` AFTER A PIPE, AGAIN, IN THE SESSION THAT HAD ALREADY READ THE WARNING.**
+  `go build ./... 2>&1 | head -3; echo "rc=$?"` reports `head`'s 0 for a build that failed.
+  Capture the rc before any pipe.
+- ⚠ **A COUNT IN A DOCSTRING BESIDE THE DICT IT COUNTS WILL DRIFT** — "Four push steps", "the
+  four CONTROL steps", "both pods", "Two repositories": ten stale phrasings swept in one pass.
+  The docstrings now carry NO number, because the dict IS the count.
+- **Decision (operator, this session): the UI deploys with a NEW UI-owned PVC** holding the
+  control journal and the session table, with the store's volume mounted read-only. Offered and
+  declined: the journal on the store's PVC (it needs write access to a volume `seed.sh`
+  overwrites wholesale) and two separate PVCs.
+- **Decision (operator, this session): the IngressRoute lands in the SAME PR as the workload**,
+  accepting that the public hostname answers refusals until the journal is seeded. The
+  alternative — cluster-internal first, route as a follow-up — was offered twice and declined.
+- **Decision (operator, this session): seed with `-provider supabase`** and the real Supabase
+  subject, so the user survives the JWT backend landing and needs no re-provision.
+- **Decision (operator, this session): the in-cluster seeding is done by the ASSISTANT next
+  session, with an explicit go-ahead first**, rather than handed to the operator as a runbook.
 
 ## How to verify
 
