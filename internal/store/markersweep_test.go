@@ -223,17 +223,35 @@ func hasFoldingRune(line string) bool {
 // a narrowing absorbed), so completeness here is cheap insurance rather than a guard.
 //
 // 🔴 BUT THE MAP IS THE SECOND THING TO EDIT IN THAT SCENARIO, NOT THE FIRST — AND THE
-// FIRST IS PINNED BY NOTHING. `asReadUnderReI` hardcodes `{"open", "resolved"}`, a THIRD
-// copy of the oracle's alternation beside `LineMentionsMarker`'s and
-// `markerAlternation`'s, and it is the one this file added: before the marker-word
-// scoping, the respelling was indifferent to what the alternation contained. If
-// `_MARKER_ANYWHERE` ever gains `CLOSED` and only the production walks are updated, then
-// `- Cloſed:` diverges for the declared ASCII-only-fold reason, the respelling is the
-// identity on it, and the sweep reports `1 divergence(s) outside the ONE declared
-// residual` — the SAME false alarm on the SAME clause this whole change exists to fix.
-// It fails LOUD, which is why the list is left duplicated rather than consolidated here
-// (one rule/one place across a test/production boundary is a bigger change than this
-// one). Edit all three sites together; nothing will tell you if you miss this one.
+// FIRST IS PINNED BY NOTHING. `asReadUnderReI` hardcodes `{"open", "resolved"}`, and it
+// is the copy this change added: before the marker-word scoping the respelling was
+// indifferent to what the alternation contained. If `_MARKER_ANYWHERE` ever gains
+// `CLOSED` and only the production walk is updated, then `- Cloſed:` diverges for the
+// declared ASCII-only-fold reason, the respelling is the identity on it (MEASURED —
+// `asReadUnderReI("- Cloſed:")` returns its input unchanged), and the sweep reports
+// `1 divergence(s) outside the ONE declared residual` — the SAME false alarm on the SAME
+// clause this whole change exists to fix. It fails LOUD, which is why the list is left
+// duplicated rather than consolidated (one rule/one place across a test/production
+// boundary is a bigger change than this one).
+//
+// 🔴 THERE ARE FOUR COPIES, NOT THREE, AND WHICH ONES YOU EDIT DEPENDS ON WHICH ORACLE
+// MOVED — an earlier wording said "edit all three sites together" and was wrong in BOTH
+// directions. The copies, with the pattern each transcribes:
+//
+//	marker.go             `LineMentionsMarker`      `_MARKER_ANYWHERE`
+//	markersweep_test.go   `asReadUnderReI`          both probes' attribution
+//	markersweep_test.go   `narrowedMentionsMarker`  `_MARKER_ANYWHERE` (the control)
+//	openness.go           `markerAlternation`       `_NEAR_MISS_MARKER`
+//
+// So for an `_MARKER_ANYWHERE`-only change, editing `markerAlternation` is WRONG — it is
+// the other pattern's transcription. 🔴 And the omitted fourth, `narrowedMentionsMarker`,
+// is the one that fails SILENTLY: it is the positive control, swept against `fx.Anywhere`,
+// and `TestTheMarkerSweepCanReportANonZero` asserts only that its `pr#` count is non-zero.
+// A stale control still satisfies that, so it would quietly stop being "`LineMentionsMarker`
+// with `foldPR` reverted — the REAL defect", which is exactly what its own doc comment
+// claims it is, while staying green. That is the opposite of the LOUD property the
+// paragraph above relies on, and it is why the list is enumerated here rather than
+// counted.
 //
 // ⚠ `unicode.SimpleFold` IS NOT A SUBSTITUTE. Go's simple-fold orbit connects U+017F
 // to `s` and U+212A to `k`, but U+0130 and U+0131 have no simple fold at all — their

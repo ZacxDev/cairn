@@ -151,12 +151,27 @@ EXTRA = (
     # reach `terminatorColon`'s `ignoreCase` argument on the `_NEAR_MISS_MARKER` side.
     # They SHOUT, so `nearMissMarker` answers them from the shouted branch, which
     # returns before the terminator run is ever walked; that run is only reachable
-    # from the sentence-cased branch. With no row of this shape, dropping the
-    # `ignoreCase &&` guard in `terminatorColon` — a plausible "simplify" edit on
-    # code a previous round introduced — produced ZERO divergences over the whole
-    # corpus and the sweep stayed green. MEASURED: with this row present that mutant
-    # makes `nearMissMarker` FALSE where `_NEAR_MISS_MARKER` matches — the pattern
-    # carries no flags, so its `[^A-Za-z0-9\n]` run spans `ſ` quite happily.
+    # from the sentence-cased branch.
+    #
+    # 🔴 NAME WHICH MUTATION — "dropping the `ignoreCase &&` guard" HAS TWO READINGS AND
+    # THIS COMMENT MEANT ONLY ONE. (a) drop the CONJUNCT, so `foldsToASCIILetter` applies
+    # for both callers; (b) delete the CLAUSE, so the run is ASCII-only for both. They
+    # move DIFFERENT probes in OPPOSITE directions, and reading them as interchangeable
+    # is what produced a false audit finding against `markersweep_test.go`'s twin
+    # paragraph — which now carries both, measured. This sentence is about (a).
+    #
+    # MEASURED: with this row present, mutant (a) makes `nearMissMarker` FALSE where
+    # `_NEAR_MISS_MARKER` matches — the pattern carries no flags, so its
+    # `[^A-Za-z0-9\n]` run spans `ſ` quite happily.
+    #
+    # ⚠ AND THE "ZERO DIVERGENCES" HALF IS RETRACTED, because it was true only of (a)
+    # and read as if it covered both. It said that with no row of this shape the mutant
+    # "produced ZERO divergences over the whole corpus and the sweep stayed green".
+    # RE-MEASURED with BOTH sentence-cased folding-rune rows removed and the fixture
+    # regenerated: under (a) that holds — 480/0 and 210/0, identical to the control —
+    # but under (b) the sweep is RED, 483 divergences with 3 OUTSIDE the declared
+    # residual on `_MARKER_ANYWHERE`. A pruner who deletes this row and picks the other
+    # reading gets a result this comment did not predict.
     "- Open ſ: a long s inside the terminator run, sentence-cased.",
     # 🔴 A FOLDING RUNE IN *BOTH* CLASS POSITIONS AT ONCE — the row shape that made the
     # sweep's own attribution clause misreport, and the only one of these nine literal

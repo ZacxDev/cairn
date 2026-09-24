@@ -242,17 +242,32 @@ FOLDING_RUNE_EXTRA = (
 #: are enumerated in ONE place — the UNION cannot grow in silence, because the assertion
 #: below is two-way against the filter.
 #:
-#: 🔴 THE SPLIT ITSELF IS DOCUMENTATION, NOT ENFORCEMENT, AND SAYING SO IS THE POINT.
-#: The assertion pins the CONCATENATION, so any re-partition of the same nine rows passes.
-#: MEASURED: move this row into `FOLDING_RUNE_EXTRA` — the exact revert of the
-#: change that created this tuple — and `pytest tests/test_marker_oracle_sweep.py` is
-#: 7 passed and the Go sweep stays green at 480/211. The mirror move passes too.
-#: Nothing can close that: which side a row belongs on is a fact about the GO WALK, and
-#: this file cannot run it (see this module's docstring — "nothing here is evidence about
-#: Go"). A Go-side test pinning the partition was considered and REJECTED: it is a test
-#: guarding a test's tuple, the same guard-on-a-guard shape cut from this PR earlier.
-#: So the split buys a reader a per-row answer by list membership and buys no guard —
-#: do not write, or read, a sentence here implying otherwise.
+#: 🔴 THE SPLIT IS DOCUMENTATION, NOT ENFORCEMENT — BUT "ANY RE-PARTITION PASSES" IS
+#: FALSE, AND AN EARLIER WORDING SAID IT. The assertion compares the filtered rows in
+#: CORPUS ORDER against the concatenation, so it pins the union AND that order. A
+#: re-partition therefore passes only when the boundary stays at the same point in the
+#: corpus order: of the 2**9 assignments of these nine rows to two tuples, the 10
+#: order-preserving prefix cuts pass and the other 502 fail. The earlier claim was
+#: generalised from two measurements that were both prefix cuts — one measurement is not
+#: a general claim, and neither are two on the same side of the boundary.
+#:
+#: MEASURED, both directions: move the count-visible row into `FOLDING_RUNE_EXTRA` (the
+#: exact revert of the change that created this tuple) and `pytest
+#: tests/test_marker_oracle_sweep.py` is 7 passed with the Go sweep green at 480/211 —
+#: a prefix cut. Move a NON-TERMINAL row, `- OPENK:`, across the boundary and it is
+#: 1 failed, 6 passed.
+#:
+#: 🔴 SO THE MISLEADING CASE IS THE ONE THAT PASSES, AND IT IS EXACTLY THE EDIT THIS
+#: LEDGER INVITES: a row at the END of `FOLDING_RUNE_EXTRA` moved across on the strength
+#: of a real measurement is a prefix cut and is silently accepted, while a row from the
+#: middle fails an assertion about corpus ORDER wearing a message about membership.
+#: What nothing can close is the part that matters: which side a row BELONGS on is a
+#: fact about the GO WALK, and this file cannot run it (see this module's docstring —
+#: "nothing here is evidence about Go"). A Go-side test pinning the partition was
+#: considered and REJECTED: it is a test guarding a test's tuple, the same guard-on-a-guard
+#: shape cut from this PR earlier. So the split buys a reader a per-row answer by list
+#: membership and buys no guard on that answer — do not write, or read, a sentence here
+#: implying otherwise, in either direction.
 FOLDING_RUNE_EXTRA_COUNT_VISIBLE = (
     "- Reſolved ſ: a long s in the marker word AND the terminator run.",
 )
@@ -268,26 +283,33 @@ def test_the_folding_rune_EXTRA_rows_are_pinned_because_NO_COUNT_CAN_SEE_THEM():
     fold-awareness, in EITHER direction. The ledger above is the guard; this asserts the
     corpus still carries exactly it.
 
-    🔴 TWO TUPLES, ONE FILTER, AND THE SPLIT IS NOT ENFORCED. The corpus does not
-    separate the populations — the filter is "carries a folding rune" — so this asserts
-    the CONCATENATION. Any re-partition of the same rows passes, measured. WHICH tuple a
-    row sits in is the question a reader comes here with, and it is answered by list
-    membership as documentation; no instrument checks it, and the tuple's own comment
-    says why nothing can.
+    🔴 TWO TUPLES, ONE FILTER, AND THE SPLIT IS NOT ENFORCED — but this assertion is
+    ORDER-SENSITIVE, so it is not indifferent to a re-partition either. The corpus does
+    not separate the populations (the filter is "carries a folding rune"), so this
+    compares the filtered rows IN CORPUS ORDER against the concatenation: a boundary
+    moved to a different point in that order fails, a boundary kept at the same point
+    passes. WHICH tuple a row BELONGS in is the question a reader comes here with, and
+    that is answered by list membership as documentation only — nothing checks it, and
+    the tuple's own comment says why nothing can.
     """
     present = tuple(
         line for line in marker_corpus.EXTRA
         if any(ch in line for ch in "İıſK")
     )
     assert present == FOLDING_RUNE_EXTRA + FOLDING_RUNE_EXTRA_COUNT_VISIBLE, (
-        "the folding-rune rows of `marker_corpus.EXTRA` have moved. The "
-        "`FOLDING_RUNE_EXTRA` rows produce no divergence, so no count in either client "
-        "can see them go; if one is genuinely obsolete, say in the commit which revert "
-        "stops being observable. A row that DOES diverge belongs in "
-        "`FOLDING_RUNE_EXTRA_COUNT_VISIBLE` instead. \u26a0 This assertion pins the "
-        "UNION, never the split: moving a row between the two tuples passes here AND "
-        "passes the Go sweep, so the split is documentation for a reader and nothing "
-        "checks it."
+        "the folding-rune rows above no longer match `marker_corpus.EXTRA`. TWO "
+        "different edits reach this line, and the fix differs:\n"
+        "  (1) a row was ADDED TO, REMOVED FROM or REORDERED IN `marker_corpus.EXTRA` "
+        "\u2014 update the tuples to match. The `FOLDING_RUNE_EXTRA` rows produce no "
+        "divergence, so no count in either client can see one go; if one is genuinely "
+        "obsolete, say in the commit which revert stops being observable.\n"
+        "  (2) `marker_corpus.EXTRA` is UNCHANGED and a row was moved BETWEEN the two "
+        "tuples here, to a boundary at a different point in the corpus order. This "
+        "assertion is order-sensitive, which is why it fired \u2014 it is NOT checking "
+        "that you put the row on the correct side. Nothing checks that: which side a "
+        "row belongs on is a fact about the Go walk, and this file cannot run it. Move "
+        "the rows so the concatenation is in corpus order.\n"
+        "Diff the tuples against `marker_corpus.EXTRA` to tell which you are in."
     )
 
 
