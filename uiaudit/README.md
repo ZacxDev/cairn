@@ -68,6 +68,14 @@ No `script-src` at all, so `default-src 'none'` governs scripts — the strictes
 `window.axe` became an object, and `axe.run()` returned `{"violations":1,
 "ids":["color-contrast"],"testEngine":"4.12.1"}` on `/`.
 
+**What that result reaches, stated so it cannot go stale:** the measurement was taken at the
+strictest point on the axis that matters — a policy granting scripts *no* source whatsoever — so
+it carries to **any** policy that does not grant scripts a source, whatever else that policy
+says. Re-run the spike only if `internal/ui`'s `ContentSecurityPolicy` ever starts permitting
+scripts; a policy that tightens elsewhere, or that drops a clause, cannot invalidate it. That is
+a claim about where this measurement sits on a dimension, not a cross-reference to anybody's
+current value — which is the distinction the stale line further down was the counter-example to.
+
 ⚠ A side observation worth recording: `fetch(location.href)` from inside the page FAILED, and
 that is the CSP working (`connect-src` falls back to `default-src 'none'`). The spike reads the
 CSP with `curl` for that reason. A reader who saw only the page-side read would conclude the
@@ -193,11 +201,27 @@ the first match — so the walk started a provider flight and its success check 
 `id="token"`) read the resulting page as a pass. Both halves are fixed: the selector names the
 form by `ui.SignInPath`, and the verdict is now the cookie rather than the absence of a word.
 
-⚠ **What the walk has still not seen live:** `script-src 'self'` with the stylesheet as a real
-subresource (so `network` stops being zero by construction — a signal worth having), an
-undeclared path answering **404** rather than 401, and `GET /` **303**ing to `/sign-in` for
-`Accept: text/html` — the last of which is now covered by the redirect guard below rather than
-by a live capture, because a signed-in walk does not trigger it.
+⚠ **What the walk has still not seen live, stated as a moving target rather than a clause:**
+the stylesheet as a real blocking subresource **against the policy as it stands at merge time**.
+The merged-tree walk above did fetch it successfully on every page — but against `internal/ui`'s
+`ContentSecurityPolicy` *as it was on the auth branch's head that day*, and that constant has
+already changed since (a clause was removed after a round-0 audit found it permitted something
+the code forbids) and may change again before merge. **Read the constant, never a copy of its
+value.**
+
+Also unseen live: an undeclared path answering **404** rather than 401 — this walk never probes
+one. `GET /` **303**ing to `/sign-in` for `Accept: text/html` is covered by the redirect guard
+below rather than by a live capture, because a signed-in walk does not trigger it.
+
+🔴 **THIS LINE WAS STALE TWICE OVER, AND BOTH WAYS ARE WORTH RECORDING.** It named a specific
+clause of that policy, and the clause was deleted — a cross-reference to one *part* of a value
+somebody else owns, which is precisely the thing that rots. And it claimed the stylesheet
+subresource had not been seen live when the merged-tree run above had already seen it, so the
+sentence was pessimistic about this harness at the same time as it was wrong about the policy.
+The second stale copy in this PR after the structural-zero line, and the same lesson both times:
+**a claim about someone else's value belongs as a pointer to the thing that holds it.** The
+spike evidence at the top of this file is deliberately NOT rewritten to match — it quotes the
+policy as measured, which is what makes it evidence rather than a claim.
 
 ✅ **That 303 WAS a hazard for the document-status gate, and it is now CLOSED.** A redirect
 lands on a 2xx, so every other check here passes on it — and the bytes measured would be filed
