@@ -698,8 +698,18 @@ func Validate(env Env, opts Options) (int, error) {
 		for _, name := range entryNames {
 			entryPaths = append(entryPaths, filepath.Join(cache, scope, name))
 		}
+		// 🔴 THE ADVISORIES' DENOMINATOR IS `ScannedEntryCount`, NOT `checked`, AND
+		// THAT IS A THIRD SET. `checked` is the LISTING — every `*.md` name in the
+		// scope directory, which is the right denominator for the parse line above
+		// because the loader tries every one of them. The scanners do not: they read
+		// only the kinds the loader's own table TAKES, refusing a FIFO, a device, a
+		// directory or a dangling link before `open()`. Handing them `checked`
+		// therefore printed a zero over files nothing had opened — MEASURED on a scope
+		// holding one entry beside a FIFO: `dropped lines: 0 across 2 entry file(s)`,
+		// with one of the two never read. The FIFO is not lost from the output; it is
+		// reported malformed on stderr by the line above and drives the exit to 5.
 		for _, line := range store.ValidationAdvisoryLines(
-			checked,
+			store.ScannedEntryCount(entryPaths),
 			store.ScanDroppedLines(entryPaths),
 			store.ScanUnreachableMarkers(entryPaths),
 		) {

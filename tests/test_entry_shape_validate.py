@@ -235,10 +235,17 @@ class TestScanDroppedLines:
 
         `extract_sections` concatenates same-named sections, so the orphan under
         the SECOND heading arrives immediately after the FIRST section's bullet
-        and is absorbed into it. Measured here: the orphan sits on file line 16
-        and contributes NO finding; the offsets this scanner reports are into the
-        concatenated body, which is not the same coordinate system as the file
-        once a heading repeats.
+        and is absorbed into it. The orphan contributes NO finding; the offsets
+        this scanner reports are into the concatenated body, which is not the
+        same coordinate system as the file once a heading repeats.
+
+        ⚠ THE FILE LINE IS ASSERTED BELOW, NOT STATED HERE. An earlier draft of
+        this docstring read "the orphan sits on file line 16"; it sits on 21, and
+        the wrong number was copied onward into a PR comment before an audit
+        re-derived it from `_entry`. A measurement written into prose is a claim
+        nothing re-runs, so the number now lives in the positive control, where a
+        fixture edit that moves the line fails this test rather than silently
+        making a sentence false.
         """
         path = tmp_path / "twice-headed.md"
         path.write_text(
@@ -250,8 +257,16 @@ class TestScanDroppedLines:
         assert entry_shape.scan_dropped_lines([path]) == ()
         # The positive control on the fixture: the orphan really is in the file,
         # so the zero above is about absorption and not about a fixture that
-        # never wrote the line.
-        assert any("SECOND heading" in ln for ln in path.read_text().splitlines())
+        # never wrote the line. The LINE NUMBER is asserted, not described —
+        # `_entry` is shared with every other case here, so a header line added
+        # to it moves this orphan and the docstring above would otherwise go
+        # quietly wrong (it already did once, by five lines).
+        lines = path.read_text(encoding="utf-8").splitlines()
+        orphans = [n for n, ln in enumerate(lines, 1) if "SECOND heading" in ln]
+        assert orphans == [21], (
+            f"the orphan is on file line(s) {orphans}, not 21 — `_entry`'s header "
+            f"changed shape, so re-derive rather than editing this number"
+        )
 
 
 class TestNonRegularPathsAreRefusedBeforeOpen:
@@ -312,6 +327,56 @@ class TestNonRegularPathsAreRefusedBeforeOpen:
         link.symlink_to(fifo)
         done = self._scan_in_a_subprocess(link)
         assert done.returncode == 0, done.stderr
+
+    def test_the_DENOMINATOR_counts_what_was_SCANNED_not_what_was_LISTED(
+        self, tmp_path: Path
+    ):
+        """🔴 THE ZERO OVER A FILE NOBODY OPENED. RED before `scanned_entry_count`
+        existed, because the clients passed the unfiltered listing.
+
+        The two scanners refuse a FIFO before `open()` — the tests above are the
+        whole reason they do — but the count printed beside their zero came from
+        `entry_files_in`, which lists it. So a scope holding one real entry and
+        one FIFO printed `dropped lines: 0 across 2 entry file(s)`, asserting
+        that every line of a file nothing had read reaches a bullet. That is the
+        reassuring zero the `NOT CHECKED` branch exists to prevent, arriving
+        through the numerator instead of through an empty directory.
+
+        ⚠ THE FIFO IS NOT LOST FROM THE OUTPUT and this is not a softening: the
+        parse line above the advisories still counts it and reports it malformed,
+        and `validate` still exits 5. Only the advisory denominator changes.
+        """
+        real = _write(tmp_path, "- 2000-01-04: a bullet.\n")
+        fifo = tmp_path / "wedge.md"
+        os.mkfifo(fifo)
+        paths = [real, fifo]
+
+        assert entry_shape.scanned_entry_count(paths) == 1
+        assert len(paths) == 2, "the fixture must present BOTH, or this proves nothing"
+
+        blob = "\n".join(entry_shape.validation_advisory_lines(
+            n_scanned=entry_shape.scanned_entry_count(paths),
+            dropped=entry_shape.scan_dropped_lines(paths),
+            unreachable=entry_shape.scan_unreachable_markers(paths),
+        ))
+        assert "across 1 entry file(s) scanned" in blob, blob
+        assert "across 2 entry file(s)" not in blob, blob
+
+    def test_a_scope_of_NOTHING_BUT_unreadable_kinds_says_NOT_CHECKED(
+        self, tmp_path: Path
+    ):
+        """The other end of the same change, and the one that makes it a fix
+        rather than a re-labelling: when the scanners open NOTHING, the honest
+        output is `NOT CHECKED`, not `0 across 1`.
+        """
+        fifo = tmp_path / "wedge.md"
+        os.mkfifo(fifo)
+        assert entry_shape.scanned_entry_count([fifo]) == 0
+        lines = entry_shape.validation_advisory_lines(
+            n_scanned=entry_shape.scanned_entry_count([fifo]),
+            dropped=(), unreachable=(),
+        )
+        assert len(lines) == 1 and "NOT CHECKED" in lines[0], lines
 
 
 # --------------------------------------------------------------------------
@@ -453,7 +518,7 @@ class TestValidationAdvisoryLines:
         THAT WALKED NOTHING, and it must not render anywhere near a clean-looking
         count."""
         lines = entry_shape.validation_advisory_lines(
-            n_files=0, dropped=(), unreachable=()
+            n_scanned=0, dropped=(), unreachable=()
         )
         assert len(lines) == 1
         assert "NOT CHECKED" in lines[0]
@@ -464,11 +529,12 @@ class TestValidationAdvisoryLines:
     def test_both_zeros_carry_their_DENOMINATOR(self):
         """A bare zero is indistinguishable from a scanner wired to nothing."""
         lines = entry_shape.validation_advisory_lines(
-            n_files=7, dropped=(), unreachable=()
+            n_scanned=7, dropped=(), unreachable=()
         )
         blob = "\n".join(lines)
-        assert "dropped lines: 0 across 7 entry file(s)" in blob
-        assert "marker reachability: 0 out-of-reach marker(s) across 7 entry file(s)" in blob
+        assert "dropped lines: 0 across 7 entry file(s) scanned" in blob
+        assert ("marker reachability: 0 out-of-reach marker(s) across 7 entry "
+                "file(s) scanned") in blob
 
     def test_the_dropped_zero_states_ALL_THREE_of_its_blind_spots(self):
         """🔴 UNLIKE ITS SIBLING, THIS CHECK IS KNOWINGLY PARTIAL — AND IT IS
@@ -485,7 +551,7 @@ class TestValidationAdvisoryLines:
         the behaviour move together.
         """
         blob = "\n".join(
-            entry_shape.validation_advisory_lines(n_files=1, dropped=(), unreachable=())
+            entry_shape.validation_advisory_lines(n_scanned=1, dropped=(), unreachable=())
         )
         assert "PARTIAL BY CONSTRUCTION, IN THREE WAYS" in blob
         for named in ("ABSORBED TAIL", "UNCLOSED FENCE", "DUPLICATED"):
@@ -498,7 +564,7 @@ class TestValidationAdvisoryLines:
         cannot support. That is the order the pre-extraction original shipped in
         until an audit read its rendered output for a real broken entry."""
         lines = entry_shape.validation_advisory_lines(
-            n_files=1,
+            n_scanned=1,
             dropped=(entry_shape.DroppedLineFinding("a.md", 1, "  lost."),),
             unreachable=(),
         )
@@ -507,7 +573,7 @@ class TestValidationAdvisoryLines:
 
     def test_findings_are_quoted_with_their_file_and_offset(self):
         lines = entry_shape.validation_advisory_lines(
-            n_files=2,
+            n_scanned=2,
             dropped=(
                 entry_shape.DroppedLineFinding("talus-svc.md", 1, "  lost prose."),
                 entry_shape.DroppedLineFinding(
@@ -521,11 +587,11 @@ class TestValidationAdvisoryLines:
             ),
         )
         blob = "\n".join(lines)
-        assert "🔴 2 DROPPED LINE(S) across 2 entry file(s)" in blob
+        assert "🔴 2 DROPPED LINE(S) across 2 entry file(s) scanned" in blob
         assert "1 of them looks like a `OPEN:`/`RESOLVED:` DECLARATION" in blob
         assert "    talus-svc.md: nuance line 1" in blob
         assert "    talus-svc.md: nuance line 2  ← looks like a DECLARATION" in blob
-        assert "🔴 1 MARKER(S) OUT OF REACH across 2 entry file(s)" in blob
+        assert "🔴 1 MARKER(S) OUT OF REACH across 2 entry file(s) scanned" in blob
         assert "    talus-svc.md: line 2 of the bullet opening" in blob
         assert "(would declare `open`)" in blob
 
@@ -535,7 +601,7 @@ class TestValidationAdvisoryLines:
         own verdict."""
         long_line = "x" * 500
         lines = entry_shape.validation_advisory_lines(
-            n_files=1,
+            n_scanned=1,
             dropped=(entry_shape.DroppedLineFinding("a.md", 1, long_line),),
             unreachable=(),
         )

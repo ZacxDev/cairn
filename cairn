@@ -1652,8 +1652,18 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # write lost a line — which makes the store lossier, not safer. A gate an
         # author cannot turn green by fixing the file they are writing is worse
         # than no gate.
+        # 🔴 THE ADVISORIES' DENOMINATOR IS `scanned_entry_count`, NOT `checked`,
+        # AND THAT IS A THIRD SET. `checked` is the LISTING — every `*.md` name in
+        # the scope directory — which is right for the parse line above, because
+        # the loader tries every one of them. The scanners do not: they read only
+        # the kinds the loader's table TAKES, refusing a FIFO, a device, a
+        # directory or a dangling link before `open()`. Handing them `checked`
+        # printed a zero over files nothing opened — MEASURED on a scope holding
+        # one entry beside a FIFO: `dropped lines: 0 across 2 entry file(s)`, one
+        # of them never read. The FIFO is not lost from the output; the line above
+        # reports it malformed and drives the exit to 5.
         for line in entry_shape.validation_advisory_lines(
-            n_files=checked,
+            n_scanned=entry_shape.scanned_entry_count(entry_paths),
             dropped=entry_shape.scan_dropped_lines(entry_paths),
             unreachable=entry_shape.scan_unreachable_markers(entry_paths),
         ):

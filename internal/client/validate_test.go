@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -302,10 +303,10 @@ func TestValidateReportsDroppedLinesAndOutOfReachMarkers(t *testing.T) {
 	}
 	for _, want := range []string{
 		"cairn: alpha-notes: 2 of 2 entry file(s) parse, 0 malformed",
-		"🔴 2 DROPPED LINE(S) across 2 entry file(s) [dropped-line]",
+		"🔴 2 DROPPED LINE(S) across 2 entry file(s) scanned [dropped-line]",
 		"1 of them looks like a `OPEN:`/`RESOLVED:` DECLARATION",
 		"lossy-thing.md: nuance line 2  ← looks like a DECLARATION",
-		"🔴 1 MARKER(S) OUT OF REACH across 2 entry file(s) [unreachable-marker]",
+		"🔴 1 MARKER(S) OUT OF REACH across 2 entry file(s) scanned [unreachable-marker]",
 		"lossy-thing.md: line 2 of the bullet opening",
 		"(would declare `open`)",
 	} {
@@ -381,5 +382,96 @@ func TestAScopeWithNoEntriesPrintsNotCheckedRatherThanAZero(t *testing.T) {
 	}
 	if strings.Contains(stdout, "0 across 0") {
 		t.Fatalf("a zero over nothing was printed:\n%s", stdout)
+	}
+}
+
+// 🔴 THE ADVISORY DENOMINATOR COUNTS WHAT THE SCANNERS OPENED, NOT WHAT THE DIRECTORY
+// LISTED — AND THOSE ARE A THIRD SET, distinct from both the parse line's numerator and
+// its denominator.
+//
+// RED at `cc1242a`: the advisories were handed `checked`, the unfiltered `*.md` listing,
+// so this fixture printed `dropped lines: 0 across 2 entry file(s)` — "every non-blank
+// line reaches a bullet some reader will surface" asserted over a FIFO nothing had
+// opened. The scanners refuse a FIFO before `open()` (that is the round-1 fix, and it
+// stands); it was only the printed count that still included it.
+//
+// ⚠ AND THE FIFO IS NOT SOFTENED OUT OF THE OUTPUT, which is what keeps this a fix
+// rather than a hiding place: the parse line above still counts it, still reports it
+// malformed, and the verb still exits 5. Both halves are asserted below, because a
+// change that quietened the refusal would pass an assertion about the advisory alone.
+func TestTheAdvisoryDenominatorExcludesAPathTheScannersNeverOpen(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	entries, err := os.ReadDir(filepath.Join(cache, "alpha-notes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the fixture seeds %d file(s); this case needs exactly one so the "+
+			"counts below are unambiguous", len(entries))
+	}
+	fifo := filepath.Join(cache, "alpha-notes", "wedge.md")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+
+	if code != ExitCorrupt {
+		t.Fatalf("a refused entry must still drive the exit to %d, got %d\n%s",
+			ExitCorrupt, code, stderr)
+	}
+	if want := "1 of 2 entry file(s) parse, 1 malformed"; !strings.Contains(stdout, want) {
+		t.Errorf("the PARSE line must still count the fifo — want %q in:\n%s",
+			want, stdout)
+	}
+	for _, want := range []string{
+		"dropped lines: 0 across 1 entry file(s) scanned",
+		"marker reachability: 0 out-of-reach marker(s) across 1 entry file(s) scanned",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "across 2 entry file(s) scanned") {
+		t.Errorf("the advisory counted a path it never opened:\n%s", stdout)
+	}
+}
+
+// The other end of the same change: when the scanners open NOTHING, `NOT CHECKED` is the
+// honest line. Without the denominator fix this printed `0 across 1`, a zero over a file
+// that was refused before `open()` — the exact shape
+// `TestAScopeWithNoEntriesPrintsNotCheckedRatherThanAZero` exists to forbid, reached
+// through a different door.
+func TestAScopeHoldingONLYAnUnopenablePathAlsoSaysNotChecked(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	dir := filepath.Join(cache, "pipe-only")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "wedge.md"), 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+
+	opts := readOpts()
+	opts.Scope = "pipe-only"
+	code, stdout, stderr := capture(t, Validate, opts)
+	if code != ExitCorrupt {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	var line string
+	for _, ln := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(ln, "cairn: pipe-only: dropped lines") {
+			line = ln
+		}
+	}
+	if line == "" || !strings.Contains(line, "NOT CHECKED") {
+		t.Fatalf("want a NOT CHECKED line for pipe-only, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "0 across 1") {
+		t.Fatalf("a zero over a file nothing opened was printed:\n%s", stdout)
 	}
 }

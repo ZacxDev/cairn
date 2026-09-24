@@ -115,10 +115,32 @@ type DroppedLineFinding struct {
 // the file as it is when IT runs, so a body that changed mid-command cannot be reported
 // under offsets taken from an earlier read.
 func nuanceBody(path string) (string, bool) {
-	// `ActionFor` rather than a map index, so an unmapped kind is the same BUG it
-	// is in the loader rather than a silent zero value.
-	if action, err := ActionFor(ClassifyPath(path), loaderEntryActions); err != nil ||
-		action != Take {
+	// `ActionFor` rather than a map index, so the KIND comes from the loader's own
+	// table and never from a predicate spelled here.
+	//
+	// 🔴 THE ERROR IS SWALLOWED, AND AN EARLIER FORM OF THIS COMMENT CLAIMED THE
+	// OPPOSITE — it said an unmapped kind was "the same BUG it is in the loader
+	// rather than a silent zero value". It is not. `LoadIndex` RETURNS `ActionFor`'s
+	// error (see `load.go`); the line below folds it into `("", false)`, which is
+	// byte-for-byte what a bare map index would have produced, because a zero-value
+	// `Action` is not `Take` either. What `ActionFor` buys here is the SHARED TABLE,
+	// not the raised error.
+	//
+	// ⚠ AND THE TWO CLIENTS DIVERGE ON THAT BRANCH. `lib/entry_shape.py`'s
+	// `_nuance_body` calls `action_for(...) != TAKE`, and `action_for` raises
+	// `AssertionError` on an unmapped kind with nothing catching it — so the oracle
+	// ABORTS where this returns "no nuance section". UNREACHABLE TODAY in both:
+	// `TestTheActionTablesAreTotal` here and `TestClassifierIsTotal` on the Python
+	// side pin the kind set against the loader table two-way, so no unmapped kind can
+	// exist to reach either branch. Recorded rather than closed — closing it means
+	// giving this function an error return that both call sites would discard, which
+	// is the same swallow one frame further out.
+	//
+	// ⚠ SIBLING ASYMMETRY ON THE SAME TABLE, for whoever adds a third action:
+	// `LoadIndex` branches `action == Refuse`, both scanners branch `action != Take`.
+	// Identical today only because the table holds no row that is neither — a `Skip`
+	// would be READ by the loader and SKIPPED here.
+	if !scannerReadsPath(path) {
 		return "", false
 	}
 	data, err := os.ReadFile(path)
@@ -290,18 +312,51 @@ const AdvisoryQuoteMax = 120
 // divergence, and the parity world seeds a scope carrying both a dropped line and an
 // out-of-reach marker precisely so a one-sided edit is RED rather than invisible.
 func ValidationAdvisoryLines(
-	nFiles int,
+	nScanned int,
 	dropped []DroppedLineFinding,
 	unreachable []UnreachableMarkerFinding,
 ) []string {
-	if nFiles == 0 {
+	if nScanned == 0 {
 		return []string{fmt.Sprintf(
 			"dropped lines / marker reachability: NOT CHECKED — 0 entry file(s) "+
-				"to read, so a zero here would be a zero over nothing. [%s] [%s]",
+				"scanned, so a zero here would be a zero over nothing. [%s] [%s]",
 			ReasonDroppedLine, ReasonUnreachableMarker)}
 	}
-	out := droppedLinesBlock(nFiles, dropped)
-	return append(out, reachabilityBlock(nFiles, unreachable)...)
+	out := droppedLinesBlock(nScanned, dropped)
+	return append(out, reachabilityBlock(nScanned, unreachable)...)
+}
+
+// scannerReadsPath is the ONE predicate deciding whether the two advisory scanners
+// OPEN a path, and therefore the one that decides the denominator they print.
+//
+// 🔴 IT IS THE DENOMINATOR *AND* THE GATE, SPELLED ONCE, BECAUSE AS TWO THINGS IT WAS
+// WRONG. The advisories used to be handed `len(EntryFileNames(...))` — an unfiltered
+// listing — while the scanners read only the kinds the loader TAKES. MEASURED on a
+// scope holding one real entry beside a FIFO: `dropped lines: 0 across 2 entry
+// file(s) — every non-blank … line reaches a bullet some reader will surface`, over a
+// file nothing had opened. That is the reassuring zero the `NOT CHECKED` branch above
+// exists to prevent, arriving through the numerator's own count instead of through an
+// empty directory.
+func scannerReadsPath(path string) bool {
+	action, err := ActionFor(ClassifyPath(path), loaderEntryActions)
+	return err == nil && action == Take
+}
+
+// ScannedEntryCount is how many of `paths` the advisory scanners will actually open —
+// the denominator `ValidationAdvisoryLines` must be given.
+//
+// ⚠ IT IS NOT `len(paths)`, AND THE GAP IS THE POINT. A FIFO, a dangling symlink, a
+// directory or a device in a scope directory is listed as an entry file and REFUSED
+// before `open()`, so it appears in the parse line above the advisories (as malformed)
+// and must not appear in their denominator.
+func ScannedEntryCount(paths []string) int {
+	n := 0
+	for _, path := range paths {
+		if scannerReadsPath(path) {
+			n++
+		}
+	}
+	return n
 }
 
 // droppedLinesBlock is the DROPPED-LINE advisory — the half that means content is
@@ -312,10 +367,10 @@ func ValidationAdvisoryLines(
 // dropped" would read as "no bullet has lost its head", which is a claim it cannot
 // make. Saying which half was checked is the difference between a measurement and a
 // reassurance.
-func droppedLinesBlock(nFiles int, dropped []DroppedLineFinding) []string {
+func droppedLinesBlock(nScanned int, dropped []DroppedLineFinding) []string {
 	if len(dropped) == 0 {
 		return []string{fmt.Sprintf(
-			"dropped lines: 0 across %d entry file(s) [%s] — every non-blank "+
+			"dropped lines: 0 across %d entry file(s) scanned [%s] — every non-blank "+
 				"`%s` line reaches a bullet some reader will surface. 🔴 PARTIAL "+
 				"BY CONSTRUCTION, IN THREE WAYS, and this zero is a claim about "+
 				"none of them: (1) ABSORBED TAIL — a bullet that lost its opening "+
@@ -328,7 +383,7 @@ func droppedLinesBlock(nFiles int, dropped []DroppedLineFinding) []string {
 				"are concatenated into one body, so text under the second is "+
 				"absorbed by a bullet from the first and any offset printed here "+
 				"would index the concatenation rather than the file.",
-			nFiles, ReasonDroppedLine, NuanceHeading, NuanceHeading)}
+			nScanned, ReasonDroppedLine, NuanceHeading, NuanceHeading)}
 	}
 	marked := 0
 	for _, d := range dropped {
@@ -337,13 +392,14 @@ func droppedLinesBlock(nFiles int, dropped []DroppedLineFinding) []string {
 		}
 	}
 	out := []string{fmt.Sprintf(
-		"🔴 %d DROPPED LINE(S) across %d entry file(s) [%s] — present in the file, "+
-			"inside NO bullet, so EVERY reader skips them: `--ref`, `--search`, the "+
+		"🔴 %d DROPPED LINE(S) across %d entry file(s) scanned [%s] — present in "+
+			"the file, inside NO bullet, so EVERY reader skips them: `--ref`, "+
+			"`--search`, the "+
 			"digest and every openness count. `parse_journal_bullets` drops text "+
 			"that precedes the first bullet. The cause is almost always a lost or "+
 			"indented bullet OPENING line; the fix is to restore it, NOT to delete "+
 			"the text.",
-		len(dropped), nFiles, ReasonDroppedLine)}
+		len(dropped), nScanned, ReasonDroppedLine)}
 	if marked > 0 {
 		plural := ""
 		if marked == 1 {
@@ -380,24 +436,25 @@ func droppedLinesBlock(nFiles int, dropped []DroppedLineFinding) []string {
 // names — "fix the LINE", "rewrite as `RESOLVED <sha>:`" — is wrong here. A marker
 // on a continuation line is spelled correctly; the edit it needs is to be PROMOTED
 // to a bullet of its own.
-func reachabilityBlock(nFiles int, unreachable []UnreachableMarkerFinding) []string {
+func reachabilityBlock(nScanned int, unreachable []UnreachableMarkerFinding) []string {
 	if len(unreachable) == 0 {
 		return []string{"", fmt.Sprintf(
-			"marker reachability: 0 out-of-reach marker(s) across %d entry file(s) "+
-				"[%s] — every `OPEN:`/`RESOLVED:` found is on a bullet's OPENING "+
-				"line, where the parser reads.",
-			nFiles, ReasonUnreachableMarker)}
+			"marker reachability: 0 out-of-reach marker(s) across %d entry "+
+				"file(s) scanned [%s] — every `OPEN:`/`RESOLVED:` found is on a "+
+				"bullet's OPENING line, where the parser reads.",
+			nScanned, ReasonUnreachableMarker)}
 	}
 	out := []string{"", fmt.Sprintf(
-		"🔴 %d MARKER(S) OUT OF REACH across %d entry file(s) [%s] — spelled "+
-			"CORRECTLY, on a bullet's CONTINUATION line, where NO reader looks. The "+
+		"🔴 %d MARKER(S) OUT OF REACH across %d entry file(s) scanned [%s] — "+
+			"spelled CORRECTLY, on a bullet's CONTINUATION line, where NO reader "+
+			"looks. The "+
 			"marker pattern is anchored at position 0 of a bullet's OPENING line, so "+
 			"this declares NOTHING: it raises neither the `OPEN` badge nor "+
 			"`NEAR-MISS`. 🔴 It is NOT a near-miss and is NOT counted as one — a "+
 			"near-miss is mis-spelled where the parser looks and is fixed by editing "+
 			"the line; this is fixed by PROMOTING the line to a top-level bullet of "+
 			"its own.",
-		len(unreachable), nFiles, ReasonUnreachableMarker)}
+		len(unreachable), nScanned, ReasonUnreachableMarker)}
 	for _, u := range unreachable {
 		out = append(out,
 			fmt.Sprintf("    %s: line %d of the bullet opening", u.Filename, u.Offset),

@@ -126,27 +126,47 @@ func LineOpenness(line string) (openness, resolvedBy string) {
 // pattern's tail. There is NO leading `\b`: the oracle's pattern has none either, so
 // `REOPEN:` matches on both sides, at the `OPEN` inside it.
 //
-// ⚠ EXACTLY ONE NARROWING AGAINST THE ORACLE REMAINS, AND AN EARLIER VERSION OF THIS
-// PARAGRAPH DECLARED ONE WHILE THREE WERE PRESENT. `_MARKER_ANYWHERE` is compiled
-// `re.IGNORECASE` over the WHOLE pattern, and a differential sweep over 13,440
-// generated lines found 3,620 lines the oracle matched and this did not — and NONE
-// the other way — in three populations: `pr#` in the ref run (2,160), a non-ASCII
-// decimal digit in a `#`/`PR#` reference (630), and U+017F (830). The first two are
-// CLOSED — `refRunThenColon` now takes a `foldPR` flag and the digit run reads
-// `unicode.IsDigit`; both fixes are in `refAtomEnds`, and the same sweep re-runs at
-// 830 divergences, every one of them U+017F.
+// ⚠ EXACTLY ONE NARROWING AGAINST THE ORACLE REMAINS, AND EVERY EARLIER VERSION OF
+// THIS PARAGRAPH UNDERCOUNTED — one while three were present, then one while two were.
+// `_MARKER_ANYWHERE` is compiled `re.IGNORECASE` over the WHOLE pattern, and four
+// distinct consequences of that were each read ASCII-only at some point:
 //
-// The survivor is `hasFoldedPrefix`'S ASCII-ONLY FOLD: `re.I` on a `str` pattern also
-// folds U+017F (long s) onto `s`, so a line spelling `reſolved:` matches on the oracle
-// and not here. 🔴 IT HAS NO JUSTIFICATION BEYOND ITS COST, AND SAYING SO IS THE
-// POINT — do not read a rationale into it. `hasFoldedPrefix` is shared with
-// `markerAlternation` and `_UNMARKED_ACTION`'s transcription, so closing it means full
-// Unicode simple-case-folding in three consumers whose oracles differ in whether they
-// fold at all; that is a separate change with its own differential sweep. What makes
-// the residue tolerable is scope, not merit: this flag may ONLY rank a dropped line's
-// urgency, so a miss costs a word of emphasis and never a silent pass. CLOSING
-// CONDITION: `hasFoldedPrefix` folds by `unicode.SimpleFold` and the sweep below
-// reports 0 divergences across all three populations.
+//	`pr#` in the ref run                      CLOSED — `refRunThenColon`'s `ignoreCase`
+//	a non-ASCII `\d` in a `#`/`PR#` reference  CLOSED — `refAtomEnds`, `unicode.IsDigit`
+//	the `[A-Za-z0-9_]` boundary lookahead      CLOSED — `isWordishUnder`, at the call
+//	                                                    site below; REDUNDANTLY, and
+//	                                                    the call site says so
+//	the `[^A-Za-z0-9\n]` terminator run        CLOSED — `terminatorColon`, and this is
+//	                                                    the one doing all the work
+//
+// The last two were WIDER than the oracle, not narrower, and neither was written down
+// until a committed sweep measured them: the count in this paragraph came from a
+// scratchpad script, so its "NONE the other way" was a claim no reader could check.
+//
+// The survivor is `hasFoldedPrefix`'S ASCII-ONLY FOLD OF THE MARKER WORD ITSELF: `re.I`
+// on a `str` pattern also folds U+017F (long s) onto `s`, so a line spelling
+// `reſolved:` matches on the oracle and not here. 🔴 IT HAS NO JUSTIFICATION BEYOND ITS
+// COST, AND SAYING SO IS THE POINT — do not read a rationale into it. `hasFoldedPrefix`
+// is shared with `markerAlternation` and `_UNMARKED_ACTION`'s transcription, so closing
+// it means full Unicode simple-case-folding in three consumers whose oracles differ in
+// whether they fold at all; that is a separate change with its own differential sweep.
+// What makes the residue tolerable is scope, not merit: this flag may ONLY rank a
+// dropped line's urgency, so a miss costs a word of emphasis and never a silent pass.
+//
+// 🔴 CLOSING CONDITION, RESTATED AGAINST AN ARTIFACT THAT EXISTS. The previous one read
+// "the sweep below reports 0 divergences across all three populations" and there was no
+// sweep below — not in this file, not anywhere in the tree, and the figures it quoted
+// were unreproducible. The sweep is now
+// `internal/store/markersweep_test.go`, over the corpus `tests/marker_corpus.py`
+// generates and `internal/store/testdata/marker_oracle_sweep.json` carries; the
+// oracle's side of it is re-derived from the LIVE patterns by
+// `tests/test_marker_oracle_sweep.py` on every pytest run. So: `hasFoldedPrefix` folds by `unicode.SimpleFold`, and
+//
+//	go test ./internal/store/ -run TestTheGoMarkerTranscriptions -count=1 -v
+//
+// passes with the U+017F clause DELETED from that test's ledger. Mechanically it is a
+// closed condition either way — with the residual open, the same command REQUIRES a
+// non-zero U+017F count, so the sweep can never report a bare comfortable zero.
 func LineMentionsMarker(line string) bool {
 	rs := []rune(line)
 	for i := range rs {
@@ -156,12 +176,30 @@ func LineMentionsMarker(line string) bool {
 			}
 			end := i + len(word)
 			// `(?![A-Za-z0-9_])` — the word-boundary guard that keeps
-			// `RESOLVED_ADDR` and `OPENED` out.
-			if end < len(rs) && isWordish(rs[end]) {
+			// `RESOLVED_ADDR` and `OPENED` out. `true` because under
+			// `re.IGNORECASE` that class ALSO matches the four non-ASCII runes
+			// that fold onto an ASCII letter (`foldsToASCIILetter`).
+			//
+			// ⚠ UNREACHABLE TODAY, DECLARED RATHER THAN COUNTED AS COVERAGE.
+			// MEASURED by mutation against the committed sweep: reverting THIS
+			// argument to `isWordish` alone leaves 0 divergences, because
+			// `terminatorColon` — fold-aware for the same reason — already rejects
+			// every line it would have caught. The four runes cannot begin a ref
+			// atom and `[ \t]*` cannot consume one, so a folding rune sitting
+			// immediately after the marker word can only be eaten by the
+			// terminator run, and that run refuses it. So no mutant on this line
+			// can be killed, and it must not be read as a guard the sweep watches.
+			// It stays because the ASCII-only reading was WRONG here as well as
+			// there — reverting BOTH is what shipped seven wider-than-oracle lines
+			// — and because a transcription that is correct only through an
+			// interaction with a sibling function re-opens the moment that
+			// sibling changes shape.
+			if end < len(rs) && isWordishUnder(rs[end], true) {
 				continue
 			}
-			// `true`: the oracle's `re.IGNORECASE` covers the ref run too, unlike
-			// `_NEAR_MISS_MARKER`'s scoped `(?i:…)`. See `refRunThenColon`.
+			// `true`: the oracle's `re.IGNORECASE` covers everything after the marker
+			// word, unlike `_NEAR_MISS_MARKER`'s scoped `(?i:…)`. See
+			// `refRunThenColon` for the three things that flag governs.
 			if refRunThenColon(rs, end, map[int]bool{}, true) {
 				return true
 			}

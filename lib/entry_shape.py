@@ -536,6 +536,29 @@ def line_carries_marker(line: str) -> bool:
     return openness is not None or line_mentions_marker(line)
 
 
+def _scanner_reads_path(path: Path) -> bool:
+    """Will the two advisory scanners OPEN this path?
+
+    🔴 THE GATE AND THE DENOMINATOR, SPELLED ONCE, BECAUSE AS TWO THINGS THEY
+    DISAGREED. `_nuance_body` has always asked the loader's own table before
+    `open()`; the printed denominator was `len(entry_files_in(...))`, an
+    unfiltered listing, so the advisories counted files they never read.
+    """
+    return action_for(classify_path(path), _LOADER_ENTRY_ACTIONS) == TAKE
+
+
+def scanned_entry_count(paths: Iterable[str | Path]) -> int:
+    """How many of `paths` the advisory scanners actually open.
+
+    ⚠ NOT `len(paths)`, AND THE GAP IS THE POINT. A FIFO, a dangling symlink, a
+    directory or a device inside a scope directory is listed as an entry file and
+    REFUSED before `open()`. It belongs in the parse line's denominator — the
+    loader really did try it, and really did report it malformed — and it must
+    not appear in a denominator that claims text was read.
+    """
+    return sum(1 for path in paths if _scanner_reads_path(Path(path)))
+
+
 def _nuance_body(path: Path) -> str | None:
     """The `## Nuance / work-history` body of one entry file, or None.
 
@@ -557,6 +580,18 @@ def _nuance_body(path: Path) -> str | None:
     this reason (a fifo measured wedging a request thread for 25s). This gate is
     that same table — `_LOADER_ENTRY_ACTIONS`, not a fresh predicate — so the
     advisories read precisely the paths the loader reads and no others.
+
+    ⚠ THAT SENTENCE IS ABOUT THE SCANNERS, AND IT USED TO BE READ AS COVERING THE
+    PRINTED DENOMINATOR TOO. It did not: the clients passed the unfiltered
+    listing to `validation_advisory_lines`, so a scope holding one entry beside a
+    FIFO printed `0 across 2 entry file(s)` over a file nothing opened.
+    `scanned_entry_count` is the denominator now, built from this same predicate.
+
+    ⚠ AND THE UNMAPPED-KIND BRANCH DIVERGES FROM THE GO CLIENT. `action_for`
+    RAISES `AssertionError` here, uncaught; `internal/store.nuanceBody` folds the
+    same condition into "no nuance section". UNREACHABLE in both —
+    `TestClassifierIsTotal` and Go's `TestTheActionTablesAreTotal` pin the kind
+    set against the table two-way — so it is recorded rather than closed.
 
     ⚠ THE RESIDUAL IS THE LOADER'S RESIDUAL, AND IT IS NOT EMPTY. The kinds the
     table TAKES are `regular-file`, `link-to-file`, `indeterminate` and `absent`;
@@ -583,7 +618,7 @@ def _nuance_body(path: Path) -> str | None:
     each scanner sees the file as it is when IT runs, so a body that changed
     mid-command cannot be reported under offsets taken from an earlier read.
     """
-    if action_for(classify_path(path), _LOADER_ENTRY_ACTIONS) != TAKE:
+    if not _scanner_reads_path(path):
         return None
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -718,7 +753,7 @@ ADVISORY_QUOTE_MAX = 120
 
 def validation_advisory_lines(
     *,
-    n_files: int,
+    n_scanned: int,
     dropped: Sequence[DroppedLineFinding],
     unreachable: Sequence[UnreachableMarkerFinding],
 ) -> tuple[str, ...]:
@@ -744,19 +779,20 @@ def validation_advisory_lines(
     reassuring zero from an instrument that walked nothing, and it must not
     render anywhere near a clean-looking count.
     """
-    if n_files == 0:
+    if n_scanned == 0:
         return (
             f"dropped lines / marker reachability: NOT CHECKED — 0 entry file(s) "
-            f"to read, so a zero here would be a zero over nothing. "
+            f"scanned, so a zero here would be a zero over nothing. "
             f"[{DROPPED_LINE}] [{UNREACHABLE_MARKER}]",
         )
     return tuple(
-        _dropped_lines_block(n_files, dropped) + _reachability_block(n_files, unreachable)
+        _dropped_lines_block(n_scanned, dropped)
+        + _reachability_block(n_scanned, unreachable)
     )
 
 
 def _dropped_lines_block(
-    n_files: int, dropped: Sequence[DroppedLineFinding]
+    n_scanned: int, dropped: Sequence[DroppedLineFinding]
 ) -> list[str]:
     """The DROPPED-LINE advisory — the half that means content is ALREADY LOST.
 
@@ -768,8 +804,8 @@ def _dropped_lines_block(
     """
     if not dropped:
         return [
-            f"dropped lines: 0 across {n_files} entry file(s) [{DROPPED_LINE}] — "
-            f"every non-blank `{NUANCE_HEADING}` line reaches a bullet some reader "
+            f"dropped lines: 0 across {n_scanned} entry file(s) scanned "
+            f"[{DROPPED_LINE}] — every non-blank `{NUANCE_HEADING}` line reaches a bullet some reader "
             f"will surface. 🔴 PARTIAL BY CONSTRUCTION, IN THREE WAYS, and this "
             f"zero is a claim about none of them: (1) ABSORBED TAIL — a bullet that "
             f"lost its opening line while another bullet sat above it is absorbed "
@@ -785,8 +821,9 @@ def _dropped_lines_block(
     n = len(dropped)
     marked = sum(1 for d in dropped if d.carries_marker)
     out = [
-        f"🔴 {n} DROPPED LINE(S) across {n_files} entry file(s) [{DROPPED_LINE}] — "
-        f"present in the file, inside NO bullet, so EVERY reader skips them: "
+        f"🔴 {n} DROPPED LINE(S) across {n_scanned} entry file(s) scanned "
+        f"[{DROPPED_LINE}] — present in the file, inside NO bullet, so EVERY "
+        f"reader skips them: "
         f"`--ref`, `--search`, the digest and every openness count. "
         f"`parse_journal_bullets` drops text that precedes the first bullet. The "
         f"cause is almost always a lost or indented bullet OPENING line; the fix "
@@ -819,7 +856,7 @@ def _dropped_lines_block(
 
 
 def _reachability_block(
-    n_files: int, unreachable: Sequence[UnreachableMarkerFinding]
+    n_scanned: int, unreachable: Sequence[UnreachableMarkerFinding]
 ) -> list[str]:
     """The MARKER-REACHABILITY advisory.
 
@@ -831,14 +868,15 @@ def _reachability_block(
     if not unreachable:
         return [
             "",
-            f"marker reachability: 0 out-of-reach marker(s) across {n_files} entry "
-            f"file(s) [{UNREACHABLE_MARKER}] — every `OPEN:`/`RESOLVED:` found is "
+            f"marker reachability: 0 out-of-reach marker(s) across {n_scanned} entry "
+            f"file(s) scanned [{UNREACHABLE_MARKER}] — every `OPEN:`/`RESOLVED:` "
+            f"found is "
             f"on a bullet's OPENING line, where the parser reads.",
         ]
     n = len(unreachable)
     out = [
         "",
-        f"🔴 {n} MARKER(S) OUT OF REACH across {n_files} entry file(s) "
+        f"🔴 {n} MARKER(S) OUT OF REACH across {n_scanned} entry file(s) scanned "
         f"[{UNREACHABLE_MARKER}] — spelled CORRECTLY, on a bullet's CONTINUATION "
         f"line, where NO reader looks. The marker pattern is anchored at position "
         f"0 of a bullet's OPENING line, so this declares NOTHING: it raises "

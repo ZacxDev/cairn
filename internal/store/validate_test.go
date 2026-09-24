@@ -415,7 +415,15 @@ func TestLineCarriesMarker(t *testing.T) {
 		// killed by half the table; what these two alone kill is a REVERT of either
 		// convergence.
 		{"  OPEN pr#12: a lowercase PR reference.", true},
-		{"  OPEN #١٢٣٤٥: a non-ASCII decimal digit reference — FIVE digits, so the\n\t\t// terminator run cannot span them and the digit class is the only thing\n\t\t// that can match. Two digits landed exactly ON `[^A-Za-z0-9\\n]{0,4}`'s\n\t\t// boundary and the mutant SURVIVED a fully green suite.", true},
+		// 🔴 FIVE DIGITS, AND THE COUNT IS THE WHOLE FIXTURE. `[^A-Za-z0-9\n]{0,4}`
+		// can span at most four non-alphanumerics, so a run of five non-ASCII digits
+		// cannot be absorbed by the terminator and only the digit class can match it.
+		// Two digits sit exactly ON that boundary, and with two the mutant SURVIVED a
+		// fully green suite.
+		// ⚠ That paragraph used to live INSIDE the string literal below — a four-line
+		// blob masquerading as one line. The assertion discriminated anyway; it just
+		// printed a comment as test data.
+		{"  OPEN #١٢٣٤٥: a non-ASCII decimal digit reference.", true},
 		{"  resolved upstream in 1.2.3.", false},
 		{"  RESOLVED_ADDR appears in the trace…", false},
 		// ⚠ AND SO IS THIS ONE, WHICH THE COMMENT BELOW USED TO CLAIM AS A BOUNDARY

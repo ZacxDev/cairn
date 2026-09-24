@@ -1791,11 +1791,13 @@ class TestValidateReportsTheWriteProtocolContract:
         # 🔴 THE FILE PARSES. The parse half must still say so, or this test would
         # be measuring a malformed entry and proving nothing about the new half.
         assert "gizmo-notes: 2 of 2 entry file(s) parse, 0 malformed" in out, out
-        assert "🔴 2 DROPPED LINE(S) across 2 entry file(s) [dropped-line]" in out, out
+        assert ("🔴 2 DROPPED LINE(S) across 2 entry file(s) scanned "
+                "[dropped-line]") in out, out
         assert "1 of them looks like a `OPEN:`/`RESOLVED:` DECLARATION" in out, out
         assert "lossy-thing.md: nuance line 2  ← looks like a DECLARATION" in out, out
         assert (
-            "🔴 1 MARKER(S) OUT OF REACH across 2 entry file(s) [unreachable-marker]"
+            "🔴 1 MARKER(S) OUT OF REACH across 2 entry file(s) scanned "
+            "[unreachable-marker]"
             in out
         ), out
         assert "lossy-thing.md: line 2 of the bullet opening" in out, out
