@@ -93,8 +93,9 @@ type route struct {
 // answered **404**, honestly. What survives, and is the half that was always worth its
 // cost, is that a BAD CREDENTIAL is answered uniformly: no refusal on this surface says
 // which part of a credential was wrong, which is the oracle over the CREDENTIAL TABLE
-// rather than over the URL space. See [Server.ServeHTTP], where the gate ORDER is what
-// still keeps an unauthenticated caller from telling a route from a typo.
+// rather than over the URL space. ⚠ The gate ORDER incidentally keeps an unauthenticated
+// caller from telling most routes from a typo — but NOT the root, which answers a browser
+// 303 where a typo gets 401. See [Server.ServeHTTP] for the scope of that one exception.
 // 🔴 AND THE SHARE FLOW IS THREE ROWS ON FIXED PATHS, WITH THE SCOPE IN A QUERY
 // PARAMETER RATHER THAN IN THE PATH. `routes` is an EXACT-MATCH map, so a path
 // parameter (`/share/{scope}`) would mean a prefix match in the dispatcher — and a

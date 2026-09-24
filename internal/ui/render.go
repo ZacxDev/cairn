@@ -550,9 +550,17 @@ func safeHref(raw string) (string, bool) {
 // builds its own internal links from the ledger, never from user text.
 var allowedSchemes = []string{"http://", "https://"}
 
-// stylesheet is a constant. It is NOT user text and could never be: it is written
-// here, in this file, and no input reaches it — which is why `style-src
-// 'unsafe-inline'` in the response's policy buys an attacker nothing.
+// stylesheet is a constant. It is NOT user text and could never be: it is written here, in
+// this file, and no input reaches it.
+//
+// ⚠ THE REASON THIS COMMENT USED TO GIVE IS RETRACTED, AND THE CONSTANT-NESS IT RESTED ON IS
+// NOT. It read "— which is why `style-src 'unsafe-inline'` in the response's policy buys an
+// attacker nothing", and the policy no longer carries `'unsafe-inline'`: [ContentSecurityPolicy]
+// is `style-src 'self'`, so an inline `<style>` does not apply at all and these bytes are
+// SERVED, by [Server.handleStylesheet] at [StylesheetPath]. The old argument was sound for the
+// policy it described and is now about a clause that is gone; the fact it rested on — no input
+// reaches this string — is what makes serving it as a static asset safe, so it is kept and the
+// conclusion is replaced rather than the whole sentence deleted.
 const stylesheet = `
 :root { color-scheme: light dark; }
 body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 48rem; }

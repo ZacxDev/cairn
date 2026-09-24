@@ -47,9 +47,6 @@ type SupabaseOAuth struct {
 	// provider is the UPSTREAM social provider GoTrue is asked for (`github`), which is a
 	// different thing from `SupabaseJWT.provider` — see [SupabaseOAuthProviderGitHub].
 	provider string
-	// apiKey, when non-empty, is sent as `apikey` and as a bearer token. Empty is the
-	// self-hosted-GoTrue shape. See `SupabaseOAuthConfig.APIKey`.
-	apiKey string
 	// client is this type's own HTTP client, with its own timeout, for the same reason
 	// `KeySet` has one: a package that shares `http.DefaultClient` inherits whatever
 	// timeout somebody else set on it, which is usually none.
@@ -110,16 +107,6 @@ type SupabaseOAuthConfig struct {
 	// RedirectURL is the absolute URL of this surface's callback route. Required, and it
 	// must also appear in the provider's `GOTRUE_URI_ALLOW_LIST`.
 	RedirectURL string
-	// APIKey is the project's anonymous key, sent as `apikey` and as a bearer token.
-	//
-	// ⚠ OPTIONAL, AND THE TWO DEPLOYMENTS IT TELLS APART ARE BOTH REAL. A HOSTED Supabase
-	// project is reached through an API gateway that refuses a request with no `apikey` —
-	// so without this the token exchange answers 401 and the whole button is inert, which
-	// is the "shipped completely inert" failure this repository names. A SELF-HOSTED GoTrue
-	// has no such gateway and needs no key. Empty means "send neither header", which is the
-	// second shape; it is not a disabled check, because the key is not a credential this
-	// flow authenticates ANYBODY with — the access token is.
-	APIKey string
 	// Client is the HTTP client. nil means one with a bounded timeout.
 	Client *http.Client
 	// Now is the clock. nil means `time.Now().UTC()`.
@@ -188,7 +175,6 @@ func NewSupabaseOAuth(cfg SupabaseOAuthConfig) (*SupabaseOAuth, error) {
 		authBase: base,
 		redirect: redirect,
 		provider: SupabaseOAuthProviderGitHub,
-		apiKey:   strings.TrimSpace(cfg.APIKey),
 		client:   client,
 		now:      now,
 	}, nil
@@ -303,13 +289,15 @@ func (o *SupabaseOAuth) Exchange(ctx context.Context, code, verifier string) (co
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if o.apiKey != "" {
-		// Both headers, which is what a hosted project's gateway expects: `apikey`
-		// identifies the project and the bearer form is what the gateway forwards.
-		req.Header.Set("apikey", o.apiKey)
-		req.Header.Set("Authorization", "Bearer "+o.apiKey)
-	}
-
+	// ⚠ NO `apikey` AND NO `Authorization` HEADER, AND THE ABSENCE IS A DELETION RATHER THAN
+	// AN OVERSIGHT. A draft carried an optional project key for a HOSTED Supabase project,
+	// whose API gateway refuses the token endpoint without one. The deployment this is built
+	// for runs GoTrue SELF-HOSTED behind its own ingress with no such gateway and explicitly
+	// declined the variable, so the path had a refusal ladder, a file reader, a
+	// trailing-newline ruling and two tests and NO consumer — and its `_FILE` spelling would
+	// have been the first secret this pod mounts. If a hosted project ever appears, the
+	// symptom is this exchange answering 401 with everything else correct, and the fix is
+	// re-adding a config field plus these two headers.
 	resp, err := o.client.Do(req)
 	if err != nil {
 		// The URL is NOT interpolated: it carries the project reference, and this error

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/netid"
 )
 
 // stubOAuth is a provider that records what it was asked and answers what it was told to.
@@ -266,9 +268,9 @@ func TestAnExpiredFlightIsRefused(t *testing.T) {
 	now := base
 	table := newFlights(func() time.Time { return now })
 
-	id, ok := table.start("fixture-verifier-value", time.Minute)
-	if !ok {
-		t.Fatal("PRECONDITION FAILED: the flight table refused to open a flight at all")
+	id, outcome := table.start("198.51.100.7", "fixture-verifier-value", time.Minute)
+	if outcome != flightOpened {
+		t.Fatalf("PRECONDITION FAILED: the flight table refused to open a flight at all (%s)", outcome)
 	}
 
 	// One nanosecond before expiry: live.
@@ -280,9 +282,9 @@ func TestAnExpiredFlightIsRefused(t *testing.T) {
 
 	// And AT the expiry instant: dead. A second flight, because the first was consumed.
 	now = base
-	id2, ok := table.start("fixture-verifier-value-two", time.Minute)
-	if !ok {
-		t.Fatal("PRECONDITION FAILED: the flight table refused a second flight")
+	id2, outcome := table.start("198.51.100.7", "fixture-verifier-value-two", time.Minute)
+	if outcome != flightOpened {
+		t.Fatalf("PRECONDITION FAILED: the flight table refused a second flight (%s)", outcome)
 	}
 	now = base.Add(time.Minute)
 	if _, held := table.take(id2); held {
@@ -291,31 +293,168 @@ func TestAnExpiredFlightIsRefused(t *testing.T) {
 	}
 }
 
-// TestTheFlightTableIsBounded pins the memory bound on an UNAUTHENTICATED endpoint.
+// TestTheFlightTableIsBoundedGloballyAndPerClient pins BOTH bounds on an UNAUTHENTICATED
+// endpoint, and pins that each one refuses for its OWN reason.
 //
-// 🔴 IT IS A REGRESSION TEST FOR A DEFECT THIS CHANGE WOULD HAVE SHIPPED WITHOUT THE CAP:
+// 🔴 IT IS A REGRESSION TEST FOR A DEFECT THIS CHANGE WOULD HAVE SHIPPED WITHOUT THE CAPS:
 // `POST /sign-in/github` is reachable by anybody who can open a socket, and every request
 // writes a record that lives five minutes. Without `maxOpenFlights` the route is a memory
-// exhaustion endpoint. The cap is measured here rather than asserted, and the POSITIVE
-// CONTROL is that the table grew to the cap at all — a table that refused from the start
-// would satisfy the refusal below while measuring nothing.
-func TestTheFlightTableIsBounded(t *testing.T) {
+// exhaustion endpoint; without `maxFlightsPerClient` ONE caller reaches the global bound
+// alone and every other person's button refuses until the oldest flights expire.
+//
+// 🔴 THE TWO ARMS USE DIFFERENT CLIENT KEYS AND THAT IS THE WHOLE DESIGN OF THE FIXTURE, NOT
+// A DETAIL. An earlier version of this test opened 1032 flights under ONE fixture client and
+// asserted the global cap. Under a per-client bound that loop never reaches the global one —
+// it stops at 8 — so the global assertion would have been satisfied by the WRONG bound, with
+// the number that matters never exercised. Distinct keys are what make the global arm reach
+// its own boundary; `flightRefusal` is what makes each arm prove WHICH bound fired, so
+// neither can be credited with the other's kill.
+func TestTheFlightTableIsBoundedGloballyAndPerClient(t *testing.T) {
 	fixed := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	table := newFlights(func() time.Time { return fixed })
-	opened := 0
-	for i := 0; i < maxOpenFlights+8; i++ {
-		if _, ok := table.start("fixture-verifier", time.Minute); ok {
+
+	// PER-CLIENT: one key, many attempts.
+	perClient := newFlights(func() time.Time { return fixed })
+	opened, refusals := 0, map[flightRefusal]int{}
+	for i := 0; i < maxFlightsPerClient+5; i++ {
+		_, outcome := perClient.start("198.51.100.7", "fixture-verifier", time.Minute)
+		if outcome == flightOpened {
 			opened++
+			continue
 		}
+		refusals[outcome]++
 	}
-	if opened != maxOpenFlights {
-		t.Errorf("%d flight(s) were opened against a cap of %d. A cap that admits more than it declares is "+
-			"not a bound, and one that admits fewer refuses sign-ins nobody asked it to.", opened, maxOpenFlights)
+	if opened != maxFlightsPerClient {
+		t.Errorf("one client opened %d flight(s) against a per-client cap of %d", opened, maxFlightsPerClient)
 	}
-	if n := table.openCount(); n != maxOpenFlights {
+	if refusals[flightRefusedPerClient] != 5 {
+		t.Errorf("the per-client refusals were %v; all 5 over-cap attempts must be refused BY THE PER-CLIENT "+
+			"bound. A refusal by the GLOBAL bound here would mean this arm measured the wrong number.", refusals)
+	}
+
+	// GLOBAL: distinct keys, so the per-client bound is never the thing that refuses. Each
+	// key opens one flight, so reaching `maxOpenFlights` takes exactly that many keys.
+	global := newFlights(func() time.Time { return fixed })
+	openedGlobal, globalRefusals := 0, map[flightRefusal]int{}
+	for i := 0; i < maxOpenFlights+8; i++ {
+		_, outcome := global.start(fmt.Sprintf("198.51.100.%d", i), "fixture-verifier", time.Minute)
+		if outcome == flightOpened {
+			openedGlobal++
+			continue
+		}
+		globalRefusals[outcome]++
+	}
+	if openedGlobal != maxOpenFlights {
+		t.Errorf("%d flight(s) were opened against a global cap of %d. A cap that admits more than it declares "+
+			"is not a bound, and one that admits fewer refuses sign-ins nobody asked it to.",
+			openedGlobal, maxOpenFlights)
+	}
+	if globalRefusals[flightRefusedGlobal] != 8 {
+		t.Errorf("the global refusals were %v; all 8 over-cap attempts must be refused BY THE GLOBAL bound",
+			globalRefusals)
+	}
+	if n := global.openCount(); n != maxOpenFlights {
 		t.Errorf("the table holds %d record(s), want %d", n, maxOpenFlights)
 	}
-	t.Logf("flight cap: %d opened, %d refused, table at %d", opened, maxOpenFlights+8-opened, table.openCount())
+
+	// 🔴 AND THE PROPERTY THE PER-CLIENT BOUND EXISTS FOR: one caller AT ITS OWN CAP must not
+	// stop anybody else signing in. This is the assertion the global bound alone cannot make,
+	// and it is the whole reason the second number exists.
+	shared := newFlights(func() time.Time { return fixed })
+	for i := 0; i < maxFlightsPerClient+3; i++ {
+		shared.start("198.51.100.7", "fixture-verifier", time.Minute)
+	}
+	if _, outcome := shared.start("203.0.113.9", "fixture-verifier", time.Minute); outcome != flightOpened {
+		t.Errorf("a SECOND client was refused (%s) while the first sat at its own cap. One caller spending "+
+			"everybody else's share is the denial of service the per-client bound exists to prevent.", outcome)
+	}
+
+	t.Logf("flight caps: per-client %d opened / %d refused; global %d opened / %d refused; a second client "+
+		"still opened one while the first was at its cap",
+		opened, refusals[flightRefusedPerClient], openedGlobal, globalRefusals[flightRefusedGlobal])
+}
+
+// TestALockedOutClientOpensNoFlight pins that the existing sign-in lockout covers the
+// provider door too.
+//
+// 🔴 IT IS A REGRESSION TEST FOR A REAL HOLE IN THE FIRST DRAFT OF THIS CHANGE: `handleSignIn`
+// consulted the limiter and `handleOAuthStart` did not, so a client locked out for five failed
+// credential attempts could still drive the start row without limit.
+//
+// ⚠ WHAT IT DOES *NOT* ASSERT, DELIBERATELY: that starting a flight RECORDS a failure. It must
+// not. `netid.RateLimiter` counts failed auth into one bucket per client, shared with
+// `POST /sign-in` at 5 failures per window — so recording here would mean five clicks of this
+// button lock the caller out of the CREDENTIAL FORM. The second assertion below pins that
+// absence, because a later edit "tidying" the limiter calls to match would otherwise look
+// like a consistency fix.
+func TestALockedOutClientOpensNoFlight(t *testing.T) {
+	cfg := testConfig(t, refusingAuth{})
+	stub := &stubOAuth{}
+	cfg.OAuth = stub
+	limiter := netid.NewRateLimiter(netid.DefaultMaxFailures, time.Minute, time.Hour)
+	cfg.Limiter = limiter
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("the server did not build: %v", err)
+	}
+
+	// The client `httptest.NewRequest` presents, locked out through the limiter's own API so
+	// this test does not depend on how the lockout was reached.
+	probe := httptest.NewRequest("POST", OAuthStartPath, nil)
+	client, _, ok := netid.ResolveClient(probe.Header, probe.RemoteAddr, nil)
+	if !ok {
+		t.Fatal("PRECONDITION FAILED: the fixture request has no resolvable client identity, so the lockout " +
+			"below would be keyed on nothing")
+	}
+	// POSITIVE CONTROL: before the lockout, this exact request opens a flight. Without it a
+	// refusal below could be any other guard.
+	warm := httptest.NewRequest("POST", OAuthStartPath, nil)
+	warm.Header.Set("Origin", "https://"+warm.Host)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, warm)
+	if rec.Code != http.StatusSeeOther || srv.flights.openCount() != 1 {
+		t.Fatalf("POSITIVE CONTROL FAILED: an unlocked client answered %d with %d flight(s) open; the refusal "+
+			"below would not be the lockout's doing", rec.Code, srv.flights.openCount())
+	}
+
+	for i := 0; i < netid.DefaultMaxFailures; i++ {
+		limiter.RecordFailure(client)
+	}
+	if !limiter.LockedOut(client) {
+		t.Fatal("PRECONDITION FAILED: the client is not locked out after the configured number of failures")
+	}
+
+	before := srv.flights.openCount()
+	r := httptest.NewRequest("POST", OAuthStartPath, nil)
+	r.Header.Set("Origin", "https://"+r.Host)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("a LOCKED-OUT client got %d from the start row, want 401. The lockout must cover this door "+
+			"too, or five failed credential attempts cost an attacker nothing here.", rec.Code)
+	}
+	if n := srv.flights.openCount(); n != before {
+		t.Errorf("a locked-out client opened %d flight(s); the refusal must cost nothing", n-before)
+	}
+
+	// 🔴 AND THE ABSENCE: a SUCCESSFUL flight start must not count against the sign-in bucket.
+	fresh := testConfig(t, refusingAuth{})
+	fresh.OAuth = &stubOAuth{}
+	freshLimiter := netid.NewRateLimiter(netid.DefaultMaxFailures, time.Minute, time.Hour)
+	fresh.Limiter = freshLimiter
+	srv2, err := New(fresh)
+	if err != nil {
+		t.Fatalf("the server did not build: %v", err)
+	}
+	for i := 0; i < netid.DefaultMaxFailures+2; i++ {
+		req := httptest.NewRequest("POST", OAuthStartPath, nil)
+		req.Header.Set("Origin", "https://"+req.Host)
+		srv2.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if freshLimiter.LockedOut(client) {
+		t.Errorf("%d successful flight starts LOCKED THE CLIENT OUT. Starting a sign-in is not a failed one, "+
+			"and that bucket is shared with POST /sign-in — so this would lock a person out of the credential "+
+			"form, which is the door that works when the provider is down.", netid.DefaultMaxFailures+2)
+	}
 }
 
 // TestAFailedExchangeSaysNothingAboutTheCredentialTable pins the uniform refusal across the

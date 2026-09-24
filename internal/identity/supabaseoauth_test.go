@@ -169,9 +169,6 @@ type oauthTestServer struct {
 	requests int
 	// body is the last request body, parsed.
 	body map[string]string
-	// apiKey and bearer are the last request's headers.
-	apiKey string
-	bearer string
 	// status and response are what it answers.
 	status   int
 	response string
@@ -181,8 +178,6 @@ func (o *oauthTestServer) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		o.requests++
-		o.apiKey = r.Header.Get("apikey")
-		o.bearer = r.Header.Get("Authorization")
 		o.body = map[string]string{}
 		_ = json.NewDecoder(r.Body).Decode(&o.body)
 		// The grant type is part of the contract and is asserted HERE, at the endpoint,
@@ -356,55 +351,6 @@ func TestTheExchangeRefusesEveryFailureOfTheTOKENENDPOINT(t *testing.T) {
 	if endpoint.requests != 0 {
 		t.Errorf("an empty code or verifier reached the network %d time(s); it must be refused locally",
 			endpoint.requests)
-	}
-}
-
-// TestTheAnonKeyIsSentOnlyWhenConfigured pins both shapes of deployment.
-//
-// 🔴 THE TWO ARE BOTH REAL AND THE ABSENT ONE IS NOT A DISABLED CHECK. A hosted Supabase
-// project is reached through a gateway that refuses a request with no `apikey`, so without it
-// the exchange answers 401 and the whole button is INERT — which is the failure this
-// repository names as worse than a loud one. A self-hosted GoTrue has no gateway and needs no
-// key. Sending an empty `apikey` header to the second is not harmless either: an empty header
-// is a header, and a gateway may read it as a wrong key rather than as none.
-func TestTheAnonKeyIsSentOnlyWhenConfigured(t *testing.T) {
-	const key = "fixture-anon-key-which-is-not-a-real-credential"
-	for _, arm := range []struct {
-		name       string
-		configured string
-		wantAPIKey string
-		wantBearer string
-	}{
-		{"a hosted project with an anon key", key, key, "Bearer " + key},
-		{"a self-hosted GoTrue with none", "", "", ""},
-	} {
-		t.Run(arm.name, func(t *testing.T) {
-			signerKey := newECSigner(t, "ec-1")
-			endpoint := &oauthTestServer{
-				response: `{"access_token":"` + signerKey.sign(t, defaultClaims(), nil) + `"}`,
-			}
-			httpSrv := endpoint.start(t)
-			verifier, err := NewSupabaseJWT(goodSupabaseConfig(t, keySetOver(t, signerKey)))
-			if err != nil {
-				t.Fatalf("the verifier did not build: %v", err)
-			}
-			flow, err := NewSupabaseOAuth(SupabaseOAuthConfig{
-				Verifier: verifier, AuthBaseURL: httpSrv.URL, RedirectURL: testRedirectURL,
-				APIKey: arm.configured, Now: fixedNow,
-			})
-			if err != nil {
-				t.Fatalf("the flow did not build: %v", err)
-			}
-			if _, err := flow.Exchange(context.Background(), "c", "v"); err != nil {
-				t.Fatalf("the exchange failed: %v", err)
-			}
-			if endpoint.apiKey != arm.wantAPIKey {
-				t.Errorf("the `apikey` header was %q, want %q", endpoint.apiKey, arm.wantAPIKey)
-			}
-			if endpoint.bearer != arm.wantBearer {
-				t.Errorf("the `Authorization` header was %q, want %q", endpoint.bearer, arm.wantBearer)
-			}
-		})
 	}
 }
 

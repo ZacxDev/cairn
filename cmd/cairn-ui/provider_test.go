@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -135,95 +133,34 @@ func TestAWhitespaceRedirectURLIsRefusedRatherThanReadAsUnset(t *testing.T) {
 	}
 }
 
-// TestTheAnonKeyIsReadFromEitherSpellingAndNeverBoth pins the optional credential's two
-// arrival paths.
+// TestTheOAuthSettingIsInTheSupabaseNamespaceAndItsPathsComeFromTheLedger is what is left of
+// a test that had grown two vacuous halves, and saying so is better than quietly shipping
+// them.
 //
-// 🔴 BOTH SET IS A REFUSAL AND NOT A PRECEDENCE, which is the ruling this repository takes
-// wherever one value has two spellings: a precedence makes the effective value depend on which
-// line a manifest emitted, and the operator who wrote two cannot be told from the one who
-// forgot to delete the first.
+// ⚠ TWO ASSERTIONS WERE DELETED AS MEASURING NOTHING. One walked THREE constants asserting a
+// `CAIRN_SUPABASE_` prefix; two of them were the anon-key pair this round deleted, so it now
+// walks one. The other read
+// `strings.HasSuffix("https://host.invalid"+ui.OAuthCallbackPath, ui.OAuthCallbackPath)` —
+// which is true for EVERY value of that constant, including the empty string. A tautology in
+// a guard is worse than no guard: it reads as coverage and stops anyone looking.
 //
-// ⚠ THE FILE FORM STRIPS EXACTLY ONE TRAILING NEWLINE, which is the edit `echo "$K" > file`
-// makes. Every other byte may legitimately be part of the value, so trimming more would
-// silently change a credential.
-func TestTheAnonKeyIsReadFromEitherSpellingAndNeverBoth(t *testing.T) {
-	const key = "fixture-anon-key-which-is-not-a-real-credential"
-	dir := t.TempDir()
-	path := filepath.Join(dir, "anon-key")
-	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
-		t.Fatalf("writing the fixture key file: %v", err)
+// ⚠ AND THE CLAIM THE OLD NAME MADE IS COVERED ELSEWHERE, WHICH IS WHY IT IS NOT REBUILT
+// HERE. "A refusal names the variable that unblocks it" is asserted against the real error
+// text by `TestTheProviderFlowHasTHREEStatesAndTheMIDDLEOneIsNotAnError` (which requires
+// `identity.EnvSupabaseJWKSURL` in the half-configured refusal) and by
+// `TestAWhitespaceRedirectURLIsRefusedRatherThanReadAsUnset` (which requires
+// `EnvSupabaseRedirectURL` in every blank refusal). Restating it over the constants would be
+// the same claim with less information.
+func TestTheOAuthSettingIsInTheSupabaseNamespaceAndItsPathsComeFromTheLedger(t *testing.T) {
+	if !strings.HasPrefix(EnvSupabaseRedirectURL, "CAIRN_SUPABASE_") {
+		t.Errorf("%q is not in the CAIRN_SUPABASE_* namespace, which is where every setting of this "+
+			"integration lives", EnvSupabaseRedirectURL)
 	}
-
-	t.Run("neither", func(t *testing.T) {
-		t.Setenv(EnvSupabaseAnonKey, "")
-		t.Setenv(EnvSupabaseAnonKeyFile, "")
-		got, err := anonKey()
-		if err != nil || got != "" {
-			t.Errorf("want an empty key and no error, got %q / %v — a self-hosted GoTrue needs none", got, err)
-		}
-	})
-	t.Run("inline", func(t *testing.T) {
-		t.Setenv(EnvSupabaseAnonKey, key)
-		t.Setenv(EnvSupabaseAnonKeyFile, "")
-		got, err := anonKey()
-		if err != nil || got != key {
-			t.Errorf("want %q, got %q / %v", key, got, err)
-		}
-	})
-	t.Run("from a file, with its trailing newline stripped", func(t *testing.T) {
-		t.Setenv(EnvSupabaseAnonKey, "")
-		t.Setenv(EnvSupabaseAnonKeyFile, path)
-		got, err := anonKey()
-		if err != nil || got != key {
-			t.Errorf("want %q, got %q / %v. A trailing newline is what `echo` adds; a key that carried it "+
-				"would be rejected by the gateway with nothing naming why.", key, got, err)
-		}
-	})
-	t.Run("both", func(t *testing.T) {
-		t.Setenv(EnvSupabaseAnonKey, key)
-		t.Setenv(EnvSupabaseAnonKeyFile, path)
-		if _, err := anonKey(); err == nil {
-			t.Error("two spellings of one credential were accepted; the effective value would then depend on " +
-				"which line the manifest emitted")
-		}
-	})
-	t.Run("a file that cannot be read", func(t *testing.T) {
-		t.Setenv(EnvSupabaseAnonKey, "")
-		t.Setenv(EnvSupabaseAnonKeyFile, filepath.Join(dir, "not-here"))
-		_, err := anonKey()
-		if err == nil {
-			t.Fatal("an unreadable key file was accepted, so the exchange would be refused at the first " +
-				"sign-in rather than at startup")
-		}
-		if strings.Contains(err.Error(), key) {
-			t.Error("the refusal carries the CONTENT of the key file; this line reaches an operator's log")
-		}
-	})
-}
-
-// TestTheRefusalsNameTheVariablesThisProgramReads pins the spellings a refusal quotes back,
-// against the constants, so the two cannot drift.
-//
-// ⚠ AN INVARIANT GUARD IN THE SAME SHAPE `cmd/cairn-server`'s
-// `TestTheSentinelNamesTheVariableThisProgramReads` TAKES. A refusal naming a variable nobody
-// set is a refusal an operator cannot act on, and the failure is silent: the message still
-// looks like advice.
-func TestTheRefusalsNameTheVariablesThisProgramReads(t *testing.T) {
-	for _, name := range []string{
-		EnvSupabaseRedirectURL,
-		EnvSupabaseAnonKey,
-		EnvSupabaseAnonKeyFile,
-	} {
-		if !strings.HasPrefix(name, "CAIRN_SUPABASE_") {
-			t.Errorf("%q is not in the CAIRN_SUPABASE_* namespace", name)
-		}
-	}
-	// And the callback PATH half comes from `internal/ui` rather than being written twice:
-	// the operator's allow-list entry has to match the route this binary serves.
-	if !strings.HasSuffix("https://host.invalid"+ui.OAuthCallbackPath, ui.OAuthCallbackPath) {
-		t.Error("the callback path is not the one the ledger declares")
-	}
+	// The callback PATH half comes from `internal/ui` rather than being written twice: the
+	// operator's `GOTRUE_URI_ALLOW_LIST` entry has to match the route this binary serves, and
+	// an empty constant would make the refusal text name nothing.
 	if ui.OAuthCallbackPath == "" || ui.OAuthStartPath == "" {
-		t.Error("the OAuth paths are empty, so a refusal quoting them tells an operator nothing")
+		t.Error("an OAuth path constant is EMPTY, so the refusal that quotes it tells an operator nothing " +
+			"and the route it names is not the one the ledger declares")
 	}
 }

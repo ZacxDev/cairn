@@ -325,11 +325,19 @@ func New(cfg Config) (*Server, error) {
 // "wrong credential" case in this surface's OWN logs and tests.
 //
 // 🔴 WHAT IS *KEPT* IS THE PROPERTY THAT WAS ALWAYS THE VALUABLE HALF: A BAD CREDENTIAL IS
-// STILL ANSWERED UNIFORMLY. Gate (4) runs BEFORE gate (5), so an UNAUTHENTICATED caller
-// still cannot tell a route from a typo — the uniform answer is now a consequence of the
-// gate ORDER rather than a guard spelled into gate (5) — and no refusal anywhere on this
-// surface says which half of a credential was wrong. That is the oracle over the credential
-// table, and it is a different property from the URL space.
+// STILL ANSWERED UNIFORMLY. No refusal anywhere on this surface says which half of a
+// credential was wrong. That is the oracle over the credential TABLE, and it is a different
+// property from the URL space.
+//
+// ⚠ AND THE NEARBY CLAIM ABOUT THE URL SPACE IS NARROWER THAN THE ONE THIS COMMENT FIRST
+// MADE, BECAUSE THE BRANCH BELOW FALSIFIED IT IN THE SAME CHANGE. It said an unauthenticated
+// caller "still cannot tell a route from a typo", as a free consequence of gate (4) running
+// before gate (5). That is true for every path BUT ONE: a browser asking for `/` is answered
+// 303 while a browser asking for `/nonsense` is answered 401, so the root IS distinguishable
+// without a credential. Exactly one path, deliberately, and it is the path a sign-in flow has
+// to advertise anyway — the same stated narrowing the PUBLIC rows already carry. The credential
+// property above is untouched by it: the 303 discloses that `/` exists, never anything about
+// who may see it.
 //
 // 🔴 AND THE ONE CONTENT-NEGOTIATED BRANCH, WHICH IS AN OPERATOR DECISION RATHER THAN A
 // CONSEQUENCE. An unauthenticated `GET /` from something that `Accept`s `text/html` is
@@ -550,33 +558,42 @@ func (s *Server) handleStylesheet(w http.ResponseWriter, _ *http.Request, _ iden
 //     stylesheet was a Go constant no input reached — that argument was true — but it
 //     licensed every inline style on the page, including one a later edit adds from a
 //     value that is not a constant. `'self'` licenses a same-origin FILE and nothing else.
-//   - `script-src 'self'` is NEW, and it is the only WIDENING. There was no `script-src` at
-//     all, so `default-src 'none'` forbade script outright. This admits script served from
-//     this origin — which is what makes a progressive enhancement possible without another
-//     policy edit — and still refuses an inline `<script>`, a `javascript:` URL and any
-//     third-party script host. No page here serves script today.
-//   - 🔴 THERE IS NO `img-src`, AND ITS ABSENCE IS A DELETION RATHER THAN AN OVERSIGHT. A
-//     draft of this policy carried `img-src 'self' data:` for a favicon nobody had asked for,
-//     which is a clause permitting something the CODE forbids: there is no `<img>` anywhere
-//     in this package, and `TestHostileEntryTextIsEscaped` in `render_test.go` asserts the
-//     literal `"<img"` can NEVER appear in a legitimately rendered page. A policy that is
-//     wider than the code is a policy nobody can read as a claim about the code.
-//     ⚠ WHOEVER ADDS AN IMAGE MEETS BOTH SIDES AT ONCE: adding `img-src` here without
-//     reworking that escaping guard leaves the guard red, and reworking the guard without
-//     adding `img-src` leaves the image blocked by `default-src 'none'`. They move in ONE
-//     commit, and this sentence is the warning that they collide.
 //   - `default-src 'none'`, `base-uri 'none'` and `form-action 'self'` are UNCHANGED.
 //     `base-uri 'none'` is what stops an injected `<base href>` re-pointing every relative
 //     URL on the page, and `form-action 'self'` admits this surface's own forms while
 //     refusing an injected `<form action="//elsewhere">` that would exfiltrate what
 //     somebody types.
 //
+// 🔴 THERE IS NO `script-src` AND NO `img-src`, AND BOTH ABSENCES ARE THE SAME RULE: A
+// CLAUSE THAT PERMITS SOMETHING THE CODE FORBIDS IS A POLICY NOBODY CAN READ AS A CLAIM
+// ABOUT THE CODE. `default-src 'none'` already forbids script, image, frame, font, connect
+// and everything else this package does not emit; naming a directive is how one of those
+// becomes POSSIBLE. Measured on this package: `render.go` emits no `<script>` and no
+// `<img>`, and `TestHostileEntryTextIsEscaped` lists BOTH `"<script"` and `"<img"` among the
+// substrings it asserts can never appear in a rendered page.
+//
+// ⚠ BOTH WERE BRIEFLY IN THIS CONSTANT DURING THE CHANGE THAT WROTE IT, AND RECORDING THAT
+// IS THE POINT RATHER THAN TIDYING IT AWAY. `img-src 'self' data:` was drafted for a favicon
+// nobody had asked for. `script-src 'self'` was in the policy this change was HANDED, with
+// the stated benefit of "enabling a future progressive enhancement without a second policy
+// edit" — which is anticipating a requirement that does not exist, in the very change that
+// deliberately built the sign-in flow SCRIPTLESS (see `providerForm`: the implicit OAuth flow
+// was available and was refused precisely so no script would be needed). Before that clause,
+// script on this surface was IMPOSSIBLE; with it, script became possible with no consumer, on
+// a public-internet surface serving client-confidential notes. It is deleted.
+//
+// 🔴 THE RULE FOR WHOEVER COMES NEXT, IN ONE FORM FOR BOTH: A SCRIPT OR AN IMAGE ARRIVING
+// LATER ADDS ITS CLAUSE IN THE COMMIT THAT ADDS THE SCRIPT OR THE IMAGE — never before, and
+// never "so it is ready". The two sides collide by construction and that is deliberate:
+// adding the directive here without reworking the escaping guard leaves the guard RED, and
+// reworking the guard without adding the directive leaves the asset blocked by
+// `default-src 'none'`. They move in ONE commit, and this sentence is the warning that they
+// must.
+//
 // 🔴 AND THE ACTUAL XSS DEFENCE IS UNCHANGED BY ALL OF IT, WHICH IS THE POINT RATHER THAN A
 // CAVEAT. The guard is gomponents' text and attribute-value escaping plus the AST ban on
 // `Raw`/`Rawf` and on non-constant element and attribute NAMES — see this package's doc
 // comment, `safeHref`, and `TestNoRawNodeConstructorAppearsInTheUIPackage`. The policy is
-// the barrier BEHIND that, and `script-src 'self'` does not weaken the escaping by one
-// character: a store entry's text still cannot become an element, and an injected
-// `<script src>` still cannot name a host this origin does not serve.
-const ContentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; " +
+// the barrier BEHIND that.
+const ContentSecurityPolicy = "default-src 'none'; style-src 'self'; " +
 	"base-uri 'none'; form-action 'self'"

@@ -350,8 +350,17 @@ assertion above is satisfied by a page with no links at all.
 ### Response hardening, which is a second barrier and not the guard
 
 `X-Content-Type-Options: nosniff` and a CSP of
-`default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'`.
+`default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'`.
 The escaping is the guard; these are behind it.
+
+🔴 **NO `script-src` AND NO `img-src`, AND BOTH ABSENCES ARE ONE RULE:** a clause that permits
+something the code forbids is a policy nobody can read as a claim about the code. `render.go`
+emits neither, and `TestHostileEntryTextIsEscaped` lists both `"<script"` and `"<img"` among
+the substrings it asserts can never appear in a rendered page. `default-src 'none'` forbids
+them today; **naming a directive is how one of them becomes possible.** A script or an image
+arriving later adds its clause *in the commit that adds it* — see `ContentSecurityPolicy`'s own
+comment, which also records that both were briefly in a draft of this very change and why
+neither survived review.
 
 ⚠ **THIS PARAGRAPH WAS WRONG ABOUT THE POLICY IT DESCRIBED, AND IN TWO DIFFERENT WAYS — the
 record is the point.** It read *"a CSP of `default-src 'none'; style-src 'unsafe-inline';
@@ -362,9 +371,9 @@ the constant moved to `'self'` so the forms would work — so the README asserte
 policy than the code shipped, for two phases, in the section whose whole job is to state what
 the response promises. And the `'unsafe-inline'` half was true and is now **gone**: the
 stylesheet is served from `/static/app.css`, so an inline `<style>` does not apply at all.
-Which direction each clause moved, and why there is deliberately **no `img-src`**, is in
-`ContentSecurityPolicy`'s own comment in `server.go` — read it there rather than restating it
-here, because that is the string the header test pins as a literal.
+Which direction each clause moved is in `ContentSecurityPolicy`'s own comment in `server.go` —
+read it there rather than restating it here, because that is the string the header test pins as
+a literal.
 
 ## 🔴 `TrustedHeader` is not in this binary's identity chain
 
@@ -594,9 +603,12 @@ What replaced it, and what was deliberately kept:
 - **the uniform refusal for a BAD CREDENTIAL stays**, and that was always the half worth its
   cost: it is an oracle over the credential TABLE, not over the URL space. No refusal on this
   surface says which part of a credential was wrong.
-- an unauthenticated caller *still* cannot tell a route from a typo, because gate (4) runs before
-  gate (5) — but that is now a consequence of the gate ORDER rather than a guard anybody
-  maintains.
+- an unauthenticated caller still cannot tell *most* routes from a typo, because gate (4) runs
+  before gate (5) — a consequence of the gate ORDER rather than a guard anybody maintains.
+  ⚠ **Not the root**, and this bullet said otherwise in its first draft: a browser asking for `/`
+  gets 303 where `/nonsense` gets 401, so exactly one path is distinguishable without a
+  credential. It is the path a sign-in flow has to advertise anyway, and it discloses that `/`
+  exists — never anything about who may see it.
 - **`GET /` DOES redirect a browser now**, 303 to `/sign-in`, on an operator decision. It is
   scoped to one path, one method and an `Accept` carrying `text/html`; every other path, method
   and client keeps the uniform 401 byte for byte, so the machine contract is unmoved.
@@ -1025,8 +1037,10 @@ Two decisions inside that are worth reading twice.
 **`flow_type=pkce` is what keeps the flow scriptless.** Without it GoTrue returns the access
 token in the URL **fragment**, which no server ever receives: the page would need script to
 read `location.hash` and post it back. That is more code, a second way in, and a token in the
-browser's history. `script-src 'self'` would have permitted such a script — the flow was
-available and was refused.
+browser's history. A draft of this change carried `script-src 'self'`, which would have
+permitted such a script — the flow was available and was refused. **That clause is gone too**:
+having deliberately built the flow scriptless, keeping a directive that re-permits script
+"for later" would be the policy-wider-than-the-code shape this surface refuses.
 
 **There is no `state` parameter, and its absence is a decision with a reason.** GoTrue does not
 pass an arbitrary `state` through to the callback; it manages its own and appends only `code`.
@@ -1049,8 +1063,8 @@ make this process perform.
 
 `internal/ui`'s `flights` table: in memory, keyed by a 32-byte flight id carried in a
 `__Host-cairn-oauth` cookie (`HttpOnly`, `Secure`, `SameSite=Lax`, `MaxAge` = the flight TTL),
-**single use** (the record is deleted on read), **expiring** (5 minutes), and **bounded**
-(`maxOpenFlights`).
+**single use** (the record is deleted on read), **expiring** (5 minutes), and **bounded twice**
+(`maxFlightsPerClient` = 8, `maxOpenFlights` = 1024).
 
 - **Why not the session store.** `identity/session.go` rejects in-memory storage *for
   sessions* because a restart signs everybody out and a second replica has no shared truth.
@@ -1062,11 +1076,26 @@ make this process perform.
   needs no table at all, and it was refused on ONE property: single use. A cookie is deleted by
   *asking* the browser to delete it, so a client that declines cannot be made to; a map entry
   removed on read cannot be presented twice whatever the client does.
-- **Why the cap exists.** `POST /sign-in/github` is reachable by anybody who can open a socket,
-  and every request writes a record that lives five minutes. Without `maxOpenFlights` the route
-  is a memory-exhaustion endpoint. ⚠ The cap's cost is a denial of service on the **button**:
-  with the table full a legitimate provider sign-in is refused until flights expire. The token
-  form touches this table not at all, which is one more reason that door is kept.
+- **Why there are TWO caps, and why one is not enough.** `POST /sign-in/github` is reachable by
+  anybody who can open a socket, and every request writes a record that lives five minutes.
+  Without `maxOpenFlights` the route is a memory-exhaustion endpoint. But a **global cap alone
+  is a denial of service with extra steps**: one anonymous caller reaches 1024 on its own,
+  refreshed every five minutes, and everybody else's button then refuses until the oldest
+  expire. `maxFlightsPerClient` is what stops one caller spending everybody else's share —
+  `netid`'s own comment makes the same ruling about a limiter with one bucket. The global number
+  bounds this process's **memory**; the per-client number bounds one caller's **share**.
+  ⚠ The residual cost: callers behind a shared egress address share a client identity, so a busy
+  office reaches 8 between them. That delays a GitHub sign-in and never a credential one — the
+  token form touches this table not at all.
+- **The existing sign-in lockout covers this door, and `RecordFailure` deliberately does not.**
+  `handleOAuthStart` consults `netid.RateLimiter.LockedOut` (its absence was a real hole: a
+  client locked out for five failed credential attempts could still drive the start row without
+  limit). It does **not** record a failure, because that bucket is shared with `POST /sign-in` at
+  5 per window — so counting a *started* sign-in there would mean five clicks of this button lock
+  the caller out of the **credential form** for fifteen minutes, behind a refusal that explains
+  nothing. Starting a sign-in is not a failing one; the rate of flight creation is bounded by the
+  table that holds the flights. `TestALockedOutClientOpensNoFlight` pins both halves, including
+  the absence.
 - ⚠ **`SameSite=Lax` is load-bearing here, not a convenience.** The callback is a top-level GET
   navigation from the PROVIDER's origin, which is cross-site: `Strict` would withhold the cookie
   and every provider sign-in would be refused.
@@ -1089,11 +1118,19 @@ through `identity.SupabaseBackendFromEnvironment`, which is the **same ledger an
 policy** `cmd/cairn-server` gets — a second reader of that ledger is the duplicated predicate
 `internal/identity/config.go`'s whole history is about.
 
-Two names are read by `cmd/cairn-ui` itself, outside the ledger, and the cost is stated where
-they are declared: `CAIRN_SUPABASE_REDIRECT_URL` (required; what arms the button, judged with
-`identity.ValueReducesToNothing` rather than a fresh `TrimSpace`) and
-`CAIRN_SUPABASE_ANON_KEY`/`_FILE` (optional; a hosted Supabase project's gateway refuses the
-token endpoint without it, a self-hosted GoTrue needs none).
+**One** name is read by `cmd/cairn-ui` itself, outside the ledger, and the cost is stated where
+it is declared: `CAIRN_SUPABASE_REDIRECT_URL` (required; what arms the button, judged with
+`identity.ValueReducesToNothing` rather than a fresh `TrimSpace`).
+
+⚠ **A `CAIRN_SUPABASE_ANON_KEY`/`_FILE` PAIR WAS DRAFTED AND DELETED**, and the record is worth
+more than the code was. A **hosted** Supabase project sits behind an API gateway that refuses the
+token endpoint without an `apikey` header; this deployment runs GoTrue **self-hosted** behind its
+own ingress, has no such gateway, and declined the variable in its own manifest. So the pair
+carried a both-set refusal, a file reader, a trailing-newline ruling and two tests for a
+deployment shape nobody has — and the `_FILE` spelling would have been the **first secret this
+pod mounts**. Re-adding twenty lines if a hosted project ever appears is cheaper than carrying
+them; the symptom that would call for it (the exchange answering 401 with everything else
+correct) is recorded at `identity.SupabaseOAuth.Exchange`.
 
 🔴 **There is no `CAIRN_SUPABASE_AUTH_URL`.** `/authorize` and `/token` hang off the verifier's
 own **issuer**, which for Supabase *is* the GoTrue base URL. Two places to name the project is a
@@ -1123,10 +1160,10 @@ prefix match, which is a second way for a request to reach a handler and one
 reads each page's `<link href>` and then fetches that exact href, because two separate
 assertions would both pass for a route nobody links or a link nobody serves.
 
-## The mutation rows — 15 mutants, 15 killed
+## The mutation rows — 18 mutants, 18 killed
 
 Each reverts ONE decision to its pre-change behaviour, or breaks one guard, and names the test
-that must go red. Run before the battery: a baseline proving all 15 named tests GREEN, so a test
+that must go red. Run before the battery: a baseline proving all 18 named tests GREEN, so a test
 that was already red could not be reported as a kill.
 
 | mutant | test that KILLED it |
@@ -1138,7 +1175,10 @@ that was already red could not be reported as a kill.
 | the entries page inlines its stylesheet again | `TestTheStylesheetIsServedAsItsOwnRoute` |
 | the ambient cookie tried before the Supabase header credential | `TestTheUIChainTriesEveryHeaderCREDENTIALBeforeTheAmBIENTCookie` |
 | a flight is not consumed on read (replayable sign-in) | `TestAFlightIsSingleUseAndBoundToItsBrowser` |
-| the flight table has no size bound | `TestTheFlightTableIsBounded` |
+| the flight table has no GLOBAL size bound | `TestTheFlightTableIsBoundedGloballyAndPerClient` |
+| the PER-CLIENT flight bound is removed (one caller spends the whole table) | the same test |
+| the start row ignores the sign-in lockout | `TestALockedOutClientOpensNoFlight` |
+| a successful flight start RECORDS a failure against the shared sign-in bucket | the same test |
 | the same-origin gate always passes | `TestTheStartRowIsRefusedCrossSite` |
 | the exchanged token trusted because of the CHANNEL it arrived on | `TestTheExchangeVERIFIESWhatTheProviderReturned` |
 | the PKCE challenge is the verifier itself (no S256) | `TestTheGitHubButtonMintsAFlightAndRedirectsToTheProvider` |

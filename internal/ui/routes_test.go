@@ -778,19 +778,19 @@ func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 	// against the constant the handler sets is a test that `a == a`: it goes green for
 	// every edit of the constant, including one that deletes `default-src 'none'`.
 	// The literal below is the contract; changing it is a decision somebody takes here.
-	const want = "default-src 'none'; script-src 'self'; style-src 'self'; " +
-		"base-uri 'none'; form-action 'self'"
+	const want = "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'"
 	if got := rec.Header().Get("Content-Security-Policy"); got == "" {
 		t.Error("no Content-Security-Policy was sent")
 	} else if got != want {
-		t.Errorf("the Content-Security-Policy is %q, want %q. Which direction each part moved, and why, is in "+
-			"`ContentSecurityPolicy`'s own comment: `style-src` TIGHTENED from `'unsafe-inline'` to `'self'` "+
-			"(an inline <style> is now impossible, which is why the stylesheet is a route), `script-src 'self'` "+
-			"is the ONE widening, and `default-src`/`base-uri`/`form-action` are unchanged. There is "+
-			"deliberately no `img-src`: this package renders no <img> and `TestHostileEntryTextIsEscaped` "+
-			"asserts the literal \"<img\" can never appear, so a clause permitting one would be wider than the "+
-			"code. The XSS defence is the escaping plus the Raw ban, and none of this moves it. Editing this "+
-			"literal is a decision somebody takes here.", got, want)
+		t.Errorf("the Content-Security-Policy is %q, want %q. The ONE move is `style-src` TIGHTENING from "+
+			"`'unsafe-inline'` to `'self'`, which is why the stylesheet is a route; `default-src`/`base-uri`/"+
+			"`form-action` are unchanged. There is deliberately NO `script-src` and NO `img-src`: this package "+
+			"emits neither, `TestHostileEntryTextIsEscaped` asserts the literals \"<script\" and \"<img\" can "+
+			"never appear in a rendered page, and a clause permitting something the CODE forbids is a policy "+
+			"nobody can read as a claim about the code. Naming a directive is how one of those becomes "+
+			"POSSIBLE — `default-src 'none'` forbids them all today. A script or an image arriving later adds "+
+			"its clause in the COMMIT THAT ADDS IT. Editing this literal is a decision somebody takes here.",
+			got, want)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Errorf("Content-Type is %q", got)

@@ -91,16 +91,15 @@ const (
 	// process can derive it — see `identity.ErrSupabaseOAuthNoRedirect`.
 	EnvSupabaseRedirectURL = "CAIRN_SUPABASE_REDIRECT_URL"
 
-	// EnvSupabaseAnonKey and EnvSupabaseAnonKeyFile are the project's anonymous key, which
-	// a HOSTED Supabase project's API gateway requires on the token endpoint and a
-	// SELF-HOSTED GoTrue does not. Optional; see `identity.SupabaseOAuthConfig.APIKey`.
+	// ⚠ THERE IS NO `CAIRN_SUPABASE_ANON_KEY`, AND ITS ABSENCE IS A DELETION RATHER THAN A
+	// GAP. A draft of this change read a project key here, inline or from a file, because a
+	// HOSTED Supabase project's API gateway refuses the token endpoint without one. This
+	// deployment runs GoTrue SELF-HOSTED with no such gateway and declined the variable in
+	// its own manifest, so the pair had a both-set refusal, a file reader, a
+	// trailing-newline ruling and two tests and NO consumer — and the `_FILE` spelling would
+	// have been the FIRST secret this pod mounts. `identity.SupabaseOAuth.Exchange` records
+	// the symptom that would call for it back.
 	//
-	// 🔴 THE `_FILE` SPELLING EXISTS BECAUSE THE INLINE ONE IS READABLE IN `/proc`. The same
-	// pair `CAIRN_TRUSTED_HEADER_SECRET`/`_FILE` offers, for the same reason, and the file
-	// form is the one a Kubernetes Secret mounts.
-	EnvSupabaseAnonKey     = "CAIRN_SUPABASE_ANON_KEY"
-	EnvSupabaseAnonKeyFile = "CAIRN_SUPABASE_ANON_KEY_FILE"
-
 	// EnvUIControlJournal is the `-control-journal` flag's environment spelling.
 	//
 	// 🔴 IT IS A CONSTANT AND ITS SIBLINGS ARE STRING LITERALS, BECAUSE THIS ONE IS READ
@@ -584,10 +583,6 @@ func providerSignIn(backend *identity.SupabaseJWT, armed bool) (*identity.Supaba
 			EnvSupabaseRedirectURL, ui.GitHubLabel, identity.EnvSupabaseJWKSURL, identity.EnvSupabaseIssuer,
 			EnvSupabaseRedirectURL)
 	}
-	key, keyErr := anonKey()
-	if keyErr != nil {
-		return nil, keyErr
-	}
 	// 🔴 THE AUTH BASE IS THE VERIFIER'S OWN ISSUER, NOT A SECOND VARIABLE. See
 	// `identity.SupabaseJWT.Issuer`: two places to name the project is a deployment that
 	// verifies tokens from one and starts sign-ins at another, with nothing naming the
@@ -596,39 +591,7 @@ func providerSignIn(backend *identity.SupabaseJWT, armed bool) (*identity.Supaba
 		Verifier:    backend,
 		AuthBaseURL: backend.Issuer(),
 		RedirectURL: redirect,
-		APIKey:      key,
 	})
-}
-
-// anonKey resolves the optional anonymous key, inline or from a file.
-//
-// 🔴 THE FILE IS READ WITH NO TRIM EXCEPT A TRAILING NEWLINE, WHICH IS THE ONE EDIT A FILE
-// GETS FOR FREE. `echo "$KEY" > file` appends one; every other byte may legitimately be part
-// of the value, and trimming more would silently change a credential — the ruling
-// `setting.keepWhitespace` records one package over.
-//
-// ⚠ BOTH SPELLINGS SET IS A REFUSAL, NOT A PRECEDENCE RULE. A precedence would make the
-// value depend on which line the manifest emitted last, and the operator who wrote two
-// cannot be told from the one who forgot to delete the first.
-func anonKey() (string, error) {
-	inline := os.Getenv(EnvSupabaseAnonKey)
-	path := strings.TrimSpace(os.Getenv(EnvSupabaseAnonKeyFile))
-	if inline != "" && path != "" {
-		return "", fmt.Errorf("both $%s and $%s are set, and this program will not choose between two "+
-			"spellings of one credential. Refusing to start; delete one", EnvSupabaseAnonKey, EnvSupabaseAnonKeyFile)
-	}
-	if path != "" {
-		body, err := os.ReadFile(path)
-		if err != nil {
-			// The path is named and the CONTENT never is: this line reaches an operator's
-			// log, and the content is the credential.
-			return "", fmt.Errorf("$%s names %s, which cannot be read (%w). Refusing to start; the "+
-				"token exchange against a hosted Supabase project is refused without it",
-				EnvSupabaseAnonKeyFile, path, err)
-		}
-		return strings.TrimSuffix(string(body), "\n"), nil
-	}
-	return inline, nil
 }
 
 // envDuration falls back on an unparseable value rather than refusing, which matches

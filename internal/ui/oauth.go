@@ -11,6 +11,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/netid"
 )
 
 // OAuthAuthority is the provider sign-in this surface drives, as an interface so the
@@ -63,20 +64,29 @@ const GitHubLabel = "GitHub"
 // it being long is a window in which a planted flight is still completable.
 const FlightTTL = 5 * time.Minute
 
-// maxOpenFlights bounds the table's SIZE, and that bound is the whole reason this is not
-// just a map.
+// maxOpenFlights bounds the table's TOTAL size, and `maxFlightsPerClient` bounds one
+// caller's share of it. Two bounds, because one of them alone is not a bound anybody wants.
 //
 // 🔴 A FLIGHT IS CREATED BY AN UNAUTHENTICATED REQUEST, SO WITHOUT A CAP THE START ROUTE IS
 // A MEMORY-EXHAUSTION ENDPOINT. The same-origin gate refuses a cross-site POST, so an
-// attacker has to drive it directly — which anybody can. Each record is small, so the cap is
-// generous; what matters is that it exists and that reaching it is SAID rather than
-// discovered as a restart.
+// attacker has to drive it directly — which anybody can.
 //
-// ⚠ WHAT THE CAP COSTS, STATED RATHER THAN HIDDEN: with the table full, a legitimate GitHub
-// sign-in is refused until the oldest flights expire. It is a denial of service on the
-// BUTTON and not on the surface — the token form mints a session without touching this table
-// at all, which is one of the reasons that door is kept.
-const maxOpenFlights = 1024
+// 🔴 AND A GLOBAL CAP ALONE IS A DENIAL OF SERVICE WITH EXTRA STEPS, WHICH IS WHY THE
+// PER-CLIENT ONE EXISTS. With only `maxOpenFlights`, one anonymous caller reaches the whole
+// bound on its own — 1024 POSTs, refreshed every five minutes — and every OTHER person's
+// GitHub button then refuses until the oldest flights expire. The global number bounds this
+// process's MEMORY; the per-client number is what stops one caller spending everybody else's
+// share of it. `netid`'s own comment makes the same ruling about a limiter with one bucket:
+// a single shared key means the first abuser locks out everybody.
+//
+// ⚠ WHAT THEY STILL COST, STATED RATHER THAN HIDDEN: a caller behind a shared egress address
+// shares a client identity, so a busy office reaches `maxFlightsPerClient` between them. The
+// cost is a delayed GitHub sign-in, never a delayed one through the credential form — that
+// door does not touch this table at all, which is one more reason it is kept.
+const (
+	maxOpenFlights      = 1024
+	maxFlightsPerClient = 8
+)
 
 // flight is one started, uncompleted sign-in.
 //
@@ -89,6 +99,12 @@ const maxOpenFlights = 1024
 type flight struct {
 	verifier string
 	expires  time.Time
+	// client is the `netid.ResolveClient` identity that opened this flight, and it is held
+	// ONLY so `maxFlightsPerClient` can be counted. It is never compared at the callback:
+	// the binding there is the flight COOKIE, which is unguessable, and re-checking the
+	// client would break every legitimate sign-in that changes address mid-flow — a phone
+	// moving from wifi to cellular between the button and the provider's redirect.
+	client string
 }
 
 // flights is the open-sign-in table.
@@ -119,29 +135,73 @@ func newFlights(now func() time.Time) *flights {
 	return &flights{open: map[string]flight{}, now: now}
 }
 
+// flightRefusal says WHICH bound refused, for the log line and for a test that must not
+// credit one bound with the other's kill.
+type flightRefusal uint8
+
+const (
+	flightOpened flightRefusal = iota
+	// flightRefusedPerClient: this caller already holds `maxFlightsPerClient` live records.
+	flightRefusedPerClient
+	// flightRefusedGlobal: the whole table is at `maxOpenFlights`.
+	flightRefusedGlobal
+	// flightRefusedNoID: `crypto/rand` failed, so no unguessable id could be minted.
+	flightRefusedNoID
+)
+
+func (r flightRefusal) String() string {
+	switch r {
+	case flightRefusedPerClient:
+		return "this client already holds the maximum open flights"
+	case flightRefusedGlobal:
+		return "the flight table is full"
+	case flightRefusedNoID:
+		return "no flight id could be generated"
+	default:
+		return "opened"
+	}
+}
+
 // start records a verifier and returns the id the browser must come back with.
 //
 // It prunes expired records on every insert rather than on a timer, for the reason
 // `FileSessionStore.Create` gives about the same choice: a background goroutine whose
 // failure is silent is worse than a bound maintained by the path that grows the table.
-func (f *flights) start(verifier string, ttl time.Duration) (string, bool) {
+//
+// 🔴 THE PRUNE AND THE PER-CLIENT COUNT ARE ONE PASS, AND THE ORDER IS LOAD-BEARING. Counting
+// before pruning would charge a caller for flights that have already expired, so somebody who
+// tried eight times across an hour would be refused on the ninth for records that no longer
+// exist. The single pass also means the per-client number is a count of LIVE flights, which is
+// the only number the bound is about.
+func (f *flights) start(client, verifier string, ttl time.Duration) (string, flightRefusal) {
 	id, err := newFlightID()
 	if err != nil {
-		return "", false
+		return "", flightRefusedNoID
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := f.now()
+	mine := 0
 	for key, rec := range f.open {
 		if !now.Before(rec.expires) {
 			delete(f.open, key)
+			continue
+		}
+		if rec.client == client {
+			mine++
 		}
 	}
-	if len(f.open) >= maxOpenFlights {
-		return "", false
+	// The per-client bound is checked FIRST, so a caller that has spent its own share is told
+	// that rather than being told the table is full — which would be a fact about everybody
+	// else and would send an operator looking in the wrong place.
+	if mine >= maxFlightsPerClient {
+		return "", flightRefusedPerClient
 	}
-	f.open[id] = flight{verifier: verifier, expires: now.Add(ttl)}
-	return id, true
+	if len(f.open) >= maxOpenFlights {
+		return "", flightRefusedGlobal
+	}
+	f.open[id] = flight{verifier: verifier, expires: now.Add(ttl), client: client}
+	return id, flightOpened
 }
 
 // take removes and returns a flight's verifier. SINGLE USE: the record is deleted whether
@@ -285,6 +345,41 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		s.refuseUnconfiguredOAuth(w)
 		return
 	}
+	// 🔴 THE CLIENT IS RESOLVED BEFORE ANY WORK, AND `netid.ResolveClient` IS REUSED RATHER
+	// THAN REIMPLEMENTED — the same ruling `handleSignIn` records, for the same reason: the
+	// trust boundary is the whole difficulty and it is already decided there. The header is
+	// read ONLY from a peer inside the allowlist; every other peer is keyed on its own
+	// address.
+	client, trusted, ok := netid.ResolveClient(r.Header, r.RemoteAddr, s.trustedProxies)
+	if !ok {
+		// FAIL CLOSED, AND COUNT NOTHING. There is no bucket to count into, and the
+		// alternative — one shared key for every unidentifiable request — is the failure
+		// `internal/netid` exists to avoid.
+		s.logf("github sign-in refused: no client identity could be resolved from peer %q", r.RemoteAddr)
+		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+		return
+	}
+
+	// 🔴 THE EXISTING SIGN-IN LOCKOUT COVERS THIS DOOR TOO, AND ITS ABSENCE HERE WAS A REAL
+	// HOLE: a client locked out for five failed credential attempts could still drive the
+	// start row without limit. Consulting it costs one map read and needs no new state.
+	//
+	// ⚠ BUT THIS HANDLER DELIBERATELY DOES NOT `RecordFailure`, AND THAT IS A DIVERGENCE
+	// WORTH STATING RATHER THAN A FORGOTTEN CALL. `netid.RateLimiter` counts FAILED AUTH into
+	// one bucket per client, shared with `POST /sign-in`, at `DefaultMaxFailures` = 5 with a
+	// 15-minute lockout. Starting a sign-in is not a failed one: recording it would mean five
+	// clicks of this button — back, retry, back, retry, which a slow provider makes ordinary —
+	// lock the caller out of the CREDENTIAL FORM for fifteen minutes, behind a refusal that
+	// deliberately explains nothing. That trades a real regression on the door that always
+	// works for a bound the flight table can hold itself. So the rate of flight CREATION is
+	// bounded by `maxFlightsPerClient`, where the thing being bounded lives, and the limiter
+	// keeps meaning exactly what its own comment says it means.
+	if s.limiter != nil && s.limiter.LockedOut(client) {
+		s.logf("github sign-in refused: %s is locked out (client identity %s)", client, peerState(trusted))
+		s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+		return
+	}
+
 	verifier, err := randomPKCEValue()
 	if err != nil {
 		// `crypto/rand` failing is not a condition to carry on through: the alternative to
@@ -293,13 +388,14 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		s.renderSignIn(w, http.StatusInternalServerError, signInRefused)
 		return
 	}
-	id, ok := s.flights.start(verifier, FlightTTL)
-	if !ok {
-		// The cap, or a `crypto/rand` failure inside the mint. Both are the same answer to
-		// the caller and both are worth a line, because a surface refusing every GitHub
-		// sign-in while the token form works is otherwise a silent half-outage.
-		s.logf("github sign-in refused: no flight could be opened (%d open, cap %d)",
-			s.flights.openCount(), maxOpenFlights)
+	id, outcome := s.flights.start(client, verifier, FlightTTL)
+	if outcome != flightOpened {
+		// The log names WHICH bound refused, because "the table is full" and "you have spent
+		// your own share" send an operator to completely different places — and a surface
+		// refusing every GitHub sign-in while the token form works is otherwise a silent
+		// half-outage.
+		s.logf("github sign-in refused: %s (%d open, per-client cap %d, global cap %d, client identity %s)",
+			outcome, s.flights.openCount(), maxFlightsPerClient, maxOpenFlights, peerState(trusted))
 		s.renderSignIn(w, http.StatusServiceUnavailable, oauthIncomplete)
 		return
 	}
