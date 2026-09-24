@@ -253,10 +253,23 @@ func TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire(t *testing.T) {
 		if !strings.HasPrefix(header, oauthFlightCookieName+"=") {
 			t.Errorf("%s is not named %s: %q", tc.name, oauthFlightCookieName, header)
 		}
-		for _, want := range []string{"HttpOnly", "Secure", "SameSite=Lax", "Path=/"} {
+		for _, want := range []string{"HttpOnly", "Secure", "SameSite=Lax"} {
 			if !strings.Contains(header, want) {
 				t.Errorf("%s does not carry %s: %q", tc.name, want, header)
 			}
+		}
+		// 🔴 `Path` IS MATCHED EXACTLY, BECAUSE `strings.Contains(header, "Path=/")` IS
+		// SATISFIED BY `Path=/sign-in` — AND THAT WALKED THE GUARD THIS TEST WAS WRITTEN TO
+		// BE. Measured: mutating `oauthFlightCookie`'s `Path: "/"` to `"/sign-in"` survived
+		// the whole suite. A conforming browser refuses a `__Host-` cookie whose path is not
+		// exactly `/`, so the cookie is DROPPED and every provider sign-in fails with nothing
+		// naming why — the identical consequence this test already asserts correctly for
+		// `Domain`. The attribute is compared as a whole field: `Path=/` must be followed by
+		// the end of the header or by the `;` that starts the next attribute.
+		if !hasExactCookieAttr(header, "Path=/") {
+			t.Errorf("%s does not carry an exact `Path=/`: %q. A `__Host-` cookie with any other path is "+
+				"refused outright by a conforming browser, so this would not weaken the guard — it would "+
+				"delete the cookie.", tc.name, header)
 		}
 		if strings.Contains(header, "Domain=") {
 			t.Errorf("%s carries a Domain attribute: %q. A `__Host-` cookie with one is refused outright by "+
@@ -314,14 +327,33 @@ func TestAFlightIsSingleUseAndBoundToItsBrowser(t *testing.T) {
 			"nothing. This is the assertion that replaced an `openCount() == 0` check, which measured the old " +
 			"delete-on-read implementation rather than the property.")
 	}
+	// 🔴 AND THE VERIFIER IS GONE FROM THE SPENT RECORD. `take`'s comment claims it is cleared,
+	// and deleting `rec.verifier = ""` survived the whole suite — so the claim had no guard. It
+	// matters more than it looks: a spent record is now KEPT until expiry rather than deleted,
+	// so an unguarded claim here means a live PKCE secret sitting in memory for the rest of the
+	// TTL. This reaches into the table's internals because nothing observable from outside can
+	// see a field that is no longer read.
+	srv.flights.mu.Lock()
+	spent, present := srv.flights.open[cookie.Value]
+	srv.flights.mu.Unlock()
+	if !present {
+		t.Error("the spent record is GONE from the table, so it did not keep its slot — which is the " +
+			"mechanism that bounds the rate of outbound exchanges")
+	} else if spent.verifier != "" {
+		t.Errorf("the spent record still holds its PKCE verifier (%d bytes). It has served its only purpose, "+
+			"and a record that keeps it leaves a live secret in memory for the rest of the TTL.",
+			len(spent.verifier))
+	} else if !spent.consumed {
+		t.Error("the record is not marked consumed, so the refusal above happened for some other reason")
+	}
 	// ...then again with the same cookie and a fresh code.
 	replay := httptest.NewRequest("GET", OAuthCallbackPath+"?code=code-two", nil)
 	replay.AddCookie(cookie)
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, replay)
 	if rec.Code != http.StatusBadRequest {
-		t.Errorf("a REPLAYED flight id answered %d, want 400. `flights.take` deletes the record on read, so "+
-			"the second presentation must find nothing.", rec.Code)
+		t.Errorf("a REPLAYED flight id answered %d, want 400. `flights.take` MARKS the record consumed, so "+
+			"the second presentation must find a spent one and refuse it.", rec.Code)
 	}
 	if sessionCookieFrom(rec.Result()) != nil {
 		t.Error("the replayed callback minted a SESSION, which is a second live session from one sign-in")
@@ -1062,6 +1094,23 @@ func TestTheCredentialFormSURVIVESTheProviderButton(t *testing.T) {
 		t.Error("the credential sign-in minted no session on a server with a provider configured, so adding " +
 			"the provider degraded the door it was meant to sit beside")
 	}
+}
+
+// hasExactCookieAttr answers whether a rendered `Set-Cookie` carries `attr` as a WHOLE
+// attribute rather than as a prefix of one.
+//
+// 🔴 IT EXISTS BECAUSE `strings.Contains` IS THE WRONG TOOL FOR A COOKIE ATTRIBUTE AND THAT
+// COST A GUARD. `Contains(header, "Path=/")` is true of `Path=/sign-in`, `Path=/anything` and
+// `Path=/`, so the assertion admitted every value it was written to refuse. An attribute ends
+// at the header's end or at the `; ` before the next one, and that is the whole of this
+// function.
+func hasExactCookieAttr(header, attr string) bool {
+	for _, field := range strings.Split(header, ";") {
+		if strings.TrimSpace(field) == attr {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionCookieFrom returns the session cookie a response set, or nil.

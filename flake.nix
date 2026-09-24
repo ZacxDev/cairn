@@ -579,21 +579,29 @@
       };
 
       # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
-      # MODULE. `cmd/cairn-ui` now carries three phases — the entries page, cookie
-      # sessions with a sign-in pair, and the SHARE FLOW — over one authentication
-      # chain and one rendering path. It is DEPLOYED BY NOTHING — saying so is part
-      # of the change. ⚠ This also said "and no image wraps it", which stopped being
-      # true when `packages.ui-image` landed; PUBLISHED and DEPLOYED are two separate
-      # claims, and only the second still holds. ⚠ This used to add "the same way
-      # `cmd/cairn-server`'s own doc comment says it for the Go pod", and that
-      # cross-reference is dead: the Go pod IS deployed, and its doc comment now says
-      # so. A cross-reference is a claim about ANOTHER file, and nothing tells you
-      # when that file moves.
+      # MODULE. `cmd/cairn-ui` carries the entries page, cookie sessions with a
+      # sign-in pair, a GitHub sign-in through the operator's GoTrue, one static
+      # stylesheet and the SHARE FLOW — over one authentication chain and one
+      # rendering path.
       #
-      # ⚠ THIS COMMENT SAID "PHASE A: one page" THROUGH TWO PHASES THAT ADDED ROUTES,
-      # WHICH IS WHY THE PHASE COUNT IS NOT REPEATED AS A NUMBER ANYWHERE ELSE HERE.
-      # `ui.DeclaredRouteLedger()` is the count that cannot go stale; this sentence
-      # names what the surface DOES, which is the part a reader of `flake.nix` needs.
+      # ⚠ IT IS PUBLISHED AND IT IS DEPLOYED, AND THIS COMMENT HAS NOW BEEN WRONG
+      # ABOUT THAT IN EVERY DIRECTION IT COULD BE. It said "and no image wraps it",
+      # which died when `packages.ui-image` landed. It then said "It is DEPLOYED BY
+      # NOTHING — saying so is part of the change", with a ⚠ re-affirming that of the
+      # two claims "only the second still holds". Both halves are false now: the image
+      # is pushed by `.github/workflows/publish-image.yml`, which then proves it
+      # pullable with no credentials, and a manifest in the operator's GitOps
+      # repository points a pod at it. ⚠ A third sentence here was retired earlier for
+      # cross-referencing `cmd/cairn-server`'s doc comment — and the lesson generalises
+      # to this very block: a claim about what DEPLOYS an artefact is a claim about a
+      # repository nothing in this file can see.
+      #
+      # ⚠ AND THE PHASE COUNT IS GONE FROM THIS BLOCK, ELEVEN LINES ABOVE THE SENTENCE
+      # THAT SAYS IT IS NOT REPEATED ANYWHERE. It read "now carries three phases" while
+      # the paragraph below said "THE PHASE COUNT IS NOT REPEATED AS A NUMBER ANYWHERE
+      # ELSE HERE" — the count and its own prohibition, in one comment. It said "PHASE
+      # A: one page" through two phases before that. `ui.DeclaredRouteLedger()` is the
+      # count that cannot go stale; this block names what the surface DOES.
       #
       # 🔴 NO `gitMinimal` ON A WRAPPER, AND THE ABSENCE IS DELIBERATE RATHER THAN
       # FORGOTTEN. `packages.cairn` and `packages.cairn-go` carry one because their

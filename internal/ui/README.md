@@ -1070,7 +1070,8 @@ make this process perform.
 
 `internal/ui`'s `flights` table: in memory, keyed by a 32-byte flight id carried in a
 `__Host-cairn-oauth` cookie (`HttpOnly`, `Secure`, `SameSite=Lax`, `MaxAge` = the flight TTL),
-**single use** (the record is deleted on read), **expiring** (5 minutes), and **bounded twice**
+**single use** (the record is MARKED consumed on read, never deleted — see below), **expiring**
+(5 minutes), and **bounded twice**
 (`maxFlightsPerClient` = 8, `maxOpenFlights` = 1024).
 
 - **Why not the session store.** `identity/session.go` rejects in-memory storage *for
@@ -1082,7 +1083,11 @@ make this process perform.
 - **Why not the cookie alone.** Carrying the verifier in the browser's own `HttpOnly` cookie
   needs no table at all, and it was refused on ONE property: single use. A cookie is deleted by
   *asking* the browser to delete it, so a client that declines cannot be made to; a map entry
-  removed on read cannot be presented twice whatever the client does.
+  MARKED consumed by the server cannot be presented twice whatever the client does. ⚠ This bullet
+  said "a map entry **removed** on read", which was the mechanism for exactly one commit: deleting
+  freed the caller's rate slot at the start of the token exchange, which is the defect the next
+  bullet describes. The argument never rested on the delete — it rests on the decision being the
+  server's.
 - **Why there are TWO caps, and why one is not enough.** `POST /sign-in/github` is reachable by
   anybody who can open a socket, and every request writes a record that lives five minutes.
   Without `maxOpenFlights` the route is a memory-exhaustion endpoint. But a **global cap alone
@@ -1148,12 +1153,16 @@ complete at the provider and be refused here, with nothing naming the disagreeme
 |---|---|---|
 | no `CAIRN_SUPABASE_*` | the deployment that existed before this change | credential form only; the two OAuth rows answer **501** |
 | the ledger armed, no redirect URL | a bearer JWT authenticates; no browser flow | credential form only; rows answer 501; the startup line says so |
-| both | the button is live | both doors |
+| both, key set fetched | the button is live | both doors |
+| both, key set **never fetched** | the provider was unreachable at startup, or is now | credential form only; rows answer **503**; a `WARNING` on stderr; **re-arms by itself** when a fetch succeeds |
 | a redirect URL and no verifier | half-configured | **refuses to start**, naming the variable that unblocks it |
+| a redirect URL whose path does not end with the callback route | a typo, or a line copied from another app | **refuses to start**, naming both paths |
+| a redirect URL that does not parse | a broken template substitution | **refuses to start** |
 
-The startup line reports which of the three it is, for the reason it already reports whether a
-share can be recorded: the answer is decided at startup and discovered at the first click
-otherwise.
+⚠ **This table listed FOUR rows and stopped at the third state**, with no 503 row and no
+path-mismatch row — both of which the same change introduced. The startup line reports which
+state it is in, for the reason it already reports whether a share can be recorded: the answer is
+decided at startup and discovered at the first click otherwise.
 
 ## The stylesheet is now a route
 
@@ -1167,11 +1176,24 @@ prefix match, which is a second way for a request to reach a handler and one
 reads each page's `<link href>` and then fetches that exact href, because two separate
 assertions would both pass for a route nobody links or a link nobody serves.
 
-## The mutation rows — 18 mutants, 18 killed
+## The mutation rows — 31 mutants, 31 killed, and the battery is NOT in the tree
 
-Each reverts ONE decision to its pre-change behaviour, or breaks one guard, and names the test
-that must go red. Run before the battery: a baseline proving all 18 named tests GREEN, so a test
-that was already red could not be reported as a kill.
+🔴 **READ THIS BEFORE THE TABLE: THIS BATTERY IS RUN BY HAND AND IS NOT COMMITTED.** Unlike
+`tests/control_mutants.py` — a step in `.github/workflows/ci.yml`, pinned by
+`tests/test_control_mutant_count_is_pinned.py` — the rows below were driven by a script in a
+scratch directory, one mutant at a time, and nothing in this repository re-runs them. So this
+table is a RECORD of a measurement, not a gate, and it is the only place in the tree that
+records it: a later reviewer could not verify the count from the tree at all while the table
+said 18 and the run was 27.
+🔴 **A ROW HERE IS NOT COVERAGE. The guard it names is the coverage; the row is evidence the
+guard was watched going red once.** If you change any of this code, the honest move is to
+re-derive the relevant rows rather than to trust a table nothing re-runs — and the section above
+records why a second committed battery was deleted rather than added.
+
+Each row reverts ONE decision to its pre-change behaviour, or breaks one guard, and names the
+test that must go red. A baseline ran first proving all 31 named tests GREEN, so a test that was
+already red could not be reported as a kill; a mutant whose build failed was reported as
+BUILD-FAIL and never as a kill.
 
 | mutant | test that KILLED it |
 |---|---|
@@ -1193,6 +1215,19 @@ that was already red could not be reported as a kill.
 | the provider's `error_description` reflected into the page | `TestTheProviderErrorIsNotReflectedIntoThePage` |
 | the credential field renamed, breaking the harness selector | `TestTheCredentialFormSURVIVESTheProviderButton` |
 | the credential form rewired to post at the provider route | the same test |
+| `frame-ancestors` dropped (the surface becomes frameable) | `TestTheHTMLResponseCarriesItsHardeningHeaders` |
+| the chain assembled BY HAND in the wrong order — **the control that actually compiles** | `TestTheUIChainTriesEveryHeaderCREDENTIALBeforeTheAmBIENTCookie` |
+| a spent flight DELETED again (the cap bounds concurrency, not rate) | `TestOneClientCannotAmplifyRequestsAtTheProvider` |
+| the flight cookie loses its `__Host-` prefix | `TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire` |
+| `FlightTTL` widened to thirty days | `TestTheGitHubButtonMintsAFlightAndRedirectsToTheProvider` |
+| the global flight cap **WIDENED** — the direction the old assertion could not see | `TestTheFlightTableIsBoundedGloballyAndPerClient` |
+| the callback reads the query BEFORE consuming the flight | `TestTheProviderErrorIsNotReflectedIntoThePage` |
+| an unready provider treated as ready | `TestTheProviderDoorIsWITHHELDWhileItsKeySetHasNeverBeenFetched` |
+| the served stylesheet emptied (the self-referential comparison) | `TestTheStylesheetIsServedAsItsOwnRoute` |
+| the startup callback-path check disabled | `TestTheProviderFlowDecisionTable` |
+| that check made an EQUALITY again (refusing a path-prefixing proxy) | the same test |
+| the flight cookie's `Path` no longer exactly `/` — a `__Host-` cookie a browser DROPS | `TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire` |
+| a consumed flight KEEPS its PKCE verifier in memory | `TestAFlightIsSingleUseAndBoundToItsBrowser` |
 
 🔴 **ONE OF THOSE MUTANTS SURVIVED ITS FIRST RUN, AND THE SURVIVAL WAS A DEFECT IN THE TEST
 RATHER THAN IN THE CODE.** The S256 assertion first read
@@ -1204,8 +1239,35 @@ independently in the test, and adds an assertion that the challenge and the veri
 same string. That is the "never derive a test's expectation from the implementation it tests"
 rule, caught by the battery rather than by review.
 
+🔴 **AND A LATER ROUND RAN ITS OWN 21 MUTANTS AND FOUR SURVIVED — TWO OF THEM AGAINST GUARDS THE
+ROUND ABOVE HAD JUST WRITTEN.** The survivors were: the startup callback-path check (no test fed
+it a wrong path at all), the `__Host-` cookie's `Path` (asserted with
+`strings.Contains(header, "Path=/")`, which `Path=/sign-in` satisfies), the "verifier is cleared
+on consume" claim, and one magnitude-band mutant that was by design. All four are closed now.
+**Read that as a measurement of the battery rather than of the code: a battery you choose is
+blind to exactly what you did not think to mutate**, which is why the table above is evidence and
+not coverage, and why an independent round is worth more than another row. The four rows at the
+end of the table are the ones that close those survivors — they exist because somebody else
+looked, not because the battery grew on its own.
+
 ## What Phase D's tests still structurally cannot see
 
+- 🔴 **A GUARD THIS SECTION SHOULD HAVE PREDICTED AND DID NOT: the startup path check shipped
+  with no test at all.** Mutating its condition to `false` survived all 27 tests in
+  `cmd/cairn-ui`, because the only redirect URL any fixture fed it happened to have a matching
+  path. A check whose guard is "the fixture happens to satisfy it" is a check nobody holds, and
+  the decision table it belongs to says in its own docstring that it is "written out because it
+  is a decision and not a derivation" — the new decision was simply not written into it. Every
+  row of that table now carries the refusal it expects to see BY NAME, so a row cannot go green
+  on the wrong refusal.
+- 🔴 **AND THE SAME CHECK REFUSED A LEGITIMATE DEPLOYMENT, WHICH NO TEST COULD HAVE CAUGHT
+  BECAUSE NO TEST DESCRIBED IT.** An equality against `ui.OAuthCallbackPath` exits 78 for a
+  surface behind a path-prefixing proxy — `…/cairn/sign-in/github/callback` — which started and
+  worked before the check existed. The assumption that failed was written one line above it
+  ("the path half is this repository's"): a path PREFIX is the deployment's too. It is a suffix
+  match now, and the proxy shape is a row in the table. ⚠ **What still cannot be checked here:
+  whether the prefix matches the proxy's** — this process cannot know its own external origin,
+  which is the same reason the scheme and host are unchecked.
 - **No real provider.** Every test here stubs the exchange or stands up a local HTTP handler
   answering as the token endpoint. Nothing measures GoTrue's actual `/authorize` parameter
   handling, its allow-list matching, or whether `flow_type=pkce` behaves as documented on the

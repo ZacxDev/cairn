@@ -34,8 +34,14 @@ func fixtureVerifier(t *testing.T) *identity.SupabaseJWT {
 	return backend
 }
 
-// TestTheProviderFlowHasTHREEStatesAndTheMIDDLEOneIsNotAnError is the decision table for
-// `providerSignIn`, written out because it is a decision and not a derivation.
+// TestTheProviderFlowDecisionTable is `providerSignIn`'s decision table, written out because
+// it is a decision and not a derivation.
+//
+// ⚠ IT WAS CALLED `…HasTHREEStatesAndTheMIDDLEOneIsNotAnError` AND THE COUNT WENT STALE IN THE
+// NEXT COMMIT — the startup path check added two more refusals. The number is out of the name
+// for the same reason `README.md` lost "Seven routes": a count in a label beside a table that
+// grows is a second spelling that only ever goes stale. The MIDDLE state is still the one worth
+// naming, and it is named below.
 //
 // 🔴 THE MIDDLE STATE IS THE ONE A READER WOULD GET WRONG. A deployment with the Supabase
 // ledger armed and NO redirect URL is not half-broken: it authenticates a BEARER JWT (an API
@@ -47,20 +53,47 @@ func fixtureVerifier(t *testing.T) *identity.SupabaseJWT {
 // no verifier means the operator wrote down a callback and would get a button that refuses
 // every sign-in — the shape `internal/identity`'s ledgers exist against, arriving through a
 // variable outside them.
-func TestTheProviderFlowHasTHREEStatesAndTheMIDDLEOneIsNotAnError(t *testing.T) {
+func TestTheProviderFlowDecisionTable(t *testing.T) {
 	const redirect = "https://notes.example.invalid/sign-in/github/callback"
 
+	// 🔴 THE LAST FOUR ROWS ARE THE STARTUP PATH CHECK, WHICH SHIPPED WITH NO ROW AT ALL AND
+	// THEREFORE NO GUARD. Measured: mutating its condition to `false` survived all 27 tests in
+	// this package, because the only URL any of them fed it happened to have a matching path.
+	// A check whose guard is "the fixture happens to satisfy it" is a check nobody is holding.
 	for _, arm := range []struct {
 		name     string
 		redirect string
 		armed    bool
 		wantFlow bool
 		wantErr  bool
+		// wantErrNames, when set, must appear in the refusal — so a row cannot be satisfied
+		// by the WRONG refusal, which is how a decision table goes green about nothing.
+		wantErrNames string
 	}{
-		{"no Supabase at all", "", false, false, false},
-		{"the ledger armed and no redirect URL", "", true, false, false},
-		{"both", redirect, true, true, false},
-		{"a redirect URL and no verifier", redirect, false, false, true},
+		{"no Supabase at all", "", false, false, false, ""},
+		{"the ledger armed and no redirect URL", "", true, false, false, ""},
+		{"both", redirect, true, true, false, ""},
+		{"a redirect URL and no verifier", redirect, false, false, true, identity.EnvSupabaseJWKSURL},
+
+		// The path check. Each of these is a real way to get the variable wrong.
+		{"a callback path that is not the route", "https://notes.example.invalid/callback",
+			true, false, true, ui.OAuthCallbackPath},
+		{"a path that is a PREFIX of the route but not the route",
+			"https://notes.example.invalid/sign-in/github", true, false, true, ui.OAuthCallbackPath},
+		// ⚠ THE UNPARSEABLE FIXTURE IS A BAD PERCENT ESCAPE, NOT A CONTROL CHARACTER. The first
+		// version used `\x7f\x00`, which `url.Parse` does reject — and which `t.Setenv` cannot
+		// set at all ("setenv: invalid argument"), so the row failed on the HARNESS rather than
+		// on the check. A fixture that cannot reach the code under test measures nothing. This
+		// one is also the realistic shape: a broken template substitution.
+		{"a URL that does not parse", "https://notes.example.invalid/%zz/sign-in/github/callback",
+			true, false, true, EnvSupabaseRedirectURL},
+
+		// 🔴 AND THE ROW THE EQUALITY VERSION OF THIS CHECK REFUSED: a surface behind a
+		// path-prefixing proxy. It served `/sign-in/github/callback` after the prefix was
+		// stripped, started and worked before the check existed, and exited 78 with it. A
+		// suffix keeps the typo-catching value and admits this.
+		{"a callback behind a path-prefixing proxy",
+			"https://notes.example.invalid/cairn/sign-in/github/callback", true, true, false, ""},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			t.Setenv(EnvSupabaseRedirectURL, arm.redirect)
@@ -71,11 +104,13 @@ func TestTheProviderFlowHasTHREEStatesAndTheMIDDLEOneIsNotAnError(t *testing.T) 
 			flow, err := providerSignIn(backend, arm.armed)
 			if arm.wantErr {
 				if err == nil {
-					t.Fatal("want a refusal, got none — a callback URL with nothing to verify an exchanged " +
-						"token against is a button that refuses every sign-in")
+					t.Fatalf("want a refusal for %q, got none. Every row here is a way to get this "+
+						"configuration wrong such that the surface would come up announcing a live "+
+						"button and then answer 404 or 401 at the first click.", arm.redirect)
 				}
-				if !strings.Contains(err.Error(), identity.EnvSupabaseJWKSURL) {
-					t.Errorf("the refusal does not name the variable that unblocks it: %v", err)
+				if arm.wantErrNames != "" && !strings.Contains(err.Error(), arm.wantErrNames) {
+					t.Errorf("the refusal does not name %q, so this row could be satisfied by a DIFFERENT "+
+						"refusal than the one it is about: %v", arm.wantErrNames, err)
 				}
 				return
 			}

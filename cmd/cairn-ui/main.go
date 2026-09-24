@@ -606,27 +606,38 @@ func providerSignIn(backend *identity.SupabaseJWT, armed bool) (*identity.Supaba
 			EnvSupabaseRedirectURL, ui.GitHubLabel, identity.EnvSupabaseJWKSURL, identity.EnvSupabaseIssuer,
 			EnvSupabaseRedirectURL)
 	}
-	// 🔴 THE CONFIGURED CALLBACK'S *PATH* MUST BE THE ROUTE THIS BINARY SERVES, AND NOTHING
-	// CHECKED IT. A URL pointing anywhere else — a typo, a copied line from another app —
-	// builds cleanly, prints a confident startup line naming the button as live, and then
-	// every sign-in completes at the PROVIDER and lands on a 404 here. That is precisely the
-	// failure this whole startup path is designed against: an answer decided at startup and
-	// discovered at the first click. The constant is in scope; comparing it costs one line.
+	// 🔴 THE CONFIGURED CALLBACK'S PATH MUST *END WITH* THE ROUTE THIS BINARY SERVES, AND
+	// NOTHING CHECKED IT AT ALL. A URL pointing somewhere else — a typo, a line copied from
+	// another app — built cleanly, printed a confident startup line naming the button as live,
+	// and then every sign-in completed at the PROVIDER and landed on a 404 here. That is
+	// precisely the failure this whole startup path is designed against: an answer decided at
+	// startup and discovered at the first click.
 	//
-	// ⚠ ONLY THE PATH IS CHECKED, DELIBERATELY. The scheme, host and port are the
-	// DEPLOYMENT's — this process cannot know its own external origin (see
-	// `identity.ErrSupabaseOAuthNoRedirect`) — so there is nothing here to compare them
-	// against. The path half is this repository's, which is exactly why it is checkable.
+	// 🔴 IT IS A SUFFIX AND NOT AN EQUALITY, BECAUSE AN EQUALITY REFUSED A LEGITIMATE
+	// DEPLOYMENT — measured, and the first draft of this check shipped it. A surface behind a
+	// path-prefixing proxy is reached at `https://notes.example/cairn/sign-in/github/callback`
+	// and serves `/sign-in/github/callback` after the prefix is stripped; that deployment
+	// started and worked before this check existed and exited 78 with it, and the refusal's own
+	// text told the operator to set a path that would then have been wrong.
+	//
+	// ⚠ THE ASSUMPTION THE EQUALITY RESTED ON IS WHAT WAS WRONG, AND IT WAS WRITTEN DOWN ONE
+	// LINE ABOVE IT: "the scheme, host and port are the DEPLOYMENT's … the path half is this
+	// repository's". A path PREFIX is the deployment's too. Only the SUFFIX is this
+	// repository's, and a suffix keeps every bit of the typo-catching value: `/callback`,
+	// `/auth/callback` and `/sign-in/github` are all still refused, because none of them ends
+	// with the route. What it can no longer catch is a prefix that does not match the proxy's
+	// — which this process cannot know either way.
 	if parsed, parseErr := url.Parse(redirect); parseErr != nil {
 		return nil, fmt.Errorf("%s=%q does not parse as a URL (%w). Refusing to start",
 			EnvSupabaseRedirectURL, redirect, parseErr)
-	} else if parsed.Path != ui.OAuthCallbackPath {
+	} else if !strings.HasSuffix(parsed.Path, ui.OAuthCallbackPath) {
 		return nil, fmt.Errorf(
-			"%s=%q has path %q, but this binary serves its callback at %q. Every %s sign-in would "+
-				"complete at the provider and then land on a 404 here, with nothing in this surface's own "+
-				"logs to say why — the provider would have redirected the browser to a path that is not a "+
-				"route. Refusing to start; set the path to %s (the ORIGIN half is yours, and it must match "+
-				"the entry in the provider's GOTRUE_URI_ALLOW_LIST)",
+			"%s=%q has path %q, which does not end with %q — the callback route this binary serves. Every "+
+				"%s sign-in would complete at the provider and then land on a 404 here, with nothing in this "+
+				"surface's own logs to say why, because the provider would have redirected the browser to a "+
+				"path that is not a route. Refusing to start; the path must END with %s. A leading prefix is "+
+				"fine and is expected behind a path-stripping proxy; the ORIGIN half is yours, and the whole "+
+				"URL must match the entry in the provider's GOTRUE_URI_ALLOW_LIST",
 			EnvSupabaseRedirectURL, redirect, parsed.Path, ui.OAuthCallbackPath, ui.GitHubLabel,
 			ui.OAuthCallbackPath)
 	}
@@ -841,10 +852,19 @@ func openAuthority(journal, storeRoot, tokenFile string) (*control.Cache, error)
 // `identity.CookieSession` resolves a live browser session from the session table and
 // `PrincipalFor`, consulting NO credential — so a deployment mid-rotation (every credential
 // revoked, the replacement not yet issued) is still serving every signed-in browser, and
-// this guard turns the next restart into a refusal that ends those sessions. That is the
-// right trade for a surface nothing deploys — coming up unable to authenticate anybody is
-// the louder failure — but it is a state the refusal's wording does not weigh, and it is
-// named here rather than discovered during a rotation.
+// this guard turns the next restart into a refusal that ends those sessions.
+//
+// 🔴 THE REASON THAT TRADE WAS ACCEPTED IS RETRACTED, AND THE TRADE IS LEFT STANDING. It read
+// "That is the right trade for a surface nothing deploys — coming up unable to authenticate
+// anybody is the louder failure". The premise died in the commit that wrote this retraction:
+// the surface IS deployed and public, so a refusal to start now ends live sessions on a live
+// surface rather than failing loudly on a hand-run binary. The trade is still judged right —
+// a surface that comes up able to authenticate NOBODY is worse than one that refuses, and the
+// state is reachable by following the obvious first command — but it is now a decision about
+// production and not about a convenience. ⚠ Note the shape: this is the same premise the JWKS
+// fetch used to reason its way to a startup exit, and that one WAS wrong; they are different
+// because a missing credential means nobody can get in at all, while a missing key set leaves
+// the credential form working. It is named here rather than discovered during a rotation.
 func refuseAnAuthorityNobodyCanSignInTo(authority *control.Cache, journal string) error {
 	if journal == "" {
 		return nil
