@@ -106,6 +106,19 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 		fmt.Printf("uiaudit:   skip %s\n", s)
 	}
 
+	// 🔴 THE ONE `notADocument` ROW THAT GETS A CHECK ANYWAY, OVER PLAIN HTTP. A stylesheet
+	// route is a real blocking subresource of every page, so a 404 or a wrong content-type
+	// there makes every page render unstyled — and NO browser-side collector in this harness
+	// looks at that. It is gated on the ledger, so it is a no-op until the row exists, and a
+	// FAILURE here is fatal: unlike the push, it is a fact about the surface.
+	if cssSkipped, err := StylesheetCheck(ledger, world.BaseURL); err != nil {
+		return fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, world.Log())
+	} else if cssSkipped {
+		fmt.Printf("uiaudit: no %s row in this ledger, so its HTTP check is skipped (it is not a defect: the route arrives with the auth change)\n", StylesheetPath)
+	} else {
+		fmt.Printf("uiaudit: %s answers 200 text/css with a non-empty body — the one thing a walk can usefully assert about a non-document row\n", StylesheetPath)
+	}
+
 	browser, err := NewBrowser(ctx, world.BaseURL, budget)
 	if err != nil {
 		return err

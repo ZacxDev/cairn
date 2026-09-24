@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"mime"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -96,6 +99,69 @@ var plainGET = map[string]bool{
 	ui.SignInPath: true,
 }
 
+// notADocument is the THIRD class: a `GET` row a browser walk must not capture as a page,
+// mapped to the REASON it is not one.
+//
+// 🔴 A REASON RATHER THAN A BOOLEAN, BECAUSE "SKIPPED" IS THE THING THAT NEEDS JUSTIFYING.
+// A `map[string]bool` here would make the walk log say a row was skipped and nothing about
+// why, and the next person to read it cannot tell a deliberate exclusion from a row somebody
+// gave up on. The reason is printed with the skip and is what makes
+// `captured + skipped == len(ledger)` an accounting rather than an excuse.
+//
+// 🔴 AND THE ALTERNATIVE — PUTTING THESE IN `plainGET` — IS THE FALSE GREEN THIS HARNESS
+// ALREADY SHIPPED ONCE, which is why neither is there:
+//
+//   - The OAuth CALLBACK is reachable only with a provider `?code=` AND a live single-use
+//     flight cookie. Navigated bare it renders a refusal. Capturing that refusal would run
+//     axe, the layout script and the digest over an ERROR PAGE and count it as a page —
+//     byte-for-byte the defect that produced "62 axe violations across 6 rules" over
+//     browser error pages at exit 0. The document-status gate in `browser.go` would now
+//     catch it as a failed walk, which is better than a false green and still worse than
+//     not navigating a row that cannot answer.
+//   - The STYLESHEET is a `text/css` response, not a document. axe, the layout smells and
+//     the a11y digest are all meaningless on it, and a screenshot of a stylesheet is noise
+//     in a pixel diff that is already advisory. It gets a non-browser check instead — see
+//     [StylesheetCheck], which is the one thing about that row a walk can usefully assert.
+//
+// ⚠ THE TWO KEYS ARE LITERALS RATHER THAN `ui.OAuthCallbackPath` AND `ui.StylesheetPath`
+// FOR EXACTLY ONE REASON: those constants do not exist on this branch's base. They arrive
+// with the auth change, and a literal here is the second spelling of a route that
+// `internal/ui/routes.go` warns about. **Closing condition:** once that change is merged,
+// replace both literals with the constants and add the assertion that the ledger contains
+// them — which is a compile-time claim the moment the constants exist, and is not expressible
+// before. Until then a key that matches no row is inert, which is why writing them early is
+// safe rather than speculative.
+var notADocument = map[string]string{
+	"/static/app.css": "a text/css response and not a document — axe, the layout smells and the " +
+		"a11y digest are all meaningless on a stylesheet, and its screenshot is noise in the pixel diff; " +
+		"checked over plain HTTP instead",
+	"/sign-in/github/callback": "reachable only with a provider ?code= AND a live single-use flight " +
+		"cookie, so navigated bare it renders a refusal — capturing that would measure an error page and " +
+		"count it as a page",
+}
+
+// classesFor is how many of the three sets claim a path, and it exists so that a path in two
+// of them is a REFUSAL rather than a silent win for whichever `case` the switch reaches first.
+//
+// ⚠ AN INVARIANT GUARD, LABELLED. No path has ever been in two sets. It is pinned because the
+// sets are hand-written and the failure would be invisible: a row moved from `plainGET` to
+// `notADocument` without deleting the first entry keeps being captured, and the reason string
+// added alongside it is simply never printed — a declaration that reads as a decision and has
+// no effect.
+func classesFor(path string) []string {
+	var in []string
+	if plainGET[path] {
+		in = append(in, "plainGET")
+	}
+	if linkExpanded[path] {
+		in = append(in, "linkExpanded")
+	}
+	if notADocument[path] != "" {
+		in = append(in, "notADocument")
+	}
+	return in
+}
+
 // Targets derives the walk's BASE targets from the route ledger.
 //
 // The accounting it returns is load-bearing, not decoration: `captured + skipped` must
@@ -132,7 +198,21 @@ func Targets(ledger []string) (targets []Target, skipped []string, err error) {
 		// row can walk past by being named differently.
 		signedIn := !classes["public"]
 
+		// A path claimed by two classes is a refusal, not a race between `case` arms.
+		if in := classesFor(path); len(in) > 1 {
+			return nil, nil, fmt.Errorf(
+				"ledger row %q is in %d classes (%s); exactly one must claim it, or which one wins is "+
+					"whichever `case` this switch reaches first and the losing declaration is inert",
+				row, len(in), strings.Join(in, ", "))
+		}
+
 		switch {
+		case notADocument[path] != "":
+			// 🔴 SKIPPED WITH ITS REASON, AND COUNTED. This arm is what keeps
+			// `captured + skipped == len(ledger)` true for a row that must not be captured,
+			// so the `default` below stays a refusal about rows nobody has classified rather
+			// than becoming a catch-all for rows a browser cannot render.
+			skipped = append(skipped, row+" (not a document: "+notADocument[path]+")")
 		case linkExpanded[path], plainGET[path]:
 			// Both classes are navigated bare. The difference is only that a
 			// link-expanded page's own hrefs become further targets, which [ExpandLinks]
@@ -144,14 +224,81 @@ func Targets(ledger []string) (targets []Target, skipped []string, err error) {
 		default:
 			// The refusal the comment on `linkExpanded` exists for.
 			return nil, nil, fmt.Errorf(
-				"ledger row %q is a GET this walk has not been told how to reach: add it to `plainGET` "+
-					"if the path as written is the page a user sees, or to `linkExpanded` if the page "+
-					"publishes further targets as links (a %q query parameter, say). Left to a default it "+
-					"would be captured however it happens to render and still count as a page",
+				"ledger row %q is a GET this walk has not been told how to reach. Add it to `plainGET` "+
+					"if the path as written is the page a user sees; to `linkExpanded` if the page "+
+					"publishes further targets as links (a %q query parameter, say); or to `notADocument` "+
+					"WITH A REASON if a browser must not capture it at all. Left to a default it would be "+
+					"captured however it happens to render and still count as a page",
 				row, ui.QueryScope)
 		}
 	}
 	return targets, skipped, nil
+}
+
+// StylesheetPath is the `notADocument` row that gets a check anyway.
+//
+// ⚠ A LITERAL FOR THE SAME REASON THE `notADocument` KEY IS — see that comment. It is derived
+// from nothing here, so [StylesheetCheck] is a no-op on a ledger that has no such row.
+const StylesheetPath = "/static/app.css"
+
+// StylesheetCheck asserts the one thing about a stylesheet route a walk can usefully assert:
+// that it answers 200, with `Content-Type: text/css`, and a non-empty body.
+//
+// 🔴 IT IS PLAIN HTTP, NOT A BROWSER, AND THAT IS THE POINT OF SEPARATING IT. A stylesheet is
+// not a document; every browser-side collector this harness runs is meaningless on one. But the
+// route is now a REAL BLOCKING SUBRESOURCE of every page, so a 404 or a wrong content-type
+// there is a genuine first-party network finding — one that would otherwise show up only as a
+// page that renders unstyled, which no assertion in this harness looks at.
+//
+// 🔴 IT IS GATED ON THE LEDGER, NEVER RUN UNCONDITIONALLY. On a tree whose ledger has no
+// stylesheet row the check would be asking about a path the surface does not serve, and its
+// failure would be a fact about the harness. `hasRow` is the gate, and it reads the same ledger
+// the walk derives from — so the check appears exactly when the route does.
+//
+// ⚠ AND `Content-Type` IS COMPARED ON ITS MEDIA TYPE, NOT AS A WHOLE STRING. A conforming
+// server may append `; charset=utf-8`, so a whole-string comparison would fail on a correct
+// response — the guard would be spelled rather than structural, in the direction that refuses
+// the honest tree.
+func StylesheetCheck(ledger []string, base string) (skipped bool, err error) {
+	if !hasRow(ledger, "GET "+StylesheetPath) {
+		return true, nil
+	}
+	resp, err := http.Get(strings.TrimRight(base, "/") + StylesheetPath)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", StylesheetPath, err)
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		return false, fmt.Errorf("%s: reading the body: %w", StylesheetPath, readErr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("%s answered %d, not 200 — it is a blocking subresource of every page, "+
+			"so every page renders unstyled and no browser-side collector here would say so",
+			StylesheetPath, resp.StatusCode)
+	}
+	media, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if media != "text/css" {
+		return false, fmt.Errorf("%s answered Content-Type %q (media type %q), not text/css — a conforming "+
+			"browser refuses a stylesheet served under the wrong type, so the page renders unstyled with a 200",
+			StylesheetPath, resp.Header.Get("Content-Type"), media)
+	}
+	if len(body) == 0 {
+		return false, fmt.Errorf("%s answered 200 text/css with an EMPTY body, which is a stylesheet that "+
+			"styles nothing and is indistinguishable from a working one at the status line", StylesheetPath)
+	}
+	return false, nil
+}
+
+// hasRow answers whether the ledger declares an exact `<METHOD> <path>` row, ignoring the
+// classes a row may carry after it.
+func hasRow(ledger []string, want string) bool {
+	for _, row := range ledger {
+		if fields := strings.Fields(row); len(fields) >= 2 && fields[0]+" "+fields[1] == want {
+			return true
+		}
+	}
+	return false
 }
 
 // ExpandLinks turns the hrefs a link-expanded page rendered into further targets.

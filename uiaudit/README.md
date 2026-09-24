@@ -88,11 +88,111 @@ Per row:
 - **`public` class** → captured signed-OUT. Derived from the CLASS, never from the path: a
   guard looking for `/sign-` would be a guard on a word a new row can be spelled around.
 - **Anything else** → captured signed-IN.
-- **A `GET` row in neither `plainGET` nor `linkExpanded`** → the walk **REFUSES**, naming the
-  row and both remedies. That is what stops a new route being absorbed silently.
+- **In `notADocument`** → skipped, **with the reason it is not a document**, and counted.
+- **A `GET` row in none of the three sets** → the walk **REFUSES**, naming the row and all
+  three remedies. That is what stops a new route being absorbed silently.
 
 `LedgerAccounting` requires `captured rows + skipped rows == len(ledger)` and is printed every
 run: `ledger has 7 row(s); 3 target(s) derived, 4 row(s) skipped`.
+
+### The third class, and the merged-tree break it closes
+
+✅ **The accounting caught a break on a tree neither PR's CI could see.** The auth change adds
+three `GET` rows. Both changes are green on their own branches and **touch zero files in
+common**, so `git merge-tree` exits 0 and every per-branch gate stays green — and the merged
+tree is red, because this walk refuses a `GET` row nobody classified. That is the disjoint-file
+merge break: one side widened the route ledger, the other added a consumer of it.
+
+**Neither new row may be captured, and that is the point of a third class rather than two more
+`plainGET` entries:**
+
+| row | why it is `notADocument` |
+|---|---|
+| `GET /sign-in/github/callback` | reachable only with a provider `?code=` **and** a live single-use flight cookie. Navigated bare it renders a refusal — and capturing a refusal is byte-for-byte the false green above |
+| `GET /static/app.css` | a `text/css` response, not a document. axe, the layout smells and the digest are all meaningless on a stylesheet, and its screenshot is noise in an already-advisory pixel diff |
+
+`notADocument` maps path → **reason**, not path → `bool`: a skip with no reason cannot be told
+from a row somebody gave up on. The walk prints both kinds of skip in distinguishable sentences
+(`not GET:` vs `not a document:`), because "a browser must not navigate this" and "a browser
+cannot usefully render this" are different facts. Measured output on the merged ledger —
+**10 rows → 3 targets + 7 skips**:
+
+```
+skip GET /sign-in/github/callback public (not a document: reachable only with a provider ?code= AND
+  a live single-use flight cookie, so navigated bare it renders a refusal — capturing that would
+  measure an error page and count it as a page)
+skip GET /static/app.css public (not a document: a text/css response and not a document — axe, the
+  layout smells and the a11y digest are all meaningless on a stylesheet, and its screenshot is
+  noise in the pixel diff; checked over plain HTTP instead)
+skip POST /share (not GET: reached by submitting a form, never navigated)
+skip POST /sign-in public (not GET: reached by submitting a form, never navigated)
+skip POST /sign-in/github public (not GET: reached by submitting a form, never navigated)
+skip POST /sign-out (not GET: reached by submitting a form, never navigated)
+skip POST /unshare (not GET: reached by submitting a form, never navigated)
+```
+
+**The accounting guard was mutation-tested, because adding a class means editing the thing that
+catches an unclassified row.** Harness validated first (a `-run` filter selecting nothing scores
+every mutant SURVIVED — measured earlier in this module). **5 mutants, 5 KILLED, each by the test
+that NAMES its property:**
+
+| mutant | killed by |
+|---|---|
+| the unknown-row refusal becomes a silent skip (`notADocument` as a default) | `TestTheUNKNOWNRowREFUSALSURVIVESTheThirdClass` |
+| the not-a-document skip loses its REASON | `TestTheMERGEDLedgerIsFullyACCOUNTEDFor` |
+| the not-a-document row is CAPTURED instead of skipped | both of the above |
+| the two-class conflict check removed | `TestAPathClaimedByTwoClassesIsREFUSED` |
+| `LedgerAccounting` stops comparing | `TestLedgerAccountingCatchesAnUnaccountedRow` |
+
+### One non-browser assertion, on the stylesheet row
+
+`StylesheetCheck` asserts the route answers **200**, media type **`text/css`**, **non-empty
+body** — over plain HTTP, no browser. It is the one thing about that row a walk can usefully
+check, and it matters because the route is a **blocking subresource of every page**: a 404 there
+makes every page render unstyled and nothing else in this harness looks at that.
+
+**Gated on the ledger**, so it is a no-op until the row exists. Six cases, and the gate's own
+control is the first: the server in that case would fail *every* assertion, so a check that ran
+anyway could not pass.
+
+| case | result |
+|---|---|
+| no stylesheet row in the ledger, server deliberately broken | **SKIPPED** — proves the gate held |
+| `200 text/css` + body | pass |
+| `200 text/css; charset=utf-8` + body | **pass** — a whole-string content-type comparison would refuse this correct response |
+| `404` | red: *answered 404, not 200* |
+| `200 text/html` | red: *not text/css* |
+| `200 text/css`, empty body | red: *EMPTY body* |
+
+⚠ **The two `notADocument` keys and `StylesheetPath` are string literals**, not
+`ui.OAuthCallbackPath` / `ui.StylesheetPath`, for one reason: those constants do not exist on
+this branch's base. A literal is the second spelling of a route that `routes.go` warns about.
+**Closing condition:** once the auth change merges, replace the literals with the constants and
+assert the ledger contains them — a compile-time claim the moment the constants exist, and not
+expressible before. `mergedLedger` in `targets_test.go` should be **deleted** at the same time,
+not updated: it is a transcription, and the real ledger supersedes it.
+
+⚠ **This walk was exercised PRE-MERGE, against the older ledger** — 7 rows, 3 targets, 4 skips,
+6 pages. The merged ledger's behaviour is measured through `mergedLedger` and not through a
+browser. What the walk has not yet seen live: `script-src 'self'` with the stylesheet as a real
+subresource (so `network` stops being zero by construction — a signal worth having), an
+undeclared path answering **404** rather than 401, and `GET /` **303**ing to `/sign-in` for
+`Accept: text/html`.
+
+✅ **That last one WAS a hazard for the document-status gate, and it is now CLOSED.** A redirect
+lands on a 2xx, so every other check here passes on it — and the bytes measured would be filed
+under this target's push identity, which is what the hub matches its P2 diff on, so one page's
+violations would be attributed to another forever with nothing reporting an error.
+`CaptureTarget` now compares the LANDED path against the navigated one and refuses a mismatch.
+Driven at **303** (the real case), **302** and **307**, each asserting the redirect guard's own
+error string so it cannot pass because the status gate or axe failed instead — plus a
+**same-path positive control**, because a guard that refused every navigation would satisfy all
+three redirect cases and make the harness useless.
+
+⚠ The comparison is on the PATH only: a server may legitimately normalise a query string, and a
+guard that fired on the honest tree gets deleted. So a redirect that keeps the path and drops the
+query is **not** caught — a lesser fault (same route, different arguments), named here rather
+than left to be discovered.
 
 ### A row whose scope comes from a query parameter
 
@@ -347,6 +447,44 @@ log → *no result lines*; a top-level test removed → *15 < 16*; a **subtest r
 an appended `SKIP` → *1 skipped*; an appended **indented** `FAIL` → *1 failing*.
 
 ## Public-repo constraints
+
+### 🔴 The toolchain pin was a NO-OP, and CI's own log is what proved it
+
+**Measured, from the first run of this job:**
+
+```
+Setup go version spec 1.25
+go version go1.25.14 linux/amd64
+go: downloading go1.26.0 (linux/amd64)
+```
+
+It went **green on 1.26 while advertising 1.25**. Go 1.21+ defaults to `GOTOOLCHAIN=auto`, which
+downloads a newer toolchain when any `go` directive in the module graph asks for one — silently,
+with the pinned compiler already installed. **The same shape as the `buildGoModule` no-op
+`AGENTS.md` already records, reached by a different mechanism.**
+
+Two independent causes, so fixing one would not have been enough:
+
+1. `uiaudit/go.mod` had been rewritten to `go 1.26` by a `go mod tidy` run on a 1.26 host. **Tidy
+   raises the directive to the running toolchain and does not warn** — it had silently undone an
+   earlier `go mod edit -go=1.25.0`.
+2. **`chromedp v0.16.0` declares `go 1.26` itself**, as did the `cdproto` pseudo-version it pulled.
+   So even a corrected directive would have been overridden by the graph.
+
+The fix is all three together: the directive says `1.25.0`; **`chromedp` is held at v0.14.2** — the
+newest release declaring `go 1.24` — with `cdproto` at the revision that release requires; and the
+job sets **`GOTOOLCHAIN: local`**, which turns a recurrence into a hard failure instead of a
+download. A step then **reads the version out of the compiler** and asserts the directive, because
+setting a pin is not observing one.
+
+**Proven under the real toolchain, not inferred:** `GOTOOLCHAIN=go1.25.14` builds `cairn-ui`,
+vets and runs the whole suite — **21 top-level / 23 subtests / 44 total, 0 failures** — and
+`GOTOOLCHAIN=local` (which forbids any switch) reports no switch needed.
+
+⚠ **The dependency hold is the fragile half.** A routine `go get -u` in this module re-breaks the
+pin, and the only thing that will say so is the assertion step. The version chart, if it needs
+revisiting: `v0.16.0`/`v0.15.1`/`v0.15.0` → `go 1.26`; `v0.14.2`/`v0.14.1`/`v0.14.0` → `go 1.24`;
+`v0.13.7` → `go 1.23`.
 
 ### 🔴 The hub's project name is a DENIED IDENTIFIER, env-var spellings included
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -106,6 +108,136 @@ func TestExpandLinksAcceptsOnlyWhatTheSurfacePublishedForThisPage(t *testing.T) 
 	}
 }
 
+// mergedLedger is the ledger the auth change produces, transcribed from ITS `routes.go` rather
+// than imagined — the two OAuth rows and the stylesheet row, with the classes that file gives
+// them.
+//
+// 🔴 IT IS A FIXTURE RATHER THAN AN IMPORT BECAUSE THE ROWS DO NOT EXIST ON THIS BASE, AND THAT
+// IS ALSO WHY THIS TEST MATTERS. Both changes are green on their own branches and touch ZERO
+// files in common, so `git merge-tree` exits 0 and every per-branch gate stays green — and the
+// merged tree is still red, because this walk's accounting refuses a `GET` row nobody classified.
+// That is the disjoint-file merge break: one side widened the route ledger, the other added a
+// consumer of it. This fixture is what makes the merged tree's answer knowable from HERE.
+//
+// ⚠ A TRANSCRIPTION IS A COPY AND CAN GO STALE. It stops being needed the moment the rows land,
+// at which point the real `ui.DeclaredRouteLedger()` carries them and this fixture should be
+// deleted rather than updated — the closing condition on `notADocument`'s literals is the same
+// event.
+var mergedLedger = []string{
+	"GET / content",
+	"GET /share content",
+	"GET /sign-in public",
+	"GET /sign-in/github/callback public",
+	"GET /static/app.css public",
+	"POST /share",
+	"POST /sign-in public",
+	"POST /sign-in/github public",
+	"POST /sign-out",
+	"POST /unshare",
+}
+
+// TestTheMERGEDLedgerIsFullyACCOUNTEDFor is the regression guard for the break the merged tree
+// has.
+//
+// It asserts all five `GET` rows are classified, that the two new ones are SKIPPED WITH A REASON
+// rather than captured, and — the half that matters — that the reason says WHY each is not a
+// document. A skip with no reason is the thing `notADocument` exists to prevent.
+func TestTheMERGEDLedgerIsFullyACCOUNTEDFor(t *testing.T) {
+	targets, skipped, err := Targets(mergedLedger)
+	if err != nil {
+		t.Fatalf("the merged ledger must be fully accounted for, got: %v", err)
+	}
+	if err := LedgerAccounting(mergedLedger, targets, skipped); err != nil {
+		t.Fatal(err)
+	}
+
+	captured := map[string]bool{}
+	for _, tg := range targets {
+		captured[tg.Path] = true
+	}
+	for _, want := range []string{"/", "/share", "/sign-in"} {
+		if !captured[want] {
+			t.Errorf("%s must still be captured on the merged ledger", want)
+		}
+	}
+	// 🔴 NEITHER NEW ROW MAY BE CAPTURED. The callback renders a refusal without a provider
+	// code and a live flight cookie; the stylesheet is not a document at all.
+	for _, never := range []string{"/sign-in/github/callback", "/static/app.css"} {
+		if captured[never] {
+			t.Errorf("%s was CAPTURED: a browser walk over it measures a non-document or an error page "+
+				"and counts it, which is the false green this harness already shipped once", never)
+		}
+	}
+
+	joined := strings.Join(skipped, "\n")
+	// Each skip must carry a REASON, and the reason must be about why it is not a document —
+	// not merely that it was skipped.
+	for _, want := range []string{
+		"GET /sign-in/github/callback public (not a document: reachable only with a provider ?code=",
+		"GET /static/app.css public (not a document: a text/css response and not a document",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the skip list must carry this row AND its reason:\n  want prefix: %q\n  got:\n%s", want, joined)
+		}
+	}
+	// The non-GET rows are still skipped for the OTHER reason, which must remain a
+	// DISTINGUISHABLE sentence — collapsing the two kinds of skip would lose the difference
+	// between "a browser cannot usefully render this" and "a browser must not navigate this".
+	//
+	// ⚠ THE EXPECTED COUNT IS DERIVED FROM THE FIXTURE, NOT WRITTEN DOWN. A literal here was
+	// wrong twice in this file's history — once at 28-vs-16 result lines and once at 4-vs-5
+	// non-GET rows, both times refusing an honest tree. A count that can disagree with the
+	// thing it counts is a second source of truth, so it is computed.
+	wantNonGET := 0
+	for _, row := range mergedLedger {
+		if !strings.HasPrefix(row, "GET ") {
+			wantNonGET++
+		}
+	}
+	if n := strings.Count(joined, "not GET:"); n != wantNonGET {
+		t.Errorf("the fixture has %d non-GET row(s); %d carried the non-GET reason:\n%s", wantNonGET, n, joined)
+	}
+	wantNotDoc := 0
+	for _, row := range mergedLedger {
+		fields := strings.Fields(row)
+		if len(fields) >= 2 && fields[0] == "GET" && notADocument[fields[1]] != "" {
+			wantNotDoc++
+		}
+	}
+	if wantNotDoc == 0 {
+		t.Fatal("the fixture contains no `notADocument` GET row, so every assertion above about " +
+			"skipped-with-a-reason passed vacuously")
+	}
+	if n := strings.Count(joined, "not a document:"); n != wantNotDoc {
+		t.Errorf("the fixture has %d not-a-document GET row(s); %d carried that reason:\n%s", wantNotDoc, n, joined)
+	}
+	t.Logf("merged ledger: %d row(s) -> %d target(s), %d skip(s)", len(mergedLedger), len(targets), len(skipped))
+	for _, s := range skipped {
+		t.Logf("  skip %s", s)
+	}
+}
+
+// TestAPathClaimedByTwoClassesIsREFUSED.
+//
+// ⚠ AN INVARIANT GUARD, LABELLED. No path has ever been in two sets. It is pinned because the
+// sets are hand-written and the failure is invisible: a row moved to `notADocument` without its
+// old entry deleted keeps being captured, and the reason string added beside it is never printed
+// — a declaration that reads as a decision and has no effect.
+func TestAPathClaimedByTwoClassesIsREFUSED(t *testing.T) {
+	saved := notADocument
+	notADocument = map[string]string{ui.RootPath: "pretend the root is not a document"}
+	defer func() { notADocument = saved }()
+
+	_, _, err := Targets([]string{"GET / content"})
+	if err == nil {
+		t.Fatal("a path in both `plainGET` and `notADocument` was accepted: which class wins is then " +
+			"whichever `case` the switch reaches first, and the losing declaration is inert")
+	}
+	if !strings.Contains(err.Error(), "plainGET") || !strings.Contains(err.Error(), "notADocument") {
+		t.Fatalf("the refusal must name BOTH claiming classes; got %q", err)
+	}
+}
+
 // TestAGETRowTheWalkWasNotToldAboutIsREFUSEDRatherThanCapturedBare.
 //
 // ⚠ AN INVARIANT GUARD, LABELLED. No ledger in this repository has ever carried an unhandled
@@ -207,5 +339,128 @@ func TestLedgerAccountingCatchesAnUnaccountedRow(t *testing.T) {
 	// And the other direction: an extra row nobody handled.
 	if err := LedgerAccounting(append(ledger, "GET /extra"), targets, skipped); err == nil {
 		t.Fatal("a ledger row nobody handled left the accounting green: it cannot see a ledger that GREW")
+	}
+}
+
+// TestTheUNKNOWNRowREFUSALSURVIVESTheThirdClass is the guard on the guard.
+//
+// 🔴 ADDING A CLASS IS EDITING THE THING THAT CATCHES AN UNCLASSIFIED ROW, AND THE OBVIOUS WAY TO
+// GET IT WRONG IS TO MAKE `notADocument` THE DEFAULT. A `switch` whose new arm was written as
+// `default:` — or whose `notADocument` lookup used a `map[string]bool` zero value the wrong way
+// round — would absorb every future row silently WITH a reason string attached, which reads as a
+// deliberate decision and is the worst version of this failure: coverage that documents itself.
+//
+// So this drives an unknown row against the ledger that now HAS a third class, and requires the
+// refusal still to fire and still to name all three remedies.
+func TestTheUNKNOWNRowREFUSALSURVIVESTheThirdClass(t *testing.T) {
+	_, _, err := Targets(append(mergedLedger, "GET /assets/logo.svg public"))
+	if err == nil {
+		t.Fatal("an unclassified GET row was absorbed after the third class was added: `notADocument` " +
+			"has become a default, and every future row is now silently skipped WITH a reason that " +
+			"reads as a decision somebody made")
+	}
+	for _, remedy := range []string{"plainGET", "linkExpanded", "notADocument"} {
+		if !strings.Contains(err.Error(), remedy) {
+			t.Errorf("the refusal must name the %q remedy so the reader makes a decision rather than a guess; got %q", remedy, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "WITH A REASON") {
+		t.Errorf("the refusal must say that `notADocument` needs a REASON, or the next row gets an empty one; got %q", err)
+	}
+	if !strings.Contains(err.Error(), "GET /assets/logo.svg") {
+		t.Errorf("the refusal must name the row it refused; got %q", err)
+	}
+}
+
+// TestStylesheetCheckIsGatedOnTheLedgerAndCanGoRED.
+//
+// 🔴 THE GATE IS THE HALF THAT NEEDS PROVING. Run unconditionally, this check would ask about a
+// path the surface does not serve and its failure would be a fact about the harness, not the
+// tree — so it must SKIP on a ledger with no stylesheet row and RUN on one that has it. Both
+// directions are driven here, against a server that is deliberately wrong, so a skip cannot be
+// mistaken for a pass.
+func TestStylesheetCheckIsGatedOnTheLedgerAndCanGoRED(t *testing.T) {
+	type served struct {
+		status      int
+		contentType string
+		body        string
+	}
+	for _, tc := range []struct {
+		name     string
+		ledger   []string
+		served   served
+		wantErr  string // "" means the check must pass
+		wantSkip bool
+	}{
+		{
+			// The gate. The server below would FAIL every assertion, so a check that ran
+			// anyway could not pass — which is what makes this a real control on the gate
+			// rather than a tautology.
+			name:     "no stylesheet row in the ledger — SKIPPED, and the server is broken to prove the gate held",
+			ledger:   ui.DeclaredRouteLedger(),
+			served:   served{status: 404, contentType: "text/html", body: ""},
+			wantSkip: true,
+		},
+		{
+			name:   "200 text/css with a body — the honest case",
+			ledger: mergedLedger,
+			served: served{status: 200, contentType: "text/css", body: "body { margin: 0 }"},
+		},
+		{
+			// ⚠ THE CHARSET CASE, WHICH A WHOLE-STRING COMPARISON WOULD FAIL. A conforming
+			// server may append a charset; refusing that would be a spelled guard rejecting a
+			// correct response.
+			name:   "200 text/css; charset=utf-8 — must PASS, or the guard refuses the honest tree",
+			ledger: mergedLedger,
+			served: served{status: 200, contentType: "text/css; charset=utf-8", body: "body { margin: 0 }"},
+		},
+		{
+			name:    "404 — every page then renders unstyled and no browser-side collector says so",
+			ledger:  mergedLedger,
+			served:  served{status: 404, contentType: "text/plain", body: "no"},
+			wantErr: "answered 404, not 200",
+		},
+		{
+			name:    "200 but text/html — a conforming browser refuses the stylesheet at a 200",
+			ledger:  mergedLedger,
+			served:  served{status: 200, contentType: "text/html", body: "body { margin: 0 }"},
+			wantErr: "not text/css",
+		},
+		{
+			name:    "200 text/css with an EMPTY body",
+			ledger:  mergedLedger,
+			served:  served{status: 200, contentType: "text/css", body: ""},
+			wantErr: "EMPTY body",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != StylesheetPath {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", tc.served.contentType)
+				w.WriteHeader(tc.served.status)
+				_, _ = w.Write([]byte(tc.served.body))
+			}))
+			defer srv.Close()
+
+			skipped, err := StylesheetCheck(tc.ledger, srv.URL)
+			if skipped != tc.wantSkip {
+				t.Fatalf("skipped=%v, want %v", skipped, tc.wantSkip)
+			}
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("this case must pass: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("the check accepted a stylesheet response it must refuse")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("the refusal fired for the wrong reason.\n  want substring: %q\n  got: %v", tc.wantErr, err)
+			}
+		})
 	}
 }

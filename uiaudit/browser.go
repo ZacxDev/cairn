@@ -33,6 +33,9 @@ type Capture struct {
 	// DocStatus is the status of this page's OWN document response, checked before anything
 	// is measured. See [Browser.CaptureTarget].
 	DocStatus int
+	// LandedURL is where the browser ACTUALLY ended up, which a 2xx does not tell you — see
+	// [Browser.CaptureTarget]'s redirect guard.
+	LandedURL string
 	// Hrefs is what this page published, populated only when the target says it publishes
 	// links. See [ExpandLinks].
 	Hrefs []string
@@ -374,6 +377,37 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 			t.Path, vp.Name, status, docURL)
 	}
 	c.DocStatus = status
+
+	// 🔴 AND A 2xx IS NOT ENOUGH, BECAUSE A REDIRECT LANDS ON ONE. This is the same class as the
+	// status gate and the status gate structurally cannot see it: a `303` to another page leaves
+	// the FINAL document at 200, so every check above passes while the bytes measured belong to a
+	// different route. The capture would then be filed under this target's `PushURL`, and the hub
+	// matches its P2 diff on that string — so one page's axe violations would be attributed to
+	// another page forever, with nothing anywhere reporting an error.
+	//
+	// 🔴 NOT HYPOTHETICAL: the auth change makes `GET /` answer `303 /sign-in` for an
+	// `Accept: text/html` request without a session. A walk whose session dropped mid-run would
+	// capture the sign-in page under `PushURL: "/"` and call it clean.
+	//
+	// ⚠ THE COMPARISON IS ON THE PATH ONLY, AND THE NARROWING IS DELIBERATE. A server may
+	// legitimately normalise or reorder a query string, so comparing the whole URL would refuse
+	// correct responses — a guard that fires on the honest tree gets deleted. A redirect that
+	// keeps the path and drops the query is therefore NOT caught here; it is a lesser fault
+	// (same route, different arguments) and `README.md` names it as the remaining edge.
+	var landed string
+	if err := chromedp.Run(b.ctx, chromedp.Location(&landed)); err != nil {
+		return nil, fmt.Errorf("reading the landed location for %s: %w", t.Path, err)
+	}
+	c.LandedURL = landed
+	wantPath, _, _ := strings.Cut(t.Path, "?")
+	if lu, err := url.Parse(landed); err != nil {
+		return nil, fmt.Errorf("the landed location %q for %s is not a URL: %w", landed, t.Path, err)
+	} else if lu.Path != wantPath {
+		return nil, fmt.Errorf("%s at %s was REDIRECTED to %s (path %q, wanted %q): the document answered %d, "+
+			"so the status gate passed — but the bytes captured belong to a different route and would be "+
+			"filed under this target's push identity forever",
+			t.Path, vp.Name, landed, lu.Path, wantPath, status)
+	}
 
 	// The hrefs this page publishes, collected only where the target says it publishes
 	// some. `[href]` rather than `a[href]` would pick up `<link>`; the walk wants links a

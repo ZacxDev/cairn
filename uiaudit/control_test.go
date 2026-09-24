@@ -325,6 +325,79 @@ func TestAHealthyDocumentIsNOTRefused(t *testing.T) {
 	}
 }
 
+// TestAPageThatREDIRECTEDIsREFUSEDEvenThoughItAnswered200 closes the hazard the status gate
+// structurally cannot see.
+//
+// 🔴 A REDIRECT LANDS ON A 2xx, SO EVERY OTHER CHECK IN THIS HARNESS PASSES ON IT. The bytes
+// measured then belong to a different route and get filed under this target's push identity —
+// and the hub matches its P2 diff on that string, so one page's violations would be attributed
+// to another forever with nothing reporting an error. Not hypothetical: the auth change makes
+// `GET /` answer `303 /sign-in` for an `Accept: text/html` request without a session, so a walk
+// whose session dropped mid-run would capture the sign-in page and call it `/`.
+//
+// The 303 case is the real one; 302 and 307 are driven too so the guard is not tied to one
+// status, and the SAME-PATH case is the positive control — a guard that refused every navigation
+// would satisfy the first three and make the harness useless.
+func TestAPageThatREDIRECTEDIsREFUSEDEvenThoughItAnswered200(t *testing.T) {
+	chromiumOrRefuse(t)
+
+	const page = `<!doctype html><html lang="en"><head><title>ok</title></head><body><main><h1>ok</h1></main></body></html>`
+	for _, tc := range []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{"303, which is what the auth change answers on / without a session", http.StatusSeeOther, true},
+		{"302, so the guard is not tied to one status", http.StatusFound, true},
+		{"307, which preserves the method and still moves the document", http.StatusTemporaryRedirect, true},
+		{"no redirect at all — the POSITIVE CONTROL: a guard that refused everything would pass the three above", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/" && tc.status != 0 {
+					http.Redirect(w, r, "/sign-in", tc.status)
+					return
+				}
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = w.Write([]byte(page))
+			}))
+			defer srv.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			b, err := NewBrowser(ctx, srv.URL, 60*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer b.Close()
+
+			c, err := b.CaptureTarget(Target{Path: "/", PushURL: "/", LedgerRow: "GET / content"}, Mobile)
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("a page that did NOT redirect must be captured: %v", err)
+				}
+				if c.DocStatus != 200 {
+					t.Fatalf("DocStatus = %d, want 200", c.DocStatus)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("a %d redirect was captured: the final document answered 200, so the status gate "+
+					"passed, and the sign-in page's bytes would be filed under PushURL \"/\" forever", tc.status)
+			}
+			// 🔴 IT MUST FAIL FOR THE REDIRECT GUARD'S OWN REASON. A failure from the status
+			// gate, or from axe declining to inject, would be green for the wrong reason and
+			// would stay green with the redirect guard deleted.
+			if !strings.Contains(err.Error(), "was REDIRECTED to") {
+				t.Fatalf("the refusal came from somewhere other than the redirect guard: %v", err)
+			}
+			if !strings.Contains(err.Error(), `wanted "/"`) {
+				t.Fatalf("the refusal must name the path it wanted; got %v", err)
+			}
+		})
+	}
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

@@ -1019,6 +1019,32 @@ jobs:
   # before adding a dependency to that module, because nothing in this repository will.
   uiaudit:
     runs-on: ubuntu-latest
+    # 🔴 `GOTOOLCHAIN=local` FORBIDS THE SWITCH, AND WITHOUT IT THIS JOB'S PIN WAS A MEASURED
+    # NO-OP. Go 1.21+ defaults to `GOTOOLCHAIN=auto`, which DOWNLOADS a newer toolchain when a
+    # `go` directive in the module graph asks for one — silently, and with the pinned compiler
+    # already installed. The first version of this job did exactly that. From its own log:
+    #
+    #     Setup go version spec 1.25
+    #     go version go1.25.14 linux/amd64
+    #     go: downloading go1.26.0 (linux/amd64)
+    #
+    # It went GREEN on 1.26 while advertising 1.25. Two causes, both real: `uiaudit/go.mod` had
+    # been rewritten to `go 1.26` by a `go mod tidy` run on a 1.26 host (tidy raises the
+    # directive to the running toolchain and never warns), AND `chromedp v0.16.0` plus the
+    # `cdproto` pseudo-version it pulled each declare `go 1.26` themselves — so even a corrected
+    # directive would have been overridden by the graph.
+    #
+    # The fix is all three together: the directive says `1.25.0`; `chromedp` is held at
+    # **v0.14.2**, the newest release declaring `go 1.24`, with `cdproto` at the revision that
+    # release requires; and this variable turns any future recurrence into a HARD FAILURE
+    # instead of a download. ⚠ The dependency hold is the fragile half — a routine
+    # `go get -u` in that module re-breaks the pin, and the only thing that will say so is the
+    # assertion below.
+    #
+    # ⚠ THE SAME SHAPE AS THE `buildGoModule` NO-OP AGENTS.md ALREADY RECORDS, reached by a
+    # different mechanism. A pin is a claim about what RAN; read it out of the compiler.
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v4
       # 🔴 THE SAME 1.25 THE `go` JOB PINS. The nested module's own `go` directive says
@@ -1029,6 +1055,25 @@ jobs:
         with:
           go-version: "1.25"
           cache: false
+      # 🔴 READ THE PIN OUT OF THE COMPILER, BECAUSE SETTING IT IS NOT OBSERVING IT. This is
+      # the step that would have caught the no-op above: `GOTOOLCHAIN=local` makes a switch
+      # impossible, and this makes the version an assertion rather than a log line nobody reads.
+      - name: the toolchain that will actually run, asserted rather than assumed
+        run: |
+          set -euo pipefail
+          got=$(go version)
+          echo "$got"
+          case "$got" in
+            *go1.25*) ;;
+            *) echo "::error::this job must run go1.25 (the pin) but the compiler reports: $got"; exit 1 ;;
+          esac
+          # And the nested module's own directive, which is the other half of the pin.
+          directive=$(grep -m1 '^go ' uiaudit/go.mod)
+          echo "uiaudit/go.mod: $directive"
+          case "$directive" in
+            "go 1.25"*) ;;
+            *) echo "::error::uiaudit/go.mod says '$directive'; a go mod tidy on a newer host raises this silently and GOTOOLCHAIN=auto would then download that toolchain"; exit 1 ;;
+          esac
       # 🔴 THE INTERPRETER IS PINNED TOO, BECAUSE THE FIXTURE WORLD IS PYTHON.
       # `uiaudit/boot.go` calls `tests/reader_fixtures.py`'s own `build_store` rather than
       # transcribing it, so this job runs that file — and running it on whatever
@@ -1084,7 +1129,7 @@ jobs:
           # 🔴 TWO COUNTS, BECAUSE THE ANCHOR DECIDES WHICH QUESTION IS ASKED — AND A DRAFT
           # OF THIS STEP GOT IT WRONG IN THE DIRECTION THAT FAILS THE HONEST TREE. `go test
           # -v` indents a SUBTEST's result line, so `^--- PASS` counts only top-level
-          # functions (16 here) while an unanchored pattern also counts every table row (29).
+          # functions (21 here) while an unanchored pattern also counts every table row (44).
           # The draft measured 28 by hand with a leading-space alternative and then gated on
           # `^--- PASS`, so the floor refused a green tree. Both numbers are now counted and
           # both are floors: the top-level one notices a `func Test…` deleted, the total one
@@ -1116,12 +1161,12 @@ jobs:
           fi
           # Both floors are the counts measured on the tree that introduced this job. A test
           # deleted from a file that keeps others would otherwise move nothing.
-          if [ "$passes" -lt 16 ]; then
-            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 16 — a Test function was deleted"
+          if [ "$passes" -lt 21 ]; then
+            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 21 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 29 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 29 — a table row was deleted"
+          if [ "$total" -lt 44 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 44 — a table row was deleted"
             exit 1
           fi
 
