@@ -158,24 +158,38 @@ func hasFoldingRune(line string) bool {
 // ⚠ SPELLED AS ESCAPES, for the reason `foldsToASCIILetter` gives: U+212A renders
 // identically to an ASCII `K` in almost every font, and U+0130/U+0131 to `I`/`i`.
 //
-// 🔴 THE TARGETS ARE A CLAIM ABOUT CPYTHON, SO THEY ARE MEASURED THERE, NOT ARGUED
-// HERE — AND THE MAP ITSELF IS READ OUT OF THIS FILE AND COMPARED THERE, BECAUSE A
-// MEASUREMENT AGAINST A SECOND LITERAL IS BLIND TO THIS ONE.
-// `tests/test_marker_oracle_sweep.py`'s
-// `test_the_GO_fold_target_map_is_pinned_TWO_WAY_against_CPython` sweeps `re.I` on the
-// pinned interpreter for each rune's target and requires THIS map — parsed from this
-// source file — to equal it, in both directions. Before that existed the Python side
-// compared CPython against a dict spelled in the Python file, so a wrong or missing
-// target here was invisible to it: MEASURED by mutation, three of these four entries
-// SURVIVED every test in the tree.
-//
-// ⚠ ONLY THE U+017F ENTRY IS REACHABLE FROM THE WALK, AND SAYING SO IS THE POINT.
+// 🔴 ONLY THE U+017F ENTRY IS REACHABLE FROM THE WALK, AND SAYING SO *IS* THE COVERAGE
+// STATEMENT — THIS MAP IS NOT PINNED AGAINST CPYTHON AND DELIBERATELY IS NOT.
 // `asReadUnderReI` respells the MARKER WORD, and the only letter of `open`/`resolved`
 // any of these four folds onto is the `s` of `resolved`. U+0130, U+0131 and U+212A fold
 // onto `i`/`i`/`k`, which appear in neither word, so no corpus row can exercise them
-// however it is spelled — do not read the map's completeness as coverage. What they are
-// for is the two-way pin above: the SET is a claim about the interpreter, and a fifth
-// rune, or a moved target, has to fail SOMETHING.
+// however it is spelled — MEASURED by mutation at `fdc313f1`: retargeting or deleting
+// any of those three SURVIVES every test in the tree, and always did. **Do not read the
+// map's completeness as coverage.**
+//
+// 🔴 AND DO NOT RE-ADD A TEST THAT PINS IT — that was built, measured and CUT, and this
+// note exists so nobody derives it a second time. `ZacxDev/cairn#109`'s closing
+// condition asked for a two-way pin parsing this map out of this file; ~100 lines of it
+// were written and killed all eight mutants. It was removed under `the-algorithm` step 5
+// (`ZacxDev/cairn#110`): it is a TEST GUARDING A TEST'S CONSTANT, the fix for
+// over-guarding is never another guard, and its unique coverage was six mutations that
+// are inert by construction. What it did NOT uniquely cover, and what still guards every
+// consequential case: a fifth folding rune, or a moved target, fails
+// `tests/test_marker_oracle_sweep.py::test_the_re_I_folding_runes_are_exactly_the_four_
+// the_code_names`, which sweeps the whole codepoint space; the U+017F entry — the only
+// reachable one — fails the Go sweep in this file; and the PRODUCTION enumeration
+// `foldsToASCIILetter` is killed on all four runes by that same sweep. #109's own F2
+// body offers this paragraph as the sufficient alternative ("state plainly that three
+// entries are unexercised today"); its closing condition escalated that to a mandatory
+// pin, the two halves disagree, and the escalation carries no measured incident — the
+// incident it cites was a COMMENT over-claiming coverage, which is what this fixes.
+//
+// ⚠ THE MAP STAYS FOUR-WIDE even though three entries are inert, and that is the ~10%
+// added back after the deletion pass. It costs three lines and no maintenance; it pairs
+// with `foldsToASCIILetter`'s enumeration; and if the oracle's `OPEN|RESOLVED`
+// alternation ever gains a word containing `i` or `k`, a trimmed map would silently
+// under-respell. That failure is LOUD (a declared divergence reported as undeclared, not
+// a narrowing absorbed), so completeness here is cheap insurance rather than a guard.
 //
 // ⚠ `unicode.SimpleFold` IS NOT A SUBSTITUTE. Go's simple-fold orbit connects U+017F
 // to `s` and U+212A to `k`, but U+0130 and U+0131 have no simple fold at all — their
