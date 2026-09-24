@@ -1060,22 +1060,48 @@ jobs:
       # REFUSES rather than skips when chromium is absent — so this step failing is also the
       # signal that the step above installed nothing.
       - name: the harness's own guards, including the positive control
-        working-directory: uiaudit
         env:
           UIAUDIT_REPO_ROOT: ${{ github.workspace }}
+          UIAUDIT_CAIRN_UI: /tmp/cairn-ui
         run: |
           set -euo pipefail
+          # 🔴 `cairn-ui` IS BUILT FROM THE ROOT MODULE'S OWN DIRECTORY, NOT BY A RELATIVE
+          # PATH OUT OF THE NESTED ONE, AND THE DIFFERENCE IS A TOOLCHAIN QUESTION NOBODY
+          # SHOULD HAVE TO ANSWER. `go build ../cmd/cairn-ui` from inside `uiaudit/` names a
+          # package outside that module; it succeeded on go1.26.7 when measured by hand, and
+          # that is ONE point on a dimension this job pins somewhere else — CI installs 1.25.
+          # Building each module from its own root makes the behaviour irrelevant instead of
+          # measured-at-one-point, which is what `uiaudit/run.sh` also does.
+          go build -o /tmp/cairn-ui ./cmd/cairn-ui
+          cd uiaudit
           go vet ./...
-          go build -o /tmp/cairn-ui ../cmd/cairn-ui
-          UIAUDIT_CAIRN_UI=/tmp/cairn-ui go test -count=1 -v ./... 2>&1 | tee /tmp/uiaudit-tests.log || true
+          go test -count=1 -v ./... 2>&1 | tee /tmp/uiaudit-tests.log || true
           # 🔴 COUNT THE RUNNER'S OWN RESULT LINES, NEVER THE EXIT CODE. `tee` is the last
           # command in that pipeline and would swallow a non-zero status, and a suite that
           # collected nothing exits 0 with no result lines at all — the reassuring zero this
           # repository refuses everywhere.
+          #
+          # 🔴 TWO COUNTS, BECAUSE THE ANCHOR DECIDES WHICH QUESTION IS ASKED — AND A DRAFT
+          # OF THIS STEP GOT IT WRONG IN THE DIRECTION THAT FAILS THE HONEST TREE. `go test
+          # -v` indents a SUBTEST's result line, so `^--- PASS` counts only top-level
+          # functions (16 here) while an unanchored pattern also counts every table row (28).
+          # The draft measured 28 by hand with a leading-space alternative and then gated on
+          # `^--- PASS`, so the floor refused a green tree. Both numbers are now counted and
+          # both are floors: the top-level one notices a `func Test…` deleted, the total one
+          # notices a ROW deleted from a table — which the first cannot see, and which is how
+          # the mutation cases in `payload_test.go` would quietly shrink.
           passes=$(grep -c '^--- PASS' /tmp/uiaudit-tests.log || true)
-          fails=$(grep -c '^--- FAIL' /tmp/uiaudit-tests.log || true)
-          skips=$(grep -c '^--- SKIP' /tmp/uiaudit-tests.log || true)
-          echo "uiaudit tests: PASS=$passes FAIL=$fails SKIP=$skips"
+          subpasses=$(grep -cE '^[[:space:]]+--- PASS' /tmp/uiaudit-tests.log || true)
+          fails=$(grep -cE '^[[:space:]]*--- FAIL' /tmp/uiaudit-tests.log || true)
+          skips=$(grep -cE '^[[:space:]]*--- SKIP' /tmp/uiaudit-tests.log || true)
+          total=$((passes + subpasses))
+          echo "uiaudit tests: top-level PASS=$passes subtest PASS=$subpasses total=$total FAIL=$fails SKIP=$skips"
+          # The instrument check on the counter itself: a log with no result lines at all is a
+          # suite that collected nothing, which exits 0 and would otherwise read as a pass.
+          if [ "$total" = "0" ]; then
+            echo "::error::uiaudit produced NO result lines; the suite collected nothing and its exit code says nothing"
+            exit 1
+          fi
           if [ "$fails" != "0" ]; then
             echo "::error::uiaudit has $fails failing test(s)"
             exit 1
@@ -1088,10 +1114,14 @@ jobs:
             echo "::error::uiaudit skipped $skips test(s); a skipped instrument validation is a pass nobody earned"
             exit 1
           fi
-          # The floor is the count measured on the tree that introduced this job. A test
+          # Both floors are the counts measured on the tree that introduced this job. A test
           # deleted from a file that keeps others would otherwise move nothing.
-          if [ "$passes" -lt 28 ]; then
-            echo "::error::uiaudit reported $passes PASS line(s), floor is 28"
+          if [ "$passes" -lt 16 ]; then
+            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 16 — a Test function was deleted"
+            exit 1
+          fi
+          if [ "$total" -lt 28 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 28 — a table row was deleted"
             exit 1
           fi
 
