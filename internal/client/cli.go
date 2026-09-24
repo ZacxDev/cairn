@@ -59,7 +59,7 @@ func Verbs() []Verb {
 		{Name: "search", Help: "search the scope for hunks",
 			Flags: append(append([]string{}, commonReadFlags...), "--all-scopes"),
 			Run:   func(e Env, o Options) (int, error) { return Report(e, o, true) }},
-		{Name: "validate", Help: "parse-check the cached entries",
+		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
 		{Name: "ls-entries", Help: "one `<scope>/<entry>.md` per line",
 			Flags: commonReadFlags, Run: LsEntries},

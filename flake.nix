@@ -383,6 +383,17 @@
           || (rel == "go.sum")
           || (rel == "tests/conformance/requests.json")
           || (rel == "internal/report/testdata/reader_fixtures.json")
+          # 🔴 AND A THIRD ONE, FOUND BY A RED SANDBOX BUILD RATHER THAN BY ANYONE
+          # READING THE PARAGRAPH ABOVE. `internal/store/markersweep_test.go` is the
+          # differential sweep behind `marker.go`'s narrowing ledger: it replays the
+          # ORACLE's verdicts for every generated line against two hand-rolled
+          # transcriptions of CPython regexes. Its fixture was first written to
+          # `tests/fixtures/`, which this allowlist does not carry — so the sweep was
+          # green on the dev host and RED here, which is the two-tier split the
+          # comment above describes, arriving one commit after it was written. Moved
+          # under the package it tests, like `reader_fixtures.json`, and named here
+          # for the same reason: the dimension is supplied, not pinned away.
+          || (rel == "internal/store/testdata/marker_oracle_sweep.json")
           # 🔴 THE NESTED MODULE'S TWO LOCK FILES, AND NOTHING ELSE FROM THAT
           # DIRECTORY. `internal/depspolicy`'s
           # `TestTheNestedModuleSetIsExactlyTheAllowlist` walks the tree for

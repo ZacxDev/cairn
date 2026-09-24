@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -251,5 +252,226 @@ func TestValidateCountsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("got %q, want a line containing %q — only `README.md` EXACTLY is excluded",
 			stdout, want)
+	}
+}
+
+// THE WRITE-PROTOCOL HALF OF `validate`, AT THE VERB.
+//
+// 🔴 THE PARSE COUNT ABOVE AND THESE TWO BLOCKS ANSWER DIFFERENT QUESTIONS. "Would the
+// loader accept this file?" is the count line; an entry can pass it while holding text NO
+// reader will ever surface. Until these blocks the only tool that reported
+// `dropped lines:` and `marker reachability:` was an operator-local launcher, so an agent
+// that had the package and not the launcher — the deployed case — ran a check that was
+// silently weaker than the mandated one, and nothing in its output said so.
+//
+// The oracle's own coverage for the same rows is
+// `tests/test_cairn_cli.py::TestValidateReportsTheWriteProtocolContract`, and the two
+// clients are compared byte-for-byte by `tests/parity/` over a scope
+// (`crag-notes`) seeded with exactly these defects — so a one-sided change is a
+// divergence, not a fix.
+
+// seedLossyEntry writes an entry that PARSES and still holds three things no reader can
+// reach: two lines before the first bullet (the second a declaration) and a
+// correctly-spelled marker on a bullet's continuation line.
+func seedLossyEntry(t *testing.T, root, scope, ref string) {
+	t.Helper()
+	body := "---\nservice: " + ref + "\nscope: " + scope + "\n---\n\n" +
+		"## What it is\n\nsynthetic.\n\n## Pointers\n\n- none\n\n" +
+		"## Nuance / work-history\n\n" +
+		"  this line reaches no bullet at all: the `- ` that opened it is gone.\n" +
+		"  OPEN: and this one is a declaration nothing will ever surface.\n" +
+		"- 2000-01-04: RESOLVED abc1234: the bullet that did survive.\n" +
+		"  OPEN: a marker several lines in, where no parser looks.\n"
+	if err := os.WriteFile(filepath.Join(root, scope, ref+".md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateReportsDroppedLinesAndOutOfReachMarkers(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedLossyEntry(t, cache, "alpha-notes", "lossy-thing")
+
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+
+	// 🔴 THE FILE PARSES. The parse half must still say so, or this test would be
+	// measuring a malformed entry and proving nothing about the new half.
+	if code != ExitOK {
+		t.Fatalf("a parsing scope exits 0, got %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"cairn: alpha-notes: 2 of 2 entry file(s) parse, 0 malformed",
+		"🔴 2 DROPPED LINE(S) across 2 entry file(s) scanned [dropped-line]",
+		"1 of them looks like a `OPEN:`/`RESOLVED:` DECLARATION",
+		"lossy-thing.md: nuance line 2  ← looks like a DECLARATION",
+		"🔴 1 MARKER(S) OUT OF REACH across 2 entry file(s) scanned [unreachable-marker]",
+		"lossy-thing.md: line 2 of the bullet opening",
+		"(would declare `open`)",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
+// 🔴 THE WRITE PROTOCOL BRANCHES ON THIS COMMAND'S EXIT CODE TO MEAN "write NOTHING".
+// Failing here would stop a session recording anything into an entry whose only defect is
+// that an OLDER write lost a line — a gate the author cannot turn green by fixing the file
+// they are writing, which is worse than no gate.
+func TestNeitherAdvisoryMovesTheExitCode(t *testing.T) {
+	home := oneInstanceHost(t)
+	seedLossyEntry(t, filepath.Join(home, ".cache", "subsystem-store"),
+		"alpha-notes", "lossy-thing")
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+	if !strings.Contains(stdout, "DROPPED LINE(S)") {
+		t.Fatalf("the fixture never reached the advisory:\n%s", stdout)
+	}
+	if code != ExitOK {
+		t.Fatalf("an advisory moved the exit code to %d\n%s", code, stderr)
+	}
+}
+
+// 🔴 A BARE ABSENCE IS INDISTINGUISHABLE FROM A SCANNER WIRED TO NOTHING.
+func TestACleanScopeStillPrintsBothDenominators(t *testing.T) {
+	home := oneInstanceHost(t)
+	_ = home
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+	if code != ExitOK {
+		t.Fatalf("a clean scope exits 0, got %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"dropped lines: 0 across 1 entry file(s)",
+		"PARTIAL BY CONSTRUCTION",
+		"marker reachability: 0 out-of-reach marker(s) across 1 entry file(s)",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
+// 🔴 "0 across 0 entry file(s)" IS THE REASSURING ZERO FROM AN INSTRUMENT THAT WALKED
+// NOTHING. The fixture is a scope holding ONLY its policy sheet, which is the reachable
+// shape rather than a contrived one: `/snapshot` ships READMEs and both loaders skip them.
+func TestAScopeWithNoEntriesPrintsNotCheckedRatherThanAZero(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	if err := os.MkdirAll(filepath.Join(cache, "sheet-only"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seedREADME(t, cache, "sheet-only")
+
+	code, stdout, stderr := capture(t, Validate, readOpts())
+	if code != ExitOK {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	var line string
+	for _, ln := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(ln, "cairn: sheet-only: dropped lines") {
+			line = ln
+		}
+	}
+	if line == "" || !strings.Contains(line, "NOT CHECKED") {
+		t.Fatalf("want a NOT CHECKED line for sheet-only, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "0 across 0") {
+		t.Fatalf("a zero over nothing was printed:\n%s", stdout)
+	}
+}
+
+// 🔴 THE ADVISORY DENOMINATOR COUNTS WHAT THE SCANNERS OPENED, NOT WHAT THE DIRECTORY
+// LISTED — AND THOSE ARE A THIRD SET, distinct from both the parse line's numerator and
+// its denominator.
+//
+// RED at `cc1242a`: the advisories were handed `checked`, the unfiltered `*.md` listing,
+// so this fixture printed `dropped lines: 0 across 2 entry file(s)` — "every non-blank
+// line reaches a bullet some reader will surface" asserted over a FIFO nothing had
+// opened. The scanners refuse a FIFO before `open()` (that is the round-1 fix, and it
+// stands); it was only the printed count that still included it.
+//
+// ⚠ AND THE FIFO IS NOT SOFTENED OUT OF THE OUTPUT, which is what keeps this a fix
+// rather than a hiding place: the parse line above still counts it, still reports it
+// malformed, and the verb still exits 5. Both halves are asserted below, because a
+// change that quietened the refusal would pass an assertion about the advisory alone.
+func TestTheAdvisoryDenominatorExcludesAPathTheScannersNeverOpen(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	entries, err := os.ReadDir(filepath.Join(cache, "alpha-notes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the fixture seeds %d file(s); this case needs exactly one so the "+
+			"counts below are unambiguous", len(entries))
+	}
+	fifo := filepath.Join(cache, "alpha-notes", "wedge.md")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+
+	if code != ExitCorrupt {
+		t.Fatalf("a refused entry must still drive the exit to %d, got %d\n%s",
+			ExitCorrupt, code, stderr)
+	}
+	if want := "1 of 2 entry file(s) parse, 1 malformed"; !strings.Contains(stdout, want) {
+		t.Errorf("the PARSE line must still count the fifo — want %q in:\n%s",
+			want, stdout)
+	}
+	for _, want := range []string{
+		"dropped lines: 0 across 1 entry file(s) scanned",
+		"marker reachability: 0 out-of-reach marker(s) across 1 entry file(s) scanned",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "across 2 entry file(s) scanned") {
+		t.Errorf("the advisory counted a path it never opened:\n%s", stdout)
+	}
+}
+
+// The other end of the same change: when the scanners open NOTHING, `NOT CHECKED` is the
+// honest line. Without the denominator fix this printed `0 across 1`, a zero over a file
+// that was refused before `open()` — the exact shape
+// `TestAScopeWithNoEntriesPrintsNotCheckedRatherThanAZero` exists to forbid, reached
+// through a different door.
+func TestAScopeHoldingONLYAnUnopenablePathAlsoSaysNotChecked(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	dir := filepath.Join(cache, "pipe-only")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "wedge.md"), 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+
+	opts := readOpts()
+	opts.Scope = "pipe-only"
+	code, stdout, stderr := capture(t, Validate, opts)
+	if code != ExitCorrupt {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	var line string
+	for _, ln := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(ln, "cairn: pipe-only: dropped lines") {
+			line = ln
+		}
+	}
+	if line == "" || !strings.Contains(line, "NOT CHECKED") {
+		t.Fatalf("want a NOT CHECKED line for pipe-only, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "0 across 1") {
+		t.Fatalf("a zero over a file nothing opened was printed:\n%s", stdout)
 	}
 }

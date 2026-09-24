@@ -58,6 +58,24 @@ that never reached the mechanism would otherwise make "both clients agree" a fac
 fixture. The metacharacter has to sit in the cache's PARENT for it to be about the class at all;
 see `WORLD_METACHARACTER_SUFFIX`.
 
+`nonregular-path-parity` is the third structural claim, and it exists because **the world cannot
+represent the input**. `world.build_store` writes files that the pod tars and each client unpacks;
+neither a fifo nor a device node survives that pipe — the snapshot walker refuses them,
+`install_snapshot` replaces the cache root wholesale, and `tarfile`'s `filter="data"` would drop
+the member even if one arrived. So no `Case` row can present a non-regular path, and a whole
+hazard class was invisible to a gate that otherwise compares every verb: `validate`'s two
+advisories opened every candidate unconditionally while the loader beside them had refused
+`other` / `link-to-other` before `open()` since a fifo was measured wedging a request thread for
+25 s. Both clients **wedged forever** on a cache holding one, where the commit before the
+advisories exited 5. The check syncs a real cache, seeds a fifo named `*.md` into it, and runs
+both clients' `validate --no-sync` under a 30 s timeout. 🔴 **The timeout is part of the
+assertion, and the positive control is read rather than assumed:** the fifo must land as a
+MALFORMED entry at exit 5 — the loader's own refusal — or the row FAILS, because two clients that
+both skipped the scope, or both crashed the same way, compare equal. ⚠ A character device is the
+same table arm and is deliberately NOT seeded here: its failure is an OOM whose blast radius is
+the harness's own box, where a fifo's is a hang a timeout bounds exactly. `link-to-other` is
+covered by unit tests in both clients; what this check adds is the CROSS-CLIENT claim.
+
 ## What this gate found — twelve divergences in nine findings
 
 🔴 **Relocated here from `AGENTS.md`, which is loaded into every session in this repository
