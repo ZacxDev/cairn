@@ -22,18 +22,28 @@
 # The separate package's real cost is therefore smaller than stated here, and the
 # retraction with its scope lives at that step.
 #
-# 🔴 AND THE PYTHON HALF RUNS FIRST, WHOLE. Build, controls, both pushes and the
-# anonymous-pull proof for `cairn-store` all complete before the FIRST Go-image
-# step. `ci.yml` asserts only that the Go image BUILDS, so every Go step here is
-# a FIRST execution, and a first execution in front of the Python publish gates
-# that publish on a path that has never run once — the same shape as the failure
-# this file was written to fix: seven runs in a row where nothing published
-# because one step nobody had exercised went red.
-# ⚠ THIS USED TO SAY THAT ORDERING "would gate the pod that is actually deployed",
-# AND THAT INVERTED AT THE CUTOVER: `cairn-store-go` IS the deployed pod, so the
-# ordering now publishes the DEPLOYED pod LAST and most exposed. The ordering is
-# UNCHANGED deliberately — reversing it is a behaviour change with its own blast
-# radius — and the decision is filed rather than drifted into.
+# 🔴 AND THE GO HALF RUNS FIRST, WHOLE, BECAUSE `cairn-store-go` IS THE DEPLOYED
+# POD. Build, controls, both pushes and the anonymous-pull proof for
+# `cairn-store-go` all complete before the FIRST Python-image step. The rule the
+# ordering encodes: THE POD THE CLUSTER ACTUALLY PULLS PUBLISHES FIRST, so it is
+# the leg LEAST exposed to an earlier step going red. Every step is exposed to
+# every step in front of it; the only question this file gets to answer is which
+# artefact sits at the front.
+#
+# ⚠ THE RETRACTED ORDERING AND ITS RETRACTED REASON, KEPT SO NOBODY RE-DERIVES
+# THEM. The Python half used to run first, and the argument was: "`ci.yml` asserts
+# only that the Go image BUILDS, so every Go step here is a FIRST execution, and a
+# first execution in front of the Python publish gates that publish on a path that
+# has never run once — the same shape as the failure this file was written to fix,
+# seven runs in a row where nothing published because one step nobody had
+# exercised went red." Both halves of that are spent. MEASURED before the
+# reversal: the last fifteen runs of this workflow are 14 success / 1 cancelled,
+# and a recent successful run executed `push the Go pod's immutable sha tag` AND
+# `push the Python pod's immutable sha tag` to success — so NEITHER half is a
+# first execution any more. And the pod the old ordering protected is the one
+# NOTHING deploys: the cutover made `cairn-store-go` the deployed pod, so the
+# Python-first ordering published the DEPLOYED pod LAST and most exposed, which
+# is the opposite of what its own rationale asked for.
 # `tests/test_publish_workflow.py` pins the ORDER, not only the membership.
 #
 # 🔴 WHY THIS EXISTS, AND WHAT WAS ACTUALLY MEASURED. `ci.yml`'s `nix` job builds
@@ -166,101 +176,14 @@ jobs:
           echo "sha tag      = $sha_tag"
           echo "version tag  = ${version_tag:-<none: not a tag push>}"
 
-      # ── THE PYTHON POD. Everything about `cairn-store` — build, control, both
-      # pushes, and the anonymous-pull proof — happens before the first Go step.
+      # ── THE TWO SHARED PREREQUISITES, ABOVE BOTH HALVES AND BELONGING TO
+      # NEITHER. skopeo is the binary every push and every anonymous-pull proof
+      # runs, and the ghcr login is what every push needs; they sit here rather
+      # than inside a half because whichever half goes first would otherwise own
+      # them, and the next reordering would strand the other half with no binary
+      # and no credential. They were inside the PYTHON half while that half ran
+      # first, which is exactly the coupling this position removes.
       # ─────────────────────────────────────────────────────────────────────────
-
-      # 🔴 ONE BUILD, AND IT IS THE FLAKE'S. A second `docker build` here would
-      # be a THIRD way to produce this pod, and the premise of
-      # `tests/test_flake_image_matches_dockerfile.py` is that there are two and
-      # they are pinned against each other. Publishing the nix output keeps the
-      # published artefact inside that pin.
-      - name: build the Python server image from the flake
-        id: build
-        run: |
-          set -euo pipefail
-          out=$(nix build .#packages.x86_64-linux.server-image \
-                  --no-link --print-out-paths --print-build-logs)
-          printf 'archive=%s\n' "$out" >> "$GITHUB_OUTPUT"
-          echo "archive = $out"
-          ls -l "$out"
-
-      # 🔴 THE CONTROL THAT MATTERS MOST HERE, AND IT IS STRICTER THAN THE ONE IN
-      # `server/build-push.sh` FOR A REASON: that script pushes to whatever
-      # registry the operator names, usually a private one. This pushes to a
-      # PUBLIC one. A store entry baked into a layer is a private note published
-      # to the internet — the exact class the leak gate exists to stop, one step
-      # past the leak gate's reach, because the leak gate reads the TREE and this
-      # reads the ARTEFACT.
-      #
-      # 🔴 AND IT IS A PAIR. "`/data` holds 0 files" is also what an image with no
-      # filesystem at all would report, and a reassuring zero is indistinguishable
-      # from a probe wired to nothing. The second command is the positive half:
-      # the code IS in the image and imports, so the zero above was measured
-      # against a real root.
-      #
-      # 🔴 THE `/data` BLOCK IS PINNED THREE WAYS AND IT USED TO BE PINNED NONE.
-      # MEASURED: deleting it from EITHER pod's control left the whole suite
-      # green. `test_both_image_controls_REFUSE_on_a_non_empty_data_directory`
-      # now reads the PROBE, the BRANCH on `$leaked`, and that branch's exit
-      # code; this step's whole command text is pinned as well. Do not delete or
-      # reword it without reading that test — and note that a variable which
-      # merely EXISTS is not a guard, so moving the measurement out of the `if`
-      # is the same defect as deleting it.
-      - name: control — /data is EMPTY in the image, and the code is really there
-        run: |
-          set -euo pipefail
-          loaded=$(docker load -i "${{ steps.build.outputs.archive }}" \
-                   | sed -n 's/^Loaded image: //p')
-          echo "loaded = $loaded"
-          test -n "$loaded"
-
-          leaked=$(docker run --rm --entrypoint /bin/busybox "$loaded" \
-                     sh -c 'ls -A /data | wc -l')
-          if [ "$leaked" != "0" ]; then
-            echo "REFUSING TO PUBLISH: /data in the image holds $leaked entr(y|ies)."
-            echo "  This image is about to become PUBLIC. Store content must arrive"
-            echo "  at runtime on a volume and must never be in a layer."
-            docker run --rm --entrypoint /bin/busybox "$loaded" sh -c 'ls -A /data'
-            exit 1
-          fi
-          echo "control: /data holds $leaked files (must be 0) — OK"
-
-          # 🔴 THE INTERPRETER IS READ OUT OF THE IMAGE'S OWN `Cmd`, NOT SPELLED
-          # `python3`. It is NOT on this image's `PATH` — measured: `PATH=/bin`
-          # and `/bin` is busybox alone, so `command -v python3` returns nothing.
-          # `server/build-push.sh` gets away with the bare name because the
-          # Dockerfile image is `python:3.12-slim` and inherits one; the flake
-          # image names an absolute store path in `Cmd` instead. A control
-          # written the other way would fail here for a reason that has nothing
-          # to do with what it claims to measure.
-          py=$(docker inspect -f '{{index .Config.Cmd 0}}' "$loaded")
-          echo "interpreter (from the image's own Cmd) = $py"
-          docker run --rm --entrypoint "$py" "$loaded" -c \
-            'import sys; sys.path.insert(0, "/app/lib"); import subsystem_recall as r; print("positive control: subsystem_recall imported,", len(r.RECALL_MODES), "modes")'
-
-          # …and the image RUNS: with no token source it must refuse for a NAMED
-          # configuration reason and exit non-zero, which is a different claim
-          # from "the container was created". A container that started and sat
-          # there would satisfy a naive smoke test and tell you nothing.
-          set +e
-          startup=$(docker run --rm "$loaded" 2>&1)
-          rc=$?
-          set -e
-          echo "no-config start: rc=$rc"
-          echo "$startup"
-          if [ "$rc" -eq 0 ]; then
-            echo "REFUSING TO PUBLISH: the server exited 0 with no token source."
-            echo "  It is supposed to refuse. A 0 here means the entrypoint is not"
-            echo "  running the server at all."
-            exit 1
-          fi
-          case "$startup" in
-            *"subsystem-store-api:"*) ;;
-            *) echo "REFUSING TO PUBLISH: the refusal did not come from the server"
-               exit 1 ;;
-          esac
-          echo "control: the image runs and refuses by name — OK"
 
       # 🔴 skopeo IS TAKEN FROM THE FLAKE'S OWN PINNED nixpkgs, NOT FROM THE
       # RUNNER IMAGE. GitHub's ubuntu image happens to ship one today; a job whose
@@ -315,112 +238,17 @@ jobs:
             | "${{ steps.skopeo.outputs.bin }}" login ghcr.io \
                 -u '${{ github.actor }}' --password-stdin
 
-      # 🔴 `docker-archive:` READS THE GZIPPED TAR THE FLAKE PRODUCES DIRECTLY —
-      # measured, not assumed: `dockerTools.buildLayeredImage` defaults to a gzip
-      # compressor and skopeo detects it. No decompression step, and in
-      # particular no change to the derivation's `compressor`, which would move
-      # the artefact that `test_flake_image_matches_dockerfile.py` is pinned to.
-      #
-      # 🔴 THE FOUR PUSH STEPS BELOW ARE PINNED BY THEIR WHOLE NORMALISED COMMAND
-      # TEXT in `tests/test_publish_workflow.py`, not by a keyword. Which archive
-      # goes to which package under which tag is the entire contract, and a guard
-      # on words is walkable by rewording. A cosmetic edit here fails that test;
-      # that is the price of a machine-readable claim, and it is paid on purpose.
-      #
-      # 🔴 AND SO ARE THE FOUR CONTROL STEPS — both `control — …` steps and both
-      # `PROVE …` steps — for the same reason and after a measurement: three of
-      # them were pinned by NOTHING, and mutants that re-aimed the Go proof at
-      # the Python package, deleted either pod's `/data` emptiness check, and
-      # turned a refusal's `exit 1` into `exit 0` each SURVIVED a fully green
-      # suite. Reformatting any of those eight steps now fails a test.
-      - name: push the Python pod's immutable sha tag
-        run: |
-          set -euo pipefail
-          "${{ steps.skopeo.outputs.bin }}" copy --all \
-            "docker-archive:${{ steps.build.outputs.archive }}" \
-            "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}"
-
-      - name: push the Python pod's version tag, on a tag push only
-        if: steps.ref.outputs.version_tag != ''
-        run: |
-          set -euo pipefail
-          "${{ steps.skopeo.outputs.bin }}" copy --all \
-            "docker-archive:${{ steps.build.outputs.archive }}" \
-            "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version_tag }}"
-
-      # 🔴 THE ONLY CHECK THAT ANSWERS THE QUESTION THIS WORKFLOW EXISTS FOR, AND
-      # A GREEN PUSH DOES NOT ANSWER IT. A ghcr package is PRIVATE on first
-      # publish. A private image and a working one are indistinguishable from
-      # inside this job — the push succeeded either way — and the difference only
-      # surfaces as `ImagePullBackOff` in somebody else's cluster, hours later,
-      # with nothing pointing back here.
-      #
-      # `--no-creds` is the point: it is the same read an unauthenticated cluster
-      # makes. The run is still logged in from two steps ago, so without that flag
-      # this would pass on THIS job's credentials and prove nothing at all.
-      #
-      # 🔴 AND THE `ref` IS PER-PACKAGE, WHICH NOTHING USED TO SAY. The absent-tag
-      # control below is COUNTED one per package; the reference that must RESOLVE
-      # is reached through `$ref`, one indirection away, and was constrained by
-      # nothing. MEASURED: aiming the GO step's `ref` at this package left the
-      # suite green while the job pushed the Go image and then printed
-      # `ANONYMOUS PULL OK` for `cairn-store`.
-      # `test_each_anonymous_proof_inspects_ITS_OWN_package` now pins each proof
-      # step's `ref`, forbids the other package's expression anywhere in the
-      # step, and requires the printed settings URL to name this step's package.
-      - name: PROVE the published image is pullable with NO credentials
-        run: |
-          set -euo pipefail
-          ref='${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}'
-          skopeo='${{ steps.skopeo.outputs.bin }}'
-
-          # The negative control FIRST, so a pass below is a measurement rather
-          # than a claim: if an inspect of a tag that cannot exist also succeeds,
-          # this instrument is answering something other than the question.
-          set +e
-          $skopeo inspect --no-creds \
-            "docker://${{ steps.ref.outputs.image }}:sha-0000000000000000000000000000000000000000" \
-            >/dev/null 2>&1
-          control_rc=$?
-          set -e
-          if [ "$control_rc" -eq 0 ]; then
-            echo "REFUSING: an anonymous inspect of a tag that does not exist SUCCEEDED."
-            echo "  This check cannot distinguish a public image from anything."
-            exit 1
-          fi
-          echo "negative control: absent tag refused anonymously (rc=$control_rc) — OK"
-
-          set +e
-          out=$($skopeo inspect --no-creds "docker://$ref" 2>&1)
-          rc=$?
-          set -e
-          if [ "$rc" -ne 0 ]; then
-            echo "$out"
-            echo
-            echo "REFUSING: $ref was PUSHED but cannot be pulled without credentials."
-            echo "  A package created by Actions in a PUBLIC repo has been measured to"
-            echo "  come out PUBLIC, so this is NOT the expected first-publish state --"
-            echo "  something made this one private. GitHub exposes no REST route for"
-            echo "  the flip; it is a ONE-TIME manual step, per package:"
-            echo
-            echo "    https://github.com/users/${{ github.repository_owner }}/packages/container/cairn-store/settings"
-            echo "    -> Danger Zone -> Change visibility -> Public"
-            echo
-            echo "  Until then no cluster outside this repository can pull this image,"
-            echo "  which is the entire reason this workflow exists."
-            exit 1
-          fi
-          echo "$out" | head -20
-          digest=$(printf '%s' "$out" | sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' | head -1)
-          echo
-          echo "ANONYMOUS PULL OK: $ref"
-          echo "digest: $digest"
-          echo "pin this in a deployment: $ref"
-
-      # ── THE GO POD. Nothing below this line runs until the Python pod above is
-      # built, controlled, pushed and proved anonymously pullable. See the 🔴 at
-      # the top of this file: every step from here down is a FIRST execution of an
-      # image nothing in this repository has ever run.
+      # ── THE GO POD, AND IT GOES FIRST BECAUSE IT IS THE DEPLOYED ONE. Build,
+      # controls, both pushes and the anonymous-pull proof for `cairn-store-go`
+      # all complete before the FIRST Python-image step below. The cluster pulls
+      # THIS package, so it is the leg that must be least exposed to an earlier
+      # step going red.
+      # ⚠ THIS BLOCK USED TO SIT SECOND AND READ "Nothing below this line runs
+      # until the Python pod above is built, controlled, pushed and proved
+      # anonymously pullable … every step from here down is a FIRST execution of
+      # an image nothing in this repository has ever run." The second half is
+      # spent: this half has published green, measured on this workflow's own run
+      # history, so it is not a first execution. Kept so nobody re-derives it.
       # ─────────────────────────────────────────────────────────────────────────
 
       # 🔴 THE GO POD IS BUILT HERE AND PUBLISHED BELOW, AND IT IS WHAT RUNS.
@@ -596,14 +424,23 @@ jobs:
       # job, which is the whole reason this check exists. An expected failure
       # that is explained is cheaper than a gate that cannot fail.
       #
-      # 🔴 AND THAT EXPECTED FAILURE IS WHY THE WHOLE GO HALF RUNS AFTER THE WHOLE
-      # PYTHON ONE, NOT ONLY THIS STEP. An earlier draft put the Go build and the
-      # Go controls in front of the Python push and claimed "it runs last" on the
-      # strength of this step alone — which left the THEN-deployed Python pod
-      # unable to publish if any first-execution Go step went red, the exact
-      # failure mode of the seven runs this file was written to fix.
-      # ⚠ Said "the pod that IS deployed"; that named the right pod only before
-      # the cutover. Third copy of one claim in this file; see the 🔴 at the top.
+      # 🔴 AND THE WHOLE GO HALF NOW RUNS BEFORE THE WHOLE PYTHON ONE, NOT ONLY
+      # THIS STEP. The deployed pod publishes first, so this half is the one least
+      # exposed to an earlier red step; a step of the PYTHON half going red can no
+      # longer strand it.
+      # ⚠ TWO RETRACTED VERSIONS OF THIS PARAGRAPH, KEPT SO NEITHER IS RE-DERIVED.
+      # It first read "the whole Go half runs AFTER the whole Python one … an
+      # earlier draft put the Go build and the Go controls in front of the Python
+      # push and claimed 'it runs last' on the strength of this step alone — which
+      # left the THEN-deployed Python pod unable to publish if any first-execution
+      # Go step went red, the exact failure mode of the seven runs this file was
+      # written to fix." Then it said "the pod that IS deployed", which named the
+      # right pod only before the cutover. Both are spent: this half is no longer
+      # a first execution — it has published green, measured on the run history —
+      # and the pod the ordering protected is the one nothing pulls. The narrow
+      # claim the first version got RIGHT survives and is the reason the step below
+      # is still not softened: "it runs last" is a property of ONE step, never of
+      # the half it is read as covering.
       - name: PROVE the published GO image is pullable with NO credentials
         run: |
           set -euo pipefail
@@ -646,6 +483,216 @@ jobs:
             echo
             echo "  Then re-run this workflow (workflow_dispatch). Until it is done, no"
             echo "  cluster outside this repository can pull the Go pod."
+            exit 1
+          fi
+          echo "$out" | head -20
+          digest=$(printf '%s' "$out" | sed -n 's/.*"Digest": "\([^"]*\)".*/\1/p' | head -1)
+          echo
+          echo "ANONYMOUS PULL OK: $ref"
+          echo "digest: $digest"
+          echo "pin this in a deployment: $ref"
+
+      # ── THE PYTHON POD, AND IT GOES SECOND BECAUSE NOTHING DEPLOYS IT.
+      # Everything about `cairn-store` — build, control, both pushes, and the
+      # anonymous-pull proof — happens after the whole Go half above. ⚠ This read
+      # "happens before the first Go step", which was true and is not: the
+      # ordering reversed when `cairn-store-go` became the deployed pod. Publishing
+      # this half is still load-bearing — it is the ORACLE, and the parity gate
+      # compares against it until P8 — so a red step here still stops a publish;
+      # it stops the publish of the pod that nothing pulls.
+      # ─────────────────────────────────────────────────────────────────────────
+
+      # 🔴 ONE BUILD, AND IT IS THE FLAKE'S. A second `docker build` here would
+      # be a THIRD way to produce this pod, and the premise of
+      # `tests/test_flake_image_matches_dockerfile.py` is that there are two and
+      # they are pinned against each other. Publishing the nix output keeps the
+      # published artefact inside that pin.
+      - name: build the Python server image from the flake
+        id: build
+        run: |
+          set -euo pipefail
+          out=$(nix build .#packages.x86_64-linux.server-image \
+                  --no-link --print-out-paths --print-build-logs)
+          printf 'archive=%s\n' "$out" >> "$GITHUB_OUTPUT"
+          echo "archive = $out"
+          ls -l "$out"
+
+      # 🔴 THE CONTROL THAT MATTERS MOST HERE, AND IT IS STRICTER THAN THE ONE IN
+      # `server/build-push.sh` FOR A REASON: that script pushes to whatever
+      # registry the operator names, usually a private one. This pushes to a
+      # PUBLIC one. A store entry baked into a layer is a private note published
+      # to the internet — the exact class the leak gate exists to stop, one step
+      # past the leak gate's reach, because the leak gate reads the TREE and this
+      # reads the ARTEFACT.
+      #
+      # 🔴 AND IT IS A PAIR. "`/data` holds 0 files" is also what an image with no
+      # filesystem at all would report, and a reassuring zero is indistinguishable
+      # from a probe wired to nothing. The second command is the positive half:
+      # the code IS in the image and imports, so the zero above was measured
+      # against a real root.
+      #
+      # 🔴 THE `/data` BLOCK IS PINNED THREE WAYS AND IT USED TO BE PINNED NONE.
+      # MEASURED: deleting it from EITHER pod's control left the whole suite
+      # green. `test_both_image_controls_REFUSE_on_a_non_empty_data_directory`
+      # now reads the PROBE, the BRANCH on `$leaked`, and that branch's exit
+      # code; this step's whole command text is pinned as well. Do not delete or
+      # reword it without reading that test — and note that a variable which
+      # merely EXISTS is not a guard, so moving the measurement out of the `if`
+      # is the same defect as deleting it.
+      - name: control — /data is EMPTY in the image, and the code is really there
+        run: |
+          set -euo pipefail
+          loaded=$(docker load -i "${{ steps.build.outputs.archive }}" \
+                   | sed -n 's/^Loaded image: //p')
+          echo "loaded = $loaded"
+          test -n "$loaded"
+
+          leaked=$(docker run --rm --entrypoint /bin/busybox "$loaded" \
+                     sh -c 'ls -A /data | wc -l')
+          if [ "$leaked" != "0" ]; then
+            echo "REFUSING TO PUBLISH: /data in the image holds $leaked entr(y|ies)."
+            echo "  This image is about to become PUBLIC. Store content must arrive"
+            echo "  at runtime on a volume and must never be in a layer."
+            docker run --rm --entrypoint /bin/busybox "$loaded" sh -c 'ls -A /data'
+            exit 1
+          fi
+          echo "control: /data holds $leaked files (must be 0) — OK"
+
+          # 🔴 THE INTERPRETER IS READ OUT OF THE IMAGE'S OWN `Cmd`, NOT SPELLED
+          # `python3`. It is NOT on this image's `PATH` — measured: `PATH=/bin`
+          # and `/bin` is busybox alone, so `command -v python3` returns nothing.
+          # `server/build-push.sh` gets away with the bare name because the
+          # Dockerfile image is `python:3.12-slim` and inherits one; the flake
+          # image names an absolute store path in `Cmd` instead. A control
+          # written the other way would fail here for a reason that has nothing
+          # to do with what it claims to measure.
+          py=$(docker inspect -f '{{index .Config.Cmd 0}}' "$loaded")
+          echo "interpreter (from the image's own Cmd) = $py"
+          docker run --rm --entrypoint "$py" "$loaded" -c \
+            'import sys; sys.path.insert(0, "/app/lib"); import subsystem_recall as r; print("positive control: subsystem_recall imported,", len(r.RECALL_MODES), "modes")'
+
+          # …and the image RUNS: with no token source it must refuse for a NAMED
+          # configuration reason and exit non-zero, which is a different claim
+          # from "the container was created". A container that started and sat
+          # there would satisfy a naive smoke test and tell you nothing.
+          set +e
+          startup=$(docker run --rm "$loaded" 2>&1)
+          rc=$?
+          set -e
+          echo "no-config start: rc=$rc"
+          echo "$startup"
+          if [ "$rc" -eq 0 ]; then
+            echo "REFUSING TO PUBLISH: the server exited 0 with no token source."
+            echo "  It is supposed to refuse. A 0 here means the entrypoint is not"
+            echo "  running the server at all."
+            exit 1
+          fi
+          case "$startup" in
+            *"subsystem-store-api:"*) ;;
+            *) echo "REFUSING TO PUBLISH: the refusal did not come from the server"
+               exit 1 ;;
+          esac
+          echo "control: the image runs and refuses by name — OK"
+
+      # 🔴 `docker-archive:` READS THE GZIPPED TAR THE FLAKE PRODUCES DIRECTLY —
+      # measured, not assumed: `dockerTools.buildLayeredImage` defaults to a gzip
+      # compressor and skopeo detects it. No decompression step, and in
+      # particular no change to the derivation's `compressor`, which would move
+      # the artefact that `test_flake_image_matches_dockerfile.py` is pinned to.
+      #
+      # 🔴 EVERY PUSH STEP IN THIS FILE IS PINNED BY ITS WHOLE NORMALISED COMMAND
+      # TEXT in `tests/test_publish_workflow.py`, not by a keyword. Which archive
+      # goes to which package under which tag is the entire contract, and a guard
+      # on words is walkable by rewording. A cosmetic edit here fails that test;
+      # that is the price of a machine-readable claim, and it is paid on purpose.
+      #
+      # 🔴 AND SO IS EVERY `control — …` AND `PROVE …` STEP — for the same reason
+      # and after a measurement: three of them were pinned by NOTHING, and mutants
+      # that re-aimed the Go proof at the Python package, deleted either pod's
+      # `/data` emptiness check, and turned a refusal's `exit 1` into `exit 0`
+      # each SURVIVED a fully green suite. Reformatting any of them now fails a
+      # test.
+      # ⚠ NO COUNTS HERE, DELIBERATELY. This said FOUR of each and "those eight
+      # steps" while SIX of each existed — the UI leg made it stale and nothing
+      # went red. The pinned dicts in `tests/test_publish_workflow.py` ARE the
+      # count; a number restated beside them is one more thing to forget. It also
+      # said the push steps were "BELOW", which the Go-first reordering made false
+      # for the Go pair that now runs above this comment.
+      - name: push the Python pod's immutable sha tag
+        run: |
+          set -euo pipefail
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
+            "docker-archive:${{ steps.build.outputs.archive }}" \
+            "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}"
+
+      - name: push the Python pod's version tag, on a tag push only
+        if: steps.ref.outputs.version_tag != ''
+        run: |
+          set -euo pipefail
+          "${{ steps.skopeo.outputs.bin }}" copy --all \
+            "docker-archive:${{ steps.build.outputs.archive }}" \
+            "docker://${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.version_tag }}"
+
+      # 🔴 THE ONLY CHECK THAT ANSWERS THE QUESTION THIS WORKFLOW EXISTS FOR, AND
+      # A GREEN PUSH DOES NOT ANSWER IT. A ghcr package is PRIVATE on first
+      # publish. A private image and a working one are indistinguishable from
+      # inside this job — the push succeeded either way — and the difference only
+      # surfaces as `ImagePullBackOff` in somebody else's cluster, hours later,
+      # with nothing pointing back here.
+      #
+      # `--no-creds` is the point: it is the same read an unauthenticated cluster
+      # makes. The run is still logged in from two steps ago, so without that flag
+      # this would pass on THIS job's credentials and prove nothing at all.
+      #
+      # 🔴 AND THE `ref` IS PER-PACKAGE, WHICH NOTHING USED TO SAY. The absent-tag
+      # control below is COUNTED one per package; the reference that must RESOLVE
+      # is reached through `$ref`, one indirection away, and was constrained by
+      # nothing. MEASURED: aiming the GO step's `ref` at this package left the
+      # suite green while the job pushed the Go image and then printed
+      # `ANONYMOUS PULL OK` for `cairn-store`.
+      # `test_each_anonymous_proof_inspects_ITS_OWN_package` now pins each proof
+      # step's `ref`, forbids the other package's expression anywhere in the
+      # step, and requires the printed settings URL to name this step's package.
+      - name: PROVE the published image is pullable with NO credentials
+        run: |
+          set -euo pipefail
+          ref='${{ steps.ref.outputs.image }}:${{ steps.ref.outputs.sha_tag }}'
+          skopeo='${{ steps.skopeo.outputs.bin }}'
+
+          # The negative control FIRST, so a pass below is a measurement rather
+          # than a claim: if an inspect of a tag that cannot exist also succeeds,
+          # this instrument is answering something other than the question.
+          set +e
+          $skopeo inspect --no-creds \
+            "docker://${{ steps.ref.outputs.image }}:sha-0000000000000000000000000000000000000000" \
+            >/dev/null 2>&1
+          control_rc=$?
+          set -e
+          if [ "$control_rc" -eq 0 ]; then
+            echo "REFUSING: an anonymous inspect of a tag that does not exist SUCCEEDED."
+            echo "  This check cannot distinguish a public image from anything."
+            exit 1
+          fi
+          echo "negative control: absent tag refused anonymously (rc=$control_rc) — OK"
+
+          set +e
+          out=$($skopeo inspect --no-creds "docker://$ref" 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "$out"
+            echo
+            echo "REFUSING: $ref was PUSHED but cannot be pulled without credentials."
+            echo "  A package created by Actions in a PUBLIC repo has been measured to"
+            echo "  come out PUBLIC, so this is NOT the expected first-publish state --"
+            echo "  something made this one private. GitHub exposes no REST route for"
+            echo "  the flip; it is a ONE-TIME manual step, per package:"
+            echo
+            echo "    https://github.com/users/${{ github.repository_owner }}/packages/container/cairn-store/settings"
+            echo "    -> Danger Zone -> Change visibility -> Public"
+            echo
+            echo "  Until then no cluster outside this repository can pull this image,"
+            echo "  which is the entire reason this workflow exists."
             exit 1
           fi
           echo "$out" | head -20

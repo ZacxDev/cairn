@@ -21,12 +21,15 @@ properties are load-bearing and none of them is visible in a green run:
   * every published image must go to its OWN package, and each must carry ITS OWN
     controls — the Python pod's positive control is an interpreter `-c` probe and
     the Go image's `Cmd[0]` is a server binary that has no `-c`;
-  * the whole PYTHON half must complete before the first GO step. ⚠ This read
-    "Nothing in this repository has ever RUN the Go image … keeps the pod that IS
-    deployed unpublished" — spent at the cutover: the Go image IS the deployed
-    pod, so the ordering now exposes the DEPLOYED pod to an earlier red step.
-    Unchanged deliberately; see the assertion's own message. The seven failed
-    runs are still why a first-execution step is not put first;
+  * the whole GO half must complete before the first PYTHON step, because
+    `cairn-store-go` is the pod the cluster pulls and the leg that publishes
+    first is the leg least exposed to an earlier red step. ⚠ THE ORDERING WAS
+    THE OTHER WAY ROUND AND SO WAS THIS BULLET — it read "the whole PYTHON half
+    must complete before the first GO step", on the argument that "Nothing in
+    this repository has ever RUN the Go image … keeps the pod that IS deployed
+    unpublished". Both legs are spent: the cutover made the Go image the deployed
+    pod, and the Go half has since published green, so it is not a first
+    execution either. Reversed on an operator decision, measured first;
   * the `nix build` that resolves skopeo must name an OUTPUT. `nixpkgs#skopeo` is
     multi-output, so `--print-out-paths` prints two paths with the `-man` one
     FIRST; the step that appended `/bin/skopeo` to that value ran a two-line
@@ -774,15 +777,21 @@ PROOF_STEP_PACKAGES = {
 # own prose (`REFUSING TO PUBLISH`, `head -20`).
 ROUTE_LITERAL = re.compile(r"\b(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\s+[a-z][\w-]*\b")
 
-# 🔴 THE TWO HALVES, IN THE ORDER THE JOB MUST RUN THEM. Every member of the
-# first must appear before every member of the second.
-PYTHON_HALF_STEPS = (
-    "build the Python server image from the flake",
-    PYTHON_CONTROL_STEP,
-    "push the Python pod's immutable sha tag",
-    "push the Python pod's version tag, on a tag push only",
-    PYTHON_PROOF_STEP,
-)
+# 🔴 THE TWO HALVES, IN THE ORDER THE JOB MUST RUN THEM — GO FIRST. Every member
+# of the first must appear before every member of the second.
+#
+# ⚠ THESE TWO TUPLES WERE DECLARED THE OTHER WAY ROUND, WITH THE SAME SENTENCE
+# ABOVE THEM. The declaration order is not what the assertion reads — it reads
+# `names.index(...)` out of the workflow — so a stale order here would have been a
+# comment contradicting the code rather than a failure. Swapped with the ordering
+# so the file cannot be read as arguing for the reverse.
+#
+# ⚠ AND NEITHER TUPLE CONTAINS THE UI LEG, WHICH IS NOT AN OMISSION. `cairn-ui`
+# is a third image with its own build, control, pushes and proof; it runs after
+# BOTH halves and no assertion in this file constrains where it sits. That was
+# true before the reversal and is true after it — the reversal moved the two
+# halves relative to each other and left the UI leg last, so it neither created
+# nor destroyed an ordering relation nobody had pinned.
 GO_HALF_STEPS = (
     "build the Go server image from the flake",
     GO_CONTROL_STEP,
@@ -790,57 +799,91 @@ GO_HALF_STEPS = (
     "push the Go pod's version tag, on a tag push only",
     GO_PROOF_STEP,
 )
+PYTHON_HALF_STEPS = (
+    "build the Python server image from the flake",
+    PYTHON_CONTROL_STEP,
+    "push the Python pod's immutable sha tag",
+    "push the Python pod's version tag, on a tag push only",
+    PYTHON_PROOF_STEP,
+)
 
 
-def test_the_whole_PYTHON_half_runs_before_the_first_GO_step(text: str) -> None:
+def test_the_whole_GO_half_runs_before_the_first_PYTHON_step(text: str) -> None:
     """🔴 A RELATION BETWEEN TWO GROUPS, NOT A PROPERTY OF ONE STEP.
 
-    ⚠ THIS DOCSTRING'S RATIONALE IS SPENT — see the assertion message below,
-    which carries the correction. It read: "Nothing in this repository has ever
+    🔴 THE LIVE REASON: `cairn-store-go` IS THE POD THE CLUSTER PULLS, AND THE LEG
+    THAT PUBLISHES FIRST IS THE LEG LEAST EXPOSED TO AN EARLIER RED STEP. Every
+    step in this job is exposed to every step in front of it, so the only thing
+    the ordering decides is which artefact sits at the front. The deployed pod
+    does.
+
+    ⚠ THE ORDERING WAS THE OTHER WAY ROUND AND THIS TEST ASSERTED IT, UNDER THE
+    NAME `test_the_whole_PYTHON_half_runs_before_the_first_GO_step`. The retracted
+    rationale, kept so nobody re-derives it: "Nothing in this repository has ever
     RUN the Go image … A first execution placed in front of the Python publish
-    gates the pod that is actually deployed on a path nobody has exercised."
-    The Go image IS the deployed pod now, so the Python publish gates a pod
-    NOTHING runs, and this ordering exposes the deployed one to an earlier red
-    step. `ci.yml` does still assert only that the Go image BUILDS.
+    gates the pod that is actually deployed on a path nobody has exercised", with
+    seven consecutive runs where nothing published as the evidence. BOTH legs are
+    spent, and both were measured before the reversal rather than assumed:
 
-    🔴 THE ORDERING IS UNCHANGED AND THAT IS DELIBERATE — reversing it is a CI
-    behaviour change, and seven consecutive runs where nothing published because
-    one unexercised step went red is still the reason a first-execution step is
-    not put first. Decide it; do not drift into it.
+      * the cutover made `cairn-store-go` the DEPLOYED pod, so the pod the old
+        ordering protected is the one nothing pulls;
+      * neither half is a first execution any more. Measured on this workflow's
+        own run history: the last fifteen runs are 14 success / 1 cancelled, and a
+        recent successful run executed `push the Go pod's immutable sha tag` and
+        `push the Python pod's immutable sha tag` to success. Both packages
+        answer an anonymous `skopeo inspect` at that run's sha tag, against an
+        absent-tag negative control that is refused.
 
-    ⚠ The correction first went into the assertion message ONLY, leaving this
-    docstring asserting the spent version — the message renders on failure, the
-    docstring renders in `pytest -v` and to anyone opening the file. A correction
-    applied at one of two sites reads as complete at whichever site you land on.
+    ⚠ AND THE CORRECTION IS APPLIED AT EVERY SITE IN ONE COMMIT, WHICH IS THE
+    LESSON THE PREVIOUS ROUND LEFT HERE: the correction then went into the
+    assertion message ONLY, leaving this docstring asserting the spent version.
+    The message renders on failure and the docstring renders in `pytest -v`, so a
+    correction applied at one of two sites reads as complete at whichever site you
+    land on. The sites are this docstring, the module docstring, the assertion
+    message below, `.github/workflows/publish-image.yml` (three comment blocks),
+    `tests/publish_workflow_mutants.py` and `.github/workflows/ci.yml`.
 
-    The earlier draft had the Go BUILD and the Go CONTROLS before the Python
-    push, and carried a comment claiming "it runs last" — true of the Go
-    anonymous-pull proof alone, and false of the half it was read as covering.
+    🔴 THE RELATION IS `last_go < first_python`, NOT `first_go < last_python`, AND
+    THE DIFFERENCE IS THE WHOLE GUARD. The second is the naive mirror of the
+    retired assertion and it is satisfied by an INTERLEAVED job — one Go step
+    anywhere before one Python step — while reading as "the whole Go half runs
+    first". This asserts the MAXIMUM Go index is below the MINIMUM Python one,
+    which is the sentence the test's name makes. It also subsumes the weaker
+    form, so nothing is lost by stating only the strong one.
+
+    The earlier draft of the workflow had the Go BUILD and the Go CONTROLS before
+    the Python push, and carried a comment claiming "it runs last" — true of the
+    Go anonymous-pull proof alone, and false of the half it was read as covering.
+    That narrow claim still holds and is still worth not re-deriving: "it runs
+    last" is a property of ONE step, never of the half it is read as covering.
     """
     names = step_names(text)
-    missing = [n for n in PYTHON_HALF_STEPS + GO_HALF_STEPS if n not in names]
+    missing = [n for n in GO_HALF_STEPS + PYTHON_HALF_STEPS if n not in names]
     assert not missing, (
         f"these steps are absent, so the ordering below would compare nothing: "
         f"{missing}\nthe file's steps are: {names}"
     )
-    last_python = max(names.index(n) for n in PYTHON_HALF_STEPS)
-    first_go = min(names.index(n) for n in GO_HALF_STEPS)
-    assert last_python < first_go, (
-        f"{names[first_go]!r} (step {first_go + 1}) runs before "
-        f"{names[last_python]!r} (step {last_python + 1}).\n"
-        "Every Python step — build, control, both pushes and the anonymous-pull "
-        "proof — must finish before the FIRST Go-image step.\n"
-        "⚠ THE ORIGINAL RATIONALE HAS INVERTED AND THE ORDERING IS NOT RE-ARGUED "
-        "HERE. It read: 'The Go image has never been run by anything in this "
-        "repository; a first execution in front of the Python publish leaves the "
-        "deployed pod unpublished when it goes red, which is what the last seven "
-        "runs of this workflow did.' Both legs are spent — the Go image IS the "
-        "deployed pod, so this ordering now publishes the DEPLOYED pod LAST and "
-        "most exposed to an earlier red step, which is the opposite of what the "
-        "rationale asked for. The ordering is left UNCHANGED deliberately: "
-        "reversing it is a CI behaviour change with its own blast radius, not a "
-        "docs edit, and the seven-failure history is still the reason a "
-        "first-execution step is not put first. Decide it, do not drift into it."
+    last_go = max(names.index(n) for n in GO_HALF_STEPS)
+    first_python = min(names.index(n) for n in PYTHON_HALF_STEPS)
+    assert last_go < first_python, (
+        f"{names[first_python]!r} (step {first_python + 1}) runs before "
+        f"{names[last_go]!r} (step {last_go + 1}).\n"
+        "Every Go step — build, control, both pushes and the anonymous-pull "
+        "proof — must finish before the FIRST Python-image step, because "
+        "`cairn-store-go` is the pod the cluster pulls and the leg that publishes "
+        "first is the leg least exposed to an earlier step going red.\n"
+        "⚠ THE ORDERING WAS THE OPPOSITE AND THE RETRACTED RATIONALE IS KEPT SO "
+        "NOBODY RE-DERIVES IT. It read: 'The Go image has never been run by "
+        "anything in this repository; a first execution in front of the Python "
+        "publish leaves the deployed pod unpublished when it goes red, which is "
+        "what the last seven runs of this workflow did.' Both legs are spent. The "
+        "cutover made the Go image the DEPLOYED pod, so Python-first published "
+        "the deployed pod LAST and most exposed. And neither half is a first "
+        "execution: measured on the run history before the reversal, the last "
+        "fifteen runs were 14 success / 1 cancelled and a recent successful run "
+        "pushed BOTH pods' sha tags green. Do not swap this back to make a "
+        "reordering quiet — if the deployed pod changes, this assertion and its "
+        "prose move together, in one commit."
     )
 
 
