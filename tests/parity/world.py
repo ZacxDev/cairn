@@ -106,6 +106,36 @@ ENTRIES: list[tuple[str, int, str]] = [
                                                     body="a lookalike that IS an entry")),
     ("beta-notes/README-old.md", 12_000_000_000, _entry("readme-old", "beta-notes",
                                                         body="a prefix lookalike, also an entry")),
+    # --- the WRITE-PROTOCOL scope: content a reader cannot reach ------------------------
+    #
+    # 🔴 A SCOPE WHOSE ENTRIES PARSE AND STILL HOLD LOST CONTENT, because without one this
+    # gate was STRUCTURALLY BLIND to the whole `dropped lines:` / `marker reachability:`
+    # half of `validate`. Every other entry in this world has a well-formed nuance section,
+    # so both advisories would print their ZERO branch on every row — and a client that
+    # implemented neither, or implemented one of them differently, would compare equal for
+    # as long as the corpus never presented the discriminating input.
+    #
+    # `talus-svc` carries BOTH defects at once, and they are different defects:
+    #   * two lines BEFORE the first bullet, which `parse_journal_bullets` drops — the
+    #     second of them a `OPEN:` DECLARATION, so the `carries_marker` flag is exercised
+    #     rather than merely defined;
+    #   * a correctly-spelled `OPEN:` on a bullet's CONTINUATION line, which every marker
+    #     reader is anchored past.
+    # `scree-api` is its clean sibling, so the denominator this scope prints is 2 rather
+    # than 1 and a client that counted FINDINGS where it should count FILES is visible.
+    ("crag-notes/talus-svc.md", 13_000_000_000,
+     "---\nservice: talus-svc\nscope: crag-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry whose nuance section lost a bullet opening.\n"
+     "\n## Pointers\n\n"
+     "- `apps/talus-svc/values.yaml`\n"
+     "\n## Nuance / work-history\n\n"
+     "  this line reaches no bullet at all: the `- ` that opened it is gone.\n"
+     "  OPEN: and this one is a declaration nothing will ever surface.\n"
+     "- 2000-01-04: RESOLVED abc1234: the bullet that did survive.\n"
+     "  OPEN: a marker several lines in, where no parser looks.\n"),
+    ("crag-notes/scree-api.md", 14_000_000_000, _entry("scree-api", "crag-notes",
+                                                       body="the clean sibling of a lossy entry")),
 ]
 
 #: The sheets above, as store-relative paths. A sheet is NOT an entry: `ls-entries` must not
@@ -136,7 +166,7 @@ EMPTY_SCOPES = ["hollow-set"]
 #: base64url)`. It is synthetic filler, not a credential — the value is a repeated literal
 #: precisely so nobody can mistake it for one that ever authorised anything.
 TOKEN = "parity-harness-synthetic-token-0000000000000"
-ALLOWED_SCOPES = ("alpha-notes", "beta-notes", "rubble-heap", "hollow-set")
+ALLOWED_SCOPES = ("alpha-notes", "beta-notes", "crag-notes", "rubble-heap", "hollow-set")
 TOKEN_ROW = f"{TOKEN} parity-harness {','.join(ALLOWED_SCOPES)}\n"
 
 #: The handoff doc. 🔴 IT QUOTES `apps/widget-cfg/values.yaml`, WHICH IS THE OLDER OF THE TWO

@@ -665,6 +665,43 @@ func Validate(env Env, opts Options) (int, error) {
 		checked := len(entryNames)
 		fmt.Fprintf(env.Stdout, "cairn: %s: %d of %d entry file(s) parse, %d malformed\n",
 			scope, checked-len(index.Malformed), checked, len(index.Malformed))
+		// 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE TWO
+		// BLOCKS IT WAS THE WHOLE OF WHAT THIS COMMAND REPORTED. "Would the loader
+		// accept this file?" is answered by the line above; an entry can pass it while
+		// holding text NO reader will ever surface. `dropped lines:` is the half that
+		// means content is ALREADY LOST — the file holds it, the store holds it, and
+		// `--ref`, `--search`, the digest and every openness count skip it. A
+		// post-write check that cannot see that is checking the parser, not the write.
+		//
+		// 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: both
+		// scanners are tolerant by construction (an unreadable file or a missing nuance
+		// section contributes nothing), and a file the loader rejected can still hold
+		// lost content that a later fix to its front matter would not restore. The
+		// rejection above is still the finding that matters, which is why these print
+		// BELOW it and change no verdict.
+		//
+		// 🔴 NEITHER MOVES `worst`. The write protocol branches on this command's EXIT
+		// CODE to mean "write NOTHING", so failing here would stop a session recording
+		// anything into an entry whose only defect is that an OLDER write lost a line —
+		// which makes the store lossier, not safer.
+		entryPaths := make([]string, 0, len(entryNames))
+		for _, name := range entryNames {
+			entryPaths = append(entryPaths, filepath.Join(cache, scope, name))
+		}
+		for _, line := range store.ValidationAdvisoryLines(
+			checked,
+			store.ScanDroppedLines(entryPaths),
+			store.ScanUnreachableMarkers(entryPaths),
+		) {
+			// A blank separator stays blank — prefixing it would print a trailing
+			// `cairn: <scope>: ` with nothing after it, and the parity gate would then
+			// pin that noise in both clients forever.
+			if line == "" {
+				fmt.Fprintln(env.Stdout)
+				continue
+			}
+			fmt.Fprintf(env.Stdout, "cairn: %s: %s\n", scope, line)
+		}
 		if len(index.Malformed) > 0 && ExitCorrupt > worst {
 			worst = ExitCorrupt
 		}

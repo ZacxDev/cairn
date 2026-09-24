@@ -17,18 +17,40 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from host_identity import this_host
-from subsystem_resolver import NUANCE_HEADING, POINTERS_HEADING, normalize_ref
+from subsystem_resolver import (
+    NUANCE_HEADING,
+    POINTERS_HEADING,
+    UNREACHABLE_MARKER,
+    extract_sections,
+    line_mentions_marker,
+    line_openness,
+    normalize_ref,
+    parse_journal_bullets,
+)
+# 🔴 THE READER'S OWN FENCE PREDICATE, IMPORTED PRIVATE RATHER THAN RE-SPELLED.
+# `_is_fence` knows both ``` and ~~~; a hand-spelled copy that knew only the
+# first would report a ~~~-fenced sample line as lost content, and the two
+# scanners below would then disagree with `parse_journal_bullets`, which is the
+# function that decides what a reader can actually see. Importing an underscore
+# name across modules is deliberate here: a second copy of this predicate is the
+# duplicated rule, and the Go port makes the same call (`store.IsFence`).
+from subsystem_resolver import _is_fence  # noqa: E402
 
 __all__ = [
     "CairnError", "GitError", "RepoPathMissingError", "StoreMissingError",
     "BULLET_TEXT_MAX", "SHAPE_HEADINGS", "STORE_IS_PER_HOST",
     "STORE_IS_ONE_INSTANCE",
+    "DROPPED_LINE", "UNREACHABLE_MARKER",
+    "DroppedLineFinding", "UnreachableMarkerFinding",
     "derive_scope", "repo_path_missing_message", "scope_for_repo",
     "store_caveat", "store_host", "store_host_line",
+    "line_carries_marker", "scan_dropped_lines", "scan_unreachable_markers",
+    "validation_advisory_lines",
 ]
 
 
@@ -386,3 +408,387 @@ def scope_for_repo(
         repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]
     ).strip()
     return derive_scope(_toplevel(repo), common)
+
+
+# --------------------------------------------------------------------------
+# The WRITE-PROTOCOL advisories: content a reader cannot reach
+# --------------------------------------------------------------------------
+#
+# 🔴 THESE TWO CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
+# PARSE CHECK. The count line above them answers "would the loader accept these
+# files?", and a file can pass that while holding text NO reader will ever
+# surface. `dropped lines:` is the half that means content is ALREADY LOST.
+#
+# 🔴 NEITHER MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate` answers one
+# question and the write protocol branches on its EXIT CODE to mean "write
+# NOTHING". Failing here would stop a session recording anything into an entry
+# whose only defect is that an OLDER write lost a line — which makes the store
+# lossier, not safer. They are reported loudly and change no code.
+
+DROPPED_LINE = "dropped-line"
+"""The reason token for a nuance line that reaches NO bullet.
+
+A population of its own, and the one furthest from every other: the openness
+shapes are all readings OF a bullet, so each is about content a reader can at
+least see. This is content the file HOLDS and no reader can reach at all —
+`parse_journal_bullets` drops text that precedes the first bullet, so those lines
+are in the entry, in the store, in the backup, and in no consumer's output.
+"""
+
+
+@dataclass(frozen=True)
+class UnreachableMarkerFinding:
+    """One bullet carrying a correctly-spelled marker where no parser looks.
+
+    🔴 DELIBERATELY NOT AN OPENNESS POPULATION. `JournalBullet.openness_population`
+    partitions bullets by a reading of their OPENING line; this is a fact about
+    lines 2..n, and the bullet it is about is usually `none` — a bullet that
+    declared nothing. Carried in its own field, counted in its own key and
+    rendered in its own block, so there is no place it could be added to a
+    near-miss total: a near-miss is a marker MIS-SPELLED where the parser looks
+    and is fixed by editing that line, this is a marker spelled CORRECTLY where
+    the parser never looks and is fixed by promoting it to a bullet of its own.
+    One count covering both would send half the readers to the wrong remedy.
+    """
+
+    filename: str
+    bullet_first_line: str
+    """The bullet's OPENING line — what a reader will search the file for."""
+
+    offset: int
+    """1-based line index WITHIN the bullet. Always >= 2."""
+
+    line: str
+    """The continuation line carrying the marker, verbatim."""
+
+    openness: str
+    """`open` | `resolved` — what it would have declared at a bullet's head."""
+
+
+@dataclass(frozen=True)
+class DroppedLineFinding:
+    """One `## Nuance / work-history` line that belongs to no parsed bullet.
+
+    🔴 THE SHAPE, AND WHY IT IS NOT `UnreachableMarkerFinding`. That one is a
+    marker on a line that IS inside a bullet — the bullet is read, the marker is
+    not. This is a line inside NO bullet: nothing about it is read, marker or
+    otherwise. The remedies differ for the same reason the populations do — an
+    unreachable marker is fixed by PROMOTING one line, a dropped line by
+    restoring the bullet opening that used to sit above it.
+
+    🔴 MEASURED IN THE FIELD, NOT HYPOTHETICAL. Over every committed version of
+    every entry file in a live store of several hundred entries, seven versions
+    carried dropped lines — two entries whose whole bullet block had been
+    indented, each broken for days. One of them held a `OPEN:` that raised no
+    badge for the whole of that window, and would still raise none, because every
+    marker reader here anchors at position 0; see `line_carries_marker`.
+    """
+
+    filename: str
+    offset: int
+    """1-based line index within the `## Nuance / work-history` section body."""
+
+    line: str
+    """The dropped line, verbatim."""
+
+    carries_marker: bool = False
+    """The line looks like it declared `OPEN:`/`RESOLVED:`.
+
+    Recorded because it changes the URGENCY and nothing else: a dropped line is
+    lost content either way, but a dropped DECLARATION is an open action the
+    store is actively failing to report. It is never counted as an open action —
+    the bullet it belonged to no longer exists, so there is nothing to declare
+    it ON.
+    """
+
+
+def line_carries_marker(line: str) -> bool:
+    """Does this dropped line carry an `OPEN:`/`RESOLVED:` declaration?
+
+    🔴 IT RESTATES NO GRAMMAR. It asks `line_openness` — which runs the same
+    `_bullet_openness` that `parse_journal_bullets` calls for a bullet's line 1 —
+    and falls back to `line_mentions_marker` for a declaration sitting mid-line.
+    A hand-spelled copy could not stay in step with the real pattern: the
+    pre-extraction original WAS one, and measured against all seven historical dropped-line
+    blobs in a live store it was `False` on every one of them, including the
+    `OPEN:` this feature's own motivating incident cites — while returning True
+    for the prose `resolved upstream in 1.2.3.`.
+
+    ⚠ `line_mentions_marker` IS THE ONLY PLACE IN EITHER CLIENT THAT LOOKS FOR A
+    MARKER MID-LINE, and that is deliberate rather than a gap elsewhere: every
+    marker READER anchors at position 0, so a mid-line `OPEN:` declares nothing
+    anywhere and did not declare anything while its bullet was intact either.
+    Widening a reader to match would make this one flag disagree with every
+    other surface. It may ONLY rank urgency — a dropped line is a finding on its
+    own and this flag never gates reporting, so a miss costs a word of emphasis,
+    never a silent pass.
+    """
+    openness, _sha = line_openness(line)
+    return openness is not None or line_mentions_marker(line)
+
+
+def _nuance_body(path: Path) -> str | None:
+    """The `## Nuance / work-history` body of one entry file, or None.
+
+    Deliberately tolerant: a file that cannot be read, or has no nuance section,
+    yields None rather than raising. Both scanners run BESIDE the parse check,
+    never in front of it — a malformed file's own rejection is the finding that
+    matters, and an advisory computed from its half-parsed body would bury it.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return extract_sections(text, (NUANCE_HEADING,)).get(NUANCE_HEADING) or None
+
+
+def scan_unreachable_markers(
+    paths: Iterable[str | Path],
+) -> tuple[UnreachableMarkerFinding, ...]:
+    """Markers typed into a bullet's BODY, where the marker parser never reads.
+
+    🔴 IT IS A SEPARATE WALK FROM ANY OPEN-ACTION SCAN BY CHOICE. Merging them
+    would mean deciding what to do with a bullet that declared nothing on its
+    opening line, and the answer there is "report it, but never as an open
+    action" — a second population inside a function whose whole contract is a
+    one-branch precedence.
+    """
+    out: list[UnreachableMarkerFinding] = []
+    for p in paths:
+        path = Path(p)
+        body = _nuance_body(path)
+        if body is None:
+            continue
+        for b in parse_journal_bullets(body):
+            for m in b.unreachable_markers:
+                out.append(
+                    UnreachableMarkerFinding(
+                        filename=path.name,
+                        bullet_first_line=b.first_line,
+                        offset=m.offset,
+                        line=m.line,
+                        openness=m.openness,
+                    )
+                )
+    return tuple(out)
+
+
+def scan_dropped_lines(
+    paths: Iterable[str | Path],
+) -> tuple[DroppedLineFinding, ...]:
+    """Nuance lines present on disk that reach no bullet. READ-ONLY.
+
+    🔴 IT ASKS THE READER'S OWN PARSER AND DERIVES NOTHING ITSELF. The set of
+    reachable lines is taken from `parse_journal_bullets`' output rather than
+    re-deduced from a bullet pattern here, so this check cannot drift away from
+    what consumers actually see. Re-deriving it would be a duplicated predicate
+    with the checker's worst failure mode: blessing lines the reader drops.
+
+    🔴 WHAT IT STRUCTURALLY CANNOT SEE, stated because the gap is the whole
+    reason to read this twice. A bullet that loses its opening line while ANOTHER
+    bullet sits above it is not detectable — `parse_journal_bullets` appends
+    every non-bullet line to the bullet above, so the orphaned tail is absorbed
+    into it and inherits its date, and the resulting file is BYTE-IDENTICAL to
+    one where that bullet legitimately wrapped. No check can separate the two,
+    and this one does not pretend to: it covers the case where the drop is
+    decidable — text before the first bullet, which includes every entry whose
+    NEWEST bullet lost its head, the store being newest-first.
+    """
+    out: list[DroppedLineFinding] = []
+    for p in paths:
+        path = Path(p)
+        body = _nuance_body(path)
+        if body is None:
+            continue
+        # 🔴 REACHABILITY IS KEYED ON (OFFSET, LINE), NOT ON THE LINE ALONE. A
+        # `set[str]` masks an orphan whose text is byte-identical to any line
+        # inside any bullet of the same file — and a read-modify-write race,
+        # which is the shape that produces a decapitated bullet in the first
+        # place, is exactly what duplicates a block.
+        reachable: set[tuple[int, str]] = set()
+        lines = body.splitlines()
+        cursor = 0
+        for b in parse_journal_bullets(body):
+            for ln in b.lines:
+                # `parse_journal_bullets` preserves order and never reorders or
+                # rewrites a line, so a forward scan re-attaches each bullet line
+                # to its own offset. Trailing blanks it stripped are simply not
+                # looked for; the skip below treats them as reachable anyway.
+                while cursor < len(lines) and lines[cursor] != ln:
+                    cursor += 1
+                if cursor < len(lines):
+                    reachable.add((cursor + 1, ln))
+                    cursor += 1
+        in_fence = False
+        for i, line in enumerate(lines, 1):
+            # 🔴 FENCES ARE SKIPPED, as in the sibling scanner and in
+            # `parse_journal_bullets` itself. A fenced snippet BEFORE the first
+            # bullet is sample text, and reporting it would hand the operator the
+            # remedy "restore the bullet opening line" for content that never had
+            # one.
+            if _is_fence(line):
+                in_fence = not in_fence
+                continue
+            if in_fence or not line.strip() or (i, line) in reachable:
+                continue
+            out.append(
+                DroppedLineFinding(
+                    filename=path.name,
+                    offset=i,
+                    line=line,
+                    carries_marker=line_carries_marker(line),
+                )
+            )
+    return tuple(out)
+
+
+#: The longest a quoted line runs before it is cut. A finding names a FILE and a
+#: LINE NUMBER; the quote is there to recognise it by, and an entry may hold a
+#: 4,000-character bullet.
+ADVISORY_QUOTE_MAX = 120
+
+
+def validation_advisory_lines(
+    *,
+    n_files: int,
+    dropped: Sequence[DroppedLineFinding],
+    unreachable: Sequence[UnreachableMarkerFinding],
+) -> tuple[str, ...]:
+    """The two write-protocol advisory blocks, as lines. UNPREFIXED.
+
+    Each client prefixes every line with its own `cairn: <scope>: `, because
+    `validate` with no `--scope` walks every scope the cache holds and an
+    unprefixed block would not say which one it is about.
+
+    🔴 THE DROPPED-LINE BLOCK COMES FIRST, deliberately. A dropped line is
+    content NO reader reaches, so the marker scan never sees it — a
+    `0 out-of-reach` printed above a `🔴 N DROPPED LINE(S)` is a fact about text
+    the parser never got to, and reads as a reassurance it cannot support.
+
+    🔴 EVERY BLOCK PRINTS ITS DENOMINATOR EVEN WHEN IT FINDS NOTHING. A bare zero
+    is indistinguishable from a scanner wired to nothing, and each of these has a
+    SECOND way to be vacuous that the zero must not hide: both read only
+    `## Nuance / work-history`, so an entry whose heading is renamed contributes
+    zero to both for a reason neither block can state.
+
+    🔴 AND WHEN NOTHING WAS CHECKED THE BLOCKS DO NOT PRINT AT ALL — one
+    `NOT CHECKED` line prints instead. "0 across 0 entry file(s)" is the
+    reassuring zero from an instrument that walked nothing, and it must not
+    render anywhere near a clean-looking count.
+    """
+    if n_files == 0:
+        return (
+            f"dropped lines / marker reachability: NOT CHECKED — 0 entry file(s) "
+            f"to read, so a zero here would be a zero over nothing. "
+            f"[{DROPPED_LINE}] [{UNREACHABLE_MARKER}]",
+        )
+    return tuple(
+        _dropped_lines_block(n_files, dropped) + _reachability_block(n_files, unreachable)
+    )
+
+
+def _dropped_lines_block(
+    n_files: int, dropped: Sequence[DroppedLineFinding]
+) -> list[str]:
+    """The DROPPED-LINE advisory — the half that means content is ALREADY LOST.
+
+    🔴 THE ZERO CARRIES ITS OWN BLIND SPOT IN WORDS. This check is knowingly
+    PARTIAL — the absorbed-tail case is undecidable, see `scan_dropped_lines` —
+    so a bare "0 dropped" would read as "no bullet has lost its head", which is a
+    claim it cannot make. Saying which half was checked is the difference between
+    a measurement and a reassurance.
+    """
+    if not dropped:
+        return [
+            f"dropped lines: 0 across {n_files} entry file(s) [{DROPPED_LINE}] — "
+            f"every non-blank `{NUANCE_HEADING}` line reaches a bullet some reader "
+            f"will surface. 🔴 PARTIAL BY CONSTRUCTION: this sees text before the "
+            f"FIRST bullet. A bullet that lost its opening line while another "
+            f"bullet sat above it is absorbed into that one and is byte-identical "
+            f"to a legitimate wrap — no check can see it, and this zero is not a "
+            f"claim about that case."
+        ]
+    n = len(dropped)
+    marked = sum(1 for d in dropped if d.carries_marker)
+    out = [
+        f"🔴 {n} DROPPED LINE(S) across {n_files} entry file(s) [{DROPPED_LINE}] — "
+        f"present in the file, inside NO bullet, so EVERY reader skips them: "
+        f"`--ref`, `--search`, the digest and every openness count. "
+        f"`parse_journal_bullets` drops text that precedes the first bullet. The "
+        f"cause is almost always a lost or indented bullet OPENING line; the fix "
+        f"is to restore it, NOT to delete the text."
+    ]
+    if marked:
+        out.append(
+            f"  🔴 {marked} of them look{'s' if marked == 1 else ''} like a "
+            f"`OPEN:`/`RESOLVED:` DECLARATION. "
+            f"That is an open action the store is actively failing to report — it "
+            f"raises no badge and is counted in no openness total, because the "
+            f"bullet that would carry it no longer exists."
+        )
+    for d in dropped:
+        flag = "  ← looks like a DECLARATION" if d.carries_marker else ""
+        out.append(f"    {d.filename}: nuance line {d.offset}{flag}")
+        out.append(f"      {d.line.strip()[:ADVISORY_QUOTE_MAX]}")
+    out.append(
+        "  🔴 RESTORE FROM HISTORY, NOT FROM MEMORY. The entry's previous version "
+        "is one `git log -p -- <file>` away in the store's own history. "
+        "Reconstructing the opening line by hand invents a date and an author the "
+        "store never had."
+    )
+    out.append(
+        "  (Advisory. It changes no verdict: the loader accepts the file, and the "
+        "write protocol branches on this command's exit code to mean 'write "
+        "NOTHING'.)"
+    )
+    return out
+
+
+def _reachability_block(
+    n_files: int, unreachable: Sequence[UnreachableMarkerFinding]
+) -> list[str]:
+    """The MARKER-REACHABILITY advisory.
+
+    🔴 ITS OWN BLOCK, BECAUSE IT IS ITS OWN SHAPE. Every remedy a near-miss
+    advisory names — "fix the LINE", "rewrite as `RESOLVED <sha>:`" — is wrong
+    here. A marker on a continuation line is spelled correctly; the edit it needs
+    is to be PROMOTED to a bullet of its own.
+    """
+    if not unreachable:
+        return [
+            "",
+            f"marker reachability: 0 out-of-reach marker(s) across {n_files} entry "
+            f"file(s) [{UNREACHABLE_MARKER}] — every `OPEN:`/`RESOLVED:` found is "
+            f"on a bullet's OPENING line, where the parser reads.",
+        ]
+    n = len(unreachable)
+    out = [
+        "",
+        f"🔴 {n} MARKER(S) OUT OF REACH across {n_files} entry file(s) "
+        f"[{UNREACHABLE_MARKER}] — spelled CORRECTLY, on a bullet's CONTINUATION "
+        f"line, where NO reader looks. The marker pattern is anchored at position "
+        f"0 of a bullet's OPENING line, so this declares NOTHING: it raises "
+        f"neither the `OPEN` badge nor `NEAR-MISS`. 🔴 It is NOT a near-miss and "
+        f"is NOT counted as one — a near-miss is mis-spelled where the parser "
+        f"looks and is fixed by editing the line; this is fixed by PROMOTING the "
+        f"line to a top-level bullet of its own.",
+    ]
+    for u in unreachable:
+        out.append(f"    {u.filename}: line {u.offset} of the bullet opening")
+        out.append(f"      bullet: {u.bullet_first_line[:ADVISORY_QUOTE_MAX]}")
+        out.append(
+            f"      marker: {u.line.strip()[:ADVISORY_QUOTE_MAX]}   "
+            f"(would declare `{u.openness}`)"
+        )
+    out.append(
+        "  🔴 BEFORE FIXING ANY MARKER ABOVE IT IN THE SAME SECTION, re-check this "
+        "one against the store's history. Such a bullet can have raised its badge "
+        "only BY ACCIDENT, through a broken `RESOLVED —` sitting above it — so "
+        "repairing that line would SILENCE a still-open action."
+    )
+    out.append(
+        "  (Advisory. It changes no verdict: the loader accepts the file, and the "
+        "write protocol branches on this command's exit code to mean 'write "
+        "NOTHING'.)"
+    )
+    return out

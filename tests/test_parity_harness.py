@@ -298,7 +298,12 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # 101 -> 102 and this is the literal the formula prescribes for it. That row is what makes
     # the gate able to see a glob metacharacter in a `--repo` ANCHOR; the three focus rows beside
     # it default `--repo` to `.` and are structurally unable to.
-    floor = 96
+    # ⚠ 96 -> 97 WHEN `validate-write-protocol-advisories` LANDED: `m` moved 102 -> 103 and
+    # this is the literal the formula prescribes for it. That row is what makes the gate able
+    # to see the `dropped lines:` / `marker reachability:` blocks at all — every other scope in
+    # the world parses cleanly, so both advisories print their ZERO branch everywhere and a
+    # client implementing neither would compare equal.
+    floor = 97
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why

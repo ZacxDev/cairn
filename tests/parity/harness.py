@@ -422,6 +422,17 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "never a clean 0", ["validate", "--scope", "ghost-void"]),
         Case("validate-no-sync", "the same over the cache, off the network",
              ["validate", "--no-sync"]),
+        # 🔴 THE WRITE-PROTOCOL HALF, AND IT IS THE DISCRIMINATING INPUT THE CORPUS DID NOT
+        # HAVE. Every other scope's entries have a well-formed nuance section, so both
+        # advisories print their ZERO branch everywhere and a client that implemented
+        # neither would compare equal. `crag-notes` carries a dropped line that IS a
+        # declaration and an out-of-reach marker, so this row compares the FINDINGS
+        # branches — the quoted line, the per-file offsets and the `carries_marker` flag —
+        # rather than two identical zeros. A one-sided fix is RED here.
+        Case("validate-write-protocol-advisories",
+             "a scope whose entries PARSE and still hold content no reader can reach: the "
+             "`dropped lines:` and `marker reachability:` blocks, with findings",
+             ["validate", "--scope", "crag-notes"]),
 
         # --- doctor -----------------------------------------------------------
         Case("doctor-live", "seven checks, four states, the count line and the exit legend",

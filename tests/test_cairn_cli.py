@@ -1750,6 +1750,125 @@ class TestValidateScopeGuard:
         assert "no-such-scope" in proc.stderr, proc.stderr
 
 
+class TestValidateReportsTheWriteProtocolContract:
+    """🔴 THE PACKAGED `validate` WAS A PARSE CHECK AND WAS BEING USED AS THE
+    POST-WRITE CHECK, WHICH ARE DIFFERENT QUESTIONS.
+
+    "Would the loader accept this file?" is what the count line answers, and an
+    entry can pass it while holding text NO reader will ever surface. Until these
+    two blocks the only tool that reported `dropped lines:` and
+    `marker reachability:` was an operator-local launcher, so an agent that had the
+    package and not the launcher — which is the deployed case — ran a check that
+    was silently weaker than the mandated one, and nothing in its output said so.
+
+    `dropped lines:` is the half that means content is ALREADY LOST: the file
+    holds it, the store holds it, and `--ref`, `--search`, the digest and every
+    openness count skip it.
+    """
+
+    #: An entry that PARSES and still holds three things no reader can reach: two
+    #: lines before the first bullet (the second of them a declaration) and a
+    #: correctly-spelled marker on a bullet's continuation line.
+    LOSSY_NUANCE = (
+        "  this line reaches no bullet at all: the `- ` that opened it is gone.\n"
+        "  OPEN: and this one is a declaration nothing will ever surface.\n"
+        "- 2026-01-06: RESOLVED abc1234: the bullet that did survive.\n"
+        "  OPEN: a marker several lines in, where no parser looks."
+    )
+
+    def test_a_lossy_entry_that_PARSES_is_reported_by_BOTH_blocks(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        cache = tmp_path / "cache"
+        (source_store / "gizmo-notes" / "lossy-thing.md").write_text(
+            _entry("lossy-thing", "gizmo-notes", self.LOSSY_NUANCE)
+        )
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn(
+            "validate", "--scope", "gizmo-notes", "--no-sync", url=None, cache=cache
+        )
+        out = proc.stdout
+        # 🔴 THE FILE PARSES. The parse half must still say so, or this test would
+        # be measuring a malformed entry and proving nothing about the new half.
+        assert "gizmo-notes: 2 of 2 entry file(s) parse, 0 malformed" in out, out
+        assert "🔴 2 DROPPED LINE(S) across 2 entry file(s) [dropped-line]" in out, out
+        assert "1 of them looks like a `OPEN:`/`RESOLVED:` DECLARATION" in out, out
+        assert "lossy-thing.md: nuance line 2  ← looks like a DECLARATION" in out, out
+        assert (
+            "🔴 1 MARKER(S) OUT OF REACH across 2 entry file(s) [unreachable-marker]"
+            in out
+        ), out
+        assert "lossy-thing.md: line 2 of the bullet opening" in out, out
+        assert "(would declare `open`)" in out, out
+
+    def test_neither_advisory_moves_the_EXIT_CODE(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE WRITE PROTOCOL BRANCHES ON THIS COMMAND'S EXIT CODE TO MEAN
+        "write NOTHING". Failing here would stop a session recording anything into
+        an entry whose only defect is that an OLDER write lost a line — which
+        makes the store lossier, not safer, and is a gate the author cannot turn
+        green by fixing the file they are writing."""
+        cache = tmp_path / "cache"
+        (source_store / "gizmo-notes" / "lossy-thing.md").write_text(
+            _entry("lossy-thing", "gizmo-notes", self.LOSSY_NUANCE)
+        )
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn(
+            "validate", "--scope", "gizmo-notes", "--no-sync", url=None, cache=cache
+        )
+        assert "DROPPED LINE(S)" in proc.stdout, proc.stdout
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    def test_a_CLEAN_scope_still_prints_both_denominators(
+        self, live_store, tmp_path: Path
+    ):
+        """🔴 A BARE ABSENCE IS INDISTINGUISHABLE FROM A SCANNER WIRED TO NOTHING.
+        Both zeros carry the file count they are a zero over, and the dropped-line
+        zero additionally carries its own blind spot in words — it is knowingly
+        PARTIAL, so "0 dropped" must not read as "no bullet has lost its head"."""
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn(
+            "validate", "--scope", "widget-cfg", "--no-sync", url=None, cache=cache
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "dropped lines: 0 across 2 entry file(s)" in proc.stdout, proc.stdout
+        assert "PARTIAL BY CONSTRUCTION" in proc.stdout, proc.stdout
+        assert (
+            "marker reachability: 0 out-of-reach marker(s) across 2 entry file(s)"
+            in proc.stdout
+        ), proc.stdout
+
+    def test_a_scope_with_NO_entries_prints_NOT_CHECKED_rather_than_a_zero(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 "0 across 0 entry file(s)" IS THE REASSURING ZERO FROM AN INSTRUMENT
+        THAT WALKED NOTHING, and it must not render anywhere near a clean-looking
+        count.
+
+        The fixture is a scope holding ONLY its policy sheet, which is the
+        reachable shape rather than a contrived one: `/snapshot` ships READMEs,
+        the loader skips them in every scope, and so does this denominator — so a
+        sheet-only scope really does present zero entry files to the scanners.
+        """
+        sheet_only = source_store / "sheet-only"
+        sheet_only.mkdir()
+        (sheet_only / "README.md").write_text(
+            "# sheet-only — the scope's own policy sheet, not an entry\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn("validate", "--no-sync", url=None, cache=cache)
+        line = [
+            ln for ln in proc.stdout.splitlines()
+            if ln.startswith("cairn: sheet-only: dropped lines")
+        ]
+        assert line, proc.stdout
+        assert "NOT CHECKED" in line[0], line[0]
+        assert "0 across 0" not in proc.stdout, proc.stdout
+
+
 class TestSearchOverTheClient:
     """🔴 `cairn search` had ZERO tests anywhere in the repo, so the fix that
     gave search its own `_exit_for` label had no regression test at all."""
