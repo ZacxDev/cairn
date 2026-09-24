@@ -859,6 +859,82 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   from it — here it was the gcroot of the very server a human was queued to verify, so the order
   had to be replace-then-remove.
 
+- 🔴 **THE TEN BULLETS BELOW ARE RE-DERIVED FROM #96, WHICH LOST THE DOC RACE THREE TIMES.**
+  They are its session's own records, moved into `Gotchas` (which APPENDS) rather than into
+  `State now` (which REPLACES) because every one of them is a record of a round that has
+  CLOSED, and that is what this document's own convention says to do with those. ⚠ **Six of
+  #96's bullets were deliberately NOT carried and the reason is per-bullet, not editorial:**
+  its `main` sha, its rank-9 status and its `leakscan` instance-naming are all falsified by
+  the work above; its `SIX OF ELEVEN` event-kind count is superseded by the FOUR-of-eleven
+  entry with a selection rule under `Defects`; its `leakscan` directory entry is superseded by
+  the widened class there; and its *"the cheap control settled it"* bullet is **retracted**
+  above, so re-landing it would reinstate a conclusion this file now measures as wrong.
+- ✅ **THE RENAME ARC (rank 7) IS DONE AND VERIFIED ON `main`, CLAUSE BY CLAUSE.**
+  `56cc56e`. Measured live, not recalled: **11** alias pairs in `internal/envalias`; every
+  configuration read goes through the resolver (the only two raw reads are deliberate —
+  `cairn-ui`'s control journal, which must SEE whitespace to refuse it, and
+  `lib/host_identity.py`'s host-label names, which have no aliases); the warning is
+  *"$X is a deprecated alias for $Y. Where both are set in the environment, $Y is the one that
+  is read."*; and `RemovalAnchor` = *"the Python client (packages.cairn) is retired"* — the
+  milestone the operator approved in place of a version, since this repo's version IS the git
+  revision (`flake.nix`: `self.shortRev`) and `leakscan` refuses a dated one.
+- 🔴 **P7'S KEY WAS REPLACED BEFORE IT WAS BUILT, AND THAT IS THE SESSION'S BEST RESULT.** Rank
+  3 specified *"key it on principal + epoch"*. Measured: all fourteen journal event kinds are
+  AUTHORIZATION events and `internal/write/write.go` makes no `control.` call, so an append
+  moves no epoch — that key answers **304 to a client missing new bullets**. The validator is a
+  digest of the **UNCOMPRESSED** tar instead: it covers content, the visible set and `?scope=`
+  at once, and it is the only form both servers can agree on, because gzip identity between
+  them is recorded as unattainable while `tests/dualrun/` compares the uncompressed tar
+  byte-for-byte. **Independently re-verified after merge:** mutating the validator to a
+  content-independent value makes `TestAnAppendMovesTheETag` fail with its own message.
+- ⚠ **ONE DEBT, FILED RATHER THAN CARRIED IN A REPORT.** P7's two binding claims are not in
+  `AGENTS.md` — it has **73 bytes** free and its own rule forbids paying by deleting a claim.
+  It is `## Defects (batched)` entry with a mechanical closing condition; it is not an open end.
+- 🔴 **AND THE GATE BUILT THIS SESSION REFUSED THIS VERY DOC, CORRECTLY.** The first draft of the
+  bullet above spelled the task board's real name — the SAME denied identifier scrubbed off `main`
+  this morning as #68, re-introduced by the sentence explaining that no task resolved. Rule (o)
+  exited 13 on the delta, named the file and line, and nothing was written or pushed. **Not a
+  pre-existing red and not an override case:** the remedy was the scratch file. The remedy for the
+  NAME is the one `AGENTS.md` already prescribes — keep the mechanism, drop the particular.
+- 🔴 **A SWEEP FOR THE PHRASINGS YOU HAVE SEEN IS A SPELLED CHECK, AND IT MISSED A CLAIM IN THE
+  COMMIT WHOSE WHOLE SUBJECT WAS THAT CLAIM.** #78 corrected "which pod is deployed" at three
+  sites, found by grepping three wordings (`deployed by nothing`, `not deployed by anything`,
+  `DEPLOYED BY NOTHING`). A **fourth** claim — `AGENTS.md:399`, *"`server/Dockerfile` is what is
+  deployed today"* — used none of them and survived; #81 had to finish the job, and its message
+  records *"It survived #78, whose entire subject was correcting which server is deployed."*
+  The right question is **"what else in this file asserts this?"**, never "where else does this
+  phrase appear". A grep over wordings you already know cannot find the one you do not.
+- 🔴 **TWO FALSE ZEROS ON ONE CLAIM, BOTH READING AS CONFIRMATION, IN UNDER A MINUTE.**
+  Verifying that the handoff skill never mentions `leakscan`: (a) `grep -lc` combines two
+  conflicting flags and prints **nothing at all** — not an error, just silence; (b)
+  `find ~/.claude/skills/handoff -type f` returns **0 files**, because home-manager makes those
+  entries **symlinks** and `-type f` does not follow them, while `grep` on the same path reads
+  them fine. Both produced an empty result that looked like the answer. **`find -L` is the fix**,
+  and a positive control on the same invocation is what exposed both.
+- 🔴 **`gh pr checks` REPORTS THE LATEST RUN PER CHECK *NAME*, NOT PER COMMIT** — so after a
+  rebase or a base move it can show a job's verdict from an older head, and a "pending" there
+  can be a run that already finished on a sha you no longer care about. Read
+  `gh api repos/<o>/<r>/commits/<sha>/check-runs` for the head you are actually merging.
+  ⚠ And read BOTH surfaces: the same head answered `state=pending statuses=0` on the commit-
+  status API while all six check-runs were `success` — this repo posts check-runs and no
+  statuses, so a zero there is an ABSENCE, not a red.
+- 🔴 **A MUTANT THAT DOES NOT COMPILE DIES AT THE BUILD AND PROVES NOTHING — HIT LIVE WHILE
+  VERIFYING P7.** Replacing the ETag's digest with a constant left `hex` and `sha256Sum`
+  unused, so `go test` reported `[build failed]` and the guard never ran. Rebuilt so the mutant
+  still USES both symbols while being content-independent, it reached the guard and died with
+  the guard's own message. **Mutate the narrowest expression that can be wrong**, and check the
+  mutant compiles before reading its verdict.
+- ⚠ **`mergeStateStatus: UNKNOWN` IS THE API COMPUTING LAZILY, NOT A PROBLEM WITH THE PR.**
+  Seen immediately after a sibling PR merged and moved the base; it resolved to `CLEAN` on a
+  re-read seconds later. Do not treat it as a conflict signal, and do not merge through it —
+  re-read until it is one of the real values.
+- **THE QUEUE WAS STALE IN TWO INDEPENDENT PLACES, BOTH ABOUT WORK ALREADY FINISHED**, and each
+  cost real time before the work could start: rank 2 named a defect `tests/test_narrowing_echo_sites.py`
+  had already closed, and rank 6 asked to close entries an earlier session had already moved to
+  the archive. Neither was careless — it is what happens when sessions that cannot see each
+  other write the same list. **Before acting on a ranked item, check whether it is already
+  done**; the entry is a claim like any other.
+
 ## How to verify
 
 ```bash
