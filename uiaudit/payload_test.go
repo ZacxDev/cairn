@@ -6,9 +6,11 @@ import (
 	"testing"
 )
 
-// 🔴 THIS FILE IS THE ONLY EVIDENCE THE PUSH LEG HAS, BECAUSE THE WIRE LEG CANNOT BE
-// EXERCISED. Creating the hub's plugin target and minting the push and read keys are
-// Supabase-gated operator steps, so no push has ever left this harness. What is testable
+// 🔴 THIS FILE IS THE ONLY EVIDENCE THE REFUSAL PATH HAS, AND THAT IS NARROWER THAN WHAT IT USED TO
+// CLAIM. The wire leg IS exercised now — three real pushes, all accepted, recorded in `README.md`
+// residual 3 — so the ACCEPTANCE path is measured against the real service. Every refusal below is
+// not: the server has never rejected a push from this harness, so each 400 these cases assert is a
+// claim about this module's copy of the server's rules. What is testable
 // without a server is the payload's SHAPE against the rules the server enforces — and every
 // one of those rules, when broken, rejects the WHOLE multi-page push rather than the page,
 // which is why an offline refusal is worth having.

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -380,104 +378,5 @@ func TestTheUNKNOWNRowREFUSALSURVIVESTheThirdClass(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "GET /assets/logo.svg") {
 		t.Errorf("the refusal must name the row it refused; got %q", err)
-	}
-}
-
-// TestStylesheetCheckIsGatedOnTheLedgerAndCanGoRED.
-//
-// 🔴 THE GATE IS THE HALF THAT NEEDS PROVING. Run unconditionally, this check would ask about a
-// path the surface does not serve and its failure would be a fact about the harness, not the
-// tree — so it must SKIP on a ledger with no stylesheet row and RUN on one that has it. Both
-// directions are driven here, against a server that is deliberately wrong, so a skip cannot be
-// mistaken for a pass.
-func TestStylesheetCheckIsGatedOnTheLedgerAndCanGoRED(t *testing.T) {
-	type served struct {
-		status      int
-		contentType string
-		body        string
-	}
-	for _, tc := range []struct {
-		name     string
-		ledger   []string
-		served   served
-		wantErr  string // "" means the check must pass
-		wantSkip bool
-	}{
-		{
-			// The gate. The server below would FAIL every assertion, so a check that ran
-			// anyway could not pass — which is what makes this a real control on the gate
-			// rather than a tautology.
-			// ⚠ AN EXPLICIT LEDGER, NOT `ui.DeclaredRouteLedger()`. Using the live ledger here
-			// was a defect the merged tree exposed: once the stylesheet row LANDS, the live
-			// ledger contains it and this case stops testing the gate — it silently becomes a
-			// second copy of the honest case, and the gate it was written for is then covered by
-			// nothing. A fixture that cannot acquire the row is the only thing that keeps
-			// measuring the `false` branch.
-			name:     "no stylesheet row in the ledger — SKIPPED, and the server is broken to prove the gate held",
-			ledger:   []string{"GET / content", "GET /sign-in public", "POST /sign-in public"},
-			served:   served{status: 404, contentType: "text/html", body: ""},
-			wantSkip: true,
-		},
-		{
-			name:   "200 text/css with a body — the honest case",
-			ledger: mergedLedger,
-			served: served{status: 200, contentType: "text/css", body: "body { margin: 0 }"},
-		},
-		{
-			// ⚠ THE CHARSET CASE, WHICH A WHOLE-STRING COMPARISON WOULD FAIL. A conforming
-			// server may append a charset; refusing that would be a spelled guard rejecting a
-			// correct response.
-			name:   "200 text/css; charset=utf-8 — must PASS, or the guard refuses the honest tree",
-			ledger: mergedLedger,
-			served: served{status: 200, contentType: "text/css; charset=utf-8", body: "body { margin: 0 }"},
-		},
-		{
-			name:    "404 — every page then renders unstyled and no browser-side collector says so",
-			ledger:  mergedLedger,
-			served:  served{status: 404, contentType: "text/plain", body: "no"},
-			wantErr: "answered 404, not 200",
-		},
-		{
-			name:    "200 but text/html — a conforming browser refuses the stylesheet at a 200",
-			ledger:  mergedLedger,
-			served:  served{status: 200, contentType: "text/html", body: "body { margin: 0 }"},
-			wantErr: "not text/css",
-		},
-		{
-			name:    "200 text/css with an EMPTY body",
-			ledger:  mergedLedger,
-			served:  served{status: 200, contentType: "text/css", body: ""},
-			wantErr: "EMPTY body",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != StylesheetPath {
-					http.NotFound(w, r)
-					return
-				}
-				w.Header().Set("Content-Type", tc.served.contentType)
-				w.WriteHeader(tc.served.status)
-				_, _ = w.Write([]byte(tc.served.body))
-			}))
-			defer srv.Close()
-
-			skipped, err := StylesheetCheck(tc.ledger, srv.URL)
-			if skipped != tc.wantSkip {
-				t.Fatalf("skipped=%v, want %v", skipped, tc.wantSkip)
-			}
-			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("this case must pass: %v", err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatal("the check accepted a stylesheet response it must refuse")
-			}
-			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("the refusal fired for the wrong reason.\n  want substring: %q\n  got: %v", tc.wantErr, err)
-			}
-		})
 	}
 }

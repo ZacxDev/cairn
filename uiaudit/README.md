@@ -26,10 +26,20 @@ HTML string scanning. What it measures:
 2. **axe-core over the real rendered DOM.** There was no accessibility check of any kind in
    cairn before this. There cannot be one without a browser: axe's violations are functions
    of computed style and layout, not of the HTML string.
-3. **Layout at 390px and 1440px.** This surface had never been rendered at any width.
-4. **A signal `/healthz` structurally cannot give.** `internal/ui/README.md` names a
-   deployment whose session volume vanishes after start: readiness passes, every login fails.
-   Signing in through the form is the only thing that separates those two worlds.
+3. **Layout at 390px and 1440px.** This surface had never been rendered at any width. ⚠ The two
+   values are **not chosen here and not arbitrary**: they are the two the upstream hub's own native
+   crawl uses, so a pushed run is diffed against pages captured at the same widths. `Viewport`'s
+   doc in `targets.go` says so at the definition. The COUNT satisfies this repository's
+   two-points rule; the VALUES come from the consumer.
+4. ⚠ **RETRACTED — and kept rather than deleted.** This claimed the harness is the only thing
+   that can distinguish a deployment whose session volume vanished after start (readiness passes,
+   every login fails). **It is false of this harness**, and the blind set below already said so:
+   the walk only ever boots a *fresh hermetic pod over a temp directory it created*, so the broken
+   world is one it cannot construct. Both statements were right; together they retract the claim.
+   What is true is that a **smoke probe signing in against a real deployment** would distinguish
+   them — `/healthz` answers before the authentication chain runs and a sign-in does not — and
+   **nothing here runs one**. The gap is real and unclosed; naming this program as its closer was
+   the error.
 
 ## The two spikes — both PASS, with the conditions they were measured under
 
@@ -393,42 +403,172 @@ correctly publishes nothing. Closing condition: a fixture journal in `boot.go` t
 admin grant over one synthetic scope, after which `ExpandLinks` reaches the page with no change
 to the derivation.
 
-### 3. The wire leg is UNEXERCISED
+### 3. ✅ The wire leg is EXERCISED — three real pushes, and what the service actually accepted
 
-No push has left this harness to any server. Creating the hub's plugin target and minting
-the push and read keys are Supabase-gated operator steps. What **is** verified is the payload's
-SHAPE, offline, against the rules the server enforces — every one of which rejects the WHOLE
-multi-page push rather than the page:
+**This section previously said the leg was unexercised. It is not, and the distinction the old
+wording asked for can now be drawn.** Three pushes to a real plugin target, all `200`, all
+`status: done`, walk exit 0 each time. Endpoint and credentials are secrets; neither appears here.
 
-- refs ↔ parts integrity in both directions (a referenced part missing; an orphan part)
-- per-file 16 MiB cap, body 64 MiB cap, ≤200 pages
-- a strict round-trip through a `DisallowUnknownFields` decoder, and **no `perf` key**
-- the closed viewport set and the closed finding-type set
-- a11y details carry a top-level string `id` — the LEGACY `"<id> — <help>"` string is REFUSED
-- `layout`/`perf` findings authored here are REFUSED (the server derives them from the raw
-  block via `internal/signals`)
-- an **empty** a11y digest is REFUSED with the reason, since sending one 400s the whole push
-- `RunReport`'s struct tags are pinned against a fixture written from the hub's own field
-  names, each field a distinct value, because a mis-spelled tag prints a reassuring empty diff
+**What the service ACCEPTED — measured by reading the ingested run back, not inferred from the
+schema:**
 
-⚠ And that is a claim about **this copy of the server's rules**, not about the server. If
-the hub tightens one, these tests stay green and the push starts failing.
+| claim | how it was measured |
+|---|---|
+| all six page rows stored | `pages` array = **6**, `{mobile: 3, desktop: 3}` |
+| the 390px capture is not collapsed | `width=390` on three rows, `width=1440` on three — the service derives width from the viewport NAME |
+| `environment: "lab"` accepted | echoed back as `environment: lab` |
+| **the a11y detail took the STRUCTURED path** | stored as a JSON **object** with top-level `"id": "color-contrast"` — not the `{"detail": "…"}` wrapping, so `new_a11y_rules` keys on it |
+| the a11y digest passed the real validator | `a11y_digest_key` set on **all six** rows — a malformed digest 400s the whole push, so the verbatim vendoring is confirmed against the live validator rather than against my reading of it |
+| raw layout counts, findings derived server-side | I send **no** `layout` finding; the service stored one it computed: `{"smell": "small-tap-targets", "count": 1, "examples": ["button (65x21)"], "note": "…"}` |
+| **the mobile gating works, discriminatingly** | that layout finding appears on the **mobile** rows and is **absent from desktop**, despite both carrying the same `small_tap_targets: 1`. Had this harness computed the finding itself it would have emitted it on desktop too and been wrong — the raw-counts-only design is validated by a discriminating observation, not by the absence of an error |
+| no `perf` findings | none stored; the block is omitted and `lab` would suppress them anyway |
 
-### 4. Nothing else in this repository governs `uiaudit/`'s dependencies
+**And what the second push measured, which CORRECTS a prediction this PR made.** The diff came back
+`pages +0/-0, 0 changed, 0 size-changed`, **`new_a11y_rules (0)`**, all deltas `+0`.
 
-Declared in full in `internal/depspolicy`'s package doc, section *"WHAT A NESTED MODULE
-ESCAPES"*. Summary: the allowlist reads the verified-root `go.mod` only; the import ban walks
-`cmd/`+`internal/` only; the `ok` floor never sees a nested module because `go test ./...` does
-not descend; `flake.nix`'s `onlyGo` filter is an allowlist that excludes any new top-level
-directory. **No test anywhere counts `go.mod` files.** Whoever adds a module here is the whole
-review. Mitigation: nothing here ships — not packaged, not a flake output, not on a deploy
-path.
+- The predicted "first diff flags every axe rule new" transient **did not happen**, and the reason
+  is structural: that transient applies to a target whose BASELINE predates the structured-detail
+  fix, so its ids appear for the first time in the diff. This target's very first push already
+  carried structured ids, so there was never an id-less baseline. A brand-new target skips it.
+- So the promotion candidate's precondition — *"after two baseline runs"* — is **satisfied and
+  measured**, not pending. Two runs exist and the diff is clean. What remains before promoting
+  `new_a11y_rules` to blocking is a **decision**, not a measurement.
+- `0 changed / 0 size-changed` across two independent runs also means the pixel diff is stable for
+  this hermetic world. ⚠ That does **not** argue for gating on it: the 684-regressions-over-565-pushes
+  figure is about real producers against changing sites, and this is a fixed fixture with a pinned
+  clock. Stability here is evidence about the fixture, not about the metric.
 
-### 5. The blind set
+**What is still NOT exercised, stated so the upgrade does not read wider than it is:**
+
+- the push from **CI** rather than from this host — the secrets exist, but no CI run has carried
+  them yet;
+- a push **large enough to approach any cap** (body 64 MiB, per-file 16 MiB, ≤200 pages). The real
+  body is ~787 KB and 24 parts, so every cap is exercised only by the offline refusals below;
+- every **refusal** path. The server accepted all three pushes, so none of the 400s the offline
+  tests assert has been seen from the service.
+
+**The offline shape verification therefore keeps its place, and its claim is now narrower and
+truer.** It still refuses, before upload: refs ↔ parts in both directions; the per-file, body and
+page caps; a strict `DisallowUnknownFields` round trip with **no `perf` key**; the closed viewport
+and finding-type sets; an a11y detail without a top-level string `id` (the legacy `"<id> — <help>"`
+string); a `layout`/`perf` finding authored here; an **empty** a11y digest; and `RunReport`'s struct
+tags against a fixture of pairwise-distinct values, because a mis-spelled tag prints a reassuring
+empty diff.
+
+⚠ **Those are still a claim about this copy of the server's rules — for the REFUSALS.** The
+acceptance path is now measured against the real service; the rejection path is not, and if the hub
+tightens a rule these tests stay green while the push starts failing. That asymmetry is the honest
+statement, and it is why the offline tests were not deleted once the wire leg worked.
+
+### 4. ✅ The nested-module escape now has a LEDGER — the deferral it replaced had no checker
+
+The escape itself stands and is not reversed: chromedp in a separate module is a stronger claim
+than a test, because a different module's packages are unreachable without a `require` in the root
+`go.mod` that `DeclaredModules` would see. What was wrong was the **deferral**.
+
+`internal/depspolicy`'s doc used to close with *"if a second nested module is ever added, the right
+response is to make `go.mod` files COUNTED here"* — while the same doc established that **nothing
+counted `go.mod` files**. A closing condition whose trigger nothing can observe is not a work item.
+And the trigger was the wrong one: the likely event is not a second module appearing, it is **this
+module's dependency set changing** — a routine `go get -u` re-breaks the toolchain pin, and the CI
+assertion reads only the `go` directive.
+
+Closed the way every comparable blind spot here is: `DeclaredNestedModules` + `NestedModuleAllowlist`
+versus a **tree walk that counts `go.mod` files**, failing on grow *or* shrink.
+
+**Two lists per module, because the two lock files legitimately differ** — measured: `go.sum` carries
+`ledongthuc/pdf` and `orisano/pixelmatch` (optional deps of chromedp, in the module graph, hence
+hashed) which `go.mod` does not require. One list compared against both would be permanently red, so
+the difference is declared. `IsThirdParty` drops the parent module, reached through the `replace`.
+
+**A build failure through nix, and the rows that make it one are load-bearing — measured both ways:**
+
+| | result |
+|---|---|
+| with `uiaudit`, `uiaudit/go.mod`, `uiaudit/go.sum` in `onlyGo` | `nix build .#cairn-ui` → `ok internal/depspolicy` **inside the derivation** |
+| with those three rows removed | `nix build` **rc=1**, and the refusal **names `onlyGo`** |
+
+The directory row is required for the two file rows to mean anything — `cleanSourceWith` never
+visits a path whose parent the filter rejected. Verified by materialising the filtered source: it
+holds `uiaudit/go.mod` and `uiaudit/go.sum` and **zero** `.go` files from that directory, which is
+deliberate (nothing in nix builds that module, so shipping its sources would add chromedp to every
+derivation's source closure for nothing).
+
+**Mutation battery — 6 mutants, 6 KILLED**, harness validated first:
+
+| mutant | killed by |
+|---|---|
+| the directory ledger SHRINKS | the directory comparison |
+| a declared dependency REMOVED (ledger says less than the file) | the `go.mod` comparison |
+| a dependency ADDED to the file only (the `go get -u` shape) | both file comparisons |
+| the two lists collapsed (go.sum-only entries copied into `GoMod`) | the `go.mod` comparison |
+| `NestedModuleDirs` stubbed to return the ledger (a tautology) | `TestNestedModuleDirsActuallyWALKS` |
+| `uiaudit/go.mod` absent from the tree | the absent-file refusal, which names `onlyGo` |
+
+🔴 **The fifth SURVIVED the first battery and is why the walk control exists.** Stubbing the walk to
+return the ledger left the comparison green, made the absent-file branch unreachable, and would have
+hidden a second nested module — "reads as coverage while providing none", inside the package whose
+job is refusing exactly that. The control drives the walk over a synthetic tree whose answer cannot
+come from the ledger, and asserts that it does not equal the ledger.
+
+⚠ **It still does not put those dependencies under the import ban or in the `ok` floor.** It makes
+the escape's BOUNDARY observable; it does not make the escape smaller.
+
+### 5. Deleted in round 0, and why each earned deletion rather than a defence
+
+- **`spike/main.go` — DELETED.** It was a second copy of the sign-in that **rotted inside its own
+  PR**: it still carried both defects fixed in `browser.go` — the bare first-match
+  `form button[type=submit]` selector and the success check that read the *absence* of `id="token"`.
+  On the merged tree it would click the GitHub button, acquire `__Host-cairn-oauth` (satisfying its
+  own prefix check), get 303'd back, find the token field, and print **`SPIKE 1 FAIL: the cookie was
+  not re-sent`** — a confident wrong diagnosis of a working surface. Nothing in CI ran it. My
+  "a spike nobody can re-run is a claim again" defence is answered better by the walk, which
+  re-measures both spike claims on every push. The **README's spike evidence stays** — it quotes the
+  measurement, which is what makes it evidence.
+  The second origin it carried is not lost: the cookie test below now runs at **both** `127.0.0.1`
+  and `localhost` as subtests, which is a caller rather than a flag nobody passes.
+- **`StylesheetCheck` — DELETED.** A strict subset of `internal/ui`'s own
+  `TestTheStylesheetIsServedAsItsOwnRoute`, which asserts the exact `Content-Type` including charset,
+  `X-Content-Type-Options: nosniff`, byte-equality with the stylesheet constant, a size floor, that
+  no page carries an inline `<style>`, that every page links the route, and unauthenticated
+  reachability — **as a hard failure in root `go test ./...`**, so in the `go` job and all three nix
+  derivations. Mine was an advisory tick in a non-blocking job. `doc.go` states the rule it broke.
+  ⚠ And its justifying comment was **false within this package**: it claimed no browser-side
+  collector looks at a failed stylesheet fetch, while `Browser.onEvent` records any subresource
+  `Status >= 400` as a first-party network event — the very thing a network zero is asserted to mean.
+  `StylesheetPath` survives, because the ledger-derived structural-zero test reads it.
+
+### 6. ✅ The session cookie's attributes are now PINNED as a browser honours them
+
+Justification 1 used to be an assertion. `TestTheSessionCookiesFourFlagsAreHONOUREDByTheBrowser`
+reads six facts back out of a real jar after a real navigation, **at two origins**:
+
+```
+HONOURED: name=__Host-cairn-session secure=true httpOnly=true sameSite=Lax path="/" domain="127.0.0.1" (host-only)
+HONOURED: name=__Host-cairn-session secure=true httpOnly=true sameSite=Lax path="/" domain="localhost"  (host-only)
+and RE-SENT: a second navigation to / answered 200
+```
+
+Two origins because the dimension is the **origin host**: `session.go`'s comment names `localhost`,
+the pod binds `127.0.0.1`, and Chromium's trustworthy-origin rule is stated per host. The `Domain`
+assertion is the subtle one — a `__Host-` cookie carrying `Domain` must be refused outright, so what
+is pinned is that the jar's domain is the origin's host with **no leading dot**.
+
+🔴 **A latent bug fixed in the same pass:** `SignIn` took the **first** `__Host-`-prefixed cookie by
+jar iteration order. The auth change adds `__Host-cairn-oauth`, so which cookie was read would have
+been decided by map order — and every attribute printed and asserted would have been about the wrong
+one. It now names `identity.SessionCookieName`.
+
+⚠ **What this does NOT cover, and no test here can:** that the cookie is **attached to a
+cross-site-initiated callback** while `SameSite=Strict` would withhold it. That needs a real provider
+redirecting from a different origin, which a hermetic walk cannot stage. It is in the blind set.
+
+### 7. The blind set
 
 Concurrency, real network conditions, a second browser engine, a narrowed credential, the
 share flow's WRITE paths (`POST /share`, `POST /unshare` — skipped as non-GET and never
-exercised), the session-volume-vanishes deployment as an actual boot condition rather than as
+exercised), the **cross-site cookie attachment** on a provider callback (needs a real provider; see
+residual 6), the session-volume-vanishes deployment as an actual boot condition rather than as
 the thing sign-in would catch, and any width other than 390 and 1440.
 
 ## Gating — advisory only, deliberately
@@ -483,11 +623,11 @@ needle nothing can produce is the shape this repository refuses, so the step fir
 fork-PR case, which is *supposed* to skip, would fail the control instead.
 
 **The test-count floors carry the same treatment.** `^--- PASS` counts top-level functions
-only, because `go test -v` indents a subtest's line — so both counts are floors (16 top-level,
-29 including subtests), and `FAIL`/`SKIP` are matched with `^[[:space:]]*` so an *indented*
+only, because `go test -v` indents a subtest's line — so both counts are floors (the numbers are
+whatever the current tree measures; CI carries them and a stale copy here was already wrong once), and `FAIL`/`SKIP` are matched with `^[[:space:]]*` so an *indented*
 failure is seen. Seven controls, each refusing for its own reason: the real log ACCEPTED; empty
 log → *no result lines*; a top-level test removed → *15 < 16*; a **subtest row** removed →
-*28 < 29* (which the top-level count structurally cannot see); an appended `FAIL` → *1 failing*;
+one under the total floor (which the top-level count structurally cannot see); an appended `FAIL` → *1 failing*;
 an appended `SKIP` → *1 skipped*; an appended **indented** `FAIL` → *1 failing*.
 
 ## Public-repo constraints

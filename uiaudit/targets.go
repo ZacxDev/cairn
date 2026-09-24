@@ -2,9 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"mime"
-	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -31,7 +28,19 @@ type Viewport struct {
 	Width, Height int
 }
 
-// The two widths. 390 is the phone width this surface has never been rendered at; 1440
+// 🔴 THE TWO VALUES COME FROM THE CONSUMER, NOT FROM A PREFERENCE HERE, AND THAT IS WHY THEY ARE
+// THESE TWO. The upstream hub's own native crawl captures at 390 and 1440, and it matches its P2
+// diff on `url`+`viewport` — so a producer capturing at any other pair would be diffed against
+// pages rendered at widths its own screenshots were never taken at. Verified against a real ingested
+// run: the service stored `width=390` on the three mobile rows and `width=1440` on the three desktop
+// rows, i.e. it records the width it derives from the viewport NAME rather than anything this
+// harness sends. Changing either number silently changes what the diff compares.
+//
+// ⚠ THE COUNT SATISFIES THIS REPOSITORY'S TWO-POINTS RULE; THE VALUES DO NOT COME FROM IT. Two
+// widths is "measure at ≥2 points"; WHICH two is the consumer's contract. Both facts, because
+// either alone reads as arbitrary.
+//
+// 390 is the phone width this surface has never been rendered at; 1440
 // is the desktop one the hub's native crawl uses.
 var (
 	Mobile  = Viewport{Name: "mobile", Width: 390, Height: 844}
@@ -120,8 +129,9 @@ var plainGET = map[string]bool{
 //     not navigating a row that cannot answer.
 //   - The STYLESHEET is a `text/css` response, not a document. axe, the layout smells and
 //     the a11y digest are all meaningless on it, and a screenshot of a stylesheet is noise
-//     in a pixel diff that is already advisory. It gets a non-browser check instead — see
-//     [StylesheetCheck], which is the one thing about that row a walk can usefully assert.
+//     in a pixel diff that is already advisory. It gets NO check here either — `internal/ui`'s
+//     own `TestTheStylesheetIsServedAsItsOwnRoute` already asserts far more about it than this
+//     package could, as a build refusal rather than an advisory tick. See [StylesheetPath].
 //
 // ⚠ THE TWO KEYS ARE LITERALS RATHER THAN `ui.OAuthCallbackPath` AND `ui.StylesheetPath`
 // FOR EXACTLY ONE REASON: those constants do not exist on this branch's base. They arrive
@@ -132,7 +142,7 @@ var plainGET = map[string]bool{
 // before. Until then a key that matches no row is inert, which is why writing them early is
 // safe rather than speculative.
 var notADocument = map[string]string{
-	"/static/app.css": "a text/css response and not a document — axe, the layout smells and the " +
+	StylesheetPath: "a text/css response and not a document — axe, the layout smells and the " +
 		"a11y digest are all meaningless on a stylesheet, and its screenshot is noise in the pixel diff; " +
 		"checked over plain HTTP instead",
 	"/sign-in/github/callback": "reachable only with a provider ?code= AND a live single-use flight " +
@@ -235,60 +245,30 @@ func Targets(ledger []string) (targets []Target, skipped []string, err error) {
 	return targets, skipped, nil
 }
 
-// StylesheetPath is the `notADocument` row that gets a check anyway.
+// StylesheetPath is the `notADocument` row's path, and it is read in two places that are NOT a
+// check on the route: `notADocument`'s own key, and the ledger test in `printSignalSummary` /
+// `control_test.go` that decides whether a network zero is STRUCTURAL or means "every subresource
+// succeeded".
 //
-// ⚠ A LITERAL FOR THE SAME REASON THE `notADocument` KEY IS — see that comment. It is derived
-// from nothing here, so [StylesheetCheck] is a no-op on a ledger that has no such row.
+// 🔴 THERE IS DELIBERATELY NO HTTP CHECK ON THIS ROUTE HERE, AND THE DELETED ONE IS WORTH A
+// SENTENCE SO NOBODY ADDS IT BACK. A `StylesheetCheck` stood here asserting 200, `text/css` and a
+// non-empty body. It was a STRICT SUBSET of `internal/ui`'s own
+// `TestTheStylesheetIsServedAsItsOwnRoute`, which asserts the exact `Content-Type` including
+// charset, `X-Content-Type-Options: nosniff`, BYTE-EQUALITY with the stylesheet constant, a size
+// floor, that no page carries an inline `<style>`, that every page links the route, and that an
+// unauthenticated caller can reach it — as a hard failure in root `go test ./...`, so in the `go`
+// job and all three nix derivations. That is a BUILD REFUSAL; this would have been an advisory
+// tick in a `continue-on-error` job. `doc.go` states the rule it broke: a second spelling of a
+// gate that already exists.
+//
+// ⚠ AND ITS JUSTIFYING COMMENT WAS FALSE WITHIN THIS PACKAGE. It claimed no browser-side
+// collector here looks at a failed stylesheet fetch. `Browser.onEvent` records any subresource
+// response with `Status >= 400` as a first-party network event — which is precisely the thing a
+// network zero is asserted to mean. The walk was already watching.
+//
+// ⚠ A LITERAL FOR THE SAME REASON THE `notADocument` KEY IS: `ui.StylesheetPath` does not exist
+// on this branch's base. Same closing condition.
 const StylesheetPath = "/static/app.css"
-
-// StylesheetCheck asserts the one thing about a stylesheet route a walk can usefully assert:
-// that it answers 200, with `Content-Type: text/css`, and a non-empty body.
-//
-// 🔴 IT IS PLAIN HTTP, NOT A BROWSER, AND THAT IS THE POINT OF SEPARATING IT. A stylesheet is
-// not a document; every browser-side collector this harness runs is meaningless on one. But the
-// route is now a REAL BLOCKING SUBRESOURCE of every page, so a 404 or a wrong content-type
-// there is a genuine first-party network finding — one that would otherwise show up only as a
-// page that renders unstyled, which no assertion in this harness looks at.
-//
-// 🔴 IT IS GATED ON THE LEDGER, NEVER RUN UNCONDITIONALLY. On a tree whose ledger has no
-// stylesheet row the check would be asking about a path the surface does not serve, and its
-// failure would be a fact about the harness. `hasRow` is the gate, and it reads the same ledger
-// the walk derives from — so the check appears exactly when the route does.
-//
-// ⚠ AND `Content-Type` IS COMPARED ON ITS MEDIA TYPE, NOT AS A WHOLE STRING. A conforming
-// server may append `; charset=utf-8`, so a whole-string comparison would fail on a correct
-// response — the guard would be spelled rather than structural, in the direction that refuses
-// the honest tree.
-func StylesheetCheck(ledger []string, base string) (skipped bool, err error) {
-	if !hasRow(ledger, "GET "+StylesheetPath) {
-		return true, nil
-	}
-	resp, err := http.Get(strings.TrimRight(base, "/") + StylesheetPath)
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", StylesheetPath, err)
-	}
-	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if readErr != nil {
-		return false, fmt.Errorf("%s: reading the body: %w", StylesheetPath, readErr)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("%s answered %d, not 200 — it is a blocking subresource of every page, "+
-			"so every page renders unstyled and no browser-side collector here would say so",
-			StylesheetPath, resp.StatusCode)
-	}
-	media, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if media != "text/css" {
-		return false, fmt.Errorf("%s answered Content-Type %q (media type %q), not text/css — a conforming "+
-			"browser refuses a stylesheet served under the wrong type, so the page renders unstyled with a 200",
-			StylesheetPath, resp.Header.Get("Content-Type"), media)
-	}
-	if len(body) == 0 {
-		return false, fmt.Errorf("%s answered 200 text/css with an EMPTY body, which is a stylesheet that "+
-			"styles nothing and is indistinguishable from a working one at the status line", StylesheetPath)
-	}
-	return false, nil
-}
 
 // hasRow answers whether the ledger declares an exact `<METHOD> <path>` row, ignoring the
 // classes a row may carry after it.

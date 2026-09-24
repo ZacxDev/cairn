@@ -106,19 +106,6 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 		fmt.Printf("uiaudit:   skip %s\n", s)
 	}
 
-	// 🔴 THE ONE `notADocument` ROW THAT GETS A CHECK ANYWAY, OVER PLAIN HTTP. A stylesheet
-	// route is a real blocking subresource of every page, so a 404 or a wrong content-type
-	// there makes every page render unstyled — and NO browser-side collector in this harness
-	// looks at that. It is gated on the ledger, so it is a no-op until the row exists, and a
-	// FAILURE here is fatal: unlike the push, it is a fact about the surface.
-	if cssSkipped, err := StylesheetCheck(ledger, world.BaseURL); err != nil {
-		return fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, world.Log())
-	} else if cssSkipped {
-		fmt.Printf("uiaudit: no %s row in this ledger, so its HTTP check is skipped (it is not a defect: the route arrives with the auth change)\n", StylesheetPath)
-	} else {
-		fmt.Printf("uiaudit: %s answers 200 text/css with a non-empty body — the one thing a walk can usefully assert about a non-document row\n", StylesheetPath)
-	}
-
 	browser, err := NewBrowser(ctx, world.BaseURL, budget)
 	if err != nil {
 		return err
@@ -280,7 +267,15 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 		fmt.Fprintf(os.Stderr, "uiaudit: push failed (non-fatal): %v\n", err)
 		return nil
 	}
-	fmt.Printf("%s%s url=%s\n", pushConfirmation, res.RunID, res.URL)
+	// 🔴 THE RUN ID ONLY — THE SERVICE-RETURNED URL IS NOT PRINTED, AND THAT IS A LEAK-SURFACE
+	// DECISION RATHER THAN TIDINESS. `res.URL` is an absolute URL built by the hub, so it carries
+	// the hostname this repository may not spell (`leakscan.py`'s `reachable-hostname` rule, and
+	// the `denied-identifier` set). This line goes into a GitHub Actions log, which is public for
+	// a public repository. Actions does mask secret VALUES, and both base URLs are secrets, so the
+	// masking would probably catch it — but "probably, via a platform feature" is not the standard
+	// the rest of this module holds, and the run id alone is everything a reader needs to address
+	// the run through the read API. Do not add the URL back for convenience.
+	fmt.Printf("%s%s\n", pushConfirmation, res.RunID)
 
 	report, err := ReadRun(ctx, cfg, res.RunID)
 	if err != nil {

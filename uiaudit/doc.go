@@ -13,15 +13,25 @@
 //     `Secure`-over-`http://localhost` half as "a claim about browsers and no test here
 //     has measured it". A header assertion cannot close that; a jar read after a real
 //     navigation can. See `spike/main.go`, which is the measurement.
+//
 //  2. AXE-CORE OVER THE RENDERED DOM. There is no accessibility check of any kind in this
 //     repository today, and there is no way to add one without a browser: the violations
 //     axe reports are functions of computed style and layout, not of the HTML string.
+//
 //  3. LAYOUT AT TWO WIDTHS. This surface has never been rendered at any width. The
 //     `<meta viewport>` comes from gomponents' HTML5 template and nothing pins it.
-//  4. A SIGNAL `/healthz` STRUCTURALLY CANNOT GIVE. `internal/ui/README.md` names a
-//     deployment in which the session volume disappears after start: readiness passes,
-//     every login fails. A harness that signs in through the form is the only thing that
-//     distinguishes those two worlds.
+//
+//  4. ⚠ RETRACTED, AND KEPT HERE RATHER THAN DELETED. This claimed the harness is the only
+//     thing that can distinguish a deployment whose session volume vanished after start —
+//     readiness passes, every login fails. It is FALSE OF THIS HARNESS, and the same README
+//     already said so in its blind set: this walk only ever boots a FRESH hermetic pod over a
+//     temp directory it created itself, so the broken world is one it cannot construct. Both
+//     statements were right and together they retract the claim.
+//
+//     What IS true: a SMOKE PROBE that signed in against a real deployment would distinguish
+//     them, because `/healthz` answers before the authentication chain runs and a sign-in does
+//     not. NOTHING RUNS ONE — not this harness, not any CI job here. The gap is real and
+//     unclosed; what was wrong was naming this program as its closer.
 //
 // # 🔴 THIS IS A NESTED MODULE, AND THAT IS AN ESCAPE FROM FOUR GATES
 //

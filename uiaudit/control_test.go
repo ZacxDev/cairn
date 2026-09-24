@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/ui"
+	"github.com/chromedp/cdproto/network"
 )
 
 // 🔴 THIS FILE IS THE POSITIVE CONTROL, AND WITHOUT IT EVERY ZERO THIS HARNESS REPORTS IS
@@ -444,6 +447,144 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestTheSessionCookiesFourFlagsAreHONOUREDByTheBrowser turns justification 1 from an assertion
+// into a pinned, re-checkable property.
+//
+// 🔴 EVERY EXISTING GATE IN THIS REPOSITORY CAN ONLY READ THE HEADER THE SERVER SENT. `internal/
+// identity` chooses `__Host-`, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/` and NO `Domain`, and
+// a unit test can assert the `http.Cookie` struct it built — but a struct field is not a browser's
+// behaviour. `session.go`'s own comment says the `Secure`-over-plaintext-loopback half is "a claim
+// about browsers and no test here has measured it", and the `Domain` absence is load-bearing
+// because a conforming browser REFUSES a `__Host-` cookie that carries one. This is the only test
+// in the repository that reads those six facts back out of a real jar, after a real navigation,
+// over a real plaintext loopback origin.
+//
+// ⚠ WHAT IT CANNOT DRIVE, STATED RATHER THAN IMPLIED. Three cookie claims matter; this pins the
+// two that need no third party:
+//
+//  1. ✅ the `__Host-` prefixed `Secure` cookie is STORED on a plaintext loopback origin — here.
+//  2. ✅ its four flags survive the round trip as the browser recorded them — here.
+//  3. ❌ that it is ATTACHED to a cross-site-initiated callback while `SameSite=Strict` would
+//     withhold it. That needs a real provider redirecting from a DIFFERENT origin, which a
+//     hermetic walk has no way to stage. It is measured in an audit transcript and is NOT pinned
+//     by anything in this repository; `README.md` names it in the blind set. Do not read this
+//     test as covering it.
+func TestTheSessionCookiesFourFlagsAreHONOUREDByTheBrowser(t *testing.T) {
+	chromiumOrRefuse(t)
+	bin := os.Getenv("UIAUDIT_CAIRN_UI")
+	if bin == "" {
+		t.Fatal("UIAUDIT_CAIRN_UI must name a built cairn-ui: this test is the only pinned record of " +
+			"the cookie attributes a BROWSER honours, so skipping it silently removes that record")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+	world, err := BootWorld(ctx, os.Getenv("UIAUDIT_REPO_ROOT"), bin, t.TempDir(), 18781)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer world.Stop()
+
+	// 🔴 TWO ORIGINS, BECAUSE ONE MEASUREMENT IS NOT A GENERAL CLAIM AND THE DIMENSION HERE IS THE
+	// ORIGIN HOST. `session.go`'s comment names `localhost`; the pod binds `127.0.0.1`. Chromium's
+	// potentially-trustworthy-origin rule is stated per host, so a `Secure` cookie being stored is
+	// a claim about the host it was measured on. The pod binds loopback once and the BROWSER is
+	// pointed at each name in turn — which is the honest split, since the server cannot tell them
+	// apart and the browser can.
+	//
+	// ⚠ THIS REPLACED A FLAG. An earlier draft of the harness carried a second program that took a
+	// `-base` argument so an operator could re-measure at `localhost`. It rotted inside its own PR
+	// and was deleted; a flag whose only caller is a human who remembers to pass it is a path with
+	// no caller. A subtest is a caller.
+	for _, origin := range []struct{ name, base string }{
+		{"127.0.0.1 — what the pod binds", world.BaseURL},
+		{"localhost — what session.go's comment names", strings.Replace(world.BaseURL, "127.0.0.1", "localhost", 1)},
+	} {
+		t.Run(origin.name, func(t *testing.T) {
+			assertCookieHonoured(t, ctx, world, origin.base)
+		})
+	}
+}
+
+// assertCookieHonoured is the per-origin body. `wantDomain` is derived from the base rather than
+// passed, because a host-only cookie's jar domain IS the origin's host and deriving it removes the
+// chance of asserting one origin's value against another's.
+func assertCookieHonoured(t *testing.T, ctx context.Context, world *World, base string) {
+	t.Helper()
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDomain := u.Hostname()
+
+	b, err := NewBrowser(ctx, base, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	got, err := b.SignIn(fixtureToken)
+	if err != nil {
+		t.Fatalf("%v\n--- cairn-ui log ---\n%s", err, world.Log())
+	}
+
+	// 🔴 READ BACK FROM THE JAR, FIELD BY FIELD, EACH WITH THE ATTACK IT REFUSES. A single
+	// struct-equality assertion would report "the cookie is wrong" and make a reader diff two
+	// printouts; naming each one means a failure says which property was lost.
+	if got.Name != identity.SessionCookieName {
+		t.Fatalf("the browser stored %q, not %q — every assertion below would be about the wrong cookie",
+			got.Name, identity.SessionCookieName)
+	}
+	if !strings.HasPrefix(got.Name, "__Host-") {
+		t.Errorf("the stored name %q lacks the __Host- prefix: a conforming browser then permits a "+
+			"sibling subdomain to set it, which is the attack the prefix refuses", got.Name)
+	}
+	if !got.Secure {
+		t.Error("the browser did NOT record Secure. This is the half `internal/identity/session.go` " +
+			"flags as unmeasured: `Secure` is unconditional there, and a browser that dropped the flag " +
+			"over plaintext loopback would send the session id to every network hop")
+	}
+	if !got.HTTPOnly {
+		t.Error("the browser did NOT record HttpOnly: the session id becomes readable from " +
+			"document.cookie, which also breaks CSRFTokenFor's soundness — a token derived from a " +
+			"value script can read is derivable by the attacker")
+	}
+	if got.SameSite != network.CookieSameSiteLax {
+		t.Errorf("the browser recorded SameSite=%q, want Lax. Strict would break an ordinary link into "+
+			"the surface; None would attach it to a cross-site POST, which is the CSRF vector", got.SameSite)
+	}
+	if got.Path != "/" {
+		t.Errorf("the browser recorded Path=%q, want \"/\": a __Host- cookie with any other path is "+
+			"refused outright by a conforming browser", got.Path)
+	}
+	// 🔴 THE `Domain` ABSENCE IS THE SUBTLE ONE, AND CDP REPORTS IT AS THE HOST. A `__Host-` cookie
+	// that carries a `Domain` attribute is refused outright — so the thing to assert is that the
+	// jar's domain is exactly the origin's host with NO leading dot, which is how a host-only
+	// cookie appears. A leading dot would mean the attribute was sent and honoured.
+	if strings.HasPrefix(got.Domain, ".") {
+		t.Errorf("the browser recorded Domain=%q — a leading dot means a domain-scoped cookie, and a "+
+			"__Host- cookie carrying Domain must be refused outright", got.Domain)
+	}
+	if got.Domain != wantDomain {
+		t.Errorf("the browser recorded Domain=%q, want the origin host %q exactly (host-only)", got.Domain, wantDomain)
+	}
+
+	t.Logf("HONOURED BY %s: name=%s secure=%v httpOnly=%v sameSite=%v path=%q domain=%q (host-only)",
+		"chromium", got.Name, got.Secure, got.HTTPOnly, got.SameSite, got.Path, got.Domain)
+
+	// And the load-bearing half of justification 1: stored is not the same as RE-SENT. A browser
+	// that parsed Set-Cookie and then dropped the cookie for failing the `Secure` requirement looks
+	// identical at the header and differs only in what it sends back.
+	c, err := b.CaptureTarget(Target{Path: ui.RootPath, PushURL: ui.RootPath, LedgerRow: "GET / content"}, Desktop)
+	if err != nil {
+		t.Fatalf("re-navigating with the session cookie: %v\n--- cairn-ui log ---\n%s", err, world.Log())
+	}
+	if c.DocStatus != 200 {
+		t.Fatalf("%s answered %d on a second navigation: the cookie was stored but not RE-SENT",
+			ui.RootPath, c.DocStatus)
+	}
+	t.Logf("and RE-SENT: a second navigation to %s answered %d", ui.RootPath, c.DocStatus)
 }
 
 func digestEntries(c *Capture) int {

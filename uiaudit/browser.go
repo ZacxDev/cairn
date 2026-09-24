@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/ui"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
@@ -315,9 +316,16 @@ func (b *Browser) SignIn(token string) (*network.Cookie, error) {
 	})); err != nil {
 		return nil, err
 	}
+	// 🔴 THE COOKIE IS NAMED, NOT PREFIX-MATCHED, AND THE PREFIX VERSION WAS A LATENT BUG THAT
+	// THE MERGED TREE ARMS. `__Host-` is a SECURITY prefix, not an identity: the auth change adds
+	// `__Host-cairn-oauth` beside `__Host-cairn-session`, so "the first cookie whose name starts
+	// with `__Host-`" is decided by jar iteration order. Taking the wrong one would have this
+	// function report success while returning an OAuth flight cookie, and every attribute the
+	// caller then prints — and `TestTheSessionCookiesFourFlagsAreHONOUREDByTheBrowser` asserts —
+	// would be about the wrong cookie. `identity.SessionCookieName` is the one spelling.
 	var session *network.Cookie
 	for _, c := range cookies {
-		if strings.HasPrefix(c.Name, "__Host-") {
+		if c.Name == identity.SessionCookieName {
 			session = c
 			break
 		}
@@ -327,11 +335,12 @@ func (b *Browser) SignIn(token string) (*network.Cookie, error) {
 		for _, c := range cookies {
 			names = append(names, c.Name)
 		}
-		return nil, fmt.Errorf("sign-in did not take: no __Host- cookie in the jar after submitting %q "+
+		return nil, fmt.Errorf("sign-in did not take: no %s cookie in the jar after submitting %q "+
 			"(landed on %s; jar holds %d cookie(s): %s; token field still rendered: %v). Either the click "+
 			"missed the token form, or the pod refused the credential — a fresh pod makes the five-attempt "+
 			"lockout unlikely, so check the token file and that the session file's directory is writable",
-			signInSubmit, loc, len(cookies), strings.Join(names, ", "), strings.Contains(html, `id="token"`))
+			identity.SessionCookieName, signInSubmit, loc, len(cookies), strings.Join(names, ", "),
+			strings.Contains(html, `id="token"`))
 	}
 	// The weaker corroboration, kept because it distinguishes two worlds the cookie cannot: a
 	// cookie set while the page STILL shows the token form means the redirect did not happen.

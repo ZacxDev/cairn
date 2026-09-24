@@ -85,13 +85,15 @@ func (c PushConfig) Missing() []string {
 
 // Push builds the multipart body and POSTs it.
 //
-// ⚠ THIS LEG IS UNEXERCISED IN THIS CHANGE AND SAYING SO IS PART OF SHIPPING IT. Creating
-// the hub's plugin target and minting the two keys are Supabase-gated operator steps,
-// so no push has been sent from this harness to any server. What IS exercised is the
-// payload's SHAPE, offline, against the server's own rules — refs↔parts integrity, no
-// unknown fields, per-file and body caps, the closed finding-type set, the structured a11y
-// detail and the non-empty-digest rule (`payload_test.go`). The wire leg is the part a
-// reader must not read as verified.
+// ✅ THIS LEG IS EXERCISED: three real pushes, all 200, all `status: done`. The measured record —
+// what the service accepted, and the prediction it corrected — is `README.md` residual 3, which is
+// the canonical site; this comment points there rather than restating it.
+//
+// ⚠ WHAT IS STILL UNMEASURED IS THE REFUSAL PATH, AND THE ASYMMETRY IS THE POINT. Every push the
+// service has seen was ACCEPTED, so none of the 400s `payload_test.go` asserts has ever come back
+// from the server — those remain a claim about this module's copy of the server's rules. If the hub
+// tightens one, those tests stay green and the push starts failing. Nor has a push gone out from
+// CI rather than from a workstation, and no real body has come close to any cap.
 func Push(ctx context.Context, cfg PushConfig, payload *PushPayload, files map[string][]byte) (*PushResult, error) {
 	metaJSON, err := json.Marshal(payload)
 	if err != nil {
