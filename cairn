@@ -2520,7 +2520,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--all-scopes", action="store_true")
     q.set_defaults(func=cmd_search)
 
-    v = common(sub.add_parser("validate", help="parse-check the cached entries"))
+    v = common(sub.add_parser("validate", help="the post-write check: parse, dropped lines, marker reachability"))
     v.set_defaults(func=cmd_validate)
 
     e = common(sub.add_parser("ls-entries", help="one `<scope>/<entry>.md` per line"))

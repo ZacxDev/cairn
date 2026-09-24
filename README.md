@@ -267,7 +267,7 @@ check.
 | a scope's digest | `cairn recall --scope X` (`--ref R`, `--list`, `--limit N`, `--page N`) |
 | find a hunk by text | `cairn search 'query'` (`--all-scopes`) |
 | what the cache actually holds — the ENTRY files, never a scope's `README.md` | `cairn ls-entries` |
-| parse-check the cached entries | `cairn validate` |
+| the post-write check: parse, dropped lines, marker reachability | `cairn validate` |
 | one call of diagnostics | `cairn doctor` (`--json`, `--no-sync`) |
 | append one dated, attributed bullet | `cairn append --scope S --ref R --text '…' --session ID` |
 | replace a whole entry behind `If-Match` | `cairn put --scope S --ref R --file F` |

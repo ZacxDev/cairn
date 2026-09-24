@@ -126,12 +126,27 @@ func LineOpenness(line string) (openness, resolvedBy string) {
 // pattern's tail. There is NO leading `\b`: the oracle's pattern has none either, so
 // `REOPEN:` matches on both sides, at the `OPEN` inside it.
 //
-// ⚠ AND IT INHERITS `hasFoldedPrefix`'S ASCII-ONLY FOLD, which is a NARROWING
-// against CPython's `re.I` rather than an equality: `re.I` on a `str` pattern also
-// folds U+017F (long s) onto `s`, so a line spelling `reſolved:` matches on the
-// oracle and not here. Stated rather than claimed closed — the sibling
-// `markerAlternation` has carried the same narrowing since the port, this is the
-// same trade, and the flag it feeds may only rank urgency.
+// ⚠ EXACTLY ONE NARROWING AGAINST THE ORACLE REMAINS, AND AN EARLIER VERSION OF THIS
+// PARAGRAPH DECLARED ONE WHILE THREE WERE PRESENT. `_MARKER_ANYWHERE` is compiled
+// `re.IGNORECASE` over the WHOLE pattern, and a differential sweep over 13,440
+// generated lines found 3,620 lines the oracle matched and this did not — and NONE
+// the other way — in three populations: `pr#` in the ref run (2,160), a non-ASCII
+// decimal digit in a `#`/`PR#` reference (630), and U+017F (830). The first two are
+// CLOSED — `refRunThenColon` now takes a `foldPR` flag and the digit run reads
+// `unicode.IsDigit`; both fixes are in `refAtomEnds`, and the same sweep re-runs at
+// 830 divergences, every one of them U+017F.
+//
+// The survivor is `hasFoldedPrefix`'S ASCII-ONLY FOLD: `re.I` on a `str` pattern also
+// folds U+017F (long s) onto `s`, so a line spelling `reſolved:` matches on the oracle
+// and not here. 🔴 IT HAS NO JUSTIFICATION BEYOND ITS COST, AND SAYING SO IS THE
+// POINT — do not read a rationale into it. `hasFoldedPrefix` is shared with
+// `markerAlternation` and `_UNMARKED_ACTION`'s transcription, so closing it means full
+// Unicode simple-case-folding in three consumers whose oracles differ in whether they
+// fold at all; that is a separate change with its own differential sweep. What makes
+// the residue tolerable is scope, not merit: this flag may ONLY rank a dropped line's
+// urgency, so a miss costs a word of emphasis and never a silent pass. CLOSING
+// CONDITION: `hasFoldedPrefix` folds by `unicode.SimpleFold` and the sweep below
+// reports 0 divergences across all three populations.
 func LineMentionsMarker(line string) bool {
 	rs := []rune(line)
 	for i := range rs {
@@ -145,7 +160,9 @@ func LineMentionsMarker(line string) bool {
 			if end < len(rs) && isWordish(rs[end]) {
 				continue
 			}
-			if refRunThenColon(rs, end, map[int]bool{}) {
+			// `true`: the oracle's `re.IGNORECASE` covers the ref run too, unlike
+			// `_NEAR_MISS_MARKER`'s scoped `(?i:…)`. See `refRunThenColon`.
+			if refRunThenColon(rs, end, map[int]bool{}, true) {
 				return true
 			}
 		}

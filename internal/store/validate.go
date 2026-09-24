@@ -73,11 +73,54 @@ type DroppedLineFinding struct {
 
 // nuanceBody is the nuance-section body of one entry file, and whether it has one.
 //
-// Deliberately tolerant: a file that cannot be read, or has no nuance section,
-// yields false rather than an error. Both scanners run BESIDE the parse check,
-// never in front of it — a malformed file's own rejection is the finding that
-// matters, and an advisory computed from its half-parsed body would bury it.
+// 🔴 THE PATH'S KIND IS DECIDED BEFORE IT IS OPENED, THROUGH THE LOADER'S OWN
+// TABLE. An `err != nil` check is NOT tolerance for a path that is not a regular
+// file, and measuring it was the point: reading a FIFO returns no error — it BLOCKS
+// until somebody writes, and `validate` never returns. A character device does not
+// error either; `os.ReadFile` grows its buffer until the runtime dies of
+// `fatal error: out of memory`, which no `err` can catch. Measured on this tree at
+// the CLI, both clients, against a cache holding one such path: the FIFO wedged
+// until a `timeout 20` killed it (124), and a symlink to `/dev/zero` under an
+// address-space limit exited 2 here and 1 on the oracle — in each case abandoning
+// every scope after the bad one, where the same tree one commit earlier reported the
+// file as malformed and exited 5.
+//
+// `LoadIndex` never had that exposure: it refuses `other`, `link-to-other`,
+// `broken-link`, `directory` and `link-to-dir` before `open()`, for exactly this
+// reason (a fifo measured wedging a request thread for 25s). This gate is that same
+// table — `loaderEntryActions`, not a fresh predicate — so the advisories read
+// precisely the paths the loader reads and no others.
+//
+// ⚠ THE RESIDUAL IS THE LOADER'S RESIDUAL, AND IT IS NOT EMPTY. The kinds the table
+// TAKES are `regular-file`, `link-to-file`, `indeterminate` and `absent`; on the last
+// three the read can still fail, and `err != nil` is what turns that into
+// "contributes nothing". What it does NOT cover is a REGULAR file whose read is
+// unbounded — a `/proc` file reached through a symlink, say. That is `LoadIndex`'s
+// own RESIDUAL LEDGER, unchanged here and not widened: this function is now exactly
+// as exposed as the reader beside it, which is the property worth having. It is not a
+// claim that nothing can fail.
+//
+// Deliberately tolerant otherwise: a file with no nuance section yields false. Both
+// scanners run BESIDE the parse check, never in front of it — a malformed file's own
+// rejection is the finding that matters, and an advisory computed from its
+// half-parsed body would bury it.
+//
+// ⚠ EACH ENTRY IS READ THREE TIMES PER `validate` — once by `LoadIndex` and once by
+// each scanner — AND THAT IS A DECISION, NOT AN OVERSIGHT. Measured on this tree over
+// a synthetic cache of 300 entries carrying 30 bullets apiece: 36 ms end to end here
+// and 118 ms on the oracle, process start included. Caching the body would put mutable
+// state into two functions whose whole contract is READ-ONLY and independent, to save a
+// fraction of a tenth of a second on a store an order of magnitude larger than any real
+// one. The re-read also has one honest property a cache would remove: each scanner sees
+// the file as it is when IT runs, so a body that changed mid-command cannot be reported
+// under offsets taken from an earlier read.
 func nuanceBody(path string) (string, bool) {
+	// `ActionFor` rather than a map index, so an unmapped kind is the same BUG it
+	// is in the loader rather than a silent zero value.
+	if action, err := ActionFor(ClassifyPath(path), loaderEntryActions); err != nil ||
+		action != Take {
+		return "", false
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
@@ -128,15 +171,29 @@ func ScanUnreachableMarkers(paths []string) []UnreachableMarkerFinding {
 // actually see. Re-deriving it would be a duplicated predicate with the checker's
 // worst failure mode: blessing lines the reader drops.
 //
-// 🔴 WHAT IT STRUCTURALLY CANNOT SEE, stated because the gap is the whole reason to
-// read this twice. A bullet that loses its opening line while ANOTHER bullet sits
-// above it is not detectable — `ParseJournalBullets` appends every non-bullet line
-// to the bullet above, so the orphaned tail is absorbed into it and inherits its
-// date, and the resulting file is BYTE-IDENTICAL to one where that bullet
-// legitimately wrapped. No check can separate the two, and this one does not pretend
-// to: it covers the case where the drop is decidable — text before the first bullet,
-// which includes every entry whose NEWEST bullet lost its head, the store being
-// newest-first.
+// 🔴 WHAT IT STRUCTURALLY CANNOT SEE — THREE CASES, NOT ONE, and an earlier version
+// of this paragraph named only the first. The printed zero names all three
+// (`droppedLinesBlock`), because a caveat the operator never reads is not a caveat.
+// Each is pinned by an invariant guard in `validate_test.go` and its oracle twin.
+//
+//  1. ABSORBED TAIL. A bullet that loses its opening line while ANOTHER bullet sits
+//     above it is not detectable — `ParseJournalBullets` appends every non-bullet
+//     line to the bullet above, so the orphaned tail is absorbed into it and inherits
+//     its date, and the file is BYTE-IDENTICAL to one where that bullet legitimately
+//     wrapped. No check can separate the two.
+//  2. UNCLOSED FENCE. `IsFence` toggles, so an odd count leaves everything after the
+//     last fence marked fenced — and fenced lines are deliberately skipped as sample
+//     text (see below). A bullet swallowed that way yields NO dropped-line finding
+//     and NO bullet, so its `OPEN:` is reported by nothing at all. This is the one
+//     case where the zero is actively misleading rather than merely partial.
+//  3. DUPLICATED nuance HEADING. `ExtractSections` concatenates same-named sections
+//     into one body, so an orphan under the SECOND heading is absorbed by a bullet
+//     from the FIRST, and the offsets reported here index the concatenation rather
+//     than the file.
+//
+// What it DOES cover is the case where the drop is decidable — text before the first
+// bullet, which includes every entry whose NEWEST bullet lost its head, the store
+// being newest-first.
 func ScanDroppedLines(paths []string) []DroppedLineFinding {
 	var out []DroppedLineFinding
 	for _, p := range paths {
@@ -260,12 +317,18 @@ func droppedLinesBlock(nFiles int, dropped []DroppedLineFinding) []string {
 		return []string{fmt.Sprintf(
 			"dropped lines: 0 across %d entry file(s) [%s] — every non-blank "+
 				"`%s` line reaches a bullet some reader will surface. 🔴 PARTIAL "+
-				"BY CONSTRUCTION: this sees text before the FIRST bullet. A bullet "+
-				"that lost its opening line while another bullet sat above it is "+
-				"absorbed into that one and is byte-identical to a legitimate wrap "+
-				"— no check can see it, and this zero is not a claim about that "+
-				"case.",
-			nFiles, ReasonDroppedLine, NuanceHeading)}
+				"BY CONSTRUCTION, IN THREE WAYS, and this zero is a claim about "+
+				"none of them: (1) ABSORBED TAIL — a bullet that lost its opening "+
+				"line while another bullet sat above it is absorbed into that one "+
+				"and is byte-identical to a legitimate wrap, so no check can "+
+				"separate them; (2) UNCLOSED FENCE — an odd number of ``` or ~~~ "+
+				"makes every line after it fenced, and fenced lines are skipped as "+
+				"sample text, so a whole bullet can be swallowed with its `OPEN:` "+
+				"and reported nowhere; (3) DUPLICATED `%s` HEADING — the sections "+
+				"are concatenated into one body, so text under the second is "+
+				"absorbed by a bullet from the first and any offset printed here "+
+				"would index the concatenation rather than the file.",
+			nFiles, ReasonDroppedLine, NuanceHeading, NuanceHeading)}
 	}
 	marked := 0
 	for _, d := range dropped {

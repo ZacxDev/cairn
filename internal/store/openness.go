@@ -3,6 +3,7 @@ package store
 import (
 	"regexp"
 	"time"
+	"unicode"
 
 	"github.com/ZacxDev/cairn/internal/pytext"
 )
@@ -326,7 +327,9 @@ func markerAlternation(rs []rune, p int) bool {
 		if !hasFoldedPrefix(rs[p:], word) {
 			continue
 		}
-		if refRunThenColon(rs, p+len(word), map[int]bool{}) {
+		// `false`: `_NEAR_MISS_MARKER` scopes `(?i:…)` to the marker word alone, so
+		// its `PR#` is case-sensitive. See `refRunThenColon`.
+		if refRunThenColon(rs, p+len(word), map[int]bool{}, false) {
 			return true
 		}
 	}
@@ -335,7 +338,18 @@ func markerAlternation(rs []rune, p int) bool {
 
 // refRunThenColon is `(?:[ \t]*(?:<ref>))*[^A-Za-z0-9\n]{0,4}:` — memoized on the
 // position, which is the whole state, so the walk cannot blow up.
-func refRunThenColon(rs []rune, p int, seen map[int]bool) bool {
+//
+// 🔴 `foldPR` IS NOT A CONVENIENCE FLAG: THE TWO CALLERS TRANSCRIBE TWO PATTERNS THAT
+// GENUINELY DIFFER THERE, AND A SHARED WALK WITH ONE ANSWER WAS WRONG FOR ONE OF THEM.
+// `_MARKER_ANYWHERE` is compiled with `re.IGNORECASE` over the WHOLE pattern, so its
+// `PR#\d+` matches `pr#`, `Pr#` and `pR#`; `_NEAR_MISS_MARKER` puts only the marker
+// word inside a scoped `(?i:OPEN|RESOLVED)` and leaves the ref run OUTSIDE it, so its
+// `PR#` is case-SENSITIVE. Passing `false` from both — which is what a single
+// `hasExactPrefix` here amounted to — made `LineMentionsMarker` narrower than the
+// oracle on every lowercase spelling. Measured over a generated corpus before the fix:
+// 2,160 lines where the oracle matched and this walk did not, all of them `pr#`.
+// `seen` stays one map per top-level call because `foldPR` is constant within one.
+func refRunThenColon(rs []rune, p int, seen map[int]bool, foldPR bool) bool {
 	if seen[p] {
 		return false
 	}
@@ -349,8 +363,8 @@ func refRunThenColon(rs []rune, p int, seen map[int]bool) bool {
 	for q < len(rs) && (rs[q] == ' ' || rs[q] == '\t') {
 		q++
 	}
-	for _, next := range refAtomEnds(rs, q) {
-		if refRunThenColon(rs, next, seen) {
+	for _, next := range refAtomEnds(rs, q, foldPR) {
+		if refRunThenColon(rs, next, seen, foldPR) {
 			return true
 		}
 	}
@@ -360,7 +374,10 @@ func refRunThenColon(rs []rune, p int, seen map[int]bool) bool {
 // refAtomEnds is every position one `<ref>` atom can end at, starting from q:
 // `[0-9a-fA-F]{7,40}(?![0-9a-fA-F])`, `PR#\d+`, `#\d+`, `\([^)]{1,30}\)` or
 // `\[[^\]]{1,30}\]`.
-func refAtomEnds(rs []rune, q int) []int {
+//
+// `foldPR` folds the `PR` literal, and ONLY it — see `refRunThenColon` for which
+// caller wants which and why. The hex atom is already both cases by its own class.
+func refAtomEnds(rs []rune, q int, foldPR bool) []int {
 	var ends []int
 	// The hex atom's lookahead forces the WHOLE maximal hex run to be consumed, so the
 	// run's length is what decides: 7..40 matches, anything else does not.
@@ -373,15 +390,25 @@ func refAtomEnds(rs []rune, q int) []int {
 	}
 	// `PR#\d+` and `#\d+`, with every length of the digit run — a greedy engine would
 	// backtrack into them, and a later atom can begin with a digit.
+	//
+	// 🔴 `\d` IS A UNICODE CLASS IN BOTH ORACLE PATTERNS, NOT `[0-9]`. Neither is
+	// compiled with `re.ASCII`, so CPython's `\d` on a `str` pattern is category `Nd`
+	// — every decimal digit in Unicode, of which ASCII is one block of about 700.
+	// `unicode.IsDigit` is that same category, so this now transcribes the oracle
+	// rather than a narrower reading of it, for BOTH callers: the narrowing was
+	// shared, so `nearMissMarker` carried it too. Measured over a generated corpus
+	// before the fix: 630 lines where the oracle matched here and this walk did not.
 	digitsFrom := -1
 	switch {
-	case hasExactPrefix(rs[q:], "PR#"):
+	case foldPR && hasFoldedPrefix(rs[q:], "pr#"):
+		digitsFrom = q + 3
+	case !foldPR && hasExactPrefix(rs[q:], "PR#"):
 		digitsFrom = q + 3
 	case q < len(rs) && rs[q] == '#':
 		digitsFrom = q + 1
 	}
 	if digitsFrom >= 0 {
-		for j := digitsFrom; j < len(rs) && rs[j] >= '0' && rs[j] <= '9'; j++ {
+		for j := digitsFrom; j < len(rs) && unicode.IsDigit(rs[j]); j++ {
 			ends = append(ends, j+1)
 		}
 	}

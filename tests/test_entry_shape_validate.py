@@ -12,6 +12,10 @@ Every fixture is synthetic and dated year 2000, per `AGENTS.md`.
 """
 from __future__ import annotations
 
+import os
+import socket
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -143,10 +147,54 @@ class TestScanDroppedLines:
     ):
         """Both scanners run BESIDE the parse check, never in front of it: a
         malformed or unreadable file's own rejection is the finding that matters,
-        and an advisory that raised here would replace it with a traceback."""
-        missing = tmp_path / "never-written.md"
-        assert entry_shape.scan_dropped_lines([missing]) == ()
-        assert entry_shape.scan_unreachable_markers([missing]) == ()
+        and an advisory that raised here would replace it with a traceback.
+
+        ⚠ INVARIANT GUARDS, NOT REGRESSION COVERAGE, AND THAT IS THE WHOLE POINT
+        OF SPLITTING THEM OUT. Every kind below fails the read by RAISING an
+        `OSError`, which `_nuance_body` caught before the classifier gate existed
+        and catches now — so all five pass on pre-change code. The docstring they
+        used to sit under claimed to prevent a traceback and this was the only
+        evidence for it; the kinds that actually produced one do not raise at all
+        and are in `TestNonRegularPathsAreRefusedBeforeOpen` below.
+        """
+        cases = {
+            "absent": tmp_path / "never-written.md",
+            "directory": tmp_path / "a-directory.md",
+            "broken-link": tmp_path / "dangling.md",
+            "link-to-dir": tmp_path / "to-a-directory.md",
+            "other (socket)": tmp_path / "a-socket.md",
+        }
+        cases["directory"].mkdir()
+        cases["broken-link"].symlink_to(tmp_path / "nothing-here")
+        cases["link-to-dir"].symlink_to(cases["directory"])
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.bind(str(cases["other (socket)"]))
+            for kind, path in cases.items():
+                assert entry_shape.scan_dropped_lines([path]) == (), kind
+                assert entry_shape.scan_unreachable_markers([path]) == (), kind
+        finally:
+            sock.close()
+
+    def test_a_SYMLINK_to_a_regular_entry_IS_still_scanned(self, tmp_path: Path):
+        """🔴 THE NEGATIVE CONTROL ON THE CLASSIFIER GATE, AND IT IS THE CELL THE
+        WHOLE NARROW-VS-BROAD RULING WAS ABOUT.
+
+        `link-to-file` is `TAKE` in `_LOADER_ENTRY_ACTIONS`: the loader reads a
+        symlink to a regular `*.md` and always has. A gate spelled "regular files
+        only" would make these scanners NARROWER than the loader — printing
+        `dropped lines: 0 across N entry file(s)` over a file the denominator
+        counted and the scanner never opened, which is the reassuring zero this
+        whole block of prose exists to refuse. A mutant that flips the gate to
+        `classify_path(path) == KIND_REGULAR_FILE` is killed here and nowhere
+        else.
+        """
+        real = _write(tmp_path, "  the bullet opening that carried this line is gone.\n"
+                                "- 2000-01-04: a bullet.\n")
+        link = tmp_path / "linked-svc.md"
+        link.symlink_to(real)
+        found = entry_shape.scan_dropped_lines([link])
+        assert [(d.filename, d.offset) for d in found] == [("linked-svc.md", 1)]
 
     def test_the_ABSORBED_TAIL_case_is_KNOWN_INVISIBLE(self, tmp_path: Path):
         """🔴 AN INVARIANT GUARD ON A DECLARED BLIND SPOT — NOT regression coverage.
@@ -163,6 +211,107 @@ class TestScanDroppedLines:
             "  2000-01-05: the NEXT bullet, whose `- ` is gone.\n",
         )
         assert entry_shape.scan_dropped_lines([path]) == ()
+
+    def test_an_UNCLOSED_FENCE_is_KNOWN_INVISIBLE(self, tmp_path: Path):
+        """🔴 AN INVARIANT GUARD ON BLIND SPOT (2) — NOT regression coverage, and
+        the one where the zero is actively misleading rather than partial.
+
+        `_is_fence` toggles, so an odd count leaves every following line fenced,
+        and fenced lines are skipped as sample text by design. A bullet swallowed
+        that way produces no bullet AND no dropped-line finding, so the `OPEN:`
+        below is surfaced by nothing in either scanner. Pinned so that the
+        printed caveat keeps naming it — the previous caveat named only the
+        absorbed tail, and this shape reads exactly like a clean entry.
+        """
+        path = _write(
+            tmp_path,
+            "```\n- 2000-01-04: OPEN: a whole bullet swallowed by one stray fence.\n",
+        )
+        assert entry_shape.scan_dropped_lines([path]) == ()
+        assert entry_shape.scan_unreachable_markers([path]) == ()
+
+    def test_a_DUPLICATED_nuance_heading_is_KNOWN_INVISIBLE(self, tmp_path: Path):
+        """🔴 AN INVARIANT GUARD ON BLIND SPOT (3) — NOT regression coverage.
+
+        `extract_sections` concatenates same-named sections, so the orphan under
+        the SECOND heading arrives immediately after the FIRST section's bullet
+        and is absorbed into it. Measured here: the orphan sits on file line 16
+        and contributes NO finding; the offsets this scanner reports are into the
+        concatenated body, which is not the same coordinate system as the file
+        once a heading repeats.
+        """
+        path = tmp_path / "twice-headed.md"
+        path.write_text(
+            _entry("- 2000-01-04: a bullet under the FIRST heading.\n")
+            + "\n## Nuance / work-history\n\n"
+            "  an orphan under the SECOND heading.\n",
+            encoding="utf-8",
+        )
+        assert entry_shape.scan_dropped_lines([path]) == ()
+        # The positive control on the fixture: the orphan really is in the file,
+        # so the zero above is about absorption and not about a fixture that
+        # never wrote the line.
+        assert any("SECOND heading" in ln for ln in path.read_text().splitlines())
+
+
+class TestNonRegularPathsAreRefusedBeforeOpen:
+    """🔴 THE TWO KINDS THAT DO NOT RAISE, WHICH IS WHY THEY GOT PAST AN
+    `except OSError` AND PAST THE TEST THAT CLAIMED TO COVER THEM.
+
+    Reading a FIFO BLOCKS until somebody writes to it — no error, no return, and
+    `validate` never finishes. `load_index` has refused `other` and
+    `link-to-other` before `open()` since a fifo was measured wedging a request
+    thread for 25s; the advisories added beside it opened every path
+    unconditionally, so `cairn validate` over a cache holding one hung on BOTH
+    clients where the commit before it exited 5.
+
+    ⚠ IT RUNS IN A SUBPROCESS BECAUSE THE PRE-CHANGE FAILURE IS A HANG. An
+    in-process call cannot be watched to fail — it never comes back, and a test
+    that wedges the whole suite is not a red, it is a dead runner. The timeout is
+    what makes the symptom observable and bounded.
+    """
+
+    #: Long enough that a loaded box does not flake it, short enough that a real
+    #: wedge is not mistaken for slowness. The pre-change failure is INFINITE, so
+    #: no value of this can be too small in the direction that matters.
+    TIMEOUT_S = 20
+
+    def _scan_in_a_subprocess(self, path: Path) -> subprocess.CompletedProcess:
+        root = Path(__file__).resolve().parent.parent
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(root / "lib"), env.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep)
+        return subprocess.run(
+            [sys.executable, "-c",
+             "import sys, entry_shape\n"
+             "p = sys.argv[1]\n"
+             "assert entry_shape.scan_dropped_lines([p]) == ()\n"
+             "assert entry_shape.scan_unreachable_markers([p]) == ()\n",
+             str(path)],
+            env=env, timeout=self.TIMEOUT_S, capture_output=True, text=True,
+        )
+
+    def test_a_FIFO_named_like_an_entry_does_not_wedge_the_scanners(
+        self, tmp_path: Path
+    ):
+        """`other`. RED at `d6a4b91`: the child never returns and this raises
+        `subprocess.TimeoutExpired`."""
+        fifo = tmp_path / "wedge.md"
+        os.mkfifo(fifo)
+        done = self._scan_in_a_subprocess(fifo)
+        assert done.returncode == 0, done.stderr
+
+    def test_a_SYMLINK_to_a_fifo_does_not_wedge_them_either(self, tmp_path: Path):
+        """`link-to-other`. `open()` does not care which path shape reached the
+        fifo, which is exactly why the loader's table refuses both kinds and why
+        one case cannot stand for the other: they are two cells."""
+        fifo = tmp_path / "real-fifo"
+        os.mkfifo(fifo)
+        link = tmp_path / "wedge-through-a-link.md"
+        link.symlink_to(fifo)
+        done = self._scan_in_a_subprocess(link)
+        assert done.returncode == 0, done.stderr
 
 
 # --------------------------------------------------------------------------
@@ -244,6 +393,17 @@ class TestLineCarriesMarker:
             "  - 2000-01-04: OPEN: a dated, nested declaration.",
             "  RESOLVED abc1234: a closing claim.",
             "  the remedy landed; RESOLVED abc1234: mid-line, still a declaration.",
+            # 🔴 THE ORACLE HALF OF A TWO-WAY PIN, and the oracle is the side that
+            # was already right. `_MARKER_ANYWHERE` is `re.IGNORECASE` over the
+            # WHOLE pattern (so `PR#\\d+` folds) and is not `re.ASCII` (so `\\d` is
+            # the Unicode `Nd` category). The Go port transcribed both narrower and
+            # was silently missing these; the twin cases live in
+            # `internal/store/validate_test.go`'s `TestLineCarriesMarker`. Pinned
+            # HERE so a future "simplification" of the oracle pattern — adding
+            # `re.ASCII`, or scoping the `(?i:…)` the way `_NEAR_MISS_MARKER` does
+            # — is a red rather than a silent re-narrowing of both clients.
+            "  OPEN pr#12: a lowercase PR reference.",
+            "  OPEN #١٢٣٤٥: a non-ASCII decimal digit reference.",
         ],
     )
     def test_true_on_a_declaration(self, line: str):
@@ -257,13 +417,23 @@ class TestLineCarriesMarker:
             # word boundary, so prose fired and the field shapes did not.
             "  resolved upstream in 1.2.3.",
             "  RESOLVED_ADDR appears in the trace…",
-            # 🔴 THE WORD-BOUNDARY GUARD'S OWN DISCRIMINATING INPUT, and it is
-            # narrow on purpose. `RESOLVED_ADDR appears…` above is rejected by the
-            # COLON rule and would pass with no boundary guard at all, so it
-            # cannot witness the guard. These two put a colon within reach of the
-            # token, so the only thing that can reject them is the boundary.
+            # ⚠ AND SO IS THIS ONE, WHICH THE COMMENT BELOW USED TO CLAIM AS A
+            # BOUNDARY WITNESS. Re-derived by mutation: delete the word-boundary
+            # guard and this line is STILL rejected, by the terminator rule —
+            # `[^A-Za-z0-9\n]{0,4}:` cannot cross `ADDR`, and `_ADDR` is no ref
+            # atom either. It is a second sample of the line above it, one colon
+            # richer. Kept because it is a real prose shape, relabelled because a
+            # comment asserting coverage it does not provide is worse than none:
+            # it stops the next reader looking for a case that does.
             "  RESOLVED_ADDR: the symbol named in the trace.",
+            # 🔴 THE WORD-BOUNDARY GUARD'S OWN DISCRIMINATING INPUT — ONE PER
+            # TOKEN, because the guard is spelled once per token and a mutant can
+            # remove either. The colon sits within the terminator's reach of the
+            # token itself (`_` is not alphanumeric, so `[^A-Za-z0-9\n]{0,4}:`
+            # spans it), which means nothing but the boundary can reject them:
+            # delete it and both flip to True.
             "  OPEN_: an identifier, not a declaration.",
+            "  RESOLVED_: an identifier prefix, not a declaration.",
             "  OPEN SOURCE licences are listed below.",
             "  OPENED the lease and moved on.",
             "  ordinary prose with no marker at all.",
@@ -300,14 +470,26 @@ class TestValidationAdvisoryLines:
         assert "dropped lines: 0 across 7 entry file(s)" in blob
         assert "marker reachability: 0 out-of-reach marker(s) across 7 entry file(s)" in blob
 
-    def test_the_dropped_zero_states_its_OWN_blind_spot(self):
-        """🔴 UNLIKE ITS SIBLING, THIS CHECK IS KNOWINGLY PARTIAL. A bare "0
-        dropped" would read as "no bullet has lost its head", which is a claim it
-        cannot make."""
-        lines = entry_shape.validation_advisory_lines(
-            n_files=1, dropped=(), unreachable=()
+    def test_the_dropped_zero_states_ALL_THREE_of_its_blind_spots(self):
+        """🔴 UNLIKE ITS SIBLING, THIS CHECK IS KNOWINGLY PARTIAL — AND IT IS
+        PARTIAL IN THREE WAYS, WHERE THE PRINTED SENTENCE USED TO NAME ONE.
+
+        A bare "0 dropped" would read as "no bullet has lost its head", which is
+        a claim it cannot make. Naming only the absorbed tail was the same defect
+        one size smaller: the sentence read as a complete enumeration and was not,
+        so an operator reading it would have concluded that an unclosed fence or
+        a duplicated heading WAS covered. Each name below is pinned to an
+        invariant guard above (`test_the_ABSORBED_TAIL_case_is_KNOWN_INVISIBLE`,
+        `test_an_UNCLOSED_FENCE_is_KNOWN_INVISIBLE`,
+        `test_a_DUPLICATED_nuance_heading_is_KNOWN_INVISIBLE`), so the claim and
+        the behaviour move together.
+        """
+        blob = "\n".join(
+            entry_shape.validation_advisory_lines(n_files=1, dropped=(), unreachable=())
         )
-        assert "PARTIAL BY CONSTRUCTION" in "\n".join(lines)
+        assert "PARTIAL BY CONSTRUCTION, IN THREE WAYS" in blob
+        for named in ("ABSORBED TAIL", "UNCLOSED FENCE", "DUPLICATED"):
+            assert named in blob, named
 
     def test_the_DROPPED_block_comes_BEFORE_the_reachability_block(self):
         """🔴 A dropped line is content NO reader reaches, so the marker scan never

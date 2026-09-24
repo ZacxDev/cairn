@@ -1,10 +1,16 @@
 package store
 
 import (
+	"context"
+	"errors"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // The WRITE-PROTOCOL half of `validate`, ported. Every fixture is synthetic and
@@ -108,13 +114,157 @@ func TestAFileWithNoNuanceHeadingContributesNothing(t *testing.T) {
 	}
 }
 
+// ⚠ INVARIANT GUARDS, NOT REGRESSION COVERAGE, AND THAT IS THE WHOLE POINT OF
+// SPLITTING THEM OUT. Every kind below fails the read by RETURNING AN ERROR, which
+// `nuanceBody` handled before the classifier gate existed and handles now — so all
+// five pass on pre-change code. The single-case version of this test claimed to
+// prevent a crash and was the only evidence for it; the kinds that actually produced
+// one do not return an error at all, and they are in
+// `TestNonRegularPathsAreRefusedBeforeOpen`.
 func TestAnUnreadableFileContributesNothingRatherThanFailing(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "never-written.md")
-	if got := ScanDroppedLines([]string{missing}); len(got) != 0 {
-		t.Fatalf("dropped: want none, got %#v", got)
+	dir := t.TempDir()
+	aDir := filepath.Join(dir, "a-directory.md")
+	if err := os.Mkdir(aDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if got := ScanUnreachableMarkers([]string{missing}); len(got) != 0 {
-		t.Fatalf("unreachable: want none, got %#v", got)
+	dangling := filepath.Join(dir, "dangling.md")
+	if err := os.Symlink(filepath.Join(dir, "nothing-here"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	toDir := filepath.Join(dir, "to-a-directory.md")
+	if err := os.Symlink(aDir, toDir); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(dir, "a-socket.md")
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	for kind, path := range map[string]string{
+		"absent":         filepath.Join(dir, "never-written.md"),
+		"directory":      aDir,
+		"broken-link":    dangling,
+		"link-to-dir":    toDir,
+		"other (socket)": sockPath,
+	} {
+		if got := ScanDroppedLines([]string{path}); len(got) != 0 {
+			t.Errorf("%s dropped: want none, got %#v", kind, got)
+		}
+		if got := ScanUnreachableMarkers([]string{path}); len(got) != 0 {
+			t.Errorf("%s unreachable: want none, got %#v", kind, got)
+		}
+	}
+}
+
+// 🔴 THE NEGATIVE CONTROL ON THE CLASSIFIER GATE, AND IT IS THE CELL THE WHOLE
+// NARROW-VS-BROAD RULING WAS ABOUT. `link-to-file` is `Take` in
+// `loaderEntryActions`: the loader reads a symlink to a regular `*.md` and always
+// has. A gate spelled "regular files only" would make these scanners NARROWER than
+// the loader — printing `dropped lines: 0 across N entry file(s)` over a file the
+// denominator counted and the scanner never opened, which is the reassuring zero the
+// advisory's own prose exists to refuse. A mutant that flips the gate to
+// `ClassifyPath(path) == KindRegularFile` is killed here and nowhere else.
+func TestASymlinkToARegularEntryIsStillScanned(t *testing.T) {
+	dir := t.TempDir()
+	real := entryWithNuance(t, dir, "talus-svc.md",
+		"  the bullet opening that carried this line is gone.\n"+
+			"- 2000-01-04: a bullet.")
+	link := filepath.Join(dir, "linked-svc.md")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	got := ScanDroppedLines([]string{link})
+	if len(got) != 1 || got[0].Filename != "linked-svc.md" || got[0].Offset != 1 {
+		t.Fatalf("a symlinked entry must still be scanned, got %#v", got)
+	}
+}
+
+// 🔴 THE TWO KINDS THAT DO NOT RETURN AN ERROR, WHICH IS WHY THEY GOT PAST AN
+// `err != nil` CHECK AND PAST THE TEST THAT CLAIMED TO COVER THEM.
+//
+// Reading a FIFO BLOCKS until somebody writes to it — no error, no return, and
+// `validate` never finishes. `LoadIndex` has refused `other` and `link-to-other`
+// before `open()` since a fifo was measured wedging a request thread for 25s; the
+// advisories added beside it opened every path unconditionally, so `cairn validate`
+// over a cache holding one hung on BOTH clients where the commit before it exited 5.
+//
+// ⚠ IT RUNS IN A SUBPROCESS BECAUSE THE PRE-CHANGE FAILURE IS A HANG. An in-process
+// call cannot be watched to fail — it never comes back, and a test that wedges the
+// whole package is not a red, it is a dead runner. `-timeout` would kill the binary
+// and report the panic against whatever test was running, which is a different and
+// much worse signal. The context timeout is what makes the symptom observable, bounded
+// and attributed.
+func TestNonRegularPathsAreRefusedBeforeOpen(t *testing.T) {
+	if os.Getenv(scanHelperEnv) != "" {
+		// The helper half. `go test` re-execs this binary; this branch does the
+		// scan and exits, so the parent measures a process rather than a call.
+		for _, scan := range []func([]string) int{
+			func(p []string) int { return len(ScanDroppedLines(p)) },
+			func(p []string) int { return len(ScanUnreachableMarkers(p)) },
+		} {
+			if n := scan([]string{os.Getenv(scanHelperEnv)}); n != 0 {
+				os.Exit(3)
+			}
+		}
+		os.Exit(0)
+	}
+
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "wedge.md")
+	mkfifo(t, fifo)
+	realFifo := filepath.Join(dir, "real-fifo")
+	mkfifo(t, realFifo)
+	linked := filepath.Join(dir, "wedge-through-a-link.md")
+	if err := os.Symlink(realFifo, linked); err != nil {
+		t.Fatal(err)
+	}
+
+	for kind, path := range map[string]string{
+		// `open()` does not care which path shape reached the fifo, which is
+		// exactly why the loader's table refuses both kinds and why one case
+		// cannot stand for the other: they are two cells.
+		"other":         fifo,
+		"link-to-other": linked,
+	} {
+		// RED at `d6a4b91`: the child never returns and this is a DeadlineExceeded.
+		ctx, cancel := context.WithTimeout(context.Background(), scanHelperTimeout)
+		cmd := exec.CommandContext(ctx, os.Args[0],
+			"-test.run=^TestNonRegularPathsAreRefusedBeforeOpen$")
+		cmd.Env = append(os.Environ(), scanHelperEnv+"="+path)
+		out, err := cmd.CombinedOutput()
+		// 🔴 READ `ctx.Err()` BEFORE `cancel()`, NOT AFTER. A cancelled context
+		// reports `context canceled` whether or not the deadline was reached, so
+		// the tidy-up-first ordering turns every PASS into a wedge report — which
+		// is how the first draft of this test failed on a tree that was correct.
+		wedged := errors.Is(ctx.Err(), context.DeadlineExceeded)
+		cancel()
+		if wedged {
+			t.Errorf("%s: the scanners WEDGED — the child did not return within %s "+
+				"(output: %s)", kind, scanHelperTimeout, out)
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: helper failed: %v (output: %s)", kind, err, out)
+		}
+	}
+}
+
+// scanHelperEnv carries the path under test into the re-executed helper. Its
+// PRESENCE is what selects the helper half, so it must never be a path that could
+// legitimately be empty.
+const scanHelperEnv = "CAIRN_TEST_SCAN_NONREGULAR_PATH"
+
+// scanHelperTimeout is long enough that a loaded box does not flake it, short enough
+// that a real wedge is not mistaken for slowness. The pre-change failure is INFINITE,
+// so no value here can be too small in the direction that matters.
+const scanHelperTimeout = 20 * time.Second
+
+func mkfifo(t *testing.T, path string) {
+	t.Helper()
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatalf("mkfifo %s: %v", path, err)
 	}
 }
 
@@ -130,6 +280,56 @@ func TestTheAbsorbedTailCaseIsKnownInvisible(t *testing.T) {
 			"  2000-01-05: the NEXT bullet, whose `- ` is gone.")
 	if got := ScanDroppedLines([]string{path}); len(got) != 0 {
 		t.Fatalf("want none (undecidable), got %#v", got)
+	}
+}
+
+// 🔴 AN INVARIANT GUARD ON BLIND SPOT (2) — NOT regression coverage, and the one
+// where the zero is actively misleading rather than partial. `IsFence` toggles, so an
+// odd count leaves every following line fenced, and fenced lines are skipped as sample
+// text by design. A bullet swallowed that way produces no bullet AND no dropped-line
+// finding, so the `OPEN:` below is surfaced by nothing in either scanner. Pinned so
+// the printed caveat keeps naming it.
+func TestAnUnclosedFenceIsKnownInvisible(t *testing.T) {
+	dir := t.TempDir()
+	path := entryWithNuance(t, dir, "talus-svc.md",
+		"```\n- 2000-01-04: OPEN: a whole bullet swallowed by one stray fence.")
+	if got := ScanDroppedLines([]string{path}); len(got) != 0 {
+		t.Fatalf("dropped: want none (fenced), got %#v", got)
+	}
+	if got := ScanUnreachableMarkers([]string{path}); len(got) != 0 {
+		t.Fatalf("unreachable: want none (fenced), got %#v", got)
+	}
+}
+
+// 🔴 AN INVARIANT GUARD ON BLIND SPOT (3) — NOT regression coverage. `ExtractSections`
+// concatenates same-named sections, so the orphan under the SECOND heading arrives
+// immediately after the FIRST section's bullet and is absorbed into it. The offsets
+// this scanner reports index the concatenated body, which stops being the file's
+// coordinate system once a heading repeats.
+func TestADuplicatedNuanceHeadingIsKnownInvisible(t *testing.T) {
+	dir := t.TempDir()
+	path := entryWithNuance(t, dir, "talus-svc.md",
+		"- 2000-01-04: a bullet under the FIRST heading.")
+	extra := "\n" + NuanceHeading + "\n\n  an orphan under the SECOND heading.\n"
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(extra); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if got := ScanDroppedLines([]string{path}); len(got) != 0 {
+		t.Fatalf("want none (absorbed across the duplicated heading), got %#v", got)
+	}
+	// The positive control on the fixture: the orphan really is in the file, so the
+	// zero above is about absorption and not about a fixture that never wrote it.
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "SECOND heading") {
+		t.Fatal("the fixture never wrote the orphan, so the zero above proves nothing")
 	}
 }
 
@@ -206,15 +406,34 @@ func TestLineCarriesMarker(t *testing.T) {
 		{"  - 2000-01-04: OPEN: a dated, nested declaration.", true},
 		{"  RESOLVED abc1234: a closing claim.", true},
 		{"  the remedy landed; RESOLVED abc1234: mid-line, still a declaration.", true},
+		// 🔴 THE TWO NARROWINGS `LineMentionsMarker`'S COMMENT DECLARED CLOSED, PINNED
+		// WHERE A MUTANT CAN SEE THEM. The oracle compiles `_MARKER_ANYWHERE` with
+		// `re.IGNORECASE` over the WHOLE pattern, so its `PR#\d+` folds; and neither
+		// oracle pattern is `re.ASCII`, so `\d` is the Unicode `Nd` category. Both
+		// were false here until `refAtomEnds` grew `foldPR` and `unicode.IsDigit`.
+		// ⚠ They are TRUE cases, so a mutant that made this function always-false is
+		// killed by half the table; what these two alone kill is a REVERT of either
+		// convergence.
+		{"  OPEN pr#12: a lowercase PR reference.", true},
+		{"  OPEN #١٢٣٤٥: a non-ASCII decimal digit reference — FIVE digits, so the\n\t\t// terminator run cannot span them and the digit class is the only thing\n\t\t// that can match. Two digits landed exactly ON `[^A-Za-z0-9\\n]{0,4}`'s\n\t\t// boundary and the mutant SURVIVED a fully green suite.", true},
 		{"  resolved upstream in 1.2.3.", false},
 		{"  RESOLVED_ADDR appears in the trace…", false},
-		// 🔴 THE WORD-BOUNDARY GUARD'S OWN DISCRIMINATING INPUT, and it is narrow on
-		// purpose. The line above is rejected by the COLON rule and would pass with
-		// no boundary guard at all, so it cannot witness the guard. These two put a
-		// colon within reach of the token, so the only thing that can reject them is
-		// the boundary.
+		// ⚠ AND SO IS THIS ONE, WHICH THE COMMENT BELOW USED TO CLAIM AS A BOUNDARY
+		// WITNESS. Re-derived by mutation: delete the word-boundary guard and this
+		// line is STILL rejected, by `terminatorColon` — `[^A-Za-z0-9\n]{0,4}:`
+		// cannot cross `ADDR`, and `_ADDR` is no ref atom either. It is a second
+		// sample of the line above it, one colon richer. Kept because it is a real
+		// prose shape, relabelled because a comment asserting coverage it does not
+		// provide is worse than none: it stops the next reader looking for a case
+		// that does.
 		{"  RESOLVED_ADDR: the symbol named in the trace.", false},
+		// 🔴 THE WORD-BOUNDARY GUARD'S OWN DISCRIMINATING INPUT — ONE PER TOKEN,
+		// because the guard runs once per word in the loop and a mutant can weaken
+		// either. The colon sits within `terminatorColon`'s reach of the token itself
+		// (`_` is not alphanumeric, so the run spans it), which means nothing but the
+		// boundary can reject them: delete it and both flip to true.
 		{"  OPEN_: an identifier, not a declaration.", false},
+		{"  RESOLVED_: an identifier prefix, not a declaration.", false},
 		{"  OPEN SOURCE licences are listed below.", false},
 		{"  OPENED the lease and moved on.", false},
 		{"  ordinary prose with no marker at all.", false},
@@ -222,6 +441,39 @@ func TestLineCarriesMarker(t *testing.T) {
 	for _, c := range cases {
 		if got := LineCarriesMarker(c.line); got != c.want {
 			t.Errorf("LineCarriesMarker(%q) = %v, want %v", c.line, got, c.want)
+		}
+	}
+}
+
+// 🔴 THE `foldPR` FLAG IS AN ASYMMETRY BETWEEN TWO ORACLE PATTERNS, NOT A SETTING —
+// AND WITHOUT THIS TEST THE CHEAPEST "SIMPLIFICATION" IS TO DELETE IT.
+//
+// `_MARKER_ANYWHERE` is `re.IGNORECASE` over the whole pattern, so its ref run folds.
+// `_NEAR_MISS_MARKER` scopes the fold to `(?i:OPEN|RESOLVED)` and leaves `PR#\d+`
+// OUTSIDE it, so its ref run does not. Passing `true` from both call sites would make
+// `nearMissMarker` WIDER than the oracle — inventing a near-miss badge nobody typed,
+// which is the dangerous direction; passing `false` from both is the narrowing this
+// change closed. The pair below is the only place the difference is observable.
+//
+// ⚠ `- Open …` rather than `- OPEN …` DELIBERATELY: the all-caps spelling is matched
+// by the SHOUTED branch, which needs no terminator and no ref run at all, so a shouted
+// fixture would be true whatever `foldPR` does. The sentence-cased spelling is the
+// only one that reaches the walk.
+func TestTheRefRunFoldsPROnlyForTheMarkerAnywherePattern(t *testing.T) {
+	for _, c := range []struct {
+		line              string
+		anywhere, nearMis bool
+	}{
+		{"- Open PR#12: an upper-case PR reference.", true, true},
+		{"- Open pr#12: a lower-case PR reference.", true, false},
+		{"- Open #١٢٣٤٥: a non-ASCII decimal digit, Unicode `\\d` in BOTH patterns.",
+			true, true},
+	} {
+		if got := LineMentionsMarker(c.line); got != c.anywhere {
+			t.Errorf("LineMentionsMarker(%q) = %v, want %v", c.line, got, c.anywhere)
+		}
+		if got := nearMissMarker(c.line); got != c.nearMis {
+			t.Errorf("nearMissMarker(%q) = %v, want %v", c.line, got, c.nearMis)
 		}
 	}
 }
@@ -249,9 +501,17 @@ func TestBothZerosCarryTheirDenominator(t *testing.T) {
 	for _, want := range []string{
 		"dropped lines: 0 across 7 entry file(s)",
 		"marker reachability: 0 out-of-reach marker(s) across 7 entry file(s)",
-		// 🔴 THIS CHECK IS KNOWINGLY PARTIAL. A bare "0 dropped" would read as
-		// "no bullet has lost its head", which is a claim it cannot make.
-		"PARTIAL BY CONSTRUCTION",
+		// 🔴 THIS CHECK IS KNOWINGLY PARTIAL — AND IN THREE WAYS, WHERE THE
+		// PRINTED SENTENCE USED TO NAME ONE. A bare "0 dropped" would read as "no
+		// bullet has lost its head", which is a claim it cannot make; naming only
+		// the absorbed tail was the same defect one size smaller, because the
+		// sentence read as a complete enumeration and was not. Each name is
+		// pinned to an invariant guard above, so the claim and the behaviour move
+		// together.
+		"PARTIAL BY CONSTRUCTION, IN THREE WAYS",
+		"ABSORBED TAIL",
+		"UNCLOSED FENCE",
+		"DUPLICATED",
 	} {
 		if !strings.Contains(blob, want) {
 			t.Errorf("missing %q in:\n%s", want, blob)

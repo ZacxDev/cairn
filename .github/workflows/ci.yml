@@ -721,8 +721,14 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 105 PASS lines measured on this head: 103 cases plus TWO structural checks —
-          # `cache-mtime-parity` and `orphan-reap-parity`. The newest case is
+          # 106 PASS lines measured on this head: 103 cases plus THREE structural checks —
+          # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`. The
+          # last of those seeds a FIFO named `*.md` into a synced cache and runs both
+          # clients' `validate --no-sync` under a timeout: the world CANNOT carry a
+          # non-regular path (the pod tars it, and neither a fifo nor a device node
+          # survives that pipe), so no `Case` row can present the shape, and both clients
+          # wedged forever on it until the advisories were gated on the loader's own path
+          # classifier. The newest case is
           # `validate-write-protocol-advisories`, a scope whose entries PARSE and still hold
           # content no reader can reach — every other scope in the world parses cleanly, so
           # both of `validate`'s advisories print their ZERO branch everywhere else and a
@@ -748,8 +754,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 105 ]; then
-            echo "REFUSING: $passes passes, and 105 were measured — the gate got smaller"
+          if [ "$passes" -lt 106 ]; then
+            echo "REFUSING: $passes passes, and 106 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then

@@ -25,13 +25,22 @@ from host_identity import this_host
 from subsystem_resolver import (
     NUANCE_HEADING,
     POINTERS_HEADING,
+    TAKE,
     UNREACHABLE_MARKER,
+    action_for,
+    classify_path,
     extract_sections,
     line_mentions_marker,
     line_openness,
     normalize_ref,
     parse_journal_bullets,
 )
+# 🔴 THE LOADER'S OWN ACTION TABLE, IMPORTED PRIVATE RATHER THAN RE-DECIDED — see
+# `_nuance_body`. The advisories must read EXACTLY the set of paths `load_index`
+# reads: narrower and they print a zero over a file the loader counted, wider and
+# they `open()` a fifo the loader refused. Either way the second copy of the rule
+# is what drifts, so there is no second copy.
+from subsystem_resolver import _LOADER_ENTRY_ACTIONS  # noqa: E402
 # 🔴 THE READER'S OWN FENCE PREDICATE, IMPORTED PRIVATE RATHER THAN RE-SPELLED.
 # `_is_fence` knows both ``` and ~~~; a hand-spelled copy that knew only the
 # first would report a ~~~-fenced sample line as lost content, and the two
@@ -530,11 +539,52 @@ def line_carries_marker(line: str) -> bool:
 def _nuance_body(path: Path) -> str | None:
     """The `## Nuance / work-history` body of one entry file, or None.
 
-    Deliberately tolerant: a file that cannot be read, or has no nuance section,
-    yields None rather than raising. Both scanners run BESIDE the parse check,
-    never in front of it — a malformed file's own rejection is the finding that
-    matters, and an advisory computed from its half-parsed body would bury it.
+    🔴 THE PATH'S KIND IS DECIDED BEFORE IT IS OPENED, THROUGH THE LOADER'S OWN
+    TABLE. `try: read_text` is NOT tolerance for a path that is not a regular
+    file, and measuring it was the point: `except OSError` cannot catch a FIFO,
+    because reading one does not raise — it BLOCKS until somebody writes, and
+    `validate` never returns. A character device does not raise either; it
+    streams until the process dies of `MemoryError`, which is not an `OSError`
+    and propagates. Measured on this tree at the CLI, both clients, against a
+    cache holding one such path: the FIFO wedged until a `timeout 20` killed it
+    (124), and a symlink to `/dev/zero` under an address-space limit exited 1
+    (Python, bare traceback) and 2 (Go, runtime out-of-memory) — in each case
+    abandoning every scope after the bad one, where the same tree one commit
+    earlier reported the file as malformed and exited 5.
+
+    `load_index` never had that exposure: it refuses `other`, `link-to-other`,
+    `broken-link`, `directory` and `link-to-dir` before `open()`, for exactly
+    this reason (a fifo measured wedging a request thread for 25s). This gate is
+    that same table — `_LOADER_ENTRY_ACTIONS`, not a fresh predicate — so the
+    advisories read precisely the paths the loader reads and no others.
+
+    ⚠ THE RESIDUAL IS THE LOADER'S RESIDUAL, AND IT IS NOT EMPTY. The kinds the
+    table TAKES are `regular-file`, `link-to-file`, `indeterminate` and `absent`;
+    on the last three the read can still fail, and `except OSError` is what turns
+    that into "contributes nothing". What it does NOT cover is a REGULAR file
+    whose read is unbounded — a `/proc` file reached through a symlink, say. That
+    is the loader's own residual ledger (`load_index`), unchanged here and not
+    widened: this function is now exactly as exposed as the reader beside it,
+    which is the property worth having. It is not a claim that nothing can raise.
+
+    Deliberately tolerant otherwise: a file with no nuance section yields None.
+    Both scanners run BESIDE the parse check, never in front of it — a malformed
+    file's own rejection is the finding that matters, and an advisory computed
+    from its half-parsed body would bury it.
+
+    ⚠ EACH ENTRY IS READ THREE TIMES PER `validate` — once by `load_index` and
+    once by each scanner — AND THAT IS A DECISION, NOT AN OVERSIGHT. Measured on
+    this tree over a synthetic cache of 300 entries carrying 30 bullets apiece:
+    118 ms end to end for the oracle and 36 ms for the Go client, interpreter and
+    process start included. Caching the body would put mutable state into two
+    functions whose whole contract is READ-ONLY and independent, to save a
+    fraction of a tenth of a second on a store an order of magnitude larger than
+    any real one. The re-read also has one honest property a cache would remove:
+    each scanner sees the file as it is when IT runs, so a body that changed
+    mid-command cannot be reported under offsets taken from an earlier read.
     """
+    if action_for(classify_path(path), _LOADER_ENTRY_ACTIONS) != TAKE:
+        return None
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -584,15 +634,33 @@ def scan_dropped_lines(
     what consumers actually see. Re-deriving it would be a duplicated predicate
     with the checker's worst failure mode: blessing lines the reader drops.
 
-    🔴 WHAT IT STRUCTURALLY CANNOT SEE, stated because the gap is the whole
-    reason to read this twice. A bullet that loses its opening line while ANOTHER
-    bullet sits above it is not detectable — `parse_journal_bullets` appends
-    every non-bullet line to the bullet above, so the orphaned tail is absorbed
-    into it and inherits its date, and the resulting file is BYTE-IDENTICAL to
-    one where that bullet legitimately wrapped. No check can separate the two,
-    and this one does not pretend to: it covers the case where the drop is
-    decidable — text before the first bullet, which includes every entry whose
-    NEWEST bullet lost its head, the store being newest-first.
+    🔴 WHAT IT STRUCTURALLY CANNOT SEE — THREE CASES, NOT ONE, and an earlier
+    version of this paragraph named only the first. The printed zero names all
+    three (`_dropped_lines_block`), because a caveat the operator never reads is
+    not a caveat. Each is pinned by an invariant guard in
+    `tests/test_entry_shape_validate.py` and its Go twin.
+
+      1. ABSORBED TAIL. A bullet that loses its opening line while ANOTHER
+         bullet sits above it is not detectable — `parse_journal_bullets` appends
+         every non-bullet line to the bullet above, so the orphaned tail is
+         absorbed into it and inherits its date, and the resulting file is
+         BYTE-IDENTICAL to one where that bullet legitimately wrapped. No check
+         can separate the two.
+      2. UNCLOSED FENCE. `_is_fence` toggles, so an odd count leaves everything
+         after the last fence marked fenced — and fenced lines are deliberately
+         skipped as sample text (see below). A bullet swallowed that way yields
+         NO dropped-line finding and NO bullet, so its `OPEN:` is reported by
+         nothing at all. This is the one case where the zero is actively
+         misleading rather than merely partial, which is why it is named first
+         in the printed caveat's remedy order.
+      3. DUPLICATED `## Nuance / work-history` HEADING. `extract_sections`
+         concatenates same-named sections into one body, so an orphan under the
+         SECOND heading is absorbed by a bullet from the FIRST, and the offsets
+         this function reports index the concatenation rather than the file.
+
+    What it DOES cover is the case where the drop is decidable — text before the
+    first bullet, which includes every entry whose NEWEST bullet lost its head,
+    the store being newest-first.
     """
     out: list[DroppedLineFinding] = []
     for p in paths:
@@ -702,11 +770,17 @@ def _dropped_lines_block(
         return [
             f"dropped lines: 0 across {n_files} entry file(s) [{DROPPED_LINE}] — "
             f"every non-blank `{NUANCE_HEADING}` line reaches a bullet some reader "
-            f"will surface. 🔴 PARTIAL BY CONSTRUCTION: this sees text before the "
-            f"FIRST bullet. A bullet that lost its opening line while another "
-            f"bullet sat above it is absorbed into that one and is byte-identical "
-            f"to a legitimate wrap — no check can see it, and this zero is not a "
-            f"claim about that case."
+            f"will surface. 🔴 PARTIAL BY CONSTRUCTION, IN THREE WAYS, and this "
+            f"zero is a claim about none of them: (1) ABSORBED TAIL — a bullet that "
+            f"lost its opening line while another bullet sat above it is absorbed "
+            f"into that one and is byte-identical to a legitimate wrap, so no check "
+            f"can separate them; (2) UNCLOSED FENCE — an odd number of ``` or ~~~ "
+            f"makes every line after it fenced, and fenced lines are skipped as "
+            f"sample text, so a whole bullet can be swallowed with its `OPEN:` and "
+            f"reported nowhere; (3) DUPLICATED `{NUANCE_HEADING}` HEADING — the "
+            f"sections are concatenated into one body, so text under the second is "
+            f"absorbed by a bullet from the first and any offset printed here would "
+            f"index the concatenation rather than the file."
         ]
     n = len(dropped)
     marked = sum(1 for d in dropped if d.carries_marker)
