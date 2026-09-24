@@ -159,9 +159,23 @@ func hasFoldingRune(line string) bool {
 // identically to an ASCII `K` in almost every font, and U+0130/U+0131 to `I`/`i`.
 //
 // 🔴 THE TARGETS ARE A CLAIM ABOUT CPYTHON, SO THEY ARE MEASURED THERE, NOT ARGUED
-// HERE. `tests/test_marker_oracle_sweep.py` sweeps the codepoint space for the SET and
-// checks this MAP's targets against `re.I` on the pinned interpreter, the same way it
-// already pins the set `foldsToASCIILetter` hardcodes.
+// HERE — AND THE MAP ITSELF IS READ OUT OF THIS FILE AND COMPARED THERE, BECAUSE A
+// MEASUREMENT AGAINST A SECOND LITERAL IS BLIND TO THIS ONE.
+// `tests/test_marker_oracle_sweep.py`'s
+// `test_the_GO_fold_target_map_is_pinned_TWO_WAY_against_CPython` sweeps `re.I` on the
+// pinned interpreter for each rune's target and requires THIS map — parsed from this
+// source file — to equal it, in both directions. Before that existed the Python side
+// compared CPython against a dict spelled in the Python file, so a wrong or missing
+// target here was invisible to it: MEASURED by mutation, three of these four entries
+// SURVIVED every test in the tree.
+//
+// ⚠ ONLY THE U+017F ENTRY IS REACHABLE FROM THE WALK, AND SAYING SO IS THE POINT.
+// `asReadUnderReI` respells the MARKER WORD, and the only letter of `open`/`resolved`
+// any of these four folds onto is the `s` of `resolved`. U+0130, U+0131 and U+212A fold
+// onto `i`/`i`/`k`, which appear in neither word, so no corpus row can exercise them
+// however it is spelled — do not read the map's completeness as coverage. What they are
+// for is the two-way pin above: the SET is a claim about the interpreter, and a fifth
+// rune, or a moved target, has to fail SOMETHING.
 //
 // ⚠ `unicode.SimpleFold` IS NOT A SUBSTITUTE. Go's simple-fold orbit connects U+017F
 // to `s` and U+212A to `k`, but U+0130 and U+0131 have no simple fold at all — their
@@ -175,18 +189,75 @@ var reIFoldsOnto = map[rune]rune{
 	'\u212a': 'k', // KELVIN SIGN
 }
 
-// asReadUnderReI respells a line the way `re.IGNORECASE` reads it: every folding rune
-// replaced by the ASCII letter it folds onto. That substitution is the WHOLE of the
-// difference between the oracle's view of such a line and a walk that folds ASCII only
-// — at the marker word, at the `[A-Za-z0-9_]` lookahead and inside the negated
-// `[^A-Za-z0-9\n]` run alike.
-func asReadUnderReI(line string) string {
-	return strings.Map(func(r rune) rune {
-		if a, ok := reIFoldsOnto[r]; ok {
-			return a
+// reIFoldedPrefix is `hasFoldedPrefix` as the ORACLE reads a marker word: the ASCII
+// fold PLUS the four runes above. It is the declared residual, removed.
+func reIFoldedPrefix(rs []rune, want string) bool {
+	w := []rune(want)
+	if len(rs) < len(w) {
+		return false
+	}
+	for i, c := range w {
+		g := rs[i]
+		if a, ok := reIFoldsOnto[g]; ok {
+			g = a
+		} else if g >= 'A' && g <= 'Z' {
+			g += 'a' - 'A'
 		}
-		return r
-	}, line)
+		if g != c {
+			return false
+		}
+	}
+	return true
+}
+
+// asReadUnderReI respells a line with the DECLARED RESIDUAL REMOVED: a folding rune that
+// sits inside a MARKER WORD — a run that folds onto `open` or `resolved` — becomes the
+// ASCII letter `re.I` reads it as. Nowhere else.
+//
+// 🔴 THE SCOPE IS THE FIX, AND RESPELLING THE WHOLE LINE WAS WRONG IN A WAY NO COUNT ON
+// THE COMMITTED CORPUS COULD SEE. This function used to say the substitution was "the
+// WHOLE of the difference … at the marker word, at the `[A-Za-z0-9_]` lookahead and
+// inside the negated `[^A-Za-z0-9\n]` run alike". That is true of `_MARKER_ANYWHERE`,
+// compiled `re.IGNORECASE`, and FALSE of `_NEAR_MISS_MARKER`, which carries no flags and
+// scopes its fold to `(?i:OPEN|RESOLVED)` — so its two character classes are literally
+// ASCII and its terminator run spans `ſ` quite happily (`foldsToASCIILetter`'s own
+// comment says this, and is right). Respelling that `ſ` to an `s` STOPPED the run, so a
+// divergence whose only cause WAS the declared fold stopped vanishing and got reported as
+// `1 divergence(s) outside the ONE declared residual` — a false alarm on the one clause
+// that exists to catch a real narrowing. MEASURED on `- Reſolved ſ: …`, now a corpus row
+// (`tests/marker_corpus.py`): oracle True, walk false, whole-line respelling false,
+// attributed UNDECLARED, the Go sweep RED. No row of that shape existed before, which is
+// why `210 / 0` held over a broken attribution.
+//
+// ⚠ SCOPED TO THE MARKER WORD FOR *BOTH* PROBES, NOT BRANCHED ON THE PATTERN'S FLAGS.
+// The declared residual is the same one in both — `hasFoldedPrefix`'s ASCII-only fold of
+// the marker word (`marker.go`'s paragraph; `nearMissMarker`'s own ledger) — and every
+// other consequence of `re.I` is CLOSED in the walk, so the marker word is the only place
+// there is a cause to remove. On `_MARKER_ANYWHERE` the wider respelling was merely
+// harmless, never load-bearing: MEASURED, the two scopes attribute that probe's 480
+// divergences identically, 480 declared and 0 undeclared either way. Narrower is also the
+// safe direction — see `divergenceIsTheDeclaredFold`.
+func asReadUnderReI(line string) string {
+	rs := []rune(line)
+	inWord := make([]bool, len(rs))
+	for i := range rs {
+		for _, word := range []string{"open", "resolved"} {
+			if reIFoldedPrefix(rs[i:], word) {
+				for k := i; k < i+len(word); k++ {
+					inWord[k] = true
+				}
+			}
+		}
+	}
+	out := make([]rune, len(rs))
+	for i, r := range rs {
+		if a, ok := reIFoldsOnto[r]; ok && inWord[i] {
+			out[i] = a
+			continue
+		}
+		out[i] = r
+	}
+	return string(out)
 }
 
 // divergenceIsTheDeclaredFold attributes one divergence to the declared residual by
@@ -264,8 +335,9 @@ func summarise(divs []markerSweepDivergence) map[string]int {
 // message says so: delete the clause here and the paragraph in `marker.go` together.
 //
 // ⚠ (d) IS A LITERAL, AND A LITERAL IS BRITTLE ON PURPOSE HERE. `> 0` let the
-// residual GROW silently: the spelled gate above absorbed a whole extra divergence
-// (210 -> 211) from a mutant and the run stayed green, because nothing in the tree
+// residual GROW silently: the spelled gate above absorbed a whole extra divergence from
+// a mutant — 210 to 211 on the corpus as it then stood, one row shorter than today's —
+// and the run stayed green, because nothing in the tree
 // pinned either number. A count that must be re-derived when the corpus moves is the
 // cost of a residual that cannot grow behind a passing test. Do NOT do arithmetic on
 // the two sides when this fails — re-run the sweep and copy the number it prints.
@@ -281,7 +353,9 @@ func TestTheGoMarkerTranscriptionsMatchTheOracleExceptTheDeclaredResidual(t *tes
 		want int
 	}{
 		{"LineMentionsMarker vs _MARKER_ANYWHERE", fx.Anywhere, LineMentionsMarker, 480},
-		{"nearMissMarker vs _NEAR_MISS_MARKER", fx.NearMiss, nearMissMarker, 210},
+		// 210 -> 211: one corpus row added, `- Reſolved ſ: …`, the shape that made
+		// the whole-line respelling misattribute. See `asReadUnderReI`.
+		{"nearMissMarker vs _NEAR_MISS_MARKER", fx.NearMiss, nearMissMarker, 211},
 	} {
 		divs := runMarkerSweep(lines, probe.bits, probe.fn)
 		declared, undeclared := 0, 0

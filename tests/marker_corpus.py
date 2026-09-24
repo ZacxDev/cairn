@@ -158,6 +158,19 @@ EXTRA = (
     # makes `nearMissMarker` FALSE where `_NEAR_MISS_MARKER` matches — the pattern
     # carries no flags, so its `[^A-Za-z0-9\n]` run spans `ſ` quite happily.
     "- Open ſ: a long s inside the terminator run, sentence-cased.",
+    # 🔴 A FOLDING RUNE IN *BOTH* CLASS POSITIONS AT ONCE — the row shape that made the
+    # sweep's own attribution clause misreport, and the only one of these nine literal
+    # rows that DIVERGES rather than sitting at zero. `(?i:OPEN|RESOLVED)` folds the `ſ`
+    # in the marker word, so `_NEAR_MISS_MARKER` matches and `nearMissMarker` — whose
+    # `hasFoldedPrefix` is the declared ASCII-only residual — does not. That divergence
+    # IS the declared residual. But the second `ſ` sits in the `[^A-Za-z0-9\n]{0,4}`
+    # terminator run, which carries NO flags on this pattern and therefore spans it
+    # happily; an attribution that respelled the WHOLE line turned that `ſ` into an `s`,
+    # stopped the run, and reported a declared-fold divergence as
+    # `1 divergence(s) outside the ONE declared residual`. MEASURED: with this row
+    # present and `asReadUnderReI` respelling the whole line, the Go sweep is RED.
+    # `- Open ſ:` above cannot reach it — one folding rune cannot be in two places.
+    "- Reſolved ſ: a long s in the marker word AND the terminator run.",
 )
 
 

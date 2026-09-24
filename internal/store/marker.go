@@ -160,13 +160,28 @@ func LineOpenness(line string) (openness, resolvedBy string) {
 // `internal/store/markersweep_test.go`, over the corpus `tests/marker_corpus.py`
 // generates and `internal/store/testdata/marker_oracle_sweep.json` carries; the
 // oracle's side of it is re-derived from the LIVE patterns by
-// `tests/test_marker_oracle_sweep.py` on every pytest run. So: `hasFoldedPrefix` folds by `unicode.SimpleFold`, and
+// `tests/test_marker_oracle_sweep.py` on every pytest run.
+//
+// So, MECHANICALLY: widen `hasFoldedPrefix` to fold the four runes `foldsToASCIILetter`
+// names — `unicode.SimpleFold` alone will NOT do it, U+0130 and U+0131 have no simple
+// fold — re-run
 //
 //	go test ./internal/store/ -run TestTheGoMarkerTranscriptions -count=1 -v
 //
-// passes with the U+017F clause DELETED from that test's ledger. Mechanically it is a
-// closed condition either way — with the residual open, the same command REQUIRES a
-// non-zero U+017F count, so the sweep can never report a bare comfortable zero.
+// and the sweep FAILS, by design, with *"the declared residual reported ZERO
+// divergences"*. That failure is the closing condition met: delete clause (c) and the
+// per-probe `want` counts of clause (d) in `markersweep_test.go`, and this paragraph,
+// in the same change.
+//
+// 🔴 THERE IS NO PER-RUNE CLAUSE AND NO PER-RUNE COUNT, AND AN EARLIER VERSION OF THIS
+// PARAGRAPH TOLD A MAINTAINER TO DELETE ONE. It read *"passes with the U+017F clause
+// DELETED from that test's ledger"* and *"the same command REQUIRES a non-zero U+017F
+// count"*. `classify` emits ONE combined label — `re.I-folding rune
+// (U+0130/0131/017F/212A)` — and the ledger is one number per PROBE, not per rune; a
+// maintainer following that instruction had nothing to delete. (ZacxDev/cairn#109.)
+// What the old sentence got RIGHT is worth keeping: with the residual open the same
+// command requires a non-zero declared count, so the sweep can never report a bare
+// comfortable zero.
 func LineMentionsMarker(line string) bool {
 	rs := []rune(line)
 	for i := range rs {

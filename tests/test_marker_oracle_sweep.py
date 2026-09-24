@@ -166,16 +166,134 @@ def test_the_re_I_folding_runes_are_exactly_the_four_the_code_names():
     # vanish; a wrong target there fails CLOSED (the divergence is reported as
     # undeclared) but for a reason no message would explain. Measured, not argued.
     #
-    # ⚠ A LIST PER RUNE, NEVER A SINGLE VALUE: a rune folding onto TWO ASCII
-    # letters would make `reIFoldsOnto` ambiguous, and a dict comprehension would hide
-    # that by keeping whichever came last.
-    folds_onto = {
+    # ⚠ THIS CLAUSE PINS CPYTHON AGAINST A LITERAL *HERE*, AND THAT IS ALL IT DOES —
+    # `test_the_GO_fold_target_map_is_pinned_TWO_WAY_against_CPython` below is what pins
+    # the GO map. Reading this one as covering both is the F2 defect of ZacxDev/cairn#109.
+    assert _measured_folds_onto() == {0x0130: ["i"], 0x0131: ["i"],
+                                      0x017F: ["s"], 0x212A: ["k"]}, _measured_folds_onto()
+
+
+def _measured_folds_onto() -> dict[int, list[str]]:
+    """Each folding rune's ASCII target(s), measured on the pinned interpreter.
+
+    ⚠ A LIST PER RUNE, NEVER A SINGLE VALUE: a rune folding onto TWO ASCII letters would
+    make `reIFoldsOnto` ambiguous, and a dict comprehension would hide that by keeping
+    whichever came last.
+    """
+    return {
         c: [t for t in "abcdefghijklmnopqrstuvwxyz0123456789_"
             if re.compile(re.escape(t), re.I).fullmatch(chr(c))]
-        for c in (0x0130, 0x0131, 0x017F, 0x212A)
+        for c in _re_i_folding_runes()
     }
-    assert folds_onto == {0x0130: ["i"], 0x0131: ["i"],
-                          0x017F: ["s"], 0x212A: ["k"]}, folds_onto
+
+
+def _re_i_folding_runes() -> tuple[int, ...]:
+    """The non-ASCII codepoints `[A-Za-z0-9_]` matches under `re.I`, swept not assumed."""
+    klass = re.compile("[A-Za-z0-9_]", re.I)
+    return tuple(sorted(c for c in range(0x110000)
+                        if c > 127 and klass.fullmatch(chr(c))))
+
+
+#: The Go source carrying `reIFoldsOnto` — the map the Go sweep's attribution clause
+#: actually reads. Not a copy of it: the tests below parse THIS file.
+GO_SWEEP = ROOT / "internal" / "store" / "markersweep_test.go"
+
+_GO_MAP_BLOCK = re.compile(r"^var reIFoldsOnto = map\[rune\]rune\{$(?P<body>.*?)^\}$",
+                           re.S | re.M)
+_GO_MAP_ENTRY = re.compile(
+    r"^\s*'(?P<key>\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8}|[^'\\])'"
+    r"\s*:\s*'(?P<val>[^'\\])',\s*(?://.*)?$")
+
+
+def _parse_go_fold_map(text: str) -> dict[int, str]:
+    """`reIFoldsOnto` as the Go file spells it, as {codepoint: ASCII target}.
+
+    Takes the SOURCE TEXT rather than reading the file, so the control below can feed it
+    a mutated copy and watch the answer move. A parser whose output nobody has seen
+    change is indistinguishable from one returning a constant.
+    """
+    block = _GO_MAP_BLOCK.search(text)
+    assert block, (
+        "no `var reIFoldsOnto = map[rune]rune{…}` block found in the Go source. Either "
+        "it was renamed or reshaped — in which case this pin is measuring nothing and "
+        "must be re-pointed, not deleted — or this regex went stale."
+    )
+    out: dict[int, str] = {}
+    for line in block.group("body").splitlines():
+        if not line.strip() or line.lstrip().startswith("//"):
+            continue
+        entry = _GO_MAP_ENTRY.match(line)
+        assert entry, (
+            f"unparsed line inside the `reIFoldsOnto` block: {line!r}. This pin reads "
+            "the map by shape; a line it cannot read would otherwise be silently "
+            "skipped, which is exactly the blindness it exists to close."
+        )
+        key = entry.group("key")
+        cp = int(key[2:], 16) if key.startswith("\\") else ord(key)
+        assert cp not in out, f"U+{cp:04X} appears twice in the Go map"
+        out[cp] = entry.group("val")
+    assert out, "the `reIFoldsOnto` block parsed to NOTHING, which would pass vacuously"
+    return out
+
+
+def test_the_GO_fold_target_map_is_pinned_TWO_WAY_against_CPython():
+    """🔴 THE PIN F2 OF ZacxDev/cairn#109 EXISTS FOR: THE GO MAP ITSELF, NOT A COPY.
+
+    `markersweep_test.go`'s comment claimed this file "checks this MAP's targets". It did
+    not — it measured CPython against a dict spelled a few lines further up in THIS file,
+    so a Go-side drift was invisible to it. MEASURED by mutation before this test existed,
+    one mutant per detached `cp -a` copy, each run against BOTH
+    `go test ./internal/store/ -run TestTheGoMarkerTranscriptions` and this file:
+    retargeting or deleting the U+0130, U+0131 or U+212A entry — SIX mutants — all
+    SURVIVED; only the two U+017F mutants were killed, and an unmutated control was green.
+    Three of four entries were unexercised under a comment saying they were measured.
+    They are unreachable BY CONSTRUCTION, not by accident: `asReadUnderReI` respells
+    `open`/`resolved`, and `i`/`k` occur in neither word. With this test, all eight of
+    those mutants die here.
+
+    ⚠ TWO-WAY, IN BOTH DIRECTIONS THAT CAN GO WRONG. A rune CPython folds that the Go map
+    omits fails here (the Go sweep would then report a real declared-fold divergence as
+    undeclared); a rune in the Go map that CPython does not fold fails here too (dead
+    weight that reads as coverage). Equality, never containment.
+    """
+    measured = _measured_folds_onto()
+    for cp, targets in measured.items():
+        assert len(targets) == 1, (
+            f"U+{cp:04X} folds onto {targets} — more than one ASCII target makes "
+            "`reIFoldsOnto` ambiguous and the sweep's respelling arbitrary."
+        )
+    expected = {cp: targets[0] for cp, targets in measured.items()}
+    assert _parse_go_fold_map(GO_SWEEP.read_text(encoding="utf-8")) == expected, (
+        "`internal/store/markersweep_test.go`'s `reIFoldsOnto` disagrees with what "
+        f"CPython {sys.version_info.major}.{sys.version_info.minor} folds. The map is a "
+        "claim about the interpreter; fix the Go map, do not relax this."
+    )
+
+
+def test_the_GO_MAP_PARSER_can_see_a_changed_or_missing_entry():
+    """🔴 THE POSITIVE AND NEGATIVE CONTROLS ON THE PARSER ABOVE.
+
+    A pin built on a regex over source text is only as good as the regex, and "no match"
+    reads identically to "nothing wrong". So: feed it a mutated copy of the REAL file and
+    require the answer to MOVE, and feed it one with an entry removed and require that
+    entry to be gone. Without this pair, a stale pattern would make the test above pass
+    over a map it never read.
+    """
+    real = GO_SWEEP.read_text(encoding="utf-8")
+    parsed = _parse_go_fold_map(real)
+    assert parsed[0x017F] == "s", parsed
+
+    retargeted = real.replace(r"'\u017f': 's'", r"'\u017f': 'k'", 1)
+    assert retargeted != real, (
+        "the U+017F entry is not spelled the way this control expects, so the control "
+        "mutated nothing and proves nothing."
+    )
+    assert _parse_go_fold_map(retargeted)[0x017F] == "k"
+
+    without = "\n".join(ln for ln in real.splitlines()
+                        if not ln.lstrip().startswith(r"'\u212a':"))
+    assert without != real, "the U+212A entry was not found — this control removed nothing"
+    assert 0x212A not in _parse_go_fold_map(without)
 
 
 #: 🔴 THE `EXTRA` ROWS NO COUNT CAN SEE, PINNED TWO-WAY SO THEY CANNOT BE DELETED
@@ -201,6 +319,13 @@ FOLDING_RUNE_EXTRA = (
     "- RESOLVED abc1234 K: a Kelvin sign inside the terminator run.",
     "- OPEN ſſſ: three of them, still inside the run's bound.",
     "- Open ſ: a long s inside the terminator run, sentence-cased.",
+    #: ⚠ THE ONE ROW HERE THAT DIVERGES, so it IS inside the Go sweep's `211` and is not
+    #: blind to a count — it is in this ledger because it belongs beside its siblings, and
+    #: because what it observes is the sweep's ATTRIBUTION clause rather than a walk.
+    #: A folding rune in the marker word AND in the terminator run at once: the first is
+    #: the declared residual, the second is the position `_NEAR_MISS_MARKER` reads ASCII.
+    #: Respelling the WHOLE line conflated them and reported the divergence as UNDECLARED.
+    "- Reſolved ſ: a long s in the marker word AND the terminator run.",
 )
 
 
@@ -208,20 +333,25 @@ def test_the_folding_rune_EXTRA_rows_are_pinned_because_NO_COUNT_CAN_SEE_THEM():
     """🔴 THE ONE POPULATION A PASSING SWEEP IS BLIND TO.
 
     `internal/store/markersweep_test.go` pins the size of the declared residual, so a
-    corpus row that DIVERGES is covered by that number. These rows do not diverge at
-    HEAD, so deleting all eight leaves both counts at 480/210 and every test green —
-    while removing the only lines that can catch a revert of `terminatorColon`'s
-    fold-awareness, in EITHER direction. The ledger above is the guard; this asserts
-    the corpus still carries exactly it.
+    corpus row that DIVERGES is covered by that number. The first EIGHT rows do not
+    diverge at HEAD, so deleting them leaves both counts at 480/211 and every test
+    green — while removing the only lines that can catch a revert of
+    `terminatorColon`'s fold-awareness, in EITHER direction. The ledger above is the
+    guard; this asserts the corpus still carries exactly it.
+
+    ⚠ THE NINTH ROW IS DIFFERENT AND IS LISTED ANYWAY. `- Reſolved ſ: …` DOES diverge,
+    so the Go count would see it go; it is pinned here because it is the same
+    population and because what it guards is the sweep's ATTRIBUTION clause — delete
+    it and `asReadUnderReI` may go back to respelling the whole line with nothing red.
     """
     present = tuple(
         line for line in marker_corpus.EXTRA
         if any(ch in line for ch in "İıſK")
     )
     assert present == FOLDING_RUNE_EXTRA, (
-        "the folding-rune rows of `marker_corpus.EXTRA` have moved. They produce no "
-        "divergence, so no count in either client can see them go; if a row is "
-        "genuinely obsolete, say in the commit which revert stops being observable."
+        "the folding-rune rows of `marker_corpus.EXTRA` have moved. All but the last "
+        "produce no divergence, so no count in either client can see them go; if a row "
+        "is genuinely obsolete, say in the commit which revert stops being observable."
     )
 
 
