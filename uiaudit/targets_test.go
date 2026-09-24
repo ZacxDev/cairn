@@ -303,14 +303,25 @@ func TestANonGETRowIsSkippedAndCOUNTED(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var wantSkipped int
+	// ⚠ THE EXPECTATION COUNTS BOTH KINDS OF SKIP, AND COUNTING ONLY NON-GET ROWS WAS A DEFECT
+	// THE MERGED TREE EXPOSED. On a ledger that carries a `notADocument` row this test read
+	// "5 non-GET rows, 7 skips" and failed — not because the walk was wrong but because the
+	// expectation was narrower than the thing it measured. A test that hardcodes which KINDS of
+	// skip exist goes stale the moment a kind is added, which is the same failure mode as a
+	// hardcoded path list.
+	wantSkipped := 0
 	for _, row := range ledger {
-		if !strings.HasPrefix(row, "GET ") {
+		fields := strings.Fields(row)
+		switch {
+		case !strings.HasPrefix(row, "GET "):
+			wantSkipped++
+		case len(fields) >= 2 && notADocument[fields[1]] != "":
 			wantSkipped++
 		}
 	}
 	if len(skipped) != wantSkipped {
-		t.Fatalf("the ledger has %d non-GET row(s); the walk listed %d skip(s)", wantSkipped, len(skipped))
+		t.Fatalf("the ledger implies %d skip(s) (non-GET plus notADocument); the walk listed %d:\n%s",
+			wantSkipped, len(skipped), strings.Join(skipped, "\n"))
 	}
 	if err := LedgerAccounting(ledger, targets, skipped); err != nil {
 		t.Fatal(err)
@@ -396,8 +407,14 @@ func TestStylesheetCheckIsGatedOnTheLedgerAndCanGoRED(t *testing.T) {
 			// The gate. The server below would FAIL every assertion, so a check that ran
 			// anyway could not pass — which is what makes this a real control on the gate
 			// rather than a tautology.
+			// ⚠ AN EXPLICIT LEDGER, NOT `ui.DeclaredRouteLedger()`. Using the live ledger here
+			// was a defect the merged tree exposed: once the stylesheet row LANDS, the live
+			// ledger contains it and this case stops testing the gate — it silently becomes a
+			// second copy of the honest case, and the gate it was written for is then covered by
+			// nothing. A fixture that cannot acquire the row is the only thing that keeps
+			// measuring the `false` branch.
 			name:     "no stylesheet row in the ledger — SKIPPED, and the server is broken to prove the gate held",
-			ledger:   ui.DeclaredRouteLedger(),
+			ledger:   []string{"GET / content", "GET /sign-in public", "POST /sign-in public"},
 			served:   served{status: 404, contentType: "text/html", body: ""},
 			wantSkip: true,
 		},

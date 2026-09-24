@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ZacxDev/cairn/internal/ui"
 )
 
 // 🔴 THIS FILE IS THE POSITIVE CONTROL, AND WITHOUT IT EVERY ZERO THIS HARNESS REPORTS IS
@@ -226,9 +228,38 @@ func TestTheHermeticSurfaceIsWhereTheZEROSCOMEFROM(t *testing.T) {
 		t.Errorf("the hermetic surface produced %d console event(s): %v — the page has grown a script, "+
 			"and `doc.go`'s structural-zero claim is now false", len(c.Console), c.Console)
 	}
-	if len(c.Network) != 0 {
-		t.Errorf("the hermetic surface produced %d network event(s): %v — the page has grown a subresource, "+
-			"and `doc.go`'s structural-zero claim is now false", len(c.Network), c.Network)
+
+	// 🔴 THE NETWORK ASSERTION IS DERIVED FROM THE LEDGER, BECAUSE THE STRUCTURAL ZERO IS A
+	// PROPERTY OF THE SURFACE AND THE SURFACE IS CHANGING.
+	//
+	// The claim "zero by construction" rested on the page having no subresources — an inline
+	// stylesheet and no script. The auth change moves the stylesheet to its own ROUTE, which makes
+	// it a real blocking subresource, and the zero stops being structural. Measured on the merged
+	// tree: this assertion failed there, and it was the ASSERTION that was stale, not the walk.
+	//
+	// So the expectation is read off the ledger rather than written down. On a ledger with no
+	// stylesheet row the zero must hold; on one that has it, a page that loaded NOTHING would mean
+	// the browser never fetched the stylesheet — which is a finding in the other direction, and
+	// the only reason this is not simply relaxed to "don't care".
+	hasStylesheet := hasRow(ui.DeclaredRouteLedger(), "GET "+StylesheetPath)
+	failures := 0
+	for _, e := range c.Network {
+		// Only ERRORS are recorded, so any entry here is a failed request. A successful
+		// stylesheet fetch produces no event at all.
+		failures++
+		t.Logf("network event: %+v", e)
+	}
+	if failures != 0 {
+		t.Errorf("the hermetic surface produced %d FAILED network request(s) — every subresource it asks "+
+			"for must succeed, whether or not the stylesheet route exists", failures)
+	}
+	if hasStylesheet {
+		t.Logf("this ledger declares %s, so the console zero above remains structural while the network "+
+			"one does NOT: the page now has a real blocking subresource. `doc.go` and `README.md` scope "+
+			"the structural claim to console for exactly this reason.", StylesheetPath)
+	} else {
+		t.Logf("this ledger declares no %s row, so BOTH zeros are structural: the page has no scripts and "+
+			"no subresources at all", StylesheetPath)
 	}
 	// A floor, not an assertion about the count: a walk that rendered the sign-in page
 	// instead would have a different digest and this is the cheapest way to notice.

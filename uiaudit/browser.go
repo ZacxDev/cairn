@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/ui"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
@@ -267,27 +268,45 @@ func (b *Browser) drain() (console, netw []Event) {
 // CREDENTIAL ANSWERS 401. If a walk starts failing on a token that is known good, the
 // lockout is the first thing to suspect and the code is the last: the pod is fresh on
 // every run precisely so that the counter is too.
+// 🔴 THE SELECTOR NAMES THE FORM BY ITS ACTION, AND A BARE `form button[type=submit]` WAS A
+// MEASURED DEFECT RATHER THAN A STYLE POINT.
+//
+// The sign-in page grew a SECOND form — an OAuth provider button — and it comes FIRST in document
+// order. `chromedp.ByQuery` takes the first match, so a bare selector clicked "Sign in with
+// GitHub" and started a provider flight instead of submitting the token. Measured on the merged
+// tree: `<form class="signin-provider" method="post" action="/sign-in/github">` precedes
+// `<form class="signin" method="post" action="/sign-in">`.
+//
+// The action is `ui.SignInPath`, so this selector is derived from the same constant the renderer's
+// form action is, and a page that adds a third form cannot steal the click.
+var signInSubmit = `form[action="` + ui.SignInPath + `"] button[type=submit]`
+
 func (b *Browser) SignIn(token string) (*network.Cookie, error) {
 	var loc, html string
 	if err := chromedp.Run(b.ctx,
 		chromedp.EmulateViewport(int64(Desktop.Width), int64(Desktop.Height)),
-		chromedp.Navigate(b.base+"/sign-in"),
+		chromedp.Navigate(b.base+ui.SignInPath),
 		// `#token` is the single-field token path's input. Waiting on it rather than on a
 		// timeout is what makes a sign-in page that failed to render a loud failure.
 		chromedp.WaitVisible(`#token`, chromedp.ByID),
 		chromedp.SendKeys(`#token`, token, chromedp.ByID),
-		chromedp.Click(`form button[type=submit]`, chromedp.ByQuery),
+		chromedp.Click(signInSubmit, chromedp.ByQuery),
 		chromedp.Sleep(600*time.Millisecond),
 		chromedp.Location(&loc),
 		chromedp.OuterHTML(`html`, &html, chromedp.ByQuery),
 	); err != nil {
-		return nil, fmt.Errorf("driving the sign-in form: %w", err)
-	}
-	if strings.Contains(html, `id="token"`) {
-		return nil, fmt.Errorf("sign-in did not take: %s still renders the token field "+
-			"(a fresh pod, so a lockout is unlikely; check the token file and the session file's directory)", loc)
+		return nil, fmt.Errorf("driving the sign-in form (selector %q): %w", signInSubmit, err)
 	}
 
+	// 🔴 THE VERDICT IS THE COOKIE, NOT THE ABSENCE OF A WORD, AND THE ORDER OF THESE TWO CHECKS
+	// IS THE FIX FOR A SECOND DEFECT THE SAME MEASUREMENT EXPOSED.
+	//
+	// The old code decided "sign-in took" from `!strings.Contains(html, 'id="token"')` — a guard
+	// on a SPELLING, satisfied by ANY page that happens not to render that field. When the click
+	// went to the OAuth button, the page it landed on satisfied it, and the walk reported
+	// "signed in, but no __Host- cookie is in the jar" — a contradiction it should never have
+	// been able to express. Asserting the STATE (a session cookie exists) rather than the absence
+	// of a word makes the two checks agree by construction.
 	var cookies []*network.Cookie
 	if err := chromedp.Run(b.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		got, err := network.GetCookies().Do(ctx)
@@ -296,16 +315,31 @@ func (b *Browser) SignIn(token string) (*network.Cookie, error) {
 	})); err != nil {
 		return nil, err
 	}
+	var session *network.Cookie
 	for _, c := range cookies {
 		if strings.HasPrefix(c.Name, "__Host-") {
-			return c, nil
+			session = c
+			break
 		}
 	}
-	// A cookie that is absent from the jar and a cookie the browser refuses to ATTACH are
-	// different failures, and only the second one is interesting. Reaching here means the
-	// first: the page rendered as signed in, yet the jar has no `__Host-` cookie.
-	return nil, fmt.Errorf("signed in, but no __Host- cookie is in the jar (%d cookie(s) present): "+
-		"the browser parsed Set-Cookie and then dropped it", len(cookies))
+	if session == nil {
+		names := make([]string, 0, len(cookies))
+		for _, c := range cookies {
+			names = append(names, c.Name)
+		}
+		return nil, fmt.Errorf("sign-in did not take: no __Host- cookie in the jar after submitting %q "+
+			"(landed on %s; jar holds %d cookie(s): %s; token field still rendered: %v). Either the click "+
+			"missed the token form, or the pod refused the credential — a fresh pod makes the five-attempt "+
+			"lockout unlikely, so check the token file and that the session file's directory is writable",
+			signInSubmit, loc, len(cookies), strings.Join(names, ", "), strings.Contains(html, `id="token"`))
+	}
+	// The weaker corroboration, kept because it distinguishes two worlds the cookie cannot: a
+	// cookie set while the page STILL shows the token form means the redirect did not happen.
+	if strings.Contains(html, `id="token"`) {
+		return nil, fmt.Errorf("a session cookie was set but %s still renders the token field: "+
+			"the credential was accepted and the post-sign-in redirect did not happen", loc)
+	}
+	return session, nil
 }
 
 // SignOut clears the session by clicking the sign-out control, so the public rows are
