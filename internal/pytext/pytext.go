@@ -337,10 +337,15 @@ func DecodeUTF8Replace(data []byte) string {
 // `TestLowerIsCPythonExceptForFinalSigma` holds every row above with CPython's answer
 // BESIDE this function's, and fails when one MOVES IN EITHER DIRECTION — a lost U+0130
 // expansion, and equally the day somebody teaches this function Final_Sigma without
-// revisiting the decision above. `TestLowerMatchesCPython` pins rule 1 and is
-// STRUCTURALLY UNABLE to see rule 2: it compares one code point at a time, and an isolated
-// `Σ` lowercases to `σ` on both sides. That test's positive control is that the U+0130 row
-// FAILS when this function delegates straight to `strings.ToLower`.
+// revisiting the decision above. `TestLowerMatchesCPython` pins rule 1 and asserts NOTHING
+// about rule 2 in either direction — which is a property of how that test is BUILT, not a
+// structural impossibility, and an earlier version of this sentence claimed the latter
+// ("STRUCTURALLY UNABLE to see rule 2: it compares one code point at a time"). Its
+// single-code-point sweep genuinely cannot: an isolated `Σ` lowercases to U+03C3 on both
+// sides. Its second sweep walks `<r>İ<r>`, which DOES reach rule 2 — at `r = U+03A3` and
+// nowhere else — so that one code point is skipped there on purpose, leaving the ledger
+// above the sole router for a Final_Sigma change. That test's positive control is that the
+// U+0130 row FAILS when this function delegates straight to `strings.ToLower`.
 //
 // ⚠ THE COMBINING MARK IS THE WHOLE HAZARD, AND A PREVIOUS COMMENT DISMISSED IT ON A
 // MEASUREMENT THAT ONLY LOOKED AT THE EASY CASE. `store.NormalizeRef` folds everything

@@ -210,14 +210,24 @@ func TestContainsSpace(t *testing.T) {
 // from this implementation.
 //
 // 🔴 THE NAME OVERSTATES THE SCOPE, AND THIS PARAGRAPH IS THE CORRECTION RATHER THAN A
-// RENAME. What this test pins is the UNCONDITIONAL rule (U+0130's expansion). It is
-// STRUCTURALLY UNABLE to see the CONTEXTUAL one — Final_Sigma — in either half: the table
-// holds no multi-letter Greek word, and the structural sweep below compares
-// `Lower(string(r))` against `strings.ToLower(string(r))` ONE CODE POINT AT A TIME, where
-// an isolated `Σ` lowercases to `σ` on both sides because Final_Sigma needs a cased letter
-// BEFORE the sigma. So no widening of that sweep can reach rule 2, however many code
-// points it walks. `TestLowerIsCPythonExceptForFinalSigma` below is the guard that does,
-// and `Lower`'s docstring carries the decision not to implement it.
+// RENAME. What this test pins is the UNCONDITIONAL rule (U+0130's expansion), and it pins
+// NOTHING about the CONTEXTUAL one — Final_Sigma — in either direction.
+//
+// Two of its three parts cannot see rule 2 at all: the table holds no multi-letter Greek
+// word, and the single-code-point sweep compares `Lower(string(r))` against
+// `strings.ToLower(string(r))` ONE CODE POINT AT A TIME, where an isolated `Σ` lowercases
+// to U+03C3 on both sides because Final_Sigma needs a cased letter BEFORE the sigma.
+//
+// 🔴 THE THIRD PART — the per-rune sweep over `<r>İ<r>` — DOES REACH RULE 2, AND AN EARLIER
+// VERSION OF THIS PARAGRAPH CLAIMED THE OPPOSITE ("no widening of that sweep can reach
+// rule 2, however many code points it walks"). That sentence was refuted by the sweep fifty
+// lines below it: at `r = U+03A3` the swept string is `ΣİΣ`, whose trailing Σ is preceded
+// by a cased letter and ends the string, so CPython answers U+03C2 there where the simple
+// mapping answers U+03C3. That single code point is SKIPPED by that form rather than
+// pinned — the sweep's own note carries the reason — which is what keeps a test named
+// `MatchesCPython` from asserting the answer CPython does not give, and leaves
+// `TestLowerIsCPythonExceptForFinalSigma` the SOLE guard a Final_Sigma change has to move.
+// `Lower`'s docstring carries the decision not to implement it.
 func TestLowerMatchesCPython(t *testing.T) {
 	// U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE, built from its code point rather than
 	// pasted, per this file's header — and U+0307 is invisible beside an `i` on screen,
@@ -273,18 +283,53 @@ func TestLowerMatchesCPython(t *testing.T) {
 	//
 	// So the loop gets its OWN sweep, over strings that DO contain U+0130. The property is
 	// that the expansion happens exactly at the U+0130 and every other code point passes
-	// through the SIMPLE mapping untouched — asserted at both ends and the middle of the
-	// string, because a special case keyed on position would otherwise show up at one only.
+	// through the SIMPLE mapping untouched.
+	//
+	// 🔴 TWO FORMS, BECAUSE ONE OF THEM REACHES NO INTERIOR POSITION AND THIS COMMENT USED TO
+	// CLAIM IT ASSERTED "both ends and the middle of the string". In `<r>İ<r>` the swept code
+	// point occupies positions 0 and 2 ONLY — the middle is ALWAYS the U+0130, which leaves
+	// through the expansion branch before the simple-mapping write is reached. Measured: a
+	// special case keyed on an interior index (`if i > 0 && i < len(rs)-1 { b.WriteRune('Z');
+	// continue }` ahead of that write) SURVIVED this whole package and died only downstream,
+	// in `internal/store` and `internal/report`. `İ<r>İ` is the form that puts an arbitrary
+	// code point in the interior, and it is what makes the positional claim true HERE.
 	for r := rune(0); r <= 0x10FFFF; r++ {
 		if (r >= 0xD800 && r <= 0xDFFF) || r == 0x0130 {
 			continue
 		}
 		side := strings.ToLower(string(r))
-		in := string(r) + dotted + string(r)
-		want := side + "i" + dot + side
+
+		// FORM 1 — the swept code point at BOTH ENDS.
+		//
+		// ⚠ U+03A3 IS EXCLUDED FROM THIS FORM, AND IT IS THE ONLY EXCLUSION. `ΣİΣ` ends in a
+		// sigma preceded by a cased letter, so Final_Sigma FIRES on CPython (U+03C2) while
+		// this form's expectation is the simple-mapping answer (U+03C3): measured over the
+		// whole range, that is the ONE code point of 1,112,063 where this form and CPython's
+		// `.lower()` disagree. Pinning it would make a test named `MatchesCPython` assert the
+		// answer CPython does not give, and would make the day somebody implements
+		// Final_Sigma fail HERE — with a message about the simple-mapping contract, naming
+		// the wrong cause — as well as in the ledger test built to route exactly that change.
+		// `TestLowerIsCPythonExceptForFinalSigma` owns this code point instead, and its
+		// `both rules at once` row runs it through this very loop.
+		if r != 0x03a3 {
+			in := string(r) + dotted + string(r)
+			want := side + "i" + dot + side
+			if got := Lower(in); got != want {
+				t.Fatalf("the per-rune loop must apply the SIMPLE mapping to every code point "+
+					"but U+0130, with the swept code point at BOTH ENDS: Lower(%+q) = %+q, "+
+					"want %+q", in, got, want)
+			}
+		}
+
+		// FORM 2 — the swept code point in the INTERIOR. No exclusion is needed and none is
+		// made: measured over the whole range, this form's expectation equals CPython's
+		// `.lower()` at all 1,112,063 code points, U+03A3 included — a cased letter FOLLOWS
+		// that sigma here, so Final_Sigma does not fire and the two rules do not meet.
+		in := dotted + string(r) + dotted
+		want := "i" + dot + side + "i" + dot
 		if got := Lower(in); got != want {
-			t.Fatalf("the per-rune loop must apply the SIMPLE mapping to every code point "+
-				"but U+0130: Lower(%+q) = %+q, want %+q", in, got, want)
+			t.Fatalf("the per-rune loop must apply the SIMPLE mapping at an INTERIOR position "+
+				"too, not only at the ends: Lower(%+q) = %+q, want %+q", in, got, want)
 		}
 	}
 }
