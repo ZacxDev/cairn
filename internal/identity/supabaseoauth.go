@@ -249,8 +249,16 @@ func (o *SupabaseOAuth) AuthorizeURL(challenge string) string {
 	q.Set("code_challenge_method", "s256")
 	// `flow_type` is what makes GoTrue return a `code` to exchange rather than a token in
 	// the URL FRAGMENT. Without it the access token arrives after a `#`, which no server
-	// ever receives — the flow would need script to read it, and the CSP forbids inline
-	// script. So this parameter is what keeps this flow scriptless.
+	// ever receives — the flow would need script in the page to read `location.hash` and
+	// POST it back. So this parameter is what keeps this flow scriptless.
+	//
+	// ⚠ THE REASON THIS COMMENT USED TO GIVE IS RETRACTED AND THE DECISION IS NOT. It read
+	// "…and the CSP forbids inline script"; the browser surface's content-security policy
+	// has since been DELETED by operator decision, so nothing in a browser forbids script
+	// there any more. What survives is the stronger half, which never depended on a header:
+	// a token in the fragment is a token in the browser's history that the server never
+	// sees, and a flow that needs script to complete is a flow with a second way in. Do not
+	// re-derive "the CSP is gone, so the implicit flow is fine now".
 	q.Set("flow_type", "pkce")
 	return o.authBase + "/authorize?" + q.Encode()
 }

@@ -354,33 +354,56 @@ assertion above is satisfied by a page with no links at all.
 | the `ToLower` is deleted | rc 0 | `safeHref refused a permitted URL "HTTPS://tracker.invalid/issue/1"` |
 | the whitespace/C0 strip is deleted | rc 0 | `safeHref refused a permitted URL "  https://tracker.invalid/issue/1  "` |
 
-### Response hardening, which is a second barrier and not the guard
+### Response hardening: one header, and a policy that was DELETED on purpose
 
-`X-Content-Type-Options: nosniff` and a CSP of
-`default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'`.
-The escaping is the guard; these are behind it.
+`X-Content-Type-Options: nosniff`. That is the whole list. The escaping is the guard; that
+header is behind it.
 
-🔴 **NO `script-src` AND NO `img-src`, AND BOTH ABSENCES ARE ONE RULE:** a clause that permits
-something the code forbids is a policy nobody can read as a claim about the code. `render.go`
-emits neither, and `TestHostileEntryTextIsEscaped` lists both `"<script"` and `"<img"` among
-the substrings it asserts can never appear in a rendered page. `default-src 'none'` forbids
-them today; **naming a directive is how one of them becomes possible.** A script or an image
-arriving later adds its clause *in the commit that adds it* — see `ContentSecurityPolicy`'s own
-comment, which also records that both were briefly in a draft of this very change and why
-neither survived review.
+🔴 **THE CONTENT-SECURITY-POLICY IS GONE, BY OPERATOR DECISION — challenged once with the
+blast radius below and reaffirmed.** It was
+`default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`.
+`TestTheHTMLResponseSendsNoContentSecurityPolicy` pins the absence on both HTML shapes and on
+the report-only spelling, so restoring the header is a decision somebody takes in that test
+rather than a line that reappears in a merge.
 
-⚠ **THIS PARAGRAPH WAS WRONG ABOUT THE POLICY IT DESCRIBED, AND IN TWO DIFFERENT WAYS — the
-record is the point.** It read *"a CSP of `default-src 'none'; style-src 'unsafe-inline';
-base-uri 'none'; form-action 'none'` — no script permitted at all. The stylesheet is a Go
-constant in `render.go` that no input reaches, which is what makes `style-src 'unsafe-inline'`
-buy an attacker nothing."* The `form-action 'none'` half had been **stale since Phase B**, when
-the constant moved to `'self'` so the forms would work — so the README asserted a stricter
+**What was given up, named rather than left to be reconstructed:**
+
+| clause removed | what it had been stopping |
+|---|---|
+| `frame-ancestors 'none'` | the surface is FRAMABLE — clickjacking the share flow's grant and revoke POSTs |
+| `form-action 'self'` | an injected form can be induced to POST offsite |
+| `base-uri 'none'` | an injected `<base href>` re-points every relative URL on the page |
+| `default-src 'none'` | arbitrary script and third-party origins become loadable |
+
+🔴 **THE FRAMING ROW IS THE ONE THE TWO CROSS-SITE GATES CANNOT COVER, AND THAT IS WHY IT IS
+FIRST.** A clickjacked submit originates INSIDE the page: its `Origin` really is this origin
+and the CSRF token rendered into it really is the victim's, so gate (2) and gate (6) both
+pass. Framing was never something those gates could see; refusing to be framed was the only
+defence and it is now absent.
+
+🔴 **AND THE GATES THEMSELVES ARE UNTOUCHED, WHICH IS A DIFFERENT SENTENCE FROM THE ONE ABOVE.**
+`sameOrigin` and `csrfTokenFor` are derived from the request method by `stateChanging`, they
+read no header `writeHTML` sets, and `session_test.go` measures them. So are the `__Host-`
+cookie attributes and the sign-in lockout. Reading "the CSP is gone" as "cross-site protection
+is gone" is the mistake this paragraph exists to stop.
+
+⚠ **ONE THING THE DELETION DID NOT BUY, BECAUSE THE OPPOSITE IS THE OBVIOUS GUESS:** the policy
+was never what blocked Tailwind. `style-src 'self'` permits a compiled same-origin stylesheet —
+which is precisely how the stylesheet was served *under* that policy, from `/static/app.css`.
+The absent build step was the blocker; it is now present (`tailwind.css` → `app.css`, gated by
+`checks.ui-stylesheet-is-current`). The header deletion removed a control and additionally
+unblocked the Tailwind Play CDN, which Tailwind documents as not for production and which this
+surface does **not** use.
+
+⚠ **THE PARAGRAPH THIS SECTION REPLACED WAS WRONG ABOUT THE POLICY IT DESCRIBED, TWICE, and the
+record is kept because it is the reason to distrust a prose restatement of a header.** It read
+*"a CSP of `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`
+— no script permitted at all."* The `form-action 'none'` half had been **stale since Phase B**,
+when the constant moved to `'self'` so the forms would work — so this README asserted a stricter
 policy than the code shipped, for two phases, in the section whose whole job is to state what
-the response promises. And the `'unsafe-inline'` half was true and is now **gone**: the
-stylesheet is served from `/static/app.css`, so an inline `<style>` does not apply at all.
-Which direction each clause moved is in `ContentSecurityPolicy`'s own comment in `server.go` —
-read it there rather than restating it here, because that is the string the header test pins as
-a literal.
+the response promises. The lesson outlives the header: a policy written in prose drifts from the
+policy on the wire, which is why what remains here is a table of what was REMOVED and a test
+name, not a string anybody has to keep in step.
 
 ## 🔴 `TrustedHeader` is not in this binary's identity chain
 
@@ -1165,17 +1188,64 @@ path-mismatch row — both of which the same change introduced. The startup line
 state it is in, for the reason it already reports whether a share can be recorded: the answer is
 decided at startup and discovered at the first click otherwise.
 
-## The stylesheet is now a route
+## The stylesheet is a route, and its bytes are BUILD OUTPUT
 
-`style-src 'self'` forbids an inline `<style>`, so all three pages link `/static/app.css` and
-`handleStylesheet` serves the same Go constant. It is `classPublic` because the sign-in page
-links it and that page answers anybody — a stylesheet behind the chain renders the way in as
-unstyled text. It serves a **constant**, not a directory: an `http.FileServer` would need a
-prefix match, which is a second way for a request to reach a handler and one
-`TestEveryServedPathComesFromTheLedger` structurally cannot probe.
+All three pages link `/static/app.css` and `handleStylesheet` serves it. It is `classPublic`
+because the sign-in page links it and that page answers anybody — a stylesheet behind the chain
+renders the way in as unstyled text. It serves an **embedded file**, not a directory: an
+`http.FileServer` would need a prefix match, which is a second way for a request to reach a
+handler and one `TestEveryServedPathComesFromTheLedger` structurally cannot probe.
 `TestTheStylesheetIsServedAsItsOwnRoute` pins the RELATIONSHIP rather than either side — it
 reads each page's `<link href>` and then fetches that exact href, because two separate
 assertions would both pass for a route nobody links or a link nobody serves.
+
+⚠ **THE ROUTE'S ORIGINAL REASON IS GONE AND THE ROUTE IS NOT.** It existed because
+`style-src 'self'` forbade an inline `<style>`; that policy was deleted (see *Response
+hardening* above), so an inline stylesheet would work again. What keeps the route is the
+size: the bytes are generated now, ~29 KB, and inlining them would send that on every
+response instead of once per five minutes.
+
+### The theme: Tailwind, compiled, checked in
+
+| file | what |
+|---|---|
+| `internal/ui/tailwind.css` | the SOURCE — `@theme` tokens, the component layer, the reduced-motion block |
+| `internal/ui/app.css` | the OUTPUT — generated, checked in, `//go:embed`ed by `stylesheet.go` |
+| `nix run .#build-ui-stylesheet` | regenerates the output from the source, in the working tree |
+| `checks.ui-stylesheet-is-current` | regenerates in a sandbox and REFUSES a difference |
+
+🔴 **REGENERATE AND DIFF, NEVER HAND-EDIT `app.css`** — the same discipline
+`internal/report/testdata/reader_fixtures.json` carries, and for a sharper reason: the file is
+embedded, so a stale one is not a weaker comparison, it is *the theme the surface actually
+serves*. Nothing about forgetting to regenerate is loud on its own — the build succeeds, every
+Go test passes, and the previous stylesheet ships. The check is what makes it loud, and it
+validates its own instrument first: a negative control appends a line to the generated bytes
+and requires `diff` to report a difference, exiting **2** ("could not vouch") if the control
+compares equal.
+
+🔴 **THE CLASS NAMES IN `render.go` ARE WHAT THE GENERATOR SCANS, SO EVERY ONE IS A LITERAL.**
+`tailwind.css` declares `@import "tailwindcss" source(none)` plus `@source "./*.go"`, which
+pins the scan to exactly `internal/ui/*.go`. Two consequences bind the next edit: a class
+assembled at run time (`"text-" + size`) is invisible to that scan and would silently not
+exist in the stylesheet; and automatic source detection is OFF deliberately, because it walks
+the whole project and `flake.nix`'s `onlyGo` filter hands the sandbox a *different* tree from
+the one a developer builds in — two trees, two stylesheets, a check red for a reason nobody
+can see.
+
+The semantic class names (`.viewer`, `.signin`, `.replica-honesty`, `.entry`, …) are kept
+rather than replaced by utilities at each call site: two are asserted by tests here, one is
+driven by a browser harness outside this repository, and `@apply` in a component layer is
+Tailwind's documented answer for exactly that. Utilities are used directly for page layout.
+
+🔴 **`prefers-reduced-motion: reduce` REMOVES THE MOTION, IT DOES NOT SHORTEN IT.** The common
+snippet sets `animation-duration: 0.01ms`, which still *runs* the animation — a reader who
+asked for no motion gets one frame of the same transform. The block sets `animation: none` and
+`transition: none`, unlayered and `!important`, so it beats both the component layer and any
+utility. It is a global block rather than per-call-site `motion-reduce:` variants for the
+reason a spelled guard is weaker than a structural one: a variant is one forgotten class away
+from being wrong, at a place where being wrong is an accessibility failure. Every keyframe set
+uses `both` fill with a visible `to` state, so removing the animation leaves the element in its
+ordinary static rendering rather than invisible at `opacity: 0`.
 
 ## The mutation rows — 31 mutants, 31 killed, and the battery is NOT in the tree
 
@@ -1198,7 +1268,7 @@ BUILD-FAIL and never as a kill.
 
 | mutant | test that KILLED it |
 |---|---|
-| the CSP reverted to the Phase A/B policy | `TestTheHTMLResponseCarriesItsHardeningHeaders` |
+| ~~the CSP reverted to the Phase A/B policy~~ — **RETIRED**: the policy it reverted no longer exists, and the test that killed it no longer asserts one. The replacement mutant is *the CSP header is restored*, killed by `TestTheHTMLResponseSendsNoContentSecurityPolicy`. Both rows are kept because a table row that silently changes meaning is worse than one that says it changed | `TestTheHTMLResponseSendsNoContentSecurityPolicy` |
 | an undeclared path answers the old uniform 401 | `TestEveryServedPathComesFromTheLedger` |
 | the root redirect deleted | `TestTheRootRedirectsABrowserAndRefusesEverythingElse` |
 | the root redirect WIDENED to every client (`Accept` ignored) | the same test |

@@ -516,16 +516,52 @@ func (s *Server) renderPage(w http.ResponseWriter, id identity.Identity, scopes 
 
 // writeHTML is the ONE place an HTML response's headers are chosen, so the sign-in page
 // and the content page cannot end up under different policies.
+//
+// 🔴 THIS SURFACE SENDS NO `Content-Security-Policy`, AND THAT IS AN OPERATOR DECISION
+// RATHER THAN AN OVERSIGHT. The header was
+// `default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`
+// and it was removed on an explicit instruction, challenged once with the blast radius
+// below and reaffirmed. `TestTheHTMLResponseSendsNoContentSecurityPolicy` pins the absence,
+// so restoring the header is a decision somebody takes there, in the open, rather than a
+// line that reappears in a merge.
+//
+// 🔴 WHAT WAS GIVEN UP, NAMED SO THE NEXT READER DOES NOT HAVE TO RECONSTRUCT IT — all of
+// it accepted knowingly on a public, cookie-authenticated surface carrying a
+// state-changing share flow:
+//
+//   - `frame-ancestors 'none'` → this surface is FRAMABLE, so the share flow's grant and
+//     revoke POSTs are clickjackable. That is the one cross-site vector neither gate below
+//     can see: a clickjacked submit originates INSIDE the page, so its `Origin` really is
+//     this origin and the CSRF token in it really is the victim's, and both gates pass.
+//   - `form-action 'self'` → an injected form can be induced to POST offsite.
+//   - `base-uri 'none'` → an injected `<base href>` can re-point every relative URL.
+//   - `default-src 'none'` → arbitrary script and third-party origins become loadable.
+//
+// ⚠ AND ONE THING IT DID *NOT* BUY, RECORDED BECAUSE THE OPPOSITE IS THE OBVIOUS GUESS:
+// the policy was never what blocked the Tailwind build. `style-src 'self'` permits a
+// compiled same-origin stylesheet — which is exactly how the stylesheet was served UNDER
+// this policy, at [StylesheetPath]. The absent build step was the blocker, and it is now
+// present (`tailwind.css` → `app.css`). Deleting the header removed a control; it did not
+// unblock the theme.
+//
+// 🔴 THE CROSS-SITE GATES ARE UNTOUCHED BY ALL OF IT AND MUST STAY THAT WAY. `sameOrigin`
+// and `csrfTokenFor` in `session.go` are derived from the request method via
+// `stateChanging`, they never read a header this function sets, and they are this surface's
+// actual CSRF defence. "The CSP is gone" is not a reason to touch either one. The XSS
+// defence is likewise unchanged and was always the real one: gomponents' text and
+// attribute-value escaping plus the AST ban on `Raw`/`Rawf`, measured by
+// `TestHostileEntryTextIsEscaped` and `TestNoRawNodeConstructorAppearsInTheUIPackage`. What
+// is gone is the barrier BEHIND that guard, not the guard.
 func writeHTML(w http.ResponseWriter, code int, body string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// 🔴 `nosniff` IS NOT DECORATION HERE. Every byte of the body below came out of
 	// a store entry somebody wrote, and a browser that content-sniffs a response it
 	// was told is HTML can be talked into a different type by the leading bytes.
+	//
+	// ⚠ IT IS NOW THE ONLY HARDENING HEADER ON AN HTML RESPONSE, which is a reason to
+	// keep it rather than a reason to reconsider it: it is not part of the policy that
+	// was deleted and nothing about that decision reaches it.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// The content-security policy is a SECOND barrier behind the escaping rather than a
-	// replacement for it — the escaping is the guard, and `TestHostileEntryTextIsEscaped`
-	// is what measures it.
-	w.Header().Set("Content-Security-Policy", ContentSecurityPolicy)
 	w.WriteHeader(code)
 	_, _ = w.Write([]byte(body))
 }
@@ -540,8 +576,10 @@ func writeHTML(w http.ResponseWriter, code int, body string) {
 // structurally cannot probe (see `routes`, where the share flow makes the same ruling about
 // path parameters). One constant at one exact path has none of those questions.
 //
-// ⚠ `nosniff` IS SET HERE TOO, AND NOT BECAUSE THE BYTES ARE UNTRUSTED — they are a constant
-// in this repository. It is set because a browser that content-sniffs a stylesheet into
+// ⚠ `nosniff` IS SET HERE TOO, AND NOT BECAUSE THE BYTES ARE UNTRUSTED — they are build
+// output checked into this repository, generated from `tailwind.css` and reaching the binary
+// through a `//go:embed`, so no input reaches them either. It is set because a browser that
+// content-sniffs a stylesheet into
 // something else is a browser this response has to be explicit with; the header costs one
 // line and its absence is the kind of thing a reader assumes is deliberate.
 func (s *Server) handleStylesheet(w http.ResponseWriter, _ *http.Request, _ identity.Identity) {
@@ -551,77 +589,15 @@ func (s *Server) handleStylesheet(w http.ResponseWriter, _ *http.Request, _ iden
 	// long-lived cache on an unversioned path means a deployment that changes the stylesheet
 	// serves a stale one to every returning browser until the entry expires, with nothing to
 	// invalidate it. Five minutes keeps the page off the wire on a reload and cannot outlive
-	// a deploy by long. A content-hashed path is the answer that would license `immutable`,
-	// and it needs a build step this binary does not have.
+	// a deploy by long. A content-hashed path is the answer that would license `immutable`.
+	// ⚠ THE REASON THAT USED TO BE GIVEN — "it needs a build step this binary does not
+	// have" — IS NOW FALSE AND THE CONCLUSION IS NOT. There IS a build step: `tailwind.css`
+	// is compiled to `app.css` and embedded. What it does not produce is a content-HASHED
+	// path, and the hash is the whole mechanism — it is what makes the URL change when the
+	// bytes do. Adding one means the route's path stops being a constant, which
+	// `TestEveryServedPathComesFromTheLedger` and `stylesheetLink` both read as one, so it
+	// is a change to the ledger rather than to this line.
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(stylesheet))
 }
-
-// ContentSecurityPolicy is the policy every HTML response carries.
-//
-// 🔴 WHAT CHANGED FROM THE PHASE A/B POLICY, AND WHICH DIRECTION EACH MOVE WENT — because
-// "we simplified the CSP" reads as "we relaxed it" and one of these is strictly stricter:
-//
-//   - `style-src 'unsafe-inline'` → `style-src 'self'`. This is a TIGHTENING, and it is the
-//     one that cost something: an inline `<style>` element is now IMPOSSIBLE in a conforming
-//     browser, so the stylesheet moved out of the document and is served from
-//     [StylesheetPath] as its own route. `'unsafe-inline'` was defensible while the
-//     stylesheet was a Go constant no input reached — that argument was true — but it
-//     licensed every inline style on the page, including one a later edit adds from a
-//     value that is not a constant. `'self'` licenses a same-origin FILE and nothing else.
-//   - `default-src 'none'`, `base-uri 'none'` and `form-action 'self'` are UNCHANGED.
-//     `base-uri 'none'` is what stops an injected `<base href>` re-pointing every relative
-//     URL on the page, and `form-action 'self'` admits this surface's own forms while
-//     refusing an injected `<form action="//elsewhere">` that would exfiltrate what
-//     somebody types.
-//   - 🔴 `frame-ancestors 'none'` IS NEW, IT IS A RESTRICTION, AND IT CLOSES A HOLE BOTH
-//     CROSS-SITE GATES ARE STRUCTURALLY BLIND TO. `frame-ancestors` has NO `default-src`
-//     fallback — that is the trap, and an earlier version of this comment read as though
-//     `default-src 'none'` covered framing. It does not, and nothing else here did: this
-//     surface sent no `X-Frame-Options` either, so any site could frame it.
-//     The concrete path is CLICKJACKING a state change: frame `GET /share?scope=…` for an
-//     authenticated victim, overlay the Revoke button, and let them click. The submit then
-//     ORIGINATES INSIDE THE PAGE, so `Origin` equals `Host` and the CSRF token rendered into
-//     it is the victim's own — **gate (2) and gate (6) are both satisfied**, because both
-//     ask whether the request came from this origin and a clickjacked submit genuinely did.
-//     Framing is the one cross-site vector neither gate can see, and the only defence is to
-//     refuse being framed at all.
-//     ⚠ IT DOES NOT CONTRADICT THE DELETE-WHAT-THE-CODE-FORBIDS RULE BELOW. `script-src` and
-//     `img-src` were PERMISSIONS for things this package cannot emit; this is a REFUSAL of
-//     something any third party can do to a page that serves nothing to arrange it. The two
-//     directions are not the same decision, and conflating them would delete a guard.
-//
-// 🔴 THERE IS NO `script-src` AND NO `img-src`, AND BOTH ABSENCES ARE THE SAME RULE: A
-// CLAUSE THAT PERMITS SOMETHING THE CODE FORBIDS IS A POLICY NOBODY CAN READ AS A CLAIM
-// ABOUT THE CODE. `default-src 'none'` already forbids script, image, frame, font, connect
-// and everything else this package does not emit; naming a directive is how one of those
-// becomes POSSIBLE. Measured on this package: `render.go` emits no `<script>` and no
-// `<img>`, and `TestHostileEntryTextIsEscaped` lists BOTH `"<script"` and `"<img"` among the
-// substrings it asserts can never appear in a rendered page.
-//
-// ⚠ BOTH WERE BRIEFLY IN THIS CONSTANT DURING THE CHANGE THAT WROTE IT, AND RECORDING THAT
-// IS THE POINT RATHER THAN TIDYING IT AWAY. `img-src 'self' data:` was drafted for a favicon
-// nobody had asked for. `script-src 'self'` was in the policy this change was HANDED, with
-// the stated benefit of "enabling a future progressive enhancement without a second policy
-// edit" — which is anticipating a requirement that does not exist, in the very change that
-// deliberately built the sign-in flow SCRIPTLESS (see `providerForm`: the implicit OAuth flow
-// was available and was refused precisely so no script would be needed). Before that clause,
-// script on this surface was IMPOSSIBLE; with it, script became possible with no consumer, on
-// a public-internet surface serving client-confidential notes. It is deleted.
-//
-// 🔴 THE RULE FOR WHOEVER COMES NEXT, IN ONE FORM FOR BOTH: A SCRIPT OR AN IMAGE ARRIVING
-// LATER ADDS ITS CLAUSE IN THE COMMIT THAT ADDS THE SCRIPT OR THE IMAGE — never before, and
-// never "so it is ready". The two sides collide by construction and that is deliberate:
-// adding the directive here without reworking the escaping guard leaves the guard RED, and
-// reworking the guard without adding the directive leaves the asset blocked by
-// `default-src 'none'`. They move in ONE commit, and this sentence is the warning that they
-// must.
-//
-// 🔴 AND THE ACTUAL XSS DEFENCE IS UNCHANGED BY ALL OF IT, WHICH IS THE POINT RATHER THAN A
-// CAVEAT. The guard is gomponents' text and attribute-value escaping plus the AST ban on
-// `Raw`/`Rawf` and on non-constant element and attribute NAMES — see this package's doc
-// comment, `safeHref`, and `TestNoRawNodeConstructorAppearsInTheUIPackage`. The policy is
-// the barrier BEHIND that.
-const ContentSecurityPolicy = "default-src 'none'; style-src 'self'; " +
-	"base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
