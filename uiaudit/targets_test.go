@@ -106,46 +106,58 @@ func TestExpandLinksAcceptsOnlyWhatTheSurfacePublishedForThisPage(t *testing.T) 
 	}
 }
 
-// mergedLedger is the ledger the auth change produces, transcribed from ITS `routes.go` rather
-// than imagined — the two OAuth rows and the stylesheet row, with the classes that file gives
-// them.
+// TestTheLedgerCARRIESEveryNotADocumentRow is the assertion the `notADocument` closing condition
+// promised, and it is expressible only now that the auth change is merged.
 //
-// 🔴 IT IS A FIXTURE RATHER THAN AN IMPORT BECAUSE THE ROWS DO NOT EXIST ON THIS BASE, AND THAT
-// IS ALSO WHY THIS TEST MATTERS. Both changes are green on their own branches and touch ZERO
-// files in common, so `git merge-tree` exits 0 and every per-branch gate stays green — and the
-// merged tree is still red, because this walk's accounting refuses a `GET` row nobody classified.
-// That is the disjoint-file merge break: one side widened the route ledger, the other added a
-// consumer of it. This fixture is what makes the merged tree's answer knowable from HERE.
+// 🔴 IT REPLACES A TRANSCRIBED FIXTURE, AND DELETING THAT FIXTURE WAS THE POINT RATHER THAN TIDYING.
+// While the auth change was unmerged this file carried `mergedLedger` — a hand-copied ledger used to
+// predict the merged tree's behaviour. That was the right instrument then and is the wrong one now: a
+// transcription is a copy, and a copy of a ledger is exactly what this module refuses everywhere
+// else. The real `ui.DeclaredRouteLedger()` carries those rows today, so a prediction is replaced by
+// a measurement and the fixture is gone.
 //
-// ⚠ A TRANSCRIPTION IS A COPY AND CAN GO STALE. It stops being needed the moment the rows land,
-// at which point the real `ui.DeclaredRouteLedger()` carries them and this fixture should be
-// deleted rather than updated — the closing condition on `notADocument`'s literals is the same
-// event.
-var mergedLedger = []string{
-	"GET / content",
-	"GET /share content",
-	"GET /sign-in public",
-	"GET /sign-in/github/callback public",
-	"GET /static/app.css public",
-	"POST /share",
-	"POST /sign-in public",
-	"POST /sign-in/github public",
-	"POST /sign-out",
-	"POST /unshare",
+// What it pins: every key in `notADocument` is a row the ledger actually declares. A key matching no
+// row is inert — it would silently stop excluding anything, and the row it was meant to exclude would
+// fall through to the `default` refusal, which reads as "somebody added a route" rather than "a
+// constant was renamed". Both halves are one failure seen from opposite ends.
+func TestTheLedgerCARRIESEveryNotADocumentRow(t *testing.T) {
+	ledger := ui.DeclaredRouteLedger()
+	if len(notADocument) == 0 {
+		t.Fatal("`notADocument` is empty, so every assertion here passes vacuously")
+	}
+	for path, reason := range notADocument {
+		if !hasRow(ledger, "GET "+path) {
+			t.Errorf("`notADocument` carries %q but the ledger declares no `GET %s` row. A key that "+
+				"matches nothing excludes nothing, and the route it was meant to exclude then falls "+
+				"through to the unclassified-row refusal — which reads as a NEW route rather than a "+
+				"renamed constant.\n  ledger: %v", path, path, ledger)
+		}
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("`notADocument[%q]` has an empty reason; a skip with no reason cannot be told from "+
+				"a row somebody gave up on", path)
+		}
+	}
+	// And the two rows are the ones the constants name, so a constant repointed at a different route
+	// fails here rather than silently changing what the walk skips.
+	for _, want := range []string{ui.StylesheetPath, ui.OAuthCallbackPath} {
+		if notADocument[want] == "" {
+			t.Errorf("%q is not in `notADocument`; the walk would try to capture it as a page", want)
+		}
+	}
 }
 
-// TestTheMERGEDLedgerIsFullyACCOUNTEDFor is the regression guard for the break the merged tree
-// has.
+// TestTheREALLedgerIsFullyACCOUNTEDFor replaces the fixture-driven version of this check.
 //
-// It asserts all five `GET` rows are classified, that the two new ones are SKIPPED WITH A REASON
-// rather than captured, and — the half that matters — that the reason says WHY each is not a
-// document. A skip with no reason is the thing `notADocument` exists to prevent.
-func TestTheMERGEDLedgerIsFullyACCOUNTEDFor(t *testing.T) {
-	targets, skipped, err := Targets(mergedLedger)
+// ✅ THE MERGED TREE IT USED TO PREDICT IS NOW `main`, so this runs against the live ledger and the
+// disjoint-file merge break it was written for is history rather than a forecast. It is kept because
+// the NEXT route-adding change gets the same treatment for free.
+func TestTheREALLedgerIsFullyACCOUNTEDFor(t *testing.T) {
+	ledger := ui.DeclaredRouteLedger()
+	targets, skipped, err := Targets(ledger)
 	if err != nil {
-		t.Fatalf("the merged ledger must be fully accounted for, got: %v", err)
+		t.Fatalf("the live ledger must be fully accounted for, got: %v", err)
 	}
-	if err := LedgerAccounting(mergedLedger, targets, skipped); err != nil {
+	if err := LedgerAccounting(ledger, targets, skipped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,14 +165,14 @@ func TestTheMERGEDLedgerIsFullyACCOUNTEDFor(t *testing.T) {
 	for _, tg := range targets {
 		captured[tg.Path] = true
 	}
-	for _, want := range []string{"/", "/share", "/sign-in"} {
+	for _, want := range []string{ui.RootPath, ui.SharePath, ui.SignInPath} {
 		if !captured[want] {
-			t.Errorf("%s must still be captured on the merged ledger", want)
+			t.Errorf("%s must be captured", want)
 		}
 	}
-	// 🔴 NEITHER NEW ROW MAY BE CAPTURED. The callback renders a refusal without a provider
+	// 🔴 NO `notADocument` ROW MAY BE CAPTURED. The callback renders a refusal without a provider
 	// code and a live flight cookie; the stylesheet is not a document at all.
-	for _, never := range []string{"/sign-in/github/callback", "/static/app.css"} {
+	for never := range notADocument {
 		if captured[never] {
 			t.Errorf("%s was CAPTURED: a browser walk over it measures a non-document or an error page "+
 				"and counts it, which is the false green this harness already shipped once", never)
@@ -168,50 +180,31 @@ func TestTheMERGEDLedgerIsFullyACCOUNTEDFor(t *testing.T) {
 	}
 
 	joined := strings.Join(skipped, "\n")
-	// Each skip must carry a REASON, and the reason must be about why it is not a document —
-	// not merely that it was skipped.
-	for _, want := range []string{
-		"GET /sign-in/github/callback public (not a document: reachable only with a provider ?code=",
-		"GET /static/app.css public (not a document: a text/css response and not a document",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("the skip list must carry this row AND its reason:\n  want prefix: %q\n  got:\n%s", want, joined)
-		}
-	}
-	// The non-GET rows are still skipped for the OTHER reason, which must remain a
-	// DISTINGUISHABLE sentence — collapsing the two kinds of skip would lose the difference
-	// between "a browser cannot usefully render this" and "a browser must not navigate this".
-	//
-	// ⚠ THE EXPECTED COUNT IS DERIVED FROM THE FIXTURE, NOT WRITTEN DOWN. A literal here was
-	// wrong twice in this file's history — once at 28-vs-16 result lines and once at 4-vs-5
-	// non-GET rows, both times refusing an honest tree. A count that can disagree with the
-	// thing it counts is a second source of truth, so it is computed.
-	wantNonGET := 0
-	for _, row := range mergedLedger {
-		if !strings.HasPrefix(row, "GET ") {
-			wantNonGET++
-		}
-	}
-	if n := strings.Count(joined, "not GET:"); n != wantNonGET {
-		t.Errorf("the fixture has %d non-GET row(s); %d carried the non-GET reason:\n%s", wantNonGET, n, joined)
-	}
-	wantNotDoc := 0
-	for _, row := range mergedLedger {
+	// Both counts DERIVED from the ledger, never written down — a literal was wrong twice in this
+	// file's history and both times it refused an honest tree.
+	wantNonGET, wantNotDoc := 0, 0
+	for _, row := range ledger {
 		fields := strings.Fields(row)
-		if len(fields) >= 2 && fields[0] == "GET" && notADocument[fields[1]] != "" {
+		switch {
+		case !strings.HasPrefix(row, "GET "):
+			wantNonGET++
+		case len(fields) >= 2 && notADocument[fields[1]] != "":
 			wantNotDoc++
 		}
 	}
 	if wantNotDoc == 0 {
-		t.Fatal("the fixture contains no `notADocument` GET row, so every assertion above about " +
-			"skipped-with-a-reason passed vacuously")
+		t.Fatal("the live ledger carries no `notADocument` GET row, so the skipped-with-a-reason " +
+			"assertions below pass vacuously")
+	}
+	if n := strings.Count(joined, "not GET:"); n != wantNonGET {
+		t.Errorf("the ledger has %d non-GET row(s); %d carried that reason:\n%s", wantNonGET, n, joined)
 	}
 	if n := strings.Count(joined, "not a document:"); n != wantNotDoc {
-		t.Errorf("the fixture has %d not-a-document GET row(s); %d carried that reason:\n%s", wantNotDoc, n, joined)
+		t.Errorf("the ledger has %d not-a-document GET row(s); %d carried that reason:\n%s", wantNotDoc, n, joined)
 	}
-	t.Logf("merged ledger: %d row(s) -> %d target(s), %d skip(s)", len(mergedLedger), len(targets), len(skipped))
-	for _, s := range skipped {
-		t.Logf("  skip %s", s)
+	t.Logf("live ledger: %d row(s) -> %d target(s), %d skip(s)", len(ledger), len(targets), len(skipped))
+	for _, sk := range skipped {
+		t.Logf("  skip %s", sk)
 	}
 }
 
@@ -243,16 +236,16 @@ func TestAPathClaimedByTwoClassesIsREFUSED(t *testing.T) {
 // and two OAuth routes — and a walk that absorbed a new row silently would under-cover it
 // while reporting success, which is the failure this whole derivation is designed against.
 func TestAGETRowTheWalkWasNotToldAboutIsREFUSEDRatherThanCapturedBare(t *testing.T) {
-	ledger := append(ui.DeclaredRouteLedger(), "GET /assets/app.css")
+	ledger := append(ui.DeclaredRouteLedger(), "GET /assets/unclassified.css")
 
 	_, _, err := Targets(ledger)
 	if err == nil {
-		t.Fatal("a GET row in neither `plainGET` nor `linkExpanded` was absorbed silently: " +
+		t.Fatal("a GET row in none of the three classes was absorbed silently: " +
 			"the walk would report success over a surface it under-covered")
 	}
 	// 🔴 THE MESSAGE MUST NAME THE ROW, because the whole value of the refusal is that the
 	// person who added the route learns which one it is without reading this file.
-	if !strings.Contains(err.Error(), "GET /assets/app.css") {
+	if !strings.Contains(err.Error(), "GET /assets/unclassified.css") {
 		t.Fatalf("the refusal must name the row it refused; got %q", err)
 	}
 	if !strings.Contains(err.Error(), "plainGET") || !strings.Contains(err.Error(), "linkExpanded") {
@@ -362,7 +355,7 @@ func TestLedgerAccountingCatchesAnUnaccountedRow(t *testing.T) {
 // So this drives an unknown row against the ledger that now HAS a third class, and requires the
 // refusal still to fire and still to name all three remedies.
 func TestTheUNKNOWNRowREFUSALSURVIVESTheThirdClass(t *testing.T) {
-	_, _, err := Targets(append(mergedLedger, "GET /assets/logo.svg public"))
+	_, _, err := Targets(append(ui.DeclaredRouteLedger(), "GET /assets/logo.svg public"))
 	if err == nil {
 		t.Fatal("an unclassified GET row was absorbed after the third class was added: `notADocument` " +
 			"has become a default, and every future row is now silently skipped WITH a reason that " +

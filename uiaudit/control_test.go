@@ -249,7 +249,7 @@ func TestTheHermeticSurfaceIsWhereTheZEROSCOMEFROM(t *testing.T) {
 	// stylesheet row the zero must hold; on one that has it, a page that loaded NOTHING would mean
 	// the browser never fetched the stylesheet — which is a finding in the other direction, and
 	// the only reason this is not simply relaxed to "don't care".
-	hasStylesheet := hasRow(ui.DeclaredRouteLedger(), "GET "+StylesheetPath)
+	hasStylesheet := hasRow(ui.DeclaredRouteLedger(), "GET "+ui.StylesheetPath)
 	failures := 0
 	for _, e := range c.Network {
 		// Only ERRORS are recorded, so any entry here is a failed request. A successful
@@ -264,10 +264,10 @@ func TestTheHermeticSurfaceIsWhereTheZEROSCOMEFROM(t *testing.T) {
 	if hasStylesheet {
 		t.Logf("this ledger declares %s, so the console zero above remains structural while the network "+
 			"one does NOT: the page now has a real blocking subresource. `doc.go` and `README.md` scope "+
-			"the structural claim to console for exactly this reason.", StylesheetPath)
+			"the structural claim to console for exactly this reason.", ui.StylesheetPath)
 	} else {
 		t.Logf("this ledger declares no %s row, so BOTH zeros are structural: the page has no scripts and "+
-			"no subresources at all", StylesheetPath)
+			"no subresources at all", ui.StylesheetPath)
 	}
 	// A floor, not an assertion about the count: a walk that rendered the sign-in page
 	// instead would have a different digest and this is the cheapest way to notice.

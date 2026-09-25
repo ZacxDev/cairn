@@ -354,12 +354,12 @@ func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	// claim beside a page that had just fetched one. A claim about the surface has to read the
 	// surface.
 	fmt.Printf("uiaudit:   console=%d — 🔴 STRUCTURAL, NOT A PASS: this surface ships NO script, and an existing XSS guard asserts \"<img\" can never render, so the console collector has nothing to observe here whatever the code does. control_test.go counts 2 on a page that does.\n", console)
-	if hasRow(ui.DeclaredRouteLedger(), "GET "+StylesheetPath) {
+	if hasRow(ui.DeclaredRouteLedger(), "GET "+ui.StylesheetPath) {
 		fmt.Printf("uiaudit:   network=%d FAILED subresource request(s) — and this is NOT a structural zero: %s is a route on this tree, so every page has a real blocking subresource. Zero here means it was FETCHED SUCCESSFULLY on every page, which is a stronger statement than the structural one it replaces.\n",
-			netw, StylesheetPath)
+			netw, ui.StylesheetPath)
 	} else {
 		fmt.Printf("uiaudit:   network=%d over subresources the PAGES asked for — same structural caveat: this ledger has no %s row, so there are none.\n",
-			netw, StylesheetPath)
+			netw, ui.StylesheetPath)
 	}
 	// ⚠ THE COUNT IS RUN-DEPENDENT, WHICH IS THE WHOLE REASON IT IS NOT ATTRIBUTED TO A PAGE.
 	// Measured on this tree at two points: one walk recorded a `401 /favicon.ico` (attached,

@@ -460,7 +460,7 @@ acceptance path is now measured against the real service; the rejection path is 
 tightens a rule these tests stay green while the push starts failing. That asymmetry is the honest
 statement, and it is why the offline tests were not deleted once the wire leg worked.
 
-### 3b. ✅ The CI push was blocked by an edge, and is now landing — with a retraction
+### 3b. ✅ The CI push was blocked by an edge; the fix is load-bearing and the header proved it
 
 **`verify-push` caught this, and it is the first thing it has ever caught.** The walk step exited
 **0** while nothing landed. Without that control the job would have been green over a non-event —
@@ -479,38 +479,60 @@ byte-identical output with every line labelled `UNKNOWN STEP` for that run, so a
 is not evidence of one. The stderr line **did** print — the control's diagnosis surface was never the
 weak part; the log reader was.
 
-#### 🔴 A retraction, and the methodological error is the point
+#### ✅ The header is LOAD-BEARING — and the retraction that got here is the part worth keeping
 
-An earlier version of this section, and of `push.go`'s `UserAgent` doc, claimed the user agent was
-**measured not to be** the cause. Two real measurements backed it: three workstation pushes on Go's
+**Do not delete `UserAgent` as dead weight. Removing it re-breaks the CI push.** That is measured by
+running the discriminator, not inferred.
+
+An A-B-A pattern over four CI runs at four separated times, one variable, and **nothing changed at
+the edge by anyone** — the operator's setup was entirely through the service's API (a plugin target,
+two credentials, four repo secrets; no WAF, firewall or proxy rule touched):
+
+| run | header | `verify-push` |
+|---|---|---|
+| `430b6cc` | absent | **failure** — `403`, `text/html`, managed challenge |
+| `87c4064` | **present** | success, `status: done` |
+| `1de95bf` | **present** | success |
+| the discriminator (closed, branch deleted) | absent | **failure** — `403`, `text/html`, managed challenge |
+
+Two observations per arm, interleaved. ⚠ Still not a proof — the edge is a third party and could in
+principle vary on its own in a way that coincided with the variable twice — but an A-B-A with
+separated observations is the strongest shape available from outside, and the actionable conclusion
+is established.
+
+**And the retraction it replaced is kept, because the error is more instructive than the result.** An
+earlier version of this section, and of `push.go`'s `UserAgent` doc, claimed the user agent was
+*measured not to be* the cause. Two real measurements backed it: three workstation pushes on Go's
 default UA answered `200`, and an unauthenticated read-API probe from that workstation was answered
 `401` **by the app** under the default, an honest and a browser-shaped UA alike.
 
 **Both measurements are true; neither supports the conclusion.** That workstation is never
 challenged, so at that origin the user agent has nothing to overcome — I measured the dimension at a
 point where it is **inert** and concluded the dimension does not matter. Two points, both on the flat
-part of the curve. It is the "one measurement is not a general claim" error running backwards.
+part of the curve, and having two of them made it *feel* safer rather than *be* safer. The rule says
+to measure at a boundary **and** a middle; both of mine were in the middle.
 
-Then the explicit `UserAgent` was added and **the next CI push landed**:
+⚠ **What must not be read into it:** the header is an honest identification, **not** a browser
+impersonation, and not a technique for passing a challenge. It works because an identifiable
+non-browser client is treated differently from an anonymous one — not because it looks like a
+browser. If a challenge stands in front of this client again, the answer is an operator allow rule for
+the endpoint or the address range — never a better disguise, and never disabled TLS verification.
+
+#### ✅ And the loud-refusal fix validated itself in the wild
+
+The discriminator's failure is the first time the new message ran on the real path, triggered by
+something other than a test:
 
 ```
-uiaudit: PUSH CONFIRMED run_id=777ffb4c-afb6-448e-930e-acce90a10171
-uiaudit: --- the hub's deterministic diff (run 777ffb4c-…, status done) ---
-uiaudit:   vs b7427cfb-…: pages +0/-0, 4 changed, 0 size-changed
-uiaudit:   new_a11y_rules (0): (none)
+the push leg was refused BEFORE REACHING THE SERVICE: 403 Forbidden with Content-Type
+"text/html; charset=UTF-8", and the body is not JSON. It looks like a Cloudflare MANAGED
+CHALLENGE (an interstitial that expects a browser to run JavaScript), which no HTTP client can pass.
+🔴 THIS IS NOT A TOKEN OR PAYLOAD PROBLEM …
 ```
 
-A **fourth** run exists, confirmed by the read-back's own round trip to the service rather than by
-the log, and it diffed against the third workstation push — so the chain is intact.
-
-⚠ **What is still not established:** whether a concurrent change in front of the service also
-happened. Two candidate causes, one observation. **The discriminator is cheap and unrun:** revert the
-header on a throwaway branch and see whether CI is challenged again. Until then, *"the header was
-added and the push started working"* is the honest statement and *"the header fixed it"* is not.
-
-And what must not be read into it: the header is an honest identification, **not** a browser
-impersonation. If a challenge ever does stand in front of this client again, the answer is an operator
-allow rule — never a more convincing disguise.
+and that run's whole walk log was **5,674 bytes** where the old error string alone had been
+**816,059**. Both halves of the item confirmed by an independent trigger rather than by their own
+tests.
 
 #### 🔴 A new datum that strengthens keeping the pixel diff advisory
 
@@ -533,6 +555,17 @@ else's release schedule. That is now a measured reason rather than an inherited 
 - **The body cap dropped 1 MiB → 4 KiB.** The refusal produced an **816,059-byte** error string: the
   diagnosis sat in the first 200 bytes and the rest buried it in the log of the run that needed
   reading. The CI walk log is now **5,343 bytes** total.
+
+  🔴 **AND THAT 816,059-BYTE STRING IS AN INSTANCE OF A CLASS, NOT A ONE-OFF: AN UNBOUNDED READ OF A
+  HOSTILE-SHAPED RESPONSE.** The read *was* bounded — `io.LimitReader(resp.Body, 1<<20)` — which is
+  exactly what makes it worth writing down: a limit chosen as "surely nothing is bigger than this" is
+  not a limit on the thing that matters, which is how much of it a human has to read. The shape that
+  bites is a response whose SIZE is chosen by whoever is answering, and an intermediary answering with
+  a challenge page is precisely that. The fix has two halves and needs both: a cap sized for a
+  DIAGNOSIS (4 KiB) rather than for a payload, and **a test that drives the real HTTP path**, because
+  the cap lives in the caller's `io.LimitReader` and a unit test of the formatter cannot see it. The
+  mutant that survived the first battery — raising the cap while every classifier case capped its own
+  body — is the reason that test exists rather than a cheaper one.
 
 Red at base, green at HEAD, mutation-tested — **6 mutants, 6 killed**, harness validated first:
 
@@ -671,10 +704,25 @@ repository already refuses, reached from a new direction.
 - **The one promotion candidate, after two baseline runs:** `new_a11y_rules` non-empty. It is
   a closed set of rule ids, it is deterministic, and this harness pushes the structured detail
   it is derived from. Nothing else qualifies.
-- **The pixel diff stays advisory indefinitely.** 684 visual regressions over 565 pushes
-  across existing producers. A full-page height shift also reads as a near-100% pixel change,
-  which is why the log annotates a `size_changed` page as a layout change rather than a
-  regression.
+- **The pixel diff stays advisory indefinitely, and there is now a MEASURED LOCAL reason rather
+  than only an inherited one.** The inherited figure is 684 visual regressions over 565 pushes
+  across existing producers. The local measurement is stronger, because it is about *this* harness:
+
+  | comparison | result |
+  |---|---|
+  | two runs on ONE machine (chromium 153.0.8010.52) | **`0 changed`** of 6 pages |
+  | a CI run (chromium **153.0.8010.36**, the runner's snap) against that baseline | **`4 changed`** of 6, `0 size-changed` |
+
+  So the pixel diff is stable across runs on one machine and **not across chromium builds** — and
+  four of six pages moved on a *patch* difference, with no page-height change to explain it.
+
+  🔴 **THE RUNNER'S CHROMIUM IS AN UNPINNED INPUT, INSTALLED FRESH OVER THE NETWORK EVERY RUN.** So
+  a pixel gate would flip on somebody else's release schedule, on a signal a future reader will
+  eventually propose promoting. **Pinning chromium is the thing that would have to happen first** —
+  a fixed build (a nix-pinned one, or a version-pinned container) is the precondition, not a nicety,
+  and until it exists this signal cannot gate whatever its numbers look like. A full-page height
+  shift also reads as a near-100% pixel change, which is why the log annotates a `size_changed`
+  page as a layout change rather than a regression.
 - **Nothing LLM-derived gates anything, ever.** Blocker-key stability there is measured 0.22
   and synthesis 0.00. The read-back deliberately decodes only `summary` and `diff`; the
   persona evaluator's output is not read at all, so it cannot be printed beside the

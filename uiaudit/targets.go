@@ -131,21 +131,21 @@ var plainGET = map[string]bool{
 //     the a11y digest are all meaningless on it, and a screenshot of a stylesheet is noise
 //     in a pixel diff that is already advisory. It gets NO check here either — `internal/ui`'s
 //     own `TestTheStylesheetIsServedAsItsOwnRoute` already asserts far more about it than this
-//     package could, as a build refusal rather than an advisory tick. See [StylesheetPath].
+//     package could, as a build refusal rather than an advisory tick.
 //
-// ⚠ THE TWO KEYS ARE LITERALS RATHER THAN `ui.OAuthCallbackPath` AND `ui.StylesheetPath`
-// FOR EXACTLY ONE REASON: those constants do not exist on this branch's base. They arrive
-// with the auth change, and a literal here is the second spelling of a route that
-// `internal/ui/routes.go` warns about. **Closing condition:** once that change is merged,
+// ✅ THE KEYS ARE THE CONSTANTS, AND THE CLOSING CONDITION THAT GOT THEM THERE IS DISCHARGED.
+// They were string literals while the auth change was unmerged, because the constants did not
+// exist on this branch's base — and a literal is the second spelling of a route that
+// `internal/ui/routes.go` warns about. The stated condition was "once that change is merged,
 // replace both literals with the constants and add the assertion that the ledger contains
-// them — which is a compile-time claim the moment the constants exist, and is not expressible
-// before. Until then a key that matches no row is inert, which is why writing them early is
-// safe rather than speculative.
+// them". It is merged; both are done. `TestTheLedgerCARRIESEveryNotADocumentRow` is that
+// assertion, and it is a compile-time claim now in a way it could not have been before.
 var notADocument = map[string]string{
-	StylesheetPath: "a text/css response and not a document — axe, the layout smells and the " +
-		"a11y digest are all meaningless on a stylesheet, and its screenshot is noise in the pixel diff; " +
-		"checked over plain HTTP instead",
-	"/sign-in/github/callback": "reachable only with a provider ?code= AND a live single-use flight " +
+	ui.StylesheetPath: "a text/css response and not a document — axe, the layout smells and the " +
+		"a11y digest are all meaningless on a stylesheet, and `internal/ui`'s own " +
+		"TestTheStylesheetIsServedAsItsOwnRoute already asserts far more about it than a browser walk " +
+		"could, as a build refusal rather than an advisory tick",
+	ui.OAuthCallbackPath: "reachable only with a provider ?code= AND a live single-use flight " +
 		"cookie, so navigated bare it renders a refusal — capturing that would measure an error page and " +
 		"count it as a page",
 }
@@ -245,13 +245,8 @@ func Targets(ledger []string) (targets []Target, skipped []string, err error) {
 	return targets, skipped, nil
 }
 
-// StylesheetPath is the `notADocument` row's path, and it is read in two places that are NOT a
-// check on the route: `notADocument`'s own key, and the ledger test in `printSignalSummary` /
-// `control_test.go` that decides whether a network zero is STRUCTURAL or means "every subresource
-// succeeded".
-//
-// 🔴 THERE IS DELIBERATELY NO HTTP CHECK ON THIS ROUTE HERE, AND THE DELETED ONE IS WORTH A
-// SENTENCE SO NOBODY ADDS IT BACK. A `StylesheetCheck` stood here asserting 200, `text/css` and a
+// 🔴 THERE IS DELIBERATELY NO HTTP CHECK ON THE STYLESHEET ROUTE HERE, AND THE DELETED ONE IS WORTH
+// A SENTENCE SO NOBODY ADDS IT BACK. A `StylesheetCheck` stood here asserting 200, `text/css` and a
 // non-empty body. It was a STRICT SUBSET of `internal/ui`'s own
 // `TestTheStylesheetIsServedAsItsOwnRoute`, which asserts the exact `Content-Type` including
 // charset, `X-Content-Type-Options: nosniff`, BYTE-EQUALITY with the stylesheet constant, a size
@@ -266,9 +261,8 @@ func Targets(ledger []string) (targets []Target, skipped []string, err error) {
 // response with `Status >= 400` as a first-party network event — which is precisely the thing a
 // network zero is asserted to mean. The walk was already watching.
 //
-// ⚠ A LITERAL FOR THE SAME REASON THE `notADocument` KEY IS: `ui.StylesheetPath` does not exist
-// on this branch's base. Same closing condition.
-const StylesheetPath = "/static/app.css"
+// ⚠ A LOCAL `StylesheetPath` CONST USED TO LIVE HERE AND IS GONE: `ui.StylesheetPath` exists now,
+// and two spellings of one route is the thing this file keeps warning about.
 
 // hasRow answers whether the ledger declares an exact `<METHOD> <path>` row, ignoring the
 // classes a row may carry after it.

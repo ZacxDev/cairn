@@ -48,38 +48,43 @@ const (
 
 // UserAgent identifies this client on every request it makes.
 //
-// 🔴 IT IS PROBABLY THE THING THAT UNBLOCKED THE CI PUSH, AND AN EARLIER VERSION OF THIS COMMENT
-// CLAIMED THE OPPOSITE. The retraction is kept because the mistake is instructive.
+// 🔴 IT IS LOAD-BEARING. REMOVING IT RE-BREAKS CI — MEASURED, NOT INFERRED. Do not delete this
+// header as dead weight, and do not "simplify" it away: without it the CI push is answered `403`
+// with a Cloudflare managed-challenge page and never reaches the service.
 //
-// The sequence: a CI push was answered `403` with a Cloudflare managed-challenge page ("Just a
-// moment…", `challenges.cloudflare.com`) instead of reaching the app. The obvious theory was that
-// Go's default `User-Agent: Go-http-client/2.0` is refused as a non-browser signature. I set out to
-// falsify it and thought I had:
+// The evidence is an A-B-A pattern over four CI runs at four separated times, one variable, with
+// nothing changed at the edge by anyone (the operator's setup was entirely through the service's
+// API — a plugin target, two credentials, four repo secrets; no WAF, firewall or proxy rule):
 //
-//   - three pushes from a workstation, same client, DEFAULT user agent, answered `200`;
-//   - and an unauthenticated probe of the read API from that workstation answered `401` BY THE APP
-//     under Go's default UA, an honest custom UA and a browser-shaped UA alike.
+//	header ABSENT   → `verify-push` FAILURE, 403 text/html, managed challenge
+//	header PRESENT  → push lands, `status: done`
+//	header PRESENT  → push lands
+//	header ABSENT   → `verify-push` FAILURE, 403 text/html, managed challenge  (the discriminator)
 //
-// Both measurements are real. **Neither supports the conclusion I drew from them**, and the reason
-// is the whole lesson: that workstation is never challenged, so at that origin the user agent has
-// nothing to overcome. Measuring a dimension at a point where it is INERT and concluding the
-// dimension does not matter is the "one measurement is not a general claim" error running backwards
-// — I had two points, and both were on the flat part of the curve.
+// Two observations per arm, interleaved. ⚠ It is still not a proof: the edge is a third party and
+// could in principle vary on its own in a way that coincided with the variable twice. But an A-B-A
+// with separated observations is the strongest shape available from outside, and the actionable
+// conclusion — deleting this line re-breaks the push — is established.
 //
-// Then this constant was added and the next CI push LANDED (`status: done`, a fourth run on the
-// service). One variable changed in this program: the header below.
+// # 🔴 AND AN EARLIER VERSION OF THIS COMMENT CLAIMED THE OPPOSITE, WHICH IS THE PART WORTH KEEPING
 //
-// ⚠ WHAT IS STILL NOT ESTABLISHED, because it cannot be from inside this repository: whether a
-// concurrent change in front of the service also happened. Two candidate causes, one observation.
-// The discriminator is cheap and nobody has run it: revert this header on a throwaway branch and
-// see whether CI is challenged again. Until someone does, "the user agent was added and the push
-// started working" is the honest statement, and "the user agent fixed it" is not.
+// It said the user agent was MEASURED not to be the cause, on two real measurements: three pushes
+// from a workstation with Go's DEFAULT agent answered `200`, and an unauthenticated probe of the read
+// API from that workstation was answered `401` BY THE APP under the default, an honest and a
+// browser-shaped agent alike.
 //
-// Either way the header earns its place: a request that cannot be identified cannot be
-// allow-listed, and `Go-http-client/2.0` is shared with every Go program on the internet. And note
-// what must NOT be read into this — it is an honest identification, not a browser impersonation. If
-// a challenge ever does stand in front of this client, the answer is an operator allow rule, never a
-// more convincing disguise.
+// Both measurements are true. **Neither supports the conclusion.** That workstation is never
+// challenged, so at that origin the user agent has nothing to overcome — I measured the dimension at
+// a point where it is INERT and concluded the dimension does not matter. Two points, both on the flat
+// part of the curve, and having two of them made it FEEL safer rather than BE safer. The rule says to
+// measure at a boundary and a middle; both of mine were in the middle.
+//
+// ⚠ WHAT MUST NOT BE READ INTO THIS. The string below is an honest identification, NOT a browser
+// impersonation, and it is not a technique for getting past a challenge. It works because an
+// identifiable non-browser client is treated differently from an anonymous one — not because it looks
+// like a browser. If a challenge ever does stand in front of this client again, the answer is an
+// operator allow rule for the endpoint or the client's address range. **Never a more convincing
+// disguise**, and never disabled TLS verification.
 const UserAgent = "cairn-uiaudit/1 (+https://github.com/ZacxDev/cairn)"
 
 // maxDiagnosticBody caps how much of a refusal body reaches an error message.

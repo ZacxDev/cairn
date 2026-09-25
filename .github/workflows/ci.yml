@@ -1142,6 +1142,19 @@ jobs:
       # `default-src 'none'`) is a claim about the build that ran, and a log without the
       # version is a measurement without its scope. The spikes in `uiaudit/README.md`
       # record which build they were measured under for the same reason.
+      #
+      # 🔴 AND IT IS A FLAPPING INPUT ON THE PIXEL DIFF, WHICH IS MEASURED RATHER THAN FEARED.
+      # Two runs on one machine (chromium 153.0.8010.52) diffed `0 changed` of 6 pages; a CI run
+      # on 153.0.8010.36 — the runner's snap — diffed **4 changed** of 6 against that same
+      # baseline, with `0 size-changed`, so four pages moved on a PATCH difference with no page
+      # height change to explain it.
+      #
+      # That is why the pixel diff cannot gate, and it is a stronger reason than the inherited
+      # cross-producer regression figure because it is about this harness. 🔴 **PINNING CHROMIUM
+      # IS THE PRECONDITION FOR ANY PIXEL GATE** — a nix-pinned build or a version-pinned
+      # container — and until that exists the signal flips on somebody else's release schedule
+      # whatever its numbers look like. Do not promote a visual predicate while this step
+      # installs whatever the image currently ships. See `uiaudit/README.md`'s gating section.
       - name: chromium, and its version, which is an unpinned input
         run: |
           set -euo pipefail
@@ -1181,7 +1194,7 @@ jobs:
           # 🔴 TWO COUNTS, BECAUSE THE ANCHOR DECIDES WHICH QUESTION IS ASKED — AND A DRAFT
           # OF THIS STEP GOT IT WRONG IN THE DIRECTION THAT FAILS THE HONEST TREE. `go test
           # -v` indents a SUBTEST's result line, so `^--- PASS` counts only top-level
-          # functions (24 here) while an unanchored pattern also counts every table row (51).
+          # functions (25 here) while an unanchored pattern also counts every table row (52).
           # The draft measured 28 by hand with a leading-space alternative and then gated on
           # `^--- PASS`, so the floor refused a green tree. Both numbers are now counted and
           # both are floors: the top-level one notices a `func Test…` deleted, the total one
@@ -1213,12 +1226,12 @@ jobs:
           fi
           # Both floors are the counts measured on the tree that introduced this job. A test
           # deleted from a file that keeps others would otherwise move nothing.
-          if [ "$passes" -lt 24 ]; then
-            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 24 — a Test function was deleted"
+          if [ "$passes" -lt 25 ]; then
+            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 25 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 51 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 51 — a table row was deleted"
+          if [ "$total" -lt 52 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 52 — a table row was deleted"
             exit 1
           fi
 
