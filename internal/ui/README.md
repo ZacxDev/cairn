@@ -1068,9 +1068,17 @@ Two decisions inside that are worth reading twice.
 token in the URL **fragment**, which no server ever receives: the page would need script to
 read `location.hash` and post it back. That is more code, a second way in, and a token in the
 browser's history. A draft of this change carried `script-src 'self'`, which would have
-permitted such a script — the flow was available and was refused. **That clause is gone too**:
-having deliberately built the flow scriptless, keeping a directive that re-permits script
-"for later" would be the policy-wider-than-the-code shape this surface refuses.
+permitted such a script — the flow was available and was refused.
+
+⚠ **THAT PARAGRAPH'S SECOND HALF IS RETIRED, AND THE DECISION IT DESCRIBES IS NOT.** It read
+*"That clause is gone too: having deliberately built the flow scriptless, keeping a directive
+that re-permits script 'for later' would be the policy-wider-than-the-code shape this surface
+refuses."* There is no policy left to be wider than the code — the whole header was deleted by
+operator decision, so **nothing in a browser forbids script here any more**. The scriptless flow
+stands on the half that never depended on a header: a token in the fragment is a token in the
+browser's history that the server never receives, and a flow needing script to complete is a
+second way in. `internal/identity/supabaseoauth.go` carries the same retraction beside the
+`flow_type` parameter. Do not re-derive *"the CSP is gone, so the implicit flow is fine now"*.
 
 **There is no `state` parameter, and its absence is a decision with a reason.** GoTrue does not
 pass an arbitrary `state` through to the callback; it manages its own and appends only `code`.
@@ -1286,7 +1294,7 @@ BUILD-FAIL and never as a kill.
 | the provider's `error_description` reflected into the page | `TestTheProviderErrorIsNotReflectedIntoThePage` |
 | the credential field renamed, breaking the harness selector | `TestTheCredentialFormSURVIVESTheProviderButton` |
 | the credential form rewired to post at the provider route | the same test |
-| `frame-ancestors` dropped (the surface becomes frameable) | `TestTheHTMLResponseCarriesItsHardeningHeaders` |
+| ~~`frame-ancestors` dropped (the surface becomes frameable)~~ — 🔴 **RETIRED, AND IT IS THE SHARPER OF THE TWO RETIREMENTS BECAUSE THE "MUTANT" IS NOW THE SHIPPED STATE.** The whole policy was deleted by operator decision, so this surface IS frameable — see *Response hardening* above. The row was false twice over: the named killer stopped asserting anything about the policy in the same change, and the state it calls a defect is the accepted one. **There is no replacement mutant**, deliberately: nothing here can kill a mutant whose result is what the tree already does, and inventing a row that sounded like coverage would be worse than saying so. What IS pinned is the deletion itself, by `TestTheHTMLResponseSendsNoContentSecurityPolicy` | *(nothing — see above)* |
 | the chain assembled BY HAND in the wrong order — **the control that actually compiles** | `TestTheUIChainTriesEveryHeaderCREDENTIALBeforeTheAmBIENTCookie` |
 | a spent flight DELETED again (the cap bounds concurrency, not rate) | `TestOneClientCannotAmplifyRequestsAtTheProvider` |
 | the flight cookie loses its `__Host-` prefix | `TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire` |
