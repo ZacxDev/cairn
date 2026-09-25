@@ -267,20 +267,80 @@ func DecodeUTF8Replace(data []byte) string {
 	return string(out)
 }
 
-// Lower is CPython's `str.lower()`.
+// Lower is CPython's `str.lower()` FOR ONE OF THE TWO RULES THAT SEPARATE IT FROM
+// `strings.ToLower`, AND NOT THE OTHER. Which one, and why, is the whole of this comment.
 //
-// 🔴 `strings.ToLower` IS NOT IT, AND THE DIFFERENCE IS EXACTLY ONE CODE POINT — WHICH IS
-// WHY IT SURVIVED A REVIEW THAT SAID SO. `str.lower()` applies Unicode's FULL lowercase
-// mapping, which may expand one code point into SEVERAL; `strings.ToLower` applies the
-// SIMPLE mapping, one rune to one rune. Measured differentially over every code point in
-// the range (0 … U+10FFFF, 1,433 of which lower at all) on the pinned interpreter:
+// 🔴 UNICODE'S FULL LOWERCASE MAPPING DIFFERS FROM THE SIMPLE ONE IN **TWO**
+// LANGUAGE-INDEPENDENT RULES — NOT ONE, AND THIS COMMENT SAID ONE FOR A WHOLE ROUND.
+// `str.lower()` applies the FULL mapping; `strings.ToLower` applies the SIMPLE one, one
+// rune to one rune. The two rules are different KINDS of rule, which is why no
+// code-point-at-a-time sweep can see the second:
 //
-//	U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE  ->  Python "i̇"   Go "i"
-//	every other code point                        ->  identical
+//  1. UNCONDITIONAL, AND IMPLEMENTED HERE — one code point expands into two. Measured
+//     differentially over every code point in the range (0 … U+10FFFF, 1,433 of which
+//     lower at all) on the pinned interpreter:
 //
-// One divergence, in both directions (no code point lowers in Go and not in Python).
-// `TestLowerMatchesCPython` pins the pair, and the sweep's own positive control is that
-// the U+0130 row FAILS when this function delegates straight to `strings.ToLower`.
+//     U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE  ->  Python "i̇"   Go "i"
+//     every other code point                        ->  identical
+//
+//     In both directions: no code point lowers in Go and not in Python.
+//
+//  2. CONTEXTUAL, AND **NOT** IMPLEMENTED HERE — Final_Sigma. U+03A3 GREEK CAPITAL LETTER
+//     SIGMA lowercases to U+03C2 FINAL SIGMA when it ENDS A WORD and to U+03C3 otherwise,
+//     so the answer is a function of the NEIGHBOURS rather than of the code point.
+//     Measured on both sides (go1.26.7 / CPython 3.12.14):
+//
+//     the glyphs are one stroke apart, so each row names the code point it ends in:
+//     U+03C2 is FINAL SIGMA and U+03C3 is the ordinary one.
+//
+//     "AΣ"   ->  Python U+03C2  here U+03C3  (DIVERGE)
+//     "ΑΣ Β" ->  Python U+03C2  here U+03C3  (DIVERGE)
+//     "ΣΣ"   ->  Python U+03C3 U+03C2  here U+03C3 U+03C3  (DIVERGE)
+//     "Σ"    ->  Python U+03C3  here U+03C3  (agree — no cased letter precedes it)
+//     "AΣB"  ->  Python U+03C3  here U+03C3  (agree — a cased letter follows it)
+//
+// 🔴 THE DECISION, WRITTEN DOWN SO IT IS A DECISION AND NOT AN OVERSIGHT: FINAL_SIGMA IS
+// DELIBERATELY NOT IMPLEMENTED. Two grounds, and the FIRST is the one that expires:
+//
+//   - NO CALLER CAN OBSERVE IT AT THIS COMMIT — enumerated, not argued from one example.
+//     Both `σ` and `ς` are non-ASCII, and every caller either compares this function's
+//     output against an ASCII-only set or folds non-ASCII away first, so the two answers
+//     take the SAME branch at each of them:
+//     · `store.headingKey` pairs a file heading's key only with a SCHEMA heading's key, and
+//     every `ShapeHeadings` entry is ASCII — so a Σ-bearing heading pairs with nothing on
+//     either side. MEASURED at this commit: an entry whose pointers heading is
+//     `## POINTERΣ` renders 11 advisory lines that are BYTE-IDENTICAL on both clients
+//     (both ABSENT, and the inventory quotes the heading verbatim).
+//     · `store.NormalizeRef` folds everything outside `[a-z0-9.-]` to `-`; σ and ς are
+//     both outside it, so both become the same separator.
+//     · `report.Tokenize` keeps only `[a-z0-9]` runs; both are separators.
+//     · `report.FoldSensitivity` and `report.DiscardedSensitivity` compare against
+//     `knownSensitivities`, all ASCII; both answers miss and both fold to the fail-safe.
+//     · `store.BulletOpenness` lowercases a `[0-9a-fA-F]{7,40}` submatch, which Σ cannot
+//     reach.
+//     ⚠ THAT IS A CLAIM ABOUT THE CALLERS, NOT ABOUT THIS FUNCTION, and it is the half
+//     that goes stale: a caller added that puts this output on a screen, into a filename,
+//     or into a comparison against non-ASCII text makes the divergence live, and nothing
+//     here would fail. Re-run the enumeration before adding one.
+//   - AND THE FOLD WOULD NEED A UNICODE DATABASE GO DOES NOT SHIP. CPython's condition is
+//     `\p{cased}\p{case-ignorable}* Σ !(\p{case-ignorable}*\p{cased})`. `Cased` is
+//     derivable from what `unicode` exports (`Lu|Ll|Lt|Other_Lowercase|Other_Uppercase`),
+//     but `Case_Ignorable` also needs `Word_Break ∈ {MidLetter, MidNumLet, Single_Quote}`,
+//     and Go's `unicode` package exports NO Word_Break table at all — checked against
+//     `unicode.Properties` and `unicode.Categories` on go1.26.7. Implementing it therefore
+//     means hand-transcribing that set: a second Unicode database whose drift from the
+//     pinned interpreter would be silent, which is the hazard this package's header exists
+//     for. It is not that it cannot be done; it is that the cost is a table, and today it
+//     buys no output.
+//
+// 🔴 SO THE DIVERGENCE SET IS A LEDGER, NOT A SENTENCE.
+// `TestLowerIsCPythonExceptForFinalSigma` holds every row above with CPython's answer
+// BESIDE this function's, and fails when one MOVES IN EITHER DIRECTION — a lost U+0130
+// expansion, and equally the day somebody teaches this function Final_Sigma without
+// revisiting the decision above. `TestLowerMatchesCPython` pins rule 1 and is
+// STRUCTURALLY UNABLE to see rule 2: it compares one code point at a time, and an isolated
+// `Σ` lowercases to `σ` on both sides. That test's positive control is that the U+0130 row
+// FAILS when this function delegates straight to `strings.ToLower`.
 //
 // ⚠ THE COMBINING MARK IS THE WHOLE HAZARD, AND A PREVIOUS COMMENT DISMISSED IT ON A
 // MEASUREMENT THAT ONLY LOOKED AT THE EASY CASE. `store.NormalizeRef` folds everything
@@ -300,8 +360,10 @@ func DecodeUTF8Replace(data []byte) string {
 // URL path cannot carry it.
 func Lower(s string) string {
 	// The fast path is the common one and is not an optimisation for its own sake: it also
-	// documents that the special case is a single code point rather than a general
-	// algorithm, so a reader can see the whole divergence in one branch.
+	// documents that the special case handled HERE is a single code point rather than a
+	// general algorithm. ⚠ It is NOT the whole divergence from `str.lower()` — rule 2 in
+	// the docstring above is contextual and has no branch anywhere in this function, which
+	// is exactly why a reader could take this one branch for the complete story.
 	if !strings.ContainsRune(s, dottedCapitalI) {
 		return strings.ToLower(s)
 	}
@@ -318,9 +380,13 @@ func Lower(s string) string {
 	return b.String()
 }
 
-// The one full-lowercase expansion in the Unicode tables the pinned interpreter ships, as
+// The one full-lowercase EXPANSION in the Unicode tables the pinned interpreter ships, as
 // NUMERIC RUNE CONSTANTS for the reason the package comment gives: U+0307 is invisible
 // beside its neighbour in source, so a literal here would be unreviewable.
+//
+// ⚠ "THE ONE EXPANSION" IS NOT "THE ONE DIVERGENCE". Final_Sigma is a SUBSTITUTION of one
+// code point for another, not an expansion, so it is absent from this pair by definition
+// rather than by omission. See rule 2 in `Lower`'s docstring.
 const (
 	dottedCapitalI    = rune(0x0130)
 	combiningDotAbove = rune(0x0307)

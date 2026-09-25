@@ -4,8 +4,15 @@ import "github.com/ZacxDev/cairn/internal/pytext"
 
 // The reason tokens the DROPPED-LINE and MARKER-REACHABILITY advisories are keyed on.
 // They are SEPARATE tokens for separate populations and their counts are never summed.
-// ⚠ TWO OF THE FOUR ADVISORY BLOCKS, NOT ALL OF THEM: `entry shape` and `open actions`
-// carry no reason token, which is why the `NOT CHECKED` line prints only these two.
+// ⚠ THEY COVER TWO OF THE FOUR ADVISORY BLOCKS, NOT ALL FOUR: `entry shape` and `open
+// actions` have no reason token of their own, so the two constants below are the only ones
+// the `NOT CHECKED` line can carry.
+// 🔴 THAT IS A CLAIM ABOUT THE TOKENS, NOT ABOUT THE BLOCKS, AND THE LINE NAMES ALL FOUR.
+// `ValidationAdvisoryLines`' `NOT CHECKED` branch withholds every block and says so by
+// NAME — "entry shape, dropped lines, open actions and marker reachability" — and then
+// appends `[dropped-line] [unreachable-marker]`. So it is the bracketed REASON TOKENS that
+// number two; a maintainer who reads "only these two" as "the line mentions two blocks"
+// has it backwards, which is how this comment was written the first time.
 //
 // 🔴 BOTH ARE "THE READER CANNOT SEE IT", AND THEY ARE STILL DIFFERENT
 // QUANTITIES WITH DIFFERENT REMEDIES. An unreachable marker sits INSIDE a bullet

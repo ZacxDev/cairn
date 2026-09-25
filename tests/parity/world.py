@@ -121,8 +121,17 @@ ENTRIES: list[tuple[str, int, str]] = [
     #     rather than merely defined;
     #   * a correctly-spelled `OPEN:` on a bullet's CONTINUATION line, which every marker
     #     reader is anchored past.
-    # `scree-api` is its clean sibling, so the denominator this scope prints is 2 rather
-    # than 1 and a client that counted FINDINGS where it should count FILES is visible.
+    # `scree-api` is its clean sibling, so the denominator this scope prints is LARGER THAN
+    # THE NUMBER OF FINDINGS and a client that counted FINDINGS where it should count FILES
+    # is visible.
+    #
+    # ⚠ AND THE DENOMINATOR IS DELIBERATELY NOT WRITTEN DOWN HERE ANY MORE. It is the count
+    # of entry files in THIS SCOPE, so every row appended below moves it: this comment read
+    # "the denominator this scope prints is 2 rather than 1" and was stale three entries
+    # later, ~37 lines above the addition that invalidated it. Nothing in this repo pins it
+    # either — the harness diffs the TWO CLIENTS against each other live and stores no
+    # golden, so a number transcribed into a comment here is the only copy and has no
+    # checker. What the fixture pins is the PROPERTY: files, not findings.
     ("crag-notes/talus-svc.md", 13_000_000_000,
      "---\nservice: talus-svc\nscope: crag-notes\n---\n"
      "\n## What it is\n\n"
@@ -206,8 +215,29 @@ ENTRIES: list[tuple[str, int, str]] = [
     #                                                         -> RENAMED
     #
     # Two different findings, two different rendered sub-blocks, and neither client errors.
-    # `internal/pytext.Lower` is the function that agrees with the oracle; this row is what
-    # makes reverting to `strings.ToLower` RED instead of silent.
+    # `internal/pytext.Lower` is the function that agrees with the oracle ON THIS RULE; this
+    # row is what makes reverting to `strings.ToLower` RED instead of silent.
+    #
+    # 🔴 "AGREES WITH THE ORACLE" USED TO BE WRITTEN WITHOUT THAT QUALIFIER AND IT WAS A
+    # FALSE COMPLETENESS CLAIM. `str.lower()` differs from the simple mapping in TWO
+    # language-independent rules, and `pytext.Lower` implements ONE of them: the
+    # unconditional U+0130 expansion this row covers. The other is CONTEXTUAL — Final_Sigma:
+    # U+03A3 lowercases to U+03C2 at the end of a word on the oracle and to U+03C3 here.
+    # `pytext.Lower`'s docstring carries the decision NOT to implement it, and
+    # `TestLowerIsCPythonExceptForFinalSigma` is the ledger.
+    #
+    # ⚠ AND THERE IS DELIBERATELY NO Σ ROW BESIDE THIS ONE, WHICH IS NOT THE SAME OMISSION
+    # THIS ROW WAS ADDED TO FIX. The U+0130 row has discriminating power because Go's answer
+    # (`pointers`) is ASCII and COLLIDES with the schema heading's key — that collision is
+    # what makes one client say RENAMED and the other ABSENT. Final_Sigma's two answers are
+    # BOTH non-ASCII, so a Σ-bearing heading pairs with no schema heading on EITHER client
+    # and both report ABSENT with the heading quoted verbatim in the inventory. MEASURED at
+    # the commit this paragraph landed in: an entry whose pointers heading is `## POINTERΣ`
+    # renders 11 advisory lines that are BYTE-IDENTICAL across the two clients. A Σ row would
+    # therefore be an INVARIANT row — one that cannot go red for the rule it names — and
+    # counting it as coverage is the "reads as coverage while providing none" failure, not a
+    # closure of it. It becomes worth seeding the day a schema heading stops being ASCII, or
+    # a caller puts a folded key on a screen rather than only comparing it with another key.
     #
     # ⚠ IT IS AN INTERIOR CODE POINT, NOT A LEADING OR TRAILING ONE, and that is the
     # reachability argument rather than decoration: `NormalizeRef`'s own notes record that

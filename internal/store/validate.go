@@ -374,12 +374,28 @@ const ShapeInventoryShown = 6
 // calls beside them already came from the package — an inconsistency three lines wide,
 // and the `ToLower` half was a REAL divergence rather than a style point.
 // `strings.ToLower` is Unicode's SIMPLE lowercase mapping; the oracle's `.lower()` is
-// the FULL one, which may expand one code point into several. `pytext.Lower` documents
-// the single differing code point and `TestLowerMatchesCPython` pins it. MEASURED on
-// this tree: a pointers heading written `## PO<U+0130>NTERS` folded to `poi<U+0307>nters`
-// on the oracle — reported ABSENT — and to `pointers` here, reported RENAMED. The parity
-// corpus now seeds that heading (`world.ENTRIES`, `crag-notes/scarp-idx.md`), so the
-// revert is RED rather than a silent one-sided fold.
+// the FULL one, which differs in TWO language-independent rules. MEASURED on this tree: a
+// pointers heading written `## PO<U+0130>NTERS` folded to `poi<U+0307>nters` on the oracle
+// — reported ABSENT — and to `pointers` here, reported RENAMED. The parity corpus now seeds
+// that heading (`world.ENTRIES`, `crag-notes/scarp-idx.md`), so the revert is RED rather
+// than a silent one-sided fold.
+//
+// ⚠ AND `pytext.Lower` CLOSES ONE OF THE TWO, NOT BOTH — this comment claimed "the single
+// differing code point" for a round, and the second rule is CONTEXTUAL so no
+// code-point-at-a-time test can see it. `Lower` implements the unconditional U+0130
+// expansion and deliberately does NOT implement Final_Sigma (U+03A3 lowercases to U+03C2 at
+// the end of a word on the oracle and to U+03C3 here); its docstring carries that decision
+// and `TestLowerIsCPythonExceptForFinalSigma` is the ledger.
+// 🔴 THAT SECOND RULE REACHES NO OUTPUT THROUGH THIS FUNCTION, AND THE REASON IS
+// STRUCTURAL RATHER THAN LUCKY: this key is only ever compared against a SCHEMA heading's
+// key, every `ShapeHeadings` entry is ASCII, and U+03C2 and U+03C3 are both non-ASCII — so
+// a Σ-bearing heading pairs with nothing on EITHER client and both report ABSENT. MEASURED
+// at this commit: an entry whose pointers heading is `## POINTERΣ` renders 11 advisory
+// lines that are byte-identical across the two clients. That is why the parity corpus seeds
+// U+0130 and NOT Σ — a Σ row would be an invariant row with no discriminating power, which
+// is the opposite of what the U+0130 row is for. It becomes reachable the moment a schema
+// heading stops being ASCII, or a caller compares this key against anything but another
+// key from this function.
 //
 // ⚠ `pytext.CollapseWhitespace` IS `" ".join(s.split())`, WHICH ALSO STRIPS, while the
 // oracle's `re.sub` here does not — they agree at this call site ONLY because the

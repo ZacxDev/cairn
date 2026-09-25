@@ -990,9 +990,20 @@ class TestEntryShapeBlock:
         then looked for those two names in the block — which a HARDCODED literal
         spelling the same two names satisfies exactly, because the literal and the
         derived string are the same bytes as long as the set never moves.
-        MEASURED: replacing the `", ".join(...)` in `validation_advisory_lines`
-        with that literal left this whole module green, 153 passed. The guard read
-        as coverage and provided none.
+        MEASURED, and the figures are the ones a re-runner reproduces rather than
+        a remembered total: replacing the `spine = ", ".join(...)` line in
+        `validation_advisory_lines` with `spine = "`## Pointers`, `## Nuance /
+        work-history`"` leaves the ASSERT-ONLY version of this test GREEN — `68
+        passed`, the whole module — and is RED here, `1 failed, 67 passed` of the
+        68 this module collects, failing on THIS test. Run as
+        `pytest tests/test_entry_shape_validate.py -q` with the mutant applied to
+        `lib/entry_shape.py`. The guard read as coverage and provided none.
+
+        ⚠ AN EARLIER WORDING OF THIS PARAGRAPH SAID `153 passed`, AND NO RUN OF
+        THIS MODULE PRODUCES THAT NUMBER — `--collect-only -q` reports 68 for this
+        file and 68 for the assert-only version of it. A wrong denominator sends a
+        re-runner looking for a different suite, and finding none is a perfectly
+        good reason to disbelieve the substantive claim beside it.
 
         So the set is PATCHED to carry a third heading this module never spells,
         and every expectation below is derived from the PATCHED value. A re-typed

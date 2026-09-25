@@ -208,6 +208,16 @@ func TestContainsSpace(t *testing.T) {
 // 🔴 `str.lower()` APPLIES THE FULL LOWERCASE MAPPING AND `strings.ToLower` APPLIES THE
 // SIMPLE ONE. The expectations below are transcribed from the pinned interpreter, never
 // from this implementation.
+//
+// 🔴 THE NAME OVERSTATES THE SCOPE, AND THIS PARAGRAPH IS THE CORRECTION RATHER THAN A
+// RENAME. What this test pins is the UNCONDITIONAL rule (U+0130's expansion). It is
+// STRUCTURALLY UNABLE to see the CONTEXTUAL one — Final_Sigma — in either half: the table
+// holds no multi-letter Greek word, and the structural sweep below compares
+// `Lower(string(r))` against `strings.ToLower(string(r))` ONE CODE POINT AT A TIME, where
+// an isolated `Σ` lowercases to `σ` on both sides because Final_Sigma needs a cased letter
+// BEFORE the sigma. So no widening of that sweep can reach rule 2, however many code
+// points it walks. `TestLowerIsCPythonExceptForFinalSigma` below is the guard that does,
+// and `Lower`'s docstring carries the decision not to implement it.
 func TestLowerMatchesCPython(t *testing.T) {
 	// U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE, built from its code point rather than
 	// pasted, per this file's header — and U+0307 is invisible beside an `i` on screen,
@@ -251,6 +261,132 @@ func TestLowerMatchesCPython(t *testing.T) {
 	if len(diverged) != 1 || diverged[0] != 0x0130 {
 		t.Fatalf("Lower must differ from strings.ToLower at U+0130 and nowhere else, "+
 			"differs at %d code point(s): %U", len(diverged), diverged)
+	}
+
+	// 🔴 AND THE SWEEP ABOVE NEVER LEAVES THE FAST PATH, WHICH A MUTANT PROVED RATHER THAN
+	// A REVIEW SUSPECTING IT. Every single-code-point string except U+0130 itself misses
+	// `strings.ContainsRune(s, dottedCapitalI)` and returns from the first branch, so the
+	// per-rune loop is UNREACHABLE from the loop above — a second special case added inside
+	// that loop (`r == dottedCapitalI || r == 'Q'`) SURVIVED this whole package's tests.
+	// That is the "breakable but unreachable" shape: the guard existed, the earlier check
+	// always won, and the mutation died nowhere.
+	//
+	// So the loop gets its OWN sweep, over strings that DO contain U+0130. The property is
+	// that the expansion happens exactly at the U+0130 and every other code point passes
+	// through the SIMPLE mapping untouched — asserted at both ends and the middle of the
+	// string, because a special case keyed on position would otherwise show up at one only.
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		if (r >= 0xD800 && r <= 0xDFFF) || r == 0x0130 {
+			continue
+		}
+		side := strings.ToLower(string(r))
+		in := string(r) + dotted + string(r)
+		want := side + "i" + dot + side
+		if got := Lower(in); got != want {
+			t.Fatalf("the per-rune loop must apply the SIMPLE mapping to every code point "+
+				"but U+0130: Lower(%+q) = %+q, want %+q", in, got, want)
+		}
+	}
+}
+
+// 🔴 THE SECOND DIVERGENCE FROM `str.lower()`, WHICH NO SINGLE-CODE-POINT SWEEP CAN SEE.
+// `TestLowerMatchesCPython` pins the UNCONDITIONAL rule; Unicode's full lowercase mapping
+// has a CONTEXTUAL one too — Final_Sigma — and `Lower` deliberately does not implement it.
+// This is the LEDGER of both, so the claim is machine-readable instead of prose: every row
+// carries CPython's answer BESIDE what `Lower` returns, and the test fails when a row moves
+// IN EITHER DIRECTION. That includes the day somebody teaches `Lower` Final_Sigma — a
+// deliberate change then has to update this ledger and the DECISION in `Lower`'s docstring
+// together, which is the only way the two can stay in agreement.
+//
+// ⚠ THE `cpython` COLUMN IS TRANSCRIBED FROM THE PINNED INTERPRETER (3.12.14), NEVER FROM
+// THIS IMPLEMENTATION — measured as `s.lower()` on each `in` below. The escapes are numeric
+// for the reason this file's header gives: U+0307 renders on top of its neighbour, and
+// U+03C2 and U+03C3 are one stroke apart at a glance.
+func TestLowerIsCPythonExceptForFinalSigma(t *testing.T) {
+	const (
+		dotted   = "\u0130" // LATIN CAPITAL LETTER I WITH DOT ABOVE
+		dot      = "\u0307" // COMBINING DOT ABOVE — Case_Ignorable, and INVISIBLE in source
+		capSigma = "\u03a3" // GREEK CAPITAL LETTER SIGMA
+		sigma    = "\u03c3" // GREEK SMALL LETTER SIGMA
+		finalSig = "\u03c2" // GREEK SMALL LETTER FINAL SIGMA
+		capAlpha = "\u0391" // GREEK CAPITAL LETTER ALPHA — a cased letter BEFORE the sigma
+		alpha    = "\u03b1" // GREEK SMALL LETTER ALPHA
+		capBeta  = "\u0392" // GREEK CAPITAL LETTER BETA — a cased letter after the space
+		beta     = "\u03b2" // GREEK SMALL LETTER BETA
+	)
+	rows := []struct {
+		name    string
+		in      string
+		cpython string // the pinned interpreter's `.lower()`
+		want    string // what `Lower` returns
+		agrees  bool   // whether the two above are the same string
+	}{
+		// RULE 1 — UNCONDITIONAL, IMPLEMENTED. The expansion, in the positions
+		// `NormalizeRef`'s own notes show behave differently from each other.
+		{"U+0130 alone", dotted, "i" + dot, "i" + dot, true},
+		{"U+0130 before a letter", dotted + "a", "i" + dot + "a", "i" + dot + "a", true},
+		{"U+0130 between letters", "a" + dotted + "b", "ai" + dot + "b", "ai" + dot + "b", true},
+		{"U+0130 doubled", dotted + dotted, "i" + dot + "i" + dot, "i" + dot + "i" + dot, true},
+
+		// RULE 2 — CONTEXTUAL, NOT IMPLEMENTED. These three rows ARE the divergence,
+		// spelled out rather than described in a sentence.
+		{"sigma ending a word", "A" + capSigma, "a" + finalSig, "a" + sigma, false},
+		{"sigma before a space", capAlpha + capSigma + " " + capBeta,
+			alpha + finalSig + " " + beta, alpha + sigma + " " + beta, false},
+		{"sigma after sigma", capSigma + capSigma, sigma + finalSig, sigma + sigma, false},
+		// 🔴 AND THE ROW THAT MAKES THE COST CLAIM CONCRETE: a Case_Ignorable code point
+		// after the sigma does NOT stop Final_Sigma firing. Getting this row right is what
+		// needs the `Case_Ignorable` property, which Go's `unicode` package does not ship —
+		// the second ground in `Lower`'s decision.
+		{"sigma then a case-ignorable mark", "A" + capSigma + dot,
+			"a" + finalSig + dot, "a" + sigma + dot, false},
+		// Both rules in one string: the U+0130 expansion must still happen in a word that
+		// also ends in a sigma, so the fast path's `ContainsRune` branch is exercised
+		// TOGETHER with the sigma rather than on its own.
+		{"both rules at once", dotted + capSigma, "i" + dot + finalSig, "i" + dot + sigma, false},
+
+		// …and the contexts where Final_Sigma does NOT fire, which is what makes the rows
+		// above a claim about CONTEXT rather than about the code point. Without these a
+		// blanket `Σ -> σ` and a blanket `Σ -> ς` would be indistinguishable here.
+		{"sigma alone — nothing cased precedes it", capSigma, sigma, sigma, true},
+		{"sigma with a cased letter after it", "A" + capSigma + "B", "a" + sigma + "b",
+			"a" + sigma + "b", true},
+	}
+
+	for _, tc := range rows {
+		t.Run(tc.name, func(t *testing.T) {
+			// The ledger's own consistency: `agrees` is derived information and a row that
+			// mislabels itself would read as coverage while asserting the opposite.
+			if (tc.want == tc.cpython) != tc.agrees {
+				t.Fatalf("row %q is self-contradictory: want %+q, cpython %+q, agrees %v",
+					tc.name, tc.want, tc.cpython, tc.agrees)
+			}
+			got := Lower(tc.in)
+			if got != tc.want {
+				side := "a row where Lower is DOCUMENTED to diverge from CPython"
+				if tc.agrees {
+					side = "a row where Lower MUST equal CPython"
+				}
+				t.Fatalf("Lower(%+q) = %+q, want %+q — CPython gives %+q, and this is %s. "+
+					"If this moved on purpose, the DECISION in Lower's docstring (Final_Sigma "+
+					"deliberately NOT implemented) is now stale and must be rewritten in the "+
+					"same change", tc.in, got, tc.want, tc.cpython, side)
+			}
+		})
+	}
+
+	// 🔴 THE DIVERGENT SET IS CLOSED, NOT MERELY ENUMERATED. The only rule `Lower` is
+	// documented to get wrong is Final_Sigma, so a row appended with `agrees: false` for any
+	// other reason is a divergence nobody decided on. Asserted here rather than left to the
+	// docstring, because widening the ledger is exactly how the "one code point" claim this
+	// test exists to correct came to be written in the first place.
+	for _, tc := range rows {
+		if !tc.agrees && !strings.ContainsRune(tc.in, 0x03a3) {
+			t.Fatalf("row %q diverges from CPython without carrying U+03A3, so it is not "+
+				"Final_Sigma: %+q -> Lower %+q, cpython %+q. Either it is a bug in Lower or "+
+				"the divergence set in Lower's docstring has grown and says so nowhere",
+				tc.name, tc.in, tc.want, tc.cpython)
+		}
 	}
 }
 

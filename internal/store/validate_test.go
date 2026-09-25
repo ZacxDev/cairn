@@ -706,10 +706,21 @@ func TestTheFoldNeverWidensWhatExtractSectionsAccepts(t *testing.T) {
 	}
 }
 
-// 🔴 THE CASE FOLD IS CPython's `str.lower()`, NOT `strings.ToLower`, AND EXACTLY ONE
-// CODE POINT SEPARATES THEM. `pytext.Lower` tabulates the divergence; this pins that
-// `headingKey` — the one place in this file that lowercases anything — actually goes
-// through it. The expectation is written as the two runes the FULL mapping produces
+// 🔴 THE CASE FOLD IS CPython's `str.lower()`, NOT `strings.ToLower`, AND **TWO** RULES
+// SEPARATE THEM — this comment said ONE for a round, and the sentence was the defect, not
+// a typo. `pytext.Lower` tabulates both: it implements the UNCONDITIONAL one (U+0130's
+// expansion, which is what this test pins) and deliberately does NOT implement the
+// CONTEXTUAL one (Final_Sigma). This pins that `headingKey` — the one place in this file
+// that lowercases anything — actually goes through `pytext.Lower`.
+//
+// ⚠ IT PINS THE FOLD, NOT THE WHOLE DIVERGENCE, and the missing half is unobservable HERE
+// for a structural reason worth stating rather than discovering: the key is only ever
+// compared against a SCHEMA heading's key, all of which are ASCII, and Final_Sigma's two
+// outputs (U+03C2, U+03C3) are both non-ASCII — so a Σ-bearing heading pairs with nothing on
+// either client. A case for it belongs in `pytext`, where the divergence lives, and it is
+// there: `TestLowerIsCPythonExceptForFinalSigma`.
+//
+// The expectation is written as the two runes the FULL mapping produces
 // (`i` + U+0307 COMBINING DOT ABOVE), which is what the oracle's `.lower()` yields and
 // what `strings.ToLower` does NOT: the simple mapping emits a bare `i`, so the key
 // collides with the schema heading's and the file is reported RENAMED where the oracle
