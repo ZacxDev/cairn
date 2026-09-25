@@ -787,11 +787,20 @@ func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 // 🔴 THE POLICY WAS DELETED BY OPERATOR DECISION, CHALLENGED ONCE AND REAFFIRMED. It was
 // `default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`.
 // The accepted exposure, named here so this test reads as a contract rather than as a gap:
-// the surface is FRAMABLE (clickjacking on the share flow's state-changing POSTs, which both
-// cross-site gates are structurally blind to, because a clickjacked submit's Origin really is
-// this origin and its CSRF token really is the victim's); a form can be induced to POST
-// offsite; an injected `<base href>` can re-point every relative URL; and arbitrary script
-// and third-party origins become loadable. `writeHTML`'s comment carries the whole record.
+// the surface is FRAMABLE; a form can be induced to POST offsite; an injected `<base href>`
+// can re-point every relative URL; and arbitrary script and third-party origins become
+// loadable. `writeHTML`'s comment carries the whole record.
+//
+// ⚠ THE FRAMING CLAUSE HERE USED TO READ "(clickjacking on the share flow's state-changing
+// POSTs, which both cross-site gates are structurally blind to, because a clickjacked submit's
+// Origin really is this origin and its CSRF token really is the victim's)", AND THAT IS
+// RETRACTED. `identity.SessionCookie` sets `SameSite=Lax`, and an iframe load is a cross-site
+// SUBRESOURCE request, so a conforming browser sends no session cookie: the framed document is
+// the SIGN-IN page, with nothing authenticated to overlay. What survives is UI redress against
+// that public sign-in page, any future session-free route, and the loss of the second
+// independent refusal — `writeHTML` states all three, and states that the correction is
+// DERIVED from the cookie constructor rather than measured in a browser. The accepted exposure
+// is therefore SMALLER than it was recorded as, which is not a reason to revisit the deletion.
 //
 // 🔴 THIS TEST IS NOT A LICENCE TO REMOVE THE CROSS-SITE GATES, WHICH ARE A DIFFERENT
 // MECHANISM. `sameOrigin` and `csrfTokenFor` are derived from the request method by

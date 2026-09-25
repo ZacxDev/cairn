@@ -370,16 +370,46 @@ rather than a line that reappears in a merge.
 
 | clause removed | what it had been stopping |
 |---|---|
-| `frame-ancestors 'none'` | the surface is FRAMABLE — clickjacking the share flow's grant and revoke POSTs |
+| `frame-ancestors 'none'` | the surface is FRAMABLE — see the corrected blast radius below, which is **smaller** than this row first claimed |
 | `form-action 'self'` | an injected form can be induced to POST offsite |
 | `base-uri 'none'` | an injected `<base href>` re-points every relative URL on the page |
 | `default-src 'none'` | arbitrary script and third-party origins become loadable |
 
-🔴 **THE FRAMING ROW IS THE ONE THE TWO CROSS-SITE GATES CANNOT COVER, AND THAT IS WHY IT IS
-FIRST.** A clickjacked submit originates INSIDE the page: its `Origin` really is this origin
-and the CSRF token rendered into it really is the victim's, so gate (2) and gate (6) both
-pass. Framing was never something those gates could see; refusing to be framed was the only
-defence and it is now absent.
+### 🔴 The framing row, CORRECTED — and the correction shrinks the accepted exposure
+
+⚠ **WHAT THIS SECTION FIRST SAID IS WRONG, AND IT WAS THE LOAD-BEARING DESCRIPTION OF AN
+OPERATOR DECISION — so the retraction matters more than usual.** It read: *"THE FRAMING ROW IS
+THE ONE THE TWO CROSS-SITE GATES CANNOT COVER… A clickjacked submit originates INSIDE the
+page: its `Origin` really is this origin and the CSRF token rendered into it really is the
+victim's, so gate (2) and gate (6) both pass. Framing was never something those gates could
+see; refusing to be framed was the only defence and it is now absent."*
+
+**That mechanism does not reach an authenticated page.** `identity.SessionCookie` builds
+`__Host-cairn-session` with **`SameSite=Lax`**. An `<iframe>` load is a cross-site
+**subresource** request — neither the top-level GET navigation Lax still admits nor the
+cross-site POST it refuses — so a conforming browser does not attach the cookie. The framed
+document therefore renders the **sign-in page**: no session, no CSRF token rendered into
+anything, and nothing authenticated behind the overlay to click. `session.go`'s own comment
+already stated the rule this follows from; nobody applied it here.
+
+⚠ **THE DIRECTION IS CONSERVATIVE — the exposure is SMALLER than recorded, not larger — so
+this is not a reason to revisit the deletion.** It is recorded because a decision reaffirmed on
+a description deserves an accurate one.
+
+**What survives, which is real and different:**
+
+| survives | why no gate here addresses it |
+|---|---|
+| **UI redress against the unauthenticated sign-in page** | it is `classPublic` and answers anybody, so it frames; a framed sign-in form under an attacker's chrome is a phishing surface, and every request involved is legitimate |
+| **any route a later change makes reachable without a session** | it inherits the same problem with nothing going red — the standing cost of having no `frame-ancestors` |
+| **the loss of the second, independent refusal** | `frame-ancestors` and `SameSite` were two separate mechanisms; one is gone, so a client that does not enforce Lax restores the original mechanism in full and nothing here would know |
+
+🔴 **AND THE LIMIT ON THE CORRECTION ITSELF: IT IS DERIVED, NOT MEASURED.** It follows from
+`identity.SessionCookie`'s constructor and from `SameSite` semantics. **No test in this tree
+and no browser run has observed that a framed request omits this cookie.** `session.go` flags
+its neighbouring `Secure`-on-`localhost` claim as unmeasured for the same reason, and this one
+is no better evidenced. Read it as *"the mechanism as recorded does not follow"*, never as
+*"it was observed not to happen"*.
 
 🔴 **AND THE GATES THEMSELVES ARE UNTOUCHED, WHICH IS A DIFFERENT SENTENCE FROM THE ONE ABOVE.**
 `sameOrigin` and `csrfTokenFor` are derived from the request method by `stateChanging`, they
@@ -1231,19 +1261,40 @@ validates its own instrument first: a negative control appends a line to the gen
 and requires `diff` to report a difference, exiting **2** ("could not vouch") if the control
 compares equal.
 
-🔴 **THE CLASS NAMES IN `render.go` ARE WHAT THE GENERATOR SCANS, SO EVERY ONE IS A LITERAL.**
-`tailwind.css` declares `@import "tailwindcss" source(none)` plus `@source "./*.go"`, which
-pins the scan to exactly `internal/ui/*.go`. Two consequences bind the next edit: a class
-assembled at run time (`"text-" + size`) is invisible to that scan and would silently not
-exist in the stylesheet; and automatic source detection is OFF deliberately, because it walks
-the whole project and `flake.nix`'s `onlyGo` filter hands the sandbox a *different* tree from
-the one a developer builds in — two trees, two stylesheets, a check red for a reason nobody
-can see.
+🔴 **NOTHING IS SCANNED. `tailwind.css` IS THE GENERATOR'S ONLY INPUT, AND THAT IS WHAT MAKES
+A RAW UTILITY IN `render.go` A SILENT DEFECT.** The file declares
+`@import "tailwindcss" source(none)` and **no `@source` at all**, so the output is a pure
+function of those bytes plus the pinned CLI. The structural tell is in the artefact: `app.css`
+carries a bare `@layer utilities;` — the layer is declared and **empty**.
 
-The semantic class names (`.viewer`, `.signin`, `.replica-honesty`, `.entry`, …) are kept
-rather than replaced by utilities at each call site: two are asserted by tests here, one is
-driven by a browser harness outside this repository, and `@apply` in a component layer is
-Tailwind's documented answer for exactly that. Utilities are used directly for page layout.
+🔴 **SO THE RULE THAT BINDS THE NEXT EDIT: EVERY CLASS `render.go` RENDERS IS A SEMANTIC NAME
+DEFINED IN `tailwind.css`. NEVER A RAW TAILWIND UTILITY.** Add `h.Class("flex gap-2")` to a new
+element and regenerate: `app.css` is byte-unchanged, so
+`checks.ui-stylesheet-is-current` is **green**, `go test ./internal/ui/` is **green**, and the
+element ships with two class names the served bytes have no rule for. Give it a named class
+here instead, composed with `@apply` like the other ~35.
+`TestEveryRenderedClassHasARuleInTheStylesheet` is the mechanical check on exactly that, and it
+exists because this paragraph on its own is a rule nothing enforces.
+
+⚠ **THIS SECTION USED TO TEACH THE OPPOSITE, AND THE RETRACTION IS THE POINT BECAUSE THIS
+README IS THE DOC A NEXT EDITOR READS INSTEAD OF THE SOURCE COMMENTS.** It read *"THE CLASS
+NAMES IN `render.go` ARE WHAT THE GENERATOR SCANS, SO EVERY ONE IS A LITERAL. `tailwind.css`
+declares `@import "tailwindcss" source(none)` plus `@source "./*.go"`, which pins the scan to
+exactly `internal/ui/*.go` … a class assembled at run time (`"text-" + size`) is invisible to
+that scan"*, and it closed with *"Utilities are used directly for page layout."* Both were true
+of the draft and both are now false: **the `@source` line was deleted**, because Tailwind's
+extractor reads COMMENTS as readily as code and this package's comments are dense by house rule
+— six utilities were generated out of ordinary English with no class literal anywhere, and a
+comment-only edit reddened the currency check with a message blaming a hand-edit that never
+happened. The measurement is in `tailwind.css`'s own header. The run-time-assembly hazard the
+old text named is now the *whole* hazard rather than an edge of it: with no scan, a **literal**
+utility is just as invisible as a computed one.
+
+The semantic class names (`.viewer`, `.signin`, `.replica-honesty`, `.entry`, `.page-header`,
+`.page-main`, `.signin-main`, …) are therefore the only kind this surface renders — the page
+shell included, which is what the three `.page-*`/`.signin-main` classes are. Two are asserted
+by tests here, one is driven by a browser harness outside this repository, and `@apply` in a
+component layer is Tailwind's documented answer for exactly that.
 
 🔴 **`prefers-reduced-motion: reduce` REMOVES THE MOTION, IT DOES NOT SHORTEN IT.** The common
 snippet sets `animation-duration: 0.01ms`, which still *runs* the animation — a reader who

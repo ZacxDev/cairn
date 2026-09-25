@@ -12,10 +12,17 @@ import _ "embed"
 // and rewrites this file in place.
 //
 // ⚠ IT IS NOT USER TEXT AND COULD NEVER BE, WHICH IS WHAT MAKES SERVING IT AS A STATIC
-// ASSET SAFE. No input reaches it: every byte comes from `tailwind.css`, from the Tailwind
-// distribution, and from the class literals in this package's own `.go` files. That fact
-// is what the earlier `const stylesheet` rested on too, and it survives the move to a
-// build step unchanged — what changed is only who types the bytes.
+// ASSET SAFE. No input reaches it: every byte comes from `tailwind.css` and from the
+// Tailwind distribution — TWO sources, and there is no third. That fact is what the earlier
+// `const stylesheet` rested on too, and it survives the move to a build step unchanged;
+// what changed is only who types the bytes.
+//
+// ⚠ THIS SENTENCE LISTED A THIRD SOURCE — "the class literals in this package's own `.go`
+// files" — AND THAT WAS TRUE OF A DRAFT ONLY. The `@source "./*.go"` line it described is
+// deleted; `tailwind.css` is the generator's only input. Corrected here rather than left,
+// because a reader who believes a `.go` file feeds the stylesheet will write a raw utility
+// into a `Class()` call and ship an element with no rule behind it. See
+// `TestEveryRenderedClassHasARuleInTheStylesheet`, which is the check that catches that.
 //
 // 🔴 THE FILE MUST BE IN `flake.nix`'s `onlyGo` FILTER, AND ITS ABSENCE IS A BUILD FAILURE
 // RATHER THAN A SILENT ONE — the good direction, and worth naming because the failure
