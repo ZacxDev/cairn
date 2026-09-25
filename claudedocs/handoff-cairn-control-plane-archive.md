@@ -1015,3 +1015,605 @@ handoff, not here, because that section appends and this file is read on demand.
   `bannerFor`; `tests/routing_mutants.py` scoring a never-run suite as KILLED; two CI floors with
   silent slack; the flake wiring pinned by prose only.
 - ✅ **CLOSED BY #53:** issue #51, the `AGENTS.md` reverted-draft flip history.
+
+## Gotchas moved out of the handoff at the SECOND prune
+
+🔴 **VERBATIM, AND MOVED RATHER THAN SUMMARISED — the same rule as the first prune above, applied seven days later.** The section had gone from 49 survivors to **147 bullets and 84,556 B**, 62% of a 136,100 B document, while every other section combined would have fitted inside the 65,536 B guideline on its own. **70 bullets moved, nothing was edited on the way in, and nothing was shortened.** What moved is a record of a round, a PR or an arc that has CLOSED — P1's seed-stamp decision, the #38/#41 attribution ladders, #64's six-round share-flow ladder, the rename arc, P7's ETag, the #85 sweep, the #96/#97 doc races, #101/#102's fact-ledger arc, and the deploy decisions the deploy discharged — plus every duplicate instance of a tripwire the handoff still carries once each. A claim that reads as settled history here is still a claim: if one of these contradicts the code, the code moved and this is the record of what was believed.
+
+**The header paragraph the second prune replaced, verbatim, because it is the first prune's own record of itself:**
+
+> 🔴 **THIS SECTION WAS PRUNED, AND PRUNED MEANS *MOVED*: THE PRUNE DELETED AND SHORTENED NOTHING.** ⚠ One of the 49 survivors has since been superseded by a fuller instance in this same section and removed, so a re-run of the prune's own verification now reconciles to 173 rather than 174 — the CLAIM survived, the bullet did not, and those are different statements.** It held 174 bullets and 89,588 B — 78% of a document read first thing every session. 125 of them are now in `claudedocs/handoff-cairn-control-plane-archive.md`, **verbatim**, under a heading that says which arc they came from. What stayed is what binds a NEXT edit: one instance of each general tripwire, the standing operator decisions, and the current arc's record. What moved is a record of a round or an arc that has CLOSED, plus every duplicate instance of a tripwire kept here — `isolation: "worktree"` alone was recorded six times, `$?`-after-a-pipe three, MERGEABLE-but-conflicting four.
+> 
+> ⚠ **A DUPLICATE IS NOT A REDUNDANCY WHEN THE SECOND ONE RECORDS THAT THE LESSON WAS READ AND THEN HIT ANYWAY** — that is why the instance kept is usually the LATEST, which carries the re-occurrence, rather than the first, which carries only the discovery.
+
+- **Decision (operator, this session):** an unencodable seed stamp resolves to
+  `seeded=UNREADABLE` on **both** sides — an authorised exception to P1's "do not change
+  the oracle", because a contract cannot include "sometimes truncate the response
+  mid-stream". Regenerating all 98 goldens after it moved **none**.
+- 🔴 **THE MUTATION BATTERY'S OWN ROWS ARE AS WRONG-ABLE AS THE CODE, AND FOUR WERE.** Across
+  three rounds: a row naming a killer that NEVER RUNS (the named test reached the function by
+  a different path); two patterns that failed to apply so the mutant died at the BUILD rather
+  than at a guard; and an `EQUIVALENT` label whose stated reason — "a window between two
+  adjacent statements no gate can open from outside" — was FALSE, because a caller-injected
+  `clock()` sat between them. That last one is the worst shape: a label that reads as
+  coverage while providing none, forecloses the test that would close the gap, and sits
+  inside the battery built to refuse exactly that.
+- 🔴 **`$?` AFTER A PIPE IS THE LAST COMMAND'S STATUS.** `python3 tests/leakscan.py | tail`
+  returns `tail`'s 0 for a scanner that exited **2**. Combined with the worktree defect
+  above — failure on stderr, stdout ending in a wall of `PASS` — a piped read looks clean.
+  Capture the rc before any pipe, and read stderr.
+- 🔴 **`pgrep -f` MATCHED MY OWN SHELL WHILE I WAS SWEEPING FOR LEAKED PROCESSES — the exact
+  documented trap, live.** A sweep for `cairn-server.test|control_mutants` returned one hit,
+  and the hit was the sweeping command's own `zsh -c` line quoting the pattern. Read as a
+  leak it would have sent me hunting a process that did not exist; read as a hit to `kill` it
+  would have killed the shell. **Resolve PIDs, skip `$$`, and confirm each via
+  `/proc/<pid>/cmdline` and `/proc/<pid>/cwd` before believing OR killing anything.** The
+  real answer was zero.
+- 🔴 **BASE-CLONE DRIFT HAPPENS ON FEATURE BRANCHES TOO, NOT JUST `main`.** The local
+  `feat/identity-interface` was a stale leftover at `58ee284`, **four commits behind**
+  `origin`, checked out in no worktree, while the PR head was `7ac810e`. A `worktree add` on
+  it silently produces a tree missing the last four commits — including the ceiling raise —
+  and every gate run there measures the wrong tree. `git merge --ff-only` is the safe sync
+  precisely because it cannot conflict or autostash: it advanced (nothing was ahead), and had
+  the branch diverged it would have REFUSED rather than guessed.
+- 🔴 **ASKING "WHICH GUARD DOES YOUR OWN CHANGE EMPTY?" *INSIDE* THE FIX ROUND FINALLY CAUGHT
+  IT IN-ROUND — the sixth instance, and the first not discovered a round later.** The shape,
+  six times across two PRs: a change moves a test's OBSERVABLE out from under an UNEDITED
+  guard, and a green suite certifies the defect. Instances: a deletion made `Model` re-read the
+  journal so `TestARejectedBatchLeavesNeitherBytesNorState` answered correctly regardless (and
+  emptied `append-validates-against-the-live-cache` + `clone-is-shallow`); a new refusal's
+  PRECEDENCE made all 15 ledger variables refuse via the new sentinel (`15/15 shadowed` vs
+  `0/15` with an authority); a `cache.go` edit invalidated FOUR mutant anchors at once; and a
+  within-request fold SUBSUMED the raw rule, leaving `apply`'s `ScopeByNameIn` check with zero
+  tests. **Put the question in every fix brief.**
+- 🔴 **VERIFY A SQUASH MERGE BY CONTENT, NEVER BY ANCESTRY — carried here from `State now`,
+  which is a REPLACE section, so it would otherwise have been deleted by this very update.**
+  `git merge-base --is-ancestor <branch-head> origin/main` returns **false** after every
+  squash merge, forever, and reads as "not merged — redo the work". Measured on #35:
+  ancestry false, while `git diff e708cba origin/main -- internal/identity/` was **empty** and
+  `main` carried the new symbol. ⚠ **A WHOLE-TREE diff is NOT that check** — it showed 4 files
+  / 930 insertions, which were another PR's files the branch never had. Diff the PAYLOAD
+  PATHS, and separately confirm the merge commit exists.
+- 🔴 **"EXECUTABLE" IS NOT "PAYLOAD", AND I GOT IT WRONG ON BOTH PRs BEFORE CORRECTING IT.** The
+  attribution gate counts the payload lines a round's FIXES change, and the tie-breaker is the
+  **REVERT TEST**: revert this file's diff — does the PR's stated deliverable still ship? On #38
+  I posted `payload=13` because the change sat in a source file; it was a doc comment, and
+  reverting it still ships `ProvisionUser`. On #41 a fix round reported `102` for changes
+  confined to two guard modules; revert them and `server-image-go` still ships. **Both are 0.**
+  Measure it — strip comments and blanks and compare — and run a **positive control** proving the
+  method detects a real change. 🔴 **Correct such a figure IN PUBLIC on the PR:** a class that
+  moves between rounds makes the stop unfalsifiable, and the only thing separating a correction
+  from a manipulation is that it is stated, with its reasoning, where the next reader sees it.
+- 🔴 **BOTH LADDERS ENDED ON THE ATTRIBUTION GATE, NOT ON A CLEAN ROUND, AND THAT IS THE DESIGNED
+  OUTCOME.** Every round found something real, so the findings-keyed rule would have run forever.
+  What the later rounds found were defects in **scaffolding the ladder itself had just written** —
+  a false sentence inside a retraction, a count introduced by the very commit that deleted a count
+  for being unpinned. Two consecutive rounds whose fixes change zero payload lines means the
+  ladder has left the PR. **File the remainder with a closing condition rather than fixing it**,
+  so it reads as open rather than absent.
+- 🔴 **A GUARD SPELLED RATHER THAN STRUCTURAL PRODUCED A FOURTH SPELLING IN ONE MODULE, AND THE
+  FIX WAS TO STOP PARSING.** #41's `Env` guard read keys out of the `//` override with the regex
+  `[A-Za-z_][\w'-]*\s*=(?!=)`. Four spellings walked past it, each shipping
+  `SUBSYSTEM_STORE_ROOT=/wrong` to the pod with every assertion green: `inherit` (no `=`),
+  `${"NAME"} =` (no bare identifier), a mapper lambda, and `++ [ "…=/wrong" ]` appended to the
+  resulting **list**, which the override reader never looks at. That last one has teeth — the pod
+  then carries two `SUBSYSTEM_STORE_ROOT` entries and Go's env map takes the later, so the server
+  starts, health-checks and serves an empty store. **Closed by pinning the WHOLE NORMALISED `Env`
+  expression** for both images and DELETING the key parsing — 125 insertions against 430
+  deletions. Teaching the parser two more spellings is how a fifth arrives. Cost accepted: a
+  cosmetic reformat of either `Env` block now fails the test, which is what buys a
+  machine-readable claim instead of a walkable one.
+- ⚠ **A worktree created with `git worktree add -b <branch> origin/main` has upstream
+  `origin/main`, so a bare `git push` there TARGETS MAIN.** Mine was refused only because
+  `push.default=simple` requires the names to match — luck, not design. Push with an explicit
+  refspec (`git push origin <branch>:<branch>`) and fix the upstream immediately.
+- ⚠ **`xargs -0 command grep` FAILS** (`command` is a builtin xargs cannot exec) with 127 and
+  empty output — indistinguishable from a clean zero. Use plain `grep` under `xargs`: it execs the
+  binary, so this host's `.gitignore`-honouring `grep` FUNCTION never applies.
+- 🔴 **TWO PRs EDITING THIS DOC CONFLICTED WHILE BOTH REPORTED `MERGEABLE` — MEASURED AGAIN, AND
+  THE RESOLUTION IS THE INTERESTING PART.** `git merge-tree --write-tree` between #48 and the
+  handoff PR exited **1**; GitHub called both CLEAN because it compared each against a `main`
+  where neither had landed. 🔴 **Branch on the EXIT CODE** — that command prints only a tree OID
+  on success and emits NO conflict markers, so a marker grep finds nothing either way. ⚠ **And
+  the fix was not a conflict resolution**: #48's own handoff edit had rewritten the same sections
+  with facts that were now TRUE, while the handoff PR's narrative ("#48 is open, not merged") had
+  gone stale in the minutes since it was written. The right move was to **reset the docs branch
+  onto the new `main` and rebuild the delta against it**, not to merge a stale story into a fresh
+  one. **A doc PR that loses a race does not need resolving — it needs re-deriving.**
+- 🔴 **zsh ATE `$var:` A THIRD TIME, IN THE SESSION THAT HAD JUST READ THE WARNING.**
+  `git show $B:tests/parity/README.md` expanded through the history modifier `:t` and produced
+  `fatal: ambiguous argument 'route-the-read-verbsests/parity/README.md'`. That one is LOUD and
+  therefore harmless; the same expansion inside a grep returns a confident wrong value.
+  **Brace it: `${B}:path`.** Recorded as the third instance because two were not enough.
+- 🔴 **THE LEAK GATE CAUGHT MY OWN HANDOFF DELTA — BEFORE THE PUSH, WHICH IS THE WHOLE POINT.**
+  Scanning the scratch delta before handing it to the write tool found **two real leaks**: an
+  external tool named directly, and four private repo names quoted out of a search result. Both
+  rewritten to describe by ROLE. Re-scan: 5 findings → 0, same instrument. ⚠ **My positive control
+  was badly chosen and did NOT go red** — reach was proven instead by the test run flagging the
+  file directly. A control that fails to fire is not a passing control; say which one actually
+  carried the proof.
+- 🔴 **AND THEN IT CAUGHT THE *NEXT* HANDOFF DELTA, AFTER THE PUSH — THIRD EVENT OF THE SAME
+  CLASS, WITH THE BULLET DIRECTLY ABOVE ALREADY WRITTEN.** ⚠ **Not the same identifier**, and
+  the distinction matters because it is what rules out "one remedy already covers this": the
+  first was an external tool's name, the second a repository name, both `denied-identifier`.
+  🔴 **The failure is a SEQUENCING one: `handoff_doc.py --confirm --push` commits and pushes in
+  ONE call, so there is no moment between them to scan in.** Scanning "the pushed tree" is
+  scanning after the mistake is public.
+- 🔴 **AND THE REMEDY I FIRST WROTE FOR THAT WAS A THIRD PHRASING OF ADVICE THAT HAD ALREADY
+  FAILED TWICE — RECORDED BECAUSE THE REACH FOR A BETTER WORDING IS THE ERROR, NOT THE WORDING.**
+  It said "scan the SCRATCH DELTA, before the tool is invoked at all". The bullet above it said
+  the same thing in different words, and the leak happened anyway. **There is no mechanism:
+  `~/.claude/skills/handoff/` contains no reference to `leakscan` at all, so nothing runs it and
+  nothing refuses on it.** A guard spelled as a sentence is walkable by forgetting, and three
+  events is enough evidence that it is being forgotten. **The deterministic fix is one line in
+  `handoff_doc.py`: run `leakscan` on the delta and refuse the write on rc≠0** — filed as ranked
+  work, in the repo that owns that script rather than this one. Until it exists, the honest
+  statement is that this hazard is UNGUARDED, not that it is handled.
+- ⚠ **`leakscan` EXIT 2 IS "COULD NOT VOUCH", AND A LEFTOVER AGENT WORKTREE CAUSES IT.** A removed
+  agent's worktree directory under `.claude/worktrees/` made the scanner exit 2 with
+  `COULD NOT READ … Is a directory`. Not a leak and not a pass. Check the worktree is clean and
+  its commits are on `origin` **before** removing it — then re-run for a real verdict.
+- 🔴 **MY OWN GREP WAS THE WRONG INSTRUMENT THREE TIMES IN ONE SESSION, AND THE THIRD ONE ALMOST
+  REOPENED A CLOSED FINDING.** (a) Grepping parity row names for `multi-instance` found none and read
+  as an unsupported claim — the rows are named `recall-routed-…`. (b) A crude comment filter reported
+  7 "non-comment" lines in an all-docstring diff. (c) Grepping for a retracted sentence counted the
+  **quoted retraction** — the repo's house style of recording the old wording so nobody re-derives it
+  — as a live claim. **A zero, or a hit, from a pattern you chose is a fact about the pattern. Read
+  the match before believing the count.**
+- 🔴 **FOUR NEW DEFECT ENTRIES, PARKED HERE BECAUSE THE `Defects` HEADING REPLACES AND WOULD
+  HAVE DELETED THIRTEEN.** Move them under ranked item 6.
+  **(a)** `tests/unchanged_output_capture.py` is run by NO CI job and no nix check — measured,
+  zero references in `.github/workflows/` and `flake.nix`. #66 decided it stays MANUAL with a
+  written trigger; a blanket job would be red by construction, since it is a base-vs-head
+  differential. **(b)** The canonical handoff is ~99 KB against its own 65 KB guideline and
+  does not record #60, #63 or #66; its prune PR is blocked behind #62 and #65. **(c)** Two
+  entries #66 deliberately did not answer because #64 owns their files — the
+  `checks.default-is-the-go-client` Python-side insensitivity (`flake.nix`) and 2(d), whether
+  `cairn-ui` should render through `internal/report` (`internal/ui/README.md`); 2(d) is likely
+  answered by #64 itself. **(d)** Raw environment copies remain in five NON-consumer files
+  (`tests/test_subsystem_store_api.py`, `tests/routing_mutants.py`, `tests/parity/world.py`,
+  `tests/dualrun/harness.py`, `tests/conformance/oracle.py`); most build a SERVER environment,
+  which is a different predicate, and none was audited. Stated in `env_pin.py`'s docstring.
+- 🔴 **A GUARD I WIDENED TO ACCOMMODATE A NEW FEATURE STOPPED GUARDING, AND ONLY A MUTANT
+  FOUND IT.** `TestEveryContentRouteConsultsTheAuthority` is a regression test for a shipped
+  defect (a page rendered without consulting the authority). Adding a second authority, the
+  natural edit was `source.calls == 0` → `source.calls + sharing.reads == 0` — and **a sum is
+  satisfiable by the WRONG authority**: re-applying the original defect with a call to the
+  other one PASSES. Fixed with a per-route expectation where a content route missing from
+  the map FAILS. 🔴 **THE GENERAL SHAPE: when you add a second way to do the thing a guard
+  watches, the guard is part of the change, and widening it is the failure mode.**
+- 🔴 **AN `EQUIVALENT` MUTATION LABEL IS A CLAIM ABOUT *EVERY* OBSERVABLE, AND ONE MADE HERE
+  WAS FALSE.** Two authority checks looked redundant ("removing either leaves the other
+  answering 403"). The discriminator missed: a request with **no verb field** answers 403
+  unmutated and **400** with the handler's check removed, because that check runs BEFORE form
+  validation — so an unauthorised caller learns their input was malformed. **An EQUIVALENT
+  label is precisely what stops anybody writing the test that kills the mutant**, which is
+  why the retracted reason is kept beside the row rather than tidied away.
+- 🔴 **A GUARD'S OWN PRESCRIBED REMEDY PRODUCED THE STATE IT REFUSES.** The control-journal
+  refusal said "seed it with `cairn-server -create-user`" — which mints a user and **no
+  credential**. A journal seeded exactly as instructed had 1 user, 0 credentials, and the
+  surface came up announcing `sharing writable` while refusing every sign-in. **Third
+  spelling of that guard: a byte count (walked around by a one-byte journal), a user count
+  (walked around by the remedy), then the sign-in precondition itself.** 🔴 **A PROXY CAN
+  ALWAYS BE WALKED AROUND — ask the question the code asks.**
+- 🔴 **AN OPERATOR-FACING REMEDY CAN INVITE A SECRET INTO A DURABLE STORE.** "Hand-append a
+  `credential-issued` record" named neither the shape nor that `token_hash` is the SHA-256
+  digest. `Event.validate` checked that field's **LENGTH ONLY** at the time — under a message
+  reading "this journal is not a place a credential may ever land" — so a 64-character token
+  was accepted and persisted, and sign-in then failed on a digest mismatch with no signal why.
+  **When you tell somebody to hand-write a record, name the field that holds a digest.**
+  ✅ The check now requires hex, in either case, and `Model.apply` lowercases what it stores;
+  the tense here is past deliberately, because the lesson is the remedy's shape rather than
+  the guard's state.
+- 🔴 **A COMMENT THAT WOULD HAVE INSTRUCTED THE NEXT MAINTAINER TO UNDO THE GATE IT
+  EXPLAINS.** A commit moved the `go` job's `ok` floor to `-lt 18` and left three claims at
+  17 beside it, including in bold *"So: `ok < 17` refuses. 17 passes (today's tree)."*
+  Somebody whose deletion failed the gate reads that, concludes it is misconfigured and sets
+  it back — restoring the off-by-one the block exists to record. **Move every number in a
+  gate's explanation with its condition, in one commit; the explanation is the thing people
+  act on.**
+- 🔴 **FIVE ROUNDS, AND THE FIX ROUND'S OWN PROSE WAS THE NEXT FINDING EVERY SINGLE TIME.**
+  Measured across the ladder: rounds 2–5 each found the previous round's sentences wrong —
+  four unswept retractions, a completeness claim ("the last copy standing") that was itself
+  false, a cost conclusion that **contradicted its own numbers**, and a per-round payload
+  figure off by one in the very commit message arguing the ladder had converged. **Budget
+  for it; the correction is cheap and the belief is not.**
+- ⚠ **A COST MODEL RETIRED ON EVIDENCE THAT CONFIRMED IT.** A round replaced
+  `O(P × G × log G)` with four timings and concluded the cost was "worse than the expression
+  implies … quadratic and not the log-linear the old expression reads as". `P × G × log G`
+  **is** quadratic when both parameters grow together; the model predicted 4.49× against
+  4.47× measured. The conclusion came from reading a two-parameter expression as if one were
+  fixed. `BenchmarkAudience` now makes the table re-derivable, which is what the round should
+  have committed in the first place.
+- **Decision (operator, this session): land both halves of the share flow as-is**, rather
+  than dropping the unreachable write half. Round 0 argued the write half is unattributed and
+  unreachable; a probe showed the READ half is equally journal-gated, so dropping it buys a
+  smaller diff and no reachability.
+- **Decision (operator, this session): keep `Candidates`' co-membership narrowing** — you can
+  only share with people you already share a project with — with the invite flow filed as P6.
+- 🔴 **THE SHARE FLOW'S SIX-ROUND AUDIT LADDER, RECORDED HERE RATHER THAN IN `State now`
+  BECAUSE THAT HEADING REPLACES AND THIS IS THE DURABLE HALF.** #64 carried round 0
+  (requirements/deletion) plus rounds 1–5, each dispatched BLIND against a hand-built
+  worktree at the PR head — `isolation: "worktree"` branches from the DEFAULT branch here and
+  would have handed every auditor a tree of `main` without the package under audit. What it
+  found, in order: **round 0** a 234-line mutation battery **no gate ran**; **round 1** a
+  regression guard the PR had **widened until it stopped guarding** (re-applying the original
+  defect PASSED it) and an `EQUIVALENT` label **measured false**; **round 2** four retractions
+  written at one site each by the commit whose own message said a retraction is a tree-wide
+  sweep; **round 3** the control-journal guard's **own prescribed remedy producing the state
+  it refuses**; **round 4** a CI comment that would have instructed the next maintainer to
+  undo the floor it had just moved; **round 5** a remedy that **invited a secret into the
+  authority journal**. 🔴 **THE STOP WAS ARGUED, NOT TRIGGERED.** Executable payload per
+  round — `--remerge-diff --not origin/main`, comments stripped — was **15 → 22 → 31 → 4 → 7**
+  against **722** in the PR proper. The attribution gate's two-consecutive-zeroes never fired
+  and this was not an all-prose PR, so neither mechanism ended it; it was stopped on the
+  stated grounds that the ladder had left the PR, with the auditor concurring unprompted.
+  **Every round's findings are on the PR as comments, which is the record.**
+- 🔴 **A DOC PR I WROTE PREDICTED ITS OWN STALENESS AND I MERGED THE FEATURE FIRST ANYWAY —
+  ON PURPOSE, AND THE ORDER IS THE POINT.** #71 said "still 3 of 4 on `main`", which merging
+  #64 made false within the minute. Writing the handoff first and merging second would have
+  shipped a doc that was wrong on arrival; merging first and re-deriving the delta costs one
+  rebase and produces a doc whose verdict was MEASURED rather than predicted. **When a doc's
+  claim is about a state your next action changes, take the action first.**
+- **Decision (operator, this session): the credential gap is FILED, not built.** A
+  credential-issuing command carries its own decisions — token generation, display-once,
+  revocation UX — and the one hazard worth naming is that it is the single path where a
+  secret could reach the journal. It is ranked work rather than a bolt-on to the share flow.
+- ✅ **THE CONTROL-PLANE ARC CLOSED AT `7d7c9ea`, AND THE VERDICT IS RECORDED HERE BECAUSE
+  `State now` REPLACES AND THIS IS THE DURABLE HALF.** The condition — frozen at round 1, four
+  clauses, naming the three commands a later session runs — was measured **on `main`** rather
+  than inferred from the PR's six green checks: authz matrix PASS · share flow serving a scope
+  granted from one user to another with its replica-honesty notice pinned PASS · identity
+  through both backends PASS · `packages.default` the Go client PASS · `pytest tests -q` 1997
+  passed / 0 failed · `go test ./...` 18 ok. **ADDRESSED ⇒ ARC CLOSED.** 🔴 **THE "ON `main`"
+  WORDING IS THE WHOLE POINT AND IT COST ONE EXTRA STEP TO HONOUR**: green CI is a claim about
+  a branch, the clause asked about `main`, and they agreed here only because they were both
+  measured. A session that reported "addressed" off the PR's rollup would have been asserting.
+- 🔴 **MY OWN MEASUREMENT OF THAT COUNT WAS WRONG FIRST, AND IT WOULD HAVE HAD ME "CORRECT"
+  NINE TO NINE.** `go run ./cmd/cairn -verbs | tail -n +2 | grep -c .` answered **9** — the
+  `tail -n +2` assumed a header row that the command does not print, and silently dropped
+  `append`. Reading the RAW output answered ten, and argparse agreed. **Parsing a tool's
+  output makes its FORMAT a dependency you did not pin**, and the failure here was a
+  confident number that matched the stale prose.
+- 🔴 **DELETING DEAD CODE REPRODUCED THE FINDING INSIDE ITS OWN FIX.** #44's finding was that
+  `normalise_shell` was dead *and* that a docstring still pointed at it. Deleting the function
+  left TWO docstrings pointing at it — the same defect, freshly made, in the commit closing it.
+  **After removing a symbol, grep its NAME, not just its call sites.**
+- 🔴 **A GUARD'S MESSAGE CLAIMED EVERY STATE WHILE ITS BODY COUNTED ROWS, AND THE STATE IT
+  MISSED WAS THE ONE THAT BREAKS THE NAIVE SPELLING.** `internal/client`'s `doctor` fixture
+  renders `OK`, `UNMEASURED` and `NOT-OBSERVABLE` — never `PROBLEM`, whose marker `🔴` is a
+  SINGLE RUNE where the other three are two. Closed with two guards rather than one: the
+  fixture's states are a ledger that fails if it SHRINKS, and a separate unit case drives
+  `doctor.ParseRow` over every state. ⚠ **`ParseRow` LANDED ON `main` AT `93d0f03`**, replacing the
+  exported `Markers()` table; this bullet carried a "pending #74" label for exactly one merge,
+  which is the point — a durable bullet naming a symbol one unmerged PR away greps to zero hits
+  with nothing to tell a reader whether it was renamed or reverted. **When a fixture cannot reach a case, the honest fix is
+  a second guard, not a wider sentence.**
+- 🔴 **A PR BODY IS A CLAIM, AND THE CLAIM WAS ABOUT A DESIGN THAT NO LONGER SHIPPED.** #1854's
+  body carried a watched end-to-end run, a red/green matrix and a mutation table — all taken
+  against its FIRST shape, whose differential attribution machinery its third commit **deleted**
+  in response to an operator decision. An audit-driven redesign resets the verification gate, so
+  the evidence in the body was about code that had been removed. **Re-watch after a redesign;
+  the body's confidence is the strongest reason to, not a reason not to.**
+- 🔴 **GATE ON THE MERGED TREE, NOT THE PR BRANCH — AND THE TELL IS THAT THE BASE MOVED, NOT
+  THAT ANYTHING OVERLAPPED.** #1854's four tekton checks were green on its own branch while
+  `main` had advanced two commits. `git merge-tree --write-tree` exited **0** (branch on the
+  EXIT CODE — it prints a tree OID and emits no conflict markers, so a marker grep finds
+  nothing either way), and the merged tree then ran **575 passed / 0 failed**. Green on the
+  branch was a claim about a tree nobody was going to ship.
+- ⚠ **RULE (m) FIRES BEFORE RULE (o), WHICH COSTS A ROUND WHEN PROBING THE LEAK GATE.** A probe
+  delta whose `## Goal` carried a prose closing condition rather than the
+  `closing-condition:` key exited **11** `undefined-done` and never reached the scanner.
+  Harmless and loud — but a probe of a LATER gate has to satisfy every earlier one first.
+- 🔴 **RETRACTING A TRUE CLAIM IS THE SAME DEFECT AS LEAVING A FALSE ONE, POINTED THE OTHER WAY —
+  AND #85 DID IT TWICE.** Once claiming `flake.nix` *"never said"* the Go image was undeployed
+  (it did, at the `server-image-go` block, a site the same commit had missed while editing that
+  file); once retracting *"neither had anything watching its condition"*, which was true.
+- 🔴 **A CORRECTION APPLIED AT SOME OF ITS SITES READS COMPLETE AT WHICHEVER ONE YOU LAND ON.**
+  The dominant failure across #85's four audit rounds. Measured: the publish-ordering rationale
+  had **SIX** sites; round 1 fixed three and reported it done; round 2 found the other three —
+  one of them the copy a *"See the 🔴 at the top of this file"* pointer routes readers to, in a
+  file round 1 had edited four lines below that pointer.
+- 🔴 **A GUARD'S STATED PREMISE CAN DIE WHILE ITS ASSERTION STAYS CORRECT — ONLY THE PROSE TELLS
+  YOU.** `test_flake_go_image_runtime_contract.py`'s *"Nothing has ever published
+  `server-image-go`"*, and `test_publish_workflow.py`'s ordering rationale, whose **both** legs
+  are spent. The first guard's line is still worth keeping; the second now enforces the opposite
+  of what it argues for (rank 10).
+- 🔴 **A NOTICE THAT LICENSES WORK IS ITSELF WORK: RETIRE IT IN THE COMMIT THAT DOES THE WORK.**
+  #81 recorded that the tree was deliberately left inconsistent pending an operator decision;
+  #85 swept it on that decision and left the notice standing — while `AGENTS.md`, paid by every
+  session, points at that exact block.
+- ⚠ **A PROSE-PAYLOAD LADDER CANNOT FIRE THE ATTRIBUTION GATE** — the `.md` IS the payload, so
+  every round scores non-zero by construction. Use the ladder-authored pre-image share instead,
+  and **record the measurement**: #81's ladder stopped at **16/16 = 1.00** (threshold 2/3);
+  #85's round 2 measured **8/28 = 0.29**, so that ladder had NOT left the PR and continuing was
+  the correct call rather than a judgement.
+- 🔴 **AND THE SAME MERGE LEFT A TREE THAT DID NOT COMPILE, FROM FILES THAT NEVER CONFLICTED.**
+  *(Also re-derived from #80.)* The rename replaced an env helper; the new command's call site —
+  added on the other branch, in a hunk the rename never touched — still called the old name.
+  **Disjoint files are not safety: one side widened how something is read, the other added a
+  caller.** The mutation battery said so first, by REFUSING TO VOUCH: *"the unedited copy is not
+  green, so every mutant below would score KILLED for a reason that has nothing to do with its
+  guard."* A non-compiling tree would otherwise have reported a perfect score.
+- 🔴 **MY PROBE REVOKED THE SESSION IT WAS ABOUT TO TEST, AND I FILED THE 401 AS AN INSTRUMENT
+  QUIRK — THE RETRACTED DIAGNOSIS IS KEPT HERE BECAUSE IT WOULD HAVE TAUGHT THE NEXT READER TO
+  PAPER OVER A REAL REVOCATION.** ❌ **RETRACTED:** *"the cookie is `__Host-…; Secure` and curl
+  will not send a `Secure` cookie over `http://`, so a post-sign-in 401 is the instrument, not
+  the server; force the header."* **Measured false in both directions.** curl 8.21.0 treats
+  loopback as a secure context exactly as a browser does: sign in, `GET /` with the jar → **200**.
+  The positive control that the Secure rule *can* withhold (a `secure` cookie for a non-loopback
+  host over `http://`) was watched to fire, so the instrument was working.
+  ✅ **THE REAL MECHANISM IS A SECURITY GUARD DOING ITS JOB.** `internal/ui/session.go` revokes
+  the presented session before minting the new one — session-fixation defence, and the code says
+  so. My chain re-ran `POST /sign-in` mid-probe with `-b <jar>` to read a `Location`, and threw
+  the replacement cookie away with `-c /dev/null`; that call **revoked the jar's own session**,
+  so the next `GET /` was a correct 401. Isolated: a second sign-in **without** presenting the
+  cookie leaves the first session at 200; **presenting** it takes the first session to 401.
+  🔴 **THE LESSON IS THE CONTROL I DID NOT RUN.** A 401 is the observable the most mechanisms
+  share, and I picked the one I already suspected. The forced-header "control" changed **two**
+  variables — it also re-signed-in, so it minted a fresh session; it could never have
+  discriminated. **Never re-run an authenticating request inside a chain you are measuring**, and
+  when an auth probe fails, suspect your own previous request before the server.
+- 🔴 **THE TEN BULLETS BELOW ARE RE-DERIVED FROM #96, WHICH LOST THE DOC RACE THREE TIMES.**
+  They are its session's own records, moved into `Gotchas` (which APPENDS) rather than into
+  `State now` (which REPLACES) because every one of them is a record of a round that has
+  CLOSED, and that is what this document's own convention says to do with those. ⚠ **Six of
+  #96's bullets were deliberately NOT carried and the reason is per-bullet, not editorial:**
+  its `main` sha, its rank-9 status and its `leakscan` instance-naming are all falsified by
+  the work above; its `SIX OF ELEVEN` event-kind count is superseded by the FOUR-of-eleven
+  entry with a selection rule under `Defects`; its `leakscan` directory entry is superseded by
+  the widened class there; and its *"the cheap control settled it"* bullet is **retracted**
+  above, so re-landing it would reinstate a conclusion this file now measures as wrong.
+- ✅ **THE RENAME ARC (rank 7) IS DONE AND VERIFIED ON `main`, CLAUSE BY CLAUSE.**
+  `56cc56e`. Measured live, not recalled: **11** alias pairs in `internal/envalias`; every
+  configuration read goes through the resolver (the only two raw reads are deliberate —
+  `cairn-ui`'s control journal, which must SEE whitespace to refuse it, and
+  `lib/host_identity.py`'s host-label names, which have no aliases); the warning is
+  *"$X is a deprecated alias for $Y. Where both are set in the environment, $Y is the one that
+  is read."*; and `RemovalAnchor` = *"the Python client (packages.cairn) is retired"* — the
+  milestone the operator approved in place of a version, since this repo's version IS the git
+  revision (`flake.nix`: `self.shortRev`) and `leakscan` refuses a dated one.
+- 🔴 **P7'S KEY WAS REPLACED BEFORE IT WAS BUILT, AND THAT IS THE SESSION'S BEST RESULT.** Rank
+  3 specified *"key it on principal + epoch"*. Measured: all fourteen journal event kinds are
+  AUTHORIZATION events and `internal/write/write.go` makes no `control.` call, so an append
+  moves no epoch — that key answers **304 to a client missing new bullets**. The validator is a
+  digest of the **UNCOMPRESSED** tar instead: it covers content, the visible set and `?scope=`
+  at once, and it is the only form both servers can agree on, because gzip identity between
+  them is recorded as unattainable while `tests/dualrun/` compares the uncompressed tar
+  byte-for-byte. **Independently re-verified after merge:** mutating the validator to a
+  content-independent value makes `TestAnAppendMovesTheETag` fail with its own message.
+- ⚠ **ONE DEBT, FILED RATHER THAN CARRIED IN A REPORT.** P7's two binding claims are not in
+  `AGENTS.md` — it has **73 bytes** free and its own rule forbids paying by deleting a claim.
+  It is `## Defects (batched)` entry with a mechanical closing condition; it is not an open end.
+- 🔴 **AND THE GATE BUILT THIS SESSION REFUSED THIS VERY DOC, CORRECTLY.** The first draft of the
+  bullet above spelled the task board's real name — the SAME denied identifier scrubbed off `main`
+  this morning as #68, re-introduced by the sentence explaining that no task resolved. Rule (o)
+  exited 13 on the delta, named the file and line, and nothing was written or pushed. **Not a
+  pre-existing red and not an override case:** the remedy was the scratch file. The remedy for the
+  NAME is the one `AGENTS.md` already prescribes — keep the mechanism, drop the particular.
+- 🔴 **A MUTANT THAT DOES NOT COMPILE DIES AT THE BUILD AND PROVES NOTHING — HIT LIVE WHILE
+  VERIFYING P7.** Replacing the ETag's digest with a constant left `hex` and `sha256Sum`
+  unused, so `go test` reported `[build failed]` and the guard never ran. Rebuilt so the mutant
+  still USES both symbols while being content-independent, it reached the guard and died with
+  the guard's own message. **Mutate the narrowest expression that can be wrong**, and check the
+  mutant compiles before reading its verdict.
+- 🔴 **RE-DERIVED FROM #97**, which lost the doc race to #98 and then to #96. Three of its
+  bullets were deliberately not carried — its `SIX OF ELEVEN` event-kind count, its
+  `leakscan`-exits-2-on-a-directory entry, and its *"the cheap control settled it"* bullet —
+  each superseded or retracted above rather than merely reworded.
+- 🔴 **AN EMPTY RESULT COULD NOT DISTINGUISH TWO CAUSES OF A `leakscan` EXIT 2, AND THE CHEAP
+  CONTROL SETTLED IT IN ONE COMMAND.** The base clone exited 2 with untracked `result` symlinks
+  AND a live agent worktree both present, either a plausible culprit. A fresh worktree of
+  `origin/main` — same tree, neither artefact — scanned **rc 0**, and the scanner's single
+  `COULD NOT READ` line named the worktree directory. **The rival mechanism was named before
+  concluding, and the discriminating control cost less than reasoning about it would have.**
+- 🔴 **THE LEAK GATE BUILT THIS MORNING REFUSED THREE OF THIS SESSION'S OWN DELTAS, AND THE
+  THIRD WAS A DIFFERENT RULE FROM THE FIRST TWO.** Two `denied-identifier` (a repo name in a
+  `$`-variable spelling, which is why it did not LOOK like a name; and this repo's own
+  synthetic canary, pasted in while documenting how to probe the gate) and one
+  `dated-incident` (a real date in prose). ⚠ **A SYNTHETIC VALUE IS STILL A DENIED
+  IDENTIFIER** — the canary exists to be refused, so quoting it in a committed doc is a real
+  violation, not an exemption. The remedy every time was to describe by ROLE.
+- 🔴 **TWO REASONS FOR THAT ORDER WERE FALSE AND ARE RETRACTED IN THE CODE RATHER THAN
+  SWAPPED.** "A lockout checked after the token is one a valid credential walks through" —
+  false, measured. "An attacker must not get the failure record wiped" — false for THIS
+  limiter: `netid.RateLimiter.RecordSuccess` is a deliberate no-op whose own comment explains
+  that a success-resets-counter design is the defect. `internal/api` states the first reason
+  for ITSELF; **a reason does not transfer between packages unexamined**, and examining it is
+  what produced the retraction.
+- 🔴 **A BUCKET-SEPARATION TEST NEEDS A THRESHOLD ABOVE ONE, AND AT ONE IT FAILS AGAINST
+  CORRECT CODE.** `RecordFailure` reports the lockout when the count REACHES the threshold, so
+  at 1 every client trips on its own first failure — making "the second client's first failure
+  must not trip" unsatisfiable. The first draft asserted exactly that and went red against a
+  correct implementation.
+- 🔴 **AN ANCHOR INSIDE A STEP'S BODY IS NOT A BOUNDARY.** Inserting that leg anchored on a
+  comment line that occurs INSIDE the Go proof step, so the insert landed mid-step and a
+  follow-up rewrite truncated its tail. The whole-text pin caught it with a diff naming
+  exactly the missing lines; review would not have. Restored from `origin/main` and appended
+  at EOF, where the last step genuinely ends.
+- ⚠ **A COUNT IN A DOCSTRING BESIDE THE DICT IT COUNTS WILL DRIFT** — "Four push steps", "the
+  four CONTROL steps", "both pods", "Two repositories": ten stale phrasings swept in one pass.
+  The docstrings now carry NO number, because the dict IS the count.
+- **Decision (operator, this session): the IngressRoute lands in the SAME PR as the workload**,
+  accepting that the public hostname answers refusals until the journal is seeded. The
+  alternative — cluster-internal first, route as a follow-up — was offered twice and declined.
+- **Decision (operator, this session): the in-cluster seeding is done by the ASSISTANT next
+  session, with an explicit go-ahead first**, rather than handed to the operator as a runbook.
+- 🔴 **"BOTH CI TIERS SIMULATED GREEN" WAS A SIMULATION THAT COULD NOT REACH THE BRANCH IT
+  CLAIMED TO TEST.** The refuse-on-skip path only executes when a toolchain is ABSENT; the host
+  has `go` and `nix`, so `toolchain_missing` returned `None` and the `require` set was never
+  consulted. `CAIRN_FACTS_REQUIRE=go`, `=nix` and `=all` all printed an identical `20 passed`.
+  **Ask what a green simulation structurally cannot execute** — here, the only branch that
+  mattered.
+- 🔴 **I REPORTED `completed=6/6` AND NEVER READ THE CONCLUSIONS. THREE OF THE SIX HAD FAILED.**
+  `completed` and `success` are different fields on the same object, and the easier one to assert
+  is the one that says nothing. This happened while assembling an audit brief, in the session
+  that had been quoting *read the content, never the exit code* all day. **Read
+  `[.statusCheckRollup[]|select(.conclusion=="FAILURE")]|length`, not a completion count.**
+- ⚠ **AND THE CI BREAKS WERE STRUCTURAL, NOT FLAKY:** the new step sat at `ci.yml:380` while the
+  job's `pip install pytest` was at `:531`; the `nix` job installs pytest NOWHERE; and 20 added
+  tests took the `tests` job's drift guard from gap 97 to 117 against its `MAX_GAP = 100`. **A new
+  pytest step in the `go` or `nix` job must be placed after that job's own interpreter setup, and
+  adding tests in bulk must move `FLOOR`.**
+- 🔴 **A SPELLED READ-ONLY GUARD WALKED PAST EVERY DESTRUCTIVE COMMAND PUT THROUGH IT.**
+  `{tok.lstrip("-") for tok in cmd} & {"rm","write","commit",…}` accepts `git clean -fdx`, a hard
+  repo reset, and any `sh -c "…"` one-liner, because a shell string tokenises as ONE token.
+  Labelling it "a spelled check" in its own docstring was NOT enough — **it had no negative
+  control, and neither did its sibling**, in a PR whose other three controls all did.
+- ⚠ **A GUARD WHOSE BODY IS A WORD-COUNT WHILE ITS DOCSTRING CLAIMS A RELATIONSHIP.** #101's
+  `test_every_unanswerable_fact_names_who_CAN_answer_it` asserted `len(reason) > 80` and that one
+  of four words appeared. A reason saying the OPPOSITE — *"nobody knows who could"* — passes both.
+  Same shape as the guards-narrower-than-their-docstring family already recorded here.
+- ⚠ **THE SALVAGE IS THE SHAPE TO COPY, NOT THE MECHANISM.** #102 does the one part with a
+  measured incident behind it, in one file: delete the derivable claim, name the command once,
+  add no guard. Measured `+8 lines, -4 prose words, derivable claims asserted 3 -> 0` — the line
+  count ROSE because a fenced command costs lines, and the number that matters is the assertion
+  count. **Report both rather than the flattering one.**
+- ⚠ **`flake.nix` HAD ALREADY DECLINED #101'S SHAPE, IN WRITING** — *"a check that ran the binary
+  to print that list and diffed it against a third hand-written copy would restate one claim down
+  a longer path."* The repo's existing prose contained the refutation of the mechanism before it
+  was built. **Grep the tree for a rejected-alternative note before building a gate.**
+- ⚠ **A THROWAWAY REPO BUILT TO TEST A GUARD STILL TRIPS THE never-commit-to-main HOOK**, and the
+  hook resolves `-C` from the COMMAND TEXT: a shell variable it cannot expand, or a directory the
+  command is about to CREATE, both make it judge the CALLER's repo instead. `git init -b work` and
+  create the directory in an EARLIER tool call.
+- ⚠ **A `no-change` (exit 5) SHORT-CIRCUITS BEFORE THE LEAK GATE.** Re-testing the gate with a delta
+  already merged measures the no-change path, not the guard — a green there is about nothing. Use a
+  fresh delta for every gate probe.
+
+## Open-investigation blocks closed and moved out at the SECOND prune
+
+🔴 **VERBATIM.** Six blocks: the two host-HOME doctor-test blocks and the ✅ CLOSED block that closed them (kept together, because the closure's whole value is that it quotes what the two live-reading blocks said), the `packages.default` flip's mechanical blocker, the live-JWKS-fetch coverage gap, and the publish gate. Every one is resolved or superseded on `main`. The two that stay in the handoff are the ones still open: the four loopback-only auth controls, and the byte-identity test that failed once and has not reproduced.
+
+### A sibling session's HOME write turned a host-dependent test red mid-session
+- as-of: 2026-09-18
+- **Symptom + exact repro:** `python3 -m pytest tests -q` on the same tree reported
+  `1942 passed` earlier and `1 failed, 1941 passed` later. The failure is
+  `tests/test_cairn_doctor.py::TestTheCliWiring::test_a_no_sync_run_still_reads_the_LOCAL_config`,
+  `IndexError` at `test_cairn_doctor.py:876`.
+- **Observed (with values):** `stat` gives `~/.config/subsystem-store/instances` mtime
+  **2026-09-17 22:00:43**, containing one `<a real project>.env` file; `routes.json` carries
+  25 top-level keys.
+  The green run finished **before** that write; the red runs came after. With that config
+  present, `cmd_doctor` emits per-instance check names and the test's exact `"token"` lookup
+  finds none.
+- **Ruled out:** that it is PR #38's. It fails identically on plain `origin/main`.
+  `via: measurement`
+- **Ruled out:** intra-file test-ordering. It fails at file level too (`1 failed, 59 passed`)
+  and alone. `via: measurement`
+- **Ruled out:** `CAIRN_MIRROR_ROOT`. Unsetting it does not fix it. `via: measurement`
+- **Leading hypothesis:** the session holding `cairn-oss-multi-instance-phase-c` (standing up a
+  second store instance) wrote that config. CI is unaffected — fresh checkout, clean HOME.
+- **Next probe:** none needed for #38. If it is to be fixed, the test should pin the HOME it
+  reads rather than inheriting the operator's — that is the real defect.
+
+### ✅ CLOSED — the `packages.default` flip's mechanical blocker (residual 8)
+- as-of: closed at `feat/route-the-read-verbs`; the entry is kept rather than deleted because the
+  measurement that made it a blocker is what stops the next session re-deriving the hold.
+- **Was:** `cairn doctor` / `cairn ls-entries` via the Go client on a host with more than one
+  instance configured → **exit 11**, refusal on stderr, 0 bytes stdout. All five read paths sat
+  behind `RefuseUnportedMultiInstance` (`verbs.go:52,78,101,246`, `cli.go:614`).
+- **Ruled out:** that this was a doc fix. It was raised as an undeclared narrowing whose blast
+  radius could not be established from the code; running the packaged client on a real
+  multi-instance host is what turned it into a blocker. `via: measurement`
+- **Closed by:** `internal/report` taking an instance-aware caveat (four red-at-`d8b858a`
+  differential fixture rows), `recall`/`search`/`validate` routing their scope and
+  `sync`/`ls-entries`/`doctor` walking every instance, three multi-instance READ parity rows
+  comparing stdout+stderr+exit, and the guard deleted with residual 8's table row.
+- 🔴 **WHAT IS LEFT IS A DECISION, NOT A CAPABILITY — AND A GREEN GATE STILL DOES NOT LICENSE
+  IT.** The flip **widens** the CLI contract (`-verbs`/`-exit-codes` answer 0 where the oracle
+  exits 2) — residual 7 — and needs an announcement, because it changes what
+  `nix run github:…/cairn` executes for consumers who never asked for a new client.
+
+### CLOSED — a live JWKS fetch has now been exercised against a real issuer
+- as-of: 2026-09-18 · **CLOSED 2026-09-25, and the `Next probe:` line below is DISCHARGED — do
+  not run it.** The probe it asked for was *"a pod, a network and a real issuer"*, and the deploy
+  recorded in `State now` is exactly that: the browser surface runs in-cluster against a live
+  self-hosted GoTrue, reached over TLS through the public edge. **A completed HANDSHAKE, which is
+  what this block said no measurement had ever produced:** the pod's startup line carries **no**
+  `key set could not be fetched` warning, and that warning is emitted on any fetch failure — so
+  its absence is the positive evidence, not silence. The failure arm was ALSO observed, which is
+  what makes the success arm a measurement rather than an assumption: the same binary run against
+  a 502 printed the warning, withheld the provider button and answered 503 on those routes.
+  ⚠ **SCOPE: this closes the HANDSHAKE question, NOT the `SSL_CERT_FILE` one.** The root-count
+  observations below stand unchanged and the variable is still inert in both directions; nothing
+  here re-opens or re-measures that. ⚠ And the handshake was made by the **UI** image, not the
+  pod image the root counts were taken in — same CA-bundle mechanism, different artefact, so read
+  it as evidence about the mechanism rather than about that image.
+- **Symptom + exact repro:** not a defect — a coverage gap three rounds touched and none closed.
+- **Observed (with values):** every measurement about the Go image's TLS trust is an
+  `x509.SystemCertPool()` root COUNT, never a completed handshake: **121** roots with
+  `SSL_CERT_FILE` as shipped, **121** unset, **121** pointed at `/nonexistent`, against a
+  positive control of **0** in an image with no CA roots. The bundle is reachable and the
+  variable is **inert in both directions** — which is now what the code says.
+- **Ruled out:** the original justification, that the image "has no `/etc`" so the bundle would
+  be unreachable without the variable. `pkgs.cacert` is root-merged by `buildLayeredImage`, so
+  `/etc/ssl/certs/ca-bundle.crt` exists and `/etc/ssl/certs` is in Go's `certDirectories`.
+  `via: measurement`
+- **Next probe:** a pod, a network and a real issuer. Nothing in the repo covers it.
+
+### CLOSED — the publish gate, and the second defect the first one hid
+- as-of: 2026-09-19
+- **Symptom + exact repro:** `gh run list --workflow=publish-image.yml` → 7 runs, 7 failures.
+- **Observed (with values):** every run died in `pin skopeo` with exit 127 plus
+  `Invalid format`, because `nix build --print-out-paths` prints **two** paths for
+  `nixpkgs#skopeo` (the `man` output FIRST). Fixed by naming the output — `nixpkgs#skopeo.out`
+  prints exactly one, measured at the pinned lock on nix 2.34.8.
+- **Observed (with values):** with that closed, the run reached the push and failed
+  **`denied: permission_denied: write_package`**. Cause measured: the package read
+  `repository: null`, created **17 minutes BEFORE the workflow first landed** — a hand push had
+  made it a user-scoped package with no repo for `packages: write` to be based on. Granting the
+  repo write access fixed it; both packages now read `vis=public repo=<this repo>`.
+- **Ruled out:** that the resolver needed a script. An audit refuted it by measurement and the
+  111-line script was deleted. `via: measurement`
+- **Next probe:** none — closed. A successful run is on record.
+
+### STILL LIVE, re-measured at `e15e331`: the host-HOME-dependent doctor test
+- as-of: 2026-09-21
+- **Symptom + exact repro:** `uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly`
+  → **`1 failed, 1969 passed`**, the failure being
+  `tests/test_cairn_doctor.py::TestTheCliWiring::test_a_no_sync_run_still_reads_the_LOCAL_config`.
+- **Observed (with values):** measured TWICE this session, on `main` at `0587ace` and again on the
+  `docs/positioning-agent-swarm-memory` branch — **identical count both times, 1 failed / 1969
+  passed**, so the branch introduced nothing. `stat ~/.config/subsystem-store/instances` →
+  mtime **2026-09-17 22:00:43**, one `.env` inside. `via: measurement`
+- **Ruled out:** that either of this session's PRs caused it — the same failure and the same pass
+  count on plain `main` before any branch existed. `via: measurement`
+- **Leading hypothesis:** unchanged from the 2026-09-18 block above — a sibling session's write to
+  `~/.config/subsystem-store/instances` makes `cmd_doctor` emit per-instance check names, and the
+  test's `"token"` lookup finds none. CI is unaffected (fresh checkout, clean HOME).
+- **Next probe:** none needed for either merged PR. The real defect is that the test inherits the
+  operator's HOME instead of pinning one; that is the fix when somebody wants it.
+
+### ✅ CLOSED — the host-HOME-dependent doctor test was fixed two merges before this doc still called it LIVE
+- as-of: 2026-09-23
+- **Symptom + exact repro:** the block above — *"STILL LIVE, re-measured at `e15e331`"* — records
+  `uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly` returning
+  **`1 failed, 1969 passed`**, the failure being
+  `tests/test_cairn_doctor.py::TestTheCliWiring::test_a_no_sync_run_still_reads_the_LOCAL_config`,
+  and its `Next probe` says *"the real defect is that the test inherits the operator's HOME instead
+  of pinning one; that is the fix when somebody wants it."*
+- **Observed (with values):** on `feat/ui-image` at `a88f60b` the full suite is
+  **2059 passed, 0 failed** in 525.86 s — that test among them, no failure, no skip.
+  🔴 **AND THE CONDITION THE BLOCK BLAMES IS STILL PRESENT, WHICH IS WHAT MAKES THIS A CLOSURE
+  RATHER THAN A DISAPPEARANCE**: `stat ~/.config/subsystem-store/instances` still reads mtime
+  **2026-09-17 22:00:43** with one `.env` inside — byte-for-byte the state the two earlier
+  blocks both name as the cause. Same host, same HOME, same config, test green.
+  `via: measurement`
+- **Ruled out:** that the symptom merely failed to reproduce. The fix is identifiable and dated:
+  `git log e15e331..origin/main -- tests/test_cairn_doctor.py lib/ cairn` names **`c47636b`**,
+  *"Pin the host configuration a doctor test inherited, and close three ladder-filed defects"*
+  (#60) — which is the `Next probe`'s own prescription, already landed. `via: measurement`
+- **Ruled out:** that this doc was merely behind by one merge. It is behind by **two** — `c47636b`
+  (#60) predates both `93d0f03` (#74) and `a88f60b` (#76) — and the LATER of the two blocks,
+  which re-measured it as LIVE, was written **after** the fix existed, which is the part worth recording.
+  `via: measurement` — the ordering was read off
+  `git log --oneline e15e331..origin/main -- tests/test_cairn_doctor.py lib/ cairn`, which lists
+  `c47636b` below both later merges rather than inferred from the version numbers.
+- **Leading hypothesis:** none needed; closed.
+- **Next probe:** none. 🔴 **THE DURABLE LESSON IS ABOUT THIS DOCUMENT, NOT ABOUT THE TEST.** An
+  `Open investigations` block is APPEND-ONLY, so a block saying `STILL LIVE` survives every update
+  that does not retype it — including the update that lands its fix. Two sessions re-measured this
+  one as live; neither ran `git log <the-as-of-ref>..origin/main -- <the paths the block names>`,
+  which is one command and is what closed it. **Before re-measuring any `STILL LIVE` block, ask
+  what landed since its `as-of` ref.**
