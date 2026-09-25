@@ -1164,8 +1164,7 @@ slug, and this doc has twice measured a shuffle re-pointing live claims.
   more samples of one path; what identified it was probing the SAME service by a second route — from
   inside the cluster, from the consuming pod itself (6/6 OK) — plus a sibling endpoint on the external
   path that stayed healthy throughout, and the provider's own restart clock being 22h old. That
-  triangulation put the fault in the edge path and nowhere else. **An error, like an empty result,
-  cannot name its own mechanism.**
+  triangulation put the fault in the edge path and nowhere else.
 - ⚠ **A DEGRADED-BUT-SAFE FAILURE MODE IS WORTH READING THE CODE FOR BEFORE ACCEPTING THE RISK.**
   Against that 502 the surface does not refuse to start: it warns, withholds the provider button,
   answers 503 on those routes only, leaves the credential form, the entries page and existing sessions
@@ -1185,11 +1184,6 @@ slug, and this doc has twice measured a shuffle re-pointing live claims.
   stripped before apply and the applied object is byte-identical. Confirmed rather than assumed: the
   pod's age and restart count were unchanged across that reconcile. Useful when the correction above
   has to land on a surface you do not want to cycle twice.
-- 🔴 **RESOLVING PIDs INSTEAD OF `pkill -f` IS WHAT MADE A SIBLING SESSION'S PROCESS VISIBLE.** A
-  sweep for leftover test binaries found a running instance of this very surface — and reading
-  `/proc/<pid>/cmdline` showed its paths belonged to a DIFFERENT session's scratchpad (the held
-  rank-9 share-flow world), not to this one. A `-f` pattern match would have killed another session's
-  deliberately-held instance, and the damage would have read as a defect in the work under test.
 - ⚠ **`claim-work` HAS NO SLUG FOR WORK THAT IS NOT ON THE RANKED LIST YET, AND TAKING ONE ANYWAY IS
   STILL RIGHT.** This session's deploy was not a ranked item under the doc's current numbering, so
   there was no `--slug-for` answer; a descriptive slug was claimed instead and released at the end.
@@ -1289,8 +1283,18 @@ human was asked to take. `cp -a` the world, run a second instance on another por
 event appended, then kill it **by resolved PID** (`ss -lptnH 'sport = :<port>'` →
 `/proc/<pid>/cmdline`), never by a `-f` pattern.
 
-**The DEPLOYED browser surface (ranks 9 and 13 are browser work against THIS, not a hand-run
-instance).** 🔴 **Its public hostname is deliberately NOT written down in this PUBLIC repository** —
+**The DEPLOYED browser surface — RANK 13's target, and NOT rank 9's.** 🔴 **AN EARLIER DRAFT OF
+THIS BLOCK SAID "ranks 9 and 13 are browser work against THIS, not a hand-run instance", AND THAT
+WAS WRONG ABOUT RANK 9 — the retraction is kept because the wrong version sent a reader to the
+wrong target.** Rank 9 verifies the SHARE FLOW, whose `Candidates` list is narrowed by
+CO-MEMBERSHIP (operator decision, recorded under `Gotchas`: you may share only with somebody you
+already share a project with). Measured on the deployed journal: **1 `user-created`, 1 project, 1
+`member-set`** — one person, so the candidate select there is EMPTY and there is nobody to share
+with. **Rank 9 therefore stays the hand-run recipe ABOVE** (which builds two users and joins them)
+until somebody provisions a second co-member in-cluster; rank 13 is the only one this block is
+about. ⚠ **Do not "simplify" by deleting the hand-run recipe** — it is the only procedure that
+produces a world rank 9 can be verified in.
+🔴 **Its public hostname is deliberately NOT written down in this PUBLIC repository** —
 read it from the deployment-manifest repo's UI IngressRoute, and substitute it for `<surface>`:
 
 ```bash
@@ -1330,6 +1334,34 @@ how a 10-commit lag sat unnoticed for a day behind a healthy pod and green gates
 PR #35's CI and the merged-tree byte budget, the P4 ladder, the round-1 fix round, and #38's
 round-3/merged-gate block. They are resolved or superseded; the archive keeps them verbatim,
 because a closed block's value is its measured values and eliminations. Read it on demand.
+
+### FOUR of the five auth controls are still LOOPBACK-only readings, off-mesh unverified
+- as-of: 2026-09-25
+- **Symptom + exact repro:** not a defect — a coverage gap, recorded HERE because it previously
+  lived only in `State now`, which REPLACES. It had already been hand-carried across two updates;
+  the third would have dropped it, and the gap would then read as absent rather than open.
+- **Observed (with values):** the anonymous refusal IS now measured off-mesh against the deployed
+  surface — `GET /` (`Accept: */*`) → **401**, `GET /share` → **401**, through the public edge.
+  Those are the ONLY two off-mesh readings. Everything else was watched failing closed over
+  LOOPBACK on a hand-run binary: the Origin pair, the CSRF pair, the `__Host-` cookie attributes
+  (`Path=/; HttpOnly; Secure; SameSite=Lax`), and the five-failure lockout answering 401 to a
+  VALID credential. ⚠ Post-deploy probes added `POST /sign-in/github` → 403 with no Origin and 403
+  with a foreign Origin, and the callback with no flight → 400. **Those exercise the OAuth routes'
+  gates, NOT the four above** — the CSRF pair is a POST with a session and a wrong token, which
+  none of these sends, so do not count them as closing this.
+- **Ruled out:** that a trusted-network bypass could exist — every gate derives from the REQUEST
+  (Origin vs Host, the session's own token, the cookie, the client key) and none branches on
+  network position. `via: code` — a STRUCTURAL argument from reading the handlers, never a
+  measurement, which is exactly why this block stays open.
+- **Leading hypothesis:** the controls hold off-mesh; the structural argument is sound and the two
+  measured refusals are consistent with it. Nothing contradicts it — but consistency is not the
+  measurement.
+- **Next probe:** drive the four remaining controls against the DEPLOYED surface, not a loopback
+  binary: a POST with a valid session and a wrong CSRF token (expect 403), the `__Host-` attributes
+  read off a real `Set-Cookie` at the edge, and five failed sign-ins followed by a VALID credential
+  (expect 401, proving the lockout is not walkable). ⚠ The lockout probe is RATE-LIMITER STATE on a
+  live surface and buckets on the client key — do it deliberately, and expect to wait out the
+  window rather than restarting the pod to clear it.
 
 ### A sibling session's HOME write turned a host-dependent test red mid-session
 - as-of: 2026-09-18
@@ -1371,8 +1403,21 @@ because a closed block's value is its measured values and eliminations. Read it 
   exits 2) — residual 7 — and needs an announcement, because it changes what
   `nix run github:…/cairn` executes for consumers who never asked for a new client.
 
-### A live JWKS fetch has never been exercised against a real issuer
-- as-of: 2026-09-18
+### CLOSED — a live JWKS fetch has now been exercised against a real issuer
+- as-of: 2026-09-18 · **CLOSED 2026-09-25, and the `Next probe:` line below is DISCHARGED — do
+  not run it.** The probe it asked for was *"a pod, a network and a real issuer"*, and the deploy
+  recorded in `State now` is exactly that: the browser surface runs in-cluster against a live
+  self-hosted GoTrue, reached over TLS through the public edge. **A completed HANDSHAKE, which is
+  what this block said no measurement had ever produced:** the pod's startup line carries **no**
+  `key set could not be fetched` warning, and that warning is emitted on any fetch failure — so
+  its absence is the positive evidence, not silence. The failure arm was ALSO observed, which is
+  what makes the success arm a measurement rather than an assumption: the same binary run against
+  a 502 printed the warning, withheld the provider button and answered 503 on those routes.
+  ⚠ **SCOPE: this closes the HANDSHAKE question, NOT the `SSL_CERT_FILE` one.** The root-count
+  observations below stand unchanged and the variable is still inert in both directions; nothing
+  here re-opens or re-measures that. ⚠ And the handshake was made by the **UI** image, not the
+  pod image the root counts were taken in — same CA-bundle mechanism, different artefact, so read
+  it as evidence about the mechanism rather than about that image.
 - **Symptom + exact repro:** not a defect — a coverage gap three rounds touched and none closed.
 - **Observed (with values):** every measurement about the Go image's TLS trust is an
   `x509.SystemCertPool()` root COUNT, never a completed handshake: **121** roots with
