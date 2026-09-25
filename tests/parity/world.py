@@ -186,6 +186,43 @@ ENTRIES: list[tuple[str, int, str]] = [
      "- 2000-01-07: Open items: the retry budget is not yet addressed.\n"
      "- 2000-01-08: RESOLVED: closed, and naming no sha at all.\n"
      "- 2000-01-09: RESOLVED abc1234: closed and verifiable, reported by nothing.\n"),
+    # --- the CASE FOLD, which no other row in this world can reach -----------------------
+    #
+    # 🔴 UNTIL THIS FILE EXISTED THIS GATE WAS STRUCTURALLY BLIND TO A ONE-SIDED CASE FOLD,
+    # AND THE DIVERGENCE IT COVERS WAS LIVE. Every heading in every other entry here is
+    # ASCII, and over ASCII the two clients' lowercase mappings are the same function — so a
+    # client that folded headings with Go's `strings.ToLower` (the SIMPLE Unicode mapping)
+    # compared byte-identical to the oracle's `str.lower()` (the FULL one, which may expand
+    # one code point into several) on every row, forever. The corpus never presented the
+    # discriminating input. It does now.
+    #
+    # The heading is `## PO<U+0130>NTERS` — U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE,
+    # written as an escape because a literal beside its neighbours is unreviewable, and the
+    # expansion it produces (U+0307 COMBINING DOT ABOVE) renders ON TOP of the `i` and is
+    # invisible in source. MEASURED at the commit this file landed in:
+    #
+    #   oracle  `.lower()`           -> "poi<U+0307>nters"  -> pairs with NOTHING -> ABSENT
+    #   go      `strings.ToLower`    -> "pointers"          -> pairs with `## Pointers`
+    #                                                         -> RENAMED
+    #
+    # Two different findings, two different rendered sub-blocks, and neither client errors.
+    # `internal/pytext.Lower` is the function that agrees with the oracle; this row is what
+    # makes reverting to `strings.ToLower` RED instead of silent.
+    #
+    # ⚠ IT IS AN INTERIOR CODE POINT, NOT A LEADING OR TRAILING ONE, and that is the
+    # reachability argument rather than decoration: `NormalizeRef`'s own notes record that
+    # the same expansion at the END of a string is trimmed away and the two clients AGREE
+    # there — a fixture spelled `## POINTERS<U+0130>` would have scored a pass while the
+    # defect stood.
+    ("crag-notes/scarp-idx.md", 17_000_000_000,
+     "---\nservice: scarp-idx\nscope: crag-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry whose spine heading folds differently under the two lowercase "
+     "mappings.\n"
+     "\n## PO\u0130NTERS\n\n"
+     "- `apps/scarp-idx/values.yaml`\n"
+     "\n## Nuance / work-history\n\n"
+     "- 2000-01-10: RESOLVED abc1234: closed and verifiable, reported by nothing.\n"),
 ]
 
 #: The sheets above, as store-relative paths. A sheet is NOT an entry: `ls-entries` must not

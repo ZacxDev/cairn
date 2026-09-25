@@ -1630,7 +1630,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
             f"cairn: {scope}: {checked - len(malformed)} of {checked} "
             f"entry file(s) parse, {len(malformed)} malformed"
         )
-        # 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE TWO
+        # 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE
         # BLOCKS IT WAS THE WHOLE OF WHAT THIS COMMAND REPORTED. "Would the loader
         # accept this file?" is answered by the line above; an entry can pass it
         # while holding text NO reader will ever surface. `dropped lines:` is the
@@ -1639,8 +1639,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # skip it. A post-write check that cannot see that is checking the parser,
         # not the write.
         #
-        # 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: both
-        # scanners are tolerant by construction (an unreadable file or a missing
+        # 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: every
+        # scanner is tolerant by construction (an unreadable file or a missing
         # nuance section contributes nothing), and a file the loader rejected can
         # still hold lost content that a later fix to its front matter would not
         # restore. The rejection above is still the finding that matters, which is

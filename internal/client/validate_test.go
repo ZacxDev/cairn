@@ -257,7 +257,7 @@ func TestValidateCountsAREADMELookalikeAsAnOrdinaryEntry(t *testing.T) {
 
 // THE WRITE-PROTOCOL HALF OF `validate`, AT THE VERB.
 //
-// 🔴 THE PARSE COUNT ABOVE AND THESE TWO BLOCKS ANSWER DIFFERENT QUESTIONS. "Would the
+// 🔴 THE PARSE COUNT ABOVE AND THESE BLOCKS ANSWER DIFFERENT QUESTIONS. "Would the
 // loader accept this file?" is the count line; an entry can pass it while holding text NO
 // reader will ever surface. Until these blocks the only tool that reported
 // `dropped lines:` and `marker reachability:` was an operator-local launcher, so an agent

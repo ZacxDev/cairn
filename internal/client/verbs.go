@@ -498,15 +498,15 @@ func emptyState(state State) State {
 
 // Validate is the POST-WRITE check over the cached entries, and the parse count is
 // only its first half. It parse-checks with the READER'S OWN parser, then reports the
-// two write-protocol advisories — dropped lines and marker reachability — which answer
-// a different question: not "would the loader accept this file?" but "does it hold text
-// no reader will ever surface?". Neither advisory moves the exit code — the write
-// protocol branches on that code to mean "write NOTHING", and failing here would stop
-// a session recording anything into an entry whose only defect is that an OLDER write
-// lost a line. ⚠ "It does not move the exit code" is a claim about the ADVISORY, never
-// about the command: a non-regular path in the cache is still a malformed entry and
-// still exits 5, and a round of this PR briefly made that a crash instead — see
-// `store.nuanceBody`.
+// write-protocol advisories — entry shape, dropped lines, open actions and marker
+// reachability — which answer a different question: not "would the loader accept this
+// file?" but "does it hold text no reader will ever surface?". No advisory moves the
+// exit code — the write protocol branches on that code to mean "write NOTHING", and
+// failing here would stop a session recording anything into an entry whose only defect
+// is that an OLDER write lost a line. ⚠ "It does not move the exit code" is a claim
+// about the ADVISORY, never about the command: a non-regular path in the cache is
+// still a malformed entry and still exits 5, and a round of this PR briefly made that
+// a crash instead — see `store.nuanceBody`.
 //
 // 🔴 THE RESOLVER IS THE PARSER, so `validate` and `recall` cannot disagree about what
 // "malformed" means. The Python version once shelled a separate authoring tool's `--validate`,
@@ -675,7 +675,7 @@ func Validate(env Env, opts Options) (int, error) {
 		checked := len(entryNames)
 		fmt.Fprintf(env.Stdout, "cairn: %s: %d of %d entry file(s) parse, %d malformed\n",
 			scope, checked-len(index.Malformed), checked, len(index.Malformed))
-		// 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE TWO
+		// 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE
 		// BLOCKS IT WAS THE WHOLE OF WHAT THIS COMMAND REPORTED. "Would the loader
 		// accept this file?" is answered by the line above; an entry can pass it while
 		// holding text NO reader will ever surface. `dropped lines:` is the half that
@@ -683,8 +683,8 @@ func Validate(env Env, opts Options) (int, error) {
 		// `--ref`, `--search`, the digest and every openness count skip it. A
 		// post-write check that cannot see that is checking the parser, not the write.
 		//
-		// 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: both
-		// scanners are tolerant by construction (an unreadable file or a missing nuance
+		// 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: every
+		// scanner is tolerant by construction (an unreadable file or a missing nuance
 		// section contributes nothing), and a file the loader rejected can still hold
 		// lost content that a later fix to its front matter would not restore. The
 		// rejection above is still the finding that matters, which is why these print

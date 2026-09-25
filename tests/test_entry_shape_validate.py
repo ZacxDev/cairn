@@ -3,7 +3,7 @@
 
 🔴 WHAT THIS FILE IS COVERAGE FOR, AND WHAT IT IS NOT. The packaged `validate`
 already answered "would the loader accept this file?" — that half is pinned by
-`tests/test_cairn_cli.py` and is untouched here. These two scanners answer a
+`tests/test_cairn_cli.py` and is untouched here. These scanners answer a
 DIFFERENT question, the one the write protocol actually mandates: does the entry
 hold text NO reader will ever surface? `dropped lines:` is the half that means
 content is ALREADY LOST.
@@ -145,7 +145,7 @@ class TestScanDroppedLines:
     def test_an_unreadable_file_contributes_nothing_rather_than_raising(
         self, tmp_path: Path
     ):
-        """Both scanners run BESIDE the parse check, never in front of it: a
+        """Every scanner runs BESIDE the parse check, never in front of it: a
         malformed or unreadable file's own rejection is the finding that matters,
         and an advisory that raised here would replace it with a traceback.
 
@@ -219,7 +219,7 @@ class TestScanDroppedLines:
         `_is_fence` toggles, so an odd count leaves every following line fenced,
         and fenced lines are skipped as sample text by design. A bullet swallowed
         that way produces no bullet AND no dropped-line finding, so the `OPEN:`
-        below is surfaced by nothing in either scanner. Pinned so that the
+        below is surfaced by nothing in any scanner. Pinned so that the
         printed caveat keeps naming it — the previous caveat named only the
         absorbed tail, and this shape reads exactly like a clean entry.
         """
@@ -334,7 +334,7 @@ class TestNonRegularPathsAreRefusedBeforeOpen:
         """🔴 THE ZERO OVER A FILE NOBODY OPENED. RED before `scanned_entry_count`
         existed, because the clients passed the unfiltered listing.
 
-        The two scanners refuse a FIFO before `open()` — the tests above are the
+        The scanners refuse a FIFO before `open()` — the tests above are the
         whole reason they do — but the count printed beside their zero came from
         `entry_files_in`, which lists it. So a scope holding one real entry and
         one FIFO printed `dropped lines: 0 across 2 entry file(s)`, asserting
@@ -979,23 +979,46 @@ class TestEntryShapeBlock:
             assert f"`{heading}`" in block[0], heading
         assert "`## What it is` is NOT checked here" in block[0], block[0]
 
-    def test_the_SPINE_IS_READ_FROM_SHAPE_HEADINGS_not_re_typed(self):
+    def test_the_SPINE_IS_READ_FROM_SHAPE_HEADINGS_not_re_typed(self, monkeypatch):
         """🔴 THE PRINTED SET AND THE CHECKED SET ARE ONE OBJECT. A block that
         spelled its own heading list would keep printing the old pair after
         `SHAPE_HEADINGS` grew — the reassuring zero over a heading nothing looks
-        at, arriving through a stale string."""
-        assert entry_shape.SHAPE_HEADINGS == (
-            entry_shape.POINTERS_HEADING, entry_shape.NUANCE_HEADING
-        )
+        at, arriving through a stale string.
+
+        🔴 AND THAT CLAIM IS ONLY OBSERVABLE BY GROWING THE SET, WHICH THIS TEST
+        DID NOT USED TO DO. It asserted `SHAPE_HEADINGS == (POINTERS, NUANCE)` and
+        then looked for those two names in the block — which a HARDCODED literal
+        spelling the same two names satisfies exactly, because the literal and the
+        derived string are the same bytes as long as the set never moves.
+        MEASURED: replacing the `", ".join(...)` in `validation_advisory_lines`
+        with that literal left this whole module green, 153 passed. The guard read
+        as coverage and provided none.
+
+        So the set is PATCHED to carry a third heading this module never spells,
+        and every expectation below is derived from the PATCHED value. A re-typed
+        list cannot follow it, and the mutant above is RED.
+
+        ⚠ THE OLD `SHAPE_HEADINGS == (POINTERS_HEADING, NUANCE_HEADING)` ASSERT IS
+        GONE AND NOTHING WAS LOST WITH IT: `entry_shape` DEFINES the tuple as
+        exactly that expression, from the same two imported constants, so the
+        assert restated its own definition. It also could not survive the set
+        growing, which is the property this test is about.
+        """
+        grown = entry_shape.SHAPE_HEADINGS + ("## Provenance / where it came from",)
+        monkeypatch.setattr(entry_shape, "SHAPE_HEADINGS", grown)
         block = [
             ln for ln in entry_shape.validation_advisory_lines(
                 n_scanned=13, shape=(), dropped=(), open_actions=(), unreachable=()
             )
             if ln.startswith("entry shape:")
         ][0]
-        # The ORDER is part of the printed contract the parity gate compares.
-        first, second = entry_shape.SHAPE_HEADINGS
-        assert block.index(f"`{first}`") < block.index(f"`{second}`"), block
+        for heading in grown:
+            assert f"`{heading}`" in block, (heading, block)
+        # The ORDER is part of the printed contract the parity gate compares, and
+        # it is checked across the WHOLE set rather than one pair: a renderer that
+        # sorted, reversed or appended out of band is visible only at length 3.
+        positions = [block.index(f"`{h}`") for h in grown]
+        assert positions == sorted(positions), block
 
     def test_the_FINDINGS_branch_renders_EACH_KIND_SEPARATELY_and_sums_NOTHING(self):
         """🔴 FOUR DISJOINT KINDS, FOUR SUB-BLOCKS, FOUR COUNTS. A single

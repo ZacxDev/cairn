@@ -288,7 +288,7 @@ func TestTheAbsorbedTailCaseIsKnownInvisible(t *testing.T) {
 // where the zero is actively misleading rather than partial. `IsFence` toggles, so an
 // odd count leaves every following line fenced, and fenced lines are skipped as sample
 // text by design. A bullet swallowed that way produces no bullet AND no dropped-line
-// finding, so the `OPEN:` below is surfaced by nothing in either scanner. Pinned so
+// finding, so the `OPEN:` below is surfaced by nothing in any scanner. Pinned so
 // the printed caveat keeps naming it.
 func TestAnUnclosedFenceIsKnownInvisible(t *testing.T) {
 	dir := t.TempDir()
@@ -656,9 +656,10 @@ func TestACaseNearMissIsRenamedAndQuotesWhatTheWriterTyped(t *testing.T) {
 //
 // 🔴 THE WHITESPACE CASE IS AN *INTERNAL* RUN, NOT A LEADING ONE, AND THE FIRST DRAFT OF
 // THIS TEST GOT IT WRONG. `##   Pointers` is folded by the `StripWhitespace` already in
-// the chain, so `collapseWhitespace` never executes — a mutant that DELETED the collapse
-// survived a green run of this very test. Only a run BETWEEN two words reaches it. That
-// is the difference between a mutant that is breakable and a guard that is REACHABLE.
+// the chain, so the collapse (`pytext.CollapseWhitespace`) changes nothing — a mutant
+// that DELETED it survived a green run of this very test. Only a run BETWEEN two words
+// reaches it. That is the difference between a mutant that is breakable and a guard that
+// is REACHABLE.
 func TestALevelAColonAndAWhitespaceRunAllPairAsRenamed(t *testing.T) {
 	dir := t.TempDir()
 	for _, tc := range []struct{ name, written, schema string }{
@@ -702,6 +703,39 @@ func TestTheFoldNeverWidensWhatExtractSectionsAccepts(t *testing.T) {
 	}
 	if _, ok := ExtractSections(text, []string{PointersHeading})[PointersHeading]; ok {
 		t.Fatal("ExtractSections accepted a folded heading — the store just widened")
+	}
+}
+
+// 🔴 THE CASE FOLD IS CPython's `str.lower()`, NOT `strings.ToLower`, AND EXACTLY ONE
+// CODE POINT SEPARATES THEM. `pytext.Lower` tabulates the divergence; this pins that
+// `headingKey` — the one place in this file that lowercases anything — actually goes
+// through it. The expectation is written as the two runes the FULL mapping produces
+// (`i` + U+0307 COMBINING DOT ABOVE), which is what the oracle's `.lower()` yields and
+// what `strings.ToLower` does NOT: the simple mapping emits a bare `i`, so the key
+// collides with the schema heading's and the file is reported RENAMED where the oracle
+// reports ABSENT.
+//
+// ⚠ REACHABILITY: the `U+0130` is placed BETWEEN two letters, never at an end. Nothing
+// earlier in the chain touches it — `TrimLeft("#")`, `StripWhitespace` and
+// `TrimRight(":")` all leave an interior letter alone — so this assertion is about the
+// lowercase step and no other.
+func TestTheFoldIsCPythonsFullLowercaseMappingNotTheSimpleOne(t *testing.T) {
+	// 🔴 ESCAPES, NOT LITERALS, FOR THE REASON `pytext` GIVES: U+0307 renders on top of
+	// its neighbour and is invisible in source, so a literal here would be unreviewable.
+	const dottedCapitalI = "\u0130"    // LATIN CAPITAL LETTER I WITH DOT ABOVE
+	const combiningDotAbove = "\u0307" // COMBINING DOT ABOVE
+	written := "## PO" + dottedCapitalI + "NTERS"
+	want := "poi" + combiningDotAbove + "nters"
+	if got := headingKey(written); got != want {
+		t.Fatalf("headingKey(%q) = %q, want %q — the simple mapping would give %q and "+
+			"pair this heading with the schema's, reporting RENAMED where the oracle "+
+			"reports ABSENT", written, got, want, "pointers")
+	}
+	// The consequence, stated as the thing the report gets wrong rather than as a string:
+	// the key must NOT collide with the schema heading's.
+	if headingKey(written) == headingKey(PointersHeading) {
+		t.Fatalf("a full-case-expansion heading paired with %q — the two clients now "+
+			"disagree about ABSENT vs RENAMED", PointersHeading)
 	}
 }
 
@@ -1004,6 +1038,51 @@ func TestTheShapeZeroCarriesItsDenominatorAndTheSetItChecked(t *testing.T) {
 	if strings.Index(block, "`"+ShapeHeadings[0]+"`") >
 		strings.Index(block, "`"+ShapeHeadings[1]+"`") {
 		t.Errorf("the spine printed out of order: %s", block)
+	}
+}
+
+// 🔴 THE PRINTED SET AND THE CHECKED SET ARE ONE OBJECT, AND ITERATING `ShapeHeadings`
+// IS NOT ENOUGH TO SAY SO. The test above builds its expectation by iterating, which
+// makes it survive the set GROWING — but a renderer that spelled the current two
+// headings as a LITERAL satisfies it exactly, because the literal and the derived string
+// are the same bytes while the set never moves. MEASURED at this commit: replacing
+// `entryShapeBlock`'s `strings.Join(quoted, ", ")` with that literal left the whole
+// `internal/store` package GREEN. The oracle's twin had the same hole, in the same
+// shape, and both are closed the same way — by growing the set and deriving the
+// expectation from the GROWN value.
+//
+// ⚠ `ShapeHeadings` IS A PACKAGE VAR AND THIS TEST WRITES IT. Restored by `t.Cleanup`,
+// and no test in this package calls `t.Parallel`, so nothing observes the widened set.
+func TestTheSpineIsDerivedFromShapeHeadingsAndNotReTyped(t *testing.T) {
+	original := ShapeHeadings
+	t.Cleanup(func() { ShapeHeadings = original })
+	// A heading no source file in this repo spells, so a re-typed list cannot carry it
+	// by accident.
+	grown := append(append([]string{}, original...), "## Provenance / where it came from")
+	ShapeHeadings = grown
+
+	var block string
+	for _, ln := range ValidationAdvisoryLines(13, nil, nil, nil, nil) {
+		if strings.HasPrefix(ln, "entry shape:") {
+			block = ln
+		}
+	}
+	if block == "" {
+		t.Fatal("no `entry shape:` line at all")
+	}
+	at := make([]int, 0, len(grown))
+	for _, h := range grown {
+		i := strings.Index(block, "`"+h+"`")
+		if i < 0 {
+			t.Fatalf("the spine dropped %q after `ShapeHeadings` grew — it is re-typed, "+
+				"not derived: %s", h, block)
+		}
+		at = append(at, i)
+	}
+	for i := 1; i < len(at); i++ {
+		if at[i-1] > at[i] {
+			t.Fatalf("the spine printed out of order at %q: %s", grown[i], block)
+		}
 	}
 }
 

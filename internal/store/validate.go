@@ -11,12 +11,12 @@ import (
 
 // The WRITE-PROTOCOL advisories: content a reader cannot reach.
 //
-// 🔴 THESE TWO CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
+// 🔴 THESE CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
 // PARSE CHECK. The `N of M entry file(s) parse` line answers "would the loader
 // accept these files?", and a file can pass that while holding text NO reader will
 // ever surface. `dropped lines:` is the half that means content is ALREADY LOST.
 //
-// 🔴 NEITHER MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate` answers one
+// 🔴 NOT ONE OF THEM MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate` answers one
 // question and the write protocol branches on its EXIT CODE to mean "write
 // NOTHING". Failing here would stop a session recording anything into an entry
 // whose only defect is that an OLDER write lost a line — which makes the store
@@ -101,20 +101,33 @@ type DroppedLineFinding struct {
 // as exposed as the reader beside it, which is the property worth having. It is not a
 // claim that nothing can fail.
 //
-// Deliberately tolerant otherwise: a file with no nuance section yields false. Both
-// scanners run BESIDE the parse check, never in front of it — a malformed file's own
+// Deliberately tolerant otherwise: a file with no nuance section yields false. Every
+// scanner runs BESIDE the parse check, never in front of it — a malformed file's own
 // rejection is the finding that matters, and an advisory computed from its
 // half-parsed body would bury it.
 //
-// ⚠ EACH ENTRY IS READ THREE TIMES PER `validate` — once by `LoadIndex` and once by
-// each scanner — AND THAT IS A DECISION, NOT AN OVERSIGHT. Measured on this tree over
-// a synthetic cache of 300 entries carrying 30 bullets apiece: 36 ms end to end here
-// and 118 ms on the oracle, process start included. Caching the body would put mutable
-// state into two functions whose whole contract is READ-ONLY and independent, to save a
-// fraction of a tenth of a second on a store an order of magnitude larger than any real
-// one. The re-read also has one honest property a cache would remove: each scanner sees
-// the file as it is when IT runs, so a body that changed mid-command cannot be reported
-// under offsets taken from an earlier read.
+// ⚠ EACH ENTRY IS READ FIVE TIMES PER `validate` — once by `LoadIndex` and once by
+// each of the FOUR scanners — AND THAT IS A DECISION, NOT AN OVERSIGHT. It was THREE
+// until the shape and open-action scanners landed, and this comment said so for as
+// long as it took an audit to read it; the DECISION survived the re-measurement and
+// the numbers did not.
+//
+// RE-MEASURED over the same shape of corpus — a synthetic cache of 300 entries
+// carrying 30 bullets apiece, `validate --no-sync` over one scope, medians of 27 runs
+// per client interleaved on one loaded dev host:
+//
+//	reads/entry   3.00 -> 5.00   (strace `openat`, both clients, identical)
+//	Go client     39.8 ms -> 62.5 ms
+//	oracle        155.7 ms -> 190.1 ms  (+22%)
+//
+// The earlier figures (36 ms here, 118 ms on the oracle) did NOT reproduce as absolute
+// numbers — this host is slower and busier than whatever measured them — so they are
+// replaced rather than adjusted. Caching the body would put mutable state into
+// functions whose whole contract is READ-ONLY and independent, to save a few tens of
+// milliseconds on a store an order of magnitude larger than any real one. The re-read
+// also has one honest property a cache would remove: each scanner sees the file as it
+// is when IT runs, so a body that changed mid-command cannot be reported under offsets
+// taken from an earlier read.
 func nuanceBody(path string) (string, bool) {
 	// `ActionFor` rather than a map index, so the KIND comes from the loader's own
 	// table and never from a predicate spelled here.
@@ -138,7 +151,7 @@ func nuanceBody(path string) (string, bool) {
 	// is the same swallow one frame further out.
 	//
 	// ⚠ SIBLING ASYMMETRY ON THE SAME TABLE, for whoever adds a third action:
-	// `LoadIndex` branches `action == Refuse`, both scanners branch `action != Take`.
+	// `LoadIndex` branches `action == Refuse`, every scanner branches `action != Take`.
 	// Identical today only because the table holds no row that is neither — a `Skip`
 	// would be READ by the loader and SKIPPED here.
 	text, ok := entryText(path)
@@ -355,35 +368,29 @@ const ShapeInventoryShown = 6
 // and a trailing colon. Whitespace RUNS collapse to one space, mirroring the oracle's
 // `re.sub(r"\s+", " ", …)`, so `##  Nuance  /  work-history` pairs rather than reading
 // as a heading nothing can match.
+//
+// 🔴 EVERY STEP IS A `pytext` FUNCTION, AND TWO OF THEM DID NOT USED TO BE. This ran
+// `strings.ToLower` over a locally open-coded collapse while the two `StripWhitespace`
+// calls beside them already came from the package — an inconsistency three lines wide,
+// and the `ToLower` half was a REAL divergence rather than a style point.
+// `strings.ToLower` is Unicode's SIMPLE lowercase mapping; the oracle's `.lower()` is
+// the FULL one, which may expand one code point into several. `pytext.Lower` documents
+// the single differing code point and `TestLowerMatchesCPython` pins it. MEASURED on
+// this tree: a pointers heading written `## PO<U+0130>NTERS` folded to `poi<U+0307>nters`
+// on the oracle — reported ABSENT — and to `pointers` here, reported RENAMED. The parity
+// corpus now seeds that heading (`world.ENTRIES`, `crag-notes/scarp-idx.md`), so the
+// revert is RED rather than a silent one-sided fold.
+//
+// ⚠ `pytext.CollapseWhitespace` IS `" ".join(s.split())`, WHICH ALSO STRIPS, while the
+// oracle's `re.sub` here does not — they agree at this call site ONLY because the
+// `StripWhitespace` on the line above has already removed the ends. That is the whole
+// reason the local copy could be deleted rather than moved.
 func headingKey(heading string) string {
 	s := strings.TrimLeft(heading, "#")
 	s = pytext.StripWhitespace(s)
 	s = strings.TrimRight(s, ":")
 	s = pytext.StripWhitespace(s)
-	return strings.ToLower(collapseWhitespace(s))
-}
-
-// collapseWhitespace is `re.sub(r"\s+", " ", s)` over the oracle's `\s` class.
-//
-// ⚠ IT IS `pytext.IsSpace`, NOT `unicode.IsSpace`, because the oracle's `\s` on a `str`
-// pattern is Unicode-aware and this comparison must agree with it — a heading separated
-// by a NO-BREAK SPACE must fold the same way on both clients or the parity gate reports
-// a divergence in a report nobody can read.
-func collapseWhitespace(s string) string {
-	var b strings.Builder
-	prevSpace := false
-	for _, r := range s {
-		if pytext.IsSpace(r) {
-			if !prevSpace {
-				b.WriteByte(' ')
-			}
-			prevSpace = true
-			continue
-		}
-		b.WriteRune(r)
-		prevSpace = false
-	}
-	return b.String()
+	return pytext.Lower(pytext.CollapseWhitespace(s))
 }
 
 // ShapeFinding is one way an entry's spine departs from the schema. FOUR DISJOINT
@@ -553,27 +560,24 @@ func ScanOpenActions(paths []string) []OpenAction {
 // entry may hold a 4,000-character bullet.
 const AdvisoryQuoteMax = 120
 
-// ValidationAdvisoryLines renders the two write-protocol advisory blocks, as lines.
+// ValidationAdvisoryLines renders the write-protocol advisory blocks, as lines.
 // UNPREFIXED.
 //
 // Each client prefixes every line with its own `cairn: <scope>: `, because
 // `validate` with no `--scope` walks every scope the cache holds and an unprefixed
 // block would not say which one it is about.
 //
-// 🔴 THE DROPPED-LINE BLOCK COMES FIRST, deliberately. A dropped line is content NO
-// reader reaches, so the marker scan never sees it — a `0 out-of-reach` printed
-// above a `🔴 N DROPPED LINE(S)` is a fact about text the parser never got to, and
-// reads as a reassurance it cannot support.
-//
 // 🔴 EVERY BLOCK PRINTS ITS DENOMINATOR EVEN WHEN IT FINDS NOTHING. A bare zero is
-// indistinguishable from a scanner wired to nothing, and each of these has a SECOND
-// way to be vacuous that the zero must not hide: both read only the nuance heading,
-// so an entry whose heading is renamed contributes zero to both for a reason neither
-// block can state.
+// indistinguishable from a scanner wired to nothing, and THREE OF THESE FOUR have a
+// SECOND way to be vacuous that the zero must not hide: they read only the nuance
+// heading, so an entry whose heading is renamed contributes zero to all three for a
+// reason only the SHAPE block can state. The shape block's own zero carries the SET it
+// checked for the mirror-image reason — a reader who assumes the third spine heading
+// was checked would take it as a claim about a heading nothing examined.
 //
 // 🔴 AND WHEN NOTHING WAS CHECKED THE BLOCKS DO NOT PRINT AT ALL — one `NOT CHECKED`
-// line prints instead. "0 across 0 entry file(s)" is the reassuring zero from an
-// instrument that walked nothing, and it must not render anywhere near a
+// line prints instead, naming all four. "0 across 0 entry file(s)" is the reassuring
+// zero from an instrument that walked nothing, and it must not render anywhere near a
 // clean-looking count.
 //
 // 🔴 THIS IS ONE HALF OF A PAIR KEPT BYTE-IDENTICAL BY `tests/parity/`. The oracle's
@@ -815,8 +819,9 @@ func openActionsBlock(nScanned int, openActions []OpenAction) []string {
 			"nobody could turn green by fixing the file.)")
 }
 
-// scannerReadsPath is the ONE predicate deciding whether the two advisory scanners
-// OPEN a path, and therefore the one that decides the denominator they print.
+// scannerReadsPath is the ONE predicate deciding whether the advisory scanners OPEN a
+// path — every one of them, through `entryText` — and therefore the one that decides
+// the denominator they print.
 //
 // 🔴 IT IS THE DENOMINATOR *AND* THE GATE, SPELLED ONCE, BECAUSE AS TWO THINGS IT WAS
 // WRONG. The advisories used to be handed `len(EntryFileNames(...))` — an unfiltered
@@ -961,8 +966,12 @@ func reachabilityBlock(nScanned int, unreachable []UnreachableMarkerFinding) []s
 	return out
 }
 
-// advisoryFooter is the sentence BOTH blocks end on, written once because it is one
-// claim: these findings change no verdict, and the reason is the same for both.
+// advisoryFooter is the sentence the DROPPED-LINE and MARKER-REACHABILITY blocks end
+// on, written once because it is one claim: these findings change no verdict, and the
+// reason is the same for both. ⚠ IT IS TWO OF THE FOUR BLOCKS, NOT ALL OF THEM —
+// `entryShapeBlock` and `openActionsBlock` each end on their own sentence, because the
+// reason a shape finding changes no verdict is not the reason an unfinished action
+// does not.
 const advisoryFooter = "  (Advisory. It changes no verdict: the loader accepts the " +
 	"file, and the write protocol branches on this command's exit code to mean " +
 	"'write NOTHING'.)"

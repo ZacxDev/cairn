@@ -46,7 +46,7 @@ from subsystem_resolver import (
 from subsystem_resolver import _LOADER_ENTRY_ACTIONS  # noqa: E402
 # 🔴 THE READER'S OWN FENCE PREDICATE, IMPORTED PRIVATE RATHER THAN RE-SPELLED.
 # `_is_fence` knows both ``` and ~~~; a hand-spelled copy that knew only the
-# first would report a ~~~-fenced sample line as lost content, and the two
+# first would report a ~~~-fenced sample line as lost content, and the
 # scanners below would then disagree with `parse_journal_bullets`, which is the
 # function that decides what a reader can actually see. Importing an underscore
 # name across modules is deliberate here: a second copy of this predicate is the
@@ -429,13 +429,13 @@ def scope_for_repo(
 # The WRITE-PROTOCOL advisories: content a reader cannot reach
 # --------------------------------------------------------------------------
 #
-# 🔴 THESE TWO CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
+# 🔴 THESE CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
 # PARSE CHECK. The count line above them answers "would the loader accept these
 # files?", and a file can pass that while holding text NO reader will ever
 # surface. `dropped lines:` is the half that means content is ALREADY LOST.
 #
-# 🔴 NEITHER MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate` answers one
-# question and the write protocol branches on its EXIT CODE to mean "write
+# 🔴 NOT ONE OF THEM MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate`
+# answers one question and the write protocol branches on its EXIT CODE to mean "write
 # NOTHING". Failing here would stop a session recording anything into an entry
 # whose only defect is that an OLDER write lost a line — which makes the store
 # lossier, not safer. They are reported loudly and change no code.
@@ -543,7 +543,8 @@ def line_carries_marker(line: str) -> bool:
 
 
 def _scanner_reads_path(path: Path) -> bool:
-    """Will the two advisory scanners OPEN this path?
+    """Will the advisory scanners OPEN this path? Every one of them, through
+    `_entry_text`.
 
     🔴 THE GATE AND THE DENOMINATOR, SPELLED ONCE, BECAUSE AS TWO THINGS THEY
     DISAGREED. `_nuance_body` has always asked the loader's own table before
@@ -609,20 +610,33 @@ def _nuance_body(path: Path) -> str | None:
     which is the property worth having. It is not a claim that nothing can raise.
 
     Deliberately tolerant otherwise: a file with no nuance section yields None.
-    Both scanners run BESIDE the parse check, never in front of it — a malformed
+    Every scanner runs BESIDE the parse check, never in front of it — a malformed
     file's own rejection is the finding that matters, and an advisory computed
     from its half-parsed body would bury it.
 
-    ⚠ EACH ENTRY IS READ THREE TIMES PER `validate` — once by `load_index` and
-    once by each scanner — AND THAT IS A DECISION, NOT AN OVERSIGHT. Measured on
-    this tree over a synthetic cache of 300 entries carrying 30 bullets apiece:
-    118 ms end to end for the oracle and 36 ms for the Go client, interpreter and
-    process start included. Caching the body would put mutable state into two
-    functions whose whole contract is READ-ONLY and independent, to save a
-    fraction of a tenth of a second on a store an order of magnitude larger than
-    any real one. The re-read also has one honest property a cache would remove:
-    each scanner sees the file as it is when IT runs, so a body that changed
-    mid-command cannot be reported under offsets taken from an earlier read.
+    ⚠ EACH ENTRY IS READ FIVE TIMES PER `validate` — once by `load_index` and
+    once by each of the FOUR scanners — AND THAT IS A DECISION, NOT AN OVERSIGHT.
+    It was THREE until the shape and open-action scanners landed, and this
+    comment said so for as long as it took an audit to read it; the DECISION
+    survived the re-measurement and the numbers did not.
+
+    RE-MEASURED over the same shape of corpus — a synthetic cache of 300 entries
+    carrying 30 bullets apiece, `validate --no-sync` over one scope, medians of
+    27 runs per client interleaved on one loaded dev host::
+
+        reads/entry   3.00 -> 5.00   (strace `openat`, both clients, identical)
+        oracle        155.7 ms -> 190.1 ms  (+22%)
+        Go client      39.8 ms ->  62.5 ms
+
+    The earlier figures (118 ms here, 36 ms for the Go client) did NOT reproduce
+    as absolute numbers — this host is slower and busier than whatever measured
+    them — so they are replaced rather than adjusted. Caching the body would put
+    mutable state into functions whose whole contract is READ-ONLY and
+    independent, to save a few tens of milliseconds on a store an order of
+    magnitude larger than any real one. The re-read also has one honest property
+    a cache would remove: each scanner sees the file as it is when IT runs, so a
+    body that changed mid-command cannot be reported under offsets taken from an
+    earlier read.
     """
     text = _entry_text(path)
     if text is None:

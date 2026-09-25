@@ -2,8 +2,10 @@ package store
 
 import "github.com/ZacxDev/cairn/internal/pytext"
 
-// The reason tokens the two write-protocol advisories are keyed on. They are
-// SEPARATE tokens for separate populations and their counts are never summed.
+// The reason tokens the DROPPED-LINE and MARKER-REACHABILITY advisories are keyed on.
+// They are SEPARATE tokens for separate populations and their counts are never summed.
+// ⚠ TWO OF THE FOUR ADVISORY BLOCKS, NOT ALL OF THEM: `entry shape` and `open actions`
+// carry no reason token, which is why the `NOT CHECKED` line prints only these two.
 //
 // 🔴 BOTH ARE "THE READER CANNOT SEE IT", AND THEY ARE STILL DIFFERENT
 // QUANTITIES WITH DIFFERENT REMEDIES. An unreachable marker sits INSIDE a bullet
