@@ -1842,6 +1842,150 @@ class TestValidateReportsTheWriteProtocolContract:
             in proc.stdout
         ), proc.stdout
 
+    #: An entry that PARSES and whose SPINE is wrong three ways at once: `## Pointers`
+    #: renamed by case, and the nuance heading written twice with nothing under either.
+    #: 🔴 IT IS ALSO THE ORDERING FIXTURE — an unreachable nuance section means the
+    #: three lower blocks are all silent about a badly broken file, which is exactly
+    #: why `entry shape:` has to print above them.
+    SHAPE_BROKEN = (
+        "---\nservice: bent-thing\nscope: gizmo-notes\n---\n"
+        "\n## What it is\n\nan entry whose spine departs from the schema.\n"
+        "\n## pointers\n\n- ops skill `manage-bent-thing`\n"
+        "\n## Nuance / work-history\n"
+        "\n## Nuance / work-history\n"
+    )
+
+    #: Every openness population at once, plus the two the scan must be SILENT about
+    #: (`RESOLVED <sha>:` and an ordinary bullet). Without those two controls a client
+    #: that reported every bullet it saw would satisfy the per-population counts.
+    ALL_POPULATIONS = "\n".join([
+        "- 2026-01-05: OPEN: the writer declared this one, exactly.",
+        "- 2026-01-06: **OPEN**: emphasis, so the marker never parses.",
+        "- 2026-01-07: Open items: the retry budget is not yet addressed.",
+        "- 2026-01-08: RESOLVED: closed, and naming no sha at all.",
+        "- 2026-01-09: RESOLVED abc1234: closed, and reported by nothing.",
+        "- 2026-01-10: an ordinary bullet about an ordinary thing.",
+    ])
+
+    def test_a_BENT_SPINE_that_PARSES_is_reported_by_the_ENTRY_SHAPE_block(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE SPINE EVERY CONSUMER DEPENDS ON WAS ENFORCED BY NOTHING. This
+        entry parses — only a missing `service:` ever went red — while its
+        `## Pointers` reaches no reader and its nuance section silently merges into
+        one empty body. The reader computes an entry's bullet count and its
+        `OPEN` badge from that section, so this renders as a well-formed EMPTY
+        entry rather than as the broken one it is.
+        """
+        cache = tmp_path / "cache"
+        (source_store / "gizmo-notes" / "bent-thing.md").write_text(self.SHAPE_BROKEN)
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn(
+            "validate", "--scope", "gizmo-notes", "--no-sync", url=None, cache=cache
+        )
+        out = proc.stdout
+        # 🔴 THE FILE PARSES, or this test is measuring a malformed entry.
+        assert "gizmo-notes: 2 of 2 entry file(s) parse, 0 malformed" in out, out
+        assert "entry shape across 2 entry file(s), checked for" in out, out
+        assert "1 section(s) RENAMED" in out, out
+        assert "bent-thing.md: `## Pointers` is written as `## pointers`" in out, out
+        assert "1 heading(s) DUPLICATED" in out, out
+        assert ("bent-thing.md: `## Nuance / work-history` appears 2 times"
+                in out), out
+        assert "1 section(s) PRESENT AND EMPTY" in out, out
+        # 🔴 AND THE THREE LOWER BLOCKS ARE SILENT ABOUT IT, which is the ordering
+        # argument as behaviour: their zeros are facts about a section no parser
+        # reached, and only the block above can say so.
+        assert "open actions: 0 declared across 2 entry file(s)" in out, out
+        assert "dropped lines: 0 across 2 entry file(s) scanned" in out, out
+
+    def test_ALL_FOUR_OPEN_ACTION_POPULATIONS_are_reported_SEPARATELY(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 FOUR POPULATIONS, FOUR SUB-BLOCKS, AND THEY ARE NEVER SUMMED. A
+        `OPEN:` bullet is exact — the writer said so — while the unmarked guess is
+        a FLOOR from two measured phrasings with unknown recall. One total over
+        both would let the floor masquerade as a count.
+
+        The two silent controls are what stop this passing a client that reported
+        every bullet it saw: six bullets in, four reported.
+        """
+        cache = tmp_path / "cache"
+        (source_store / "gizmo-notes" / "busy-thing.md").write_text(
+            _entry("busy-thing", "gizmo-notes", self.ALL_POPULATIONS)
+        )
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn(
+            "validate", "--scope", "gizmo-notes", "--no-sync", url=None, cache=cache
+        )
+        out = proc.stdout
+        assert "gizmo-notes: 2 of 2 entry file(s) parse, 0 malformed" in out, out
+        assert "open actions across 2 entry file(s):" in out, out
+        assert "🔴 1 declared `OPEN:`" in out, out
+        assert "🔴 1 bullet(s) look like an ATTEMPTED marker" in out, out
+        assert "⚠ 1 unmarked bullet(s) that READ like an open action" in out, out
+        assert "⚠ 1 `RESOLVED:` bullet(s) name no sha" in out, out
+        # The two controls are reported by NOTHING.
+        assert "RESOLVED abc1234: closed, and reported by nothing" not in out, out
+        assert "an ordinary bullet about an ordinary thing" not in out, out
+        # 🔴 NO SUMMED TOTAL over the four.
+        assert "4 declared" not in out, out
+
+    def test_neither_NEW_advisory_moves_the_EXIT_CODE(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE WRITE PROTOCOL BRANCHES ON THIS COMMAND'S EXIT CODE TO MEAN
+        "write NOTHING". An entry whose heading is renamed is genuinely, silently
+        broken — and still must not fail the verdict, because the verdict answers
+        one question ("would the loader accept this file?") and the answer is yes.
+        A gate an author cannot turn green by fixing the file they are writing is
+        worse than no gate."""
+        cache = tmp_path / "cache"
+        (source_store / "gizmo-notes" / "bent-thing.md").write_text(self.SHAPE_BROKEN)
+        (source_store / "gizmo-notes" / "busy-thing.md").write_text(
+            _entry("busy-thing", "gizmo-notes", self.ALL_POPULATIONS)
+        )
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn(
+            "validate", "--scope", "gizmo-notes", "--no-sync", url=None, cache=cache
+        )
+        # Both new blocks are in the FINDINGS branch, or this proves nothing.
+        assert "section(s) RENAMED" in proc.stdout, proc.stdout
+        assert "declared `OPEN:`" in proc.stdout, proc.stdout
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    def test_a_CLEAN_scope_prints_all_FOUR_denominators_IN_ORDER(
+        self, live_store, tmp_path: Path
+    ):
+        """🔴 A BARE ABSENCE IS INDISTINGUISHABLE FROM A SCANNER WIRED TO NOTHING,
+        and the shape zero has a second way to be vacuous the others do not: it
+        must name the SET it checked, because a reader who assumes `## What it is`
+        was checked would take it as a claim about a heading nothing examined.
+
+        The ORDER is asserted here rather than in the unit tests alone because it
+        is what an operator actually reads, and it is the whole reason the shape
+        block exists above the other three.
+        """
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn(
+            "validate", "--scope", "widget-cfg", "--no-sync", url=None, cache=cache
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        out = proc.stdout
+        assert ("entry shape: 2 entry file(s) checked for `## Pointers`, "
+                "`## Nuance / work-history`") in out, out
+        assert "`## What it is` is NOT checked here" in out, out
+        assert "open actions: 0 declared across 2 entry file(s)" in out, out
+        assert "FLOOR with unknown recall" in out, out
+        at = [
+            out.index(leader) for leader in (
+                "entry shape:", "dropped lines:", "open actions:",
+                "marker reachability:",
+            )
+        ]
+        assert at == sorted(at), (at, out)
+
     def test_a_scope_with_NO_entries_prints_NOT_CHECKED_rather_than_a_zero(
         self, source_store: Path, live_store, tmp_path: Path
     ):
@@ -1864,11 +2008,21 @@ class TestValidateReportsTheWriteProtocolContract:
         proc = run_cairn("validate", "--no-sync", url=None, cache=cache)
         line = [
             ln for ln in proc.stdout.splitlines()
-            if ln.startswith("cairn: sheet-only: dropped lines")
+            if ln.startswith("cairn: sheet-only: write-protocol advisories")
         ]
         assert line, proc.stdout
         assert "NOT CHECKED" in line[0], line[0]
         assert "0 across 0" not in proc.stdout, proc.stdout
+        # 🔴 THE WITHHOLDING IS ALL-OR-NOTHING ACROSS ALL FOUR BLOCKS, and that is the
+        # half a `NOT CHECKED` substring cannot assert. A client that withheld the two
+        # older blocks and still printed `entry shape: 0 entry file(s) checked` or
+        # `open actions: 0 declared across 0` would satisfy every line above while
+        # emitting exactly the reassuring zero this fixture exists to forbid — and
+        # `0 across 0` does not appear in either of those two spellings, so the
+        # assertion above cannot see it.
+        for withheld in ("entry shape:", "open actions:", "dropped lines:",
+                         "marker reachability:"):
+            assert f"cairn: sheet-only: {withheld}" not in proc.stdout, withheld
 
 
 class TestSearchOverTheClient:

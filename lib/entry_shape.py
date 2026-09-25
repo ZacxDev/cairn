@@ -16,6 +16,7 @@ called.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,7 @@ from subsystem_resolver import (
     POINTERS_HEADING,
     TAKE,
     UNREACHABLE_MARKER,
+    WHAT_HEADING,
     action_for,
     classify_path,
     extract_sections,
@@ -34,6 +36,7 @@ from subsystem_resolver import (
     line_openness,
     normalize_ref,
     parse_journal_bullets,
+    scan_headings,
 )
 # 🔴 THE LOADER'S OWN ACTION TABLE, IMPORTED PRIVATE RATHER THAN RE-DECIDED — see
 # `_nuance_body`. The advisories must read EXACTLY the set of paths `load_index`
@@ -43,7 +46,7 @@ from subsystem_resolver import (
 from subsystem_resolver import _LOADER_ENTRY_ACTIONS  # noqa: E402
 # 🔴 THE READER'S OWN FENCE PREDICATE, IMPORTED PRIVATE RATHER THAN RE-SPELLED.
 # `_is_fence` knows both ``` and ~~~; a hand-spelled copy that knew only the
-# first would report a ~~~-fenced sample line as lost content, and the two
+# first would report a ~~~-fenced sample line as lost content, and the
 # scanners below would then disagree with `parse_journal_bullets`, which is the
 # function that decides what a reader can actually see. Importing an underscore
 # name across modules is deliberate here: a second copy of this predicate is the
@@ -55,10 +58,13 @@ __all__ = [
     "BULLET_TEXT_MAX", "SHAPE_HEADINGS", "STORE_IS_PER_HOST",
     "STORE_IS_ONE_INSTANCE",
     "DROPPED_LINE", "UNREACHABLE_MARKER",
-    "DroppedLineFinding", "UnreachableMarkerFinding",
+    "SHAPE_ABSENT", "SHAPE_RENAMED", "SHAPE_DUPLICATED", "SHAPE_EMPTY",
+    "SHAPE_INVENTORY_SHOWN",
+    "DroppedLineFinding", "UnreachableMarkerFinding", "ShapeFinding", "OpenAction",
     "derive_scope", "repo_path_missing_message", "scope_for_repo",
     "store_caveat", "store_host", "store_host_line",
     "line_carries_marker", "scan_dropped_lines", "scan_unreachable_markers",
+    "scan_entry_shape", "scan_open_actions",
     "validation_advisory_lines",
 ]
 
@@ -423,13 +429,13 @@ def scope_for_repo(
 # The WRITE-PROTOCOL advisories: content a reader cannot reach
 # --------------------------------------------------------------------------
 #
-# 🔴 THESE TWO CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
+# 🔴 THESE CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
 # PARSE CHECK. The count line above them answers "would the loader accept these
 # files?", and a file can pass that while holding text NO reader will ever
 # surface. `dropped lines:` is the half that means content is ALREADY LOST.
 #
-# 🔴 NEITHER MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate` answers one
-# question and the write protocol branches on its EXIT CODE to mean "write
+# 🔴 NOT ONE OF THEM MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate`
+# answers one question and the write protocol branches on its EXIT CODE to mean "write
 # NOTHING". Failing here would stop a session recording anything into an entry
 # whose only defect is that an OLDER write lost a line — which makes the store
 # lossier, not safer. They are reported loudly and change no code.
@@ -537,7 +543,8 @@ def line_carries_marker(line: str) -> bool:
 
 
 def _scanner_reads_path(path: Path) -> bool:
-    """Will the two advisory scanners OPEN this path?
+    """Will the advisory scanners OPEN this path? Every one of them, through
+    `_entry_text`.
 
     🔴 THE GATE AND THE DENOMINATOR, SPELLED ONCE, BECAUSE AS TWO THINGS THEY
     DISAGREED. `_nuance_body` has always asked the loader's own table before
@@ -603,28 +610,59 @@ def _nuance_body(path: Path) -> str | None:
     which is the property worth having. It is not a claim that nothing can raise.
 
     Deliberately tolerant otherwise: a file with no nuance section yields None.
-    Both scanners run BESIDE the parse check, never in front of it — a malformed
+    Every scanner runs BESIDE the parse check, never in front of it — a malformed
     file's own rejection is the finding that matters, and an advisory computed
     from its half-parsed body would bury it.
 
-    ⚠ EACH ENTRY IS READ THREE TIMES PER `validate` — once by `load_index` and
-    once by each scanner — AND THAT IS A DECISION, NOT AN OVERSIGHT. Measured on
-    this tree over a synthetic cache of 300 entries carrying 30 bullets apiece:
-    118 ms end to end for the oracle and 36 ms for the Go client, interpreter and
-    process start included. Caching the body would put mutable state into two
-    functions whose whole contract is READ-ONLY and independent, to save a
-    fraction of a tenth of a second on a store an order of magnitude larger than
-    any real one. The re-read also has one honest property a cache would remove:
-    each scanner sees the file as it is when IT runs, so a body that changed
-    mid-command cannot be reported under offsets taken from an earlier read.
+    ⚠ EACH ENTRY IS READ FIVE TIMES PER `validate` — once by `load_index` and
+    once by each of the FOUR scanners — AND THAT IS A DECISION, NOT AN OVERSIGHT.
+    It was THREE until the shape and open-action scanners landed, and this
+    comment said so for as long as it took an audit to read it; the DECISION
+    survived the re-measurement and the numbers did not.
+
+    RE-MEASURED over the same shape of corpus — a synthetic cache of 300 entries
+    carrying 30 bullets apiece, `validate --no-sync` over one scope, medians of
+    27 runs per client interleaved on one loaded dev host::
+
+        reads/entry   3.00 -> 5.00   (strace `openat`, both clients, identical)
+        oracle        155.7 ms -> 190.1 ms  (+22%)
+        Go client      39.8 ms ->  62.5 ms
+
+    The earlier figures (118 ms here, 36 ms for the Go client) did NOT reproduce
+    as absolute numbers — this host is slower and busier than whatever measured
+    them — so they are replaced rather than adjusted. Caching the body would put
+    mutable state into functions whose whole contract is READ-ONLY and
+    independent, to save a few tens of milliseconds on a store an order of
+    magnitude larger than any real one. The re-read also has one honest property
+    a cache would remove: each scanner sees the file as it is when IT runs, so a
+    body that changed mid-command cannot be reported under offsets taken from an
+    earlier read.
+    """
+    text = _entry_text(path)
+    if text is None:
+        return None
+    return extract_sections(text, (NUANCE_HEADING,)).get(NUANCE_HEADING) or None
+
+
+def _entry_text(path: Path) -> str | None:
+    """The WHOLE entry file, or None when no scanner may open this path.
+
+    🔴 THE GATE AND THE READ, SPELLED ONCE FOR EVERY SCANNER. `_nuance_body`
+    carried both inline until a scanner appeared that needs the whole file rather
+    than one section (`scan_entry_shape`, which has to see headings the nuance
+    body cannot contain). A second copy of the gate is the shape this module
+    already refuses everywhere else: the FIFO and character-device hazards
+    `_nuance_body` documents are properties of the OPEN, not of the section
+    extraction, so a scanner that reads the file by a different route inherits
+    none of the protection. Read `_nuance_body`'s docstring for the measurements
+    — they apply verbatim to every caller of this function.
     """
     if not _scanner_reads_path(path):
         return None
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    return extract_sections(text, (NUANCE_HEADING,)).get(NUANCE_HEADING) or None
 
 
 def scan_unreachable_markers(
@@ -745,6 +783,216 @@ def scan_dropped_lines(
     return tuple(out)
 
 
+# --------------------------------------------------------------------------
+# The entry's SHAPE, as opposed to whether its front matter parses
+# --------------------------------------------------------------------------
+#
+# 🔴 WHY A SHAPE CHECK EXISTS AT ALL. `validate` returned `OK` at exit 0 for an
+# entry with all three spine headings renamed, for one with no headings at all,
+# and for one whose sections were all empty. Only a missing `service:` went red.
+# So the spine every consumer depends on was enforced by NOTHING: it held because
+# two skills happen to describe it and one template happens to emit it.
+#
+# 🔴 AND IT IS NOT COSMETIC. `subsystem_recall` computes an entry's bullet count
+# and its `🔴 N OPEN` badge from `extract_sections(...)[NUANCE_HEADING]`, so a
+# heading that is renamed — or given a trailing colon, or shifted off column 0 —
+# yields an empty body, and the index row a resume consumes renders an entry with
+# genuine open actions as a well-formed empty one. The reader names a missing
+# heading ON READ; this catches the same thing ON WRITE, in the turn that wrote
+# it, which is the difference between "someone eventually notices" and "the
+# writer is told".
+#
+# 🔴 WHICH HEADINGS, AND WHY STILL NOT `## What it is`. The checked set is
+# `SHAPE_HEADINGS` — the set whose absence makes a NUMBER wrong. `## What it is`
+# IS read: `subsystem_recall` surfaces it in every printed body. But it feeds no
+# bullet count and no index badge, so a missing one cannot turn a parse failure
+# into a well-formed empty entry the way a missing `## Nuance / work-history`
+# can. Flagging it would report a convention with no numeric consequence beside
+# two whose consequence is measured, and a writer cannot tell those apart in a
+# list. The reader names its absence under the entry's own body, where the person
+# reading that entry is already looking.
+
+SHAPE_ABSENT = "absent"
+SHAPE_RENAMED = "renamed"
+SHAPE_DUPLICATED = "duplicated"
+SHAPE_EMPTY = "empty"
+
+#: Cap on the heading inventory printed beside an ABSENT finding. A bound, not a
+#: filter — the remainder is always counted in the line.
+SHAPE_INVENTORY_SHOWN = 6
+
+
+def _heading_key(heading: str) -> str:
+    """The LOOSE form, used ONLY to pair a heading with the schema one it missed.
+
+    🔴 IT NEVER ACCEPTS A HEADING. `extract_sections` matches the exact string and
+    keeps doing so; folding `## Pointers` and `## pointers` together there would
+    quietly widen what the store is allowed to look like, which is the opposite of
+    what this check is for. This exists so the report can say "you wrote
+    `## pointers`" instead of "the section is absent" — the difference between a
+    finding a writer can act on in one edit and one that sends them looking for
+    prose that is already on disk.
+
+    Folds exactly three near-misses: the `#` level, the case and surrounding
+    whitespace, and a trailing colon.
+    """
+    return re.sub(r"\s+", " ", heading.lstrip("#").strip().rstrip(":").strip()).lower()
+
+
+@dataclass(frozen=True)
+class ShapeFinding:
+    """One way an entry's spine departs from the schema. FOUR DISJOINT KINDS.
+
+    🔴 THEY ARE NEVER SUMMED, for the same reason `OpenAction`'s populations are
+    not: they are different facts with different remedies. `renamed` and `absent`
+    are the same missing section reported at different resolutions — the writer
+    typed something we can show them, or they did not — and collapsing them would
+    throw away the only half that is actionable. `duplicated` is a section that IS
+    parsed, twice, silently merged. `empty` is a section present and unfilled,
+    which `extract_sections` tracks separately from absent precisely so this can.
+
+    🔴 `duplicated` AND `empty` ARE NOT MUTUALLY EXCLUSIVE, and neither branch in
+    `scan_entry_shape` excludes the other: a heading written twice whose merged
+    body is still blank is BOTH, and reporting one of the two would hand the
+    writer half a remedy.
+    """
+
+    filename: str
+    heading: str
+    """The SCHEMA heading this finding is about, always — never the typo."""
+
+    kind: str
+    found: tuple[str, ...] = ()
+    """For `renamed`, the near-miss heading(s) actually written; for `absent`, the
+    file's whole heading inventory, so the writer sees what they wrote instead."""
+
+    count: int = 0
+    """For `duplicated`, how many times the exact heading appears."""
+
+
+def scan_entry_shape(paths: Iterable[str | Path]) -> tuple[ShapeFinding, ...]:
+    """Report each entry's spine against `SHAPE_HEADINGS`. READ-ONLY.
+
+    Tolerant in exactly the way the sibling scanners are, and gated the same way:
+    a path the loader's own table refuses is never opened (`_entry_text`), and a
+    file that cannot be read contributes nothing rather than raising, because this
+    runs BESIDE the parse check and never in front of it — a malformed file's own
+    rejection is the finding that matters.
+
+    🔴 IT REUSES `extract_sections` AND `scan_headings` AND PARSES NOTHING ITSELF.
+    Both are views over one walker in `subsystem_resolver`, so this cannot come to
+    a different conclusion about what a heading is than the reader does — which
+    would be the worst possible defect in a checker whose entire job is to predict
+    what the reader will see.
+    """
+    out: list[ShapeFinding] = []
+    for p in paths:
+        path = Path(p)
+        text = _entry_text(path)
+        if text is None:
+            continue
+        present = extract_sections(text, SHAPE_HEADINGS)
+        headings = scan_headings(text)
+        for h in SHAPE_HEADINGS:
+            if h not in present:
+                near = tuple(x for x in headings if _heading_key(x) == _heading_key(h))
+                out.append(
+                    ShapeFinding(
+                        filename=path.name,
+                        heading=h,
+                        kind=SHAPE_RENAMED if near else SHAPE_ABSENT,
+                        found=near or headings,
+                    )
+                )
+                continue
+            # 🔴 BOTH REMAINING KINDS CAN BE TRUE OF ONE HEADING AT ONCE — a
+            # duplicated heading whose merged body is still empty — so neither
+            # branch excludes the other and neither is an `elif`.
+            n = sum(1 for x in headings if x == h)
+            if n > 1:
+                out.append(
+                    ShapeFinding(
+                        filename=path.name, heading=h, kind=SHAPE_DUPLICATED, count=n
+                    )
+                )
+            if not present[h].strip():
+                out.append(ShapeFinding(filename=path.name, heading=h, kind=SHAPE_EMPTY))
+    return tuple(out)
+
+
+# --------------------------------------------------------------------------
+# Unfinished business: the four openness populations, as a writer sees them
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class OpenAction:
+    """One bullet `validate` is reporting as unfinished business.
+
+    🔴 FOUR POPULATIONS, AND THEY MUST NEVER BE ADDED TOGETHER INTO ONE NUMBER.
+    A `OPEN:` bullet is a claim the WRITER made and is exact, while an unmarked
+    one is this tool's guess from two measured phrasings and has unknown recall.
+    Merging them would let a floor masquerade as a count.
+    """
+
+    filename: str
+    declared: bool
+    """The writer typed `OPEN:`. Exact — not a guess about the prose."""
+
+    date: str | None
+    first_line: str
+    near_miss: bool = False
+    """The bullet tried to declare a marker and missed the grammar.
+
+    A THIRD population, never folded into either other one: it is not an open
+    action and not a guess about one, it is a write that did not land.
+    """
+
+    unverifiable_closure: bool = False
+    """A `RESOLVED:` that names no sha, so its claim cannot be checked.
+
+    A FOURTH population. Not a problem — closing an action is the outcome this
+    whole design wants — but the sha is what separates "closed, and here is the
+    commit" from an assertion, and only a branch on `resolved_by` makes the field
+    mean anything.
+    """
+
+
+def scan_open_actions(paths: Iterable[str | Path]) -> tuple[OpenAction, ...]:
+    """Read each entry's journal and collect its unfinished business. READ-ONLY.
+
+    Deliberately tolerant, exactly as the sibling scanners are: a file no scanner
+    may open, one that cannot be read, or one with no `## Nuance / work-history`
+    section contributes nothing rather than raising. This runs BESIDE the parse
+    check, never in front of it.
+    """
+    out: list[OpenAction] = []
+    for p in paths:
+        path = Path(p)
+        body = _nuance_body(path)
+        if body is None:
+            continue
+        for b in parse_journal_bullets(body):
+            # 🔴 ONE BRANCH, ON THE RESOLVER'S SINGLE PRECEDENCE SOURCE.
+            # Re-deriving membership from the individual predicates here is what
+            # let a bullet be both a near-miss and an unmarked action on one
+            # surface while being one thing on another — the duplicated predicate
+            # `openness_population` exists to remove.
+            pop = b.openness_population
+            if pop in ("none", "resolved"):
+                continue
+            out.append(
+                OpenAction(
+                    filename=path.name,
+                    declared=pop == "open",
+                    near_miss=pop == "near-miss",
+                    unverifiable_closure=pop == "unverifiable",
+                    date=b.date,
+                    first_line=b.first_line,
+                )
+            )
+    return tuple(out)
+
+
 #: The longest a quoted line runs before it is cut. A finding names a FILE and a
 #: LINE NUMBER; the quote is there to recognise it by, and an entry may hold a
 #: 4,000-character bullet.
@@ -754,41 +1002,219 @@ ADVISORY_QUOTE_MAX = 120
 def validation_advisory_lines(
     *,
     n_scanned: int,
+    shape: Sequence[ShapeFinding],
     dropped: Sequence[DroppedLineFinding],
+    open_actions: Sequence[OpenAction],
     unreachable: Sequence[UnreachableMarkerFinding],
 ) -> tuple[str, ...]:
-    """The two write-protocol advisory blocks, as lines. UNPREFIXED.
+    """The four write-protocol advisory blocks, as lines. UNPREFIXED.
 
     Each client prefixes every line with its own `cairn: <scope>: `, because
     `validate` with no `--scope` walks every scope the cache holds and an
     unprefixed block would not say which one it is about.
 
-    🔴 THE DROPPED-LINE BLOCK COMES FIRST, deliberately. A dropped line is
-    content NO reader reaches, so the marker scan never sees it — a
-    `0 out-of-reach` printed above a `🔴 N DROPPED LINE(S)` is a fact about text
-    the parser never got to, and reads as a reassurance it cannot support.
+    🔴 EVERY FINDING SET IS A REQUIRED KEYWORD, NOT A DEFAULT, and that is the
+    point of the signature. A defaulted `shape=()` would let a client that never
+    wired the scanner print a confident `entry shape: … each present exactly once`
+    over files nothing examined — the reassuring zero from an instrument wired to
+    nothing, arriving through a forgotten argument instead of an empty directory.
+    Required, a missed call site is a `TypeError` here and a compile error in the
+    Go port.
+
+    🔴 THE ORDER IS LOAD-BEARING, IN BOTH ADJACENT PAIRS:
+
+      * `entry shape:` COMES FIRST OF ALL. A renamed `## Nuance / work-history`
+        makes every one of the three blocks below read an empty section, so their
+        zeros are facts about a section the parser never reached. Read in the
+        other order, `open actions: 0 declared` is simply false.
+      * `dropped lines:` COMES BEFORE `open actions` AND `marker reachability:`.
+        A dropped line is content NO reader reaches, so neither of those scans
+        ever sees it — a zero printed above a `🔴 N DROPPED LINE(S)` reads as a
+        reassurance it cannot support.
 
     🔴 EVERY BLOCK PRINTS ITS DENOMINATOR EVEN WHEN IT FINDS NOTHING. A bare zero
-    is indistinguishable from a scanner wired to nothing, and each of these has a
-    SECOND way to be vacuous that the zero must not hide: both read only
+    is indistinguishable from a scanner wired to nothing, and three of these four
+    have a SECOND way to be vacuous that the zero must not hide: they read only
     `## Nuance / work-history`, so an entry whose heading is renamed contributes
-    zero to both for a reason neither block can state.
+    zero to all three for a reason only the SHAPE block can state. The shape
+    block's own zero carries the SET it checked for the mirror-image reason — a
+    reader who assumes the third spine heading was checked would take it as a
+    claim about a heading nothing examined.
 
     🔴 AND WHEN NOTHING WAS CHECKED THE BLOCKS DO NOT PRINT AT ALL — one
-    `NOT CHECKED` line prints instead. "0 across 0 entry file(s)" is the
-    reassuring zero from an instrument that walked nothing, and it must not
-    render anywhere near a clean-looking count.
+    `NOT CHECKED` line prints instead, naming all four. "0 across 0 entry
+    file(s)" is the reassuring zero from an instrument that walked nothing, and it
+    must not render anywhere near a clean-looking count.
     """
     if n_scanned == 0:
         return (
-            f"dropped lines / marker reachability: NOT CHECKED — 0 entry file(s) "
-            f"scanned, so a zero here would be a zero over nothing. "
-            f"[{DROPPED_LINE}] [{UNREACHABLE_MARKER}]",
+            f"write-protocol advisories: NOT CHECKED — 0 entry file(s) scanned, so "
+            f"a zero here would be a zero over nothing. This withholds ALL FOUR "
+            f"blocks — entry shape, dropped lines, open actions and marker "
+            f"reachability. [{DROPPED_LINE}] [{UNREACHABLE_MARKER}]",
         )
     return tuple(
-        _dropped_lines_block(n_scanned, dropped)
+        _entry_shape_block(n_scanned, shape)
+        + _dropped_lines_block(n_scanned, dropped)
+        + _open_actions_block(n_scanned, open_actions)
         + _reachability_block(n_scanned, unreachable)
     )
+
+
+def _entry_shape_block(
+    n_scanned: int, shape: Sequence[ShapeFinding]
+) -> list[str]:
+    """The SHAPE advisory. Prints on every path that SCANNED something.
+
+    🔴 IT PRINTS ITS DENOMINATOR EVEN WHEN IT FINDS NOTHING, AND IT PRINTS WHICH
+    HEADINGS IT LOOKED FOR. A reassuring zero is indistinguishable from an
+    instrument wired to nothing unless it carries the size of what it looked at —
+    and here it must also carry the SET it looked at, because a reader who assumes
+    the third spine heading was checked would take this zero as a claim about a
+    heading nothing examined.
+
+    🔴 THE FOUR KINDS ARE RENDERED SEPARATELY AND NEVER SUMMED — see
+    `ShapeFinding`. Each KIND names its own remedy, and `renamed`'s ("you wrote
+    this, the schema says that") is the only one a writer can act on in a single
+    edit.
+    """
+    spine = ", ".join(f"`{h}`" for h in SHAPE_HEADINGS)
+    absent = [s for s in shape if s.kind == SHAPE_ABSENT]
+    renamed = [s for s in shape if s.kind == SHAPE_RENAMED]
+    duplicated = [s for s in shape if s.kind == SHAPE_DUPLICATED]
+    empty = [s for s in shape if s.kind == SHAPE_EMPTY]
+    if not shape:
+        return [
+            "",
+            f"entry shape: {n_scanned} entry file(s) checked for {spine} — each "
+            f"present exactly once and non-empty. 🔴 `{WHAT_HEADING}` is NOT checked "
+            f"here: the reader DOES surface it, but it feeds no count and no badge, "
+            f"so its absence changes nothing this zero is about — `subsystem_recall` "
+            f"names a missing one under that entry's own body instead."
+        ]
+    out = [
+        "",
+        f"entry shape across {n_scanned} entry file(s), checked for {spine} "
+        f"(NOT `{WHAT_HEADING}`, which feeds no count and no badge):"
+    ]
+    if renamed:
+        out.append(
+            f"  🔴 {len(renamed)} section(s) RENAMED — the heading is close but not "
+            f"exact, so NO reader reaches the section. Matching is exact-string after "
+            f"a right-strip, case-sensitive, at column 0. On that entry's index row "
+            f"this reads as `0 nuance` with no `OPEN` badge: PARSE FAILURE, not an "
+            f"empty entry."
+        )
+        for s in renamed:
+            wrote = ", ".join(f"`{h}`" for h in s.found)
+            out.append(f"    {s.filename}: `{s.heading}` is written as {wrote}")
+    if absent:
+        out.append(
+            f"  🔴 {len(absent)} section(s) ABSENT — the heading is not in the file at "
+            f"all, under any spelling this tool can pair with it. Whatever the entry "
+            f"says on that subject is invisible to every default read. Read the "
+            f"inventory below against the schema heading: a section retitled far "
+            f"enough that no folding pairs it lands here rather than under RENAMED."
+        )
+        for s in absent:
+            shown = list(s.found[:SHAPE_INVENTORY_SHOWN])
+            rest = len(s.found) - len(shown)
+            inventory = ", ".join(f"`{h}`" for h in shown) if shown else "(none at all)"
+            if rest > 0:
+                inventory += f", … {rest} more"
+            out.append(
+                f"    {s.filename}: no `{s.heading}`; the file's headings are {inventory}"
+            )
+    if duplicated:
+        out.append(
+            f"  🔴 {len(duplicated)} heading(s) DUPLICATED — the sections silently "
+            f"MERGE into one body and anything written under a heading BETWEEN them is "
+            f"dropped from the read entirely. Fold them into one section."
+        )
+        for s in duplicated:
+            out.append(f"    {s.filename}: `{s.heading}` appears {s.count} times")
+    if empty:
+        out.append(
+            f"  ⚠ {len(empty)} section(s) PRESENT AND EMPTY — the heading is there "
+            f"with nothing under it. Not a parse failure and not the same as absent: "
+            f"the reader finds the section and prints a blank."
+        )
+        for s in empty:
+            out.append(f"    {s.filename}: `{s.heading}`")
+    out.append(
+        "  (Advisory, and it changes no verdict: the loader accepts a file whose "
+        "sections it cannot find, which is precisely the silent failure this block "
+        "exists to make loud. Fix the heading, not the exit code.)"
+    )
+    return out
+
+
+def _open_actions_block(
+    n_scanned: int, open_actions: Sequence[OpenAction]
+) -> list[str]:
+    """The UNFINISHED-BUSINESS advisory. Prints on every path that SCANNED something.
+
+    🔴 IT PRINTS ITS DENOMINATOR EVEN WHEN IT FINDS NOTHING, like every sibling.
+    "0 declared across 29 entry file(s)" is a reading; a blank space is not.
+
+    🔴 THE FOUR POPULATIONS ARE RENDERED SEPARATELY AND NEVER SUMMED — see
+    `OpenAction`. `declared` is exact and the unmarked guess is a FLOOR with
+    unknown recall; one total over both would let the floor masquerade as a count.
+    """
+    declared = [a for a in open_actions if a.declared]
+    near = [a for a in open_actions if a.near_miss]
+    unverifiable = [a for a in open_actions if a.unverifiable_closure]
+    guessed = [
+        a for a in open_actions
+        if not a.declared and not a.near_miss and not a.unverifiable_closure
+    ]
+    if not open_actions:
+        return [
+            "",
+            f"open actions: 0 declared across {n_scanned} entry file(s), 0 "
+            f"attempted-but-unparsed, 0 `RESOLVED:` naming no sha, and 0 unmarked "
+            f"bullets matched the two phrasings this tool can recognise. 🔴 The last "
+            f"of those is a FLOOR with unknown recall, not a clean bill of health — "
+            f"an unfinished action phrased any other way is invisible here.",
+        ]
+    out = ["", f"open actions across {n_scanned} entry file(s):"]
+    if declared:
+        out.append(
+            f"  🔴 {len(declared)} declared `OPEN:` — exact, the writer said so. "
+            f"Re-check against the repo; if it landed, rewrite as `RESOLVED <sha>:`."
+        )
+        for a in declared:
+            out.append(f"    {a.filename}: {a.first_line[:ADVISORY_QUOTE_MAX]}")
+    if near:
+        out.append(
+            f"  🔴 {len(near)} bullet(s) look like an ATTEMPTED marker that did not "
+            f"parse — they declare nothing and show no badge. Fix the line: the "
+            f"marker follows `YYYY-MM-DD: `, is upper-case, carries no emphasis or "
+            f"parenthetical, and ends in `:`."
+        )
+        for a in near:
+            out.append(f"    {a.filename}: {a.first_line[:ADVISORY_QUOTE_MAX]}")
+    if guessed:
+        out.append(
+            f"  ⚠ {len(guessed)} unmarked bullet(s) that READ like an open action. "
+            f"AT LEAST this many — two measured phrasings, unknown recall."
+        )
+        for a in guessed:
+            out.append(f"    {a.filename}: {a.first_line[:ADVISORY_QUOTE_MAX]}")
+    if unverifiable:
+        out.append(
+            f"  ⚠ {len(unverifiable)} `RESOLVED:` bullet(s) name no sha, so the "
+            f"closure cannot be checked. Not a defect — closing is the point — but "
+            f"`RESOLVED <sha>:` is what makes it verifiable rather than asserted."
+        )
+        for a in unverifiable:
+            out.append(f"    {a.filename}: {a.first_line[:ADVISORY_QUOTE_MAX]}")
+    out.append(
+        "  (Advisory. None of this changes the verdict: an entry with unfinished "
+        "business is still well-formed, and failing it here would be a red gate "
+        "nobody could turn green by fixing the file.)"
+    )
+    return out
 
 
 def _dropped_lines_block(
@@ -804,6 +1230,7 @@ def _dropped_lines_block(
     """
     if not dropped:
         return [
+            "",
             f"dropped lines: 0 across {n_scanned} entry file(s) scanned "
             f"[{DROPPED_LINE}] — every non-blank `{NUANCE_HEADING}` line reaches a bullet some reader "
             f"will surface. 🔴 PARTIAL BY CONSTRUCTION, IN THREE WAYS, and this "
@@ -821,6 +1248,7 @@ def _dropped_lines_block(
     n = len(dropped)
     marked = sum(1 for d in dropped if d.carries_marker)
     out = [
+        "",
         f"🔴 {n} DROPPED LINE(S) across {n_scanned} entry file(s) scanned "
         f"[{DROPPED_LINE}] — present in the file, inside NO bullet, so EVERY "
         f"reader skips them: "

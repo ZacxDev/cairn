@@ -423,15 +423,25 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
         Case("validate-no-sync", "the same over the cache, off the network",
              ["validate", "--no-sync"]),
         # 🔴 THE WRITE-PROTOCOL HALF, AND IT IS THE DISCRIMINATING INPUT THE CORPUS DID NOT
-        # HAVE. Every other scope's entries have a well-formed nuance section, so both
-        # advisories print their ZERO branch everywhere and a client that implemented
-        # neither would compare equal. `crag-notes` carries a dropped line that IS a
-        # declaration and an out-of-reach marker, so this row compares the FINDINGS
-        # branches — the quoted line, the per-file offsets and the `carries_marker` flag —
-        # rather than two identical zeros. A one-sided fix is RED here.
+        # HAVE. Every other scope's entries have a well-formed spine and nuance section, so
+        # all FOUR advisories print their ZERO branch everywhere and a client that
+        # implemented none of them would compare equal. `crag-notes` carries a dropped line
+        # that IS a declaration, an out-of-reach marker, every one of the four shape KINDS
+        # and every one of the four open-action POPULATIONS — so this row compares the
+        # FINDINGS branches of all four blocks (the quoted lines, the per-file offsets, the
+        # `carries_marker` flag, the heading inventory, the per-population sub-headings)
+        # rather than four identical zeros. A one-sided fix is RED here.
+        #
+        # 🔴 IT ALSO PINS THE BLOCK ORDER, because the comparison is byte-for-byte over
+        # stdout: a client that printed `open actions` above `entry shape:` diverges on the
+        # line SEQUENCE even though every individual line is right. That order is not
+        # cosmetic — a renamed nuance heading makes the lower three blocks read an empty
+        # section, so their zeros are facts about a section no parser reached, and only the
+        # shape block can say so.
         Case("validate-write-protocol-advisories",
              "a scope whose entries PARSE and still hold content no reader can reach: the "
-             "`dropped lines:` and `marker reachability:` blocks, with findings",
+             "`entry shape:`, `dropped lines:`, `open actions` and `marker reachability:` "
+             "blocks, with findings, in that order",
              ["validate", "--scope", "crag-notes"]),
 
         # --- doctor -----------------------------------------------------------

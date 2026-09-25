@@ -121,8 +121,17 @@ ENTRIES: list[tuple[str, int, str]] = [
     #     rather than merely defined;
     #   * a correctly-spelled `OPEN:` on a bullet's CONTINUATION line, which every marker
     #     reader is anchored past.
-    # `scree-api` is its clean sibling, so the denominator this scope prints is 2 rather
-    # than 1 and a client that counted FINDINGS where it should count FILES is visible.
+    # `scree-api` is its clean sibling, so the denominator this scope prints is LARGER THAN
+    # THE NUMBER OF FINDINGS and a client that counted FINDINGS where it should count FILES
+    # is visible.
+    #
+    # ⚠ AND THE DENOMINATOR IS DELIBERATELY NOT WRITTEN DOWN HERE ANY MORE. It is the count
+    # of entry files in THIS SCOPE, so every row appended below moves it: this comment read
+    # "the denominator this scope prints is 2 rather than 1" and was stale three entries
+    # later, ~37 lines above the addition that invalidated it. Nothing in this repo pins it
+    # either — the harness diffs the TWO CLIENTS against each other live and stores no
+    # golden, so a number transcribed into a comment here is the only copy and has no
+    # checker. What the fixture pins is the PROPERTY: files, not findings.
     ("crag-notes/talus-svc.md", 13_000_000_000,
      "---\nservice: talus-svc\nscope: crag-notes\n---\n"
      "\n## What it is\n\n"
@@ -136,6 +145,114 @@ ENTRIES: list[tuple[str, int, str]] = [
      "  OPEN: a marker several lines in, where no parser looks.\n"),
     ("crag-notes/scree-api.md", 14_000_000_000, _entry("scree-api", "crag-notes",
                                                        body="the clean sibling of a lossy entry")),
+    # --- the SHAPE and OPEN-ACTION halves of the same write-protocol report ------------
+    #
+    # 🔴 TWO MORE ENTRIES, BECAUSE THE TWO FILES ABOVE EXERCISE ONLY THE ZERO BRANCH OF
+    # BOTH NEW BLOCKS AND THE CORPUS WOULD OTHERWISE BE BLIND TO THEM THE SAME WAY IT WAS
+    # BLIND TO THE OTHER TWO. `talus-svc` and `scree-api` both carry an exact spine and no
+    # reportable bullet, so `entry shape:` and `open actions` would print `each present
+    # exactly once` / `0 declared` on every row in the world — and a client that
+    # implemented neither, or implemented one of them differently, would compare equal for
+    # as long as nothing presented the discriminating input. These two present it: between
+    # them they produce ALL FOUR shape kinds and ALL FOUR open-action populations, each in
+    # its own rendered sub-block.
+    #
+    # `moraine-cfg` is the SHAPE file, and it carries three of the four kinds at once:
+    #   * `## pointers` — a CASE near-miss, so RENAMED rather than absent: the report has
+    #     to print the heading the writer actually typed, not just "it is missing";
+    #   * the nuance heading written TWICE with nothing under either — DUPLICATED *and*
+    #     EMPTY together, which is the disjointness claim made observable. A client whose
+    #     two branches excluded each other prints one of them and compares RED.
+    # It contributes nothing to the other three blocks, which is itself the ordering
+    # argument: its nuance section is unreachable, so `dropped lines`, `open actions` and
+    # `marker reachability` are each silent about a file that is badly broken.
+    ("crag-notes/moraine-cfg.md", 15_000_000_000,
+     "---\nservice: moraine-cfg\nscope: crag-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry whose spine departs from the schema three ways at once.\n"
+     "\n## pointers\n\n"
+     "- `apps/moraine-cfg/values.yaml`\n"
+     "\n## Nuance / work-history\n"
+     "\n## Nuance / work-history\n"),
+    # `cirque-api` is the OPEN-ACTION file, and it is the fourth shape kind at the same
+    # time: it has NO `## Pointers` under any spelling this tool can pair with one, so the
+    # report prints its heading INVENTORY instead of a near-miss. Its nuance section is
+    # exact and non-empty, so all four openness populations render:
+    #   * a declared `OPEN:` — exact, the writer said so;
+    #   * an emphasised `**OPEN**:` — a near-miss, a write that did not land;
+    #   * `Open items:` prose — the unmarked FLOOR with unknown recall;
+    #   * a `RESOLVED:` naming no sha — an unverifiable closure.
+    # A fifth bullet is a `RESOLVED <sha>:`, population `resolved`, which must be reported
+    # by NOTHING — the control that stops this row passing a client which reported every
+    # bullet it saw.
+    ("crag-notes/cirque-api.md", 16_000_000_000,
+     "---\nservice: cirque-api\nscope: crag-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry carrying every openness population at once.\n"
+     "\n## Nuance / work-history\n\n"
+     "- 2000-01-05: OPEN: the writer declared this one, exactly.\n"
+     "- 2000-01-06: **OPEN**: emphasis, so the marker never parses.\n"
+     "- 2000-01-07: Open items: the retry budget is not yet addressed.\n"
+     "- 2000-01-08: RESOLVED: closed, and naming no sha at all.\n"
+     "- 2000-01-09: RESOLVED abc1234: closed and verifiable, reported by nothing.\n"),
+    # --- the CASE FOLD, which no other row in this world can reach -----------------------
+    #
+    # 🔴 UNTIL THIS FILE EXISTED THIS GATE WAS STRUCTURALLY BLIND TO A ONE-SIDED CASE FOLD,
+    # AND THE DIVERGENCE IT COVERS WAS LIVE. Every heading in every other entry here is
+    # ASCII, and over ASCII the two clients' lowercase mappings are the same function — so a
+    # client that folded headings with Go's `strings.ToLower` (the SIMPLE Unicode mapping)
+    # compared byte-identical to the oracle's `str.lower()` (the FULL one, which may expand
+    # one code point into several) on every row, forever. The corpus never presented the
+    # discriminating input. It does now.
+    #
+    # The heading is `## PO<U+0130>NTERS` — U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE,
+    # written as an escape because a literal beside its neighbours is unreviewable, and the
+    # expansion it produces (U+0307 COMBINING DOT ABOVE) renders ON TOP of the `i` and is
+    # invisible in source. MEASURED at the commit this file landed in:
+    #
+    #   oracle  `.lower()`           -> "poi<U+0307>nters"  -> pairs with NOTHING -> ABSENT
+    #   go      `strings.ToLower`    -> "pointers"          -> pairs with `## Pointers`
+    #                                                         -> RENAMED
+    #
+    # Two different findings, two different rendered sub-blocks, and neither client errors.
+    # `internal/pytext.Lower` is the function that agrees with the oracle ON THIS RULE; this
+    # row is what makes reverting to `strings.ToLower` RED instead of silent.
+    #
+    # 🔴 "AGREES WITH THE ORACLE" USED TO BE WRITTEN WITHOUT THAT QUALIFIER AND IT WAS A
+    # FALSE COMPLETENESS CLAIM. `str.lower()` differs from the simple mapping in TWO
+    # language-independent rules, and `pytext.Lower` implements ONE of them: the
+    # unconditional U+0130 expansion this row covers. The other is CONTEXTUAL — Final_Sigma:
+    # U+03A3 lowercases to U+03C2 at the end of a word on the oracle and to U+03C3 here.
+    # `pytext.Lower`'s docstring carries the decision NOT to implement it, and
+    # `TestLowerIsCPythonExceptForFinalSigma` is the ledger.
+    #
+    # ⚠ AND THERE IS DELIBERATELY NO Σ ROW BESIDE THIS ONE, WHICH IS NOT THE SAME OMISSION
+    # THIS ROW WAS ADDED TO FIX. The U+0130 row has discriminating power because Go's answer
+    # (`pointers`) is ASCII and COLLIDES with the schema heading's key — that collision is
+    # what makes one client say RENAMED and the other ABSENT. Final_Sigma's two answers are
+    # BOTH non-ASCII, so a Σ-bearing heading pairs with no schema heading on EITHER client
+    # and both report ABSENT with the heading quoted verbatim in the inventory. MEASURED at
+    # the commit this paragraph landed in: an entry whose pointers heading is `## POINTERΣ`
+    # renders 11 advisory lines that are BYTE-IDENTICAL across the two clients. A Σ row would
+    # therefore be an INVARIANT row — one that cannot go red for the rule it names — and
+    # counting it as coverage is the "reads as coverage while providing none" failure, not a
+    # closure of it. It becomes worth seeding the day a schema heading stops being ASCII, or
+    # a caller puts a folded key on a screen rather than only comparing it with another key.
+    #
+    # ⚠ IT IS AN INTERIOR CODE POINT, NOT A LEADING OR TRAILING ONE, and that is the
+    # reachability argument rather than decoration: `NormalizeRef`'s own notes record that
+    # the same expansion at the END of a string is trimmed away and the two clients AGREE
+    # there — a fixture spelled `## POINTERS<U+0130>` would have scored a pass while the
+    # defect stood.
+    ("crag-notes/scarp-idx.md", 17_000_000_000,
+     "---\nservice: scarp-idx\nscope: crag-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry whose spine heading folds differently under the two lowercase "
+     "mappings.\n"
+     "\n## PO\u0130NTERS\n\n"
+     "- `apps/scarp-idx/values.yaml`\n"
+     "\n## Nuance / work-history\n\n"
+     "- 2000-01-10: RESOLVED abc1234: closed and verifiable, reported by nothing.\n"),
 ]
 
 #: The sheets above, as store-relative paths. A sheet is NOT an entry: `ls-entries` must not
