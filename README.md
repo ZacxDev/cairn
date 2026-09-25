@@ -69,26 +69,49 @@ bucket, a git repo or an NFS mount:
   and one of them is a lie. ⚠ **Exit `3` is therefore wider than that one
   state.** A read whose cache exists but cannot be fully read — a scope
   directory or an entry file at mode `000` — exits `3` with `index entry
-  unreadable: under <root> (…) — the store was not fully read`, and prints
-  **nothing on stdout**. The exit code, not the output, is what says whether the
-  report is complete.
+  unreadable: under <root> (…) — the store was not fully read`. 🔴 **The exit
+  code, not the output, is what says whether the report is complete — and that
+  is the ONLY half of this you may rely on.** An earlier wording added "and
+  prints **nothing on stdout**", which is false in general: see the
+  `0 bytes`/`partial` note under the table below.
   🔴 **WHAT YOU ACTUALLY SEE DEPENDS ON THE VERB, AND THIS PARAGRAPH USED TO BE
   WRONG FOR TWO OF THE THREE.** It said such a read "prints `⚠ cairn: cached —
   …` and then exits `3`", which sends a caller hunting for a banner that is
   never emitted. Measured on BOTH clients over a mode-`000` scope directory
   **and** a mode-`000` entry file — twelve runs, the two clients agreeing byte
-  for byte in every one:
+  for byte in every one, each run naming ONE scope with `--scope`:
 
   | verb | exit | stdout | the `cached` banner |
   |---|---|---|---|
   | `recall` | `3` | **0 bytes** | **not printed, on either stream** |
   | `search` | `3` | **0 bytes** | **not printed, on either stream** |
-  | `validate` | `3` | 0 bytes | on **stderr** |
+  | `validate` | `3` | 0 bytes **for the single scope those runs named** — see below | on **stderr** |
 
-  The cause is ordering rather than policy — the reads print their banner
-  *after* the reader returns, so the raise pre-empts it, while `validate` prints
-  its banner before it loads anything. **For a read, the ABSENCE of the banner
-  is the signal**: a `cached` banner is not a promise of `0`, and no banner at
+  🔴 **THE `validate` STDOUT CELL WAS WRONG AS A GENERAL CLAIM, AND THIS PR'S OWN
+  TESTS ASSERT THE OPPOSITE IN THE SAME COMMIT.** `cmd_validate` prints its
+  per-scope line INSIDE the loop, so every scope processed before the unreadable
+  one has already emitted output by the time the raise happens. `0 bytes` is true
+  only when the failing scope is the FIRST one validated — which is the world all
+  twelve runs above used, because each named a single `--scope`. **Re-measured
+  with no `--scope` at all**, one cache holding a readable `cairn` (9 entries)
+  plus an unreadable scope, `validate --no-sync`, both clients byte-identical:
+  unreadable scope sorting **after** → exit `3` with **2,030 bytes** of stdout,
+  first line `cairn: cairn: 9 of 9 entry file(s) parse, 0 malformed`; unreadable
+  scope sorting **before** → exit `3` with **0 bytes**. The tree already said so
+  — `tests/test_cairn_cli.py::TestAScopeThatVANISHESMidRunIsNotServedAsZeroOfZero`
+  asserts `"cairn: aaa: 1 of 1 entry file(s) parse, 0 malformed" in stdout` at
+  exit 3, and `internal/client/validate_test.go` likewise. **So a supervisor told
+  "3 ⇒ 0 bytes" either stops reading stdout or reads a non-empty stdout at 3 as
+  corruption; the honest rule is that at exit `3` stdout is a PARTIAL report whose
+  length depends on how far the walk got, and the code is what says it is
+  partial.** ⚠ One shape neither measurement covered: `search --all-scopes` over a
+  partially-unreadable store — that flag refuses `--cache`, so it was not built
+  here. **Unmeasured, and not asserted either way.**
+
+  The banner column's cause is ordering rather than policy — the reads print
+  their banner *after* the reader returns, so the raise pre-empts it, while
+  `validate` prints its banner before it loads anything. **For a read, the ABSENCE
+  of the banner is the signal**: a `cached` banner is not a promise of `0`, and no banner at
   all is not a promise that nothing was attempted. Where a banner IS printed it
   says which of the four states the *sync* reached.
   Orthogonally a read names the **scope's status**, so a

@@ -81,8 +81,21 @@ var loaderEntryActions = map[Kind]Action{
 // unusable one. It names the SHAPE and never invents a fix, because the
 // operator's fix differs per shape (delete the lock file; delete the fifo).
 var loaderRefusalReason = map[Kind]string{
+	// 🔴 THE MECHANISM NAMED HERE IS `is_entry_filename`, NOT A GLOB, AND THAT IS A
+	// CORRECTION APPLIED TO BOTH CLIENTS IN ONE CHANGE. This string said
+	// "`glob('*.md')` matches a leading dot"; the ORACLE's entry walk stopped globbing in
+	// #119 (`entry_files_in` → `iterdir()` + `is_entry_filename`), so the sentence cited a
+	// mechanism that no longer exists while its conclusion stayed true. It is strictly
+	// worse than a stale comment because it is a RUNTIME STRING — it reaches a 503 body
+	// and `validate`'s stderr. Named for the PREDICATE rather than the WALK on purpose:
+	// `IsEntryFileName`/`is_entry_filename` is what decides, and a future change of walk
+	// cannot make this stale again.
+	// 🔴 IT MUST STAY BYTE-IDENTICAL TO `lib/subsystem_resolver._LOADER_REFUSAL_REASON`'s
+	// `KIND_BROKEN_LINK` — measured identical before this edit and after. The audit named
+	// only the Python site; this twin carried the same false citation, so fixing one alone
+	// would have turned a stale-but-AGREEING string into a client DIVERGENCE.
 	KindBrokenLink: "broken symlink (a dangling target, or a link loop) — not an entry, and " +
-		"refused before `open()`. `glob('*.md')` matches a leading dot, so an " +
+		"refused before `open()`. `is_entry_filename` accepts a leading dot, so an " +
 		"editor lock file such as `.#<entry>.md` lands here; reading it raised " +
 		"`index entry unreadable`, which took the whole store down for every " +
 		"caller and named this file in the error",
@@ -402,10 +415,21 @@ func EntryFileNames(dir string) ([]string, error) {
 // exists to be measured, while the property survives unchanged. What both sides now do is
 // what this function always did: read the directory and APPLY the suffix test explicitly,
 // so the property is stated rather than inherited from a matcher. Re-measured on the
-// pinned interpreter over one directory holding `a.md`, `.#lock.md`, `.md`, `README.md`,
-// `b.MD`, `c.md.txt`, `d.markdown` and a directory named `sub.md`: `glob("*.md")` and
-// `iterdir()` + `is_entry_filename` return the identical `['.#lock.md', '.md', 'a.md',
-// 'sub.md']`.
+// pinned interpreter (3.12.14) over one directory holding `a.md`, `.#lock.md`, `.md`,
+// `README.md`, `b.MD`, `c.md.txt`, `d.markdown` and a directory named `sub.md`:
+// `glob("*.md")` + `is_entry_filename` and `iterdir()` + `is_entry_filename` return the
+// identical `['.#lock.md', '.md', 'a.md', 'sub.md']`.
+//
+// ⚠ THE FILTER IS NAMED ON BOTH SIDES OF THAT EQUALITY, AND THIS HEADER DROPPED IT FROM THE
+// GLOB SIDE FOR ONE ROUND. It read "`glob(\"*.md\")` and `iterdir()` + `is_entry_filename`
+// return the identical [4 names]", which is FALSE as written: re-measured over that same
+// directory, a RAW `glob("*.md")` returns **5** — it includes `README.md`, which
+// `is_entry_filename` is what rejects. So a verifier re-deriving the literal wording got a
+// mismatch on the quoted list and had no way to tell a stale claim from a real drift.
+// `lib/subsystem_resolver.entry_files_in`'s docstring states the same equality correctly
+// ("`glob(\"*.md\")` and `iterdir()` filtered through `is_entry_filename`"); this site is
+// now the same claim. The equality being asserted is between the two WALKS under one
+// filter, never between a bare matcher and a filtered one.
 func mdNamesIn(dir string) ([]string, error) {
 	dirents, err := os.ReadDir(dir)
 	if err != nil {
@@ -491,6 +515,71 @@ func EntryFilesOrUnreadable(storeRoot, dir string) ([]string, error) {
 		return nil, StoreUnreadable(storeRoot, err)
 	}
 	return names, nil
+}
+
+// ScopeDirsOrUnreadable lists a store's scope directories, failing closed into the
+// READER'S sentence.
+//
+// 🔴 THE THIRD UNWRAPPED READ OF THE STORE, AND #119's OWN DECLARATION SAID THE SET WAS
+// CLOSED. `LoadStore` wraps the INDEX walk and `EntryFilesOrUnreadable` wraps `Validate`'s
+// per-scope DENOMINATOR; the read that enumerates the cache ROOT — `Validate`'s `held`,
+// which decides WHICH scopes are validated at all — was a bare `os.ReadDir(cache)` whose
+// error was `return 0, readErr`, i.e. the RAW `*os.PathError`. `tests/parity/README.md`
+// row 4 declared the one remaining cache-root divergence as the oracle raising out of
+// `resolve_state`'s stamp check and named the remedy as teaching `resolve_state` that an
+// unreadable stamp is "no cache" — a remedy that does not touch this line, so that row
+// could go green with this still live.
+//
+// 🔴 THE DEPTH HAS TWO SUB-CASES AND THE MODE IS WHAT SEPARATES THEM — MEASURED ON BOTH
+// CLIENTS at `8ddbb6f`, `--no-sync`, one cache holding one readable scope, `chmod` on the
+// cache ROOT:
+//
+//	root mode   verb                    oracle                     go
+//	---------   ---------------------   ------------------------   ---
+//	0000, 0444  recall/search/validate  1 (traceback)              3 (banner)
+//	0111        recall, search          3, named sentence          3, identical
+//	0111        validate                1 (traceback out of held)  3, RAW errno
+//
+// Without `x` the stamp `stat` fails and nothing reaches here — that is row 4's case,
+// untouched. WITH `x` and without `r` the stamp read SUCCEEDS, `recall` and `search` fail
+// closed through `LoadStore` byte-identically, and `validate` alone escaped: exit 1 with a
+// traceback on the oracle, and here exit 3 — already the right NUMBER via `cli.go`'s
+// reader-error arm — printing `open <cache>: permission denied` where one level down the
+// same client prints `index entry unreadable: under <root> (PermissionError: …)`. That TEXT
+// half is the same defect #111 closed for `LoadIndex`, at a site #111 did not reach.
+//
+// 🔴 THE SENTENCE IS `StoreUnreadable`'s, NOT SPELLED HERE, and that is now THREE call
+// sites for one set of bytes — which is exactly why it is a function. The parity gate
+// compares these bytes against the oracle's `_store_unreadable`.
+//
+// ⚠ THE PER-CHILD `os.Stat` SKIPS ON ANY ERROR, AND THAT IS UNCHANGED FROM BEFORE THIS
+// FUNCTION EXISTED — deliberately NOT aligned with `LoadIndex`'s `isIgnoredStatErrno`
+// rule fifty lines up, even though that rule is the better one. The oracle's `is_dir()`
+// RAISES outside `pathlib._IGNORED_ERRNOS`, so the two clients disagree here in principle
+// — but no mode reaches it: a child cannot be `stat`ed at all without `x` on this root,
+// and without `x` the run has already diverged at the stamp check. Aligning it would add a
+// guard nothing can make fail, which is worse than a declared seam. Declared in
+// `tests/parity/README.md` row 4 rather than closed here.
+func ScopeDirsOrUnreadable(storeRoot string) ([]string, error) {
+	entries, err := os.ReadDir(storeRoot)
+	if err != nil {
+		return nil, StoreUnreadable(storeRoot, err)
+	}
+	held := make([]string, 0, len(entries))
+	for _, e := range entries {
+		info, statErr := os.Stat(filepath.Join(storeRoot, e.Name()))
+		if statErr != nil || !info.IsDir() {
+			continue
+		}
+		held = append(held, e.Name())
+	}
+	// `slices.Sort`, not `sort.Strings`, purely to avoid a second sort import in this
+	// file — `LoadIndex` above already uses it. Byte-wise ascending either way, which
+	// is what the caller's `--scope` membership check and the oracle's `sorted()` both
+	// assume; this is NOT the byte-wise-vs-component-wise question `LsEntries` carries,
+	// because these are bare scope NAMES with no separator in them.
+	slices.Sort(held)
+	return held, nil
 }
 
 // LoadStore resolves the store root and loads its index.

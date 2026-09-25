@@ -1530,7 +1530,29 @@ def cmd_validate(args: argparse.Namespace) -> int:
     # WAS CHECKED — a zero here is NOT a clean bill of health" while exiting 0.
     # That is the silent zero this command exists to detect, committed by the
     # command itself. With no --scope we validate EVERY scope in the cache.
-    held = sorted(p.name for p in cache.iterdir() if p.is_dir())
+    #
+    # 🔴 THROUGH `rc.scope_dirs_or_unreadable`, NOT A BARE `cache.iterdir()` — THE
+    # THIRD READ OF THE STORE, AND THE ONE #119 DECLARED DID NOT EXIST. This line
+    # was `sorted(p.name for p in cache.iterdir() if p.is_dir())`, outside every
+    # wrap, so a cache root that is SEARCHABLE but not READABLE (mode 0111 — the
+    # stamp `stat` in `resolve_state` still succeeds, so execution reaches here)
+    # took the oracle down with a `PermissionError` TRACEBACK at exit 1 while the
+    # Go client answered 3 with its own raw `open <cache>: permission denied`
+    # rather than the reader's sentence. Both halves of #111 at a new site: the
+    # 1-vs-3 code divergence AND a raw OS error where one level down the same
+    # client prints `index entry unreadable: under <root> (…)`. `recall` and
+    # `search` were already byte-identical at 3 here, because they reach the root
+    # walk through `load_store`; only this verb read the root itself.
+    #
+    # ⚠ THIS IS NOT ROW 4's CACHE-ROOT CASE, WHICH REMAINS OPEN. That one is mode
+    # 000/0444 — no `x`, so `(cache / SYNC_STAMP).exists()` raises and nothing
+    # reaches this line. Two sub-cases, two mechanisms; see the function's header.
+    #
+    # ⚠ NO `except` HERE, DELIBERATELY. The `EntryUnreadableError` this can raise
+    # travels to `main()`'s reader-error rung — the same rung `recall` and `search`
+    # already land on for this condition — so the sentence has one writer and the
+    # exit code one owner. An `except` here would be a second policy site.
+    held = rc.scope_dirs_or_unreadable(cache)
     if args.scope:
         # 🔴 THE SILENT ZERO THIS FUNCTION WAS REWRITTEN TO CLOSE, STILL OPEN ON
         # THIS BRANCH. The no-scope path was fixed to enumerate the cache; the
@@ -2811,9 +2833,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         # DELIBERATE. Go reaches its arm with raw OS errors too, because its verbs
         # return them as values; catching `OSError` at this boundary would turn any
         # unexpected I/O bug anywhere in the client into a confident "the store is
-        # broken, exit 3". The residual — a raw `OSError` from a cache-root walk
-        # that never becomes a reader error — is declared in
-        # `tests/parity/README.md` rather than closed here.
+        # broken, exit 3".
+        #
+        # ✅ THE RESIDUAL THIS PARAGRAPH USED TO NAME IS CLOSED, AND ITS CITATION WAS
+        # FALSE BESIDES. It read: "The residual — a raw `OSError` from a cache-root
+        # walk that never becomes a reader error — is declared in
+        # `tests/parity/README.md` rather than closed here." Grepping
+        # `tests/parity/` for the cache-root walk found it ONLY as evidence inside an
+        # unreachability argument about a DIFFERENT read (`validate`'s per-scope
+        # denominator, in "What the gate structurally cannot see"), never as a
+        # declared residual — so the sentence pointed a reader at a declaration that
+        # did not exist, which is how a narrow `except` came to look considered.
+        # The walk it named is `cmd_validate`'s `held`; it now goes through
+        # `rc.scope_dirs_or_unreadable`, which raises `EntryUnreadableError` and so
+        # lands on THIS arm by class rather than needing `OSError` widened. Gated by
+        # `tests/parity/harness.py`'s `validate-unreadable-cache-root` row.
+        #
+        # ⚠ WHAT REMAINS IS NOT THAT CASE, AND IT IS GENUINELY DECLARED: a cache root
+        # with no `x` bit raises out of `resolve_state` BEFORE any verb runs, so it
+        # never reaches this ladder at all. `tests/parity/README.md` row 4 carries it,
+        # with a closing condition — verified by reading that row, not by citing it.
         #
         # 🔴 THE `ResolverError` HALF IS WIDER THAN THE TWO CLASSES JUSTIFIED ABOVE,
         # AND THAT IS A DECISION, NOT AN OVERSIGHT. `ResolverError` has five

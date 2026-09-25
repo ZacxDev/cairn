@@ -386,7 +386,7 @@ table against it in both directions, so neither can drift ahead of the other:
 
 | kind | on disk | why it is refused |
 |---|---|---|
-| `broken-link` | a dangling symlink — e.g. an Emacs lock file `.#entry.md`, which `glob("*.md")` really does match | opening it raised, and an `OSError` fails closed, so `/recall` and `/search` answered **503** for EVERY caller and named the file and its scope in the body |
+| `broken-link` | a dangling symlink — e.g. an Emacs lock file `.#entry.md`, which `is_entry_filename` really does accept (⚠ this cell said `glob("*.md")`; #119 replaced that walk with `iterdir()` + `is_entry_filename`, so the property survived while the named mechanism did not) | opening it raised, and an `OSError` fails closed, so `/recall` and `/search` answered **503** for EVERY caller and named the file and its scope in the body |
 | `other` | a fifo / socket / device named `*.md` | `read_text` on a fifo blocks until somebody writes; on `replicas: 1` the request thread never returned |
 | `link-to-other` | a symlink pointing *at* a fifo / socket / device | the same hang in a different shape — `open()` does not care which path shape reached the fifo. Measured wedging an unrestricted `/recall` for **25s** while `/healthz` stayed 200 |
 | `directory` | a directory named `*.md` — one stray `mkdir <scope>/<slug>.md`, an rsync or a restore artefact | `read_text` raises `IsADirectoryError`, and that `OSError` fails closed: **503** on `/recall` and `/search` for every caller. Measured, with a dangling-lock-file control returning 200 on the same shape |

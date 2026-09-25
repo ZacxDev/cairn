@@ -1455,6 +1455,68 @@ def entry_files_or_unreadable(
         raise _store_unreadable(Path(store_root), exc) from exc
 
 
+def scope_dirs_or_unreadable(store_root: str | Path) -> list[str]:
+    """The names of a store's scope directories, failing closed into ONE sentence.
+
+    🔴 THE THIRD UNWRAPPED READ OF THE STORE, AND #119's OWN DECLARATION SAID THE
+    SET WAS CLOSED. `load_store` wraps the INDEX walk and
+    `entry_files_or_unreadable` wraps `validate`'s per-scope DENOMINATOR; the read
+    that enumerates the cache ROOT — `cairn validate`'s `held`, which decides
+    WHICH scopes are validated at all — was a bare
+    `sorted(p.name for p in cache.iterdir() if p.is_dir())`, and had been since
+    before this branch. `tests/parity/README.md` row 4 declared the one remaining
+    cache-root divergence as raising out of `resolve_state`'s
+    `(cache / SYNC_STAMP).exists()`, and named the remedy as teaching
+    `resolve_state` that an unreadable stamp is "no cache" — a remedy that does
+    not touch this line. So that row could go green with this still live.
+
+    🔴 THE DEPTH HAS TWO SUB-CASES AND THE MODE IS WHAT SEPARATES THEM — MEASURED
+    ON BOTH CLIENTS at `8ddbb6f`, `--no-sync`, one cache holding one readable
+    scope, `chmod` on the cache ROOT:
+
+        root mode   verb                    oracle                     go
+        ---------   ---------------------   ------------------------   ---
+        0000, 0444  recall/search/validate  1 (traceback)              3 (banner)
+        0111        recall, search          3, named sentence          3, identical
+        0111        validate                1 (traceback out of held)  3, raw errno
+
+    Without `x` the stamp `stat` itself fails, so nothing reaches here and the
+    divergence is `resolve_state`'s — row 4's case, untouched by this function.
+    WITH `x` and without `r` the stamp read SUCCEEDS, `recall` and `search` fail
+    closed through `load_store` byte-identically, and `validate` alone escaped:
+    the oracle with a `PermissionError` traceback at exit 1, the Go client at 3
+    but printing its raw `*os.PathError` (`open <cache>: permission denied`)
+    instead of the reader's own sentence — the same TEXT defect #111 closed one
+    level down, at a site #111 did not reach.
+
+    🔴 IT NEEDS NO `chmod` IN THE WILD. `iterdir()` propagates every `OSError`,
+    and this store may be a bucket, a git checkout or an NFS mount (`README.md`),
+    so an `ESTALE` or `EIO` from the root listing arrives by the same route a mode
+    bit does.
+
+    ⚠ THE PER-CHILD `is_dir()` IS DELIBERATELY OUTSIDE THE WRAP, MIRRORING GO'S
+    PER-CHILD `os.Stat`. `pathlib` answers False for
+    `_IGNORED_ERRNOS == (ENOENT, ENOTDIR, EBADF, ELOOP)` and RAISES for anything
+    else, while `internal/store.ScopeDirsOrUnreadable` skips a child on ANY stat
+    error — an asymmetry that PRE-DATES this change and is left exactly as it was,
+    because no mode reaches it: a child cannot be `stat`ed at all without `x` on
+    this root, and without `x` the run has already diverged at `resolve_state`.
+    Closing it would mean a guard nothing can make fail. Declared in
+    `tests/parity/README.md` row 4 rather than closed here.
+    """
+    root = Path(store_root)
+    try:
+        # 🔴 THE LISTING IS MATERIALISED INSIDE THE `try`, NOT LEFT LAZY.
+        # `iterdir()` is a GENERATOR — the `os.listdir` it wraps runs on the first
+        # `next()` — so a bare `return sorted(p.name for p in root.iterdir() …)`
+        # raises from inside the comprehension, past this `except`. Wrapping the
+        # `list()` is what puts the raise where it can be caught.
+        children = list(root.iterdir())
+    except OSError as exc:
+        raise _store_unreadable(root, exc) from exc
+    return sorted(p.name for p in children if p.is_dir())
+
+
 def load_store(
     store_root: str | Path,
     *,

@@ -841,6 +841,114 @@ func TestAGenuinelyAbsentCacheStillExitsThreeForItsOwnReason(t *testing.T) {
 	}
 }
 
+// THE THIRD READ OF THE STORE. `LoadStore` wraps the INDEX walk and `EntryFilesOrUnreadable`
+// wraps this verb's per-scope DENOMINATOR; the read that enumerates the cache ROOT — `held`,
+// which decides WHICH scopes are validated at all — was a bare `os.ReadDir(cache)` whose error
+// went back as `return 0, readErr`, i.e. the RAW `*os.PathError`. It had been that way since
+// before this branch; what makes it a finding is that `tests/parity/README.md` row 4 declared
+// the cache-root depth CLOSED, with a mechanism (`resolve_state`'s stamp check) and a remedy
+// that do not touch this line.
+//
+// 🔴 MODE 0111 IS THE ONLY MODE THAT REACHES IT, AND THAT IS THE MECHANISM, NOT A CHOICE OF
+// FIXTURE. Searchable-but-not-readable: `ResolveState` can still `stat` `<cache>/.sync-stamp`
+// by name, so execution gets past the state banner, and then the LISTING fails. Drop the `x`
+// bit (0000, 0444) and the stamp check itself fails first — a different, still-declared
+// divergence this row must not be confused with.
+//
+// 🔴 THE CODE IS NOT WHAT IS RED HERE — the same shape as the #111 rows above. `cli.go`'s
+// reader-error arm already returned 3 at `8ddbb6f`, so a row asserting only the code would be
+// an INVARIANT GUARD wearing a regression test's name. What is red at that commit is the
+// SENTENCE: this client printed `open <cache>: permission denied`. The ORACLE's half — where
+// the CODE is red too, 1 with a traceback — is
+// `tests/test_cairn_cli.py::TestASearchableButUnreadableCacheROOTExitsThreeAndNeverTracebacks`,
+// and the byte comparison is `tests/parity/harness.py`'s `validate-unreadable-cache-root` row.
+func unreadableCacheRootHost(t *testing.T) (home, cache string) {
+	t.Helper()
+	home = oneInstanceHost(t)
+	cache = filepath.Join(home, ".cache", "subsystem-store")
+	// 🔴 THE REACHABILITY CONTROL, AND IT IS TWO CLAIMS. The root must exist (a chmod of an
+	// absent path would measure `ResolveState`'s no-cache arm instead) AND it must hold at
+	// least one scope directory — over an EMPTY root `held` is empty and `Validate` answers
+	// "nothing to validate … holds no scopes" at the SAME exit 3 for a different reason, so
+	// this row would pass having measured nothing.
+	if _, err := os.Stat(filepath.Join(cache, "alpha-notes")); err != nil {
+		t.Fatalf("the fixture never seeded a scope under the root this row makes "+
+			"unreadable: %v", err)
+	}
+	if err := os.Chmod(cache, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	// Restored so `t.TempDir()` can traverse it at teardown, and so a leaked mode cannot
+	// become the next row's fixture.
+	t.Cleanup(func() { _ = os.Chmod(cache, 0o755) })
+	return home, cache
+}
+
+func TestAnUnreadableCacheROOTIsReportedWithTheORACLESSentenceAtExitThree(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions; the condition cannot be constructed")
+	}
+	// BOTH argv shapes: they take different branches BELOW `held` — `--scope` goes through
+	// the membership check, no-`--scope` iterates `held` itself — so one alone would leave
+	// the other's route unmeasured.
+	for _, argv := range [][]string{
+		{"validate", "--scope", "alpha-notes", "--no-sync"},
+		{"validate", "--no-sync"},
+	} {
+		t.Run(strings.Join(argv, " "), func(t *testing.T) {
+			_, cache := unreadableCacheRootHost(t)
+			code, stdout, stderr := runCLI(t, argv...)
+			if code != ExitUnreachableNoCache {
+				t.Fatalf("an unreadable cache root exits %d, got %d\n%s",
+					ExitUnreachableNoCache, code, stderr)
+			}
+			// RED at `8ddbb6f`: the raw `*os.PathError` carries none of this.
+			if !strings.Contains(stderr, "index entry unreadable: under "+cache+" ") {
+				t.Fatalf("the reader's own sentence must name the ROOT, got:\n%s", stderr)
+			}
+			wantTail := "(PermissionError: [Errno 13] Permission denied: '" + cache + "')"
+			if !strings.Contains(stderr, wantTail) {
+				t.Fatalf("the OS-error tail must be CPython's, want %q in:\n%s",
+					wantTail, stderr)
+			}
+			if !strings.Contains(stderr, "the store was not fully read") {
+				t.Fatalf("…and must say the read was INCOMPLETE, got:\n%s", stderr)
+			}
+			// 🔴 RED at `8ddbb6f` — this is the text it printed INSTEAD. Asserted as an
+			// ABSENCE because the two are alternatives at one site: a mutant that wrapped
+			// the error and ALSO printed the cause raw would keep every assertion above.
+			if strings.Contains(stderr, "open "+cache+": permission denied") {
+				t.Fatalf("the RAW *os.PathError must not survive the wrap:\n%s", stderr)
+			}
+			// 🔴 NOT ABSORBED INTO THE OTHER 3. `Validate` already exits 3 for an EMPTY
+			// cache, so a `held` that swallowed the error and returned nothing would land
+			// on the right NUMBER with a sentence claiming the cache holds nothing.
+			if strings.Contains(stderr, "holds no scopes") {
+				t.Fatalf("a root nobody could list is not a root with no scopes:\n%s", stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("nothing was validated, so nothing is on stdout:\n%s", stdout)
+			}
+		})
+	}
+}
+
+func TestTheSameCacheRootREADABLEStillExitsZero(t *testing.T) {
+	// 🔴 THE CONTROL THAT MAKES THE ROWS ABOVE A MEASUREMENT. A client that exited 3 on
+	// every unscoped `validate` satisfies them; mode 0755 is the only difference.
+	oneInstanceHost(t)
+	code, stdout, stderr := runCLI(t, "validate", "--no-sync")
+	if code != ExitOK {
+		t.Fatalf("a readable cache root exits 0, got %d\n%s", code, stderr)
+	}
+	if strings.Contains(stderr, "index entry unreadable") {
+		t.Fatalf("a readable root is not an unreadable store:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "cairn: alpha-notes: ") {
+		t.Fatalf("…and it validated the scope it holds, got:\n%s", stdout)
+	}
+}
+
 // removeOnFirstWrite is the DETERMINISTIC staging device for a scope directory that
 // vanishes mid-run, and it needs no timing window at all: the removal is performed BY the
 // client's own first write to stdout, which happens while it is still inside the FIRST
@@ -850,9 +958,24 @@ func TestAGenuinelyAbsentCacheStillExitsThreeForItsOwnReason(t *testing.T) {
 //
 // 🔴 A REAL RACE WOULD NOT DO. The window is genuinely a TOCTOU one (`install_snapshot`
 // renames a cache root away while a reader holds a listing of the old one), but a test that
-// reproduced it by sleeping would be a flake whose green means nothing. There is no STATIC
-// world that reaches this read either: both walks resolve `<cache>/<scope>` from the same
-// parent listing, so `held` and `LoadIndex` cannot disagree about it.
+// reproduced it by sleeping would be a flake whose green means nothing.
+//
+// 🔴 NO STATIC WORLD REACHES THIS READ EITHER — BUT THE REASON THAT STOOD HERE WAS FALSE AND IS
+// CORRECTED RATHER THAN RESTATED. It said "both walks resolve `<cache>/<scope>` from the same
+// parent listing, so `held` and `LoadIndex` cannot disagree about it". They CAN disagree: the
+// held loop (now `store.ScopeDirsOrUnreadable`, carrying the behaviour forward verbatim) skips a
+// child on ANY `os.Stat` error, while `LoadIndex` `continue`s only for the four errnos in
+// `pathlib._IGNORED_ERRNOS` and RETURNS every other one — a distinction `internal/store/load.go`
+// argues for at length, and the opposite of "cannot disagree".
+//
+// What actually holds is an ORDERING, not an equivalence: `LoadIndex` walks `<cache>/<scope>`
+// inside `LoadStore` — which owns the fail-closed wrap — BEFORE the denominator's second walk of
+// the same directory is reached, so any static condition that stops the second has already failed
+// the wrapped first one closed. And where the predicates DO disagree, `held` is the side that
+// SKIPS, so the scope is never iterated and the denominator is never reached at all. Round 2
+// reached neither denominator across 12 adversarial static worlds. ⚠ Stated no more strongly than
+// it was measured: "no world we could build reaches it", not "no world exists" — which is why
+// this device exists instead of a row in the parity gate.
 type removeOnFirstWrite struct {
 	t      *testing.T
 	buf    bytes.Buffer

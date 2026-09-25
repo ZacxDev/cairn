@@ -1626,8 +1626,12 @@ class TestNotAScopeIsSkippedNotRefused:
         it predates this fix; it shares the root cause above.
 
         ⚠ NAMED FOR THE PATH IT ACTUALLY COVERS. `/api/v1/recall/<scope>` is
-        STILL affected: `load_index` uses `scope_dir.glob("*.md")`, and pathlib
-        glob DOES match a leading dot, so a lock file still 503s that route. The
+        STILL affected: `load_index` walks with `iterdir()` and filters through
+        `is_entry_filename`, which ACCEPTS a leading dot, so a lock file still
+        503s that route. ⚠ This sentence said `load_index` "uses
+        `scope_dir.glob(\"*.md\")`, and pathlib glob DOES match a leading dot",
+        which is stale — #119 replaced that walk — while the conclusion it
+        supports is unchanged. The
         fix lives in `lib/subsystem_resolver.py`, which this card's
         non-goals forbid touching ("the local store is alive and heavily used;
         this task moves files between hosts"). Calling this
@@ -2796,6 +2800,146 @@ class TestAnUnreadableSCOPE_DIRECTORYExitsThreeAndIsNotCalledEmpty:
         assert f"{self.SCOPE}: 1 of 1 entry file(s) parse, 0 malformed" in proc.stdout
 
 
+class TestASearchableButUnreadableCacheROOTExitsThreeAndNeverTracebacks:
+    """🔴 THE THIRD READ OF THE STORE, ONE LEVEL ABOVE THE TWO ALREADY WRAPPED,
+    AND #119's OWN DECLARATION SAID THE SET WAS CLOSED.
+
+    `load_store` wraps the INDEX walk; `entry_files_or_unreadable` wraps
+    `validate`'s per-scope DENOMINATOR. The read that enumerates the cache ROOT —
+    `cmd_validate`'s `held`, which decides WHICH scopes are validated at all — was
+    a bare `sorted(p.name for p in cache.iterdir() if p.is_dir())` outside every
+    wrap, and had been since before this branch.
+
+    🔴 WHAT MADE IT A FINDING NOW IS THAT THE DECLARATION WAS WRONG-SCOPED, NOT
+    THAT THE LINE CHANGED. `tests/parity/README.md` row 4 said the one remaining
+    cache-root divergence raises out of `resolve_state`'s
+    `(cache / SYNC_STAMP).exists()` and named the remedy as teaching
+    `resolve_state` that an unreadable stamp is "no cache". At mode **0111** the
+    stamp `stat` SUCCEEDS — the root is searchable — so that remedy does not touch
+    this line, and the row could have gone green with this still live.
+
+    MEASURED at `8ddbb6f` on BOTH clients, `--no-sync`, one cache holding one
+    readable scope, `chmod` on the cache ROOT:
+
+        root mode   verb                    oracle                     Go client
+        ---------   ---------------------   ------------------------   ---------
+        0000, 0444  recall/search/validate  1 (traceback)              3 (banner)
+        0111        recall, search          3, named sentence          3, identical
+        0111        validate                1 (traceback out of held)  3, RAW errno
+
+    So `recall` and `search` were ALREADY byte-identical at 3 here, because they
+    reach the root walk through `load_store`; `validate` alone read the root
+    itself. Row 4's "1 vs 3" is therefore true of the no-`x` modes and FALSE of
+    this one for two of the three verbs — which is why the row's own numbers could
+    not have found this.
+
+    ⚠ 0111 IS THE ONLY MODE THAT REACHES IT, AND THAT IS THE MECHANISM RATHER THAN
+    A CHOICE OF FIXTURE. Without `x` on the root the stamp `stat` fails first and
+    the run diverges at `resolve_state` — a DIFFERENT, still-open case. Without
+    `r` but with `x`, every child is reachable by name while the listing is not,
+    which is exactly the state `held` cannot survive.
+
+    ⚠ THE MODE IS SET HERE, NEVER COMMITTED — git does not preserve it, so a
+    committed fixture would arrive `0755` in CI and every assertion below would
+    pass over a root nothing refused. Restored in a `finally`.
+    """
+
+    SCOPE = "gizmo-notes"
+
+    def _synced_cache(self, live_store, tmp_path: Path) -> Path:
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        # 🔴 A POSITIVE CONTROL ON THE FIXTURE: the root must actually HOLD scope
+        # directories. Over an empty root `held` is `[]` and `cmd_validate`
+        # answers "nothing to validate" at 3 — the same code for a different
+        # reason, which would let this row pass having measured nothing.
+        assert (cache / self.SCOPE).is_dir(), sorted(p.name for p in cache.iterdir())
+        return cache
+
+    @pytest.mark.parametrize("argv", [
+        # BOTH argv shapes, because they take different branches BELOW `held` and
+        # a fix applied to one would leave the other raw: `--scope` goes through
+        # the membership check, no-`--scope` iterates `held` itself.
+        ("validate", "--scope", "gizmo-notes", "--no-sync"),
+        ("validate", "--no-sync"),
+    ], ids=["scoped", "unscoped"])
+    def test_an_unreadable_cache_ROOT_exits_3_with_the_named_sentence(
+        self, live_store, tmp_path: Path, argv
+    ):
+        """RED at `8ddbb6f`: `returncode == 1` with `PermissionError` and
+        `Traceback (most recent call last)` on stderr, out of
+        `cairn:1533`'s `cache.iterdir()`. Green here with 3 and the reader's own
+        sentence."""
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the guard is unreachable")
+        cache = self._synced_cache(live_store, tmp_path)
+        cache.chmod(0o111)
+        try:
+            proc = run_cairn(*argv, url=None, cache=cache)
+        finally:
+            cache.chmod(0o755)
+        assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
+        # 🔴 THE TRACEBACK IS HALF THE FINDING — the exit code alone would be
+        # satisfied by any refusal, and #111's whole subject is that a Python
+        # traceback is not a reader error.
+        assert "Traceback (most recent call last)" not in proc.stderr, proc.stderr
+        assert "index entry unreadable" in proc.stderr, proc.stderr
+        assert f"under {cache} " in proc.stderr, proc.stderr
+        assert "(PermissionError: [Errno 13] Permission denied:" in proc.stderr, (
+            proc.stderr
+        )
+        assert "the store was not fully read" in proc.stderr, proc.stderr
+        # 🔴 AND IT MUST NOT HAVE BEEN ABSORBED INTO THE OTHER 3. `cmd_validate`
+        # already exits 3 for an EMPTY cache ("nothing to validate — … holds no
+        # scopes"), so a `held` that swallowed the error and returned `[]` would
+        # land on the right NUMBER with a sentence asserting the cache is empty.
+        assert "holds no scopes" not in proc.stderr, proc.stderr
+        assert proc.stdout == "", proc.stdout
+
+    def test_the_SAME_root_READABLE_exits_0(self, live_store, tmp_path: Path):
+        """🔴 THE CONTROL THAT MAKES THE 3 ABOVE A MEASUREMENT. Without it a client
+        that exited 3 on every `--no-sync` validate would satisfy the row above.
+        Mode 0755 is the only difference between the two runs."""
+        cache = self._synced_cache(live_store, tmp_path)
+        proc = run_cairn("validate", "--no-sync", url=None, cache=cache)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert "index entry unreadable" not in proc.stderr, proc.stderr
+        assert f"{self.SCOPE}: " in proc.stdout, proc.stdout
+
+    def test_the_sentence_is_the_one_recall_ALREADY_printed(
+        self, live_store, tmp_path: Path
+    ):
+        """🔴 NOT A NEW SENTENCE — THE EXISTING ONE, PROVED BY COMPARISON RATHER
+        THAN BY RESTATING ITS WORDS. `recall` was already byte-identical between
+        the two clients at this mode (it reaches the root walk through
+        `load_store`); this asserts `validate`'s last stderr line is now the SAME
+        line `recall` emits, so the fix routed to the one writer instead of
+        spelling a second copy that could drift.
+
+        ⚠ LAST LINE, not the whole stream: `validate` prints its state banner
+        BEFORE it loads anything and the reads print theirs after the reader
+        returns, so the two streams cannot be compared whole. That ordering
+        difference is `README.md`'s own measured table.
+        """
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the guard is unreachable")
+        cache = self._synced_cache(live_store, tmp_path)
+        cache.chmod(0o111)
+        try:
+            val = run_cairn("validate", "--scope", self.SCOPE, "--no-sync",
+                            url=None, cache=cache)
+            rec = run_cairn("recall", "--scope", self.SCOPE, "--no-sync",
+                            url=None, cache=cache)
+        finally:
+            cache.chmod(0o755)
+        val_last = val.stderr.strip().splitlines()[-1]
+        rec_last = rec.stderr.strip().splitlines()[-1]
+        assert val_last == rec_last, (val_last, rec_last)
+        # A positive control on the comparison itself: two empty strings would
+        # also be equal.
+        assert "index entry unreadable" in val_last, val_last
+
+
 class TestAScopeThatVANISHESMidRunIsNotServedAsZeroOfZero:
     """🔴 #119 CLOSED A FALSE ABSENCE AT THE FIRST READ AND OPENED A TRACEBACK AT
     THE SECOND. `cmd_validate` reads each scope directory TWICE — once inside
@@ -2838,11 +2982,25 @@ class TestAScopeThatVANISHESMidRunIsNotServedAsZeroOfZero:
     by a clock.
 
     🔴 AND NO **STATIC** WORLD REACHES THIS READ, WHICH IS WHY THE PARITY HARNESS
-    CANNOT CARRY IT. `held` and `load_index` both resolve `<cache>/<scope>` from the
-    same parent listing and both test `is_dir()`, so any mode or absence that stops
-    the second walk has already stopped the first — a mode-000 scope directory
-    fails inside `load_store` and never reaches line 1640. Something has to CHANGE
-    between the two walks, and the harness runs two binaries over a fixed tree.
+    CANNOT CARRY IT — BUT THE REASON THAT STOOD HERE WAS FALSE AND IS CORRECTED
+    RATHER THAN RESTATED. It said "`held` and `load_index` both resolve
+    `<cache>/<scope>` from the same parent listing and both test `is_dir()`, so any
+    mode or absence that stops the second walk has already stopped the first". The
+    two predicates are NOT the same: on the Go side the held loop
+    (`store.ScopeDirsOrUnreadable`) skips a child on ANY stat error while
+    `LoadIndex` returns every errno outside `pathlib._IGNORED_ERRNOS`; and on this
+    side `scope_dirs_or_unreadable`'s `is_dir()` raises for those same errnos where
+    Go's skips. An equivalence was asserted that neither client implements.
+
+    What actually holds is an ORDERING: `load_index` walks `<cache>/<scope>` inside
+    `load_store` — which owns the fail-closed wrap — BEFORE the denominator's second
+    walk of that directory is reached, so a mode-000 scope directory fails inside
+    `load_store` and never reaches the denominator at all. Where the predicates DO
+    disagree, `held` is the side that drops the scope, so it is never iterated.
+    Something therefore has to CHANGE between the two walks, and the harness runs
+    two binaries over a fixed tree. ⚠ Stated no more strongly than it was measured:
+    round 2 reached neither denominator across 12 adversarial static worlds — "no
+    world we could build", not "no world exists".
 
     ⚠ IN-PROCESS, WHICH IS WHY IT DOES NOT USE `run_cairn`. A subprocess's stdout is
     a pipe; hooking it would mean relying on the pipe filling, which is a timing

@@ -13331,9 +13331,15 @@ class TestTheReaderNarrowingItself:
 # single `in` and cannot be satisfied by coincidence.
 LOCKED_ENTRY = "sealed-adit.md"
 # An Emacs lock file: a DANGLING symlink whose name starts with a dot and ends
-# `.md`. `Path.glob("*.md")` matches a leading dot — measured, not assumed, and
-# pinned by a test below — so it IS a candidate entry, and this exact shape has
-# been observed 503ing `/api/v1/recall/<scope>` in practice.
+# `.md`. `is_entry_filename` accepts a leading dot — measured, not assumed — so it
+# IS a candidate entry, and this exact shape has been observed 503ing
+# `/api/v1/recall/<scope>` in practice.
+# ⚠ THIS SAID `Path.glob("*.md")` matches a leading dot "and pinned by a test below".
+# That remains a TRUE fact about pathlib, and the test below still pins it — but it is
+# no longer the mechanism that DECIDES what a candidate entry is: #119 replaced the
+# loader's walk with `iterdir()` + `is_entry_filename`. The glob measurement is kept
+# (the server-side `/snapshot` reasoning still leans on it); the sentence justifying
+# "it IS a candidate entry" now names the predicate that actually rules.
 EMACS_LOCK = ".#sealed-adit.md"
 
 

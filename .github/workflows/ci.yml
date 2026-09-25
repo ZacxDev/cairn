@@ -739,10 +739,16 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 110 PASS lines measured on this head: 107 cases plus THREE structural checks —
+          # 111 PASS lines measured on this head: 108 cases plus THREE structural checks —
           # re-derived by RUNNING the harness on this tree
-          # (`SUMMARY cases=107 passes=110 failures=0 dead-normalizations=0`, rc 0) and reading
-          # `grep -c '^PASS '`, never by adding two to the previous literal.
+          # (`SUMMARY cases=108 passes=111 failures=0 dead-normalizations=0`, rc 0) and reading
+          # `grep -c '^PASS '`, never by adding one to the previous literal.
+          # ⚠ 110 -> 111 WHEN `validate-unreadable-cache-root` LANDED: ONE row, not two, and the
+          # asymmetry with the four rows before it is the argument rather than an oversight.
+          # `recall` and `search` already answered a mode-0111 cache ROOT with identical bytes at
+          # exit 3 — they reach the root walk through `load_store`/`LoadStore`, which was always
+          # wrapped — so rows on them would be INVARIANT guards wearing a regression row's name.
+          # `validate` alone read the root itself, through `held`.
           # ⚠ THE PREVIOUS LITERAL WAS 106 AGAINST A RUN THAT PRODUCED 108, WHICH IS THE EXACT
           # BLINDNESS THE 🔴 NOTE BELOW DESCRIBES, COMMITTED BY THE COMMIT THAT WROTE IT. The
           # two #111 rows landed and this number did not move, so deleting either one of them
@@ -785,8 +791,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 110 ]; then
-            echo "REFUSING: $passes passes, and 110 were measured — the gate got smaller"
+          if [ "$passes" -lt 111 ]; then
+            echo "REFUSING: $passes passes, and 111 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then

@@ -221,10 +221,18 @@ func LsEntries(env Env, opts Options) (int, error) {
 		// 3, pinned by a PARITY ROW — this case IS statically expressible, unlike the
 		// vanished-directory one, so the gate can own it. Mechanically:
 		// `python3 tests/parity/harness.py | grep -q '^PASS ls-entries-unreadable-scope-dir'`
-		// exits 0, and that row is shown RED at this head. ⚠ A zero-match grep exits 1, so
-		// unlike a `go test -run` filter this command cannot read as met when the row is
-		// absent — but check the run's own `SUMMARY … failures=0` line too, because a row that
-		// FAILED still prints a name.
+		// exits 0 AND the run's own `SUMMARY … failures=0` line holds — the second half because
+		// a row that FAILED still prints a name. ⚠ A zero-match grep exits 1, so unlike a
+		// `go test -run` filter this command cannot read as met while the row is missing, which
+		// is exactly what makes it usable as a condition before the row exists.
+		//
+		// ⚠ AND THIS SENTENCE CLAIMED MORE THAN THAT FOR ONE ROUND, WHICH IS WHY THE WORDING IS
+		// NOW THE TWIN'S: it said "and that row is shown RED at this head". There is no such
+		// row — measured, `grep -c 'ls-entries-unreadable-scope-dir' tests/parity/harness.py`
+		// is **0** — so nothing was being shown red, and an auditor checking the claim would
+		// find an ABSENT row where a failing one was promised. The `cairn` spelling of this
+		// same condition never made that claim; two spellings of one condition disagreed, and
+		// this was the wrong one.
 		//
 		// 🔴 THE TWO CLIENTS STILL DIVERGE ON SOME PREFIXED SCOPE NAMES, AND THE CONDITION
 		// IS NARROWER THAN "A PREFIX" — A SENTENCE HERE SAID "any cache where one scope name
@@ -568,19 +576,24 @@ func Validate(env Env, opts Options) (int, error) {
 	// repo-derived scope would validate a scope the cache does not hold and print "NOTHING WAS
 	// CHECKED — a zero here is NOT a clean bill of health" while exiting 0. With no `--scope`
 	// we validate EVERY scope in the cache.
-	var held []string
-	entries, readErr := os.ReadDir(cache)
-	if readErr != nil {
-		return 0, readErr
+	//
+	// 🔴 THROUGH `store.ScopeDirsOrUnreadable`, NOT AN OPEN-CODED `os.ReadDir` — THE THIRD
+	// READ OF THE STORE, AND THE ONE #119 DECLARED DID NOT EXIST. This block was
+	// `entries, readErr := os.ReadDir(cache)` / `return 0, readErr`, handing `cli.go` the
+	// RAW `*os.PathError`: a cache root that is SEARCHABLE but not READABLE (mode 0111 —
+	// the stamp `stat` in `ResolveState` still succeeds, so execution reaches here) printed
+	// `🔴 cairn: open <cache>: permission denied` at exit 3 where every other reader prints
+	// `index entry unreadable: under <root> (PermissionError: …)`, while the ORACLE died
+	// with a traceback at exit 1. Both halves of #111 at a new site. `recall` and `search`
+	// were already byte-identical at 3, because they reach the root walk through
+	// `LoadStore`; only this verb reads the root itself.
+	//
+	// ⚠ NOT ROW 4's CACHE-ROOT CASE, WHICH REMAINS OPEN — that one is mode 000/0444, where
+	// no `x` means the stamp check fails and nothing reaches this line.
+	held, heldErr := store.ScopeDirsOrUnreadable(cache)
+	if heldErr != nil {
+		return 0, heldErr
 	}
-	for _, e := range entries {
-		info, statErr := os.Stat(filepath.Join(cache, e.Name()))
-		if statErr != nil || !info.IsDir() {
-			continue
-		}
-		held = append(held, e.Name())
-	}
-	sort.Strings(held)
 
 	var scopes []string
 	if opts.Scope != "" {
@@ -720,8 +733,13 @@ func Validate(env Env, opts Options) (int, error) {
 		// directory (`EntryFileNames` → `os.ReadDir`) instead of globbing
 		// `<cache>/<scope>/*.md` also removes a latent divergence for scope names carrying
 		// glob metacharacters. The scope name used to be part of the PATTERN, while the
-		// oracle's `Path(scope_dir).glob("*.md")` globs only the pattern and treats the
-		// directory literally. MEASURED: a directory literally named `wid[get` gave Go `[]`
+		// oracle — at the time this was measured — globbed with `Path(scope_dir).glob("*.md")`,
+		// which globs only the pattern and treats the directory literally. ⚠ PAST TENSE
+		// DELIBERATELY: #119 replaced that walk with `iterdir()` + `is_entry_filename`, so the
+		// oracle no longer globs here at all and the present-tense wording that stood here
+		// described a client that no longer exists. The measurement below is unaffected — it
+		// was taken against the globbing oracle and is kept as the record of WHY the pattern
+		// was removed on this side. MEASURED: a directory literally named `wid[get` gave Go `[]`
 		// plus `syntax error in pattern` — `validate` would have printed `0 of 0` — where the
 		// oracle listed the file. NOT claimed as a fix: nothing here exercises such a scope
 		// name, and whether one can reach a cache at all is not established.

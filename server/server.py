@@ -2331,8 +2331,16 @@ class _EntryLock:
 
     The lock file is named `.<entry>.lock` — a leading dot AND no `.md` suffix,
     so it is invisible to all three of the store's walkers twice over
-    (`load_index` globs `*.md`, `/snapshot` skips dotfiles and requires `.md`,
-    `snapshot_freshness` counts `.md` only).
+    (`load_index` filters through `is_entry_filename`, which requires `.md`;
+    `/snapshot` skips dotfiles and requires `.md`; `snapshot_freshness` counts
+    `.md` only).
+
+    ⚠ THAT FIRST CLAUSE SAID "`load_index` globs `*.md`", WHICH IS STALE — #119
+    replaced that walk with `iterdir()` + `is_entry_filename`. The conclusion is
+    unchanged, but the correction matters for a reader counting the "twice over":
+    `is_entry_filename` ACCEPTS a leading dot, so for THIS walker it is the
+    suffix alone that excludes the lock file, not the dot. The old wording let a
+    reader credit the dot with half the protection it does not provide here.
     """
 
     def __init__(self, entry_path: Path) -> None:

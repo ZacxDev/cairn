@@ -2463,10 +2463,14 @@ def visible_scope_set(visible_scopes: Sequence[str] | None) -> set[str] | None:
 # has never successfully read one, so refusing it changes no legitimate caller"
 # — are the five below. The first ruling decided two:
 #
-#   `broken-link`  a dangling symlink. `Path.glob("*.md")` MATCHES A LEADING
+#   `broken-link`  a dangling symlink. `is_entry_filename` ACCEPTS A LEADING
 #                  DOT — measured, not assumed — so an Emacs lock file
 #                  (`.#entry.md`, a dangling link to `user@host.pid:boot`) is a
-#                  candidate entry. Opening it raised, and because an OSError
+#                  candidate entry. ⚠ THIS SAID `Path.glob("*.md")` MATCHES A
+#                  LEADING DOT, AND THE GLOB IS GONE (#119 → `iterdir()` +
+#                  `is_entry_filename`); the property is unchanged, the named
+#                  mechanism was not. Corrected with the runtime string below,
+#                  which carried the same citation into a 503 body. Opening it raised, and because an OSError
 #                  fails closed in BOTH policies that took `/recall` down for
 #                  EVERY caller, naming the file and its scope in the 503.
 #   `other`        fifo, socket, device. `read_text` on a FIFO BLOCKS until
@@ -2561,9 +2565,23 @@ _LOADER_ENTRY_ACTIONS: dict[str, str] = {
 # SHAPE and never invents a fix, because the operator's fix differs per shape
 # (delete the lock file; delete the fifo).
 _LOADER_REFUSAL_REASON: dict[str, str] = {
+    # 🔴 THE MECHANISM NAMED HERE IS `is_entry_filename`, NOT A GLOB, AND THAT IS A
+    # CORRECTION. This string said "`glob('*.md')` matches a leading dot"; there is no
+    # glob in the entry walk any more — #119 made `entry_files_in` use `iterdir()` +
+    # `is_entry_filename` — so it cited a mechanism that no longer exists while its
+    # CONCLUSION stayed true. Strictly worse than a stale comment, because it is a
+    # RUNTIME STRING: it reaches a 503 body and `validate`'s stderr, so an operator was
+    # handed a false mechanism to go looking for. Named for the PREDICATE rather than the
+    # WALK deliberately — `is_entry_filename` is what decides, it is pinned by tests, and
+    # a future change of walk cannot make this stale again.
+    # 🔴 AND IT MUST STAY BYTE-IDENTICAL TO `internal/store/load.go`'s
+    # `loaderRefusalReason[KindBrokenLink]` — measured identical before this edit and
+    # after. The audit that found this named only this site; the Go twin carried the same
+    # false citation, so fixing one alone would have turned a stale-but-AGREEING string
+    # into a client DIVERGENCE in operator-visible output.
     KIND_BROKEN_LINK: (
         "broken symlink (a dangling target, or a link loop) — not an entry, and "
-        "refused before `open()`. `glob('*.md')` matches a leading dot, so an "
+        "refused before `open()`. `is_entry_filename` accepts a leading dot, so an "
         "editor lock file such as `.#<entry>.md` lands here; reading it raised "
         "`index entry unreadable`, which took the whole store down for every "
         "caller and named this file in the error"
