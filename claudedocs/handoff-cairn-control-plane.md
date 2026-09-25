@@ -24,104 +24,100 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`901b77d`** (#104), and ⚠ **re-read rather than quoting it** — `main` moved three times
-  during this session (`46e68ff` → `db46537` → `901b77d`), twice from another session's work.
-  The DoD stands: **ADDRESSED ⇒ the arc stays CLOSED.** Run `pytest tests -q` and read **0 failed**;
-  the total is deliberately not quoted here (it moved 2076 → 2084 → 2089 with no `def test_` added,
-  so its selection is unstated and the figure is unreproducible).
+- `main` @ **`ad74fd0`** (#110), and ⚠ **re-read rather than quoting it** — `main` moved twice while this
+  session was working (`71041ff` #106, then `ad74fd0` #110, both from other sessions), and the second
+  landed *after* this session had already fast-forwarded once. The DoD stands: **ADDRESSED ⇒ the arc
+  stays CLOSED.** Run `pytest tests -q` and read **0 failed**; the total is deliberately not quoted
+  here (its selection is unstated and the figure is unreproducible).
   ⚠ **THE DoD's EVIDENCE, CARRIED FORWARD BECAUSE THIS SECTION REPLACES:** the authz matrix; the
   share flow with its replica-honesty notice; identity resolving through both backends;
   `packages.default = mkGoClient` (in `flake.nix`'s `packages` block — deliberately **not** a line
-  number: that binding read 916, then 927, then 929 inside one session as siblings edited the file);
-  and `go test ./...` **19 ok / 0 FAIL** over 20 packages, one with no test files. Distance from the
-  commit that first met it is a COMMAND, never a number, because it grows with every merge:
-  `git rev-list --count 7d7c9ea..origin/main`.
-- ✅ **RANK 10 IS DONE, MERGED AS `901b77d`, AND VERIFIED ON A REAL PUBLISH RUN RATHER THAN ON THE
-  PR.** The operator chose **reverse it — Go first**. `last_python < first_go` became
-  `last_go < first_python`. 🔴 **THE MERGE TRIGGERED THE FIRST EXECUTION OF THE NEW ORDER AND THAT
-  IS THE EVIDENCE, NOT THE GREEN PR** — run `35954743095`, sha `901b77de`, conclusion success, with
-  the executed order read off the run: prereqs 5–6, **Go 7–11**, **Python 12–16**, **UI 17–21
-  unmoved**, so `last_go=11 < first_python=12` live. The three version-tag pushes skipped, which is
-  their `if:` working on a branch push, not a gate hiding a half.
-- 🔴 **TWO THINGS THE RANK-10 AGENT GOT RIGHT AGAINST ITS BRIEF, BOTH WORTH KEEPING.** (a) The brief
-  specified `first_go < last_python`, which is `min < max` — **satisfied by a fully INTERLEAVED job
-  while reading as "the whole Go half runs first"**, and the only form under which the brief's own
-  suggested mutant is invisible. The shipped assertion is the true mirror. (b) `pin skopeo` and
-  `log in to ghcr` sat INSIDE the Python half; moving the Go half in front without hoisting them
-  would have run the Go pushes with no skopeo binary and no ghcr credential. **Ask what the half you
+  number); and `go test ./...` over the Go packages. Distance from the commit that first met it is a
+  COMMAND, never a number: `git rev-list --count 7d7c9ea..origin/main`.
+- 🔴 **THE DEPLOY IS DONE, AND THE PREVIOUS `State now` SAYING "STILL NOT STARTED" WAS ALREADY FALSE
+  WHEN THIS SESSION READ IT.** Another session built the full manifest set and seeded the journal the
+  day before this one, in the deployment-manifest repo, while this doc still said nothing had been
+  written there. **Both were re-verified live this session rather than read off the commit messages:** the
+  surface is `1/1 Running` with a ClusterIP on the UI port and its own PVC bound; the control journal
+  on that volume holds **30 records** — `user-created 1 · project-created 1 · scope-created 26 ·
+  member-set 1 · credential-issued 1 · granted 0`, matching the seeding commit's own count exactly.
+  ⚠ **The lesson is not "the doc was stale" but that a `State now` bullet asserting a NEGATIVE
+  ("not started") is the one shape a reader cannot falsify without going and looking.**
+- ✅ **THE LOOPBACK-ONLY GAP THIS DOC NAMED IS CLOSED, AND ONLY FOR ONE OF THE FIVE CONTROLS.** The
+  previous entry said every auth control *"was watched failing closed on the same binary over
+  LOOPBACK, never off-mesh … that is the gap the precondition names"*. Measured off-mesh this session
+  through the public edge: the anonymous refusal answers **401** on the entries route and on the share
+  route. 🔴 **THAT IS ONE CONTROL, NOT FIVE** — the Origin pair, the CSRF pair, the `__Host-` cookie
+  attributes and the five-failure lockout are still loopback-only readings, and two anonymous GETs say
+  nothing about any of them. Do not read the ✅ as retiring the precondition.
+- ✅ **THE DEPLOYED IMAGE WAS 10 COMMITS BEHIND AND GITHUB SIGN-IN WAS UNCONFIGURED; BOTH ARE FIXED,
+  AND THE LAG IS THE PART WORTH REMEMBERING.** The surface had been serving `sha-899b4cbd…` (#99)
+  since it first rolled — an artefact that PREDATES the sign-in flow entirely — while #106 sat merged
+  on `main` and the identity provider sat fully configured beside it. Nothing reported the gap: the
+  pod was healthy, the route answered, and every gate in both repos was green. **A deployment pinned
+  by immutable tag does not drift; it stands still, which reads identically to "current" from
+  outside.** Bumped to `sha-71041ff8…` and armed with three variables, in two commits on the
+  deployment repo's trunk (`3a64a5764`, then `ce125e9db` correcting a claim the first one made).
+- 🔴 **THE THREE SIGN-IN VARIABLES ARE A SET, AND DELETING ONE TAKES THE POD DOWN RATHER THAN
+  DISABLING THE BUTTON.** `providerSignIn` exits **78** when the redirect URL is set and no verifier
+  is. With none of them set the surface comes up with the button simply absent, which is not an error
+  and was this pod's state until now. The audience variable is deliberately ABSENT: it defaults to the
+  value the provider actually issues and the check stays armed, so spelling it out would be a second
+  statement of an agreeing value.
+- ✅ **ARMED AND VERIFIED ON THE SERVED SURFACE, off-mesh, after the tag went live.** The pod's own
+  startup line names the credential form **and** the GitHub button with its callback, and carries **no
+  key-set warning**, so the key fetch succeeded. The sign-in page answers 200 and carries the GitHub
+  form action; the share route stays 401; the OAuth start refuses **403** both with no Origin and with
+  a foreign Origin; the callback with no flight refuses **400** — a refusal, not a 500, which is the
+  shape that would mean an unguarded handler.
+- ⏳ **WHAT IS STILL NOT VERIFIED IS A *COMPLETED* SIGN-IN, AND EVERY READING ABOVE IS A REFUSAL OR AN
+  UNAUTHENTICATED PAGE.** Nobody has carried a GitHub identity through the provider and back to a
+  session on this deployment. That is a human's step and this list must not be read as standing in for
+  it — it is rank 13.
+- ⚠ **CARRIED FORWARD — RANK 10 (the publish ordering) IS DONE**, merged as `901b77d` (#104) and
+  verified on the real publish run rather than on the PR: the merge triggered the first execution of
+  the new order, with the Go half executing wholly before the Python half. Two things the agent got
+  right against its brief are worth keeping: the brief's `first_go < last_python` is `min < max` and
+  is satisfied by a fully INTERLEAVED job, so the shipped assertion is the true mirror; and the skopeo
+  pin and the registry login sat INSIDE the Python half, so moving the Go half in front without
+  hoisting them would have run the Go pushes with no binary and no credential. **Ask what the half you
   are moving was silently borrowing from the other one.**
-- ⚠ **ELEVEN RATIONALE SITES, NOT SIX** — the count in the old rank-10 entry undercounted. The three
-  it missed: the hoisted-prereq comment, a pinning note whose *"THE FOUR PUSH STEPS BELOW"* the move
-  falsified (and which said four of each where six exist), and `ci.yml`'s present-tense summary.
-- 🔴 **A REORDER'S REAL BLAST RADIUS IS `steps.<id>.outputs`, AND NO TEST IN THIS REPO COVERS IT.**
-  Verified by hand on #104: **43** references, all resolving to a strictly earlier step
-  (`ref`, `skopeo`, `build-go`, `build`, `build-ui`). Reported as a PAIR — the checker was proved
-  able to go red first (relocating `id: ref` to the end yields **24** `NOT-EARLIER` violations)
-  because a bare zero from a hand-written checker is indistinguishable from one wired to nothing.
-  A second cheap structural check that IS worth copying: the workflow's **non-comment, non-blank
-  lines are an identical multiset** before and after (387 lines, same sorted digest), which is what
-  proves a pure reorder moved no `run:` body and so cannot have disturbed the whole-text pins.
-- ⏳ **RANK 11 IS OPEN AS A PR AND ITS ONE RED CHECK IS NOT ITS OWN.** the handoff-tooling repo's **#1867**, `MERGEABLE`, unmerged deliberately. `handoff_doc.py` now scans the commit message by
-  materialising it as an untracked probe file in the target tree so the EXISTING single `leak_gate`
-  scan reads it, removing it in a `finally` that covers five exit paths. Reproduced independently,
-  not taken from the agent: denied identifier in `--advanced` → **rc 13**, no commit, nothing
-  staged, no probe leftover; clean `--advanced` → rc 0 committing **only** the doc path; and a
-  `.gitignore` line on the probe **refuses LOUDLY at rc 13** rather than passing silently, stating
-  that `--leak-pre-existing-approved` cannot reach that arm.
-- 🔴 **THE HANDOFF LEAK GATE'S SCOPE IS NOW WIDER THAN THE COMMIT: it scans the WHOLE `--advanced`
-  VALUE, not just the committed subject.** `splitlines()[0]` and `[:100]` each drop operator text
-  that still reaches stdout, so the superset is deliberate — it can refuse text that would never
-  have been committed. Know that before reading a refusal as "this would have leaked".
-- 🔴 **the handoff-tooling repo's `main` IS RED ON THE `pytests` LEG, CAUSED BY ITS OWN CAIRN PIN BUMP, AND THIS IS THE
-  CROSS-REPO COUPLING NOBODY HAD WRITTEN DOWN.** `5273d71b` moved the pin `c5df9615` → `5dfc11a2`;
-  the handoff-tooling repo's `test_kills_the_readme_exclusion` mutates `pinned("subsystem_resolver")`, and cairn
-  consolidated its open-coded README exclusion into one `is_entry_filename` predicate behind
-  `SCOPE_POLICY_SHEET`, so the anchor count went **1 → 0**. **A cairn consolidation can redden
-  the handoff-tooling repo, and no gate on either side says so.** Discriminated rather than assumed: `step-pytests`
-  exit **0** with `step-verdict` exit **1** (the genuine-failure signature, not the congestion
-  255-with-no-verdict one), TaskRun `StepFailed`, and CI and local produce **identical** totals
-  (`collected=24096 passed=24091 skipped=4 failed=1`) — identical totals across two environments is
-  what rules out load.
-- 🔴 **AND THE HANDOFF-TOOLING REPO'S BRANCH PROTECTION NO LONGER REQUIRES STATUS CHECKS —
-  `required_status_checks` returns 404.** Both `scripts/run-tests.sh`'s own comment and the CI-platform skill's gotcha #9 assert that a red leg BLOCKS the merge; that is now false in the permissive
-  direction. Both files say *"re-measure rather than trusting this line"*, which is the only reason
-  it was caught. ⚠ Do not restate either version — measure it.
-- ✅ **CARRIED FORWARD, because `State now` REPLACES:** the UI image is published and anonymously
-  pullable (`ghcr.io/zacxdev/cairn-ui`), measured twice with an absent-tag negative control each
-  time; both publish controls ran for real; the Go pod is the DEPLOYED pod and both pods publish to
-  two ghcr packages under one `sha-<40-hex>` scheme.
-- ✅ **CARRIED FORWARD — THE FIVE AUTH CONTROLS WERE WATCHED FAILING CLOSED on the shipped binary**,
-  because the neighbouring app's manifests make that the written precondition for exposure:
-  unauthenticated `GET /` and `/share` → **401**; `POST /sign-in` with no Origin / a foreign Origin /
-  the right one → **403 / 403 / 303**; `POST /share` with no CSRF / a wrong CSRF / a valid CSRF but
-  no session → **403 / 403 / 401**; the cookie is
-  `__Host-cairn-session=…; Path=/; HttpOnly; Secure; SameSite=Lax` (every `__Host-` requirement met);
-  and after five failures a VALID credential answers **401, not 303**, so the lockout is not
-  walkable. ⚠ **ALL OF IT IS LOOPBACK, NOT OFF-MESH, AND THAT IS THE GAP THE PRECONDITION NAMES.**
-  What is measured is that each gate derives from the REQUEST — Origin vs Host, the session's own
-  token, the cookie, the client key — and none branches on network position, so there is no
-  trusted-network bypass. That is a STRUCTURAL argument, not the off-mesh measurement, and it cannot
-  become one without deploying.
-- ⏳ **THE DEPLOY IS STILL NOT STARTED, and its two MEASURED constraints both still narrow it.**
-  **(a)** `cairn-ui` reads the store from a FILESYSTEM (`ui.StoreSource{Root:}`, no `http.Client`
-  anywhere under `cmd/cairn-ui` or `internal/ui`) and the store's volume is `ReadWriteOnce` on
-  `local-path`, so the UI is forced onto the store's namespace AND node. **(b)** the deployed pod
-  has **no control journal** — its env is exactly `SUBSYSTEM_STORE_{PORT,ROOT,TOKEN_FILE,TRUSTED_PROXIES}`
-  — and the UI refuses to start without one, so a journal must be created and seeded IN-CLUSTER
-  first. **Operator decision on record: the in-cluster seeding is done by the ASSISTANT, with an
-  explicit go-ahead first.** Nothing has been written into the deployment-manifest repo, because
-  that repo's own `CLAUDE.md` states commit = live deploy.
-- 🔴 **`cairn-control-plane-9` IS STILL HELD ON PURPOSE** and the browser step is still a human's.
-  ⚠ **Its handover is stale AGAIN by the mechanism this doc already recorded** — the world, the
-  token and the pid are session-scoped, and `main` has moved past `1838b82` by many commits
-  including #100 and #104. **Re-run `git diff 1838b82 origin/main -- internal/ui cmd/cairn-ui
-  internal/identity internal/control internal/report internal/store` AND READ THE HUNKS; do not
-  match a file count.** Rebuild the instance before handing any URL over.
+- ⚠ **CARRIED FORWARD — A REORDER'S REAL BLAST RADIUS IS `steps.<id>.outputs`, AND NO TEST COVERS
+  IT.** Verified by hand on #104: 43 references, all resolving to a strictly earlier step, reported as
+  a PAIR because the checker was first proved able to go red (relocating the first step yields 24
+  violations). The second cheap structural check worth copying: the workflow's non-comment, non-blank
+  lines are an identical multiset before and after, which is what proves a pure reorder disturbed no
+  `run:` body.
+- ⏳ **CARRIED FORWARD — RANK 11 IS OPEN AS THE HANDOFF-TOOLING REPO'S #1867, UNMERGED ON PURPOSE**,
+  `MERGEABLE`, its closing condition met and watched (a commit message carrying a denied identifier is
+  refused at rc 13). It is held because that repo's `main` is red for an unrelated reason, below, and
+  merging would bake that red into main's history. 🔴 **Its leak gate's scope is WIDER THAN THE
+  COMMIT: it scans the whole `--advanced` value, not just the committed subject**, because
+  `splitlines()[0]` and `[:100]` each drop operator text that still reaches stdout. Know that before
+  reading a refusal as "this would have leaked".
+- 🔴 **CARRIED FORWARD — THE HANDOFF-TOOLING REPO'S `main` IS RED ON ITS TEST LEG, CAUSED BY ITS OWN
+  CAIRN PIN BUMP, AND THIS IS THE CROSS-REPO COUPLING NOBODY HAD WRITTEN DOWN.** Its
+  `test_kills_the_readme_exclusion` mutates a pinned anchor, and cairn consolidated its open-coded
+  README exclusion into one `is_entry_filename` predicate, so the anchor count went **1 → 0**. **A
+  cairn consolidation can redden that repo, and no gate on either side says so.** Discriminated rather
+  than assumed: the genuine-failure signature, with CI and local producing identical collected/passed/
+  failed totals — identical totals across two environments is what rules out load.
+- 🔴 **CARRIED FORWARD — THAT REPO'S BRANCH PROTECTION NO LONGER REQUIRES STATUS CHECKS**
+  (`required_status_checks` returns 404), so two files asserting a red leg BLOCKS the merge are wrong
+  in the permissive direction. ⚠ Do not restate either version — measure it. That is rank 12.
+- ✅ **CARRIED FORWARD:** the UI image is published and anonymously pullable, measured twice with an
+  absent-tag negative control each time; both publish controls ran for real; the Go pod is the
+  DEPLOYED pod and both pods publish to two ghcr packages under one `sha-<40-hex>` scheme.
+- 🔴 **CARRIED FORWARD — `cairn-control-plane-9` IS STILL HELD ON PURPOSE** and the browser step is
+  still a human's. ⚠ Its handover is stale again by the mechanism this doc already records — the
+  world, the token and the pid are session-scoped. **Rebuild the instance before handing any URL
+  over**, and note that a long-lived instance from an earlier session was observed still running on
+  the UI port this session; check who holds that port before binding it.
 
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE — ranks 1–9 keep their meaning; 10 and 11 are now DONE/OPEN.** Rank is half
-a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live claims.
+🔴 **NUMBERING IS STABLE — ranks 1–12 keep their meaning; 13 is new.** Rank is half a `claim-work`
+slug, and this doc has twice measured a shuffle re-pointing live claims.
 
 1. ✅ **DONE — #74 merged as `93d0f03`.** forcing: gate.
 2. ✅ **DONE — merged as `562a4f6f`.** forcing: gate.
@@ -141,26 +137,32 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
 9. ⏳ **IN FLIGHT: the share flow's human verification.** Everything a `curl` can reach is green and
    the write half is **unconsumed**. What is left is genuinely a human's: JavaScript, layout, focus
    order, and whether the replica-honesty notice is actually READ. ⚠ **The previous handover is dead
-   — rebuild the instance and re-read the token file; do not reuse a pasted value, and do not reuse
-   port 8103 without checking who holds it** (two sessions collided on it because `## How to verify`
-   names it).
+   — rebuild the instance and re-read the token file; do not reuse a pasted value, and check who
+   holds the UI port before binding it** (an instance from an earlier session was still holding it
+   this session).
    forcing: user — the operator reserved the browser step to a human.
-10. ✅ **DONE — merged as `901b77d` (#104) and verified on publish run `35954743095`.** The operator
-    decided **reverse it, Go first**; the inverted rationale is rewritten at all eleven sites.
-    forcing: user — an operator decision #85 declined to take, taken this session.
-11. ⏳ **OPEN AS the handoff-tooling repo's #1867, UNMERGED ON PURPOSE.** The closing condition is **met and watched** — a
-    commit message carrying a denied identifier is refused at rc 13. It is held because the handoff-tooling repo's `main`
-    is red for an unrelated reason (see `State now`) and merging would bake that red into main's
-    history. **Closing condition for the MERGE:** the handoff-tooling repo's `test_kills_the_readme_exclusion` anchor
-    retargeted to the consolidated `is_entry_filename` shape, `nix build
-    .#checks.x86_64-linux.pytests` exiting 0 at the handoff-tooling repo main, then #1867 merged.
+10. ✅ **DONE — merged as `901b77d` (#104) and verified on a real publish run.** The operator decided
+    **reverse it, Go first**; the inverted rationale is rewritten at all eleven sites.
+    forcing: user — an operator decision #85 declined to take.
+11. ⏳ **OPEN AS the handoff-tooling repo's #1867, UNMERGED ON PURPOSE.** The closing condition is
+    **met and watched**. Held because that repo's `main` is red for an unrelated reason (see
+    `State now`) and merging would bake that red into main's history. **Closing condition for the
+    MERGE:** its `test_kills_the_readme_exclusion` anchor retargeted to the consolidated
+    `is_entry_filename` shape, its `pytests` check exiting 0 at that repo's main, then #1867 merged.
     forcing: incident — a denied identifier is on public `main` in a commit message today.
-12. **NEW — CORRECT TWO FILES THAT ASSERT the handoff-tooling repo's TEKTON CHECKS BLOCK A MERGE.** They do not:
-    `required_status_checks` returns 404. `scripts/run-tests.sh`'s comment and the CI-platform skill's
-    gotcha #9 both claim the opposite, and both are wrong in the PERMISSIVE direction, which is the
-    dangerous one. **Closing condition:** both sites state the measured value with the command that
-    re-measures it, or say the protection was deliberately removed and by whom.
+12. **CORRECT TWO FILES THAT ASSERT THE HANDOFF-TOOLING REPO'S CI CHECKS BLOCK A MERGE.** They do
+    not: `required_status_checks` returns 404. Both sites are wrong in the PERMISSIVE direction,
+    which is the dangerous one. **Closing condition:** both state the measured value with the command
+    that re-measures it, or say the protection was deliberately removed and by whom.
     forcing: gate — a comment is a claim, and this one licenses merging through a red gate.
+13. **NEW — COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** Everything a `curl` can
+    reach is verified (see `State now`); what is unproven is that a real identity traverses the
+    provider and lands as a session. **Closing condition:** a human opens the surface's public
+    hostname in a browser, completes the GitHub flow, and the entries page renders for the seeded
+    operator user — or the failure is recorded with the pod's log line for it. ⚠ **Do the rank-9
+    share-flow check in the SAME sitting**: both are browser work on the same deployment, and
+    splitting them costs a second bring-up.
+    forcing: user — the operator reserved the browser step to a human.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section
@@ -1130,8 +1132,71 @@ a `claim-work` slug, and this doc has twice measured a shuffle re-pointing live 
   already merged measures the no-change path, not the guard — a green there is about nothing. Use a
   fresh delta for every gate probe.
 
-## How to verify
+- 🔴 **AN IMMUTABLY-TAGGED DEPLOYMENT DOES NOT DRIFT — IT STANDS STILL, WHICH IS INDISTINGUISHABLE
+  FROM "CURRENT" FROM OUTSIDE.** The browser surface served an artefact 10 commits stale for a day
+  while a merged feature sat on `main` and its provider sat configured beside it. Every instrument
+  was green and correct: the pod was healthy, the route answered, both repos' gates passed. **Nothing
+  anywhere compares a deployed tag against the branch it came from**, and the one reading that would
+  have shown it — resolving the running image's sha back to a commit and counting the distance — is
+  not something any gate does. **When you touch a deployment, resolve its image to a commit and count
+  `git rev-list --count <that>..origin/main` before believing it is current.**
+- 🔴 **A `State now` BULLET ASSERTING A NEGATIVE IS THE ONE SHAPE A READER CANNOT FALSIFY CHEAPLY.**
+  This doc said *"the deploy is still not started … nothing has been written into the deployment-
+  manifest repo"* for a day after both were done. A positive claim carries its own check (go read the
+  thing it names); *"X has not happened"* names nothing to read, so it survives every review until
+  somebody independently goes looking. **Give a negative claim the command that would refute it.**
+- 🔴 **THE KICKOFF'S RANKS AND THE DOC'S RANKS DISAGREED, WHICH IS THE SHUFFLE HAZARD THIS DOC
+  ALREADY RECORDS, ARRIVING FROM THE OTHER DIRECTION.** The resume message described rank 10 as the
+  deploy and rank 11 as the seeding; by then the doc had renumbered those to the publish ordering and
+  the leak gate. Acting on the kickoff's numbering would have claimed the wrong slug. **The doc is the
+  authority over the kickoff that points at it, and a kickoff quoting a rank NUMBER goes stale the
+  moment the list moves — quote the work, not the rank.**
+- 🔴 **A CLEAN START PROVES NOTHING UNTIL THE CHECK THAT WOULD REFUSE HAS BEEN WATCHED REFUSING.**
+  Before committing a config change to a repo where commit = live deploy, the binary was run against
+  the exact values with two negative controls: redirect-URL-set-but-no-verifier → exit 78, and a
+  callback path that does not end with the served route → exit 78. Only then was the passing run
+  evidence. ⚠ The first attempt at this measured **the instrument**, not the program: `env -i` with a
+  hand-written `PATH` put `timeout` out of reach and the run exited **127**. Reading the OUTPUT rather
+  than the code is what caught it — a 127 read as a program failure would have sent the whole change
+  back for a defect that did not exist.
+- 🔴 **DISCRIMINATE A TRANSIENT BY FINDING THE STEP THAT DIFFERS, NOT BY RE-RUNNING IT.** The key-set
+  fetch returned 502 five times and then 200 twenty-seven consecutive times. Re-running only produced
+  more samples of one path; what identified it was probing the SAME service by a second route — from
+  inside the cluster, from the consuming pod itself (6/6 OK) — plus a sibling endpoint on the external
+  path that stayed healthy throughout, and the provider's own restart clock being 22h old. That
+  triangulation put the fault in the edge path and nowhere else. **An error, like an empty result,
+  cannot name its own mechanism.**
+- ⚠ **A DEGRADED-BUT-SAFE FAILURE MODE IS WORTH READING THE CODE FOR BEFORE ACCEPTING THE RISK.**
+  Against that 502 the surface does not refuse to start: it warns, withholds the provider button,
+  answers 503 on those routes only, leaves the credential form, the entries page and existing sessions
+  untouched, and re-arms itself when a fetch succeeds. Knowing that turned a deploy-blocking question
+  into an accepted, documented window. **Decision (operator, this session): keep the external key-set
+  URL rather than the in-cluster one, accepting that window.** The in-cluster alternative was measured
+  working from the consuming pod and is recorded beside the variable so it is not re-derived as new.
+- 🔴 **I SHIPPED A FALSE CLAIM IN A COMMIT MESSAGE AND IN A MANIFEST COMMENT, AND THE MEASUREMENT
+  THAT CAUGHT IT WAS THE VERIFICATION I ALMOST SKIPPED.** Both said the pre-bump 401 on the root
+  "is not the post-bump expectation". The root branches on `Accept`: a browser navigation gets **303**
+  to the sign-in page, a non-browser client still gets **401**. The error was in the direction that
+  wastes a rollback — somebody re-measuring with `curl` reads 401 and concludes the deploy failed.
+  Corrected in a follow-up commit that keeps the wrong sentence inline, because what it got wrong is
+  the useful part. **A prediction written into a comment before the deploy is a claim; go back and
+  measure it after.**
+- ⚠ **A COMMENT-ONLY CHANGE TO A WORKLOAD MANIFEST DOES NOT ROLL THE POD**, because YAML comments are
+  stripped before apply and the applied object is byte-identical. Confirmed rather than assumed: the
+  pod's age and restart count were unchanged across that reconcile. Useful when the correction above
+  has to land on a surface you do not want to cycle twice.
+- 🔴 **RESOLVING PIDs INSTEAD OF `pkill -f` IS WHAT MADE A SIBLING SESSION'S PROCESS VISIBLE.** A
+  sweep for leftover test binaries found a running instance of this very surface — and reading
+  `/proc/<pid>/cmdline` showed its paths belonged to a DIFFERENT session's scratchpad (the held
+  rank-9 share-flow world), not to this one. A `-f` pattern match would have killed another session's
+  deliberately-held instance, and the damage would have read as a defect in the work under test.
+- ⚠ **`claim-work` HAS NO SLUG FOR WORK THAT IS NOT ON THE RANKED LIST YET, AND TAKING ONE ANYWAY IS
+  STILL RIGHT.** This session's deploy was not a ranked item under the doc's current numbering, so
+  there was no `--slug-for` answer; a descriptive slug was claimed instead and released at the end.
+  **The lock is worth taking even when the queue has no entry for the work** — the hazard it guards
+  (two sessions doing the same thing) does not require the work to be enumerated.
 
+## How to verify
 ```bash
 cd /home/zach/workspace/cairn
 python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
@@ -1223,6 +1288,41 @@ human was asked to take. `cp -a` the world, run a second instance on another por
 `/share` with the post-auth `csrf` hidden field and an `Origin` header, confirm a `granted`
 event appended, then kill it **by resolved PID** (`ss -lptnH 'sport = :<port>'` →
 `/proc/<pid>/cmdline`), never by a `-f` pattern.
+
+**The DEPLOYED browser surface (ranks 9 and 13 are browser work against THIS, not a hand-run
+instance).** 🔴 **Its public hostname is deliberately NOT written down in this PUBLIC repository** —
+read it from the deployment-manifest repo's UI IngressRoute, and substitute it for `<surface>`:
+
+```bash
+# Anonymous refusals. The root answers TWO DIFFERENT THINGS and that is not a bug:
+curl -s -o /dev/null -w '%{http_code}\n'                       https://<surface>/       # 401
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+     -H 'Accept: text/html'                                    https://<surface>/       # 303 -> /sign-in
+curl -s -o /dev/null -w '%{http_code}\n'                       https://<surface>/share  # 401
+# The sign-in page must be 200 AND carry the provider button:
+curl -s https://<surface>/sign-in | grep -c 'sign-in/github'                            # 1
+# The cross-site gates must refuse, and the callback must REFUSE rather than 500:
+curl -s -o /dev/null -w '%{http_code}\n' -X POST               https://<surface>/sign-in/github  # 403
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+     -H 'Origin: https://evil.example'                         https://<surface>/sign-in/github  # 403
+curl -s -o /dev/null -w '%{http_code}\n' \
+  'https://<surface>/sign-in/github/callback?code=bogus&state=bogus'                    # 400
+```
+
+🔴 **`curl https://<surface>/` ANSWERING 401 IS CORRECT AND IS NOT A FAILED DEPLOY.** The root
+branches on `Accept`: a browser navigation gets 303, `*/*` gets 401. This was written wrong once, in
+the direction that wastes a rollback — pass `-H 'Accept: text/html'` or the answer is about curl.
+
+🔴 **THE POD'S OWN STARTUP LINE IS THE AUTHORITY ON WHETHER THE PROVIDER BUTTON IS ARMED**, and a
+200 on the sign-in page does NOT distinguish armed from withheld. It names the credential form and
+the provider with its callback; a `key set could not be fetched` WARNING means the button is
+withheld and its routes answer 503 until a fetch succeeds, re-arming by itself. Read it from the
+workload's logs.
+
+🔴 **RESOLVE THE RUNNING IMAGE BACK TO A COMMIT AND COUNT THE DISTANCE BEFORE BELIEVING THE
+DEPLOYMENT IS CURRENT.** Read the image tag off the workload, then
+`git rev-list --count <that-sha>..origin/main` here. Nothing gates this on either side, and it is
+how a 10-commit lag sat unnoticed for a day behind a healthy pod and green gates.
 
 ## Open investigations — live diagnosis state
 
