@@ -220,12 +220,13 @@ func TestContainsSpace(t *testing.T) {
 //
 // 🔴 THE THIRD PART — the per-rune sweep over `<r>İ<r>` — DOES REACH RULE 2, AND AN EARLIER
 // VERSION OF THIS PARAGRAPH CLAIMED THE OPPOSITE ("no widening of that sweep can reach
-// rule 2, however many code points it walks"). That sentence was refuted by the sweep fifty
-// lines below it: at `r = U+03A3` the swept string is `ΣİΣ`, whose trailing Σ is preceded
-// by a cased letter and ends the string, so CPython answers U+03C2 there where the simple
-// mapping answers U+03C3. That single code point is SKIPPED by that form rather than
-// pinned — the sweep's own note carries the reason — which is what keeps a test named
-// `MatchesCPython` from asserting the answer CPython does not give, and leaves
+// rule 2, however many code points it walks"). That sentence was refuted by the second sweep
+// in this same function, below it — no line count is given because the earlier wording gave
+// one and it went stale on the first edit: at `r = U+03A3` the swept string is `ΣİΣ`, whose
+// trailing Σ is preceded by a cased letter and ends the string, so CPython answers U+03C2
+// there where the simple mapping answers U+03C3. That code point is SKIPPED by that form
+// rather than pinned — the sweep's own note carries the reason — which is what keeps a test
+// named `MatchesCPython` from asserting the answer CPython does not give, and leaves
 // `TestLowerIsCPythonExceptForFinalSigma` the SOLE guard a Final_Sigma change has to move.
 // `Lower`'s docstring carries the decision not to implement it.
 func TestLowerMatchesCPython(t *testing.T) {
