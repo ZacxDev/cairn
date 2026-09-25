@@ -1432,6 +1432,50 @@ class TestTheEntryFilePredicateIsOneRule:
         with pytest.raises(sr.UnknownScopeError):
             sr.resolve_ref("flux", loaded, "nope")
 
+    def test_an_UNREADABLE_scope_dir_RAISES_where_an_EMPTY_one_returns_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """🔴 THE FALSE-ABSENCE DEFECT AT THE DIRECTORY LEVEL, AND THE ONE STATE
+        THE FIX MUST NOT TOUCH, IN ONE TEST SO THEY CANNOT BE SEPARATED.
+
+        `pathlib.Path.glob` SUPPRESSES the `OSError` its own directory scan
+        raises and yields nothing; `iterdir()` propagates it. Over a scope
+        directory at mode `000` that difference decided the whole answer: an
+        empty listing here is indistinguishable downstream from a directory
+        somebody made and never filled, so the scope registered with zero entries
+        and `recall` answered `status=scope-empty` — *"NOTHING RECORDED YET …
+        Not an error."* — at exit **0** over a directory nothing had read. RED at
+        `278b8df`, where `entry_files_in` returned `[]` and no exception was
+        raised.
+
+        ⚠ THE FIRST ASSERTION IS THE NEGATIVE CONTROL ON THE FIXTURE, AND IT IS
+        NOT DECORATION. `iterdir()` and `glob` agree over an EMPTY directory
+        (both `[]`), so a fixture whose locked scope held no entry files could
+        not tell a refusal from the honest empty answer; this asserts the
+        directory really does hold one.
+        """
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the guard is unreachable")
+        locked = tmp_path / "sealed-adit"
+        _write_entry(locked, "flux.md", "---\nservice: flux\nscope: sealed-adit\n---\n")
+        assert [p.name for p in locked.glob("*.md")] == ["flux.md"], (
+            "the fixture must hold an entry file, or `iterdir` and `glob` agree "
+            "and the mode is not the variable"
+        )
+        empty = tmp_path / "made-never-filled"
+        empty.mkdir()
+
+        # THE STATE THAT MUST NOT MOVE: readable and genuinely empty → an honest
+        # empty listing, no exception. Green before the fix and after it.
+        assert sr.entry_files_in(empty) == []
+
+        locked.chmod(0o000)
+        try:
+            with pytest.raises(PermissionError):
+                sr.entry_files_in(locked)
+        finally:
+            locked.chmod(0o755)
+
     @pytest.mark.parametrize("key", ["scope", "repo"])
     def test_directory_name_beats_a_stale_scope_field(self, tmp_path: Path, key: str) -> None:
         """🔴 This test only wrote `repo:` and was VACUOUS for the `scope:` case.

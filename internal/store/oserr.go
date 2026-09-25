@@ -11,15 +11,29 @@ import (
 // osErrorTypeName is CPython's exception CLASS NAME for an OS error, which the
 // store-unreachable sentences interpolate as `{type(exc).__name__}`.
 //
-// ⚠ A KNOWN, UNPINNED RESIDUAL — stated because "it is not in the normalization
-// table" must not read as "somebody measured it". No case in the conformance
-// corpus reaches these sentences: the fixture store is fully readable, so the
-// only inputs that produce one are a mode-000 entry, a FIFO named `*.md` or a
-// vanished store — none of which the corpus builds. What IS pinned is the STATUS
-// and the header set (`store-unreachable`, `X-Store-Exit: 3`), which is the part a
-// client branches on. The exception's own `[Errno N] text: 'path'` tail is NOT
-// reproduced byte-for-byte here and a future round that wants it will have to add
-// a corpus case that reaches it, which is the honest way round.
+// ✅ THAT RESIDUAL IS CLOSED, AND THE PARAGRAPH IT REPLACES IS DELETED RATHER THAN LEFT TO READ
+// AS COVERAGE NOBODY TOOK. It said the exception's own `[Errno N] text: 'path'` tail was "NOT
+// reproduced byte-for-byte here" and that "a future round that wants it will have to add a corpus
+// case that reaches it". That round happened — twice, at two depths — and the cases are parity
+// rows rather than conformance ones, which is the distinction the old wording could not make:
+//
+//   - `validate-unreadable-entry` / `recall-unreadable-entry` (#111) chmod a CACHED ENTRY FILE
+//     to 000 for the measured run and compare stdout, stderr AND the exit code between the two
+//     clients, so the whole sentence — type name and `[Errno 13] Permission denied: '<path>'`
+//     tail included — is compared BYTE FOR BYTE. `PyOSError` exists for that tail.
+//   - `validate-unreadable-scope-dir` / `recall-unreadable-scope-dir` (#119) do the same one
+//     directory up, over a cached SCOPE DIRECTORY at 000.
+//
+// The mode cannot be COMMITTED (git does not preserve 000, so a fixture would arrive readable in
+// CI), which is why these are harness-built rows and not corpus files — the old paragraph's "the
+// fixture store is fully readable" was a fact about the corpus, not a limit on the gate. A
+// CONTENT-FLOOR sentinel per family, each keyed on the row's own `Case` field, refuses to vouch
+// for a run in which either `chmod` stopped happening.
+//
+// ⚠ WHAT IS STILL UNPINNED IS THE `X-Store-*` HEADER SIDE, and that claim survives unchanged: no
+// conformance case reaches these sentences, so what the SERVER pins is the STATUS and the header
+// set (`store-unreachable`, `X-Store-Exit: 3`). It is the two CLIENTS' rendering that is now
+// gated, which is where this function's output goes.
 func osErrorTypeName(err error) string {
 	switch {
 	case errors.Is(err, fs.ErrPermission):

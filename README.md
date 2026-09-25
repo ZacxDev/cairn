@@ -66,7 +66,14 @@ bucket, a git repo or an NFS mount:
   produced it — `live`, `cached` (with age and revision), `scope-empty`, or
   🔴 **`store-unreachable, no cache`, which exits `3` and must never be read as
   the third**: `scope-empty` and an unreachable store both "print no entries"
-  and one of them is a lie. Orthogonally it names the **scope's status**, so a
+  and one of them is a lie. ⚠ **Exit `3` is therefore wider than that one
+  state, and it can arrive under a `cached` banner.** A read whose cache exists
+  but cannot be fully read — a scope directory or an entry file at mode `000` —
+  prints `⚠ cairn: cached — …` and then exits `3` with `index entry
+  unreadable: under <root> (…) — the store was not fully read`. So the banner
+  says which of the four states the *sync* reached, and the exit code says
+  whether the *report* is complete; a `cached` banner is not a promise of `0`.
+  Orthogonally it names the **scope's status**, so a
   `cached` read can still report `scope-absent` (no such scope here — also what
   a scope your token cannot see looks like) or `scope-unreadable`. An agent that
   cannot tell "nothing is there" from "I could not look" will act on the

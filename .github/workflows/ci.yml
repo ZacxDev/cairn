@@ -739,7 +739,20 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 106 PASS lines measured on this head: 103 cases plus THREE structural checks —
+          # 110 PASS lines measured on this head: 107 cases plus THREE structural checks —
+          # re-derived by RUNNING the harness on this tree
+          # (`SUMMARY cases=107 passes=110 failures=0 dead-normalizations=0`, rc 0) and reading
+          # `grep -c '^PASS '`, never by adding two to the previous literal.
+          # ⚠ THE PREVIOUS LITERAL WAS 106 AGAINST A RUN THAT PRODUCED 108, WHICH IS THE EXACT
+          # BLINDNESS THE 🔴 NOTE BELOW DESCRIBES, COMMITTED BY THE COMMIT THAT WROTE IT. The
+          # two #111 rows landed and this number did not move, so deleting either one of them
+          # left `passes=107 >= 106` green, `declared=104 >= floor 99` green, the derived-floor
+          # check green and the content sentinel True (the surviving row still emitted the
+          # sentence) — no guard fired. Four rows are now in this family, so the ledger that
+          # matters is the number, not the prose: run it and copy what it prints.
+          # ⚠ THE STALE COUNT BELOW IS KEPT AS THE RECORD OF WHAT MOVED, not as a claim about
+          # this head: the sentence "103 cases … The newest case is
+          # `validate-write-protocol-advisories`" was true two rounds ago.
           # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`. The
           # last of those seeds a FIFO named `*.md` into a synced cache and runs both
           # clients' `validate --no-sync` under a timeout: the world CANNOT carry a
@@ -772,16 +785,28 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 106 ]; then
-            echo "REFUSING: $passes passes, and 106 were measured — the gate got smaller"
+          if [ "$passes" -lt 110 ]; then
+            echo "REFUSING: $passes passes, and 110 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
             echo "REFUSING: $fails failing row(s)"
             exit 1
           fi
-          # …and the harness's own two in-run controls, read rather than assumed.
-          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True' /tmp/parity.txt
+          # …and the harness's own FOUR in-run content controls, read rather than assumed.
+          # 🔴 ALL FOUR FIELDS ARE NAMED, AND THE ANCHOR IS WHY THAT MATTERS. This was an
+          # anchored PREFIX reading two fields while its own comment claimed it read "the
+          # harness's own two in-run controls" — true of the grep and false of the harness,
+          # which by then printed three. A prefix match says nothing about the fields after the
+          # ones it spells, so it matched whatever `unreadable-entry=` said. The third and
+          # fourth sentinels WERE still enforced — the harness refuses to vouch and exits 2,
+          # which `set -o pipefail` above turns into a failed step — so this grep was a
+          # coverage-WORDING gap rather than a hole. It is widened anyway, because a check whose
+          # comment overstates it is what stops the next reader looking.
+          # ⚠ THE TRAILING `mtime-files=…` FIELDS ARE DELIBERATELY NOT MATCHED: they carry a
+          # measured number, not a verdict, so spelling them here would make this line red on
+          # every corpus change.
+          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
 
   # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY

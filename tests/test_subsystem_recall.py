@@ -408,6 +408,53 @@ class TestNegativeControls:
         assert "index entry unreadable" in str(exc.value)
         assert "INCOMPLETE" in str(exc.value)
 
+    def test_an_unreadable_SCOPE_DIRECTORY_raises_the_SAME_sentinel(
+        self, store: Path
+    ) -> None:
+        """🔴 THE THIRD UNREADABLE SITE, AND THE ONE THAT USED TO BE SERVED AT
+        EXIT 0 AS AN ABSENCE. The two rows above are about an entry FILE; this is
+        the scope DIRECTORY holding them. `entry_files_in` walked it with
+        `pathlib.Path.glob`, which SUPPRESSES the `OSError` its directory scan
+        raises and yields nothing — so the scope registered with zero entries and
+        this call returned `status=scope-empty` ("NOTHING RECORDED YET … Not an
+        error.") instead of raising. RED at `278b8df`: no exception, and
+        `rc.recall(store, SCOPE).status == "scope-empty"`.
+
+        ⚠ IT REUSES `EntryUnreadableError`, NOT A NEW CLASS. `load_store` already
+        owns the one `except OSError` wrap; this defect was never a missing error
+        path, it was a swallowed errno upstream of an existing one.
+        """
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the guard is unreachable")
+        scope_dir = store / SCOPE
+        # The negative control on the fixture: over an EMPTY directory `glob` and
+        # `iterdir` agree, so the mode could not be the variable.
+        assert list(scope_dir.glob("*.md")), "the fixture scope must hold entries"
+        scope_dir.chmod(0o000)
+        try:
+            with pytest.raises(rc.EntryUnreadableError) as exc:
+                rc.recall(store, SCOPE)
+        finally:
+            scope_dir.chmod(0o755)
+        assert "index entry unreadable" in str(exc.value)
+        assert "INCOMPLETE" in str(exc.value)
+        assert str(scope_dir) in str(exc.value), "the refused directory must be NAMED"
+
+    def test_a_genuinely_EMPTY_scope_is_STILL_scope_empty_and_does_NOT_raise(
+        self, store: Path
+    ) -> None:
+        """🔴 THE STATE THE FIX ABOVE MUST NOT COLLAPSE. `scope-empty` with
+        "Not an error" is the CORRECT answer for a directory that exists and
+        genuinely holds nothing, and it is a different state from unreadable —
+        separated by MECHANISM (`iterdir()` returns `[]` vs raises), not by a
+        predicate either side could get wrong. Green before the fix and after it:
+        an invariant guard, not regression coverage.
+        """
+        (store / "made-never-filled").mkdir()
+        report = rc.recall(store, "made-never-filled")
+        assert report.status == "scope-empty"
+        assert report.total_in_scope == 0
+
     def test_read_entry_wraps_its_OWN_read_too(self, store: Path, tmp_path: Path) -> None:
         """The second unreadable site: an entry that loaded fine, then could not
         be read for its body. Reached directly, because the two reads are

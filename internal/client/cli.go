@@ -618,12 +618,25 @@ func Run(env Env, argv []string) int {
 		fmt.Fprintf(env.Stderr, "🔴 cairn: %s — %s\n", StateNoCache, unreachableErr.Reason)
 		return ExitUnreachableNoCache
 	}
-	// ⚠ EVERYTHING ELSE IS A READER ERROR — a missing store root, an unreadable entry — and it
-	// exits 3, which is what the reader's own contract says those mean. The oracle reaches the
-	// same number by a different route: those raise out of `cmd_recall` and the module's
-	// `_exit_for` is never consulted, so its CLI wrapper prints a traceback at exit 1. That is
-	// a genuine divergence and it is in the good direction; it is declared in
-	// `tests/parity/README.md` rather than reproduced.
+	// ⚠ EVERYTHING ELSE IS A READER ERROR — a missing store root, an unreadable entry, an
+	// unreadable scope directory — and it exits 3, which is what the reader's own contract says
+	// those mean.
+	//
+	// ✅ THE ORACLE NOW REACHES THE SAME NUMBER BY THE SAME ROUTE, AND THE THREE CLAIMS THAT
+	// STOOD HERE ARE DELETED BECAUSE ALL THREE WERE FALSE. This comment said the oracle "prints
+	// a traceback at exit 1", that this was "a genuine divergence and it is in the good
+	// direction", and that it was "declared in `tests/parity/README.md` rather than reproduced".
+	// #111 grew the oracle's `main()` the reader-error rung this function always had, and #119
+	// stopped `entry_files_in` swallowing `EACCES` on the scope directory; the README row it
+	// pointed at now says the opposite of what the comment claimed it said. MEASURED on both
+	// clients at both depths: byte-identical stderr and exit 3 on all four (verb × depth). A
+	// comment left claiming a divergence that is closed is the shape that gets a guard deleted
+	// for being redundant.
+	//
+	// ⚠ WHAT REMAINS IS ONE DEPTH UP AND IS STILL DECLARED IN `tests/parity/README.md` (residual
+	// 4): a mode-000 cache ROOT never becomes a reader error at all — it raises out of the
+	// oracle's `resolve_state` at exit 1 while `ResolveState` here answers
+	// `store-unreachable, no cache` at 3, which is the branch above, not this one.
 	fmt.Fprintf(env.Stderr, "🔴 cairn: %s\n", runErr)
 	return ExitUnreachableNoCache
 }

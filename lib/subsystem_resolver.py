@@ -2679,12 +2679,62 @@ def entry_files_in(scope_dir: Path) -> list[Path]:
     from `load_index` and the denominator from a bare `*.md` glob, so the two
     could disagree about what an entry is. They now cannot.
 
-    ⚠ `Path.glob("*.md")` DOES match a leading dot — measured, not assumed — so a
-    dangling `.#entry.md` editor lock file IS in this set. That is deliberate:
+    🔴 `iterdir()`, NEVER `glob("*.md")` — THE GLOB SWALLOWS `EACCES` AND SERVES A
+    FALSE ABSENCE AT EXIT 0. `pathlib.Path.glob` suppresses the `OSError` its own
+    directory scan raises and yields NOTHING; `iterdir()` raises. Over a scope
+    directory at mode `000` that difference is the whole of the answer, because an
+    empty listing from THIS function is indistinguishable downstream from a
+    directory somebody made and never filled: the scope registers with zero
+    entries, `recall` reports `status=scope-empty`, and the client prints
+    "NOTHING RECORDED YET — `<scope>/` exists but holds no entries … Not an
+    error." at exit **0** over a directory whose contents were never read.
+    MEASURED on CPython 3.12.14 over one directory holding one `*.md` file at
+    `chmod 000`: `glob("*.md")` → `[]`, `iterdir()` → `PermissionError [Errno 13]`.
+    And MEASURED end-to-end on both clients over a cached scope at mode `000`,
+    before this line changed: `cairn recall` and `cairn validate` each answered
+    **0** with `status=scope-empty` on the oracle and **3** with `index entry
+    unreadable: under <root> (PermissionError: …)` on the Go client, which reaches
+    the same directory through `os.ReadDir` and has never had the suppression.
+    So this is the `TestUnreadableScope` defect — "`Path.glob` swallows
+    PermissionError and returns []" — one directory level up from the entry files
+    the server already guards, and on the CACHE side where no server walk can see
+    it.
+
+    🔴 IT RAISES RATHER THAN REPORTING, AND THAT IS THE EXISTING POLICY, NOT A NEW
+    ONE. `load_index`'s ⚠ `OSError` paragraph already says an unreadable path
+    "fails closed in both modes … the set of entries is then unknown, so there is
+    nothing honest to degrade to", and `load_store` owns the one wrap that turns
+    it into the named `index entry unreadable` sentence. This function therefore
+    adds no `except` of its own: the `PermissionError` travels the route a
+    mode-000 ENTRY FILE already travels, and both clients print the same bytes.
+
+    ⚠ AN EMPTY SCOPE IS STILL EMPTY, AND THE TWO ARE SEPARATED BY MECHANISM
+    RATHER THAN BY A PREDICATE. `iterdir()` over a readable directory holding no
+    entries returns `[]` exactly as the glob did — so `scope-empty` at exit 0,
+    with its "Not an error" sentence, is unchanged for the state it is true of.
+    Only the case that CANNOT produce an honest listing now raises.
+
+    ⚠ THE FILENAME FILTER IS UNCHANGED, AND THE EQUIVALENCE WAS MEASURED RATHER
+    THAN ASSUMED. Over one directory holding `a.md`, `.#lock.md`, `.md`,
+    `README.md`, `b.MD`, `c.md.txt`, `d.markdown` and a DIRECTORY named `sub.md`,
+    `glob("*.md")` and `iterdir()` filtered through `is_entry_filename` return the
+    identical list `['.#lock.md', '.md', 'a.md', 'sub.md']`. The leading dot and
+    the directory are both KEPT on purpose — see the two ⚠ notes below.
+
+    ⚠ A LEADING DOT IS IN THIS SET — measured, not assumed — so a dangling
+    `.#entry.md` editor lock file IS a candidate. That is deliberate:
     `classify_path` is what refuses it, and refusing it is a REPORTED rejection
     rather than a silent drop.
+
+    ⚠ A VANISHED DIRECTORY NOW RAISES `FileNotFoundError` WHERE THE GLOB RETURNED
+    `[]`, and that is the same trade in the same direction. Both production
+    callers resolve the directory from a listing that just reported it as a
+    directory (`load_index`'s `Path(root).iterdir()`, and `cairn validate`'s
+    `cache.iterdir()` gate), so the only way to reach it is a TOCTOU race —
+    already the `absent` cell of `load_index`'s RESIDUAL LEDGER, already an
+    `OSError`, and already fail-closed through the same wrap.
     """
-    return sorted(p for p in Path(scope_dir).glob("*.md") if is_entry_filename(p.name))
+    return sorted(p for p in Path(scope_dir).iterdir() if is_entry_filename(p.name))
 
 
 def load_index(

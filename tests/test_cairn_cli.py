@@ -2661,3 +2661,136 @@ class TestAnUnreadableEntryExitsThreeAndNeverTracebacks:
         assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
         assert "no cache exists" in proc.stderr, proc.stderr
         assert "index entry unreadable" not in proc.stderr, proc.stderr
+
+
+class TestAnUnreadableSCOPE_DIRECTORYExitsThreeAndIsNotCalledEmpty:
+    """🔴 THE SAME FALSE ABSENCE, ONE DIRECTORY LEVEL UP, AND IN THE WORSE
+    DIRECTION. `TestAnUnreadableEntryExitsThreeAndNeverTracebacks` above covers a
+    mode-000 ENTRY FILE; this covers a mode-000 SCOPE DIRECTORY, which the same
+    fix round left open because `entry_files_in` walked it with
+    `pathlib.Path.glob`, and `glob` SUPPRESSES the `OSError` its own directory
+    scan raises while `iterdir()` propagates it.
+
+    MEASURED at `278b8df` over a cached scope directory at `chmod 000`, with a
+    readable control either side:
+
+        chmod 000 <cache>/<scope>     oracle                       Go client
+        ------------------------      ---------------------------  ---------
+        control (readable)            0                            0
+        `recall`                      0  status=scope-empty        3
+        `validate`                    0                            3
+
+    and the oracle's exit-0 stdout said *"NOTHING RECORDED YET — `<scope>/`
+    exists but holds no entries. … Not an error."* over a directory whose
+    contents were never read. That is the confident zero this whole client
+    exists to prevent, and it is worse than the entry-file half: 1 with a
+    traceback is at least non-zero.
+
+    🔴 SAME CLASS AS TWO DEFECTS THIS REPO ALREADY FIXED — `ls-entries` listing
+    READMEs as entries, and `Focus` returning a false "no handoff doc" — and the
+    same class as `TestUnreadableScope` above, whose docstring names the exact
+    mechanism ("`Path.glob` swallows PermissionError and returns []"). That one is
+    about the SERVER's copy of the walk, which `server.py`'s snapshot already
+    answers with `iterdir()`; this one is about the CLIENT's cache, where no
+    server walk can see it.
+
+    ⚠ THE MODE IS SET HERE, NEVER COMMITTED — git does not preserve `000`, so a
+    committed fixture would arrive readable in CI and every assertion below would
+    pass over a directory nothing refused. Restored in a `finally` so it cannot
+    leak into a later test through a shared cache.
+    """
+
+    #: `gizmo-notes` is the fixture's second POPULATED scope. A populated one is
+    #: required: over an EMPTY directory `iterdir()` and `glob` agree (both `[]`),
+    #: so the mode would be the only difference and the row could not tell a
+    #: refusal from the honest empty answer it must keep.
+    SCOPE = "gizmo-notes"
+
+    def _synced_cache(self, live_store, tmp_path: Path) -> Path:
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        scope_dir = cache / self.SCOPE
+        # 🔴 A POSITIVE CONTROL ON THE FIXTURE: a chmod of a directory that does
+        # not exist, or one holding no entries, would measure a different
+        # condition with a different code.
+        assert scope_dir.is_dir(), sorted(p.name for p in cache.iterdir())
+        assert [p.name for p in scope_dir.glob("*.md")], (
+            "the row needs a POPULATED scope — over an empty one `glob` and "
+            "`iterdir` agree and the mode cannot be the variable"
+        )
+        return cache
+
+    @pytest.mark.parametrize("verb", ["recall", "validate"])
+    def test_an_unreadable_scope_DIR_exits_3_with_the_named_sentence(
+        self, live_store, tmp_path: Path, verb: str
+    ):
+        """RED at `278b8df` with `returncode == 0`, for BOTH verbs; green at HEAD
+        with 3 and the reader's own `index entry unreadable` sentence."""
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the guard is unreachable")
+        cache = self._synced_cache(live_store, tmp_path)
+        scope_dir = cache / self.SCOPE
+        scope_dir.chmod(0o000)
+        try:
+            proc = run_cairn(verb, "--scope", self.SCOPE, "--no-sync",
+                             url=None, cache=cache)
+        finally:
+            scope_dir.chmod(0o755)
+        assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
+        # 🔴 THE EXIT CODE ALONE WOULD NOT SEE THE DEFECT THIS ROW IS ABOUT — the
+        # oracle answered 0 *with a sentence asserting absence*, so the text is
+        # half the finding.
+        combined = proc.stdout + proc.stderr
+        assert "scope-empty" not in combined, combined
+        assert "NOTHING RECORDED YET" not in combined, combined
+        assert "index entry unreadable" in proc.stderr, proc.stderr
+        assert str(scope_dir) in proc.stderr, proc.stderr
+        # The oracle's own OSError spelling — the half the Go client reproduces
+        # through `store.PyOSError` so the parity rows can compare BYTES.
+        assert "(PermissionError: [Errno 13] Permission denied:" in proc.stderr, (
+            proc.stderr
+        )
+        assert "the store was not fully read" in proc.stderr, proc.stderr
+        assert "Traceback (most recent call last)" not in proc.stderr, proc.stderr
+
+    @pytest.mark.parametrize("verb", ["recall", "validate"])
+    def test_a_genuinely_EMPTY_scope_dir_still_exits_0_and_is_STILL_called_empty(
+        self, live_store, tmp_path: Path, verb: str
+    ):
+        """🔴 THE HALF THE FIX COULD HAVE COLLAPSED, AND THE REASON IT IS A
+        SEPARATE MECHANISM RATHER THAN A SEPARATE PREDICATE. A directory that
+        EXISTS and is genuinely empty is a real, distinct state and `scope-empty`
+        / "Not an error" is the CORRECT answer for it. `iterdir()` over a readable
+        empty directory returns `[]` exactly as `glob` did, so nothing about this
+        case moved — and a fix that made the empty case raise would pass every
+        assertion in the row above while destroying the ordinary outcome.
+
+        This row is green at `278b8df` AND at HEAD, deliberately: it is an
+        invariant guard on the state the fix must not touch, not regression
+        coverage for the defect.
+        """
+        cache = self._synced_cache(live_store, tmp_path)
+        # Made HERE rather than taken from the sync: whether a tar carries an
+        # empty directory is a property of the transport, not of this claim.
+        empty = cache / "made-never-filled"
+        empty.mkdir()
+        proc = run_cairn(verb, "--scope", "made-never-filled", "--no-sync",
+                         url=None, cache=cache)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert "index entry unreadable" not in proc.stderr, proc.stderr
+        if verb == "recall":
+            assert "status=scope-empty" in proc.stdout, proc.stdout
+            assert "NOTHING RECORDED YET" in proc.stdout, proc.stdout
+            assert "Not an error." in proc.stdout, proc.stdout
+        else:
+            assert "0 of 0 entry file(s) parse, 0 malformed" in proc.stdout, proc.stdout
+
+    def test_the_SAME_scope_READABLE_exits_0(self, live_store, tmp_path: Path):
+        """🔴 THE CONTROL THAT MAKES THE 3 ABOVE A MEASUREMENT. Without it a
+        client that exited 3 on every `--no-sync` read would satisfy the rows
+        above."""
+        cache = self._synced_cache(live_store, tmp_path)
+        proc = run_cairn("validate", "--scope", self.SCOPE, "--no-sync",
+                         url=None, cache=cache)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert f"{self.SCOPE}: 1 of 1 entry file(s) parse, 0 malformed" in proc.stdout

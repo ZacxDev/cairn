@@ -310,7 +310,15 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # route (oracle 1 with a traceback, Go 3) rather than measuring it. Two rows and not one
     # because the verbs reach the condition through different code: `recall` through
     # `load_store`/`LoadStore`, `validate` through its own load, which bypassed that wrap.
-    floor = 99
+    # ⚠ 99 -> 101 WHEN `validate-unreadable-scope-dir` AND `recall-unreadable-scope-dir` LANDED
+    # (#119): `m` moved 105 -> 107 and 101 is the literal the formula prescribes for it
+    # (`107 - min(50, max(1, 107/20)) = 101.65 -> 101`, re-derived by running the formula on
+    # `len(harness.cases(1))`, not by arithmetic on the previous line). Those two rows are what
+    # make the gate able to see an unreadable scope DIRECTORY, which the entry rows above
+    # structurally cannot: chmodding the file leaves the directory listable, and the directory
+    # case was the one the oracle answered **0** with `status=scope-empty` where the Go client
+    # answered 3.
+    floor = 101
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why

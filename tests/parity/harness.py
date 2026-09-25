@@ -277,6 +277,27 @@ class Case:
     #: would hand the Go client a mode it did not set; and `restore_store` rebuilds the STORE
     #: only, never the cache, so a leaked `000` would poison every later `--no-sync` row.
     unreadable_in_cache: str | None = None
+    #: A SCOPE DIRECTORY, relative to the CACHE root, to `chmod 000` for the measured run —
+    #: restored to 0o755 the moment that run returns, in a `finally`.
+    #:
+    #: 🔴 A SIBLING FIELD AND NOT A WIDENING OF THE ONE ABOVE, FOR THREE MECHANICAL REASONS.
+    #: (1) The existence check differs — `is_file()` above, `is_dir()` here — and a check that
+    #: accepted either would stop being a positive control on which condition the row builds.
+    #: (2) The restore mode differs: 0o644 on a file, 0o755 on a directory, and restoring a
+    #: directory to 0o644 leaves it unlistable for every later row. (3) The FLOOR SENTINELS are
+    #: keyed on these fields, so one field for both families would make a run that only ever
+    #: chmodded a FILE claim it had measured a DIRECTORY too — the sentence both produce is
+    #: identical, so nothing downstream could tell them apart.
+    #:
+    #: 🔴 IT IS A DIFFERENT DEFECT FROM `unreadable_in_cache`, NOT A DEEPER VERSION OF IT. An
+    #: unreadable ENTRY FILE was answered 1-with-a-traceback by the oracle and 3 by the Go
+    #: client. An unreadable SCOPE DIRECTORY was answered **0** by the oracle —
+    #: `status=scope-empty`, *"NOTHING RECORDED YET … Not an error."* — because
+    #: `pathlib.Path.glob` SUPPRESSES the `OSError` its directory scan raises while
+    #: `os.ReadDir` on the Go side does not. A false claim of ABSENCE at exit 0 is the worse
+    #: direction, and no `unreadable_in_cache` row could reach it: chmodding the file leaves
+    #: the directory readable.
+    unreadable_dir_in_cache: str | None = None
 
 
 def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
@@ -497,6 +518,50 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              ["recall", "--scope", "beta-notes", "--no-sync"],
              wipe_cache=True, presync=True,
              unreadable_in_cache="beta-notes/spindle-cfg.md"),
+
+        # --- an UNREADABLE cached scope DIRECTORY (#119) -----------------------
+        #
+        # 🔴 A DIFFERENT DEFECT ONE DIRECTORY LEVEL UP, AND THE ONLY ONE OF THE TWO THAT WAS
+        # SERVED AT EXIT 0 AS AN ABSENCE. The rows above chmod an entry FILE, which leaves the
+        # scope directory readable, so the loader lists it, opens the file and fails — the
+        # condition they measure. A directory at mode 000 never gets as far as a listing:
+        # `pathlib.Path.glob` SUPPRESSES the `OSError` its own scan raises and yields nothing,
+        # `os.ReadDir` propagates it. MEASURED on both clients at `278b8df`, with a readable
+        # control either side:
+        #
+        #     chmod 000 <cache>/beta-notes   oracle                     go
+        #     ----------------------------   -------------------------  ---
+        #     control (readable)             0                          0
+        #     recall                         0  status=scope-empty      3
+        #     validate                       0                          3
+        #
+        # and the oracle's exit-0 stdout carried "NOTHING RECORDED YET — `beta-notes/` exists
+        # but holds no entries. … Not an error." over a directory nothing had read. That is a
+        # false claim of ABSENCE at a SUCCESS code — the same class as `ls-entries` listing
+        # READMEs as entries and `Focus` returning a false "no handoff doc", and strictly worse
+        # than the entry half, where 1-with-a-traceback is at least non-zero.
+        #
+        # 🔴 BOTH VERBS, FOR THE SAME REASON THE ENTRY ROWS NEED BOTH: `recall` reaches the
+        # walk through `load_store`/`LoadStore` and `validate` reaches it a second time through
+        # its own `entry_files_in(cache / scope)` denominator. One row would leave the other
+        # route unmeasured.
+        #
+        # ⚠ `beta-notes` IS A POPULATED SCOPE, AND THAT IS LOAD-BEARING. Over an EMPTY
+        # directory `glob` and `iterdir` agree — both yield nothing — so the mode would not be
+        # the variable and the row would compare two honest empty answers. `once()` asserts the
+        # directory holds at least one entry file before it chmods.
+        Case("validate-unreadable-scope-dir",
+             "a CACHED scope DIRECTORY at mode 000: the named `index entry unreadable` "
+             "sentence naming the DIRECTORY, at exit 3, and NOT `scope-empty` at 0",
+             ["validate", "--scope", "beta-notes", "--no-sync"],
+             wipe_cache=True, presync=True,
+             unreadable_dir_in_cache="beta-notes"),
+        Case("recall-unreadable-scope-dir",
+             "the same directory under `recall`, whose exit-0 answer was the false ABSENCE "
+             "this row exists to refuse",
+             ["recall", "--scope", "beta-notes", "--no-sync"],
+             wipe_cache=True, presync=True,
+             unreadable_dir_in_cache="beta-notes"),
 
         # --- doctor -----------------------------------------------------------
         Case("doctor-live", "seven checks, four states, the count line and the exit legend",
@@ -1241,6 +1306,14 @@ def main(argv: list[str] | None = None) -> int:
             # nothing. The existence check inside `once()` cannot see that: the file is there
             # either way. Only "some row actually produced the sentence" can.
             saw_unreadable_entry = False
+            # 🔴 A FOURTH SENTINEL, AND IT IS NOT REDUNDANT WITH THE THIRD, BECAUSE THE TWO
+            # FAMILIES PRODUCE THE *SAME SENTENCE*. `index entry unreadable` is emitted for a
+            # mode-000 entry FILE and for a mode-000 scope DIRECTORY alike, so a run that had
+            # stopped chmodding directories entirely would still set the sentinel above and
+            # claim a floor it had not measured. These two are therefore keyed on WHICH FIELD
+            # produced them rather than on the sentence alone — the only operand that can tell
+            # the two conditions apart.
+            saw_unreadable_dir = False
             wanted = None if args.only is None else set(args.only.split(","))
             selected = [c for c in cases(closed, hostile_port)
                         if wanted is None or c.id in wanted]
@@ -1317,6 +1390,54 @@ def main(argv: list[str] | None = None) -> int:
                                    [a.replace("<NEWFILE>", str(new_file))
                                      .replace("<PUTFILE>", str(put_file))
                                     for a in case.setup], cwd, env)
+                    if (case.unreadable_dir_in_cache is not None
+                            and case.unreadable_in_cache is not None):
+                        # 🔴 REFUSED RATHER THAN SILENTLY ORDERED. The two blocks below are
+                        # mutually exclusive by construction — the first one that matches
+                        # RETURNS — so a row setting both would have exactly one mode applied
+                        # and would still PASS, having measured half of what its `why` claims.
+                        # That is the "green for the wrong reason" shape, so it is an error
+                        # rather than a precedence rule nobody would read.
+                        raise SystemExit(
+                            f"REFUSING: case {case.id!r} sets BOTH `unreadable_in_cache` and "
+                            f"`unreadable_dir_in_cache`. Only one mode would be applied — the "
+                            f"blocks below return — so the row would measure one condition "
+                            f"while claiming two. Split it into two rows."
+                        )
+                    if case.unreadable_dir_in_cache is not None:
+                        # 🔴 THE DIRECTORY TWIN OF THE BLOCK BELOW, WITH ITS OWN EXISTENCE
+                        # CHECK AND ITS OWN RESTORE MODE. Same ordering argument — after the
+                        # presync, before the measured run, restored in a `finally` because
+                        # `once()` runs per CLIENT and a leaked 000 on a DIRECTORY would make
+                        # every later `--no-sync` row unlistable rather than merely wrong.
+                        #
+                        # 🔴 THE POSITIVE CONTROL IS TWO CLAIMS, NOT ONE, AND THE SECOND IS
+                        # WHAT MAKES THE ROW MEAN ANYTHING. The directory must EXIST (a chmod
+                        # of an absent path would measure a FileNotFoundError downstream) AND
+                        # it must HOLD at least one entry file — over an EMPTY directory a
+                        # suppressing walk and a raising one agree, so the mode would not be
+                        # the variable and both clients would compare two honest empty answers
+                        # at exit 0.
+                        target_dir = cache / case.unreadable_dir_in_cache
+                        if not target_dir.is_dir():
+                            raise SystemExit(
+                                f"REFUSING: case {case.id!r} names "
+                                f"{case.unreadable_dir_in_cache!r} under the cache and the "
+                                f"presync did not put a directory there. Held: "
+                                f"{sorted(p.name for p in cache.iterdir())}"
+                            )
+                        if not any(target_dir.glob("*.md")):
+                            raise SystemExit(
+                                f"REFUSING: case {case.id!r} names scope directory "
+                                f"{case.unreadable_dir_in_cache!r}, which holds NO `*.md` "
+                                f"file — over an empty directory a suppressing walk and a "
+                                f"raising one agree, so this row would measure nothing."
+                            )
+                        target_dir.chmod(0o000)
+                        try:
+                            return run_client(cmd, cwd, env)
+                        finally:
+                            target_dir.chmod(0o755)
                     if case.unreadable_in_cache is None:
                         return run_client(cmd, cwd, env)
                     # 🔴 AFTER THE PRESYNC AND BEFORE THE MEASURED RUN, AND RESTORED WHATEVER
@@ -1390,8 +1511,19 @@ def main(argv: list[str] | None = None) -> int:
                     saw_live_banner = True
                 if "FEATURED IN FULL" in py.stdout:
                     saw_rendered_digest = True
-                if "index entry unreadable" in py.stderr:
+                # 🔴 KEYED ON THE ROW'S OWN FIELD, NOT ON THE SENTENCE ALONE. Both mode-000
+                # families print the identical sentence, so `"index entry unreadable" in
+                # py.stderr` cannot say WHICH condition produced it: a run that had lost the
+                # directory chmod would set the entry sentinel and vouch for a floor it never
+                # reached. Pairing the field with the sentence makes each sentinel a claim
+                # about one condition, and still goes False the moment either half stops
+                # happening — a renamed field, a hook moved above the presync, a
+                # `restore_store` that rebuilt the cache.
+                if case.unreadable_in_cache is not None and "index entry unreadable" in py.stderr:
                     saw_unreadable_entry = True
+                if (case.unreadable_dir_in_cache is not None
+                        and "index entry unreadable" in py.stderr):
+                    saw_unreadable_dir = True
 
                 py_out, go_out = norm(py.stdout), norm(go.stdout)
                 py_err, go_err = norm(py.stderr), norm(go.stderr)
@@ -1658,13 +1790,16 @@ def main(argv: list[str] | None = None) -> int:
 
             print(f"CONTENT-FLOOR live-banner={saw_live_banner} "
                   f"rendered-digest={saw_rendered_digest} "
-                  f"unreadable-entry={saw_unreadable_entry}{mtime_note}")
+                  f"unreadable-entry={saw_unreadable_entry} "
+                  f"unreadable-scope-dir={saw_unreadable_dir}{mtime_note}")
             floor_broken = wanted is None and not (
                 saw_live_banner and saw_rendered_digest and saw_unreadable_entry
+                and saw_unreadable_dir
             )
             if floor_broken:
-                print("REFUSING TO VOUCH: this run did not produce ALL THREE of a LIVE banner, a "
-                      "rendered digest and an `index entry unreadable` sentence — so it measured "
+                print("REFUSING TO VOUCH: this run did not produce ALL FOUR of a LIVE banner, a "
+                      "rendered digest, an `index entry unreadable` sentence from a mode-000 "
+                      "ENTRY FILE and one from a mode-000 SCOPE DIRECTORY — so it measured "
                       "refusals rather than reports, or the mode-000 rows compared two clients "
                       "reading a store with nothing wrong.", file=sys.stderr)
 
