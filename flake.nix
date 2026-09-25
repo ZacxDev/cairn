@@ -357,6 +357,13 @@
           (type == "directory" && (
             rel == "cmd" || rel == "internal"
             || rel == "tests" || rel == "tests/conformance"
+            # 🔴 THE DIRECTORY ROW IS REQUIRED FOR THE TWO FILE ROWS BELOW TO MEAN
+            # ANYTHING, AND THAT IS MEASURED RATHER THAN REASONED. `cleanSourceWith`
+            # never visits a path whose PARENT the filter rejected, so naming
+            # `uiaudit/go.mod` while `uiaudit` itself was excluded allowed exactly
+            # nothing — the filtered tree still held no such file. Verified by
+            # materialising the filtered source and listing it.
+            || rel == "uiaudit"
             || pkgs.lib.hasPrefix "cmd/" rel || pkgs.lib.hasPrefix "internal/" rel
           ))
           || (rel == "go.mod")
@@ -402,6 +409,28 @@
           # file reaches the derivation as its own path literal. Adding it back here would
           # be a row nothing reads.
           || (rel == "internal/ui/app.css")
+          # 🔴 THE NESTED MODULE'S TWO LOCK FILES, AND NOTHING ELSE FROM THAT
+          # DIRECTORY. `internal/depspolicy`'s
+          # `TestTheNestedModuleSetIsExactlyTheAllowlist` walks the tree for
+          # `go.mod` files and compares BOTH lock files against a declared
+          # allowlist, failing on grow or shrink — which is what closes the
+          # nested-module escape its package doc describes. That test runs inside
+          # these derivations, so without these two rows it would read a tree with
+          # zero nested modules and report "the set SHRANK": red for a reason that
+          # has nothing to do with the code. The test REFUSES rather than skipping
+          # in that case and names this filter, because a comparison against an
+          # absent operand reports SAME rather than MISSING.
+          #
+          # ⚠ THE `.go` FILES UNDER `uiaudit/` ARE DELIBERATELY STILL EXCLUDED, and
+          # the asymmetry is the whole point of the arrangement. Nothing in any nix
+          # derivation builds that module — it is not a package, not an output and
+          # not on a deploy path — so shipping its sources into a sandbox that
+          # cannot build them would add `chromedp` to every derivation's source
+          # closure for no gain. What these rows buy is that the LEDGER over that
+          # module is checkable here, which makes it a build failure rather than an
+          # advisory tick.
+          || (rel == "uiaudit/go.mod")
+          || (rel == "uiaudit/go.sum")
           # A `.go` file only under the two directories this module is made of. A
           # bare suffix test would also carry a stray `.go` anywhere in the tree,
           # which is an allowlist that says something wider than it means.

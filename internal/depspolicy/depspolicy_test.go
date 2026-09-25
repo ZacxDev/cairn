@@ -1,6 +1,9 @@
 package depspolicy
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -231,4 +234,278 @@ func TestTheImportGraphDoesNotDependOnTheBuILDPLATFORM(t *testing.T) {
 			len(differing), strings.Join(differing, "\n  "))
 	}
 	t.Logf("%d package(s) walked; import sets identical with and without build-constraint evaluation", len(all))
+}
+
+// TestTheNestedModuleSetIsExactlyTheAllowlist closes the deferral the package doc retracts.
+//
+// 🔴 IT FAILS ON GROW *OR* SHRINK, IN BOTH DIMENSIONS — the set of nested module DIRECTORIES, and
+// each one's third-party module set. Grow is the obvious direction; shrink matters because an
+// allowlist that quietly becomes a list of things that are no longer there reads as coverage while
+// governing nothing, which is the failure `TestTheModuleSetIsExactlyTheAllowlist` exists for one
+// level up.
+//
+// 🔴 AND IT REFUSES WHEN THE FILES ARE ABSENT RATHER THAN TOLERATING IT. These tests run inside the
+// nix derivations, whose `src` is `onlyGo` — an ALLOWLIST that excluded `uiaudit/` entirely until
+// `uiaudit/go.mod` and `uiaudit/go.sum` were added as named rows. Without those rows the walk finds
+// zero nested modules and the natural failure message is "the set SHRANK", which is red for a
+// reason that has nothing to do with the tree. A `t.Skip` would be worse: a skip nobody counts is a
+// pass, and this is the only thing that observes the escape's boundary. So the refusal names the
+// filter, which is where the fix is.
+func TestTheNestedModuleSetIsExactlyTheAllowlist(t *testing.T) {
+	root, err := RepoRoot()
+	if err != nil {
+		t.Fatalf("the repository root could not be derived: %v", err)
+	}
+
+	found, err := NestedModuleDirs(root)
+	if err != nil {
+		t.Fatalf("walking for nested go.mod files: %v", err)
+	}
+
+	want := append([]string(nil), DeclaredNestedModules...)
+	slices.Sort(want)
+	if !slices.Equal(found, want) {
+		// The absent-file case gets its own sentence, because its remedy is in `flake.nix` and
+		// not in this file — and because "the set shrank" is a true but useless thing to be told
+		// when the reason is that the source filter never shipped the file.
+		for _, dir := range want {
+			if _, statErr := os.Stat(filepath.Join(root, dir, "go.mod")); statErr != nil {
+				t.Fatalf("%s/go.mod is not present in this tree (%v).\n"+
+					"If this is a nix build, `flake.nix`'s `onlyGo` filter is an ALLOWLIST and must carry "+
+					"`%s/go.mod` and `%s/go.sum` as named rows. This test REFUSES rather than skipping, "+
+					"because a comparison against an absent operand reports SAME rather than MISSING.",
+					dir, statErr, dir, dir)
+			}
+		}
+		t.Fatalf("the nested-module DIRECTORY set does not match the allowlist.\n  walked:   %v\n  declared: %v\n"+
+			"A directory appearing is a decision — a second nested module escapes the allowlist, the import "+
+			"ban, the `ok` floor and every nix derivation, all of which the package doc spells out. A "+
+			"directory DISAPPEARING is also a refusal, so this cannot become a list of things that are "+
+			"no longer there.", found, want)
+	}
+
+	for _, dir := range want {
+		t.Run(dir, func(t *testing.T) {
+			modPath := filepath.Join(root, dir)
+			fromMod, err := ModulesInGoMod(modPath)
+			if err != nil {
+				t.Fatalf("%s/go.mod could not be read: %v", dir, err)
+			}
+			fromSum, err := ModulesInGoSum(modPath)
+			if err != nil {
+				t.Fatalf("%s/go.sum could not be read: %v — `onlyGo` must carry it as a named row too", dir, err)
+			}
+
+			deps, ok := NestedModuleAllowlist[dir]
+			if !ok || len(deps.GoMod) == 0 || len(deps.GoSum) == 0 {
+				t.Fatalf("%s is in DeclaredNestedModules with no complete entry in NestedModuleAllowlist; "+
+					"an empty allowlist is satisfied by any dependency set, which is coverage that governs nothing", dir)
+			}
+
+			// 🔴 BOTH LOCK FILES, AGAINST THEIR OWN DECLARED SETS, BECAUSE THEY DIFFER FOR A
+			// STRUCTURAL REASON. `go.mod` is what the author required; `go.sum` records every
+			// module in the GRAPH, including optional dependencies of a dependency. Comparing
+			// both against one list is a gate that cannot be satisfied — see [NestedModuleDeps].
+			// Reading only `go.mod` would miss a TRANSITIVE addition, which is the shape a
+			// routine `go get -u` produces and what the CI toolchain assertion cannot see.
+			for _, c := range []struct {
+				file     string
+				got      []string
+				declared []string
+			}{
+				{"go.mod", thirdPartyOnly(fromMod), deps.GoMod},
+				{"go.sum", thirdPartyOnly(fromSum), deps.GoSum},
+			} {
+				want := append([]string(nil), c.declared...)
+				slices.Sort(want)
+				if !slices.Equal(c.got, want) {
+					t.Errorf("%s/%s's third-party module set does not match its declared list.\n"+
+						"  in the file: %v\n  declared:    %v\n"+
+						"  only in the file: %v\n  only declared:    %v\n"+
+						"A module APPEARING is a decision nobody reviewed; a module DISAPPEARING means the "+
+						"list has become a record of things that are no longer there.",
+						dir, c.file, c.got, want, setDiff(c.got, want), setDiff(want, c.got))
+				}
+			}
+		})
+	}
+}
+
+// thirdPartyOnly is the comparison form: third-party modules only, sorted, duplicates collapsed.
+//
+// 🔴 [IsThirdParty] IS APPLIED, WHICH IS WHAT DROPS THE PARENT MODULE. `uiaudit/go.mod` requires
+// `github.com/ZacxDev/cairn` through a `replace` onto this repository — that is not a third party,
+// and listing it in an allowlist of third-party dependencies would make the ledger say something it
+// does not mean. `go.sum` also carries two lines per module (the zip and the `/go.mod`), so a raw
+// list from it double-counts.
+func thirdPartyOnly(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, m := range in {
+		if IsThirdParty(m) {
+			out = append(out, m)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// TestNestedModuleDirsActuallyWALKS is the positive control on the walk, and it closes a mutant
+// that SURVIVED the first battery.
+//
+// 🔴 THE DIRECTORY COMPARISON IN THE TEST ABOVE IS SELF-REFERENTIAL UNLESS SOMETHING PROVES THE
+// WALK READS THE DISK. Measured: replacing [NestedModuleDirs]' body with `return
+// DeclaredNestedModules, nil` left that test GREEN — the ledger was compared against itself, the
+// absent-file branch became unreachable, and a second nested module would have been invisible. That
+// is the "reads as coverage while providing none" shape this package exists to refuse, reached
+// inside the package itself.
+//
+// So this drives the walk over a SYNTHETIC tree whose answer cannot come from the ledger: two
+// nested modules with names nothing in this repository uses, a root `go.mod` that must be excluded,
+// a `testdata` module that must be skipped, and a `go.mod`-less directory that must not appear.
+func TestNestedModuleDirsActuallyWALKS(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{
+		"go.mod",                  // the verified root — excluded, `DeclaredModules` governs it
+		"alpha/go.mod",            // a nested module
+		"beta/gamma/go.mod",       // a nested module two levels down
+		"testdata/fixture/go.mod", // inside testdata — skipped, a fixture module may live there
+		"delta/not-a-module.txt",  // no go.mod — must not appear
+	} {
+		p := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("module example.invalid/x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := NestedModuleDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"alpha", "beta/gamma"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("the walk returned %v, want %v.\n"+
+			"If this returned %v it is not reading the disk at all — it is echoing the ledger, which makes "+
+			"TestTheNestedModuleSetIsExactlyTheAllowlist a tautology and a second nested module invisible.",
+			got, want, DeclaredNestedModules)
+	}
+
+	// 🔴 AND THE ANSWER MUST NOT BE THE LEDGER'S. If the two ever coincide this control stops
+	// discriminating, so it is asserted rather than assumed — the synthetic names are chosen so
+	// that they cannot.
+	if slices.Equal(got, DeclaredNestedModules) {
+		t.Fatal("the synthetic tree's answer equals DeclaredNestedModules, so this control cannot tell a " +
+			"real walk from a stub; pick directory names this repository does not use")
+	}
+}
+
+// TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT is the regression guard for a
+// dev-host-only permanently-red gate.
+//
+// 🔴 RED AT BASE, AND ONLY WHERE A HUMAN RUNS IT. The first [NestedModuleDirs] walked the disk
+// behind a three-name denylist, honouring neither `.gitignore` nor untracked-ness. Agent worktrees
+// live under `.claude/worktrees/<name>/`, each carrying `uiaudit/go.mod`, so in the base clone
+// `go test ./...` — the command `AGENTS.md` documents — failed for any session with a live worktree,
+// saying "a directory appearing is a decision" when nothing had been decided. CI and all three nix
+// tiers were unaffected because `onlyGo` excludes `.claude/`, which is what made it the worst
+// category: invisible to every gate, red in front of every developer.
+//
+// 🔴 AND THE HALF THAT MATTERS MOST IS THE SECOND SUBTEST. A fix that ignored untracked files could
+// trivially go blind to the thing the ledger exists for. `TestNestedModuleDirsActuallyWALKS` cannot
+// catch that — its synthetic tree is not a git repository at all, so it exercises the fallback and
+// never the git path. This drives a real `git init`, so both answers come from git.
+func TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT(t *testing.T) {
+	// 🔴 TWO TIERS, AND THE FIRST DRAFT OF THIS GUARD BROKE THE NIX BUILD. It refused outright when
+	// git was absent, on the correct principle that a skip nobody counts is a pass. But the nix
+	// derivations' check phase has NO git and cannot have one without adding a build input for a
+	// single test — and in that environment git is not the authority anyway: the source is the
+	// `onlyGo`-filtered tree, so `NestedModuleDirs`' fallback is the right code path there and
+	// `TestNestedModuleDirsActuallyWALKS` is what exercises it. Refusing there made three derivations
+	// red for a reason with nothing to do with the tree.
+	//
+	// So the tier that CAN run this must not skip it, and the tier that cannot must. That is the same
+	// shape `tests/test_go_client_ledgers.py` already uses: it refuses on a skip in the `go` job
+	// because the `tests` job has no Go toolchain. `CAIRN_GIT_TESTS_REQUIRED` is the explicit
+	// statement of which tier is which, set in the `go` CI job — so a skip in the environment that
+	// was supposed to measure this is a FAILURE, and a skip in the sandbox is a fact about the
+	// sandbox.
+	if _, err := exec.LookPath("git"); err != nil {
+		if os.Getenv("CAIRN_GIT_TESTS_REQUIRED") != "" {
+			t.Fatalf("CAIRN_GIT_TESTS_REQUIRED is set but git is absent: this is the only test of the "+
+				"tracked-file path, and this tier is the one that is supposed to measure it (%v)", err)
+		}
+		t.Skipf("no git, so the tracked-file path cannot be measured here — expected inside a nix "+
+			"derivation, where the `onlyGo`-filtered source makes the fallback path correct and "+
+			"`TestNestedModuleDirsActuallyWALKS` covers it. 🔴 A skip here is only acceptable because "+
+			"the `go` CI job sets CAIRN_GIT_TESTS_REQUIRED and therefore CANNOT skip it (%v)", err)
+	}
+
+	root := t.TempDir()
+	gitRun := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	gitRun("init", "-q")
+	write("go.mod", "module example.invalid/root\n")
+	write("tracked/go.mod", "module example.invalid/root/tracked\n")
+	gitRun("add", "go.mod", "tracked/go.mod")
+	gitRun("commit", "-q", "-m", "root and one tracked nested module")
+
+	// The shape that broke the dev host: an untracked nested module, in a directory whose name this
+	// function must NOT need to know.
+	write(".claude/worktrees/some-agent/uiaudit/go.mod", "module example.invalid/agent\n")
+	// And one that is also a git root, which is what a real worktree looks like.
+	write("vendored/checkout/.git", "gitdir: /nowhere\n")
+	write("vendored/checkout/go.mod", "module example.invalid/vendored\n")
+
+	got, err := NestedModuleDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"tracked"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("NestedModuleDirs returned %v, want %v.\n"+
+			"  If %q is in there, an UNTRACKED module is being counted — that is the dev-host failure: a "+
+			"stray checkout under a directory this function cannot be expected to name turns `go test "+
+			"./...` red for every developer while every CI tier stays green.\n"+
+			"  If %q is MISSING, the fix has gone blind to a TRACKED module, which is the thing the "+
+			"whole ledger exists to notice.",
+			got, want, ".claude/worktrees/some-agent/uiaudit", "tracked")
+	}
+
+	// 🔴 THE POSITIVE CONTROL ON THE CONTROL: track the previously-untracked module and it must
+	// appear. Otherwise this test would pass against an implementation that simply ignored
+	// everything outside a hardcoded set.
+	gitRun("add", "-f", ".claude/worktrees/some-agent/uiaudit/go.mod")
+	gitRun("commit", "-q", "-m", "track it deliberately")
+	got, err = NestedModuleDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []string{".claude/worktrees/some-agent/uiaudit", "tracked"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("after tracking it deliberately, NestedModuleDirs returned %v, want %v — the "+
+			"distinction being drawn is not tracked-vs-untracked but something else", got, want)
+	}
+	t.Logf("untracked ignored, tracked counted, and a nested git root skipped: %v", got)
 }

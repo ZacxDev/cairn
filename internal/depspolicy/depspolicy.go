@@ -83,6 +83,67 @@
 // third-party module is ever dropped, the right move is to restore `vendorHash = null`
 // and delete this package, not to keep a weaker gate for its own sake.
 //
+// # 🔴 WHAT A NESTED MODULE ESCAPES, AND THE ONE THAT EXISTS
+//
+// 🔴 A SECOND `go.mod` ANYWHERE IN THIS TREE IS INVISIBLE TO EVERY GUARD DESCRIBED ABOVE,
+// AND NO TEST IN THIS REPOSITORY COUNTS `go.mod` FILES. The escape is total, it is
+// mechanical, and it is declared here because an escape nobody wrote down reads as coverage
+// while providing none — which is the one thing this package exists to refuse. Each surface
+// fails for its own reason:
+//
+//   - [DeclaredModules] versus the module set. [ModulesInGoMod] and [ModulesInGoSum] read the
+//     VERIFIED-ROOT pair ([RepoRoot]) and nothing else, so a nested module's `require` block is not
+//     in the set it compares. `TestTheModuleSetIsExactlyTheAllowlist` fails on GROW or
+//     SHRINK of a list the nested module never appears in.
+//   - The import ban. [ImportGraph] walks `cmd/` and `internal/`. A top-level directory is
+//     outside both, so nothing in it is a node in the graph and no edge out of it is
+//     checked. (It would be unreachable ANYWAY — a package in another module cannot be
+//     imported by `cmd/cairn` without a `require` in the root `go.mod`, which the allowlist
+//     WOULD see. So this surface is belt-and-braces; the two above are the real holes.)
+//   - The `ok` floor. `go build ./...` and `go test ./...` do not descend into a nested
+//     module, so its packages never report `ok`, the count does not move, and the floor in
+//     `.github/workflows/ci.yml`'s `go` job is blind to the module existing, to its tests
+//     being deleted, and to its dependencies.
+//   - `flake.nix`'s `onlyGo` filter. That filter is an ALLOWLIST — `cmd`, `internal`,
+//     `tests`, `tests/conformance` and four named files — so a new top-level directory
+//     reaches no Go derivation at all. Nothing in it is built or tested by any `nix build`.
+//
+// ONE nested module exists today: `uiaudit/`, the browser-surface audit harness, which
+// requires `github.com/chromedp/chromedp` and a small graph under it. It was taken
+// DELIBERATELY and for a reason this package's own trade makes clear: chromedp is a large
+// dependency whose only consumer is a CI harness, and the alternative — a `require` in the
+// root `go.mod` — would put it in the module graph every one of the three Go derivations
+// resolves, force an allowlist entry, and make the import ban the only thing standing
+// between a browser automation library and the pod. A dependency that cannot reach the pod
+// because it is in a DIFFERENT MODULE is a stronger claim than one that cannot reach it
+// because a test says so.
+//
+// ⚠ WHAT THAT COSTS, STATED RATHER THAN TRADED AWAY SILENTLY: `uiaudit/` builds nothing that
+// ships — not packaged, not a flake output, not on any deploy path — so the blast radius of a
+// dependency added there is a CI job rather than a binary. That is the mitigation, and it is the
+// only one.
+//
+// 🔴 WHAT IS NO LONGER TRUE: THAT ITS DEPENDENCIES ARE GOVERNED BY NOTHING. This paragraph used to
+// end by DEFERRING that — "if a second nested module is ever added, the right response is to make
+// `go.mod` files COUNTED here". That deferral was unsound twice over and it is retracted rather
+// than quietly dropped:
+//
+//   - ITS TRIGGER HAD NO POSSIBLE CHECKER. Nothing counted `go.mod` files, as this very doc
+//     established two paragraphs earlier — so "if a second module is added" was a condition
+//     nothing could observe. By this repository's own rules that is not a work item.
+//   - AND IT WAS THE WRONG TRIGGER. The likely event is not a second module appearing; it is
+//     THIS module's dependency set changing. `uiaudit/README.md` says a routine `go get -u`
+//     re-breaks its toolchain pin, and the CI step guarding that pin reads the `go` directive
+//     only, never the module set.
+//
+// [DeclaredNestedModules] and [NestedModuleAllowlist] close it now, in the shape every comparable
+// blind spot here is closed: a declared ledger failing on GROW *or* SHRINK, checked against a tree
+// walk that counts the files rather than trusting the list. `flake.nix`'s `onlyGo` filter carries
+// `uiaudit/go.mod` and `uiaudit/go.sum` as named rows so the test can read them inside the
+// derivations — which makes it a BUILD FAILURE through nix, the same strength this doc claims for
+// the import ban. It REFUSES when those files are absent rather than tolerating it, because a
+// comparison against an absent operand reports SAME rather than MISSING.
+//
 // # HOW THE GRAPH IS BUILT, AND WHAT IT DELIBERATELY EXCLUDES
 //
 // [ImportGraph] walks every directory under `cmd/` and `internal/` with
@@ -107,6 +168,8 @@ import (
 	"go/build"
 	"io/fs"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -143,6 +206,207 @@ var DeclaredModules = []string{
 	// its own — measured from its published `go.mod`, which carries no `require`
 	// block at v1.3.0 — which is why this list has one entry rather than a tree.
 	"maragu.dev/gomponents",
+}
+
+// DeclaredNestedModules is every directory in this repository holding a `go.mod` OTHER than the
+// verified root, relative to that root.
+//
+// 🔴 THIS EXISTS BECAUSE THE DEFERRAL IT REPLACED HAD NO POSSIBLE CHECKER. The section above used
+// to close with "if a second nested module is ever added, the right response is to make `go.mod`
+// files COUNTED here" — a closing condition whose trigger nothing could observe, since the same
+// doc establishes that nothing counted `go.mod` files. A condition with no checker is not a work
+// item; it is a note that reads like one.
+//
+// 🔴 AND THE TRIGGER WAS MIS-SPECIFIED, WHICH IS THE WORSE HALF. The likely event is not "a second
+// module appears" — it is THIS module's dependency set changing. `uiaudit/`'s own README says a
+// routine `go get -u` re-breaks its toolchain pin, and the CI step that reads the pin reads the
+// `go` DIRECTIVE only, never the module set. So the ledger below is checked against the nested
+// module's `go.mod` AND `go.sum` by `TestTheNestedModuleSetIsExactlyTheAllowlist`, failing on GROW
+// *or* SHRINK, in the same shape as [DeclaredModules] — which is how every comparable blind spot in
+// this repository is closed.
+//
+// ⚠ WHAT IT DOES NOT DO, SO NOBODY READS IT AS WIDER THAN IT IS. It counts modules and directories.
+// It does NOT put `uiaudit/`'s dependencies under the import ban (they cannot reach `cmd/` or
+// `internal/` — a different module's packages are unreachable without a `require` in the root
+// `go.mod`, which [DeclaredModules] would see), and it does not move the `ok` floor, because
+// `go test ./...` still does not descend. The escape described above is still an escape; this makes
+// its BOUNDARY observable rather than the escape smaller.
+var DeclaredNestedModules = []string{
+	// The browser-surface audit harness. It requires `github.com/chromedp/chromedp` and its
+	// graph — a browser automation library whose only consumer is a CI job. Keeping it in a
+	// separate module is what makes "it cannot reach the pod" a property of the module boundary
+	// rather than of a test somebody can delete.
+	"uiaudit",
+}
+
+// NestedModuleDeps is one nested module's declared third-party module sets.
+//
+// 🔴 TWO LISTS, BECAUSE THE TWO LOCK FILES LEGITIMATELY DIFFER AND ONE LIST WOULD BE PERMANENTLY
+// RED. Measured on `uiaudit/`: `go.sum` carries `github.com/ledongthuc/pdf` and
+// `github.com/orisano/pixelmatch` — optional dependencies of `chromedp` that are in the module
+// GRAPH and therefore need recorded hashes, while `go.mod` does not require them because nothing
+// imported builds against them. A single allowlist compared against both files can only be
+// satisfied by whichever file it was written from, and a gate that cannot be satisfied is the
+// permanently-red gate this repository refuses. So the difference is DECLARED instead, which also
+// makes it reviewable: a module moving from `GoSum` to `GoMod` means something started importing it.
+type NestedModuleDeps struct {
+	// GoMod is the set `go.mod` requires — what the author asked for.
+	GoMod []string
+	// GoSum is the set `go.sum` records — what the graph actually resolved. It is a SUPERSET of
+	// `GoMod` and the extras are the interesting ones: a transitive addition is exactly the
+	// shape a routine `go get -u` produces, and it is invisible to `go.mod` alone.
+	GoSum []string
+}
+
+// NestedModuleAllowlist is every nested module's declared dependency set, keyed by the same
+// relative directory as [DeclaredNestedModules].
+//
+// 🔴 A SEPARATE LIST RATHER THAN A UNION WITH [DeclaredModules], BECAUSE THE TWO ARE DIFFERENT
+// CLAIMS WITH DIFFERENT CONSEQUENCES. A module added to the ROOT list is a module every Go
+// derivation resolves and that the import ban then has to keep out of the pod. A module added
+// here reaches a CI harness and nothing that ships. Merging them would make the cheaper decision
+// look like the expensive one, and the expensive one look routine.
+//
+// 🔴 NO VERSIONS, DELIBERATELY. A list of versions would go red on every legitimate patch bump and
+// would be deleted for being noise. What is pinned here is WHICH modules exist; `uiaudit/go.sum`
+// pins the versions, and the `uiaudit` job's toolchain assertion is what notices a bump that moves
+// the `go` directive. ⚠ The parent module is NOT listed: it is reached through a `replace` onto this
+// repository and [IsThirdParty] excludes it, which is correct — it is not a third party.
+var NestedModuleAllowlist = map[string]NestedModuleDeps{
+	"uiaudit": {
+		GoMod: []string{
+			"github.com/chromedp/cdproto",
+			"github.com/chromedp/chromedp",
+			"github.com/chromedp/sysutil",
+			"github.com/go-json-experiment/json",
+			"github.com/gobwas/httphead",
+			"github.com/gobwas/pool",
+			"github.com/gobwas/ws",
+			"golang.org/x/sys",
+			// In the graph because `uiaudit` imports `internal/ui`, which renders HTML.
+			"maragu.dev/gomponents",
+		},
+		GoSum: []string{
+			"github.com/chromedp/cdproto",
+			"github.com/chromedp/chromedp",
+			"github.com/chromedp/sysutil",
+			"github.com/go-json-experiment/json",
+			"github.com/gobwas/httphead",
+			"github.com/gobwas/pool",
+			"github.com/gobwas/ws",
+			// 🔴 THE TWO `go.sum`-ONLY ENTRIES, AND WHY THEY ARE NOT A DEFECT: optional
+			// dependencies of `chromedp` (PDF reading and pixel matching). They are in the
+			// module graph, so `go.sum` records hashes for them; nothing imported builds
+			// against them, so `go.mod` does not require them. Neither reaches any binary in
+			// this repository — `uiaudit` is a nested module and nothing here builds it.
+			"github.com/ledongthuc/pdf",
+			"github.com/orisano/pixelmatch",
+			"golang.org/x/sys",
+			"maragu.dev/gomponents",
+		},
+	},
+}
+
+// NestedModuleDirs returns every directory holding a `go.mod` other than the root, relative to it
+// and sorted.
+//
+// 🔴 IT ASKS GIT WHICH FILES ARE TRACKED, AND A PLAIN DISK WALK WAS A DEV-HOST-ONLY PERMANENTLY-RED
+// GATE. The first version walked the filesystem behind a three-name denylist (`.git`, `testdata`,
+// `node_modules`), which honours neither `.gitignore` nor untracked-ness. Agent worktrees live under
+// `.claude/worktrees/<name>/`, each a full checkout containing `uiaudit/go.mod` — so in the base
+// clone, `go test ./...` (the command `AGENTS.md` documents) FAILED for any session with a live
+// worktree, reporting "a directory appearing is a decision" when nothing had been decided.
+// Reproduced by planting one untracked nested module; CI and all three nix tiers were unaffected,
+// because `onlyGo` excludes `.claude/` — which is exactly what makes it the category this repository
+// refuses: red only where a human runs it, so the fix is to stop gating or to gate correctly.
+//
+// Widening the denylist would have been the spelled fix, and wrong: the next tool puts its scratch
+// checkout somewhere else. The question "is this path part of THIS repository" belongs to git, not
+// to a list of directory names.
+//
+// 🔴 AND THE FALLBACK IS NOT A CONVENIENCE — IT IS THE ONLY CORRECT ANSWER IN A NIX SANDBOX. There
+// is no `.git` there and no `git` binary, so `git ls-files` cannot answer; but the sandbox's source
+// IS the `onlyGo`-filtered tree, which by construction contains only files somebody named. A disk
+// walk is therefore exactly right there and exactly wrong in a working tree. Both paths are
+// exercised: [TestNestedModuleDirsActuallyWALKS] drives the fallback over a synthetic tree, and
+// [TestTheNestedModuleSetIsExactlyTheAllowlist] runs in both environments.
+func NestedModuleDirs(root string) ([]string, error) {
+	if tracked, ok := trackedNestedModuleDirs(root); ok {
+		return tracked, nil
+	}
+	return walkNestedModuleDirs(root)
+}
+
+// trackedNestedModuleDirs asks git. The second return is false when git cannot answer at all — no
+// binary, or not a work tree — which is the nix-sandbox case and NOT an error.
+//
+// ⚠ IT DISTINGUISHES "GIT SAID NO FILES" FROM "GIT COULD NOT ANSWER", because those license opposite
+// conclusions: the first is a real empty set, the second must fall through. A single `err != nil`
+// check would collapse them and silently turn a broken git into "this repository has no nested
+// modules", which passes the allowlist comparison only by luck.
+func trackedNestedModuleDirs(root string) ([]string, bool) {
+	// `--full-name` so paths are repository-relative whatever the cwd; `-z` so a path containing a
+	// newline cannot split one entry into two.
+	cmd := exec.Command("git", "-C", root, "ls-files", "-z", "--full-name", "--", "*go.mod", "go.mod")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	var dirs []string
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel == "" || path.Base(rel) != "go.mod" {
+			continue
+		}
+		dir := path.Dir(rel)
+		if dir == "." {
+			continue // the verified root, which `DeclaredModules` governs
+		}
+		dirs = append(dirs, dir)
+	}
+	slices.Sort(dirs)
+	return slices.Compact(dirs), true
+}
+
+// walkNestedModuleDirs is the no-git path. It also skips any directory that is itself a git root,
+// which is defence in depth rather than the primary mechanism: a nested checkout or worktree carries
+// a `.git` entry, and whatever it contains belongs to that repository rather than this one.
+func walkNestedModuleDirs(root string) ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "testdata", "node_modules":
+				return fs.SkipDir
+			}
+			// A nested git root — a clone or a worktree — is a different repository.
+			if p != root {
+				if _, statErr := os.Lstat(filepath.Join(p, ".git")); statErr == nil {
+					return fs.SkipDir
+				}
+			}
+			return nil
+		}
+		if d.Name() != "go.mod" {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, filepath.Dir(p))
+		if relErr != nil {
+			return relErr
+		}
+		if rel == "." {
+			return nil
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // LinkedBinaryRoots are the packages whose import closure must stay free of every

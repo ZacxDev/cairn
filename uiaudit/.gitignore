@@ -1,0 +1,18 @@
+# 🔴 THE BUILD OUTPUTS, AND THIS FILE EXISTS BECAUSE A 13 MB ELF BINARY WAS ONE `git add` FROM
+# BEING COMMITTED TO A PUBLIC REPOSITORY.
+#
+# `go build ./...` and `go vet ./...` in this directory drop a binary named after the package —
+# `uiaudit` — beside the sources. It got staged once by a `git add uiaudit`, which is the natural
+# way to stage this directory, and nothing would have refused it:
+#
+#   - `tests/leakscan.py` classifies a file with a NUL byte in its first 8000 as BINARY and SKIPS
+#     IT BY NAME, so its clean exit 0 is not evidence about this file. That is the same blind spot
+#     the "never commit a screenshot" rule exists for, reached from a different direction.
+#   - `gofmt -l` and `go vet` say nothing about untracked artefacts.
+#   - and a Go binary is `not stripped` with `debug_info`, so it embeds absolute build paths from
+#     whatever machine produced it — which on a workstation means a home directory, and is exactly
+#     the class of particular this repository was extracted to remove.
+#
+# Ignoring them is the structural fix. Do not replace this with "remember to check `git status`".
+/uiaudit
+/cairn-ui

@@ -425,6 +425,19 @@ jobs:
       # question: vet reads the code, the unit tests exercise the guards, and the
       # conformance corpus measures the SERVED behaviour against the oracle's
       # recorded contract. A green on any one of them is not the others.
+      # 🔴 THIS JOB IS THE TIER THAT MUST NOT SKIP A GIT-DEPENDENT TEST.
+      # `internal/depspolicy`'s `TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT` is the only
+      # thing that exercises the tracked-file path behind `NestedModuleDirs` — the path that stops a
+      # stray checkout under `.claude/worktrees/` from turning `go test ./...` red on every
+      # developer's machine. The nix derivations' check phase has no git and legitimately skips it
+      # (there, the `onlyGo`-filtered source makes the fallback path the correct one). This variable
+      # is what makes the skip a FAILURE here, where git exists and the path is real.
+      #
+      # ⚠ SAME SHAPE AS `tests/test_go_client_ledgers.py` REFUSING ON A SKIP IN THIS JOB, and for the
+      # same reason: a skip nobody counts is a pass.
+      - name: the tier that must not skip a git-dependent test
+        run: echo "CAIRN_GIT_TESTS_REQUIRED=1" >> "$GITHUB_ENV"
+
       - name: go vet
         run: go vet ./...
 
@@ -1041,3 +1054,338 @@ jobs:
       # comes back with it.
       - name: the browser surface builds, and its unit tests pass under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-ui --no-link --print-build-logs
+
+  # 🔴 THE ONE JOB THAT RENDERS A PAGE IN A BROWSER, AND THE ONLY ONE THAT CAN SEE THE
+  # FOUR THINGS `uiaudit/README.md` ENUMERATES. Every other job in this file reads bytes:
+  # the conformance corpus reads a served HTTP contract, the parity harness reads two
+  # CLIs' stdout, `internal/report`'s fixture reads the oracle's rendered text. None of
+  # them can observe a cookie flag a browser HONOURED, an axe violation that is a function
+  # of computed style, or a layout at 390px.
+  #
+  # 🔴 IT IS ADVISORY AND NOTHING IN IT BLOCKS, WHICH IS A DECISION WITH A CLOSING
+  # CONDITION RATHER THAN A PERMANENT ONE. The first diff against a nonexistent baseline
+  # flags every axe rule "new" exactly once, so a gate promoted today is red for a reason
+  # that has nothing to do with the tree. `uiaudit/README.md` names the ONE predicate that
+  # becomes a promotion candidate after two baseline runs (`new_a11y_rules` non-empty) and
+  # what stays advisory indefinitely.
+  #
+  # ⚠ IT DOES NOT MOVE THE `ok` FLOOR IN THE `go` JOB, AND THAT IS STRUCTURAL RATHER THAN
+  # AN OVERSIGHT: `uiaudit/` is a NESTED MODULE, `go test ./...` does not descend into one,
+  # and no test anywhere counts `go.mod` files. The whole escape is declared in
+  # `internal/depspolicy`'s package doc under "WHAT A NESTED MODULE ESCAPES". Read it there
+  # before adding a dependency to that module, because nothing in this repository will.
+  uiaudit:
+    runs-on: ubuntu-latest
+    # 🔴 NON-BLOCKING, AND THE COMMENT THAT USED TO STAND HERE CLAIMED AN OUTCOME THIS LINE DOES
+    # NOT PRODUCE — MEASURED ON THIS BRANCH RATHER THAN ASSUMED.
+    #
+    # It said `continue-on-error` "makes the word advisory true of the thing a merger actually sees".
+    # It does not. On run 36052237008 the WORKFLOW conclusion was `success` while the `uiaudit` JOB
+    # conclusion was `failure`: job-level `continue-on-error` removes the merge BLOCK, and leaves the
+    # red row exactly where it was. So a merger on that PR saw a red tick caused entirely by a
+    # third-party CDN — the precise half the old comment claimed to prevent.
+    #
+    # ⚠ WHAT IT ACTUALLY BUYS, WHICH IS STILL WORTH HAVING: this job cannot block a merge. That
+    # matters because it installs chromium from the runner image on every run, over the network, at
+    # whatever version that image currently ships — so an `apt` hiccup, a snap fallback or a chromium
+    # change would otherwise gate a tree nobody touched. A permanently-blocking gate on a third
+    # party's release schedule is the category this repository refuses.
+    #
+    # ⚠ AND WHAT IT DOES NOT BUY, SAID PLAINLY RATHER THAN PAPERED OVER: **the row can still go red,
+    # and a reader of the checks list will see it.** That is accepted, not fixed. The alternative
+    # considered and rejected was a wrapper that swallows every failure so the job is always green —
+    # rejected because it would also swallow the `verify-push` control, the test-count floors and the
+    # toolchain assertion, and those exist precisely to be visible. `verify-push` has already caught
+    # one real silent failure by going red; a job that could not go red would have reported a green
+    # over a non-event.
+    #
+    # So: red row, no block. When the row is red, `uiaudit/README.md`'s residual 3b is the first
+    # thing to read — the most likely cause is the edge in front of the hub, not this tree.
+    #
+    # 🔴 EVERY FLOOR AND CONTROL BELOW IS UNCHANGED. This line decides what a failure COSTS, never
+    # whether anything is checked. Removing any of them because the job is non-blocking would be the
+    # actual mistake.
+    #
+    # 🔴 THE PROMOTION PATH, so this does not become permanent by default: `uiaudit/README.md` names
+    # ONE predicate as the promotion candidate (`new_a11y_rules` non-empty) and records that its
+    # precondition is measured rather than pending. Promoting it means splitting that one assertion
+    # into its own blocking job — not deleting this line, which would make chromium's version a merge
+    # blocker again.
+    continue-on-error: true
+    # 🔴 `GOTOOLCHAIN=local` FORBIDS THE SWITCH, AND WITHOUT IT THIS JOB'S PIN WAS A MEASURED
+    # NO-OP. Go 1.21+ defaults to `GOTOOLCHAIN=auto`, which DOWNLOADS a newer toolchain when a
+    # `go` directive in the module graph asks for one — silently, and with the pinned compiler
+    # already installed. The first version of this job did exactly that. From its own log:
+    #
+    #     Setup go version spec 1.25
+    #     go version go1.25.14 linux/amd64
+    #     go: downloading go1.26.0 (linux/amd64)
+    #
+    # It went GREEN on 1.26 while advertising 1.25. Two causes, both real: `uiaudit/go.mod` had
+    # been rewritten to `go 1.26` by a `go mod tidy` run on a 1.26 host (tidy raises the
+    # directive to the running toolchain and never warns), AND `chromedp v0.16.0` plus the
+    # `cdproto` pseudo-version it pulled each declare `go 1.26` themselves — so even a corrected
+    # directive would have been overridden by the graph.
+    #
+    # The fix is all three together: the directive says `1.25.0`; `chromedp` is held at
+    # **v0.14.2**, the newest release declaring `go 1.24`, with `cdproto` at the revision that
+    # release requires; and this variable turns any future recurrence into a HARD FAILURE
+    # instead of a download. ⚠ The dependency hold is the fragile half — a routine
+    # `go get -u` in that module re-breaks the pin, and the only thing that will say so is the
+    # assertion below.
+    #
+    # ⚠ THE SAME SHAPE AS THE `buildGoModule` NO-OP AGENTS.md ALREADY RECORDS, reached by a
+    # different mechanism. A pin is a claim about what RAN; read it out of the compiler.
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+      # 🔴 THE SAME 1.25 THE `go` JOB PINS. The nested module's own `go` directive says
+      # 1.25.0 for this reason: it is not governed by `internal/depspolicy` or by any nix
+      # derivation, so the ONLY thing keeping its toolchain from drifting away from the
+      # root module's is that both are pinned here and in `uiaudit/go.mod`.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      # 🔴 READ THE PIN OUT OF THE COMPILER, BECAUSE SETTING IT IS NOT OBSERVING IT. This is
+      # the step that would have caught the no-op above: `GOTOOLCHAIN=local` makes a switch
+      # impossible, and this makes the version an assertion rather than a log line nobody reads.
+      - name: the toolchain that will actually run, asserted rather than assumed
+        run: |
+          set -euo pipefail
+          got=$(go version)
+          echo "$got"
+          case "$got" in
+            *go1.25*) ;;
+            *) echo "::error::this job must run go1.25 (the pin) but the compiler reports: $got"; exit 1 ;;
+          esac
+          # And the nested module's own directive, which is the other half of the pin.
+          directive=$(grep -m1 '^go ' uiaudit/go.mod)
+          echo "uiaudit/go.mod: $directive"
+          case "$directive" in
+            "go 1.25"*) ;;
+            *) echo "::error::uiaudit/go.mod says '$directive'; a go mod tidy on a newer host raises this silently and GOTOOLCHAIN=auto would then download that toolchain"; exit 1 ;;
+          esac
+      # 🔴 THE INTERPRETER IS PINNED TOO, BECAUSE THE FIXTURE WORLD IS PYTHON.
+      # `uiaudit/boot.go` calls `tests/reader_fixtures.py`'s own `build_store` rather than
+      # transcribing it, so this job runs that file — and running it on whatever
+      # interpreter the runner image ships would materialise the store with a tool nothing
+      # else in this repository has ever used. Same reason, same version, as every other
+      # job here.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ⚠ CHROMIUM COMES FROM THE RUNNER IMAGE, WHICH MAKES ITS VERSION AN INPUT NOBODY
+      # HERE PINS — so it is PRINTED. Every claim this job makes about browser behaviour
+      # (the `__Host-` cookie being stored over plaintext loopback; axe executing under
+      # `default-src 'none'`) is a claim about the build that ran, and a log without the
+      # version is a measurement without its scope. The spikes in `uiaudit/README.md`
+      # record which build they were measured under for the same reason.
+      #
+      # 🔴 AND IT IS A FLAPPING INPUT ON THE PIXEL DIFF, WHICH IS MEASURED RATHER THAN FEARED.
+      # Two runs on one machine (chromium 153.0.8010.52) diffed `0 changed` of 6 pages; a CI run
+      # on 153.0.8010.36 — the runner's snap — diffed **4 changed** of 6 against that same
+      # baseline, with `0 size-changed`, so four pages moved on a PATCH difference with no page
+      # height change to explain it.
+      #
+      # That is why the pixel diff cannot gate, and it is a stronger reason than the inherited
+      # cross-producer regression figure because it is about this harness. 🔴 **PINNING CHROMIUM
+      # IS THE PRECONDITION FOR ANY PIXEL GATE** — a nix-pinned build or a version-pinned
+      # container — and until that exists the signal flips on somebody else's release schedule
+      # whatever its numbers look like. Do not promote a visual predicate while this step
+      # installs whatever the image currently ships. See `uiaudit/README.md`'s gating section.
+      - name: chromium, and its version, which is an unpinned input
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq chromium-browser || sudo snap install chromium
+          command -v chromium || command -v chromium-browser
+          chromium --version || chromium-browser --version
+
+      # 🔴 THE MODULE'S OWN GUARDS FIRST, AND THEY INCLUDE THE POSITIVE CONTROL. The walk
+      # below reports small numbers, two of which are zero BY CONSTRUCTION; without an
+      # instrument validation every one of them is indistinguishable from a collector wired
+      # to nothing. `control_test.go` serves a page that MUST produce non-zero counts and
+      # REFUSES rather than skips when chromium is absent — so this step failing is also the
+      # signal that the step above installed nothing.
+      - name: the harness's own guards, including the positive control
+        env:
+          UIAUDIT_REPO_ROOT: ${{ github.workspace }}
+          UIAUDIT_CAIRN_UI: /tmp/cairn-ui
+        run: |
+          set -euo pipefail
+          # 🔴 `cairn-ui` IS BUILT FROM THE ROOT MODULE'S OWN DIRECTORY, NOT BY A RELATIVE
+          # PATH OUT OF THE NESTED ONE, AND THE DIFFERENCE IS A TOOLCHAIN QUESTION NOBODY
+          # SHOULD HAVE TO ANSWER. `go build ../cmd/cairn-ui` from inside `uiaudit/` names a
+          # package outside that module; it succeeded on go1.26.7 when measured by hand, and
+          # that is ONE point on a dimension this job pins somewhere else — CI installs 1.25.
+          # Building each module from its own root makes the behaviour irrelevant instead of
+          # measured-at-one-point, which is what `uiaudit/run.sh` also does.
+          go build -o /tmp/cairn-ui ./cmd/cairn-ui
+          cd uiaudit
+          go vet ./...
+          go test -count=1 -v ./... 2>&1 | tee /tmp/uiaudit-tests.log || true
+          # 🔴 COUNT THE RUNNER'S OWN RESULT LINES, NEVER THE EXIT CODE. `tee` is the last
+          # command in that pipeline and would swallow a non-zero status, and a suite that
+          # collected nothing exits 0 with no result lines at all — the reassuring zero this
+          # repository refuses everywhere.
+          #
+          # 🔴 TWO COUNTS, BECAUSE THE ANCHOR DECIDES WHICH QUESTION IS ASKED — AND A DRAFT
+          # OF THIS STEP GOT IT WRONG IN THE DIRECTION THAT FAILS THE HONEST TREE. `go test
+          # -v` indents a SUBTEST's result line, so `^--- PASS` counts only top-level
+          # functions (29 here) while an unanchored pattern also counts every table row (64).
+          # The draft measured 28 by hand with a leading-space alternative and then gated on
+          # `^--- PASS`, so the floor refused a green tree. Both numbers are now counted and
+          # both are floors: the top-level one notices a `func Test…` deleted, the total one
+          # notices a ROW deleted from a table — which the first cannot see, and which is how
+          # the mutation cases in `payload_test.go` would quietly shrink.
+          passes=$(grep -c '^--- PASS' /tmp/uiaudit-tests.log || true)
+          subpasses=$(grep -cE '^[[:space:]]+--- PASS' /tmp/uiaudit-tests.log || true)
+          fails=$(grep -cE '^[[:space:]]*--- FAIL' /tmp/uiaudit-tests.log || true)
+          skips=$(grep -cE '^[[:space:]]*--- SKIP' /tmp/uiaudit-tests.log || true)
+          total=$((passes + subpasses))
+          echo "uiaudit tests: top-level PASS=$passes subtest PASS=$subpasses total=$total FAIL=$fails SKIP=$skips"
+          # The instrument check on the counter itself: a log with no result lines at all is a
+          # suite that collected nothing, which exits 0 and would otherwise read as a pass.
+          if [ "$total" = "0" ]; then
+            echo "::error::uiaudit produced NO result lines; the suite collected nothing and its exit code says nothing"
+            exit 1
+          fi
+          if [ "$fails" != "0" ]; then
+            echo "::error::uiaudit has $fails failing test(s)"
+            exit 1
+          fi
+          # A SKIP here is a refusal, not a pass. The only skippable thing in the module is
+          # the positive control, and a skipped instrument validation is a green about
+          # nothing. The tests themselves t.Fatal rather than t.Skip; this is a second tier
+          # in case one is ever changed.
+          if [ "$skips" != "0" ]; then
+            echo "::error::uiaudit skipped $skips test(s); a skipped instrument validation is a pass nobody earned"
+            exit 1
+          fi
+          # Both floors are the counts measured on the tree that introduced this job. A test
+          # deleted from a file that keeps others would otherwise move nothing.
+          if [ "$passes" -lt 29 ]; then
+            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 29 — a Test function was deleted"
+            exit 1
+          fi
+          if [ "$total" -lt 64 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 64 — a table row was deleted"
+            exit 1
+          fi
+
+      - name: the walk — boot cairn-ui, drive chromium, push, read the diff back
+        id: walk
+        env:
+          # 🔴 ENV/SECRET ONLY, NEVER LITERALS. `tests/leakscan.py`'s `reachable-hostname`
+          # rule is a general unbounded regex over several domains applied line-by-line to
+          # every file type, so an the hub hostname written into this file would fire it.
+          # A fork PR gets none of these; the harness exits 3 and `run.sh` maps that to
+          # success, because a job that failed there would train everyone to ignore it.
+          CAIRN_AUDIT_PUSH_URL: ${{ secrets.CAIRN_AUDIT_PUSH_URL }}
+          CAIRN_AUDIT_PUSH_TOKEN: ${{ secrets.CAIRN_AUDIT_PUSH_TOKEN }}
+          CAIRN_AUDIT_API_URL: ${{ secrets.CAIRN_AUDIT_API_URL }}
+          CAIRN_AUDIT_API_TOKEN: ${{ secrets.CAIRN_AUDIT_API_TOKEN }}
+          UIAUDIT_WORK: ${{ runner.temp }}/uiaudit
+          # ⚠ `github.event.pull_request.head.sha` RATHER THAN `github.sha`. On a `pull_request`
+          # event `github.sha` is the EPHEMERAL MERGE COMMIT, which exists only on the runner and
+          # cannot be resolved from a clone — so a run label built from it names a commit nobody can
+          # look up, on a design whose whole point is run-to-run attribution. The head sha is the
+          # commit a reader actually has. `github.sha` is kept as the fallback for the `push` and
+          # `merge_group` events, where there is no pull-request head.
+          UIAUDIT_LABEL: cairn-ui ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$UIAUDIT_WORK"
+          ./uiaudit/run.sh 2>&1 | tee "$UIAUDIT_WORK/walk.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" != "0" ]; then
+            echo "::error::the walk failed (rc $rc): the harness could not measure anything, so it must not report a pass"
+            exit "$rc"
+          fi
+          # Whether credentials were present at all, decided ONCE here and read by the
+          # `verify-push` control below. Deciding it twice is how a control starts asking a
+          # different question from the thing it guards.
+          if [ -n "${CAIRN_AUDIT_PUSH_URL:-}" ] && [ -n "${CAIRN_AUDIT_PUSH_TOKEN:-}" ] && [ -n "${CAIRN_AUDIT_API_URL:-}" ] && [ -n "${CAIRN_AUDIT_API_TOKEN:-}" ]; then
+            echo "credentialed=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "credentialed=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 🔴 THE `verify-push` CONTROL, AND WITHOUT IT A MISCONFIGURED TOKEN IS A SILENT
+      # GREEN. The push path is non-fatal by design — a walk that captured is worth its
+      # artifacts even when the push did not land — so nothing in the step above turns a
+      # rejected push into a red job. This step is what does, and only when credentials were
+      # actually present.
+      #
+      # 🔴 IT GREPS A STRING THE PROGRAM DEFINES AS A CONSTANT (`pushConfirmation` in
+      # `uiaudit/main.go`), AND IT CHECKS THAT THE CONSTANT STILL SAYS SO BEFORE USING IT AS
+      # A NEEDLE. A second spelling in YAML is how a control starts matching nothing while
+      # reporting success. Grepping for a string that CAN be absent is only a control once
+      # something has been seen to produce it; the positive side is that `pushConfirmation`
+      # is printed on the ONLY path that follows a 2xx push with a non-empty `run_id`.
+      - name: verify-push — the push actually landed
+        if: steps.walk.outputs.credentialed == 'yes'
+        env:
+          UIAUDIT_WORK: ${{ runner.temp }}/uiaudit
+        run: |
+          set -euo pipefail
+          needle='uiaudit: PUSH CONFIRMED run_id='
+          if ! grep -qF "const pushConfirmation = \"$needle\"" uiaudit/main.go; then
+            echo "::error::verify-push is grepping for a string uiaudit/main.go no longer defines; the control would match nothing"
+            exit 1
+          fi
+          if ! grep -qF "$needle" "$UIAUDIT_WORK/walk.log"; then
+            echo "::error::credentials were present but the walk never confirmed a push. The push leg is non-fatal by design, so without this control that is a silent green."
+            sed -n '/push failed/,+3p' "$UIAUDIT_WORK/walk.log" || true
+            exit 1
+          fi
+          grep -F "$needle" "$UIAUDIT_WORK/walk.log"
+
+      - name: the deterministic diff, in the log and in the step summary
+        if: always()
+        env:
+          UIAUDIT_WORK: ${{ runner.temp }}/uiaudit
+        run: |
+          set -uo pipefail
+          # The walk writes the hub diff block to `$GITHUB_STEP_SUMMARY` itself when it
+          # read one back. This step adds what was MEASURED unconditionally, so a run with no
+          # credentials still leaves a readable record.
+          {
+            echo '## uiaudit'
+            echo
+            echo '```'
+            grep -E '^uiaudit: ' "$UIAUDIT_WORK/walk.log" || echo '(no walk log)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 🔴 THE CAPTURES LEAVE AS AN ARTIFACT AND ARE NEVER COMMITTED. `tests/leakscan.py`
+      # classifies a file with a NUL byte in its first 8000 bytes as binary and SKIPS IT BY
+      # NAME, so a PNG committed to this public repository would pass the gate untouched
+      # whatever it contained. The pixel baseline belongs in the hub anyway.
+      # 🔴 THE PATH IS NARROWED TO THE CAPTURES AND THE WALK LOG, NOT THE WHOLE WORK DIRECTORY, AND
+      # ON A PUBLIC REPOSITORY THAT IS A SCOPE DECISION RATHER THAN TIDINESS. `${{ runner.temp
+      # }}/uiaudit` also held `bin/` — a ~24 MB pair of unstripped Go binaries embedding
+      # `/home/runner/work/...` DWARF paths — and `world/`, the fixture store plus its token and
+      # session files. None of that is a leak today (the content is the synthetic world, and the
+      # token is the implausible repeated character), but publishing build artefacts nobody asked
+      # for is the same hazard `uiaudit/.gitignore` closes for COMMITS, left open for PUBLISHES.
+      # Two named paths say what is meant to leave.
+      #
+      # ⚠ AND THE WALK LOG IS PUBLISHED, WHICH IS WHY `transportFailure` EXISTS. Actions masks the
+      # log STREAM; `tee` writes raw bytes to this file, so masking does not apply to the copy that
+      # leaves. Any error text reaching stdout is therefore public — see `push.go`'s
+      # `transportFailure`, which is the reason a transport error's message is classified rather
+      # than reproduced.
+      - name: upload the captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uiaudit-captures
+          path: |
+            ${{ runner.temp }}/uiaudit/artifacts
+            ${{ runner.temp }}/uiaudit/walk.log
+          retention-days: 7
+          if-no-files-found: warn
