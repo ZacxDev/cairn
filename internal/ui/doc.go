@@ -46,11 +46,22 @@
 //
 // # WHAT THIS PACKAGE DOES, AND WHAT IT STILL DOES NOT
 //
-// Four pages behind the same `internal/identity` chain the pod uses, minus one
-// backend: the entries page, the sign-in pair, and the share flow. Cookie
-// sessions arrived in phase B; the share flow — "who has access to this scope", a
-// grant, a revocation, and the notice qualifying all three — is phase C and is
-// this package's `sharing.go`, `sharehandlers.go` and [SharePage].
+// Four pages and one stylesheet behind the same `internal/identity` chain the pod
+// uses, minus one backend: the entries page, the sign-in page with TWO doors, and
+// the share flow. Cookie sessions arrived in phase B; the share flow — "who has
+// access to this scope", a grant, a revocation, and the notice qualifying all
+// three — is phase C and is this package's `sharing.go`, `sharehandlers.go` and
+// [SharePage]; phase D is the GitHub sign-in in `oauth.go`, an authorization-code
+// flow with PKCE whose verifier lives in this package's own [flights] table and
+// whose exchanged token is verified by `identity.SupabaseJWT` like any other.
+//
+// 🔴 THE SECOND DOOR DID NOT REPLACE THE FIRST, AND THAT IS A REQUIREMENT RATHER
+// THAN AN ACCIDENT. The credential form stays: it is the door that verified the
+// deployment, the only one that works while the identity provider is unreachable,
+// and the only one an automated harness can drive — the provider flow is
+// cross-origin to a third party with MFA. `internal/ui/README.md`'s phase D
+// section states all three, and a test pins the field's SELECTOR rather than its
+// presence.
 //
 // 🔴 WHAT IT STILL DOES NOT DO, STATED RATHER THAN LEFT TO BE INFERRED:
 //

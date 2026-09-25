@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
 )
@@ -147,18 +148,17 @@ func (s *Server) handleSignInForm(w http.ResponseWriter, r *http.Request, _ iden
 	s.renderSignIn(w, http.StatusOK, "")
 }
 
-// handleSignIn exchanges a presented credential for a session. It is the ONE place a
-// session is minted.
+// handleSignIn exchanges a presented credential for a session. It is one of TWO doors into
+// [Server.openSession], which is where a session is actually minted and where the fixation
+// guard lives — the other is `handleOAuthCallback`.
 //
-// 🔴 THE OLD SESSION IS REVOKED BEFORE THE NEW ONE IS MINTED, WHICH IS THE FIXATION
-// GUARD AND IS STRONGER THAN "THE ID CHANGES". Session fixation is an attacker planting
-// a session id in a victim's browser and waiting for the victim to authenticate it. A
-// fresh id on sign-in defeats it for the browser that signs in — but the attacker still
-// HOLDS the planted id, and if that id is a live session of their own they keep it.
-// Revoking the presented one closes that: whatever session this browser arrived with
-// stops working, for everybody holding it, at the moment somebody signs in over it.
+// ⚠ THIS COMMENT SAID "IT IS THE ONE PLACE A SESSION IS MINTED" AND CARRIED THE FIXATION
+// PARAGRAPH ITSELF. Both were true of a surface with one door; the mint moved to
+// `openSession` on the day the second arrived, and a copy of the paragraph here would be a
+// second claim about code this function no longer contains.
 //
-// ⚠ AND THE REVOCATION RUNS ONLY AFTER THE CREDENTIAL IS ACCEPTED. Revoking on a FAILED
+// ⚠ AND THE REVOCATION RUNS ONLY AFTER THE CREDENTIAL IS ACCEPTED — which is a property of
+// the ORDER OF THESE TWO CALLS and not of `openSession`, so it is stated here. Revoking on a FAILED
 // attempt would make an unauthenticated cross-site POST into a denial-of-service: anyone
 // who can make a victim's browser submit this form with a junk token could sign them out
 // at will. Gate (2) already refuses that request, so this is defence in depth — but the
@@ -224,6 +224,31 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 		return
 	}
 
+	s.openSession(w, r, principal, "credential from "+client+" (client identity "+peerState(trusted)+")")
+}
+
+// openSession is the ONE place a session is minted, and it is one place because there are
+// now TWO doors into it.
+//
+// 🔴 A SECOND COPY OF THIS WOULD BE A SECOND PLACE TO FORGET THE REVOKE-BEFORE-MINT
+// ORDERING, AND THE COPY THAT FORGOT WOULD BE THE ONE ON THE NEWER DOOR. The fixation guard,
+// the store write and the cookie are four lines each and every one of them is load-bearing;
+// `handleSignIn` and `handleOAuthCallback` reach this function with a principal and nothing
+// else, so the two doors cannot diverge in what a session IS.
+//
+// 🔴 THE OLD SESSION IS REVOKED BEFORE THE NEW ONE IS MINTED, WHICH IS THE FIXATION GUARD
+// AND IS STRONGER THAN "THE ID CHANGES". Session fixation is an attacker planting a session
+// id in a victim's browser and waiting for the victim to authenticate it. A fresh id on
+// sign-in defeats it for the browser that signs in — but the attacker still HOLDS the planted
+// id, and if that id is a live session of their own they keep it. Revoking the presented one
+// closes that: whatever session this browser arrived with stops working, for everybody
+// holding it, at the moment somebody signs in over it.
+//
+// ⚠ `via` NAMES THE DOOR AND GOES ONLY TO THE LOG. It is composed by the caller out of
+// values the caller already logs — never a value from the request body — because this line
+// is the one an operator reads to tell a token sign-in from a provider one, and a refusal
+// that reflected caller text into a log is how a log becomes unreadable.
+func (s *Server) openSession(w http.ResponseWriter, r *http.Request, principal control.Principal, via string) {
 	if old, err := r.Cookie(identity.SessionCookieName); err == nil && old.Value != "" {
 		if err := s.sessions.Revoke(old.Value); err != nil {
 			// A revocation that failed must not be followed by a successful sign-in:
@@ -261,8 +286,7 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request, _ identity
 	http.SetCookie(w, identity.SessionCookie(id, rec.ExpiresAt))
 	// The principal's DISPLAY, which is what every audit line in this system carries,
 	// and nothing about the credential or the session.
-	s.logf("sign-in: a session was opened for %s from %s (client identity %s)",
-		principal, client, peerState(trusted))
+	s.logf("sign-in: a session was opened for %s via %s", principal, via)
 	// 303, not 302: the browser must follow it with a GET. A 302 leaves the method
 	// up to the client, and a client that re-POSTs to `/` gets the uniform 401.
 	http.Redirect(w, r, RootPath, http.StatusSeeOther)
@@ -289,9 +313,25 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request, _ identit
 	http.Redirect(w, r, SignInPath, http.StatusSeeOther)
 }
 
+// renderSignIn is the ONE place the sign-in page is rendered, so the button's presence
+// cannot differ between the form's own 200 and every refusal that lands here.
+//
+// ⚠ THIS SENTENCE CARRIED A COUNT ("the five refusals") AND THE COUNT WENT STALE IN THE SAME
+// CHANGE THAT WROTE IT — there are now at least ten call sites, across the credential path, the
+// provider start row and the callback. The number is not restated: it is `git grep
+// 'renderSignIn('` and nothing here can keep it true. What matters is the property, which does
+// not move when a caller is added: every one of them renders through this function, so the
+// button's presence and the page's shape are decided in ONE place.
+//
+// 🔴 THE BUTTON IS RENDERED IFF THE PROVIDER DOOR CAN WORK RIGHT NOW, AND THAT IS DERIVED
+// FROM THE SERVER RATHER THAN PASSED IN. A boolean parameter here would be a value six call
+// sites could get wrong, and the one that got it wrong would render a button whose route
+// answers 501 or 503. `providerArmed` folds in BOTH questions — is a provider configured, and
+// has its key set ever been fetched — so a page rendered during a provider outage offers the
+// door that still works and not the one that does not.
 func (s *Server) renderSignIn(w http.ResponseWriter, code int, message string) {
 	var b strings.Builder
-	if err := SignInPage(message).Render(&b); err != nil {
+	if err := SignInPage(message, s.providerArmed()).Render(&b); err != nil {
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}

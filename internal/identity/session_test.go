@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
+	"github.com/ZacxDev/cairn/internal/testcookie"
 )
 
 // --- fixtures -------------------------------------------------------------------------
@@ -640,9 +641,12 @@ func TestTheSessionCookieCarriesItsFlagsOnTheWire(t *testing.T) {
 			"empty string.")
 	}
 
+	// `Path=/` is matched EXACTLY: `strings.Contains` accepts `Path=/sign-in`, and a
+	// conforming browser DROPS a `__Host-` cookie whose path is not exactly `/` — so that
+	// mutation used to survive here and signed nobody out visibly.
 	for _, want := range []string{"HttpOnly", "Secure", "SameSite=Lax", "Path=/"} {
-		if !strings.Contains(header, want) {
-			t.Errorf("the Set-Cookie header does not carry %s: %q", want, header)
+		if !testcookie.HasExactAttr(header, want) {
+			t.Errorf("the Set-Cookie header does not carry %s exactly: %q", want, header)
 		}
 	}
 	if !strings.HasPrefix(header, SessionCookieName+"=") {
@@ -663,9 +667,10 @@ func TestTheSessionCookieCarriesItsFlagsOnTheWire(t *testing.T) {
 		t.Errorf("the cleared cookie does not expire it: %q", cleared)
 	}
 	for _, want := range []string{"HttpOnly", "Secure", "SameSite=Lax", "Path=/"} {
-		if !strings.Contains(cleared, want) {
-			t.Errorf("the cleared cookie does not carry %s (%q); a browser matches a deletion to an existing "+
-				"cookie on name, path and domain, and a mismatch leaves the original in place", want, cleared)
+		if !testcookie.HasExactAttr(cleared, want) {
+			t.Errorf("the cleared cookie does not carry %s exactly (%q); a browser matches a deletion to an "+
+				"existing cookie on name, path and domain, and a mismatch leaves the original in place",
+				want, cleared)
 		}
 	}
 	t.Logf("set-cookie: %q", header)

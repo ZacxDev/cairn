@@ -25,13 +25,12 @@ removed.**
   of them — however it arrives. A test needs the SHAPE; regenerate it synthetic.
 
 🔴 **`tests/leakscan.py` runs in CI on every commit AND IT DOES NOT COVER ALL FIVE — know
-which.** Credentials, private IPs and dated incident references are gated in GENERAL.
-Hostnames and project/scope names are gated only for a CLOSED SET of digests
-(`denied-identifier`): the names a scrub already removed cannot come back, a NEW one is
-invisible until you add it. Captured text is gated by NOTHING and cannot be; that bullet is
-yours. ⚠ This line once claimed the scanner enforced all five while it enforced three; the
-record of that, and why neither rule is a heuristic, is `tests/leakscan.py`'s own docstring.
-Run it before you push:
+which.** Credentials, private IPs, dated incidents AND hosts under the deployment's registrable
+domains (`reachable-hostname`, UNBOUNDED) are gated in GENERAL. Only a CLOSED SET of digests
+covers the REST of the project/scope/host class (`denied-identifier`): a name a scrub removed
+cannot return, a NEW one is invisible until you add it. Captured text is gated by NOTHING; that
+bullet is yours. ⚠ Wrong BOTH ways here once — all five over
+three, then omitting `reachable-hostname`; the docstring says why. Run it before you push:
 
 ```bash
 python3 tests/leakscan.py            # scan the tree
@@ -93,7 +92,7 @@ These are the house style, and they are why the guards here are worth trusting:
 | `cmd/cairn-server`, `internal/api` | the Go port of the server (P1), stdlib-only — see below |
 | `cmd/cairn`, `internal/client`, `internal/doctor` | the Go port of the CLIENT (P2), over the SAME `internal/report` the pod uses |
 | `internal/report`, `internal/store` | the ONE renderer and the store loader, shared by pod and CLI |
-| `cmd/cairn-ui`, `internal/ui` | P-A/B/C: the BROWSER surface — pages, gomponents, COOKIE SESSIONS, the SHARE FLOW, deployed by nothing; 📄 its own README |
+| `cmd/cairn-ui`, `internal/ui` | the BROWSER surface — pages, gomponents, COOKIE SESSIONS, the SHARE FLOW, GitHub sign-in; **DEPLOYED**; 📄 its own README |
 | `internal/depspolicy` | the ALLOWLIST and import BAN that replaced `vendorHash = null` |
 | `internal/control` | P3: the ONE authz predicate the pod now authorises from, and `tokenfile/` (the token file, projected); 📄 its own README |
 | `internal/identity` | P4: the ONE `Authenticator` (🔴 one backend BYPASSES auth on a DIRECTLY-reached pod; never default, refuses to start); 📄 its own README |

@@ -35,8 +35,11 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"GET / content",
 		"GET /share content",
 		"GET /sign-in public",
+		"GET /sign-in/github/callback public",
+		"GET /static/app.css public",
 		"POST /share",
 		"POST /sign-in public",
+		"POST /sign-in/github public",
 		"POST /sign-out",
 		"POST /unshare",
 	}
@@ -225,7 +228,13 @@ func testConfig(t *testing.T, auth identity.Authenticator) Config {
 		Source:      staticSource{scopes: benignWorld()},
 		Sharing:     benignSharing(),
 		Sessions:    mustSessions(t),
-		Log:         io.Discard,
+		// 🔴 A PROVIDER IS WIRED IN THE DEFAULT FIXTURE, DELIBERATELY, SO THE DISPATCH TESTS
+		// MEASURE THE CONFIGURED SHAPE. The unconfigured one is a real deployment and it has
+		// its own test (`TestTheGitHubRowsAnswerAnHonestRefusalWhenTheProviderIsNotConfigured`);
+		// making it the default here would leave every routing walk measuring the 501 branch
+		// and none of them measuring a handler.
+		OAuth: &stubOAuth{},
+		Log:   io.Discard,
 	}
 }
 
@@ -273,45 +282,99 @@ func publicRoutes() []string {
 	return out
 }
 
+// bareGETAnswer is what each GET row answers to a PARAMETERLESS request from an
+// authenticated caller against `testConfig`'s world.
+//
+// 🔴 IT IS HAND-WRITTEN AND A ROW MISSING FROM IT FAILS, WHICH IS THE SAME MECHANISM
+// `contentAuthority` USES AND FOR THE SAME REASON. The walk below needs to know what "the
+// handler was reached" looks like per row, and it cannot be derived: `GET /` renders a page,
+// `GET /static/app.css` serves bytes, and `GET /sign-in/github/callback` REFUSES a request
+// carrying no flight — which is the handler working, not the handler missing. Deriving the
+// expectation from the response would make the walk assert `a == a`.
+//
+// ⚠ IT REPLACED A LOOP THAT REQUIRED 200 FROM EVERY GET ROW, and the replacement is what
+// makes the positive control survive a row whose bare answer is a refusal. Requiring 200
+// would have forced the callback to answer 200 to a request it must refuse.
+var bareGETAnswer = map[string]int{
+	"GET / content":                       http.StatusOK,
+	"GET /share content":                  http.StatusOK,
+	"GET /sign-in public":                 http.StatusOK,
+	"GET /static/app.css public":          http.StatusOK,
+	"GET /sign-in/github/callback public": http.StatusBadRequest,
+}
+
 // TestEveryServedPathComesFromTheLedger closes the blind spot `DeclaredRoutes`'s own
 // comment names: a path served from anywhere other than the table.
+//
+// 🔴 THE "URL SPACE IS NOT MAPPABLE" REQUIREMENT IS GONE AND THE ANTI-STALE-HANDLER ONE IS
+// NOT — AND THE TWO WERE ALWAYS DIFFERENT CLAIMS WEARING ONE ASSERTION. This test used to
+// require the uniform **401** from an undeclared path, on the stated grounds that a 404
+// "would let an unauthenticated caller map the URL space". That premise is void: this
+// repository is PUBLIC and `routes.go` publishes every row, so the map is the source. What
+// the assertion was ALSO doing — and this is the half worth keeping — is refusing a path that
+// reaches a STALE HANDLER. `GET /entries` is the worked example and it is still in the probe
+// list below: it WAS a row, the row was removed because the page behind it and the page
+// behind `GET /` are the same page, and a dispatcher that still served it would answer 200
+// with a rendered page.
+//
+// 🔴 SO THE PROBE NOW REQUIRES **404 AND THE `noSuchRoute` BODY**, WHICH IS A STRICTLY
+// STRONGER ANTI-STALE-HANDLER ASSERTION THAN THE 401 WAS. A stale handler cannot produce
+// either: it renders HTML, or it redirects, or it answers 200. The 401 was satisfiable by any
+// refusal from any layer — including the authentication chain, which is a different gate
+// entirely — so it could not tell "this path is not a route" from "this caller is not
+// authenticated". The probes are driven as an AUTHENTICATED caller for exactly that reason:
+// gate (4) runs first, so an unauthenticated probe would measure the chain and would pass
+// with the ledger deleted.
+//
+// ⚠ AND THE UNIFORM REFUSAL FOR AN UNAUTHENTICATED CALLER IS STILL PINNED, JUST NOT HERE:
+// `TestAnUnauthenticatedRequestReachesNoRenderer` is what measures it, and
+// `TestTheRootRedirectsABrowserAndRefusesEverythingElse` pins that the one content-negotiated
+// branch did not widen it.
 func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 
-	// POSITIVE CONTROL: every GET route really is served, so the refusals below are
-	// not "this handler refuses everything". The POST rows are excluded because they
-	// answer a redirect rather than a 200 — `TestTheWholeSessionLifecycle` is what
-	// drives those.
+	// POSITIVE CONTROL: every GET route really is reached, so the refusals below are not
+	// "this handler refuses everything". The POST rows are excluded because they answer a
+	// redirect rather than a body — `TestTheWholeSessionLifecycle` is what drives those.
 	served := 0
+	ok200 := 0
 	for _, route := range DeclaredRouteLedger() {
 		method, path, _ := splitRoute(route)
 		if method != http.MethodGet {
 			continue
 		}
+		want, declared := bareGETAnswer[route]
+		if !declared {
+			t.Errorf("%s is a declared GET row and `bareGETAnswer` does not say what it answers to a "+
+				"parameterless request. Add it — that is the decision, and it is deliberately not derivable "+
+				"from the response, because deriving it would make this walk assert `a == a`.", route)
+			continue
+		}
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("declared route %s %s answered %d, not 200", method, path, rec.Code)
+		if rec.Code != want {
+			t.Errorf("declared route %s %s answered %d, want %d", method, path, rec.Code, want)
 			continue
 		}
 		served++
+		if want == http.StatusOK {
+			ok200++
+		}
 	}
-	if served == 0 {
-		t.Fatal("NO declared GET route answered 200, so the refusals below prove nothing about routing")
+	if ok200 == 0 {
+		t.Fatal("NO declared GET route answered 200, so the refusals below prove nothing about routing — a " +
+			"server that refused everything would satisfy them")
 	}
 
-	// An undeclared path gets the SAME uniform refusal a bad credential gets — never
-	// a 404, which would let an unauthenticated caller map the URL space.
-	// `GET /entries` is in this list rather than in the ledger, and that is the point
-	// of naming it: it WAS a row, and the row was removed because the page behind it
-	// and the page behind `GET /` are the same page. A path that stops being a route
-	// must get the uniform refusal, not a 404 and not a stale handler.
+	// An undeclared path is answered 404 with the no-route body. `GET /entries` is in this
+	// list rather than in the ledger, and that is the point of naming it: see the doc
+	// comment for what it was and what a stale handler would do with it.
 	//
-	// ⚠ EVERY PROBE IS A GET AND THE NEAR-MISSES OF THE PUBLIC ROWS ARE IN IT. A POST
-	// probe would be refused by the same-origin gate before the ledger is ever
-	// consulted, so it would measure gate (2) rather than routing and would pass with
-	// the ledger deleted. The public rows themselves are NOT probed here: they answer
-	// 200 to anybody by design, which is the narrowing `routes` states.
+	// ⚠ EVERY PROBE IS A GET AND THE NEAR-MISSES OF THE PUBLIC ROWS ARE IN IT. A POST probe
+	// would be refused by the same-origin gate before the ledger is ever consulted, so it
+	// would measure gate (2) rather than routing and would pass with the ledger deleted. The
+	// public rows themselves are NOT probed: they answer without a credential by design.
+	probed := 0
 	for _, probe := range [][2]string{
 		{"GET", "/entries"},
 		{"GET", "/entries/"},
@@ -320,17 +383,37 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", "/sign-out"},
 		{"GET", "/sign-in/"},
 		{"GET", "/sign-inx"},
+		// The near-misses of the rows this change ADDED. A prefix match anywhere in the
+		// dispatcher would serve these, and a prefix match is the second way to reach a
+		// handler that `routes`'s own comment refuses.
+		{"GET", "/sign-in/github"},
+		{"GET", "/sign-in/github/callback/"},
+		{"GET", "/static/"},
+		{"GET", "/static/app.cssx"},
+		{"GET", "/static/../static/app.css"},
 	} {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(probe[0], probe[1], nil))
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s %s answered %d; an undeclared path must get the same uniform 401 a bad credential "+
-				"gets, so the URL space is not mappable", probe[0], probe[1], rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s answered %d, want 404. A path that is not a row must not reach a handler — "+
+				"`GET /entries` WAS a row and a dispatcher that still served it would answer 200 with a "+
+				"rendered page", probe[0], probe[1], rec.Code)
+			continue
 		}
+		if body := rec.Body.String(); body != noSuchRoute {
+			t.Errorf("%s %s answered 404 with body %q, want %q. The status alone is satisfiable by a handler "+
+				"that chose to 404; the body is what says the DISPATCHER refused.", probe[0], probe[1], body, noSuchRoute)
+			continue
+		}
+		probed++
 	}
+	if probed == 0 {
+		t.Error("NO undeclared GET probe reached the no-route answer, so the ledger is not in their path")
+	}
+
 	// 🔴 AND THE STATE-CHANGING PROBES, WITH A CORRECT ORIGIN SO THEY MEASURE ROUTING.
 	// `POST /` was in the list above before Phase B; it moved here because the
-	// same-origin gate now runs BEFORE the ledger, so a POST without an `Origin` would
+	// same-origin gate runs BEFORE the ledger, so a POST without an `Origin` would
 	// be refused at 403 by gate (2) and the probe would pass with the ledger deleted.
 	// Giving it a correct origin puts the ledger back in the path.
 	crossed := 0
@@ -339,23 +422,100 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"POST", "/admin"},
 		{"PUT", "/sign-out"},
 		{"DELETE", "/sign-in"},
+		// The callback path under the WRONG method, and the start path under the wrong one
+		// too: the two OAuth rows differ in method for a stated reason (see `routes`), so a
+		// dispatcher keyed on path alone would serve both either way.
+		{"POST", "/sign-in/github/callback"},
+		{"PUT", "/sign-in/github"},
 	} {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(probe[0], probe[1], nil)
 		r.Header.Set("Origin", "https://"+r.Host)
 		srv.ServeHTTP(rec, r)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s %s with a correct Origin answered %d; an undeclared method/path pair must get the same "+
-				"uniform 401 a bad credential gets", probe[0], probe[1], rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s with a correct Origin answered %d, want 404; an undeclared method/path pair must "+
+				"not reach a handler", probe[0], probe[1], rec.Code)
 			continue
 		}
 		crossed++
 	}
 	if crossed == 0 {
-		t.Error("NO same-origin state-changing probe reached the uniform 401, so the ledger is not in their path")
+		t.Error("NO same-origin state-changing probe reached the no-route answer, so the ledger is not in their path")
 	}
-	t.Logf("routing: %d declared GET route(s) served 200, 7 undeclared GET probe(s) refused 401, "+
-		"%d same-origin state-changing probe(s) refused 401", served, crossed)
+	t.Logf("routing: %d declared GET route(s) answered what `bareGETAnswer` declares (%d of them 200), "+
+		"%d undeclared GET probe(s) refused 404, %d same-origin state-changing probe(s) refused 404",
+		served, ok200, probed, crossed)
+}
+
+// TestTheRootRedirectsABrowserAndRefusesEverythingElse is the REGRESSION test for the one
+// content-negotiated branch, and it pins both halves of it.
+//
+// 🔴 THE SECOND HALF IS THE LOAD-BEARING ONE. Anybody can see that `/` now redirects; what
+// has to stay true is that NOTHING ELSE MOVED — a client that did not ask for HTML, any other
+// path, and any other method all keep the uniform 401 byte for byte, because a script driving
+// this surface was written against that. The widening is scoped to one path, one method and
+// one header, and each of those three is probed with the other two held correct so a branch
+// that dropped any of them is visible.
+func TestTheRootRedirectsABrowserAndRefusesEverythingElse(t *testing.T) {
+	srv := newTestServer(t, refusingAuth{})
+
+	browser := httptest.NewRequest("GET", RootPath, nil)
+	browser.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, browser)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("an unauthenticated browser GET of %s answered %d, want 303. A browser landing on the root "+
+			"must be shown the way in.", RootPath, rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != SignInPath {
+		t.Errorf("the redirect points at %q, want %q", got, SignInPath)
+	}
+
+	// THE NARROWNESS, one dimension at a time. Each row holds the other two dimensions at
+	// the redirecting value, so a branch that forgot to test one of them is visible here
+	// rather than in production.
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		accept string
+	}{
+		{"a client that did not ask for HTML", "GET", RootPath, "*/*"},
+		{"a client that sent no Accept at all", "GET", RootPath, ""},
+		{"a different path, asking for HTML", "GET", "/share", "text/html"},
+		{"an undeclared path, asking for HTML", "GET", "/admin", "text/html"},
+		{"the root under HEAD, asking for HTML", "HEAD", RootPath, "text/html"},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		if tc.accept != "" {
+			r.Header.Set("Accept", tc.accept)
+		}
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, r)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s answered %d, want 401 — the machine contract is that everything but a browser GET of "+
+				"the root is unmoved", tc.name, rec.Code)
+			continue
+		}
+		if body := rec.Body.String(); body != "unauthorized" {
+			t.Errorf("%s answered 401 with body %q; the refusal must stay uniform and carry no reason",
+				tc.name, body)
+		}
+	}
+
+	// 🔴 AND AN AUTHENTICATED BROWSER IS NOT REDIRECTED, which is what stops the branch
+	// becoming a loop. It is placed here rather than in a page test because the failure it
+	// guards against — a redirect derived from the path and the header but NOT from the
+	// authentication outcome — would send a signed-in user to the sign-in page for ever.
+	authed := newTestServer(t, staticAuth{testIdentity()})
+	r := httptest.NewRequest("GET", RootPath, nil)
+	r.Header.Set("Accept", "text/html")
+	rec = httptest.NewRecorder()
+	authed.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Errorf("an AUTHENTICATED browser GET of %s answered %d, want 200. A redirect that did not depend on "+
+			"the authentication outcome would be an infinite loop for every signed-in user.", RootPath, rec.Code)
+	}
 }
 
 // contentAuthority names, per content route, WHICH half of the authority seam its
@@ -553,6 +713,14 @@ func TestAnUnauthenticatedRequestReachesNoRenderer(t *testing.T) {
 
 	// The PUBLIC rows are the stated exception and they must answer WITHOUT a
 	// credential, or the sign-in flow is unreachable and the surface has no way in.
+	//
+	// 🔴 THE CLAIM IS "NOT REFUSED BY THE CHAIN", NOT "ANSWERS 200", AND THE DIFFERENCE
+	// ARRIVED WITH THE OAUTH CALLBACK. That row is public and it REFUSES a request carrying
+	// no flight — 400, which is the handler working. A blanket `== 200` here would have
+	// forced it to answer 200 to a request it must refuse, so the assertion is the one the
+	// class actually makes: a public row is dispatched BEFORE the chain, so it can answer
+	// anything EXCEPT the chain's own 401-with-`unauthorized`.
+	publicAnswers := 0
 	for _, route := range publicRoutes() {
 		method, path, _ := splitRoute(route)
 		if method != http.MethodGet {
@@ -560,10 +728,15 @@ func TestAnUnauthenticatedRequestReachesNoRenderer(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("the public row %s answered %d for an unauthenticated caller; a sign-in page behind the "+
-				"authentication chain is a door locked from the inside", route, rec.Code)
+		if rec.Code == http.StatusUnauthorized && rec.Body.String() == "unauthorized" {
+			t.Errorf("the public row %s got the CHAIN's uniform refusal for an unauthenticated caller; a "+
+				"sign-in page behind the authentication chain is a door locked from the inside", route)
+			continue
 		}
+		publicAnswers++
+	}
+	if publicAnswers == 0 {
+		t.Fatal("NO public GET row answered an unauthenticated caller at all, so this surface has no way in")
 	}
 
 	// The health path is the ONE exception, and it is answered without a credential.
@@ -605,14 +778,23 @@ func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 	// against the constant the handler sets is a test that `a == a`: it goes green for
 	// every edit of the constant, including one that deletes `default-src 'none'`.
 	// The literal below is the contract; changing it is a decision somebody takes here.
-	const want = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'"
+	const want = "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; " +
+		"frame-ancestors 'none'"
 	if got := rec.Header().Get("Content-Security-Policy"); got == "" {
 		t.Error("no Content-Security-Policy was sent")
 	} else if got != want {
-		t.Errorf("the Content-Security-Policy is %q, want %q. It permits no script at all, which is a SECOND "+
-			"barrier behind the escaping — widening it is a decision, not a tidy-up. `form-action 'self'` is as "+
-			"wide as it goes: it admits this surface's own sign-in and sign-out forms and refuses a form that "+
-			"posts anywhere else.", got, want)
+		t.Errorf("the Content-Security-Policy is %q, want %q. The ONE move is `style-src` TIGHTENING from "+
+			"`'unsafe-inline'` to `'self'`, which is why the stylesheet is a route; `default-src`/`base-uri`/"+
+			"`form-action` are unchanged. There is deliberately NO `script-src` and NO `img-src`: this package "+
+			"emits neither, `TestHostileEntryTextIsEscaped` asserts the literals \"<script\" and \"<img\" can "+
+			"never appear in a rendered page, and a clause permitting something the CODE forbids is a policy "+
+			"nobody can read as a claim about the code. Naming a directive is how one of those becomes "+
+			"POSSIBLE — `default-src 'none'` forbids them all today. A script or an image arriving later adds "+
+			"its clause in the COMMIT THAT ADDS IT. `frame-ancestors 'none'` is the opposite direction and "+
+			"must NOT be deleted by that rule: it has no `default-src` fallback, so without it any site can "+
+			"frame this surface — and a clickjacked submit satisfies BOTH cross-site gates, because its "+
+			"Origin really is this origin and its CSRF token really is the victim's. Editing this literal "+
+			"is a decision somebody takes here.", got, want)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Errorf("Content-Type is %q", got)

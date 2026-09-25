@@ -77,14 +77,25 @@ type route struct {
 // authority answer from an empty one, that they had none. A page that has not asked may
 // not answer.
 //
-// 🔴 AND THE SIGN-IN PAIR IS PUBLIC, WHICH NARROWS A PROPERTY PHASE A HAD. Before this
-// change every path that was not `/healthz` answered the same uniform 401, so an
-// unauthenticated caller could not tell a route from a typo. `GET /sign-in` answers 200
-// to anybody, so the URL space is now mappable TO THE EXTENT OF THE PUBLIC ROWS — two
-// paths, both of which a sign-in flow has to advertise anyway. The property still holds
-// in full for every authenticated row, and `TestEveryServedPathComesFromTheLedger`
-// probes non-public paths for exactly that reason. This is a stated narrowing, not an
-// accident: a sign-in page nobody can reach is not a sign-in page.
+// 🔴 THE PUBLIC ROWS ARE PUBLIC BECAUSE A SURFACE WHOSE ONLY WAY IN IS BEHIND ITS OWN
+// AUTHENTICATION HAS NO WAY IN. The sign-in pair, the two GitHub rows and the stylesheet
+// carry `classPublic`: each is reached before anybody has a credential. `GET /sign-in`
+// must answer an anonymous caller or the door is locked from the inside; the GitHub pair
+// must, because the flow starts and finishes before a session exists; and the stylesheet
+// must, because the sign-in page links it.
+//
+// 🔴 AND THE "THE URL SPACE IS NOT MAPPABLE" PROPERTY IS GONE — RETRACTED RATHER THAN
+// NARROWED AGAIN. This comment said the space was "mappable TO THE EXTENT OF THE PUBLIC
+// ROWS" and that the property "still holds in full for every authenticated row". Both
+// sentences described a guard that was never buying anything: THIS REPOSITORY IS PUBLIC,
+// and the map is this file. Anybody who wants the ledger reads `routes` — or runs
+// `ui.DeclaredRoutes()`, which the startup line already counts — so an unknown path is now
+// answered **404**, honestly. What survives, and is the half that was always worth its
+// cost, is that a BAD CREDENTIAL is answered uniformly: no refusal on this surface says
+// which part of a credential was wrong, which is the oracle over the CREDENTIAL TABLE
+// rather than over the URL space. ⚠ The gate ORDER incidentally keeps an unauthenticated
+// caller from telling most routes from a typo — but NOT the root, which answers a browser
+// 303 where a typo gets 401. See [Server.ServeHTTP] for the scope of that one exception.
 // 🔴 AND THE SHARE FLOW IS THREE ROWS ON FIXED PATHS, WITH THE SCOPE IN A QUERY
 // PARAMETER RATHER THAN IN THE PATH. `routes` is an EXACT-MATCH map, so a path
 // parameter (`/share/{scope}`) would mean a prefix match in the dispatcher — and a
@@ -100,6 +111,25 @@ var routes = map[routeKey]route{
 	{"GET", "/sign-in"}:   {(*Server).handleSignInForm, classPublic},
 	{"POST", "/sign-in"}:  {(*Server).handleSignIn, classPublic},
 	{"POST", "/sign-out"}: {(*Server).handleSignOut, 0},
+
+	// 🔴 THE PROVIDER PAIR, AND THE METHODS ARE NOT INTERCHANGEABLE. The START is a POST so
+	// that gate (2) — same origin, derived from the method — refuses a cross-site request to
+	// it: as a GET it would be reachable by any `<img src>` and by every link prefetcher,
+	// each of which would mint a flight and overwrite the visitor's flight cookie. The
+	// CALLBACK is a GET because the PROVIDER chooses the method and a redirect is a GET;
+	// that makes it the one state-changing handler on this surface behind a safe method, and
+	// `handleOAuthCallback` names what guards it instead.
+	{"POST", "/sign-in/github"}:         {(*Server).handleOAuthStart, classPublic},
+	{"GET", "/sign-in/github/callback"}: {(*Server).handleOAuthCallback, classPublic},
+
+	// 🔴 THE STYLESHEET IS A ROUTE BECAUSE THE POLICY MADE IT ONE. `style-src 'self'` — see
+	// [ContentSecurityPolicy] — forbids an inline `<style>` element in a conforming browser,
+	// so the stylesheet that was a `<style>` in every page's head is served from here
+	// instead. It is `classPublic` because the SIGN-IN page links it and that page answers an
+	// anonymous caller; a stylesheet behind the chain would render the way in as unstyled
+	// text. It is NOT `classContent`: it consults no authority, and it answers the same bytes
+	// to everybody, which is exactly what makes it safe to serve before authentication.
+	{"GET", "/static/app.css"}: {(*Server).handleStylesheet, classPublic},
 }
 
 // SignInPath and SignOutPath are spelled once and read by the dispatcher, by the
@@ -118,6 +148,21 @@ const (
 	// decides. Two paths make the two writes two rows in the ledger, which is where
 	// somebody reads them.
 	UnsharePath = "/unshare"
+
+	// OAuthStartPath and OAuthCallbackPath are the provider pair.
+	//
+	// 🔴 THE CALLBACK PATH IS ALSO WHAT THE OPERATOR MUST PUT IN THE PROVIDER'S
+	// `GOTRUE_URI_ALLOW_LIST`, AND IT IS SPELLED HERE ONCE FOR THAT REASON TOO. The full
+	// URL is configuration (this process cannot know its own external origin — see
+	// `identity.ErrSupabaseOAuthNoRedirect`), but the PATH half is this file's, and a
+	// deployment whose allow-list names a different path gets a flow that completes at the
+	// provider and lands nowhere.
+	OAuthStartPath    = "/sign-in/github"
+	OAuthCallbackPath = "/sign-in/github/callback"
+
+	// StylesheetPath is the one static asset this surface serves. See `routes` for why it
+	// is a route at all and why it is public.
+	StylesheetPath = "/static/app.css"
 )
 
 // QueryScope is the one query parameter this surface reads.
