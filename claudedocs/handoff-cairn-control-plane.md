@@ -1246,6 +1246,41 @@ slug, and this doc has twice measured a shuffle re-pointing live claims.
   done**, and when two copies exist, fix the one a reader reaches FIRST. This doc already carried
   that lesson in the abstract; it was read, and the sweep still missed a site.
 
+- 🔴 **THE PRUNE ALREADY RAN ONCE AND THE DOCUMENT FULLY REGREW IN SEVEN DAYS — MEASURED, AND IT
+  CHANGES WHAT "PRUNE THE DOC" MEANS.** At the prune commit (`3c4a1c6`, 2026-09-18) the whole
+  document was **63,433 B** — *under* the 65,536 B guideline, so the prune WORKED. Seven days later
+  it is **134,563 B**: ×2.1, roughly **10 KB and 8 `Gotchas` bullets per day**. `Gotchas` went
+  **45,984 B / 89 bullets → 83,618 B / 147**, and is now **62% of the document**; every other
+  section combined is ~51 KB and would sit inside the guideline on its own. **So re-running the
+  prune buys about a week.** Treating it as a one-time fix is how a ceiling becomes decorative —
+  the same pathology as a permanently-red gate, arrived at from the other side.
+- 🔴 **`Gotchas` HAS AN ENTRY RULE AND NO EXIT RULE, WHICH MAKES IT MONOTONIC BY CONSTRUCTION — AND
+  THE BUCKET RULE ACTIVELY FEEDS IT.** The write tool's semantics say durable content must not sit
+  in a REPLACE section (`State now`, `Next steps`, `How to verify`), so the correct remedy for
+  every such finding is "move it to `Gotchas`", which APPENDS and never shrinks. ⚠ **This session
+  did exactly that twice in one PR** — once relocating an auth-coverage claim out of `State now`,
+  once moving a do-not-delete guard out of `How to verify` — both correct by the bucket rule and
+  both making the size problem worse in the one section that is the problem. **The two rules are in
+  tension and nothing in the tooling says so.** Neither audit round caught it, because each was
+  scoped to one axis. ⚠ **This very bullet is an instance**: it is being appended to `Gotchas`.
+  **Closing condition:** an eviction rule for `Gotchas` — the candidate shape is *a bullet whose
+  arc has closed moves to the archive in the SAME PR that closes the arc*, so eviction rides on
+  work already happening instead of being a separate act of will. It belongs in the `/handoff`
+  flow, which can enforce it; a sentence in this document cannot.
+- ⚠ **AND THE ORDER MATTERS: FIX THE EXIT RULE BEFORE PRUNING, NOT AFTER.** Pruning first restores
+  the number and leaves the mechanism, so the next reader sees a green document and no reason to
+  look. The measurement above is what makes that argument, and it is recorded here so the next
+  session does not have to re-derive it — or, worse, re-run the prune and believe it held.
+- ⚠ **A RECORDED "I CHECKED THIS" CLAIM DRIFTED, AND IT WAS THE CLAIM LICENSING A DISMISSAL.** This
+  document states that the write-back guard's demand for a handoff *about the archive file* is
+  correctly dismissed, on the evidence that the archive carries "zero of `## Goal`, `## State now`,
+  `## Next steps`, `## How to verify` **or a closing-condition**". Re-measured: the four headings
+  are still **0**, but `closing condition` now appears **3 times** — all inside archived bullets
+  *discussing* closing conditions, none the archive asserting its own. **The conclusion holds and
+  the stated evidence does not**, which is the shape worth noticing: a check written once as
+  "0 hits" rots into a false statement the moment the archived prose mentions the word. Assert the
+  STRUCTURE (no handoff headings, header says nothing here is live), never a grep count.
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
