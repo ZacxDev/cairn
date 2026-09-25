@@ -460,78 +460,95 @@ acceptance path is now measured against the real service; the rejection path is 
 tightens a rule these tests stay green while the push starts failing. That asymmetry is the honest
 statement, and it is why the offline tests were not deleted once the wire leg worked.
 
-### 3b. 🔴 The push works from a workstation and is BLOCKED from CI — an edge, not a token
+### 3b. ✅ The CI push was blocked by an edge, and is now landing — with a retraction
 
 **`verify-push` caught this, and it is the first thing it has ever caught.** The walk step exited
-**0**; the push silently did not land. Without that control the job would have been green over a
-non-event — which is the entire argument for it, now paid for.
+**0** while nothing landed. Without that control the job would have been green over a non-event —
+which is the entire argument for it, now paid for.
 
-**The diagnosis, measured in this order:**
+**Diagnosis, measured in order:**
 
 | step | finding |
 |---|---|
-| the step conclusions (API, not `gh run view`) | everything `success` except `verify-push` |
-| the walk's own log, read from the **uploaded artifact** | `uiaudit: push failed (non-fatal): push rejected: 403 Forbidden: <!DOCTYPE html…` |
-| classification of that body | Cloudflare **managed challenge** — `Just a moment...`, `challenges.cloudflare.com`, `Enable JavaScript`. **Not** `error code: 1010` |
+| step conclusions (API, not `gh run view`) | everything `success` except `verify-push` |
+| the walk's log, from the **uploaded artifact** | `push failed (non-fatal): push rejected: 403 Forbidden: <!DOCTYPE html…` |
+| that body | Cloudflare **managed challenge** — `Just a moment...`, `challenges.cloudflare.com`. **Not** `1010` |
 
-⚠ **The artifact is why this was answerable at all.** `gh run view --log` and `--log-failed` return
-byte-identical output with every line labelled `UNKNOWN STEP` for this run, so a missing line there
-is not evidence of a missing line. The `upload the captures` step tee'd the walk's own stdout+stderr,
-which cannot be mis-attributed. **The stderr line did print** — the control's diagnosis surface was
-never the weak part; the log reader was.
+⚠ **The artifact is why this was answerable.** `gh run view --log` and `--log-failed` return
+byte-identical output with every line labelled `UNKNOWN STEP` for that run, so a missing line there
+is not evidence of one. The stderr line **did** print — the control's diagnosis surface was never the
+weak part; the log reader was.
 
-#### The User-Agent theory is MEASURED FALSE
+#### 🔴 A retraction, and the methodological error is the point
 
-The obvious cause is Go's default `User-Agent: Go-http-client/2.0` being refused as a non-browser
-signature. It is not the cause:
+An earlier version of this section, and of `push.go`'s `UserAgent` doc, claimed the user agent was
+**measured not to be** the cause. Two real measurements backed it: three workstation pushes on Go's
+default UA answered `200`, and an unauthenticated read-API probe from that workstation was answered
+`401` **by the app** under the default, an honest and a browser-shaped UA alike.
 
-- **three pushes from a workstation, same binary, same default UA → `200`**, and the service still
-  lists those runs;
-- an **unauthenticated** probe of the read API from that workstation is answered **`401` by the app**
-  (`text/plain`, the app's own refusal — so the request arrived) under Go's default UA, an honest
-  custom UA, **and** a browser-shaped UA. All three reach it.
+**Both measurements are true; neither supports the conclusion.** That workstation is never
+challenged, so at that origin the user agent has nothing to overcome — I measured the dimension at a
+point where it is **inert** and concluded the dimension does not matter. Two points, both on the flat
+part of the curve. It is the "one measurement is not a general claim" error running backwards.
 
-Same binary, same UA, different **network origin**. A hosted CI runner sits in an address range a
-managed challenge treats as higher risk. 🔴 **So this is an operator change in front of the service**
-— an allow rule for the push endpoint or for the runner's ranges. There is nothing this program can
-do, and nothing it should: passing a challenge is the wrong response to being challenged.
+Then the explicit `UserAgent` was added and **the next CI push landed**:
 
-An explicit `UserAgent` is set anyway, and it is **not** presented as the fix: a request that cannot
-be identified cannot be allow-listed, and `Go-http-client/2.0` is shared with every Go program on the
-internet. `push.go`'s `UserAgent` doc carries the measurements so nobody re-derives the theory.
+```
+uiaudit: PUSH CONFIRMED run_id=777ffb4c-afb6-448e-930e-acce90a10171
+uiaudit: --- the hub's deterministic diff (run 777ffb4c-…, status done) ---
+uiaudit:   vs b7427cfb-…: pages +0/-0, 4 changed, 0 size-changed
+uiaudit:   new_a11y_rules (0): (none)
+```
+
+A **fourth** run exists, confirmed by the read-back's own round trip to the service rather than by
+the log, and it diffed against the third workstation push — so the chain is intact.
+
+⚠ **What is still not established:** whether a concurrent change in front of the service also
+happened. Two candidate causes, one observation. **The discriminator is cheap and unrun:** revert the
+header on a throwaway branch and see whether CI is challenged again. Until then, *"the header was
+added and the push started working"* is the honest statement and *"the header fixed it"* is not.
+
+And what must not be read into it: the header is an honest identification, **not** a browser
+impersonation. If a challenge ever does stand in front of this client again, the answer is an operator
+allow rule — never a more convincing disguise.
+
+#### 🔴 A new datum that strengthens keeping the pixel diff advisory
+
+That first CI push reported **`4 changed`** pages against a workstation baseline, with `0
+size-changed` — i.e. four of six pages differ visually between **chromium 153.0.8010.36 (the runner's
+snap)** and **153.0.8010.52 (the workstation)**. Two workstation runs against each other had reported
+`0 changed`.
+
+So the pixel diff is stable across runs on one machine and **not** across chromium builds. Since the
+runner's chromium is an unpinned input installed fresh every run, a pixel gate would flip on somebody
+else's release schedule. That is now a measured reason rather than an inherited one.
 
 #### What was fixed here, and it is about DIAGNOSIS
 
-- **An HTML or non-JSON body on these endpoints now reads as "refused BEFORE REACHING THE SERVICE"**,
-  with `THIS IS NOT A TOKEN OR PAYLOAD PROBLEM` in the message. The old text was `push rejected: 403
-  Forbidden: <!DOCTYPE html…`, whose first reading is "bad push token" — the wrong thing to check.
-  The test is **structural** (content type, and whether the body parses as JSON), not a vendor
-  keyword; the vendor is named only as a hint when it identifies itself, because the next
-  intermediary will not say "cloudflare".
-- **The body cap dropped from 1 MiB to 4 KiB.** The refusal produced an **816,059-byte** error
-  string: the diagnosis was in the first 200 bytes and everything after it buried the finding in the
-  log of the run that needed reading.
+- **An HTML or non-JSON body now reads as `refused BEFORE REACHING THE SERVICE`**, with `THIS IS NOT
+  A TOKEN OR PAYLOAD PROBLEM`. The old text's first reading is "bad push token" — the wrong thing to
+  check, and the first reading actually reached. The test is **structural** (content type, and whether
+  the body parses as JSON), never a vendor keyword, because the next intermediary will not say
+  "cloudflare"; the vendor is named only as a hint when it identifies itself.
+- **The body cap dropped 1 MiB → 4 KiB.** The refusal produced an **816,059-byte** error string: the
+  diagnosis sat in the first 200 bytes and the rest buried it in the log of the run that needed
+  reading. The CI walk log is now **5,343 bytes** total.
 
-Red at base, green at HEAD, and mutation-tested — **6 mutants, 6 killed**, harness validated first:
+Red at base, green at HEAD, mutation-tested — **6 mutants, 6 killed**, harness validated first:
 
 | mutant | killed by |
 |---|---|
 | **the base**: the old one-line message, no edge/service distinction | the challenge and 1010 cases |
-| the truncation removed (the 800 KB dump returns) | the challenge case **and** the real-HTTP cap test |
+| the truncation removed | the challenge case **and** the real-HTTP cap test |
 | the cap back to 1 MiB | the real-HTTP cap test **only** |
-| the HTML test becomes a vendor keyword hunt | the 1010 case **and** the unbranded-HTML case |
+| the HTML test becomes a vendor keyword hunt | the 1010 **and** unbranded-HTML cases |
 | the user agent dropped from the push leg | the both-legs test |
 | the user agent dropped from the read-back leg | the both-legs test |
 
 🔴 **The third row is why `TestTheBODYCAPIsExercisedOnTheREALHTTPPath` exists.** The classifier test
-caps the body *itself*, so raising `maxDiagnosticBody` back to 1 MiB left every one of its cases
-green — the cap lives in the caller's `io.LimitReader`, and a unit test of the formatter is
-structurally blind to it. That mutant **survived** the first battery.
-
-⚠ **Still unconfirmed, and it is the one thing I cannot close:** that a push lands **from CI**. The
-`verify-push` control is deliberately unchanged and will keep the job's step red until it does. The
-confirming measurement is a **fourth run appearing on the service with the CI label** — read from the
-service, not from the log, for the reason the artifact note above gives.
+caps the body *itself*, so raising `maxDiagnosticBody` back to 1 MiB left all its cases green — the
+cap lives in the caller's `io.LimitReader`, and a unit test of the formatter is structurally blind to
+it. That mutant **survived** the first battery.
 
 ### 4. ✅ The nested-module escape now has a LEDGER — the deferral it replaced had no checker
 

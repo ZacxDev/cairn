@@ -48,27 +48,38 @@ const (
 
 // UserAgent identifies this client on every request it makes.
 //
-// 🔴 IT IS NOT THE FIX FOR THE CLOUDFLARE REFUSAL, AND SAYING SO IS THE POINT. A CI run was
-// answered `403` with a Cloudflare managed-challenge page ("Just a moment…", scripts from
-// `challenges.cloudflare.com`, "Enable JavaScript") instead of reaching the app. The obvious theory
-// is that Go's default `User-Agent: Go-http-client/2.0` is refused as a non-browser signature.
-// **That theory is MEASURED FALSE:**
+// 🔴 IT IS PROBABLY THE THING THAT UNBLOCKED THE CI PUSH, AND AN EARLIER VERSION OF THIS COMMENT
+// CLAIMED THE OPPOSITE. The retraction is kept because the mistake is instructive.
 //
-//   - three pushes from a workstation, with this same client and the DEFAULT user agent, were
-//     answered `200` and created runs the service still lists;
-//   - and an unauthenticated probe of the read API from that workstation is answered `401` by the
-//     APP — the app's own `text/plain` refusal, so the request arrived — under Go's default UA, an
-//     honest custom UA, and a browser-shaped UA alike. All three reach it.
+// The sequence: a CI push was answered `403` with a Cloudflare managed-challenge page ("Just a
+// moment…", `challenges.cloudflare.com`) instead of reaching the app. The obvious theory was that
+// Go's default `User-Agent: Go-http-client/2.0` is refused as a non-browser signature. I set out to
+// falsify it and thought I had:
 //
-// Same binary, same UA, different network origin: the discriminator is WHERE the request comes
-// from, not what it calls itself. A hosted CI runner sits in an address range a managed challenge
-// treats as higher risk. **Closing that needs an operator change in front of the service** (an
-// allow rule for the push endpoint, or for the runner's ranges) — there is nothing this program can
-// do about it, and nothing it SHOULD do: working around a challenge is exactly the wrong response.
+//   - three pushes from a workstation, same client, DEFAULT user agent, answered `200`;
+//   - and an unauthenticated probe of the read API from that workstation answered `401` BY THE APP
+//     under Go's default UA, an honest custom UA and a browser-shaped UA alike.
 //
-// So why set it at all? Because a request that cannot be identified cannot be allow-listed. An
-// operator writing that rule needs a stable string to write it against, and `Go-http-client/2.0` is
-// shared with every other Go program on the internet. That is the whole claim for this constant.
+// Both measurements are real. **Neither supports the conclusion I drew from them**, and the reason
+// is the whole lesson: that workstation is never challenged, so at that origin the user agent has
+// nothing to overcome. Measuring a dimension at a point where it is INERT and concluding the
+// dimension does not matter is the "one measurement is not a general claim" error running backwards
+// — I had two points, and both were on the flat part of the curve.
+//
+// Then this constant was added and the next CI push LANDED (`status: done`, a fourth run on the
+// service). One variable changed in this program: the header below.
+//
+// ⚠ WHAT IS STILL NOT ESTABLISHED, because it cannot be from inside this repository: whether a
+// concurrent change in front of the service also happened. Two candidate causes, one observation.
+// The discriminator is cheap and nobody has run it: revert this header on a throwaway branch and
+// see whether CI is challenged again. Until someone does, "the user agent was added and the push
+// started working" is the honest statement, and "the user agent fixed it" is not.
+//
+// Either way the header earns its place: a request that cannot be identified cannot be
+// allow-listed, and `Go-http-client/2.0` is shared with every Go program on the internet. And note
+// what must NOT be read into this — it is an honest identification, not a browser impersonation. If
+// a challenge ever does stand in front of this client, the answer is an operator allow rule, never a
+// more convincing disguise.
 const UserAgent = "cairn-uiaudit/1 (+https://github.com/ZacxDev/cairn)"
 
 // maxDiagnosticBody caps how much of a refusal body reaches an error message.
