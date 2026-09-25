@@ -38,8 +38,8 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   rather than only textually clean: the two additions land in **different jobs** (#117 → a `nix`-job
   step; #108 → a `go`-job step plus the whole new `uiaudit` job).
   🔴 **`git rerere` supplied that resolution, so it was treated as a CLAIM** — the assertion that
-  settles it, and why a marker grep cannot, is the first `Gotchas` bullet below. Result: 519 added
-  lines, **0 missing, 0 removed**.
+  settles it, and why a marker grep cannot, is the `Gotchas` bullet beginning *"`git rerere` CAN
+  RESOLVE A CONFLICT FOR YOU SILENTLY"*. Result: 519 added lines, **0 missing, 0 removed**.
   Merged-tree gates, run at `371ad76` on TODAY's `main`: `go vet` rc 0 · `go test` **19 `ok` / 0
   `FAIL`** counted from result lines · `leakscan` rc 0 and `--self-test` rc 0 · `checks.…
   ui-stylesheet-is-current` rc 0 · `packages.{cairn-go,cairn-ui}` rc 0 under the **pinned Go 1.25**,
@@ -49,13 +49,20 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   is the `nix build` row, and both were read.
   ⏳ **CI at `371ad76` was still settling when this was written:** `nix`/`parity`/`leakscan`/`dualrun`/
   `uiaudit` green, `go` and `tests` in progress. **Not merged, deliberately** — see rank 17.
-- ⏳ **RANK 15 IS IN FLIGHT AND UNFINISHED.** `claim-work cairn-control-plane-15` is held by this
-  session. Round 0 of the ladder on the handoff-tooling repo's **#1871** was assembled with
-  `audit-dispatch.py 1871 --round 0` and dispatched to a READ-ONLY cross-repo agent; **its report had
-  not returned.** No `audit-claims` block is posted yet, so the next session's `--round 1` would
-  refuse — that is the anchor to create, not a bug.
-- 🔴 **#1871 REACHES *THIS* DOCUMENT — the last `Gotchas` bullet below carries the measurement and the
-  ledger check.** Once rule (p) lands, the next `/handoff` update that GROWS this doc is refused
+- 🔴 **RANK 15 IS BLOCKED ON AN OPERATOR LINE, NOT ON WORK — round 0 RETURNED
+  `requirement questioned — R1`.** `claim-work cairn-control-plane-15` is held by this session.
+  The full verdict and why it is a Fork rather than a nit are in the `Gotchas` bullet beginning
+  *"ROUND 0 OF A LADDER CAN BLOCK A MERGE"*.
+  In one line: #1871's requirement chain is **self-authored end to end by one agent session** and it
+  arms a refusal on the only step that records a session, in **every** repo — so it needs one operator
+  decision before merge. 🔴 **`/audit-pr`'s own rule: round 0 REPORTS and does not move the ladder** —
+  it is not a finding for the findings-keyed stop rule and it licenses skipping no round, so rounds 1+
+  are still owed whatever the operator decides about R1. ⚠ **The battery repair inside that PR is
+  cleanly attributable and SEPARABLE** — it unbreaks a gate red at its own baseline control since
+  #1815 and does not depend on rule (p).
+- 🔴 **#1871 REACHES *THIS* DOCUMENT — the `Gotchas` bullet beginning *"THIS DOCUMENT IS NOT
+  GRANDFATHERED"* carries the measurement and the ledger check.** Once rule (p) lands, the next
+  `/handoff` update that GROWS this doc is refused
   (`status=size-ratchet`, exit **14**) unless the delta nets ≤ 0 or the run carries
   `--override-size-ratchet "<why>"`. ⚠ **`14` is free** on `main` (`EXIT_*` run 0,2–13), and rule (p)
   fires **before** the leak gate, which is why `SKILL.md`'s refusal list now reads 11 · 12 · 14 · 13.
@@ -124,17 +131,22 @@ this doc has twice measured a shuffle re-pointing live claims.
     both PRs (rc 1, `flake.nix` only, resolution additive, merged tree green), then rounds 1 and 2 ran.
     🔴 **It stopped on the ATTRIBUTION gate — two consecutive payload-zero rounds — NOT on a clean
     round.** forcing: gate.
-15. ⏳ **IN FLIGHT — the handoff-tooling repo's `#1871` (rule (p), the size ratchet): AUDIT, THEN
-    MERGE.** `MERGEABLE`/`CLEAN`, four commit statuses `success`, **0 check-runs** (this repo posts
-    statuses, not check-runs — read both surfaces). Round 0 was dispatched read-only and had not
-    returned when this was written; **no `audit-claims` block is posted, so `--round 1` will refuse
-    until one is.** Verified statically already: `main`'s battery copy list lacks `handoff-audit.py`,
-    `skill-audit.py` and `browser-bridge/tests/test_skill_size.py`, all three of which the branch adds —
-    so the "the gate was silently broken since #1815" claim has its static half.
-    **Closing condition:** round 0 then the nine axes, findings fixed or filed, a claims block posted
-    with `--payload`, and the PR merged — or a written line saying why it is held.
-    forcing: gate — the ratchet is what stops the prune being undone, and at the measured ~10 KB/day
-    this document returns to its pre-prune size in under five days without it.
+15. 🔴 **HELD ON AN OPERATOR DECISION — the handoff-tooling repo's `#1871` (rule (p), the size
+    ratchet). Round 0 is DONE and its verdict is `requirement questioned — R1`; rounds 1+ are still
+    owed.** `MERGEABLE`/`CLEAN`, four commit statuses `success`, **0 check-runs** (that repo posts
+    statuses, not check-runs — read both surfaces). **The decision to take, in one question:** land
+    rule (p) as written, land it scoped to repos that ship no size gate (round 0's F4/D3 — that keeps
+    100% of the motivating value, since cairn ships no `test_handoff_doc_size.py`), land only the
+    separable battery repair, or close it. 🔴 **Do NOT merge it on this doc's own say-so** — this doc's
+    rank 15 is part of the self-authored chain round 0 flagged. Verified independently, not accepted:
+    `main`'s battery copy list lacks `handoff-audit.py`, `skill-audit.py` and
+    `browser-bridge/tests/test_skill_size.py`, all three of which the branch adds; and round 0's F3 —
+    two byte figures that reproduce nowhere in the tree — was re-measured here and CONFIRMED with a
+    positive control; the corrected figures are in `Gotchas`.
+    **Closing condition:** a written operator line choosing among those four, then rounds 1+ with
+    findings fixed or filed and a claims block posted with `--payload`, then the PR merged or closed.
+    forcing: gate — the ratchet is what stops the prune being undone, and this document has regrown
+    measurably since the prune (its own figures are corrected in `Gotchas`) without it.
 16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION (`cairn#117`'s D1).** Round 0 measured the delta:
     the `@source` scan yields **~18 real utility selectors across 4 call sites**, against a generated
     artefact checked into the tree, a nix derivation, a second nix app, a flake check, a CI step and an
@@ -907,6 +919,46 @@ instance of a tripwire kept here.
   98,304 · `handoff-cairn-phase3.md` 163,840 · `handoff-cairn-task-linkage.md` 81,920), which is
   exactly the shape that makes "surely ours is grandfathered too" a wrong guess. **Check the ledger,
   do not infer it from a sibling.**
+
+- 🔴 **TWO BYTE FIGURES THIS DOCUMENT ASSERTS DO NOT REPRODUCE AGAINST THE TREE, AND THEY HAVE ALREADY
+  PROPAGATED INTO ANOTHER REPO'S CODE COMMENTS.** This file says the first prune landed the document at
+  **63,433 B** (lines 257 and 757) and that it was **134,563 B** seven days later (line 758), ×2.1.
+  MEASURED with a positive control: `git cat-file -s 3c4a1c6:claudedocs/handoff-cairn-control-plane.md`
+  is **64,097 B**, the pre-prune peak is **139,371 B** at `219d58e`, and a scan of **every** revision of
+  the file finds **no** revision measuring 63,433 or 134,563 — while the control value 64,097 hits two
+  revisions, so the scan works. The true ratio is **×2.17**. 🔴 **The CONCLUSION survives** — 64,097 is
+  under the 65,536 B guideline, so "the prune WORKED and the document then doubled" is unaffected, which
+  is exactly why the wrong numbers are dangerous rather than obviously wrong. ⚠ **They are no longer
+  only ours:** the handoff-tooling repo's #1871 quotes them at FOUR sites (two in `handoff_doc.py`, one
+  in its test module, one in `write-gate.md` §I), each beside the sha that contradicts it — found by
+  this arc's round 0, re-verified here rather than accepted. That repo has already ruled on this shape:
+  its size gate's own module says any other mention *"must cross-reference this module rather than
+  restate the literal."* **Closing condition:** both figures in THIS file corrected to the measured
+  values with the `git cat-file -s` command that re-measures them beside each, and the four downstream
+  sites either corrected or reduced to a cross-reference. ⚠ **Same defect class this document already
+  tracks as "a count without its selection is not reproducible" — but one level worse, because these
+  two DID carry a sha, and the sha is what refutes them.**
+- 🔴 **ROUND 0 OF A LADDER CAN BLOCK A MERGE THAT EVERY CORRECTNESS ROUND WOULD HAVE PASSED, AND THIS IS
+  THE FIRST INSTANCE IN THIS ARC.** #1871's round 0 verdict is `requirement questioned — R1`: the
+  measurement, the task-board item carrying the requirement, the acceptance criteria stamped
+  **AUTHOR-SPECIFIED**, the implementation, and the ranked next-step instructing a future session to
+  merge it were all authored by **one agent session** (`268378fb-…`, the task created 57 minutes before
+  the first commit), and three separate labels make that read as external specification. No operator
+  line authorises it: the only operator decision in this arc authorises **a prune**, not a tool
+  refusal. 🔴 **The blast radius is what makes it a Fork rather than a nit** — rule (p) arms a refusal
+  on `/handoff`'s write path, which is the ONLY step that records a session, in EVERY repo. ⚠ **The
+  block is "get an operator line", NOT "the code is wrong"** — round 0 separately re-verified that all
+  15 mutation rows apply and change exactly one line each, and that the battery repair is cleanly
+  attributable to `claude/RULES.md`'s *"a permanently-red gate is worse than no gate"*. **The repair is
+  SEPARABLE and could land on its own.**
+  ⚠ **SIXTH LEAK-GATE EVENT, AND IT FIRED ON *THIS* BULLET.** Writing the attribution chain above
+  required naming the system that holds the task — and that system's NAME is a denied identifier, so
+  `status=leak-refused` (exit 13, one `denied-identifier` finding) rolled the write back. The lesson
+  this arc already records was READ and hit anyway, in a new shape: the previous five were fixture
+  data, a commit message and a canary quoted while documenting the gate, and this one is **an external
+  system named while describing WHO AUTHORED a requirement** — a sentence whose whole subject is
+  attribution, where the name feels like the evidence. Describe the system by its ROLE
+  (*"the task board"*) and the attribution is unharmed.
 
 ## How to verify
 ```bash
