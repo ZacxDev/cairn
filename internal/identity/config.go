@@ -871,6 +871,64 @@ var ErrSessionBackendWithoutAuthority = errors.New(
 		"projection, which holds no user any identity provider can name, so a verified sign-in " +
 		"AUTHENTICATES and then reads nothing: the pod comes up healthy and every scope is empty")
 
+// SupabaseBackendFromEnvironment builds the SUPABASE BACKEND ALONE from the environment,
+// reporting whether anything armed it.
+//
+// 🔴 IT EXISTS BECAUSE `FromEnvironment` BUILDS A CHAIN THE BROWSER SURFACE MAY NOT HAVE,
+// AND THE ALTERNATIVE WAS A SECOND READER OF THIS LEDGER. `cmd/cairn-ui` must not call
+// `FromEnvironment`: that builder arms the trusted-header backend when an operator declares
+// the deployment proxy-fronted, and `internal/ui/auth.go` records why a publicly-reachable
+// browser endpoint cannot carry that trade at any setting. Without this function the UI
+// would have to read `CAIRN_SUPABASE_*` itself — a second spelling of the blank policy this
+// file's whole history is about, wrong in the same direction at the same seven sites.
+//
+// 🔴 SO THE ORDER HERE IS `FromEnvironment`'s ORDER, NOT A CHEAPER ONE: retired names first
+// and unconditionally, then the ledger resolved in full, then the blank refusal, then the
+// constructor. A caller that skipped the retired sweep would silently ignore a manifest
+// still carrying `CAIRN_SUPABASE_JWT_SECRET`, which is exactly the shape `retiredEnv`'s own
+// comment exists against.
+//
+// ⚠ IT DOES NOT ASK `ErrSessionBackendWithoutAuthority`'s QUESTION, AND THE REASON IS THAT
+// THE ANSWER IS ALREADY DECIDED FOR THIS CALLER. That refusal guards a pod whose session
+// backends would otherwise resolve against the token-file projection; this function takes
+// the authority as a parameter and the one caller hands it the same `control.Cache` the
+// whole surface authorises from. A nil `authority` reaches `NewSupabaseJWT`'s rung 0
+// (`ErrNoAuthority`), which is the fail-closed direction.
+//
+// ⚠ AND "ARMED" IS THE LEDGER'S OWN QUESTION, NOT "DID A BACKEND GET BUILT". `false` with a
+// nil error means no `CAIRN_SUPABASE_*` variable holds a real value — the deployment has not
+// asked for this backend. An armed ledger that fails its own construction returns the
+// error, never `false`: a half-configured backend must not read as an absent one.
+func SupabaseBackendFromEnvironment(env map[string]string, authority ModelSource) (*SupabaseJWT, bool, error) {
+	if err := refuseRetiredSettings(env); err != nil {
+		return nil, false, err
+	}
+	values, armed, faults := resolveLedger(env, supabaseEnv)
+	if err := refuseBlanks(faults); err != nil {
+		return nil, false, err
+	}
+	if !armed {
+		return nil, false, nil
+	}
+	backend, err := supabaseFromEnv(values, authority)
+	if err != nil {
+		return nil, false, err
+	}
+	return backend, true, nil
+}
+
+// Issuer is the `iss` this backend requires.
+//
+// 🔴 IT IS EXPOSED SO THE SIGN-IN FLOW CAN DERIVE ITS ENDPOINTS FROM THE VERIFIER RATHER
+// THAN FROM A SECOND VARIABLE. For Supabase the issuer IS the GoTrue base URL —
+// `https://<project-ref>.supabase.co/auth/v1` — so `/authorize` and `/token` hang off the
+// same string the signature check is already pinned to. A separate
+// `CAIRN_SUPABASE_AUTH_URL` would be a second place the project can be named, and the
+// failure of two places is a deployment that verifies tokens from one project and starts
+// sign-ins at another: every sign-in would complete at the provider and be refused here,
+// with nothing naming the disagreement.
+func (s *SupabaseJWT) Issuer() string { return s.verify.Issuer }
+
 // reader hands a constructor the values `resolveLedger` already produced, and remembers
 // the first fault.
 //

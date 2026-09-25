@@ -99,6 +99,19 @@ type Server struct {
 	now         func() time.Time
 	log         io.Writer
 
+	// oauth and flights are the provider sign-in, and they are one pair rather than two
+	// settings for the reason the pair below is: a flight table with no provider to send
+	// anybody to holds nothing, and a provider with nowhere to record a PKCE verifier
+	// cannot complete a flow. `oauth` is nil on a deployment that has not configured one —
+	// see `refuseUnconfiguredOAuth` for why that is SAID rather than refused at
+	// construction — and `flights` is never nil, because a table nobody writes to costs an
+	// empty map.
+	oauth   OAuthAuthority
+	flights *flights
+	// oauthReady answers whether the provider can be reached at all RIGHT NOW. nil means
+	// "no readiness signal was supplied", which is ARMED — see [Server.providerArmed].
+	oauthReady func() bool
+
 	// trustedProxies and limiter are the client-identity pair, and they are one pair
 	// rather than two settings: the limiter's key IS what `netid.ResolveClient` returns,
 	// so a lockout without a trusted-proxy allowlist would bucket every request behind an
@@ -127,6 +140,32 @@ type Config struct {
 	// for a credential that was refused. Taking a string makes that unrepresentable
 	// rather than avoided by care.
 	Credentials identity.TokenAuthority
+	// OAuth is the PROVIDER sign-in the GitHub button drives, and it is the one field on
+	// this struct that may legitimately be nil.
+	//
+	// 🔴 NIL MEANS "THIS DEPLOYMENT HAS NO PROVIDER", WHICH IS A CONFIGURATION AND NOT A
+	// DEFECT — AND IT IS THE ONE PLACE THIS STRUCT DIVERGES FROM `Sharing`'s RULING, SO THE
+	// DIVERGENCE IS ARGUED RATHER THAN ASSUMED. `Sharing` is required precisely because a
+	// nil-means-disabled field would put a row in the ledger whose handler was inert. The
+	// same objection lands here and is answered rather than ignored: the two OAuth rows
+	// answer **501 with a sentence naming the configuration**, and
+	// `TestTheGitHubRowsAnswerAnHonestRefusalWhenTheProviderIsNotConfigured` measures both
+	// of them, so neither is an unmeasured row. What makes required impossible is the
+	// deployment that exists: a surface whose only door is a credential token today would
+	// refuse to start, so requiring this would turn a new feature into an outage.
+	//
+	// ⚠ AND THE BUTTON IS NOT RENDERED WHEN THIS IS NIL. A control that is present and
+	// cannot work teaches a user that sign-in is unreliable — the same ruling [Page] makes
+	// about the sign-out button it withholds from a caller with no session.
+	OAuth OAuthAuthority
+	// OAuthReady answers whether the provider's key set has ever been fetched. nil means
+	// "no readiness signal", which is ARMED — see [Server.providerArmed] for why the
+	// alternative was a startup fatality that took the credential form down with it.
+	//
+	// ⚠ IT IS A PREDICATE AND NOT A BOOLEAN, SO THE DOOR RE-ARMS WITHOUT A RESTART. The
+	// caller's background refresh loop keeps trying; the first success flips this and the
+	// next render carries the button.
+	OAuthReady func() bool
 	// TrustedProxies is the peer allowlist that makes `netid.ClientIPHeader` readable,
 	// and it is REQUIRED whenever this surface is reachable by anybody but the local
 	// host — `cmd/cairn-ui` refuses to start otherwise, mirroring the pod.
@@ -259,6 +298,13 @@ func New(cfg Config) (*Server, error) {
 		now:         now,
 		log:         out,
 
+		oauth:      cfg.OAuth,
+		oauthReady: cfg.OAuthReady,
+		// The SAME clock the server and the session store take, for the reason
+		// `Config.Now` records: a flight live to one and dead to the other is a sign-in
+		// that fails at the last step for no visible reason.
+		flights: newFlights(now),
+
 		trustedProxies: cfg.TrustedProxies,
 		limiter:        cfg.Limiter,
 	}, nil
@@ -276,9 +322,43 @@ func New(cfg Config) (*Server, error) {
 //     front of a cross-site POST to the PUBLIC sign-in row, which by definition has no
 //     session to carry a token;
 //  3. public rows, dispatched with a zero `identity.Identity`;
-//  4. the authentication chain, whose refusal is uniform across every remaining path;
-//  5. the ledger, so an unknown path is indistinguishable from a bad credential;
+//  4. the authentication chain, whose refusal is uniform across every remaining path —
+//     except for ONE content-negotiated branch on `GET /`, see below;
+//  5. the ledger, which answers 404 for a path that is not a row;
 //  6. the CSRF TOKEN gate, on every state-changing method that got this far.
+//
+// 🔴 GATE (5) ANSWERS 404 WHERE IT ANSWERED THE UNIFORM 401, AND THE PREMISE THAT MADE THE
+// 401 WORTH ITS COST IS VOID. It read: "a 404 for a path that is not a route would let an
+// unauthenticated caller map the URL space." That is true and it does not matter, because
+// this repository is PUBLIC and `routes.go` publishes every row — the URL space is mappable
+// by reading the file the server is built from. What the 401 bought was therefore nothing an
+// attacker did not already have, and what it cost was real: a browser landing on a mistyped
+// path was told it was unauthorized, and the "no route" case was indistinguishable from the
+// "wrong credential" case in this surface's OWN logs and tests.
+//
+// 🔴 WHAT IS *KEPT* IS THE PROPERTY THAT WAS ALWAYS THE VALUABLE HALF: A BAD CREDENTIAL IS
+// STILL ANSWERED UNIFORMLY. No refusal anywhere on this surface says which half of a
+// credential was wrong. That is the oracle over the credential TABLE, and it is a different
+// property from the URL space.
+//
+// ⚠ AND THE NEARBY CLAIM ABOUT THE URL SPACE IS NARROWER THAN THE ONE THIS COMMENT FIRST
+// MADE, BECAUSE THE BRANCH BELOW FALSIFIED IT IN THE SAME CHANGE. It said an unauthenticated
+// caller "still cannot tell a route from a typo", as a free consequence of gate (4) running
+// before gate (5). That is true for every path BUT ONE: a browser asking for `/` is answered
+// 303 while a browser asking for `/nonsense` is answered 401, so the root IS distinguishable
+// without a credential. Exactly one path, deliberately, and it is the path a sign-in flow has
+// to advertise anyway — the same stated narrowing the PUBLIC rows already carry. The credential
+// property above is untouched by it: the 303 discloses that `/` exists, never anything about
+// who may see it.
+//
+// 🔴 AND THE ONE CONTENT-NEGOTIATED BRANCH, WHICH IS AN OPERATOR DECISION RATHER THAN A
+// CONSEQUENCE. An unauthenticated `GET /` from something that `Accept`s `text/html` is
+// answered 303 to the sign-in page; everything else — every other path, every other method,
+// and any client that did not ask for HTML — keeps the uniform 401 byte for byte. So a
+// browser landing on the root is shown the way in, and a script or a machine client sees
+// exactly what it saw before: the machine contract is unmoved, which is the whole reason the
+// branch is derived from `Accept` and from the path rather than from a route class.
+// `TestTheRootRedirectsABrowserAndRefusesEverythingElse` is what measures both halves.
 //
 // 🔴 THE CSRF GATE IS AFTER AUTHENTICATION ON PURPOSE, AND THAT IS WHAT MAKES IT
 // REACHABLE RATHER THAN SHADOWED. A token check placed ahead of the chain would refuse
@@ -312,28 +392,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// (4)
 	id, err := s.auth.Authenticate(r)
 	if err != nil || !id.Valid() {
-		// 🔴 THE SAME UNIFORM REFUSAL THE POD GIVES, FOR THE SAME REASON, AND IT
-		// COVERS AN UNKNOWN PATH TOO. A 404 for a path that is not a route would let
-		// an unauthenticated caller map the URL space; a 401 that differs from the
-		// bad-credential 401 would let them enumerate which paths exist.
+		// 🔴 THE ONE WIDENING, AND IT IS SCOPED TO THE ROOT PATH AND TO A CLIENT THAT
+		// ASKED FOR HTML. See [Server.ServeHTTP]'s own comment for the decision; what is
+		// here is its narrowness. It is NOT derived from a route class, because a class
+		// can only make a route less protected and this branch must not be reachable by
+		// declaring one; it is derived from the PATH and the `Accept` header, which is the
+		// same "derive it from the request" rule both cross-site gates follow.
+		if r.Method == http.MethodGet && r.URL.Path == RootPath && acceptsHTML(r) {
+			http.Redirect(w, r, SignInPath, http.StatusSeeOther)
+			return
+		}
+		// 🔴 THE SAME UNIFORM REFUSAL THE POD GIVES, FOR THE SAME REASON, AND IT STILL
+		// COVERS AN UNKNOWN PATH — not because gate (5) spells it, but because this gate
+		// runs FIRST. A 401 that differed from the bad-credential 401 would let a caller
+		// enumerate which paths exist, and THAT half of the property is the one that was
+		// always worth its cost: it is about the credential table, not about the URL space.
 		//
 		// ⚠ `WWW-Authenticate` IS NOT SENT, DELIBERATELY. A browser that receives it
 		// raises a native basic-auth dialog, which is a credential prompt this
 		// surface does not implement and cannot honour.
-		//
-		// ⚠ AND IT IS NOT A REDIRECT TO THE SIGN-IN PAGE, WHICH IS THE OBVIOUS
-		// BROWSER-FRIENDLY THING AND WAS REFUSED. A 303 for `GET /` beside a 401 for
-		// `GET /admin` tells an unauthenticated caller which paths are real, which is
-		// the enumeration this uniform answer exists to prevent. The cost is that a
-		// browser landing on `/` sees plain text; the entry point is `/sign-in`, and
-		// widening the answer is a decision a later phase can make deliberately.
 		writePlain(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	// (5)
+	// (5) An authenticated caller asking for a path that is not a row gets the honest
+	// answer. See [Server.ServeHTTP] for why this is no longer the uniform 401, and for
+	// what is kept instead.
 	if !known {
-		writePlain(w, http.StatusUnauthorized, "unauthorized")
+		writePlain(w, http.StatusNotFound, noSuchRoute)
 		return
 	}
 
@@ -363,6 +449,30 @@ func stateChanging(r *http.Request) bool {
 	default:
 		return true
 	}
+}
+
+// noSuchRoute is what gate (5) says. A fixed sentence that does not echo the path: a
+// response that repeated what was asked for would reflect caller-chosen text, which is the
+// same rule `crossSiteRefusal` follows one file over.
+const noSuchRoute = "no such route"
+
+// acceptsHTML answers whether this client asked for HTML.
+//
+// 🔴 IT LOOKS FOR `text/html` EXPLICITLY AND DOES NOT HONOUR `*/*`, WHICH IS THE WHOLE
+// NARROWNESS OF THE ROOT REDIRECT. Every browser sends `text/html` at the front of its
+// `Accept`; `curl` sends `*/*`, and a Go client that sets nothing sends no header at all.
+// Treating `*/*` as "wants HTML" would move the machine contract — every script that GETs
+// `/` with no credential would start receiving a redirect instead of the 401 it was written
+// against — which is precisely what this branch is scoped to avoid.
+//
+// ⚠ IT DOES NOT PARSE `Accept` PROPERLY, AND THAT IS STATED RATHER THAN IMPLIED. A full
+// parse would weigh `q=0` — `Accept: text/html;q=0` means "anything BUT html" — so a client
+// that spelled that would be redirected here. The cost is a redirect to a page such a client
+// will not render; the benefit of not writing a media-type parser is that there is no
+// media-type parser. If a caller ever depends on the distinction, this is the function to
+// make honest.
+func acceptsHTML(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
 func writePlain(w http.ResponseWriter, code int, body string) {
@@ -412,23 +522,106 @@ func writeHTML(w http.ResponseWriter, code int, body string) {
 	// a store entry somebody wrote, and a browser that content-sniffs a response it
 	// was told is HTML can be talked into a different type by the leading bytes.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// A content-security policy with no `script-src` permits no script at all,
-	// which is a SECOND barrier behind the escaping rather than a replacement for
-	// it — the escaping is the guard, and `TestHostileEntryTextIsEscaped` is what
-	// measures it.
+	// The content-security policy is a SECOND barrier behind the escaping rather than a
+	// replacement for it — the escaping is the guard, and `TestHostileEntryTextIsEscaped`
+	// is what measures it.
 	w.Header().Set("Content-Security-Policy", ContentSecurityPolicy)
 	w.WriteHeader(code)
 	_, _ = w.Write([]byte(body))
 }
 
+// handleStylesheet serves the one static asset. It is PUBLIC and it reads nothing.
+//
+// 🔴 IT SERVES A GO CONSTANT AND TOUCHES NO FILESYSTEM, WHICH IS WHY THERE IS NO PATH
+// TRAVERSAL TO GET WRONG. The alternative — an `http.FileServer` over a directory — is the
+// shape that has to be argued safe: it needs a prefix strip, it follows symlinks, it serves
+// whatever somebody drops in the directory, and its route is a PREFIX match, which is a
+// second way for a request to reach a handler and one `TestEveryServedPathComesFromTheLedger`
+// structurally cannot probe (see `routes`, where the share flow makes the same ruling about
+// path parameters). One constant at one exact path has none of those questions.
+//
+// ⚠ `nosniff` IS SET HERE TOO, AND NOT BECAUSE THE BYTES ARE UNTRUSTED — they are a constant
+// in this repository. It is set because a browser that content-sniffs a stylesheet into
+// something else is a browser this response has to be explicit with; the header costs one
+// line and its absence is the kind of thing a reader assumes is deliberate.
+func (s *Server) handleStylesheet(w http.ResponseWriter, _ *http.Request, _ identity.Identity) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// 🔴 A SHORT `max-age` AND NOT AN IMMUTABLE ONE, BECAUSE THE URL CARRIES NO VERSION. A
+	// long-lived cache on an unversioned path means a deployment that changes the stylesheet
+	// serves a stale one to every returning browser until the entry expires, with nothing to
+	// invalidate it. Five minutes keeps the page off the wire on a reload and cannot outlive
+	// a deploy by long. A content-hashed path is the answer that would license `immutable`,
+	// and it needs a build step this binary does not have.
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(stylesheet))
+}
+
 // ContentSecurityPolicy is the policy every HTML response carries.
 //
-// 🔴 `form-action 'self'` WHERE PHASE A HAD `'none'`, AND THE WIDENING IS A DECISION
-// RATHER THAN A CONSEQUENCE. `'none'` forbids a form submission outright, so the sign-in
-// and sign-out forms would be inert in a conforming browser — the policy would have
-// silently disabled the feature rather than refusing to ship it. `'self'` still refuses
-// a form that posts anywhere but this origin, which is the property `'none'` was buying
-// on a page that had no forms: it means an injected `<form action="//elsewhere">` cannot
-// exfiltrate whatever a user types. Nothing else moved; there is still no `script-src`,
-// so no script runs at any origin.
-const ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'"
+// 🔴 WHAT CHANGED FROM THE PHASE A/B POLICY, AND WHICH DIRECTION EACH MOVE WENT — because
+// "we simplified the CSP" reads as "we relaxed it" and one of these is strictly stricter:
+//
+//   - `style-src 'unsafe-inline'` → `style-src 'self'`. This is a TIGHTENING, and it is the
+//     one that cost something: an inline `<style>` element is now IMPOSSIBLE in a conforming
+//     browser, so the stylesheet moved out of the document and is served from
+//     [StylesheetPath] as its own route. `'unsafe-inline'` was defensible while the
+//     stylesheet was a Go constant no input reached — that argument was true — but it
+//     licensed every inline style on the page, including one a later edit adds from a
+//     value that is not a constant. `'self'` licenses a same-origin FILE and nothing else.
+//   - `default-src 'none'`, `base-uri 'none'` and `form-action 'self'` are UNCHANGED.
+//     `base-uri 'none'` is what stops an injected `<base href>` re-pointing every relative
+//     URL on the page, and `form-action 'self'` admits this surface's own forms while
+//     refusing an injected `<form action="//elsewhere">` that would exfiltrate what
+//     somebody types.
+//   - 🔴 `frame-ancestors 'none'` IS NEW, IT IS A RESTRICTION, AND IT CLOSES A HOLE BOTH
+//     CROSS-SITE GATES ARE STRUCTURALLY BLIND TO. `frame-ancestors` has NO `default-src`
+//     fallback — that is the trap, and an earlier version of this comment read as though
+//     `default-src 'none'` covered framing. It does not, and nothing else here did: this
+//     surface sent no `X-Frame-Options` either, so any site could frame it.
+//     The concrete path is CLICKJACKING a state change: frame `GET /share?scope=…` for an
+//     authenticated victim, overlay the Revoke button, and let them click. The submit then
+//     ORIGINATES INSIDE THE PAGE, so `Origin` equals `Host` and the CSRF token rendered into
+//     it is the victim's own — **gate (2) and gate (6) are both satisfied**, because both
+//     ask whether the request came from this origin and a clickjacked submit genuinely did.
+//     Framing is the one cross-site vector neither gate can see, and the only defence is to
+//     refuse being framed at all.
+//     ⚠ IT DOES NOT CONTRADICT THE DELETE-WHAT-THE-CODE-FORBIDS RULE BELOW. `script-src` and
+//     `img-src` were PERMISSIONS for things this package cannot emit; this is a REFUSAL of
+//     something any third party can do to a page that serves nothing to arrange it. The two
+//     directions are not the same decision, and conflating them would delete a guard.
+//
+// 🔴 THERE IS NO `script-src` AND NO `img-src`, AND BOTH ABSENCES ARE THE SAME RULE: A
+// CLAUSE THAT PERMITS SOMETHING THE CODE FORBIDS IS A POLICY NOBODY CAN READ AS A CLAIM
+// ABOUT THE CODE. `default-src 'none'` already forbids script, image, frame, font, connect
+// and everything else this package does not emit; naming a directive is how one of those
+// becomes POSSIBLE. Measured on this package: `render.go` emits no `<script>` and no
+// `<img>`, and `TestHostileEntryTextIsEscaped` lists BOTH `"<script"` and `"<img"` among the
+// substrings it asserts can never appear in a rendered page.
+//
+// ⚠ BOTH WERE BRIEFLY IN THIS CONSTANT DURING THE CHANGE THAT WROTE IT, AND RECORDING THAT
+// IS THE POINT RATHER THAN TIDYING IT AWAY. `img-src 'self' data:` was drafted for a favicon
+// nobody had asked for. `script-src 'self'` was in the policy this change was HANDED, with
+// the stated benefit of "enabling a future progressive enhancement without a second policy
+// edit" — which is anticipating a requirement that does not exist, in the very change that
+// deliberately built the sign-in flow SCRIPTLESS (see `providerForm`: the implicit OAuth flow
+// was available and was refused precisely so no script would be needed). Before that clause,
+// script on this surface was IMPOSSIBLE; with it, script became possible with no consumer, on
+// a public-internet surface serving client-confidential notes. It is deleted.
+//
+// 🔴 THE RULE FOR WHOEVER COMES NEXT, IN ONE FORM FOR BOTH: A SCRIPT OR AN IMAGE ARRIVING
+// LATER ADDS ITS CLAUSE IN THE COMMIT THAT ADDS THE SCRIPT OR THE IMAGE — never before, and
+// never "so it is ready". The two sides collide by construction and that is deliberate:
+// adding the directive here without reworking the escaping guard leaves the guard RED, and
+// reworking the guard without adding the directive leaves the asset blocked by
+// `default-src 'none'`. They move in ONE commit, and this sentence is the warning that they
+// must.
+//
+// 🔴 AND THE ACTUAL XSS DEFENCE IS UNCHANGED BY ALL OF IT, WHICH IS THE POINT RATHER THAN A
+// CAVEAT. The guard is gomponents' text and attribute-value escaping plus the AST ban on
+// `Raw`/`Rawf` and on non-constant element and attribute NAMES — see this package's doc
+// comment, `safeHref`, and `TestNoRawNodeConstructorAppearsInTheUIPackage`. The policy is
+// the barrier BEHIND that.
+const ContentSecurityPolicy = "default-src 'none'; style-src 'self'; " +
+	"base-uri 'none'; form-action 'self'; frame-ancestors 'none'"

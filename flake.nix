@@ -579,21 +579,29 @@
       };
 
       # 🔴 THE BROWSER SURFACE, AND THE ONLY ARTEFACT HERE THAT LINKS A THIRD-PARTY
-      # MODULE. `cmd/cairn-ui` now carries three phases — the entries page, cookie
-      # sessions with a sign-in pair, and the SHARE FLOW — over one authentication
-      # chain and one rendering path. It is DEPLOYED BY NOTHING — saying so is part
-      # of the change. ⚠ This also said "and no image wraps it", which stopped being
-      # true when `packages.ui-image` landed; PUBLISHED and DEPLOYED are two separate
-      # claims, and only the second still holds. ⚠ This used to add "the same way
-      # `cmd/cairn-server`'s own doc comment says it for the Go pod", and that
-      # cross-reference is dead: the Go pod IS deployed, and its doc comment now says
-      # so. A cross-reference is a claim about ANOTHER file, and nothing tells you
-      # when that file moves.
+      # MODULE. `cmd/cairn-ui` carries the entries page, cookie sessions with a
+      # sign-in pair, a GitHub sign-in through the operator's GoTrue, one static
+      # stylesheet and the SHARE FLOW — over one authentication chain and one
+      # rendering path.
       #
-      # ⚠ THIS COMMENT SAID "PHASE A: one page" THROUGH TWO PHASES THAT ADDED ROUTES,
-      # WHICH IS WHY THE PHASE COUNT IS NOT REPEATED AS A NUMBER ANYWHERE ELSE HERE.
-      # `ui.DeclaredRouteLedger()` is the count that cannot go stale; this sentence
-      # names what the surface DOES, which is the part a reader of `flake.nix` needs.
+      # ⚠ IT IS PUBLISHED AND IT IS DEPLOYED, AND THIS COMMENT HAS NOW BEEN WRONG
+      # ABOUT THAT IN EVERY DIRECTION IT COULD BE. It said "and no image wraps it",
+      # which died when `packages.ui-image` landed. It then said "It is DEPLOYED BY
+      # NOTHING — saying so is part of the change", with a ⚠ re-affirming that of the
+      # two claims "only the second still holds". Both halves are false now: the image
+      # is pushed by `.github/workflows/publish-image.yml`, which then proves it
+      # pullable with no credentials, and a manifest in the operator's GitOps
+      # repository points a pod at it. ⚠ A third sentence here was retired earlier for
+      # cross-referencing `cmd/cairn-server`'s doc comment — and the lesson generalises
+      # to this very block: a claim about what DEPLOYS an artefact is a claim about a
+      # repository nothing in this file can see.
+      #
+      # ⚠ AND THE PHASE COUNT IS GONE FROM THIS BLOCK, ELEVEN LINES ABOVE THE SENTENCE
+      # THAT SAYS IT IS NOT REPEATED ANYWHERE. It read "now carries three phases" while
+      # the paragraph below said "THE PHASE COUNT IS NOT REPEATED AS A NUMBER ANYWHERE
+      # ELSE HERE" — the count and its own prohibition, in one comment. It said "PHASE
+      # A: one page" through two phases before that. `ui.DeclaredRouteLedger()` is the
+      # count that cannot go stale; this block names what the surface DOES.
       #
       # 🔴 NO `gitMinimal` ON A WRAPPER, AND THE ABSENCE IS DELIBERATE RATHER THAN
       # FORGOTTEN. `packages.cairn` and `packages.cairn-go` carry one because their
@@ -627,7 +635,7 @@
         '';
 
         meta = with pkgs.lib; {
-          description = "The cairn browser surface: entries page, sign-in, share flow; deployed by nothing";
+          description = "The cairn browser surface: entries page, sign-in (credential form and GitHub), share flow; published and deployed";
           homepage = "https://github.com/ZacxDev/cairn";
           license = licenses.mit;
           mainProgram = "cairn-ui";
@@ -940,11 +948,14 @@
           default = mkGoClient pkgs;
           cairn-server-go = mkGoServer pkgs;
           cairn-go = mkGoClient pkgs;
-          # 🔴 THE BROWSER SURFACE HAS NO `apps` ENTRY AND IS NOT IN `default`. It is
-          # built by name or not at all, which is what "deployed by nothing" means
-          # concretely rather than as a promise. ⚠ This said "AND NOTHING ELSE — no
-          # `apps` entry, no image": there IS an image now (`packages.ui-image`), and it
-          # is PUBLISHED. Published is not deployed.
+          # 🔴 THE BROWSER SURFACE HAS NO `apps` ENTRY AND IS NOT IN `default`: it is
+          # built by name or not at all. ⚠ THAT IS A FACT ABOUT THIS FLAKE AND NOT ABOUT
+          # WHAT IS RUNNING, WHICH IS THE INFERENCE TWO EARLIER WORDINGS MADE HERE. The
+          # first said "AND NOTHING ELSE — no `apps` entry, no image"; the second said
+          # this is "what 'deployed by nothing' means concretely". There IS an image
+          # (`packages.ui-image`), `publish-image.yml` PUSHES it, and a manifest in the
+          # operator's GitOps repository DEPLOYS it. A missing `apps` entry never
+          # implied any of that.
           cairn-ui = mkGoUI pkgs;
         }
         // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
@@ -960,12 +971,17 @@
           # 🔴 `ui-image`, NOT `ui-image-go`. The `-go` suffix on the pod distinguishes
           # it from a PYTHON sibling that exists and is still published; this surface has
           # no second implementation and never had one, so a suffix would imply a
-          # counterpart a reader would then go looking for. ⚠ NOTHING PUBLISHES IT YET —
-          # `publish-image.yml` pushes `server-image` and `server-image-go` and no third
-          # leg exists, so the OCI name below is what it WOULD be published as, not a
-          # package anybody can pull. An earlier wording here read "It publishes to its
-          # own ghcr package", present tense, for a leg the same change deliberately
-          # excluded.
+          # counterpart a reader would then go looking for.
+          #
+          # ⚠ IT IS PUBLISHED, AND THE CLAIM THAT IT WAS NOT IS RETRACTED — the wording
+          # here has now been wrong in BOTH directions, which is why the record is kept.
+          # It first read "It publishes to its own ghcr package", present tense, for a leg
+          # the same change deliberately excluded. It was then corrected to "NOTHING
+          # PUBLISHES IT YET — `publish-image.yml` pushes `server-image` and
+          # `server-image-go` and no third leg exists", which is the sentence that went
+          # stale: that workflow now builds this derivation, pushes it under the OCI name
+          # below, and PROVES the result pullable with no credentials. So the name below
+          # is a package anybody can pull.
           ui-image = mkGoUIImage pkgs;
         });
 

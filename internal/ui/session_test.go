@@ -14,6 +14,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/testcookie"
 )
 
 // --- fixtures -------------------------------------------------------------------------
@@ -87,7 +88,7 @@ func newLiveMetered(
 	if err != nil {
 		t.Fatalf("the machine-token backend did not build: %v", err)
 	}
-	chain, err := AuthBackends(machine, cookie)
+	chain, err := AuthBackends(machine, nil, cookie)
 	if err != nil {
 		t.Fatalf("the chain did not build: %v", err)
 	}
@@ -216,12 +217,15 @@ func TestTheSignInResponseSetsACookieWithItsFlags(t *testing.T) {
 		t.Fatal("the sign-in response carried NO Set-Cookie header, so every assertion below would be over an " +
 			"empty string")
 	}
+	// `Path=/` goes through `testcookie.HasExactAttr` because `strings.Contains` accepts
+	// `Path=/sign-in`, which a browser DROPS for a `__Host-` cookie.
 	for _, want := range []string{"HttpOnly", "Secure", "SameSite=Lax", "Path=/"} {
-		if !strings.Contains(header, want) {
-			t.Errorf("the sign-in response's Set-Cookie does not carry %s: %q.\n"+
+		if !testcookie.HasExactAttr(header, want) {
+			t.Errorf("the sign-in response's Set-Cookie does not carry %s exactly: %q.\n"+
 				"HttpOnly keeps the id out of `document.cookie`, which is also what makes the CSRF token's "+
 				"derivation sound; Secure keeps it off plaintext; SameSite=Lax keeps the browser from attaching "+
-				"it to a cross-site POST.", want, header)
+				"it to a cross-site POST; Path must be exactly `/` or a `__Host-` cookie is refused outright.",
+				want, header)
 		}
 	}
 	if !strings.HasPrefix(header, identity.SessionCookieName+"=") {

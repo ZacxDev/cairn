@@ -33,9 +33,7 @@ func Page(viewer string, scopes []Scope, csrf string) g.Node {
 	return c.HTML5(c.HTML5Props{
 		Title:    "cairn",
 		Language: "en",
-		Head: []g.Node{
-			h.StyleEl(g.Text(stylesheet)),
-		},
+		Head:     []g.Node{stylesheetLink()},
 		Body: []g.Node{
 			h.Header(
 				h.H1(g.Text("cairn")),
@@ -52,6 +50,20 @@ func Page(viewer string, scopes []Scope, csrf string) g.Node {
 			),
 		},
 	})
+}
+
+// stylesheetLink is the ONE way a page reaches the stylesheet, so all three pages cannot
+// end up under different rules.
+//
+// 🔴 A LINK WHERE ALL THREE PAGES HAD AN INLINE `<style>`, AND THE CSP IS WHY. `style-src
+// 'self'` forbids an inline style element in a conforming browser — see
+// [ContentSecurityPolicy] for which direction each part of that policy moved — so an inline
+// stylesheet would not have been refused loudly, it would simply not have applied, and every
+// page would have rendered as unstyled text with no error anywhere. The href is a package
+// constant and never user text; `safeHref` is not reached and must not be, for the reason
+// `shareIndex` records about the same-origin case.
+func stylesheetLink() g.Node {
+	return h.Link(h.Rel("stylesheet"), h.Href(StylesheetPath))
 }
 
 // signOutForm is a POST, and that is the security property rather than a style choice.
@@ -84,22 +96,34 @@ func signOutForm(csrf string) g.Node {
 // refusal does not say which part of the credential was wrong. Both are the same rule
 // `internal/api`'s uniform 401 follows, stated where a human is the reader.
 //
-// ⚠ THE FORM CARRIES NO CSRF TOKEN, AND ITS ABSENCE IS A CONSEQUENCE RATHER THAN AN
+// ⚠ NEITHER FORM CARRIES A CSRF TOKEN, AND ITS ABSENCE IS A CONSEQUENCE RATHER THAN AN
 // OVERSIGHT: there is no session yet, so there is nothing to derive one from. What stands
 // in front of login-CSRF — an attacker making a victim's browser sign in as the attacker,
 // so the victim's later writes land in the attacker's scopes — is gate (2), the
 // same-origin check, which runs on every state-changing request including this one and
 // needs no credential to do it. That is why gate (2) exists at all and why it is BEFORE
 // authentication rather than after.
-func SignInPage(message string) g.Node {
+//
+// 🔴 `provider` RENDERS A SECOND DOOR AND THE FIRST ONE IS NOT REPLACED BY IT. The
+// credential form stays whatever the provider button does, for two reasons that are both
+// operational rather than aesthetic: it is the door that verified this deployment, and it is
+// the only one that works when the identity provider is down — the JWKS is cached and an
+// already-issued session survives an outage (`SupabaseJWT`'s own comment measures that), but
+// a NEW sign-in through the provider does not. A surface whose only way in depends on a third
+// party is a surface with a third party's availability.
+func SignInPage(message string, provider bool) g.Node {
 	return c.HTML5(c.HTML5Props{
 		Title:    "cairn — sign in",
 		Language: "en",
-		Head:     []g.Node{h.StyleEl(g.Text(stylesheet))},
+		Head:     []g.Node{stylesheetLink()},
 		Body: []g.Node{
 			h.Header(h.H1(g.Text("cairn"))),
 			h.Main(
 				g.If(message != "", h.P(h.Class("refused"), g.Text(message))),
+				// The provider button is FIRST because it is the one door a person can use
+				// without holding a secret, and a page that leads with a `password` field
+				// teaches somebody to go looking for a credential they do not need.
+				g.If(provider, providerForm()),
 				h.FormEl(
 					h.Class("signin"),
 					h.Method("post"),
@@ -119,6 +143,29 @@ func SignInPage(message string) g.Node {
 			),
 		},
 	})
+}
+
+// providerForm is the GitHub button, and it is a FORM rather than a link.
+//
+// 🔴 A LINK WOULD BE A `GET`, AND `stateChanging` CALLS `GET` SAFE — so gate (2) would not
+// cover it and any `<img src>` in the world, plus every link prefetcher and mail scanner,
+// would mint a flight in the visitor's browser and overwrite whatever flight cookie they
+// held. That is the same ruling `signOutForm` records, and it is why the start route is a
+// POST in the ledger.
+//
+// ⚠ IT NEEDS NO SCRIPT, WHICH IS THE WHOLE REASON THE FLOW IS PKCE WITH A SERVER-SIDE
+// EXCHANGE. `script-src 'self'` would permit a script served from this origin, so the
+// implicit flow was available; it was refused because it returns the access token in the URL
+// FRAGMENT, which no server ever receives — the page would have to read `location.hash` in
+// script and POST it back, which is more code, a second way in, and a token in the browser's
+// history.
+func providerForm() g.Node {
+	return h.FormEl(
+		h.Class("signin-provider"),
+		h.Method("post"),
+		h.Action(OAuthStartPath),
+		h.Button(h.Type("submit"), g.Text("Sign in with "+GitHubLabel)),
+	)
 }
 
 // ReplicaHonesty is the notice the share flow carries, and it is a CONSTANT so that a
@@ -141,8 +188,15 @@ func SignInPage(message string) g.Node {
 //
 //   - "one replica's answer, read from a cached copy of the authority" —
 //     `control.Cache` is stale by design up to its declared `MaxAge`, and `cairn-ui`
-//     is a single-replica surface (a stated limit, not an aspiration: there is no
-//     `ui-image` derivation and no deployment manifest in this repository).
+//     is a single-replica surface. ⚠ THE EVIDENCE THIS CLAUSE USED TO CITE IS RETRACTED,
+//     AND THE CLAUSE ITSELF IS NOT. It read "a stated limit, not an aspiration: there is
+//     no `ui-image` derivation and no deployment manifest in this repository" — and both
+//     of those are now false: `packages.ui-image` exists and publishes, and the surface is
+//     DEPLOYED from a manifest that lives in the operator's GitOps repository rather than
+//     here. "No manifest HERE" was never evidence about how many replicas run anywhere;
+//     the limit is real and its actual source is `internal/identity/session.go`'s storage
+//     decision, which records that the session table pins this surface to one replica and
+//     that sticky routing is the intended answer for more.
 //   - "another reader gains or loses the scope when their own cache next refreshes" —
 //     `control.Cache.ApplyNow`'s promise is explicitly about THIS process and no other.
 //   - "does not recall entries already copied" — `ApplyNow` says it in as many words:
@@ -227,7 +281,7 @@ func SharePage(v ShareView) g.Node {
 	return c.HTML5(c.HTML5Props{
 		Title:    title,
 		Language: "en",
-		Head:     []g.Node{h.StyleEl(g.Text(stylesheet))},
+		Head:     []g.Node{stylesheetLink()},
 		Body: []g.Node{
 			h.Header(
 				h.H1(g.Text("cairn")),
@@ -496,9 +550,17 @@ func safeHref(raw string) (string, bool) {
 // builds its own internal links from the ledger, never from user text.
 var allowedSchemes = []string{"http://", "https://"}
 
-// stylesheet is a constant. It is NOT user text and could never be: it is written
-// here, in this file, and no input reaches it — which is why `style-src
-// 'unsafe-inline'` in the response's policy buys an attacker nothing.
+// stylesheet is a constant. It is NOT user text and could never be: it is written here, in
+// this file, and no input reaches it.
+//
+// ⚠ THE REASON THIS COMMENT USED TO GIVE IS RETRACTED, AND THE CONSTANT-NESS IT RESTED ON IS
+// NOT. It read "— which is why `style-src 'unsafe-inline'` in the response's policy buys an
+// attacker nothing", and the policy no longer carries `'unsafe-inline'`: [ContentSecurityPolicy]
+// is `style-src 'self'`, so an inline `<style>` does not apply at all and these bytes are
+// SERVED, by [Server.handleStylesheet] at [StylesheetPath]. The old argument was sound for the
+// policy it described and is now about a clause that is gone; the fact it rested on — no input
+// reaches this string — is what makes serving it as a static asset safe, so it is kept and the
+// conclusion is replaced rather than the whole sentence deleted.
 const stylesheet = `
 :root { color-scheme: light dark; }
 body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 48rem; }

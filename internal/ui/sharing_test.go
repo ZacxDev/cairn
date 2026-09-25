@@ -157,7 +157,7 @@ func newShareRigWithAuthority(t *testing.T, authority *control.Cache) *shareRig 
 	if err != nil {
 		t.Fatalf("the machine-token backend did not build: %v", err)
 	}
-	chain, err := AuthBackends(machine, cookie)
+	chain, err := AuthBackends(machine, nil, cookie)
 	if err != nil {
 		t.Fatalf("the chain did not build: %v", err)
 	}
