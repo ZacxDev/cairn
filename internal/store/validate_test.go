@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -489,7 +490,7 @@ func TestTheRefRunFoldsPROnlyForTheMarkerAnywherePattern(t *testing.T) {
 // 🔴 "0 across 0 entry file(s)" IS THE REASSURING ZERO FROM AN INSTRUMENT THAT
 // WALKED NOTHING, and it must not render anywhere near a clean-looking count.
 func TestNothingCheckedPrintsNotCheckedAndNeitherZero(t *testing.T) {
-	lines := ValidationAdvisoryLines(0, nil, nil)
+	lines := ValidationAdvisoryLines(0, nil, nil, nil, nil)
 	if len(lines) != 1 {
 		t.Fatalf("want one line, got %#v", lines)
 	}
@@ -505,7 +506,7 @@ func TestNothingCheckedPrintsNotCheckedAndNeitherZero(t *testing.T) {
 }
 
 func TestBothZerosCarryTheirDenominator(t *testing.T) {
-	blob := strings.Join(ValidationAdvisoryLines(7, nil, nil), "\n")
+	blob := strings.Join(ValidationAdvisoryLines(7, nil, nil, nil, nil), "\n")
 	for _, want := range []string{
 		"dropped lines: 0 across 7 entry file(s)",
 		"marker reachability: 0 out-of-reach marker(s) across 7 entry file(s)",
@@ -531,9 +532,9 @@ func TestBothZerosCarryTheirDenominator(t *testing.T) {
 // A `0 out-of-reach` printed ABOVE a `N DROPPED LINE(S)` is a fact about text the
 // parser never got to, and reads as a reassurance it cannot support.
 func TestTheDroppedBlockComesBeforeTheReachabilityBlock(t *testing.T) {
-	blob := strings.Join(ValidationAdvisoryLines(1,
+	blob := strings.Join(ValidationAdvisoryLines(1, nil,
 		[]DroppedLineFinding{{Filename: "a.md", Offset: 1, Line: "  lost."}},
-		nil), "\n")
+		nil, nil), "\n")
 	dropped := strings.Index(blob, "DROPPED LINE(S)")
 	reach := strings.Index(blob, "marker reachability:")
 	if dropped < 0 || reach < 0 || dropped > reach {
@@ -542,12 +543,13 @@ func TestTheDroppedBlockComesBeforeTheReachabilityBlock(t *testing.T) {
 }
 
 func TestFindingsAreQuotedWithTheirFileAndOffset(t *testing.T) {
-	blob := strings.Join(ValidationAdvisoryLines(2,
+	blob := strings.Join(ValidationAdvisoryLines(2, nil,
 		[]DroppedLineFinding{
 			{Filename: "talus-svc.md", Offset: 1, Line: "  lost prose."},
 			{Filename: "talus-svc.md", Offset: 2, Line: "  OPEN: lost claim.",
 				CarriesMarker: true},
 		},
+		nil,
 		[]UnreachableMarkerFinding{
 			{Filename: "talus-svc.md", BulletFirstLine: "- 2000-01-04: a bullet.",
 				Offset: 2, Line: "  OPEN: x.", Openness: OpennessOpen},
@@ -572,8 +574,8 @@ func TestFindingsAreQuotedWithTheirFileAndOffset(t *testing.T) {
 // 🔴 RUNES, NOT BYTES — the oracle slices a `str`.
 func TestALongLineIsCutToTheDeclaredQuoteLength(t *testing.T) {
 	long := strings.Repeat("é", 500)
-	lines := ValidationAdvisoryLines(1,
-		[]DroppedLineFinding{{Filename: "a.md", Offset: 1, Line: long}}, nil)
+	lines := ValidationAdvisoryLines(1, nil,
+		[]DroppedLineFinding{{Filename: "a.md", Offset: 1, Line: long}}, nil, nil)
 	var quoted string
 	for _, ln := range lines {
 		if strings.HasPrefix(strings.TrimSpace(ln), "é") {
@@ -582,5 +584,662 @@ func TestALongLineIsCutToTheDeclaredQuoteLength(t *testing.T) {
 	}
 	if n := len([]rune(quoted)); n != AdvisoryQuoteMax {
 		t.Fatalf("quote is %d runes, want %d", n, AdvisoryQuoteMax)
+	}
+}
+
+// --------------------------------------------------------------------------
+// ScanEntryShape — the entry's SPINE, as opposed to whether it parses
+// --------------------------------------------------------------------------
+
+// shapedEntry writes an entry whose SECTIONS are given verbatim, front matter
+// prepended. Deliberately not `entryWithNuance`, which hard-codes a correct spine —
+// the whole point of these fixtures is that the spine is wrong.
+func shapedEntry(t *testing.T, dir, name, sections string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	slug := strings.TrimSuffix(name, ".md")
+	body := "---\nservice: " + slug + "\nscope: crag-notes\n---\n" + sections
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func shapeKinds(findings []ShapeFinding, kind string) []ShapeFinding {
+	var out []ShapeFinding
+	for _, f := range findings {
+		if f.Kind == kind {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// The positive control for every test below: if a clean entry produced findings,
+// every other assertion here would be about noise.
+func TestACleanEntryYieldsNoShapeFindings(t *testing.T) {
+	dir := t.TempDir()
+	path := entryWithNuance(t, dir, "clean-svc.md", "- 2000-01-04: a bullet.")
+	if got := ScanEntryShape([]string{path}); len(got) != 0 {
+		t.Fatalf("want no findings, got %#v", got)
+	}
+}
+
+// 🔴 RENAMED AND ABSENT ARE THE SAME MISSING SECTION AT TWO RESOLUTIONS, and the
+// renamed one is the only half a writer can act on in a single edit. Collapsing them
+// into "absent" sends someone looking for prose that is already on disk.
+func TestACaseNearMissIsRenamedAndQuotesWhatTheWriterTyped(t *testing.T) {
+	dir := t.TempDir()
+	path := shapedEntry(t, dir, "moraine-cfg.md",
+		"\n## pointers\n\n- `apps/moraine-cfg/values.yaml`\n"+
+			"\n"+NuanceHeading+"\n\n- 2000-01-04: a bullet.\n")
+	findings := ScanEntryShape([]string{path})
+	renamed := shapeKinds(findings, ShapeRenamed)
+	if len(renamed) != 1 {
+		t.Fatalf("want one RENAMED, got %#v", findings)
+	}
+	if renamed[0].Heading != PointersHeading {
+		t.Fatalf("finding is about %q", renamed[0].Heading)
+	}
+	if len(renamed[0].Found) != 1 || renamed[0].Found[0] != "## pointers" {
+		t.Fatalf("want the written spelling, got %#v", renamed[0].Found)
+	}
+	// 🔴 AND IT IS NOT ALSO REPORTED ABSENT — two findings for one heading would
+	// double the count a reader acts on.
+	if got := shapeKinds(findings, ShapeAbsent); len(got) != 0 {
+		t.Fatalf("also reported ABSENT: %#v", got)
+	}
+}
+
+// The three near-misses the fold is declared to cover, each in its own file so a
+// single assertion cannot pass on the wrong one.
+//
+// 🔴 THE WHITESPACE CASE IS AN *INTERNAL* RUN, NOT A LEADING ONE, AND THE FIRST DRAFT OF
+// THIS TEST GOT IT WRONG. `##   Pointers` is folded by the `StripWhitespace` already in
+// the chain, so `collapseWhitespace` never executes — a mutant that DELETED the collapse
+// survived a green run of this very test. Only a run BETWEEN two words reaches it. That
+// is the difference between a mutant that is breakable and a guard that is REACHABLE.
+func TestALevelAColonAndAWhitespaceRunAllPairAsRenamed(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct{ name, written, schema string }{
+		{"level-svc.md", "### Pointers", PointersHeading},
+		{"colon-svc.md", "## Pointers:", PointersHeading},
+		{"leading-svc.md", "##   Pointers", PointersHeading},
+		{"internal-svc.md", "## Nuance /  work-history", NuanceHeading},
+	} {
+		// The heading NOT under test is spelled correctly, so exactly one finding
+		// can exist and a passing assertion cannot be about the other.
+		other := NuanceHeading
+		if tc.schema == NuanceHeading {
+			other = PointersHeading
+		}
+		path := shapedEntry(t, dir, tc.name,
+			"\n"+tc.written+"\n\nbent section body.\n"+
+				"\n"+other+"\n\n- 2000-01-04: a bullet.\n")
+		findings := ScanEntryShape([]string{path})
+		renamed := shapeKinds(findings, ShapeRenamed)
+		if len(renamed) != 1 {
+			t.Errorf("%s: want one RENAMED, got %#v", tc.name, findings)
+			continue
+		}
+		if renamed[0].Heading != tc.schema || renamed[0].Found[0] != tc.written {
+			t.Errorf("%s: want RENAMED of %q quoting %q, got %#v",
+				tc.name, tc.schema, tc.written, renamed[0])
+		}
+	}
+}
+
+// 🔴 THE ONE PROPERTY THAT MAKES THE FOLD SAFE, AND IT IS A CLAIM ABOUT THE READER,
+// NOT ABOUT THIS SCANNER. `headingKey` folds `## pointers` onto `## Pointers` so the
+// report can name the typo. If that fold ever reached `ExtractSections`, the store
+// would quietly start accepting a wider set of headings than every reader parses — the
+// exact opposite of what a write-time check is for.
+func TestTheFoldNeverWidensWhatExtractSectionsAccepts(t *testing.T) {
+	text := "\n## pointers\n\n- `apps/x/values.yaml`\n" +
+		"\n" + NuanceHeading + "\n\n- 2000-01-04: a bullet.\n"
+	if headingKey("## pointers") != headingKey(PointersHeading) {
+		t.Fatal("the fold must pair them, or the RENAMED report is impossible")
+	}
+	if _, ok := ExtractSections(text, []string{PointersHeading})[PointersHeading]; ok {
+		t.Fatal("ExtractSections accepted a folded heading — the store just widened")
+	}
+}
+
+// 🔴 THE INVENTORY IS WHAT MAKES AN ABSENT FINDING ACTIONABLE. "no `## Pointers`"
+// alone leaves the writer re-reading a file they just wrote; the list of what IS there
+// is how they see that they called it something else entirely.
+func TestAHeadingNothingPairsWithIsAbsentAndCarriesTheInventory(t *testing.T) {
+	dir := t.TempDir()
+	path := shapedEntry(t, dir, "cirque-api.md",
+		"\n## Links and references\n\n- `apps/cirque-api/values.yaml`\n"+
+			"\n"+NuanceHeading+"\n\n- 2000-01-04: a bullet.\n")
+	absent := shapeKinds(ScanEntryShape([]string{path}), ShapeAbsent)
+	if len(absent) != 1 || absent[0].Heading != PointersHeading {
+		t.Fatalf("want one ABSENT about Pointers, got %#v", absent)
+	}
+	want := []string{"## Links and references", NuanceHeading}
+	if strings.Join(absent[0].Found, "|") != strings.Join(want, "|") {
+		t.Fatalf("inventory is %#v, want %#v", absent[0].Found, want)
+	}
+}
+
+// A bound, not a filter. NINE headings against a cap of six, deliberately: nine
+// OVERSHOOTS the cap rather than being a multiple of it, so a mutant that dropped the
+// slice, or sliced by a different constant, cannot land on the same rendered string.
+func TestTheInventoryIsCappedAndTheRemainderIsCounted(t *testing.T) {
+	dir := t.TempDir()
+	var sections strings.Builder
+	for i := 1; i <= 9; i++ {
+		fmt.Fprintf(&sections, "\n## Section %d\n\nprose %d.\n", i, i)
+	}
+	path := shapedEntry(t, dir, "many-svc.md", sections.String())
+	findings := ScanEntryShape([]string{path})
+	absent := shapeKinds(findings, ShapeAbsent)
+	if len(absent) != 2 {
+		t.Fatalf("want both spine headings ABSENT, got %#v", findings)
+	}
+	if len(absent[0].Found) != 9 {
+		t.Fatalf("inventory holds %d headings, want 9", len(absent[0].Found))
+	}
+	blob := strings.Join(ValidationAdvisoryLines(11, findings, nil, nil, nil), "\n")
+	for _, want := range []string{"… 3 more", "`## Section 6`"} {
+		if !strings.Contains(blob, want) {
+			t.Errorf("missing %q in:\n%s", want, blob)
+		}
+	}
+	if strings.Contains(blob, "`## Section 7`") {
+		t.Errorf("the cap did not apply:\n%s", blob)
+	}
+}
+
+// 🔴 THE DISJOINTNESS CLAIM, MADE OBSERVABLE. `duplicated` and `empty` are facts about
+// the same heading with different remedies — "fold them into one section" and "write
+// something under it" — and a reader handed one of the two has half a remedy. Neither
+// branch in ScanEntryShape is an `else`, and this is the fixture that can tell.
+//
+// THREE occurrences, not two: a mutant that hard-coded the count, or that reported
+// presence as a boolean, cannot produce the rendered `appears 3 times`.
+func TestADuplicatedHeadingWhoseMergedBodyIsEmptyYieldsBothFindings(t *testing.T) {
+	dir := t.TempDir()
+	path := shapedEntry(t, dir, "dupempty-svc.md",
+		"\n## Pointers\n\n- `apps/dupempty-svc/values.yaml`\n"+
+			"\n"+NuanceHeading+"\n"+
+			"\n"+NuanceHeading+"\n"+
+			"\n"+NuanceHeading+"\n")
+	findings := ScanEntryShape([]string{path})
+	dup := shapeKinds(findings, ShapeDuplicated)
+	empty := shapeKinds(findings, ShapeEmpty)
+	if len(dup) != 1 || dup[0].Count != 3 {
+		t.Fatalf("want one DUPLICATED with Count 3, got %#v", findings)
+	}
+	if len(empty) != 1 {
+		t.Fatalf("want one EMPTY beside it, got %#v", findings)
+	}
+	if dup[0].Heading != NuanceHeading || empty[0].Heading != NuanceHeading {
+		t.Fatalf("findings are about %q / %q", dup[0].Heading, empty[0].Heading)
+	}
+	// 🔴 AND THE TWO ARE NEVER SUMMED INTO ONE NUMBER.
+	blob := strings.Join(ValidationAdvisoryLines(5, findings, nil, nil, nil), "\n")
+	for _, want := range []string{
+		"1 heading(s) DUPLICATED", "1 section(s) PRESENT AND EMPTY",
+	} {
+		if !strings.Contains(blob, want) {
+			t.Errorf("missing %q in:\n%s", want, blob)
+		}
+	}
+	if strings.Contains(blob, "2 heading(s) DUPLICATED") {
+		t.Errorf("the two kinds were summed:\n%s", blob)
+	}
+}
+
+// The other side of the same disjointness: the `empty` branch must be a branch on the
+// BODY, not a side effect of the duplicate count.
+func TestADuplicatedHeadingWithANonEmptyBodyIsNotAlsoEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := shapedEntry(t, dir, "dupfull-svc.md",
+		"\n## Pointers\n\n- `apps/dupfull-svc/values.yaml`\n"+
+			"\n"+NuanceHeading+"\n\n- 2000-01-04: one.\n"+
+			"\n"+NuanceHeading+"\n\n- 2000-01-05: two.\n")
+	findings := ScanEntryShape([]string{path})
+	if len(shapeKinds(findings, ShapeDuplicated)) != 1 {
+		t.Fatalf("want one DUPLICATED, got %#v", findings)
+	}
+	if got := shapeKinds(findings, ShapeEmpty); len(got) != 0 {
+		t.Fatalf("also reported EMPTY over a non-empty body: %#v", got)
+	}
+}
+
+// `ExtractSections` tracks presence separately from content precisely so this
+// distinction survives, and the remedies differ: "the section was never started" sends
+// you to another file, "it is there and unfilled" does not.
+func TestAPresentButEmptyHeadingIsNotReportedAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := shapedEntry(t, dir, "empty-svc.md",
+		"\n## Pointers\n"+"\n"+NuanceHeading+"\n\n- 2000-01-04: a bullet.\n")
+	findings := ScanEntryShape([]string{path})
+	if len(findings) != 1 || findings[0].Kind != ShapeEmpty ||
+		findings[0].Heading != PointersHeading {
+		t.Fatalf("want one EMPTY about Pointers, got %#v", findings)
+	}
+}
+
+// 🔴 THE SAME GATE AS THE OTHER SCANNERS, AND IT IS NOT AN `err != nil`. Reading a FIFO
+// returns no error — it BLOCKS until somebody writes, and `validate` never returns.
+// This scanner reads the WHOLE file rather than one section, which is exactly the route
+// that could have bypassed the gate.
+func TestScanEntryShapeRefusesAPathNoScannerMayOpen(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "wedge.md")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	real := entryWithNuance(t, dir, "real-svc.md", "- 2000-01-04: a bullet.")
+	if got := ScanEntryShape([]string{real, fifo}); len(got) != 0 {
+		t.Fatalf("want no findings, got %#v", got)
+	}
+}
+
+// --------------------------------------------------------------------------
+// ScanOpenActions — the four openness populations, never summed
+// --------------------------------------------------------------------------
+
+// One bullet per population, plus the two the scan must be SILENT about.
+var populationBullets = map[string]string{
+	"open":         "- 2000-01-05: OPEN: the writer declared this one, exactly.",
+	"near-miss":    "- 2000-01-06: **OPEN**: emphasis, so the marker never parses.",
+	"unmarked":     "- 2000-01-07: Open items: the retry budget is not yet addressed.",
+	"unverifiable": "- 2000-01-08: RESOLVED: closed, and naming no sha at all.",
+	"resolved":     "- 2000-01-09: RESOLVED abc1234: closed, and reported by nothing.",
+	"none":         "- 2000-01-10: an ordinary bullet about an ordinary thing.",
+}
+
+// allPopulations joins the six in a fixed order — a map iteration would reorder the
+// bullets between runs, and the openness precedence is per-bullet so the order does not
+// change the answer, but a fixture whose bytes move is not a fixture.
+func allPopulations() string {
+	order := []string{"open", "near-miss", "unmarked", "unverifiable", "resolved", "none"}
+	rows := make([]string, 0, len(order))
+	for _, k := range order {
+		rows = append(rows, populationBullets[k])
+	}
+	return strings.Join(rows, "\n")
+}
+
+// 🔴 SIX POPULATIONS IN, FOUR OUT. `resolved` and `none` are the control: a scanner
+// that reported every bullet it saw would produce six records and satisfy any
+// "at least" assertion.
+func TestAllFourPopulationsAreReportedAndTheOtherTwoAreSilent(t *testing.T) {
+	dir := t.TempDir()
+	path := entryWithNuance(t, dir, "populations-svc.md", allPopulations())
+	actions := ScanOpenActions([]string{path})
+	if len(actions) != 4 {
+		t.Fatalf("want four records, got %d: %#v", len(actions), actions)
+	}
+	var declared, near, unverifiable, guessed []OpenAction
+	for _, a := range actions {
+		// 🔴 EXACTLY ONE FLAG EACH. A record with two is how one bullet came to be
+		// counted twice on one surface while being one thing on another.
+		n := 0
+		for _, f := range []bool{a.Declared, a.NearMiss, a.UnverifiableClosure} {
+			if f {
+				n++
+			}
+		}
+		if n > 1 {
+			t.Fatalf("record carries %d flags: %#v", n, a)
+		}
+		switch {
+		case a.Declared:
+			declared = append(declared, a)
+		case a.NearMiss:
+			near = append(near, a)
+		case a.UnverifiableClosure:
+			unverifiable = append(unverifiable, a)
+		default:
+			guessed = append(guessed, a)
+		}
+	}
+	for pop, rows := range map[string][]OpenAction{
+		"open": declared, "near-miss": near, "unverifiable": unverifiable,
+		"unmarked": guessed,
+	} {
+		if len(rows) != 1 {
+			t.Fatalf("%s: want one record, got %#v", pop, rows)
+		}
+		if rows[0].FirstLine != populationBullets[pop] {
+			t.Errorf("%s: quoted %q", pop, rows[0].FirstLine)
+		}
+	}
+	// The two controls appear in NO record at all.
+	for _, silent := range []string{"resolved", "none"} {
+		for _, a := range actions {
+			if a.FirstLine == populationBullets[silent] {
+				t.Errorf("%s was reported: %#v", silent, a)
+			}
+		}
+	}
+}
+
+// The dates in the fixture are pairwise distinct and none of them is a constant any
+// assertion or any renderer names, so a scanner that invented a date — or reused one
+// bullet's — cannot land on the right answer.
+func TestTheDateIsCarriedFromTheBulletNotReconstructed(t *testing.T) {
+	dir := t.TempDir()
+	path := entryWithNuance(t, dir, "dates-svc.md", allPopulations())
+	byLine := map[string]string{}
+	for _, a := range ScanOpenActions([]string{path}) {
+		byLine[a.FirstLine] = a.Date
+	}
+	for pop, want := range map[string]string{
+		"open": "2000-01-05", "unverifiable": "2000-01-08",
+	} {
+		if got := byLine[populationBullets[pop]]; got != want {
+			t.Errorf("%s: date is %q, want %q", pop, got, want)
+		}
+	}
+}
+
+// 🔴 THE ORDERING ARGUMENT, AS BEHAVIOUR RATHER THAN AS A COMMENT. This scan reads only
+// the nuance heading, so an entry whose heading is renamed yields zero open actions NO
+// MATTER HOW MANY IT HOLDS — and the `entry shape:` block is the only one that can say
+// why. That is why it prints ABOVE this one: read in the other order, `0 declared` is
+// false.
+func TestARenamedNuanceHeadingMakesTheOpenActionScanFindNothing(t *testing.T) {
+	dir := t.TempDir()
+	path := shapedEntry(t, dir, "renamed-svc.md",
+		"\n## Pointers\n\n- `apps/renamed-svc/values.yaml`\n"+
+			"\n## Nuance / Work-History\n\n"+allPopulations()+"\n")
+	if got := ScanOpenActions([]string{path}); len(got) != 0 {
+		t.Fatalf("want nothing, got %#v", got)
+	}
+	renamed := shapeKinds(ScanEntryShape([]string{path}), ShapeRenamed)
+	if len(renamed) != 1 || renamed[0].Heading != NuanceHeading {
+		t.Fatalf("the shape scan did not report it: %#v", renamed)
+	}
+}
+
+func TestScanOpenActionsRefusesAPathNoScannerMayOpen(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "wedge.md")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	if got := ScanOpenActions([]string{fifo}); len(got) != 0 {
+		t.Fatalf("want nothing, got %#v", got)
+	}
+}
+
+// --------------------------------------------------------------------------
+// The two NEW blocks, rendered
+// --------------------------------------------------------------------------
+
+// 🔴 A ZERO THAT DOES NOT NAME ITS SET IS A CLAIM ABOUT A HEADING NOTHING EXAMINED. The
+// denominator says how many files; the SET says which headings — and without the second
+// half a reader who assumes `## What it is` was checked takes this line as a guarantee
+// about it.
+//
+// The denominator here is 13, which is not any length in this file's fixtures and not
+// any constant the block names, so a renderer that printed a finding count, a cap, or a
+// hard-coded number cannot produce it.
+func TestTheShapeZeroCarriesItsDenominatorAndTheSetItChecked(t *testing.T) {
+	var block string
+	for _, ln := range ValidationAdvisoryLines(13, nil, nil, nil, nil) {
+		if strings.HasPrefix(ln, "entry shape:") {
+			block = ln
+		}
+	}
+	if block == "" {
+		t.Fatal("no `entry shape:` line at all")
+	}
+	wants := []string{"13 entry file(s) checked for", "`" + WhatHeading + "` is NOT checked here"}
+	for _, h := range ShapeHeadings {
+		wants = append(wants, "`"+h+"`")
+	}
+	for _, want := range wants {
+		if !strings.Contains(block, want) {
+			t.Errorf("missing %q in: %s", want, block)
+		}
+	}
+	// The ORDER is part of the printed contract the parity gate compares.
+	if strings.Index(block, "`"+ShapeHeadings[0]+"`") >
+		strings.Index(block, "`"+ShapeHeadings[1]+"`") {
+		t.Errorf("the spine printed out of order: %s", block)
+	}
+}
+
+// 🔴 FOUR DISJOINT KINDS, FOUR SUB-BLOCKS, FOUR COUNTS. A single "4 problems" total
+// would be the number a writer acts on, and every one of the four needs a different
+// edit.
+func TestTheShapeFindingsBranchRendersEachKindSeparatelyAndSumsNothing(t *testing.T) {
+	shape := []ShapeFinding{
+		{Filename: "a.md", Heading: PointersHeading, Kind: ShapeRenamed,
+			Found: []string{"## pointers"}},
+		{Filename: "b.md", Heading: PointersHeading, Kind: ShapeAbsent,
+			Found: []string{"## Elsewhere"}},
+		{Filename: "c.md", Heading: NuanceHeading, Kind: ShapeDuplicated, Count: 3},
+		{Filename: "d.md", Heading: NuanceHeading, Kind: ShapeEmpty},
+	}
+	blob := strings.Join(ValidationAdvisoryLines(13, shape, nil, nil, nil), "\n")
+	for _, want := range []string{
+		"entry shape across 13 entry file(s), checked for",
+		"🔴 1 section(s) RENAMED",
+		"    a.md: `## Pointers` is written as `## pointers`",
+		"🔴 1 section(s) ABSENT",
+		"    b.md: no `## Pointers`; the file's headings are `## Elsewhere`",
+		"🔴 1 heading(s) DUPLICATED",
+		"    c.md: `" + NuanceHeading + "` appears 3 times",
+		"⚠ 1 section(s) PRESENT AND EMPTY",
+		"    d.md: `" + NuanceHeading + "`",
+	} {
+		if !strings.Contains(blob, want) {
+			t.Errorf("missing %q in:\n%s", want, blob)
+		}
+	}
+	// 🔴 NO SUMMED TOTAL.
+	for _, forbidden := range []string{"4 section(s)", "4 heading(s)"} {
+		if strings.Contains(blob, forbidden) {
+			t.Errorf("found a summed total %q in:\n%s", forbidden, blob)
+		}
+	}
+}
+
+// An empty inventory must read as a sentence, not as a dangling `are `.
+func TestAnAbsentFindingWithNoHeadingsAtAllSaysSo(t *testing.T) {
+	blob := strings.Join(ValidationAdvisoryLines(13,
+		[]ShapeFinding{{Filename: "e.md", Heading: NuanceHeading, Kind: ShapeAbsent}},
+		nil, nil, nil), "\n")
+	if !strings.Contains(blob, "the file's headings are (none at all)") {
+		t.Fatalf("missing the empty-inventory sentence in:\n%s", blob)
+	}
+}
+
+// 🔴 THE SECOND HALF OF THIS ZERO IS A FLOOR WITH UNKNOWN RECALL, NOT A CLEAN BILL OF
+// HEALTH. `OPEN:` is exact; the unmarked guess is two measured phrasings, so an
+// unfinished action phrased any other way is invisible — and a line that did not say so
+// would be read as "there are none".
+func TestTheOpenActionsZeroCarriesItsDenominatorAndNamesTheFloor(t *testing.T) {
+	var block string
+	for _, ln := range ValidationAdvisoryLines(13, nil, nil, nil, nil) {
+		if strings.HasPrefix(ln, "open actions:") {
+			block = ln
+		}
+	}
+	if block == "" {
+		t.Fatal("no `open actions:` line at all")
+	}
+	for _, want := range []string{
+		"0 declared across 13 entry file(s)", "FLOOR with unknown recall",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("missing %q in: %s", want, block)
+		}
+	}
+}
+
+// 🔴 THE FLOOR MUST NOT MASQUERADE AS A COUNT. `Declared` is exact and `unmarked` is a
+// guess; one total over both is a number nobody can act on.
+//
+// The four sub-counts are 2, 3, 5 and 7 — pairwise distinct, none equal to their total
+// (17) or to any pairwise sum, so a renderer that added any two of them cannot land on a
+// string these assertions accept.
+func TestTheFourPopulationsRenderSeparatelyAndAreNeverSummed(t *testing.T) {
+	rows := func(tag string, n int, set func(*OpenAction)) []OpenAction {
+		out := make([]OpenAction, 0, n)
+		for i := 0; i < n; i++ {
+			a := OpenAction{
+				Filename:  fmt.Sprintf("%s-%d.md", tag, i),
+				Date:      "2000-01-04",
+				FirstLine: fmt.Sprintf("- 2000-01-04: %s row %d.", tag, i),
+			}
+			set(&a)
+			out = append(out, a)
+		}
+		return out
+	}
+	var actions []OpenAction
+	actions = append(actions, rows("declared", 2, func(a *OpenAction) { a.Declared = true })...)
+	actions = append(actions, rows("near", 3, func(a *OpenAction) { a.NearMiss = true })...)
+	actions = append(actions, rows("guess", 5, func(a *OpenAction) {})...)
+	actions = append(actions, rows("unverifiable", 7,
+		func(a *OpenAction) { a.UnverifiableClosure = true })...)
+	if len(actions) != 17 {
+		t.Fatalf("fixture holds %d rows, want 17", len(actions))
+	}
+	blob := strings.Join(ValidationAdvisoryLines(13, nil, nil, actions, nil), "\n")
+	for _, want := range []string{
+		"open actions across 13 entry file(s):",
+		"🔴 2 declared `OPEN:`",
+		"🔴 3 bullet(s) look like an ATTEMPTED marker",
+		"⚠ 5 unmarked bullet(s)",
+		"⚠ 7 `RESOLVED:` bullet(s) name no sha",
+	} {
+		if !strings.Contains(blob, want) {
+			t.Errorf("missing %q in:\n%s", want, blob)
+		}
+	}
+	if strings.Contains(blob, "17") {
+		t.Errorf("a summed total leaked into:\n%s", blob)
+	}
+}
+
+// The same bound the sibling blocks use, and the same reason: a validator that reprints
+// a 4,000-character bullet has buried its own verdict.
+// 🔴 RUNES, NOT BYTES — the oracle slices a `str`.
+func TestALongOpenActionFirstLineIsCutToTheDeclaredQuoteLength(t *testing.T) {
+	long := strings.Repeat("é", 500)
+	lines := ValidationAdvisoryLines(13, nil, nil,
+		[]OpenAction{{Filename: "a.md", Declared: true, Date: "2000-01-04",
+			FirstLine: long}}, nil)
+	var quoted string
+	for _, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "a.md: é") {
+			quoted = strings.TrimSpace(ln)
+		}
+	}
+	if quoted == "" {
+		t.Fatalf("no quoted line in:\n%s", strings.Join(lines, "\n"))
+	}
+	if n := len([]rune(quoted)); n != len("a.md: ")+AdvisoryQuoteMax {
+		t.Fatalf("quote is %d runes, want %d", n, len("a.md: ")+AdvisoryQuoteMax)
+	}
+}
+
+// Both new blocks say they are advisory, in their own words, because the remedies
+// differ and a shared sentence would name the wrong one for one of them.
+func TestBothNewBlocksSayTheyAreAdvisory(t *testing.T) {
+	blob := strings.Join(ValidationAdvisoryLines(13,
+		[]ShapeFinding{{Filename: "f.md", Heading: NuanceHeading, Kind: ShapeEmpty}},
+		nil,
+		[]OpenAction{{Filename: "a.md", Declared: true, Date: "2000-01-04",
+			FirstLine: "- 2000-01-04: OPEN: x."}},
+		nil), "\n")
+	for _, want := range []string{
+		"changes no verdict", "Fix the heading, not the exit code.",
+		"None of this changes the verdict", "red gate nobody could turn green",
+	} {
+		if !strings.Contains(blob, want) {
+			t.Errorf("missing %q in:\n%s", want, blob)
+		}
+	}
+}
+
+// 🔴 THE ORDER IS THE CLAIM, NOT A LAYOUT PREFERENCE.
+//
+// Three of the four blocks read only the nuance heading. A renamed heading makes every
+// one of them read an empty section, so each prints a zero about a section no parser
+// reached — and `entry shape:` is the only block that can say why. Printed below them it
+// is an afterthought; printed above them it is the reason. `dropped lines:` then
+// precedes the two bullet-level blocks for the sibling reason: a dropped line is content
+// NO reader reaches, so neither of those scans ever sees it.
+func TestTheFourBlocksPrintInOrder(t *testing.T) {
+	order := []string{
+		"entry shape:", "dropped lines:", "open actions:", "marker reachability:",
+	}
+	lines := ValidationAdvisoryLines(13, nil, nil, nil, nil)
+	at := make([]int, 0, len(order))
+	for _, want := range order {
+		idx := -1
+		for i, ln := range lines {
+			if strings.HasPrefix(ln, want) {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			t.Fatalf("no %q block in:\n%s", want, strings.Join(lines, "\n"))
+		}
+		at = append(at, idx)
+	}
+	for i := 1; i < len(at); i++ {
+		if at[i-1] >= at[i] {
+			t.Fatalf("blocks out of order: %v for %v", at, order)
+		}
+	}
+}
+
+func TestTheFourBlocksPrintInOrderOnTheFindingsBranch(t *testing.T) {
+	blob := strings.Join(ValidationAdvisoryLines(13,
+		[]ShapeFinding{{Filename: "a.md", Heading: NuanceHeading, Kind: ShapeEmpty}},
+		[]DroppedLineFinding{{Filename: "a.md", Offset: 1, Line: "  lost."}},
+		[]OpenAction{{Filename: "a.md", Declared: true, Date: "2000-01-04",
+			FirstLine: "- 2000-01-04: OPEN: x."}},
+		[]UnreachableMarkerFinding{{Filename: "a.md",
+			BulletFirstLine: "- 2000-01-04: a bullet.", Offset: 2,
+			Line: "  OPEN: x.", Openness: OpennessOpen}}), "\n")
+	prev := -1
+	for _, want := range []string{
+		"entry shape across", "DROPPED LINE(S)", "open actions across",
+		"MARKER(S) OUT OF REACH",
+	} {
+		at := strings.Index(blob, want)
+		if at <= prev {
+			t.Fatalf("%q at %d, out of order (previous %d):\n%s", want, at, prev, blob)
+		}
+		prev = at
+	}
+}
+
+// 🔴 ALL-OR-NOTHING. A run that withheld the two older blocks and still printed
+// `entry shape: 0 entry file(s) checked` would emit exactly the reassuring zero the
+// `NOT CHECKED` branch exists to prevent — and the `0 across 0` assertion cannot see it,
+// because that is not the spelling either new block uses.
+func TestNotCheckedWithholdsAllFourAndNamesThem(t *testing.T) {
+	lines := ValidationAdvisoryLines(0, nil, nil, nil, nil)
+	if len(lines) != 1 {
+		t.Fatalf("want one line, got %#v", lines)
+	}
+	for _, leader := range []string{
+		"entry shape:", "dropped lines:", "open actions:", "marker reachability:",
+	} {
+		if strings.HasPrefix(lines[0], leader) {
+			t.Fatalf("a block printed anyway: %q", lines[0])
+		}
+	}
+	for _, named := range []string{
+		"entry shape", "dropped lines", "open actions", "marker reachability",
+	} {
+		if !strings.Contains(lines[0], named) {
+			t.Errorf("the line does not name %q: %q", named, lines[0])
+		}
 	}
 }

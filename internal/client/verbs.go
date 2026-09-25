@@ -708,9 +708,18 @@ func Validate(env Env, opts Options) (int, error) {
 		// holding one entry beside a FIFO: `dropped lines: 0 across 2 entry file(s)`,
 		// with one of the two never read. The FIFO is not lost from the output; it is
 		// reported malformed on stderr by the line above and drives the exit to 5.
+		//
+		// 🔴 FOUR BLOCKS, AND `entry shape:` PRINTS FIRST FOR A REASON THE OTHER THREE
+		// CANNOT STATE FOR THEMSELVES. All three of the others read only the nuance
+		// heading, so an entry whose heading is RENAMED contributes zero to every one of
+		// them — `open actions: 0 declared` over a section no parser ever reached. The
+		// shape block is the one that says why, and it has to be ABOVE them to be read
+		// as the reason rather than as an afterthought. None of the four moves `worst`.
 		for _, line := range store.ValidationAdvisoryLines(
 			store.ScannedEntryCount(entryPaths),
+			store.ScanEntryShape(entryPaths),
 			store.ScanDroppedLines(entryPaths),
+			store.ScanOpenActions(entryPaths),
 			store.ScanUnreachableMarkers(entryPaths),
 		) {
 			// A blank separator stays blank — prefixing it would print a trailing

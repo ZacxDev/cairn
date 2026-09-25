@@ -373,12 +373,23 @@ func TestAScopeWithNoEntriesPrintsNotCheckedRatherThanAZero(t *testing.T) {
 	}
 	var line string
 	for _, ln := range strings.Split(stdout, "\n") {
-		if strings.HasPrefix(ln, "cairn: sheet-only: dropped lines") {
+		if strings.HasPrefix(ln, "cairn: sheet-only: write-protocol advisories") {
 			line = ln
 		}
 	}
 	if line == "" || !strings.Contains(line, "NOT CHECKED") {
 		t.Fatalf("want a NOT CHECKED line for sheet-only, got:\n%s", stdout)
+	}
+	// 🔴 THE WITHHOLDING IS ALL-OR-NOTHING ACROSS ALL FOUR BLOCKS, and that is the half
+	// the zero-substring check below cannot assert: neither new block spells its zero as
+	// `0 across N`, so a run that withheld the two older blocks and still printed
+	// `entry shape: 0 entry file(s) checked` would satisfy every line above.
+	for _, withheld := range []string{
+		"entry shape:", "open actions:", "dropped lines:", "marker reachability:",
+	} {
+		if strings.Contains(stdout, "cairn: sheet-only: "+withheld) {
+			t.Errorf("%q printed anyway:\n%s", withheld, stdout)
+		}
 	}
 	if strings.Contains(stdout, "0 across 0") {
 		t.Fatalf("a zero over nothing was printed:\n%s", stdout)
@@ -464,14 +475,217 @@ func TestAScopeHoldingONLYAnUnopenablePathAlsoSaysNotChecked(t *testing.T) {
 	}
 	var line string
 	for _, ln := range strings.Split(stdout, "\n") {
-		if strings.HasPrefix(ln, "cairn: pipe-only: dropped lines") {
+		if strings.HasPrefix(ln, "cairn: pipe-only: write-protocol advisories") {
 			line = ln
 		}
 	}
 	if line == "" || !strings.Contains(line, "NOT CHECKED") {
 		t.Fatalf("want a NOT CHECKED line for pipe-only, got:\n%s", stdout)
 	}
+	// 🔴 THE WITHHOLDING IS ALL-OR-NOTHING ACROSS ALL FOUR BLOCKS, and that is the half
+	// the zero-substring check below cannot assert: neither new block spells its zero as
+	// `0 across N`, so a run that withheld the two older blocks and still printed
+	// `entry shape: 0 entry file(s) checked` would satisfy every line above.
+	for _, withheld := range []string{
+		"entry shape:", "open actions:", "dropped lines:", "marker reachability:",
+	} {
+		if strings.Contains(stdout, "cairn: pipe-only: "+withheld) {
+			t.Errorf("%q printed anyway:\n%s", withheld, stdout)
+		}
+	}
 	if strings.Contains(stdout, "0 across 1") {
 		t.Fatalf("a zero over a file nothing opened was printed:\n%s", stdout)
+	}
+}
+
+// --------------------------------------------------------------------------
+// The two NEW blocks, at the verb
+// --------------------------------------------------------------------------
+//
+// The oracle's own coverage for the same rows is
+// `tests/test_cairn_cli.py::TestValidateReportsTheWriteProtocolContract`
+// (`test_a_BENT_SPINE_that_PARSES_is_reported_by_the_ENTRY_SHAPE_block`,
+// `test_ALL_FOUR_OPEN_ACTION_POPULATIONS_are_reported_SEPARATELY`,
+// `test_neither_NEW_advisory_moves_the_EXIT_CODE`,
+// `test_a_CLEAN_scope_prints_all_FOUR_denominators_IN_ORDER`), and the two clients are
+// compared byte-for-byte by `tests/parity/` over `crag-notes`, which now carries every
+// shape kind and every openness population — so a one-sided change is a divergence.
+
+// seedBentSpine writes an entry that PARSES and whose SPINE is wrong three ways at once:
+// `## Pointers` renamed by case, and the nuance heading written twice with nothing under
+// either.
+//
+// 🔴 IT IS ALSO THE ORDERING FIXTURE. An unreachable nuance section means the three lower
+// blocks are all silent about a badly broken file, which is exactly why `entry shape:` has
+// to print above them.
+func seedBentSpine(t *testing.T, root, scope, ref string) {
+	t.Helper()
+	body := "---\nservice: " + ref + "\nscope: " + scope + "\n---\n\n" +
+		"## What it is\n\nan entry whose spine departs from the schema.\n\n" +
+		"## pointers\n\n- none\n\n" +
+		"## Nuance / work-history\n\n" +
+		"## Nuance / work-history\n"
+	if err := os.WriteFile(filepath.Join(root, scope, ref+".md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedEveryPopulation writes an entry carrying all four reportable openness populations
+// plus the TWO the scan must be silent about — a `RESOLVED <sha>:` and an ordinary bullet.
+// Without those two controls a client that reported every bullet it saw would satisfy the
+// per-population counts.
+func seedEveryPopulation(t *testing.T, root, scope, ref string) {
+	t.Helper()
+	body := "---\nservice: " + ref + "\nscope: " + scope + "\n---\n\n" +
+		"## What it is\n\nsynthetic.\n\n## Pointers\n\n- none\n\n" +
+		"## Nuance / work-history\n\n" +
+		"- 2000-01-05: OPEN: the writer declared this one, exactly.\n" +
+		"- 2000-01-06: **OPEN**: emphasis, so the marker never parses.\n" +
+		"- 2000-01-07: Open items: the retry budget is not yet addressed.\n" +
+		"- 2000-01-08: RESOLVED: closed, and naming no sha at all.\n" +
+		"- 2000-01-09: RESOLVED abc1234: closed, and reported by nothing.\n" +
+		"- 2000-01-10: an ordinary bullet about an ordinary thing.\n"
+	if err := os.WriteFile(filepath.Join(root, scope, ref+".md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 🔴 THE SPINE EVERY CONSUMER DEPENDS ON WAS ENFORCED BY NOTHING. This entry parses — only
+// a missing `service:` ever went red — while its `## Pointers` reaches no reader and its
+// nuance section silently merges into one empty body. A reader computes an entry's bullet
+// count and its `OPEN` badge from that section, so this renders as a well-formed EMPTY
+// entry rather than as the broken one it is.
+func TestValidateReportsABentSpineThatParses(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedBentSpine(t, cache, "alpha-notes", "bent-thing")
+
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+	if code != ExitOK {
+		t.Fatalf("a parsing scope exits 0, got %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		// 🔴 THE FILE PARSES, or this test is measuring a malformed entry.
+		"cairn: alpha-notes: 2 of 2 entry file(s) parse, 0 malformed",
+		"entry shape across 2 entry file(s), checked for",
+		"1 section(s) RENAMED",
+		"bent-thing.md: `## Pointers` is written as `## pointers`",
+		"1 heading(s) DUPLICATED",
+		"bent-thing.md: `## Nuance / work-history` appears 2 times",
+		"1 section(s) PRESENT AND EMPTY",
+		// 🔴 AND THE THREE LOWER BLOCKS ARE SILENT ABOUT IT, which is the ordering
+		// argument as behaviour: their zeros are facts about a section no parser
+		// reached, and only the block above can say so.
+		"open actions: 0 declared across 2 entry file(s)",
+		"dropped lines: 0 across 2 entry file(s) scanned",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, stdout)
+		}
+	}
+}
+
+// 🔴 FOUR POPULATIONS, FOUR SUB-BLOCKS, AND THEY ARE NEVER SUMMED. A `OPEN:` bullet is
+// exact — the writer said so — while the unmarked guess is a FLOOR from two measured
+// phrasings with unknown recall. One total over both would let the floor masquerade as a
+// count. Six bullets in, four reported.
+func TestValidateReportsAllFourOpenActionPopulationsSeparately(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedEveryPopulation(t, cache, "alpha-notes", "busy-thing")
+
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+	if code != ExitOK {
+		t.Fatalf("a parsing scope exits 0, got %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"cairn: alpha-notes: 2 of 2 entry file(s) parse, 0 malformed",
+		"open actions across 2 entry file(s):",
+		"🔴 1 declared `OPEN:`",
+		"🔴 1 bullet(s) look like an ATTEMPTED marker",
+		"⚠ 1 unmarked bullet(s) that READ like an open action",
+		"⚠ 1 `RESOLVED:` bullet(s) name no sha",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, stdout)
+		}
+	}
+	// The two controls are reported by NOTHING, and no total sums the four.
+	for _, forbidden := range []string{
+		"RESOLVED abc1234: closed, and reported by nothing",
+		"an ordinary bullet about an ordinary thing",
+		"4 declared",
+	} {
+		if strings.Contains(stdout, forbidden) {
+			t.Errorf("found %q in:\n%s", forbidden, stdout)
+		}
+	}
+}
+
+// 🔴 THE WRITE PROTOCOL BRANCHES ON THIS COMMAND'S EXIT CODE TO MEAN "write NOTHING". An
+// entry whose heading is renamed is genuinely, silently broken — and still must not fail
+// the verdict, because the verdict answers one question ("would the loader accept this
+// file?") and the answer is yes.
+func TestNeitherNewAdvisoryMovesTheExitCode(t *testing.T) {
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedBentSpine(t, cache, "alpha-notes", "bent-thing")
+	seedEveryPopulation(t, cache, "alpha-notes", "busy-thing")
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+	// Both new blocks must be in their FINDINGS branch, or this proves nothing.
+	for _, reach := range []string{"section(s) RENAMED", "declared `OPEN:`"} {
+		if !strings.Contains(stdout, reach) {
+			t.Fatalf("the fixture never reached %q:\n%s", reach, stdout)
+		}
+	}
+	if code != ExitOK {
+		t.Fatalf("an advisory moved the exit code to %d\n%s", code, stderr)
+	}
+}
+
+// 🔴 A BARE ABSENCE IS INDISTINGUISHABLE FROM A SCANNER WIRED TO NOTHING, and the shape
+// zero has a second way to be vacuous the others do not: it must name the SET it checked,
+// because a reader who assumes `## What it is` was checked would take it as a claim about
+// a heading nothing examined.
+//
+// The ORDER is asserted here rather than in the unit tests alone because it is what an
+// operator actually reads, and it is the whole reason the shape block exists above the
+// other three.
+func TestACleanScopePrintsAllFourDenominatorsInOrder(t *testing.T) {
+	home := oneInstanceHost(t)
+	_ = home
+	opts := readOpts()
+	opts.Scope = "alpha-notes"
+	code, stdout, stderr := capture(t, Validate, opts)
+	if code != ExitOK {
+		t.Fatalf("a clean scope exits 0, got %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"entry shape: 1 entry file(s) checked for `## Pointers`, " +
+			"`## Nuance / work-history`",
+		"`## What it is` is NOT checked here",
+		"open actions: 0 declared across 1 entry file(s)",
+		"FLOOR with unknown recall",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, stdout)
+		}
+	}
+	prev := -1
+	for _, leader := range []string{
+		"entry shape:", "dropped lines:", "open actions:", "marker reachability:",
+	} {
+		at := strings.Index(stdout, leader)
+		if at <= prev {
+			t.Fatalf("%q at %d, out of order (previous %d):\n%s",
+				leader, at, prev, stdout)
+		}
+		prev = at
 	}
 }

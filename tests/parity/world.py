@@ -136,6 +136,56 @@ ENTRIES: list[tuple[str, int, str]] = [
      "  OPEN: a marker several lines in, where no parser looks.\n"),
     ("crag-notes/scree-api.md", 14_000_000_000, _entry("scree-api", "crag-notes",
                                                        body="the clean sibling of a lossy entry")),
+    # --- the SHAPE and OPEN-ACTION halves of the same write-protocol report ------------
+    #
+    # 🔴 TWO MORE ENTRIES, BECAUSE THE TWO FILES ABOVE EXERCISE ONLY THE ZERO BRANCH OF
+    # BOTH NEW BLOCKS AND THE CORPUS WOULD OTHERWISE BE BLIND TO THEM THE SAME WAY IT WAS
+    # BLIND TO THE OTHER TWO. `talus-svc` and `scree-api` both carry an exact spine and no
+    # reportable bullet, so `entry shape:` and `open actions` would print `each present
+    # exactly once` / `0 declared` on every row in the world — and a client that
+    # implemented neither, or implemented one of them differently, would compare equal for
+    # as long as nothing presented the discriminating input. These two present it: between
+    # them they produce ALL FOUR shape kinds and ALL FOUR open-action populations, each in
+    # its own rendered sub-block.
+    #
+    # `moraine-cfg` is the SHAPE file, and it carries three of the four kinds at once:
+    #   * `## pointers` — a CASE near-miss, so RENAMED rather than absent: the report has
+    #     to print the heading the writer actually typed, not just "it is missing";
+    #   * the nuance heading written TWICE with nothing under either — DUPLICATED *and*
+    #     EMPTY together, which is the disjointness claim made observable. A client whose
+    #     two branches excluded each other prints one of them and compares RED.
+    # It contributes nothing to the other three blocks, which is itself the ordering
+    # argument: its nuance section is unreachable, so `dropped lines`, `open actions` and
+    # `marker reachability` are each silent about a file that is badly broken.
+    ("crag-notes/moraine-cfg.md", 15_000_000_000,
+     "---\nservice: moraine-cfg\nscope: crag-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry whose spine departs from the schema three ways at once.\n"
+     "\n## pointers\n\n"
+     "- `apps/moraine-cfg/values.yaml`\n"
+     "\n## Nuance / work-history\n"
+     "\n## Nuance / work-history\n"),
+    # `cirque-api` is the OPEN-ACTION file, and it is the fourth shape kind at the same
+    # time: it has NO `## Pointers` under any spelling this tool can pair with one, so the
+    # report prints its heading INVENTORY instead of a near-miss. Its nuance section is
+    # exact and non-empty, so all four openness populations render:
+    #   * a declared `OPEN:` — exact, the writer said so;
+    #   * an emphasised `**OPEN**:` — a near-miss, a write that did not land;
+    #   * `Open items:` prose — the unmarked FLOOR with unknown recall;
+    #   * a `RESOLVED:` naming no sha — an unverifiable closure.
+    # A fifth bullet is a `RESOLVED <sha>:`, population `resolved`, which must be reported
+    # by NOTHING — the control that stops this row passing a client which reported every
+    # bullet it saw.
+    ("crag-notes/cirque-api.md", 16_000_000_000,
+     "---\nservice: cirque-api\nscope: crag-notes\n---\n"
+     "\n## What it is\n\n"
+     "a synthetic entry carrying every openness population at once.\n"
+     "\n## Nuance / work-history\n\n"
+     "- 2000-01-05: OPEN: the writer declared this one, exactly.\n"
+     "- 2000-01-06: **OPEN**: emphasis, so the marker never parses.\n"
+     "- 2000-01-07: Open items: the retry budget is not yet addressed.\n"
+     "- 2000-01-08: RESOLVED: closed, and naming no sha at all.\n"
+     "- 2000-01-09: RESOLVED abc1234: closed and verifiable, reported by nothing.\n"),
 ]
 
 #: The sheets above, as store-relative paths. A sheet is NOT an entry: `ls-entries` must not
