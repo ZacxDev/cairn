@@ -2,6 +2,7 @@ package depspolicy
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -398,4 +399,113 @@ func TestNestedModuleDirsActuallyWALKS(t *testing.T) {
 		t.Fatal("the synthetic tree's answer equals DeclaredNestedModules, so this control cannot tell a " +
 			"real walk from a stub; pick directory names this repository does not use")
 	}
+}
+
+// TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT is the regression guard for a
+// dev-host-only permanently-red gate.
+//
+// 🔴 RED AT BASE, AND ONLY WHERE A HUMAN RUNS IT. The first [NestedModuleDirs] walked the disk
+// behind a three-name denylist, honouring neither `.gitignore` nor untracked-ness. Agent worktrees
+// live under `.claude/worktrees/<name>/`, each carrying `uiaudit/go.mod`, so in the base clone
+// `go test ./...` — the command `AGENTS.md` documents — failed for any session with a live worktree,
+// saying "a directory appearing is a decision" when nothing had been decided. CI and all three nix
+// tiers were unaffected because `onlyGo` excludes `.claude/`, which is what made it the worst
+// category: invisible to every gate, red in front of every developer.
+//
+// 🔴 AND THE HALF THAT MATTERS MOST IS THE SECOND SUBTEST. A fix that ignored untracked files could
+// trivially go blind to the thing the ledger exists for. `TestNestedModuleDirsActuallyWALKS` cannot
+// catch that — its synthetic tree is not a git repository at all, so it exercises the fallback and
+// never the git path. This drives a real `git init`, so both answers come from git.
+func TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT(t *testing.T) {
+	// 🔴 TWO TIERS, AND THE FIRST DRAFT OF THIS GUARD BROKE THE NIX BUILD. It refused outright when
+	// git was absent, on the correct principle that a skip nobody counts is a pass. But the nix
+	// derivations' check phase has NO git and cannot have one without adding a build input for a
+	// single test — and in that environment git is not the authority anyway: the source is the
+	// `onlyGo`-filtered tree, so `NestedModuleDirs`' fallback is the right code path there and
+	// `TestNestedModuleDirsActuallyWALKS` is what exercises it. Refusing there made three derivations
+	// red for a reason with nothing to do with the tree.
+	//
+	// So the tier that CAN run this must not skip it, and the tier that cannot must. That is the same
+	// shape `tests/test_go_client_ledgers.py` already uses: it refuses on a skip in the `go` job
+	// because the `tests` job has no Go toolchain. `CAIRN_GIT_TESTS_REQUIRED` is the explicit
+	// statement of which tier is which, set in the `go` CI job — so a skip in the environment that
+	// was supposed to measure this is a FAILURE, and a skip in the sandbox is a fact about the
+	// sandbox.
+	if _, err := exec.LookPath("git"); err != nil {
+		if os.Getenv("CAIRN_GIT_TESTS_REQUIRED") != "" {
+			t.Fatalf("CAIRN_GIT_TESTS_REQUIRED is set but git is absent: this is the only test of the "+
+				"tracked-file path, and this tier is the one that is supposed to measure it (%v)", err)
+		}
+		t.Skipf("no git, so the tracked-file path cannot be measured here — expected inside a nix "+
+			"derivation, where the `onlyGo`-filtered source makes the fallback path correct and "+
+			"`TestNestedModuleDirsActuallyWALKS` covers it. 🔴 A skip here is only acceptable because "+
+			"the `go` CI job sets CAIRN_GIT_TESTS_REQUIRED and therefore CANNOT skip it (%v)", err)
+	}
+
+	root := t.TempDir()
+	gitRun := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	gitRun("init", "-q")
+	write("go.mod", "module example.invalid/root\n")
+	write("tracked/go.mod", "module example.invalid/root/tracked\n")
+	gitRun("add", "go.mod", "tracked/go.mod")
+	gitRun("commit", "-q", "-m", "root and one tracked nested module")
+
+	// The shape that broke the dev host: an untracked nested module, in a directory whose name this
+	// function must NOT need to know.
+	write(".claude/worktrees/some-agent/uiaudit/go.mod", "module example.invalid/agent\n")
+	// And one that is also a git root, which is what a real worktree looks like.
+	write("vendored/checkout/.git", "gitdir: /nowhere\n")
+	write("vendored/checkout/go.mod", "module example.invalid/vendored\n")
+
+	got, err := NestedModuleDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"tracked"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("NestedModuleDirs returned %v, want %v.\n"+
+			"  If %q is in there, an UNTRACKED module is being counted — that is the dev-host failure: a "+
+			"stray checkout under a directory this function cannot be expected to name turns `go test "+
+			"./...` red for every developer while every CI tier stays green.\n"+
+			"  If %q is MISSING, the fix has gone blind to a TRACKED module, which is the thing the "+
+			"whole ledger exists to notice.",
+			got, want, ".claude/worktrees/some-agent/uiaudit", "tracked")
+	}
+
+	// 🔴 THE POSITIVE CONTROL ON THE CONTROL: track the previously-untracked module and it must
+	// appear. Otherwise this test would pass against an implementation that simply ignored
+	// everything outside a hardcoded set.
+	gitRun("add", "-f", ".claude/worktrees/some-agent/uiaudit/go.mod")
+	gitRun("commit", "-q", "-m", "track it deliberately")
+	got, err = NestedModuleDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []string{".claude/worktrees/some-agent/uiaudit", "tracked"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("after tracking it deliberately, NestedModuleDirs returned %v, want %v — the "+
+			"distinction being drawn is not tracked-vs-untracked but something else", got, want)
+	}
+	t.Logf("untracked ignored, tracked counted, and a nested git root skipped: %v", got)
 }

@@ -168,6 +168,8 @@ import (
 	"go/build"
 	"io/fs"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -305,16 +307,72 @@ var NestedModuleAllowlist = map[string]NestedModuleDeps{
 	},
 }
 
-// NestedModuleDirs walks the tree and returns every directory holding a `go.mod` other than the
-// root, relative to it and sorted.
+// NestedModuleDirs returns every directory holding a `go.mod` other than the root, relative to it
+// and sorted.
 //
-// 🔴 IT COUNTS FILES RATHER THAN TRUSTING THE LEDGER, WHICH IS THE WHOLE POINT. A ledger compared
-// against itself is a tautology; this is the half that can disagree with it. `.git` and any
-// `testdata` directory are skipped — the first is not source, and the second is where a fixture
-// module would legitimately live.
+// 🔴 IT ASKS GIT WHICH FILES ARE TRACKED, AND A PLAIN DISK WALK WAS A DEV-HOST-ONLY PERMANENTLY-RED
+// GATE. The first version walked the filesystem behind a three-name denylist (`.git`, `testdata`,
+// `node_modules`), which honours neither `.gitignore` nor untracked-ness. Agent worktrees live under
+// `.claude/worktrees/<name>/`, each a full checkout containing `uiaudit/go.mod` — so in the base
+// clone, `go test ./...` (the command `AGENTS.md` documents) FAILED for any session with a live
+// worktree, reporting "a directory appearing is a decision" when nothing had been decided.
+// Reproduced by planting one untracked nested module; CI and all three nix tiers were unaffected,
+// because `onlyGo` excludes `.claude/` — which is exactly what makes it the category this repository
+// refuses: red only where a human runs it, so the fix is to stop gating or to gate correctly.
+//
+// Widening the denylist would have been the spelled fix, and wrong: the next tool puts its scratch
+// checkout somewhere else. The question "is this path part of THIS repository" belongs to git, not
+// to a list of directory names.
+//
+// 🔴 AND THE FALLBACK IS NOT A CONVENIENCE — IT IS THE ONLY CORRECT ANSWER IN A NIX SANDBOX. There
+// is no `.git` there and no `git` binary, so `git ls-files` cannot answer; but the sandbox's source
+// IS the `onlyGo`-filtered tree, which by construction contains only files somebody named. A disk
+// walk is therefore exactly right there and exactly wrong in a working tree. Both paths are
+// exercised: [TestNestedModuleDirsActuallyWALKS] drives the fallback over a synthetic tree, and
+// [TestTheNestedModuleSetIsExactlyTheAllowlist] runs in both environments.
 func NestedModuleDirs(root string) ([]string, error) {
+	if tracked, ok := trackedNestedModuleDirs(root); ok {
+		return tracked, nil
+	}
+	return walkNestedModuleDirs(root)
+}
+
+// trackedNestedModuleDirs asks git. The second return is false when git cannot answer at all — no
+// binary, or not a work tree — which is the nix-sandbox case and NOT an error.
+//
+// ⚠ IT DISTINGUISHES "GIT SAID NO FILES" FROM "GIT COULD NOT ANSWER", because those license opposite
+// conclusions: the first is a real empty set, the second must fall through. A single `err != nil`
+// check would collapse them and silently turn a broken git into "this repository has no nested
+// modules", which passes the allowlist comparison only by luck.
+func trackedNestedModuleDirs(root string) ([]string, bool) {
+	// `--full-name` so paths are repository-relative whatever the cwd; `-z` so a path containing a
+	// newline cannot split one entry into two.
+	cmd := exec.Command("git", "-C", root, "ls-files", "-z", "--full-name", "--", "*go.mod", "go.mod")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	var dirs []string
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel == "" || path.Base(rel) != "go.mod" {
+			continue
+		}
+		dir := path.Dir(rel)
+		if dir == "." {
+			continue // the verified root, which `DeclaredModules` governs
+		}
+		dirs = append(dirs, dir)
+	}
+	slices.Sort(dirs)
+	return slices.Compact(dirs), true
+}
+
+// walkNestedModuleDirs is the no-git path. It also skips any directory that is itself a git root,
+// which is defence in depth rather than the primary mechanism: a nested checkout or worktree carries
+// a `.git` entry, and whatever it contains belongs to that repository rather than this one.
+func walkNestedModuleDirs(root string) ([]string, error) {
 	var out []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -323,17 +381,23 @@ func NestedModuleDirs(root string) ([]string, error) {
 			case ".git", "testdata", "node_modules":
 				return fs.SkipDir
 			}
+			// A nested git root — a clone or a worktree — is a different repository.
+			if p != root {
+				if _, statErr := os.Lstat(filepath.Join(p, ".git")); statErr == nil {
+					return fs.SkipDir
+				}
+			}
 			return nil
 		}
 		if d.Name() != "go.mod" {
 			return nil
 		}
-		rel, relErr := filepath.Rel(root, filepath.Dir(path))
+		rel, relErr := filepath.Rel(root, filepath.Dir(p))
 		if relErr != nil {
 			return relErr
 		}
 		if rel == "." {
-			return nil // the verified root, which `DeclaredModules` already governs
+			return nil
 		}
 		out = append(out, filepath.ToSlash(rel))
 		return nil

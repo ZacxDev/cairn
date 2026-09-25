@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 🔴 THIS FILE IS THE ONLY EVIDENCE THE REFUSAL PATH HAS, AND THAT IS NARROWER THAN WHAT IT USED TO
-// CLAIM. The wire leg IS exercised now — three real pushes, all accepted, recorded in `README.md`
+// CLAIM. The wire leg IS exercised now — from a workstation and from CI, recorded in `README.md`
 // residual 3 — so the ACCEPTANCE path is measured against the real service. Every refusal below is
 // not: the server has never rejected a push from this harness, so each 400 these cases assert is a
 // claim about this module's copy of the server's rules. What is testable
@@ -625,4 +629,150 @@ func TestTheBODYCAPIsExercisedOnTheREALHTTPPath(t *testing.T) {
 			t.Logf("%s: %d-byte body -> %d-byte error", leg.name, len(huge), len(got))
 		})
 	}
+}
+
+// TestATransportFAILURENeverNamesTheENDPOINT is the regression guard for the leak that blocked this
+// PR's merge.
+//
+// 🔴 RED AT BASE. Before `transportFailure`, both legs returned `client.Do`'s error bare and
+// `main.go` printed it with `%v`. That error is a `*url.Error` whose text is
+// `Post "<URL>": <cause>`, the URL is `CAIRN_AUDIT_PUSH_URL` + the endpoint, and that variable is
+// one of this job's four secrets — published, because the walk's stdout is `tee`d to a file that is
+// uploaded as an artifact on a public repository and masking does not apply to bytes a process
+// writes to a file.
+//
+// 🔴 AND THE OBVIOUS FIX WOULD STILL FAIL THIS TEST, WHICH IS WHY THE CASES ARE SHAPED THIS WAY.
+// "Unwrap the `*url.Error` and wrap its `.Err`" removes the `Post "<URL>":` prefix and leaves the
+// host, because the CAUSE names it: `dial tcp: lookup <host>: no such host`. The DNS case below is
+// the one that catches that, and it is the reason the implementation interpolates no part of the
+// error at all.
+//
+// ⚠ IT DRIVES REAL TRANSPORT FAILURES RATHER THAN CONSTRUCTING `*url.Error` VALUES BY HAND. A
+// hand-built error is a fixture of my own beliefs about what Go puts in one; an unresolvable host
+// and a closed port are the real thing. That is the difference between testing the guard and
+// testing my model of the hazard.
+func TestATransportFAILURENeverNamesTheENDPOINT(t *testing.T) {
+	// A host that cannot resolve and is distinctive enough that a substring search is meaningful.
+	const secretHost = "uiaudit-secret-endpoint-f1.invalid"
+
+	// A port nothing listens on, obtained by opening a listener and closing it — so the refusal is
+	// real rather than simulated, and the address is one this test owns.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedAddr := ln.Addr().String()
+	_ = ln.Close()
+
+	for _, tc := range []struct {
+		name     string
+		base     string
+		wantKind string
+		// needles that must NOT appear anywhere in the error
+		secrets []string
+	}{
+		{
+			// 🔴 THE CASE THE PRESCRIBED FIX WOULD HAVE FAILED.
+			name:     "the hostname does not resolve — the CAUSE names the host, not just the URL prefix",
+			base:     "https://" + secretHost,
+			wantKind: "HOSTNAME DID NOT RESOLVE",
+			secrets:  []string{secretHost},
+		},
+		{
+			name:     "the connection is refused — the cause carries the resolved ADDRESS",
+			base:     "http://" + closedAddr,
+			wantKind: "CONNECTION FAILED",
+			secrets:  []string{closedAddr},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := PushConfig{PushURL: tc.base, PushToken: "t", APIURL: tc.base, APIToken: "t"}
+			p, files, err := BuildPayload("f1", []*Capture{goodCapture("/", "mobile")})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, leg := range []struct {
+				name string
+				run  func() error
+			}{
+				{"push", func() error { _, e := Push(context.Background(), cfg, p, files); return e }},
+				{"read-back", func() error {
+					_, e := ReadRun(context.Background(), cfg, "00000000-0000-4000-8000-000000000001")
+					return e
+				}},
+			} {
+				t.Run(leg.name, func(t *testing.T) {
+					err := leg.run()
+					if err == nil {
+						t.Fatal("a transport failure produced no error")
+					}
+					got := err.Error()
+
+					// 🔴 THE LOAD-BEARING ASSERTION. Anything that reaches stdout reaches a public
+					// artifact.
+					for _, secret := range tc.secrets {
+						if strings.Contains(got, secret) {
+							t.Errorf("the error names the endpoint %q, which is a SECRET and reaches a "+
+								"public artifact:\n  %s", secret, got)
+						}
+					}
+					// And the URL-shaped prefix must be gone too, since it carries the path even
+					// when the host is redacted.
+					for _, shape := range []string{"Post \"", "Get \"", PushEndpoint, RunEndpoint} {
+						if strings.Contains(got, shape) {
+							t.Errorf("the error carries %q, which is part of the endpoint:\n  %s", shape, got)
+						}
+					}
+					// 🔴 THE POSITIVE CONTROL: a guard that returned a constant would satisfy every
+					// assertion above while destroying the diagnosis. The class must be there, and it
+					// must be the RIGHT class — a single "something failed" for both cases would pass
+					// a weaker version of this test.
+					if !strings.Contains(got, tc.wantKind) {
+						t.Errorf("the error does not classify the failure as %q, so it says nothing "+
+							"actionable:\n  %s", tc.wantKind, got)
+					}
+					if !strings.Contains(got, "never reached the service") {
+						t.Errorf("the error must say the request never arrived: %s", got)
+					}
+					// It must also not be `%w`-wrapped, or a caller recovers the original text.
+					if unwrapped := errors.Unwrap(err); unwrapped != nil {
+						t.Errorf("the error wraps %T, so `%%v` on the cause recovers the endpoint: %v",
+							unwrapped, unwrapped)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestTheBAREErrorWOULDHaveLeaked is the negative control on the test above.
+//
+// 🔴 WITHOUT THIS, THE GUARD COULD BE PASSING BECAUSE GO STOPPED PUTTING URLS IN TRANSPORT ERRORS.
+// That would make every assertion above vacuous and nobody would notice. So this asserts the
+// HAZARD still exists in the toolchain: a bare `client.Do` error DOES name the host, which is what
+// makes `transportFailure` necessary rather than ceremonial.
+func TestTheBAREErrorWOULDHaveLeaked(t *testing.T) {
+	const secretHost = "uiaudit-control-endpoint-f1.invalid"
+	req, err := http.NewRequest(http.MethodPost, "https://"+secretHost+PushEndpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, doErr := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if doErr == nil {
+		t.Skipf("%s unexpectedly resolved; this control needs a name that does not", secretHost)
+	}
+	if !strings.Contains(doErr.Error(), secretHost) {
+		t.Fatalf("a bare transport error no longer names the host (%v) — if that is a real toolchain "+
+			"change, `transportFailure` may be simplifiable, but until it is confirmed the guard above "+
+			"is passing for a reason that has nothing to do with it", doErr)
+	}
+	// And the half that makes the prescribed fix insufficient: the unwrapped CAUSE leaks too.
+	var ue *url.Error
+	if errors.As(doErr, &ue) && !strings.Contains(fmt.Sprint(ue.Err), secretHost) {
+		t.Errorf("the unwrapped cause no longer names the host, so 'unwrap and wrap .Err' would now "+
+			"be sufficient; the implementation is stricter than needed rather than wrong, but the "+
+			"comment explaining WHY should be corrected: %v", ue.Err)
+	}
+	t.Logf("the hazard is live in this toolchain: %v", doErr)
 }

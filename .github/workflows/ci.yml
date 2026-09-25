@@ -425,6 +425,19 @@ jobs:
       # question: vet reads the code, the unit tests exercise the guards, and the
       # conformance corpus measures the SERVED behaviour against the oracle's
       # recorded contract. A green on any one of them is not the others.
+      # 🔴 THIS JOB IS THE TIER THAT MUST NOT SKIP A GIT-DEPENDENT TEST.
+      # `internal/depspolicy`'s `TestAnUNTRACKEDNestedModuleIsIGNOREDButATRACKEDOneIsNOT` is the only
+      # thing that exercises the tracked-file path behind `NestedModuleDirs` — the path that stops a
+      # stray checkout under `.claude/worktrees/` from turning `go test ./...` red on every
+      # developer's machine. The nix derivations' check phase has no git and legitimately skips it
+      # (there, the `onlyGo`-filtered source makes the fallback path the correct one). This variable
+      # is what makes the skip a FAILURE here, where git exists and the path is real.
+      #
+      # ⚠ SAME SHAPE AS `tests/test_go_client_ledgers.py` REFUSING ON A SKIP IN THIS JOB, and for the
+      # same reason: a skip nobody counts is a pass.
+      - name: the tier that must not skip a git-dependent test
+        run: echo "CAIRN_GIT_TESTS_REQUIRED=1" >> "$GITHUB_ENV"
+
       - name: go vet
         run: go vet ./...
 
@@ -1048,28 +1061,41 @@ jobs:
   # before adding a dependency to that module, because nothing in this repository will.
   uiaudit:
     runs-on: ubuntu-latest
-    # 🔴 NON-BLOCKING, AND THIS IS WHAT MAKES THE WORD "ADVISORY" TRUE OF THE THING A MERGER SEES.
-    # Every signal in this job is advisory by design — see `uiaudit/README.md` — but "the signals
-    # are advisory" is a claim about the SIGNALS, and without this the job is still a seventh
-    # per-PR check that shows a merger a red tick they cannot act on.
+    # 🔴 NON-BLOCKING, AND THE COMMENT THAT USED TO STAND HERE CLAIMED AN OUTCOME THIS LINE DOES
+    # NOT PRODUCE — MEASURED ON THIS BRANCH RATHER THAN ASSUMED.
     #
-    # The concrete reason, not a general preference: this job installs chromium from the runner
-    # image on every run, over the network, at whatever version that image currently ships. A
-    # chromium change, an `apt` hiccup or a fall through to `snap` reddens a tree nobody touched —
-    # which is the permanently-red gate this repository refuses, reached from the one direction
-    # where the input genuinely is outside the tree.
+    # It said `continue-on-error` "makes the word advisory true of the thing a merger actually sees".
+    # It does not. On run 36052237008 the WORKFLOW conclusion was `success` while the `uiaudit` JOB
+    # conclusion was `failure`: job-level `continue-on-error` removes the merge BLOCK, and leaves the
+    # red row exactly where it was. So a merger on that PR saw a red tick caused entirely by a
+    # third-party CDN — the precise half the old comment claimed to prevent.
     #
-    # ⚠ EVERY FLOOR AND CONTROL BELOW IS UNCHANGED. `continue-on-error` decides what a FAILURE
-    # COSTS, not whether the job checks anything: the test-count floors, the `verify-push` control,
-    # the toolchain assertion and the positive controls all still fail the STEP and print
-    # `::error::`, which is visible in the run and in the step summary. Removing any of them
-    # because the job is non-blocking would be the actual mistake.
+    # ⚠ WHAT IT ACTUALLY BUYS, WHICH IS STILL WORTH HAVING: this job cannot block a merge. That
+    # matters because it installs chromium from the runner image on every run, over the network, at
+    # whatever version that image currently ships — so an `apt` hiccup, a snap fallback or a chromium
+    # change would otherwise gate a tree nobody touched. A permanently-blocking gate on a third
+    # party's release schedule is the category this repository refuses.
     #
-    # 🔴 THE PROMOTION PATH, so this does not become permanent by default: `uiaudit/README.md`
-    # names ONE predicate as the promotion candidate (`new_a11y_rules` non-empty) and records that
-    # its precondition is now MEASURED rather than pending. Promoting it means splitting that one
-    # assertion into its own blocking job — not deleting this line, which would make chromium's
-    # version a merge blocker again.
+    # ⚠ AND WHAT IT DOES NOT BUY, SAID PLAINLY RATHER THAN PAPERED OVER: **the row can still go red,
+    # and a reader of the checks list will see it.** That is accepted, not fixed. The alternative
+    # considered and rejected was a wrapper that swallows every failure so the job is always green —
+    # rejected because it would also swallow the `verify-push` control, the test-count floors and the
+    # toolchain assertion, and those exist precisely to be visible. `verify-push` has already caught
+    # one real silent failure by going red; a job that could not go red would have reported a green
+    # over a non-event.
+    #
+    # So: red row, no block. When the row is red, `uiaudit/README.md`'s residual 3b is the first
+    # thing to read — the most likely cause is the edge in front of the hub, not this tree.
+    #
+    # 🔴 EVERY FLOOR AND CONTROL BELOW IS UNCHANGED. This line decides what a failure COSTS, never
+    # whether anything is checked. Removing any of them because the job is non-blocking would be the
+    # actual mistake.
+    #
+    # 🔴 THE PROMOTION PATH, so this does not become permanent by default: `uiaudit/README.md` names
+    # ONE predicate as the promotion candidate (`new_a11y_rules` non-empty) and records that its
+    # precondition is measured rather than pending. Promoting it means splitting that one assertion
+    # into its own blocking job — not deleting this line, which would make chromium's version a merge
+    # blocker again.
     continue-on-error: true
     # 🔴 `GOTOOLCHAIN=local` FORBIDS THE SWITCH, AND WITHOUT IT THIS JOB'S PIN WAS A MEASURED
     # NO-OP. Go 1.21+ defaults to `GOTOOLCHAIN=auto`, which DOWNLOADS a newer toolchain when a
@@ -1194,7 +1220,7 @@ jobs:
           # 🔴 TWO COUNTS, BECAUSE THE ANCHOR DECIDES WHICH QUESTION IS ASKED — AND A DRAFT
           # OF THIS STEP GOT IT WRONG IN THE DIRECTION THAT FAILS THE HONEST TREE. `go test
           # -v` indents a SUBTEST's result line, so `^--- PASS` counts only top-level
-          # functions (25 here) while an unanchored pattern also counts every table row (52).
+          # functions (29 here) while an unanchored pattern also counts every table row (64).
           # The draft measured 28 by hand with a leading-space alternative and then gated on
           # `^--- PASS`, so the floor refused a green tree. Both numbers are now counted and
           # both are floors: the top-level one notices a `func Test…` deleted, the total one
@@ -1226,12 +1252,12 @@ jobs:
           fi
           # Both floors are the counts measured on the tree that introduced this job. A test
           # deleted from a file that keeps others would otherwise move nothing.
-          if [ "$passes" -lt 25 ]; then
-            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 25 — a Test function was deleted"
+          if [ "$passes" -lt 29 ]; then
+            echo "::error::uiaudit reported $passes top-level PASS line(s), floor is 29 — a Test function was deleted"
             exit 1
           fi
-          if [ "$total" -lt 52 ]; then
-            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 52 — a table row was deleted"
+          if [ "$total" -lt 64 ]; then
+            echo "::error::uiaudit reported $total PASS line(s) including subtests, floor is 64 — a table row was deleted"
             exit 1
           fi
 
@@ -1248,7 +1274,13 @@ jobs:
           CAIRN_AUDIT_API_URL: ${{ secrets.CAIRN_AUDIT_API_URL }}
           CAIRN_AUDIT_API_TOKEN: ${{ secrets.CAIRN_AUDIT_API_TOKEN }}
           UIAUDIT_WORK: ${{ runner.temp }}/uiaudit
-          UIAUDIT_LABEL: cairn-ui ${{ github.sha }}
+          # ⚠ `github.event.pull_request.head.sha` RATHER THAN `github.sha`. On a `pull_request`
+          # event `github.sha` is the EPHEMERAL MERGE COMMIT, which exists only on the runner and
+          # cannot be resolved from a clone — so a run label built from it names a commit nobody can
+          # look up, on a design whose whole point is run-to-run attribution. The head sha is the
+          # commit a reader actually has. `github.sha` is kept as the fallback for the `push` and
+          # `merge_group` events, where there is no pull-request head.
+          UIAUDIT_LABEL: cairn-ui ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -uo pipefail
           mkdir -p "$UIAUDIT_WORK"
@@ -1318,11 +1350,27 @@ jobs:
       # classifies a file with a NUL byte in its first 8000 bytes as binary and SKIPS IT BY
       # NAME, so a PNG committed to this public repository would pass the gate untouched
       # whatever it contained. The pixel baseline belongs in the hub anyway.
+      # 🔴 THE PATH IS NARROWED TO THE CAPTURES AND THE WALK LOG, NOT THE WHOLE WORK DIRECTORY, AND
+      # ON A PUBLIC REPOSITORY THAT IS A SCOPE DECISION RATHER THAN TIDINESS. `${{ runner.temp
+      # }}/uiaudit` also held `bin/` — a ~24 MB pair of unstripped Go binaries embedding
+      # `/home/runner/work/...` DWARF paths — and `world/`, the fixture store plus its token and
+      # session files. None of that is a leak today (the content is the synthetic world, and the
+      # token is the implausible repeated character), but publishing build artefacts nobody asked
+      # for is the same hazard `uiaudit/.gitignore` closes for COMMITS, left open for PUBLISHES.
+      # Two named paths say what is meant to leave.
+      #
+      # ⚠ AND THE WALK LOG IS PUBLISHED, WHICH IS WHY `transportFailure` EXISTS. Actions masks the
+      # log STREAM; `tee` writes raw bytes to this file, so masking does not apply to the copy that
+      # leaves. Any error text reaching stdout is therefore public — see `push.go`'s
+      # `transportFailure`, which is the reason a transport error's message is classified rather
+      # than reproduced.
       - name: upload the captures
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: uiaudit-captures
-          path: ${{ runner.temp }}/uiaudit
+          path: |
+            ${{ runner.temp }}/uiaudit/artifacts
+            ${{ runner.temp }}/uiaudit/walk.log
           retention-days: 7
           if-no-files-found: warn

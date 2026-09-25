@@ -103,10 +103,38 @@ type Browser struct {
 	// faviconRefusals counts the browser's own `/favicon.ico` requests that this surface
 	// answered with an error. See [Browser.FaviconRefusals].
 	faviconRefusals int
+	// requestURLs pairs a request id with the URL it was issued for, because
+	// `EventLoadingFailed` carries no URL of its own. Bounded by `maxTrackedRequests`.
+	requestURLs map[network.RequestID]string
 }
 
 // FaviconPath is the one path a browser requests that no ledger row carries.
 const FaviconPath = "/favicon.ico"
+
+// maxTrackedRequests bounds the request-id→URL map. The hermetic page issues a handful; a cap
+// exists because the map is fed by page-initiated requests, whose COUNT is chosen by the page.
+const maxTrackedRequests = 4096
+
+// isFaviconRefusal is the ONE favicon predicate, shared by both network branches.
+//
+// 🔴 IT IS ONE FUNCTION BECAUSE IT WAS TWO PLACES AND ONLY ONE OF THEM HAD IT. The carve-out lived
+// inline in the response branch, so a favicon failure arriving as a LOADING FAILURE was counted as a
+// first-party network event on whatever page happened to be loading — the exact per-page attribution
+// the carve-out exists to prevent. One predicate, both callers.
+func (b *Browser) isFaviconRefusal(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	return err == nil && u.Path == FaviconPath && b.isFirstParty(raw)
+}
+
+// urlForRequest recovers the URL a request id was issued for, or "" when it was never seen.
+func (b *Browser) urlForRequest(id network.RequestID) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.requestURLs[id]
+}
 
 // NewBrowser starts headless Chromium.
 //
@@ -126,7 +154,11 @@ func NewBrowser(parent context.Context, base string, budget time.Duration) (*Bro
 		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.Flag("hide-scrollbars", false),
 	)
-	b := &Browser{base: strings.TrimRight(base, "/"), baseHost: u.Hostname()}
+	b := &Browser{
+		base:        strings.TrimRight(base, "/"),
+		baseHost:    u.Hostname(),
+		requestURLs: map[network.RequestID]string{},
+	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parent, opts...)
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
 	ctx, cancelT := context.WithTimeout(ctx, budget)
@@ -181,7 +213,42 @@ func (b *Browser) onEvent(ev any) {
 		}
 		b.record(&b.console, Event{FirstParty: true, Text: "exception: " + e.ExceptionDetails.Text})
 	case *network.EventLoadingFailed:
-		b.record(&b.netw, Event{FirstParty: true, Text: "loading failed: " + e.ErrorText})
+		// 🔴 THIS EVENT CARRIES NO URL, WHICH BREAKS BOTH THINGS THE SIBLING BRANCH DOES. It has a
+		// `RequestID` and an `ErrorText` and nothing to classify by — so the `FirstParty: true` here
+		// is an ASSUMPTION, not a classification, and it contradicts `onEvent`'s own doc claiming
+		// origin is classified by host. It also means the `/favicon.ico` carve-out below cannot apply
+		// to this branch: there is no path to compare.
+		//
+		// The fix is to remember the URL each request was issued for, so this branch can classify and
+		// carve out exactly like the other one. `EventRequestWillBeSent` carries both the id and the
+		// URL, which is where `requestURLs` is populated.
+		//
+		// ⚠ FREQUENCY UNMEASURED ON THIS SURFACE: the hermetic page asks for nothing, so no walk has
+		// ever recorded a loading failure. That is why this was invisible — the branch has never
+		// fired in anger, and its correctness was never tested by a run.
+		url := b.urlForRequest(e.RequestID)
+		if b.isFaviconRefusal(url) {
+			b.mu.Lock()
+			b.faviconRefusals++
+			b.mu.Unlock()
+			return
+		}
+		text := "loading failed: " + e.ErrorText
+		if url == "" {
+			text += " (no URL on this event; origin not classifiable)"
+		}
+		b.record(&b.netw, Event{FirstParty: url == "" || b.isFirstParty(url), Text: text})
+	case *network.EventRequestWillBeSent:
+		// The only place a request id can be paired with its URL. Bounded, because a page that
+		// issued unboundedly many requests would otherwise grow this map without limit.
+		if e.Request == nil {
+			return
+		}
+		b.mu.Lock()
+		if len(b.requestURLs) < maxTrackedRequests {
+			b.requestURLs[e.RequestID] = e.Request.URL
+		}
+		b.mu.Unlock()
 	case *network.EventResponseReceived:
 		if e.Response == nil {
 			return
@@ -204,7 +271,7 @@ func (b *Browser) onEvent(ev any) {
 		// `viewport`, so an event that wandered between pages run to run would manufacture
 		// a network delta forever. It is a real first-party refusal and it is reported once,
 		// at walk level, rather than attributed to an arbitrary page.
-		if u, err := url.Parse(e.Response.URL); err == nil && u.Path == FaviconPath && b.isFirstParty(e.Response.URL) {
+		if b.isFaviconRefusal(e.Response.URL) {
 			b.mu.Lock()
 			b.faviconRefusals++
 			b.mu.Unlock()
@@ -366,13 +433,59 @@ func (b *Browser) SignOut() error {
 	); err != nil {
 		return err
 	}
-	if !strings.Contains(html, `action="/sign-out"`) {
-		return fmt.Errorf("no sign-out form on / — cannot reach the signed-out state by clicking")
+	if !strings.Contains(html, `action="`+ui.SignOutPath+`"`) {
+		return fmt.Errorf("no sign-out form on %s — cannot reach the signed-out state by clicking", ui.RootPath)
 	}
-	return chromedp.Run(b.ctx,
-		chromedp.Click(`form[action="/sign-out"] button[type=submit]`, chromedp.ByQuery),
+
+	// 🔴 THE CLICK IS VERIFIED, AND IT USED TO BE CLICK-SLEEP-RETURN-NIL WHILE THE CALLER PRINTED
+	// "the server revoked the session". That was unfalsifiable: if the POST had been refused, the
+	// only page captured afterwards is the sign-in page, which renders IDENTICALLY whether the
+	// session was revoked or the click never landed — so the log's claim about a STORE WRITE rested
+	// on nothing.
+	//
+	// Two discriminators, and the jar is the one this code can read directly: a successful sign-out
+	// clears the session cookie. The handler also redirects to the sign-in path, so the landed
+	// location is the second. The pod's own log carries `sign-out: a session was revoked`, which is
+	// the third and is left to the caller — `World.Log()` has it, and a test asserting on a
+	// subprocess's log text is a coupling this function should not create.
+	if err := chromedp.Run(b.ctx,
+		chromedp.Click(`form[action="`+ui.SignOutPath+`"] button[type=submit]`, chromedp.ByQuery),
 		chromedp.Sleep(400*time.Millisecond),
-	)
+	); err != nil {
+		return fmt.Errorf("clicking sign-out: %w", err)
+	}
+
+	var landed string
+	var cookies []*network.Cookie
+	if err := chromedp.Run(b.ctx,
+		chromedp.Location(&landed),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			got, err := network.GetCookies().Do(ctx)
+			cookies = got
+			return err
+		}),
+	); err != nil {
+		return err
+	}
+
+	for _, c := range cookies {
+		if c.Name == identity.SessionCookieName {
+			return fmt.Errorf("sign-out did not take: %s is still in the jar after clicking (landed on "+
+				"%s). The walk would then capture the public rows WITH a live session, and the only page "+
+				"it looks at afterwards renders identically either way — which is why this is checked "+
+				"rather than assumed", identity.SessionCookieName, landed)
+		}
+	}
+	// The redirect target, as a second independent witness. A cleared cookie with no redirect would
+	// mean the browser dropped it rather than the server clearing it.
+	if u, err := url.Parse(landed); err != nil {
+		return fmt.Errorf("the landed location %q after sign-out is not a URL: %w", landed, err)
+	} else if u.Path != ui.SignInPath {
+		return fmt.Errorf("sign-out cleared the cookie but landed on %q rather than %s; the handler "+
+			"redirects there, so this is a different code path from the one the walk assumes",
+			u.Path, ui.SignInPath)
+	}
+	return nil
 }
 
 // CaptureTarget navigates one target at one width and collects everything.
@@ -478,6 +591,50 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 	if err := json.Unmarshal([]byte(layoutRaw), &layout); err != nil {
 		return nil, fmt.Errorf("layout smells on %s at %s returned %q: %w", t.Path, vp.Name, layoutRaw, err)
 	}
+
+	// 🔴 TWO ASSERTIONS, AND THE FIRST DRAFT OF THEM WAS WRONG IN A WAY THIS HARNESS'S OWN POSITIVE
+	// CONTROL CAUGHT. What they close:
+	//
+	//  1. `layout-smells.js` wraps its whole body in `try/catch` and its catch-all returns `'{}'` — by
+	//     design, so a hostile page cannot drop the shared capture. But `{}` unmarshals to a ZERO
+	//     `PushLayout`, and `MissingViewportMeta: false` is not an absence: it is the positive claim
+	//     "this page HAS a viewport meta tag". So a thrown script was reported as a clean layout line
+	//     and the walk printed `no-viewport-meta=false` having measured nothing. `InnerWidth == 0` is
+	//     the tell, because no rendered page is zero pixels wide.
+	//  2. The emulated WIDTH was asserted by nothing. [Viewport]'s doc explains why 390 and 1440 are
+	//     the consumer's numbers rather than a preference here, and `SetDeviceMetricsOverride` was
+	//     trusted to have applied them.
+	//
+	// 🔴 AND THE WIDTH ASSERTION IS CONDITIONAL, WHICH IS THE CORRECTION. A first draft asserted
+	// `InnerWidth == vp.Width` unconditionally and FAILED on this module's own control page — measured
+	// `innerWidth=1560` against a 390 viewport. That is not a broken emulation: the control page has
+	// no `<meta name=viewport>` and 1800px of content, and a mobile browser given a page that never
+	// opted into device-width sizing expands the LAYOUT viewport to fit it. Reporting a wider
+	// `innerWidth` there is correct behaviour — and it is precisely the condition
+	// `missing_viewport_meta` exists to report.
+	//
+	// So the two claims are separated. `InnerWidth > 0` holds on every page and is what catches the
+	// catch-all. `InnerWidth == vp.Width` holds only where the page OPTED IN, so it is asserted only
+	// when the same capture says a viewport meta is present — which makes the two signals corroborate
+	// each other instead of one silently excusing the other.
+	//
+	// ⚠ `chromedp.Flag("hide-scrollbars", false)` in [NewBrowser] is the one setting that could move
+	// this number, which is a second reason to assert rather than reason: if hiding scrollbars ever
+	// changes `innerWidth`, this fails loudly instead of shifting every layout measurement by a
+	// scrollbar's width.
+	if layout.InnerWidth <= 0 {
+		return nil, fmt.Errorf("%s at %s reports innerWidth=%d, which no rendered page can be. "+
+			"`layout-smells.js` almost certainly hit its catch-all and returned `{}` — a ZERO block whose "+
+			"`missing_viewport_meta:false` is an AFFIRMATIVE claim this harness would otherwise have "+
+			"printed as a clean layout line (raw: %q)",
+			t.Path, vp.Name, layout.InnerWidth, truncateForLog(layoutRaw, 200))
+	}
+	if !layout.MissingViewportMeta && layout.InnerWidth != vp.Width {
+		return nil, fmt.Errorf("%s at %s declares a <meta viewport> yet reports innerWidth=%d while the "+
+			"viewport was set to %d. A page that opted into device-width sizing must see the emulated "+
+			"width, so either the emulation did not apply or the page overrides it (raw: %q)",
+			t.Path, vp.Name, layout.InnerWidth, vp.Width, truncateForLog(layoutRaw, 200))
+	}
 	c.Layout = &layout
 
 	// The a11y digest, likewise verbatim.
@@ -490,8 +647,15 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 	// axe. 🔴 INJECTED THROUGH `Runtime.evaluate`, WHICH IS DEBUGGER-PRIVILEGED AND
 	// BYPASSES CSP. A `<script>` tag would be blocked outright: this surface's CSP names
 	// no `script-src` at all, so `default-src 'none'` governs scripts. That the bypass
-	// actually holds on THIS page under THIS CSP is measured by `spike/main.go`, not
-	// assumed from the specification.
+	// actually holds on THIS page under THIS CSP is MEASURED ON EVERY RUN rather than assumed
+	// from the specification: this injection is followed immediately by `axe.run`, and the
+	// result must decode with a `testEngine` — which `TestTheHermeticSurfaceIsWhereTheZEROSCOMEFROM`
+	// asserts. A blocked injection cannot produce that.
+	//
+	// ⚠ THE EVIDENCE USED TO BE A THROWAWAY SPIKE PROGRAM, WHICH WAS DELETED AND IS NOT COMING
+	// BACK. A separate binary nothing ran had already rotted inside its own change; the walk
+	// re-measures the same claim on every push, which is strictly stronger. `README.md` records
+	// the spike's original numbers as evidence-at-the-time.
 	if err := chromedp.Run(b.ctx, chromedp.Evaluate(axeJS, nil)); err != nil {
 		return nil, fmt.Errorf("injecting axe on %s at %s: %w", t.Path, vp.Name, err)
 	}
@@ -556,3 +720,15 @@ const axeRunJS = `axe.run(document, {resultTypes: ["violations"]}).then(r => JSO
 	url: r.url,
 	timestamp: "pinned",
 }))`
+
+// truncateForLog bounds a page-supplied string before it reaches an error message.
+//
+// 🔴 THE SAME CLASS AS `push.go`'s `maxDiagnosticBody`: a value whose SIZE is chosen by whoever is
+// answering. `layout-smells.js` builds its return value in the page, so a hostile page could make it
+// arbitrarily long — and this harness's stdout is `tee`d to a file published as an artifact.
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + fmt.Sprintf("… (%d more byte(s) elided)", len(s)-n)
+}

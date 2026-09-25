@@ -373,3 +373,74 @@ func TestTheUNKNOWNRowREFUSALSURVIVESTheThirdClass(t *testing.T) {
 		t.Errorf("the refusal must name the row it refused; got %q", err)
 	}
 }
+
+// TestTheAccountingCatchesTWOERRORSTHATCANCEL is the case a count comparison cannot see.
+//
+// 🔴 RED AT BASE. The first `LedgerAccounting` compared `len(capturedRows) + len(skipped)` against
+// `len(ledger)`. Feed it one row handled by BOTH arms and one handled by NEITHER and the arithmetic
+// balances exactly — so it passed with a page missing, while its own docstring called it "the only
+// thing that notices a ledger that grew". The existing control only DROPS a skip and APPENDS a row,
+// which are the two cases a count does catch; this is the one it cannot.
+//
+// ⚠ Invariant-strength: [Targets]'s switch cannot currently produce a double-handled row. The check
+// must not depend on that, because it is the thing that would notice if the switch changed.
+func TestTheAccountingCatchesTWOERRORSTHATCANCEL(t *testing.T) {
+	ledger := []string{"GET /a content", "GET /b content", "POST /c"}
+
+	// /a is CAPTURED and also SKIPPED; /b is handled by neither. Counts: 1 captured row + 2 skips = 3
+	// == len(ledger). A count-based accounting passes this.
+	targets := []Target{{Path: "/a", PushURL: "/a", LedgerRow: "GET /a content"}}
+	skipped := []string{
+		"GET /a content (not a document: pretend)",
+		"POST /c (not GET: reached by submitting a form, never navigated)",
+	}
+
+	if got := len(targets) + len(skipped); got != len(ledger) {
+		t.Fatalf("this fixture must make the COUNTS balance, or it does not exercise the defect: "+
+			"%d vs %d", got, len(ledger))
+	}
+
+	err := LedgerAccounting(ledger, targets, skipped)
+	if err == nil {
+		t.Fatal("a row handled by BOTH arms cancelled against a row handled by NEITHER, and the " +
+			"accounting passed with a page missing — which is exactly what a count comparison does")
+	}
+	if !strings.Contains(err.Error(), "handled TWICE") {
+		t.Errorf("the refusal should name the double-handling, since that is the half a count cannot "+
+			"see; got %q", err)
+	}
+
+	// And the other half on its own: a row handled by neither, with nothing to cancel it.
+	if err := LedgerAccounting(ledger, nil, []string{"POST /c (not GET: x)"}); err == nil {
+		t.Error("a row handled by neither arm passed")
+	} else if !strings.Contains(err.Error(), "NEITHER arm") {
+		t.Errorf("the refusal should name the unhandled rows; got %q", err)
+	}
+
+	// 🔴 AND A ROW THE LEDGER DOES NOT DECLARE, which a count also cannot see: the total can be
+	// right while the membership is wrong.
+	bogus := []Target{{Path: "/z", PushURL: "/z", LedgerRow: "GET /z content"}}
+	if err := LedgerAccounting(ledger, bogus, []string{
+		"GET /a content (not a document: x)",
+		"GET /b content (not a document: x)",
+		"POST /c (not GET: x)",
+	}); err == nil {
+		t.Error("a target attributed to a row the ledger never declared was accounted for")
+	} else if !strings.Contains(err.Error(), "does not declare") {
+		t.Errorf("the refusal should name the undeclared row; got %q", err)
+	}
+
+	// 🔴 THE POSITIVE CONTROL. A check that refused every input would satisfy all three assertions
+	// above while making the walk unrunnable — and the honest case includes the link-expansion shape,
+	// where SEVERAL targets legitimately share one ledger row.
+	honest := []Target{
+		{Path: "/a", PushURL: "/a", LedgerRow: "GET /a content"},
+		{Path: "/b?scope=x", PushURL: "/b?scope=x", LedgerRow: "GET /b content (link from /b)"},
+		{Path: "/b?scope=y", PushURL: "/b?scope=y", LedgerRow: "GET /b content (link from /b)"},
+		{Path: "/b", PushURL: "/b", LedgerRow: "GET /b content"},
+	}
+	if err := LedgerAccounting(ledger, honest, []string{"POST /c (not GET: x)"}); err != nil {
+		t.Fatalf("the honest case — including several targets sharing one row via link expansion — "+
+			"must pass: %v", err)
+	}
+}

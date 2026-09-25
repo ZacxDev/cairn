@@ -197,7 +197,17 @@ func Targets(ledger []string) (targets []Target, skipped []string, err error) {
 		// and `sameOrigin` refuses exactly that. So the walk never navigates a non-GET
 		// row, and the rows it declines are listed rather than dropped.
 		if method != "GET" {
-			skipped = append(skipped, row+" (not GET: reached by submitting a form, never navigated)")
+			// ⚠ THE REASON SAYS "REACHABLE BY A FORM", NOT "EXERCISED". Of the non-GET rows, only the
+			// sign-in and sign-out POSTs are actually submitted by this walk; `POST /share`,
+			// `POST /unshare` and the OAuth start are reached by NOTHING here — the first two need an
+			// `admin` grant the token-file deployment does not issue, and the third would leave the
+			// origin. An earlier wording claimed all of them were form-reachable, which read as
+			// coverage. What is true of every one of them is that a browser must not NAVIGATE it:
+			// `sameOrigin` refuses a state-changing request with no `Origin`, so a direct navigation
+			// measures a refusal rather than a page.
+			skipped = append(skipped, row+" (not GET: a state-changing row; navigating it directly would "+
+				"be refused for want of an Origin, so the walk never does — see README residual 7 for "+
+				"which of these are actually submitted)")
 			continue
 		}
 
@@ -309,19 +319,90 @@ func ExpandLinks(from Target, hrefs []string) (targets []Target, declined []stri
 
 // LedgerAccounting is the check the caller prints and the walk refuses on.
 //
-// ⚠ IT IS AN INVARIANT GUARD, LABELLED AS ONE. No bug in this repository has ever
-// violated it; it exists so that a FUTURE row added to the ledger and to neither set
-// above cannot be absorbed silently. Counting it as regression coverage would be a claim
-// about a defect that never happened.
+// 🔴 IT COMPARES SETS, AND THE COUNT COMPARISON IT REPLACES WAS SATISFIABLE WITH A PAGE MISSING. The
+// first version asserted `len(capturedRows) + len(skipped) == len(ledger)`, which checks neither
+// disjointness nor membership: one row handled by BOTH arms, plus another handled by NEITHER,
+// balances exactly and passes. Two errors cancelling is the characteristic failure of counting
+// arguments — and the docstring called this "the only thing that notices a ledger that grew", which
+// is a claim a count cannot support.
+//
+// ⚠ INVARIANT-STRENGTH TODAY, and labelled as such: [Targets]'s switch takes exactly one arm per
+// row, so no tree has produced a double-handled row. The point is that this check must not DEPEND on
+// that — it is the thing that would notice if the switch changed, so deriving its soundness from the
+// switch makes it circular.
+//
+// Three claims, each failing for its own reason: nothing is handled twice; nothing is handled that
+// the ledger does not declare; nothing the ledger declares goes unhandled.
 func LedgerAccounting(ledger []string, targets []Target, skipped []string) error {
-	rows := map[string]bool{}
-	for _, t := range targets {
-		rows[t.LedgerRow] = true
+	declared := make(map[string]bool, len(ledger))
+	for _, row := range ledger {
+		declared[row] = true
 	}
-	handled := len(rows) + len(skipped)
-	if handled != len(ledger) {
-		return fmt.Errorf("the ledger has %d row(s); the walk accounted for %d (%d captured row(s) + %d skipped)",
-			len(ledger), handled, len(rows), len(skipped))
+
+	// how[row] records which arm claimed it. Several TARGETS may share one row — the link expansion
+	// produces exactly that — so a row is recorded once however many targets carry it.
+	how := make(map[string]string, len(ledger))
+
+	for _, tg := range targets {
+		row := parentRow(tg.LedgerRow)
+		if !declared[row] {
+			return fmt.Errorf("target %q claims ledger row %q, which the ledger does not declare. A "+
+				"captured page attributed to a row nobody declared is a page nothing accounts for",
+				tg.Path, row)
+		}
+		if prior, seen := how[row]; seen && prior != "captured" {
+			return fmt.Errorf("ledger row %q was handled TWICE (%s, then captured)", row, prior)
+		}
+		how[row] = "captured"
+	}
+
+	for _, sk := range skipped {
+		row := reasonlessRow(sk)
+		if !declared[row] {
+			return fmt.Errorf("skip %q names ledger row %q, which the ledger does not declare", sk, row)
+		}
+		if prior, seen := how[row]; seen {
+			return fmt.Errorf("ledger row %q was handled TWICE (%s, then skipped). A count-based "+
+				"accounting would let this cancel against a row handled by NEITHER arm and pass with a "+
+				"page missing", row, prior)
+		}
+		how[row] = "skipped"
+	}
+
+	var unhandled []string
+	for _, row := range ledger {
+		if _, ok := how[row]; !ok {
+			unhandled = append(unhandled, row)
+		}
+	}
+	if len(unhandled) > 0 {
+		sort.Strings(unhandled)
+		return fmt.Errorf("the ledger declares %d row(s); %d were handled, and these were handled by "+
+			"NEITHER arm: %v", len(ledger), len(how), unhandled)
 	}
 	return nil
+}
+
+// parentRow strips the suffix [ExpandLinks] appends, so a discovered target is attributed to the
+// ledger row it descends from rather than to a string the ledger has never seen.
+func parentRow(row string) string {
+	if i := strings.Index(row, " (link from "); i >= 0 {
+		return row[:i]
+	}
+	return row
+}
+
+// reasonlessRow strips the parenthesised reason from a skip line.
+//
+// ⚠ IT CUTS AT THE FIRST " (" AND THAT IS SAFE ONLY BECAUSE A LEDGER ROW CANNOT CONTAIN ONE: a row is
+// `<METHOD> <path>[ <classes>]`, and both the method and the path are constrained — `internal/ui`'s
+// `routes` map keys are literal paths, and a class name comes from `classNames`. If a row could ever
+// contain " (", this would truncate it and the membership check above would reject a row that IS
+// declared, which fails LOUDLY rather than silently. That is the direction to fail in, but it is
+// worth knowing the assumption is there.
+func reasonlessRow(skip string) string {
+	if i := strings.Index(skip, " ("); i >= 0 {
+		return skip[:i]
+	}
+	return skip
 }

@@ -246,7 +246,10 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 		APIToken:  os.Getenv("CAIRN_AUDIT_API_TOKEN"),
 	}
 	switch {
-	case len(cfg.Missing()) == 4:
+	// ⚠ DERIVED FROM `Missing()` RATHER THAN THE LITERAL 4. A hardcoded count means a fifth secret
+	// turns every fork-PR skip into a hard failure — the branch below — because "all absent" would
+	// never again be true. `AllMissing` asks the config how many it knows about.
+	case cfg.AllMissing():
 		// The fork-PR case: a fork gets no secrets, and failing there would train everyone
 		// to ignore the job. Distinct exit code so the workflow maps it, rather than this
 		// program claiming it pushed.
@@ -353,7 +356,18 @@ func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	// simply untrue — measured by running this walk against the merged tree, where it printed the
 	// claim beside a page that had just fetched one. A claim about the surface has to read the
 	// surface.
-	fmt.Printf("uiaudit:   console=%d — 🔴 STRUCTURAL, NOT A PASS: this surface ships NO script, and an existing XSS guard asserts \"<img\" can never render, so the console collector has nothing to observe here whatever the code does. control_test.go counts 2 on a page that does.\n", console)
+	// 🔴 GUARDED ON THE NUMBER, BECAUSE THE SENTENCE IS ONLY TRUE WHEN THE COUNT IS ZERO — AND THIS
+	// IS THE THIRD RECURRENCE OF ONE CLASS IN THIS FUNCTION. The network sibling below was hardcoded,
+	// went false when the stylesheet became a route, and was made ledger-derived; the `<meta viewport>`
+	// claim was hardcoded and could be manufactured by a thrown script, and is now asserted in
+	// `CaptureTarget`. This line was still printing "STRUCTURAL, NOT A PASS" unconditionally, so a
+	// surface that grew a script would have had a non-zero count printed beside a sentence saying the
+	// collector cannot count. A claim about a measurement has to read the measurement.
+	if console == 0 {
+		fmt.Printf("uiaudit:   console=0 — 🔴 STRUCTURAL, NOT A PASS: this surface ships NO script, and an existing XSS guard asserts \"<img\" can never render, so the console collector has nothing to observe here whatever the code does. control_test.go counts 2 on a page that does.\n")
+	} else {
+		fmt.Printf("uiaudit:   console=%d — NOT a structural zero: this surface has grown something that logs, so `doc.go`'s console claim is now false and wants correcting.\n", console)
+	}
 	if hasRow(ui.DeclaredRouteLedger(), "GET "+ui.StylesheetPath) {
 		fmt.Printf("uiaudit:   network=%d FAILED subresource request(s) — and this is NOT a structural zero: %s is a route on this tree, so every page has a real blocking subresource. Zero here means it was FETCHED SUCCESSFULLY on every page, which is a stronger statement than the structural one it replaces.\n",
 			netw, ui.StylesheetPath)

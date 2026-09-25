@@ -7,8 +7,10 @@ result to an upstream audit hub and reads the deterministic diff back in the sam
 ```bash
 uiaudit/run.sh                    # the whole walk; needs chromium on PATH
 cd uiaudit && go test ./...       # the guards, incl. the positive control (REFUSES without chromium)
-cd uiaudit && go run ./spike -base http://127.0.0.1:18771 -token <tok> -axe vendor-js/axe.min.js
 ```
+
+⚠ There is no separate spike program to run: it was deleted (residual 5), and both claims it
+measured are re-measured by `go test ./...` on every run.
 
 ## Why it exists — four things, and nothing else
 
@@ -43,8 +45,16 @@ HTML string scanning. What it measures:
 
 ## The two spikes — both PASS, with the conditions they were measured under
 
-Both claims were inferred in every codebase involved and measured in none. `spike/main.go`
-re-runs them.
+Both claims were inferred in every codebase involved and measured in none.
+
+⚠ **These are the numbers as FIRST measured, by a throwaway spike program that has since been
+DELETED** — residual 5 says why, and the short version is that it rotted inside its own change. They
+are kept verbatim because they record the conditions of the original measurement, which is what makes
+them evidence rather than a claim. 🔴 **Both are now re-measured on EVERY run by the walk itself,
+which is strictly stronger than a program nobody ran:** the cookie by
+`TestTheSessionCookiesFourFlagsAreHONOUREDByTheBrowser` (six attributes from a real jar, at two
+origins), and the axe injection by every capture having to produce a decodable `testEngine` — which
+a CSP-blocked injection cannot.
 
 **Chromium 153.0.8010.52, `headless=new`, `--no-sandbox`. `cairn-ui` bound to loopback,
 `-control-journal` unset, token-file authority, the `tests/reader_fixtures.py` store.**
@@ -110,8 +120,10 @@ Per row:
 - **A `GET` row in none of the three sets** → the walk **REFUSES**, naming the row and all
   three remedies. That is what stops a new route being absorbed silently.
 
-`LedgerAccounting` requires `captured rows + skipped rows == len(ledger)` and is printed every
-run: `ledger has 7 row(s); 3 target(s) derived, 4 row(s) skipped`.
+`LedgerAccounting` compares **sets**, not counts — nothing handled twice, nothing handled that the
+ledger does not declare, nothing declared left unhandled. (It *did* compare counts, which is
+satisfiable with a page missing; see round 1's F9.) The accounting is printed every run, and no
+example numbers are quoted here because the ledger grows: read the run's own line.
 
 ### The third class, and the merged-tree break it closes
 
@@ -320,12 +332,12 @@ nothing). Measured, both halves in the same run:
 | images with no dimensions | **1** | **0** | **structural** — no `<img>` renders anywhere; an existing XSS guard asserts `"<img"` cannot |
 | horizontal overflow | **true** | **false** on every page | real |
 | missing `<meta viewport>` | **true** | **false** on every page | real — gomponents' `HTML5` supplies it, and nothing pinned that before |
-| console events | **2** | **0** | **structural** — inline stylesheet, no script, nothing to observe |
+| console events | **2** | **0** | **structural** — no script anywhere, so nothing to observe |
 | network events (page subresources) | **2** | **0** | **structural** — there are none |
 | a11y digest entries | **1** | **10** on `/`, 3 on `/sign-in`, 4 on `/share` | real |
 | screenshot | **31137 bytes**, PNG magic checked | 6 PNGs | real |
 
-**The two structural zeros are reported as structural in the walk log itself**, not as passes.
+**The structural zeros are reported as structural in the walk log itself**, not as passes.
 
 ⚠ **One claim in an earlier draft of that log line was FALSE and is corrected.** It printed
 `console=N network=M — STRUCTURAL ZERO` over both numbers. The console half holds. The network
@@ -344,6 +356,123 @@ That refusal is now counted **separately and at walk level**, for two measured r
 
 So the claim the count supports is *"the surface refuses it when asked"*, never *"every visit
 produces one"*.
+
+## Round 1: what an adversarial read found, and the two things it got wrong
+
+Nine axes, blind. Every number this README quotes about itself was re-verified and found correct; the
+findings clustered in three places, and **two of them were sharper than the report and one was
+sharper than my fix**.
+
+### 🔴 F1 — a transport failure published a secret, and the prescribed fix was insufficient
+
+`run.sh` does `… 2>&1 | tee walk.log`, and that file is uploaded as an artifact on a **public**
+repository. Actions masks the log *stream*; `tee` writes raw bytes to a file, so masking does not
+apply to the copy that leaves. And `client.Do` returns a `*url.Error` whose text is
+`Post "<URL>": <cause>` — where the URL is `CAIRN_AUDIT_PUSH_URL`, one of the four secrets.
+
+🔴 **The prescribed fix — unwrap the `*url.Error`, wrap its `.Err` — does NOT close it.** Measured:
+
+```
+bare      Post "https://H/api/plugins/runs": dial tcp: lookup H: no such host
+unwrapped dial tcp: lookup H: no such host          ← still names H
+```
+
+A TLS mismatch says `certificate is valid for …, not H`; a refused connection carries the resolved
+IP. **No part of a transport error is safe to echo**, so `transportFailure` interpolates none of it
+and emits a CLASSIFICATION derived from the error's behaviour — timeout, DNS, connection, TLS — with
+no `%w`, so no caller can recover the text. The artifact `path` is also narrowed from the whole work
+directory to the captures plus the walk log, which closes the undeclared ~24 MB of unstripped
+binaries embedding `/home/runner/...` DWARF paths.
+
+Red at base, with its own negative control: `TestTheBAREErrorWOULDHaveLeaked` asserts the hazard is
+still live in the toolchain, so the guard cannot pass because Go stopped putting URLs in errors.
+
+### 🟡 F8 — a dev-host-only permanently-red gate, and my fix broke the nix build
+
+`NestedModuleDirs` walked the disk behind a three-name denylist. Agent worktrees live under
+`.claude/worktrees/`, each carrying `uiaudit/go.mod`, so **`go test ./...` failed in the base clone
+for any session with a live worktree** — saying "a directory appearing is a decision" when nothing
+was decided. Reproduced by planting one untracked module. CI and all three nix tiers were unaffected,
+which is what made it the worst category: invisible to every gate, red in front of every developer.
+
+Git is now the authority on "is this part of this repository", with a disk-walk fallback for the nix
+sandbox, where there is no git and the `onlyGo`-filtered source makes the walk correct. Measured
+across four shapes:
+
+| shape | before | after |
+|---|---|---|
+| clean tree | ok | ok |
+| an UNTRACKED nested module | **FAIL** | ok |
+| untracked **and** a git root (a real worktree) | **FAIL** | ok |
+| a **TRACKED** nested module | FAIL | **FAIL** — the gate did not go blind |
+
+🔴 **And my first fix made the nix build red.** The test refused rather than skipped when git was
+absent — correct principle, wrong tier: the sandbox has no git and cannot have one without adding a
+build input for one test. Split the way this repo already splits `test_go_client_ledgers.py`: the
+`go` job sets `CAIRN_GIT_TESTS_REQUIRED` and therefore **cannot** skip it; the sandbox skips and says
+why. Both tiers verified — `ok` with the variable set, `ok` inside the derivation.
+
+### 🟡 F5 — three gaps in one line, and my own control proved my assertion wrong
+
+`layout-smells.js`'s catch-all returns `'{}'`, which unmarshals to `MissingViewportMeta: false` — an
+**affirmative** claim manufactured from a thrown script, after which the walk prints a clean layout
+line. `inner_width`/`scroll_width` were collected, pushed and asserted nowhere. And the positive
+control ran **Mobile only**, so 1440 emulation was exercised by no test.
+
+🔴 **My first assertion was `InnerWidth == vp.Width` unconditionally, and the positive control failed
+it: `innerWidth=1560` at a 390 viewport.** Not a broken emulation — that page has **no `<meta
+viewport>`** and 1800px of content, and a mobile browser given a page that never opted into
+device-width sizing expands the layout viewport to fit. Reporting a wider width there is *correct*,
+and is exactly what `missing_viewport_meta` exists to report. I had conflated "the emulation applied"
+with "the page opted in".
+
+So the claims are separated: `InnerWidth > 0` holds everywhere and is what catches the catch-all;
+`InnerWidth == vp.Width` is asserted **only when the same capture says a viewport meta is present**,
+so the two signals corroborate each other instead of one excusing the other. Plus
+`TestBOTHViewportWidthsAreACTUALLYAPPLIED`, which drives every width in `Viewports` with **two
+witnesses** each — the vendored script and `window.innerWidth` read independently.
+
+### 🟡 F2 — `continue-on-error` does not do what the comment claimed
+
+Measured on run `36052237008`: workflow conclusion **success**, `uiaudit` job conclusion **failure**.
+Job-level `continue-on-error` removes the merge block and leaves the red row. The comment now says
+that: **red row, no block**, and the alternative — a wrapper that swallows everything so the job is
+always green — is named and rejected, because it would also swallow `verify-push`, the floors and the
+toolchain assertion. `verify-push` has already caught one real silent failure by going red.
+
+### 🟡 F7 — four claims my own evidence contradicted
+
+`spike/main.go` was referenced **four times and does not exist**, so the CSP-bypass claim's stated
+evidence pointed at nothing; it now points at the walk, which re-measures it every run. The
+"three real pushes" / "no CI run has carried them yet" pair is gone — and **no count replaces it**,
+because a count is what went stale. The retracted "inline stylesheet" / "two structural zeros"
+language is corrected.
+
+### The rest
+
+- **F4** — `BootWorld` never proved the pod answering was the pod it started. Now `CommandContext`
+  with `Cancel`/`WaitDelay` so an aborted run cannot orphan a pod, plus `refusePortInUse` **before**
+  start. Verified against a decoy answering `/healthz` with exactly `ok` — the hardest case, because
+  every other signal is satisfied by it — and the boot refused with the holder-resolution recipe in
+  the message. ⚠ An orphan of this shape was live on the dev host, from an aborted run.
+- **F6** — `SignOut` clicked, slept, returned nil, while the log claimed "the server revoked the
+  session". It now checks the jar (the session cookie must be gone) **and** the landed path.
+- **F9** — `LedgerAccounting` compared counts where it needed sets: one row handled by both arms plus
+  one handled by neither balances exactly. `TestTheAccountingCatchesTWOERRORSTHATCANCEL` drives that
+  cancellation, and its positive control includes the link-expansion shape where several targets
+  legitimately share one row.
+- **F10** — the favicon carve-out covered only `EventResponseReceived`; `EventLoadingFailed` carries
+  no URL, so its `FirstParty: true` was an assumption contradicting `onEvent`'s own doc. Request URLs
+  are now tracked from `EventRequestWillBeSent` (bounded) so both branches classify and carve out
+  through **one** predicate. ⚠ Frequency unmeasured: the hermetic page asks for nothing, so no walk
+  has ever recorded a loading failure — which is why it was invisible.
+- **Nits**: the non-GET skip reason no longer claims all POSTs are form-reachable (three are reached
+  by nothing); the console structural line is guarded on `console == 0` — **the third recurrence of
+  one class in one function**; `chromiumOrRefuse` now starts a real browser instead of keeping a name
+  list that disagreed with chromedp in both directions and honoured a `CHROMEDP_EXEC` chromedp never
+  reads; `cfg.AllMissing()` replaces a hardcoded `== 4` so a fifth secret cannot turn every fork skip
+  into a hard failure; `UIAUDIT_LABEL` uses the PR head sha rather than the ephemeral merge sha, which
+  no clone can resolve.
 
 ## Declared residuals
 
@@ -403,11 +532,15 @@ correctly publishes nothing. Closing condition: a fixture journal in `boot.go` t
 admin grant over one synthetic scope, after which `ExpandLinks` reaches the page with no change
 to the derivation.
 
-### 3. ✅ The wire leg is EXERCISED — three real pushes, and what the service actually accepted
+### 3. ✅ The wire leg is EXERCISED — from a workstation AND from CI
 
 **This section previously said the leg was unexercised. It is not, and the distinction the old
-wording asked for can now be drawn.** Three pushes to a real plugin target, all `200`, all
-`status: done`, walk exit 0 each time. Endpoint and credentials are secrets; neither appears here.
+wording asked for can now be drawn.** Pushes to a real plugin target from a workstation **and from CI**, all `200`, all `status: done`,
+walk exit 0 each time. Endpoint and credentials are secrets; neither appears here.
+
+⚠ **No count is given, deliberately.** An earlier version said "three real pushes" and was stale
+within a day — the same failure as the test-count floors this README also stopped restating. The
+run ids are in the git history where they cannot go out of date.
 
 **What the service ACCEPTED — measured by reading the ingested run back, not inferred from the
 schema:**
@@ -440,8 +573,6 @@ schema:**
 
 **What is still NOT exercised, stated so the upgrade does not read wider than it is:**
 
-- the push from **CI** rather than from this host — the secrets exist, but no CI run has carried
-  them yet;
 - a push **large enough to approach any cap** (body 64 MiB, per-file 16 MiB, ≤200 pages). The real
   body is ~787 KB and 24 parts, so every cap is exercised only by the offline refusals below;
 - every **refusal** path. The server accepted all three pushes, so none of the 400s the offline
@@ -869,8 +1000,7 @@ indistinguishable from a fork PR by design.
 | `push.go` | the multipart POST and the synchronous diff read-back |
 | `embed.go` | the three vendored scripts |
 | `vendor-js/` | axe, the a11y digest and the layout script, verbatim — `VENDOR.md` has the provenance |
-| `spike/main.go` | the two spikes, re-runnable |
 | `run.sh` | the CI entrypoint; builds both modules separately, which is the point of the layout |
 | `targets_test.go` | the derivation's guards (one regression, the rest invariant, labelled) |
-| `payload_test.go` | the push shape, offline — the only evidence the push leg has |
+| `payload_test.go` | the push payload's shape offline, and the only evidence the REFUSAL path has |
 | `control_test.go` | the positive control, the structural-zero pair, the document-status gate |

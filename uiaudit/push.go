@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -96,6 +100,64 @@ const UserAgent = "cairn-uiaudit/1 (+https://github.com/ZacxDev/cairn)"
 // is a cap that makes the one case it fires on unreadable.
 const maxDiagnosticBody = 4 << 10
 
+// transportFailure turns a `client.Do` error into one that CANNOT carry the endpoint.
+//
+// 🔴 A TRANSPORT ERROR NAMES THE URL, AND THAT URL IS A SECRET. `client.Do` returns a `*url.Error`
+// whose `Error()` is `Post "<URL>": <cause>`, and the URL is `CAIRN_AUDIT_PUSH_URL` +
+// [PushEndpoint] — the first of which is one of this job's four secrets. Returning that error bare
+// and printing it with `%v` put the hub's hostname into the walk's stdout.
+//
+// 🔴 AND THE OBVIOUS FIX IS NOT ENOUGH — MEASURED. Unwrapping the `*url.Error` and wrapping its
+// `.Err` does NOT remove the host, because the CAUSE names it too:
+//
+//	bare      Post "https://H/api/plugins/runs": dial tcp: lookup H: no such host
+//	unwrapped dial tcp: lookup H: no such host          ← still leaks H
+//
+// A TLS mismatch says `certificate is valid for …, not H`; a refused connection carries the
+// RESOLVED IP. So there is no safe way to echo any part of a transport error, and this function
+// interpolates NONE of it. What it emits is a CLASSIFICATION — derived from the error's own
+// behaviour, never from its text — which is all an operator needs, since they know their own
+// hostname and the class is what says where to look.
+//
+// ⚠ WHY THIS MATTERS MORE HERE THAN IT WOULD ELSEWHERE: the walk's output is `tee`d to a file and
+// that file is published as an artifact on a PUBLIC repository. Actions masks the log STREAM, not
+// bytes a process writes to a file — so masking does not apply to the published copy at all.
+// `main.go` already declines to print the service-returned `res.URL` on the grounds that
+// "probably, via a platform feature" is not this module's standard; this is the same rule applied
+// to the path where the platform feature is not merely uncertain but absent.
+func transportFailure(leg string, err error) error {
+	class := "the request did not complete"
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		switch {
+		case ue.Timeout():
+			class = "the request TIMED OUT"
+		case errors.Is(ue.Err, context.Canceled), errors.Is(ue.Err, context.DeadlineExceeded):
+			class = "the walk's own context ended before the request finished"
+		default:
+			// Classified by TYPE, never by matching the message text — a substring match on an
+			// error string is both fragile and, here, a way to accidentally copy it.
+			var dnsErr *net.DNSError
+			var opErr *net.OpError
+			switch {
+			case errors.As(ue.Err, &dnsErr):
+				class = "the endpoint's HOSTNAME DID NOT RESOLVE (DNS)"
+			case errors.As(ue.Err, &opErr):
+				class = "the CONNECTION FAILED at the network layer (refused, unreachable, or reset)"
+			case errors.As(ue.Err, new(*tls.CertificateVerificationError)):
+				class = "TLS VERIFICATION FAILED"
+			}
+		}
+	}
+	// 🔴 NO `%w` AND NO `err` ANYWHERE IN THE RESULT. Wrapping would let any caller recover the
+	// original text with `%v`, which is exactly the leak — the chain is deliberately broken here.
+	return fmt.Errorf("the %s leg never reached the service: %s. "+
+		"🔴 THE UNDERLYING ERROR IS DELIBERATELY NOT REPRODUCED: it names the endpoint URL, and "+
+		"CAIRN_AUDIT_PUSH_URL is a secret whose masking does not apply to a file this job publishes "+
+		"as an artifact. The class above is what says where to look; the hostname is yours already",
+		leg, class)
+}
+
 // describeRefusal turns a non-2xx response into an error that says WHO refused.
 //
 // 🔴 A NON-JSON BODY ON THESE ENDPOINTS IS NOT A PUSH FAILURE THE WAY A 400 IS — IT MEANS SOMETHING
@@ -170,15 +232,28 @@ func (c PushConfig) Complete() bool {
 	return c.PushURL != "" && c.PushToken != "" && c.APIURL != "" && c.APIToken != ""
 }
 
-// Missing names the absent variables, so a misconfiguration says WHICH one.
-func (c PushConfig) Missing() []string {
-	var out []string
-	for name, v := range map[string]string{
+// AllMissing answers whether NONE of the credentials is present, which is the fork-PR case.
+//
+// 🔴 IT COMPARES AGAINST `len(all)` RATHER THAN A LITERAL. The caller used `len(cfg.Missing()) == 4`,
+// so adding a fifth credential would have made "all absent" unsatisfiable and turned every fork PR's
+// clean skip into the half-configured hard failure. The count lives in one place now, and that place
+// is the same map `Missing` walks.
+func (c PushConfig) AllMissing() bool { return len(c.Missing()) == len(c.all()) }
+
+// all is the ONE list of credentials, read by both `Missing` and `AllMissing`.
+func (c PushConfig) all() map[string]string {
+	return map[string]string{
 		"CAIRN_AUDIT_PUSH_URL":   c.PushURL,
 		"CAIRN_AUDIT_PUSH_TOKEN": c.PushToken,
 		"CAIRN_AUDIT_API_URL":    c.APIURL,
 		"CAIRN_AUDIT_API_TOKEN":  c.APIToken,
-	} {
+	}
+}
+
+// Missing names the absent variables, so a misconfiguration says WHICH one.
+func (c PushConfig) Missing() []string {
+	var out []string
+	for name, v := range c.all() {
 		if v == "" {
 			out = append(out, name)
 		}
@@ -189,7 +264,8 @@ func (c PushConfig) Missing() []string {
 
 // Push builds the multipart body and POSTs it.
 //
-// ✅ THIS LEG IS EXERCISED: three real pushes, all 200, all `status: done`. The measured record —
+// ✅ THIS LEG IS EXERCISED, FROM A WORKSTATION AND FROM CI: pushes answered 200 with
+// `status: done`. No count here — an earlier one went stale in a day. The measured record —
 // what the service accepted, and the prediction it corrected — is `README.md` residual 3, which is
 // the canonical site; this comment points there rather than restating it.
 //
@@ -251,7 +327,7 @@ func Push(ctx context.Context, cfg PushConfig, payload *PushPayload, files map[s
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, transportFailure("push", err)
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxDiagnosticBody))
@@ -288,7 +364,7 @@ func ReadRun(ctx context.Context, cfg PushConfig, runID string) (*RunReport, err
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, transportFailure("read-back", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))

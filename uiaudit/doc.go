@@ -12,7 +12,9 @@
 //     `__Host-`, `Secure`, `HttpOnly` and `SameSite=Lax` and its own comment flags the
 //     `Secure`-over-`http://localhost` half as "a claim about browsers and no test here
 //     has measured it". A header assertion cannot close that; a jar read after a real
-//     navigation can. See `spike/main.go`, which is the measurement.
+//     navigation can. `control_test.go`'s
+//     `TestTheSessionCookiesFourFlagsAreHONOUREDByTheBrowser` is the measurement — six
+//     attributes read back from a real jar at TWO origins, on every run rather than by hand.
 //
 //  2. AXE-CORE OVER THE RENDERED DOM. There is no accessibility check of any kind in this
 //     repository today, and there is no way to add one without a browser: the violations

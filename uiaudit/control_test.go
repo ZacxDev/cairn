@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/ui"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/chromedp"
 )
 
 // 🔴 THIS FILE IS THE POSITIVE CONTROL, AND WITHOUT IT EVERY ZERO THIS HARNESS REPORTS IS
@@ -81,22 +81,45 @@ const controlPage = `<!doctype html>
 </body>
 </html>`
 
+// chromiumOrRefuse refuses — rather than skips — when no browser can be started.
+//
+// 🔴 IT ASKS CHROMEDP RATHER THAN GUESSING, BECAUSE THE HAND-WRITTEN LIST DISAGREED WITH CHROMEDP IN
+// BOTH DIRECTIONS. The previous version walked its own name list and also honoured `CHROMEDP_EXEC`,
+// which chromedp does not read at all — so it could refuse on a host chromedp would have driven
+// fine, and it could pass on a host where chromedp then failed to find anything. A precondition
+// check that disagrees with the thing it is a precondition for is worse than none: it reports the
+// wrong cause.
+//
+// So the check is an actual browser start. That is a couple of hundred milliseconds and it answers
+// the only question that matters — can this process drive a browser — with no second copy of
+// chromedp's resolution order to go stale.
+//
+// 🔴 FATAL, NOT SKIP. A skipped instrument validation is a pass nobody earned, and the positive
+// control is the only thing standing between this harness's zeros and a collector wired to nothing.
+// The CI job installs chromium; a local run without one is supposed to be loud.
 func chromiumOrRefuse(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"chromium", "chromium-browser", "google-chrome-stable", "google-chrome", "chrome"} {
-		if _, err := exec.LookPath(name); err == nil {
-			return
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx,
+		append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.Flag("headless", "new"),
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("disable-dev-shm-usage", true),
+		)...)
+	defer cancelAlloc()
+	probeCtx, cancelProbe := chromedp.NewContext(allocCtx)
+	defer cancelProbe()
+
+	var ua string
+	if err := chromedp.Run(probeCtx, chromedp.Evaluate(`navigator.userAgent`, &ua)); err != nil {
+		t.Fatalf("no browser could be started, so this test REFUSES rather than skipping — a skipped "+
+			"instrument validation is a green about nothing, and the positive control is the only thing "+
+			"that makes this harness's zeros readable. chromedp's own resolution failed: %v\n"+
+			"Install chromium, or run this module's tests where one exists (the CI `uiaudit` job "+
+			"installs it).", err)
 	}
-	if p := os.Getenv("CHROMEDP_EXEC"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return
-		}
-	}
-	// 🔴 FATAL, NOT SKIP. See the file comment: this is the module's only instrument
-	// validation, and a skipped instrument validation is a green that means nothing.
-	t.Fatal("no chromium on PATH: this is the harness's only positive control, so it REFUSES rather than skipping. " +
-		"Install chromium, or run this module's tests only where one exists (the CI `uiaudit` job installs it).")
+	t.Logf("browser available: %s", ua)
 }
 
 func TestThePositiveControlMakesEverySignalNonZero(t *testing.T) {
@@ -110,9 +133,10 @@ func TestThePositiveControlMakesEverySignalNonZero(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// 🔴 NO CSP ON THE CONTROL, DELIBERATELY. The control's job is to prove the
-		// COLLECTORS can count; `spike/main.go` is what proves the axe injection survives
-		// the real surface's `default-src 'none'`. Conflating the two would make a CSP
-		// change here look like a collector failure.
+		// COLLECTORS can count; the walk's own axe result is what proves the injection survives
+		// the real surface's CSP. Conflating the two would make a CSP change here look like a
+		// collector failure. That the CDP injection survives the real policy is measured by the
+		// walk itself — see `browser.go`'s injection comment — not by a separate program.
 		_, _ = w.Write([]byte(controlPage))
 	}))
 	defer srv.Close()
@@ -276,6 +300,94 @@ func TestTheHermeticSurfaceIsWhereTheZEROSCOMEFROM(t *testing.T) {
 	}
 	t.Logf("hermetic surface: console=0 network=0 (structural), axe violations=%d, digest entries=%d",
 		len(c.Violations), digestEntries(c))
+}
+
+// TestBOTHViewportWidthsAreACTUALLYAPPLIED is the control for a dimension every test used to pin at
+// one point.
+//
+// 🔴 THE POSITIVE CONTROL RAN `Mobile` ONLY, SO 1440 EMULATION WAS EXERCISED BY NOTHING. Every
+// layout number this harness reports at desktop width rested on `SetDeviceMetricsOverride` having
+// applied a value no assertion read back — and the walk's own summary line prints those numbers as
+// findings. A harness whose config pins a dimension is structurally blind to that dimension's
+// defects; this one pinned it at the mobile end and shipped the desktop end unmeasured.
+//
+// It also covers the second half of the same gap: `layout-smells.js` returns `'{}'` from its
+// catch-all, which unmarshals to `InnerWidth: 0` AND `MissingViewportMeta: false` — an affirmative
+// claim manufactured from a thrown script. `CaptureTarget` now refuses on `InnerWidth != vp.Width`,
+// so a throw becomes a failed capture instead of a clean-looking layout line, and this is what
+// proves that refusal reachable at both widths rather than only at the one the control happened to
+// use.
+func TestBOTHViewportWidthsAreACTUALLYAPPLIED(t *testing.T) {
+	chromiumOrRefuse(t)
+
+	// A page that reports what the browser thinks its viewport is, so the assertion has a second
+	// independent witness besides the vendored script.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><html lang="en"><head><title>w</title>` +
+			`<meta name="viewport" content="width=device-width, initial-scale=1">` +
+			`</head><body><main><h1>width</h1></main></body></html>`))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	b, err := NewBrowser(ctx, srv.URL, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	// 🔴 EVERY VIEWPORT IN THE WALK'S MATRIX, DERIVED FROM `Viewports` RATHER THAN LISTED. A literal
+	// pair here would go stale the moment a third width is added — and a third width added with no
+	// test is exactly the gap this closes.
+	if len(Viewports) < 2 {
+		t.Fatalf("the walk declares %d viewport(s); this repository's own rule is to measure a "+
+			"dimension at two points or more", len(Viewports))
+	}
+	seen := map[int]bool{}
+	for _, vp := range Viewports {
+		t.Run(vp.Name, func(t *testing.T) {
+			c, err := b.CaptureTarget(Target{Path: "/", PushURL: "/width", LedgerRow: "control"}, vp)
+			if err != nil {
+				t.Fatalf("capturing at %s (%dpx): %v", vp.Name, vp.Width, err)
+			}
+			// The vendored script's own number, which `CaptureTarget` already refused on — asserted
+			// again here so a future relaxation of that refusal does not silently remove the only
+			// check on the width.
+			//
+			// ⚠ THIS PAGE CARRIES `<meta name=viewport>` DELIBERATELY, which is what makes the equality
+			// assertable. A page without one legitimately reports a WIDER `innerWidth` under mobile
+			// emulation — the layout viewport expands to fit content that never opted into device-width
+			// sizing — and this module's own positive-control page is exactly that case. Measured:
+			// 1560 against a 390 viewport, which is correct behaviour and not a broken emulation.
+			if c.Layout.InnerWidth != vp.Width {
+				t.Errorf("layout-smells reports innerWidth=%d at %s, want %d",
+					c.Layout.InnerWidth, vp.Name, vp.Width)
+			}
+			// And the browser's own answer, read independently of the vendored script — two witnesses,
+			// because the script is a file this module copies verbatim and could be re-vendored wrong.
+			var innerWidth int
+			if err := chromedp.Run(b.ctx, chromedp.Evaluate(`window.innerWidth`, &innerWidth)); err != nil {
+				t.Fatal(err)
+			}
+			if innerWidth != vp.Width {
+				t.Errorf("window.innerWidth is %d at %s, want %d — the emulation did not apply",
+					innerWidth, vp.Name, vp.Width)
+			}
+			// A page WITH a viewport meta must not be reported as missing one; that is the affirmative
+			// claim the catch-all would otherwise manufacture.
+			if c.Layout.MissingViewportMeta {
+				t.Errorf("the page carries <meta name=viewport> but the capture reports it missing at %s", vp.Name)
+			}
+			seen[vp.Width] = true
+		})
+	}
+	if len(seen) < 2 {
+		t.Fatalf("only %d distinct width(s) were actually measured: %v — the matrix collapsed and this "+
+			"control is back to pinning one point", len(seen), seen)
+	}
+	t.Logf("widths applied and verified by two witnesses each: %v", seen)
 }
 
 // TestAPageThatANSWEREDAnErrorIsREFUSEDRatherThanMeasured is the REGRESSION guard for the

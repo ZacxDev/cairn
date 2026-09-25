@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,24 @@ import (
 // 🔴 AND NOTHING IS ADDED TO `cmd/cairn-ui` FOR THIS. Every knob the boot needs is a flag
 // that already exists, so the binary under audit is the binary that ships. A `-uiaudit`
 // mode would make the thing measured differ from the thing deployed.
+
+// healthBodyMirror is `internal/ui`'s health response, which is unexported there.
+//
+// ⚠ A SECOND SPELLING OF A TWO-BYTE LITERAL, AND THE DUPLICATION IS ACCEPTED RATHER THAN HIDDEN.
+// `ui.healthBody` is not exported and exporting it would widen that package's surface for one
+// assertion in a CI harness — a worse trade than this note. What makes the duplication safe is the
+// direction it fails in: if `internal/ui` ever changes the string, `waitHealthy` stops seeing a match
+// and the boot times out with "something else is listening on this port", which is loud, immediate,
+// and in the one place a reader would look. It cannot fail SILENTLY, which is the only kind of
+// duplication worth refusing.
+//
+// 🔴 AND IT IS NOT THE LOAD-BEARING CHECK. `refusePortInUse` is what establishes that the pod
+// answering is the pod this boot started; this only catches a non-cairn listener that a port bind
+// raced.
+const healthBodyMirror = "ok"
+
+// bindHost is the loopback address the pod is told to listen on, spelled once.
+const bindHost = "127.0.0.1"
 
 // fixtureToken is the credential the walk signs in with.
 //
@@ -98,7 +118,7 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 	}
 
 	w := &World{
-		BaseURL: fmt.Sprintf("http://127.0.0.1:%d", port),
+		BaseURL: fmt.Sprintf("http://%s:%d", bindHost, port),
 		Store:   store,
 		Scopes:  scopes,
 		dir:     dir,
@@ -110,11 +130,18 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 	// journal would render a page no deployment serves. The consequence is that
 	// `POST /share` has no effect to capture, which is fine — this walk never navigates
 	// a non-GET row anyway.
-	w.cmd = exec.Command(uiBinary,
+	// 🔴 `CommandContext` RATHER THAN `Command`, AND THAT IS HOW AN ORPHAN SURVIVED. A plain
+	// `exec.Command` ties the child to nothing: if the walk's context ends — a timeout, a cancelled
+	// CI job, a panic before `Stop` — the pod keeps running and keeps the port. One was found alive
+	// on a developer's machine from an aborted run, over a DIFFERENT store, and a subsequent walk
+	// would have reported `pod up … over N scope(s)` from its own `listScopes` while the browser
+	// talked to the survivor. `Cancel` and `WaitDelay` make the kill the context's job rather than a
+	// `defer` somebody might not reach.
+	w.cmd = exec.CommandContext(ctx, uiBinary,
 		"-store", store,
 		"-token-file", tokenPath,
 		"-session-file", filepath.Join(dir, "sessions.json"),
-		"-host", "127.0.0.1",
+		"-host", bindHost,
 		"-port", fmt.Sprint(port),
 	)
 	w.cmd.Stdout = logFile
@@ -124,6 +151,23 @@ func BootWorld(ctx context.Context, repoRoot, uiBinary, dir string, port int) (*
 	// competing with it. `PATH` is kept because `cairn-ui` resolves nothing by bare name
 	// today and a future one might.
 	w.cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir}
+
+	w.cmd.Cancel = func() error { return w.cmd.Process.Kill() }
+	// A grace period, then SIGKILL: `Wait` must not block forever on a child that ignores the first
+	// signal, because the caller's `defer w.Stop()` would then hang the whole run.
+	w.cmd.WaitDelay = 5 * time.Second
+
+	// 🔴 THE PORT IS CLAIMED BEFORE THE POD IS STARTED, WHICH IS WHAT MAKES "THE POD ANSWERING IS THE
+	// POD WE STARTED" A PROPERTY RATHER THAN A HOPE. `waitHealthy` accepts any 200 on
+	// `/healthz` — and a survivor from an aborted run answers exactly that, over its own store. So
+	// this binds the port first: if anything already holds it, the boot REFUSES and names the
+	// collision instead of measuring somebody else's pod. The listener is closed immediately
+	// afterwards, which leaves a window — but a window between two operations in this function is a
+	// different risk from a survivor that has been running for hours, and it is the smaller one.
+	if err := refusePortInUse(bindHost, port); err != nil {
+		logFile.Close()
+		return nil, err
+	}
 
 	if err := w.cmd.Start(); err != nil {
 		logFile.Close()
@@ -169,8 +213,18 @@ func waitHealthy(ctx context.Context, url string, budget time.Duration) error {
 		if err == nil {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 			resp.Body.Close()
+			// 🔴 THE BODY IS COMPARED, NOT JUST THE STATUS. `internal/ui` answers `/healthz` with a
+			// fixed string; accepting any 200 accepts any HTTP server on that port — which is
+			// precisely the survivor case this boot now refuses up front. Two cheap checks against
+			// one class of confusion is not redundancy when the first one is a port bind and the
+			// second is a payload.
 			if resp.StatusCode == http.StatusOK {
-				return nil
+				if got := strings.TrimSpace(string(body)); got != healthBodyMirror {
+					last = fmt.Errorf("%s answered 200 but the body is %q, not %q — something else is "+
+						"listening on this port", url, got, healthBodyMirror)
+				} else {
+					return nil
+				}
 			}
 			last = fmt.Errorf("%s answered %s (%q)", url, resp.Status, strings.TrimSpace(string(body)))
 		} else {
@@ -215,3 +269,22 @@ dest = pathlib.Path(sys.argv[2])
 reader_fixtures.build_store(dest)
 print(f"{dest} built from reader_fixtures.build_store\n", end="")
 `
+
+// refusePortInUse refuses when anything already holds the loopback port this walk is about to use.
+//
+// 🔴 IT IS THE ONLY THING THAT DISTINGUISHES "MY POD IS UP" FROM "SOMEBODY'S POD IS UP". Every other
+// signal in the boot — a 200 on `/healthz`, a scope count read from the store this function created —
+// is equally true of a survivor from an aborted run listening on the same port over a different
+// store. The failure that shape produces is the worst kind: a walk that reports the world it built
+// while measuring a world it did not.
+func refusePortInUse(host string, port int) error {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("%s is already in use, so this walk refuses to start: a pod already listening "+
+			"there would answer /healthz and be measured as if it were the one this boot created, over "+
+			"whatever store IT was given. Find the holder (`ss -lptn 'sport = :%d'`) and kill it by "+
+			"RESOLVED PID rather than by a pattern: %w", addr, port, err)
+	}
+	return ln.Close()
+}
