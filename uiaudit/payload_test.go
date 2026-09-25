@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -361,5 +365,264 @@ func TestSlugKeepsTheTwoShareTargetsDistinct(t *testing.T) {
 		if strings.ContainsAny(s, "/\\?=.") {
 			t.Errorf("slug %q is not a plain basename: the server refuses a ref with a path component", s)
 		}
+	}
+}
+
+// TestARefusalFromAnEDGEIsDistinguishedFromTheSERVICES is the regression guard for the silent
+// failure `verify-push` caught.
+//
+// 🔴 RED BEFORE THIS CHANGE, AND THE OLD BEHAVIOUR IS THE DEFECT. A CI push was answered `403` with
+// a Cloudflare managed-challenge page; the old error read `push rejected: 403 Forbidden: <!DOCTYPE
+// html…` followed by **816,059 bytes** of that page. Two faults in one line: it presented an
+// intermediary's refusal as the service's (the first reading reached was "the push token is wrong",
+// which is the wrong thing to check), and it buried the diagnosis under 800 KB in the log of the run
+// that needed reading.
+//
+// 🔴 THE FIXTURES ARE REALISTIC RATHER THAN TEXTBOOK, WHICH IS THE POINT OF THE FIRST CASE. Its body
+// is the SHAPE of the page actually received — a challenge interstitial with its own CSP and a
+// `challenges.cloudflare.com` script source — not a minimal `<html>bad</html>` that any classifier
+// would catch. A scanner that only recognises its own canonical example passes the real thing.
+//
+// ⚠ AND THE CLASSIFIER IS STRUCTURAL, NOT A VENDOR KEYWORD HUNT. The discriminator is the content
+// type and whether the body is JSON; the vendor is named only as a HINT when it identifies itself.
+// The `an unbranded HTML error page` case is what pins that: it carries no vendor string at all and
+// must still be classified as an edge refusal, because the next intermediary will not say
+// "cloudflare".
+func TestARefusalFromAnEDGEIsDistinguishedFromTheSERVICES(t *testing.T) {
+	// The real shape, trimmed: doctype, the challenge title, its CSP naming the challenge host, and
+	// the JavaScript requirement. Long enough that the truncation assertion below is meaningful.
+	challenge := `<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>` +
+		`<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">` +
+		`<meta name="robots" content="noindex,nofollow">` +
+		`<meta http-equiv="content-security-policy" content="default-src 'none'; ` +
+		`script-src 'nonce-7hKToPUjXzccQpqsjUwH0e' 'unsafe-eval' https://challenges.cloudflare.com; ` +
+		`style-src 'unsafe-inline'; img-src 'self' https://challenges.cloudflare.com">` +
+		`</head><body><div class="main-wrapper"><h1>audit-hub.example.com</h1>` +
+		`<p>Verifying you are human. This may take a few seconds.</p>` +
+		`<noscript><div id="challenge-error-title">Enable JavaScript and cookies to continue</div></noscript>` +
+		`</div>` + strings.Repeat("<!-- challenge payload padding -->", 400) + `</body></html>`
+
+	for _, tc := range []struct {
+		name        string
+		status      int
+		contentType string
+		body        string
+		wantEdge    bool
+		wantSubs    []string
+		denySubs    []string
+	}{
+		{
+			name:        "the REAL Cloudflare managed challenge that broke CI",
+			status:      http.StatusForbidden,
+			contentType: "text/html; charset=UTF-8",
+			body:        challenge,
+			wantEdge:    true,
+			wantSubs: []string{
+				"refused BEFORE REACHING THE SERVICE",
+				"NOT A TOKEN OR PAYLOAD PROBLEM",
+				"MANAGED CHALLENGE",
+				"byte(s) elided", // the truncation fired
+			},
+			denySubs: []string{"challenge payload padding"}, // the 800 KB must NOT be in the message
+		},
+		{
+			name:        "Cloudflare 1010, a refused client signature — a DIFFERENT edge verdict",
+			status:      http.StatusForbidden,
+			contentType: "text/html",
+			body:        `<html><head><title>Access denied</title></head><body>error code: 1010</body></html>`,
+			wantEdge:    true,
+			wantSubs:    []string{"refused BEFORE REACHING THE SERVICE", "error 1010"},
+			denySubs:    []string{"MANAGED CHALLENGE"},
+		},
+		{
+			// 🔴 THE CASE THAT PROVES THE GUARD IS NOT SPELLED. No vendor string anywhere, so a
+			// keyword hunt for "cloudflare" would misfile this as the service's own refusal.
+			name:        "an unbranded HTML error page from some other intermediary",
+			status:      http.StatusBadGateway,
+			contentType: "text/html",
+			body:        `<html><head><title>502 Bad Gateway</title></head><body><h1>502</h1></body></html>`,
+			wantEdge:    true,
+			wantSubs:    []string{"refused BEFORE REACHING THE SERVICE", "not JSON"},
+			denySubs:    []string{"cloudflare", "MANAGED CHALLENGE"},
+		},
+		{
+			// A plaintext non-JSON refusal is still not the service's JSON contract.
+			name:        "a plaintext refusal, which is also not the service's JSON",
+			status:      http.StatusServiceUnavailable,
+			contentType: "text/plain; charset=utf-8",
+			body:        "no healthy upstream",
+			wantEdge:    true,
+			wantSubs:    []string{"refused BEFORE REACHING THE SERVICE"},
+		},
+		{
+			// 🔴 THE POSITIVE CONTROL. A guard that classified everything as an edge refusal would
+			// satisfy every case above while destroying the thing the error is for. The service's
+			// own 400 must still read as the service's, with its message intact.
+			name:        "the SERVICE's own 400 — must NOT be called an edge refusal",
+			status:      http.StatusBadRequest,
+			contentType: "application/json",
+			body:        `{"error":"page 0 references file \"root-mobile.png\" but no matching part was uploaded"}`,
+			wantEdge:    false,
+			wantSubs:    []string{"refused BY THE SERVICE", "no matching part was uploaded"},
+			denySubs:    []string{"BEFORE REACHING", "NOT A TOKEN"},
+		},
+		{
+			name:        "the SERVICE's 401 on a bad token — the case that must stay readable as a token problem",
+			status:      http.StatusUnauthorized,
+			contentType: "application/json; charset=utf-8",
+			body:        `{"error":"invalid push token"}`,
+			wantEdge:    false,
+			wantSubs:    []string{"refused BY THE SERVICE", "invalid push token"},
+			denySubs:    []string{"BEFORE REACHING"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{
+				Status:     fmt.Sprintf("%d %s", tc.status, http.StatusText(tc.status)),
+				StatusCode: tc.status,
+				Header:     http.Header{"Content-Type": []string{tc.contentType}},
+			}
+			// The caller caps the read, so the classifier sees at most `maxDiagnosticBody`.
+			capped := tc.body
+			if len(capped) > maxDiagnosticBody {
+				capped = capped[:maxDiagnosticBody]
+			}
+			err := describeRefusal("push", resp, []byte(capped))
+			if err == nil {
+				t.Fatal("a non-2xx response produced no error")
+			}
+			got := err.Error()
+			for _, want := range tc.wantSubs {
+				if !strings.Contains(got, want) {
+					t.Errorf("the message must contain %q.\ngot: %s", want, truncate(got, 400))
+				}
+			}
+			for _, deny := range tc.denySubs {
+				if strings.Contains(strings.ToLower(got), strings.ToLower(deny)) {
+					t.Errorf("the message must NOT contain %q — it misfiles the refusal.\ngot: %s",
+						deny, truncate(got, 400))
+				}
+			}
+			// 🔴 AND THE MESSAGE MUST STAY SMALL WHATEVER THE BODY WAS. The defect was an
+			// 816,059-byte error string; a cap nobody asserts is a cap that drifts back.
+			if len(got) > 4000 {
+				t.Errorf("the error message is %d bytes; it buries the diagnosis the way the 816,059-byte "+
+					"original did", len(got))
+			}
+		})
+	}
+}
+
+// TestTheUserAgentIsSetOnBOTHLegs.
+//
+// ⚠ AN INVARIANT GUARD, LABELLED — and it is NOT a claim that the user agent fixes anything.
+// [UserAgent]'s doc records the measurements showing it does not. What this pins is that a request
+// which cannot be identified cannot be allow-listed by an operator, and that BOTH legs carry the
+// same identification: a rule written for one and not the other would half-work, which is harder to
+// diagnose than neither working.
+func TestTheUserAgentIsSetOnBOTHLegs(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path+" ua="+r.Header.Get("User-Agent"))
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == PushEndpoint {
+			_, _ = w.Write([]byte(`{"run_id":"00000000-0000-4000-8000-000000000001","url":"x"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"run_id":"00000000-0000-4000-8000-000000000001","status":"done","summary":{}}`))
+	}))
+	defer srv.Close()
+
+	cfg := PushConfig{PushURL: srv.URL, PushToken: "t", APIURL: srv.URL, APIToken: "t"}
+	p, files, err := BuildPayload("ua-test", []*Capture{goodCapture("/", "mobile")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Push(context.Background(), cfg, p, files)
+	if err != nil {
+		t.Fatalf("the push leg: %v", err)
+	}
+	if _, err := ReadRun(context.Background(), cfg, res.RunID); err != nil {
+		t.Fatalf("the read-back leg: %v", err)
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("expected one request per leg, got %d: %v", len(seen), seen)
+	}
+	for _, s := range seen {
+		if !strings.Contains(s, "ua="+UserAgent) {
+			t.Errorf("a leg did not carry the identification: %s", s)
+		}
+		if strings.Contains(s, "Go-http-client") {
+			t.Errorf("a leg still sends Go's default user agent: %s", s)
+		}
+	}
+	t.Logf("both legs identified: %v", seen)
+}
+
+// TestTheBODYCAPIsExercisedOnTheREALHTTPPath closes a mutant that SURVIVED the first battery.
+//
+// 🔴 `TestARefusalFromAnEDGE…` CAPS THE BODY ITSELF, SO IT CANNOT SEE `maxDiagnosticBody` AT ALL.
+// Measured: raising that constant back to 1 MiB left every case in that test green, because each one
+// hands `describeRefusal` a pre-truncated slice — the cap lives in the CALLER, in the
+// `io.LimitReader` beside `resp.Body`, and a unit test of the classifier is structurally blind to it.
+// That is the exact shape of a constant nobody observes.
+//
+// So this drives the real `Push` and `ReadRun` against a server that returns a body far larger than
+// the cap, and asserts the resulting error is small. It is the only test that exercises the read
+// limit rather than the formatting.
+func TestTheBODYCAPIsExercisedOnTheREALHTTPPath(t *testing.T) {
+	// Two orders of magnitude over the cap, and shaped like the page that actually arrived so the
+	// classifier still files it as an edge refusal while the cap does its work.
+	huge := `<!DOCTYPE html><html><head><title>Just a moment...</title></head><body>` +
+		strings.Repeat("<!-- x -->", 100_000) + `</body></html>`
+	if len(huge) <= maxDiagnosticBody*10 {
+		t.Fatalf("the fixture is %d bytes, which is not comfortably over the %d-byte cap; this test "+
+			"would pass whether or not the cap exists", len(huge), maxDiagnosticBody)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(huge))
+	}))
+	defer srv.Close()
+
+	cfg := PushConfig{PushURL: srv.URL, PushToken: "t", APIURL: srv.URL, APIToken: "t"}
+	p, files, err := BuildPayload("cap-test", []*Capture{goodCapture("/", "mobile")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, leg := range []struct {
+		name string
+		call func() error
+	}{
+		{"push", func() error { _, e := Push(context.Background(), cfg, p, files); return e }},
+		{"read-back", func() error {
+			_, e := ReadRun(context.Background(), cfg, "00000000-0000-4000-8000-000000000001")
+			return e
+		}},
+	} {
+		t.Run(leg.name, func(t *testing.T) {
+			err := leg.call()
+			if err == nil {
+				t.Fatal("a 403 produced no error")
+			}
+			got := err.Error()
+			// 🔴 THE ASSERTION IS ON THE MESSAGE'S SIZE, which is what the 816,059-byte original got
+			// wrong. A generous bound still catches a two-orders-of-magnitude regression.
+			if len(got) > 4000 {
+				t.Errorf("the error is %d bytes from a %d-byte body: the read cap is not being applied, "+
+					"and a CI log gets the 800 KB dump that buried the original diagnosis",
+					len(got), len(huge))
+			}
+			// And it must still be classified, not merely short.
+			if !strings.Contains(got, "refused BEFORE REACHING THE SERVICE") {
+				t.Errorf("the %s leg's oversized HTML refusal was not classified as an edge refusal: %s",
+					leg.name, truncate(got, 300))
+			}
+			t.Logf("%s: %d-byte body -> %d-byte error", leg.name, len(huge), len(got))
+		})
 	}
 }
