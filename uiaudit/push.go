@@ -241,7 +241,6 @@ func Push(ctx context.Context, cfg PushConfig, payload *PushPayload, files map[s
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.PushToken)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("User-Agent", UserAgent)
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
@@ -276,10 +275,6 @@ func ReadRun(ctx context.Context, cfg PushConfig, runID string) (*RunReport, err
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.APIToken)
-	// The same identification as the push leg, for the same reason — see [UserAgent]. Both legs
-	// cross the same edge, so a rule written for one and not the other would half-work, which is
-	// worse than neither.
-	req.Header.Set("User-Agent", UserAgent)
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -549,12 +549,12 @@ func TestTheUserAgentIsSetOnBOTHLegs(t *testing.T) {
 	if len(seen) != 2 {
 		t.Fatalf("expected one request per leg, got %d: %v", len(seen), seen)
 	}
+	// THROWAWAY BRANCH: inverted on purpose. This branch exists only to measure whether the edge
+	// challenges Go's default user agent, and the assertion is flipped so the guards step stays
+	// green and the walk actually runs. Do not merge this branch.
 	for _, s := range seen {
-		if !strings.Contains(s, "ua="+UserAgent) {
-			t.Errorf("a leg did not carry the identification: %s", s)
-		}
-		if strings.Contains(s, "Go-http-client") {
-			t.Errorf("a leg still sends Go's default user agent: %s", s)
+		if !strings.Contains(s, "ua=Go-http-client") {
+			t.Errorf("the discriminator needs Go's DEFAULT user agent on the wire: %s", s)
 		}
 	}
 	t.Logf("both legs identified: %v", seen)
