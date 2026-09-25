@@ -58,9 +58,21 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   by immutable tag does not drift; it stands still, which reads identically to "current" from
   outside.** Bumped to `sha-71041ff8…` and armed with three variables, in two commits on the
   deployment repo's trunk (`3a64a5764`, then `ce125e9db` correcting a claim the first one made).
-- 🔴 **THE THREE SIGN-IN VARIABLES ARE A SET, AND DELETING ONE TAKES THE POD DOWN RATHER THAN
-  DISABLING THE BUTTON.** `providerSignIn` exits **78** when the redirect URL is set and no verifier
-  is. With none of them set the surface comes up with the button simply absent, which is not an error
+- 🔴 **THE THREE SIGN-IN VARIABLES ARE A SET, AND WHICH ONE YOU DELETE DECIDES WHETHER THE POD
+  SURVIVES — AN EARLIER DRAFT SAID "DELETING ONE TAKES THE POD DOWN" FOR ALL THREE, AND THAT IS
+  FALSE FOR THE REDIRECT URL.** Read off `cmd/cairn-ui/main.go`'s `providerSignIn`, per variable:
+  - delete **`CAIRN_SUPABASE_JWKS_URL`** or **`CAIRN_SUPABASE_ISSUER`** while the redirect URL is
+    still set → the backend refuses to build and the program **exits 78. Pod DOWN.**
+  - delete **`CAIRN_SUPABASE_REDIRECT_URL`** → `redirect == ""` returns `nil, nil` **before** the
+    verifier is consulted → **pod UP**, credential form and existing sessions untouched, the button
+    simply absent. The function's own comment names this a real configuration, not a mistake.
+  🔴 **THE CORRECTION MATTERS UNDER INCIDENT, WHICH IS THE ONLY TIME ANYONE READS THIS.** If the
+  GitHub flow misbehaves in production, deleting the redirect URL is the cheapest remedy available —
+  button gone, no image roll, nothing else disturbed. The old wording said that path took the pod
+  down, which would push an operator to roll the image back instead: a slower, wider change. ⚠ The
+  deployment manifest's own comment is NOT wrong in this way — it says "deleting either of the first
+  two", so fix the claim here and leave that one alone.
+  With none of the three set the surface comes up with the button simply absent, which is not an error
   and was this pod's state until now. The audience variable is deliberately ABSENT: it defaults to the
   value the provider actually issues and the check stays armed, so spelling it out would be a second
   statement of an agreeing value.
@@ -152,16 +164,38 @@ slug, and this doc has twice measured a shuffle re-pointing live claims.
     forcing: incident — a denied identifier is on public `main` in a commit message today.
 12. **CORRECT TWO FILES THAT ASSERT THE HANDOFF-TOOLING REPO'S CI CHECKS BLOCK A MERGE.** They do
     not: `required_status_checks` returns 404. Both sites are wrong in the PERMISSIVE direction,
-    which is the dangerous one. **Closing condition:** both state the measured value with the command
+    which is the dangerous one. 🔴 **THE TWO SITES, RESTORED — an earlier draft of this item
+    compressed the names out, leaving a gate-forced closing condition nobody could check: with
+    "two files" unnamed, a session cannot know it found BOTH.** They are **`scripts/run-tests.sh`'s
+    own comment** and the **CI-platform skill's gotcha #9**, both in the handoff-tooling repo.
+    Neither is a denied identifier — they are ordinary tool paths that have always been in this
+    document and pass `leakscan` — so there was never a de-identification reason to drop them.
+    **Closing condition:** both state the measured value with the command
     that re-measures it, or say the protection was deliberately removed and by whom.
     forcing: gate — a comment is a claim, and this one licenses merging through a red gate.
 13. **NEW — COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** Everything a `curl` can
     reach is verified (see `State now`); what is unproven is that a real identity traverses the
     provider and lands as a session. **Closing condition:** a human opens the surface's public
     hostname in a browser, completes the GitHub flow, and the entries page renders for the seeded
-    operator user — or the failure is recorded with the pod's log line for it. ⚠ **Do the rank-9
-    share-flow check in the SAME sitting**: both are browser work on the same deployment, and
-    splitting them costs a second bring-up.
+    operator user — or the failure is recorded with the pod's log line for it.
+    🔴 **RANK 9 IS NOT PART OF THIS SITTING, AND AN EARLIER DRAFT OF THIS ITEM SAID IT WAS.** It
+    read *"Do the rank-9 share-flow check in the SAME sitting: both are browser work on the same
+    deployment"* — **false**, and it sent a reader to a world where rank 9 cannot be done at all.
+    Measured on the deployed journal: **1 `user-created`, 1 project, 1 `member-set`.** Rank 9
+    verifies the SHARE FLOW, whose `Candidates` list is narrowed by CO-MEMBERSHIP, so one person
+    means an EMPTY candidate select and nobody to share with. **Rank 9 needs the hand-run recipe
+    under `## How to verify`** (which builds two users and joins them), or a second co-member
+    provisioned in-cluster first. Do not fold the two.
+    ⚠ **PRECONDITION NOBODY HAS RECORDED, AND ITS FAILURE IS DELIBERATELY UNREADABLE.** Sign-in
+    resolves the exchanged token's `sub` against a user the control plane ALREADY holds
+    (`UserByProviderSubject`); an unknown subject is REFUSED, never provisioned — that refusal is
+    the anti-self-serve-signup guard, not a bug. The journal's `provider` is `supabase`, which
+    matches what the backend resolves against; whether its one `subject` equals the `sub` the
+    provider will actually issue for the operator's GitHub identity is **NOT recorded anywhere and
+    was not re-verified here**. 🔴 On a mismatch the browser gets the SAME generic 401 as every
+    other sign-in failure — `internal/ui/oauth.go` says the three distinct causes are collapsed on
+    purpose and the REASON goes to the pod's log. **So read the pod's log on any failure; the page
+    cannot tell you which of the three happened.**
     forcing: user — the operator reserved the browser step to a human.
 
 ## Defects (batched)
@@ -1135,11 +1169,17 @@ slug, and this doc has twice measured a shuffle re-pointing live claims.
 - 🔴 **AN IMMUTABLY-TAGGED DEPLOYMENT DOES NOT DRIFT — IT STANDS STILL, WHICH IS INDISTINGUISHABLE
   FROM "CURRENT" FROM OUTSIDE.** The browser surface served an artefact 10 commits stale for a day
   while a merged feature sat on `main` and its provider sat configured beside it. Every instrument
-  was green and correct: the pod was healthy, the route answered, both repos' gates passed. **Nothing
-  anywhere compares a deployed tag against the branch it came from**, and the one reading that would
-  have shown it — resolving the running image's sha back to a commit and counting the distance — is
-  not something any gate does. **When you touch a deployment, resolve its image to a commit and count
-  `git rev-list --count <that>..origin/main` before believing it is current.**
+  was green and correct: the pod was healthy, the route answered, both repos' gates passed. The one
+  reading that would have shown it — resolving the running image's sha back to a commit and counting
+  the distance — is not something any gate does. **When you touch a deployment, resolve its image to
+  a commit and count `git rev-list --count <that>..origin/main` before believing it is current.**
+  ⚠ **AND THE SCOPE OF THAT NEGATIVE, BECAUSE AN EARLIER DRAFT OVERSTATED IT AS "nothing ANYWHERE
+  compares a deployed tag against the branch it came from" — a claim spanning two repositories and a
+  cluster, carrying no command to refute it, written three lines above the rule forbidding exactly
+  that shape.** What is actually measured: **nothing in THIS repository** does it (checked here),
+  and nothing found in the deployment repo's manifests or CI as of the commit that armed sign-in.
+  Refute it by grepping either tree for a check that reads a running image's tag and compares it to
+  a branch — a single hit retires the claim.
 - 🔴 **A `State now` BULLET ASSERTING A NEGATIVE IS THE ONE SHAPE A READER CANNOT FALSIFY CHEAPLY.**
   This doc said *"the deploy is still not started … nothing has been written into the deployment-
   manifest repo"* for a day after both were done. A positive claim carries its own check (go read the
@@ -1189,6 +1229,22 @@ slug, and this doc has twice measured a shuffle re-pointing live claims.
   there was no `--slug-for` answer; a descriptive slug was claimed instead and released at the end.
   **The lock is worth taking even when the queue has no entry for the work** — the hazard it guards
   (two sessions doing the same thing) does not require the work to be enumerated.
+- 🔴 **THE HAND-RUN BRING-UP RECIPE UNDER `## How to verify` MUST NOT BE DELETED, AND THE REASON IS
+  RECORDED *HERE* BECAUSE THAT SECTION IS A REPLACE BUCKET.** The deployed browser surface holds
+  **one** user, and the share flow's `Candidates` is narrowed by CO-MEMBERSHIP — so rank 9 cannot
+  be verified there at all, and the recipe (two users, joined) is the only procedure that builds a
+  world in which it can. ⚠ **A note saying "do not delete this" is self-deleting when it lives in
+  the section it protects**: the next `/handoff` regenerates `State now`, `Next steps` and
+  `How to verify` wholesale, so a guard written into any of the three survives exactly one update.
+  It was written there first, which is the mistake this bullet exists to stop repeating — **put a
+  guard in `Gotchas`, which appends, and leave only the procedure in the replaced section.**
+- 🔴 **A RETRACTION IS A TREE-WIDE SWEEP — AND THE SITE I SWEPT WAS THE LESS-READ ONE.** A wrong
+  claim about rank 9's target was corrected under `## How to verify` while an IDENTICAL copy
+  survived in the ranked item itself, which is the section `/resume` and `claim-work` actually
+  drive from. The audit round that caught it noted the corrected copy sat ~1,120 lines below the
+  live one. **Grep the claim's own words across the whole document before calling a retraction
+  done**, and when two copies exist, fix the one a reader reaches FIRST. This doc already carried
+  that lesson in the abstract; it was read, and the sweep still missed a site.
 
 ## How to verify
 ```bash
@@ -1359,9 +1415,16 @@ because a closed block's value is its measured values and eliminations. Read it 
 - **Next probe:** drive the four remaining controls against the DEPLOYED surface, not a loopback
   binary: a POST with a valid session and a wrong CSRF token (expect 403), the `__Host-` attributes
   read off a real `Set-Cookie` at the edge, and five failed sign-ins followed by a VALID credential
-  (expect 401, proving the lockout is not walkable). ⚠ The lockout probe is RATE-LIMITER STATE on a
-  live surface and buckets on the client key — do it deliberately, and expect to wait out the
-  window rather than restarting the pod to clear it.
+  (expect 401, proving the lockout is not walkable). 🔴 **DO NOT FIRE THE LOCKOUT PROBE UNTIL YOU
+  HAVE CONFIRMED THE TRUSTED-PROXY ALLOWLIST RESOLVES *YOUR* CLIENT ADDRESS, BECAUSE THE BLAST
+  RADIUS OF A WRONG ONE IS THE WHOLE INTERNET.** `cmd/cairn-ui/main.go` states it: an allowlist
+  that does not match the real proxy buckets every caller under the proxy's own address, so **one**
+  abuser — here, you — locks out **everybody**. The variable being SET is not the check; the pod
+  starts on a set-but-wrong value and cannot tell, and the tell is in the log rather than in any
+  probe. Defaults are **5 failures / 900 s**, so getting this wrong is a **15-minute sign-in outage
+  on a public surface**, and the advice below (wait it out rather than restart) EXTENDS it.
+  ⚠ The probe is RATE-LIMITER STATE on a live surface and buckets on the client key — do it
+  deliberately, and expect to wait out the window rather than restarting the pod to clear it.
 
 ### A sibling session's HOME write turned a host-dependent test red mid-session
 - as-of: 2026-09-18
