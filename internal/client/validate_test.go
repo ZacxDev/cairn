@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -687,5 +688,155 @@ func TestACleanScopePrintsAllFourDenominatorsInOrder(t *testing.T) {
 				leader, at, prev, stdout)
 		}
 		prev = at
+	}
+}
+
+// runCLI drives the whole dispatch — `Parse` plus `Run`'s error ladder — rather than the verb
+// function, and 🔴 THAT IS THE POINT OF IT RATHER THAN A CONVENIENCE. `capture` above calls a
+// verb directly and `t.Fatalf`s when it returns an error, so it is STRUCTURALLY unable to
+// observe the reader-error arm: every exit code that arm produces is a property of `Run`, not
+// of `Validate`. A test written with `capture` for the rows below would have failed with "the
+// verb returned an error rather than an exit code" and told you nothing about the code.
+func runCLI(t *testing.T, argv ...string) (int, string, string) {
+	t.Helper()
+	var out bytes.Buffer
+	errFile, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer errFile.Close()
+	code := Run(Env{
+		Stdout: &out,
+		Stderr: errFile,
+		Host:   func() string { return "fixture-host-000000000000" },
+	}, argv)
+	written, err := os.ReadFile(errFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code, out.String(), string(written)
+}
+
+// THE #111 ROWS. An unreadable (`chmod 000`) entry in a cached scope made the two clients
+// disagree: the oracle printed a Python traceback at exit 1, this client exited 3 — but with
+// the RAW Go error text (`open <path>: permission denied`) rather than the named
+// `index entry unreadable: under <root> (PermissionError: …)` sentence every other reader in
+// this store emits, because `Validate` read through `LoadIndex` and so bypassed `LoadStore`'s
+// wrap.
+//
+// 🔴 THE CODE IS NOT WHAT IS RED HERE, AND SAYING SO IS THE POINT. At `a0745ed` this client
+// already answered 3, so a row asserting only the code would be an INVARIANT GUARD wearing a
+// regression test's name. What is red at that commit is the SENTENCE: the two assertions below
+// on `index entry unreadable` and on the CPython `[Errno 13] … : '<path>'` tail both fail
+// there. The oracle's half of the same fix — the exit code — is red in
+// `tests/test_cairn_cli.py::TestAnUnreadableEntryExitsThreeAndNeverTracebacks`, and the pair
+// being compared byte-for-byte is `tests/parity/harness.py`'s
+// `validate-unreadable-entry` / `recall-unreadable-entry` rows.
+//
+// ⚠ THE MODE IS SET HERE AND RESTORED HERE. Git does not preserve `000`, so a committed
+// fixture would arrive readable in CI and every row below would pass over a file nothing
+// refused. `t.TempDir()` cleanup also cannot remove a directory it cannot traverse, which is
+// the second reason the `0o644` restore is not cosmetic.
+func unreadableEntryHost(t *testing.T) (home, entry string) {
+	t.Helper()
+	home = oneInstanceHost(t)
+	entry = filepath.Join(home, ".cache", "subsystem-store", "alpha-notes", "one.md")
+	// 🔴 THE REACHABILITY CONTROL. If `oneInstanceHost` ever stops seeding this exact path
+	// the `chmod` below would be creating nothing, and a row asserting "the read failed"
+	// would be measuring an ABSENT file — a different condition with a different message.
+	if _, err := os.Stat(entry); err != nil {
+		t.Fatalf("the fixture never seeded the entry this row makes unreadable: %v", err)
+	}
+	if err := os.Chmod(entry, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(entry, 0o644) })
+	return home, entry
+}
+
+func TestAnUnreadableEntryIsReportedWithTheORACLESSentenceAtExitThree(t *testing.T) {
+	for _, verb := range []string{"validate", "recall"} {
+		t.Run(verb, func(t *testing.T) {
+			_, entry := unreadableEntryHost(t)
+			code, _, stderr := runCLI(t, verb, "--scope", "alpha-notes", "--no-sync")
+			if code != ExitUnreachableNoCache {
+				t.Fatalf("an unreadable entry exits %d, got %d\n%s",
+					ExitUnreachableNoCache, code, stderr)
+			}
+			// RED at `a0745ed` for `validate`: the raw `*os.PathError` carries none of this.
+			if !strings.Contains(stderr, "index entry unreadable: under ") {
+				t.Fatalf("the reader's own sentence must name the store, got:\n%s", stderr)
+			}
+			if !strings.Contains(stderr, "the store was not fully read") {
+				t.Fatalf("…and must say the read was INCOMPLETE, got:\n%s", stderr)
+			}
+			// 🔴 RED at `a0745ed` for BOTH verbs. `%s` on a Go `*os.PathError` renders
+			// `open <path>: permission denied`; the oracle interpolates `str(exc)`, which
+			// is this. It is the whole reason `store.PyOSError` is on those two sentences,
+			// and the parity rows compare exactly these bytes.
+			wantTail := "(PermissionError: [Errno 13] Permission denied: '" + entry + "')"
+			if !strings.Contains(stderr, wantTail) {
+				t.Fatalf("the OS-error tail must be CPython's, want %q in:\n%s",
+					wantTail, stderr)
+			}
+		})
+	}
+}
+
+func TestTheSameScopeREADABLEStillExitsZero(t *testing.T) {
+	// 🔴 THE CONTROL THAT MAKES THE ROWS ABOVE A MEASUREMENT. A client that exited 3 on
+	// every `validate`, or a fixture whose entry was never seeded, satisfies them.
+	oneInstanceHost(t)
+	code, stdout, stderr := runCLI(t, "validate", "--scope", "alpha-notes", "--no-sync")
+	if code != ExitOK {
+		t.Fatalf("a readable scope exits 0, got %d\n%s", code, stderr)
+	}
+	want := "cairn: alpha-notes: 1 of 1 entry file(s) parse, 0 malformed"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("got %q, want a line containing %q", stdout, want)
+	}
+}
+
+func TestAMalformedEntryStillExitsFiveAndIsNotAbsorbedIntoThree(t *testing.T) {
+	// 🔴 THE OTHER DIRECTION, AND THE ONE THE FIX COULD PLAUSIBLY HAVE BROKEN. `ExitCorrupt`
+	// (5) was the other candidate code for an unreadable entry, and taking it would have
+	// meant collecting the unreadable file as a `MalformedEntry` — which is what this row's
+	// file already is. The two conditions keep DIFFERENT codes: "could not interpret this
+	// file" is collected and reported at 5, "could not READ the store" fails closed at 3.
+	home := oneInstanceHost(t)
+	bent := filepath.Join(home, ".cache", "subsystem-store", "alpha-notes", "bent.md")
+	if err := os.WriteFile(bent,
+		[]byte("---\nservice: not-the-filename\nscope: alpha-notes\n---\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runCLI(t, "validate", "--scope", "alpha-notes", "--no-sync")
+	if code != ExitCorrupt {
+		t.Fatalf("a malformed entry exits %d, got %d\n%s", ExitCorrupt, code, stderr)
+	}
+	if !strings.Contains(stderr, "malformed") {
+		t.Fatalf("…and is NAMED on stderr:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "index entry unreadable") {
+		t.Fatalf("a file that PARSED badly is not an unreadable store:\n%s", stderr)
+	}
+}
+
+func TestAGenuinelyAbsentCacheStillExitsThreeForItsOwnReason(t *testing.T) {
+	// 🔴 3 HAS TO KEEP MEANING WHAT IT ALREADY MEANT. This row reaches it through
+	// `ResolveState`, not through the reader-error arm, and its stderr says so — so a mutant
+	// that routed this case through the new arm would keep the code and lose the sentence.
+	home := oneInstanceHost(t)
+	if err := os.RemoveAll(filepath.Join(home, ".cache", "subsystem-store")); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runCLI(t, "validate", "--scope", "alpha-notes", "--no-sync")
+	if code != ExitUnreachableNoCache {
+		t.Fatalf("an absent cache exits %d, got %d\n%s", ExitUnreachableNoCache, code, stderr)
+	}
+	if !strings.Contains(stderr, "no cache exists") {
+		t.Fatalf("…for its OWN reason, not the reader-error arm's:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "index entry unreadable") {
+		t.Fatalf("an absent cache is not an unreadable entry:\n%s", stderr)
 	}
 }

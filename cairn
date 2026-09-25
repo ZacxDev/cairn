@@ -1538,9 +1538,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # separate authoring tool's `--validate`, which was a second
         # implementation of the same predicate — exactly the shape that lets a
         # file validate clean and then fail to render.
-        index = subsystem_resolver.load_index(
+        #
+        # 🔴 AND IT READS THROUGH `load_store`, NOT `load_index` DIRECTLY — A POLICY
+        # SITE, NOT A SPELLING. `load_index`'s RESIDUAL LEDGER says a `TAKE` kind
+        # whose `read_text` raises "fails closed into a store-wide
+        # `EntryUnreadableError`"; that wrap lives in `load_store`, and this line
+        # used to bypass it, so the ledger's sentence was simply not true of this
+        # verb. A `chmod 000` entry left a raw `PermissionError` escaping
+        # `cmd_validate` as a TRACEBACK at exit 1. MEASURED over one scope holding
+        # one mode-000 entry: `subsystem_recall.py --store <root>` → 3 with the
+        # named sentence, `cairn validate` → 1 with a stack trace, the Go client →
+        # 3. Reading through the ONE function that owns the policy is what makes
+        # the ledger true here too, instead of a second `except OSError` at this
+        # site. #111.
+        _store, index = rc.load_store(
             cache,
-            on_malformed=subsystem_resolver.ON_MALFORMED_COLLECT,
+            verb="validated",
             visible_scopes=[scope],
         )
         malformed = index.malformed
@@ -2719,6 +2732,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_WRITE_UNREACHABLE
         # Reached only by a config failure outside `resolve_state`; still named.
         print(f"🔴 cairn: {STATE_NO_CACHE} — {exc}", file=sys.stderr)
+        return EXIT_UNREACHABLE_NO_CACHE
+    except (rc.StoreMissingError, subsystem_resolver.ResolverError) as exc:
+        # 🔴 THE READER-ERROR RUNG THIS LADDER WAS MISSING, AND ITS ABSENCE WAS A
+        # DIVERGENCE (#111). `internal/client/cli.go`'s ladder ends with exactly
+        # this arm — "EVERYTHING ELSE IS A READER ERROR — a missing store root, an
+        # unreadable entry — and it exits 3" — and this one simply stopped, so the
+        # SAME condition printed a Python traceback at exit 1 here and a named line
+        # at exit 3 there. MEASURED on one scope holding one `chmod 000` entry
+        # before this arm existed: `cairn validate` → 1, `cairn recall` → 1, the Go
+        # client → 3 for both.
+        #
+        # 🔴 3, AND IT IS THE ORACLE'S OWN NUMBER RATHER THAN THE PORT'S.
+        # `subsystem_recall.main` — the reader this client wraps — has always
+        # answered `except (TouchError, ResolverError) … return 3` for this exact
+        # condition, and `_exit_for`'s docstring states the rule it rests on: "3 is
+        # already 'the store is broken' for this CLI (`StoreMissingError`,
+        # `EntryUnreadableError`)". Measured directly: `subsystem_recall.py --store
+        # <root> --scope <s>` over that store exits 3, and 0 with the same entry
+        # readable. So the wrapper was the only thing in the system that did not
+        # already agree.
+        #
+        # 🔴 NOT `EXIT_CORRUPT` (5), WHICH IS THE OTHER CANDIDATE AND IS WRONG.
+        # 5 is a MALFORMED entry — one that was READ and rejected — and the whole
+        # of `load_index`'s residual ledger rests on "could not interpret this
+        # file" and "could not READ the store" being different facts, only the
+        # first of which has an honest degraded form. Routing an unreadable entry
+        # to 5 means collecting it as a `MalformedEntry`, which would make `recall`
+        # serve the readable entries at exit 0 for a store it did not fully read,
+        # and make `validate` print `N-1 of N parse, 1 malformed` about a file
+        # nothing opened. That trades a fail-closed read for a partial one.
+        #
+        # ⚠ NAMED CLASSES, NOT A BARE `except OSError`, AND THE DIFFERENCE IS
+        # DELIBERATE. Go reaches its arm with raw OS errors too, because its verbs
+        # return them as values; catching `OSError` at this boundary would turn any
+        # unexpected I/O bug anywhere in the client into a confident "the store is
+        # broken, exit 3". The residual — a raw `OSError` from a cache-root walk
+        # that never becomes a reader error — is declared in
+        # `tests/parity/README.md` rather than closed here.
+        print(f"🔴 cairn: {exc}", file=sys.stderr)
         return EXIT_UNREACHABLE_NO_CACHE
 
 

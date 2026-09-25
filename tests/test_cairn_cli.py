@@ -2543,3 +2543,121 @@ class TestTheConditionalSync:
         assert "fetched from" in again.stdout, (
             "an unusable validator must mean NO conditional, not a broken one"
         )
+
+
+class TestAnUnreadableEntryExitsThreeAndNeverTracebacks:
+    """🔴 THE #111 REGRESSION. A `chmod 000` entry inside a cached scope made the
+    two clients disagree about the exit code: this client raised
+    `PermissionError` (under `validate`) / `EntryUnreadableError` (under `recall`)
+    straight out of its subcommand and printed a PYTHON TRACEBACK at exit **1**,
+    while the Go client printed one named line at exit **3**.
+
+    🔴 3 IS THIS CLIENT'S OWN NUMBER, NOT THE PORT'S, AND THAT IS WHY THIS FILE
+    ASSERTS THE LITERAL. `subsystem_recall.main` — the reader this client wraps —
+    has always answered `except (TouchError, ResolverError) … return 3` for
+    exactly this condition, and `_exit_for`'s docstring states the rule behind it:
+    "3 is already 'the store is broken' for this CLI (`StoreMissingError`,
+    `EntryUnreadableError`)". Measured before the fix over one scope holding one
+    mode-000 entry: the reader module exited 3, this client 1, the Go client 3 —
+    so the wrapper was the only thing in the system that did not already agree.
+
+    ⚠ THE MODE IS SET *HERE*, NEVER COMMITTED. Git does not preserve a `000`
+    mode, so a committed fixture would arrive readable in CI and every assertion
+    below would pass over a file nothing refused — a green that measures nothing.
+    The `finally` restores 0o644 so the mode cannot leak into another test
+    through `tmp_path` reuse or a cache the next case inherits.
+
+    ⚠ NOT A BARE `assert returncode != 0`. The defect WAS a non-zero exit — 1 is
+    non-zero — so that assertion is green against the bug it is written for.
+    """
+
+    #: Nothing in the fixture store is unreadable, so this test has to make the
+    #: condition. `other-thing.md` is `gizmo-notes`'s only entry, which makes the
+    #: scope's read TOTALLY unreadable rather than partially — the shape the
+    #: issue names.
+    SCOPE = "gizmo-notes"
+    ENTRY = "other-thing.md"
+
+    def _cache_with_one_unreadable_entry(self, live_store, tmp_path: Path) -> Path:
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        entry = cache / self.SCOPE / self.ENTRY
+        # 🔴 A POSITIVE CONTROL ON THE FIXTURE ITSELF: if the sync did not place
+        # this file, every assertion below would be about a path that is unreadable
+        # because it does not exist, which is a different condition with a
+        # different exit code.
+        assert entry.is_file(), sorted(p.name for p in (cache / self.SCOPE).iterdir())
+        return cache
+
+    @pytest.mark.parametrize("verb", ["validate", "recall"])
+    def test_an_unreadable_entry_exits_3_with_the_named_sentence(
+        self, live_store, tmp_path: Path, verb: str
+    ):
+        """RED at `a0745ed` with `returncode == 1` and `Traceback (most recent
+        call last)` on stderr, for BOTH verbs; green at HEAD with 3."""
+        cache = self._cache_with_one_unreadable_entry(live_store, tmp_path)
+        entry = cache / self.SCOPE / self.ENTRY
+        entry.chmod(0o000)
+        try:
+            proc = run_cairn(verb, "--scope", self.SCOPE, "--no-sync",
+                             url=None, cache=cache)
+        finally:
+            entry.chmod(0o644)
+        assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
+        # 🔴 THE TRACEBACK IS ITS OWN ASSERTION. A future change could reach 3 by
+        # some other route while still dumping an interpreter stack — which leaks
+        # internal paths and is not a contract a caller can read.
+        assert "Traceback (most recent call last)" not in proc.stderr, proc.stderr
+        assert "index entry unreadable" in proc.stderr, proc.stderr
+        assert str(entry) in proc.stderr, proc.stderr
+        # The oracle's OSError spelling, which is the half the Go client has to
+        # reproduce through `store.PyOSError` for the parity row to compare equal.
+        assert "(PermissionError: [Errno 13] Permission denied:" in proc.stderr, (
+            proc.stderr
+        )
+
+    def test_the_SAME_scope_READABLE_exits_0(self, live_store, tmp_path: Path):
+        """🔴 THE CONTROL THAT MAKES THE 3 ABOVE A MEASUREMENT. Without it a
+        client that exited 3 on every `validate` — or one whose sync silently
+        placed nothing — would satisfy the test above."""
+        cache = self._cache_with_one_unreadable_entry(live_store, tmp_path)
+        proc = run_cairn("validate", "--scope", self.SCOPE, "--no-sync",
+                         url=None, cache=cache)
+        assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+        assert f"{self.SCOPE}: 1 of 1 entry file(s) parse, 0 malformed" in proc.stdout
+
+    def test_a_MALFORMED_entry_still_exits_5_and_is_NOT_absorbed_into_3(
+        self, source_store: Path, live_store, tmp_path: Path
+    ):
+        """🔴 THE OTHER DIRECTION, AND THE ONE THE FIX COULD PLAUSIBLY HAVE
+        BROKEN. `EXIT_CORRUPT` (5) was the other candidate code for an unreadable
+        entry, and taking it would have meant collecting the unreadable file as a
+        `MalformedEntry` — which is what this row's file already is. The two
+        conditions keep DIFFERENT codes: "could not interpret this file" is
+        collected and reported at 5, "could not READ the store" fails closed at 3.
+        """
+        (source_store / self.SCOPE / "bent-spine.md").write_text(
+            "---\nservice: not-the-filename\nscope: " + self.SCOPE + "\n---\n\n"
+        )
+        cache = tmp_path / "cache"
+        assert run_cairn("sync", url=live_store.base, cache=cache).returncode == 0
+        proc = run_cairn("validate", "--scope", self.SCOPE, "--no-sync",
+                         url=None, cache=cache)
+        assert proc.returncode == 5, (proc.returncode, proc.stdout, proc.stderr)
+        assert "malformed" in proc.stderr, proc.stderr
+
+    def test_a_genuinely_ABSENT_cache_still_exits_3_for_its_OWN_reason(
+        self, tmp_path: Path
+    ):
+        """🔴 3 HAS TO KEEP MEANING WHAT IT ALREADY MEANT. This row reaches it
+        through `resolve_state`, not through the new reader-error arm, and its
+        stderr says so — so a mutant that made the new arm swallow this case would
+        keep the code and lose the sentence.
+        """
+        cache = tmp_path / "empty-cache"
+        cache.mkdir()
+        proc = run_cairn("validate", "--scope", self.SCOPE, "--no-sync",
+                         url=None, cache=cache)
+        assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
+        assert "no cache exists" in proc.stderr, proc.stderr
+        assert "index entry unreadable" not in proc.stderr, proc.stderr

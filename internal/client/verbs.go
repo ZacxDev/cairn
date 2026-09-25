@@ -583,7 +583,17 @@ func Validate(env Env, opts Options) (int, error) {
 
 	worst := ExitOK
 	for _, scope := range scopes {
-		index, loadErr := store.LoadIndex(cache, store.Collect,
+		// 🔴 THROUGH `LoadStore`, NOT `LoadIndex` DIRECTLY, AND THE ORACLE'S
+		// `cmd_validate` MOVED IN THE SAME COMMIT. `LoadIndex`'s residual ledger says a
+		// `Take` kind whose read fails "fails closed into a store-wide
+		// EntryUnreadableError" — that wrap is `LoadStore`'s, and this line bypassed it,
+		// so a mode-000 entry reached the CLI as a bare `*os.PathError` and printed
+		// `open <path>: permission denied` where every other reader prints the named
+		// `index entry unreadable: under <root> (PermissionError: …)` sentence. The exit
+		// code was already 3 via `cli.go`'s reader-error arm; the TEXT was not the
+		// oracle's — and the oracle's own answer was a traceback at exit 1. Both sides
+		// now read the store through the one function that owns the policy. #111.
+		index, loadErr := store.LoadStore(cache, "validated",
 			store.VisibleScopeSet([]string{scope}))
 		if loadErr != nil {
 			return 0, loadErr

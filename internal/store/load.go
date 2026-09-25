@@ -420,11 +420,16 @@ func mdNamesIn(dir string) ([]string, error) {
 // though the reader has no write path. It is a claim about the RUN, which is what a
 // reader of the message needs to know; rewording it would be a divergence with nothing
 // behind it.
+//
+// 🔴 THE CAUSE IS RENDERED BY `PyOSError`, FOR THE REASON SPELLED OUT AT `LoadStore`'s
+// OWN WRAP: the oracle interpolates `str(exc)` and Go's `*os.PathError` does not spell
+// itself the same way, so `%s` on the raw cause diverges in the parenthetical alone.
+// Kept identical to its store-wide twin so the two cannot drift.
 func EntryUnreadable(path string, cause error) *EntryUnreadableError {
 	return &EntryUnreadableError{message: fmt.Sprintf(
 		"index entry unreadable: %s (%s: %s) — the store was not fully read, so this "+
 			"report is INCOMPLETE; nothing was written",
-		path, osErrorTypeName(cause), cause)}
+		path, osErrorTypeName(cause), PyOSError(cause))}
 }
 
 // LoadStore resolves the store root and loads its index.
@@ -455,9 +460,20 @@ func LoadStore(storeRoot, verb string, visible ScopeSet) (*Index, error) {
 			// silently short index.
 			return nil, me
 		}
+		// 🔴 `PyOSError(err)`, NOT `err` — THE TAIL IS PART OF THE COMPARED BYTES.
+		// The oracle interpolates `str(exc)`, which for an `OSError` is
+		// `[Errno 13] Permission denied: '<path>'`; Go's own `*os.PathError` renders
+		// `open <path>: permission denied`. Both clients therefore printed this
+		// sentence with a DIFFERENT parenthetical, which is what `PyOSError` exists
+		// for and what `osErrorTypeName`'s header declared as an unpinned residual
+		// ("the exception's own `[Errno N] text: 'path'` tail is NOT reproduced
+		// byte-for-byte here"). MEASURED before this line changed, one mode-000 entry
+		// under `recall`: the two sentences differed in exactly that parenthetical
+		// and in nothing else. `PyOSError` returns the Go text unchanged for an error
+		// carrying no errno, so this widens nothing else. #111.
 		return nil, &EntryUnreadableError{message: fmt.Sprintf(
 			"index entry unreadable: under %s (%s: %s) — the store was not fully read, so this report would be INCOMPLETE",
-			storeRoot, osErrorTypeName(err), err)}
+			storeRoot, osErrorTypeName(err), PyOSError(err))}
 	}
 	if visible.Unrestricted {
 		return index, nil

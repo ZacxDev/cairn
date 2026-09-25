@@ -257,6 +257,26 @@ class Case:
     #: `--only corrupt-…` measured the refusal with no cache at all — a weaker property wearing
     #: the same PASS.
     presync: bool = False
+    #: A path, relative to the CACHE root, to `chmod 000` for the measured run — restored to
+    #: 0o644 the moment that run returns, in a `finally`.
+    #:
+    #: 🔴 IT IS A CACHE PATH AND NOT A STORE PATH, AND THAT IS THE WHOLE MECHANISM. An
+    #: unreadable file in the SERVER's store never reaches either client — the snapshot walker
+    #: refuses it — so a sync installs a cache that does not hold it and both clients then read
+    #: a store with nothing wrong. The condition is a CACHED entry the client cannot open, so
+    #: the mode has to be set after the sync and before the read. Pair it with
+    #: `presync=True, wipe_cache=True` so the row is about a cache this run built.
+    #:
+    #: 🔴 IT CANNOT BE A COMMITTED FIXTURE, WHICH IS WHY IT IS A FIELD AT ALL. Git does not
+    #: preserve a `000` mode, so a mode-000 file in `world.py`'s corpus would arrive READABLE in
+    #: CI and the rows below would compare two clean runs — a green measuring nothing. It could
+    #: not live in the shared world anyway: the loader fails CLOSED on an unreadable entry, so
+    #: one such file in `alpha-notes` would change the answer of every other row reading it.
+    #:
+    #: ⚠ THE RESTORE IS NOT COSMETIC. `once()` runs per CLIENT, so without it the oracle's run
+    #: would hand the Go client a mode it did not set; and `restore_store` rebuilds the STORE
+    #: only, never the cache, so a leaked `000` would poison every later `--no-sync` row.
+    unreadable_in_cache: str | None = None
 
 
 def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
@@ -443,6 +463,40 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              "`entry shape:`, `dropped lines:`, `open actions` and `marker reachability:` "
              "blocks, with findings, in that order",
              ["validate", "--scope", "crag-notes"]),
+
+        # --- an UNREADABLE cached entry (#111) --------------------------------
+        #
+        # 🔴 THE DIVERGENCE THESE TWO ROWS CLOSE, AND WHY NO EXISTING ROW COULD SEE IT. The
+        # corpus is always fully READABLE, so `tests/parity/README.md` row 4 declared the
+        # reader-error exit route as a DIFFERENCE rather than measuring it: a `chmod 000` entry
+        # made the oracle raise out of its subcommand and print a Python TRACEBACK at exit 1
+        # while the Go client printed one named line at exit 3. Measured on both clients over
+        # one scope holding one mode-000 entry, before the fix: `validate` 1 vs 3, `recall`
+        # 1 vs 3, and — the half the exit code hides — the Go client's sentence carried Go's
+        # own `open <path>: permission denied` where the oracle's carried CPython's
+        # `[Errno 13] Permission denied: '<path>'`.
+        #
+        # 🔴 BOTH VERBS, BECAUSE THEY REACH THE CONDITION THROUGH DIFFERENT CODE. `recall`
+        # reads through `load_store`/`LoadStore`, which has always wrapped the OS error into
+        # the named sentence; `validate` read through `load_index`/`LoadIndex` and bypassed
+        # that wrap entirely, so it had a DIFFERENT message on both sides as well as a
+        # different code. One row would have left the other's route unmeasured.
+        #
+        # ⚠ `--no-sync` IS LOAD-BEARING, NOT INHERITED STYLE. Without it the measured run
+        # syncs, `install_snapshot` replaces the cache root wholesale, and the mode-000 file is
+        # overwritten by a readable one — the row would compare two clean runs and pass.
+        Case("validate-unreadable-entry",
+             "a CACHED entry at mode 000: the named `index entry unreadable` sentence with "
+             "CPython's own OSError tail, at exit 3, and NOT a traceback",
+             ["validate", "--scope", "beta-notes", "--no-sync"],
+             wipe_cache=True, presync=True,
+             unreadable_in_cache="beta-notes/spindle-cfg.md"),
+        Case("recall-unreadable-entry",
+             "the same store under `recall`, which reaches the condition through `load_store` "
+             "rather than through the verb's own load",
+             ["recall", "--scope", "beta-notes", "--no-sync"],
+             wipe_cache=True, presync=True,
+             unreadable_in_cache="beta-notes/spindle-cfg.md"),
 
         # --- doctor -----------------------------------------------------------
         Case("doctor-live", "seven checks, four states, the count line and the exit legend",
@@ -1179,6 +1233,14 @@ def main(argv: list[str] | None = None) -> int:
             #: would clear the pre-flight and fail these.
             saw_live_banner = False
             saw_rendered_digest = False
+            # 🔴 THE THIRD FLOOR SENTINEL, AND IT IS A POSITIVE CONTROL ON A FIXTURE THE
+            # HARNESS BUILDS ITSELF RATHER THAN READS. `unreadable_in_cache` sets a mode; if
+            # that `chmod` stopped happening — the field renamed, the hook moved above the
+            # presync, a future `restore_store` that rebuilt the cache — both clients would
+            # read a perfectly good store, agree, and the rows would PASS having measured
+            # nothing. The existence check inside `once()` cannot see that: the file is there
+            # either way. Only "some row actually produced the sentence" can.
+            saw_unreadable_entry = False
             wanted = None if args.only is None else set(args.only.split(","))
             selected = [c for c in cases(closed, hostile_port)
                         if wanted is None or c.id in wanted]
@@ -1255,7 +1317,28 @@ def main(argv: list[str] | None = None) -> int:
                                    [a.replace("<NEWFILE>", str(new_file))
                                      .replace("<PUTFILE>", str(put_file))
                                     for a in case.setup], cwd, env)
-                    return run_client(cmd, cwd, env)
+                    if case.unreadable_in_cache is None:
+                        return run_client(cmd, cwd, env)
+                    # 🔴 AFTER THE PRESYNC AND BEFORE THE MEASURED RUN, AND RESTORED WHATEVER
+                    # HAPPENS. The order is the mechanism: the file has to EXIST in the cache
+                    # (a sync put it there) before its mode can make it unreadable, and the
+                    # mode has to be gone before the next `once()` — this one is per CLIENT, so
+                    # the oracle's leak would be the Go client's fixture. The existence check
+                    # is a positive control on the row itself: a `chmod` of an absent path
+                    # raises here rather than quietly measuring a FileNotFoundError downstream.
+                    target = cache / case.unreadable_in_cache
+                    if not target.is_file():
+                        raise SystemExit(
+                            f"REFUSING: case {case.id!r} names "
+                            f"{case.unreadable_in_cache!r} under the cache and the presync did "
+                            f"not put a regular file there. Held: "
+                            f"{sorted(str(p.relative_to(cache)) for p in cache.rglob('*.md'))}"
+                        )
+                    target.chmod(0o000)
+                    try:
+                        return run_client(cmd, cwd, env)
+                    finally:
+                        target.chmod(0o644)
 
                 py = once([sys.executable, str(ROOT / "cairn")] + shared + argv_case)
                 # 🔴 THE SABOTAGE IS APPLIED TO THE GO SIDE ONLY, AND WITH REALISTIC ARGUMENTS.
@@ -1307,6 +1390,8 @@ def main(argv: list[str] | None = None) -> int:
                     saw_live_banner = True
                 if "FEATURED IN FULL" in py.stdout:
                     saw_rendered_digest = True
+                if "index entry unreadable" in py.stderr:
+                    saw_unreadable_entry = True
 
                 py_out, go_out = norm(py.stdout), norm(go.stdout)
                 py_err, go_err = norm(py.stderr), norm(go.stderr)
@@ -1572,11 +1657,16 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
 
             print(f"CONTENT-FLOOR live-banner={saw_live_banner} "
-                  f"rendered-digest={saw_rendered_digest}{mtime_note}")
-            floor_broken = wanted is None and not (saw_live_banner and saw_rendered_digest)
+                  f"rendered-digest={saw_rendered_digest} "
+                  f"unreadable-entry={saw_unreadable_entry}{mtime_note}")
+            floor_broken = wanted is None and not (
+                saw_live_banner and saw_rendered_digest and saw_unreadable_entry
+            )
             if floor_broken:
-                print("REFUSING TO VOUCH: no row produced a LIVE banner and a rendered digest, "
-                      "so this run measured refusals rather than reports.", file=sys.stderr)
+                print("REFUSING TO VOUCH: this run did not produce ALL THREE of a LIVE banner, a "
+                      "rendered digest and an `index entry unreadable` sentence — so it measured "
+                      "refusals rather than reports, or the mode-000 rows compared two clients "
+                      "reading a store with nothing wrong.", file=sys.stderr)
 
             dead = [n.name for n in norms if not n.fired]
             dead_is_fatal = wanted is None

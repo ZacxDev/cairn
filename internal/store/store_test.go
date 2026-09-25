@@ -882,3 +882,61 @@ func TestPyRepr(t *testing.T) {
 		}
 	}
 }
+
+// THE TWO "the store was not fully read" SENTENCES MUST SPELL THEIR CAUSE THE ORACLE'S WAY.
+//
+// 🔴 THIS EXISTS BECAUSE A MUTATION SWEEP FOUND THE SURVIVOR AND SAID SO. `EntryUnreadable`'s
+// cause was moved from `%s` on the raw Go error to `PyOSError` in the same change as
+// `LoadStore`'s — one rule, one place, exactly as `EntryUnreadable`'s own header demands ("so
+// the two … sentences cannot drift apart"). But reverting THIS one alone left `internal/client`,
+// `internal/store` and `internal/report` all green: the per-entry sentence is raised from
+// `report.ReadEntry`/`search`, which run AFTER the index loaded, and an entry that was readable
+// at index time and unreadable at body time is a TOCTOU no test can stage. So the guard has to
+// call the function DIRECTLY rather than reach it through a verb.
+//
+// ⚠ AND IT ASSERTS THE WHOLE NORMALISED SENTENCE, not that `[Errno` appears somewhere. A
+// substring check on the tail alone passes for a sentence that lost its path, its type name or
+// its "INCOMPLETE" clause — and the parity gate compares these bytes.
+func TestBothUnreadableSentencesRenderTheirCauseAsCPythonWould(t *testing.T) {
+	cause := &os.PathError{Op: "open", Path: "/w/alpha-notes/one.md", Err: syscall.EACCES}
+	// 🔴 THE NEGATIVE CONTROL ON THE FIXTURE: Go's OWN rendering, which is what the mutant
+	// produces. If these two were ever equal the assertions below could not tell the two
+	// spellings apart and would pass either way.
+	if cause.Error() == PyOSError(cause) {
+		t.Fatalf("the fixture cannot discriminate: Go and CPython render %q identically",
+			cause.Error())
+	}
+
+	perEntry := EntryUnreadable("/w/alpha-notes/one.md", cause).Error()
+	wantPerEntry := "index entry unreadable: /w/alpha-notes/one.md " +
+		"(PermissionError: [Errno 13] Permission denied: '/w/alpha-notes/one.md') — " +
+		"the store was not fully read, so this report is INCOMPLETE; nothing was written"
+	if perEntry != wantPerEntry {
+		t.Fatalf("EntryUnreadable:\n got %q\nwant %q", perEntry, wantPerEntry)
+	}
+
+	// The store-wide twin, reached the way a reader reaches it: a scope holding one entry
+	// nothing can open. Same spelling, same function, so the two cannot drift.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "alpha-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "alpha-notes", "one.md")
+	if err := os.WriteFile(entry, []byte("---\nservice: one\nscope: alpha-notes\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(entry, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(entry, 0o644) })
+	_, err := LoadStore(root, "recalled", Unrestricted())
+	if err == nil {
+		t.Fatal("an unreadable entry must fail the store CLOSED, not load a short index")
+	}
+	wantWide := "index entry unreadable: under " + root +
+		" (PermissionError: [Errno 13] Permission denied: '" + entry + "') — " +
+		"the store was not fully read, so this report would be INCOMPLETE"
+	if err.Error() != wantWide {
+		t.Fatalf("LoadStore:\n got %q\nwant %q", err.Error(), wantWide)
+	}
+}

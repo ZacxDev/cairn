@@ -303,7 +303,14 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # to see the `dropped lines:` / `marker reachability:` blocks at all — every other scope in
     # the world parses cleanly, so both advisories print their ZERO branch everywhere and a
     # client implementing neither would compare equal.
-    floor = 97
+    # ⚠ 97 -> 99 WHEN `validate-unreadable-entry` AND `recall-unreadable-entry` LANDED (#111):
+    # `m` moved 103 -> 105 and 99 is the literal the formula prescribes for it. Those two rows
+    # are what make the gate able to see an UNREADABLE entry at all — the corpus is otherwise
+    # always fully readable, so `tests/parity/README.md` row 4 DECLARED the reader-error exit
+    # route (oracle 1 with a traceback, Go 3) rather than measuring it. Two rows and not one
+    # because the verbs reach the condition through different code: `recall` through
+    # `load_store`/`LoadStore`, `validate` through its own load, which bypassed that wrap.
+    floor = 99
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
