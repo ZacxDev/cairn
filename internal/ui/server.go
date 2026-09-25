@@ -529,45 +529,66 @@ func (s *Server) renderPage(w http.ResponseWriter, id identity.Identity, scopes 
 // it accepted knowingly on a public, cookie-authenticated surface carrying a
 // state-changing share flow:
 //
-//   - `frame-ancestors 'none'` → this surface is FRAMABLE. What that costs is stated
-//     precisely below, because the first draft of this comment described a mechanism
-//     `SameSite=Lax` prevents.
+//   - `frame-ancestors 'none'` → this surface is FRAMABLE, so the share flow's grant and
+//     revoke POSTs are clickjackable. A clickjacked submit originates INSIDE the page, so
+//     its `Origin` really is this origin and the CSRF token in it really is the victim's,
+//     and both gates below pass. See the ORIGIN-vs-SITE note after this list: a second
+//     draft claimed `SameSite=Lax` prevents this and was WRONG.
 //   - `form-action 'self'` → an injected form can be induced to POST offsite.
 //   - `base-uri 'none'` → an injected `<base href>` can re-point every relative URL.
 //   - `default-src 'none'` → arbitrary script and third-party origins become loadable.
 //
-// 🔴 WHAT THE FRAMING ROW COSTS, CORRECTED — AND THE CORRECTION MAKES THE ACCEPTED EXPOSURE
-// SMALLER THAN IT WAS RECORDED AS, WHICH IS NOT A REASON TO REVISIT THE DECISION. This
-// comment first said: *"the share flow's grant and revoke POSTs are clickjackable. That is
-// the one cross-site vector neither gate below can see: a clickjacked submit originates
-// INSIDE the page, so its `Origin` really is this origin and the CSRF token in it really is
-// the victim's, and both gates pass."* That mechanism does not reach an AUTHENTICATED page.
-// `identity.SessionCookie` builds `__Host-cairn-session` with `SameSite=Lax`, and an
-// `<iframe>` load is a cross-site SUBRESOURCE request — neither the top-level GET navigation
-// Lax still admits nor the cross-site POST it refuses. A conforming browser therefore does
-// not attach the cookie, so the framed document renders the SIGN-IN page: no session, no
-// rendered CSRF token, and nothing authenticated behind the overlay to click.
+// 🔴 `SameSite` IS SITE-SCOPED AND `frame-ancestors` WAS ORIGIN-SCOPED. THEY ARE NOT THE
+// SAME BOUNDARY, AND A DRAFT OF THIS COMMENT CONFLATED THEM AND WAS WRONG IN THE UNSAFE
+// DIRECTION. That draft said the clickjacking bullet above *"does not reach an AUTHENTICATED
+// page"*, because `identity.SessionCookie` sets `SameSite=Lax` and an `<iframe>` load is a
+// cross-site subresource request, so the framed document would render the SIGN-IN page. It
+// then concluded the accepted exposure was *"SMALLER than recorded"*. Both sentences are
+// retracted. This is the record an operator decision was reaffirmed on, so it is corrected
+// here rather than quietly reworded to have always said this.
 //
-// 🔴 WHAT SURVIVES IS REAL AND DIFFERENT, SO THE ROW IS CORRECTED RATHER THAN DELETED:
+// 🔴 WHY IT IS WRONG, AND THE REPOSITORY HAD ALREADY WRITTEN IT DOWN. "Same site" is the
+// REGISTRABLE DOMAIN, not the origin. `identity.SessionCookieName`'s own comment quoted in
+// full — the draft above stopped one clause short of the words that refute it:
 //
-//   - UI REDRESS AGAINST THE UNAUTHENTICATED SIGN-IN PAGE. It is `classPublic` and answers
-//     anybody, so it frames. A framed sign-in form under an attacker's chrome is a phishing
-//     surface — the victim types a credential into a real page they cannot see the context
-//     of — and no gate here addresses that, because every request involved is legitimate.
-//   - ANY ROUTE A LATER CHANGE MAKES REACHABLE WITHOUT A SESSION inherits the same problem,
-//     with nothing going red. That is the standing cost of having no `frame-ancestors`.
-//   - THE DEFENCE IS NOW A SINGLE BROWSER-SIDE PROPERTY WITH NO BACKSTOP. `frame-ancestors`
-//     and `SameSite` were two independent refusals; one is gone. `session.go` says in as many
-//     words that Lax "is a browser-side property this server cannot verify" — so a client
-//     that does not enforce it restores the original mechanism in full, and nothing here
-//     would know.
+//	`Lax` is NOT treated as the CSRF guard — it is a browser-side property this server
+//	cannot verify, AND "SAME SITE" STILL INCLUDES A SIBLING SUBDOMAIN. The guard is the
+//	token.
 //
-// ⚠ AND THE LIMIT ON THAT CORRECTION, STATED RATHER THAN IMPLIED: it is DERIVED from
-// `identity.SessionCookie`'s constructor and from `SameSite` semantics. **No test here and no
-// browser run has measured that a framed request omits this cookie.** `session.go` flags its
-// neighbouring `Secure`-on-localhost claim the same way and for the same reason; this one is
-// no better evidenced. Read it as "the mechanism as recorded does not follow", not as "it was
-// observed not to happen".
+// So a framer at a sibling host under the same registrable domain is SAME-SITE. Lax attaches
+// `__Host-cairn-session` to that framed load, and the `__Host-` prefix does not help: it stops
+// a sibling host from SETTING the cookie, it has nothing to do with how the site is computed.
+// The framed document therefore renders AUTHENTICATED, with a real [csrfTokenFor] token in it,
+// and the induced click submits with `Origin` genuinely equal to this origin. `sameOrigin`
+// passes, the token matches, and the originally recorded mechanism follows IN FULL.
+// `internal/identity/session.go` already models a hostile sibling host under the registrable
+// domain as a real attacker against this exact cookie; that is the same attacker.
+//
+// 🔴 SO THE BLAST RADIUS IS WHAT IT WAS FIRST RECORDED AS. What `SameSite=Lax` buys is the
+// NARROWER case only — a framer at a different registrable domain — and even there it is a
+// browser-side property this server cannot verify, unmeasured here, and a single mechanism
+// where there used to be two. The live cases, worst first:
+//
+//   - A SAME-SITE FRAMER: any host sharing this deployment's registrable domain. Full
+//     clickjacking of the share flow's state-changing POSTs, both gates satisfied, exactly as
+//     the bullet above says. ⚠ Whether such a host EXISTS is a property of the deployment —
+//     what else is served under that domain — which this repository cannot see and must not
+//     assume away.
+//   - A CROSS-SITE FRAMER IN A CLIENT THAT DOES NOT ENFORCE LAX: same mechanism, restored in
+//     full, and nothing here would know.
+//   - UI REDRESS AGAINST THE UNAUTHENTICATED SIGN-IN PAGE, which needs no cookie at all. It is
+//     `classPublic` and answers anybody, so it frames from any origin. A framed sign-in form
+//     under an attacker's chrome is a phishing surface, and no gate here addresses it because
+//     every request involved is legitimate.
+//   - ANY ROUTE A LATER CHANGE MAKES REACHABLE WITHOUT A SESSION inherits that last one, with
+//     nothing going red. The standing cost of having no `frame-ancestors`.
+//
+// ⚠ AND THE EVIDENCE CLASS, BECAUSE IT DID NOT IMPROVE: all of this is DERIVED from the cookie
+// constructor and from `SameSite`/`frame-ancestors` scoping rules. No test here and no browser
+// run has framed this surface or observed which requests carry the cookie. `session.go` flags
+// its neighbouring `Secure`-on-`localhost` claim the same way; these are no better evidenced.
+// The lesson the retraction leaves: the wrong draft was ALSO derived, read plausibly, and was
+// unsafe — so do not treat the reasoning above as a substitute for measuring it.
 //
 // ⚠ AND ONE THING IT DID *NOT* BUY, RECORDED BECAUSE THE OPPOSITE IS THE OBVIOUS GUESS:
 // the policy was never what blocked the Tailwind build. `style-src 'self'` permits a

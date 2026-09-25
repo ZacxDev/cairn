@@ -13,7 +13,10 @@ import (
 // 🔴 EVERY CLASS NAME THIS FILE RENDERS IS A SEMANTIC NAME DEFINED IN `tailwind.css`, AND
 // A RAW TAILWIND UTILITY HERE WOULD SIMPLY NOT WORK. The generator scans NOTHING — the
 // stylesheet is compiled from `tailwind.css` alone — so `h.Class("flex gap-2")` would
-// render a class the stylesheet has no rule for, silently, with every test still green.
+// render a class the stylesheet has no rule for. `TestEveryRenderedClassHasARuleInTheStylesheet`
+// is what catches that and is the ONLY thing that can: regenerating leaves `app.css`
+// byte-identical, so the currency check stays green, and before that test existed the whole
+// package did too.
 //
 // ⚠ AN EARLIER DRAFT DID CARRY RAW UTILITIES HERE, BEHIND AN `@source "./*.go"`, AND THAT
 // SCAN WAS THE DEFECT. Tailwind's extractor reads the whole file including COMMENTS, and

@@ -13,12 +13,42 @@ import (
 	"testing"
 )
 
-// classCtor is the gomponents attribute constructor this guard reads, spelled once.
-const classCtor = "Class"
+// The three ways this package can put a class on an element, spelled once.
+//
+// 🔴 THERE ARE THREE BECAUSE A DRAFT OF THIS GUARD HANDLED ONLY THE FIRST, AND ITS NAME
+// CLAIMED ALL OF THEM. Measured on that draft: replacing one `h.Class("viewer")` with
+// `g.Attr("class", "zzbypass gap-2")` — two names with no rule in `app.css` — left the guard
+// PASSING, and so did `c.Classes{...}`. Neither was a finding; both were INVISIBLE. `g` and
+// `c` are already imported by `render.go`, and `components.Classes` is gomponents' idiomatic
+// conditional-class helper — exactly what somebody would reach for to collapse `taskItem`'s
+// `Class("task refused")` / `Class("task")` branch. A guard whose description is wider than
+// its implementation reads as coverage while providing none, which is worse than no guard
+// because it stops anyone looking.
+const (
+	classCtor = "Class"
+	// attrCtorName is `Attr`, which emits an arbitrary attribute — a class source when its
+	// first argument is the literal "class".
+	attrCtorName = "Attr"
+	// classesType is `components.Classes`, a `map[string]bool` whose KEYS are class names and
+	// which renders as a `class` attribute. It appears as a composite literal, not a call, so
+	// it is matched separately from the two constructors above.
+	classesType = "Classes"
+	// classAttrName is the attribute name that makes an `Attr` call a class source.
+	classAttrName = "class"
+)
 
 // collectRenderedClasses returns every class TOKEN this file renders, plus a finding for
-// every `Class` call whose argument is not a string literal, and how many `Class` calls it
-// inspected.
+// every class source whose names it cannot read, and how many class sources it inspected.
+//
+// 🔴 THE THREE ARMS ARE `Class`, `Attr("class", …)` AND `Classes{…}`, AND THE LIST IS
+// CLOSED — WHICH IS THE LIMIT OF THIS GUARD AND IS STATED HERE RATHER THAN LEFT TO BE
+// DISCOVERED. Those are every way gomponents emits a class attribute today. A FOURTH way —
+// a helper in this package that wraps one of them behind a non-literal, a future gomponents
+// API, a hand-rolled node type with its own `Render` — would be INVISIBLE to this scan: not
+// a finding, absent. The scan cannot close that structurally without a type checker, so the
+// mitigation is the non-literal rule instead: every shape it CAN see whose names it cannot
+// READ is a finding, which is what stops the hole being reopened one level up by indirection.
+// If a fourth source is added, add an arm here in the same commit.
 //
 // 🔴 IT IS AN AST SCAN AND NOT A GREP, AND THIS PACKAGE PROVES WHY RATHER THAN ASSERTING
 // IT. `render.go`'s own doc comment contains the text `h.Class("flex gap-2")` as the WORKED
@@ -61,42 +91,127 @@ func collectRenderedClasses(fset *token.FileSet, file *ast.File) (tokens []strin
 		return nil, findings, 0
 	}
 
+	// literalString unquotes an expression if it is a string literal.
+	literalString := func(e ast.Expr) (string, bool) {
+		lit, isLit := e.(*ast.BasicLit)
+		if !isLit || lit.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			return "", false
+		}
+		return v, true
+	}
+	addTokens := func(value string) {
+		tokens = append(tokens, strings.Fields(value)...)
+	}
+
 	ast.Inspect(file, func(n ast.Node) bool {
+		// ARM 3 — `<alias>.Classes{…}`, a composite literal rather than a call.
+		if lit, isComposite := n.(*ast.CompositeLit); isComposite {
+			sel, isSel := lit.Type.(*ast.SelectorExpr)
+			if !isSel || sel.Sel.Name != classesType {
+				return true
+			}
+			ident, isIdent := sel.X.(*ast.Ident)
+			if !isIdent || !aliases[ident.Name] {
+				return true
+			}
+			inspected++
+			where := fset.Position(lit.Pos()).String()
+			for _, elt := range lit.Elts {
+				kv, isKV := elt.(*ast.KeyValueExpr)
+				if !isKV {
+					findings = append(findings, fmt.Sprintf(
+						"%s: a %s.Classes element is not a key/value pair, so this scan cannot read the class "+
+							"name it carries.", where, ident.Name))
+					continue
+				}
+				key, ok := literalString(kv.Key)
+				if !ok {
+					findings = append(findings, fmt.Sprintf(
+						"%s: a %s.Classes KEY is not a string literal. The key IS the class name, and a name "+
+							"this scan cannot read is a name nobody can check has a rule in the stylesheet.",
+						where, ident.Name))
+					continue
+				}
+				addTokens(key)
+			}
+			return true
+		}
+
 		call, isCall := n.(*ast.CallExpr)
 		if !isCall {
 			return true
 		}
 		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		if !isSel || sel.Sel.Name != classCtor {
+		if !isSel {
 			return true
 		}
 		ident, isIdent := sel.X.(*ast.Ident)
 		if !isIdent || !aliases[ident.Name] {
 			return true
 		}
-		inspected++
 		where := fset.Position(call.Pos()).String()
-		if len(call.Args) != 1 {
-			findings = append(findings, fmt.Sprintf("%s: %s.Class takes one argument; this call has %d",
-				where, ident.Name, len(call.Args)))
-			return true
-		}
-		lit, isLit := call.Args[0].(*ast.BasicLit)
-		if !isLit || lit.Kind != token.STRING {
-			findings = append(findings, fmt.Sprintf(
-				"%s: %s.Class is called with a NON-LITERAL argument. Nothing scans this package to build the "+
-					"stylesheet — `tailwind.css` is the generator's only input — so a class name this test "+
-					"cannot read is a class name nobody can check has a rule. Spell it as a literal.",
-				where, ident.Name))
-			return true
-		}
-		value, err := strconv.Unquote(lit.Value)
-		if err != nil {
-			findings = append(findings, fmt.Sprintf("%s: the class literal did not unquote: %v", where, err))
-			return true
-		}
-		for _, tok := range strings.Fields(value) {
-			tokens = append(tokens, tok)
+
+		switch sel.Sel.Name {
+		// ARM 1 — `<alias>.Class("…")`.
+		case classCtor:
+			inspected++
+			if len(call.Args) != 1 {
+				findings = append(findings, fmt.Sprintf("%s: %s.Class takes one argument; this call has %d",
+					where, ident.Name, len(call.Args)))
+				return true
+			}
+			value, ok := literalString(call.Args[0])
+			if !ok {
+				findings = append(findings, fmt.Sprintf(
+					"%s: %s.Class is called with a NON-LITERAL argument. Nothing scans this package to build "+
+						"the stylesheet — `tailwind.css` is the generator's only input — so a class name this "+
+						"test cannot read is a class name nobody can check has a rule. Spell it as a literal.",
+					where, ident.Name))
+				return true
+			}
+			addTokens(value)
+
+		// ARM 2 — `<alias>.Attr("class", "…")`.
+		//
+		// 🔴 A NON-LITERAL ATTRIBUTE NAME IS A FINDING TOO, BECAUSE IT *COULD* BE "class" AND
+		// THIS SCAN CANNOT TELL. Skipping it would reopen the exact hole this arm closes, one
+		// level up: `g.Attr(name, "zzbypass")` would be invisible again. The raw-node ban next
+		// door refuses a non-constant `Attr` name for its own (escaping) reason; this refuses
+		// it for a different one, and both want the same thing from the code.
+		case attrCtorName:
+			if len(call.Args) == 0 {
+				return true
+			}
+			name, ok := literalString(call.Args[0])
+			if !ok {
+				inspected++
+				findings = append(findings, fmt.Sprintf(
+					"%s: %s.Attr is called with a NON-LITERAL attribute NAME, so this scan cannot tell whether "+
+						"it emits a class attribute. Spell the name as a literal.", where, ident.Name))
+				return true
+			}
+			if !strings.EqualFold(name, classAttrName) {
+				return true
+			}
+			inspected++
+			// A one-argument `Attr("class")` is a boolean attribute with no value, so it names
+			// no class. It is pointless rather than dangerous; nothing to check.
+			if len(call.Args) < 2 {
+				return true
+			}
+			value, ok := literalString(call.Args[1])
+			if !ok {
+				findings = append(findings, fmt.Sprintf(
+					"%s: %s.Attr(%q, …) is called with a NON-LITERAL value, so the class names it emits cannot "+
+						"be checked against the stylesheet. Spell them as a literal, or use %s.Class.",
+					where, ident.Name, name, ident.Name))
+				return true
+			}
+			addTokens(value)
 		}
 		return true
 	})
@@ -179,7 +294,7 @@ func TestEveryRenderedClassHasARuleInTheStylesheet(t *testing.T) {
 			"nothing to do with the class names")
 	}
 
-	// 🔴 POSITIVE CONTROL ON THE LOOKUP ITSELF, BECAUSE "ALL 34 RESOLVED" AND "THE LOOKUP
+	// 🔴 POSITIVE CONTROL ON THE LOOKUP ITSELF, BECAUSE "THEY ALL RESOLVED" AND "THE LOOKUP
 	// ALWAYS SAYS YES" ARE THE SAME OUTPUT. A name no stylesheet defines must NOT resolve,
 	// and a name this one certainly defines must.
 	const absent = "this-class-is-defined-nowhere"
@@ -237,32 +352,118 @@ func TestTheClassRuleGuardCanGoRED(t *testing.T) {
 			"missing, so the guard would be red on a correct tree and get deleted")
 	}
 
-	// Arm 2: a non-literal argument must be a finding rather than a silent skip.
-	src := `package ui
+	// The remaining arms are driven over SYNTHETIC files, and that is a deliberate split
+	// rather than a shortcut. `Attr("class", …)` and `Classes{…}` do not appear in this
+	// package today, so there is nothing real for them to read — which is exactly the state
+	// in which a dead arm is invisible. A synthetic source is the only way to prove the
+	// machinery works BEFORE somebody writes the first one.
+	scan := func(t *testing.T, src string) ([]string, []string, int) {
+		t.Helper()
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "synthetic.go", src, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("the synthetic file did not parse: %v", err)
+		}
+		return collectRenderedClasses(fset, file)
+	}
 
-import h "maragu.dev/gomponents/html"
+	const imports = `package ui
 
-func f(name string) any { return h.Class(name) }
+import (
+	g "maragu.dev/gomponents"
+	c "maragu.dev/gomponents/components"
+	h "maragu.dev/gomponents/html"
+)
+
+var _, _, _ = g.Text, c.Classes{}, h.Class
 `
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "synthetic.go", src, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("the synthetic file did not parse: %v", err)
-	}
-	toks, findings, inspected := collectRenderedClasses(fset, file)
-	if inspected != 1 {
-		t.Fatalf("the scan inspected %d Class call(s) in the synthetic file, want 1 — it did not resolve the "+
-			"import alias, so the arm-2 result below is about nothing", inspected)
-	}
-	if len(toks) != 0 {
-		t.Errorf("the scan reported class token(s) %v from a NON-LITERAL argument; it cannot know them", toks)
-	}
-	if len(findings) != 1 {
-		t.Fatalf("arm 2 is dead: a non-literal Class argument produced %d finding(s), want 1. A class name "+
-			"the scan cannot read would then pass silently, and the clean verdict would mean only 'every "+
-			"class I happened to be able to read'", len(findings))
-	}
-	if !strings.Contains(findings[0], "NON-LITERAL") {
-		t.Errorf("arm 2 fired, but for the wrong reason: %q", findings[0])
+
+	for _, tc := range []struct {
+		name       string
+		src        string
+		wantTokens []string
+		wantFinds  int
+		wantReason string
+		why        string
+	}{
+		{
+			name:       "arm 1: a non-literal Class argument is a finding, not a skip",
+			src:        imports + "\nfunc f(name string) any { return h.Class(name) }\n",
+			wantFinds:  1,
+			wantReason: "NON-LITERAL",
+			why: "a class name the scan cannot read would pass silently, and the clean verdict would " +
+				"mean only 'every class I happened to be able to read'",
+		},
+		{
+			name:       "arm 2: Attr(\"class\", …) is READ, not ignored",
+			src:        imports + "\nfunc f() any { return g.Attr(\"class\", \"zzbypass gap-2\") }\n",
+			wantTokens: []string{"zzbypass", "gap-2"},
+			why: "measured on the first draft of this guard: swapping one h.Class for this exact call " +
+				"left the guard PASSING with two classes that have no rule",
+		},
+		{
+			name:       "arm 2: a non-literal Attr VALUE on class is a finding",
+			src:        imports + "\nfunc f(v string) any { return g.Attr(\"class\", v) }\n",
+			wantFinds:  1,
+			wantReason: "NON-LITERAL",
+			why:        "otherwise the arm is walkable by moving the string one variable away",
+		},
+		{
+			name:       "arm 2: a non-literal Attr NAME is a finding, because it COULD be class",
+			src:        imports + "\nfunc f(n string) any { return g.Attr(n, \"zzbypass\") }\n",
+			wantFinds:  1,
+			wantReason: "NON-LITERAL",
+			why:        "skipping it reopens the hole one level up",
+		},
+		{
+			name: "arm 2: an Attr on a DIFFERENT attribute is not a class source",
+			src:  imports + "\nfunc f() any { return g.Attr(\"title\", \"zzbypass\") }\n",
+			why:  "a guard that treated every attribute as classes would be red on correct code",
+		},
+		{
+			name:       "arm 3: Classes{…} KEYS are read",
+			src:        imports + "\nfunc f(ok bool) any { return c.Classes{\"task\": true, \"zzbypass\": ok} }\n",
+			wantTokens: []string{"task", "zzbypass"},
+			why: "components.Classes renders as a class attribute, and it is the idiomatic helper for " +
+				"the conditional branch taskItem already has",
+		},
+		{
+			name:       "arm 3: a non-literal Classes KEY is a finding",
+			src:        imports + "\nfunc f(k string) any { return c.Classes{k: true} }\n",
+			wantFinds:  1,
+			wantReason: "not a string literal",
+			why:        "the key IS the class name",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			toks, findings, inspected := scan(t, tc.src)
+			if inspected == 0 {
+				t.Fatalf("the scan inspected ZERO class sources in this file, so every result below is "+
+					"about nothing — it resolved no import alias or the arm never matched. (%s)", tc.why)
+			}
+			if len(findings) != tc.wantFinds {
+				t.Fatalf("got %d finding(s), want %d: %v. THE ARM IS DEAD — %s",
+					len(findings), tc.wantFinds, findings, tc.why)
+			}
+			if tc.wantReason != "" && !strings.Contains(findings[0], tc.wantReason) {
+				t.Errorf("the arm fired, but for the wrong reason: %q does not mention %q",
+					findings[0], tc.wantReason)
+			}
+			if tc.wantFinds > 0 && len(toks) != 0 {
+				t.Errorf("the scan reported token(s) %v it cannot actually know", toks)
+			}
+			if got := strings.Join(toks, " "); got != strings.Join(tc.wantTokens, " ") {
+				t.Errorf("class tokens = %q, want %q. %s", got, strings.Join(tc.wantTokens, " "), tc.why)
+			}
+			// 🔴 AND THE ARM MUST REACH THE VERDICT, NOT MERELY PARSE. A token this scan
+			// extracts is only useful if the missing-rule lookup would fire on it, so the
+			// synthetic bypass names are checked against the REAL stylesheet here.
+			for _, tok := range toks {
+				if strings.HasPrefix(tok, "zzbypass") && hasSelectorFor(stylesheet, tok) {
+					t.Errorf("the stylesheet unexpectedly defines %q, so this control cannot show the "+
+						"arm producing a FAILING token", tok)
+				}
+			}
+		})
 	}
 }

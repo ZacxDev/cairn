@@ -370,46 +370,63 @@ rather than a line that reappears in a merge.
 
 | clause removed | what it had been stopping |
 |---|---|
-| `frame-ancestors 'none'` | the surface is FRAMABLE — see the corrected blast radius below, which is **smaller** than this row first claimed |
+| `frame-ancestors 'none'` | the surface is FRAMABLE — full clickjacking of the share flow's state-changing POSTs, with both cross-site gates satisfied; see below |
 | `form-action 'self'` | an injected form can be induced to POST offsite |
 | `base-uri 'none'` | an injected `<base href>` re-points every relative URL on the page |
 | `default-src 'none'` | arbitrary script and third-party origins become loadable |
 
-### 🔴 The framing row, CORRECTED — and the correction shrinks the accepted exposure
+### 🔴 The framing row — and a RETRACTION of this section's own previous correction
 
-⚠ **WHAT THIS SECTION FIRST SAID IS WRONG, AND IT WAS THE LOAD-BEARING DESCRIPTION OF AN
-OPERATOR DECISION — so the retraction matters more than usual.** It read: *"THE FRAMING ROW IS
-THE ONE THE TWO CROSS-SITE GATES CANNOT COVER… A clickjacked submit originates INSIDE the
-page: its `Origin` really is this origin and the CSRF token rendered into it really is the
-victim's, so gate (2) and gate (6) both pass. Framing was never something those gates could
-see; refusing to be framed was the only defence and it is now absent."*
+⚠ **THIS SECTION HAS BEEN WRONG ONCE IN EACH DIRECTION, AND THE SECOND TIME WAS THE UNSAFE
+ONE. It is the load-bearing description of an operator decision that was reaffirmed on it, so
+both drafts are quoted rather than reworded away.**
 
-**That mechanism does not reach an authenticated page.** `identity.SessionCookie` builds
-`__Host-cairn-session` with **`SameSite=Lax`**. An `<iframe>` load is a cross-site
-**subresource** request — neither the top-level GET navigation Lax still admits nor the
-cross-site POST it refuses — so a conforming browser does not attach the cookie. The framed
-document therefore renders the **sign-in page**: no session, no CSRF token rendered into
-anything, and nothing authenticated behind the overlay to click. `session.go`'s own comment
-already stated the rule this follows from; nobody applied it here.
+The **original** text said: *"A clickjacked submit originates INSIDE the page: its `Origin`
+really is this origin and the CSRF token rendered into it really is the victim's, so gate (2)
+and gate (6) both pass. Framing was never something those gates could see; refusing to be
+framed was the only defence and it is now absent."*
 
-⚠ **THE DIRECTION IS CONSERVATIVE — the exposure is SMALLER than recorded, not larger — so
-this is not a reason to revisit the deletion.** It is recorded because a decision reaffirmed on
-a description deserves an accurate one.
+The **second** draft called that wrong, on the grounds that `identity.SessionCookie` sets
+`SameSite=Lax` so a framed load carries no cookie and renders the sign-in page, and concluded
+the exposure was *"SMALLER than recorded"*. **That second draft is retracted. The original
+stands.**
 
-**What survives, which is real and different:**
+🔴 **`SameSite` IS SITE-SCOPED; `frame-ancestors` WAS ORIGIN-SCOPED.** They are not the same
+boundary and the retracted draft conflated them. "Same site" is the **registrable domain**.
+`session.go`'s own comment says so, and the retracted draft cited that very comment while
+stopping one clause short of the words that refute it — quoted here **in full**:
 
-| survives | why no gate here addresses it |
+> `Lax` is NOT treated as the CSRF guard — it is a browser-side property this server cannot
+> verify, **and "same site" still includes a sibling subdomain**. The guard is the token.
+
+So a framer at **any host sharing this deployment's registrable domain is same-site**. Lax
+attaches `__Host-cairn-session` to that framed load — the `__Host-` prefix stops a sibling
+*setting* the cookie and has nothing to do with how the site is computed. The framed document
+renders **authenticated**, with a real `csrfTokenFor` token in it; the induced click submits
+with `Origin` genuinely equal to this origin; `sameOrigin` passes and the token matches. The
+originally recorded mechanism follows **in full**. `internal/identity/session.go` already
+models a hostile sibling host under the registrable domain as a real attacker against this
+exact cookie — it is the same attacker.
+
+**The live cases, worst first:**
+
+| case | what happens |
 |---|---|
-| **UI redress against the unauthenticated sign-in page** | it is `classPublic` and answers anybody, so it frames; a framed sign-in form under an attacker's chrome is a phishing surface, and every request involved is legitimate |
-| **any route a later change makes reachable without a session** | it inherits the same problem with nothing going red — the standing cost of having no `frame-ancestors` |
-| **the loss of the second, independent refusal** | `frame-ancestors` and `SameSite` were two separate mechanisms; one is gone, so a client that does not enforce Lax restores the original mechanism in full and nothing here would know |
+| **a SAME-SITE framer** — any host under this deployment's registrable domain | full clickjacking of the share flow's grant and revoke POSTs, **both gates satisfied**, exactly as the original text said. ⚠ Whether such a host exists is a property of the **deployment** — what else is served under that domain — which this repository cannot see and must not assume away |
+| **a cross-site framer in a client that does not enforce Lax** | same mechanism, restored in full, and nothing here would know |
+| **UI redress against the unauthenticated sign-in page** | needs no cookie at all, so it frames from **any** origin; a framed sign-in form under an attacker's chrome is a phishing surface, and no gate addresses it because every request involved is legitimate |
+| **any route a later change makes reachable without a session** | inherits the row above, with nothing going red — the standing cost of having no `frame-ancestors` |
 
-🔴 **AND THE LIMIT ON THE CORRECTION ITSELF: IT IS DERIVED, NOT MEASURED.** It follows from
-`identity.SessionCookie`'s constructor and from `SameSite` semantics. **No test in this tree
-and no browser run has observed that a framed request omits this cookie.** `session.go` flags
-its neighbouring `Secure`-on-`localhost` claim as unmeasured for the same reason, and this one
-is no better evidenced. Read it as *"the mechanism as recorded does not follow"*, never as
-*"it was observed not to happen"*.
+What `SameSite=Lax` actually buys is the **narrower** case only: a framer at a *different*
+registrable domain. That is worth having and it is not what the retracted draft claimed.
+
+🔴 **AND THE EVIDENCE CLASS, WHICH DID NOT IMPROVE ACROSS EITHER DRAFT.** All of this is
+**derived** — from the cookie constructor, and from `SameSite`/`frame-ancestors` scoping rules.
+**No test in this tree and no browser run has framed this surface or observed which requests
+carry the cookie.** `session.go` flags its neighbouring `Secure`-on-`localhost` claim as
+unmeasured for the same reason. The lesson the retraction leaves is the point: the wrong draft
+was *also* derived, *also* read plausibly, and was unsafe — derivation is not a substitute for
+measuring it.
 
 🔴 **AND THE GATES THEMSELVES ARE UNTOUCHED, WHICH IS A DIFFERENT SENTENCE FROM THE ONE ABOVE.**
 `sameOrigin` and `csrfTokenFor` are derived from the request method by `stateChanging`, they
@@ -1269,12 +1286,19 @@ carries a bare `@layer utilities;` — the layer is declared and **empty**.
 
 🔴 **SO THE RULE THAT BINDS THE NEXT EDIT: EVERY CLASS `render.go` RENDERS IS A SEMANTIC NAME
 DEFINED IN `tailwind.css`. NEVER A RAW TAILWIND UTILITY.** Add `h.Class("flex gap-2")` to a new
-element and regenerate: `app.css` is byte-unchanged, so
-`checks.ui-stylesheet-is-current` is **green**, `go test ./internal/ui/` is **green**, and the
-element ships with two class names the served bytes have no rule for. Give it a named class
-here instead, composed with `@apply` like the other ~35.
-`TestEveryRenderedClassHasARuleInTheStylesheet` is the mechanical check on exactly that, and it
-exists because this paragraph on its own is a rule nothing enforces.
+element and regenerate: `app.css` is **byte-unchanged**, so
+`checks.ui-stylesheet-is-current` stays **green** and the element would ship with two class
+names the served bytes have no rule for. Give it a named class here instead, composed with
+`@apply` like the other ~35.
+
+🔴 **`TestEveryRenderedClassHasARuleInTheStylesheet` IS WHAT MAKES THAT LOUD, AND IF YOU ARE
+READING THIS BECAUSE IT WENT RED, IT IS RIGHT AND THE CODE IS WRONG.** Define the class in
+`tailwind.css` and regenerate; do not delete the test. **Before it existed,
+`go test ./internal/ui/` was green on exactly the defect above** — that is why it exists, and
+it is the only thing in the tree that can see it: the currency check compares generated
+against committed and a raw utility moves neither. It reads `Class(…)`, `Attr("class", …)` and
+`Classes{…}`; a fourth way of emitting a class would be invisible to it, which its own doc
+comment states.
 
 ⚠ **THIS SECTION USED TO TEACH THE OPPOSITE, AND THE RETRACTION IS THE POINT BECAUSE THIS
 README IS THE DOC A NEXT EDITOR READS INSTEAD OF THE SOURCE COMMENTS.** It read *"THE CLASS
