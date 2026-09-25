@@ -24,111 +24,61 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`ad74fd0`** (#110), and ⚠ **re-read rather than quoting it** — `main` moved twice while this
-  session was working (`71041ff` #106, then `ad74fd0` #110, both from other sessions), and the second
-  landed *after* this session had already fast-forwarded once. The DoD stands: **ADDRESSED ⇒ the arc
-  stays CLOSED.** Run `pytest tests -q` and read **0 failed**; the total is deliberately not quoted
-  here (its selection is unstated and the figure is unreproducible).
-  ⚠ **THE DoD's EVIDENCE, CARRIED FORWARD BECAUSE THIS SECTION REPLACES:** the authz matrix; the
-  share flow with its replica-honesty notice; identity resolving through both backends;
-  `packages.default = mkGoClient` (in `flake.nix`'s `packages` block — deliberately **not** a line
-  number); and `go test ./...` over the Go packages. Distance from the commit that first met it is a
-  COMMAND, never a number: `git rev-list --count 7d7c9ea..origin/main`.
-- 🔴 **THE DEPLOY IS DONE, AND THE PREVIOUS `State now` SAYING "STILL NOT STARTED" WAS ALREADY FALSE
-  WHEN THIS SESSION READ IT.** Another session built the full manifest set and seeded the journal the
-  day before this one, in the deployment-manifest repo, while this doc still said nothing had been
-  written there. **Both were re-verified live this session rather than read off the commit messages:** the
-  surface is `1/1 Running` with a ClusterIP on the UI port and its own PVC bound; the control journal
-  on that volume holds **30 records** — `user-created 1 · project-created 1 · scope-created 26 ·
-  member-set 1 · credential-issued 1 · granted 0`, matching the seeding commit's own count exactly.
-  ⚠ **The lesson is not "the doc was stale" but that a `State now` bullet asserting a NEGATIVE
-  ("not started") is the one shape a reader cannot falsify without going and looking.**
-- ✅ **THE LOOPBACK-ONLY GAP THIS DOC NAMED IS CLOSED, AND ONLY FOR ONE OF THE FIVE CONTROLS.** The
-  previous entry said every auth control *"was watched failing closed on the same binary over
-  LOOPBACK, never off-mesh … that is the gap the precondition names"*. Measured off-mesh this session
-  through the public edge: the anonymous refusal answers **401** on the entries route and on the share
-  route. 🔴 **THAT IS ONE CONTROL, NOT FIVE** — the Origin pair, the CSRF pair, the `__Host-` cookie
-  attributes and the five-failure lockout are still loopback-only readings, and two anonymous GETs say
-  nothing about any of them. Do not read the ✅ as retiring the precondition.
-- ✅ **THE DEPLOYED IMAGE WAS 10 COMMITS BEHIND AND GITHUB SIGN-IN WAS UNCONFIGURED; BOTH ARE FIXED,
-  AND THE LAG IS THE PART WORTH REMEMBERING.** The surface had been serving `sha-899b4cbd…` (#99)
-  since it first rolled — an artefact that PREDATES the sign-in flow entirely — while #106 sat merged
-  on `main` and the identity provider sat fully configured beside it. Nothing reported the gap: the
-  pod was healthy, the route answered, and every gate in both repos was green. **A deployment pinned
-  by immutable tag does not drift; it stands still, which reads identically to "current" from
-  outside.** Bumped to `sha-71041ff8…` and armed with three variables, in two commits on the
-  deployment repo's trunk (`3a64a5764`, then `ce125e9db` correcting a claim the first one made).
-- 🔴 **THE THREE SIGN-IN VARIABLES ARE A SET, AND WHICH ONE YOU DELETE DECIDES WHETHER THE POD
-  SURVIVES — AN EARLIER DRAFT SAID "DELETING ONE TAKES THE POD DOWN" FOR ALL THREE, AND THAT IS
-  FALSE FOR THE REDIRECT URL.** Read off `cmd/cairn-ui/main.go`'s `providerSignIn`, per variable:
-  - delete **`CAIRN_SUPABASE_JWKS_URL`** or **`CAIRN_SUPABASE_ISSUER`** while the redirect URL is
-    still set → the backend refuses to build and the program **exits 78. Pod DOWN.**
-  - delete **`CAIRN_SUPABASE_REDIRECT_URL`** → `redirect == ""` returns `nil, nil` **before** the
-    verifier is consulted → **pod UP**, credential form and existing sessions untouched, the button
-    simply absent. The function's own comment names this a real configuration, not a mistake.
-  🔴 **THE CORRECTION MATTERS UNDER INCIDENT, WHICH IS THE ONLY TIME ANYONE READS THIS.** If the
-  GitHub flow misbehaves in production, deleting the redirect URL is the cheapest remedy available —
-  button gone, no image roll, nothing else disturbed. The old wording said that path took the pod
-  down, which would push an operator to roll the image back instead: a slower, wider change. ⚠ The
-  deployment manifest's own comment is NOT wrong in this way — it says "deleting either of the first
-  two", so fix the claim here and leave that one alone.
-  With none of the three set the surface comes up with the button simply absent, which is not an error
-  and was this pod's state until now. The audience variable is deliberately ABSENT: it defaults to the
-  value the provider actually issues and the check stays armed, so spelling it out would be a second
-  statement of an agreeing value.
-- ✅ **ARMED AND VERIFIED ON THE SERVED SURFACE, off-mesh, after the tag went live.** The pod's own
-  startup line names the credential form **and** the GitHub button with its callback, and carries **no
-  key-set warning**, so the key fetch succeeded. The sign-in page answers 200 and carries the GitHub
-  form action; the share route stays 401; the OAuth start refuses **403** both with no Origin and with
-  a foreign Origin; the callback with no flight refuses **400** — a refusal, not a 500, which is the
-  shape that would mean an unguarded handler.
-- ⏳ **WHAT IS STILL NOT VERIFIED IS A *COMPLETED* SIGN-IN, AND EVERY READING ABOVE IS A REFUSAL OR AN
-  UNAUTHENTICATED PAGE.** Nobody has carried a GitHub identity through the provider and back to a
-  session on this deployment. That is a human's step and this list must not be read as standing in for
-  it — it is rank 13.
-- ⚠ **CARRIED FORWARD — RANK 10 (the publish ordering) IS DONE**, merged as `901b77d` (#104) and
-  verified on the real publish run rather than on the PR: the merge triggered the first execution of
-  the new order, with the Go half executing wholly before the Python half. Two things the agent got
-  right against its brief are worth keeping: the brief's `first_go < last_python` is `min < max` and
-  is satisfied by a fully INTERLEAVED job, so the shipped assertion is the true mirror; and the skopeo
-  pin and the registry login sat INSIDE the Python half, so moving the Go half in front without
-  hoisting them would have run the Go pushes with no binary and no credential. **Ask what the half you
-  are moving was silently borrowing from the other one.**
-- ⚠ **CARRIED FORWARD — A REORDER'S REAL BLAST RADIUS IS `steps.<id>.outputs`, AND NO TEST COVERS
-  IT.** Verified by hand on #104: 43 references, all resolving to a strictly earlier step, reported as
-  a PAIR because the checker was first proved able to go red (relocating the first step yields 24
-  violations). The second cheap structural check worth copying: the workflow's non-comment, non-blank
-  lines are an identical multiset before and after, which is what proves a pure reorder disturbed no
-  `run:` body.
-- ⏳ **CARRIED FORWARD — RANK 11 IS OPEN AS THE HANDOFF-TOOLING REPO'S #1867, UNMERGED ON PURPOSE**,
-  `MERGEABLE`, its closing condition met and watched (a commit message carrying a denied identifier is
-  refused at rc 13). It is held because that repo's `main` is red for an unrelated reason, below, and
-  merging would bake that red into main's history. 🔴 **Its leak gate's scope is WIDER THAN THE
-  COMMIT: it scans the whole `--advanced` value, not just the committed subject**, because
-  `splitlines()[0]` and `[:100]` each drop operator text that still reaches stdout. Know that before
-  reading a refusal as "this would have leaked".
-- 🔴 **CARRIED FORWARD — THE HANDOFF-TOOLING REPO'S `main` IS RED ON ITS TEST LEG, CAUSED BY ITS OWN
-  CAIRN PIN BUMP, AND THIS IS THE CROSS-REPO COUPLING NOBODY HAD WRITTEN DOWN.** Its
-  `test_kills_the_readme_exclusion` mutates a pinned anchor, and cairn consolidated its open-coded
-  README exclusion into one `is_entry_filename` predicate, so the anchor count went **1 → 0**. **A
-  cairn consolidation can redden that repo, and no gate on either side says so.** Discriminated rather
-  than assumed: the genuine-failure signature, with CI and local producing identical collected/passed/
-  failed totals — identical totals across two environments is what rules out load.
-- 🔴 **CARRIED FORWARD — THAT REPO'S BRANCH PROTECTION NO LONGER REQUIRES STATUS CHECKS**
-  (`required_status_checks` returns 404), so two files asserting a red leg BLOCKS the merge are wrong
-  in the permissive direction. ⚠ Do not restate either version — measure it. That is rank 12.
-- ✅ **CARRIED FORWARD:** the UI image is published and anonymously pullable, measured twice with an
-  absent-tag negative control each time; both publish controls ran for real; the Go pod is the
-  DEPLOYED pod and both pods publish to two ghcr packages under one `sha-<40-hex>` scheme.
-- 🔴 **CARRIED FORWARD — `cairn-control-plane-9` IS STILL HELD ON PURPOSE** and the browser step is
-  still a human's. ⚠ Its handover is stale again by the mechanism this doc already records — the
-  world, the token and the pid are session-scoped. **Rebuild the instance before handing any URL
-  over**, and note that a long-lived instance from an earlier session was observed still running on
-  the UI port this session; check who holds that port before binding it.
+- `main` @ **`a0745ed`** (#114) — ⚠ **re-read rather than quoting it.** `main` moved five times during
+  this session (`ad74fd0` → `299386a` → `219d58e` → `b4a51ff` → `a0745ed`), three of them this
+  session's own merges and two a sibling's. The DoD stands: **ADDRESSED ⇒ the arc stays CLOSED.**
+  Run `pytest tests -q` and read **0 failed**; the total is deliberately NOT quoted here — its
+  selection is unstated and the figure is unreproducible, so a number would rot on sight.
+- ✅ **THREE DOC PRs MERGED THIS SESSION** — `299386a` (#113, the deploy record + two audit rounds'
+  fixes), `219d58e` (#115, the prune-regrowth measurement), `b4a51ff` (#116, the prune itself).
+- ✅ **THE PRUNE LANDED AND DID NOT DELETE A CLAIM — VERIFIED INDEPENDENTLY, NOT TAKEN FROM THE
+  AGENT.** doc **139,371 → 89,200 B**, archive 84,798 → 138,791 B, `Gotchas` 151 → 81 bullets.
+  Union of bullet BODIES across both files: **413 bullets / 406 distinct before AND after, 0 lost,
+  0 gained**, with the detector's own positive control firing (it reports 1 when a known bullet is
+  dropped). Ranks 1–13 and all `forcing:` tags byte-identical. 🔴 **Still 23,664 B over the
+  65,536 B ceiling, and stopping there was correct** — there is no further ~24 KB of closed
+  content, and hitting the number would have required deleting claims.
+- ⏳ **TWO PRs ARE OPEN AND UNMERGED, BOTH DISPATCHED THIS SESSION, BOTH FROM TASKS THIS SESSION
+  AUTHORED.** `cairn#117` (Tailwind theme + CSP deletion, head `6bbcddf`) and the handoff-tooling
+  repo's **#1871** (rule (p), the size ratchet). 🔴 **Both will end at `ready_for_review`, never
+  `complete`: this session wrote both sets of acceptance criteria, and an agent may not grade an
+  exam it wrote.** Tasks 657 and 658 are `in_progress` with pre-start comments carrying the
+  criteria verbatim.
+- 🔴 **THE CSP IS DELETED FROM THE BROWSER SURFACE BY OPERATOR DECISION, CHALLENGED ONCE AND
+  REAFFIRMED, AND THE ACCEPTED RISKS ARE NAMED RATHER THAN IMPLIED.** Gone: `frame-ancestors`
+  (the share flow's grant POST becomes framable — clickjacking), `form-action` (forms may POST
+  offsite), `base-uri` (base-tag injection), `default-src 'none'` (arbitrary script origins).
+  ⚠ **The correction that changes what it buys:** the CSP was NEVER what blocked Tailwind —
+  `style-src 'self'` already permits a compiled same-origin stylesheet, proven by the pre-change
+  stylesheet being served under that exact policy. The absent build step was the blocker.
+  🔴 **`sameOrigin`, `csrfTokenFor` and the `stateChanging` gates are NOT the CSP and are
+  UNTOUCHED** — verified independently: `git diff -- internal/ui/session.go` is **0 lines**.
+- ✅ **CARRIED FORWARD — THE DEPLOY IS DONE AND GITHUB SIGN-IN IS ARMED.** The browser surface runs
+  the current image with `CAIRN_SUPABASE_{JWKS_URL,ISSUER,REDIRECT_URL}` set; the pod's own startup
+  line names the credential form AND the provider with its callback, with no key-set warning.
+  Off-mesh: sign-in page 200 carrying the provider form action, share route 401, OAuth start 403
+  with no Origin and 403 with a foreign Origin, callback with no flight 400 (a refusal, not a 500).
+  🔴 **The three sign-in variables are a SET, and WHICH one you delete decides whether the pod
+  survives**: dropping `JWKS_URL` or `ISSUER` while the redirect is set ⇒ **exit 78, pod DOWN**;
+  dropping `REDIRECT_URL` ⇒ **pod UP**, button absent, sessions untouched — the cheapest incident
+  remedy, and an earlier draft of this doc said the opposite.
+- ⏳ **CARRIED FORWARD — A *COMPLETED* SIGN-IN IS STILL UNVERIFIED.** Every reading above is a
+  refusal or an unauthenticated page. That is rank 13 and it is a human's.
+- 🔴 **CARRIED FORWARD — RANK 9 CANNOT BE DONE ON THE DEPLOYED SURFACE, MEASURED.** The deployed
+  control journal holds **1 `user-created`, 1 project, 1 `member-set`**, and the share flow's
+  `Candidates` is narrowed by CO-MEMBERSHIP — so the candidate select there is EMPTY and there is
+  nobody to share with. Rank 9 needs the hand-run recipe under `## How to verify`, or a second
+  co-member provisioned in-cluster first. ⚠ An earlier draft of the deployed-surface block said
+  ranks 9 and 13 were both browser work against it; that was wrong and is retracted in place.
+- ⚠ **CARRIED FORWARD, UNCHANGED:** rank 11 open as the handoff-tooling repo's #1867 (held because
+  that repo's `main` is red for an unrelated reason); that repo's branch protection no longer
+  requires status checks; `cairn-control-plane-9` still held on purpose; the UI image published and
+  anonymously pullable; the reorder blast radius (`steps.<id>.outputs`, 43 references, no test
+  covers it).
 
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE — ranks 1–12 keep their meaning; 13 is new.** Rank is half a `claim-work`
+🔴 **NUMBERING IS STABLE — 1–13 keep their meaning; 14–16 are new.** Rank is half a `claim-work`
 slug, and this doc has twice measured a shuffle re-pointing live claims.
 
 1. ✅ **DONE — #74 merged as `93d0f03`.** forcing: gate.
@@ -136,67 +86,65 @@ slug, and this doc has twice measured a shuffle re-pointing live claims.
 3. ✅ **DONE — P7 merged as `c0f5b06`.** forcing: none.
 4. **P8 — retire the Python oracle.** **Closing condition:** P8 opens when BOTH (a) the Go client
    has completed a real read AND a real write against the live pod from **at least two distinct
-   hosts**, recorded — the POSITIVE CONTROL separating *held up* from *never ran*; and (b) no open
-   defect names the Go client or `packages.default`. **BACKSTOP: if (a) has not happened by
-   2026-11-01, P8 opens anyway and the residual risk is accepted EXPLICITLY, in writing.** Checked
-   by `cairn doctor` output from two hosts plus `gh issue list`. ⚠ Sized, not measured: ~33,000
-   deletable lines, 3 of 6 CI jobs, ~233 KB of prose, ~10 paired-ledger guards.
+   hosts**, recorded; and (b) no open defect names the Go client or `packages.default`.
+   **BACKSTOP: if (a) has not happened by 2026-11-01, P8 opens anyway and the residual risk is
+   accepted EXPLICITLY, in writing.** Checked by `cairn doctor` output from two hosts plus
+   `gh issue list`. ⚠ Sized, not measured: ~33,000 deletable lines, 3 of 6 CI jobs, ~233 KB of
+   prose, ~10 paired-ledger guards.
    forcing: none
 5. ✅ **DONE — `cairn-server -issue-credential`, in #76.** forcing: gate.
 6. ✅ **DONE.** forcing: user.
 7. ✅ **DONE — rename landed as `56cc56e` (#69).** forcing: user.
 8. ✅ **DONE — rule (o) merged as `c4490f07` in the handoff-tooling repo.** forcing: incident.
-9. ⏳ **IN FLIGHT: the share flow's human verification.** Everything a `curl` can reach is green and
-   the write half is **unconsumed**. What is left is genuinely a human's: JavaScript, layout, focus
-   order, and whether the replica-honesty notice is actually READ. ⚠ **The previous handover is dead
-   — rebuild the instance and re-read the token file; do not reuse a pasted value, and check who
-   holds the UI port before binding it** (an instance from an earlier session was still holding it
-   this session).
+9. ⏳ **IN FLIGHT: the share flow's human verification.** 🔴 **It CANNOT be done on the deployed
+   surface** — one user, empty candidate select (see `State now`). Use the hand-run recipe under
+   `## How to verify`, which builds two users and joins them, or provision a second co-member
+   in-cluster first. ⚠ The previous handover is dead — rebuild the instance, re-read the token
+   file, and check who holds the UI port before binding it.
    forcing: user — the operator reserved the browser step to a human.
-10. ✅ **DONE — merged as `901b77d` (#104) and verified on a real publish run.** The operator decided
-    **reverse it, Go first**; the inverted rationale is rewritten at all eleven sites.
-    forcing: user — an operator decision #85 declined to take.
-11. ⏳ **OPEN AS the handoff-tooling repo's #1867, UNMERGED ON PURPOSE.** The closing condition is
-    **met and watched**. Held because that repo's `main` is red for an unrelated reason (see
-    `State now`) and merging would bake that red into main's history. **Closing condition for the
-    MERGE:** its `test_kills_the_readme_exclusion` anchor retargeted to the consolidated
-    `is_entry_filename` shape, its `pytests` check exiting 0 at that repo's main, then #1867 merged.
+10. ✅ **DONE — merged as `901b77d` (#104), verified on a real publish run.** forcing: user.
+11. ⏳ **OPEN AS the handoff-tooling repo's #1867, UNMERGED ON PURPOSE.** Closing condition met and
+    watched; held because that repo's `main` is red for an unrelated reason.
     forcing: incident — a denied identifier is on public `main` in a commit message today.
 12. **CORRECT TWO FILES THAT ASSERT THE HANDOFF-TOOLING REPO'S CI CHECKS BLOCK A MERGE.** They do
-    not: `required_status_checks` returns 404. Both sites are wrong in the PERMISSIVE direction,
-    which is the dangerous one. 🔴 **THE TWO SITES, RESTORED — an earlier draft of this item
-    compressed the names out, leaving a gate-forced closing condition nobody could check: with
-    "two files" unnamed, a session cannot know it found BOTH.** They are **`scripts/run-tests.sh`'s
-    own comment** and the **CI-platform skill's gotcha #9**, both in the handoff-tooling repo.
-    Neither is a denied identifier — they are ordinary tool paths that have always been in this
-    document and pass `leakscan` — so there was never a de-identification reason to drop them.
-    **Closing condition:** both state the measured value with the command
-    that re-measures it, or say the protection was deliberately removed and by whom.
+    not: `required_status_checks` returns 404. The two sites are **`scripts/run-tests.sh`'s own
+    comment** and the **CI-platform skill's gotcha #9**. Both are wrong in the PERMISSIVE
+    direction. **Closing condition:** both state the measured value with the command that
+    re-measures it, or say the protection was deliberately removed and by whom.
     forcing: gate — a comment is a claim, and this one licenses merging through a red gate.
-13. **NEW — COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** Everything a `curl` can
-    reach is verified (see `State now`); what is unproven is that a real identity traverses the
-    provider and lands as a session. **Closing condition:** a human opens the surface's public
-    hostname in a browser, completes the GitHub flow, and the entries page renders for the seeded
-    operator user — or the failure is recorded with the pod's log line for it.
-    🔴 **RANK 9 IS NOT PART OF THIS SITTING, AND AN EARLIER DRAFT OF THIS ITEM SAID IT WAS.** It
-    read *"Do the rank-9 share-flow check in the SAME sitting: both are browser work on the same
-    deployment"* — **false**, and it sent a reader to a world where rank 9 cannot be done at all.
-    Measured on the deployed journal: **1 `user-created`, 1 project, 1 `member-set`.** Rank 9
-    verifies the SHARE FLOW, whose `Candidates` list is narrowed by CO-MEMBERSHIP, so one person
-    means an EMPTY candidate select and nobody to share with. **Rank 9 needs the hand-run recipe
-    under `## How to verify`** (which builds two users and joins them), or a second co-member
-    provisioned in-cluster first. Do not fold the two.
-    ⚠ **PRECONDITION NOBODY HAS RECORDED, AND ITS FAILURE IS DELIBERATELY UNREADABLE.** Sign-in
-    resolves the exchanged token's `sub` against a user the control plane ALREADY holds
-    (`UserByProviderSubject`); an unknown subject is REFUSED, never provisioned — that refusal is
-    the anti-self-serve-signup guard, not a bug. The journal's `provider` is `supabase`, which
-    matches what the backend resolves against; whether its one `subject` equals the `sub` the
-    provider will actually issue for the operator's GitHub identity is **NOT recorded anywhere and
-    was not re-verified here**. 🔴 On a mismatch the browser gets the SAME generic 401 as every
-    other sign-in failure — `internal/ui/oauth.go` says the three distinct causes are collapsed on
-    purpose and the REASON goes to the pod's log. **So read the pod's log on any failure; the page
-    cannot tell you which of the three happened.**
+13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** **Closing condition:** a human
+    opens the surface in a browser, completes the GitHub flow, and the entries page renders for the
+    seeded operator user — or the failure is recorded with the pod's log line. ⚠ **Precondition
+    nobody has recorded:** sign-in resolves the token's `sub` against a user the control plane
+    ALREADY holds; an unknown subject is REFUSED by design, and all three failure causes collapse
+    into one generic 401 on purpose, so **the pod's log is the only place the mechanism exists**.
     forcing: user — the operator reserved the browser step to a human.
+14. **NEW — `cairn#117`: TEST-MERGE AGAINST #108, THEN RUN ROUND 1 (the nine axes).** Round 0 is
+    done and its two 🔴s are closed and independently verified. 🔴 **#117 and #108 both touch
+    `flake.nix`'s `onlyGo` filter region (both at `@@ -387`) and both append a step to the same CI
+    job** — `gh` says `MERGEABLE`, which is a claim about each PR against `main`, never about the
+    tree their merge creates, and a SEMANTIC conflict survives a clean textual merge. **Closing
+    condition:** a merged-tree gate run on #117+#108 with its result recorded, then round 1
+    dispatched BLIND and its findings fixed or filed.
+    forcing: gate — a security-posture change is unaudited by the nine axes and two PRs overlap
+    in two shared files with no merged-tree measurement.
+15. **NEW — the handoff-tooling repo's `#1871` (rule (p), the size ratchet): AUDIT, THEN MERGE.**
+    Unmerged, `MERGEABLE`/`CLEAN`, audit not run. 🔴 **It also REPAIRED a gate that had been
+    silently broken since #1815** — the mutation battery's copy list was three files short, so it
+    could not score a sweep at all; verified statically (the branch adds three `cp -a` lines that
+    `origin/main` lacks). **Closing condition:** round 0 then the nine axes, findings fixed or
+    filed, and the PR merged — or a written line saying why it is held.
+    forcing: gate — the ratchet is what stops the prune being undone, and at the measured ~10 KB/day
+    this document returns to its pre-prune size in under five days without it.
+16. **NEW — DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION (`cairn#117`'s D1).** Round 0 measured the
+    delta: the `@source` scan yields **~18 real utility selectors across 4 call sites**, against a
+    generated artefact checked into the tree, a nix derivation, a second nix app, a flake check, a
+    CI step and an unpinnable upstream version. ~40% of the 28 KB `app.css` is Tailwind machinery.
+    "Use Tailwind" is the operator's explicit ask and stands; "Tailwind as a build toolchain" is
+    the implementer's. **Closing condition:** a written operator line either accepting the
+    toolchain or directing the hand-written-modern-CSS alternative.
+    forcing: user — it is a requirement question only the operator can answer, and #117 cannot
+    close while it is open.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section
@@ -839,6 +787,80 @@ instance of a tripwire kept here.
   "0 hits" rots into a false statement the moment the archived prose mentions the word. Assert the
   STRUCTURE (no handoff headings, header says nothing here is live), never a grep count.
 
+- 🔴 **THREE INSTRUMENT FAILURES IN ONE FINDING, NONE OF WHICH CHANGED A CONCLUSION — BECAUSE EACH
+  WAS CAUGHT BY A CONTROL RATHER THAN BY INSPECTION.** Closing one 🔴 on `cairn#117` produced: (a)
+  the implementer's sweep sliced each test body to the next `^func`, swallowing the FOLLOWING test's
+  doc comment — exactly where the evidence lived — so it reported the table clean; (b) its first
+  control restored with `git checkout -- internal/ui/*.go` while those files carried the
+  UNCOMMITTED fix, destroying it; (c) my own regeneration control reported ✅ BYTE-IDENTICAL when
+  the generator had **refused to run at all** (`no …/tailwind.css — run this from the repository
+  root, or pass the root as $1`) — the file was unchanged because nothing regenerated it. **Every
+  one was caught by reading OUTPUT rather than an exit code or a diff.**
+- 🔴 **A GENERATOR POINTED AT SOURCE FILES READS THE COMMENTS, AND IN A REPO THAT MANDATES DENSE
+  COMMENTS THAT IS A LIVE FALSE-RED FACTORY.** `@source "./*.go"` made Tailwind emit `.sticky`,
+  `.table`, `.hidden`, `.visible`, `.fixed`, `.static` — each present in the generated CSS with
+  **zero** occurrences in any `Class()` literal, generated purely from English prose (`table` 64
+  occurrences in comments, `visible` 15, `fixed` 14). Rewording three comment lines changed the
+  stylesheet. The check that would fire says *"app.css is BUILD OUTPUT and must never be
+  hand-edited"* — a **correct remedy with a wrong diagnosis**, sending the reader to hunt an edit
+  nobody made. **Closed by scanning NOTHING** (`source(none)` with no `@source` at all): a dedicated
+  constants file or an inline source list both leave prose in the input set, so only "scan nothing"
+  is structural rather than a discipline one edit can break.
+- 🔴 **PROVE A DISCONNECTION WITH BOTH ARMS: the change is byte-identical AND the instrument can
+  still move the output.** "Reword a comment ⇒ identical" is satisfied by a generator that writes
+  nothing. The second arm — change the real input, watch the output move (28,109 → 28,145 B) — is
+  what makes the first mean anything.
+- 🔴 **A `checks.*` ENTRY NOBODY NAMES IS A CHECK NOBODY RUNS, AND THIS ARC PRODUCED THE FIRST LIVE
+  INSTANCE.** `cairn#117` added `checks.ui-stylesheet-is-current` to `flake.nix` and left
+  `.github/workflows/ci.yml` untouched; CI named five checks and not it. The guard for the WHOLE
+  generated-stylesheet approach would have shipped inert, reading as covered precisely because it
+  exists in `flake.nix`. Fixed in the same PR, and **validated as an instrument before being
+  trusted**: rc 0 restored, rc 1 with one rule appended, `nix eval` resolving the attribute so a
+  typo could not silently never match.
+- 🔴 **A MUTATION BATTERY CAN BE UNABLE TO SCORE A SWEEP FOR WEEKS AND READ AS MERELY RED.** the
+  handoff-tooling repo's `mutants-handoff-cap.sh` has been exiting 1 at its own BASELINE control
+  since #1815: its copy list never moved when a new function landed, so the mutated copy lacked a
+  module the tests need. **The chain is three files deep and the traceback names an unrelated
+  subsystem's size gate**, which reads as a foreign breakage rather than a missing copy. Verified
+  statically rather than by running it: the branch adds three `cp -a` lines `origin/main` lacks.
+  **A gate nobody can run is not a gate, and its redness is not evidence about the code.**
+- 🔴 **`__HARNESS_BROKE__ … only 0 test(s) ran` IS A "COULD NOT MEASURE" SIGNAL, NOT A RED RESULT —
+  AND I NEARLY READ IT AS CORROBORATION.** Trying to confirm the claim above by running the battery
+  at `origin/main`, I got rc 1 and almost reported it as agreement. Two things were wrong: my
+  `worktree add` had failed with `already exists`, so I ran in a directory that was **not a git
+  repository at all**, and the shell had no pytest, making "0 tests ran" inevitable. **A true claim
+  corroborated by a broken instrument is still unevidenced.**
+- ⚠ **THE SHARED SCRATCHPAD IS ONE PATH AND DISPATCHED AGENTS WRITE INTO IT.** An implementer
+  working in another repo overwrote this session's own PR-comment drafts at the same filenames.
+  Nothing was lost because those comments were already posted, but the collision is the documented
+  one: **name scratch files per-agent, and do not assume a path you wrote is still yours.**
+- 🔴 **A PRE-START COMMENT MUST PRECEDE THE `in_progress` FLIP, BECAUSE ONLY THE COMMENT NOTIFIES.**
+  A status flip to `in_progress` pushes to nobody; the notification fires on entering
+  `ready_for_review`. So the pre-start comment is the operator's ONLY chance to object BEFORE the
+  work, and posting it after the flip inverts that. Both tasks this session dispatched follow that
+  order, with the criteria quoted verbatim so the timestamped copy is auditable.
+- 🔴 **WHEN YOU AUTHOR THE CRITERIA, YOU MAY NOT GRADE THEM — EVEN WHEN THE DETECTOR SAYS
+  AUTHOR-SPECIFIED.** The pickup detector is deterministic: a `## Acceptance criteria` heading ⇒
+  AUTHOR-SPECIFIED ⇒ a local pickup may set `complete`. But this session WROTE both cards minutes
+  before picking them up, so the heading's presence is an artefact of its own authorship. Both are
+  committed to ending at `ready_for_review`. **Read the detector's verdict against who actually
+  wrote the words, not against the heading.**
+- ⚠ **`--arc` CANNOT SEE A REPO OUTSIDE ITS FOUR HANDLES, AND ITS REFUSAL IS EXPLICITLY "NOT
+  MEASURED".** `find-session --arc` resolves a doc against a FIXED set of four repo-handle
+  environment variables only; for a repo outside that set — and **this repo is outside it** — it
+  exits **5**, which its own text says must never be reported as an empty arc. Pointing an unused handle at the repo for one invocation is a working
+  read-only workaround; the repo LABEL in the output is then cosmetically wrong.
+- ⚠ **AN ARC AUDIT'S COVERAGE IS BOUNDED BY COMMIT-TRAILER ATTRIBUTION, AND HERE IT WAS 16 OF 33.**
+  `--arc` unions WRITERS (from the doc's commit trailers, which include the originating session) with
+  READERS (sessions whose OPENING message names the doc). It printed **"17 of 33 commit(s) on this
+  doc carry no session id — those writers are NOT in this chain"**, and the opencode corpus was not
+  searched at all. **Quote the uncovered half whenever you report an arc as complete.**
+- 🔴 **A MULTI-PART INSTRUCTION LOSES ITS TAIL, AND NOTHING NOTICES.** An arc audit over 16 sessions
+  found exactly one ask that was given directly and then dropped rather than deferred: the third
+  clause of a three-part process feedback. The first two shipped in one PR whose title names them
+  both; the third had **0 mentions in this doc and 0 tasks**. The tell is a PR title that enumerates
+  *some* of a numbered instruction. **When an instruction has parts, record the parts, not the PR.**
+
 ## How to verify
 ```bash
 cd /home/zach/workspace/cairn
@@ -1041,3 +1063,27 @@ values and eliminations. Read it on demand.
   same ephemeral port gives exactly one failure with no timing signal. `via: assumed`
 - **Next probe:** run the file alone in a loop of 20 and watch for a single failure —
   `for i in $(seq 20); do uv run --with pytest python -m pytest tests/test_subsystem_store_api.py -q -p no:randomly | tail -1; done`
+
+### `cairn#117` and `cairn#108` overlap in two shared files and no merged tree has been measured
+- as-of: 2026-09-25
+- **Symptom + exact repro:** both PRs are open, both report `MERGEABLE` against `main`, and neither
+  has been merged-tree gated against the other. `gh pr view <n> --json mergeable` answers about each
+  PR versus `main`; it says nothing about the tree their merge creates.
+- **Observed (with values):** `gh pr view 108 --json files` and `gh pr view 117 --json files` share
+  **`flake.nix`** and **`.github/workflows/ci.yml`**. Round 0 located the `flake.nix` hunks: #108 at
+  `@@ -357` and `@@ -387`, #117's first hunk at `@@ -387` — the **same `onlyGo` filter region**. Both
+  also append a step to the same `nix` CI job. #117 head `6bbcddf`; #108 open, unmerged.
+- **Ruled out:** that the overlap is only prose. #117's PR body originally said #108 "touches
+  `internal/ui/render.go` prose only in a residual it left unapplied"; the file lists refute that —
+  two shared files, both load-bearing. `via: command` (`gh pr view --json files` on both).
+- **Ruled out:** that `MERGEABLE` settles it. `RULES.md` records a measured instance of two PRs both
+  reporting `MERGEABLE` while `git merge-tree --write-tree` exited **1**, because GitHub compared
+  each against a `main` where neither had landed. `via: doc`
+- **Leading hypothesis:** a textual conflict is likely in `ci.yml` (both append to the same job's
+  step list) and possible in `flake.nix`'s `onlyGo` list; a semantic conflict is possible regardless,
+  since #117 REMOVES an `onlyGo` row (`tailwind.css`, which existed only for the now-deleted
+  `@source` scan) while #108 edits the same region.
+- **Next probe:** build an integration branch off current `main`, merge both, and run the full gate
+  set there — `git merge-tree --write-tree` first and **branch on its EXIT CODE, never on a marker
+  grep** (it prints only a tree OID on success and emits no `<<<<<<<`). Then bisect any failure to
+  the merge commits. Do this BEFORE round 1, because round 1 cannot see it.
