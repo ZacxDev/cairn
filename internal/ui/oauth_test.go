@@ -1051,9 +1051,17 @@ func TestTheStartRowIsRefusedCrossSite(t *testing.T) {
 	}
 }
 
-// TestTheStylesheetIsServedAsItsOwnRoute is the REGRESSION test for the CSP change: with
-// `style-src 'self'` an inline `<style>` does not apply, so a page that still inlined it would
-// render unstyled with nothing going red.
+// TestTheStylesheetIsServedAsItsOwnRoute pins that every page reaches the stylesheet through
+// the route that answers it.
+//
+// ⚠ IT WAS WRITTEN AS THE REGRESSION TEST FOR THE CSP CHANGE — under `style-src 'self'` an
+// inline `<style>` did not apply, so a page that still inlined one rendered unstyled with
+// nothing going red. THAT PREMISE IS GONE: the policy was deleted by operator decision, so an
+// inline `<style>` would work again. The test is kept and the reason is restated rather than
+// the test deleted, because the relationship it pins is what the surface still depends on and
+// the bytes are now BUILD OUTPUT (`tailwind.css` → `app.css`, ~29 KB) that nobody wants
+// inlined into every response. Do not read the `<style>` assertion below as a claim about a
+// policy: it is a claim about where the stylesheet lives.
 //
 // 🔴 IT PINS THE RELATIONSHIP AND NOT EITHER SIDE. Two assertions on their own would both pass
 // for a broken pair: a route serving CSS nobody links, or a page linking a path nobody serves.
@@ -1066,9 +1074,9 @@ func TestTheStylesheetIsServedAsItsOwnRoute(t *testing.T) {
 		srv.ServeHTTP(rec, httptest.NewRequest("GET", page, nil))
 		body := rec.Body.String()
 		if strings.Contains(body, "<style") {
-			t.Errorf("%s still carries an inline <style> element. `style-src 'self'` forbids one in a "+
-				"conforming browser, so it would not be refused — it would simply not apply, and the page "+
-				"would render unstyled with nothing going red.", page)
+			t.Errorf("%s carries an inline <style> element. The stylesheet is build output served from "+
+				"%s and cached for five minutes; inlining it sends ~29 KB on every response and leaves "+
+				"this test's link/route relationship unstated.", page, StylesheetPath)
 		}
 		if !strings.Contains(body, `href="`+StylesheetPath+`"`) {
 			t.Errorf("%s does not link %s, so it has no styles at all", page, StylesheetPath)
@@ -1103,6 +1111,28 @@ func TestTheStylesheetIsServedAsItsOwnRoute(t *testing.T) {
 		if !strings.Contains(served, selector) {
 			t.Errorf("the served stylesheet has no rule for %q, which the pages render; an equality against "+
 				"the constant would pass for a stylesheet that styled nothing", selector)
+		}
+	}
+	// 🔴 AND THE THREE PROPERTIES THE THEME IS SUPPOSED TO HAVE, BECAUSE A STYLESHEET THAT IS
+	// LONG AND HAS THE RIGHT SELECTORS CAN STILL BE THE WRONG STYLESHEET. Each substring below
+	// can only be produced by the thing it names, and a hand-edit of `app.css` that dropped one
+	// would pass every assertion above.
+	//
+	// ⚠ THIS IS NOT THE MEASUREMENT OF CRITERION 3 AND MUST NOT BE READ AS ONE. It asserts the
+	// media query is IN the bytes; whether a browser applies it is a browser question, answered
+	// by the Chromium harness with `Emulation.setEmulatedMedia`. A test here structurally cannot
+	// see that — which is exactly why the browser run is a separate claim.
+	for _, want := range []struct{ substring, why string }{
+		{"@media (prefers-reduced-motion: reduce)", "reduced motion is honoured at all"},
+		{"animation: none !important", "reduced motion REMOVES motion rather than shortening it — " +
+			"the common `0.01ms` snippet still runs the animation, one frame of it"},
+		{"--color-surface", "the theme's colour tokens are present, so the pages resolve one palette"},
+		{"transition-property", "there are transitions to reduce in the first place"},
+	} {
+		if !strings.Contains(served, want.substring) {
+			t.Errorf("the served stylesheet does not contain %q, so %s is not true of it. `app.css` is "+
+				"GENERATED from `tailwind.css` — regenerate with `nix run .#build-ui-stylesheet` rather "+
+				"than editing the output.", want.substring, want.why)
 		}
 	}
 	// 🔴 AND IT IS REACHABLE WITHOUT A CREDENTIAL, because the SIGN-IN page links it. A

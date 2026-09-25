@@ -986,6 +986,21 @@ jobs:
       - name: the UI image owns its session directory
         run: nix build .#checks.x86_64-linux.ui-image-owns-its-session-dir --no-link --print-build-logs
 
+      # 🔴 THE SERVED STYLESHEET IS GENERATED, AND THIS IS THE ONLY THING THAT SAYS SO.
+      # `internal/ui/app.css` is Tailwind output built from `internal/ui/tailwind.css` and
+      # CHECKED IN, so the two can drift silently: a hand edit to `app.css` compiles, embeds,
+      # serves and passes every Go test, because nothing else in the tree ever regenerates it.
+      # `checks.ui-stylesheet-is-current` rebuilds it in the sandbox and refuses a difference.
+      #
+      # 🔴 IT IS NAMED HERE BECAUSE CI RUNS NO `nix flake check` — the steps in this job build
+      # each check BY NAME, so a `checks.*` entry nobody names is a check nobody runs, and it
+      # reads as covered precisely because it exists in `flake.nix`. The commit that added the
+      # check did not add this step; the guard for the whole generated-stylesheet approach
+      # would have shipped inert. Adding a `checks.*` entry means adding a step here in the
+      # SAME commit.
+      - name: the served stylesheet is current with its Tailwind source
+        run: nix build .#checks.x86_64-linux.ui-stylesheet-is-current --no-link --print-build-logs
+
       # The Go CLIENT is packaged too, and for the same reasons: a consumer will eventually pin
       # it, and its build runs the unit tests under the PINNED toolchain rather than the one
       # `setup-go` installed. Two tiers, both read.

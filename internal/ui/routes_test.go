@@ -763,8 +763,10 @@ func TestAZeroIdentityWithNoErrorIsRefused(t *testing.T) {
 	}
 }
 
-// TestTheHTMLResponseCarriesItsHardeningHeaders pins the two headers that are part of
-// the escaping story rather than decoration.
+// TestTheHTMLResponseCarriesItsHardeningHeaders pins the header that is part of the
+// escaping story rather than decoration.
+//
+// ⚠ IT USED TO PIN TWO, AND THE SECOND IS NOW PINNED AS AN ABSENCE BY THE TEST BELOW.
 func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 	srv := newTestServer(t, staticAuth{testIdentity()})
 	rec := httptest.NewRecorder()
@@ -773,31 +775,72 @@ func TestTheHTMLResponseCarriesItsHardeningHeaders(t *testing.T) {
 		t.Errorf("X-Content-Type-Options is %q; every byte of this body came out of a store entry, and a "+
 			"browser that content-sniffs can be talked into a different type by the leading bytes", got)
 	}
-	// 🔴 THE POLICY IS PINNED AS A LITERAL HERE RATHER THAN READ FROM
-	// `ContentSecurityPolicy`, AND THAT IS THE POINT. A test comparing the header
-	// against the constant the handler sets is a test that `a == a`: it goes green for
-	// every edit of the constant, including one that deletes `default-src 'none'`.
-	// The literal below is the contract; changing it is a decision somebody takes here.
-	const want = "default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; " +
-		"frame-ancestors 'none'"
-	if got := rec.Header().Get("Content-Security-Policy"); got == "" {
-		t.Error("no Content-Security-Policy was sent")
-	} else if got != want {
-		t.Errorf("the Content-Security-Policy is %q, want %q. The ONE move is `style-src` TIGHTENING from "+
-			"`'unsafe-inline'` to `'self'`, which is why the stylesheet is a route; `default-src`/`base-uri`/"+
-			"`form-action` are unchanged. There is deliberately NO `script-src` and NO `img-src`: this package "+
-			"emits neither, `TestHostileEntryTextIsEscaped` asserts the literals \"<script\" and \"<img\" can "+
-			"never appear in a rendered page, and a clause permitting something the CODE forbids is a policy "+
-			"nobody can read as a claim about the code. Naming a directive is how one of those becomes "+
-			"POSSIBLE — `default-src 'none'` forbids them all today. A script or an image arriving later adds "+
-			"its clause in the COMMIT THAT ADDS IT. `frame-ancestors 'none'` is the opposite direction and "+
-			"must NOT be deleted by that rule: it has no `default-src` fallback, so without it any site can "+
-			"frame this surface — and a clickjacked submit satisfies BOTH cross-site gates, because its "+
-			"Origin really is this origin and its CSRF token really is the victim's. Editing this literal "+
-			"is a decision somebody takes here.", got, want)
-	}
 	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Errorf("Content-Type is %q", got)
+	}
+}
+
+// TestTheHTMLResponseSendsNoContentSecurityPolicy pins a DELETION, which is why it exists
+// at all: a header nobody asserts is a header that comes back in a merge with nothing going
+// red, and this one was removed on purpose.
+//
+// 🔴 THE POLICY WAS DELETED BY OPERATOR DECISION, CHALLENGED ONCE AND REAFFIRMED. It was
+// `default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`.
+// The accepted exposure, named here so this test reads as a contract rather than as a gap:
+// the surface is FRAMABLE — clickjacking on the share flow's state-changing POSTs, which both
+// cross-site gates are structurally blind to, because a clickjacked submit's Origin really is
+// this origin and its CSRF token really is the victim's; a form can be induced to POST
+// offsite; an injected `<base href>` can re-point every relative URL; and arbitrary script
+// and third-party origins become loadable. `writeHTML`'s comment carries the whole record.
+//
+// ⚠ AN INTERMEDIATE DRAFT RETRACTED THAT FRAMING CLAUSE AND WAS ITSELF WRONG — THE CLAUSE IS
+// REINSTATED. The draft argued `identity.SessionCookie`'s `SameSite=Lax` keeps the cookie off
+// a framed load, so the framed document would be the SIGN-IN page with nothing authenticated
+// to overlay, and called the exposure "SMALLER than recorded". `SameSite` is SITE-scoped while
+// `frame-ancestors` was ORIGIN-scoped: a framer at any host under this deployment's
+// registrable domain is SAME-SITE, the cookie IS attached, and the page renders authenticated
+// with a real CSRF token. `identity.SessionCookieName`'s comment says "same site" still
+// includes a sibling subdomain, and the retracted draft cited that comment while stopping one
+// clause short of it. Lax buys only the different-registrable-domain case. `writeHTML` carries
+// the corrected radius and the fact that all of it is DERIVED rather than measured.
+//
+// 🔴 THIS TEST IS NOT A LICENCE TO REMOVE THE CROSS-SITE GATES, WHICH ARE A DIFFERENT
+// MECHANISM. `sameOrigin` and `csrfTokenFor` are derived from the request method by
+// `stateChanging`, never from a header, and `session_test.go` measures them. Reading "the CSP
+// is gone" as "cross-site protection is gone" is the mistake this paragraph exists to stop.
+//
+// ⚠ AND IT ASSERTS THE HEADER KEY IS ABSENT RATHER THAN EMPTY, because
+// `http.Header.Get` cannot tell those apart: a handler setting the header to `""` would
+// satisfy a `got == ""` check while putting a real, empty `Content-Security-Policy:` on the
+// wire — and an empty policy is not "no policy", it is a policy that permits nothing in some
+// browsers and is ignored in others. The map lookup distinguishes them.
+func TestTheHTMLResponseSendsNoContentSecurityPolicy(t *testing.T) {
+	srv := newTestServer(t, staticAuth{testIdentity()})
+	// Both HTML shapes, because `writeHTML` is the one place that chooses these headers and a
+	// test that probed only the authenticated page would miss a policy restored on the
+	// refusal path.
+	for _, probe := range []struct {
+		name string
+		auth identity.Authenticator
+		path string
+	}{
+		{"the entries page", staticAuth{testIdentity()}, RootPath},
+		{"the sign-in page", refusingAuth{}, SignInPath},
+	} {
+		srv = newTestServer(t, probe.auth)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest("GET", probe.path, nil))
+		if values, ok := rec.Header()["Content-Security-Policy"]; ok {
+			t.Errorf("%s sent Content-Security-Policy: %q. That header was DELETED by operator "+
+				"decision — the record is in `writeHTML`'s comment, with the accepted exposure "+
+				"named. Restoring it is a decision somebody takes here, in the open, not a line "+
+				"that reappears in a merge. If it is being restored on purpose, edit this test in "+
+				"the same commit.", probe.name, values)
+		}
+		if values, ok := rec.Header()["Content-Security-Policy-Report-Only"]; ok {
+			t.Errorf("%s sent Content-Security-Policy-Report-Only: %q. The report-only spelling is "+
+				"the same decision reached by a different door.", probe.name, values)
+		}
 	}
 }
 
