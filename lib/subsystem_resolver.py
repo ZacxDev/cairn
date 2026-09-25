@@ -2277,6 +2277,35 @@ def entry_mapping(text: str, *, filename: str, scope: str) -> dict[str, object]:
 # inherits this guard rather than needing one. Said here so the next reader does
 # not have to rediscover it, and so "two sites" stops reading as "all of them".
 #
+# ⬜ FOLLOW-UP, DELIBERATELY NOT CLOSED HERE: THE THREE `census()` CITATIONS ARE
+# UNVERIFIABLE FROM THIS REPO, AND THE TWO SPELLINGS OF THE NAME DISAGREE.
+# MEASURED at `3d653f7`: `git ls-files | grep -c subsystem_touch` is **0**, and
+# `git ls-files -z | xargs -0 grep -lE '^[[:space:]]*def census'` returns **0**
+# files — so neither `entry_shape.census()` (this site) nor
+# `subsystem_touch.census()` (`server/server.py`, `server/README.md`) names
+# anything this tree contains.
+# 🔴 THE PATTERN IS ANCHORED FOR A REASON, AND THE UNANCHORED FORM IS ALREADY
+# BROKEN BY THIS VERY COMMENT. A bare `grep -l 'def census'` matches the two
+# PROSE mentions below and returns THIS FILE — so the unanchored spelling reports
+# a definition that does not exist, and the first draft of this block shipped it
+# as the closing condition. `^[[:space:]]*def` cannot match prose that names the
+# function mid-sentence. Positive control on the anchored pattern, so its zero is
+# a measurement and not a dead regex: the same expression with `def load_index`
+# returns `lib/subsystem_resolver.py`. `lib/entry_shape.py` IS
+# in this tree and has no `census`, so at most one of the two spellings can ever
+# have been right. Its `glob("*.md")` half is stale in exactly the way this
+# commit's other citations were, but it CANNOT be corrected from here: the
+# function it describes is not present to re-measure, so a "fix" would be a guess
+# wearing a measurement's clothes. NOT a divergence and NOT a live defect claim —
+# a citation whose subject is absent. CLOSING CONDITION: a merged PR after which
+# either (a) all three sites name a module this repo tracks and
+# `git ls-files -z | xargs -0 grep -lE '^[[:space:]]*def census'` returns it —
+# ANCHORED, per the note above, because the unanchored form matches this comment;
+# and an empty result is the UNMET state, so read the returned PATH, never `$?`
+# alone — or (b) the three citations are
+# deleted as pointing outside this repo's boundary, with the ruling's substance
+# kept. Checked by whoever owns the writer half; this repo cannot decide it alone.
+#
 # Four consecutive audit rounds found the same shape of defect in `_snapshot`,
 # and every fix added one more predicate to a sequence:
 #

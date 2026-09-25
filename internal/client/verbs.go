@@ -261,6 +261,34 @@ func LsEntries(env Env, opts Options) (int, error) {
 		// listing was byte-identical to the oracle's in all four. NOT applied here, for the
 		// reason in the paragraph above — it is a change to a verb's stdout.
 		var lines []string
+		// ⬜ FOLLOW-UP, DELIBERATELY NOT CLOSED HERE: THIS IS THE CACHE-ROOT READ ONE VERB
+		// OVER, AND IT IS STILL DISCARDED (`scopeDirs, _ :=`). `Validate`'s copy is now
+		// `store.ScopeDirsOrUnreadable`, which fails closed into the reader's own sentence;
+		// this one swallows the error and lists whatever it got.
+		//
+		// ⚠ IT IS NOT A DIVERGENCE TODAY, WHICH IS WHY IT IS A FOLLOW-UP AND NOT PART OF THIS
+		// CHANGE. The oracle's `cmd_ls_entries` still uses `cache.glob("*/*.md")`, which
+		// SUPPRESSES the `OSError` its own scan raises, so both clients answer a mode-0111
+		// cache root identically: exit 0 with an empty listing. Agreeing is not being right —
+		// it is the confident zero this client exists to refuse, and `recall`, `search` and
+		// `validate` now all answer 3 for that same root — but closing it moves a verb's
+		// stdout AND its exit code on BOTH clients, which is its own change.
+		//
+		// 🔴 IT SHARES THE OPEN DESIGN QUESTION WITH THE MODE-000 SCOPE-DIRECTORY FOLLOW-UP
+		// ABOVE AND MUST BE DECIDED WITH IT, NOT SEPARATELY: `ls-entries` fans out over every
+		// configured instance, so "fail closed" has to decide whether one unreadable root
+		// refuses the WHOLE listing or only that instance's. Two follow-ups, one ruling.
+		//
+		// CLOSING CONDITION: a merged PR after which both clients answer a cache root at mode
+		// 0111 under `ls-entries` with the reader's own `index entry unreadable` sentence at
+		// exit 3, pinned by a PARITY ROW — statically expressible, and the harness already has
+		// the field for it (`searchable_only_root`). Mechanically:
+		// `python3 tests/parity/harness.py | grep -q '^PASS ls-entries-unreadable-cache-root'`
+		// exits 0 AND the run's own `SUMMARY … failures=0` line holds. ⚠ A zero-match grep
+		// exits 1, so that cannot read as met while the row is absent — and, unlike the
+		// sentence this commit corrected forty lines up, it does NOT claim the row exists and
+		// is red today. It does not exist:
+		// `grep -c 'ls-entries-unreadable-cache-root' tests/parity/harness.py` is 0.
 		scopeDirs, _ := os.ReadDir(cache)
 		for _, d := range scopeDirs {
 			scopePath := filepath.Join(cache, d.Name())
