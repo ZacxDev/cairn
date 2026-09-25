@@ -266,7 +266,7 @@ func hasFoldedPrefix(rs []rune, want string) bool {
 //	`PR#` folding, the class folds              N/A — `_NEAR_MISS_MARKER` carries no
 //	                                            `re.I` outside `(?i:OPEN|RESOLVED)`,
 //	                                            so ASCII IS the faithful reading here
-//	`hasFoldedPrefix`'s ASCII-only fold          OPEN, 210 divergences, all
+//	`hasFoldedPrefix`'s ASCII-only fold          OPEN, 211 divergences, all
 //	                                            oracle-wider — the SAME residual
 //	                                            `LineMentionsMarker` declares, because
 //	                                            `(?i:…)` folds U+017F too
