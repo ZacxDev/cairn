@@ -82,9 +82,16 @@ var (
 // identically — which is why the compound handling below only has to solve the
 // CONCATENATED spelling (`ratelimit`) and not four punctuation variants.
 //
-// 🔴 THE LOWERCASE IS `pytext.Lower`, NOT `strings.ToLower`, and the difference is one
-// code point that is reachable from a request: U+0130 lowercases to TWO code points in
+// 🔴 THE LOWERCASE IS `pytext.Lower`, NOT `strings.ToLower`. The difference that is
+// REACHABLE FROM A REQUEST is one code point: U+0130 lowercases to TWO code points in
 // Python and one in Go.
+//
+// ⚠ "ONE CODE POINT" IS THE REACHABLE COUNT, NOT THE WHOLE DIVERGENCE — `str.lower()`
+// differs from the simple mapping in TWO rules and `pytext.Lower` implements one of them.
+// The other, Final_Sigma, cannot be observed through THIS function for a structural reason:
+// the loop below keeps only `[a-z0-9]` runs, and both of Final_Sigma's outputs (U+03C2 and
+// U+03C3) are non-ASCII, so either one is a token SEPARATOR and the token list is the same
+// on both clients. See `pytext.Lower`'s docstring for the decision and the ledger.
 func Tokenize(text string) []string {
 	lowered := pytext.Lower(text)
 	var out []string

@@ -66,6 +66,30 @@ func HeadingBlocks(text string) []HeadingBlock {
 	return blocks
 }
 
+// HeadingInventory is every ATX heading in `text`, in document order, REPEATS
+// INCLUDED. The oracle's spelling is `subsystem_resolver.scan_headings`.
+//
+// 🔴 THE VIEW `ExtractSections` CANNOT GIVE YOU, and the caller `HeadingBlocks`
+// anticipates in its own comment above. ExtractSections answers only about the
+// headings you ASKED for, so "the entry has no `## Pointers`" and "the writer called
+// it `## pointers`" are the same answer there. This is what separates them — and what
+// makes a DUPLICATE visible at all, since ExtractSections merges duplicates by design.
+//
+// 🔴 VERBATIM AND UNNORMALIZED, for the same reason matching is exact: a caller
+// reporting a near-miss must be able to print the heading the writer actually typed,
+// not a folded form of it. The folding belongs at the comparison (`headingKey`), never
+// here — doing it here would widen what the store is allowed to look like.
+func HeadingInventory(text string) []string {
+	var out []string
+	for _, block := range HeadingBlocks(text) {
+		if block.IsPreamble {
+			continue
+		}
+		out = append(out, block.Heading)
+	}
+	return out
+}
+
 // ExtractSections returns `{heading: body}` for each requested heading FOUND in
 // `text`. A heading that is absent is simply not a key.
 //

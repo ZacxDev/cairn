@@ -166,13 +166,20 @@ def test_the_re_I_folding_runes_are_exactly_the_four_the_code_names():
     # vanish; a wrong target there fails CLOSED (the divergence is reported as
     # undeclared) but for a reason no message would explain. Measured, not argued.
     #
-    # ⚠ A LIST PER RUNE, NEVER A SINGLE VALUE: a rune folding onto TWO ASCII
-    # letters would make `reIFoldsOnto` ambiguous, and a dict comprehension would hide
-    # that by keeping whichever came last.
+    # 🔴 THIS CLAUSE PINS CPYTHON AGAINST A LITERAL *HERE*, AND THAT IS ALL IT DOES. It
+    # does NOT read the Go map, and an earlier comment beside `reIFoldsOnto` claiming it
+    # "checks this MAP's targets" was the F2 defect of ZacxDev/cairn#109 — a description
+    # wider than its implementation, which is worse than no coverage because it stops
+    # anyone looking. What covers the Go side is named where the map is; do not restate
+    # it here, and do not read this clause as covering both.
+    #
+    # ⚠ A LIST PER RUNE, NEVER A SINGLE VALUE: a rune folding onto TWO ASCII letters
+    # would make `reIFoldsOnto` ambiguous, and a dict comprehension would hide that by
+    # keeping whichever came last.
     folds_onto = {
         c: [t for t in "abcdefghijklmnopqrstuvwxyz0123456789_"
             if re.compile(re.escape(t), re.I).fullmatch(chr(c))]
-        for c in (0x0130, 0x0131, 0x017F, 0x212A)
+        for c in sorted(found)
     }
     assert folds_onto == {0x0130: ["i"], 0x0131: ["i"],
                           0x017F: ["s"], 0x212A: ["k"]}, folds_onto
@@ -184,11 +191,27 @@ def test_the_re_I_folding_runes_are_exactly_the_four_the_code_names():
 #: produce ZERO divergences — that is the POINT of them, not a reason to prune them:
 #: they exist to observe the two class positions `re.IGNORECASE` narrows, and a
 #: population whose healthy reading is zero is exactly the population a "prune the dead
-#: weight" pass deletes. MEASURED by reverting `internal/store/openness.go` two ways:
-#: with `terminatorColon` read ASCII-only for BOTH callers, FOUR of these rows go
-#: WIDER than `_MARKER_ANYWHERE`, and they are the only lines in the corpus that do;
-#: with the sentence-cased row removed, dropping that function's `ignoreCase` guard
-#: produces ZERO divergences over the ENTIRE corpus and the Go sweep stays green.
+#: weight" pass deletes. MEASURED by reverting `internal/store/openness.go` two ways —
+#: and NAME WHICH, because "drop the `ignoreCase` guard" has two readings that move
+#: different probes in opposite directions, and a round-1 auditor ran the other one and
+#: derived a false finding from the mismatch (`markersweep_test.go`'s `hasFoldingRune`
+#: paragraph carries both, measured):
+#: DELETING THE CLAUSE — `terminatorColon` read ASCII-only for BOTH callers — makes FOUR
+#: of these rows go WIDER than `_MARKER_ANYWHERE` (484 total, 4 outside), and they are
+#: the only lines in the corpus that do, while `_NEAR_MISS_MARKER` is untouched at 211;
+#: and DROPPING THE CONJUNCT — fold-aware for both callers — is the mirror: 212 total,
+#: 2 OUTSIDE the declared residual on `_NEAR_MISS_MARKER`, `_MARKER_ANYWHERE` untouched.
+#:
+#: 🔴 THE SENTENCE-CASED ROW'S JUSTIFICATION WAS TRUE AND THIS PR FALSIFIED IT, four
+#: lines from the ledger it was editing. It read: "with the sentence-cased row removed,
+#: dropping that function's `ignoreCase` guard produces ZERO divergences over the ENTIRE
+#: corpus and the Go sweep stays green" — i.e. `- Open ſ:` was the ONLY row reaching that
+#: mutant. RE-MEASURED at this commit: remove it, regenerate, apply the
+#: conjunct mutation, and the sweep reports 1 divergence OUTSIDE the declared residual and
+#: goes RED. The new `- Reſolved ſ:` row is sentence-cased with a long s in the terminator
+#: run too, so it reaches the same mutant. The row stays — two rows catching it is not a
+#: reason to delete either — but it is no longer the ONLY one, and the old sentence would
+#: have told a pruner otherwise.
 #:
 #: ⚠ TWO-WAY ON PURPOSE. Adding a folding-rune row fails this too, which is the
 #: intent: a new one belongs in the ledger with its own reason, beside the others.
@@ -203,25 +226,98 @@ FOLDING_RUNE_EXTRA = (
     "- Open ſ: a long s inside the terminator run, sentence-cased.",
 )
 
+#: 🔴 THE FOLDING-RUNE ROWS A COUNT *CAN* SEE — a SEPARATE tuple, because the ledger
+#: above states an invariant ("no count can see these") that has to stay answerable
+#: MECHANICALLY, per row, by a maintainer not holding this file in their head. Folding the
+#: one divergent row in would make the answer "it depends which row", which is exactly the
+#: property that made that ledger's failure message actionable.
+#:
+#: This row carries a folding rune in the marker word AND in the terminator run at once:
+#: the first is the declared residual, the second a position `_NEAR_MISS_MARKER` reads as
+#: literal ASCII. Respelling the WHOLE line conflated them and reported a declared-fold
+#: divergence as UNDECLARED. MEASURED: delete it, regenerate, and
+#: `go test ./internal/store/ -run TestTheGoMarkerTranscriptions` goes RED on its own —
+#: `the declared residual is 210 divergence(s), and this ledger records 211`. So unlike the
+#: rows above it is NOT invisible to a count; it is pinned here anyway so both populations
+#: are enumerated in ONE place — the UNION cannot grow in silence, because the assertion
+#: below is two-way against the filter.
+#:
+#: 🔴 THE SPLIT IS DOCUMENTATION, NOT ENFORCEMENT — BUT "ANY RE-PARTITION PASSES" IS
+#: FALSE, AND AN EARLIER WORDING SAID IT. The assertion compares the filtered rows in
+#: CORPUS ORDER against the concatenation, so it pins the union AND that order. A
+#: re-partition therefore passes only when the boundary stays at the same point in the
+#: corpus order: of the 2**9 assignments of these nine rows to two tuples, the 10
+#: order-preserving prefix cuts pass and the other 502 fail. The earlier claim was
+#: generalised from two measurements that were both prefix cuts — one measurement is not
+#: a general claim, and neither are two on the same side of the boundary.
+#:
+#: MEASURED, both directions: move the count-visible row into `FOLDING_RUNE_EXTRA` (the
+#: exact revert of the change that created this tuple) and `pytest
+#: tests/test_marker_oracle_sweep.py` is 7 passed with the Go sweep green at 480/211 —
+#: a prefix cut. Move a NON-TERMINAL row, `- OPENK:`, across the boundary and it is
+#: 1 failed, 6 passed.
+#:
+#: 🔴 SO THE MISLEADING CASE IS THE ONE THAT PASSES, AND IT IS EXACTLY THE EDIT THIS
+#: LEDGER INVITES: a row at the END of `FOLDING_RUNE_EXTRA` moved across on the strength
+#: of a real measurement is a prefix cut and is silently accepted, while a row from the
+#: middle fails an assertion about corpus ORDER wearing a message about membership.
+#: What nothing can close is the part that matters: which side a row BELONGS on is a
+#: fact about the GO WALK, and this file cannot run it (see this module's docstring —
+#: "nothing here is evidence about Go"). A Go-side test pinning the partition was
+#: considered and REJECTED: it is a test guarding a test's tuple, the same guard-on-a-guard
+#: shape cut from this PR earlier. So the split buys a reader a per-row answer by list
+#: membership and buys no guard on that answer — do not write, or read, a sentence here
+#: implying otherwise, in either direction.
+FOLDING_RUNE_EXTRA_COUNT_VISIBLE = (
+    "- Reſolved ſ: a long s in the marker word AND the terminator run.",
+)
+
 
 def test_the_folding_rune_EXTRA_rows_are_pinned_because_NO_COUNT_CAN_SEE_THEM():
     """🔴 THE ONE POPULATION A PASSING SWEEP IS BLIND TO.
 
     `internal/store/markersweep_test.go` pins the size of the declared residual, so a
-    corpus row that DIVERGES is covered by that number. These rows do not diverge at
-    HEAD, so deleting all eight leaves both counts at 480/210 and every test green —
-    while removing the only lines that can catch a revert of `terminatorColon`'s
-    fold-awareness, in EITHER direction. The ledger above is the guard; this asserts
-    the corpus still carries exactly it.
+    corpus row that DIVERGES is covered by that number. The `FOLDING_RUNE_EXTRA` rows do
+    not diverge at HEAD, so deleting them leaves both counts at 480/211 and every test
+    green — while removing the only lines that can catch a revert of `terminatorColon`'s
+    fold-awareness, in EITHER direction. The ledger above is the guard; this asserts the
+    corpus still carries exactly it.
+
+    🔴 TWO TUPLES, ONE FILTER, AND THE SPLIT IS NOT ENFORCED — but this assertion is
+    ORDER-SENSITIVE, so it is not indifferent to a re-partition either. The corpus does
+    not separate the populations (the filter is "carries a folding rune"), so this
+    compares the filtered rows IN CORPUS ORDER against the concatenation: a boundary
+    moved to a different point in that order fails, a boundary kept at the same point
+    passes. WHICH tuple a row BELONGS in is the question a reader comes here with, and
+    that is answered by list membership as documentation only — nothing checks it, and
+    the tuple's own comment says why nothing can.
     """
     present = tuple(
         line for line in marker_corpus.EXTRA
         if any(ch in line for ch in "İıſK")
     )
-    assert present == FOLDING_RUNE_EXTRA, (
-        "the folding-rune rows of `marker_corpus.EXTRA` have moved. They produce no "
-        "divergence, so no count in either client can see them go; if a row is "
-        "genuinely obsolete, say in the commit which revert stops being observable."
+    assert present == FOLDING_RUNE_EXTRA + FOLDING_RUNE_EXTRA_COUNT_VISIBLE, (
+        "the folding-rune rows above no longer match `marker_corpus.EXTRA`. START BY "
+        "DIFFING the two tuples against `marker_corpus.EXTRA` \u2014 that tells you "
+        "which side moved, and pytest\u2019s own diff above names the row. These are "
+        "the shapes seen so far; the list is NOT closed, so trust the diff over it:\n"
+        "  \u2022 THE CORPUS MOVED \u2014 a row was added to, removed from, reordered "
+        "in, or edited in place in `marker_corpus.EXTRA`. Update the tuples to match. "
+        "The `FOLDING_RUNE_EXTRA` rows produce no divergence, so no count in either "
+        "client can see one go; if one is genuinely obsolete, say in the commit which "
+        "revert stops being observable.\n"
+        "  \u2022 A TUPLE MOVED, the corpus did not \u2014 a row was dropped from, "
+        "added to, or reordered within one of the tuples here. The union no longer "
+        "matches the corpus; restore it.\n"
+        "  \u2022 A ROW CROSSED THE BOUNDARY between the two tuples, to a split at a "
+        "different point in the corpus order. This assertion is order-sensitive, which "
+        "is the ONLY reason that fires \u2014 it is NOT checking that you put the row "
+        "on the correct side, and a crossing that keeps the split at the same point "
+        "passes silently. Nothing checks the side: which one a row belongs on is a fact "
+        "about the Go walk, and this file cannot run it. A row that DOES diverge "
+        "belongs in `FOLDING_RUNE_EXTRA_COUNT_VISIBLE`.\n"
+        "\u26a0 Do not read a count of bullets here as a count of causes \u2014 an "
+        "earlier version of this message said TWO and a third shape reached it."
     )
 
 

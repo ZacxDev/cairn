@@ -2,8 +2,17 @@ package store
 
 import "github.com/ZacxDev/cairn/internal/pytext"
 
-// The reason tokens the two write-protocol advisories are keyed on. They are
-// SEPARATE tokens for separate populations and their counts are never summed.
+// The reason tokens the DROPPED-LINE and MARKER-REACHABILITY advisories are keyed on.
+// They are SEPARATE tokens for separate populations and their counts are never summed.
+// ⚠ THEY COVER TWO OF THE FOUR ADVISORY BLOCKS, NOT ALL FOUR: `entry shape` and `open
+// actions` have no reason token of their own, so the two constants below are the only ones
+// the `NOT CHECKED` line can carry.
+// 🔴 THAT IS A CLAIM ABOUT THE TOKENS, NOT ABOUT THE BLOCKS, AND THE LINE NAMES ALL FOUR.
+// `ValidationAdvisoryLines`' `NOT CHECKED` branch withholds every block and says so by
+// NAME — "entry shape, dropped lines, open actions and marker reachability" — and then
+// appends `[dropped-line] [unreachable-marker]`. So it is the bracketed REASON TOKENS that
+// number two; a maintainer who reads "only these two" as "the line mentions two blocks"
+// has it backwards, which is how this comment was written the first time.
 //
 // 🔴 BOTH ARE "THE READER CANNOT SEE IT", AND THEY ARE STILL DIFFERENT
 // QUANTITIES WITH DIFFERENT REMEDIES. An unreachable marker sits INSIDE a bullet
@@ -160,13 +169,28 @@ func LineOpenness(line string) (openness, resolvedBy string) {
 // `internal/store/markersweep_test.go`, over the corpus `tests/marker_corpus.py`
 // generates and `internal/store/testdata/marker_oracle_sweep.json` carries; the
 // oracle's side of it is re-derived from the LIVE patterns by
-// `tests/test_marker_oracle_sweep.py` on every pytest run. So: `hasFoldedPrefix` folds by `unicode.SimpleFold`, and
+// `tests/test_marker_oracle_sweep.py` on every pytest run.
+//
+// So, MECHANICALLY: widen `hasFoldedPrefix` to fold the four runes `foldsToASCIILetter`
+// names — `unicode.SimpleFold` alone will NOT do it, U+0130 and U+0131 have no simple
+// fold — re-run
 //
 //	go test ./internal/store/ -run TestTheGoMarkerTranscriptions -count=1 -v
 //
-// passes with the U+017F clause DELETED from that test's ledger. Mechanically it is a
-// closed condition either way — with the residual open, the same command REQUIRES a
-// non-zero U+017F count, so the sweep can never report a bare comfortable zero.
+// and the sweep FAILS, by design, with *"the declared residual reported ZERO
+// divergences"*. That failure is the closing condition met: delete clause (c) and the
+// per-probe `want` counts of clause (d) in `markersweep_test.go`, and this paragraph,
+// in the same change.
+//
+// 🔴 THERE IS NO PER-RUNE CLAUSE AND NO PER-RUNE COUNT, AND AN EARLIER VERSION OF THIS
+// PARAGRAPH TOLD A MAINTAINER TO DELETE ONE. It read *"passes with the U+017F clause
+// DELETED from that test's ledger"* and *"the same command REQUIRES a non-zero U+017F
+// count"*. `classify` emits ONE combined label — `re.I-folding rune
+// (U+0130/0131/017F/212A)` — and the ledger is one number per PROBE, not per rune; a
+// maintainer following that instruction had nothing to delete. (ZacxDev/cairn#109.)
+// What the old sentence got RIGHT is worth keeping: with the residual open the same
+// command requires a non-zero declared count, so the sweep can never report a bare
+// comfortable zero.
 func LineMentionsMarker(line string) bool {
 	rs := []rune(line)
 	for i := range rs {

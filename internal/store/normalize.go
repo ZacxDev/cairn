@@ -66,9 +66,17 @@ var (
 // `scope:`/`repo:` and every `aliases:` entry go through it, and those arrive in a `PUT`
 // BODY. `EntryFromMapping` is the caller that makes it reachable.
 //
-// ⚠ ONE DIVERGENCE, MEASURED OVER THE WHOLE CODE-POINT RANGE rather than argued: U+0130
-// is the only code point whose `str.lower()` is not a single code point on the pinned
-// interpreter, and no code point lowers in Go but not in Python. See `pytext.Lower`.
+// ⚠ ONE DIVERGENCE **PER CODE POINT**, MEASURED OVER THE WHOLE RANGE rather than argued:
+// U+0130 is the only code point whose `str.lower()` is not a single code point on the pinned
+// interpreter, and no code point lowers in Go but not in Python.
+//
+// ⚠ AND "PER CODE POINT" IS THE LOAD-BEARING QUALIFIER, NOT A HEDGE. `str.lower()` has a
+// SECOND rule that is CONTEXTUAL — Final_Sigma — which no per-code-point sweep can see and
+// which `pytext.Lower` deliberately does not implement. It reaches nothing HERE because both
+// of its outputs (U+03C2, U+03C3) are outside `[a-z0-9.-]` and therefore become the SAME
+// separator, exactly as the combining mark above does. See `pytext.Lower` for the ledger and
+// the decision; unlike U+0130's case, that argument is structural rather than positional, so
+// it does not have the "only measured at the easy end" failure this comment's ancestor had.
 //
 // ⚠ `pytext.StripWhitespace` REPLACED `strings.TrimSpace` IN THE SAME CHANGE AND IS
 // **NOT** A FIX — labelled so it is not counted as one, and so nobody "simplifies" it

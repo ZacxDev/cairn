@@ -4,18 +4,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ZacxDev/cairn/internal/pytext"
 )
 
 // The WRITE-PROTOCOL advisories: content a reader cannot reach.
 //
-// 🔴 THESE TWO CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
+// 🔴 THESE CHECKS ARE WHY `validate` IS THE POST-WRITE CHECK AND NOT ONLY A
 // PARSE CHECK. The `N of M entry file(s) parse` line answers "would the loader
 // accept these files?", and a file can pass that while holding text NO reader will
 // ever surface. `dropped lines:` is the half that means content is ALREADY LOST.
 //
-// 🔴 NEITHER MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate` answers one
+// 🔴 NOT ONE OF THEM MOVES THE VERDICT, AND THAT IS NOT TIMIDITY. `validate` answers one
 // question and the write protocol branches on its EXIT CODE to mean "write
 // NOTHING". Failing here would stop a session recording anything into an entry
 // whose only defect is that an OLDER write lost a line — which makes the store
@@ -100,20 +101,33 @@ type DroppedLineFinding struct {
 // as exposed as the reader beside it, which is the property worth having. It is not a
 // claim that nothing can fail.
 //
-// Deliberately tolerant otherwise: a file with no nuance section yields false. Both
-// scanners run BESIDE the parse check, never in front of it — a malformed file's own
+// Deliberately tolerant otherwise: a file with no nuance section yields false. Every
+// scanner runs BESIDE the parse check, never in front of it — a malformed file's own
 // rejection is the finding that matters, and an advisory computed from its
 // half-parsed body would bury it.
 //
-// ⚠ EACH ENTRY IS READ THREE TIMES PER `validate` — once by `LoadIndex` and once by
-// each scanner — AND THAT IS A DECISION, NOT AN OVERSIGHT. Measured on this tree over
-// a synthetic cache of 300 entries carrying 30 bullets apiece: 36 ms end to end here
-// and 118 ms on the oracle, process start included. Caching the body would put mutable
-// state into two functions whose whole contract is READ-ONLY and independent, to save a
-// fraction of a tenth of a second on a store an order of magnitude larger than any real
-// one. The re-read also has one honest property a cache would remove: each scanner sees
-// the file as it is when IT runs, so a body that changed mid-command cannot be reported
-// under offsets taken from an earlier read.
+// ⚠ EACH ENTRY IS READ FIVE TIMES PER `validate` — once by `LoadIndex` and once by
+// each of the FOUR scanners — AND THAT IS A DECISION, NOT AN OVERSIGHT. It was THREE
+// until the shape and open-action scanners landed, and this comment said so for as
+// long as it took an audit to read it; the DECISION survived the re-measurement and
+// the numbers did not.
+//
+// RE-MEASURED over the same shape of corpus — a synthetic cache of 300 entries
+// carrying 30 bullets apiece, `validate --no-sync` over one scope, medians of 27 runs
+// per client interleaved on one loaded dev host:
+//
+//	reads/entry   3.00 -> 5.00   (strace `openat`, both clients, identical)
+//	Go client     39.8 ms -> 62.5 ms
+//	oracle        155.7 ms -> 190.1 ms  (+22%)
+//
+// The earlier figures (36 ms here, 118 ms on the oracle) did NOT reproduce as absolute
+// numbers — this host is slower and busier than whatever measured them — so they are
+// replaced rather than adjusted. Caching the body would put mutable state into
+// functions whose whole contract is READ-ONLY and independent, to save a few tens of
+// milliseconds on a store an order of magnitude larger than any real one. The re-read
+// also has one honest property a cache would remove: each scanner sees the file as it
+// is when IT runs, so a body that changed mid-command cannot be reported under offsets
+// taken from an earlier read.
 func nuanceBody(path string) (string, bool) {
 	// `ActionFor` rather than a map index, so the KIND comes from the loader's own
 	// table and never from a predicate spelled here.
@@ -137,9 +151,31 @@ func nuanceBody(path string) (string, bool) {
 	// is the same swallow one frame further out.
 	//
 	// ⚠ SIBLING ASYMMETRY ON THE SAME TABLE, for whoever adds a third action:
-	// `LoadIndex` branches `action == Refuse`, both scanners branch `action != Take`.
+	// `LoadIndex` branches `action == Refuse`, every scanner branches `action != Take`.
 	// Identical today only because the table holds no row that is neither — a `Skip`
 	// would be READ by the loader and SKIPPED here.
+	text, ok := entryText(path)
+	if !ok {
+		return "", false
+	}
+	body := ExtractSections(text, []string{NuanceHeading})[NuanceHeading]
+	if body == "" {
+		return "", false
+	}
+	return body, true
+}
+
+// entryText is the WHOLE entry file, and whether any scanner may open it at all.
+//
+// 🔴 THE GATE AND THE READ, SPELLED ONCE FOR EVERY SCANNER. `nuanceBody` carried both
+// inline until a scanner appeared that needs the whole file rather than one section
+// (`ScanEntryShape`, which has to see headings the nuance body cannot contain). A
+// second copy of the gate is the shape this file refuses everywhere else: the FIFO and
+// character-device hazards `nuanceBody` documents above are properties of the OPEN, not
+// of the section extraction, so a scanner that reads the file by a different route
+// inherits none of the protection. Every measurement in that comment applies verbatim
+// to every caller of this function.
+func entryText(path string) (string, bool) {
 	if !scannerReadsPath(path) {
 		return "", false
 	}
@@ -147,11 +183,7 @@ func nuanceBody(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	body := ExtractSections(DecodeReplace(data), []string{NuanceHeading})[NuanceHeading]
-	if body == "" {
-		return "", false
-	}
-	return body, true
+	return DecodeReplace(data), true
 }
 
 // ScanUnreachableMarkers finds markers typed into a bullet's BODY, where the marker
@@ -279,55 +311,533 @@ func ScanDroppedLines(paths []string) []DroppedLineFinding {
 	return out
 }
 
+// The entry's SHAPE, as opposed to whether its front matter parses.
+//
+// 🔴 WHY A SHAPE CHECK EXISTS AT ALL. `validate` returned `OK` at exit 0 for an entry
+// with all three spine headings renamed, for one with no headings at all, and for one
+// whose sections were all empty. Only a missing `service:` went red. So the spine every
+// consumer depends on was enforced by NOTHING.
+//
+// 🔴 AND IT IS NOT COSMETIC. A reader computes an entry's bullet count and its
+// `🔴 N OPEN` badge from `ExtractSections(...)[NuanceHeading]`, so a heading that is
+// renamed — or given a trailing colon, or shifted off column 0 — yields an empty body,
+// and the index row renders an entry with genuine open actions as a well-formed empty
+// one. The reader names a missing heading ON READ; this catches the same thing ON
+// WRITE, in the turn that wrote it.
+//
+// 🔴 WHICH HEADINGS, AND WHY STILL NOT `WhatHeading`. The checked set is
+// `ShapeHeadings` — the set whose absence makes a NUMBER wrong. `WhatHeading` IS read
+// and surfaced in every printed body, but it feeds no bullet count and no index badge,
+// so a missing one cannot turn a parse failure into a well-formed empty entry the way a
+// missing nuance heading can. Flagging it would report a convention with no numeric
+// consequence beside two whose consequence is measured, and a writer cannot tell those
+// apart in a list.
+
+// ShapeHeadings is the set of headings whose absence makes a COUNT or a BADGE wrong on
+// the read path. The oracle's spelling is `entry_shape.SHAPE_HEADINGS`, and it is the
+// same pair in the same order — the report interpolates it, so the ORDER is part of the
+// printed contract the parity gate compares.
+//
+// ⚠ A `var`, NOT A `const`, ONLY BECAUSE GO HAS NO SLICE CONSTANTS. It is never
+// written; the oracle's is a tuple for exactly this reason.
+var ShapeHeadings = []string{PointersHeading, NuanceHeading}
+
+// The four DISJOINT kinds of shape finding. Never summed — see ShapeFinding.
+const (
+	ShapeAbsent     = "absent"
+	ShapeRenamed    = "renamed"
+	ShapeDuplicated = "duplicated"
+	ShapeEmpty      = "empty"
+)
+
+// ShapeInventoryShown caps the heading inventory printed beside an ABSENT finding. A
+// bound, not a filter — the remainder is always counted in the line.
+const ShapeInventoryShown = 6
+
+// headingKey is the LOOSE form, used ONLY to pair a heading with the schema one it
+// missed. The oracle's spelling is `entry_shape._heading_key`.
+//
+// 🔴 IT NEVER ACCEPTS A HEADING. `ExtractSections` matches the exact string and keeps
+// doing so; folding `## Pointers` and `## pointers` together there would quietly widen
+// what the store is allowed to look like, which is the opposite of what this check is
+// for. This exists so the report can say "you wrote `## pointers`" instead of "the
+// section is absent" — the difference between a finding a writer can act on in one edit
+// and one that sends them looking for prose that is already on disk.
+//
+// Folds exactly three near-misses: the `#` level, the case and surrounding whitespace,
+// and a trailing colon. Whitespace RUNS collapse to one space, mirroring the oracle's
+// `re.sub(r"\s+", " ", …)`, so `##  Nuance  /  work-history` pairs rather than reading
+// as a heading nothing can match.
+//
+// 🔴 EVERY STEP IS A `pytext` FUNCTION, AND TWO OF THEM DID NOT USED TO BE. This ran
+// `strings.ToLower` over a locally open-coded collapse while the two `StripWhitespace`
+// calls beside them already came from the package — an inconsistency three lines wide,
+// and the `ToLower` half was a REAL divergence rather than a style point.
+// `strings.ToLower` is Unicode's SIMPLE lowercase mapping; the oracle's `.lower()` is
+// the FULL one, which differs in TWO language-independent rules. MEASURED on this tree: a
+// pointers heading written `## PO<U+0130>NTERS` folded to `poi<U+0307>nters` on the oracle
+// — reported ABSENT — and to `pointers` here, reported RENAMED. The parity corpus now seeds
+// that heading (`world.ENTRIES`, `crag-notes/scarp-idx.md`), so the revert is RED rather
+// than a silent one-sided fold.
+//
+// ⚠ AND `pytext.Lower` CLOSES ONE OF THE TWO, NOT BOTH — this comment claimed "the single
+// differing code point" for a round, and the second rule is CONTEXTUAL so no
+// code-point-at-a-time test can see it. `Lower` implements the unconditional U+0130
+// expansion and deliberately does NOT implement Final_Sigma (U+03A3 lowercases to U+03C2 at
+// the end of a word on the oracle and to U+03C3 here); its docstring carries that decision
+// and `TestLowerIsCPythonExceptForFinalSigma` is the ledger.
+// 🔴 THAT SECOND RULE REACHES NO OUTPUT THROUGH THIS FUNCTION, AND THE REASON IS
+// STRUCTURAL RATHER THAN LUCKY: this key is only ever compared against a SCHEMA heading's
+// key, every `ShapeHeadings` entry is ASCII, and U+03C2 and U+03C3 are both non-ASCII — so
+// a Σ-bearing heading pairs with nothing on EITHER client and both report ABSENT. MEASURED
+// at this commit: an entry whose pointers heading is `## POINTERΣ` renders 11 advisory
+// lines that are byte-identical across the two clients. That is why the parity corpus seeds
+// U+0130 and NOT Σ — a Σ row would be an invariant row with no discriminating power, which
+// is the opposite of what the U+0130 row is for. It becomes reachable the moment a schema
+// heading stops being ASCII, or a caller compares this key against anything but another
+// key from this function.
+//
+// ⚠ `pytext.CollapseWhitespace` IS `" ".join(s.split())`, WHICH ALSO STRIPS, while the
+// oracle's `re.sub` here does not — they agree at this call site ONLY because the
+// `StripWhitespace` on the line above has already removed the ends. That is the whole
+// reason the local copy could be deleted rather than moved.
+func headingKey(heading string) string {
+	s := strings.TrimLeft(heading, "#")
+	s = pytext.StripWhitespace(s)
+	s = strings.TrimRight(s, ":")
+	s = pytext.StripWhitespace(s)
+	return pytext.Lower(pytext.CollapseWhitespace(s))
+}
+
+// ShapeFinding is one way an entry's spine departs from the schema. FOUR DISJOINT
+// KINDS.
+//
+// 🔴 THEY ARE NEVER SUMMED, for the same reason OpenAction's populations are not: they
+// are different facts with different remedies. `renamed` and `absent` are the same
+// missing section reported at different resolutions — the writer typed something we can
+// show them, or they did not — and collapsing them would throw away the only half that
+// is actionable. `duplicated` is a section that IS parsed, twice, silently merged.
+// `empty` is a section present and unfilled, which ExtractSections tracks separately
+// from absent precisely so this can.
+//
+// 🔴 `duplicated` AND `empty` ARE NOT MUTUALLY EXCLUSIVE, and neither branch in
+// ScanEntryShape excludes the other: a heading written twice whose merged body is still
+// blank is BOTH, and reporting one of the two would hand the writer half a remedy.
+type ShapeFinding struct {
+	Filename string
+
+	// Heading is the SCHEMA heading this finding is about, always — never the typo.
+	Heading string
+
+	Kind string
+
+	// Found is, for `renamed`, the near-miss heading(s) actually written; for
+	// `absent`, the file's whole heading inventory, so the writer sees what they
+	// wrote instead.
+	Found []string
+
+	// Count is, for `duplicated`, how many times the exact heading appears.
+	Count int
+}
+
+// ScanEntryShape reports each entry's spine against ShapeHeadings. READ-ONLY.
+//
+// Tolerant in exactly the way the sibling scanners are, and gated the same way: a path
+// the loader's own table refuses is never opened (`entryText`), and a file that cannot
+// be read contributes nothing rather than failing, because this runs BESIDE the parse
+// check and never in front of it — a malformed file's own rejection is the finding that
+// matters.
+//
+// 🔴 IT REUSES `ExtractSections` AND `HeadingInventory` AND PARSES NOTHING ITSELF. Both
+// are views over the one `HeadingBlocks` walker, so this cannot come to a different
+// conclusion about what a heading is than the reader does — which would be the worst
+// possible defect in a checker whose entire job is to predict what the reader will see.
+func ScanEntryShape(paths []string) []ShapeFinding {
+	var out []ShapeFinding
+	for _, p := range paths {
+		text, ok := entryText(p)
+		if !ok {
+			continue
+		}
+		name := filepath.Base(p)
+		present := ExtractSections(text, ShapeHeadings)
+		headings := HeadingInventory(text)
+		for _, h := range ShapeHeadings {
+			body, isPresent := present[h]
+			if !isPresent {
+				var near []string
+				for _, x := range headings {
+					if headingKey(x) == headingKey(h) {
+						near = append(near, x)
+					}
+				}
+				kind := ShapeAbsent
+				found := headings
+				if len(near) > 0 {
+					kind = ShapeRenamed
+					found = near
+				}
+				out = append(out, ShapeFinding{
+					Filename: name, Heading: h, Kind: kind, Found: found,
+				})
+				continue
+			}
+			// 🔴 BOTH REMAINING KINDS CAN BE TRUE OF ONE HEADING AT ONCE — a
+			// duplicated heading whose merged body is still empty — so neither
+			// branch excludes the other and neither is an `else`.
+			n := 0
+			for _, x := range headings {
+				if x == h {
+					n++
+				}
+			}
+			if n > 1 {
+				out = append(out, ShapeFinding{
+					Filename: name, Heading: h, Kind: ShapeDuplicated, Count: n,
+				})
+			}
+			if pytext.StripWhitespace(body) == "" {
+				out = append(out, ShapeFinding{
+					Filename: name, Heading: h, Kind: ShapeEmpty,
+				})
+			}
+		}
+	}
+	return out
+}
+
+// OpenAction is one bullet `validate` is reporting as unfinished business.
+//
+// 🔴 FOUR POPULATIONS, AND THEY MUST NEVER BE ADDED TOGETHER INTO ONE NUMBER. A `OPEN:`
+// bullet is a claim the WRITER made and is exact, while an unmarked one is this tool's
+// guess from two measured phrasings and has unknown recall. Merging them would let a
+// floor masquerade as a count.
+type OpenAction struct {
+	Filename string
+
+	// Declared records that the writer typed `OPEN:`. Exact — not a guess about the
+	// prose.
+	Declared bool
+
+	Date      string
+	FirstLine string
+
+	// NearMiss records that the bullet tried to declare a marker and missed the
+	// grammar. A THIRD population, never folded into either other one: it is not an
+	// open action and not a guess about one, it is a write that did not land.
+	NearMiss bool
+
+	// UnverifiableClosure records a `RESOLVED:` that names no sha, so its claim
+	// cannot be checked. A FOURTH population. Not a problem — closing an action is
+	// the outcome this whole design wants — but the sha is what separates "closed,
+	// and here is the commit" from an assertion.
+	UnverifiableClosure bool
+}
+
+// ScanOpenActions reads each entry's journal and collects its unfinished business.
+// READ-ONLY.
+//
+// Deliberately tolerant, exactly as the sibling scanners are: a file no scanner may
+// open, one that cannot be read, or one with no nuance section contributes nothing.
+// This runs BESIDE the parse check, never in front of it.
+func ScanOpenActions(paths []string) []OpenAction {
+	var out []OpenAction
+	for _, p := range paths {
+		body, ok := nuanceBody(p)
+		if !ok {
+			continue
+		}
+		name := filepath.Base(p)
+		for _, b := range ParseJournalBullets(body) {
+			// 🔴 ONE BRANCH, ON THE SINGLE PRECEDENCE SOURCE. Re-deriving
+			// membership from the individual predicates here is what let a bullet
+			// be both a near-miss and an unmarked action on one surface while
+			// being one thing on another — the duplicated predicate
+			// `OpennessPopulation` exists to remove.
+			pop := b.OpennessPopulation()
+			if pop == PopulationNone || pop == PopulationResolved {
+				continue
+			}
+			out = append(out, OpenAction{
+				Filename:            name,
+				Declared:            pop == PopulationOpen,
+				NearMiss:            pop == PopulationNearMiss,
+				UnverifiableClosure: pop == PopulationUnverifiable,
+				Date:                b.Date,
+				FirstLine:           b.FirstLine(),
+			})
+		}
+	}
+	return out
+}
+
 // AdvisoryQuoteMax is the longest a quoted line runs before it is cut. A finding
 // names a FILE and a LINE NUMBER; the quote is there to recognise it by, and an
 // entry may hold a 4,000-character bullet.
 const AdvisoryQuoteMax = 120
 
-// ValidationAdvisoryLines renders the two write-protocol advisory blocks, as lines.
+// ValidationAdvisoryLines renders the write-protocol advisory blocks, as lines.
 // UNPREFIXED.
 //
 // Each client prefixes every line with its own `cairn: <scope>: `, because
 // `validate` with no `--scope` walks every scope the cache holds and an unprefixed
 // block would not say which one it is about.
 //
-// 🔴 THE DROPPED-LINE BLOCK COMES FIRST, deliberately. A dropped line is content NO
-// reader reaches, so the marker scan never sees it — a `0 out-of-reach` printed
-// above a `🔴 N DROPPED LINE(S)` is a fact about text the parser never got to, and
-// reads as a reassurance it cannot support.
-//
 // 🔴 EVERY BLOCK PRINTS ITS DENOMINATOR EVEN WHEN IT FINDS NOTHING. A bare zero is
-// indistinguishable from a scanner wired to nothing, and each of these has a SECOND
-// way to be vacuous that the zero must not hide: both read only the nuance heading,
-// so an entry whose heading is renamed contributes zero to both for a reason neither
-// block can state.
+// indistinguishable from a scanner wired to nothing, and THREE OF THESE FOUR have a
+// SECOND way to be vacuous that the zero must not hide: they read only the nuance
+// heading, so an entry whose heading is renamed contributes zero to all three for a
+// reason only the SHAPE block can state. The shape block's own zero carries the SET it
+// checked for the mirror-image reason — a reader who assumes the third spine heading
+// was checked would take it as a claim about a heading nothing examined.
 //
 // 🔴 AND WHEN NOTHING WAS CHECKED THE BLOCKS DO NOT PRINT AT ALL — one `NOT CHECKED`
-// line prints instead. "0 across 0 entry file(s)" is the reassuring zero from an
-// instrument that walked nothing, and it must not render anywhere near a
+// line prints instead, naming all four. "0 across 0 entry file(s)" is the reassuring
+// zero from an instrument that walked nothing, and it must not render anywhere near a
 // clean-looking count.
 //
 // 🔴 THIS IS ONE HALF OF A PAIR KEPT BYTE-IDENTICAL BY `tests/parity/`. The oracle's
 // spelling is `entry_shape.validation_advisory_lines`. Changing either alone IS a
-// divergence, and the parity world seeds a scope carrying both a dropped line and an
-// out-of-reach marker precisely so a one-sided edit is RED rather than invisible.
+// divergence, and the parity world seeds a scope carrying a dropped line, an
+// out-of-reach marker, a renamed heading, a duplicated-and-empty heading and every
+// open-action population precisely so a one-sided edit is RED rather than invisible.
+//
+// 🔴 EVERY FINDING SET IS A REQUIRED PARAMETER, NOT A VARIADIC OR AN OPTION STRUCT, and
+// that is the point of the signature. A caller that never wired a scanner would
+// otherwise print a confident `entry shape: … each present exactly once` over files
+// nothing examined — the reassuring zero from an instrument wired to nothing, arriving
+// through a forgotten argument instead of an empty directory. Required, a missed call
+// site is a compile error here and a `TypeError` on the oracle.
+//
+// 🔴 THE ORDER IS LOAD-BEARING, IN BOTH ADJACENT PAIRS:
+//
+//   - `entry shape:` COMES FIRST OF ALL. A renamed nuance heading makes every one of
+//     the three blocks below read an empty section, so their zeros are facts about a
+//     section the parser never reached. Read in the other order, `open actions: 0
+//     declared` is simply false.
+//   - `dropped lines:` COMES BEFORE `open actions` AND `marker reachability:`. A
+//     dropped line is content NO reader reaches, so neither of those scans ever sees
+//     it — a zero printed above a `🔴 N DROPPED LINE(S)` reads as a reassurance it
+//     cannot support.
 func ValidationAdvisoryLines(
 	nScanned int,
+	shape []ShapeFinding,
 	dropped []DroppedLineFinding,
+	openActions []OpenAction,
 	unreachable []UnreachableMarkerFinding,
 ) []string {
 	if nScanned == 0 {
 		return []string{fmt.Sprintf(
-			"dropped lines / marker reachability: NOT CHECKED — 0 entry file(s) "+
-				"scanned, so a zero here would be a zero over nothing. [%s] [%s]",
+			"write-protocol advisories: NOT CHECKED — 0 entry file(s) scanned, so a "+
+				"zero here would be a zero over nothing. This withholds ALL FOUR "+
+				"blocks — entry shape, dropped lines, open actions and marker "+
+				"reachability. [%s] [%s]",
 			ReasonDroppedLine, ReasonUnreachableMarker)}
 	}
-	out := droppedLinesBlock(nScanned, dropped)
+	out := entryShapeBlock(nScanned, shape)
+	out = append(out, droppedLinesBlock(nScanned, dropped)...)
+	out = append(out, openActionsBlock(nScanned, openActions)...)
 	return append(out, reachabilityBlock(nScanned, unreachable)...)
 }
 
-// scannerReadsPath is the ONE predicate deciding whether the two advisory scanners
-// OPEN a path, and therefore the one that decides the denominator they print.
+// entryShapeBlock is the SHAPE advisory. Prints on every path that SCANNED something.
+//
+// 🔴 IT PRINTS ITS DENOMINATOR EVEN WHEN IT FINDS NOTHING, AND IT PRINTS WHICH HEADINGS
+// IT LOOKED FOR. A reassuring zero is indistinguishable from an instrument wired to
+// nothing unless it carries the size of what it looked at — and here it must also carry
+// the SET it looked at, because a reader who assumes the third spine heading was checked
+// would take this zero as a claim about a heading nothing examined.
+//
+// 🔴 THE FOUR KINDS ARE RENDERED SEPARATELY AND NEVER SUMMED — see ShapeFinding. Each
+// KIND names its own remedy, and `renamed`'s ("you wrote this, the schema says that") is
+// the only one a writer can act on in a single edit.
+func entryShapeBlock(nScanned int, shape []ShapeFinding) []string {
+	quoted := make([]string, 0, len(ShapeHeadings))
+	for _, h := range ShapeHeadings {
+		quoted = append(quoted, "`"+h+"`")
+	}
+	spine := strings.Join(quoted, ", ")
+	var renamed, absent, duplicated, empty []ShapeFinding
+	for _, s := range shape {
+		switch s.Kind {
+		case ShapeRenamed:
+			renamed = append(renamed, s)
+		case ShapeAbsent:
+			absent = append(absent, s)
+		case ShapeDuplicated:
+			duplicated = append(duplicated, s)
+		case ShapeEmpty:
+			empty = append(empty, s)
+		}
+	}
+	if len(shape) == 0 {
+		return []string{"", fmt.Sprintf(
+			"entry shape: %d entry file(s) checked for %s — each present exactly once "+
+				"and non-empty. 🔴 `%s` is NOT checked here: the reader DOES surface "+
+				"it, but it feeds no count and no badge, so its absence changes nothing "+
+				"this zero is about — `subsystem_recall` names a missing one under that "+
+				"entry's own body instead.",
+			nScanned, spine, WhatHeading)}
+	}
+	out := []string{"", fmt.Sprintf(
+		"entry shape across %d entry file(s), checked for %s (NOT `%s`, which feeds no "+
+			"count and no badge):", nScanned, spine, WhatHeading)}
+	if len(renamed) > 0 {
+		out = append(out, fmt.Sprintf(
+			"  🔴 %d section(s) RENAMED — the heading is close but not exact, so NO "+
+				"reader reaches the section. Matching is exact-string after a "+
+				"right-strip, case-sensitive, at column 0. On that entry's index row "+
+				"this reads as `0 nuance` with no `OPEN` badge: PARSE FAILURE, not an "+
+				"empty entry.", len(renamed)))
+		for _, s := range renamed {
+			wrote := make([]string, 0, len(s.Found))
+			for _, h := range s.Found {
+				wrote = append(wrote, "`"+h+"`")
+			}
+			out = append(out, fmt.Sprintf("    %s: `%s` is written as %s",
+				s.Filename, s.Heading, strings.Join(wrote, ", ")))
+		}
+	}
+	if len(absent) > 0 {
+		out = append(out, fmt.Sprintf(
+			"  🔴 %d section(s) ABSENT — the heading is not in the file at all, under "+
+				"any spelling this tool can pair with it. Whatever the entry says on "+
+				"that subject is invisible to every default read. Read the inventory "+
+				"below against the schema heading: a section retitled far enough that "+
+				"no folding pairs it lands here rather than under RENAMED.", len(absent)))
+		for _, s := range absent {
+			shown := s.Found
+			rest := 0
+			if len(shown) > ShapeInventoryShown {
+				rest = len(shown) - ShapeInventoryShown
+				shown = shown[:ShapeInventoryShown]
+			}
+			inventory := "(none at all)"
+			if len(shown) > 0 {
+				q := make([]string, 0, len(shown))
+				for _, h := range shown {
+					q = append(q, "`"+h+"`")
+				}
+				inventory = strings.Join(q, ", ")
+			}
+			if rest > 0 {
+				inventory += fmt.Sprintf(", … %d more", rest)
+			}
+			out = append(out, fmt.Sprintf(
+				"    %s: no `%s`; the file's headings are %s",
+				s.Filename, s.Heading, inventory))
+		}
+	}
+	if len(duplicated) > 0 {
+		out = append(out, fmt.Sprintf(
+			"  🔴 %d heading(s) DUPLICATED — the sections silently MERGE into one body "+
+				"and anything written under a heading BETWEEN them is dropped from the "+
+				"read entirely. Fold them into one section.", len(duplicated)))
+		for _, s := range duplicated {
+			out = append(out, fmt.Sprintf("    %s: `%s` appears %d times",
+				s.Filename, s.Heading, s.Count))
+		}
+	}
+	if len(empty) > 0 {
+		out = append(out, fmt.Sprintf(
+			"  ⚠ %d section(s) PRESENT AND EMPTY — the heading is there with nothing "+
+				"under it. Not a parse failure and not the same as absent: the reader "+
+				"finds the section and prints a blank.", len(empty)))
+		for _, s := range empty {
+			out = append(out, fmt.Sprintf("    %s: `%s`", s.Filename, s.Heading))
+		}
+	}
+	return append(out,
+		"  (Advisory, and it changes no verdict: the loader accepts a file whose "+
+			"sections it cannot find, which is precisely the silent failure this block "+
+			"exists to make loud. Fix the heading, not the exit code.)")
+}
+
+// openActionsBlock is the UNFINISHED-BUSINESS advisory. Prints on every path that
+// SCANNED something.
+//
+// 🔴 IT PRINTS ITS DENOMINATOR EVEN WHEN IT FINDS NOTHING, like every sibling. "0
+// declared across 29 entry file(s)" is a reading; a blank space is not.
+//
+// 🔴 THE FOUR POPULATIONS ARE RENDERED SEPARATELY AND NEVER SUMMED — see OpenAction.
+// `Declared` is exact and the unmarked guess is a FLOOR with unknown recall; one total
+// over both would let the floor masquerade as a count.
+func openActionsBlock(nScanned int, openActions []OpenAction) []string {
+	// 🔴 FOUR INDEPENDENT FILTERS, NOT A `switch`, MIRRORING THE ORACLE'S FOUR LIST
+	// COMPREHENSIONS EXACTLY. `ScanOpenActions` sets exactly one flag from one
+	// `OpennessPopulation`, so a `switch` would be equivalent over every input either
+	// scanner can produce — and that is the whole trap: a hand-built record carrying
+	// two flags lands in TWO lists on the oracle and in one here, which is a
+	// divergence nothing in this file would show. The populations are disjoint because
+	// the SCANNER makes them so; the renderer must not be the second place that
+	// decides it.
+	var declared, near, unverifiable, guessed []OpenAction
+	for _, a := range openActions {
+		if a.Declared {
+			declared = append(declared, a)
+		}
+		if a.NearMiss {
+			near = append(near, a)
+		}
+		if a.UnverifiableClosure {
+			unverifiable = append(unverifiable, a)
+		}
+		if !a.Declared && !a.NearMiss && !a.UnverifiableClosure {
+			guessed = append(guessed, a)
+		}
+	}
+	if len(openActions) == 0 {
+		return []string{"", fmt.Sprintf(
+			"open actions: 0 declared across %d entry file(s), 0 "+
+				"attempted-but-unparsed, 0 `RESOLVED:` naming no sha, and 0 unmarked "+
+				"bullets matched the two phrasings this tool can recognise. 🔴 The last "+
+				"of those is a FLOOR with unknown recall, not a clean bill of health — "+
+				"an unfinished action phrased any other way is invisible here.",
+			nScanned)}
+	}
+	out := []string{"", fmt.Sprintf("open actions across %d entry file(s):", nScanned)}
+	quote := func(rows []OpenAction) {
+		for _, a := range rows {
+			out = append(out, fmt.Sprintf("    %s: %s",
+				a.Filename, truncRunes(a.FirstLine, AdvisoryQuoteMax)))
+		}
+	}
+	if len(declared) > 0 {
+		out = append(out, fmt.Sprintf(
+			"  🔴 %d declared `OPEN:` — exact, the writer said so. Re-check against the "+
+				"repo; if it landed, rewrite as `RESOLVED <sha>:`.", len(declared)))
+		quote(declared)
+	}
+	if len(near) > 0 {
+		out = append(out, fmt.Sprintf(
+			"  🔴 %d bullet(s) look like an ATTEMPTED marker that did not parse — they "+
+				"declare nothing and show no badge. Fix the line: the marker follows "+
+				"`YYYY-MM-DD: `, is upper-case, carries no emphasis or parenthetical, "+
+				"and ends in `:`.", len(near)))
+		quote(near)
+	}
+	if len(guessed) > 0 {
+		out = append(out, fmt.Sprintf(
+			"  ⚠ %d unmarked bullet(s) that READ like an open action. AT LEAST this "+
+				"many — two measured phrasings, unknown recall.", len(guessed)))
+		quote(guessed)
+	}
+	if len(unverifiable) > 0 {
+		out = append(out, fmt.Sprintf(
+			"  ⚠ %d `RESOLVED:` bullet(s) name no sha, so the closure cannot be "+
+				"checked. Not a defect — closing is the point — but `RESOLVED <sha>:` "+
+				"is what makes it verifiable rather than asserted.", len(unverifiable)))
+		quote(unverifiable)
+	}
+	return append(out,
+		"  (Advisory. None of this changes the verdict: an entry with unfinished "+
+			"business is still well-formed, and failing it here would be a red gate "+
+			"nobody could turn green by fixing the file.)")
+}
+
+// scannerReadsPath is the ONE predicate deciding whether the advisory scanners OPEN a
+// path — every one of them, through `entryText` — and therefore the one that decides
+// the denominator they print.
 //
 // 🔴 IT IS THE DENOMINATOR *AND* THE GATE, SPELLED ONCE, BECAUSE AS TWO THINGS IT WAS
 // WRONG. The advisories used to be handed `len(EntryFileNames(...))` — an unfiltered
@@ -369,7 +879,7 @@ func ScannedEntryCount(paths []string) int {
 // reassurance.
 func droppedLinesBlock(nScanned int, dropped []DroppedLineFinding) []string {
 	if len(dropped) == 0 {
-		return []string{fmt.Sprintf(
+		return []string{"", fmt.Sprintf(
 			"dropped lines: 0 across %d entry file(s) scanned [%s] — every non-blank "+
 				"`%s` line reaches a bullet some reader will surface. 🔴 PARTIAL "+
 				"BY CONSTRUCTION, IN THREE WAYS, and this zero is a claim about "+
@@ -391,7 +901,7 @@ func droppedLinesBlock(nScanned int, dropped []DroppedLineFinding) []string {
 			marked++
 		}
 	}
-	out := []string{fmt.Sprintf(
+	out := []string{"", fmt.Sprintf(
 		"🔴 %d DROPPED LINE(S) across %d entry file(s) scanned [%s] — present in "+
 			"the file, inside NO bullet, so EVERY reader skips them: `--ref`, "+
 			"`--search`, the "+
@@ -472,8 +982,12 @@ func reachabilityBlock(nScanned int, unreachable []UnreachableMarkerFinding) []s
 	return out
 }
 
-// advisoryFooter is the sentence BOTH blocks end on, written once because it is one
-// claim: these findings change no verdict, and the reason is the same for both.
+// advisoryFooter is the sentence the DROPPED-LINE and MARKER-REACHABILITY blocks end
+// on, written once because it is one claim: these findings change no verdict, and the
+// reason is the same for both. ⚠ IT IS TWO OF THE FOUR BLOCKS, NOT ALL OF THEM —
+// `entryShapeBlock` and `openActionsBlock` each end on their own sentence, because the
+// reason a shape finding changes no verdict is not the reason an unfinished action
+// does not.
 const advisoryFooter = "  (Advisory. It changes no verdict: the loader accepts the " +
 	"file, and the write protocol branches on this command's exit code to mean " +
 	"'write NOTHING'.)"

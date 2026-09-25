@@ -1630,7 +1630,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
             f"cairn: {scope}: {checked - len(malformed)} of {checked} "
             f"entry file(s) parse, {len(malformed)} malformed"
         )
-        # 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE TWO
+        # 🔴 THE PARSE COUNT IS NOT THE WRITE-PROTOCOL CHECK, AND UNTIL THESE
         # BLOCKS IT WAS THE WHOLE OF WHAT THIS COMMAND REPORTED. "Would the loader
         # accept this file?" is answered by the line above; an entry can pass it
         # while holding text NO reader will ever surface. `dropped lines:` is the
@@ -1639,8 +1639,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # skip it. A post-write check that cannot see that is checking the parser,
         # not the write.
         #
-        # 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: both
-        # scanners are tolerant by construction (an unreadable file or a missing
+        # 🔴 THEY SCAN THE MALFORMED FILES TOO, and that is not an oversight: every
+        # scanner is tolerant by construction (an unreadable file or a missing
         # nuance section contributes nothing), and a file the loader rejected can
         # still hold lost content that a later fix to its front matter would not
         # restore. The rejection above is still the finding that matters, which is
@@ -1662,9 +1662,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # one entry beside a FIFO: `dropped lines: 0 across 2 entry file(s)`, one
         # of them never read. The FIFO is not lost from the output; the line above
         # reports it malformed and drives the exit to 5.
+        #
+        # 🔴 FOUR BLOCKS, AND `entry shape:` PRINTS FIRST FOR A REASON THE OTHER
+        # THREE CANNOT STATE FOR THEMSELVES. All three of the others read only
+        # `## Nuance / work-history`, so an entry whose heading is RENAMED
+        # contributes zero to every one of them — `open actions: 0 declared` over a
+        # section no parser ever reached. The shape block is the one that says why,
+        # and it has to be ABOVE them to be read as the reason rather than as an
+        # afterthought. None of the four moves `worst`.
         for line in entry_shape.validation_advisory_lines(
             n_scanned=entry_shape.scanned_entry_count(entry_paths),
+            shape=entry_shape.scan_entry_shape(entry_paths),
             dropped=entry_shape.scan_dropped_lines(entry_paths),
+            open_actions=entry_shape.scan_open_actions(entry_paths),
             unreachable=entry_shape.scan_unreachable_markers(entry_paths),
         ):
             # A blank separator stays blank — prefixing it would print a trailing

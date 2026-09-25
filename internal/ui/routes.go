@@ -122,10 +122,13 @@ var routes = map[routeKey]route{
 	{"POST", "/sign-in/github"}:         {(*Server).handleOAuthStart, classPublic},
 	{"GET", "/sign-in/github/callback"}: {(*Server).handleOAuthCallback, classPublic},
 
-	// 🔴 THE STYLESHEET IS A ROUTE BECAUSE THE POLICY MADE IT ONE. `style-src 'self'` — see
-	// [ContentSecurityPolicy] — forbids an inline `<style>` element in a conforming browser,
-	// so the stylesheet that was a `<style>` in every page's head is served from here
-	// instead. It is `classPublic` because the SIGN-IN page links it and that page answers an
+	// 🔴 THE STYLESHEET IS A ROUTE, AND THE POLICY THAT FIRST MADE IT ONE IS GONE — THE ROUTE
+	// IS NOT. `style-src 'self'` forbade an inline `<style>` element in a conforming browser,
+	// so the stylesheet that was a `<style>` in every page's head moved here; that header has
+	// since been deleted by operator decision (see `writeHTML`). The route stays because the
+	// bytes are now GENERATED — `tailwind.css` compiled to `app.css`, ~29 KB — and inlining
+	// them into every response would send that on every page load instead of once per five
+	// minutes. It is `classPublic` because the SIGN-IN page links it and that page answers an
 	// anonymous caller; a stylesheet behind the chain would render the way in as unstyled
 	// text. It is NOT `classContent`: it consults no authority, and it answers the same bytes
 	// to everybody, which is exactly what makes it safe to serve before authentication.

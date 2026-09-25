@@ -354,33 +354,103 @@ assertion above is satisfied by a page with no links at all.
 | the `ToLower` is deleted | rc 0 | `safeHref refused a permitted URL "HTTPS://tracker.invalid/issue/1"` |
 | the whitespace/C0 strip is deleted | rc 0 | `safeHref refused a permitted URL "  https://tracker.invalid/issue/1  "` |
 
-### Response hardening, which is a second barrier and not the guard
+### Response hardening: one header, and a policy that was DELETED on purpose
 
-`X-Content-Type-Options: nosniff` and a CSP of
-`default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'`.
-The escaping is the guard; these are behind it.
+`X-Content-Type-Options: nosniff`. That is the whole list. The escaping is the guard; that
+header is behind it.
 
-🔴 **NO `script-src` AND NO `img-src`, AND BOTH ABSENCES ARE ONE RULE:** a clause that permits
-something the code forbids is a policy nobody can read as a claim about the code. `render.go`
-emits neither, and `TestHostileEntryTextIsEscaped` lists both `"<script"` and `"<img"` among
-the substrings it asserts can never appear in a rendered page. `default-src 'none'` forbids
-them today; **naming a directive is how one of them becomes possible.** A script or an image
-arriving later adds its clause *in the commit that adds it* — see `ContentSecurityPolicy`'s own
-comment, which also records that both were briefly in a draft of this very change and why
-neither survived review.
+🔴 **THE CONTENT-SECURITY-POLICY IS GONE, BY OPERATOR DECISION — challenged once with the
+blast radius below and reaffirmed.** It was
+`default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`.
+`TestTheHTMLResponseSendsNoContentSecurityPolicy` pins the absence on both HTML shapes and on
+the report-only spelling, so restoring the header is a decision somebody takes in that test
+rather than a line that reappears in a merge.
 
-⚠ **THIS PARAGRAPH WAS WRONG ABOUT THE POLICY IT DESCRIBED, AND IN TWO DIFFERENT WAYS — the
-record is the point.** It read *"a CSP of `default-src 'none'; style-src 'unsafe-inline';
-base-uri 'none'; form-action 'none'` — no script permitted at all. The stylesheet is a Go
-constant in `render.go` that no input reaches, which is what makes `style-src 'unsafe-inline'`
-buy an attacker nothing."* The `form-action 'none'` half had been **stale since Phase B**, when
-the constant moved to `'self'` so the forms would work — so the README asserted a stricter
+**What was given up, named rather than left to be reconstructed:**
+
+| clause removed | what it had been stopping |
+|---|---|
+| `frame-ancestors 'none'` | the surface is FRAMABLE — full clickjacking of the share flow's state-changing POSTs, with both cross-site gates satisfied; see below |
+| `form-action 'self'` | an injected form can be induced to POST offsite |
+| `base-uri 'none'` | an injected `<base href>` re-points every relative URL on the page |
+| `default-src 'none'` | arbitrary script and third-party origins become loadable |
+
+### 🔴 The framing row — and a RETRACTION of this section's own previous correction
+
+⚠ **THIS SECTION HAS BEEN WRONG ONCE IN EACH DIRECTION, AND THE SECOND TIME WAS THE UNSAFE
+ONE. It is the load-bearing description of an operator decision that was reaffirmed on it, so
+both drafts are quoted rather than reworded away.**
+
+The **original** text said: *"A clickjacked submit originates INSIDE the page: its `Origin`
+really is this origin and the CSRF token rendered into it really is the victim's, so gate (2)
+and gate (6) both pass. Framing was never something those gates could see; refusing to be
+framed was the only defence and it is now absent."*
+
+The **second** draft called that wrong, on the grounds that `identity.SessionCookie` sets
+`SameSite=Lax` so a framed load carries no cookie and renders the sign-in page, and concluded
+the exposure was *"SMALLER than recorded"*. **That second draft is retracted. The original
+stands.**
+
+🔴 **`SameSite` IS SITE-SCOPED; `frame-ancestors` WAS ORIGIN-SCOPED.** They are not the same
+boundary and the retracted draft conflated them. "Same site" is the **registrable domain**.
+`session.go`'s own comment says so, and the retracted draft cited that very comment while
+stopping one clause short of the words that refute it — quoted here **in full**:
+
+> `Lax` is NOT treated as the CSRF guard — it is a browser-side property this server cannot
+> verify, **and "same site" still includes a sibling subdomain**. The guard is the token.
+
+So a framer at **any host sharing this deployment's registrable domain is same-site**. Lax
+attaches `__Host-cairn-session` to that framed load — the `__Host-` prefix stops a sibling
+*setting* the cookie and has nothing to do with how the site is computed. The framed document
+renders **authenticated**, with a real `csrfTokenFor` token in it; the induced click submits
+with `Origin` genuinely equal to this origin; `sameOrigin` passes and the token matches. The
+originally recorded mechanism follows **in full**. `internal/identity/session.go` already
+models a hostile sibling host under the registrable domain as a real attacker against this
+exact cookie — it is the same attacker.
+
+**The live cases, worst first:**
+
+| case | what happens |
+|---|---|
+| **a SAME-SITE framer** — any host under this deployment's registrable domain | full clickjacking of the share flow's grant and revoke POSTs, **both gates satisfied**, exactly as the original text said. ⚠ Whether such a host exists is a property of the **deployment** — what else is served under that domain — which this repository cannot see and must not assume away |
+| **a cross-site framer in a client that does not enforce Lax** | same mechanism, restored in full, and nothing here would know |
+| **UI redress against the unauthenticated sign-in page** | needs no cookie at all, so it frames from **any** origin; a framed sign-in form under an attacker's chrome is a phishing surface, and no gate addresses it because every request involved is legitimate |
+| **any route a later change makes reachable without a session** | inherits the row above, with nothing going red — the standing cost of having no `frame-ancestors` |
+
+What `SameSite=Lax` actually buys is the **narrower** case only: a framer at a *different*
+registrable domain. That is worth having and it is not what the retracted draft claimed.
+
+🔴 **AND THE EVIDENCE CLASS, WHICH DID NOT IMPROVE ACROSS EITHER DRAFT.** All of this is
+**derived** — from the cookie constructor, and from `SameSite`/`frame-ancestors` scoping rules.
+**No test in this tree and no browser run has framed this surface or observed which requests
+carry the cookie.** `session.go` flags its neighbouring `Secure`-on-`localhost` claim as
+unmeasured for the same reason. The lesson the retraction leaves is the point: the wrong draft
+was *also* derived, *also* read plausibly, and was unsafe — derivation is not a substitute for
+measuring it.
+
+🔴 **AND THE GATES THEMSELVES ARE UNTOUCHED, WHICH IS A DIFFERENT SENTENCE FROM THE ONE ABOVE.**
+`sameOrigin` and `csrfTokenFor` are derived from the request method by `stateChanging`, they
+read no header `writeHTML` sets, and `session_test.go` measures them. So are the `__Host-`
+cookie attributes and the sign-in lockout. Reading "the CSP is gone" as "cross-site protection
+is gone" is the mistake this paragraph exists to stop.
+
+⚠ **ONE THING THE DELETION DID NOT BUY, BECAUSE THE OPPOSITE IS THE OBVIOUS GUESS:** the policy
+was never what blocked Tailwind. `style-src 'self'` permits a compiled same-origin stylesheet —
+which is precisely how the stylesheet was served *under* that policy, from `/static/app.css`.
+The absent build step was the blocker; it is now present (`tailwind.css` → `app.css`, gated by
+`checks.ui-stylesheet-is-current`). The header deletion removed a control and additionally
+unblocked the Tailwind Play CDN, which Tailwind documents as not for production and which this
+surface does **not** use.
+
+⚠ **THE PARAGRAPH THIS SECTION REPLACED WAS WRONG ABOUT THE POLICY IT DESCRIBED, TWICE, and the
+record is kept because it is the reason to distrust a prose restatement of a header.** It read
+*"a CSP of `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`
+— no script permitted at all."* The `form-action 'none'` half had been **stale since Phase B**,
+when the constant moved to `'self'` so the forms would work — so this README asserted a stricter
 policy than the code shipped, for two phases, in the section whose whole job is to state what
-the response promises. And the `'unsafe-inline'` half was true and is now **gone**: the
-stylesheet is served from `/static/app.css`, so an inline `<style>` does not apply at all.
-Which direction each clause moved is in `ContentSecurityPolicy`'s own comment in `server.go` —
-read it there rather than restating it here, because that is the string the header test pins as
-a literal.
+the response promises. The lesson outlives the header: a policy written in prose drifts from the
+policy on the wire, which is why what remains here is a table of what was REMOVED and a test
+name, not a string anybody has to keep in step.
 
 ## 🔴 `TrustedHeader` is not in this binary's identity chain
 
@@ -1045,9 +1115,17 @@ Two decisions inside that are worth reading twice.
 token in the URL **fragment**, which no server ever receives: the page would need script to
 read `location.hash` and post it back. That is more code, a second way in, and a token in the
 browser's history. A draft of this change carried `script-src 'self'`, which would have
-permitted such a script — the flow was available and was refused. **That clause is gone too**:
-having deliberately built the flow scriptless, keeping a directive that re-permits script
-"for later" would be the policy-wider-than-the-code shape this surface refuses.
+permitted such a script — the flow was available and was refused.
+
+⚠ **THAT PARAGRAPH'S SECOND HALF IS RETIRED, AND THE DECISION IT DESCRIBES IS NOT.** It read
+*"That clause is gone too: having deliberately built the flow scriptless, keeping a directive
+that re-permits script 'for later' would be the policy-wider-than-the-code shape this surface
+refuses."* There is no policy left to be wider than the code — the whole header was deleted by
+operator decision, so **nothing in a browser forbids script here any more**. The scriptless flow
+stands on the half that never depended on a header: a token in the fragment is a token in the
+browser's history that the server never receives, and a flow needing script to complete is a
+second way in. `internal/identity/supabaseoauth.go` carries the same retraction beside the
+`flow_type` parameter. Do not re-derive *"the CSP is gone, so the implicit flow is fine now"*.
 
 **There is no `state` parameter, and its absence is a decision with a reason.** GoTrue does not
 pass an arbitrary `state` through to the callback; it manages its own and appends only `code`.
@@ -1165,17 +1243,92 @@ path-mismatch row — both of which the same change introduced. The startup line
 state it is in, for the reason it already reports whether a share can be recorded: the answer is
 decided at startup and discovered at the first click otherwise.
 
-## The stylesheet is now a route
+## The stylesheet is a route, and its bytes are BUILD OUTPUT
 
-`style-src 'self'` forbids an inline `<style>`, so all three pages link `/static/app.css` and
-`handleStylesheet` serves the same Go constant. It is `classPublic` because the sign-in page
-links it and that page answers anybody — a stylesheet behind the chain renders the way in as
-unstyled text. It serves a **constant**, not a directory: an `http.FileServer` would need a
-prefix match, which is a second way for a request to reach a handler and one
-`TestEveryServedPathComesFromTheLedger` structurally cannot probe.
+All three pages link `/static/app.css` and `handleStylesheet` serves it. It is `classPublic`
+because the sign-in page links it and that page answers anybody — a stylesheet behind the chain
+renders the way in as unstyled text. It serves an **embedded file**, not a directory: an
+`http.FileServer` would need a prefix match, which is a second way for a request to reach a
+handler and one `TestEveryServedPathComesFromTheLedger` structurally cannot probe.
 `TestTheStylesheetIsServedAsItsOwnRoute` pins the RELATIONSHIP rather than either side — it
 reads each page's `<link href>` and then fetches that exact href, because two separate
 assertions would both pass for a route nobody links or a link nobody serves.
+
+⚠ **THE ROUTE'S ORIGINAL REASON IS GONE AND THE ROUTE IS NOT.** It existed because
+`style-src 'self'` forbade an inline `<style>`; that policy was deleted (see *Response
+hardening* above), so an inline stylesheet would work again. What keeps the route is the
+size: the bytes are generated now, ~29 KB, and inlining them would send that on every
+response instead of once per five minutes.
+
+### The theme: Tailwind, compiled, checked in
+
+| file | what |
+|---|---|
+| `internal/ui/tailwind.css` | the SOURCE — `@theme` tokens, the component layer, the reduced-motion block |
+| `internal/ui/app.css` | the OUTPUT — generated, checked in, `//go:embed`ed by `stylesheet.go` |
+| `nix run .#build-ui-stylesheet` | regenerates the output from the source, in the working tree |
+| `checks.ui-stylesheet-is-current` | regenerates in a sandbox and REFUSES a difference |
+
+🔴 **REGENERATE AND DIFF, NEVER HAND-EDIT `app.css`** — the same discipline
+`internal/report/testdata/reader_fixtures.json` carries, and for a sharper reason: the file is
+embedded, so a stale one is not a weaker comparison, it is *the theme the surface actually
+serves*. Nothing about forgetting to regenerate is loud on its own — the build succeeds, every
+Go test passes, and the previous stylesheet ships. The check is what makes it loud, and it
+validates its own instrument first: a negative control appends a line to the generated bytes
+and requires `diff` to report a difference, exiting **2** ("could not vouch") if the control
+compares equal.
+
+🔴 **NOTHING IS SCANNED. `tailwind.css` IS THE GENERATOR'S ONLY INPUT, AND THAT IS WHAT MAKES
+A RAW UTILITY IN `render.go` A SILENT DEFECT.** The file declares
+`@import "tailwindcss" source(none)` and **no `@source` at all**, so the output is a pure
+function of those bytes plus the pinned CLI. The structural tell is in the artefact: `app.css`
+carries a bare `@layer utilities;` — the layer is declared and **empty**.
+
+🔴 **SO THE RULE THAT BINDS THE NEXT EDIT: EVERY CLASS `render.go` RENDERS IS A SEMANTIC NAME
+DEFINED IN `tailwind.css`. NEVER A RAW TAILWIND UTILITY.** Add `h.Class("flex gap-2")` to a new
+element and regenerate: `app.css` is **byte-unchanged**, so
+`checks.ui-stylesheet-is-current` stays **green** and the element would ship with two class
+names the served bytes have no rule for. Give it a named class here instead, composed with
+`@apply` like the other ~35.
+
+🔴 **`TestEveryRenderedClassHasARuleInTheStylesheet` IS WHAT MAKES THAT LOUD, AND IF YOU ARE
+READING THIS BECAUSE IT WENT RED, IT IS RIGHT AND THE CODE IS WRONG.** Define the class in
+`tailwind.css` and regenerate; do not delete the test. **Before it existed,
+`go test ./internal/ui/` was green on exactly the defect above** — that is why it exists, and
+it is the only thing in the tree that can see it: the currency check compares generated
+against committed and a raw utility moves neither. It reads `Class(…)`, `Attr("class", …)` and
+`Classes{…}`; a fourth way of emitting a class would be invisible to it, which its own doc
+comment states.
+
+⚠ **THIS SECTION USED TO TEACH THE OPPOSITE, AND THE RETRACTION IS THE POINT BECAUSE THIS
+README IS THE DOC A NEXT EDITOR READS INSTEAD OF THE SOURCE COMMENTS.** It read *"THE CLASS
+NAMES IN `render.go` ARE WHAT THE GENERATOR SCANS, SO EVERY ONE IS A LITERAL. `tailwind.css`
+declares `@import "tailwindcss" source(none)` plus `@source "./*.go"`, which pins the scan to
+exactly `internal/ui/*.go` … a class assembled at run time (`"text-" + size`) is invisible to
+that scan"*, and it closed with *"Utilities are used directly for page layout."* Both were true
+of the draft and both are now false: **the `@source` line was deleted**, because Tailwind's
+extractor reads COMMENTS as readily as code and this package's comments are dense by house rule
+— six utilities were generated out of ordinary English with no class literal anywhere, and a
+comment-only edit reddened the currency check with a message blaming a hand-edit that never
+happened. The measurement is in `tailwind.css`'s own header. The run-time-assembly hazard the
+old text named is now the *whole* hazard rather than an edge of it: with no scan, a **literal**
+utility is just as invisible as a computed one.
+
+The semantic class names (`.viewer`, `.signin`, `.replica-honesty`, `.entry`, `.page-header`,
+`.page-main`, `.signin-main`, …) are therefore the only kind this surface renders — the page
+shell included, which is what the three `.page-*`/`.signin-main` classes are. Two are asserted
+by tests here, one is driven by a browser harness outside this repository, and `@apply` in a
+component layer is Tailwind's documented answer for exactly that.
+
+🔴 **`prefers-reduced-motion: reduce` REMOVES THE MOTION, IT DOES NOT SHORTEN IT.** The common
+snippet sets `animation-duration: 0.01ms`, which still *runs* the animation — a reader who
+asked for no motion gets one frame of the same transform. The block sets `animation: none` and
+`transition: none`, unlayered and `!important`, so it beats both the component layer and any
+utility. It is a global block rather than per-call-site `motion-reduce:` variants for the
+reason a spelled guard is weaker than a structural one: a variant is one forgotten class away
+from being wrong, at a place where being wrong is an accessibility failure. Every keyframe set
+uses `both` fill with a visible `to` state, so removing the animation leaves the element in its
+ordinary static rendering rather than invisible at `opacity: 0`.
 
 ## The mutation rows — 31 mutants, 31 killed, and the battery is NOT in the tree
 
@@ -1198,7 +1351,7 @@ BUILD-FAIL and never as a kill.
 
 | mutant | test that KILLED it |
 |---|---|
-| the CSP reverted to the Phase A/B policy | `TestTheHTMLResponseCarriesItsHardeningHeaders` |
+| ~~the CSP reverted to the Phase A/B policy~~ — **RETIRED**: the policy it reverted no longer exists, and the test that killed it no longer asserts one. The replacement mutant is *the CSP header is restored*, killed by `TestTheHTMLResponseSendsNoContentSecurityPolicy`. Both rows are kept because a table row that silently changes meaning is worse than one that says it changed | `TestTheHTMLResponseSendsNoContentSecurityPolicy` |
 | an undeclared path answers the old uniform 401 | `TestEveryServedPathComesFromTheLedger` |
 | the root redirect deleted | `TestTheRootRedirectsABrowserAndRefusesEverythingElse` |
 | the root redirect WIDENED to every client (`Accept` ignored) | the same test |
@@ -1216,7 +1369,7 @@ BUILD-FAIL and never as a kill.
 | the provider's `error_description` reflected into the page | `TestTheProviderErrorIsNotReflectedIntoThePage` |
 | the credential field renamed, breaking the harness selector | `TestTheCredentialFormSURVIVESTheProviderButton` |
 | the credential form rewired to post at the provider route | the same test |
-| `frame-ancestors` dropped (the surface becomes frameable) | `TestTheHTMLResponseCarriesItsHardeningHeaders` |
+| ~~`frame-ancestors` dropped (the surface becomes frameable)~~ — 🔴 **RETIRED, AND IT IS THE SHARPER OF THE TWO RETIREMENTS BECAUSE THE "MUTANT" IS NOW THE SHIPPED STATE.** The whole policy was deleted by operator decision, so this surface IS frameable — see *Response hardening* above. The row was false twice over: the named killer stopped asserting anything about the policy in the same change, and the state it calls a defect is the accepted one. **There is no replacement mutant**, deliberately: nothing here can kill a mutant whose result is what the tree already does, and inventing a row that sounded like coverage would be worse than saying so. What IS pinned is the deletion itself, by `TestTheHTMLResponseSendsNoContentSecurityPolicy` | *(nothing — see above)* |
 | the chain assembled BY HAND in the wrong order — **the control that actually compiles** | `TestTheUIChainTriesEveryHeaderCREDENTIALBeforeTheAmBIENTCookie` |
 | a spent flight DELETED again (the cap bounds concurrency, not rate) | `TestOneClientCannotAmplifyRequestsAtTheProvider` |
 | the flight cookie loses its `__Host-` prefix | `TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire` |

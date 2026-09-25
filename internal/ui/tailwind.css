@@ -1,0 +1,360 @@
+/* tailwind.css is the SOURCE of this surface's stylesheet. It is not served.
+ *
+ * 🔴 THE SERVED BYTES ARE `app.css`, WHICH IS GENERATED FROM THIS FILE AND CHECKED IN.
+ * `internal/ui/stylesheet.go` embeds `app.css`; `flake.nix`'s `ui-stylesheet-is-current`
+ * check regenerates it from this file and REFUSES on a difference. So the rule is the
+ * same one `internal/report/testdata/reader_fixtures.json` carries: REGENERATE AND DIFF,
+ * never hand-edit the output. A hand-edit to `app.css` is not a weaker comparison — it
+ * is a red check, by construction.
+ *
+ *   nix run .#build-ui-stylesheet     # rewrite internal/ui/app.css from this file
+ *
+ * 🔴 `source(none)` AND NO `@source` AT ALL: THIS FILE IS THE GENERATOR'S ONLY INPUT.
+ * Nothing is scanned, so every rule below reaches the output through `@apply` or by being
+ * written out, and `app.css` is a pure function of these bytes and the pinned Tailwind.
+ *
+ * ⚠ AN EARLIER DRAFT CARRIED `@source "./*.go"` AND IT WAS A DEFECT, MEASURED RATHER THAN
+ * SUSPECTED — the record is here because the draft's own comment argued it was the SAFE
+ * choice. Tailwind's extractor does not read Go; it pulls candidate strings out of the
+ * whole file, COMMENTS INCLUDED. This package's comments are unusually dense by house
+ * rule, and ordinary English in them collides with utility names: `table` appeared 68
+ * times in prose, `visible` 28, `fixed` 16, `static` 13, `hidden` 10, `sticky` 3. Six
+ * utilities — `.visible .fixed .static .sticky .hidden .table` — were generated into
+ * `app.css` with ZERO occurrences in any `Class()` literal, and rewording one comment line
+ * deleted one of them. The consequence was worse than the dead bytes: a comment-only edit
+ * turned `checks.ui-stylesheet-is-current` RED, and that check's message says "app.css is
+ * BUILD OUTPUT and must never be hand-edited", sending the reader hunting a hand-edit that
+ * never happened.
+ *
+ * 🔴 SO THE RULE FOR WHOEVER COMES NEXT: DO NOT ADD AN `@source`, AND DO NOT PUT A RAW
+ * UTILITY STRING IN A `Class()` CALL. A page that needs new styling gets a named class
+ * here, composed with `@apply`, the same way the ~35 below are. That is what keeps prose
+ * and stylesheet in different worlds — and it is a structural fix rather than a discipline
+ * one: with nothing scanned, a comment CANNOT reach the generator however it is worded.
+ */
+@import "tailwindcss" source(none);
+
+/* The theme. These are the tokens criterion 1 means by "a coherent theme": every colour,
+ * every radius and the one easing curve on this surface resolve here, so a page cannot
+ * invent a fifth grey.
+ *
+ * ⚠ THE COLOURS ARE THE LIGHT SET. The dark set overrides the same custom properties
+ * below, OUTSIDE any cascade layer, which is why it wins: Tailwind emits its theme inside
+ * `@layer theme`, and unlayered declarations beat layered ones regardless of order. */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-surface: oklch(0.982 0.004 85);
+  --color-raised: oklch(1 0 0);
+  --color-ink: oklch(0.29 0.014 75);
+  --color-muted: oklch(0.52 0.014 75);
+  --color-line: oklch(0.9 0.008 80);
+  --color-accent: oklch(0.52 0.088 205);
+  --color-accent-ink: oklch(0.99 0 0);
+  --color-danger: oklch(0.52 0.17 25);
+
+  --radius-card: 0.625rem;
+
+  /* One easing curve for the whole surface. A page that eases differently from the one
+   * beside it reads as two products. */
+  --ease-cairn: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --animate-rise: rise 0.38s var(--ease-cairn) both;
+  --animate-settle: settle 0.3s var(--ease-cairn) both;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(0.5rem);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes settle {
+    from {
+      opacity: 0;
+      transform: scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+/* 🔴 THE DARK SET IS UNLAYERED, AND THAT IS THE MECHANISM RATHER THAN A STYLE CHOICE.
+ * See the note in `@theme` above: an override written inside `@layer base` would LOSE to
+ * Tailwind's own `@layer theme` block in browsers that implement layers, which is all of
+ * them — so the surface would render its light palette on a dark-mode machine with
+ * nothing going red. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: oklch(0.21 0.008 75);
+    --color-raised: oklch(0.25 0.009 75);
+    --color-ink: oklch(0.93 0.006 85);
+    --color-muted: oklch(0.72 0.01 85);
+    --color-line: oklch(0.34 0.01 80);
+    --color-accent: oklch(0.78 0.1 200);
+    --color-accent-ink: oklch(0.18 0.01 75);
+    --color-danger: oklch(0.72 0.14 25);
+  }
+}
+
+@layer base {
+  html {
+    /* Kept from the hand-written stylesheet this replaces: it is what makes a browser's
+     * own form controls and scrollbars follow the page instead of fighting it. */
+    color-scheme: light dark;
+  }
+
+  body {
+    @apply bg-surface text-ink font-sans text-base leading-relaxed antialiased;
+    @apply mx-auto max-w-3xl px-6 py-10;
+  }
+
+  h1 {
+    @apply text-2xl font-semibold tracking-tight;
+  }
+
+  h2 {
+    @apply text-lg font-semibold tracking-tight;
+  }
+
+  h3 {
+    @apply text-sm font-semibold tracking-wide uppercase text-muted;
+  }
+
+  /* 🔴 A VISIBLE FOCUS RING ON EVERY FOCUSABLE THING, AND `:focus-visible` RATHER THAN
+   * `:focus`. This surface is keyboard-reachable by design — the sign-in form is how an
+   * automated harness gets in — and a theme that removes the browser's default outline
+   * without replacing it makes the page unusable without a mouse. `:focus-visible` is
+   * what keeps the ring off a mouse click on a button. */
+  :where(a, button, input, select, summary):focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+}
+
+@layer components {
+  /* The page shell. These three carry what were raw utility strings in `render.go` until
+   * the `@source` defect above was closed: with nothing scanned, a utility written into a
+   * `Class()` call would simply not exist in the stylesheet, so the shell is named here
+   * like everything else and `render.go` spells only semantic names. */
+
+  .page-header {
+    @apply flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1;
+    @apply border-b border-line pb-4 mb-6;
+  }
+
+  .page-main {
+    @apply flex flex-col gap-2;
+  }
+
+  /* The sign-in page has one card and no list, so its `<main>` IS the card. */
+  .signin-main {
+    @apply bg-raised border border-line rounded-card px-5 py-6 max-w-md;
+    @apply animate-rise;
+  }
+
+  /* The semantic class names below are the ones `render.go` already renders. They are
+   * kept — rather than replaced by a wall of utilities at every call site — because two
+   * of them are read by tests and one by a browser harness outside this repository, and
+   * because a name that says what a thing IS survives a restyle. The utilities compose
+   * INTO them with `@apply`, which is Tailwind's documented answer for exactly this. */
+
+  .viewer {
+    @apply text-sm text-muted;
+  }
+
+  .empty,
+  .note {
+    @apply text-sm text-muted;
+  }
+
+  .refused {
+    @apply text-danger;
+  }
+
+  /* Cards. Every block of answers on this surface is one of these. */
+  .scope,
+  .share-index,
+  .share-scope {
+    @apply bg-raised border border-line rounded-card px-5 py-4 my-4;
+    @apply animate-rise;
+  }
+
+  .scope h2,
+  .share-index h2,
+  .share-scope h2 {
+    @apply border-b border-line pb-2 mb-3;
+  }
+
+  .entry {
+    @apply flex flex-wrap items-baseline gap-x-2 py-1.5 border-b border-line/60 last:border-b-0;
+    @apply transition-colors duration-200 ease-cairn hover:bg-line/25 rounded;
+  }
+
+  .ref {
+    @apply font-mono text-xs text-muted;
+  }
+
+  .title {
+    @apply text-sm;
+  }
+
+  .aliases,
+  .tasks {
+    @apply basis-full pl-4 text-sm text-muted;
+  }
+
+  .task a {
+    @apply text-accent underline underline-offset-2 decoration-transparent;
+    @apply transition-[color,text-decoration-color] duration-200 ease-cairn;
+    @apply hover:decoration-current;
+  }
+
+  .task.refused {
+    @apply text-muted line-through;
+  }
+
+  /* Forms. The transition list is named rather than `transition-all`: `all` animates
+   * properties nobody chose, including layout ones, which is how a "subtle" theme starts
+   * shifting text under a reader's cursor. */
+  .signin,
+  .share {
+    @apply flex flex-col gap-3 items-start;
+  }
+
+  .signin label,
+  .share label {
+    @apply block text-sm font-medium;
+  }
+
+  input[type="password"],
+  input[type="text"],
+  select {
+    @apply bg-raised text-ink border border-line rounded px-3 py-2 text-sm;
+    @apply transition-[border-color,box-shadow] duration-200 ease-cairn;
+    @apply hover:border-accent/60 focus:border-accent focus:ring-2 focus:ring-accent/25;
+  }
+
+  button[type="submit"] {
+    @apply inline-flex items-center gap-2 rounded px-3.5 py-2 text-sm font-medium;
+    @apply bg-accent text-accent-ink border border-transparent cursor-pointer;
+    @apply transition-[background-color,box-shadow,transform] duration-200 ease-cairn;
+    @apply hover:brightness-110 hover:shadow-sm active:translate-y-px;
+  }
+
+  .signout,
+  .revoke {
+    @apply inline;
+  }
+
+  /* The sign-out and revoke buttons are QUIET. They sit beside content rather than
+   * asking to be pressed, and a page whose destructive control is the loudest thing on
+   * it is a page that teaches people to click it. */
+  .signout button[type="submit"],
+  .revoke button[type="submit"] {
+    @apply bg-transparent text-muted border-line px-2.5 py-1 text-xs;
+    @apply hover:text-danger hover:border-danger/60 hover:brightness-100;
+  }
+
+  .signin-provider {
+    @apply mb-3;
+  }
+
+  .share fieldset {
+    @apply border border-line rounded px-3 py-2 my-1;
+  }
+
+  .share fieldset label {
+    @apply inline-flex items-center gap-1.5 mr-3 font-normal;
+  }
+
+  /* The notices. Each is a left rule plus a tint, which is what makes them legible as a
+   * class of thing without a single icon or image — this package emits no `<img>` and a
+   * test asserts it never will. */
+  .replica-honesty {
+    @apply border-l-4 border-accent/70 bg-accent/5 rounded-r px-4 py-3 text-sm text-muted;
+    @apply animate-settle;
+  }
+
+  .read-only {
+    @apply border-l-4 border-danger/70 bg-danger/5 rounded-r px-4 py-3 text-sm;
+    @apply animate-settle;
+  }
+
+  .outcome {
+    @apply border-l-4 border-accent bg-accent/10 rounded-r px-4 py-3 text-sm font-semibold;
+    @apply animate-settle;
+  }
+
+  /* Rows: the audience list and the revocable-grant list. */
+  .audience,
+  .grants {
+    @apply flex flex-col gap-1;
+  }
+
+  .viewer-row,
+  .grant-row {
+    @apply flex flex-wrap items-center gap-x-2 py-1.5 rounded;
+    @apply transition-colors duration-200 ease-cairn hover:bg-line/25;
+  }
+
+  .who {
+    @apply text-sm font-medium;
+  }
+
+  .kind {
+    @apply text-xs text-muted rounded-full border border-line px-2 py-0.5;
+  }
+
+  .verbs {
+    @apply font-mono text-xs text-muted;
+  }
+
+  .via,
+  .at {
+    @apply text-xs text-muted italic;
+  }
+
+  .share-index ul {
+    @apply flex flex-col gap-1;
+  }
+
+  .share-index a {
+    @apply block rounded px-2 py-1.5 text-accent no-underline;
+    @apply transition-[background-color,padding-left] duration-200 ease-cairn;
+    @apply hover:bg-accent/10 hover:pl-3;
+  }
+}
+
+/* 🔴 REDUCED MOTION REMOVES THE MOTION, IT DOES NOT SHORTEN IT — AND THE DIFFERENCE IS
+ * THE WHOLE POINT OF THE SETTING. The common snippet sets `animation-duration: 0.01ms`,
+ * which still RUNS the animation: a reader with a vestibular disorder gets the same
+ * transform, one frame of it. `none` means the property never animates, which is what
+ * `prefers-reduced-motion: reduce` asks for.
+ *
+ * ⚠ IT IS UNLAYERED AND CARRIES `!important` FOR THE SAME REASON THE DARK PALETTE IS
+ * UNLAYERED: every rule it has to beat lives in `@layer components` or in a utility, and
+ * a variant like `motion-reduce:` would have to be spelled at every call site — which is
+ * a guard that is one forgotten class away from being wrong, at a place where being
+ * wrong is an accessibility failure rather than a cosmetic one.
+ *
+ * What it deliberately does NOT do is hide anything. `animation: none` on an element
+ * whose entrance animation starts at `opacity: 0` would leave it invisible; every
+ * keyframe set above therefore uses `both` fill with a visible `to` state, and removing
+ * the animation leaves the element in its ordinary static rendering. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
