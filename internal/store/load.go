@@ -373,6 +373,8 @@ func IsEntryFileName(name string) bool {
 //
 // ⚠ THE ERROR IS THE DIRECTORY READ'S, PROPAGATED. A scope directory that cannot be read is
 // NOT an empty scope — see `mdNamesIn`'s caller in `LoadIndex`, which fails closed on it.
+// A caller outside `LoadIndex` that needs the READER'S sentence rather than the raw
+// `*os.PathError` wants `EntryFilesOrUnreadable` below, not this function.
 func EntryFileNames(dir string) ([]string, error) {
 	names, err := mdNamesIn(dir)
 	if err != nil {
@@ -389,13 +391,21 @@ func EntryFileNames(dir string) ([]string, error) {
 
 // mdNamesIn is the `*.md` glob, sorted.
 //
-// ⚠ A `*.md` GLOB MATCHES A LEADING DOT — measured on the Python side, not
-// assumed — so an editor lock file (`.#entry.md`, a dangling symlink) IS a
-// candidate here. That is the `broken-link` cell's whole reason for existing, and
-// the `.md` half of the shape needs no separate check because the glob has already
-// applied it. Go's `filepath.Glob` behaves the same way, and this function is
-// written as an explicit suffix test rather than a glob so the property is stated
-// instead of inherited.
+// ⚠ A LEADING DOT IS IN THE CANDIDATE SET — so an editor lock file (`.#entry.md`, a
+// dangling symlink) IS a candidate here. That is the `broken-link` cell's whole reason
+// for existing.
+//
+// ⚠ THE CITATION MOVED IN #119 AND THIS HEADER DID NOT. It said "A `*.md` GLOB MATCHES A
+// LEADING DOT — measured on the Python side", which was a measurement of
+// `pathlib.Path.glob`; the Python side no longer globs — `entry_files_in` walks with
+// `iterdir()` and filters through `is_entry_filename` — so the named mechanism no longer
+// exists to be measured, while the property survives unchanged. What both sides now do is
+// what this function always did: read the directory and APPLY the suffix test explicitly,
+// so the property is stated rather than inherited from a matcher. Re-measured on the
+// pinned interpreter over one directory holding `a.md`, `.#lock.md`, `.md`, `README.md`,
+// `b.MD`, `c.md.txt`, `d.markdown` and a directory named `sub.md`: `glob("*.md")` and
+// `iterdir()` + `is_entry_filename` return the identical `['.#lock.md', '.md', 'a.md',
+// 'sub.md']`.
 func mdNamesIn(dir string) ([]string, error) {
 	dirents, err := os.ReadDir(dir)
 	if err != nil {
@@ -430,6 +440,57 @@ func EntryUnreadable(path string, cause error) *EntryUnreadableError {
 		"index entry unreadable: %s (%s: %s) — the store was not fully read, so this "+
 			"report is INCOMPLETE; nothing was written",
 		path, osErrorTypeName(cause), PyOSError(cause))}
+}
+
+// StoreUnreadable is the STORE-WIDE twin of `EntryUnreadable` — "I could not finish
+// reading this store", named by ROOT rather than by the file that stopped it.
+//
+// 🔴 IT IS A FUNCTION BECAUSE TWO CALL SITES NEED THE IDENTICAL BYTES AND THE SECOND
+// ARRIVED BY DUPLICATION. `LoadStore` below has always owned this wrap; `validate`'s
+// DENOMINATOR reads a scope directory a SECOND time, outside it, and that read used to
+// DISCARD its error. The oracle spells the sentence from one writer
+// (`subsystem_recall._store_unreadable`) for the same reason, and the parity gate
+// compares these bytes — so a second spelling here is a divergence waiting to happen.
+func StoreUnreadable(storeRoot string, cause error) *EntryUnreadableError {
+	return &EntryUnreadableError{message: fmt.Sprintf(
+		"index entry unreadable: under %s (%s: %s) — the store was not fully read, so this report would be INCOMPLETE",
+		storeRoot, osErrorTypeName(cause), PyOSError(cause))}
+}
+
+// EntryFilesOrUnreadable is `EntryFileNames` failing closed into the READER'S sentence.
+//
+// 🔴 IT EXISTS BECAUSE `validate` READS A SCOPE DIRECTORY TWICE AND ONLY THE FIRST READ
+// WAS WRAPPED. `Validate` loads the index through `LoadStore` — which turns a walk failure
+// into `EntryUnreadableError` — and then walks `<cache>/<scope>` AGAIN for the printed
+// line's denominator, where the error was DISCARDED as `entryNames, _ :=`. The
+// justification recorded at that site was "it is still swallowed because the oracle
+// swallows it rather than raising, so surfacing it would be a divergence with nothing
+// behind it — MEASURED … `Path("<mode-000 dir>").glob("*.md")` yields `[]` rather than a
+// `PermissionError`". #119 replaced that glob with `iterdir()`, so the measurement the
+// discard rested on became FALSE in the same change: the oracle now RAISES there.
+//
+// MEASURED at `e162746` over one cache holding two scopes, the second removed after the
+// first scope's line was printed (`validate --no-sync`, no `--scope`):
+//
+//	oracle → `FileNotFoundError` ESCAPED `main()` (a traceback at exit 1 as a process —
+//	         see `subsystem_recall.entry_files_or_unreadable` for why that half is a
+//	         separate claim with its own control)
+//	Go     → exit 0, `cairn: <scope>: 0 of 0 entry file(s) parse, 0 malformed`
+//
+// So the discard stopped agreeing with the oracle AND kept printing a count over a
+// directory nothing read — `checked = 0` beside a malformed count, which is the
+// negative-count nonsense from the other direction that the block at the call site already
+// names. Both clients now answer 3 with the identical sentence.
+//
+// ⚠ AN EMPTY SCOPE IS UNTOUCHED: `os.ReadDir` over a readable empty directory returns no
+// entries and no error, so `0 of 0` at exit 0 still means what it says. The two states are
+// separated by MECHANISM, not by a predicate.
+func EntryFilesOrUnreadable(storeRoot, dir string) ([]string, error) {
+	names, err := EntryFileNames(dir)
+	if err != nil {
+		return nil, StoreUnreadable(storeRoot, err)
+	}
+	return names, nil
 }
 
 // LoadStore resolves the store root and loads its index.
@@ -471,9 +532,10 @@ func LoadStore(storeRoot, verb string, visible ScopeSet) (*Index, error) {
 		// under `recall`: the two sentences differed in exactly that parenthetical
 		// and in nothing else. `PyOSError` returns the Go text unchanged for an error
 		// carrying no errno, so this widens nothing else. #111.
-		return nil, &EntryUnreadableError{message: fmt.Sprintf(
-			"index entry unreadable: under %s (%s: %s) — the store was not fully read, so this report would be INCOMPLETE",
-			storeRoot, osErrorTypeName(err), PyOSError(err))}
+		// ⚠ THE SENTENCE IS `StoreUnreadable`'s, NOT SPELLED HERE, because a second site
+		// (`EntryFilesOrUnreadable`, for `validate`'s denominator) must produce the
+		// IDENTICAL bytes — the parity gate compares them.
+		return nil, StoreUnreadable(storeRoot, err)
 	}
 	if visible.Unrestricted {
 		return index, nil

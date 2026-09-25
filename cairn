@@ -1228,6 +1228,31 @@ def cmd_ls_entries(args: argparse.Namespace) -> int:
             worst = max(worst, hint)
             continue
         prefix = "" if label is None else f"[{label}] "
+        # 🔴 THIS `glob` SWALLOWS `EACCES` ON A SCOPE DIRECTORY, AND AFTER #119 THIS
+        # VERB IS THE ONLY READ THAT STILL DOES. `Path.glob("*/*.md")` skips a
+        # mode-000 child and lists its siblings — MEASURED on CPython 3.12.14 and
+        # end to end on both clients, which AGREE at exit 0 because
+        # `internal/client.LsEntries` discards the same error on purpose. So there
+        # is no divergence here; what there is, is an inconsistency with the rest of
+        # this client: `recall`, `search` and `validate` each answer **3** with
+        # `index entry unreadable` for that identical directory, while the verb
+        # `README.md` advertises as "what the cache actually holds" answers **0**
+        # and says nothing. #119's whole finding is that a listing which could not be
+        # taken is not a listing of nothing.
+        #
+        # ⬜ FOLLOW-UP, DELIBERATELY NOT CLOSED IN THIS CHANGE: it moves a verb's
+        # stdout AND exit code for a state, on both clients, and it has a design
+        # question of its own — `ls-entries` fans out over every configured
+        # instance, so failing closed has to decide whether one unreadable scope
+        # refuses the whole listing or only that instance's. CLOSING CONDITION: a
+        # merged PR after which both clients answer a mode-000 scope directory under
+        # `ls-entries` with the reader's own sentence at exit 3, pinned by a PARITY
+        # ROW — this case is STATICALLY expressible, so the gate can own it, unlike
+        # the vanished-directory case above. Mechanically,
+        # `python3 tests/parity/harness.py | grep -q '^PASS ls-entries-unreadable-scope-dir'`
+        # exits 0 (a zero-match grep exits 1, so it cannot read as met when the row
+        # is missing) AND the run's own `SUMMARY … failures=0` line holds. The full
+        # argument is in `internal/client/verbs.go`'s `LsEntries` block.
         for path in sorted(cache.glob("*/*.md")):
             # 🔴 A SCOPE'S `README.md` IS ITS POLICY SHEET, NOT AN ENTRY — AND
             # THIS VERB IS THE ONE THAT ADVERTISES ITSELF AS "what the cache
@@ -1637,7 +1662,26 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # `python3 -m pytest tests -q -p no:randomly -k fold_vs_literal` and
         # `go test ./internal/client/ -run FoldVsLiteral -count=1 -v` each SELECT at
         # least one test and exit 0.
-        entry_paths = subsystem_resolver.entry_files_in(cache / scope)
+        #
+        # 🔴 AND IT FAILS CLOSED THROUGH `load_store`'S OWN WRAP, WHICH THIS LINE
+        # BYPASSED FOR ONE ROUND. This is the SECOND read of the scope directory in
+        # this loop — `load_store` above already walked it — and while
+        # `entry_files_in` globbed, a second read could not fail, because
+        # `Path.glob` SUPPRESSES the `OSError` its own scan raises. #119 made it
+        # `iterdir()`, which closed a false ABSENCE here and opened a raw `OSError`
+        # at the same instant: `main()`'s reader-error arm catches
+        # `(StoreMissingError, ResolverError)` and DELIBERATELY not `OSError`, so a
+        # scope directory that vanished between the two walks escaped as a
+        # TRACEBACK at exit 1 — the precise outcome #111 exists to remove,
+        # reintroduced at a second site — while the Go client printed
+        # `0 of 0 entry file(s) parse, 0 malformed` at exit 0. MEASURED at
+        # `e162746` over one cache holding two scopes with the second removed after
+        # the first scope's line was printed: oracle 1 + traceback, Go 0.
+        # `rc.entry_files_or_unreadable` is the SAME `EntryUnreadableError` and the
+        # SAME sentence `load_store` raises, from one writer, so both clients
+        # answer 3 with identical bytes. It is not a second `except OSError` here
+        # and not a second error class.
+        entry_paths = rc.entry_files_or_unreadable(cache, cache / scope)
         checked = len(entry_paths)
         print(
             f"cairn: {scope}: {checked - len(malformed)} of {checked} "
@@ -2770,6 +2814,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         # broken, exit 3". The residual — a raw `OSError` from a cache-root walk
         # that never becomes a reader error — is declared in
         # `tests/parity/README.md` rather than closed here.
+        #
+        # 🔴 THE `ResolverError` HALF IS WIDER THAN THE TWO CLASSES JUSTIFIED ABOVE,
+        # AND THAT IS A DECISION, NOT AN OVERSIGHT. `ResolverError` has five
+        # subclasses; the paragraphs above argue `StoreMissingError` and
+        # `EntryUnreadableError`. The other three — `UnknownScopeError`,
+        # `AmbiguousRefError`, `InvalidPathError` — would report here as
+        # `3 = store-unreachable, no cache`, which is the WRONG sentence for each of
+        # them. Kept wide anyway, for three reasons, in order of weight:
+        #
+        #   1. NARROWING WOULD CREATE A DIVERGENCE IN THE TRACEBACK DIRECTION.
+        #      `internal/client/cli.go`'s equivalent arm is the FALLBACK for every
+        #      error the verbs return ("EVERYTHING ELSE IS A READER ERROR"), so it is
+        #      already wider than this tuple. A narrower oracle means any future
+        #      `ResolverError` on a read path is exit 3 with a named line there and a
+        #      Python TRACEBACK at exit 1 here — which is #111, re-opened, and is
+        #      strictly worse than a wrong-but-named sentence.
+        #   2. MEASURED LATENT, not merely argued: all three are STATUSES on this
+        #      reader, not raises. Over one cache, `recall --scope no-such-scope` →
+        #      exit 0 `status=scope-absent`, `recall --ref <shared alias>` → exit 0
+        #      `status=ref-ambiguous`, both with no traceback; `load_store` loads with
+        #      `ON_MALFORMED_COLLECT`, so `MalformedEntryError` cannot escape it
+        #      either (its docstring says so). `InvalidPathError` is reached only from
+        #      `associate_paths` on writer-validated input.
+        #   3. `subsystem_recall.main` — the reader this client wraps — catches
+        #      `(TouchError, ResolverError)` wholesale for the same condition, so a
+        #      narrower tuple HERE would also disagree with the module it fronts.
+        #
+        # ⚠ WHAT WOULD CHANGE THIS: a `ResolverError` subclass becoming reachable
+        # from a read path with a code of its own (a 2 or a 5). Then this arm must
+        # list its classes, and `cli.go`'s fallback needs the same split in the same
+        # commit — not one side.
         print(f"🔴 cairn: {exc}", file=sys.stderr)
         return EXIT_UNREACHABLE_NO_CACHE
 

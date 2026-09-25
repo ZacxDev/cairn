@@ -291,6 +291,7 @@ from subsystem_resolver import (  # noqa: E402
     SubsystemIndex,
     UnknownScopeError,
     associate_paths,
+    entry_files_in,
     load_index,
     normalize_ref,
     parse_front_matter,
@@ -381,6 +382,7 @@ __all__ = [
     "discarded_sensitivity",
     "sensitivity_label",
     "load_store",
+    "entry_files_or_unreadable",
     "visible_scope_set",
     "listing_order",
     "listing_page",
@@ -1378,6 +1380,81 @@ class RecallReport:
         return caveat_text(f"{self.scope}/", badges_present(self.listing))
 
 
+def _store_unreadable(store: Path, exc: OSError) -> EntryUnreadableError:
+    """The ONE store-wide "not fully read" sentence, with ONE writer.
+
+    🔴 IT IS A FUNCTION BECAUSE TWO CALL SITES NOW NEED IT AND THE SECOND ONE
+    ARRIVED BY DUPLICATION. `load_store` below has always owned this wrap; the
+    `cairn validate` DENOMINATOR reads a scope directory a SECOND time, outside
+    it, and that read was left raw. Spelling the sentence again at that site would
+    make it two spellings of one rule behind two lines — the shape
+    `entry_files_in` and `is_entry_filename` were consolidated to remove, wrong at
+    N-1 of N sites in the same direction.
+    """
+    return EntryUnreadableError(
+        f"index entry unreadable: under {store} ({type(exc).__name__}: {exc}) — the "
+        f"store was not fully read, so this report would be INCOMPLETE"
+    )
+
+
+def entry_files_or_unreadable(
+    store_root: str | Path, scope_dir: str | Path
+) -> list[Path]:
+    """`entry_files_in`, failing closed into `load_store`'s OWN sentence.
+
+    🔴 IT EXISTS BECAUSE ONE VERB READS A SCOPE DIRECTORY TWICE AND ONLY THE FIRST
+    READ WAS WRAPPED. `cairn validate` loads the index through `load_store` — which
+    turns an `OSError` from the walk into `EntryUnreadableError` — and then walks
+    `<cache>/<scope>` AGAIN for the printed line's DENOMINATOR. While
+    `entry_files_in` globbed, that second read could not fail: `Path.glob`
+    SUPPRESSES the `OSError` its own directory scan raises. Making it `iterdir()`
+    (#119) closed a false ABSENCE at the first read and simultaneously opened a raw
+    `OSError` at the second — the oracle's `main()` catches
+    `(StoreMissingError, ResolverError)` and deliberately NOT `OSError`, so it
+    escaped as a TRACEBACK at exit 1, which is the exact outcome #111 exists to
+    remove, at a second site.
+
+    MEASURED at `e162746` over one cache holding two scopes, the second removed
+    after the first scope's line was printed (`validate --no-sync`, no `--scope`):
+
+        oracle  →  `FileNotFoundError` ESCAPED `main()` out of `cairn:1640`
+        Go      →  exit 0, `cairn: <scope>: 0 of 0 entry file(s) parse, 0 malformed`
+
+    ⚠ THE ORACLE'S HALF IS MEASURED IN-PROCESS, AND THE PROCESS CONSEQUENCE IS A
+    SEPARATE CLAIM WITH ITS OWN CONTROL — stated apart because the staging device
+    has to live inside the interpreter (see the guard) and so cannot read a process
+    exit status. The escape is what was observed; the script's entry point is
+    `raise SystemExit(main())`, and a control on this interpreter (3.12.14) — a
+    `main()` raising `FileNotFoundError` under that same entry point — exits **1**
+    with `Traceback (most recent call last)` on stderr. So "traceback at exit 1"
+    elsewhere in this tree is the escape plus that control, not a third
+    measurement.
+
+    i.e. BOTH a reintroduced traceback and a NEW divergence, in a repository whose
+    premise is byte-identity. Both clients now answer **3** with this function's
+    sentence: the store was not fully read, so the count would be a fiction.
+
+    🔴 3 AND NOT 0, EVEN THOUGH A VANISHED DIRECTORY LOOKS LIKE AN EMPTY ONE. That
+    is the whole of #119 restated one line later — a listing that could not be
+    taken is not a listing of nothing. An empty scope is still `0 of 0` at exit 0,
+    because `iterdir()` over a readable empty directory returns `[]` and never
+    reaches here; the two states are separated by MECHANISM, not by a predicate.
+
+    ⚠ REACHABLE, AND NOT ONLY BY A CONTRIVED RACE. `install_snapshot` renames the
+    whole cache root aside, renames the freshly staged tree into its place, then
+    `rmtree`s the retired one — read at this head, not assumed — and its own
+    docstring cites this repo's `AGENTS.md` for concurrent sessions being normal
+    and a timer being planned. So any
+    `cairn sync` whose new snapshot no longer holds a scope this reader already
+    listed lands in the window. With no `--scope` the window spans the processing
+    of every earlier scope.
+    """
+    try:
+        return entry_files_in(Path(scope_dir))
+    except OSError as exc:
+        raise _store_unreadable(Path(store_root), exc) from exc
+
+
 def load_store(
     store_root: str | Path,
     *,
@@ -1448,10 +1525,10 @@ def load_store(
             visible_scopes=visible_scopes,
         )
     except OSError as exc:
-        raise EntryUnreadableError(
-            f"index entry unreadable: under {store} ({type(exc).__name__}: {exc}) — the "
-            f"store was not fully read, so this report would be INCOMPLETE"
-        ) from exc
+        # ⚠ THE SENTENCE IS `_store_unreadable`'s, NOT SPELLED HERE, because a
+        # second site (`entry_files_or_unreadable`, for `validate`'s denominator)
+        # must produce the IDENTICAL bytes — the parity gate compares them.
+        raise _store_unreadable(store, exc) from exc
     if visible_scopes is None:
         return store, index
     # 🔴 REBUILT FROM THE TWO PUBLIC FIELDS, not by mutating a frozen dataclass

@@ -325,7 +325,29 @@ happens when it is a VALUE? The rule is argparse's, and both halves are measured
 
 ## What the gate structurally cannot see
 
-🔴 **AND THE FIRST ENTRY IS A CLOSED ONE, KEPT BECAUSE THE MECHANISM IS GENERAL: A BYTE-IDENTITY
+🔴 **A DEFECT THAT NEEDS THE WORLD TO *CHANGE MID-RUN* — AND THIS ONE WAS A LIVE DIVERGENCE FOR A
+ROUND, NOT A HYPOTHETICAL.** Every row here runs two binaries over a **fixed tree**, so a
+condition that exists only BETWEEN two reads inside one process cannot be a row at all. `cairn
+validate` / `Validate` read each scope directory **twice** — once through `load_store`/`LoadStore`
+for the index, once more for the printed line's DENOMINATOR — and #119 made that second read able
+to fail (`glob` → `iterdir()`) without wrapping it. Measured at `e162746` over one cache holding
+two scopes, the second removed after the first scope's line was printed: **the oracle died with a
+`FileNotFoundError` traceback at exit 1 and the Go client printed `cairn: <scope>: 0 of 0 entry
+file(s) parse, 0 malformed` at exit 0** — a reintroduced traceback on one side, a confident zero
+over an unread directory on the other, and this gate green throughout. No *static* world reaches
+that read: `held` and the loader both resolve `<cache>/<scope>` from the same parent listing and
+both test `is_dir()`, so any mode or absence that stops the second walk has already stopped the
+first. **The general form — ask whether the defect needs a STATE TRANSITION rather than a state —
+is what this paragraph is for.** What covers it instead is one guard per client, each staging the
+transition deterministically through the stdout writer the verb already takes, so the removal is
+performed BY the client mid-iteration with no timing window:
+`internal/client/validate_test.go::TestAVanishedScopeDirectoryIsNotCountedAsZeroEntries` and
+`tests/test_cairn_cli.py::TestAScopeThatVANISHESMidRunIsNotServedAsZeroOfZero`, both RED at
+`e162746`, both pinning the identical `index entry unreadable: under <cache> (FileNotFoundError:
+…)` sentence at exit 3. ⚠ Two guards rather than one shared harness: the device has to live inside
+each client's own process, which is precisely why this gate cannot own it.
+
+🔴 **AND THE FIRST CLOSED ENTRY IS A DIFFERENT DIMENSION OF THE SAME LESSON: A BYTE-IDENTITY
 GATE IS BLIND TO EVERY DEFECT BOTH CLIENTS COMMIT IDENTICALLY, AND THE CORPUS IS WHAT DECIDES
 WHICH THOSE ARE.** `world.py` seeded **no `README.md` in any scope**. A scope's `README.md` is its
 policy sheet and not an entry — both loaders skip it, and `/snapshot` ships it, so every real

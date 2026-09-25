@@ -2794,3 +2794,185 @@ class TestAnUnreadableSCOPE_DIRECTORYExitsThreeAndIsNotCalledEmpty:
                          url=None, cache=cache)
         assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
         assert f"{self.SCOPE}: 1 of 1 entry file(s) parse, 0 malformed" in proc.stdout
+
+
+class TestAScopeThatVANISHESMidRunIsNotServedAsZeroOfZero:
+    """🔴 #119 CLOSED A FALSE ABSENCE AT THE FIRST READ AND OPENED A TRACEBACK AT
+    THE SECOND. `cmd_validate` reads each scope directory TWICE — once inside
+    `rc.load_store`, which owns the fail-closed wrap, and once more for the printed
+    line's DENOMINATOR. While `entry_files_in` globbed, the second read could not
+    fail: `Path.glob` SUPPRESSES the `OSError` its own scan raises. Making it
+    `iterdir()` gave that line a raw `OSError`, and `main()`'s reader-error arm
+    catches `(StoreMissingError, ResolverError)` and DELIBERATELY not `OSError` — so
+    it escaped as a TRACEBACK at exit 1, which is the exact outcome #111 exists to
+    remove, at a second site.
+
+    MEASURED in-process over one cache holding `aaa` and `zzz`, `zzz` removed by the
+    client's own first write to stdout (`validate --no-sync`, no `--scope`):
+
+        tree       `main()` answered
+        --------   ----------------------------------------------------------
+        278b8df    0, `cairn: zzz: 0 of 0 entry file(s) parse, 0 malformed`
+        e162746    `FileNotFoundError` ESCAPED it, out of `cairn:1640`
+        HEAD       3, `index entry unreadable: under <cache> (FileNotFoundError: …)`
+
+    ⚠ THOSE ARE `main()`'s RETURN VALUES AND ONE ESCAPE, NOT PROCESS EXIT STATUSES —
+    the staging device has to live inside the interpreter, so this row cannot read
+    one. The process consequence of the escape (a traceback at exit 1) is a SEPARATE
+    claim with its own control, stated at
+    `subsystem_recall.entry_files_or_unreadable`.
+
+    and the Go client at `e162746` printed the `0 of 0` line at exit **0** — so the
+    change was simultaneously a reintroduced traceback AND a new cross-client
+    divergence. `internal/client/validate_test.go::
+    TestAVanishedScopeDirectoryIsNotCountedAsZeroEntries` is this row's twin.
+
+    🔴 THE STAGING IS DETERMINISTIC AND USES NO TIMING WINDOW. The window is
+    genuinely a TOCTOU one — `install_snapshot` renames the whole cache root away
+    and `rmtree`s the old one while concurrent sessions read, which its own
+    docstring says is normal — but a test that reproduced it by sleeping would be a
+    flake whose green means nothing. So the removal is performed BY the client,
+    inside its first `print()`: `sys.stdout` is replaced with a writer that removes
+    `<cache>/zzz` the first time it sees `cairn: aaa:`. At that moment the client is
+    still inside scope `aaa`'s iteration, guaranteed by the call stack rather than
+    by a clock.
+
+    🔴 AND NO **STATIC** WORLD REACHES THIS READ, WHICH IS WHY THE PARITY HARNESS
+    CANNOT CARRY IT. `held` and `load_index` both resolve `<cache>/<scope>` from the
+    same parent listing and both test `is_dir()`, so any mode or absence that stops
+    the second walk has already stopped the first — a mode-000 scope directory
+    fails inside `load_store` and never reaches line 1640. Something has to CHANGE
+    between the two walks, and the harness runs two binaries over a fixed tree.
+
+    ⚠ IN-PROCESS, WHICH IS WHY IT DOES NOT USE `run_cairn`. A subprocess's stdout is
+    a pipe; hooking it would mean relying on the pipe filling, which is a timing
+    window again. The trade is that `main()`'s return value is read directly instead
+    of a process exit status, so the row asserts the code `main()` RETURNS — and
+    that an exception does not escape it at all, which is the half that was red.
+    """
+
+    BODY = (
+        "---\nservice: one\nscope: {scope}\n---\n\n## What it is\n\nsynthetic.\n\n"
+        "## Pointers\n\n- none\n\n"
+        "## Nuance / work-history\n\n- 2000-01-01: synthetic.\n"
+    )
+
+    def _cache(self, tmp_path: Path) -> Path:
+        cache = tmp_path / "cache"
+        for scope in ("aaa", "zzz"):
+            (cache / scope).mkdir(parents=True)
+            (cache / scope / "one.md").write_text(self.BODY.format(scope=scope))
+        (cache / ".sync-stamp").write_text(
+            "synced=2000-01-01T00:00:00Z\nrevision=abc\n"
+        )
+        return cache
+
+    def _cli(self):
+        """The client as a MODULE, so `main()` can be called with a hooked stdout.
+
+        Same loader as `test_fetch_snapshot_FILTERS_the_validator_it_is_HANDED`
+        above — the file has no `.py` suffix, so it is compiled by path.
+        """
+        spec = importlib.util.spec_from_loader(
+            "cairn_cli_vanish", loader=None, origin=str(CAIRN_CLI)
+        )
+        mod = importlib.util.module_from_spec(spec)
+        mod.__file__ = str(CAIRN_CLI)
+        exec(compile(CAIRN_CLI.read_text(encoding="utf-8"), str(CAIRN_CLI), "exec"),
+             mod.__dict__)
+        return mod
+
+    @pytest.fixture
+    def _pinned_env(self, monkeypatch, tmp_path: Path):
+        """Every name `run_cairn` clears for a child, cleared in THIS process.
+
+        Derived from `env_pin`, not enumerated here, so a new configuration
+        variable is cleared on the day it is added — the same reason
+        `_pin_the_host_label` reads `EXTRA_CONFIG_ENV`.
+        """
+        for name in list(os.environ):
+            if env_pin.is_client_config(name):
+                monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("CAIRN_HOST", CLI_HOST)
+        monkeypatch.setenv("CAIRN_CONFIG", str(tmp_path / "no-such-config"))
+
+    def _run_with_the_victim_removed_mid_run(self, cache: Path, victim: Path):
+        """Returns `(outcome, stdout, stderr)`; `outcome` is the code or an
+        `Exception` that ESCAPED `main()` — which is what the defect was."""
+        class RemovesOnFirstWrite(io.StringIO):
+            fired = False
+
+            def write(self, s):
+                if not RemovesOnFirstWrite.fired and "cairn: aaa:" in s:
+                    RemovesOnFirstWrite.fired = True
+                    import shutil
+
+                    shutil.rmtree(victim)
+                return super().write(s)
+
+        out, err = RemovesOnFirstWrite(), io.StringIO()
+        mod = self._cli()
+        real_out, real_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = out, err
+        try:
+            outcome = mod.main(["--cache", str(cache), "validate", "--no-sync"])
+        except BaseException as exc:  # noqa: BLE001 — an ESCAPE is the defect
+            outcome = exc
+        finally:
+            sys.stdout, sys.stderr = real_out, real_err
+        assert RemovesOnFirstWrite.fired, (
+            "the staging device never fired, so nothing vanished and this row is "
+            f"about an ordinary two-scope cache: {out.getvalue()!r}"
+        )
+        return outcome, out.getvalue(), err.getvalue()
+
+    def test_a_vanished_scope_exits_3_with_the_named_sentence_and_NO_traceback(
+        self, tmp_path: Path, _pinned_env
+    ):
+        cache = self._cache(tmp_path)
+        victim = cache / "zzz"
+        outcome, stdout, stderr = self._run_with_the_victim_removed_mid_run(
+            cache, victim
+        )
+        # 🔴 THE ESCAPE IS ITS OWN ASSERTION AND IT COMES FIRST. At `e162746` this
+        # is a `FileNotFoundError`, and a row that only compared exit codes would
+        # report "3 != 1" and bury the fact that no contract was printed at all.
+        assert not isinstance(outcome, BaseException), (
+            f"{type(outcome).__name__} escaped main(): {outcome}"
+        )
+        assert outcome == 3, (outcome, stdout, stderr)
+        # 🔴 AND THE COUNT MUST NOT HAVE BEEN PRINTED. `0 of 0` over a directory
+        # nothing read is the confident zero this verb exists to prevent, and it is
+        # what BOTH clients did at `278b8df` and what the Go client alone did at
+        # `e162746`. The exit code cannot see it.
+        assert "cairn: zzz: 0 of 0 entry file(s) parse" not in stdout, stdout
+        # …and the readable scope's own line must survive, or this row would pass
+        # against a client that refused before doing any work.
+        assert "cairn: aaa: 1 of 1 entry file(s) parse, 0 malformed" in stdout, stdout
+        want = (
+            f"index entry unreadable: under {cache} (FileNotFoundError: "
+            f"[Errno 2] No such file or directory: '{victim}') — the store was "
+            f"not fully read, so this report would be INCOMPLETE"
+        )
+        assert want in stderr, (want, stderr)
+
+    def test_TWO_READABLE_scopes_still_exit_0_with_no_hook(
+        self, tmp_path: Path, _pinned_env
+    ):
+        """🔴 THE CONTROL THAT MAKES THE 3 ABOVE A MEASUREMENT, over the SAME world
+        minus the removal. Without it a client that exited 3 on every unscoped
+        `validate`, or one whose `held` walk had broken, satisfies the row above."""
+        cache = self._cache(tmp_path)
+        mod = self._cli()
+        out, err = io.StringIO(), io.StringIO()
+        real_out, real_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = out, err
+        try:
+            code = mod.main(["--cache", str(cache), "validate", "--no-sync"])
+        finally:
+            sys.stdout, sys.stderr = real_out, real_err
+        assert code == 0, (code, out.getvalue(), err.getvalue())
+        for scope in ("aaa", "zzz"):
+            assert f"cairn: {scope}: 1 of 1 entry file(s) parse, 0 malformed" in (
+                out.getvalue()
+            ), out.getvalue()

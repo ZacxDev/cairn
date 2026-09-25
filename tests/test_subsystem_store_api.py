@@ -23642,3 +23642,132 @@ class TestAReloadIsAtomicUnderLoad:
             f"observers saw {len(bad)} table state(s) that are neither the old "
             f"table nor the new one — the swap is not atomic: {bad}"
         )
+
+
+class TestAnUnreadableSCOPEDIRECTORYIsNotAnEmptyScopeOnTheSERVER:
+    """🔴 AN UNDECLARED SERVER-SIDE AVAILABILITY CHANGE, DECLARED.
+
+    #119 fixed `entry_files_in` on the CLIENT's cache — a mode-000 scope directory
+    was served at exit 0 as "NOTHING RECORDED YET". But `entry_files_in` is the walk
+    `load_index` enumerates with, and `load_index` is what the POD loads through
+    (`rc.load_store`, from both read routes and both write routes), so the same line
+    changed what the SERVER answers. `entry_files_in`'s own docstring said the defect
+    was "on the CACHE side where no server walk can see it", which invited exactly
+    the opposite conclusion; that sentence is corrected and this class is the gate.
+
+    MEASURED over a store holding `kelp-forest` (readable) and `quartz-mine`
+    (mode 000), calling `rc.load_store` at both commits:
+
+        visible_scopes   278b8df (`glob`)                e162746 (`iterdir`)
+        --------------   -----------------------------   ----------------------
+        None             both registered; the locked     EntryUnreadableError
+                         scope served `scope-empty`      -> 503 for EVERY scope
+        ('kelp-forest',) 200                             200 (unchanged)
+
+    🔴 THE TRADE IS KEPT, AND IT IS THE ONE THIS STORE ALREADY MADE ONE LEVEL DOWN.
+    A single mode-000 ENTRY FILE has always 503'd `/recall` and `/search` for every
+    unrestricted caller — `test_an_UNREADABLE_REGULAR_FILE_still_RAISES_and_THAT_is_
+    the_residual` is its honest record, and `load_index`'s ⚠ `OSError` paragraph is
+    the policy: the set of entries is UNKNOWN, so there is nothing honest to degrade
+    to. A directory whose listing could not be taken is strictly less knowable than
+    a file that could not be opened, so serving its siblings while calling it empty
+    was the inconsistency. Widening it to the directory level is therefore
+    consistency, not a new policy — but it IS an availability change, it was
+    undeclared for a round, and a SCOPED caller is unaffected because the allowlist
+    is applied before any walk.
+
+    ⚠ THE MODE IS SET HERE, NEVER COMMITTED. Git does not preserve `000`, so a
+    committed fixture would arrive readable in CI and every assertion would pass over
+    a directory nothing refused. Restored in a `finally` so `tmp_path` cleanup can
+    proceed.
+    """
+
+    def _store_with_a_locked_scope_dir(self, tmp_path: Path) -> Path:
+        store = _build_store(
+            tmp_path / "store",
+            {ALLOW_SCOPE: KELP_NUANCE, DENY_SCOPE: QUARTZ_NUANCE},
+        )
+        # 🔴 A POSITIVE CONTROL ON THE FIXTURE: an EMPTY directory is the one shape
+        # this row cannot use, because `iterdir()` and `glob` agree on it (both
+        # `[]`) — the mode would then be the only difference and the case could not
+        # tell a refusal from the honest empty answer it must keep.
+        assert list((store / DENY_SCOPE).glob("*.md")), sorted(
+            p.name for p in (store / DENY_SCOPE).iterdir()
+        )
+        return store
+
+    def test_an_UNRESTRICTED_caller_now_FAILS_CLOSED_for_the_whole_store(
+        self, tmp_path: Path
+    ):
+        """RED at `278b8df`, where this returned an index registering BOTH scopes
+        and the locked one rendered `scope-empty`; green at HEAD with the raise."""
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the case is unreachable")
+        store = self._store_with_a_locked_scope_dir(tmp_path)
+        locked = store / DENY_SCOPE
+        locked.chmod(0o000)
+        try:
+            with pytest.raises(api.rc.EntryUnreadableError) as caught:
+                api.rc.load_store(store, verb="recalled")
+        finally:
+            locked.chmod(0o755)
+        # 🔴 THE SENTENCE, NOT ONLY THE CLASS — it is the one a 503 body carries, and
+        # it must name the DIRECTORY rather than some file inside it.
+        assert "index entry unreadable" in str(caught.value), str(caught.value)
+        assert str(locked) in str(caught.value), str(caught.value)
+
+    def test_a_SCOPED_caller_is_UNAFFECTED_because_the_allowlist_precedes_the_walk(
+        self, tmp_path: Path
+    ):
+        """🔴 THE HALF THAT MUST NOT HAVE MOVED, and the reason the change is a
+        trade rather than a regression. Green at BOTH commits, deliberately: it is
+        an invariant guard on the property `visible_scopes`-in-the-loader bought."""
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the case is unreachable")
+        store = self._store_with_a_locked_scope_dir(tmp_path)
+        locked = store / DENY_SCOPE
+        locked.chmod(0o000)
+        try:
+            _s, index = api.rc.load_store(
+                store, verb="recalled", visible_scopes=(ALLOW_SCOPE,)
+            )
+        finally:
+            locked.chmod(0o755)
+        assert index.scopes == (ALLOW_SCOPE,)
+        assert index.malformed == ()
+
+    def test_OVER_HTTP_the_unrestricted_token_gets_503_and_the_scoped_one_gets_200(
+        self, tmp_path: Path
+    ):
+        """🔴 THE ROUTE, NOT ONLY THE LOADER — because the availability claim is
+        about what a CALLER sees, and `load_store` raising is only half of it.
+
+        Both halves in one row so the fixture is chmod'd once and the two answers
+        are about the SAME world: a store one directory of which nobody can read.
+        """
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the case is unreachable")
+        store = self._store_with_a_locked_scope_dir(tmp_path)
+        locked = store / DENY_SCOPE
+        locked.chmod(0o000)
+        try:
+            with running(store, tokens=(GOOD_TOKEN,)) as (base, _):
+                wide_code, wide_headers, wide_body = fetch(
+                    f"{base}/api/v1/recall/{ALLOW_SCOPE}", token=GOOD_TOKEN
+                )
+            with running(store, tokens=(ZACH,)) as (base, _):
+                scoped_code, scoped_headers, scoped_body = fetch(
+                    f"{base}/api/v1/recall/{ALLOW_SCOPE}", token=ZACH_TOKEN
+                )
+        finally:
+            locked.chmod(0o755)
+        assert wide_code == 503, f"{wide_code}: {wide_body.decode()[:400]}"
+        assert wide_headers["X-Store-Status"] == "store-unreachable"
+        assert "index entry unreadable" in wide_body.decode()
+        # 🔴 AND THE SCOPED CALLER IS SERVED — which is what makes the 503 above a
+        # measurement of the ALLOWLIST boundary rather than of a store that is
+        # simply broken for everyone.
+        assert scoped_code == 200, f"{scoped_code}: {scoped_body.decode()[:400]}"
+        assert scoped_headers["X-Store-Status"] == "recalled"
+        assert KELP_NUANCE in scoped_body.decode()
+        assert DENY_SCOPE not in scoped_body.decode()

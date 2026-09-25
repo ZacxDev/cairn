@@ -840,3 +840,122 @@ func TestAGenuinelyAbsentCacheStillExitsThreeForItsOwnReason(t *testing.T) {
 		t.Fatalf("an absent cache is not an unreadable entry:\n%s", stderr)
 	}
 }
+
+// removeOnFirstWrite is the DETERMINISTIC staging device for a scope directory that
+// vanishes mid-run, and it needs no timing window at all: the removal is performed BY the
+// client's own first write to stdout, which happens while it is still inside the FIRST
+// scope's iteration. `env.Stdout` is already an injected `io.Writer`, so nothing in
+// production grows a test seam — and the oracle's guard uses the identical device on
+// `sys.stdout`, which is what makes the two rows comparable.
+//
+// 🔴 A REAL RACE WOULD NOT DO. The window is genuinely a TOCTOU one (`install_snapshot`
+// renames a cache root away while a reader holds a listing of the old one), but a test that
+// reproduced it by sleeping would be a flake whose green means nothing. There is no STATIC
+// world that reaches this read either: both walks resolve `<cache>/<scope>` from the same
+// parent listing, so `held` and `LoadIndex` cannot disagree about it.
+type removeOnFirstWrite struct {
+	t      *testing.T
+	buf    bytes.Buffer
+	victim string
+	marker string
+	fired  bool
+}
+
+func (w *removeOnFirstWrite) Write(p []byte) (int, error) {
+	if !w.fired && strings.Contains(string(p), w.marker) {
+		w.fired = true
+		if err := os.RemoveAll(w.victim); err != nil {
+			w.t.Fatal(err)
+		}
+	}
+	return w.buf.Write(p)
+}
+
+func TestAVanishedScopeDirectoryIsNotCountedAsZeroEntries(t *testing.T) {
+	// 🔴 THE DENOMINATOR'S READ WAS THE ONE THIS VERB DID NOT WRAP. `LoadStore` fails
+	// closed on a scope directory it cannot walk; the SECOND walk — for the printed count
+	// — was `entryNames, _ :=`, so a scope removed between the two printed
+	// `0 of 0 entry file(s) parse, 0 malformed` at exit 0 over a directory nothing read.
+	//
+	// RED at `e162746`: `code == 0` and that line present for `zzz`. Green here with 3 and
+	// the reader's own sentence. The oracle's twin at that commit was WORSE — a
+	// `FileNotFoundError` traceback at exit 1 — so this row and
+	// `tests/test_cairn_cli.py::TestAScopeThatVANISHESMidRunIsNotServedAsZeroOfZero`
+	// together are what make the two clients agree again.
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedCache(t, cache, "aaa", "one")
+	seedCache(t, cache, "zzz", "one")
+	victim := filepath.Join(cache, "zzz")
+	// 🔴 THE FIXTURE'S OWN POSITIVE CONTROL: if `zzz` were not there to begin with, `held`
+	// would never name it and every assertion below would be about a scope the loop never
+	// reaches — green over a world the defect cannot occur in.
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("the fixture never seeded the scope this row removes: %v", err)
+	}
+
+	hook := &removeOnFirstWrite{t: t, victim: victim, marker: "cairn: aaa:"}
+	errFile, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer errFile.Close()
+	code := Run(Env{
+		Stdout: hook,
+		Stderr: errFile,
+		Host:   func() string { return "fixture-host-000000000000" },
+	}, []string{"validate", "--no-sync"})
+	written, err := os.ReadFile(errFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := hook.buf.String(), string(written)
+
+	// 🔴 THE HOOK MUST HAVE FIRED. A device that never removed anything leaves this a test
+	// about an ordinary two-scope cache, which exits 0 — the assertion below would then be
+	// red for the wrong reason, or (if the codes ever met) green for one.
+	if !hook.fired {
+		t.Fatalf("the staging device never fired, so nothing vanished:\n%s", stdout)
+	}
+	if code != ExitUnreachableNoCache {
+		t.Fatalf("a scope that vanished mid-run exits %d, got %d\nstdout:\n%s\nstderr:\n%s",
+			ExitUnreachableNoCache, code, stdout, stderr)
+	}
+	// 🔴 THE EXIT CODE ALONE CANNOT SEE THE DEFECT. What was wrong was a COUNT printed over
+	// a directory nothing read, so the absence of that line is half the finding.
+	if strings.Contains(stdout, "cairn: zzz: 0 of 0 entry file(s) parse") {
+		t.Fatalf("a count was still printed over the vanished scope:\n%s", stdout)
+	}
+	// …and the earlier scope's real line must survive, or this row would pass against a
+	// client that refused the whole command before doing any work.
+	if !strings.Contains(stdout, "cairn: aaa: 1 of 1 entry file(s) parse, 0 malformed") {
+		t.Fatalf("the READABLE scope's own line went missing:\n%s", stdout)
+	}
+	want := "index entry unreadable: under " + cache +
+		" (FileNotFoundError: [Errno 2] No such file or directory: '" + victim + "')" +
+		" — the store was not fully read, so this report would be INCOMPLETE"
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("stderr is not the ORACLE's sentence.\ngot:  %q\nwant a line containing: %q",
+			stderr, want)
+	}
+}
+
+func TestTwoREADABLEScopesStillExitZeroWithNoHook(t *testing.T) {
+	// 🔴 THE CONTROL THAT MAKES THE ROW ABOVE A MEASUREMENT, AND IT IS THE SAME WORLD MINUS
+	// THE REMOVAL. Without it, a client that exited 3 on every unscoped `validate` — or one
+	// whose `held` walk had broken — would satisfy every assertion up there.
+	home := oneInstanceHost(t)
+	cache := filepath.Join(home, ".cache", "subsystem-store")
+	seedCache(t, cache, "aaa", "one")
+	seedCache(t, cache, "zzz", "one")
+	code, stdout, stderr := runCLI(t, "validate", "--no-sync")
+	if code != ExitOK {
+		t.Fatalf("three readable scopes exit 0, got %d\n%s", code, stderr)
+	}
+	for _, scope := range []string{"aaa", "zzz"} {
+		want := "cairn: " + scope + ": 1 of 1 entry file(s) parse, 0 malformed"
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("got %q, want a line containing %q", stdout, want)
+		}
+	}
+}

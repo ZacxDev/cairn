@@ -2535,7 +2535,9 @@ def visible_scope_set(visible_scopes: Sequence[str] | None) -> set[str] | None:
 # two cells that just left this list — one this round was told explicitly not to
 # fold in. `indeterminate` means "the `lstat` failed and I could not look",
 # which is not "this kind can never be an entry"; `absent` is a file that
-# vanished between `glob()` and `classify_path`. `read_text` raises on each
+# vanished between the listing and `classify_path` (`glob()` until #119 replaced
+# it with `iterdir()`; the race did not move, the walk's name did). `read_text`
+# raises on each
 # (EACCES, FileNotFoundError) and that raise is the four-state rule's "the store
 # was not fully READ" — a DIFFERENT fact from "this entry is malformed", which
 # must not be quietly folded into it. `regular-file` and `link-to-file` are
@@ -2697,8 +2699,44 @@ def entry_files_in(scope_dir: Path) -> list[Path]:
     the same directory through `os.ReadDir` and has never had the suppression.
     So this is the `TestUnreadableScope` defect — "`Path.glob` swallows
     PermissionError and returns []" — one directory level up from the entry files
-    the server already guards, and on the CACHE side where no server walk can see
-    it.
+    the server already guards.
+
+    🔴 AND IT IS **NOT** CACHE-ONLY, WHICH AN EARLIER FORM OF THIS SENTENCE
+    ASSERTED — IT SAID THE DEFECT WAS "on the CACHE side where no server walk can
+    see it", AND THAT INVITED EXACTLY THE WRONG CONCLUSION. `load_index` — which
+    calls this function for every visible scope — is what the POD loads through
+    (`subsystem_recall.load_store`, and `server/server.py`'s read and write
+    routes), so this line changed SERVER availability too, in the fail-closed
+    direction. MEASURED over a store holding `good` and `locked` at mode 000, by
+    calling `load_store` with each allowlist against `lib/` at both commits:
+
+        visible_scopes   278b8df (`glob`)               e162746 (`iterdir`)
+        --------------   ----------------------------   ------------------------
+        None             `good` + `locked` registered,  EntryUnreadableError
+                         `locked` served `scope-empty`  -> 503 for EVERY scope
+        ['good']         `good` alone, 200              `good` alone, 200
+
+    🔴 THE TRADE IS DELIBERATE, AND IT IS THE ONE THIS STORE ALREADY MAKES ONE
+    LEVEL DOWN RATHER THAN A NEW POLICY. A single mode-000 ENTRY FILE has always
+    taken `/recall` and `/search` down for every UNRESTRICTED caller — that
+    measurement is in `load_index`'s `visible_scopes` block below, and
+    `test_an_UNREADABLE_REGULAR_FILE_still_RAISES_and_THAT_is_the_residual` is its
+    honest record. A directory whose listing could not be taken is strictly less
+    knowable than a file that could not be opened, so serving its siblings while
+    calling it empty was the inconsistency; closing it is what makes `load_index`'s
+    ⚠ `OSError` paragraph true at the directory level too. A SCOPED caller is
+    unaffected either way, because the allowlist is applied before any walk. Gated
+    server-side by `TestAnUnreadableSCOPEDIRECTORYIsNotAnEmptyScopeOnTheSERVER`,
+    whose unrestricted arm is RED at `278b8df`.
+
+    ⚠ AND IT CLOSES A SERVER-SIDE DIVERGENCE RATHER THAN CREATING ONE, WHICH IS
+    THE OTHER HALF OF WHY THE TRADE IS THE RIGHT WAY ROUND. The Go store has never
+    had the suppression — `mdNamesIn` walks with `os.ReadDir` — so
+    `internal/store.LoadStore` already answered a mode-000 scope directory with
+    this exact sentence, and `TestAnUnreadableScopeDirFailsClosedWhileAnEmptyOne
+    Loads` pins it as an INVARIANT guard, green at `278b8df` and at HEAD. So
+    before this line the two servers disagreed about the same directory; they now
+    agree. Reverting toward availability would have to move the GO side too.
 
     🔴 IT RAISES RATHER THAN REPORTING, AND THAT IS THE EXISTING POLICY, NOT A NEW
     ONE. `load_index`'s ⚠ `OSError` paragraph already says an unreadable path
@@ -2726,13 +2764,24 @@ def entry_files_in(scope_dir: Path) -> list[Path]:
     `classify_path` is what refuses it, and refusing it is a REPORTED rejection
     rather than a silent drop.
 
-    ⚠ A VANISHED DIRECTORY NOW RAISES `FileNotFoundError` WHERE THE GLOB RETURNED
-    `[]`, and that is the same trade in the same direction. Both production
-    callers resolve the directory from a listing that just reported it as a
-    directory (`load_index`'s `Path(root).iterdir()`, and `cairn validate`'s
-    `cache.iterdir()` gate), so the only way to reach it is a TOCTOU race —
-    already the `absent` cell of `load_index`'s RESIDUAL LEDGER, already an
-    `OSError`, and already fail-closed through the same wrap.
+    🔴 A VANISHED DIRECTORY NOW RAISES `FileNotFoundError` WHERE THE GLOB RETURNED
+    `[]`, AND THE SENTENCE THAT STOOD HERE WAS FALSE FOR THE CALLER IT NAMED. It
+    said both production callers reach this function from a listing that just
+    reported the directory, "so the only way to reach it is a TOCTOU race … and
+    already fail-closed through the same wrap". The race half is right; the
+    fail-closed half was **not true of `cairn validate`**, which is the caller it
+    named. That verb reads the scope directory TWICE — once inside `load_store`
+    (wrapped) and once more for the printed line's DENOMINATOR — and the second
+    read was OUTSIDE every wrap, while the CLI's reader-error arm catches
+    `(StoreMissingError, ResolverError)` and deliberately NOT `OSError`. MEASURED
+    at `e162746`: a scope removed between the two walks gave the oracle exit 1 with
+    a `FileNotFoundError` traceback and the Go client exit 0 printing
+    `0 of 0 entry file(s) parse, 0 malformed` — a reintroduced traceback AND a new
+    divergence. The second read now goes through
+    `subsystem_recall.entry_files_or_unreadable`, which IS that wrap, from one
+    writer; both clients answer 3. `load_index`'s own call site was always wrapped,
+    so for THAT caller the deleted sentence was true — which is why it read as
+    covering both.
     """
     return sorted(p for p in Path(scope_dir).iterdir() if is_entry_filename(p.name))
 
@@ -2855,9 +2904,11 @@ def load_index(
         ESTALE, EIO…). Deliberately NOT refused: "I could not look" is a
         different premise from "this kind can never be an entry", which is the
         criterion every REFUSE cell above rests on.
-      * `absent` — the candidate vanished between `glob()` and `classify_path`.
-        A TOCTOU race, `FileNotFoundError`, unreproduced here rather than
-        measured.
+      * `absent` — the candidate vanished between the LISTING and
+        `classify_path`. A TOCTOU race, `FileNotFoundError`, unreproduced here
+        rather than measured. ⚠ This cell said "between `glob()` and
+        `classify_path`" until #119 replaced that glob with `iterdir()`; the race
+        is unchanged and only the name of the walk moved.
 
     `test_the_LOADER_RESIDUAL_SET_is_pinned` pins that set, and
     `test_the_RESIDUAL_LEDGER_names_every_TAKE_kind_and_no_REFUSE_one` pins THIS
@@ -2866,11 +2917,18 @@ def load_index(
     as open for a whole round), and a new `TAKE` cell cannot go unlisted.
     (END OF RESIDUAL LEDGER)
 
-    ⚠ `Path.glob("*.md")` DOES match a leading dot — measured, not assumed — so
-    an Emacs lock file (`.#entry.md`, a dangling symlink) is a candidate and had
-    been observed 503ing `/api/v1/recall/<scope>` in practice. That is the
-    `broken-link` cell's whole reason for existing, and the `.md` half of the
-    shape needs no separate check because the glob has already applied it.
+    ⚠ A LEADING DOT IS IN THE CANDIDATE SET — measured, not assumed — so an Emacs
+    lock file (`.#entry.md`, a dangling symlink) is a candidate and had been
+    observed 503ing `/api/v1/recall/<scope>` in practice. That is the
+    `broken-link` cell's whole reason for existing. ⚠ THE MECHANISM NAMED HERE
+    MOVED IN #119 AND THE SENTENCE DID NOT: it said `Path.glob("*.md")` matches a
+    leading dot "and the `.md` half of the shape needs no separate check because
+    the glob has already applied it". There is no glob any more — `entry_files_in`
+    walks with `iterdir()` and applies `is_entry_filename`, which spells the `.md`
+    test itself, so the check is APPLIED rather than inherited. The candidate set
+    is unchanged: over one directory holding `a.md`, `.#lock.md`, `.md`,
+    `README.md`, `b.MD`, `c.md.txt`, `d.markdown` and a directory named `sub.md`,
+    both walks return `['.#lock.md', '.md', 'a.md', 'sub.md']`.
 
     ⚠ NOT A SUBSTITUTE FOR THE RESULT NARROWING in `load_store`. That one is
     still authoritative for the shape of the answer; this one exists so the

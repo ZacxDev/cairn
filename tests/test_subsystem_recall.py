@@ -3026,7 +3026,14 @@ class TestRecallNeverWrites:
     def test_the_module_never_opens_anything_for_writing(self) -> None:
         """The structural half, kept alongside the behavioural one: a reader
         that grew a write path would have to spell it somehow, and every
-        spelling below is one nobody should be adding to THIS file."""
+        spelling below is one nobody should be adding to THIS file.
+
+        ⚠ IT STRIPS `#` COMMENTS AND **NOT** DOCSTRINGS, SO PROSE CAN TRIP IT —
+        measured, not theorised: a docstring that quoted `install_snapshot`'s swap
+        as `cache.rename(…)` failed this row. That is the guard being WIDER than
+        its name, and it stays that way deliberately, because a write smuggled
+        into a module-level string is still a write the behavioural half might
+        miss. The remedy is to reword the prose, never to narrow the sweep."""
         src = MODULE_PATH.read_text(encoding="utf-8")
         code = "\n".join(
             line for line in src.splitlines() if not line.lstrip().startswith("#")
@@ -3713,16 +3720,28 @@ class TestMutationKillMatrix:
 
     def test_kills_the_unreadable_entry_wrap(self, tmp_path: Path) -> None:
         """Without it an OSError escapes unnamed, and a resuming session cannot
-        tell that the SUBSYSTEM STORE was the thing that failed."""
+        tell that the SUBSYSTEM STORE was the thing that failed.
+
+        ⚠ THE ANCHOR MOVED WHEN THE SENTENCE GAINED A SECOND CALL SITE, AND THE
+        HARNESS CAUGHT IT RATHER THAN SCORING A FALSE SURVIVOR. `_load_mutant`
+        asserts the anchor occurs exactly once, so when `load_store`'s inline
+        `raise EntryUnreadableError(…)` became `raise _store_unreadable(store, exc)`
+        this row went RED with `mutation anchor occurs 0x, expected exactly 1`. That
+        is the instrument working: a driver that silently applied nothing would have
+        reported this guard as holding. The anchor is now the ONE WRITER, so this
+        mutant reaches BOTH sites — `load_store` and `entry_files_or_unreadable`,
+        which is `cairn validate`'s denominator — rather than one; it is strictly
+        wider than it was.
+        """
         mod = _load_mutant(
             tmp_path,
             "m_unreadable",
             [
                 (
-                    "        raise EntryUnreadableError(\n"
-                    '            f"index entry unreadable: under {store} ',
-                    "        raise RuntimeError(\n"
-                    '            f"neutered: under {store} ',
+                    "    return EntryUnreadableError(\n"
+                    '        f"index entry unreadable: under {store} ',
+                    "    return RuntimeError(\n"
+                    '        f"neutered: under {store} ',
                 )
             ],
         )
