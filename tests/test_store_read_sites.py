@@ -271,11 +271,24 @@ EXPECTED: dict[str, tuple[int, str, str]] = {
         "resolves `--ref` to a file before a WRITE, twice (exact name, then "
         "`<ref>.<kind>.md`). An absent ref is the ordinary not-found answer, and "
         "`anchoredNames` swallows identically."),
+    # ⚠ ONE GO ROW STANDING IN FOR THREE PYTHON SITES, AND THAT IS THIS LEDGER'S
+    # DECLARED BLIND SPOT MADE CONCRETE — see "A RECEIVER THIS CANNOT RESOLVE" in the
+    # module docstring. `anchoredNames` is a generic "names in `dir` matching `keep`"
+    # helper with FOUR callers, and they are not one subject:
+    #   * `snapshot.go` (orphan reaping)   — twin of `cairn::_reap_orphans::glob`
+    #   * `focus.go`    (a repo's handoff) — twin of `subsystem_recall::focus_window`
+    #   * `verbs.go` x2 (write-path ref)   — twin of `cairn::cmd_put::glob`
+    # so EXEMPT here is a claim about all four, not about one. An earlier draft of
+    # this reason named only the `cmd_put` twin, which would have let a future caller
+    # reading a store through this helper inherit an exemption argued for a different
+    # subject. If a caller is ever added that must fail closed, this row is the wrong
+    # place to express that: give that CALLER its own wrapped read.
     "internal/client/anchor.go::anchoredNames::os.ReadDir": (
         1, "EXEMPT",
-        "the Go twin of the two `cmd_put` globs; its own header records the "
-        "discard as deliberate, because the oracle's `glob` yields no paths "
-        "rather than raising."),
+        "a generic name-matcher with four callers (orphan reaping, a repo's handoff "
+        "docs, and twice for write-path ref resolution). Its own header records the "
+        "discard as deliberate, because the oracle's `glob` yields no paths rather "
+        "than raising, and each Python twin swallows identically."),
 }
 
 
