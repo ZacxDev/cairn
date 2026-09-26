@@ -658,9 +658,17 @@
 
   /* The file's own heading line, rendered ONLY for a heading whose `#` run is not the
    * canonical `## ` — see `sectionBlock`. It is monospace because it is a quotation of a
-   * line in a file, and it is quiet because for a healthy entry it never appears at all. */
+   * line in a file, and it is quiet because for a healthy entry it never appears at all.
+   *
+   * 🔴 `whitespace-pre-wrap`, AND IT IS THE DIFFERENCE BETWEEN THE ELEMENT AND ITS OWN
+   * CLAIM. This line says "in the file, verbatim", and HTML collapses a run of whitespace
+   * to one space — so `#  Pointers` and `# Pointers` rendered IDENTICALLY, in the one place
+   * on the page whose entire job is to show a heading whose spelling is unusual. Caught by
+   * LOOKING at a rendered page; the markup was correct the whole time, and no assertion in
+   * this package compares rendered width. `TestAMarkerTheParserCannotReachIsStillOnThePage`
+   * now pins the declaration. */
   .section-source {
-    @apply font-mono text-xs text-muted mb-2 break-words;
+    @apply font-mono text-xs text-muted mb-2 break-words whitespace-pre-wrap;
   }
 
   /* 🔴 THE LOUD HALF OF THE MARKER TRANSFORMATION. A marker on a line item's second or

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -652,6 +653,39 @@ func elementsOf(s, open, close string) []string {
 // `<code>run <code class="inline-code">x</code> first</code>`, so cutting at the first
 // `</code>` would truncate the body at the span and every "the text around it survived"
 // assertion would be measuring half a line.
+// ruleBodyFor returns the DECLARATION BLOCK of the first rule whose selector list names
+// `.class`, or "" if there is none.
+//
+// ⚠ IT IS A BRACE SCAN AND NOT A CSS PARSER, AND ITS LIMIT IS STATED SO NOBODY READS IT
+// WIDER. It finds the first `{` after the class name and returns to the matching depth-0 `}`,
+// which is exactly right for the flat `@layer components` rules this stylesheet emits and
+// would be wrong for a rule whose selector merely contains the name inside a string or a
+// comment. `hasSelectorFor` is the guard for "does a rule EXIST"; this one exists for the one
+// case where a DECLARATION is load-bearing to a claim the page makes in words.
+func ruleBodyFor(css, class string) string {
+	loc := regexp.MustCompile(`\.` + regexp.QuoteMeta(class) + `([^A-Za-z0-9_\-]|$)`).FindStringIndex(css)
+	if loc == nil {
+		return ""
+	}
+	open := strings.IndexByte(css[loc[0]:], '{')
+	if open < 0 {
+		return ""
+	}
+	depth, start := 0, loc[0]+open
+	for i := start; i < len(css); i++ {
+		switch css[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return css[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
 func preBodies(s, class string) []string {
 	out := elementsOf(s, `<pre class="`+class+`">`, `</pre>`)
 	for i, b := range out {
@@ -865,6 +899,22 @@ func TestAMarkerTheParserCannotReachIsStillOnThePage(t *testing.T) {
 		}
 		if !strings.Contains(sources[0], escapeForTest(odd)) {
 			t.Errorf("the annotation does not quote the file's own line: %q", sources[0])
+		}
+		// 🔴 AND THE STYLESHEET HAS TO MAKE IT VERBATIM ON SCREEN, WHICH IS A SEPARATE CLAIM
+		// FROM THE BYTES BEING RIGHT. HTML collapses a run of whitespace to one space, so
+		// `#  Pointers` and `# Pointers` rendered IDENTICALLY here — in the ONE place on the
+		// page whose whole job is to show a heading whose spelling is unusual. The markup was
+		// correct the entire time; the defect was visible only in a browser. This pins the
+		// `white-space` declaration rather than a spelling of it, because `pre`, `pre-wrap`
+		// and `break-spaces` all satisfy the claim and Tailwind may emit any of them.
+		rule := ruleBodyFor(string(stylesheet), "section-source")
+		if rule == "" {
+			t.Fatal("the stylesheet has no `.section-source` rule at all, so the check below is about nothing")
+		}
+		if !strings.Contains(rule, "white-space: pre") {
+			t.Errorf("`.section-source` does not declare a preserving `white-space`, so the line it calls "+
+				"VERBATIM is rendered with its whitespace runs collapsed: a heading differing from the "+
+				"canonical one only by spacing would look identical to it.\nrule: %s", rule)
 		}
 	})
 }

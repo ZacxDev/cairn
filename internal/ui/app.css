@@ -1059,6 +1059,7 @@
     font-size: var(--text-xs);
     line-height: var(--tw-leading, var(--text-xs--line-height));
     overflow-wrap: break-word;
+    white-space: pre-wrap;
     color: var(--color-muted);
   }
   .bullet-unreachable {
