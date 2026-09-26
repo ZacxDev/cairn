@@ -13,7 +13,7 @@ repository points a pod at it", AND IT IS RETRACTED.** The second clause is stil
 never supported the first: the manifest lives in the operator's GitOps repository. The image
 is published by `.github/workflows/publish-image.yml` and the surface is live on a public
 hostname. ⚠ And the heading above is kept only as a record of where this file started — the
-package is four pages, a stylesheet route and two sign-in doors past "Phase A", and the
+package is six pages, a stylesheet route and two sign-in doors past "Phase A", and the
 sections below are the accumulated phases rather than a description of one.
 
 🔴 **HOW IT IS PACKAGED IS NOT STATED HERE. ASK:**

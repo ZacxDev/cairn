@@ -837,10 +837,15 @@ func writePlain(w http.ResponseWriter, code int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// handlePage is the entries page's handler. It was once the ONE content handler and is
-// no longer — `GET /share` is classed `content` too, and `contentAuthority` in
-// `routes_test.go` is where each content route declares WHICH authority it answers from.
-// See `routes` for the route this replaced and the sentence that made it wrong.
+// handlePage is the ROOT page's handler: a card per readable scope, plus the search box.
+//
+// ⚠ IT WAS ONCE THE ONE CONTENT HANDLER AND IS NOW ONE OF FOUR. That sentence has been
+// corrected twice — it said "the ONE content handler" until `GET /share` arrived and "one
+// of two" is what it would say next — so it is worth stating the RULE rather than the
+// count: `contentAuthority` in `routes_test.go` is where each content route declares WHICH
+// authority its answer comes from, a route missing from that map FAILS, and the count is
+// whatever `contentRoutes()` returns. See `routes` for the route this one replaced and the
+// sentence that made it wrong.
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	scopes, err := s.source.Visible(id.Auth)
 	if err != nil {
