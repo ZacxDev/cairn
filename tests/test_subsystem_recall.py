@@ -408,6 +408,53 @@ class TestNegativeControls:
         assert "index entry unreadable" in str(exc.value)
         assert "INCOMPLETE" in str(exc.value)
 
+    def test_an_unreadable_SCOPE_DIRECTORY_raises_the_SAME_sentinel(
+        self, store: Path
+    ) -> None:
+        """🔴 THE THIRD UNREADABLE SITE, AND THE ONE THAT USED TO BE SERVED AT
+        EXIT 0 AS AN ABSENCE. The two rows above are about an entry FILE; this is
+        the scope DIRECTORY holding them. `entry_files_in` walked it with
+        `pathlib.Path.glob`, which SUPPRESSES the `OSError` its directory scan
+        raises and yields nothing — so the scope registered with zero entries and
+        this call returned `status=scope-empty` ("NOTHING RECORDED YET … Not an
+        error.") instead of raising. RED at `278b8df`: no exception, and
+        `rc.recall(store, SCOPE).status == "scope-empty"`.
+
+        ⚠ IT REUSES `EntryUnreadableError`, NOT A NEW CLASS. `load_store` already
+        owns the one `except OSError` wrap; this defect was never a missing error
+        path, it was a swallowed errno upstream of an existing one.
+        """
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory permissions; the guard is unreachable")
+        scope_dir = store / SCOPE
+        # The negative control on the fixture: over an EMPTY directory `glob` and
+        # `iterdir` agree, so the mode could not be the variable.
+        assert list(scope_dir.glob("*.md")), "the fixture scope must hold entries"
+        scope_dir.chmod(0o000)
+        try:
+            with pytest.raises(rc.EntryUnreadableError) as exc:
+                rc.recall(store, SCOPE)
+        finally:
+            scope_dir.chmod(0o755)
+        assert "index entry unreadable" in str(exc.value)
+        assert "INCOMPLETE" in str(exc.value)
+        assert str(scope_dir) in str(exc.value), "the refused directory must be NAMED"
+
+    def test_a_genuinely_EMPTY_scope_is_STILL_scope_empty_and_does_NOT_raise(
+        self, store: Path
+    ) -> None:
+        """🔴 THE STATE THE FIX ABOVE MUST NOT COLLAPSE. `scope-empty` with
+        "Not an error" is the CORRECT answer for a directory that exists and
+        genuinely holds nothing, and it is a different state from unreadable —
+        separated by MECHANISM (`iterdir()` returns `[]` vs raises), not by a
+        predicate either side could get wrong. Green before the fix and after it:
+        an invariant guard, not regression coverage.
+        """
+        (store / "made-never-filled").mkdir()
+        report = rc.recall(store, "made-never-filled")
+        assert report.status == "scope-empty"
+        assert report.total_in_scope == 0
+
     def test_read_entry_wraps_its_OWN_read_too(self, store: Path, tmp_path: Path) -> None:
         """The second unreadable site: an entry that loaded fine, then could not
         be read for its body. Reached directly, because the two reads are
@@ -2979,7 +3026,14 @@ class TestRecallNeverWrites:
     def test_the_module_never_opens_anything_for_writing(self) -> None:
         """The structural half, kept alongside the behavioural one: a reader
         that grew a write path would have to spell it somehow, and every
-        spelling below is one nobody should be adding to THIS file."""
+        spelling below is one nobody should be adding to THIS file.
+
+        ⚠ IT STRIPS `#` COMMENTS AND **NOT** DOCSTRINGS, SO PROSE CAN TRIP IT —
+        measured, not theorised: a docstring that quoted `install_snapshot`'s swap
+        as `cache.rename(…)` failed this row. That is the guard being WIDER than
+        its name, and it stays that way deliberately, because a write smuggled
+        into a module-level string is still a write the behavioural half might
+        miss. The remedy is to reword the prose, never to narrow the sweep."""
         src = MODULE_PATH.read_text(encoding="utf-8")
         code = "\n".join(
             line for line in src.splitlines() if not line.lstrip().startswith("#")
@@ -3666,16 +3720,27 @@ class TestMutationKillMatrix:
 
     def test_kills_the_unreadable_entry_wrap(self, tmp_path: Path) -> None:
         """Without it an OSError escapes unnamed, and a resuming session cannot
-        tell that the SUBSYSTEM STORE was the thing that failed."""
+        tell that the SUBSYSTEM STORE was the thing that failed.
+
+        ⚠ THE ANCHOR MOVED WHEN THE SENTENCE WAS CONSOLIDATED BEHIND ONE WRITER, AND
+        THE HARNESS CAUGHT IT RATHER THAN SCORING A FALSE SURVIVOR. `_load_mutant`
+        asserts the anchor occurs exactly once, so when `load_store`'s inline
+        `raise EntryUnreadableError(…)` became `raise _store_unreadable(store, exc)`
+        this row went RED with `mutation anchor occurs 0x, expected exactly 1`. That
+        is the instrument working: a driver that silently applied nothing would have
+        reported this guard as holding. The anchor is now `_store_unreadable` itself,
+        so the mutant reaches every caller of the one writer rather than one inline
+        spelling.
+        """
         mod = _load_mutant(
             tmp_path,
             "m_unreadable",
             [
                 (
-                    "        raise EntryUnreadableError(\n"
-                    '            f"index entry unreadable: under {store} ',
-                    "        raise RuntimeError(\n"
-                    '            f"neutered: under {store} ',
+                    "    return EntryUnreadableError(\n"
+                    '        f"index entry unreadable: under {store} ',
+                    "    return RuntimeError(\n"
+                    '        f"neutered: under {store} ',
                 )
             ],
         )

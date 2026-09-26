@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -880,5 +881,128 @@ func TestPyRepr(t *testing.T) {
 		if got := PyRepr(tc.in); got != tc.want {
 			t.Fatalf("PyRepr(%q) = %s, want %s", tc.in, got, tc.want)
 		}
+	}
+}
+
+// THE TWO "the store was not fully read" SENTENCES MUST SPELL THEIR CAUSE THE ORACLE'S WAY.
+//
+// 🔴 THIS EXISTS BECAUSE A MUTATION SWEEP FOUND THE SURVIVOR AND SAID SO. `EntryUnreadable`'s
+// cause was moved from `%s` on the raw Go error to `PyOSError` in the same change as
+// `LoadStore`'s — one rule, one place, exactly as `EntryUnreadable`'s own header demands ("so
+// the two … sentences cannot drift apart"). But reverting THIS one alone left `internal/client`,
+// `internal/store` and `internal/report` all green: the per-entry sentence is raised from
+// `report.ReadEntry`/`search`, which run AFTER the index loaded, and an entry that was readable
+// at index time and unreadable at body time is a TOCTOU no test can stage. So the guard has to
+// call the function DIRECTLY rather than reach it through a verb.
+//
+// ⚠ AND IT ASSERTS THE WHOLE NORMALISED SENTENCE, not that `[Errno` appears somewhere. A
+// substring check on the tail alone passes for a sentence that lost its path, its type name or
+// its "INCOMPLETE" clause — and the parity gate compares these bytes.
+func TestBothUnreadableSentencesRenderTheirCauseAsCPythonWould(t *testing.T) {
+	cause := &os.PathError{Op: "open", Path: "/w/alpha-notes/one.md", Err: syscall.EACCES}
+	// 🔴 THE NEGATIVE CONTROL ON THE FIXTURE: Go's OWN rendering, which is what the mutant
+	// produces. If these two were ever equal the assertions below could not tell the two
+	// spellings apart and would pass either way.
+	if cause.Error() == PyOSError(cause) {
+		t.Fatalf("the fixture cannot discriminate: Go and CPython render %q identically",
+			cause.Error())
+	}
+
+	perEntry := EntryUnreadable("/w/alpha-notes/one.md", cause).Error()
+	wantPerEntry := "index entry unreadable: /w/alpha-notes/one.md " +
+		"(PermissionError: [Errno 13] Permission denied: '/w/alpha-notes/one.md') — " +
+		"the store was not fully read, so this report is INCOMPLETE; nothing was written"
+	if perEntry != wantPerEntry {
+		t.Fatalf("EntryUnreadable:\n got %q\nwant %q", perEntry, wantPerEntry)
+	}
+
+	// The store-wide twin, reached the way a reader reaches it: a scope holding one entry
+	// nothing can open. Same spelling, same function, so the two cannot drift.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "alpha-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "alpha-notes", "one.md")
+	if err := os.WriteFile(entry, []byte("---\nservice: one\nscope: alpha-notes\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(entry, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(entry, 0o644) })
+	_, err := LoadStore(root, "recalled", Unrestricted())
+	if err == nil {
+		t.Fatal("an unreadable entry must fail the store CLOSED, not load a short index")
+	}
+	wantWide := "index entry unreadable: under " + root +
+		" (PermissionError: [Errno 13] Permission denied: '" + entry + "') — " +
+		"the store was not fully read, so this report would be INCOMPLETE"
+	if err.Error() != wantWide {
+		t.Fatalf("LoadStore:\n got %q\nwant %q", err.Error(), wantWide)
+	}
+}
+
+// AN UNREADABLE SCOPE DIRECTORY FAILS THE STORE CLOSED, AND A GENUINELY EMPTY ONE DOES NOT.
+//
+// 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND LABELLED AS ONE. This client has always
+// answered a mode-000 scope directory with `index entry unreadable` at exit 3 — `mdNamesIn`
+// walks with `os.ReadDir`, which has no suppression to remove — so this test is GREEN at
+// `278b8df` and green at HEAD. It exists because the ORACLE's twin of this walk used
+// `pathlib.Path.glob`, which SUPPRESSES the `OSError` its directory scan raises and yields
+// nothing: measured over one cached scope at `chmod 000`, the oracle answered 0 with
+// `status=scope-empty` ("NOTHING RECORDED YET … Not an error.") where this client answered 3.
+// The fix is the oracle's; what this pins is the side the fix had to MATCH, so a later
+// "simplification" of `mdNamesIn` into a suppressing walk cannot make the two agree by
+// regressing this one instead.
+//
+// ⚠ THE EMPTY HALF IS THE OTHER DIRECTION AND IS WHY BOTH LIVE IN ONE TEST. A walk that
+// refused every directory it could not fully account for would satisfy the first assertion
+// while destroying the ordinary outcome, which is a scope somebody made and never filled.
+func TestAnUnreadableScopeDirFailsClosedWhileAnEmptyOneLoads(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions; the guard is unreachable")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, "alpha-notes")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(locked, "one.md")
+	if err := os.WriteFile(entry, []byte("---\nservice: one\nscope: alpha-notes\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The negative control on the fixture: over an EMPTY directory a suppressing walk and a
+	// raising one agree, so the mode could not be the variable.
+	if names, err := mdNamesIn(locked); err != nil || len(names) != 1 {
+		t.Fatalf("the fixture scope must hold exactly one entry file: %v %v", names, err)
+	}
+	empty := filepath.Join(root, "made-never-filled")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// THE STATE THAT MUST NOT MOVE: readable and genuinely empty loads, and the scope is
+	// REGISTERED rather than dropped.
+	index, err := LoadStore(root, "recalled", Unrestricted())
+	if err != nil {
+		t.Fatalf("a readable store with an empty scope must load: %v", err)
+	}
+	if !slices.Contains(index.Scopes(), "made-never-filled") {
+		t.Fatalf("an empty scope must be REGISTERED, not dropped: %v", index.Scopes())
+	}
+
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	_, err = LoadStore(root, "recalled", Unrestricted())
+	if err == nil {
+		t.Fatal("an unreadable SCOPE DIRECTORY must fail the store CLOSED, not register it empty")
+	}
+	want := "index entry unreadable: under " + root +
+		" (PermissionError: [Errno 13] Permission denied: '" + locked + "') — " +
+		"the store was not fully read, so this report would be INCOMPLETE"
+	if err.Error() != want {
+		t.Fatalf("LoadStore:\n got %q\nwant %q", err.Error(), want)
 	}
 }

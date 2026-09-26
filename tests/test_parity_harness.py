@@ -264,11 +264,16 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     and no duplicate id. So the floor covers those two, and nothing else in this file does.
 
     ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below the
-    PASS count `.github/workflows/ci.yml` pins — **106 at this head**, not the 104 this docstring
-    carried until the classifier-gate round — but that job needs a Go toolchain and a running pod; a developer
-    running `pytest tests` reaches this one and not that one. 🔴 NOTHING ASSERTS THAT THE TWO
-    NUMBERS AGREE, which is exactly how this one went stale: read `ci.yml`'s `-lt` comparison
-    rather than this sentence.
+    PASS count `.github/workflows/ci.yml` pins — **110 at this head** — but that job needs a Go
+    toolchain and a running pod; a developer running `pytest tests` reaches this one and not that
+    one. 🔴 NOTHING ASSERTS THAT THE TWO NUMBERS AGREE, which is exactly how this one went stale:
+    read `ci.yml`'s `-lt` comparison rather than this sentence.
+    🔴 **IT HAS GONE STALE IN BOTH DIRECTIONS, INCLUDING IN A COMMIT THAT MOVED `ci.yml` AND THIS
+    FILE TOGETHER.** So: **every number in this file is a MEASUREMENT with a command beside it**,
+    and the two commands are
+    `nix develop … -c python3 tests/parity/harness.py | grep -c '^PASS '` for the PASS count and
+    `python3 -c "import harness; print(len(harness.cases(1)))"` for the case count — not
+    `grep -c 'Case('`, which happens to agree today and is a different question.
 
     The AST half of the old test is deleted as genuinely redundant: `harness` is imported at module
     scope (line 30) and the `cases` fixture calls `harness.cases(1)`, so a syntax error or a
@@ -277,7 +282,8 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
     declared = len(harness.cases(1))
-    # 103 measured on this tree (`grep -c 'Case(' tests/parity/harness.py`). The floor is the
+    # 107 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
+    # compares and is therefore the only measurement that can be right. The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
     # narrowing cannot hide under it. The previous floor was 50 against 90, which could not
@@ -285,25 +291,24 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     #
     # ⚠ THIS USED TO ADD "loose enough that adding or dropping a handful of rows in a PR does not
     # make it permanently red", AND THE DRIFT GUARD BELOW MADE THAT FALSE IN THE GROWTH
-    # DIRECTION — at m=102 the formula gives exactly this literal, so adding ONE case reds
-    # `pytest tests` until the literal moves. The clause is deleted rather than the guard
+    # DIRECTION — at the measured `m` the formula gives exactly this literal, so adding ONE case
+    # reds `pytest tests` until the literal moves. The clause is deleted rather than the guard
     # loosened, and the asymmetry with `ci.yml`'s equivalent is deliberate: a parity CASE is
     # added a few times a year, so an exact guard costs an edit nobody notices, while the
     # collected count there moves on most PRs and an exact guard would red every one. Same
     # formula, different movement rate, different tolerance — stated at both sites.
-    # ⚠ AND IT WAS 85 AGAINST 101 UNTIL THIS COMMIT, because the measured `m` moved by eleven rows
-    # and the floor did not — a floor left behind by its own formula loosens silently, which is
-    # the same failure one size larger. Move BOTH when a row lands.
-    # ⚠ 95 -> 96 WHEN `recall-focus-resolved-through-an-explicit-repo-PATH` LANDED: `m` moved
-    # 101 -> 102 and this is the literal the formula prescribes for it. That row is what makes
-    # the gate able to see a glob metacharacter in a `--repo` ANCHOR; the three focus rows beside
-    # it default `--repo` to `.` and are structurally unable to.
-    # ⚠ 96 -> 97 WHEN `validate-write-protocol-advisories` LANDED: `m` moved 102 -> 103 and
-    # this is the literal the formula prescribes for it. That row is what makes the gate able
-    # to see the `dropped lines:` / `marker reachability:` blocks at all — every other scope in
-    # the world parses cleanly, so both advisories print their ZERO branch everywhere and a
-    # client implementing neither would compare equal.
-    floor = 97
+    # ⚠ AND IT WAS 85 AGAINST 101 ONCE, because the measured `m` moved by eleven rows and the
+    # floor did not — a floor left behind by its own formula loosens silently, which is the same
+    # failure one size larger. Move BOTH when a row lands, and both when one is DELETED.
+    # ⚠ 102 -> 101 WHEN `validate-unreadable-cache-root` WAS REMOVED: `m` moved 108 -> 107 and
+    # 101 is the literal the formula prescribes for it (`107 - min(50, max(1, 107/20)) = 101.65
+    # -> 101`, re-derived by RUNNING the formula on `len(harness.cases(1))`, not by arithmetic on
+    # the previous literal). That row gated the cache-ROOT read; the wraps behind it were removed
+    # after the triggering condition was measured never to occur, and the cache-root depth is
+    # declared open again in `tests/parity/README.md` row 4. What remains in this family is the
+    # four rows that gate a mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY on both clients —
+    # the conditions an ordinary `chmod` reaches.
+    floor = 101
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
@@ -337,16 +342,79 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # the `parity` job. They must NOT be asserted equal: this one counts CASES
     # DECLARED by `harness.cases()`, that one counts PASSES a run produced, and
     # the two differ by design — a structural check is a pass with no declared
-    # case behind it, which is why the run reports 106 passes over 103 cases:
+    # case behind it, which is why the run reports 110 passes over 107 cases —
+    # re-derived here from one run's own `SUMMARY cases=107 passes=110 failures=0`
+    # line, not from arithmetic on the previous literal:
     # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`,
-    # THREE structural checks. ⚠ It was 104/102, then 105/103, then this; the gap
+    # THREE structural checks. ⚠ It was 104/102, then 105/103, then 106/103, then
+    # 111/108 — and one of those pairs was WRONG for a whole round, because rows
+    # moved `m` and only `ci.yml` was updated. The gap itself
     # widens every time a claim turns out to be unreachable from any row. A
     # guard equating them would be red on a correct tree and would train its
     # reader to edit whichever number was handier. The docstring's instruction —
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (103 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (107 were "
         f"measured on this tree, across every verb and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."
+    )
+
+
+def test_the_CI_content_floor_grep_names_EVERY_field_the_harness_prints() -> None:
+    """🔴 THE `CONTENT-FLOOR` ANCHOR IN `ci.yml`, PINNED TO THE HARNESS THAT FEEDS IT.
+
+    `.github/workflows/ci.yml` asserts the harness's in-run content controls with an
+    ANCHORED PREFIX `grep`. A prefix says nothing about the fields after the ones it
+    spells, so the check silently stops covering every field the harness later adds
+    — while its own comment goes on claiming completeness.
+
+    🔴 THAT HAS HAPPENED TWICE, WHICH IS WHY THIS IS A TEST AND NOT A THIRD COMMENT.
+    The grep read TWO fields while the harness printed three, was then widened and
+    re-commented to claim it named them all while the harness had already grown another.
+    Each time the gap was found by a human re-reading the line, and each time the
+    comment was the thing that discouraged the re-read. ⚠ It fails on a REMOVAL too,
+    which is not hypothetical: a sentinel was deleted with the row it covered, and this
+    guard is what required the anchor to shrink in the same commit.
+
+    So: derive the field names from the harness's own `CONTENT-FLOOR` f-string and
+    require `ci.yml`'s anchor to name all of them. Fails in BOTH directions — a field
+    added to the harness and not to the grep, and a field in the grep the harness no
+    longer prints.
+
+    ⚠ IT PINS THE FIELD NAMES, NOT THE VALUES. `mtime-files=…` is deliberately absent
+    from the anchor because it carries a measured number rather than a verdict, so it
+    is excluded here too — by the same rule `ci.yml` states, not a second one.
+    """
+    harness = (ROOT / "tests/parity/harness.py").read_text(encoding="utf-8")
+    block = re.search(
+        r'print\(f"CONTENT-FLOOR (.*?)\)\n', harness, re.S)
+    assert block, (
+        "the harness no longer prints a `CONTENT-FLOOR` line in a shape this test can "
+        "read. That is not licence to delete this guard: re-derive the anchor, because "
+        "`ci.yml` still greps for one."
+    )
+    printed = re.findall(r"([a-z-]+)=\{", block.group(1))
+    assert printed, "no CONTENT-FLOOR field names were parsed — the instrument is dead"
+    # the trailing measured-number field is excluded by `ci.yml`'s own stated rule
+    verdict_fields = [f for f in printed if f != "mtime-files"]
+    assert len(verdict_fields) >= 4, (
+        f"only {verdict_fields} parsed; the harness has printed at least four verdict "
+        f"fields since this guard was written, so a shorter list means the parse broke"
+    )
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    anchor = re.search(r"grep -q '\^CONTENT-FLOOR ([^']*)'", ci)
+    assert anchor, "ci.yml no longer carries an anchored `^CONTENT-FLOOR` grep"
+    named = re.findall(r"([a-z-]+)=", anchor.group(1))
+    assert named == verdict_fields, (
+        f"`ci.yml`'s CONTENT-FLOOR anchor and the harness disagree about the fields.\n"
+        f"  harness prints: {verdict_fields}\n"
+        f"  ci.yml names:   {named}\n"
+        f"MISSING from the grep: {[f for f in verdict_fields if f not in named]}\n"
+        f"EXTRA in the grep:    {[f for f in named if f not in verdict_fields]}\n"
+        f"A field the harness prints and the grep does not name is UNCHECKED by that "
+        f"line — which is how this anchor went stale twice, both times while its "
+        f"comment claimed it named them all. Add the field to the anchor (and fix the "
+        f"count in the comment above it), or, if the harness dropped a field, drop it "
+        f"from the anchor in the same commit."
     )

@@ -86,6 +86,17 @@ func Routes(env Env, opts Options) (int, error) {
 				"the table.\n", instance.Alias)
 			return ExitUnrouted, nil
 		}
+		// ⚠ THIS CACHE-ROOT READ HANDS `cli.go` THE RAW `*os.PathError`, AND THAT IS NOT
+		// CLOSED HERE. `--no-sync` cannot reach it — the `state.Name != StateLive` guard above
+		// returns first — but a **304 Not Modified** does: `ResolveState` returns `StateLive`
+		// and writes nothing, so the root listed here is the pre-existing one, mode bits and
+		// all. MEASURED against a stub pod answering 304 to a matching `If-None-Match`, one
+		// instance, a one-route table, cache root at 0111: this client exits **3** printing
+		// `open <cache>: permission denied` where one level down it prints
+		// `index entry unreadable: under <root> (PermissionError: …)`, and the ORACLE exits
+		// **1** with a traceback. So both the TEXT and the code diverge. It is the cache-ROOT
+		// depth of `tests/parity/README.md` row 4, which carries it with a closing condition.
+		// UNGATED.
 		entries, readErr := os.ReadDir(cache)
 		if readErr != nil {
 			return 0, readErr

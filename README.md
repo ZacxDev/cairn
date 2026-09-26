@@ -66,7 +66,48 @@ bucket, a git repo or an NFS mount:
   produced it — `live`, `cached` (with age and revision), `scope-empty`, or
   🔴 **`store-unreachable, no cache`, which exits `3` and must never be read as
   the third**: `scope-empty` and an unreachable store both "print no entries"
-  and one of them is a lie. Orthogonally it names the **scope's status**, so a
+  and one of them is a lie. ⚠ **Exit `3` is therefore wider than that one
+  state.** A read whose cache exists but cannot be fully read — a scope
+  directory or an entry file at mode `000` — exits `3` with `index entry
+  unreadable: under <root> (…) — the store was not fully read`. 🔴 **The exit
+  code, not the output, is what says whether the report is complete.**
+  🔴 **WHAT YOU SEE DEPENDS ON THE VERB, AND THIS PARAGRAPH USED TO BE WRONG FOR
+  TWO OF THE THREE.** It said such a read "prints `⚠ cairn: cached — …` and then
+  exits `3`", which sends a caller hunting for a banner that is never emitted.
+  Measured on BOTH clients over a mode-`000` scope directory **and** a mode-`000`
+  entry file — twelve runs, the two clients agreeing byte for byte in every one,
+  each run naming ONE scope with `--scope`:
+
+  | verb | exit | stdout | the `cached` banner |
+  |---|---|---|---|
+  | `recall` | `3` | **0 bytes** | **not printed, on either stream** |
+  | `search` | `3` | **0 bytes** | **not printed, on either stream** |
+  | `validate` | `3` | 0 bytes **for the single scope those runs named** — see below | on **stderr** |
+
+  🔴 **THE `validate` STDOUT CELL IS NOT A GENERAL CLAIM.** `validate` prints its
+  per-scope line INSIDE its loop, so every scope processed before the unreadable
+  one has already emitted output by the time the raise happens; `0 bytes` is true
+  only when the failing scope is the FIRST one validated, which is what all twelve
+  runs above measured because each named a single `--scope`. **Re-measured with no
+  `--scope` at all**, one cache holding a readable scope of 9 entries plus an
+  unreadable one, `validate --no-sync`, both clients byte-identical: the unreadable
+  scope sorting **after** → exit `3` with **2,030 bytes** of stdout, first line
+  `cairn: <scope>: 9 of 9 entry file(s) parse, 0 malformed`; sorting **before** →
+  exit `3` with **0 bytes**. **So the honest rule is that at exit `3` stdout is a
+  PARTIAL report whose length depends on how far the walk got, and the code is what
+  says it is partial** — a supervisor told "3 ⇒ 0 bytes" either stops reading stdout
+  or reads a non-empty stdout at 3 as corruption. ⚠ One shape neither measurement
+  covered: `search --all-scopes` over a partially-unreadable store — that flag
+  refuses `--cache`, so it was not built. **Unmeasured, and not asserted either
+  way.**
+
+  The banner column's cause is ordering rather than policy — the reads print
+  their banner *after* the reader returns, so the raise pre-empts it, while
+  `validate` prints its banner before it loads anything. **For a read, the ABSENCE
+  of the banner is the signal**: a `cached` banner is not a promise of `0`, and no banner at
+  all is not a promise that nothing was attempted. Where a banner IS printed it
+  says which of the four states the *sync* reached.
+  Orthogonally a read names the **scope's status**, so a
   `cached` read can still report `scope-absent` (no such scope here — also what
   a scope your token cannot see looks like) or `scope-unreadable`. An agent that
   cannot tell "nothing is there" from "I could not look" will act on the
@@ -279,8 +320,15 @@ check.
 Read outcomes and write outcomes are **disjoint**, so a supervisor cannot read
 silence as success. `0` content was served (live, cached, or a genuinely empty
 scope) · `2` usage · `3` **nothing was read** — the store was unreachable with no
-cache, *or* the scope's entries are there and unreadable, which is a content
-defect `cairn validate` diagnoses rather than an outage to retry · `4` `sync` did
+cache, *or* the cache is there and could not be fully read (a mode-`000` scope
+directory or entry file), which is a **permissions problem on this host's cache
+rather than an outage to retry**: fix the mode, or `cairn sync` to replace the
+cache. ⚠ **This clause used to say the state is "a content defect `cairn
+validate` diagnoses", and that remedy is a dead end** — measured on both
+clients, `cairn validate` over exactly that state exits `3` itself with **0
+bytes on stdout**, so it diagnoses nothing the failing read did not already say.
+The one thing it adds is the PATH, which every verb already names in the same
+sentence. · `4` `sync` did
 not refresh though a usable cache survived · `5` the archive was refused · `6` the
 store refused the write, change the request · `7` the write did **not** happen and
 a retry is the right response · `8` precondition failed, re-sync and re-apply ·

@@ -81,8 +81,21 @@ var loaderEntryActions = map[Kind]Action{
 // unusable one. It names the SHAPE and never invents a fix, because the
 // operator's fix differs per shape (delete the lock file; delete the fifo).
 var loaderRefusalReason = map[Kind]string{
+	// 🔴 IT NAMES `is_entry_filename`, NOT A GLOB, AND THAT IS A CORRECTION APPLIED TO
+	// BOTH CLIENTS IN ONE CHANGE. This string said "`glob('*.md')` matches a leading dot";
+	// the ORACLE's entry walk stopped globbing when `entry_files_in` moved to `iterdir()` +
+	// `is_entry_filename`, so the sentence cited a mechanism that no longer exists while its
+	// conclusion stayed true. Worse than a stale comment because it is a RUNTIME STRING — it
+	// reaches a 503 body and `validate`'s stderr. Named for the PREDICATE rather than the
+	// WALK on purpose: `IsEntryFileName`/`is_entry_filename` is what decides, so a future
+	// change of walk cannot make this stale again.
+	// 🔴 IT MUST STAY BYTE-IDENTICAL TO `lib/subsystem_resolver._LOADER_REFUSAL_REASON`'s
+	// `KIND_BROKEN_LINK` — measured identical before this edit and after, and moved in the
+	// same commit. ⚠ NOTHING ASSERTS THAT IDENTITY: no test compares the two literals, and
+	// no parity or dualrun world seeds a dangling `.#*.md`, so the requirement rests on this
+	// comment and its twin. Change one side and you must change the other by hand.
 	KindBrokenLink: "broken symlink (a dangling target, or a link loop) — not an entry, and " +
-		"refused before `open()`. `glob('*.md')` matches a leading dot, so an " +
+		"refused before `open()`. `is_entry_filename` accepts a leading dot, so an " +
 		"editor lock file such as `.#<entry>.md` lands here; reading it raised " +
 		"`index entry unreadable`, which took the whole store down for every " +
 		"caller and named this file in the error",
@@ -373,6 +386,9 @@ func IsEntryFileName(name string) bool {
 //
 // ⚠ THE ERROR IS THE DIRECTORY READ'S, PROPAGATED. A scope directory that cannot be read is
 // NOT an empty scope — see `mdNamesIn`'s caller in `LoadIndex`, which fails closed on it.
+// ⚠ IT IS THE RAW `*os.PathError`, NOT THE READER'S `index entry unreadable` SENTENCE. Only
+// `LoadStore` turns it into that, so a caller outside `LoadStore` reporting this error
+// directly prints different bytes from the oracle.
 func EntryFileNames(dir string) ([]string, error) {
 	names, err := mdNamesIn(dir)
 	if err != nil {
@@ -389,13 +405,20 @@ func EntryFileNames(dir string) ([]string, error) {
 
 // mdNamesIn is the `*.md` glob, sorted.
 //
-// ⚠ A `*.md` GLOB MATCHES A LEADING DOT — measured on the Python side, not
-// assumed — so an editor lock file (`.#entry.md`, a dangling symlink) IS a
-// candidate here. That is the `broken-link` cell's whole reason for existing, and
-// the `.md` half of the shape needs no separate check because the glob has already
-// applied it. Go's `filepath.Glob` behaves the same way, and this function is
-// written as an explicit suffix test rather than a glob so the property is stated
-// instead of inherited.
+// ⚠ A LEADING DOT IS IN THE CANDIDATE SET — so an editor lock file (`.#entry.md`, a
+// dangling symlink) IS a candidate here. That is the `broken-link` cell's whole reason
+// for existing.
+//
+// ⚠ BOTH SIDES NOW DO WHAT THIS FUNCTION ALWAYS DID — read the directory and APPLY the
+// suffix test explicitly, so the property is stated rather than inherited from a matcher.
+// The oracle used to glob; `entry_files_in` walks with `iterdir()` and filters through
+// `is_entry_filename`. The candidate set did not move: re-measured on the pinned
+// interpreter (3.12.14) over one directory holding `a.md`, `.#lock.md`, `.md`, `README.md`,
+// `b.MD`, `c.md.txt`, `d.markdown` and a directory named `sub.md`, `glob("*.md")` and
+// `iterdir()` — each filtered through `is_entry_filename` — return the identical
+// `['.#lock.md', '.md', 'a.md', 'sub.md']`. ⚠ THE FILTER IS ON BOTH SIDES OF THAT EQUALITY:
+// a RAW `glob("*.md")` over the same directory returns **5** names, because `README.md` is
+// what `is_entry_filename` rejects.
 func mdNamesIn(dir string) ([]string, error) {
 	dirents, err := os.ReadDir(dir)
 	if err != nil {
@@ -420,11 +443,34 @@ func mdNamesIn(dir string) ([]string, error) {
 // though the reader has no write path. It is a claim about the RUN, which is what a
 // reader of the message needs to know; rewording it would be a divergence with nothing
 // behind it.
+//
+// 🔴 THE CAUSE IS RENDERED BY `PyOSError`, FOR THE REASON SPELLED OUT AT `LoadStore`'s
+// OWN WRAP: the oracle interpolates `str(exc)` and Go's `*os.PathError` does not spell
+// itself the same way, so `%s` on the raw cause diverges in the parenthetical alone.
+// Kept identical to its store-wide twin so the two cannot drift.
 func EntryUnreadable(path string, cause error) *EntryUnreadableError {
 	return &EntryUnreadableError{message: fmt.Sprintf(
 		"index entry unreadable: %s (%s: %s) — the store was not fully read, so this "+
 			"report is INCOMPLETE; nothing was written",
-		path, osErrorTypeName(cause), cause)}
+		path, osErrorTypeName(cause), PyOSError(cause))}
+}
+
+// StoreUnreadable is the STORE-WIDE twin of `EntryUnreadable` — "I could not finish
+// reading this store", named by ROOT rather than by the file that stopped it.
+//
+// 🔴 THESE BYTES ARE COMPARED ACROSS THE TWO CLIENTS, which is why the sentence lives
+// behind a name rather than being spelled at its call site. The oracle's twin is
+// `subsystem_recall._store_unreadable`, and `tests/parity/harness.py`'s
+// `validate-unreadable-entry` / `recall-unreadable-entry` / `*-unreadable-scope-dir` rows
+// diff the two clients' stderr byte for byte — so a second spelling here is a divergence
+// waiting to happen.
+//
+// ⚠ ONE CALL SITE TODAY (`LoadStore`, below). Re-derive rather than trusting this sentence:
+// `grep -n 'StoreUnreadable(' internal/store/load.go`.
+func StoreUnreadable(storeRoot string, cause error) *EntryUnreadableError {
+	return &EntryUnreadableError{message: fmt.Sprintf(
+		"index entry unreadable: under %s (%s: %s) — the store was not fully read, so this report would be INCOMPLETE",
+		storeRoot, osErrorTypeName(cause), PyOSError(cause))}
 }
 
 // LoadStore resolves the store root and loads its index.
@@ -455,9 +501,20 @@ func LoadStore(storeRoot, verb string, visible ScopeSet) (*Index, error) {
 			// silently short index.
 			return nil, me
 		}
-		return nil, &EntryUnreadableError{message: fmt.Sprintf(
-			"index entry unreadable: under %s (%s: %s) — the store was not fully read, so this report would be INCOMPLETE",
-			storeRoot, osErrorTypeName(err), err)}
+		// 🔴 `PyOSError(err)`, NOT `err` — THE TAIL IS PART OF THE COMPARED BYTES.
+		// The oracle interpolates `str(exc)`, which for an `OSError` is
+		// `[Errno 13] Permission denied: '<path>'`; Go's own `*os.PathError` renders
+		// `open <path>: permission denied`. Both clients therefore printed this
+		// sentence with a DIFFERENT parenthetical, which is what `PyOSError` exists
+		// for and what `osErrorTypeName`'s header declared as an unpinned residual
+		// ("the exception's own `[Errno N] text: 'path'` tail is NOT reproduced
+		// byte-for-byte here"). MEASURED before this line changed, one mode-000 entry
+		// under `recall`: the two sentences differed in exactly that parenthetical
+		// and in nothing else. `PyOSError` returns the Go text unchanged for an error
+		// carrying no errno, so this widens nothing else. #111.
+		// ⚠ THE SENTENCE IS `StoreUnreadable`'s, NOT SPELLED HERE, because the parity gate
+		// compares these bytes against the oracle's `_store_unreadable`.
+		return nil, StoreUnreadable(storeRoot, err)
 	}
 	if visible.Unrestricted {
 		return index, nil

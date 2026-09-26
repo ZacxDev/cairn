@@ -1378,6 +1378,25 @@ class RecallReport:
         return caveat_text(f"{self.scope}/", badges_present(self.listing))
 
 
+def _store_unreadable(store: Path, exc: OSError) -> EntryUnreadableError:
+    """The ONE store-wide "not fully read" sentence, with ONE writer.
+
+    🔴 THESE BYTES ARE COMPARED ACROSS THE TWO CLIENTS, which is why the sentence
+    lives behind a name rather than being spelled at its call site. The Go twin is
+    `internal/store.StoreUnreadable`, and `tests/parity/harness.py`'s
+    `validate-unreadable-entry` / `recall-unreadable-entry` /
+    `*-unreadable-scope-dir` rows diff the two clients' stderr byte for byte — so a
+    second spelling of it anywhere is a divergence waiting to happen.
+
+    ⚠ ONE CALL SITE TODAY (`load_store`, below). Re-derive rather than trusting this
+    sentence: `grep -n '_store_unreadable(' lib/subsystem_recall.py`.
+    """
+    return EntryUnreadableError(
+        f"index entry unreadable: under {store} ({type(exc).__name__}: {exc}) — the "
+        f"store was not fully read, so this report would be INCOMPLETE"
+    )
+
+
 def load_store(
     store_root: str | Path,
     *,
@@ -1448,10 +1467,10 @@ def load_store(
             visible_scopes=visible_scopes,
         )
     except OSError as exc:
-        raise EntryUnreadableError(
-            f"index entry unreadable: under {store} ({type(exc).__name__}: {exc}) — the "
-            f"store was not fully read, so this report would be INCOMPLETE"
-        ) from exc
+        # ⚠ THE SENTENCE IS `_store_unreadable`'s, NOT SPELLED HERE, because the
+        # parity gate compares these bytes against the Go client's
+        # `store.StoreUnreadable`.
+        raise _store_unreadable(store, exc) from exc
     if visible_scopes is None:
         return store, index
     # 🔴 REBUILT FROM THE TWO PUBLIC FIELDS, not by mutating a frozen dataclass

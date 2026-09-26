@@ -201,6 +201,17 @@ func LsEntries(env Env, opts Options) (int, error) {
 		// unreadable CACHE ROOT is not this walk's case at all, and the two clients diverge
 		// on it — above this code rather than in it.
 		//
+		// ⚠ AND THE JUSTIFICATION ABOVE HAS EXPIRED WHILE THE NARROW CLAIM SURVIVES — SAID
+		// HERE RATHER THAN LEFT TO READ AS A REASON. "Surfacing either error here would be a
+		// divergence, not an improvement" rested on the oracle's `Path.glob` swallowing
+		// `EACCES`. `cmd_ls_entries` still globs, so the two clients still AGREE at exit 0 —
+		// but `recall`, `search` and `validate` now all answer **3** with `index entry
+		// unreadable` for the same directory, so this verb, the one the top-level `README.md`
+		// advertises as *"what the cache actually holds"*, is the only read left that reports
+		// a false absence for it. NOT closed here: it moves a verb's stdout and exit code on
+		// both clients, and `ls-entries` fans out over every instance, so failing closed has
+		// to decide whether one bad scope refuses the whole listing or only that instance's.
+		//
 		// 🔴 THE TWO CLIENTS STILL DIVERGE ON SOME PREFIXED SCOPE NAMES, AND THE CONDITION
 		// IS NARROWER THAN "A PREFIX" — A SENTENCE HERE SAID "any cache where one scope name
 		// is a prefix of another" AND THAT IS MEASURABLY FALSE. The mechanism is BYTE-WISE vs
@@ -228,6 +239,18 @@ func LsEntries(env Env, opts Options) (int, error) {
 		// listing was byte-identical to the oracle's in all four. NOT applied here, for the
 		// reason in the paragraph above — it is a change to a verb's stdout.
 		var lines []string
+		// ⚠ THIS CACHE-ROOT READ IS DISCARDED (`scopeDirs, _ :=`), AND IT IS NOT CLOSED HERE.
+		// Both clients answer a mode-0111 cache root under `ls-entries` identically: exit 0
+		// with an empty listing. Agreeing is not being right — it is the confident zero this
+		// client exists to refuse, and `recall`, `search` and `validate` answer 3 for that
+		// same root — but closing it moves a verb's stdout AND its exit code on BOTH clients,
+		// and it shares the fan-out ruling with the scope-directory case above: `ls-entries`
+		// prints per instance and continues, so "fail closed" has to decide whether one
+		// unreadable root refuses the whole listing or only that instance's. The two must be
+		// decided together. ⚠ `Validate`'s copy of this read is not closed either — it
+		// RETURNS the raw `*os.PathError` rather than discarding it, so the exit code is 3
+		// but the text is not the reader's sentence while the oracle tracebacks at 1;
+		// `tests/parity/README.md` row 4 carries that whole depth.
 		scopeDirs, _ := os.ReadDir(cache)
 		for _, d := range scopeDirs {
 			scopePath := filepath.Join(cache, d.Name())
@@ -543,6 +566,17 @@ func Validate(env Env, opts Options) (int, error) {
 	// repo-derived scope would validate a scope the cache does not hold and print "NOTHING WAS
 	// CHECKED — a zero here is NOT a clean bill of health" while exiting 0. With no `--scope`
 	// we validate EVERY scope in the cache.
+	//
+	// ⚠ THIS CACHE-ROOT READ IS OUTSIDE `LoadStore`'s WRAP, AND THAT IS NOT CLOSED HERE —
+	// STATED SO IT IS NOT MISTAKEN FOR COVERED. The error handed to `cli.go` is the RAW
+	// `*os.PathError`, so a cache root that is SEARCHABLE but not READABLE (mode 0111 — the
+	// stamp `stat` in `ResolveState` still succeeds, so execution reaches here) prints
+	// `🔴 cairn: open <cache>: permission denied` at exit 3 where every other reader prints
+	// `index entry unreadable: under <root> (PermissionError: …)`, while the ORACLE dies with
+	// a traceback at exit 1. `recall` and `search` are byte-identical at 3 for that same
+	// root, because they reach the walk through `LoadStore`; only this verb reads the root
+	// itself. Both cache-root modes are `tests/parity/README.md` row 4, which carries them
+	// with a closing condition. UNGATED.
 	var held []string
 	entries, readErr := os.ReadDir(cache)
 	if readErr != nil {
@@ -583,7 +617,17 @@ func Validate(env Env, opts Options) (int, error) {
 
 	worst := ExitOK
 	for _, scope := range scopes {
-		index, loadErr := store.LoadIndex(cache, store.Collect,
+		// 🔴 THROUGH `LoadStore`, NOT `LoadIndex` DIRECTLY, AND THE ORACLE'S
+		// `cmd_validate` MOVED IN THE SAME COMMIT. `LoadIndex`'s residual ledger says a
+		// `Take` kind whose read fails "fails closed into a store-wide
+		// EntryUnreadableError" — that wrap is `LoadStore`'s, and this line bypassed it,
+		// so a mode-000 entry reached the CLI as a bare `*os.PathError` and printed
+		// `open <path>: permission denied` where every other reader prints the named
+		// `index entry unreadable: under <root> (PermissionError: …)` sentence. The exit
+		// code was already 3 via `cli.go`'s reader-error arm; the TEXT was not the
+		// oracle's — and the oracle's own answer was a traceback at exit 1. Both sides
+		// now read the store through the one function that owns the policy. #111.
+		index, loadErr := store.LoadStore(cache, "validated",
 			store.VisibleScopeSet([]string{scope}))
 		if loadErr != nil {
 			return 0, loadErr
@@ -650,25 +694,38 @@ func Validate(env Env, opts Options) (int, error) {
 		// selecting nothing prints `2050 deselected` and exits **5**, not 0. The two commands
 		// therefore need different checks, which is why this paragraph names both.
 		//
-		// ⚠ THE READ ERROR IS DISCARDED, AND THAT IS THE PRE-EXISTING BEHAVIOUR KEPT
-		// DELIBERATELY. `LoadIndex` above has ALREADY walked this directory and RETURNED on
-		// any error, so ABSENT CONCURRENT MUTATION a failure here is unreachable — an earlier
-		// form of this sentence claimed that unconditionally, and the precondition is the
-		// whole of it: a scope directory removed, renamed or chmod'd BETWEEN the two walks, or
-		// an `EMFILE`/`ENOMEM` at this call, reaches it and yields `checked = 0` beside a
-		// non-zero malformed count, i.e. the same negative-count nonsense from the other
-		// direction. It is still swallowed because the oracle swallows it rather than raising,
-		// so surfacing it would be a divergence with nothing behind it — MEASURED on the
-		// pinned interpreter (CPython 3.12.14), `Path("<mode-000 dir>").glob("*.md")` yields
-		// `[]` rather than a `PermissionError`.
+		// ⚠ THE READ ERROR IS DISCARDED, AND THE OLD JUSTIFICATION FOR THAT HAS EXPIRED —
+		// SAID HERE RATHER THAN LEFT STANDING AS A REASON. It read "it is still swallowed
+		// because the oracle swallows it rather than raising, so surfacing it would be a
+		// divergence with nothing behind it — MEASURED on the pinned interpreter (CPython
+		// 3.12.14), `Path("<mode-000 dir>").glob("*.md")` yields `[]` rather than a
+		// `PermissionError`". The oracle's `entry_files_in` now walks with `iterdir()`, so it
+		// RAISES here: the two clients disagree for the state that reaches this line.
+		//
+		// ⚠ WHAT REACHES IT IS THE WORLD CHANGING MID-RUN, AND NOTHING ELSE. `LoadIndex`
+		// above has ALREADY walked this directory INSIDE `LoadStore`'s wrap and RETURNED on
+		// any error, so no `chmod` and no static world gets this far; a scope directory
+		// removed or renamed BETWEEN the two walks — a concurrent `InstallSnapshot`, which
+		// renames the cache root aside and removes the retired one — or an `EMFILE`/`ENOMEM`
+		// at this call, is what does. MEASURED at `e162746` over one cache holding two
+		// scopes, the second removed after the first scope's line was printed
+		// (`validate --no-sync`, no `--scope`): this client prints
+		// `cairn: <scope>: 0 of 0 entry file(s) parse, 0 malformed` at exit **0** — a
+		// confident zero over a directory nothing read — while the oracle dies with a
+		// `FileNotFoundError` traceback at exit **1**. UNGATED, and declared in
+		// `tests/parity/README.md` → "What the gate structurally cannot see": no STATIC world
+		// reaches the read, so the parity gate cannot own it.
 		//
 		// ⚠ AN UNCLAIMED CONSEQUENCE, RECORDED BECAUSE NO FIXTURE COVERS IT: reading the
 		// directory (`EntryFileNames` → `os.ReadDir`) instead of globbing
 		// `<cache>/<scope>/*.md` also removes a latent divergence for scope names carrying
 		// glob metacharacters. The scope name used to be part of the PATTERN, while the
-		// oracle's `Path(scope_dir).glob("*.md")` globs only the pattern and treats the
-		// directory literally. MEASURED: a directory literally named `wid[get` gave Go `[]`
-		// plus `syntax error in pattern` — `validate` would have printed `0 of 0` — where the
+		// oracle — at the time this was measured — globbed with `Path(scope_dir).glob("*.md")`,
+		// which globs only the pattern and treats the directory literally. ⚠ PAST TENSE
+		// DELIBERATELY: the oracle no longer globs here at all, so the measurement is kept as
+		// the record of WHY the pattern was removed on this side rather than as a live
+		// comparison. MEASURED: a directory literally named `wid[get` gave Go `[]` plus
+		// `syntax error in pattern` — `validate` would have printed `0 of 0` — where the
 		// oracle listed the file. NOT claimed as a fix: nothing here exercises such a scope
 		// name, and whether one can reach a cache at all is not established.
 		entryNames, _ := store.EntryFileNames(filepath.Join(cache, scope))
