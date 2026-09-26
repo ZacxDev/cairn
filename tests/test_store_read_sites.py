@@ -73,6 +73,24 @@ a raw `iterdir` there would ADD a row, which the GROW arm catches, yet nothing h
 would notice the wrap CALL disappearing. `WRAP_CALLERS` below is the complementary
 half, and it is why there are two ledgers rather than one.
 
+## ⚠ KEYS AND OCCURRENCES ARE DIFFERENT NUMBERS, AND NEITHER IS QUOTED HERE
+
+`EXPECTED` has one entry per `<file>::<function>::<mechanism>` KEY, and each entry
+carries how many OCCURRENCES that key covers — so the two totals differ whenever a
+function lists more than once. `cmd_put` does (twice), so they differ today. Derive
+them; do not restate them:
+
+    python3 -c "import importlib.util as u; \
+      s=u.spec_from_file_location('l','tests/test_store_read_sites.py'); \
+      m=u.module_from_spec(s); s.loader.exec_module(m); \
+      d=m.discovered(); print('keys', len(d), 'occurrences', sum(d.values()))"
+
+🔴 THE COMMIT THAT INTRODUCED THIS FILE SAID "21 rows" IN ITS MESSAGE, AND THAT IS
+THE OCCURRENCE COUNT, NOT THE ROW COUNT — there are 20 rows. Recorded because it is
+the fourth stale literal this one change produced, in the file written to stop them,
+and because the message is immutable now: the branch is pushed and a force-push
+would rewrite a reviewed head. The numbers here are derived; that one is not.
+
 ## 🔴 WHAT THIS CANNOT SEE — read this before trusting a green run
 
   * **ONE MECHANISM CLASS ONLY.** It enumerates DIRECTORY LISTINGS —
@@ -116,9 +134,19 @@ REPO = Path(__file__).resolve().parents[1]
 #: `Call` node via `ast` — never by grep. 🔴 THE PARSE IS WHAT MAKES THIS USABLE
 #: IN THIS REPOSITORY: these files carry thousands of lines of prose that NAME
 #: `iterdir()` and `glob()` while explaining them, and a textual scan returns
-#: those docstring mentions as sites. Measured while building this: `ast` finds
-#: 13 Python sites where a grep for the same tokens returns 30+, nearly all of
-#: them comments.
+#: those docstring mentions as sites. RE-DERIVED on the tree that ships this file:
+#: `ast` finds **12** Python call sites across `PY_FILES` where the equivalent
+#: textual scan returns **23** — the extra 11 are prose. Both numbers move with the
+#: corpus, so re-derive rather than trusting them:
+#:
+#:   git ls-files -z -- cairn 'lib/*.py' | xargs -0 grep -oE \
+#:     '\.iterdir\(|\.glob\(|\.rglob\(|\.scandir\(|\.listdir\(|\.walk\(' | wc -l
+#:
+#: ⚠ AN EARLIER DRAFT OF THIS COMMENT SAID "13 Python sites" AND "30+" — the 13 was
+#: measured BEFORE `cmd_routes` was wrapped in this same change (wrapping removes
+#: the site), and the "30+" was never derived at all. Two stale literals in the file
+#: whose whole purpose is to stop stale literals, which is the argument for the
+#: command above being here instead of a number.
 PY_MECHANISMS = frozenset({"iterdir", "glob", "rglob", "scandir", "listdir", "walk"})
 
 #: The Go equivalents. Matched textually AFTER comments and string literals are
