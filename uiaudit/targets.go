@@ -21,36 +21,70 @@ import (
 // `internal/ui/routes.go` reaches this program without anybody editing this file, and a
 // row REMOVED stops appearing here for the same reason.
 
-// Viewport is a capture width. The two values are the hub's own two, spelled as its
-// wire strings so the push cannot disagree with the server's closed set.
+// Viewport is a capture width.
 type Viewport struct {
-	Name          string // The hub's wire value: "mobile" | "desktop"
+	// Name is this width's label. For a PUSHED viewport it is the hub's own wire string
+	// and must stay one of the server's closed set; for a local-only one it is a label
+	// this program prints and nothing else reads.
+	Name          string
 	Width, Height int
+	// Touch is whether the emulation reports a touch device. It is a FIELD rather than
+	// `Name == Mobile.Name`, which is what it used to be: that comparison made a
+	// behavioural property a function of a STRING, so a fourth width named "phone" would
+	// have silently emulated a desktop pointer, and the `:hover` rules this surface
+	// carries render differently under the two.
+	Touch bool
+	// Push is whether this capture is sent to the audit hub.
+	//
+	// 🔴 THE HUB'S VIEWPORT SET IS CLOSED AND THIS PROGRAM CANNOT WIDEN IT. `Validate`
+	// refuses a page whose viewport is outside `{mobile, desktop}` — that is the server's
+	// contract, not a preference here — and the hub matches its P2 pixel diff on
+	// `url`+`viewport`, so a page pushed under a name it has never stored would be "new"
+	// on every run and the diff would never say anything. Capturing more widths LOCALLY
+	// costs the hub nothing and is where the layout assertions read from; pushing them
+	// would be a wire-contract change this repository does not own.
+	Push bool
 }
 
-// 🔴 THE TWO VALUES COME FROM THE CONSUMER, NOT FROM A PREFERENCE HERE, AND THAT IS WHY THEY ARE
-// THESE TWO. The upstream hub's own native crawl captures at 390 and 1440, and it matches its P2
-// diff on `url`+`viewport` — so a producer capturing at any other pair would be diffed against
-// pages rendered at widths its own screenshots were never taken at. Verified against a real ingested
-// run: the service stored `width=390` on the three mobile rows and `width=1440` on the three desktop
-// rows, i.e. it records the width it derives from the viewport NAME rather than anything this
-// harness sends. Changing either number silently changes what the diff compares.
+// 🔴 THE TWO PUSHED VALUES COME FROM THE CONSUMER, NOT FROM A PREFERENCE HERE. The upstream hub's
+// own native crawl captures at 390 and 1440, and it matches its P2 diff on `url`+`viewport` — so a
+// producer capturing at any other pair would be diffed against pages rendered at widths its own
+// screenshots were never taken at. Verified against a real ingested run: the service stored
+// `width=390` on the three mobile rows and `width=1440` on the three desktop rows, i.e. it records
+// the width it derives from the viewport NAME rather than anything this harness sends. Changing
+// either number silently changes what the diff compares.
 //
-// ⚠ THE COUNT SATISFIES THIS REPOSITORY'S TWO-POINTS RULE; THE VALUES DO NOT COME FROM IT. Two
-// widths is "measure at ≥2 points"; WHICH two is the consumer's contract. Both facts, because
-// either alone reads as arbitrary.
+// 🔴 AND THREE MORE ARE CAPTURED LOCALLY, BECAUSE TWO POINTS COULD NOT SEE THE DEFECT THAT
+// PROMPTED THEM. The browse surface is a responsive card grid, and a grid has THREE interesting
+// regimes — one column, a few columns, many columns — which two widths 1050px apart cannot
+// distinguish: 390 and 1440 are both satisfied by a layout that is a single centred column at
+// every width above a phone, which is exactly what this surface was. The ultrawide end is the
+// sharpest case and it is a real machine rather than a hypothesis: the operator's display is 3427
+// CSS pixels, more than twice Tailwind's largest default breakpoint, and every rule written
+// against the default ladder renders identically at 1536 and at 3427.
 //
-// 390 is the phone width this surface has never been rendered at; 1440
-// is the desktop one the hub's native crawl uses.
+// ⚠ THE COUNT SATISFIES THIS REPOSITORY'S ≥2-POINTS RULE SEVERAL TIMES OVER; THE TWO PUSHED VALUES
+// STILL DO NOT COME FROM IT. Both facts, because either alone reads as arbitrary.
+//
+// The five, and what each one is:
+//
+//	mobile     390×844   a phone. The only width where the card grid is one column.
+//	tablet     834×1112  a portrait tablet — the first width the grid can hold two cards.
+//	laptop     1280×800  the commonest laptop viewport, and where `lg:` takes effect.
+//	desktop    1440×900  the hub's own desktop width. PUSHED.
+//	ultrawide  3440×1440 past the `ultra:` breakpoint (2000px), where the grid is widest.
 var (
-	Mobile  = Viewport{Name: "mobile", Width: 390, Height: 844}
-	Desktop = Viewport{Name: "desktop", Width: 1440, Height: 900}
+	Mobile    = Viewport{Name: "mobile", Width: 390, Height: 844, Touch: true, Push: true}
+	Tablet    = Viewport{Name: "tablet", Width: 834, Height: 1112, Touch: true}
+	Laptop    = Viewport{Name: "laptop", Width: 1280, Height: 800}
+	Desktop   = Viewport{Name: "desktop", Width: 1440, Height: 900, Push: true}
+	Ultrawide = Viewport{Name: "ultrawide", Width: 3440, Height: 1440}
 )
 
-// Viewports is the capture matrix, in a fixed order so a push's page order is stable
+// Viewports is the capture matrix, in ascending width so a push's page order is stable
 // across runs — the hub matches P2 diff pages on `url`+`viewport`, and a stable order
 // keeps a run's report readable beside the previous one.
-var Viewports = []Viewport{Mobile, Desktop}
+var Viewports = []Viewport{Mobile, Tablet, Laptop, Desktop, Ultrawide}
 
 // Target is one page to capture: a path to navigate and whether it is captured with a
 // session or without one.
@@ -98,14 +132,28 @@ type Target struct {
 // `cairn-ui` runs against a token file rather than a control journal. The walk therefore
 // captures the index and no per-scope page, and says so. Reaching the per-scope page needs a
 // journal-backed world, which is named in `README.md` as a declared gap.
+// ⚠ THE BROWSE PAGES ARE IN HERE FOR THE SAME REASON AND WITH THE SAME HAZARD. `GET /`
+// renders one card per scope, each linking `/scope?id=<control.ID>`; `GET /scope?id=…`
+// lists entries, each linking `/entry?ref=…&scope=…`. Both parameters are values the
+// SURFACE publishes — one a minted id, the other a filename stem — and guessing either
+// would reproduce the walk over 404s that reported success. `GET /entry` is NOT here: an
+// entry page publishes only its own breadcrumb and its task refs, and a task ref is an
+// external URL that [ExpandLinks] declines by design.
 var linkExpanded = map[string]bool{
+	ui.RootPath:  true,
+	ui.ScopePath: true,
 	ui.SharePath: true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.
+//
+// ⚠ `GET /entry` NAVIGATED BARE IS A REAL PAGE AND NOT A REFUSAL, which is what makes it
+// safe to capture here — `internal/ui`'s `NavigatePage` answers 200 to a request that named
+// no entry, because a request that named nothing can learn nothing. The pages that MATTER
+// are reached by link from `/scope?id=…`, which is why `/scope` is in `linkExpanded` above.
 var plainGET = map[string]bool{
-	ui.RootPath:   true,
 	ui.SignInPath: true,
+	ui.EntryPath:  true,
 }
 
 // notADocument is the THIRD class: a `GET` row a browser walk must not capture as a page,
@@ -301,18 +349,50 @@ func hasRow(ledger []string, want string) bool {
 
 // ExpandLinks turns the hrefs a link-expanded page rendered into further targets.
 //
-// 🔴 ONLY SAME-PATH, SAME-ORIGIN, RELATIVE HREFS, AND THE NARROWING IS WHAT KEEPS THE WALK
-// FROM BECOMING A CRAWLER. `internal/ui/render.go`'s `safeHref` allowlists the schemes that
-// may reach an href, so an entry's `ref` can legitimately render an external link — and a
-// harness that followed one would be sending somebody else's site through the hub. So an
-// expansion is accepted only when it is a relative href whose PATH equals the page it came
-// from: the share index's per-scope links, and nothing else. Anything else is returned as a
-// declined href so the log says what it saw rather than dropping it.
-func ExpandLinks(from Target, hrefs []string) (targets []Target, declined []string) {
+// 🔴 ONLY RELATIVE, SAME-ORIGIN HREFS THAT CARRY A QUERY AND ADDRESS A PATH THE LEDGER
+// DECLARES, AND THE NARROWING IS WHAT KEEPS THE WALK FROM BECOMING A CRAWLER.
+// `internal/ui/render.go`'s `safeHref` allowlists the schemes that may reach an href, so an
+// entry's task `ref` can legitimately render an EXTERNAL link — and a harness that followed
+// one would be sending somebody else's site through the hub. Anything not accepted is
+// returned as a declined href so the log says what it saw rather than dropping it.
+//
+// 🔴 THE ACCEPTANCE TEST WAS `u.Path == from.Path` AND IT WIDENED TO "A DECLARED GET ROW",
+// WHICH IS A STRICTLY DIFFERENT CLAIM RATHER THAN A RELAXATION. The old rule was written
+// when the only link-publishing page was the share index, whose per-scope links point back
+// at `/share`; the browse pages link ACROSS rows — `/` publishes `/scope?id=…` and `/scope`
+// publishes `/entry?…` — so a same-path rule would have declined every one of them and the
+// walk would have captured the two new pages only in their parameterless form. That is the
+// under-coverage this file exists to refuse: a green run over pages that are not the pages
+// a reader sees.
+//
+// ⚠ WHAT THE WIDENING DOES NOT GIVE UP. The href must still be RELATIVE and host-less, so
+// nothing off this origin is ever fetched; it must still carry a QUERY, so a bare link to
+// another row does not re-enqueue a page the ledger already accounts for; and the path must
+// be a row this server DECLARES, so a link to a path nobody routes is declined rather than
+// captured as whatever it happens to answer. What is new is one obligation on the caller:
+// the queue must dedupe on `Path`, because a discovered page may itself publish links and a
+// cycle (`/scope?id=X` → `/entry?…` → breadcrumb back to `/scope?id=X`) is now reachable.
+// `walkQueue` is where that lives.
+//
+// 🔴 AND IT IS BOUNDED PER PARENT BY [MaxExpansionsPerPage], WHICH IS A CAP THE HUB IMPOSES
+// RATHER THAN A PREFERENCE HERE — measured, and the unbounded version FAILED. A store's
+// scope page publishes one link per entry, and the fixture store carries 126 of them: the
+// first unbounded walk captured 650 pages, built a 260-page payload and was refused by
+// `Validate` with `too many pages: 260 (max 200)` after fifteen minutes of capture. The
+// arithmetic is `targets × pushed viewports`, and the entry pages are one TEMPLATE, so the
+// 127th adds nothing the 4th did not. What the cap must never become is a silent sample —
+// the skipped hrefs are counted and logged, which is the difference between a declared
+// bound and under-coverage.
+func ExpandLinks(from Target, hrefs []string, ledger []string) (targets []Target, declined []string, bounded int) {
 	seen := map[string]bool{}
 	for _, href := range hrefs {
 		u, err := url.Parse(href)
-		if err != nil || u.IsAbs() || u.Host != "" || u.Path != from.Path || u.RawQuery == "" {
+		if err != nil || u.IsAbs() || u.Host != "" || u.RawQuery == "" {
+			declined = append(declined, href)
+			continue
+		}
+		row, declaredAs := getRowFor(ledger, u.Path)
+		if !declaredAs {
 			declined = append(declined, href)
 			continue
 		}
@@ -323,12 +403,63 @@ func ExpandLinks(from Target, hrefs []string) (targets []Target, declined []stri
 		seen[p] = true
 		targets = append(targets, Target{
 			Path: p, PushURL: p, SignedIn: from.SignedIn,
-			LedgerRow: from.LedgerRow + " (link from " + from.Path + ")",
+			// 🔴 ATTRIBUTED TO THE ROW THE HREF ADDRESSES, NOT TO THE PAGE THAT PUBLISHED
+			// IT. `LedgerAccounting` reads `parentRow` off this string to decide which row
+			// a capture discharges; attributing `/scope?id=X` to `GET / content` would
+			// leave `GET /scope content` handled by NEITHER arm, which that function
+			// refuses — correctly, because the row really would be uncaptured.
+			LedgerRow: row + " (link from " + from.Path + ")",
+			// A discovered page expands in turn when its own path publishes links. That is
+			// what reaches an ENTRY page at all: `/entry?…` is only ever published by a
+			// `/scope?id=…` page, which is itself only ever published by `/`.
+			ExpandLinks: linkExpanded[u.Path],
 		})
 	}
-	// Sorted so a push's page order does not depend on render order.
+	// 🔴 SORTED BEFORE THE CAP IS APPLIED, WHICH IS THE ONLY ORDER THAT MAKES THE CAP
+	// DETERMINISTIC. Capping inside the loop above would take whichever hrefs the DOM
+	// happened to list first, so "which entry pages did this walk look at" would be a
+	// function of render order — and the hub matches its P2 diff on `url`, so a set that
+	// moved between runs would make every page "new" on half of them. Sorting first makes
+	// the sample the same sample every time over an unchanged store.
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Path < targets[j].Path })
-	return targets, declined
+	if len(targets) > MaxExpansionsPerPage {
+		// ⚠ BOUNDED IS NOT DECLINED, AND THE TWO ARE RETURNED SEPARATELY BECAUSE THEY MEAN
+		// OPPOSITE THINGS. A decline is a target the walk REFUSES to visit — an external
+		// URL, a path no row declares — and one appearing is a finding. A bounded target is
+		// one the walk would happily visit and the hub's page cap will not hold. Folding
+		// them into one number would make a short walk indistinguishable from a narrow one.
+		bounded = len(targets) - MaxExpansionsPerPage
+		targets = targets[:MaxExpansionsPerPage]
+	}
+	return targets, declined, bounded
+}
+
+// MaxExpansionsPerPage is how many discovered targets ONE page contributes.
+//
+// 🔴 IT EXISTS BECAUSE THE UNBOUNDED VERSION WAS MEASURED AND FAILED, NOT AS A PRECAUTION.
+// A scope page publishes one link per entry; the fixture store carries 126, so the first
+// unbounded walk captured 650 pages, spent fifteen minutes doing it and then built a
+// 260-page payload that `Validate` refused with `too many pages: 260 (max 200)` — the hub's
+// own cap, reached because the arithmetic is `targets × pushed viewports`.
+//
+// ⚠ FOUR, AND THE NUMBER IS A JUDGEMENT RATHER THAN A DERIVATION. Entry pages are ONE
+// template: the 127th tells a layout audit nothing the 4th did not, and four is enough to
+// include entries of visibly different shapes (the fixture's sorted order puts an entry with
+// an empty section and entries with and without journal bullets inside it). It is NOT derived
+// from `MaxPages`, because the divisor — how many link-publishing pages a deployment has —
+// is a property of the store rather than of this program. `Validate` stays the backstop: if
+// a store ever has enough SCOPES to blow the cap at four entries each, the push is refused
+// with the arithmetic rather than silently truncated.
+const MaxExpansionsPerPage = 4
+
+// getRowFor is the ledger row declaring `GET <path>`, classes included.
+func getRowFor(ledger []string, path string) (string, bool) {
+	for _, row := range ledger {
+		if fields := strings.Fields(row); len(fields) >= 2 && fields[0] == "GET" && fields[1] == path {
+			return row, true
+		}
+	}
+	return "", false
 }
 
 // LedgerAccounting is the check the caller prints and the walk refuses on.

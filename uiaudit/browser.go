@@ -41,6 +41,19 @@ type Capture struct {
 	// Hrefs is what this page published, populated only when the target says it publishes
 	// links. See [ExpandLinks].
 	Hrefs []string
+
+	// ScriptCount is `document.scripts.length` as the BROWSER counted it after the page
+	// settled.
+	//
+	// 🔴 IT IS COUNTED IN THE DOM RATHER THAN GREPPED OUT OF THE HTML, AND THAT IS THE
+	// WHOLE VALUE OF MEASURING IT HERE. `internal/ui`'s XSS story partly rests on this
+	// surface shipping no script at all, and a string search for `<script` over the served
+	// bytes cannot see a script an INJECTION created, a `<script>` a parser recovered from
+	// malformed markup, or one a subresource inserted. `document.scripts` is what the
+	// browser actually has. It is a measurement and not a refusal at this level: this
+	// module's own positive-control page carries a script on purpose, so the assertion
+	// belongs to the walk over the real surface — see `refuseWalkRegressions`.
+	ScriptCount int
 }
 
 // AxeViolation is the subset of an axe result the push needs. The `ID` is the whole point:
@@ -502,7 +515,10 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 		// harness whose config PINS a dimension is structurally blind to that
 		// dimension's defects; this surface has never been rendered at any width, so
 		// "the default viewport" would be a dimension nobody chose.
-		emulation.SetDeviceMetricsOverride(int64(vp.Width), int64(vp.Height), 1, vp.Name == Mobile.Name),
+		// The touch flag is `vp.Touch` and NOT `vp.Name == Mobile.Name`, which is what it
+		// was: a behavioural property keyed on a STRING is a property a fourth width named
+		// anything else silently loses. See [Viewport.Touch].
+		emulation.SetDeviceMetricsOverride(int64(vp.Width), int64(vp.Height), 1, vp.Touch),
 		chromedp.Navigate(b.base+t.Path),
 		chromedp.Sleep(350*time.Millisecond),
 	); err != nil {
@@ -580,6 +596,13 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 			&c.Hrefs)); err != nil {
 			return nil, fmt.Errorf("reading %s's links at %s: %w", t.Path, vp.Name, err)
 		}
+	}
+
+	// `document.scripts.length`, read off the live DOM. See [Capture.ScriptCount] for why
+	// this is a browser question and not a grep, and `refuseWalkRegressions` for where it
+	// is turned into a refusal.
+	if err := chromedp.Run(b.ctx, chromedp.Evaluate(`document.scripts.length`, &c.ScriptCount)); err != nil {
+		return nil, fmt.Errorf("counting scripts on %s at %s: %w", t.Path, vp.Name, err)
 	}
 
 	// Layout smells, from the hub's own script, returning its own raw keys.

@@ -54,6 +54,8 @@ import (
 func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 	want := []string{
 		"GET / content",
+		"GET /entry content",
+		"GET /scope content",
 		"GET /share content",
 		"GET /sign-in public",
 		"GET /sign-in/github/callback public",
@@ -126,9 +128,24 @@ func (refusingAuth) Authenticate(*http.Request) (identity.Identity, error) {
 	return identity.Identity{}, control.ErrNoCredential{}
 }
 
-type staticSource struct{ scopes []Scope }
+type staticSource struct {
+	scopes []Scope
+	// hits is what `Search` answers with, regardless of the query. The dispatch tests
+	// measure ROUTING, and a fixture that actually matched would make them measure
+	// `internal/report`'s scorer instead. `TestSearchIsNarrowedByTheCallersAuthority`
+	// drives the real `StoreSource` against a store on disk.
+	hits []Hit
+}
 
 func (s staticSource) Visible(control.Authorization) ([]Scope, error) { return s.scopes, nil }
+
+func (s staticSource) Search(_ control.Authorization, query string) (SearchResults, error) {
+	scopes := make([]string, 0, len(s.scopes))
+	for _, sc := range s.scopes {
+		scopes = append(scopes, sc.Name)
+	}
+	return SearchResults{Query: query, Hits: s.hits, TotalHits: len(s.hits), ScopesSearched: scopes}, nil
+}
 
 // staticSharing is a share world with no journal behind it, so the dispatch tests
 // measure ROUTING rather than the control plane. `sharing_test.go` is what drives the
@@ -325,7 +342,16 @@ func publicRoutes() []string {
 // makes the positive control survive a row whose bare answer is a refusal. Requiring 200
 // would have forced the callback to answer 200 to a request it must refuse.
 var bareGETAnswer = map[string]int{
-	"GET / content":                       http.StatusOK,
+	"GET / content": http.StatusOK,
+	// 🔴 THE BROWSE PAIR ANSWERS 200 TO A PARAMETERLESS REQUEST, AND THAT IS A DECISION
+	// RATHER THAN A CONVENIENCE. A refusal is uniform on this surface because
+	// distinguishing "no such scope" from "not yours" enumerates the store — but a request
+	// carrying no id has named no scope, so there is nothing for a uniform refusal to
+	// protect. Answering 404 to it would also make these the only content rows whose
+	// authority consultation `TestEveryContentRouteConsultsTheAuthority` could not
+	// measure, because that walk reads a rendered page. See `NavigatePage`.
+	"GET /scope content":                  http.StatusOK,
+	"GET /entry content":                  http.StatusOK,
 	"GET /share content":                  http.StatusOK,
 	"GET /sign-in public":                 http.StatusOK,
 	"GET /static/app.css public":          http.StatusOK,
@@ -579,6 +605,8 @@ func TestTheRootRedirectsABrowserAndRefusesEverythingElse(t *testing.T) {
 // rather than being silently absorbed.
 var contentAuthority = map[string]string{
 	"GET / content":      "source",
+	"GET /scope content": "source",
+	"GET /entry content": "source",
 	"GET /share content": "sharing",
 }
 
@@ -592,6 +620,15 @@ type countingSource struct {
 func (c *countingSource) Visible(control.Authorization) ([]Scope, error) {
 	c.calls++
 	return c.scopes, nil
+}
+
+// Search counts too. 🔴 A SEARCH THAT DID NOT COUNT WOULD BE A HOLE IN THE AUTHORITY
+// WALK ONE PAGE WIDE: `GET /?q=…` renders an answer about what this credential can find,
+// which is an answer about authority, and a source method that answered without being
+// counted would let a handler render it having asked nobody.
+func (c *countingSource) Search(control.Authorization, string) (SearchResults, error) {
+	c.calls++
+	return SearchResults{}, nil
 }
 
 // TestEveryContentRouteConsultsTheAuthority is a REGRESSION test, and the defect it

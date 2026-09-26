@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -154,9 +155,20 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 		// TARGETS. The share index's per-scope links are `control.ID`s nobody can guess, so
 		// the only honest way to reach them is to read what the surface itself offered — see
 		// [ExpandLinks] for the measured reason a guess was worse than useless here.
+		//
+		// 🔴 AND IT DEDUPES ON `Path`, WHICH BECAME AN OBLIGATION RATHER THAN A TIDINESS
+		// WHEN A DISCOVERED PAGE STARTED PUBLISHING LINKS OF ITS OWN. The browse pages link
+		// across rows and back: `/` → `/scope?id=X` → `/entry?…` → a breadcrumb to
+		// `/scope?id=X`. Without this set that is an unbounded queue, and the symptom is a
+		// walk that never returns rather than one that reports a defect. `/scope?id=X` is
+		// also published by TWO pages — the root's cards and the parameterless `/scope`
+		// navigation list — so even without a cycle it would be captured twice, at five
+		// widths each, and pushed as ten pages the hub would diff against themselves.
 		queue := make([]Target, 0, len(targets))
+		enqueued := map[string]bool{}
 		for _, t := range targets {
-			if t.SignedIn == signedIn {
+			if t.SignedIn == signedIn && !enqueued[t.Path] {
+				enqueued[t.Path] = true
 				queue = append(queue, t)
 			}
 		}
@@ -169,30 +181,51 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 					return fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, world.Log())
 				}
 				captures = append(captures, c)
-				fmt.Printf("uiaudit: captured %-34s %-7s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v) console=%d net=%d digest=%v\n",
+				fmt.Printf("uiaudit: captured %-38s %-9s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v) scripts=%d console=%d net=%d digest=%v\n",
 					t.Path, vp.Name, c.DocStatus, len(c.Violations),
 					c.Layout.SmallTapTargets, c.Layout.SmallText, c.Layout.HorizontalOverflow,
-					c.Layout.MissingViewportMeta,
+					c.Layout.MissingViewportMeta, c.ScriptCount,
 					len(c.Console), len(c.Network), c.HasDigest())
 
-				// Expansion is read from ONE viewport's render, not both: the hrefs a page
-				// publishes are an authority answer and cannot depend on a width, and
-				// enqueueing them twice would capture every discovered page twice.
+				// Expansion is read from ONE viewport's render, not all five: the hrefs a
+				// page publishes are an authority answer and cannot depend on a width, and
+				// enqueueing them once per width would capture every discovered page five
+				// times. The dedupe above would absorb that, which is exactly why this
+				// narrowing is kept explicit rather than left to it — two mechanisms doing
+				// one job is how the surviving one stops being read.
 				if t.ExpandLinks && vp == Viewports[0] {
-					found, declined := ExpandLinks(t, c.Hrefs)
+					found, declined, bounded := ExpandLinks(t, c.Hrefs, ledger)
 					for _, d := range declined {
-						fmt.Printf("uiaudit:   declined href %q from %s (not a same-path relative link with a query)\n", d, t.Path)
+						fmt.Printf("uiaudit:   declined href %q from %s (not a relative link, carries no query, or names no declared GET row)\n", d, t.Path)
+					}
+					if bounded > 0 {
+						// 🔴 PRINTED, AND NOT AS A DECLINE. These are pages the walk WOULD
+						// have visited; the hub's 200-page cap is what stops it, and the
+						// arithmetic is `targets × pushed viewports`. Silently taking the
+						// first four would make a bounded walk read as a complete one, which
+						// is the under-coverage this whole derivation exists against.
+						fmt.Printf("uiaudit:   %s published %d further target(s); BOUNDED to the first %d by sorted path "+
+							"(MaxExpansionsPerPage — these pages are one template, and the hub's page cap is %d)\n",
+							t.Path, bounded+len(found), MaxExpansionsPerPage, MaxPages)
 					}
 					if len(found) == 0 {
 						// ⚠ NOT AN ERROR, AND SAYING WHY IS THE POINT. On the token-file
 						// deployment the share index renders "No scope is administrable by
 						// this credential" — an authority answer, not an empty store — so
-						// zero links is the correct output. `README.md` declares reaching
-						// the per-scope page as a gap needing a journal-backed world.
-						fmt.Printf("uiaudit:   %s published no per-scope links: on a token-file deployment no scope is administrable, so the index is the only page this row has\n", t.Path)
+						// zero links is the correct output there. `README.md` declares
+						// reaching the per-scope SHARE page as a gap needing a
+						// journal-backed world. The BROWSE pages are not in that position:
+						// a token-file row is unrestricted over the store's scopes, so
+						// `GET /` does publish scope links on this deployment.
+						fmt.Printf("uiaudit:   %s published no expandable links\n", t.Path)
 					}
-					queue = append(queue, found...)
 					for _, f := range found {
+						if enqueued[f.Path] {
+							fmt.Printf("uiaudit:   already queued %s (published again by %s)\n", f.Path, t.Path)
+							continue
+						}
+						enqueued[f.Path] = true
+						queue = append(queue, f)
 						fmt.Printf("uiaudit:   expanded %s -> %s\n", t.Path, f.Path)
 					}
 				}
@@ -204,6 +237,10 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 	}
 
 	printSignalSummary(captures, browser.FaviconRefusals())
+
+	if err := refuseWalkRegressions(captures); err != nil {
+		return err
+	}
 
 	payload, files, err := BuildPayload(label, captures)
 	if err != nil {
@@ -315,6 +352,101 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 // is counted separately (see [Browser.FaviconRefusals]) and the per-page network zero below
 // is a claim about SUBRESOURCES THE PAGE ASKED FOR, which is a narrower sentence than the one
 // that was wrong.
+// refuseWalkRegressions turns three per-page measurements into a FAILED WALK.
+//
+// 🔴 A NUMBER IN A SUMMARY LINE IS NOT A GATE, AND THIS FILE ALREADY RECORDS WHAT THAT
+// COSTS. `printSignalSummary` has printed `pages with horizontal overflow=N` since this
+// harness existed; nothing read it, so a responsive regression would have been a digit in a
+// log beside an exit 0. The three below are the properties this surface is supposed to
+// have, so each is a refusal:
+//
+//   - NO HORIZONTAL OVERFLOW AT ANY CAPTURED WIDTH. This is the single layout defect no
+//     unit test in this repository can see, and the one content is most likely to cause: a
+//     long unbroken line in a store entry's body makes the whole PAGE scroll sideways, on a
+//     phone above all. The widths are the whole point — a page can be clean at 390 and 1440
+//     and broken at 834, which is why there are five.
+//   - NO SCRIPT. `internal/ui` ships none, and part of its XSS story rests on that; the
+//     console-zero claim in the summary above is explicitly structural FOR THAT REASON, so
+//     the day a script appears both that claim and the guard behind it go quiet at once.
+//   - AXE ACTUALLY RAN. `Violations: 0` is produced identically by a clean page and by an
+//     injection that never executed, and this whole program's a11y half is inert in the
+//     second case. A decodable `testEngine` is what separates them.
+//
+// ⚠ IT IS NOT A THRESHOLD ON `SmallTapTargets` OR `SmallText`. Those two are the hub's to
+// turn into findings — `vendor-js/VENDOR.md` records that the server is the single source
+// of those thresholds and that a harness computing one here would be a second, invisible
+// copy. The three above are not thresholds: each is a binary property with no number in it.
+func refuseWalkRegressions(captures []*Capture) error {
+	if len(captures) == 0 {
+		return fmt.Errorf("refuseWalkRegressions was handed NO capture, so its clean verdict would be about nothing")
+	}
+	var overflow, scripted, axeless []string
+	widths := map[string]bool{}
+	for _, c := range captures {
+		where := fmt.Sprintf("%s at %s (%dpx)", c.Target.Path, c.Viewport.Name, c.Viewport.Width)
+		widths[c.Viewport.Name] = true
+		if c.Layout.HorizontalOverflow {
+			overflow = append(overflow, fmt.Sprintf("%s: scrollWidth=%d > innerWidth=%d",
+				where, c.Layout.ScrollWidth, c.Layout.InnerWidth))
+		}
+		if c.ScriptCount != 0 {
+			scripted = append(scripted, fmt.Sprintf("%s: document.scripts.length=%d", where, c.ScriptCount))
+		}
+		// The same discriminator `control_test.go` uses: an axe result that decodes and
+		// carries the engine block is an axe result that ran.
+		if !bytes.Contains(c.AxeJSON, []byte(`"testEngine"`)) {
+			axeless = append(axeless, where)
+		}
+	}
+	// 🔴 THE WIDTH COUNT IS PART OF THE VERDICT, BECAUSE A CLEAN RUN OVER ONE WIDTH IS NOT
+	// A CLEAN RUN. A matrix that silently collapsed — a `Viewports` edited to one entry, a
+	// capture loop that broke out early — would produce zero overflow findings and read
+	// exactly like a responsive surface.
+	if len(widths) < len(Viewports) {
+		return fmt.Errorf("the walk captured %d distinct viewport(s) (%d declared): the matrix collapsed, so "+
+			"a zero overflow count below is a fact about one width rather than about the surface",
+			len(widths), len(Viewports))
+	}
+	var refusals []string
+	if len(overflow) > 0 {
+		refusals = append(refusals, fmt.Sprintf("HORIZONTAL OVERFLOW on %d capture(s) — the page scrolls "+
+			"sideways, which no unit test in this repository can see:\n    %s",
+			len(overflow), strings.Join(overflow, "\n    ")))
+	}
+	if len(scripted) > 0 {
+		refusals = append(refusals, fmt.Sprintf("SCRIPT ON THE PAGE on %d capture(s) — this surface ships "+
+			"none, and the console-zero claim above is structural only while that holds:\n    %s",
+			len(scripted), strings.Join(scripted, "\n    ")))
+	}
+	if len(axeless) > 0 {
+		refusals = append(refusals, fmt.Sprintf("AXE DID NOT RUN on %d capture(s) — a zero violation count "+
+			"from a page axe never inspected is indistinguishable from a clean one:\n    %s",
+			len(axeless), strings.Join(axeless, "\n    ")))
+	}
+	if len(refusals) > 0 {
+		return fmt.Errorf("the walk measured %d regression class(es) over %d capture(s):\n  %s",
+			len(refusals), len(captures), strings.Join(refusals, "\n  "))
+	}
+	fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts, %d/%d captures carry a decodable axe "+
+		"testEngine — over %d distinct width(s): %s\n",
+		len(captures)-len(axeless), len(captures), len(widths), viewportWidths())
+	return nil
+}
+
+// viewportWidths renders the matrix for a log line, so the run's own output says which
+// widths its clean verdict covers rather than leaving a reader to look them up.
+func viewportWidths() string {
+	parts := make([]string, 0, len(Viewports))
+	for _, vp := range Viewports {
+		push := ""
+		if vp.Push {
+			push = " PUSHED"
+		}
+		parts = append(parts, fmt.Sprintf("%s=%d%s", vp.Name, vp.Width, push))
+	}
+	return strings.Join(parts, ", ")
+}
+
 func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	var axe, console, netw, tap, text, overflow, noViewport, digests int
 	rules := map[string]int{}

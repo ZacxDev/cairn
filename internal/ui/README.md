@@ -1497,3 +1497,203 @@ looked, not because the battery grew on its own.
   under contention.
 - **Nothing measures the deployed instance**, which is the gap the retracted bullet at the end
   of Phase C's section now states honestly.
+
+---
+
+# Phase E — the browse surface: cards, search and two-level drill-down
+
+The one page became three, and the reason is an operator's complaint rather than a feature
+request: *"it's not intuitive how what I see maps back to the underlying data (what's the
+title in each card? what's each section and line item?)"* and *"I should be able to click on
+a card to view full details, down to individual entries."* Every guard on this package was
+green while that was true, which is the shape worth recording — escaping, authority, routing
+and class were all measured and none of them is a claim about whether a reader can tell what
+they are looking at.
+
+| route | class | what |
+|---|---|---|
+| `GET /` | `content` | one card per readable scope, plus the search box (`?q=`) |
+| `GET /scope?id=<control.ID>` | `content` | that scope's entry list |
+| `GET /entry?scope=<control.ID>&ref=<stem>` | `content` | one entry: its sections and its line items |
+
+## 🔴 The decision this change settles: `internal/ui` reads entry STRUCTURE from `internal/store`, not through `internal/report`
+
+`claudedocs/handoff-cairn-control-plane.md` filed *"whether `cairn-ui` should ever render
+through `internal/report`"* as an open question with the closing condition **"a written line
+for (d)"**. This is that line.
+
+**Decided: `internal/ui` parses entry files with `internal/store`'s own parsers —
+`store.ExtractSections`, `store.ParseJournalBullets`, `store.JournalBullet.OpennessPopulation`
+— and renders the resulting VALUES as HTML. It does not render through `internal/report`, and
+it does not write a parser of its own.** Three reasons, in the order they bind:
+
+1. **`internal/report` renders TEXT whose bytes are pinned against the Python oracle.** Its
+   whole contract is `RenderText`, and `tests/parity/` diffs those bytes byte-for-byte between
+   two clients. A browser needs a `<section>` per heading and an `<li>` per bullet; getting
+   there through `report` would mean parsing its rendered output back apart — a second parser
+   with extra steps, whose input is a format deliberately frozen for a different consumer.
+   Worse, it would make every HTML change on this surface a change to something the parity gate
+   watches.
+2. **A hand-rolled markdown reader here would be the duplicated predicate this repository
+   refuses everywhere else.** `store.HeadingBlocks` already knows that a `#` inside a code fence
+   is not a heading — its comment records that treating one as a heading ENDS the section early
+   and surfaces half an entry's nuance while looking like a complete read.
+   `store.ParseJournalBullets` already knows that an INDENTED `-` is a continuation and not a
+   new bullet, measured over the live corpus. A browser that disagreed with either would render
+   a structure the CLI contradicts, and the disagreement would look like a stale cache.
+3. **Openness is decided in ONE place and this surface reads it.** The badge comes from
+   `store.JournalBullet.OpennessPopulation`, which is the single source of the precedence order
+   — its own comment records a delta audit on the oracle that found one bullet counted twice
+   because two surfaces each decided membership for themselves. A renderer keyed on the word
+   `OPEN` would be that third surface, and `TestTheBadgeComesFromThePopulationAndNotFromTheWords`
+   is what refuses it (measured: that mutant lights two badges where one is correct).
+
+⚠ **What IS imported from `internal/report`:** `SurfacedHeadings`, `CountedHeadings`,
+`BasisEntryName`, the three search tuning constants, and `report.Search` itself. Those are
+values and an engine, not a renderer. The search box in particular runs the same scored,
+authority-narrowed search the CLI runs — a `strings.Contains` over titles would answer
+differently from `cairn search` for the same query against the same store, which is the drift
+`internal/report` being ONE package exists to prevent.
+
+## 🔴 `Source.Visible` is the whole read for all three pages
+
+A per-page `Entry(auth, scope, ref)` was the obvious alternative and was refused. Three views
+of ONE narrowed answer means the refusal for *"not yours"* and the refusal for *"does not
+exist"* are the SAME code path rather than two paths held byte-identical by discipline: the
+scope page picks out of the narrowed list and the entry page picks out of that, so an id the
+list does not carry is refused without the handler ever learning whether such a scope exists.
+
+⚠ **What it costs, measured rather than waved at:** every page load parses every entry the
+caller may read. `report.Search`'s own comment measures a full scan of a store this size in
+single-digit milliseconds, and search already does exactly that on every query. If a deployment
+outgrows it the fix is a cache in front of `Visible`, not a second narrowing seam behind it.
+
+## 🔴 A refusal-only authority guard is not enough, and a surviving mutant is why this is written down
+
+The first version of the authority guard asserted only that `/scope?id=<somebody else's>`
+refuses with the same bytes as an absent one, in both directions, with the positive controls.
+It was green — and the mutant that replaces `scopeSetOf(named)` with `store.Unrestricted()` in
+`StoreSource.Visible`, which is exactly the shape of forgetting the narrowing, **SURVIVED it.**
+
+The mechanism is worth stating because it is a second guard doing work nobody credited it
+with. An unnarrowed load returns the foreign scope's directory, but the id map is built from
+the AUTHORITY's `NamedScopes`, so that scope's card gets an EMPTY id and `pickScope` refuses an
+empty id. The per-scope refusal therefore still held — **while the ROOT page listed the other
+tenant's scope name, its entry refs and its bullet counts as an unlinked card.** Refused if you
+click it, fully legible on the page.
+
+`TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne` now asserts the
+root page's content as well, and that mutant dies. The general form: **a guard on a REFUSAL is
+not a guard on a LEAK**, because a leak needs no reachable URL.
+
+## What each field on the page is in the underlying file
+
+This table is also rendered on the pages themselves, as a `<details>` legend. It is in two
+places on purpose: the README is where a maintainer looks and the page is where a reader looks,
+and the operator's complaint was about the second.
+
+| on the page | in the store |
+|---|---|
+| card | one scope — a directory under the store root |
+| card title | the scope's display name, which is also its directory name |
+| `N entries` | `.md` files in that directory the loader accepted |
+| `N bullets declared open` | bullets carrying an `OPEN:` marker, summed over the scope |
+| ref | the filename without `.md`: `<slug>` or `<slug>.<kind>` |
+| title | the `service:` key in the file's front matter |
+| aliases / tasks | the `aliases:` / `tasks:` front-matter sequences, **as written** |
+| section | one `##` heading, with the heading text verbatim |
+| line item | one top-level `-` bullet under `## Nuance / work-history`, continuations included |
+| date | an ISO date the bullet's first line starts with |
+| `OPEN` / `near-miss marker` / `resolved` | the bullet's `store` openness population — exactly one |
+
+🔴 **`declared open` and not `open`, and the word is load-bearing.** The marker is opt-in:
+`report.RecalledEntry.OpenCount`'s own caveat is that a zero means *nothing was declared* and
+NOT *nothing is open*, because every bullet written before the marker existed carries none. A
+badge reading `0 open` over a scope full of unfinished work would be a completeness claim this
+store cannot make.
+
+## Dark always, and five breakpoints
+
+The palette moved into `@theme` and the `@media (prefers-color-scheme: dark)` block is
+DELETED — an operator decision: no light theme, no toggle. `html { color-scheme: dark }` goes
+with it, so the browser's own scrollbars and form controls follow; with `light dark` a reader
+on a light-mode machine got the dark palette from the tokens and light scrollbars on top of it.
+
+🔴 **The structural form of the claim is that the GENERATED stylesheet contains no
+`prefers-color-scheme` at all**, which is what `TestTheGeneratedStylesheetHasNoColourSchemePreference`
+asserts — the state, not a spelling. A guard on the word `dark` is walkable by naming a class
+`dark-mode`; a guard on a token value passes a tree that re-added a light branch under a
+different name. Its positive control is `prefers-reduced-motion`, asserted PRESENT so the zero
+cannot be produced by a stylesheet that lost every media query at once.
+
+⚠ **The mechanism that made the deleted block work is kept in `tailwind.css` even though the
+block is gone**, because it is the trap anybody re-introducing a theme switch walks into: an
+override written inside `@layer base` LOSES to `@theme`, since Tailwind emits its theme inside
+`@layer theme` and unlayered declarations beat layered ones regardless of order.
+
+**`--breakpoint-ultra: 2000px`** is a fifth rung above Tailwind's `2xl` (1536px). The
+requirement is measured rather than guessed — the operator's display is 3427 CSS pixels, more
+than twice `2xl`, so every rule written against the default ladder renders identically at 1536
+and at 3427. ⚠ **2000 and not 3427:** a breakpoint is where a layout should change, not a
+device somebody owns, and pinning it to one machine leaves every display between 1536 and 3427
+— most large monitors — on the `2xl` layout.
+
+The card grid is `repeat(auto-fit, minmax(18rem, 1fr))` rather than a `grid-cols-N` ladder, so
+the column count is a function of the CONTAINER: one column on a phone, as many as fit on an
+ultrawide, and no sixth breakpoint needed when somebody buys a wider screen.
+
+## `uiaudit` captures five widths and pushes two
+
+| name | width | pushed |
+|---|---|---|
+| mobile | 390 | ✅ |
+| tablet | 834 | — |
+| laptop | 1280 | — |
+| desktop | 1440 | ✅ |
+| ultrawide | 3440 | — |
+
+🔴 **The hub's viewport set is CLOSED and this repository cannot widen it.** `Validate`
+refuses a page whose viewport is outside `{mobile, desktop}` — the server's contract — and the
+hub matches its P2 pixel diff on `url`+`viewport`, so a page pushed under a name it has never
+stored would be "new" on every run and the diff would say nothing forever. Capturing five
+widths locally is what measures a responsive layout; pushing five would be a wire-contract
+change. `BuildPayload` is where the filter lives, and
+`TestOnlyTheHubsOwnTwoViewportsAreEverPushed` drives it through the real `BuildPayload` rather
+than reading the `Push` field — a field nothing branches on is a declaration, not a guard.
+
+🔴 **Three measurements became REFUSALS** (`refuseWalkRegressions`): no horizontal overflow at
+any captured width, `document.scripts.length == 0`, and a decodable axe `testEngine` on every
+capture. All three were already being COLLECTED and printed; nothing read them, so a responsive
+regression would have been a digit in a log beside an exit 0. The width count is part of the
+verdict too — a matrix that silently collapsed to one width produces zero overflow findings and
+reads exactly like a responsive surface.
+
+⚠ **They are refusals at the WALK and not in `CaptureTarget`**, because this module's own
+positive-control page deliberately overflows and deliberately carries a script. A refusal
+inside the capture would have made the instrument's own validation impossible.
+
+🔴 **`ExpandLinks` widened from "same path" to "a declared GET row", and that is a different
+claim rather than a relaxation.** The old rule was written when the only link-publishing page
+was the share index, whose links point back at `/share`. The browse pages link ACROSS rows:
+`/` → `/scope?id=…` → `/entry?…`. A same-path rule declines every one of them, so the walk
+would have captured the two new rows only in their parameterless form and reported success over
+pages no reader sees — the same under-coverage the first draft of `targets.go` shipped, one step
+along. What is NOT given up: the href must still be relative and host-less, must still carry a
+query, and its path must be a row this server DECLARES. The new obligation is a `Path` dedupe in
+the walk queue, because `/entry`'s breadcrumb links back to `/scope?id=X` and that cycle is now
+reachable.
+
+## What Phase E's tests still structurally cannot see
+
+- **Whether the page is legible.** Every guard here is over rendered bytes or over a
+  browser's layout numbers. "Can a reader tell what a card is" is the defect that prompted the
+  whole change and no test in this repository can measure it — the legend is prose, and prose is
+  checked by a person reading it.
+- **The ultrawide end on a real display.** 3440 is an emulated viewport at device-scale-factor
+  1. The operator's 3427px display has its own scale factor, font settings and browser chrome.
+- **Search relevance.** `report.Search`'s scoring is gated by its own fixture corpus; nothing
+  here asks whether the hits a reader gets are the hits they wanted.
+- **A store large enough to hurt.** `Source.Visible` parses every readable entry on every page
+  load. The fixture stores are a handful of files; nothing measures the page against a store
+  where that is not free.
+- **Concurrent readers.** Unchanged from Phase A: nothing runs two requests at the same instant.

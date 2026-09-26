@@ -46,14 +46,30 @@
 //
 // # WHAT THIS PACKAGE DOES, AND WHAT IT STILL DOES NOT
 //
-// Four pages and one stylesheet behind the same `internal/identity` chain the pod
-// uses, minus one backend: the entries page, the sign-in page with TWO doors, and
+// Six pages and one stylesheet behind the same `internal/identity` chain the pod
+// uses, minus one backend: the BROWSE trio, the sign-in page with TWO doors, and
 // the share flow. Cookie sessions arrived in phase B; the share flow — "who has
 // access to this scope", a grant, a revocation, and the notice qualifying all
 // three — is phase C and is this package's `sharing.go`, `sharehandlers.go` and
 // [SharePage]; phase D is the GitHub sign-in in `oauth.go`, an authorization-code
 // flow with PKCE whose verifier lives in this package's own [flights] table and
 // whose exchanged token is verified by `identity.SupabaseJWT` like any other.
+//
+// 🔴 PHASE E WIDENED THE USER-TEXT SURFACE, AND THAT MATTERS MORE HERE THAN THE PAGE
+// COUNT DOES. Until it landed, an entry's BODY never reached a browser at all — only
+// its ref, title, aliases and task refs did. `GET /entry` now renders the file's `##`
+// sections and its journal bullets, which is prose somebody else wrote reaching both
+// text content and attribute positions on a page with cookie authentication and no
+// content-security policy. The three rules above are unchanged and cover it;
+// `TestHostileEntryTextIsEscapedOnEveryBrowsePage` is what measures that they do,
+// per page rather than over the root alone.
+//
+// ⚠ AND THE STRUCTURE IS PARSED BY `internal/store`, NOT BY `internal/report` AND NOT
+// BY A MARKDOWN READER WRITTEN HERE. That is a decision with a written record —
+// `internal/ui/README.md`'s phase E section — taken because `report` renders TEXT whose
+// bytes are pinned against the Python oracle, and because `store.ExtractSections` and
+// `store.ParseJournalBullets` already answer the two questions a hand-rolled reader gets
+// wrong (a `#` inside a code fence is not a heading; an indented `-` is a continuation).
 //
 // 🔴 THE SECOND DOOR DID NOT REPLACE THE FIRST, AND THAT IS A REQUIREMENT RATHER
 // THAN AN ACCIDENT. The credential form stays: it is the door that verified the
