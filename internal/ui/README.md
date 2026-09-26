@@ -1502,13 +1502,14 @@ looked, not because the battery grew on its own.
 
 # Phase E — the browse surface: cards, search and two-level drill-down
 
-The one page became three, and the reason is an operator's complaint rather than a feature
-request: *"it's not intuitive how what I see maps back to the underlying data (what's the
-title in each card? what's each section and line item?)"* and *"I should be able to click on
-a card to view full details, down to individual entries."* Every guard on this package was
-green while that was true, which is the shape worth recording — escaping, authority, routing
-and class were all measured and none of them is a claim about whether a reader can tell what
-they are looking at.
+The one page became three, and the reason is a usability defect rather than a feature
+request. Two things were asked for, paraphrased rather than quoted because this repository
+carries no captured text: **nothing on the page said what any of it WAS in the underlying
+store** — what a heading named, what the items under it were, which part of a file they came
+from — and **there was no way to click through to one entry's full detail.** Every guard on
+this package was green while both were true, which is the shape worth recording: escaping,
+authority, routing and class were all measured, and none of them is a claim about whether a
+reader can tell what they are looking at.
 
 | route | class | what |
 |---|---|---|
