@@ -201,11 +201,6 @@ this doc has twice measured a shuffle re-pointing live claims.
   never exercises attribution rendering. (d) Whether `cairn-ui` should ever render through
   `internal/report` is **undecided and stated as open in `README.md`**. **Closing condition:**
   one PR for (b)–(c); a written line for (d).
-- 🟡 **`apps.cairn` WAS UNPINNED UNTIL #50's FIX ROUND, AND THE NEAR-MISS IS THE RECORD WORTH
-  KEEPING.** Repointing it at the Go client left **all three** of the guard's original assertions
-  green while the announced hatch silently became the Go client — a guard written for attribute A
-  not covering sibling attribute B, defeating a promise the same PR created. Closed by a fourth
-  assertion; kept because the lesson generalises.
 - 🟡 **`checks.default-is-the-go-client` IS INSENSITIVE ON THE PYTHON SIDE.** `mkCairn`'s pname is
   already `cairn`, so a `meta.mainProgram` removed *there* leaves the base-name assertions green.
   **Closing condition:** a decision to close it or a written line saying why not.
@@ -250,29 +245,50 @@ this doc has twice measured a shuffle re-pointing live claims.
   absent from the persistent battery.
 
 ## Gotchas / decisions / dead-ends
-🔴 **THIS SECTION HAS BEEN PRUNED TWICE, AND PRUNED MEANS *MOVED*: NEITHER PRUNE DELETED NOR
-SHORTENED ANYTHING.** This is the SECOND prune, and it names its selection because a count
-without one is not reproducible. Measured from the `## Gotchas` heading to the line before
-`## How to verify`, at `299386a`: **147 top-level bullets, 84,556 B**, inside a **136,100 B**
-document — 62% of a file read first thing every session, and ×2.1 in the seven days since the
-first prune had landed the whole document at 63,433 B. **70 of those 147 bullets are now in
-`claudedocs/handoff-cairn-control-plane-archive.md`, verbatim**, together with six closed
-`Open investigations` blocks and this header's own predecessor. Same selection after, with
-#115's four bullets rebased in and KEPT because they are live: **81 bullets, 47,920 B**, in an
-**89,200 B** document. 🔴 **THAT IS STILL 23,664 B OVER THE
-65,536 B GUIDELINE, AND THE GAP IS REPORTED RATHER THAN CLOSED** — closing it would have meant
-moving bullets that are not closed, and a prune that reaches a number by relocating a live
-tripwire has deleted it from every reader who does not open the archive. The first prune's own
-figures, since this paragraph replaced the one carrying them: 174 bullets, 89,588 B, 125 moved.
-What stays is what binds a NEXT edit: one instance of each general tripwire, the standing
-operator decisions still in force, and the record of the arcs still open — ranks 4, 9, 11, 12
-and 13. What moved is a record of a round, a PR or an arc that has CLOSED, plus every duplicate
-instance of a tripwire kept here.
+🔴 **THIS SECTION HAS BEEN PRUNED THREE TIMES, AND PRUNED MEANS *MOVED*: NO PRUNE HAS DELETED NOR
+SHORTENED ANYTHING.** This is the THIRD prune, and it names its selection because a count without
+one is not reproducible. Measured from the `## Gotchas` heading to the line before
+`## How to verify`, at `9c24bc4`: **108 top-level bullets, 66,662 B**, inside a **105,456 B**
+document — **63% of a file read first thing every session**, more than the whole 65,536 B
+guideline by itself. Every one of the 108 was classified into exactly **one** of four buckets,
+and **DROP was required to stay empty**: **57 STAY · 8 ARCHIVE · 43 ROUTE-OUT · 0 DROP**, moving
+**26,804 B** of `Gotchas`, plus one settled `Open investigations` block (2,052 B) and one closed
+`Defects` entry (440 B) — **29,296 B in total, all of it VERBATIM** into
+`claudedocs/handoff-cairn-control-plane-archive.md`. Asserted rather than claimed: every bullet
+body present in **exactly one** of the two files afterwards, **0 lost, 0 duplicated**, every other
+section byte-identical, and the detector validated by a positive control that dropped a known
+bullet and was watched reporting **1 lost**.
+🔴 **43 OF THE 108 WERE NEVER ABOUT THIS ARC, AND THE ARCHIVE IS A WAY-STATION FOR THEM RATHER
+THAN THEIR HOME** — generic git/shell/grep/CI/agent-tooling tripwires learned while sitting in
+this repository. The `subsystem-index` ruling is to ask which repo a lesson is ABOUT, not which
+one you were standing in, so their home is the operator's own shared rules-and-dotfiles repo
+(`claude/RULES.md`, `claude/RULES-ARCHIVE.md`) or the owning skill there. **They were deliberately NOT routed in the same
+change:** that is a cross-repo PR against files with their own *enforced* byte ceilings, and doing
+it here would have made this one unreviewable. The ranked, per-bullet list naming each proposed
+destination is on the third prune's PR. **Until that follow-up lands, the archive is the only
+copy.**
+🔴 **THAT LEAVES THIS DOCUMENT ABOVE THE 65,536 B GUIDELINE, AND THE GAP IS REPORTED RATHER THAN
+CLOSED — WHICH IS THE CORRECT OUTCOME, NOT A SHORTFALL.** Closing it would have meant relocating
+bullets that are still live, and a prune that reaches a number by moving a live tripwire has
+deleted it from every reader who does not open the archive. The single largest cost of that
+refusal is the `ROUND 0 OF A LADDER …` bullet: its round-0 record is discharged, but its tail is
+the **sixth leak-gate event** and the latest instance of that tripwire, and a bullet cannot be
+split without landing text in both files and failing the 0-duplicated assertion. What stays is
+what binds a NEXT edit: one instance of each general tripwire still in force, the standing
+operator decisions, and the record of the arcs still open — **ranks 4, 9, 11, 12, 13, 15 and 16**.
+What moved is the record of a round, a PR or an arc that has CLOSED, plus every DUPLICATE instance
+of a tripwire kept here. Earlier prunes' figures, since this paragraph replaces the one carrying
+them: the first moved 125 of 174 bullets from 89,588 B; the second moved 70 of 147 from 84,556 B
+and stopped 23,664 B over the guideline for this same reason.
+⚠ **AND THE ARCHIVE'S OWN ALLOWANCE IS NOW A LIVE COUPLING NOBODY HAD RECORDED** — this move
+takes it from 138,791 B to a measured **174,237 B** against a **grandfathered 147,456 B** in the
+handoff-tooling repo's `handoff_budget.py` ledger (rule (p)). **Exceeding it will be noticed by
+nothing**, because a foreign ledger entry sits outside every one of that gate's corpus checks by
+construction — the same disjoint-key-spaces shape a bullet below already measures. Stated as a
+follow-up with a closing condition on the PR rather than fixed here.
 
 ⚠ **A DUPLICATE IS NOT A REDUNDANCY WHEN THE SECOND ONE RECORDS THAT THE LESSON WAS READ AND THEN HIT ANYWAY** — that is why the instance kept is usually the LATEST, which carries the re-occurrence, rather than the first, which carries only the discovery.
 
-- **Never run two `uv run --with pytest` invocations concurrently** — one disposes of the
-  other's ephemeral venv and produces a bogus `FileNotFoundError` red.
 - **The flake's source filter is git-based**: an untracked new `.go` file compiles under
   `go build` and fails `nix build`. Stage new files before reading either tier as green.
 - **`AGENTS.md` + `CLAUDE.md` are gated** to 37,700 B with a 900 B minimum headroom
@@ -287,26 +303,6 @@ instance of a tripwire kept here.
   creation; that is a policy decision for whoever wires this up, recorded in
   `internal/control/README.md` because the default will otherwise read as an oversight to
   the first person who creates a CI credential and finds it cannot write.
-- 🔴 **`isolation: "worktree"` BRANCHES FROM THE DEFAULT BRANCH, NOT YOUR CHECKED-OUT ONE.**
-  Measured twice: an agent dispatched to build on an unmerged branch got a worktree of
-  `main` and correctly refused rather than recreating the missing package. **Always give a
-  dispatched agent a base check it can fail** ("`ls <path>`; if missing, STOP"), and the
-  recovery command.
-- 🔴 **AN `until`-LOOP CI WATCHER THAT COUNTS *INCOMPLETE* CHECKS REPORTS GREEN ON AN
-  EMPTY ROLLUP.** Zero incomplete checks is also what "no checks exist yet" looks like —
-  the state right after a push while GitHub clears the rollup. Measured: it returned
-  `checks: []`, `mergeable: UNKNOWN`, **exit 0**, and I reported that as green. **Require
-  a minimum check COUNT as well as completion, and print the count** so the reading
-  carries its own proof it measured something.
-- 🔴 **A MUTANT THAT FAILS TO APPLY REPORTS A FALSE `SURVIVED`, AND IT HAPPENED TWICE HERE —
-  ONCE ON THE MUTATION PROVING THE GATE.** Both were caught only by asserting the anchor's
-  occurrence count BEFORE editing. **Assert the anchor count every time**; a "survived" you
-  did not watch apply is not evidence.
-- 🔴 **A RANK SHUFFLE SILENTLY RE-POINTS EVERY LIVE CLAIM, BECAUSE THE RANK IS HALF THE SLUG.**
-  `cairn-control-plane-1` was held with a subject describing the P5 slice after the cutover was
-  promoted to rank 1, so `claim-work --slug-for <doc> 1` returned a ref naming different work, and
-  `rc 12` ("already yours, carry on") would have let a session continue with the wrong item.
-  **When you re-rank, re-subject the claims in the same breath.**
 - 🔴 **A PRUNED-TO ARCHIVE IS NOT A HANDOFF DOC, AND THE WRITE-BACK GUARD CANNOT KNOW THAT.**
   Moving blocks into `handoff-cairn-control-plane-archive.md` made the guard treat that
   filename as its own topic and demand a handoff for it. Checked rather than asserted before
@@ -314,31 +310,6 @@ instance of a tripwire kept here.
   `## How to verify` or a closing-condition, and the prune is already described inside the real
   doc. **Dismiss is the right answer there** — a handoff written "for the archive topic" would
   mint a doc nobody wants. ⚠ The dismissal is per-session; a new session starts fresh.
-- ⚠ **A HANDOFF DOC CAN NEVER RECORD ITS OWN MERGE**, so a `State now` naming the branch sha
-  is stale by exactly one commit the moment it lands. That is the mechanism, not rot — do not
-  read it as the doc being behind, and do not open a PR solely to bump it.
-- 🔴 **CI NEVER RUNS `nix flake check` — THE `nix` JOB BUILDS EACH CHECK BY NAME, SO A `checks.*`
-  ENTRY NOBODY NAMES IS A CHECK NOBODY RUNS.** Verified on `main`: no flake-check step, eight
-  explicit `nix build .#…` steps. All pre-existing checks ARE named, so there was no latent hole —
-  but the convention is one omission away from producing one, and the omission reads as covered
-  because the check exists in `flake.nix`. **Adding a `checks.*` entry means adding a CI step in the
-  same commit.**
-- 🔴 **A FORCE-PUSH TO EXACTLY THE BASE TIP AUTO-CLOSES A PR.** Re-pointing a docs branch at `main`
-  left it with zero commits ahead and GitHub closed the PR; the follow-up commit then landed on a
-  closed PR. It **reopened** cleanly — unlike the deleted-base-branch case this repo already records,
-  which refuses to reopen — and nothing was lost. **Push the branch WITH its commit, or reopen and
-  check.**
-- 🔴 **I MERGED A PR THROUGH TWO PENDING CHECKS BECAUSE `--auto` DID NOT WAIT.** `gh pr merge --auto`
-  merged immediately with `go` and `tests` still running; they passed afterwards on `main`, which is
-  the outcome being lucky rather than the process being right. **Read the rollup yourself before
-  merging** — require the full check set present AND completed — and treat `--auto` as a request, not
-  a guarantee.
-- 🔴 **A DOC PR THAT LOSES A RACE NEEDS RE-DERIVING, NOT RESOLVING.** #48 and the handoff PR both
-  edited this file; `git merge-tree --write-tree` exited **1** while GitHub reported both
-  `MERGEABLE`, because it compares each against a `main` where neither had landed. But the fix was
-  not a conflict resolution: #48's own edit had rewritten those sections with facts that had become
-  TRUE, while the handoff's narrative had gone stale in the minutes since it was written. **Reset the
-  branch onto the new base and rebuild the delta.**
 - **Decision (operator, this session): MCP is HELD.** Recorded above in `State now` with the reason
   the OLD blocker must not be cited when it is revisited.
 - 🔴 **OPERATOR DECISION: the audit ladder on PRs touching only tests, prose and CI config is
@@ -382,20 +353,6 @@ instance of a tripwire kept here.
   is assertable and was asserted**: every bullet verified present in exactly one of the two
   files, 0 missing and 0 duplicated, with every other section byte-identical. A prune that
   cannot prove it moved rather than cut is the `BYPASS`-deletion failure with a tidier diff.
-
-- 🔴 **THE OPEN-PR SWEEP FOUND WORK THE LOCK COULD NOT — FIRST MEASURED INSTANCE, AND IT WAS
-  THE WHOLE OF RANK 8.** `claim-work --list` showed `cairn-control-plane-8` free and the ranked
-  item read as unbuilt; `gh pr list --state open` carried a three-commit, `MERGEABLE` PR
-  implementing exactly it, twelve hours old and claimed by nobody. The lock is a
-  compare-and-swap on a ref: it covers the FIRST mover and says nothing about work that was
-  done without ever taking a claim. **Run both, every time, and read the PR TITLES rather than
-  counting rows** — the duplicate does not announce itself as one.
-- 🔴 **"IS THE EDIT LIVE?" IS TWO QUESTIONS WHEN A SKILL SHIPS BOTH PROSE AND A SCRIPT, AND THE
-  ANSWERS DIFFERED.** `~/.claude/skills/handoff/SKILL.md` resolves into `/nix/store` — a
-  `home.file` copy, so its edited legend needs a home-manager switch — while the same file
-  invokes the handoff tool (`<handoff-tooling-repo>/scripts/lib/handoff_doc.py`), the WORKING COPY, so the gate itself went
-  live on the base clone's fast-forward. **`readlink -f` answers only for the file you point it
-  at; read what the skill EXECUTES as well as what it says.**
 - 🔴 **A CONTROL THAT SETTLED "IS THE TREE DIRTY" WAS READ AS SETTLING "WHICH ARTEFACT DID IT",
   AND THE INSTRUMENT COULD NOT ANSWER THE SECOND QUESTION AT ALL.** ❌ **RETRACTED:** *"the
   scanner's single `COULD NOT READ` line named the worktree directory … the rival mechanism was
@@ -408,12 +365,6 @@ instance of a tripwire kept here.
   evidence about **ordering**, not about `result` — which was separately measured to be a cause
   the moment the worktree was gone. **Ask what your instrument is capable of REPORTING before
   reading its output as an elimination.**
-- ⚠ **THE DOCUMENTED `leakscan`-EXIT-2 GOTCHA NAMES A *REMOVED* AGENT'S LEFTOVER, AND MINE WAS
-  A LIVE ONE — SO ITS REMEDY DID NOT APPLY.** The recorded fix is "check the worktree is clean
-  and its commits are on `origin` before removing it". `git worktree list --porcelain` showed
-  `locked claude agent … (pid 355708)`, created minutes earlier, and that pid was in the same
-  run's own process list. **Read the lock line before acting on a remedy that ends in
-  `rm`** — and when the directory is another session's, the answer is to report, not remove.
 - 🔴 **A STARTUP BANNER SAYING THE FEATURE IS WRITABLE IS NOT EVIDENCE THE FEATURE WORKS, AND
   THIS REPO ALREADY KNEW IT.** `cairn-ui` printed `sharing writable (control journal …)` — the
   same sentence the doc records a journal printing while it refused every sign-in. The chain was
@@ -449,12 +400,6 @@ instance of a tripwire kept here.
   rewritten to describe by ROLE, re-scanned, and the write then landed. **The previous four
   events were each followed by a better-worded sentence; this one was followed by a refusal.
   That is the whole argument for the gate, and it arrived unprompted.**
-- 🔴 **`git clean -f` IS HOOK-BLOCKED HERE AND THE BLOCK KILLS THE WHOLE `bash` CALL, NOT JUST
-  THAT LINE.** A `set -e` script whose third command was `git clean -fd` ran **none** of its
-  commands, including the `checkout --detach` on line one — and the follow-up read showed HEAD
-  still where the reset was supposed to have moved it from, which reads exactly like a reset
-  that silently failed. **After a blocked call, assume NOTHING in it ran**, and prefer
-  `git checkout --detach <ref>` to a reset: it refuses rather than destroys.
 
 - 🔴 **A `STILL LIVE` INVESTIGATION BLOCK IS A CLAIM WITH NO EXPIRY, AND THIS DOC CARRIED ONE TWO
   MERGES PAST ITS FIX.** The host-HOME doctor-test block was re-measured as live by a
@@ -475,17 +420,9 @@ instance of a tripwire kept here.
   actually replaced carried **11 setuid binaries and TWO interpreters** (CPython 3.12 + Perl)
   against **zero and zero**. A **NARROWING on both axes.** **Before recording a deferral as
   spent, search the ARCHIVE for its discharge.**
-- 🔴 **A DEFERRAL WHOSE TRIGGER IS A STATE NOTHING ASSERTS ON IS A DECISION WITH A DELAY ON IT.**
-  Two found spent by one unrelated sweep — the busybox trade and `tests/dualrun/README.md`'s
-  *"Revisit if the Go pod is ever the deployed one"*. Neither sentence had a watcher; both were
-  found only because somebody happened to read the paragraph.
 - 🔴 **A CLAIM SCOPED TO "THIS COMMIT" STOPS BEING READ THAT WAY THE MOMENT THE COMMIT IS NOT THE
   NEWEST.** `cmd/cairn-server/main.go` read *"IT IS NOT DEPLOYED BY THIS COMMIT"* — true of its
   own commit, read by everyone afterwards as "this is not deployed". **Scope a claim to a STATE.**
-- 🔴 **LINE-ANCHORED `grep` FAILED FOUR TIMES ON ONE QUESTION.** The claims WRAP — across lines
-  AND across comment leaders. Normalise both before sweeping, and prove the sweep with a positive
-  control you watched HIT a known wrapped instance. ⚠ **And editing a wrapped claim MOVES the
-  wrap**, so a later sweep finds what an earlier one could not — that is not a fix.
 - 🔴 **A COUNT WITHOUT ITS SELECTION IS NOT REPRODUCIBLE.** *"82 passed"* appeared in three
   commit messages before an auditor tried to reproduce it and got 68 / 85 / 2042 depending on the
   file set. The selection is now named. Same defect class this repo already tracks for prose
@@ -497,25 +434,6 @@ instance of a tripwire kept here.
 - **Decision (operator, this session): document the commit-message leak, widen the gate, do NOT
   rewrite public history.** A force-push breaks every clone and fork and would close every open
   PR's base.
-
-- 🔴 **A CLEAN TEXTUAL MERGE DELETED FOUR TESTS, AND THE CONFLICT IT REPORTED WAS ABOUT A
-  COMMENT.** *(Re-derived from #80, which lost the doc race and carried this nowhere else.)*
-  Merging #69 into #76: `git` reported ONE conflict in `cmd/cairn-ui/main_test.go`, covering a
-  comment; taking one side of that hunk removed four unrelated tests the other side had added
-  further down the same file. No marker, no error, and reading the hunk could never have shown
-  it. 🔴 **What caught it is a DECLARATION-SET DIFF AGAINST BOTH PARENTS** —
-  `comm -23 <(git show <parent>:<f> | grep -oE '^func [A-Za-z][A-Za-z0-9_]*' | sort) <(… the
-  merged file …)`, run for each parent. Do that on every merge where both sides touched one
-  file; "no conflict markers left" is not the same claim.
-- 🔴 **WHICH DOC PR TO MERGE FIRST: PREFER THE ONE WHOSE CLAIMS ARE STILL TRUE, NOT THE ONE
-  OPENED FIRST.** The MERGEABLE-but-conflicting mechanism is already recorded twice above — this
-  is only the tie-break, which was missing. Measured on #95 vs #96: #96's `State now` asserted
-  facts a sibling session's work had just falsified (*"pid 3942268 … still true"*, *"leakscan
-  exits 2 … still true"*), while #95 deliberately omitted `State now`. #95 could therefore land
-  unchanged, and #96 needed re-deriving whichever order was chosen. **Seniority is the wrong
-  key; staleness is the right one.** 🔴 **AND A THIRD PR CAN OPEN WHILE YOU DECIDE** — #97
-  arrived four minutes after #95 merged, clean against `main` and conflicting with the branch
-  written to replace #96. Run the open-PR sweep **again** immediately before `gh pr create`.
 - 🔴 **A `nix build` IN THE REPO ROOT ARMS A GATE AGAINST YOU, AND AN ENTRY HAD ALREADY
   ACQUITTED IT.** `result`/`result-1` are untracked symlinks to store **directories**; the leak
   scanner's `--others` enumeration reads them and dies `[Errno 21]`, taking eight of the repo's
@@ -524,39 +442,6 @@ instance of a tripwire kept here.
   `--out-link <scratchpad>/…`.** ⚠ And do not remove a gcroot without checking what still runs
   from it — here it was the gcroot of the very server a human was queued to verify, so the order
   had to be replace-then-remove.
-
-- 🔴 **A SWEEP FOR THE PHRASINGS YOU HAVE SEEN IS A SPELLED CHECK, AND IT MISSED A CLAIM IN THE
-  COMMIT WHOSE WHOLE SUBJECT WAS THAT CLAIM.** #78 corrected "which pod is deployed" at three
-  sites, found by grepping three wordings (`deployed by nothing`, `not deployed by anything`,
-  `DEPLOYED BY NOTHING`). A **fourth** claim — `AGENTS.md:399`, *"`server/Dockerfile` is what is
-  deployed today"* — used none of them and survived; #81 had to finish the job, and its message
-  records *"It survived #78, whose entire subject was correcting which server is deployed."*
-  The right question is **"what else in this file asserts this?"**, never "where else does this
-  phrase appear". A grep over wordings you already know cannot find the one you do not.
-- 🔴 **TWO FALSE ZEROS ON ONE CLAIM, BOTH READING AS CONFIRMATION, IN UNDER A MINUTE.**
-  Verifying that the handoff skill never mentions `leakscan`: (a) `grep -lc` combines two
-  conflicting flags and prints **nothing at all** — not an error, just silence; (b)
-  `find ~/.claude/skills/handoff -type f` returns **0 files**, because home-manager makes those
-  entries **symlinks** and `-type f` does not follow them, while `grep` on the same path reads
-  them fine. Both produced an empty result that looked like the answer. **`find -L` is the fix**,
-  and a positive control on the same invocation is what exposed both.
-- 🔴 **`gh pr checks` REPORTS THE LATEST RUN PER CHECK *NAME*, NOT PER COMMIT** — so after a
-  rebase or a base move it can show a job's verdict from an older head, and a "pending" there
-  can be a run that already finished on a sha you no longer care about. Read
-  `gh api repos/<o>/<r>/commits/<sha>/check-runs` for the head you are actually merging.
-  ⚠ And read BOTH surfaces: the same head answered `state=pending statuses=0` on the commit-
-  status API while all six check-runs were `success` — this repo posts check-runs and no
-  statuses, so a zero there is an ABSENCE, not a red.
-- ⚠ **`mergeStateStatus: UNKNOWN` IS THE API COMPUTING LAZILY, NOT A PROBLEM WITH THE PR.**
-  Seen immediately after a sibling PR merged and moved the base; it resolved to `CLEAN` on a
-  re-read seconds later. Do not treat it as a conflict signal, and do not merge through it —
-  re-read until it is one of the real values.
-- **THE QUEUE WAS STALE IN TWO INDEPENDENT PLACES, BOTH ABOUT WORK ALREADY FINISHED**, and each
-  cost real time before the work could start: rank 2 named a defect `tests/test_narrowing_echo_sites.py`
-  had already closed, and rank 6 asked to close entries an earlier session had already moved to
-  the archive. Neither was careless — it is what happens when sessions that cannot see each
-  other write the same list. **Before acting on a ranked item, check whether it is already
-  done**; the entry is a claim like any other.
 
 - 🔴 **A HANDED-OVER `localhost:PORT` URL IS NOT A HANDOVER, AND THIS ONE WAS SILENTLY
   INVALIDATED WITHIN THE SESSION THAT GAVE IT.** `127.0.0.1:8103` was handed to the operator
@@ -598,9 +483,6 @@ instance of a tripwire kept here.
   which asks whether the pinned ones are present. So the two steps deciding whether a
   root-owned session dir or a private package reaches a PUBLIC registry were exactly the two
   the file could not see. **A whole-text pin still needs a ledger of what must be pinned.**
-- 🔴 **`$?` AFTER A PIPE, AGAIN, IN THE SESSION THAT HAD ALREADY READ THE WARNING.**
-  `go build ./... 2>&1 | head -3; echo "rc=$?"` reports `head`'s 0 for a build that failed.
-  Capture the rc before any pipe.
 - **Decision (operator, this session): the UI deploys with a NEW UI-owned PVC** holding the
   control journal and the session table, with the store's volume mounted read-only. Offered and
   declined: the journal on the store's PVC (it needs write access to a volume `seed.sh`
@@ -617,16 +499,6 @@ instance of a tripwire kept here.
   for facts no command can answer — was designed and **rejected before building**: a check that
   reddens because a stamp aged goes red on a day nobody changed anything, and `RULES.md` is
   explicit that a permanently-red gate is worse than none.
-- 🔴 **#101 WAS BUILT, AUDITED, AND CLOSED BY ITS OWN ROUND 0 — THE MOST USEFUL THING THIS ARC
-  PRODUCED, AND IT PRODUCED NO CODE.** It added a "fact ledger" whose design decision was *"it
-  asserts the question is still answerable, never the answer"*. That property was sold as what
-  made it deterministic and durable. **It is also what made it blind to both incidents it cited
-  as its basis**: through the "no image wraps it" rot (11 commits) and the "nine verbs" rot (39
-  commits, 5 sites, one a live `assert >= 9`), `nix eval .#packages…` and `cairn -verbs` answered
-  perfectly — the rot was in the ANSWER, which the design declined to look at. What actually
-  closed the second was `assert len(go_verbs) == 10` plus `flake.nix`'s `want-verbs.txt` DIFF.
-  **Ask of any proposed anti-rot gate: which of the incidents in its own rationale would it have
-  caught?**
 - 🔴 **A PROSE LINT FOR FACT-ROT IS REFUTED BY MEASUREMENT ON THIS TREE — do not re-derive it.**
   Three candidate rules were written and counted before building: `line-distance` **15 hits**,
   `bare-line-ref` **5**, `naive-count` **13**, and in each case the legitimate and the rotting
@@ -635,44 +507,11 @@ instance of a tripwire kept here.
   rots. `bare-line-ref`'s only live hits were the ref-parsing code discussing its own edge cases.
   **The defect lives in the relationship between the sentence and the world; a regex sees only the
   sentence.** `via: measurement`
-- 🔴 **A `completed` COUNT IS NOT A `conclusion`, AND I WALKED INTO IT WITH THE LESSON ON SCREEN.**
-  Reading #102's rollup I printed `FAILURES: 0` from a parser using `CheckRun`'s field names
-  (`name`/`conclusion`) against **`StatusContext`** objects (`context`/`state`), so every field came
-  back `None` and the zero was a fact about the parser. `mergeStateStatus` was `UNSTABLE` throughout.
-  **A rollup holds BOTH types — handle both, and cross-check the count against `mergeStateStatus`
-  before believing a zero.**
-- 🔴 **A TASK-COMPLETION NOTIFICATION'S "exit code 0" IS THE LAST COMMAND'S, NOT THE BUILD'S.** A
-  backgrounded `nix build … | tail -80; echo "NIX_RC=$pipestatus[1]"` was reported as **exit code
-  0** while `NIX_RC=1` and the derivation had FAILED. Same family as `$?`-after-a-pipe, arriving
-  through the harness rather than the shell. **Capture the real rc into the OUTPUT and read the
-  content; never quote a notification's exit code.**
-- 🔴 **`git show <ref>:<path>` FOR A PATH THAT DOES NOT EXIST ON THAT REF, WITH STDERR SUPPRESSED,
-  COUNTS AS ZERO.** Chasing that repo's red I reported "the mutation anchor is absent on `origin/main`"
-  from a `git show … 2>/dev/null` piped into a counter: the file had been DELETED on main, python
-  read an empty string, and the count was 0. That read as "the anchor was edited away" when the
-  truth was "you are reading the wrong file" — the real target was `pinned("subsystem_resolver")`,
-  in another repo. **Same class as `git diff --quiet <ref> -- <path>` on an absent operand: prove
-  existence with `git cat-file -e` FIRST, and never suppress stderr on a read you will quote.**
-- 🔴 **THE CONGESTION-vs-GENUINE DISCRIMINATOR FOR A RED CI LEG THERE, USED IN ANGER AND IT
-  WORKED.** Read the STEP terminations, not the PipelineRun verdict: `step-pytests` exit **0** with
-  `step-verdict` exit **1** is a real test failure; `step-pytests` exit **255/137** with no verdict
-  printed is a congestion kill, and `ExceededNodeResources`/`TaskRunTimeout`-with-no-terminated-step
-  is a third shape that posts an EMPTY description. **And the cheapest confirmation that it is not
-  load: identical totals from two independent runs** (CI and a local `nix build` of the same check
-  both gave `24096/24091/4/1`). Load moves wall times; it does not reproduce a count exactly.
 - 🔴 **A MUTATION ANCHOR IS A CROSS-REPO DEPENDENCY WHEN `MODULE_PATH` IS A PINNED INPUT.** the handoff-tooling repo's
   battery mutates a module it gets from cairn's flake, so a cairn REFACTOR — consolidating an
   open-coded predicate, exactly the thing this repo's rules ask for — reddens it with nothing on
   either side declaring the coupling. ✅ **The anchor-count assert did its job**: it went RED rather
   than reporting a false `SURVIVED`, which is the whole reason that assert exists.
-- ⚠ **`leakscan` rc 2 ON THE BASE CLONE IS STILL THE AGENT-WORKTREE DEFECT, AND REMOVING YOUR OWN
-  AGENT'S WORKTREE IS THE DISCRIMINATOR.** Removed mine (clean, HEAD == the pushed PR head); rc
-  stayed **2**, now naming a DIFFERENT session's worktree — which proves the cause is worktrees
-  rather than content, and that the survivor is not yours to remove. **Quote the PR's own CI
-  `leakscan` job instead; it was SUCCESS.**
-- 🔴 **A WORKTREE CREATED FROM `origin/main` TRACKS `origin/main`, SO A BARE `git push` TARGETS
-  MAIN** — hit again this session while setting up the handoff branch. Push with an explicit
-  refspec.
 - 🔴 **AN IMMUTABLY-TAGGED DEPLOYMENT DOES NOT DRIFT — IT STANDS STILL, WHICH IS INDISTINGUISHABLE
   FROM "CURRENT" FROM OUTSIDE.** The browser surface served an artefact 10 commits stale for a day
   while a merged feature sat on `main` and its provider sat configured beside it. Every instrument
@@ -687,17 +526,6 @@ instance of a tripwire kept here.
   and nothing found in the deployment repo's manifests or CI as of the commit that armed sign-in.
   Refute it by grepping either tree for a check that reads a running image's tag and compares it to
   a branch — a single hit retires the claim.
-- 🔴 **A `State now` BULLET ASSERTING A NEGATIVE IS THE ONE SHAPE A READER CANNOT FALSIFY CHEAPLY.**
-  This doc said *"the deploy is still not started … nothing has been written into the deployment-
-  manifest repo"* for a day after both were done. A positive claim carries its own check (go read the
-  thing it names); *"X has not happened"* names nothing to read, so it survives every review until
-  somebody independently goes looking. **Give a negative claim the command that would refute it.**
-- 🔴 **THE KICKOFF'S RANKS AND THE DOC'S RANKS DISAGREED, WHICH IS THE SHUFFLE HAZARD THIS DOC
-  ALREADY RECORDS, ARRIVING FROM THE OTHER DIRECTION.** The resume message described rank 10 as the
-  deploy and rank 11 as the seeding; by then the doc had renumbered those to the publish ordering and
-  the leak gate. Acting on the kickoff's numbering would have claimed the wrong slug. **The doc is the
-  authority over the kickoff that points at it, and a kickoff quoting a rank NUMBER goes stale the
-  moment the list moves — quote the work, not the rank.**
 - 🔴 **A CLEAN START PROVES NOTHING UNTIL THE CHECK THAT WOULD REFUSE HAS BEEN WATCHED REFUSING.**
   Before committing a config change to a repo where commit = live deploy, the binary was run against
   the exact values with two negative controls: redirect-URL-set-but-no-verifier → exit 78, and a
@@ -706,12 +534,6 @@ instance of a tripwire kept here.
   hand-written `PATH` put `timeout` out of reach and the run exited **127**. Reading the OUTPUT rather
   than the code is what caught it — a 127 read as a program failure would have sent the whole change
   back for a defect that did not exist.
-- 🔴 **DISCRIMINATE A TRANSIENT BY FINDING THE STEP THAT DIFFERS, NOT BY RE-RUNNING IT.** The key-set
-  fetch returned 502 five times and then 200 twenty-seven consecutive times. Re-running only produced
-  more samples of one path; what identified it was probing the SAME service by a second route — from
-  inside the cluster, from the consuming pod itself (6/6 OK) — plus a sibling endpoint on the external
-  path that stayed healthy throughout, and the provider's own restart clock being 22h old. That
-  triangulation put the fault in the edge path and nowhere else.
 - ⚠ **A DEGRADED-BUT-SAFE FAILURE MODE IS WORTH READING THE CODE FOR BEFORE ACCEPTING THE RISK.**
   Against that 502 the surface does not refuse to start: it warns, withholds the provider button,
   answers 503 on those routes only, leaves the credential form, the entries page and existing sessions
@@ -727,15 +549,6 @@ instance of a tripwire kept here.
   Corrected in a follow-up commit that keeps the wrong sentence inline, because what it got wrong is
   the useful part. **A prediction written into a comment before the deploy is a claim; go back and
   measure it after.**
-- ⚠ **A COMMENT-ONLY CHANGE TO A WORKLOAD MANIFEST DOES NOT ROLL THE POD**, because YAML comments are
-  stripped before apply and the applied object is byte-identical. Confirmed rather than assumed: the
-  pod's age and restart count were unchanged across that reconcile. Useful when the correction above
-  has to land on a surface you do not want to cycle twice.
-- ⚠ **`claim-work` HAS NO SLUG FOR WORK THAT IS NOT ON THE RANKED LIST YET, AND TAKING ONE ANYWAY IS
-  STILL RIGHT.** This session's deploy was not a ranked item under the doc's current numbering, so
-  there was no `--slug-for` answer; a descriptive slug was claimed instead and released at the end.
-  **The lock is worth taking even when the queue has no entry for the work** — the hazard it guards
-  (two sessions doing the same thing) does not require the work to be enumerated.
 - 🔴 **THE HAND-RUN BRING-UP RECIPE UNDER `## How to verify` MUST NOT BE DELETED, AND THE REASON IS
   RECORDED *HERE* BECAUSE THAT SECTION IS A REPLACE BUCKET.** The deployed browser surface holds
   **one** user, and the share flow's `Candidates` is narrowed by CO-MEMBERSHIP — so rank 9 cannot
@@ -745,13 +558,6 @@ instance of a tripwire kept here.
   `How to verify` wholesale, so a guard written into any of the three survives exactly one update.
   It was written there first, which is the mistake this bullet exists to stop repeating — **put a
   guard in `Gotchas`, which appends, and leave only the procedure in the replaced section.**
-- 🔴 **A RETRACTION IS A TREE-WIDE SWEEP — AND THE SITE I SWEPT WAS THE LESS-READ ONE.** A wrong
-  claim about rank 9's target was corrected under `## How to verify` while an IDENTICAL copy
-  survived in the ranked item itself, which is the section `/resume` and `claim-work` actually
-  drive from. The audit round that caught it noted the corrected copy sat ~1,120 lines below the
-  live one. **Grep the claim's own words across the whole document before calling a retraction
-  done**, and when two copies exist, fix the one a reader reaches FIRST. This doc already carried
-  that lesson in the abstract; it was read, and the sweep still missed a site.
 
 - 🔴 **THE PRUNE ALREADY RAN ONCE AND THE DOCUMENT FULLY REGREW IN SEVEN DAYS — MEASURED, AND IT
   CHANGES WHAT "PRUNE THE DOC" MEANS.** At the prune commit (`3c4a1c6`, 2026-09-18) the whole
@@ -787,16 +593,6 @@ instance of a tripwire kept here.
   the stated evidence does not**, which is the shape worth noticing: a check written once as
   "0 hits" rots into a false statement the moment the archived prose mentions the word. Assert the
   STRUCTURE (no handoff headings, header says nothing here is live), never a grep count.
-
-- 🔴 **THREE INSTRUMENT FAILURES IN ONE FINDING, NONE OF WHICH CHANGED A CONCLUSION — BECAUSE EACH
-  WAS CAUGHT BY A CONTROL RATHER THAN BY INSPECTION.** Closing one 🔴 on `cairn#117` produced: (a)
-  the implementer's sweep sliced each test body to the next `^func`, swallowing the FOLLOWING test's
-  doc comment — exactly where the evidence lived — so it reported the table clean; (b) its first
-  control restored with `git checkout -- internal/ui/*.go` while those files carried the
-  UNCOMMITTED fix, destroying it; (c) my own regeneration control reported ✅ BYTE-IDENTICAL when
-  the generator had **refused to run at all** (`no …/tailwind.css — run this from the repository
-  root, or pass the root as $1`) — the file was unchanged because nothing regenerated it. **Every
-  one was caught by reading OUTPUT rather than an exit code or a diff.**
 - 🔴 **A GENERATOR POINTED AT SOURCE FILES READS THE COMMENTS, AND IN A REPO THAT MANDATES DENSE
   COMMENTS THAT IS A LIVE FALSE-RED FACTORY.** `@source "./*.go"` made Tailwind emit `.sticky`,
   `.table`, `.hidden`, `.visible`, `.fixed`, `.static` — each present in the generated CSS with
@@ -831,66 +627,6 @@ instance of a tripwire kept here.
   `worktree add` had failed with `already exists`, so I ran in a directory that was **not a git
   repository at all**, and the shell had no pytest, making "0 tests ran" inevitable. **A true claim
   corroborated by a broken instrument is still unevidenced.**
-- ⚠ **THE SHARED SCRATCHPAD IS ONE PATH AND DISPATCHED AGENTS WRITE INTO IT.** An implementer
-  working in another repo overwrote this session's own PR-comment drafts at the same filenames.
-  Nothing was lost because those comments were already posted, but the collision is the documented
-  one: **name scratch files per-agent, and do not assume a path you wrote is still yours.**
-- 🔴 **A PRE-START COMMENT MUST PRECEDE THE `in_progress` FLIP, BECAUSE ONLY THE COMMENT NOTIFIES.**
-  A status flip to `in_progress` pushes to nobody; the notification fires on entering
-  `ready_for_review`. So the pre-start comment is the operator's ONLY chance to object BEFORE the
-  work, and posting it after the flip inverts that. Both tasks this session dispatched follow that
-  order, with the criteria quoted verbatim so the timestamped copy is auditable.
-- 🔴 **WHEN YOU AUTHOR THE CRITERIA, YOU MAY NOT GRADE THEM — EVEN WHEN THE DETECTOR SAYS
-  AUTHOR-SPECIFIED.** The pickup detector is deterministic: a `## Acceptance criteria` heading ⇒
-  AUTHOR-SPECIFIED ⇒ a local pickup may set `complete`. But this session WROTE both cards minutes
-  before picking them up, so the heading's presence is an artefact of its own authorship. Both are
-  committed to ending at `ready_for_review`. **Read the detector's verdict against who actually
-  wrote the words, not against the heading.**
-- ⚠ **`--arc` CANNOT SEE A REPO OUTSIDE ITS FOUR HANDLES, AND ITS REFUSAL IS EXPLICITLY "NOT
-  MEASURED".** `find-session --arc` resolves a doc against a FIXED set of four repo-handle
-  environment variables only; for a repo outside that set — and **this repo is outside it** — it
-  exits **5**, which its own text says must never be reported as an empty arc. Pointing an unused handle at the repo for one invocation is a working
-  read-only workaround; the repo LABEL in the output is then cosmetically wrong.
-- ⚠ **AN ARC AUDIT'S COVERAGE IS BOUNDED BY COMMIT-TRAILER ATTRIBUTION, AND HERE IT WAS 16 OF 33.**
-  `--arc` unions WRITERS (from the doc's commit trailers, which include the originating session) with
-  READERS (sessions whose OPENING message names the doc). It printed **"17 of 33 commit(s) on this
-  doc carry no session id — those writers are NOT in this chain"**, and the opencode corpus was not
-  searched at all. **Quote the uncovered half whenever you report an arc as complete.**
-- 🔴 **A MULTI-PART INSTRUCTION LOSES ITS TAIL, AND NOTHING NOTICES.** An arc audit over 16 sessions
-  found exactly one ask that was given directly and then dropped rather than deferred: the third
-  clause of a three-part process feedback. The first two shipped in one PR whose title names them
-  both; the third had **0 mentions in this doc and 0 tasks**. The tell is a PR title that enumerates
-  *some* of a numbered instruction. **When an instruction has parts, record the parts, not the PR.**
-
-- 🔴 **`git rerere` CAN RESOLVE A CONFLICT FOR YOU SILENTLY, AND ITS OUTPUT IS A CLAIM RATHER THAN AN
-  ANSWER.** Merging `origin/main` into #108 printed `Resolved 'flake.nix' using previous resolution.` on
-  **stderr** and left zero conflict markers — from a resolution recorded by an EARLIER session's
-  integration run, against a DIFFERENT `main`. The file still shows as `UU` until you `add` it, which is
-  the only reason it was read at all. **The check that settles it is not a marker grep** (there are
-  none) **and not "it compiles"**: diff each PARENT against the merge base, collect the lines each side
-  ADDED, and assert every one is present in the merged file — plus that neither side REMOVED any. Here
-  that was 519 added lines, 0 missing, 0 removed. Same family as the declaration-set diff this doc
-  already records for a merge that deleted four tests.
-- 🔴 **A HOOK-BLOCKED `bash` CALL RUNS *NOTHING* IN IT — INCLUDING THE HEREDOC THAT WAS GOING TO WRITE
-  THE COMMIT MESSAGE.** A single call wrote a message with `cat > msg.txt <<'EOF'` and then ran
-  `git commit -F msg.txt`; the commit guard refused the call, so the message file was never created and
-  the follow-up run died `could not read log file … No such file or directory` — which reads like a
-  path mistake and is not. **After a blocked call, assume nothing in it ran**, and the guard says the
-  right fix out loud: write the message with the `Write` tool and pass `-F <file>`, never a heredoc whose
-  lines a guard parses as real commands.
-- 🔴 **THE COMMIT GUARD CANNOT RESOLVE `git -C $VAR` AND JUDGES YOUR *CALLER'S* DIRECTORY INSTEAD.**
-  `git -C $WT commit` in a detached scratch worktree was refused as a commit to `main`, because the
-  guard could not see `$WT`'s value and fell back to the session's cwd — which really was `main`. It
-  says so in its own message. **Pass `-C` an ABSOLUTE path** (or assign the variable in the same
-  command) when a guard is in the path of the call.
-- 🔴 **A PR WHOSE BRANCH IS HELD BY A STALE AGENT WORKTREE IS STILL UPDATABLE — DETACH AND PUSH BY
-  REFSPEC.** `refs/heads/uiaudit-browser-harness` was checked out in
-  `.claude/worktrees/agent-…` (idle ~20 h, unlocked), so a second `worktree add` of that branch is
-  refused. `worktree add --detach <path> <head-sha>` → merge → commit → `push origin
-  HEAD:refs/heads/<branch>` updates the PR without touching the other worktree. ⚠ **The local branch
-  ref is then BEHIND `origin` by exactly that merge** — `origin` is authoritative, and the drift is
-  reported rather than silently repaired, because repairing it means writing to a checkout that is not
-  yours.
 - 🔴 **THIS DOCUMENT IS NOT GRANDFATHERED, AND THAT IS WHY RANK 15 LANDS ON IT FIRST.**
   `handoff_budget.GRANDFATHERED` holds twelve paths and none of them is
   `claudedocs/handoff-cairn-control-plane.md`, so its allowance is the base **65,536 B** against a
@@ -950,18 +686,6 @@ instance of a tripwire kept here.
   carried a name, with an edit note saying the rewrite was not a scrub — verified 0 mentions against a
   live sha still matching, so the zero is measured. **Whenever you rewrite to remove something, ask
   what now POINTS at the old object, and treat your own record as a candidate.**
-- 🔴 **A SCAN OVER A LIST OF SHAS YOU WROTE DOWN IS NOT AN ENUMERATION, AND IT COST A SECOND PUBLIC
-  FORCE-PUSH.** The first remedy was scoped from five shas typed by hand; the branch had **ten**
-  commits, and the sixth also carried names — as an ancestor of the rewrite's base, so the authorised
-  recipe structurally could not reach it. Same class as this repo's `grep`-over-known-wordings bullet
-  and as the three-repo population scan two bullets down. **`git rev-list <base>..<head>` and loop**;
-  then report the count so the selection is visible.
-- 🔴 **A POPULATION MEASURED FROM GUESSED PATHS UNDERSTATED A GATE'S BLAST RADIUS BY 4×.** The
-  already-over set was scanned across three repos resolved by writing paths out; the tool's own module
-  enumerates its repos from env handles, and resolving them found **54 more documents** in a fourth —
-  357 handoff docs in that one checkout, worst over by 344,499 B. **Ask the code where it looks; never
-  supply the answer.** ⚠ Both times a downstream agent re-measured and **overrode** the figure I gave
-  it, which is the behaviour to keep asking for.
 - 🔴 **GRANDFATHERING "AT MEASURED SIZE" REPRODUCES THE DAY-ONE REFUSAL ONE WRITE LATER.** A ratchet
   that fires on `after > allowance AND delta > 0` refuses the very next growing update when the
   allowance equals today's bytes. The ledger's own **16 KB quantum** is what delivers the stated intent,
@@ -984,12 +708,6 @@ instance of a tripwire kept here.
   **three times**, because every fix round superseded the tree it was measuring, and a sweep of a
   superseded tree is evidence about nothing that will ship. ~111 rows × one full suite each is hours.
   **Treat it as the pre-merge gate it is.**
-- ⚠ **THE `git commit` GUARD CANNOT RESOLVE `-C $VAR` AND JUDGES YOUR CALLER'S DIRECTORY — HIT TWICE IN
-  ONE SESSION.** It refused a commit in a detached scratch worktree as a commit to `main`, correctly,
-  because the variable's value was not in the command text. 🔴 **And a blocked call runs NOTHING in
-  it**, so a heredoc earlier in the same call never wrote its file and the follow-up died
-  `could not read log file` — which reads like a path mistake. **Absolute paths to `-C`, and after a
-  refusal assume nothing ran.**
 
 ## How to verify
 ```bash
@@ -1131,12 +849,11 @@ how a 10-commit lag sat unnoticed for a day behind a healthy pod and green gates
 
 ## Open investigations — live diagnosis state
 
-📄 **Eleven closed blocks are now in `claudedocs/handoff-cairn-control-plane-archive.md`** —
-five moved at the first prune (PR #35's CI and the merged-tree byte budget, the P4 ladder, the
-round-1 fix round, and #38's round-3/merged-gate block) and six at the second (the two
-host-HOME doctor-test blocks and the ✅ CLOSED block that closed them, the `packages.default`
-flip's mechanical blocker, the live-JWKS-fetch block, and the publish gate). They are resolved
-or superseded; the archive keeps them verbatim, because a closed block's value is its measured
+📄 **Twelve closed blocks are now in `claudedocs/handoff-cairn-control-plane-archive.md`** — five
+moved at the first prune, six at the second, and one at the THIRD: the `cairn#117` × `cairn#108`
+merged-tree block, settled
+when both PRs merged and the gate ran (recorded in `State now`). They are resolved or
+superseded; the archive keeps them verbatim, because a closed block's value is its measured
 values and eliminations. Read it on demand.
 
 ### FOUR of the five auth controls are still LOOPBACK-only readings, off-mesh unverified
@@ -1193,27 +910,3 @@ values and eliminations. Read it on demand.
   same ephemeral port gives exactly one failure with no timing signal. `via: assumed`
 - **Next probe:** run the file alone in a loop of 20 and watch for a single failure —
   `for i in $(seq 20); do uv run --with pytest python -m pytest tests/test_subsystem_store_api.py -q -p no:randomly | tail -1; done`
-
-### `cairn#117` and `cairn#108` overlap in two shared files and no merged tree has been measured
-- as-of: 2026-09-25
-- **Symptom + exact repro:** both PRs are open, both report `MERGEABLE` against `main`, and neither
-  has been merged-tree gated against the other. `gh pr view <n> --json mergeable` answers about each
-  PR versus `main`; it says nothing about the tree their merge creates.
-- **Observed (with values):** `gh pr view 108 --json files` and `gh pr view 117 --json files` share
-  **`flake.nix`** and **`.github/workflows/ci.yml`**. Round 0 located the `flake.nix` hunks: #108 at
-  `@@ -357` and `@@ -387`, #117's first hunk at `@@ -387` — the **same `onlyGo` filter region**. Both
-  also append a step to the same `nix` CI job. #117 head `6bbcddf`; #108 open, unmerged.
-- **Ruled out:** that the overlap is only prose. #117's PR body originally said #108 "touches
-  `internal/ui/render.go` prose only in a residual it left unapplied"; the file lists refute that —
-  two shared files, both load-bearing. `via: command` (`gh pr view --json files` on both).
-- **Ruled out:** that `MERGEABLE` settles it. `RULES.md` records a measured instance of two PRs both
-  reporting `MERGEABLE` while `git merge-tree --write-tree` exited **1**, because GitHub compared
-  each against a `main` where neither had landed. `via: doc`
-- **Leading hypothesis:** a textual conflict is likely in `ci.yml` (both append to the same job's
-  step list) and possible in `flake.nix`'s `onlyGo` list; a semantic conflict is possible regardless,
-  since #117 REMOVES an `onlyGo` row (`tailwind.css`, which existed only for the now-deleted
-  `@source` scan) while #108 edits the same region.
-- **Next probe:** build an integration branch off current `main`, merge both, and run the full gate
-  set there — `git merge-tree --write-tree` first and **branch on its EXIT CODE, never on a marker
-  grep** (it prints only a tree OID on success and emits no `<<<<<<<`). Then bisect any failure to
-  the merge commits. Do this BEFORE round 1, because round 1 cannot see it.
