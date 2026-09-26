@@ -108,11 +108,23 @@ var findingTypes = map[string]bool{
 // server rejects a referenced name with any directory component (the ref comes from
 // attacker-influenceable metadata on its side), and the reference CLI rejects it before
 // sending.
+//
+// 🔴 ONLY CAPTURES AT A `Push` VIEWPORT REACH THE PAYLOAD, AND THE FILTER IS HERE RATHER
+// THAN IN THE WALK. The hub's viewport set is CLOSED — `Validate` refuses anything outside
+// `{mobile, desktop}`, which is the server's contract and not a preference — while the walk
+// captures five widths because that is what measures a responsive layout. Filtering in the
+// walk instead would mean the extra widths were never rendered at all, which is the whole
+// thing being bought; filtering here means every width is measured locally and exactly the
+// two the hub can diff are sent. A page pushed under a viewport name the hub has never
+// stored would be "new" on every run and its pixel diff would never say anything.
 func BuildPayload(label string, captures []*Capture) (*PushPayload, map[string][]byte, error) {
 	p := &PushPayload{Label: label, Environment: EnvLab}
 	files := map[string][]byte{}
 
 	for _, c := range captures {
+		if !c.Viewport.Push {
+			continue
+		}
 		stem := slug(c.Target.PushURL) + "-" + c.Viewport.Name
 		shot := stem + ".png"
 		axe := stem + ".axe.json"

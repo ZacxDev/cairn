@@ -661,7 +661,7 @@ func (s *Server) refuseUnconfiguredOAuth(w http.ResponseWriter) {
 // has one way in, so refusing to start and refusing every request are the same outcome. THIS
 // SURFACE HAS TWO DOORS, and the whole stated reason the credential form is kept is that it
 // works when the identity provider does not. A GoTrue that is restarting while this pod is
-// rescheduled would have produced CrashLoopBackOff — the entries page, the share flow, the
+// rescheduled would have produced CrashLoopBackOff — the browse pages, the share flow, the
 // credential form and every already-issued cookie session all unservable, because a door
 // NOBODY WAS USING could not reach its key set. Two places in this tree asserted the opposite
 // in as many words, and they were right about later fetches and wrong about the first.

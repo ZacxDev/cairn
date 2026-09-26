@@ -38,22 +38,75 @@
  * every radius and the one easing curve on this surface resolve here, so a page cannot
  * invent a fifth grey.
  *
- * ⚠ THE COLOURS ARE THE LIGHT SET. The dark set overrides the same custom properties
- * below, OUTSIDE any cascade layer, which is why it wins: Tailwind emits its theme inside
- * `@layer theme`, and unlayered declarations beat layered ones regardless of order. */
+ * 🔴 THE PALETTE IS DARK, ALWAYS, AND THE MEDIA QUERY THAT USED TO SWITCH IT IS DELETED
+ * RATHER THAN INVERTED. An operator decision: this surface is dark by default and has no
+ * light theme and no toggle. What stood here was a LIGHT set in `@theme` plus a
+ * `@media (prefers-color-scheme: dark)` block overriding the same custom properties, and
+ * the mechanism that made that work is worth keeping written down even though the block
+ * is gone, because it is the trap anybody re-introducing a theme switch will walk into:
+ * an override written inside `@layer base` LOSES to `@theme`, since Tailwind emits its
+ * theme inside `@layer theme` and unlayered declarations beat layered ones regardless of
+ * order. So a future second palette goes OUTSIDE any layer or it silently does nothing.
+ *
+ * ⚠ THE STRUCTURAL FORM OF "DARK ALWAYS" IS THAT THE GENERATED STYLESHEET CONTAINS NO
+ * `prefers-color-scheme` AT ALL, and `TestTheStylesheetHasNoColourSchemePreference` asserts
+ * that rather than asserting a spelling. A guard on the WORD `dark` would pass a tree that
+ * had re-added a light branch under a different name; the absence of the query is the
+ * state, and it is the state a reader on a light-mode machine actually depends on. */
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  --color-surface: oklch(0.982 0.004 85);
-  --color-raised: oklch(1 0 0);
-  --color-ink: oklch(0.29 0.014 75);
-  --color-muted: oklch(0.52 0.014 75);
-  --color-line: oklch(0.9 0.008 80);
-  --color-accent: oklch(0.52 0.088 205);
-  --color-accent-ink: oklch(0.99 0 0);
-  --color-danger: oklch(0.52 0.17 25);
+  --color-surface: oklch(0.21 0.008 75);
+  --color-raised: oklch(0.25 0.009 75);
+  --color-ink: oklch(0.93 0.006 85);
+  --color-muted: oklch(0.72 0.01 85);
+  --color-line: oklch(0.34 0.01 80);
+  --color-accent: oklch(0.78 0.1 200);
+  --color-accent-ink: oklch(0.18 0.01 75);
+  --color-danger: oklch(0.72 0.14 25);
+
+  /* 🔴 A FIFTH BREAKPOINT, BECAUSE TAILWIND'S DEFAULT LADDER STOPS AT `2xl` (1536px) AND
+   * REAL DISPLAYS DO NOT. Measured requirement rather than a guess: the operator's display
+   * is 3427 CSS pixels wide, which is more than twice `2xl`, and every rule written against
+   * the default ladder therefore renders the same at 1536 and at 3427 — a narrow column in
+   * a sea of dark. `--breakpoint-*` is Tailwind v4's theme key for this, so `ultra:` becomes
+   * an ordinary variant and needs no config file.
+   *
+   * ⚠ 2000px AND NOT 3427px. A breakpoint is where a layout should CHANGE, not a device
+   * somebody owns: pinning it to one machine's width would leave every display between
+   * 1536 and 3427 — which is most large monitors — on the `2xl` layout. 2000 is where four
+   * columns of this card stop being cramped.
+   *
+   * 🔴 AND IT IS SPELLED IN `rem`, NOT `px`, WHICH IS NOT COSMETIC: A `px` BREAKPOINT HERE
+   * SORTS BEFORE EVERY DEFAULT ONE AND IS THEREFORE DEAD AT EVERY WIDTH WHERE IT MATTERS.
+   * Measured, not reasoned: this key read `2000px` and the generated `body` rule emitted
+   *
+   *   @media (width >= 2000px) { max-width: 112rem }      ← ultra, FIRST
+   *   @media (width >= 40rem)  { … }
+   *   @media (width >= 64rem)  { … }
+   *   @media (width >= 80rem)  { max-width: var(--container-7xl) }   ← xl, LAST
+   *
+   * At 3440px every one of those queries matches, media queries add no specificity, and the
+   * last declaration wins — so the shell capped at `xl`'s 80rem (1280px) and the `ultra`
+   * rung was inert on exactly the displays it was added for. A real Chromium rendered 1232px
+   * of content in a 3440px viewport, 35.8% of the width. 🔴 THE TELL IS THE ONE THAT MAKES
+   * THIS WORTH WRITING DOWN: the rule IS in `app.css`, correctly nested inside `body`, with
+   * the right query and the right value. Grepping the stylesheet for it finds it and proves
+   * nothing — CASCADE ORDER IS NOT VISIBLE IN A GREP.
+   *
+   * The cause is the UNIT and not the value: Tailwind v4 orders breakpoint variants by
+   * their resolved size, `2000px` is larger than every default (`2xl` is 96rem = 1536px),
+   * and it sorted FIRST anyway — a px length and a rem length are not comparable without
+   * assuming a root font size, so the mixed-unit key fell out of the ordering. Respelled in
+   * the same unit as the defaults it has to sort against, it emits last and wins.
+   *
+   * 125rem IS 2000px at the 16px root font size, so the breakpoint's VALUE is unchanged on a
+   * default browser — and on a reader who has enlarged their root font it now scales with
+   * the other four instead of standing still, which is the behaviour every default breakpoint
+   * already had. Do not "simplify" this back to px. */
+  --breakpoint-ultra: 125rem;
 
   --radius-card: 0.625rem;
 
@@ -87,34 +140,36 @@
   }
 }
 
-/* 🔴 THE DARK SET IS UNLAYERED, AND THAT IS THE MECHANISM RATHER THAN A STYLE CHOICE.
- * See the note in `@theme` above: an override written inside `@layer base` would LOSE to
- * Tailwind's own `@layer theme` block in browsers that implement layers, which is all of
- * them — so the surface would render its light palette on a dark-mode machine with
- * nothing going red. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-surface: oklch(0.21 0.008 75);
-    --color-raised: oklch(0.25 0.009 75);
-    --color-ink: oklch(0.93 0.006 85);
-    --color-muted: oklch(0.72 0.01 85);
-    --color-line: oklch(0.34 0.01 80);
-    --color-accent: oklch(0.78 0.1 200);
-    --color-accent-ink: oklch(0.18 0.01 75);
-    --color-danger: oklch(0.72 0.14 25);
-  }
-}
-
 @layer base {
   html {
-    /* Kept from the hand-written stylesheet this replaces: it is what makes a browser's
-     * own form controls and scrollbars follow the page instead of fighting it. */
-    color-scheme: light dark;
+    /* 🔴 `dark` AND NOT `light dark`, AND IT IS NOT DECORATION. This is what makes the
+     * browser's OWN chrome — form controls, scrollbars, the canvas behind a rubber-band
+     * scroll, a `<details>` marker — render dark. With `light dark` a reader whose
+     * system is set to light gets the dark palette from the tokens above and LIGHT
+     * scrollbars and LIGHT select controls on top of it, which is the failure mode that
+     * looks like a half-finished theme. The page is dark always, so the declaration is
+     * too. */
+    color-scheme: dark;
   }
 
   body {
     @apply bg-surface text-ink font-sans text-base leading-relaxed antialiased;
-    @apply mx-auto max-w-3xl px-6 py-10;
+    /* 🔴 THE WIDTH LADDER, AND `max-w-3xl` AT EVERY WIDTH WAS THE DEFECT. A fixed
+     * 48rem column is correct on a laptop and is a narrow strip on anything wider; the
+     * cards below are a grid that has nowhere to grow into if their container does not.
+     * The padding grows with it — a full-bleed layout at 3427px with 1.5rem of gutter
+     * reads as text pressed against the bezel.
+     *
+     * 🔴 THIS IS THE ELEMENT THAT CAPS THE PAGE. `.page-main` carries no `max-width` of
+     * its own, so whatever this rung resolves to is what a reader sees, minus the gutter.
+     * Writing the ladder here rather than on `<main>` is deliberate — one shell, one
+     * answer, and a page added later inherits it — but it means a rung that loses the
+     * cascade is invisible from the element anybody would think to inspect. It lost one:
+     * see `--breakpoint-ultra` above, where the top rung was dead for the whole of its
+     * first life. `uiaudit`'s content floor is what measures that this ladder REACHES the
+     * top rung, at 3440px, on every page. */
+    @apply mx-auto w-full max-w-3xl px-4 py-6;
+    @apply sm:px-6 lg:max-w-5xl lg:py-10 xl:max-w-7xl ultra:max-w-[112rem] ultra:px-12;
   }
 
   h1 {
@@ -236,6 +291,7 @@
 
   input[type="password"],
   input[type="text"],
+  input[type="search"],
   select {
     @apply bg-raised text-ink border border-line rounded px-3 py-2 text-sm;
     @apply transition-[border-color,box-shadow] duration-200 ease-cairn;
@@ -330,6 +386,329 @@
     @apply block rounded px-2 py-1.5 text-accent no-underline;
     @apply transition-[background-color,padding-left] duration-200 ease-cairn;
     @apply hover:bg-accent/10 hover:pl-3;
+  }
+
+  /* ---- The browse surface: cards, drill-down, search. --------------------------
+   *
+   * 🔴 EVERY NAME BELOW IS SEMANTIC AND COMPOSED WITH `@apply`, WHICH IS NOT A STYLE
+   * PREFERENCE HERE. Nothing scans the Go files (`source(none)`, no `@source`), so a raw
+   * utility written into a `Class()` call would render a class this stylesheet has no rule
+   * for: `app.css` byte-unchanged, the currency check green, the element unstyled.
+   * `TestEveryRenderedClassHasARuleInTheStylesheet` is the only thing that catches it. */
+
+  .page-header h1 a {
+    @apply text-ink no-underline;
+    @apply transition-colors duration-200 ease-cairn hover:text-accent;
+  }
+
+  /* The breadcrumb. `›` is a CSS-generated separator rather than a rendered character,
+   * so it is not in the accessible name of any link and a screen reader does not read it
+   * out between every step. */
+  .crumbs {
+    @apply flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-muted mb-4;
+  }
+
+  .crumb {
+    @apply text-accent no-underline rounded px-1 py-0.5;
+    @apply transition-colors duration-200 ease-cairn hover:bg-accent/10;
+  }
+
+  .crumb + .crumb::before {
+    content: "›";
+    @apply text-muted mr-1;
+  }
+
+  .crumb-here {
+    @apply text-ink font-medium hover:bg-transparent;
+  }
+
+  /* The search bar. It is a row on anything above a phone and a stack on a phone, because
+   * a 390px viewport cannot hold a label, a field and a button side by side without the
+   * field collapsing to something nobody can read what they typed in. */
+  .searchbar {
+    @apply flex flex-col gap-2 mb-6;
+    @apply sm:flex-row sm:items-center sm:gap-3;
+  }
+
+  .searchbar label {
+    @apply text-sm font-medium shrink-0;
+  }
+
+  .searchbar input[type="search"] {
+    @apply w-full sm:flex-1 sm:min-w-0;
+  }
+
+  /* 🔴 THE GRID IS `auto-fit` + `minmax`, NOT A FIXED COLUMN COUNT PER BREAKPOINT, AND
+   * THAT IS WHAT MAKES THE ULTRAWIDE CASE WORK WITHOUT A SIXTH BREAKPOINT. With
+   * `repeat(auto-fit, minmax(18rem, 1fr))` the number of columns is a function of the
+   * CONTAINER, so 390px gets one, a laptop gets two or three, and 3427px gets as many as
+   * fit — and a card never drops below 18rem, which is the width its longest stat line
+   * needs before it wraps into a second row. A per-breakpoint `grid-cols-N` ladder would
+   * need a rung for every display width anybody ever uses. */
+  .scope-grid {
+    @apply grid gap-4;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  }
+
+  /* The card. `.scope` above is kept for the share flow; this is the browse surface's
+   * own, and the two share the same visual language deliberately. */
+  .card {
+    @apply bg-raised border border-line rounded-card px-5 py-4;
+    @apply flex flex-col gap-2;
+    @apply animate-rise;
+  }
+
+  /* A card in the grid gets no vertical margin — the grid's own `gap` owns the spacing,
+   * and `my-4` on top of it would make the rows twice as far apart as the columns. */
+  .page-main > .card {
+    @apply my-4;
+  }
+
+  .scope-grid .card {
+    @apply my-0;
+  }
+
+  .card-head {
+    @apply flex flex-wrap items-baseline justify-between gap-2;
+    @apply border-b border-line pb-2 mb-1;
+  }
+
+  .card-head h2 {
+    @apply border-0 pb-0 mb-0 min-w-0 break-words;
+  }
+
+  .card-name {
+    @apply text-accent no-underline;
+    @apply transition-colors duration-200 ease-cairn hover:brightness-125;
+  }
+
+  /* The sentence that says what the card IS. Deliberately not `.note`: it is the answer
+   * to "what am I looking at", so it sits above the data rather than reading as an aside
+   * beneath it. */
+  .card-what {
+    @apply text-sm text-muted italic;
+  }
+
+  .card-stats {
+    @apply flex flex-wrap items-center gap-x-2 gap-y-1 text-xs;
+  }
+
+  .stat {
+    @apply rounded-full border border-line px-2 py-0.5 text-muted;
+  }
+
+  .stat-open {
+    @apply border-accent/60 text-accent;
+  }
+
+  .stat-warn {
+    @apply border-danger/60 text-danger;
+  }
+
+  .stat-quiet {
+    @apply border-transparent px-0 italic;
+  }
+
+  .card-entries {
+    @apply flex flex-col gap-0.5;
+  }
+
+  .card-entry {
+    @apply truncate;
+  }
+
+  .card-more,
+  .card-warn {
+    @apply text-xs text-muted italic;
+  }
+
+  .card-warn {
+    @apply text-danger not-italic;
+  }
+
+  .scope-links {
+    @apply flex flex-col gap-1;
+  }
+
+  /* The scope page's entry list. Each row is a grid on a wide viewport so refs and titles
+   * line up in columns, and a stack on a phone where they cannot. */
+  .entry-list {
+    @apply flex flex-col;
+  }
+
+  .entry-row {
+    @apply flex flex-wrap items-baseline gap-x-2 gap-y-1 py-2;
+    @apply border-b border-line/60 last:border-b-0 rounded;
+    @apply transition-colors duration-200 ease-cairn hover:bg-line/25;
+  }
+
+  .entry-row .ref a {
+    @apply text-accent no-underline;
+    @apply transition-[text-decoration-color] duration-200 ease-cairn;
+    @apply underline underline-offset-2 decoration-transparent hover:decoration-current;
+  }
+
+  .entry-count {
+    @apply text-xs text-muted;
+  }
+
+  /* Badges. 🔴 THE OPEN BADGE AND THE NEAR-MISS BADGE ARE DIFFERENT CLASSES WITH
+   * DIFFERENT COLOURS, AND THAT IS THE POINT RATHER THAN DECORATION. A near miss is a
+   * bullet that TRIED to write a marker and missed the grammar — it is not open, and
+   * until it was reported separately it was byte-identical to "no marker" on the read
+   * surface: the badge simply did not render, and a vanishing badge looks like success. */
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+    @apply border;
+  }
+
+  .badge-open {
+    @apply border-accent bg-accent/15 text-accent;
+  }
+
+  .badge-near {
+    @apply border-danger/70 bg-danger/10 text-danger;
+  }
+
+  .badge-quiet {
+    @apply border-line text-muted;
+  }
+
+  /* The entry page. */
+  .provenance {
+    @apply grid gap-x-3 gap-y-1 text-sm;
+    grid-template-columns: max-content 1fr;
+  }
+
+  .prov-key {
+    @apply font-mono text-xs text-muted;
+  }
+
+  .prov-val {
+    @apply font-mono text-xs break-all;
+  }
+
+  .entry-section {
+    @apply border-t border-line pt-3 mt-3;
+  }
+
+  .section-head {
+    @apply font-mono normal-case tracking-normal text-sm text-ink mb-2 break-words;
+  }
+
+  /* 🔴 THE BODY IS A `<pre>` AND IT SCROLLS INSIDE ITSELF. A store entry carries wrapped
+   * prose, code fences and pasted command lines; without `overflow-x-auto` one long line
+   * makes the whole PAGE scroll sideways, which is the single layout defect `uiaudit`'s
+   * `horizontal_overflow` check exists to catch and the one most likely to be introduced
+   * by content rather than by a rule. */
+  .section-body,
+  .bullet-body,
+  .hit-lines {
+    @apply font-mono text-xs leading-relaxed whitespace-pre-wrap break-words;
+    @apply overflow-x-auto max-w-full;
+    @apply bg-surface border border-line rounded px-3 py-2;
+  }
+
+  .bullets {
+    @apply flex flex-col gap-2;
+  }
+
+  .bullet {
+    @apply flex flex-col gap-1;
+  }
+
+  .bullet-meta {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .bullet-date {
+    @apply font-mono text-xs text-muted;
+  }
+
+  .labelled {
+    @apply flex flex-col gap-1;
+  }
+
+  .missing {
+    @apply text-sm text-muted italic;
+  }
+
+  /* Malformed entries. Loud, because a page that showed only the good entries would be a
+   * shorter, wrong store. */
+  .malformed {
+    @apply border-l-4 border-danger/70 bg-danger/5 rounded-r px-4 py-3 mt-3;
+    @apply flex flex-col gap-1;
+  }
+
+  .malformed-row {
+    @apply flex flex-wrap items-baseline gap-x-2 text-sm;
+  }
+
+  .malformed-why {
+    @apply text-xs text-danger;
+  }
+
+  /* Search results. `.results` carries no visual rule of its own — it is a HOOK, so a
+   * harness or a later rule can address the results card without addressing every card.
+   * An empty rule satisfies `TestEveryRenderedClassHasARuleInTheStylesheet`, which is
+   * explicit that it proves a SELECTOR exists and not that the rule does anything; the
+   * alternative is dropping the class, which would leave the results card unaddressable. */
+  .results {
+    @apply w-full;
+  }
+
+  .hits {
+    @apply flex flex-col gap-3;
+  }
+
+  .hit {
+    @apply flex flex-col gap-1 border-t border-line pt-3 first:border-t-0 first:pt-0;
+  }
+
+  .hit-where {
+    @apply flex flex-wrap items-baseline gap-2 text-sm;
+  }
+
+  .hit-where a {
+    @apply font-mono text-accent no-underline underline-offset-2;
+    @apply transition-[text-decoration-color] duration-200 ease-cairn;
+    @apply underline decoration-transparent hover:decoration-current;
+  }
+
+  .hit-scope,
+  .hit-section {
+    @apply text-xs text-muted;
+  }
+
+  .hit-section {
+    @apply font-mono;
+  }
+
+  .hit-score {
+    @apply font-mono text-xs text-accent;
+  }
+
+  /* The legend — a `<details>`, so it is one tap from the answer and costs no vertical
+   * space to a reader who already knows. No script: `<details>` is native. */
+  .legend {
+    @apply border border-line rounded-card px-4 py-3 text-sm bg-raised/60;
+  }
+
+  .legend summary {
+    @apply cursor-pointer text-muted font-medium;
+  }
+
+  .legend dl {
+    @apply grid gap-x-3 gap-y-1 mt-3;
+    grid-template-columns: max-content 1fr;
+  }
+
+  .legend-term {
+    @apply font-mono text-xs text-accent;
+  }
+
+  .legend-def {
+    @apply text-xs text-muted;
   }
 }
 

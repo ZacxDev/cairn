@@ -27,6 +27,9 @@ type Capture struct {
 	AxeJSON    []byte
 	DigestJSON []byte // nil when the digest was empty — see [Capture.HasDigest]
 	Layout     *PushLayout
+	// Content is how much of the viewport this page's own content occupied. See
+	// [ContentBox] for why it is measured separately from [PushLayout].
+	Content *ContentBox
 
 	Violations []AxeViolation
 	Console    []Event
@@ -41,6 +44,19 @@ type Capture struct {
 	// Hrefs is what this page published, populated only when the target says it publishes
 	// links. See [ExpandLinks].
 	Hrefs []string
+
+	// ScriptCount is `document.scripts.length` as the BROWSER counted it after the page
+	// settled.
+	//
+	// 🔴 IT IS COUNTED IN THE DOM RATHER THAN GREPPED OUT OF THE HTML, AND THAT IS THE
+	// WHOLE VALUE OF MEASURING IT HERE. `internal/ui`'s XSS story partly rests on this
+	// surface shipping no script at all, and a string search for `<script` over the served
+	// bytes cannot see a script an INJECTION created, a `<script>` a parser recovered from
+	// malformed markup, or one a subresource inserted. `document.scripts` is what the
+	// browser actually has. It is a measurement and not a refusal at this level: this
+	// module's own positive-control page carries a script on purpose, so the assertion
+	// belongs to the walk over the real surface — see `refuseWalkRegressions`.
+	ScriptCount int
 }
 
 // AxeViolation is the subset of an axe result the push needs. The `ID` is the whole point:
@@ -61,6 +77,74 @@ type Event struct {
 	FirstParty bool
 	Text       string
 }
+
+// ContentBox is how wide the page's own content rendered, beside how wide the viewport
+// was.
+//
+// 🔴 IT EXISTS BECAUSE `horizontal_overflow` IS BLIND TO THE OPPOSITE DEFECT, AND THAT
+// BLINDNESS IS MEASURED RATHER THAN SUSPECTED. A walk over 65 captures at five widths
+// reported `0 overflow` and was CORRECT: a container that is too NARROW never overflows,
+// so the whole class "the page ignores the viewport" passes every check this harness had.
+// The tree that reported it rendered 1232 CSS pixels of content inside a 3440-pixel
+// viewport — 36% of the width, a column in a sea of dark — and nothing here could say so.
+// Too-wide and too-narrow are different claims; `refuseContentWidth` asserts the second
+// one and the overflow refusal keeps asserting the first.
+//
+// ⚠ IT IS MEASURED HERE RATHER THAN IN `vendor-js/layout-smells.js`, WHICH IS NOT A STYLE
+// CHOICE. That file is the hub's own bytes, copied verbatim as a wire contract — its keys
+// ARE `PushLayout` — so a field added there would be a divergence from the upstream it is
+// supposed to mirror. This is a local measurement, pushed nowhere, read only by this
+// module's own refusal.
+type ContentBox struct {
+	// InnerWidth is `window.innerWidth`, read again here rather than taken from
+	// [PushLayout] so the numerator and denominator of the fraction come from one read of
+	// one layout. A ratio assembled from two evaluations separated by a reflow is a ratio
+	// of two different pages.
+	InnerWidth int `json:"inner_width"`
+	// BodyWidth is the shell's border-box width. It is carried for the FAILURE MESSAGE
+	// rather than asserted on: the width ladder this surface has lives on `body`, so a
+	// reader who sees `main` too narrow needs to know in the same line whether `body` was
+	// narrow too — that is the difference between a capped shell and a capped child.
+	BodyWidth int `json:"body_width"`
+	// MainWidth is the border-box width of the page's `<main>`, which is the element a
+	// reader's eye reads as "the page".
+	MainWidth int `json:"main_width"`
+	// MainClass is `<main>`'s class attribute verbatim. `internal/ui` renders exactly two:
+	// `page-main` on every content page and `signin-main` on the one single-card form. See
+	// `refuseContentWidth` for why the second is exempt and why the exemption is pinned on
+	// the class AND the path rather than on either alone.
+	MainClass string `json:"main_class"`
+	// MainCount is how many `<main>` elements the document has. Asserted to be exactly one:
+	// a zero would make `MainWidth` a zero that reads as "very narrow" rather than as "not
+	// measured", and a two would make it arbitrary which one was measured.
+	MainCount int `json:"main_count"`
+}
+
+// contentWidthJS reads one page's content box. Its keys are [ContentBox]'s.
+//
+// 🔴 IT DOES NOT CATCH, DELIBERATELY, AND THAT IS THE OPPOSITE OF WHAT
+// `vendor-js/layout-smells.js` DOES. That script wraps its body in a catch-all returning
+// `'{}'` because it shares one `chromedp.Run` with the screenshot and a hostile page must
+// not drop the whole capture — and this file already records what that cost: `{}`
+// unmarshals to a ZERO struct whose `missing_viewport_meta:false` is an AFFIRMATIVE claim,
+// so a thrown script printed a clean layout line. A zero here would be a content width of
+// zero, which is the worst possible direction for a FLOOR: it would read as the narrowest
+// page imaginable and refuse an honest tree, or — with the assertions below removed —
+// as an unmeasured page that passed. Letting it throw makes `chromedp.Evaluate` return an
+// error and the capture fail loudly, which is the only honest outcome for a measurement
+// nothing else can reconstruct.
+const contentWidthJS = `(() => {
+  const mains = document.querySelectorAll('main');
+  const m = mains[0];
+  const b = document.body;
+  return JSON.stringify({
+    inner_width: window.innerWidth || document.documentElement.clientWidth,
+    body_width: b ? Math.round(b.getBoundingClientRect().width) : 0,
+    main_width: m ? Math.round(m.getBoundingClientRect().width) : 0,
+    main_class: m ? (m.getAttribute('class') || '') : '',
+    main_count: mains.length,
+  });
+})()`
 
 // HasDigest answers whether this capture's digest may be attached to a push.
 //
@@ -502,7 +586,10 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 		// harness whose config PINS a dimension is structurally blind to that
 		// dimension's defects; this surface has never been rendered at any width, so
 		// "the default viewport" would be a dimension nobody chose.
-		emulation.SetDeviceMetricsOverride(int64(vp.Width), int64(vp.Height), 1, vp.Name == Mobile.Name),
+		// The touch flag is `vp.Touch` and NOT `vp.Name == Mobile.Name`, which is what it
+		// was: a behavioural property keyed on a STRING is a property a fourth width named
+		// anything else silently loses. See [Viewport.Touch].
+		emulation.SetDeviceMetricsOverride(int64(vp.Width), int64(vp.Height), 1, vp.Touch),
 		chromedp.Navigate(b.base+t.Path),
 		chromedp.Sleep(350*time.Millisecond),
 	); err != nil {
@@ -582,6 +669,13 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 		}
 	}
 
+	// `document.scripts.length`, read off the live DOM. See [Capture.ScriptCount] for why
+	// this is a browser question and not a grep, and `refuseWalkRegressions` for where it
+	// is turned into a refusal.
+	if err := chromedp.Run(b.ctx, chromedp.Evaluate(`document.scripts.length`, &c.ScriptCount)); err != nil {
+		return nil, fmt.Errorf("counting scripts on %s at %s: %w", t.Path, vp.Name, err)
+	}
+
 	// Layout smells, from the hub's own script, returning its own raw keys.
 	var layoutRaw string
 	if err := chromedp.Run(b.ctx, chromedp.Evaluate(layoutSmellsJS, &layoutRaw)); err != nil {
@@ -636,6 +730,36 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 			t.Path, vp.Name, layout.InnerWidth, vp.Width, truncateForLog(layoutRaw, 200))
 	}
 	c.Layout = &layout
+
+	// The content box: how much of the viewport the page's own content occupied. See
+	// [ContentBox] for why `layout-smells.js` cannot answer this and why the overflow
+	// signal above is structurally blind to it.
+	var contentRaw string
+	if err := chromedp.Run(b.ctx, chromedp.Evaluate(contentWidthJS, &contentRaw)); err != nil {
+		return nil, fmt.Errorf("content box on %s at %s: %w", t.Path, vp.Name, err)
+	}
+	var content ContentBox
+	if err := json.Unmarshal([]byte(contentRaw), &content); err != nil {
+		return nil, fmt.Errorf("content box on %s at %s returned %q: %w", t.Path, vp.Name, contentRaw, err)
+	}
+	// The instrument check on the DENOMINATOR, here because it holds on every page this
+	// harness can navigate, including this module's own deliberately-bad control page: no
+	// rendered document is zero pixels wide, so a zero means the evaluation did not measure
+	// a laid-out page.
+	//
+	// ⚠ THE NUMERATOR'S CHECKS ARE IN `refuseWalkRegressions`, NOT HERE, AND THE SPLIT IS
+	// DELIBERATE RATHER THAN AN OVERSIGHT. `<main>` is a property of the SURFACE under audit,
+	// not of the harness: `control_test.go`'s control page has none on purpose, and refusing
+	// its capture would break the positive control that makes every zero in this program
+	// readable. The walk captures every real page at every declared width, so the floor —
+	// which runs at the widest one — sees each of them and refuses a missing or duplicated
+	// `<main>` there, with its own message.
+	if content.InnerWidth <= 0 {
+		return nil, fmt.Errorf("%s at %s reports innerWidth=%d in its content box; no rendered page is zero "+
+			"pixels wide, so a content fraction measured here would divide by nothing (raw: %q)",
+			t.Path, vp.Name, content.InnerWidth, truncateForLog(contentRaw, 200))
+	}
+	c.Content = &content
 
 	// The a11y digest, likewise verbatim.
 	var digestRaw string

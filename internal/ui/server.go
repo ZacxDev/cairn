@@ -5,16 +5,21 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	g "maragu.dev/gomponents"
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/netid"
+	"github.com/ZacxDev/cairn/internal/report"
 	"github.com/ZacxDev/cairn/internal/store"
 )
 
-// Source is the read half the one page needs, as an interface so the renderer's
+// Source is the read half this surface needs, as an interface so the renderer's
 // tests can build a world without a store on disk.
 //
 // 🔴 IT TAKES THE AUTHORIZATION, NOT THE PRINCIPAL. `control.Authorization` is the
@@ -23,29 +28,208 @@ import (
 // principal instead would make this interface's implementer resolve the authority
 // a second time, which is the authenticated-against-one-world-authorised-against-
 // another window `control.Principal`'s own comment forbids.
+//
+// 🔴 `Visible` IS THE WHOLE READ FOR ALL THREE BROWSE PAGES, AND THAT IS A DECISION
+// RATHER THAN AN ACCIDENT. `GET /`, `GET /scope` and `GET /entry` are three views of
+// ONE narrowed answer: the scope page picks a scope out of it and the entry page picks
+// an entry out of that. A per-page read — `Entry(auth, scope, ref)` — was the obvious
+// alternative and was refused, because it would put a SECOND place where "may this
+// caller see this" is decided, and the two could then disagree about a scope. Deriving
+// every page from one answer makes the refusal for "not yours" and the refusal for
+// "does not exist" the SAME code path rather than two paths that must be kept
+// byte-identical by discipline. See `browseRefusal`.
+//
+// ⚠ WHAT IT COSTS, MEASURED RATHER THAN WAVED AT: every page load parses every entry
+// the caller may read. The store this serves is tens of kilobytes across tens of files
+// — `report.Search`'s own comment measures a full scan of it in single-digit
+// milliseconds, and search already does exactly that on every query. If a deployment
+// ever outgrows that, the fix is a cache in front of THIS function, not a second
+// narrowing seam behind it.
 type Source interface {
 	Visible(auth control.Authorization) ([]Scope, error)
+	// Search answers the root page's `?q=`. It is the SAME engine the CLI and the pod
+	// use — see [StoreSource.Search] for why a second matcher was never on the table.
+	Search(auth control.Authorization, query string) (SearchResults, error)
 }
 
-// Scope is one scope's worth of entries, as the page renders them.
+// Scope is one scope's worth of entries, as the pages render them.
 type Scope struct {
+	// ID is the scope's control-plane id, which is what a URL addresses it by.
+	//
+	// 🔴 IT IS MINTED OVER A URL-SAFE ALPHABET AND THE NAME IS NOT, WHICH IS THE WHOLE
+	// REASON THE LINK IS KEYED ON IT. `control.NewID`/`control.DerivedID` produce an
+	// opaque token; a scope NAME is a directory somebody created and is user text. It is
+	// also present on BOTH deployment shapes — `internal/control/tokenfile` mints
+	// `scopeID(name)` for every scope it projects — so `/scope?id=` is reachable against
+	// a token file as well as against a control journal. Empty is possible in principle
+	// (an authority that named no id for a scope the index listed) and the card then
+	// renders unlinked rather than linking nowhere.
+	ID control.ID
 	// Name is the scope's display name. USER TEXT.
 	Name string
 	// Entries are its entries in index order. Every string below is USER TEXT.
 	Entries []Entry
+	// Malformed are the entry files this scope holds that the loader REFUSED.
+	//
+	// 🔴 THEY ARE CARRIED RATHER THAN DROPPED, AND THE REASON IS THAT A BROWSER WHICH
+	// DROPS THEM DISAGREES WITH THE CLI WHILE LOOKING COMPLETE. `store.LoadStore` loads
+	// with `Collect` precisely so a bad entry costs one entry instead of the whole scope,
+	// and `internal/report` renders every collected row. A page that rendered only the
+	// good ones would show a shorter, tidier, WRONG store.
+	Malformed []Malformed
 }
 
-// Entry is one entry, reduced to what the page shows.
+// OpenCount is how many of this scope's entries carry at least one DECLARED `OPEN:`
+// bullet, summed over entries.
+//
+// 🔴 A ZERO IS NOT "NOTHING IS OPEN", WHICH IS `report.RecalledEntry.OpenCount`'s OWN
+// CAVEAT ONE LEVEL DOWN. The marker is opt-in, so zero means "nothing was declared".
+// The card says `declared open` rather than `open` for that reason.
+func (s Scope) OpenCount() int {
+	n := 0
+	for _, e := range s.Entries {
+		n += e.OpenCount
+	}
+	return n
+}
+
+// Malformed is one entry file the loader refused, as the page shows it.
+type Malformed struct {
+	// Label is `<scope>/<filename>`, the spelling every surface in this tree uses.
+	Label string
+	// Reason is the loader's own refusal sentence. USER-INFLUENCED: it can quote the
+	// file's own front matter.
+	Reason string
+}
+
+// Entry is one entry as the pages render it.
 //
 // 🔴 EVERY FIELD HERE IS ATTACKER-INFLUENCED, AND `Tasks` IS THE ONE THAT LANDS IN
 // A URL POSITION. A store entry's `tasks:` front-matter key is `<system>:<id>`,
 // which is the same shape as a URL scheme followed by an opaque part — so
 // `javascript:alert(document.domain)` is a WELL-FORMED task ref. See [safeHref].
+//
+// 🔴 AND `Sections` IS A SECOND URL-POSITION HAZARD IN A SHAPE THE FIRST ONE IS NOT:
+// `Ref` reaches a QUERY parameter on this surface's own links. It is a filename stem
+// from a file somebody else wrote, not a minted id, so it is percent-encoded on the way
+// out (`entryHref`) and matched against the narrowed list on the way in — never parsed
+// into a path. See `handleEntryPage`.
+//
+// ⚠ WHAT EACH FIELD IS IN THE UNDERLYING FILE, because the operator's complaint about
+// the first version of this page was exactly that nobody could tell:
+//
+//	Ref         the addressable name: `<slug>` or `<slug>.<kind>` — the FILENAME minus `.md`
+//	Title       `service:` in the front matter, which the loader pins equal to the slug
+//	Filename    the file on disk under `<store root>/<scope>/`
+//	Aliases     the `aliases:` front-matter sequence, AS WRITTEN (not the folded form)
+//	Tasks       the `tasks:` front-matter sequence, AS WRITTEN
+//	Sections    the `##` headings `report.SurfacedHeadings` names, with their bodies
+//	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
 type Entry struct {
+	Ref      string
+	Title    string
+	Filename string
+	Aliases  []string
+	Tasks    []string
+
+	// Sections are the surfaced headings this entry HAS, in
+	// `report.SurfacedHeadings` order. A heading the entry does not carry is absent
+	// from this slice and named in `MissingSections` instead — "the section was never
+	// started" and "the section is there and unfilled" are different facts about a
+	// curated entry and `store.ExtractSections` is careful to keep them apart.
+	Sections []Section
+	// MissingSections are the COUNTED headings this entry does not carry, spelled as
+	// the file would have to spell them.
+	MissingSections []string
+
+	// BulletCount, OpenCount and NearMissCount are read off ONE predicate.
+	//
+	// 🔴 `store.JournalBullet.OpennessPopulation` IS THE SINGLE SOURCE OF THE
+	// PRECEDENCE ORDER AND EVERY COUNT HERE COMES FROM IT, WHICH IS WHY THIS IS NOT A
+	// SECOND IMPLEMENTATION OF MARKER PARSING. Its own comment records a delta audit
+	// on the oracle that found ONE bullet counted twice because two surfaces each
+	// decided membership for themselves. Counting `Openness == OpennessOpen` here
+	// instead would be that second surface.
+	BulletCount   int
+	OpenCount     int
+	NearMissCount int
+}
+
+// Section is one `##` heading of an entry file and what sits under it.
+type Section struct {
+	// Heading is the heading line VERBATIM, `##` included — the string
+	// `store.ExtractSections` matched on, which is what a reader has to type to find
+	// it in the file.
+	Heading string
+	// Body is everything under it, verbatim, with surrounding blank lines trimmed.
+	// Rendered as text for a section that is not the journal.
+	Body string
+	// Bullets are the top-level journal bullets, EMPTY for every section but
+	// `store.NuanceHeading`. A nuance section whose body is non-empty and which
+	// yields no bullets is its own state — prose before the first bullet — and
+	// `Body` is what shows it.
+	Bullets []Bullet
+}
+
+// Bullet is one top-level journal bullet: the LINE ITEM the operator asked to be able
+// to see.
+type Bullet struct {
+	// Lines is the bullet VERBATIM including its continuation lines. It is a slice
+	// because a real bullet is wrapped prose — `store.JournalBullet`'s own comment
+	// measures a median of 3 lines and a longest of 19 over the live corpus, so a
+	// one-line model would silently truncate most of them.
+	Lines []string
+	// Date is the ISO date the bullet is dated with, or "". Around 44% of the oracle's
+	// corpus carries none, so "" is an ordinary reading rather than a parse failure.
+	Date string
+	// Population is which of `store`'s six openness populations this bullet is in —
+	// exactly one, decided by `store.JournalBullet.OpennessPopulation`. The badge is
+	// derived from THIS and never from a substring of the text, which is what keeps an
+	// `OPEN:` marker distinguishable from a near-miss that merely looks like one.
+	Population string
+}
+
+// Text is the bullet rejoined, for the one place a whole bullet is rendered as a
+// paragraph.
+func (b Bullet) Text() string { return strings.Join(b.Lines, "\n") }
+
+// SearchResults is one answer from `report.Search`, reduced to what the page shows.
+type SearchResults struct {
+	Query string
+	Hits  []Hit
+	// TotalHits is hits that cleared the threshold BEFORE truncation, and Omitted is
+	// how many of them are not below. Both are rendered: a list that silently stopped
+	// at twenty reads as "that is all there is".
+	TotalHits int
+	Omitted   int
+	// BestBelow is the best candidate that did NOT clear the threshold, "" if there
+	// was none.
+	//
+	// 🔴 IT IS WHAT MAKES A ZERO READABLE, and `report.SearchReport.BestBelow`'s own
+	// comment is the argument: "the query matched nothing anywhere" and "the best
+	// candidate scored 0.50 against a threshold of 0.60" are different facts with
+	// different next actions, and a page that prints the same blank for both has
+	// diagnosed nothing.
+	BestBelow string
+	// ScopesSearched is the narrowed set the engine actually walked. It is rendered so
+	// an empty result is legible as an AUTHORITY answer when the set is empty.
+	ScopesSearched []string
+}
+
+// Hit is one matched hunk.
+type Hit struct {
+	// ScopeID is carried so the hit can LINK to the entry. It is resolved through the
+	// same `NamedScopes` traversal the scope cards are, never re-derived.
+	ScopeID control.ID
+	Scope   string
 	Ref     string
-	Title   string
-	Aliases []string
-	Tasks   []string
+	Section string
+	Start   int
+	Lines   []string
+	Score   float64
+	// Basis is `report.BasisLine` or `report.BasisEntryName`. Rendered, because a
+	// name-only hit is otherwise indistinguishable from a line that matched.
+	Basis string
 }
 
 // StoreSource reads the real store, narrowed by the caller's authority.
@@ -56,12 +240,21 @@ type StoreSource struct{ Root string }
 // 🔴 `VisibleScopes(control.VerbRead)` IS THE ONLY NARROWING, AND IT IS THE SAME
 // SEAM THE POD USES. A second scope check here would be a second implementation of
 // visibility, which `internal/control/README.md` exists to refuse.
+//
+// 🔴 AND THE IDS COME OUT OF THE SAME TRAVERSAL AS THE NARROWING, NOT OUT OF A SECOND
+// LOOKUP. `Authorization.NamedScopes` returns id AND display name together for exactly
+// this reason — its own comment refuses the shape where a surface takes the names from
+// the authority and re-derives the ids from the Model, because the Model holds scopes
+// this authority cannot see and the re-derivation is therefore WIDER than the authority
+// by construction. `VisibleScopes` is itself derived from `NamedScopes`, so the two
+// values below are two projections of one walk.
 func (s StoreSource) Visible(auth control.Authorization) ([]Scope, error) {
-	visible := auth.VisibleScopes(control.VerbRead)
-	index, err := store.LoadStore(s.Root, "recall", visible)
+	named := auth.NamedScopes(control.VerbRead)
+	index, err := store.LoadStore(s.Root, "recall", scopeSetOf(named))
 	if err != nil {
 		return nil, err
 	}
+	ids := scopeIDsByFoldedName(named)
 	var out []Scope
 	for _, name := range index.Scopes() {
 		entries, err := index.Entries(name)
@@ -71,21 +264,183 @@ func (s StoreSource) Visible(auth control.Authorization) ([]Scope, error) {
 			// itself is loud instead of quietly rendering a short page.
 			return nil, err
 		}
-		page := Scope{Name: name}
+		page := Scope{ID: ids[store.NormalizeRef(name)], Name: name}
 		for _, e := range entries {
-			item := Entry{Ref: e.Ref(), Title: e.Slug, Aliases: e.RawAliases}
-			for _, t := range e.Tasks {
-				// `Raw`, not `String()`: the page shows the ref the FILE carries,
-				// because the normalisation that produces `System` lowercases and
-				// `-`-folds, and a reader comparing the page against the file would
-				// otherwise see two spellings of one ref and not know which is real.
-				item.Tasks = append(item.Tasks, t.Raw)
+			item, err := s.readEntry(name, e)
+			if err != nil {
+				return nil, err
 			}
 			page.Entries = append(page.Entries, item)
+		}
+		for _, m := range index.MalformedIn(name) {
+			page.Malformed = append(page.Malformed, Malformed{Label: m.Label(), Reason: m.Reason})
 		}
 		out = append(out, page)
 	}
 	return out, nil
+}
+
+// readEntry projects ONE entry file onto [Entry], structure included.
+//
+// 🔴 IT PARSES WITH `internal/store`'s OWN PARSERS AND WRITES NO MARKDOWN READER. The
+// decision and its reasoning are recorded in `internal/ui/README.md`; the short form is
+// that `store.ExtractSections` and `store.ParseJournalBullets` are the parsers every
+// other reader in this tree uses, they already handle the two things a hand-rolled one
+// gets wrong (a `#` inside a code fence is not a heading, an INDENTED `-` is a
+// continuation and not a new bullet), and a second parser here would render a structure
+// the CLI disagrees with.
+//
+// ⚠ IT DOES NOT GO THROUGH `internal/report`. That package's job is to render TEXT whose
+// bytes are pinned against the Python oracle; this one needs the VALUES, and reaching
+// them by parsing `report`'s rendered output back apart would be a second parser with
+// extra steps. `report.SurfacedHeadings` and `report.CountedHeadings` ARE imported, so
+// the set of headings a browser surfaces cannot drift from the set the CLI prints.
+func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
+	item := Entry{
+		Ref:      e.Ref(),
+		Title:    e.Slug,
+		Filename: e.Filename,
+		Aliases:  e.RawAliases,
+	}
+	for _, t := range e.Tasks {
+		// `Raw`, not `String()`: the page shows the ref the FILE carries,
+		// because the normalisation that produces `System` lowercases and
+		// `-`-folds, and a reader comparing the page against the file would
+		// otherwise see two spellings of one ref and not know which is real.
+		item.Tasks = append(item.Tasks, t.Raw)
+	}
+
+	// The file is located from the loader's own scope + filename, never from a path
+	// reconstructed out of the ref — `<slug>.<kind>.md` and `<slug>.md` are different
+	// files and only the loader knows which one this entry came from. That is
+	// `report.ReadEntry`'s rule, restated here because this function is the second
+	// reader to depend on it.
+	path := filepath.Join(s.Root, scope, e.Filename)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Entry{}, store.EntryUnreadable(path, err)
+	}
+	text := store.DecodeReplace(data)
+	sections := store.ExtractSections(text, report.SurfacedHeadings)
+	for _, heading := range report.SurfacedHeadings {
+		body, present := sections[heading]
+		if !present {
+			continue
+		}
+		section := Section{Heading: heading, Body: body}
+		if heading == store.NuanceHeading {
+			for _, b := range store.ParseJournalBullets(body) {
+				section.Bullets = append(section.Bullets, Bullet{
+					Lines:      b.Lines,
+					Date:       b.Date,
+					Population: b.OpennessPopulation(),
+				})
+			}
+		}
+		item.Sections = append(item.Sections, section)
+	}
+	for _, heading := range report.CountedHeadings {
+		if _, present := sections[heading]; !present {
+			item.MissingSections = append(item.MissingSections, heading)
+		}
+	}
+
+	for _, b := range store.ParseJournalBullets(sections[store.NuanceHeading]) {
+		item.BulletCount++
+		switch b.OpennessPopulation() {
+		case store.PopulationOpen:
+			item.OpenCount++
+		case store.PopulationNearMiss:
+			item.NearMissCount++
+		}
+	}
+	return item, nil
+}
+
+// Search runs the root page's query through `internal/report`'s engine.
+//
+// 🔴 IT IS THE SAME SCORED, AUTHORITY-NARROWED SEARCH THE CLI AND THE POD RUN, AND A
+// SECOND MATCHER WAS NEVER ON THE TABLE. `report.Search` tokenizes, scores, applies the
+// fuzzy floor and the short-token exact rule, and reports the best candidate BELOW the
+// threshold so a zero is readable. A `strings.Contains` over entry titles here would
+// answer differently from `cairn search` for the same query against the same store —
+// which is the drift `internal/report` being ONE package exists to prevent.
+//
+// 🔴 `AllScopes` IS TRUE AND THE NARROWING IS THE INDEX FILTER, WHICH IS `report.Search`'s
+// OWN RULING: an all-scopes search names no scope, so there is nothing for a per-scope
+// refusal check to refuse, and narrowing the INDEX is what makes a store-wide search
+// store-wide over what the caller may see and nothing else.
+func (s StoreSource) Search(auth control.Authorization, query string) (SearchResults, error) {
+	named := auth.NamedScopes(control.VerbRead)
+	rep, err := report.Search(s.Root, report.SearchOptions{
+		Query:     query,
+		AllScopes: true,
+		// The three tuning values are `internal/report`'s own defaults, reached through
+		// its constants rather than copied. `internal/api` and `internal/client` spell
+		// exactly these three the same way; a fourth surface inventing its own threshold
+		// would make the same query score differently in a browser than on a terminal.
+		Context:   report.ContextBullet,
+		Threshold: report.DefaultThreshold,
+		MaxHits:   report.DefaultMaxHits,
+	}, scopeSetOf(named))
+	if err != nil {
+		return SearchResults{}, err
+	}
+
+	ids := scopeIDsByFoldedName(named)
+	out := SearchResults{
+		Query:          query,
+		TotalHits:      rep.TotalHits,
+		Omitted:        rep.Omitted(),
+		ScopesSearched: rep.ScopesSearched,
+	}
+	if rep.BestBelow != nil {
+		out.BestBelow = rep.BestBelow.Ref
+	}
+	for _, h := range rep.Hunks {
+		out.Hits = append(out.Hits, Hit{
+			ScopeID: ids[store.NormalizeRef(h.Scope)],
+			Scope:   h.Scope,
+			Ref:     h.Ref,
+			Section: h.Section,
+			Start:   h.Start,
+			Lines:   h.Lines,
+			Score:   h.Score,
+			Basis:   h.Basis,
+		})
+	}
+	return out, nil
+}
+
+// scopeSetOf is the narrowing, derived from the ONE traversal its caller already made.
+//
+// ⚠ IT IS `Authorization.VisibleScopes` SPELLED OVER AN ALREADY-WALKED SLICE, NOT A
+// SECOND POLICY. Calling `VisibleScopes` beside `NamedScopes` would walk `byScope`
+// twice and — more to the point — would be a second place that decides which verb the
+// narrowing is about. Both callers here want the scopes reachable with `VerbRead` and
+// their ids, from one walk.
+func scopeSetOf(named []control.NamedScope) store.ScopeSet {
+	names := make([]string, 0, len(named))
+	for _, n := range named {
+		names = append(names, n.Name)
+	}
+	return store.VisibleScopeSet(names)
+}
+
+// scopeIDsByFoldedName keys the authority's ids on the FOLDED scope name.
+//
+// 🔴 FOLDED ON BOTH SIDES, BECAUSE THE INDEX'S NAMES AND THE AUTHORITY'S ARE NOT
+// GUARANTEED TO BE SPELLED THE SAME. `store.ScopeSet.Allows` folds its probe and
+// `tokenfile.foldScope` is `store.NormalizeRef`, so `Alpha_Notes` on disk and
+// `alpha-notes` in the model are ONE scope to every reader downstream. A map keyed on
+// the raw name would miss on exactly that pair and the card would render unlinked for a
+// scope the caller can reach.
+func scopeIDsByFoldedName(named []control.NamedScope) map[string]control.ID {
+	ids := make(map[string]control.ID, len(named))
+	for _, n := range named {
+		ids[store.NormalizeRef(n.Name)] = n.ID
+	}
+	return ids
 }
 
 // Server is the UI's HTTP surface.
@@ -482,10 +837,15 @@ func writePlain(w http.ResponseWriter, code int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// handlePage is the entries page's handler. It was once the ONE content handler and is
-// no longer — `GET /share` is classed `content` too, and `contentAuthority` in
-// `routes_test.go` is where each content route declares WHICH authority it answers from.
-// See `routes` for the route this replaced and the sentence that made it wrong.
+// handlePage is the ROOT page's handler: a card per readable scope, plus the search box.
+//
+// ⚠ IT WAS ONCE THE ONE CONTENT HANDLER AND IS NOW ONE OF FOUR. That sentence has been
+// corrected twice — it said "the ONE content handler" until `GET /share` arrived and "one
+// of two" is what it would say next — so it is worth stating the RULE rather than the
+// count: `contentAuthority` in `routes_test.go` is where each content route declares WHICH
+// authority its answer comes from, a route missing from that map FAILS, and the count is
+// whatever `contentRoutes()` returns. See `routes` for the route this one replaced and the
+// sentence that made it wrong.
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
 	scopes, err := s.source.Visible(id.Auth)
 	if err != nil {
@@ -495,19 +855,170 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request, id identity.
 		writePlain(w, http.StatusInternalServerError, "the store could not be read")
 		return
 	}
-	// 🔴 THE CSRF TOKEN RENDERED INTO THIS PAGE IS DERIVED FROM THE COOKIE ON THIS
-	// REQUEST, NOT FROM THE IDENTITY. A page reached with an `Authorization` header and
-	// no cookie therefore renders an EMPTY token, and its sign-out button will be
-	// refused by gate (6) — which is correct rather than a gap: there is no session for
-	// that caller to sign out of. Deriving it from the identity would require the
-	// identity to carry a session id, and `identity.Identity` deliberately carries no
-	// backend discriminator at all.
-	s.renderPage(w, id, scopes, csrfTokenFor(r))
+
+	view := PageView{
+		// 🔴 THE CSRF TOKEN RENDERED INTO THIS PAGE IS DERIVED FROM THE COOKIE ON THIS
+		// REQUEST, NOT FROM THE IDENTITY. A page reached with an `Authorization` header
+		// and no cookie therefore renders an EMPTY token, and its sign-out button will be
+		// refused by gate (6) — which is correct rather than a gap: there is no session
+		// for that caller to sign out of. Deriving it from the identity would require the
+		// identity to carry a session id, and `identity.Identity` deliberately carries no
+		// backend discriminator at all.
+		Viewer: id.Principal.Display,
+		CSRF:   csrfTokenFor(r),
+		Scopes: scopes,
+	}
+
+	// 🔴 THE QUERY IS A PARAMETER ON THE EXISTING ROOT ROW, NOT A ROUTE OF ITS OWN, AND
+	// THAT IS THE HOUSE PATTERN RATHER THAN A SHORTCUT. `routes` is an exact-match map
+	// and every served path is a literal key in it; a `/search` row would be a fourth
+	// ledger row, a fourth `bareGETAnswer` entry and a fourth thing to classify, to buy a
+	// page the root already is. The share flow keys its scope the same way and `routes`
+	// records why.
+	//
+	// ⚠ AND THE ECHO IS SAFE FOR A REASON THAT IS NOT "gomponents ESCAPES IT". The query
+	// IS reflected — the input keeps its value so a reader can refine it — which is
+	// caller-chosen text on a page, the shape `outcomeFrom` refuses for the share flow's
+	// banner. The difference is the POSITION: this text renders inside a form control the
+	// reader just typed into, not as a SENTENCE the page presents as its own. A reflected
+	// banner can say "your access was suspended, call this number"; a reflected search box
+	// says what the reader typed, which is the whole point of the control.
+	if query := strings.TrimSpace(r.URL.Query().Get(QueryQuery)); query != "" {
+		results, err := s.source.Search(id.Auth, query)
+		if err != nil {
+			writePlain(w, http.StatusInternalServerError, "the store could not be read")
+			return
+		}
+		view.Query = query
+		view.Results = &results
+	}
+	s.renderPage(w, view)
 }
 
-func (s *Server) renderPage(w http.ResponseWriter, id identity.Identity, scopes []Scope, csrf string) {
+// handleScopePage renders ONE scope's entry list.
+//
+// 🔴 THE SCOPE IS PICKED OUT OF THE NARROWED ANSWER, WHICH IS WHAT MAKES "not yours"
+// AND "does not exist" THE SAME CODE PATH RATHER THAN TWO PATHS HELD EQUAL BY CARE.
+// `Source.Visible` has already dropped every scope this credential may not read, so an
+// id that is not in the result is refused without this function ever learning whether
+// such a scope exists. That is the discipline `scopeRefusal` records one file over: a
+// 404-for-unknown beside a 403-for-somebody-else's turns the page into an existence
+// oracle over every scope in the deployment, and scope ids are unguessable by
+// construction precisely so that refusal is worth something.
+//
+// ⚠ A REQUEST WITH NO `?id=` IS NOT A REFUSAL. It named nothing, so there is nothing to
+// refuse and nothing it could learn; it gets the navigation page, which is also the
+// breadcrumb parent for this one.
+func (s *Server) handleScopePage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	scopes, err := s.source.Visible(id.Auth)
+	if err != nil {
+		writePlain(w, http.StatusInternalServerError, "the store could not be read")
+		return
+	}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes}
+
+	wanted := control.ID(r.URL.Query().Get(QueryID))
+	if wanted == "" {
+		s.renderNavigate(w, view)
+		return
+	}
+	scope, found := pickScope(scopes, wanted)
+	if !found {
+		writePlain(w, http.StatusNotFound, browseRefusal)
+		return
+	}
+	view.Scope = &scope
+	s.renderScope(w, view)
+}
+
+// handleEntryPage renders ONE entry: its sections and its line items.
+//
+// 🔴 THE `ref` IS USER TEXT IN A URL POSITION AND IT IS MATCHED, NEVER RESOLVED. The
+// scope id is minted over a URL-safe alphabet; a ref is a filename stem out of a file
+// somebody else wrote, so it can carry a slash, a `..`, a NUL or a percent sequence.
+// This function never joins it to a path and never hands it to the loader: it compares
+// it against the refs already in the narrowed answer, and anything that matches none of
+// them is refused. A `filepath.Join(root, scope, ref+".md")` here would be the traversal
+// the rest of this package is built to not need.
+//
+// 🔴 AND THE REFUSAL IS THE SAME BYTES FOR ALL FOUR WAYS TO MISS — an unknown scope, a
+// scope the caller may not read, an unknown ref, and a ref that exists in a DIFFERENT
+// scope. Distinguishing any of them is an oracle over the store's shape.
+func (s *Server) handleEntryPage(w http.ResponseWriter, r *http.Request, id identity.Identity) {
+	scopes, err := s.source.Visible(id.Auth)
+	if err != nil {
+		writePlain(w, http.StatusInternalServerError, "the store could not be read")
+		return
+	}
+	view := PageView{Viewer: id.Principal.Display, CSRF: csrfTokenFor(r), Scopes: scopes}
+
+	q := r.URL.Query()
+	wanted, ref := control.ID(q.Get(QueryScope)), q.Get(QueryRef)
+	if wanted == "" || ref == "" {
+		// Named nothing, learned nothing. See `handleScopePage`.
+		s.renderNavigate(w, view)
+		return
+	}
+	scope, found := pickScope(scopes, wanted)
+	if !found {
+		writePlain(w, http.StatusNotFound, browseRefusal)
+		return
+	}
+	entry, found := pickEntry(scope, ref)
+	if !found {
+		writePlain(w, http.StatusNotFound, browseRefusal)
+		return
+	}
+	view.Scope = &scope
+	view.Entry = &entry
+	s.renderEntry(w, view)
+}
+
+// browseRefusal is what a caller gets for a scope or an entry they may not read AND for
+// one that does not exist. One answer for both — the rule `scopeRefusal` states in full.
+const browseRefusal = "no such scope or entry, or it is not yours to read"
+
+// pickScope and pickEntry are linear scans over a list the caller is about to be shown,
+// which is `pick`'s ruling in `sharehandlers.go`: there is no index worth maintaining.
+func pickScope(scopes []Scope, id control.ID) (Scope, bool) {
+	for _, s := range scopes {
+		// An empty id would otherwise match a scope the authority could not name, which
+		// is the one case where `?id=` with nothing after it would resolve to a page.
+		if s.ID != "" && s.ID == id {
+			return s, true
+		}
+	}
+	return Scope{}, false
+}
+
+func pickEntry(scope Scope, ref string) (Entry, bool) {
+	for _, e := range scope.Entries {
+		if e.Ref == ref {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
+func (s *Server) renderPage(w http.ResponseWriter, view PageView) {
+	s.render(w, Page(view))
+}
+
+func (s *Server) renderScope(w http.ResponseWriter, view PageView) {
+	s.render(w, ScopePage(view))
+}
+
+func (s *Server) renderEntry(w http.ResponseWriter, view PageView) {
+	s.render(w, EntryPage(view))
+}
+
+func (s *Server) renderNavigate(w http.ResponseWriter, view PageView) {
+	s.render(w, NavigatePage(view))
+}
+
+func (s *Server) render(w http.ResponseWriter, node g.Node) {
 	var b strings.Builder
-	if err := Page(id.Principal.Display, scopes, csrf).Render(&b); err != nil {
+	if err := node.Render(&b); err != nil {
 		writePlain(w, http.StatusInternalServerError, "the page could not be rendered")
 		return
 	}

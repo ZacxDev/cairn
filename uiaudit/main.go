@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -154,9 +155,20 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 		// TARGETS. The share index's per-scope links are `control.ID`s nobody can guess, so
 		// the only honest way to reach them is to read what the surface itself offered — see
 		// [ExpandLinks] for the measured reason a guess was worse than useless here.
+		//
+		// 🔴 AND IT DEDUPES ON `Path`, WHICH BECAME AN OBLIGATION RATHER THAN A TIDINESS
+		// WHEN A DISCOVERED PAGE STARTED PUBLISHING LINKS OF ITS OWN. The browse pages link
+		// across rows and back: `/` → `/scope?id=X` → `/entry?…` → a breadcrumb to
+		// `/scope?id=X`. Without this set that is an unbounded queue, and the symptom is a
+		// walk that never returns rather than one that reports a defect. `/scope?id=X` is
+		// also published by TWO pages — the root's cards and the parameterless `/scope`
+		// navigation list — so even without a cycle it would be captured twice, at five
+		// widths each, and pushed as ten pages the hub would diff against themselves.
 		queue := make([]Target, 0, len(targets))
+		enqueued := map[string]bool{}
 		for _, t := range targets {
-			if t.SignedIn == signedIn {
+			if t.SignedIn == signedIn && !enqueued[t.Path] {
+				enqueued[t.Path] = true
 				queue = append(queue, t)
 			}
 		}
@@ -169,30 +181,56 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 					return fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, world.Log())
 				}
 				captures = append(captures, c)
-				fmt.Printf("uiaudit: captured %-34s %-7s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v) console=%d net=%d digest=%v\n",
+				// `main=NNNpx/MM%` is printed on EVERY capture, not only the ones the floor
+				// binds: the number is the only way a reader of this log can see the width
+				// ladder working at four widths it is not asserted at.
+				fmt.Printf("uiaudit: captured %-38s %-9s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v main=%dpx/%.0f%%) scripts=%d console=%d net=%d digest=%v\n",
 					t.Path, vp.Name, c.DocStatus, len(c.Violations),
 					c.Layout.SmallTapTargets, c.Layout.SmallText, c.Layout.HorizontalOverflow,
 					c.Layout.MissingViewportMeta,
+					c.Content.MainWidth, 100*float64(c.Content.MainWidth)/float64(c.Content.InnerWidth),
+					c.ScriptCount,
 					len(c.Console), len(c.Network), c.HasDigest())
 
-				// Expansion is read from ONE viewport's render, not both: the hrefs a page
-				// publishes are an authority answer and cannot depend on a width, and
-				// enqueueing them twice would capture every discovered page twice.
+				// Expansion is read from ONE viewport's render, not all five: the hrefs a
+				// page publishes are an authority answer and cannot depend on a width, and
+				// enqueueing them once per width would capture every discovered page five
+				// times. The dedupe above would absorb that, which is exactly why this
+				// narrowing is kept explicit rather than left to it — two mechanisms doing
+				// one job is how the surviving one stops being read.
 				if t.ExpandLinks && vp == Viewports[0] {
-					found, declined := ExpandLinks(t, c.Hrefs)
+					found, declined, bounded := ExpandLinks(t, c.Hrefs, ledger)
 					for _, d := range declined {
-						fmt.Printf("uiaudit:   declined href %q from %s (not a same-path relative link with a query)\n", d, t.Path)
+						fmt.Printf("uiaudit:   declined href %q from %s (not a relative link, carries no query, or names no declared GET row)\n", d, t.Path)
+					}
+					if bounded > 0 {
+						// 🔴 PRINTED, AND NOT AS A DECLINE. These are pages the walk WOULD
+						// have visited; the hub's 200-page cap is what stops it, and the
+						// arithmetic is `targets × pushed viewports`. Silently taking the
+						// first four would make a bounded walk read as a complete one, which
+						// is the under-coverage this whole derivation exists against.
+						fmt.Printf("uiaudit:   %s published %d further target(s); BOUNDED to the first %d by sorted path "+
+							"(MaxExpansionsPerPage — these pages are one template, and the hub's page cap is %d)\n",
+							t.Path, bounded+len(found), MaxExpansionsPerPage, MaxPages)
 					}
 					if len(found) == 0 {
 						// ⚠ NOT AN ERROR, AND SAYING WHY IS THE POINT. On the token-file
 						// deployment the share index renders "No scope is administrable by
 						// this credential" — an authority answer, not an empty store — so
-						// zero links is the correct output. `README.md` declares reaching
-						// the per-scope page as a gap needing a journal-backed world.
-						fmt.Printf("uiaudit:   %s published no per-scope links: on a token-file deployment no scope is administrable, so the index is the only page this row has\n", t.Path)
+						// zero links is the correct output there. `README.md` declares
+						// reaching the per-scope SHARE page as a gap needing a
+						// journal-backed world. The BROWSE pages are not in that position:
+						// a token-file row is unrestricted over the store's scopes, so
+						// `GET /` does publish scope links on this deployment.
+						fmt.Printf("uiaudit:   %s published no expandable links\n", t.Path)
 					}
-					queue = append(queue, found...)
 					for _, f := range found {
+						if enqueued[f.Path] {
+							fmt.Printf("uiaudit:   already queued %s (published again by %s)\n", f.Path, t.Path)
+							continue
+						}
+						enqueued[f.Path] = true
+						queue = append(queue, f)
 						fmt.Printf("uiaudit:   expanded %s -> %s\n", t.Path, f.Path)
 					}
 				}
@@ -204,6 +242,10 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 	}
 
 	printSignalSummary(captures, browser.FaviconRefusals())
+
+	if err := refuseWalkRegressions(captures); err != nil {
+		return err
+	}
 
 	payload, files, err := BuildPayload(label, captures)
 	if err != nil {
@@ -297,8 +339,246 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 	return nil
 }
 
+// contentWidthFloor is the share of the viewport the page's own `<main>` must occupy at the
+// widest captured width.
+//
+// 🔴 IT IS A FLOOR, NOT A TARGET. A page that uses MORE of the display satisfies it; nothing
+// here asks any page to fill the screen, and nothing here has an opinion about line length
+// below this line. It exists only to refuse the one shape the overflow refusal cannot see.
+//
+// 🔴 0.45 IS DERIVED FROM THE DECLARED LAYOUT AT ONE STATED WIDTH RATHER THAN CHOSEN FOR
+// FEEL, AND BOTH ENDS OF THE RANGE IT SITS IN WERE MEASURED IN A REAL CHROMIUM OVER THIS
+// SURFACE AT `contentFloorWidth`:
+//
+//	the defect  1232px of content in a 3440px viewport = 35.8%
+//	the intent  `ultra:max-w-[112rem]` (1792px) less `ultra:px-12` (48px a side)
+//	            = 1696px of content in a 3440px viewport = 49.3%
+//
+// 0.45 refuses the first by 9.2 points and admits the second with 4.3 to spare. That
+// headroom is what makes it a floor and not a golden value: widening the ultra gutters to
+// `px-24` still passes (1600px, 46.5%), while any change that puts the shell back on a
+// narrower cap does not.
+const contentWidthFloor = 0.45
+
+// contentFloorWidth is the viewport width `contentWidthFloor` was derived at, pinned as a
+// literal because the fraction is NOT scale-free: the shell's cap is an absolute 112rem, so
+// one honest layout is 49% of 3440 and 36% of 5000. Pinning the width is what keeps the
+// fraction a claim with a scope rather than a number that silently goes wrong the day
+// somebody widens the matrix — `refuseWalkRegressions` refuses rather than measures if the
+// widest declared viewport stops being this one.
+const contentFloorWidth = 3440
+
+// signinMainClass is the `<main>` class of the ONE page exempt from the content floor.
+//
+// 🔴 THE EXEMPTION REQUIRES THE CLASS **AND** THE PATH, AND EITHER ALONE WOULD BE A HOLE.
+// The sign-in page's `<main>` IS its card — a `max-w-md` form, 13% of an ultrawide viewport
+// — and that is design rather than defect: a credential field stretched across 1696px is
+// worse, not better. But an exemption spelled as a CLASS is walked by putting that class on
+// a page that should be wide, and one spelled as a PATH is walked by moving wide content
+// behind the sign-in route. Requiring both makes each direction loud, and a rename of either
+// makes the floor FIRE with this message rather than pass in silence.
+const signinMainClass = "signin-main"
+
+// contentFloorExempt answers whether this capture is the one page the floor does not bind.
+// See [signinMainClass] for why the predicate reads two things and not one.
+func contentFloorExempt(c *Capture) bool {
+	return c.Target.Path == ui.SignInPath && c.Content.MainClass == signinMainClass
+}
+
+// refuseWalkRegressions turns four per-page measurements into a FAILED WALK.
+//
+// 🔴 A NUMBER IN A SUMMARY LINE IS NOT A GATE, AND THIS FILE ALREADY RECORDS WHAT THAT
+// COSTS. `printSignalSummary` has printed `pages with horizontal overflow=N` since this
+// harness existed; nothing read it, so a responsive regression would have been a digit in a
+// log beside an exit 0. The four below are the properties this surface is supposed to
+// have, so each is a refusal:
+//
+//   - NO HORIZONTAL OVERFLOW AT ANY CAPTURED WIDTH. This is the single layout defect no
+//     unit test in this repository can see, and the one content is most likely to cause: a
+//     long unbroken line in a store entry's body makes the whole PAGE scroll sideways, on a
+//     phone above all. The widths are the whole point — a page can be clean at 390 and 1440
+//     and broken at 834, which is why there are five.
+//   - NO SCRIPT. `internal/ui` ships none, and part of its XSS story rests on that; the
+//     console-zero claim in the summary above is explicitly structural FOR THAT REASON, so
+//     the day a script appears both that claim and the guard behind it go quiet at once.
+//   - AXE ACTUALLY RAN. `Violations: 0` is produced identically by a clean page and by an
+//     injection that never executed, and this whole program's a11y half is inert in the
+//     second case. A decodable `testEngine` is what separates them.
+//   - THE CONTENT IS NOT A COLUMN IN A SEA OF DARK AT THE WIDEST WIDTH. 🔴 THIS ONE IS HERE
+//     BECAUSE THE OVERFLOW REFUSAL ABOVE IS STRUCTURALLY BLIND TO IT, WHICH IS MEASURED AND
+//     NOT SUSPECTED: a walk reported `0 overflow` over 65 captures at five widths and was
+//     CORRECT, on a tree whose pages rendered 36% of an ultrawide viewport — a container
+//     that is too NARROW never overflows, so the entire class "the page ignores the
+//     viewport" shipped green through every check this harness had. Too-wide and too-narrow
+//     are different claims and both are asserted; neither replaces the other.
+//
+// ⚠ IT IS NOT A THRESHOLD ON `SmallTapTargets` OR `SmallText`. Those two are the hub's to
+// turn into findings — `vendor-js/VENDOR.md` records that the server is the single source
+// of those thresholds and that a harness computing one here would be a second, invisible
+// copy. The content floor is not one of those: it is not a rendering heuristic the hub has
+// an opinion about, it is a property of THIS surface's own declared width ladder, derived
+// from it and asserted nowhere else.
+func refuseWalkRegressions(captures []*Capture) error {
+	if len(captures) == 0 {
+		return fmt.Errorf("refuseWalkRegressions was handed NO capture, so its clean verdict would be about nothing")
+	}
+	var overflow, scripted, axeless, narrow []string
+	widths := map[string]bool{}
+	// The content floor's own accounting: how many captures it actually looked at, how many
+	// it let through as the declared exemption, and the narrowest fraction it saw. All three
+	// are printed on a clean run, because "0 refusals" from a predicate that inspected
+	// nothing is the reassuring zero this program refuses everywhere else.
+	floorMeasured, floorExempt := 0, 0
+	floorMin, floorMinWhere := 1.0, ""
+	for _, c := range captures {
+		where := fmt.Sprintf("%s at %s (%dpx)", c.Target.Path, c.Viewport.Name, c.Viewport.Width)
+		widths[c.Viewport.Name] = true
+		// 🔴 THE FLOOR BINDS AT THE WIDEST DECLARED WIDTH ONLY, AND THE VIEWPORT IS MATCHED BY
+		// VALUE RATHER THAN BY ITS NAME STRING — the same correction `Viewport.Touch` carries:
+		// a behavioural property keyed on a name is a property a width renamed anything else
+		// silently loses. Below `--breakpoint-ultra` the shell's cap is at or above the
+		// viewport, so the fraction is near 1 at every other width and the assertion would be
+		// vacuous there; at 3440 it is the whole question.
+		if c.Viewport == Ultrawide {
+			if c.Content == nil {
+				return fmt.Errorf("%s carries no content box, so the content floor would be deciding "+
+					"from a nil measurement", where)
+			}
+			// 🔴 THE NUMERATOR'S OWN INSTRUMENT CHECK, AND IT IS A SEPARATE REFUSAL BECAUSE A
+			// FRACTION WITH AN UNMEASURED NUMERATOR IS NOT A SMALL FRACTION, IT IS NO FRACTION.
+			// A document with no `<main>` yields `main_width: 0`, which the floor below would
+			// report as the narrowest page that has ever existed — a true refusal for a false
+			// reason, sending the reader after a width ladder when the page has no content
+			// landmark at all. Two `<main>`s make it arbitrary which was measured.
+			if c.Content.MainCount != 1 {
+				return fmt.Errorf("%s has %d <main> element(s), and the content floor is a claim about exactly "+
+					"one: zero makes its width a 0 that reads as an infinitely narrow page, two makes it "+
+					"arbitrary which one was measured", where, c.Content.MainCount)
+			}
+			if c.Content.MainWidth <= 0 {
+				return fmt.Errorf("%s reports a <main> %dpx wide: no rendered element is zero pixels wide, so "+
+					"the content floor would be refusing a measurement that never happened",
+					where, c.Content.MainWidth)
+			}
+			floorMeasured++
+			if contentFloorExempt(c) {
+				floorExempt++
+			} else {
+				frac := float64(c.Content.MainWidth) / float64(c.Content.InnerWidth)
+				if frac < floorMin {
+					floorMin, floorMinWhere = frac, where
+				}
+				if frac < contentWidthFloor {
+					narrow = append(narrow, fmt.Sprintf(
+						"%s: <main> rendered %dpx of innerWidth=%dpx = %.1f%% of the viewport, floor is %.0f%% "+
+							"(body=%dpx, <main class=%q>)",
+						where, c.Content.MainWidth, c.Content.InnerWidth, frac*100, contentWidthFloor*100,
+						c.Content.BodyWidth, c.Content.MainClass))
+				}
+			}
+		}
+		if c.Layout.HorizontalOverflow {
+			overflow = append(overflow, fmt.Sprintf("%s: scrollWidth=%d > innerWidth=%d",
+				where, c.Layout.ScrollWidth, c.Layout.InnerWidth))
+		}
+		if c.ScriptCount != 0 {
+			scripted = append(scripted, fmt.Sprintf("%s: document.scripts.length=%d", where, c.ScriptCount))
+		}
+		// The same discriminator `control_test.go` uses: an axe result that decodes and
+		// carries the engine block is an axe result that ran.
+		if !bytes.Contains(c.AxeJSON, []byte(`"testEngine"`)) {
+			axeless = append(axeless, where)
+		}
+	}
+	// 🔴 THE WIDTH COUNT IS PART OF THE VERDICT, BECAUSE A CLEAN RUN OVER ONE WIDTH IS NOT
+	// A CLEAN RUN. A matrix that silently collapsed — a `Viewports` edited to one entry, a
+	// capture loop that broke out early — would produce zero overflow findings and read
+	// exactly like a responsive surface.
+	if len(widths) < len(Viewports) {
+		return fmt.Errorf("the walk captured %d distinct viewport(s) (%d declared): the matrix collapsed, so "+
+			"a zero overflow count below is a fact about one width rather than about the surface",
+			len(widths), len(Viewports))
+	}
+	// 🔴 THE FLOOR'S SCOPE IS PINNED TO A LITERAL WIDTH, AND A MATRIX THAT MOVED PAST IT
+	// REFUSES RATHER THAN MEASURES. `contentWidthFloor` is a fraction of a viewport and the
+	// shell's cap is an absolute 112rem, so the same correct layout scores 49% at 3440 and
+	// 36% at 5000: widening the widest capture without re-deriving the fraction would turn
+	// an honest tree red, and NARROWING it would make the floor pass on a layout that never
+	// reached the `ultra` breakpoint at all. Both are re-derivations, so both stop here.
+	if Ultrawide.Width != contentFloorWidth {
+		return fmt.Errorf("the content floor of %.0f%% was derived at a %dpx viewport and the widest declared "+
+			"one is now %dpx: the fraction is not scale-free (the shell's cap is an absolute 112rem), so it has "+
+			"to be re-derived at the new width rather than carried over",
+			contentWidthFloor*100, contentFloorWidth, Ultrawide.Width)
+	}
+	if floorMeasured-floorExempt <= 0 {
+		return fmt.Errorf("the content floor BOUND 0 capture(s): %d were taken at the %dpx viewport and %d of "+
+			"those were the declared exemption, so its clean verdict would be about nothing. A walk that "+
+			"captured no page at the widest declared width, or only the sign-in page there, has not measured "+
+			"this property at all",
+			floorMeasured, Ultrawide.Width, floorExempt)
+	}
+	var refusals []string
+	if len(overflow) > 0 {
+		refusals = append(refusals, fmt.Sprintf("HORIZONTAL OVERFLOW on %d capture(s) — the page scrolls "+
+			"sideways, which no unit test in this repository can see:\n    %s",
+			len(overflow), strings.Join(overflow, "\n    ")))
+	}
+	if len(scripted) > 0 {
+		refusals = append(refusals, fmt.Sprintf("SCRIPT ON THE PAGE on %d capture(s) — this surface ships "+
+			"none, and the console-zero claim above is structural only while that holds:\n    %s",
+			len(scripted), strings.Join(scripted, "\n    ")))
+	}
+	if len(axeless) > 0 {
+		refusals = append(refusals, fmt.Sprintf("AXE DID NOT RUN on %d capture(s) — a zero violation count "+
+			"from a page axe never inspected is indistinguishable from a clean one:\n    %s",
+			len(axeless), strings.Join(axeless, "\n    ")))
+	}
+	if len(narrow) > 0 {
+		refusals = append(refusals, fmt.Sprintf("CONTENT TOO NARROW on %d capture(s) at the %dpx viewport — "+
+			"the page renders a column and leaves the rest of the display empty. 🔴 THE OVERFLOW REFUSAL "+
+			"ABOVE CANNOT SEE THIS: a container that is too narrow never overflows, so this whole class is "+
+			"green on every other check here:\n    %s",
+			len(narrow), Ultrawide.Width, strings.Join(narrow, "\n    ")))
+	}
+	if len(refusals) > 0 {
+		return fmt.Errorf("the walk measured %d regression class(es) over %d capture(s):\n  %s",
+			len(refusals), len(captures), strings.Join(refusals, "\n  "))
+	}
+	fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts, %d/%d captures carry a decodable axe "+
+		"testEngine — over %d distinct width(s): %s\n",
+		len(captures)-len(axeless), len(captures), len(widths), viewportWidths())
+	// 🔴 THE FLOOR REPORTS ITS NARROWEST MEASUREMENT RATHER THAN A ZERO. "0 refusals" is
+	// produced identically by a surface that widens and by a predicate that inspected
+	// nothing; the number below moves when the layout does, which is what makes the clean
+	// verdict readable as a measurement.
+	fmt.Printf("uiaudit:   CONTENT FLOOR: narrowest non-exempt <main> at %dpx used %.1f%% of the viewport "+
+		"(%s), floor %.0f%% — over %d capture(s) at that width, %d exempt (%s with class %q)\n",
+		Ultrawide.Width, floorMin*100, floorMinWhere, contentWidthFloor*100,
+		floorMeasured, floorExempt, ui.SignInPath, signinMainClass)
+	return nil
+}
+
+// viewportWidths renders the matrix for a log line, so the run's own output says which
+// widths its clean verdict covers rather than leaving a reader to look them up.
+func viewportWidths() string {
+	parts := make([]string, 0, len(Viewports))
+	for _, vp := range Viewports {
+		push := ""
+		if vp.Push {
+			push = " PUSHED"
+		}
+		parts = append(parts, fmt.Sprintf("%s=%d%s", vp.Name, vp.Width, push))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // printSignalSummary reports every signal at the scope it was measured, and labels the
 // zeros that are zero BY CONSTRUCTION as structural rather than as passes.
+//
+// ⚠ THIS BLOCK USED TO SIT ABOVE `refuseWalkRegressions`, WHERE GODOC ATTACHED IT TO THAT
+// FUNCTION INSTEAD — a doc comment on the wrong function is a wrong claim, and it was moved
+// here rather than left for the next reader to trip over.
 //
 // 🔴 A REASSURING ZERO IS INDISTINGUISHABLE FROM AN INSTRUMENT WIRED TO NOTHING, SO EACH
 // ZERO HERE SAYS WHICH KIND IT IS. `control_test.go` is the positive control that shows the

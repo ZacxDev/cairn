@@ -60,7 +60,8 @@ func TestAGuessedQueryParameterIsNotHowAPageIsReached(t *testing.T) {
 func TestExpandLinksAcceptsOnlyWhatTheSurfacePublishedForThisPage(t *testing.T) {
 	from := Target{Path: ui.SharePath, PushURL: ui.SharePath, SignedIn: true, LedgerRow: "GET /share content", ExpandLinks: true}
 
-	accepted, declined := ExpandLinks(from, []string{
+	ledger := ui.DeclaredRouteLedger()
+	accepted, declined, bounded := ExpandLinks(from, []string{
 		// The real shape: the share index's per-scope link.
 		"/share?scope=scp_0000000000000000",
 		"/share?scope=scp_1111111111111111",
@@ -69,10 +70,10 @@ func TestExpandLinksAcceptsOnlyWhatTheSurfacePublishedForThisPage(t *testing.T) 
 		// Declined, each for its own reason.
 		"https://example.invalid/share?scope=x", // absolute: would leave the origin entirely
 		"//example.invalid/share?scope=x",       // protocol-relative: same, less obviously
-		"/",                                     // a different path: already its own ledger row
-		"/share",                                // the page itself: an infinite queue
+		"/share",                                // the page itself, with no query: an infinite queue
 		"mailto:nobody@example.invalid",         // a scheme `safeHref` may legitimately allow
-	})
+		"/nowhere?x=1",                          // a query, relative — and NO declared GET row
+	}, ledger)
 
 	var gotPaths []string
 	for _, a := range accepted {
@@ -82,9 +83,6 @@ func TestExpandLinksAcceptsOnlyWhatTheSurfacePublishedForThisPage(t *testing.T) 
 		}
 		if !strings.Contains(a.LedgerRow, from.LedgerRow) {
 			t.Errorf("an expanded target must stay attributable to the ledger row it came from; got %q", a.LedgerRow)
-		}
-		if a.ExpandLinks {
-			t.Errorf("an expanded target must not itself expand, or the queue never drains; %q does", a.Path)
 		}
 	}
 	want := "/share?scope=scp_0000000000000000|/share?scope=scp_1111111111111111"
@@ -104,6 +102,232 @@ func TestExpandLinksAcceptsOnlyWhatTheSurfacePublishedForThisPage(t *testing.T) 
 			t.Error("the duplicate was DECLINED rather than deduped: a decline and a repeat are different facts")
 		}
 	}
+	// Two accepted, under the per-page bound: nothing here is a bounded target, and saying
+	// so is what keeps `bounded` from silently absorbing a decline.
+	if bounded != 0 {
+		t.Errorf("bounded=%d over %d accepted target(s) and a cap of %d; a bounded count where nothing was "+
+			"capped means a decline was folded into the wrong number", bounded, len(accepted), MaxExpansionsPerPage)
+	}
+}
+
+// TestExpandLinksIsBOUNDEDPerPageAndSaysSoRatherThanTruncatingSilently is the guard on the
+// cap, and the cap exists because the unbounded version was MEASURED and failed.
+//
+// 🔴 A SCOPE PAGE PUBLISHES ONE LINK PER ENTRY. The fixture store carries 126, so the first
+// unbounded walk captured 650 pages, spent fifteen minutes doing it, and then built a
+// 260-page payload that `Validate` refused with `too many pages: 260 (max 200)` — the hub's
+// own cap, reached because the push arithmetic is `targets × pushed viewports`.
+//
+// 🔴 AND THE BOUND IS APPLIED AFTER THE SORT, WHICH IS THE ONLY ORDER THAT MAKES IT
+// DETERMINISTIC. Capping as the hrefs arrive takes whichever ones the DOM listed first, so
+// "which entry pages did this walk look at" becomes a function of render order — and the hub
+// matches its P2 pixel diff on `url`, so a set that moved between runs would make every page
+// "new" on half of them and the diff would never settle.
+func TestExpandLinksIsBOUNDEDPerPageAndSaysSoRatherThanTruncatingSilently(t *testing.T) {
+	ledger := ui.DeclaredRouteLedger()
+	from := Target{
+		Path: ui.ScopePath, PushURL: ui.ScopePath, SignedIn: true,
+		LedgerRow: "GET " + ui.ScopePath + " content", ExpandLinks: true,
+	}
+	// Published in DESCENDING order, so a cap applied before the sort keeps the LAST refs
+	// alphabetically and a cap applied after keeps the first. The two answers are different
+	// sets, which is what makes this a measurement rather than a restatement.
+	var hrefs []string
+	for _, ref := range []string{"zulu", "yankee", "xray", "whisky", "victor", "uniform", "tango"} {
+		hrefs = append(hrefs, "/entry?ref="+ref+"&scope=scp_0000000000000000")
+	}
+	if len(hrefs) <= MaxExpansionsPerPage {
+		t.Fatalf("the fixture publishes %d href(s) against a cap of %d, so nothing is capped and this test "+
+			"measures nothing", len(hrefs), MaxExpansionsPerPage)
+	}
+
+	accepted, declined, bounded := ExpandLinks(from, hrefs, ledger)
+	if len(accepted) != MaxExpansionsPerPage {
+		t.Fatalf("accepted %d target(s) against a cap of %d", len(accepted), MaxExpansionsPerPage)
+	}
+	if want := len(hrefs) - MaxExpansionsPerPage; bounded != want {
+		t.Errorf("bounded=%d, want %d. The count is what the walk PRINTS, and a bounded walk that reports "+
+			"nothing reads as a complete one — which is the under-coverage this whole derivation refuses.",
+			bounded, want)
+	}
+	if len(declined) != 0 {
+		t.Errorf("%d href(s) were DECLINED: every one here is a well-formed relative link to a declared row, "+
+			"so a decline means the acceptance test rejected something it should have bounded instead: %v",
+			len(declined), declined)
+	}
+	// 🔴 THE KEPT SET IS THE ALPHABETICALLY FIRST, WHICH IS WHAT SAYS THE SORT RAN BEFORE THE
+	// CAP. The fixture publishes them in descending order, so a pre-sort cap would keep
+	// zulu/yankee/xray/whisky.
+	var got []string
+	for _, a := range accepted {
+		got = append(got, a.Path)
+	}
+	want := []string{
+		"/entry?ref=tango&scope=scp_0000000000000000",
+		"/entry?ref=uniform&scope=scp_0000000000000000",
+		"/entry?ref=victor&scope=scp_0000000000000000",
+		"/entry?ref=whisky&scope=scp_0000000000000000",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("the bounded set is %v, want %v. A different set means the cap was applied BEFORE the sort, "+
+			"so which pages this walk looks at depends on DOM order and moves between runs.", got, want)
+	}
+
+	// SECOND RUN, SAME INPUT IN A DIFFERENT ORDER: the bound is deterministic over the SET
+	// and not over the order it arrived in.
+	shuffled := append([]string{hrefs[3], hrefs[0], hrefs[6]}, hrefs[1], hrefs[2], hrefs[4], hrefs[5])
+	again, _, _ := ExpandLinks(from, shuffled, ledger)
+	var gotAgain []string
+	for _, a := range again {
+		gotAgain = append(gotAgain, a.Path)
+	}
+	if strings.Join(gotAgain, "|") != strings.Join(want, "|") {
+		t.Errorf("the same hrefs in a different order produced %v, want %v — the sample is order-dependent",
+			gotAgain, want)
+	}
+	t.Logf("expansion bound: %d href(s) -> %d target(s) kept (sorted-first), %d bounded, %d declined; the "+
+		"same set in a different order keeps the same four", len(hrefs), len(accepted), bounded, len(declined))
+}
+
+// TestExpandLinksFollowsALinkACROSSRowsAndOnlyToADeclaredOne is the guard on the widening
+// the browse pages needed.
+//
+// 🔴 THE OLD RULE WAS `u.Path == from.Path` AND IT WOULD HAVE SILENTLY UNDER-COVERED THE
+// NEW PAGES RATHER THAN FAILING. `GET /` publishes `/scope?id=…` and `GET /scope?id=…`
+// publishes `/entry?…` — links ACROSS ledger rows — so a same-path rule declines every one
+// of them, the walk captures the two new rows only in their parameterless form, and the run
+// reports success over pages no reader ever sees. That is the exact failure mode
+// `linkExpanded`'s own comment records from the first draft of this file, one step along.
+//
+// ⚠ AND THE WIDENING IS BOUNDED BY THE LEDGER, WHICH IS THE HALF THAT KEEPS IT FROM BEING A
+// CRAWLER. `/nowhere?x=1` above is relative, same-origin and carries a query, and it is
+// still declined — because the path is not a row this server declares.
+func TestExpandLinksFollowsALinkACROSSRowsAndOnlyToADeclaredOne(t *testing.T) {
+	ledger := ui.DeclaredRouteLedger()
+	from := Target{
+		Path: ui.RootPath, PushURL: ui.RootPath, SignedIn: true,
+		LedgerRow: "GET / content", ExpandLinks: true,
+	}
+	accepted, declined, bounded := ExpandLinks(from, []string{
+		"/scope?id=scp_0000000000000000",
+		"/entry?ref=runbook&scope=scp_0000000000000000",
+		"/",                                  // no query: already its own row, and an infinite queue
+		"https://tracker.invalid/issue/4711", // a task ref, which `safeHref` legitimately permits
+	}, ledger)
+
+	if len(accepted) != 2 {
+		t.Fatalf("accepted %d target(s), want 2 (%v); a same-path rule accepts NEITHER, which is the "+
+			"regression this test is named for", len(accepted), accepted)
+	}
+	byPath := map[string]Target{}
+	for _, a := range accepted {
+		byPath[a.Path] = a
+	}
+
+	// 🔴 ATTRIBUTION IS TO THE ROW THE HREF ADDRESSES, NOT TO THE PUBLISHING PAGE.
+	// `LedgerAccounting` reads `parentRow` off this string to decide which row a capture
+	// discharges, so attributing a `/scope` capture to `GET / content` would leave
+	// `GET /scope content` handled by NEITHER arm — which that function refuses, correctly,
+	// because the row really would be uncaptured.
+	scope := byPath["/scope?id=scp_0000000000000000"]
+	if got := parentRow(scope.LedgerRow); got != "GET "+ui.ScopePath+" content" {
+		t.Errorf("the discovered scope page is attributed to row %q; it addresses %s and must discharge "+
+			"THAT row", got, ui.ScopePath)
+	}
+	// And it expands in turn, which is the only way an ENTRY page is ever reached.
+	if !scope.ExpandLinks {
+		t.Errorf("the discovered %s page does not expand, so no entry page is reachable by any route this "+
+			"walk has. The queue's `enqueued` set is what keeps that terminating.", ui.ScopePath)
+	}
+	entry := byPath["/entry?ref=runbook&scope=scp_0000000000000000"]
+	if got := parentRow(entry.LedgerRow); got != "GET "+ui.EntryPath+" content" {
+		t.Errorf("the discovered entry page is attributed to row %q, want the %s row", got, ui.EntryPath)
+	}
+	if entry.ExpandLinks {
+		t.Errorf("%s is not in `linkExpanded` — an entry page publishes only its breadcrumb and its task "+
+			"refs, and a task ref is external — so a discovered one must not expand", ui.EntryPath)
+	}
+
+	if len(declined) != 2 {
+		t.Fatalf("want 2 declined hrefs, got %d: %v", len(declined), declined)
+	}
+	if bounded != 0 {
+		t.Errorf("bounded=%d over 2 accepted target(s) and a cap of %d", bounded, MaxExpansionsPerPage)
+	}
+	t.Logf("cross-row expansion: %s -> %v, each attributed to its own ledger row; %d declined",
+		ui.RootPath, []string{scope.Path, entry.Path}, len(declined))
+}
+
+// TestOnlyTheHubsOwnTwoViewportsAreEverPushed pins the boundary between what the walk
+// MEASURES and what it SENDS.
+//
+// 🔴 THE HUB'S SET IS CLOSED AND THIS PROGRAM CANNOT WIDEN IT. `Validate` refuses a page
+// whose viewport is outside `{mobile, desktop}` — the server's contract — and the hub
+// matches its P2 pixel diff on `url`+`viewport`, so a page pushed under a name it has never
+// stored would be "new" on every run and the diff would say nothing forever. Capturing five
+// widths locally is what measures a responsive layout; pushing five would be a wire-contract
+// change this repository does not own.
+func TestOnlyTheHubsOwnTwoViewportsAreEverPushed(t *testing.T) {
+	if len(Viewports) != 5 {
+		t.Fatalf("the walk declares %d viewport(s), want 5. The five are named in `Viewports` with what "+
+			"each one is for; changing the count is a decision, not a tidy-up.", len(Viewports))
+	}
+	var pushed, local []string
+	widths := map[int]bool{}
+	for _, vp := range Viewports {
+		if widths[vp.Width] {
+			t.Errorf("two viewports share width %d, so one of them measures nothing the other does not", vp.Width)
+		}
+		widths[vp.Width] = true
+		if vp.Push {
+			pushed = append(pushed, vp.Name)
+		} else {
+			local = append(local, vp.Name)
+		}
+	}
+	if strings.Join(pushed, ",") != Mobile.Name+","+Desktop.Name {
+		t.Errorf("the pushed set is %v; the hub's closed set is {%s, %s} and `Validate` REFUSES anything "+
+			"else. A third pushed viewport is a 400 on the whole push.", pushed, Mobile.Name, Desktop.Name)
+	}
+	if len(local) == 0 {
+		t.Fatal("no viewport is local-only, so this test's distinction is vacuous and the extra widths " +
+			"bought nothing")
+	}
+
+	// 🔴 AND THE FILTER IS MEASURED THROUGH `BuildPayload`, NOT INFERRED FROM THE FIELD. A
+	// `Push` flag nothing branches on is a declaration, not a guard — and this repository's
+	// own rule is that a field existing in a struct is not a gate, only a BRANCH on it is.
+	var captures []*Capture
+	for _, vp := range Viewports {
+		captures = append(captures, &Capture{
+			Target:     Target{Path: "/", PushURL: "/", LedgerRow: "GET / content"},
+			Viewport:   vp,
+			Screenshot: []byte("\x89PNG\r\n\x1a\n-fixture"),
+			AxeJSON:    []byte(`{"testEngine":{"name":"axe-core"},"violations":[]}`),
+			Layout:     &PushLayout{InnerWidth: vp.Width},
+		})
+	}
+	payload, files, err := BuildPayload("fixture", captures)
+	if err != nil {
+		t.Fatalf("building the payload: %v", err)
+	}
+	if len(payload.Pages) != len(pushed) {
+		t.Errorf("BuildPayload emitted %d page(s) from %d capture(s); only the %d pushed viewport(s) may "+
+			"reach the wire", len(payload.Pages), len(captures), len(pushed))
+	}
+	for _, pg := range payload.Pages {
+		if pg.Viewport != Mobile.Name && pg.Viewport != Desktop.Name {
+			t.Errorf("a page carrying viewport %q reached the payload; the server refuses it with a 400 on "+
+				"the WHOLE push", pg.Viewport)
+		}
+	}
+	// The server's own shape check, run over what was built — the same call `main` makes
+	// before uploading, so this is the real refusal and not a restatement of it.
+	if err := payload.Validate(files); err != nil {
+		t.Errorf("the payload built from a five-width walk does not satisfy the server's shape rules: %v", err)
+	}
+	t.Logf("viewports: %d captured (%v local-only), %d pushed (%v), payload carries %d page(s)",
+		len(Viewports), local, len(pushed), pushed, len(payload.Pages))
 }
 
 // TestTheLedgerCARRIESEveryNotADocumentRow is the assertion the `notADocument` closing condition
@@ -219,11 +443,17 @@ func TestTheREALLedgerIsFullyACCOUNTEDFor(t *testing.T) {
 // old entry deleted keeps being captured, and the reason string added beside it is never printed
 // — a declaration that reads as a decision and has no effect.
 func TestAPathClaimedByTwoClassesIsREFUSED(t *testing.T) {
+	// ⚠ THE PATH IS THE SIGN-IN ROW AND NOT THE ROOT, AND THE SWAP IS NOT COSMETIC. This
+	// case needs a path that is ALREADY in exactly one class so that adding a second makes
+	// two; the root moved from `plainGET` to `linkExpanded` when it started publishing scope
+	// cards, so overriding `notADocument` with it would still produce a two-class refusal —
+	// naming a different pair, and the assertion below would fail for a reason that has
+	// nothing to do with what this test measures.
 	saved := notADocument
-	notADocument = map[string]string{ui.RootPath: "pretend the root is not a document"}
+	notADocument = map[string]string{ui.SignInPath: "pretend the sign-in page is not a document"}
 	defer func() { notADocument = saved }()
 
-	_, _, err := Targets([]string{"GET / content"})
+	_, _, err := Targets([]string{"GET " + ui.SignInPath + " public"})
 	if err == nil {
 		t.Fatal("a path in both `plainGET` and `notADocument` was accepted: which class wins is then " +
 			"whichever `case` the switch reaches first, and the losing declaration is inert")
@@ -267,9 +497,14 @@ func TestAGETRowTheWalkWasNotToldAboutIsREFUSEDRatherThanCapturedBare(t *testing
 func TestTheWalkStateIsDerivedFromTheCLASSAndNeverFromThePATH(t *testing.T) {
 	// A public row whose path shares no substring with the sign-in pair.
 	ledger := []string{"GET /landing public", "GET / content"}
-	saved := plainGET
+	saved, savedExpand := plainGET, linkExpanded
 	plainGET = map[string]bool{"/landing": true, "/": true}
-	defer func() { plainGET = saved }()
+	// ⚠ `linkExpanded` IS EMPTIED FOR THE DURATION, because the root is in it now and a path
+	// claimed by two classes is a REFUSAL — which is the previous test's subject, not this
+	// one's. Overriding only `plainGET` would make this case fail on that refusal and say
+	// nothing about whether the walk state is derived from the class.
+	linkExpanded = map[string]bool{}
+	defer func() { plainGET, linkExpanded = saved, savedExpand }()
 
 	targets, _, err := Targets(ledger)
 	if err != nil {

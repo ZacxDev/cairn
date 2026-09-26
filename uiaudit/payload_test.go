@@ -29,8 +29,16 @@ import (
 
 func goodCapture(path, viewport string) *Capture {
 	return &Capture{
-		Target:   Target{Path: path, PushURL: path, LedgerRow: "GET " + path},
-		Viewport: Viewport{Name: viewport},
+		Target: Target{Path: path, PushURL: path, LedgerRow: "GET " + path},
+		// 🔴 `Push: true`, BECAUSE `BuildPayload` NOW FILTERS ON IT AND A FIXTURE THAT
+		// FORGOT WOULD MAKE EVERY CASE IN THIS FILE VACUOUS. The walk captures five widths
+		// and pushes the hub's two; a `Viewport{Name: "mobile"}` with the zero `Push` is a
+		// capture `BuildPayload` skips, so the payload comes out with no pages and every
+		// shape assertion below measures an empty payload rather than a malformed one. That
+		// is exactly what happened when the five-width matrix landed, and the failure was
+		// loud only because `Validate` refuses an empty push — a rule that exists for a
+		// different reason and happened to catch this.
+		Viewport: Viewport{Name: viewport, Push: true},
 		// A one-byte screenshot: this file tests SHAPE, and a real PNG would make the
 		// fixture a binary blob in a public repository for no gain.
 		Screenshot: []byte{0x89},

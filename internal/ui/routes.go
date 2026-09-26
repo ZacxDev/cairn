@@ -103,8 +103,21 @@ type route struct {
 // `TestEveryServedPathComesFromTheLedger` structurally cannot probe, because there is
 // no longer a finite set of paths to probe. The query parameter keeps every served
 // path a literal key in this map, which is the property the whole ledger rests on.
+//
+// 🔴 THE BROWSE PAIR IS TWO MORE FIXED PATHS WITH THEIR OPERANDS IN QUERY PARAMETERS,
+// FOR THE REASON THE PARAGRAPH ABOVE GIVES AND NOT BY ANALOGY WITH IT. `/scope/{id}` and
+// `/entry/{scope}/{ref}` are the obvious spellings and both are refused: each needs a
+// prefix match, a prefix match is a second way for a request to reach a handler, and
+// `TestEveryServedPathComesFromTheLedger` structurally cannot probe one because there is
+// no finite set of paths left to enumerate. `/entry` makes the cost of the alternative
+// concrete — the entry REF is a filename stem out of a file somebody else wrote, so a
+// path-segment spelling would put unvalidated user text in a path position and make
+// `..` a routing question. In a query parameter it is a value the handler matches
+// against the narrowed answer and never resolves. See `handleEntryPage`.
 var routes = map[routeKey]route{
 	{"GET", "/"}:          {(*Server).handlePage, classContent},
+	{"GET", "/scope"}:     {(*Server).handleScopePage, classContent},
+	{"GET", "/entry"}:     {(*Server).handleEntryPage, classContent},
 	{"GET", "/share"}:     {(*Server).handleSharePage, classContent},
 	{"POST", "/share"}:    {(*Server).handleShare, 0},
 	{"POST", "/unshare"}:  {(*Server).handleUnshare, 0},
@@ -163,6 +176,10 @@ const (
 	SignInPath  = "/sign-in"
 	SignOutPath = "/sign-out"
 	RootPath    = "/"
+	// ScopePath is one scope's entry list, keyed by `?id=<control.ID>`.
+	// EntryPath is one entry, keyed by `?scope=<control.ID>&ref=<stem>`.
+	ScopePath = "/scope"
+	EntryPath = "/entry"
 	// SharePath answers the share flow's read AND its grant write, split by method.
 	SharePath = "/share"
 	// UnsharePath is a SEPARATE path rather than an action field on `SharePath`,
@@ -201,8 +218,24 @@ const (
 // unversioned path under a longer name and goes silently wrong on the next theme change.
 var StylesheetHashedPath = hashedStylesheetPathFor(stylesheet)
 
-// QueryScope is the one query parameter this surface reads.
-const QueryScope = "scope"
+// The query parameters this surface reads, spelled once each.
+//
+// ⚠ `QueryScope` IS SHARED BY THE SHARE FLOW AND BY `GET /entry`, AND THAT IS ON PURPOSE
+// RATHER THAN A COLLISION. Both mean "the `control.ID` of a scope", so two spellings
+// would be two names for one concept and the second would be the one somebody gets wrong.
+// `GET /scope` uses `QueryID` instead because on that page the scope is the SUBJECT, not
+// a qualifier on something else — `?scope=` reading as "some other thing, in this scope"
+// is what makes `?id=` the honest spelling there.
+const (
+	QueryScope = "scope"
+	QueryID    = "id"
+	// QueryRef is an entry ref: USER TEXT, percent-encoded on the way out by `entryHref`
+	// and matched against the narrowed answer on the way in.
+	QueryRef = "ref"
+	// QueryQuery is the search box. It rides on the ROOT row rather than on a route of
+	// its own — see `routes`.
+	QueryQuery = "q"
+)
 
 // The share flow's form fields, spelled once for the renderer and the handlers.
 //
