@@ -1228,31 +1228,17 @@ def cmd_ls_entries(args: argparse.Namespace) -> int:
             worst = max(worst, hint)
             continue
         prefix = "" if label is None else f"[{label}] "
-        # 🔴 THIS `glob` SWALLOWS `EACCES` ON A SCOPE DIRECTORY, AND AFTER #119 THIS
-        # VERB IS THE ONLY READ THAT STILL DOES. `Path.glob("*/*.md")` skips a
-        # mode-000 child and lists its siblings — MEASURED on CPython 3.12.14 and
-        # end to end on both clients, which AGREE at exit 0 because
-        # `internal/client.LsEntries` discards the same error on purpose. So there
-        # is no divergence here; what there is, is an inconsistency with the rest of
-        # this client: `recall`, `search` and `validate` each answer **3** with
-        # `index entry unreadable` for that identical directory, while the verb
-        # `README.md` advertises as "what the cache actually holds" answers **0**
-        # and says nothing. #119's whole finding is that a listing which could not be
-        # taken is not a listing of nothing.
-        #
-        # ⬜ FOLLOW-UP, DELIBERATELY NOT CLOSED IN THIS CHANGE: it moves a verb's
-        # stdout AND exit code for a state, on both clients, and it has a design
-        # question of its own — `ls-entries` fans out over every configured
-        # instance, so failing closed has to decide whether one unreadable scope
-        # refuses the whole listing or only that instance's. CLOSING CONDITION: a
-        # merged PR after which both clients answer a mode-000 scope directory under
-        # `ls-entries` with the reader's own sentence at exit 3, pinned by a PARITY
-        # ROW — this case is STATICALLY expressible, so the gate can own it, unlike
-        # the vanished-directory case above. Mechanically,
-        # `python3 tests/parity/harness.py | grep -q '^PASS ls-entries-unreadable-scope-dir'`
-        # exits 0 (a zero-match grep exits 1, so it cannot read as met when the row
-        # is missing) AND the run's own `SUMMARY … failures=0` line holds. The full
-        # argument is in `internal/client/verbs.go`'s `LsEntries` block.
+        # ⚠ THIS `glob` SWALLOWS `EACCES` ON A SCOPE DIRECTORY, AND IS NOT CHANGED
+        # HERE — SAID PLAINLY SO IT IS NOT MISTAKEN FOR COVERED. `Path.glob("*/*.md")`
+        # skips a mode-000 child and lists its siblings, so this verb answers **0**
+        # and says nothing for a directory `recall`, `search` and `validate` each
+        # answer **3** on with `index entry unreadable`. Both clients AGREE at 0 —
+        # `internal/client.LsEntries` discards the same error on purpose — so it is an
+        # inconsistency inside each client, not a divergence between them. NOT closed:
+        # it would move a verb's stdout and exit code on both clients, and
+        # `ls-entries` fans out over every configured instance, so failing closed
+        # first has to decide whether one unreadable scope refuses the whole listing
+        # or only that instance's.
         for path in sorted(cache.glob("*/*.md")):
             # 🔴 A SCOPE'S `README.md` IS ITS POLICY SHEET, NOT AN ENTRY — AND
             # THIS VERB IS THE ONE THAT ADVERTISES ITSELF AS "what the cache
@@ -1531,28 +1517,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
     # That is the silent zero this command exists to detect, committed by the
     # command itself. With no --scope we validate EVERY scope in the cache.
     #
-    # 🔴 THROUGH `rc.scope_dirs_or_unreadable`, NOT A BARE `cache.iterdir()` — THE
-    # THIRD READ OF THE STORE, AND THE ONE #119 DECLARED DID NOT EXIST. This line
-    # was `sorted(p.name for p in cache.iterdir() if p.is_dir())`, outside every
-    # wrap, so a cache root that is SEARCHABLE but not READABLE (mode 0111 — the
-    # stamp `stat` in `resolve_state` still succeeds, so execution reaches here)
-    # took the oracle down with a `PermissionError` TRACEBACK at exit 1 while the
-    # Go client answered 3 with its own raw `open <cache>: permission denied`
-    # rather than the reader's sentence. Both halves of #111 at a new site: the
-    # 1-vs-3 code divergence AND a raw OS error where one level down the same
-    # client prints `index entry unreadable: under <root> (…)`. `recall` and
-    # `search` were already byte-identical at 3 here, because they reach the root
-    # walk through `load_store`; only this verb read the root itself.
-    #
-    # ⚠ THIS IS NOT ROW 4's CACHE-ROOT CASE, WHICH REMAINS OPEN. That one is mode
-    # 000/0444 — no `x`, so `(cache / SYNC_STAMP).exists()` raises and nothing
-    # reaches this line. Two sub-cases, two mechanisms; see the function's header.
-    #
-    # ⚠ NO `except` HERE, DELIBERATELY. The `EntryUnreadableError` this can raise
-    # travels to `main()`'s reader-error rung — the same rung `recall` and `search`
-    # already land on for this condition — so the sentence has one writer and the
-    # exit code one owner. An `except` here would be a second policy site.
-    held = rc.scope_dirs_or_unreadable(cache)
+    # ⚠ THIS READ OF THE CACHE ROOT IS UNWRAPPED, AND THAT IS NOT CLOSED HERE —
+    # STATED SO A READER DOES NOT TAKE THE TWO CASES BELOW AS COVERING IT. It is the
+    # cache ROOT, one level above the scope directories `load_store` walks, so its
+    # `OSError` is not the `EntryUnreadableError` `main()`'s reader-error arm
+    # catches. MEASURED at `8ddbb6f`, `--no-sync`, one cache holding one readable
+    # scope, `chmod` on the ROOT: at mode 0111 (searchable, not readable — the stamp
+    # `stat` in `resolve_state` succeeds, so execution reaches here) this verb exits
+    # **1** with a `PermissionError` traceback while the Go client exits **3**
+    # printing its own raw `open <cache>: permission denied`; at 0000/0444 the stamp
+    # `stat` raises first and every verb is 1 against 3. Both are the cache-ROOT
+    # depth of `tests/parity/README.md` row 4, which carries them with a closing
+    # condition. UNGATED.
+    held = sorted(p.name for p in cache.iterdir() if p.is_dir())
     if args.scope:
         # 🔴 THE SILENT ZERO THIS FUNCTION WAS REWRITTEN TO CLOSE, STILL OPEN ON
         # THIS BRANCH. The no-scope path was fixed to enumerate the cache; the
@@ -1685,25 +1662,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
         # `go test ./internal/client/ -run FoldVsLiteral -count=1 -v` each SELECT at
         # least one test and exit 0.
         #
-        # 🔴 AND IT FAILS CLOSED THROUGH `load_store`'S OWN WRAP, WHICH THIS LINE
-        # BYPASSED FOR ONE ROUND. This is the SECOND read of the scope directory in
-        # this loop — `load_store` above already walked it — and while
-        # `entry_files_in` globbed, a second read could not fail, because
-        # `Path.glob` SUPPRESSES the `OSError` its own scan raises. #119 made it
-        # `iterdir()`, which closed a false ABSENCE here and opened a raw `OSError`
-        # at the same instant: `main()`'s reader-error arm catches
-        # `(StoreMissingError, ResolverError)` and DELIBERATELY not `OSError`, so a
-        # scope directory that vanished between the two walks escaped as a
-        # TRACEBACK at exit 1 — the precise outcome #111 exists to remove,
-        # reintroduced at a second site — while the Go client printed
-        # `0 of 0 entry file(s) parse, 0 malformed` at exit 0. MEASURED at
-        # `e162746` over one cache holding two scopes with the second removed after
-        # the first scope's line was printed: oracle 1 + traceback, Go 0.
-        # `rc.entry_files_or_unreadable` is the SAME `EntryUnreadableError` and the
-        # SAME sentence `load_store` raises, from one writer, so both clients
-        # answer 3 with identical bytes. It is not a second `except OSError` here
-        # and not a second error class.
-        entry_paths = rc.entry_files_or_unreadable(cache, cache / scope)
+        # ⚠ THIS IS THE SECOND READ OF THE SCOPE DIRECTORY IN THIS LOOP, AND IT IS
+        # OUTSIDE EVERY WRAP — NOT CLOSED, SO SAID HERE. `load_store` above already
+        # walked the same directory INSIDE the wrap that produces the named
+        # `index entry unreadable` sentence, which is why no `chmod` and no static
+        # world reaches this line: an unreadable or absent directory fails that first
+        # walk closed and this one is never evaluated. What DOES reach it is the world
+        # changing mid-run — a concurrent `cairn sync` whose `install_snapshot`
+        # renames the cache root aside and `rmtree`s the retired one. `entry_files_in`
+        # now walks with `iterdir()`, so that raises `FileNotFoundError` past
+        # `main()`'s `(StoreMissingError, ResolverError)` arm as a TRACEBACK at exit
+        # 1, where the Go client's `EntryFileNames` error is discarded and it prints
+        # `0 of 0 entry file(s) parse, 0 malformed` at exit 0 (MEASURED at `e162746`
+        # over one cache holding two scopes, the second removed after the first
+        # scope's line was printed). UNGATED, and declared in
+        # `tests/parity/README.md` → "What the gate structurally cannot see".
+        entry_paths = subsystem_resolver.entry_files_in(cache / scope)
         checked = len(entry_paths)
         print(
             f"cairn: {scope}: {checked - len(malformed)} of {checked} "
@@ -2503,56 +2477,17 @@ def cmd_routes(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return EXIT_UNROUTED
-        # 🔴 THROUGH `rc.scope_dirs_or_unreadable`, NOT A BARE `cache.iterdir()` —
-        # THE FOURTH CACHE-ROOT READ, AND THE THIRD ROUND OF THIS AUDIT TO FIND
-        # ONE. `load_store` wraps the INDEX walk, `entry_files_or_unreadable`
-        # wraps `validate`'s per-scope denominator, `scope_dirs_or_unreadable`
-        # wraps `validate`'s `held` — and this listing, which decides WHICH scopes
-        # the table is graded against, was a bare comprehension whose `OSError`
-        # escaped `main()`'s `(StoreMissingError, ResolverError)` arm as a
-        # TRACEBACK at exit 1. That is the exact outcome #111 exists to remove, at
-        # a fourth site.
-        #
-        # 🔴 A CHMOD DOES REACH THIS LINE, VIA A **304**, AND AN EARLIER DRAFT OF
-        # THIS VERY COMMENT SAID IT DID NOT. That draft read "NO CHMOD REACHES THIS
-        # LINE", derived from a real measurement — `routes --check --no-sync` at
-        # cache-root modes 0555/0444/0111/0000 all stop at the `state != STATE_LIVE`
-        # guard above, because the `no_sync` arm of `resolve_state` returns from an
-        # unconditional early block that can only yield `STATE_NO_CACHE` or
-        # `STATE_CACHED`. True — and then generalised into a claim about EVERY route
-        # to this line, which is the exact move this round of the audit exists to
-        # stop. Caught by building the fixture, not by re-reading the sentence.
-        #
-        # The route it missed is in this file, in `resolve_state`: a **304 Not
-        # Modified** returns `STATE_LIVE`, and its own comment there says "NOTHING IS
-        # WRITTEN" — so the cache root this line lists is the PRE-EXISTING one, mode
-        # bits and all. MEASURED against a stub pod answering 304 to a matching
-        # `If-None-Match`, one instance, a one-route table, cache root at 0111, NO
-        # `--no-sync`:
-        #
-        #     before this change   oracle → exit 1, PermissionError TRACEBACK
-        #                          go     → exit 3, raw `open <cache>: permission denied`
-        #     after  this change   both   → exit 3, byte-identical `index entry
-        #                                   unreadable: under <root> (PermissionError:
-        #                                   [Errno 13] …)`
-        #
-        # i.e. a DIVERGENCE (1 vs 3) and a raw-errno TEXT defect, both closed, and
-        # both reachable by an ordinary `chmod` on a host whose store has not changed
-        # since its last sync — the COMMON case for a `routes --check`, not an exotic
-        # one. `install_snapshot` renaming the root aside under a concurrent reader,
-        # an `ESTALE`/`EIO` from a bucket, git checkout or NFS mount (`README.md`),
-        # and every other non-mode `OSError` `iterdir()` propagates are ADDITIONAL
-        # routes, not the only ones.
-        #
-        # 🔴 THE FAN-OUT QUESTION `ls-entries` CARRIES DOES NOT ARISE HERE, WHICH
-        # IS WHY THIS ONE COULD BE CLOSED AND THAT ONE COULD NOT. This verb has
-        # ALREADY decided that one bad instance refuses the whole run: the guard
-        # above returns `EXIT_UNROUTED` for the entire check as soon as any
-        # instance is not LIVE. Failing closed here is therefore consistent with
-        # what this loop already does, and adds no new policy. `ls-entries` prints
-        # per instance and continues, so its ruling is genuinely open — see
-        # `tests/test_store_read_sites.py`, which ledgers both.
-        scopes.update(rc.scope_dirs_or_unreadable(cache))
+        # ⚠ THIS CACHE-ROOT LISTING IS UNWRAPPED, like `cmd_validate`'s `held` — its
+        # `OSError` escapes `main()`'s `(StoreMissingError, ResolverError)` arm as a
+        # traceback rather than the reader's named sentence. `--no-sync` cannot reach it
+        # (the `state != STATE_LIVE` guard above returns first), but a **304 Not
+        # Modified** does: `resolve_state` returns `STATE_LIVE` and writes nothing, so
+        # the root listed here is the pre-existing one, mode bits and all. MEASURED
+        # against a stub pod answering 304, cache root at 0111: this client exits **1**
+        # with a `PermissionError` traceback, the Go client **3** with its own raw
+        # `open <cache>: permission denied`. UNGATED, and the cache-ROOT depth of
+        # `tests/parity/README.md` row 4.
+        scopes.update(p.name for p in cache.iterdir() if p.is_dir())
     problems, notes = routing.check(scopes)
     for problem in problems:
         print(f"🔴 cairn: {problem}", file=sys.stderr)
@@ -2884,48 +2819,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         # unexpected I/O bug anywhere in the client into a confident "the store is
         # broken, exit 3".
         #
-        # ✅ THE RESIDUAL THIS PARAGRAPH USED TO NAME IS CLOSED, AND ITS CITATION WAS
-        # FALSE BESIDES. It read: "The residual — a raw `OSError` from a cache-root
-        # walk that never becomes a reader error — is declared in
-        # `tests/parity/README.md` rather than closed here." Grepping
-        # `tests/parity/` for the cache-root walk found it ONLY as evidence inside an
-        # unreachability argument about a DIFFERENT read (`validate`'s per-scope
-        # denominator, in "What the gate structurally cannot see"), never as a
-        # declared residual — so the sentence pointed a reader at a declaration that
-        # did not exist, which is how a narrow `except` came to look considered.
-        # The walk it named is `cmd_validate`'s `held`; it now goes through
-        # `rc.scope_dirs_or_unreadable`, which raises `EntryUnreadableError` and so
-        # lands on THIS arm by class rather than needing `OSError` widened. Gated by
-        # `tests/parity/harness.py`'s `validate-unreadable-cache-root` row.
-        #
-        # ⚠ WHAT REMAINS IS NOT THAT CASE. A cache root with no `x` bit raises out of
-        # `resolve_state` BEFORE any verb runs; `tests/parity/README.md` row 4 carries
-        # that one, with a closing condition — verified by reading that row, not by
-        # citing it. MEASURED at `24eb508` over an isolated HOME, one instance, cache
-        # root at 0444 and 0000: `recall`, `search`, `validate` and `ls-entries` each
-        # exit **1** with a traceback here and **3** with a banner on the Go client, and
-        # `routes --check` exits **1** here against **11** there. One mechanism, five
-        # verbs — which is why row 4 is the biggest remaining divergence in this
-        # repository and not a footnote.
-        #
-        # 🔴 THIS PARAGRAPH USED TO END "so it never reaches this ladder at all", AND
-        # THAT SENTENCE WAS FALSE — it is the third round of this audit to be caused by
-        # a closure claim made on an axis nobody enumerated. It was true of the MODE
-        # axis it was thinking about (no `x` ⇒ `resolve_state` raises first) and offered
-        # as a statement about the whole residual, so it read as "no unwrapped
-        # cache-root read remains". `cmd_routes` HAD one — a bare
-        # `cache.iterdir()` whose `OSError` escaped this very arm as a traceback — and
-        # the sentence is exactly what would stop a reader looking for it.
-        #
-        # ⚠ SO THIS PARAGRAPH NO LONGER CLAIMS CLOSURE, AND NOTHING IN PROSE SHOULD.
-        # The set of reads that can reach this ladder is ENUMERATED, two-way, by
-        # `tests/test_store_read_sites.py` — which fails when a new listing read of the
-        # store appears AND when its ledger names one that no longer exists. Three
-        # rounds of this audit each shipped a sentence asserting the set was closed;
-        # the ledger is the replacement for the fourth such sentence. It records, by
-        # name, the sites that are still NOT wrapped (`ls-entries` on both clients,
-        # `doctor` on both clients) so "not wrapped" cannot be mistaken for "not
-        # there".
+        # 🔴 IT DOES NOT CATCH EVERY UNREADABLE-STORE CONDITION, AND THE RESIDUAL IS
+        # NAMED RATHER THAN DECLARED CLOSED. Only the reads that go through
+        # `load_store` raise `EntryUnreadableError` and so land here by class; a
+        # LISTING read outside it raises a raw `OSError`, which this tuple
+        # deliberately does not catch. Still unwrapped, by name: `cmd_validate`'s
+        # `held` and `cmd_routes`' cache-ROOT listings (traceback at exit 1 against
+        # the Go client's 3 — `tests/parity/README.md` row 4's cache-root depth),
+        # `cmd_validate`'s per-scope DENOMINATOR (reachable only by the world changing
+        # mid-run; see the comment at that line), and `cmd_ls_entries`' `glob`, which
+        # swallows the error instead of raising it. A cache root with no `x` bit never
+        # reaches any verb at all — it raises out of `resolve_state` first, which is
+        # the same row 4. ⚠ Nothing enumerates that set mechanically, so re-derive it
+        # rather than trusting this list: `grep -n 'iterdir()\|glob(' cairn`.
         #
         # 🔴 THE `ResolverError` HALF IS WIDER THAN THE TWO CLASSES JUSTIFIED ABOVE,
         # AND THAT IS A DECISION, NOT AN OVERSIGHT. `ResolverError` has five

@@ -2277,35 +2277,6 @@ def entry_mapping(text: str, *, filename: str, scope: str) -> dict[str, object]:
 # inherits this guard rather than needing one. Said here so the next reader does
 # not have to rediscover it, and so "two sites" stops reading as "all of them".
 #
-# ⬜ FOLLOW-UP, DELIBERATELY NOT CLOSED HERE: THE THREE `census()` CITATIONS ARE
-# UNVERIFIABLE FROM THIS REPO, AND THE TWO SPELLINGS OF THE NAME DISAGREE.
-# MEASURED at `3d653f7`: `git ls-files | grep -c subsystem_touch` is **0**, and
-# `git ls-files -z | xargs -0 grep -lE '^[[:space:]]*def census'` returns **0**
-# files — so neither `entry_shape.census()` (this site) nor
-# `subsystem_touch.census()` (`server/server.py`, `server/README.md`) names
-# anything this tree contains.
-# 🔴 THE PATTERN IS ANCHORED FOR A REASON, AND THE UNANCHORED FORM IS ALREADY
-# BROKEN BY THIS VERY COMMENT. A bare `grep -l 'def census'` matches the two
-# PROSE mentions below and returns THIS FILE — so the unanchored spelling reports
-# a definition that does not exist, and the first draft of this block shipped it
-# as the closing condition. `^[[:space:]]*def` cannot match prose that names the
-# function mid-sentence. Positive control on the anchored pattern, so its zero is
-# a measurement and not a dead regex: the same expression with `def load_index`
-# returns `lib/subsystem_resolver.py`. `lib/entry_shape.py` IS
-# in this tree and has no `census`, so at most one of the two spellings can ever
-# have been right. Its `glob("*.md")` half is stale in exactly the way this
-# commit's other citations were, but it CANNOT be corrected from here: the
-# function it describes is not present to re-measure, so a "fix" would be a guess
-# wearing a measurement's clothes. NOT a divergence and NOT a live defect claim —
-# a citation whose subject is absent. CLOSING CONDITION: a merged PR after which
-# either (a) all three sites name a module this repo tracks and
-# `git ls-files -z | xargs -0 grep -lE '^[[:space:]]*def census'` returns it —
-# ANCHORED, per the note above, because the unanchored form matches this comment;
-# and an empty result is the UNMET state, so read the returned PATH, never `$?`
-# alone — or (b) the three citations are
-# deleted as pointing outside this repo's boundary, with the ruling's substance
-# kept. Checked by whoever owns the writer half; this repo cannot decide it alone.
-#
 # Four consecutive audit rounds found the same shape of defect in `_snapshot`,
 # and every fix added one more predicate to a sequence:
 #
@@ -2495,11 +2466,7 @@ def visible_scope_set(visible_scopes: Sequence[str] | None) -> set[str] | None:
 #   `broken-link`  a dangling symlink. `is_entry_filename` ACCEPTS A LEADING
 #                  DOT — measured, not assumed — so an Emacs lock file
 #                  (`.#entry.md`, a dangling link to `user@host.pid:boot`) is a
-#                  candidate entry. ⚠ THIS SAID `Path.glob("*.md")` MATCHES A
-#                  LEADING DOT, AND THE GLOB IS GONE (#119 → `iterdir()` +
-#                  `is_entry_filename`); the property is unchanged, the named
-#                  mechanism was not. Corrected with the runtime string below,
-#                  which carried the same citation into a 503 body. Opening it raised, and because an OSError
+#                  candidate entry. Opening it raised, and because an OSError
 #                  fails closed in BOTH policies that took `/recall` down for
 #                  EVERY caller, naming the file and its scope in the 503.
 #   `other`        fifo, socket, device. `read_text` on a FIFO BLOCKS until
@@ -2568,9 +2535,7 @@ def visible_scope_set(visible_scopes: Sequence[str] | None) -> set[str] | None:
 # two cells that just left this list — one this round was told explicitly not to
 # fold in. `indeterminate` means "the `lstat` failed and I could not look",
 # which is not "this kind can never be an entry"; `absent` is a file that
-# vanished between the listing and `classify_path` (`glob()` until #119 replaced
-# it with `iterdir()`; the race did not move, the walk's name did). `read_text`
-# raises on each
+# vanished between the listing and `classify_path`. `read_text` raises on each
 # (EACCES, FileNotFoundError) and that raise is the four-state rule's "the store
 # was not fully READ" — a DIFFERENT fact from "this entry is malformed", which
 # must not be quietly folded into it. `regular-file` and `link-to-file` are
@@ -2594,20 +2559,20 @@ _LOADER_ENTRY_ACTIONS: dict[str, str] = {
 # SHAPE and never invents a fix, because the operator's fix differs per shape
 # (delete the lock file; delete the fifo).
 _LOADER_REFUSAL_REASON: dict[str, str] = {
-    # 🔴 THE MECHANISM NAMED HERE IS `is_entry_filename`, NOT A GLOB, AND THAT IS A
-    # CORRECTION. This string said "`glob('*.md')` matches a leading dot"; there is no
-    # glob in the entry walk any more — #119 made `entry_files_in` use `iterdir()` +
+    # 🔴 IT NAMES `is_entry_filename`, NOT A GLOB, AND THAT IS A CORRECTION THIS CHANGE
+    # HAD TO MAKE. This string said "`glob('*.md')` matches a leading dot"; there is no
+    # glob in the entry walk any more — `entry_files_in` uses `iterdir()` +
     # `is_entry_filename` — so it cited a mechanism that no longer exists while its
-    # CONCLUSION stayed true. Strictly worse than a stale comment, because it is a
-    # RUNTIME STRING: it reaches a 503 body and `validate`'s stderr, so an operator was
-    # handed a false mechanism to go looking for. Named for the PREDICATE rather than the
-    # WALK deliberately — `is_entry_filename` is what decides, it is pinned by tests, and
-    # a future change of walk cannot make this stale again.
+    # conclusion stayed true. Worse than a stale comment, because it is a RUNTIME STRING:
+    # it reaches a 503 body and `validate`'s stderr. Named for the PREDICATE rather than
+    # the WALK on purpose — `is_entry_filename` is what decides, so a future change of
+    # walk cannot make this stale again.
     # 🔴 AND IT MUST STAY BYTE-IDENTICAL TO `internal/store/load.go`'s
     # `loaderRefusalReason[KindBrokenLink]` — measured identical before this edit and
-    # after. The audit that found this named only this site; the Go twin carried the same
-    # false citation, so fixing one alone would have turned a stale-but-AGREEING string
-    # into a client DIVERGENCE in operator-visible output.
+    # after, and moved in the same commit. ⚠ NOTHING ASSERTS THAT IDENTITY: no test
+    # compares the two literals, and no parity or dualrun world seeds a dangling
+    # `.#*.md`, so the requirement rests on this comment and its twin. Change one side
+    # and you must change the other by hand.
     KIND_BROKEN_LINK: (
         "broken symlink (a dangling target, or a link loop) — not an entry, and "
         "refused before `open()`. `is_entry_filename` accepts a leading dot, so an "
@@ -2744,18 +2709,13 @@ def entry_files_in(scope_dir: Path) -> list[Path]:
     **0** with `status=scope-empty` on the oracle and **3** with `index entry
     unreadable: under <root> (PermissionError: …)` on the Go client, which reaches
     the same directory through `os.ReadDir` and has never had the suppression.
-    So this is the `TestUnreadableScope` defect — "`Path.glob` swallows
-    PermissionError and returns []" — one directory level up from the entry files
-    the server already guards.
 
-    🔴 AND IT IS **NOT** CACHE-ONLY, WHICH AN EARLIER FORM OF THIS SENTENCE
-    ASSERTED — IT SAID THE DEFECT WAS "on the CACHE side where no server walk can
-    see it", AND THAT INVITED EXACTLY THE WRONG CONCLUSION. `load_index` — which
-    calls this function for every visible scope — is what the POD loads through
-    (`subsystem_recall.load_store`, and `server/server.py`'s read and write
-    routes), so this line changed SERVER availability too, in the fail-closed
-    direction. MEASURED over a store holding `good` and `locked` at mode 000, by
-    calling `load_store` with each allowlist against `lib/` at both commits:
+    🔴 AND IT IS **NOT** CACHE-ONLY — IT MOVES SERVER AVAILABILITY TOO, in the
+    fail-closed direction. `load_index` — which calls this function for every
+    visible scope — is what the POD loads through (`subsystem_recall.load_store`,
+    and `server/server.py`'s read and write routes). MEASURED over a store holding
+    `good` and `locked` at mode 000, by calling `load_store` with each allowlist
+    against `lib/` at both commits:
 
         visible_scopes   278b8df (`glob`)               e162746 (`iterdir`)
         --------------   ----------------------------   ------------------------
@@ -2776,14 +2736,13 @@ def entry_files_in(scope_dir: Path) -> list[Path]:
     server-side by `TestAnUnreadableSCOPEDIRECTORYIsNotAnEmptyScopeOnTheSERVER`,
     whose unrestricted arm is RED at `278b8df`.
 
-    ⚠ AND IT CLOSES A SERVER-SIDE DIVERGENCE RATHER THAN CREATING ONE, WHICH IS
-    THE OTHER HALF OF WHY THE TRADE IS THE RIGHT WAY ROUND. The Go store has never
-    had the suppression — `mdNamesIn` walks with `os.ReadDir` — so
+    ⚠ AND IT CLOSES A SERVER-SIDE DIVERGENCE RATHER THAN CREATING ONE. The Go
+    store has never had the suppression — `mdNamesIn` walks with `os.ReadDir` — so
     `internal/store.LoadStore` already answered a mode-000 scope directory with
-    this exact sentence, and `TestAnUnreadableScopeDirFailsClosedWhileAnEmptyOne
-    Loads` pins it as an INVARIANT guard, green at `278b8df` and at HEAD. So
-    before this line the two servers disagreed about the same directory; they now
-    agree. Reverting toward availability would have to move the GO side too.
+    this exact sentence, pinned as an INVARIANT guard by
+    `TestAnUnreadableScopeDirFailsClosedWhileAnEmptyOneLoads`. So before this line
+    the two servers disagreed about the same directory; they now agree. Reverting
+    toward availability would have to move the GO side too.
 
     🔴 IT RAISES RATHER THAN REPORTING, AND THAT IS THE EXISTING POLICY, NOT A NEW
     ONE. `load_index`'s ⚠ `OSError` paragraph already says an unreadable path
@@ -2804,7 +2763,7 @@ def entry_files_in(scope_dir: Path) -> list[Path]:
     `README.md`, `b.MD`, `c.md.txt`, `d.markdown` and a DIRECTORY named `sub.md`,
     `glob("*.md")` and `iterdir()` filtered through `is_entry_filename` return the
     identical list `['.#lock.md', '.md', 'a.md', 'sub.md']`. The leading dot and
-    the directory are both KEPT on purpose — see the two ⚠ notes below.
+    the directory are both KEPT on purpose — see the ⚠ note below.
 
     ⚠ A LEADING DOT IS IN THIS SET — measured, not assumed — so a dangling
     `.#entry.md` editor lock file IS a candidate. That is deliberate:
@@ -2812,23 +2771,20 @@ def entry_files_in(scope_dir: Path) -> list[Path]:
     rather than a silent drop.
 
     🔴 A VANISHED DIRECTORY NOW RAISES `FileNotFoundError` WHERE THE GLOB RETURNED
-    `[]`, AND THE SENTENCE THAT STOOD HERE WAS FALSE FOR THE CALLER IT NAMED. It
-    said both production callers reach this function from a listing that just
-    reported the directory, "so the only way to reach it is a TOCTOU race … and
-    already fail-closed through the same wrap". The race half is right; the
-    fail-closed half was **not true of `cairn validate`**, which is the caller it
-    named. That verb reads the scope directory TWICE — once inside `load_store`
-    (wrapped) and once more for the printed line's DENOMINATOR — and the second
-    read was OUTSIDE every wrap, while the CLI's reader-error arm catches
-    `(StoreMissingError, ResolverError)` and deliberately NOT `OSError`. MEASURED
-    at `e162746`: a scope removed between the two walks gave the oracle exit 1 with
-    a `FileNotFoundError` traceback and the Go client exit 0 printing
-    `0 of 0 entry file(s) parse, 0 malformed` — a reintroduced traceback AND a new
-    divergence. The second read now goes through
-    `subsystem_recall.entry_files_or_unreadable`, which IS that wrap, from one
-    writer; both clients answer 3. `load_index`'s own call site was always wrapped,
-    so for THAT caller the deleted sentence was true — which is why it read as
-    covering both.
+    `[]`, AND FOR ONE CALLER THAT RAISE IS UNWRAPPED — STATED HERE BECAUSE IT IS
+    NOT CLOSED. `load_index`'s own call site is inside `load_store`, which owns the
+    `EntryUnreadableError` wrap. `cairn validate` reads the scope directory a
+    SECOND time, for the printed line's DENOMINATOR, and that read is outside every
+    wrap while the CLI's reader-error arm catches `(StoreMissingError,
+    ResolverError)` and deliberately NOT `OSError`. So a scope directory that
+    vanishes BETWEEN the two walks — a concurrent `cairn sync`, whose
+    `install_snapshot` renames the cache root aside and `rmtree`s the retired one —
+    escapes as a traceback at exit 1, where the Go client prints `0 of 0 entry
+    file(s) parse, 0 malformed` at exit 0 (MEASURED at `e162746`). It needs the
+    world to CHANGE MID-RUN, so no static world and no `chmod` reaches it: an
+    unreadable directory fails the WRAPPED first walk and never gets this far.
+    UNGATED and declared, in `tests/parity/README.md` → "What the gate structurally
+    cannot see" — not fixed.
     """
     return sorted(p for p in Path(scope_dir).iterdir() if is_entry_filename(p.name))
 
@@ -2953,9 +2909,7 @@ def load_index(
         criterion every REFUSE cell above rests on.
       * `absent` — the candidate vanished between the LISTING and
         `classify_path`. A TOCTOU race, `FileNotFoundError`, unreproduced here
-        rather than measured. ⚠ This cell said "between `glob()` and
-        `classify_path`" until #119 replaced that glob with `iterdir()`; the race
-        is unchanged and only the name of the walk moved.
+        rather than measured.
 
     `test_the_LOADER_RESIDUAL_SET_is_pinned` pins that set, and
     `test_the_RESIDUAL_LEDGER_names_every_TAKE_kind_and_no_REFUSE_one` pins THIS
@@ -2967,15 +2921,14 @@ def load_index(
     ⚠ A LEADING DOT IS IN THE CANDIDATE SET — measured, not assumed — so an Emacs
     lock file (`.#entry.md`, a dangling symlink) is a candidate and had been
     observed 503ing `/api/v1/recall/<scope>` in practice. That is the
-    `broken-link` cell's whole reason for existing. ⚠ THE MECHANISM NAMED HERE
-    MOVED IN #119 AND THE SENTENCE DID NOT: it said `Path.glob("*.md")` matches a
-    leading dot "and the `.md` half of the shape needs no separate check because
-    the glob has already applied it". There is no glob any more — `entry_files_in`
-    walks with `iterdir()` and applies `is_entry_filename`, which spells the `.md`
-    test itself, so the check is APPLIED rather than inherited. The candidate set
-    is unchanged: over one directory holding `a.md`, `.#lock.md`, `.md`,
-    `README.md`, `b.MD`, `c.md.txt`, `d.markdown` and a directory named `sub.md`,
-    both walks return `['.#lock.md', '.md', 'a.md', 'sub.md']`.
+    `broken-link` cell's whole reason for existing. ⚠ THE `.md` HALF OF THE SHAPE
+    IS APPLIED RATHER THAN INHERITED, and this sentence used to say otherwise:
+    `entry_files_in` walks with `iterdir()` and filters through
+    `is_entry_filename`, which spells the suffix test itself — there is no glob to
+    inherit it from. The candidate set is unchanged: over one directory holding
+    `a.md`, `.#lock.md`, `.md`, `README.md`, `b.MD`, `c.md.txt`, `d.markdown` and a
+    directory named `sub.md`, both walks return
+    `['.#lock.md', '.md', 'a.md', 'sub.md']`.
 
     ⚠ NOT A SUBSTITUTE FOR THE RESULT NARROWING in `load_store`. That one is
     still authoritative for the shape of the answer; this one exists so the

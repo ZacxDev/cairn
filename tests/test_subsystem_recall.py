@@ -3722,16 +3722,15 @@ class TestMutationKillMatrix:
         """Without it an OSError escapes unnamed, and a resuming session cannot
         tell that the SUBSYSTEM STORE was the thing that failed.
 
-        ⚠ THE ANCHOR MOVED WHEN THE SENTENCE GAINED A SECOND CALL SITE, AND THE
-        HARNESS CAUGHT IT RATHER THAN SCORING A FALSE SURVIVOR. `_load_mutant`
+        ⚠ THE ANCHOR MOVED WHEN THE SENTENCE WAS CONSOLIDATED BEHIND ONE WRITER, AND
+        THE HARNESS CAUGHT IT RATHER THAN SCORING A FALSE SURVIVOR. `_load_mutant`
         asserts the anchor occurs exactly once, so when `load_store`'s inline
         `raise EntryUnreadableError(…)` became `raise _store_unreadable(store, exc)`
         this row went RED with `mutation anchor occurs 0x, expected exactly 1`. That
         is the instrument working: a driver that silently applied nothing would have
-        reported this guard as holding. The anchor is now the ONE WRITER, so this
-        mutant reaches BOTH sites — `load_store` and `entry_files_or_unreadable`,
-        which is `cairn validate`'s denominator — rather than one; it is strictly
-        wider than it was.
+        reported this guard as holding. The anchor is now `_store_unreadable` itself,
+        so the mutant reaches every caller of the one writer rather than one inline
+        spelling.
         """
         mod = _load_mutant(
             tmp_path,

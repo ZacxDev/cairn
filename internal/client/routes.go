@@ -2,9 +2,9 @@ package client
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
-
-	"github.com/ZacxDev/cairn/internal/store"
 )
 
 // Routes prints the routing table and, with `--check`, grades it against reality.
@@ -86,66 +86,27 @@ func Routes(env Env, opts Options) (int, error) {
 				"the table.\n", instance.Alias)
 			return ExitUnrouted, nil
 		}
-		// 🔴 THROUGH `store.ScopeDirsOrUnreadable`, NOT A BARE `os.ReadDir` — THE FOURTH
-		// CACHE-ROOT READ, AND THE THIRD ROUND OF THIS AUDIT TO FIND ONE. `LoadStore` wraps
-		// the INDEX walk, `EntryFilesOrUnreadable` wraps `Validate`'s per-scope denominator,
-		// `ScopeDirsOrUnreadable` wraps `Validate`'s `held` — and this listing, which decides
-		// WHICH scopes the table is graded against, was `return 0, readErr`, i.e. the RAW
-		// `*os.PathError`. `cli.go`'s fallback arm already gave it the right NUMBER; what it
-		// printed was `open <cache>: permission denied` where one level down the same client
-		// prints `index entry unreadable: under <root> (PermissionError: …)`. That TEXT half is
-		// the defect #111 closed for `LoadIndex`, at a site #111 did not reach — and the
-		// oracle's twin escaped as a Python traceback at exit 1, so it was a DIVERGENCE too.
-		//
-		// 🔴 A CHMOD DOES REACH THIS LINE, VIA A **304**, AND AN EARLIER DRAFT OF THIS VERY
-		// COMMENT SAID IT DID NOT. That draft read "NO CHMOD REACHES THIS LINE", derived from a
-		// real measurement — `routes --check --no-sync` at cache-root modes 0555/0444/0111/0000
-		// all stop at the `state.Name != StateLive` guard above, because `--no-sync` cannot
-		// produce `StateLive`. True, and then generalised into a claim about EVERY route to this
-		// line, which is the exact move this round of the audit exists to stop. It was caught by
-		// building the fixture rather than by re-reading the sentence.
-		//
-		// The route it missed: `ResolveState` returns `StateLive` for a **304 Not Modified** and
-		// writes NOTHING — so the root this line lists is the PRE-EXISTING one, mode bits and
+		// ⚠ THIS CACHE-ROOT READ HANDS `cli.go` THE RAW `*os.PathError`, AND THAT IS NOT
+		// CLOSED HERE. `--no-sync` cannot reach it — the `state.Name != StateLive` guard above
+		// returns first — but a **304 Not Modified** does: `ResolveState` returns `StateLive`
+		// and writes nothing, so the root listed here is the pre-existing one, mode bits and
 		// all. MEASURED against a stub pod answering 304 to a matching `If-None-Match`, one
-		// instance, a one-route table, cache root at 0111, NO `--no-sync`:
-		//
-		//	before this change   oracle → exit 1, PermissionError TRACEBACK
-		//	                     go     → exit 3, raw `open <cache>: permission denied`
-		//	after  this change   both   → exit 3, byte-identical `index entry unreadable:
-		//	                              under <root> (PermissionError: [Errno 13] …)`
-		//
-		// i.e. a DIVERGENCE (1 vs 3) and a raw-errno TEXT defect, both closed, and both reachable
-		// by an ordinary `chmod` on a host whose store has not changed since its last sync —
-		// which is the COMMON case for a `routes --check`, not an exotic one. The race
-		// `EntryFilesOrUnreadable` documents (a concurrent `InstallSnapshot` rename) and an
-		// `ESTALE`/`EIO` from a bucket, git checkout or NFS mount are ADDITIONAL routes.
-		//
-		// ⬜ SO A PARITY ROW MAY NOW BE POSSIBLE FOR THIS VERB, AND THIS DOES NOT CLAIM ONE.
-		// `tests/parity/README.md` row 4 records that the harness chmods BEFORE the run and that
-		// `routes --check` refuses a non-LIVE instance, which is why no row exists; a 304 is the
-		// case that reconciles those. CLOSING CONDITION: a merged PR after which
-		// `python3 tests/parity/harness.py | grep -q '^PASS routes-check-unreadable-cache-root'`
-		// exits 0 AND the run's own `SUMMARY … failures=0` line holds — or, if the harness cannot
-		// be made to answer a 304 for one row, a sentence here saying so and what was tried.
-		// Until then the behavioural coverage is the oracle-side
-		// `TestAnUnreadableCacheROOTUnderRoutesCheckFailsClosed` in `tests/test_cairn_cli.py`.
-		//
-		// 🔴 THE FAN-OUT QUESTION `LsEntries` CARRIES DOES NOT ARISE HERE, WHICH IS WHY THIS
-		// ONE COULD BE CLOSED AND THAT ONE COULD NOT. This verb has ALREADY decided that one
-		// bad instance refuses the whole run — the guard above returns `ExitUnrouted` for the
-		// entire check as soon as any instance is not LIVE — so failing closed here adds no
-		// new policy. `LsEntries` prints per instance and continues, so its ruling is open.
-		//
-		// ⚠ THE PER-CHILD `os.Stat` FILTER MOVES INTO THE WRAP WITH THE LISTING, AND THE
-		// BEHAVIOUR IS CARRIED FORWARD VERBATIM: `ScopeDirsOrUnreadable` skips a child on ANY
-		// stat error and returns only directories, sorted — which is what this loop did.
-		held, readErr := store.ScopeDirsOrUnreadable(cache)
+		// instance, a one-route table, cache root at 0111: this client exits **3** printing
+		// `open <cache>: permission denied` where one level down it prints
+		// `index entry unreadable: under <root> (PermissionError: …)`, and the ORACLE exits
+		// **1** with a traceback. So both the TEXT and the code diverge. It is the cache-ROOT
+		// depth of `tests/parity/README.md` row 4, which carries it with a closing condition.
+		// UNGATED.
+		entries, readErr := os.ReadDir(cache)
 		if readErr != nil {
 			return 0, readErr
 		}
-		for _, name := range held {
-			seen[name] = true
+		for _, entry := range entries {
+			info, statErr := os.Stat(filepath.Join(cache, entry.Name()))
+			if statErr != nil || !info.IsDir() {
+				continue
+			}
+			seen[entry.Name()] = true
 		}
 	}
 	var scopes []string

@@ -81,19 +81,19 @@ var loaderEntryActions = map[Kind]Action{
 // unusable one. It names the SHAPE and never invents a fix, because the
 // operator's fix differs per shape (delete the lock file; delete the fifo).
 var loaderRefusalReason = map[Kind]string{
-	// 🔴 THE MECHANISM NAMED HERE IS `is_entry_filename`, NOT A GLOB, AND THAT IS A
-	// CORRECTION APPLIED TO BOTH CLIENTS IN ONE CHANGE. This string said
-	// "`glob('*.md')` matches a leading dot"; the ORACLE's entry walk stopped globbing in
-	// #119 (`entry_files_in` → `iterdir()` + `is_entry_filename`), so the sentence cited a
-	// mechanism that no longer exists while its conclusion stayed true. It is strictly
-	// worse than a stale comment because it is a RUNTIME STRING — it reaches a 503 body
-	// and `validate`'s stderr. Named for the PREDICATE rather than the WALK on purpose:
-	// `IsEntryFileName`/`is_entry_filename` is what decides, and a future change of walk
-	// cannot make this stale again.
+	// 🔴 IT NAMES `is_entry_filename`, NOT A GLOB, AND THAT IS A CORRECTION APPLIED TO
+	// BOTH CLIENTS IN ONE CHANGE. This string said "`glob('*.md')` matches a leading dot";
+	// the ORACLE's entry walk stopped globbing when `entry_files_in` moved to `iterdir()` +
+	// `is_entry_filename`, so the sentence cited a mechanism that no longer exists while its
+	// conclusion stayed true. Worse than a stale comment because it is a RUNTIME STRING — it
+	// reaches a 503 body and `validate`'s stderr. Named for the PREDICATE rather than the
+	// WALK on purpose: `IsEntryFileName`/`is_entry_filename` is what decides, so a future
+	// change of walk cannot make this stale again.
 	// 🔴 IT MUST STAY BYTE-IDENTICAL TO `lib/subsystem_resolver._LOADER_REFUSAL_REASON`'s
-	// `KIND_BROKEN_LINK` — measured identical before this edit and after. The audit named
-	// only the Python site; this twin carried the same false citation, so fixing one alone
-	// would have turned a stale-but-AGREEING string into a client DIVERGENCE.
+	// `KIND_BROKEN_LINK` — measured identical before this edit and after, and moved in the
+	// same commit. ⚠ NOTHING ASSERTS THAT IDENTITY: no test compares the two literals, and
+	// no parity or dualrun world seeds a dangling `.#*.md`, so the requirement rests on this
+	// comment and its twin. Change one side and you must change the other by hand.
 	KindBrokenLink: "broken symlink (a dangling target, or a link loop) — not an entry, and " +
 		"refused before `open()`. `is_entry_filename` accepts a leading dot, so an " +
 		"editor lock file such as `.#<entry>.md` lands here; reading it raised " +
@@ -386,8 +386,9 @@ func IsEntryFileName(name string) bool {
 //
 // ⚠ THE ERROR IS THE DIRECTORY READ'S, PROPAGATED. A scope directory that cannot be read is
 // NOT an empty scope — see `mdNamesIn`'s caller in `LoadIndex`, which fails closed on it.
-// A caller outside `LoadIndex` that needs the READER'S sentence rather than the raw
-// `*os.PathError` wants `EntryFilesOrUnreadable` below, not this function.
+// ⚠ IT IS THE RAW `*os.PathError`, NOT THE READER'S `index entry unreadable` SENTENCE. Only
+// `LoadStore` turns it into that, so a caller outside `LoadStore` reporting this error
+// directly prints different bytes from the oracle.
 func EntryFileNames(dir string) ([]string, error) {
 	names, err := mdNamesIn(dir)
 	if err != nil {
@@ -408,28 +409,16 @@ func EntryFileNames(dir string) ([]string, error) {
 // dangling symlink) IS a candidate here. That is the `broken-link` cell's whole reason
 // for existing.
 //
-// ⚠ THE CITATION MOVED IN #119 AND THIS HEADER DID NOT. It said "A `*.md` GLOB MATCHES A
-// LEADING DOT — measured on the Python side", which was a measurement of
-// `pathlib.Path.glob`; the Python side no longer globs — `entry_files_in` walks with
-// `iterdir()` and filters through `is_entry_filename` — so the named mechanism no longer
-// exists to be measured, while the property survives unchanged. What both sides now do is
-// what this function always did: read the directory and APPLY the suffix test explicitly,
-// so the property is stated rather than inherited from a matcher. Re-measured on the
-// pinned interpreter (3.12.14) over one directory holding `a.md`, `.#lock.md`, `.md`,
-// `README.md`, `b.MD`, `c.md.txt`, `d.markdown` and a directory named `sub.md`:
-// `glob("*.md")` + `is_entry_filename` and `iterdir()` + `is_entry_filename` return the
-// identical `['.#lock.md', '.md', 'a.md', 'sub.md']`.
-//
-// ⚠ THE FILTER IS NAMED ON BOTH SIDES OF THAT EQUALITY, AND THIS HEADER DROPPED IT FROM THE
-// GLOB SIDE FOR ONE ROUND. It read "`glob(\"*.md\")` and `iterdir()` + `is_entry_filename`
-// return the identical [4 names]", which is FALSE as written: re-measured over that same
-// directory, a RAW `glob("*.md")` returns **5** — it includes `README.md`, which
-// `is_entry_filename` is what rejects. So a verifier re-deriving the literal wording got a
-// mismatch on the quoted list and had no way to tell a stale claim from a real drift.
-// `lib/subsystem_resolver.entry_files_in`'s docstring states the same equality correctly
-// ("`glob(\"*.md\")` and `iterdir()` filtered through `is_entry_filename`"); this site is
-// now the same claim. The equality being asserted is between the two WALKS under one
-// filter, never between a bare matcher and a filtered one.
+// ⚠ BOTH SIDES NOW DO WHAT THIS FUNCTION ALWAYS DID — read the directory and APPLY the
+// suffix test explicitly, so the property is stated rather than inherited from a matcher.
+// The oracle used to glob; `entry_files_in` walks with `iterdir()` and filters through
+// `is_entry_filename`. The candidate set did not move: re-measured on the pinned
+// interpreter (3.12.14) over one directory holding `a.md`, `.#lock.md`, `.md`, `README.md`,
+// `b.MD`, `c.md.txt`, `d.markdown` and a directory named `sub.md`, `glob("*.md")` and
+// `iterdir()` — each filtered through `is_entry_filename` — return the identical
+// `['.#lock.md', '.md', 'a.md', 'sub.md']`. ⚠ THE FILTER IS ON BOTH SIDES OF THAT EQUALITY:
+// a RAW `glob("*.md")` over the same directory returns **5** names, because `README.md` is
+// what `is_entry_filename` rejects.
 func mdNamesIn(dir string) ([]string, error) {
 	dirents, err := os.ReadDir(dir)
 	if err != nil {
@@ -469,152 +458,19 @@ func EntryUnreadable(path string, cause error) *EntryUnreadableError {
 // StoreUnreadable is the STORE-WIDE twin of `EntryUnreadable` — "I could not finish
 // reading this store", named by ROOT rather than by the file that stopped it.
 //
-// 🔴 IT IS A FUNCTION BECAUSE **THREE** CALL SITES NEED THE IDENTICAL BYTES, AND EACH ONE
-// AFTER THE FIRST ARRIVED BY DUPLICATION. `LoadStore` below has always owned this wrap;
-// `Validate`'s per-scope DENOMINATOR reads a scope directory a SECOND time, outside it, and
-// that read used to DISCARD its error; `ScopeDirsOrUnreadable` is the THIRD, for the
-// cache-ROOT listing. The oracle spells the sentence from one writer
-// (`subsystem_recall._store_unreadable`) for the same reason, and the parity gate compares
-// these bytes — so a second spelling here is a divergence waiting to happen.
+// 🔴 THESE BYTES ARE COMPARED ACROSS THE TWO CLIENTS, which is why the sentence lives
+// behind a name rather than being spelled at its call site. The oracle's twin is
+// `subsystem_recall._store_unreadable`, and `tests/parity/harness.py`'s
+// `validate-unreadable-entry` / `recall-unreadable-entry` / `*-unreadable-scope-dir` rows
+// diff the two clients' stderr byte for byte — so a second spelling here is a divergence
+// waiting to happen.
 //
-// ⚠ THIS COMMENT SAID "TWO CALL SITES" WHILE `ScopeDirsOrUnreadable` BELOW SAID "THREE",
-// SEVENTY LINES APART IN THIS SAME FILE — and the oracle's twin said two as well, so the
-// only place that was right was `tests/parity/README.md`. A count in prose, written once and
-// never re-derived, is the defect class this round of the audit exists to remove; the two
-// disagreeing copies are why it went unnoticed. Re-derive rather than trusting either
-// sentence: `grep -n 'StoreUnreadable(' internal/store/load.go` — the `func`, then the three
-// returns. `tests/test_store_read_sites.py` ledgers the callers two-way so a fourth cannot
-// arrive silently.
+// ⚠ ONE CALL SITE TODAY (`LoadStore`, below). Re-derive rather than trusting this sentence:
+// `grep -n 'StoreUnreadable(' internal/store/load.go`.
 func StoreUnreadable(storeRoot string, cause error) *EntryUnreadableError {
 	return &EntryUnreadableError{message: fmt.Sprintf(
 		"index entry unreadable: under %s (%s: %s) — the store was not fully read, so this report would be INCOMPLETE",
 		storeRoot, osErrorTypeName(cause), PyOSError(cause))}
-}
-
-// EntryFilesOrUnreadable is `EntryFileNames` failing closed into the READER'S sentence.
-//
-// 🔴 IT EXISTS BECAUSE `validate` READS A SCOPE DIRECTORY TWICE AND ONLY THE FIRST READ
-// WAS WRAPPED. `Validate` loads the index through `LoadStore` — which turns a walk failure
-// into `EntryUnreadableError` — and then walks `<cache>/<scope>` AGAIN for the printed
-// line's denominator, where the error was DISCARDED as `entryNames, _ :=`. The
-// justification recorded at that site was "it is still swallowed because the oracle
-// swallows it rather than raising, so surfacing it would be a divergence with nothing
-// behind it — MEASURED … `Path("<mode-000 dir>").glob("*.md")` yields `[]` rather than a
-// `PermissionError`". #119 replaced that glob with `iterdir()`, so the measurement the
-// discard rested on became FALSE in the same change: the oracle now RAISES there.
-//
-// MEASURED at `e162746` over one cache holding two scopes, the second removed after the
-// first scope's line was printed (`validate --no-sync`, no `--scope`):
-//
-//	oracle → `FileNotFoundError` ESCAPED `main()` (a traceback at exit 1 as a process —
-//	         see `subsystem_recall.entry_files_or_unreadable` for why that half is a
-//	         separate claim with its own control)
-//	Go     → exit 0, `cairn: <scope>: 0 of 0 entry file(s) parse, 0 malformed`
-//
-// So the discard stopped agreeing with the oracle AND kept printing a count over a
-// directory nothing read — `checked = 0` beside a malformed count, which is the
-// negative-count nonsense from the other direction that the block at the call site already
-// names. Both clients now answer 3 with the identical sentence.
-//
-// ⚠ AN EMPTY SCOPE IS UNTOUCHED: `os.ReadDir` over a readable empty directory returns no
-// entries and no error, so `0 of 0` at exit 0 still means what it says. The two states are
-// separated by MECHANISM, not by a predicate.
-func EntryFilesOrUnreadable(storeRoot, dir string) ([]string, error) {
-	names, err := EntryFileNames(dir)
-	if err != nil {
-		return nil, StoreUnreadable(storeRoot, err)
-	}
-	return names, nil
-}
-
-// ScopeDirsOrUnreadable lists a store's scope directories, failing closed into the
-// READER'S sentence.
-//
-// 🔴 THE THIRD UNWRAPPED READ OF THE STORE, AND #119's OWN DECLARATION SAID THE SET WAS
-// CLOSED. `LoadStore` wraps the INDEX walk and `EntryFilesOrUnreadable` wraps `Validate`'s
-// per-scope DENOMINATOR; the read that enumerates the cache ROOT — `Validate`'s `held`,
-// which decides WHICH scopes are validated at all — was a bare `os.ReadDir(cache)` whose
-// error was `return 0, readErr`, i.e. the RAW `*os.PathError`. `tests/parity/README.md`
-// row 4 declared the one remaining cache-root divergence as the oracle raising out of
-// `resolve_state`'s stamp check and named the remedy as teaching `resolve_state` that an
-// unreadable stamp is "no cache" — a remedy that does not touch this line, so that row
-// could go green with this still live.
-//
-// 🔴 THE DEPTH HAS TWO SUB-CASES AND THE MODE IS WHAT SEPARATES THEM — MEASURED ON BOTH
-// CLIENTS at `8ddbb6f`, `--no-sync`, one cache holding one readable scope, `chmod` on the
-// cache ROOT:
-//
-//	root mode   verb                    oracle                     go
-//	---------   ---------------------   ------------------------   ---
-//	0000, 0444  recall/search/validate  1 (traceback)              3 (banner)
-//	0111        recall, search          3, named sentence          3, identical
-//	0111        validate                1 (traceback out of held)  3, RAW errno
-//
-// Without `x` the stamp `stat` fails and nothing reaches here — that is row 4's case,
-// untouched. WITH `x` and without `r` the stamp read SUCCEEDS, `recall` and `search` fail
-// closed through `LoadStore` byte-identically, and `validate` alone escaped: exit 1 with a
-// traceback on the oracle, and here exit 3 — already the right NUMBER via `cli.go`'s
-// reader-error arm — printing `open <cache>: permission denied` where one level down the
-// same client prints `index entry unreadable: under <root> (PermissionError: …)`. That TEXT
-// half is the same defect #111 closed for `LoadIndex`, at a site #111 did not reach.
-//
-// 🔴 THE SENTENCE IS `StoreUnreadable`'s, NOT SPELLED HERE, and that is now THREE call
-// sites for one set of bytes — which is exactly why it is a function. The parity gate
-// compares these bytes against the oracle's `_store_unreadable`.
-//
-// ⚠ THE PER-CHILD `os.Stat` SKIPS ON ANY ERROR, AND THAT IS UNCHANGED FROM BEFORE THIS
-// FUNCTION EXISTED — deliberately NOT aligned with `LoadIndex`'s `isIgnoredStatErrno`
-// rule fifty lines up, even though that rule is the better one. The oracle's `is_dir()`
-// RAISES outside `pathlib._IGNORED_ERRNOS`, so the two clients disagree here in principle
-// — but no mode reaches it THROUGH THIS FUNCTION: a child cannot be `stat`ed at all
-// without `x` on this root, and without `x` the run has already diverged at the stamp
-// check. Declared in `tests/parity/README.md` row 4 rather than closed here.
-//
-// 🔴 "A GUARD NOTHING CAN MAKE FAIL" WAS THE WRONG SENTENCE AND IT IS WITHDRAWN — THE
-// ASYMMETRY IS NOT UNREACHABLE, IT IS UNREACHABLE *HERE*, AND THE WIDER CLAIM IS FALSE.
-// The SAME `statErr != nil { continue }` shape, in `internal/doctor`, is measurably
-// diverging from the oracle TODAY. MEASURED at `24eb508`, `doctor --no-sync`, cache ROOT at
-// mode 0444 (`r`, no `x`) and separately a SCOPE DIRECTORY at 0444 — `os.ReadDir` succeeds
-// because listing needs only `r`, and the per-child `os.Stat` fails because resolving
-// `<root>/<child>` needs `x`:
-//
-//	oracle → "the cache's UNREADABLE entry file(s) could not be compared"
-//	go     → "the cache's 0 entry file(s) could not be compared"
-//
-// `doctor.go`'s `continue` turns "I could not confirm this is a directory" into "it is not
-// one", `scopeDirs` returns an empty slice and a NIL error, and this client then asserts a
-// ZERO over a store it could not read. At mode 0111 the two AGREE on "unreadable", because
-// there the TOP-LEVEL `os.ReadDir` fails and that error is propagated on both sides. So the
-// missing bit decides WHICH read breaks, and only one of the two is swallowed.
-//
-// ⚠ THE NARROW CLAIM IS STILL TRUE AND STILL WORTH ACTING ON: aligning the per-child rule
-// *in this function* would add a branch no input reaches, because its only callers —
-// `Validate` and `Routes` — are both gated upstream. What was wrong was generalising a
-// LOCAL unreachability argument into a global one, which is how the identical asymmetry went
-// unexamined one package away. And the `x`-bit argument is an argument about MODES only: on
-// a bucket or an NFS mount, `ESTALE`/`EIO` reach a CHILD exactly as they reach the root.
-// `doctor`'s copy is ledgered as UNCOVERED, with a closing condition, in
-// `tests/test_store_read_sites.py`.
-func ScopeDirsOrUnreadable(storeRoot string) ([]string, error) {
-	entries, err := os.ReadDir(storeRoot)
-	if err != nil {
-		return nil, StoreUnreadable(storeRoot, err)
-	}
-	held := make([]string, 0, len(entries))
-	for _, e := range entries {
-		info, statErr := os.Stat(filepath.Join(storeRoot, e.Name()))
-		if statErr != nil || !info.IsDir() {
-			continue
-		}
-		held = append(held, e.Name())
-	}
-	// `slices.Sort`, not `sort.Strings`, purely to avoid a second sort import in this
-	// file — `LoadIndex` above already uses it. Byte-wise ascending either way, which
-	// is what the caller's `--scope` membership check and the oracle's `sorted()` both
-	// assume; this is NOT the byte-wise-vs-component-wise question `LsEntries` carries,
-	// because these are bare scope NAMES with no separator in them.
-	slices.Sort(held)
-	return held, nil
 }
 
 // LoadStore resolves the store root and loads its index.
@@ -656,9 +512,8 @@ func LoadStore(storeRoot, verb string, visible ScopeSet) (*Index, error) {
 		// under `recall`: the two sentences differed in exactly that parenthetical
 		// and in nothing else. `PyOSError` returns the Go text unchanged for an error
 		// carrying no errno, so this widens nothing else. #111.
-		// ⚠ THE SENTENCE IS `StoreUnreadable`'s, NOT SPELLED HERE, because a second site
-		// (`EntryFilesOrUnreadable`, for `validate`'s denominator) must produce the
-		// IDENTICAL bytes — the parity gate compares them.
+		// ⚠ THE SENTENCE IS `StoreUnreadable`'s, NOT SPELLED HERE, because the parity gate
+		// compares these bytes against the oracle's `_store_unreadable`.
 		return nil, StoreUnreadable(storeRoot, err)
 	}
 	if visible.Unrestricted {

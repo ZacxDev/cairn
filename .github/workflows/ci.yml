@@ -330,25 +330,30 @@ jobs:
           # `go test` (`internal/store/markersweep_test.go`), which is the other job and is
           # NOT in this number — so a green here is no evidence the Go walk matches anything.
           #
-          # ⚠ 2091 -> 2144, AND THE DRIFT GUARD BELOW IS WHAT FORCED IT — it went RED on this
-          # change, exactly as the note under `MAX_GAP` says it is meant to. `m` moved 2190 ->
-          # 2194 (FOUR tests: the searchable-but-unreadable cache-ROOT guard, its two argv
-          # shapes, its readable-root control, and its sentence-identity row), and against a
-          # floor still at 2091 the gap reached 103 — over the 100 bound — so the step refused
-          # with `Re-derive it: … = 2144`. 2144 = 2194 - min(50, max(1, 2194/20)); at m > 1000
-          # the `50` arm is the binding one, so the gap is exactly 50 again.
+          # ⚠ 2144 -> 2139, AND THIS IS THE FIRST TIME THE FLOOR HAS MOVED **DOWN**. `m` moved
+          # 2209 -> 2189: this change DELETES twenty tests — the ten in
+          # `tests/test_store_read_sites.py` (a two-way census of the store's listing reads,
+          # removed with the guard machinery it ledgered), the two cross-client refusal-reason
+          # guards in `tests/test_go_client_ledgers.py`, and eight in `tests/test_cairn_cli.py`
+          # (the cache-ROOT and vanished-scope classes, and the routes-check cache-root class).
+          # 2139 = 2189 - min(50, max(1, 2189/20)); at m > 1000 the `50` arm is the binding one,
+          # so the gap is exactly 50 again.
           #
-          # Measured with names on the base ref and on HEAD, one worktree each (8ddbb6f and
-          # this head), the collect-only pipeline above: base 2190, head 2194, 4 added,
-          # **0 removed** — and the four added are the four this change writes, by name.
+          # ⚠ THE PREVIOUS COMMENT HERE SAID `m` WAS **2194** AT THE HEAD IT WAS WRITTEN FOR,
+          # AND THAT NUMBER WAS ALREADY WRONG BY FIFTEEN BY THE TIME THIS LINE MOVED. Measured
+          # with the collect-only pipeline above, one worktree per ref: `d5c51af` collects
+          # **2209**, this tree **2189**. The literal was green throughout — 2209 - 2144 = 65,
+          # inside `MAX_GAP` — which is exactly how a number in a comment goes stale while the
+          # guard beside it stays quiet. Re-derive; do not carry a figure forward.
           #
-          # 🔴 THIS IS THE TWO-TIER BLIND SPOT, RECORDED BECAUSE IT CAUGHT THE AUTHOR OF THIS
-          # VERY LINE. A full local `python3 -m pytest tests -q` was GREEN at this tree (2194
-          # passed) while this job was RED, because the floor and the drift guard live in THIS
+          # 🔴 THIS IS THE TWO-TIER BLIND SPOT, RECORDED BECAUSE IT CAUGHT THE AUTHOR OF AN
+          # EARLIER FORM OF THIS LINE. A full local `python3 -m pytest tests -q` was GREEN at
+          # that tree while this job was RED, because the floor and the drift guard live in THIS
           # STEP and not in any test — so no amount of running the suite locally can see them.
           # The local check that WOULD have: run pytest with `--junitxml=/tmp/r.xml` and then
-          # execute this heredoc against it. Done that way before this literal was committed.
-          FLOOR = 2144
+          # execute this heredoc against it. Done that way before this literal was committed:
+          # `collected=2189 failed=0`, and the same 2189 from `--collect-only -q`.
+          FLOOR = 2139
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -758,23 +763,20 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 111 PASS lines measured on this head: 108 cases plus THREE structural checks —
-          # re-derived by RUNNING the harness on this tree
-          # (`SUMMARY cases=108 passes=111 failures=0 dead-normalizations=0`, rc 0) and reading
-          # `grep -c '^PASS '`, never by adding one to the previous literal.
-          # ⚠ 110 -> 111 WHEN `validate-unreadable-cache-root` LANDED: ONE row, not two, and the
-          # asymmetry with the four rows before it is the argument rather than an oversight.
-          # `recall` and `search` already answered a mode-0111 cache ROOT with identical bytes at
-          # exit 3 — they reach the root walk through `load_store`/`LoadStore`, which was always
-          # wrapped — so rows on them would be INVARIANT guards wearing a regression row's name.
-          # `validate` alone read the root itself, through `held`.
-          # ⚠ THE PREVIOUS LITERAL WAS 106 AGAINST A RUN THAT PRODUCED 108, WHICH IS THE EXACT
-          # BLINDNESS THE 🔴 NOTE BELOW DESCRIBES, COMMITTED BY THE COMMIT THAT WROTE IT. The
-          # two #111 rows landed and this number did not move, so deleting either one of them
-          # left `passes=107 >= 106` green, `declared=104 >= floor 99` green, the derived-floor
-          # check green and the content sentinel True (the surviving row still emitted the
-          # sentence) — no guard fired. Four rows are now in this family, so the ledger that
-          # matters is the number, not the prose: run it and copy what it prints.
+          # 110 PASS lines measured on this head: 107 cases plus THREE structural checks —
+          # re-derived by RUNNING the harness on this tree and reading `grep -c '^PASS '`, never
+          # by arithmetic on the previous literal.
+          # ⚠ 111 -> 110 WHEN `validate-unreadable-cache-root` WAS REMOVED: ONE row, because
+          # `recall` and `search` never had one — they reach the cache-ROOT walk through
+          # `load_store`/`LoadStore` and already agreed, so rows on them would have been
+          # INVARIANT guards wearing a regression row's name. The wrap that row gated is gone
+          # with it, and the cache-root depth is declared open again in `tests/parity/README.md`
+          # row 4. FOUR rows remain in this family: a mode-000 ENTRY FILE and a mode-000 SCOPE
+          # DIRECTORY, under `validate` and under `recall`.
+          # ⚠ THIS LITERAL HAS BEEN STALE BEFORE, IN THE REASSURING DIRECTION: it sat at 106
+          # against a run producing 108, so deleting either of the two #111 rows left
+          # `passes=107 >= 106` green with no guard firing. The ledger that matters is the
+          # number, not the prose: run it and copy what it prints.
           # ⚠ THE STALE COUNT BELOW IS KEPT AS THE RECORD OF WHAT MOVED, not as a claim about
           # this head: the sentence "103 cases … The newest case is
           # `validate-write-protocol-advisories`" was true two rounds ago.
@@ -810,28 +812,26 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 111 ]; then
-            echo "REFUSING: $passes passes, and 111 were measured — the gate got smaller"
+          if [ "$passes" -lt 110 ]; then
+            echo "REFUSING: $passes passes, and 110 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
             echo "REFUSING: $fails failing row(s)"
             exit 1
           fi
-          # …and the harness's own FIVE in-run content controls, read rather than assumed.
-          # 🔴 ALL FIVE FIELDS ARE NAMED, AND THE ANCHOR IS WHY THAT MATTERS. A prefix match
+          # …and the harness's own FOUR in-run content controls, read rather than assumed.
+          # 🔴 ALL FOUR FIELDS ARE NAMED, AND THE ANCHOR IS WHY THAT MATTERS. A prefix match
           # says nothing about the fields AFTER the ones it spells, so a short anchor reads as
           # coverage of the whole line while checking only its head.
-          # 🔴 THIS HAS NOW GONE STALE THE SAME WAY TWICE, WHICH IS THE ARGUMENT FOR READING
-          # THE HARNESS RATHER THAN THIS COMMENT. It first read TWO fields while claiming two,
-          # by which time the harness printed three. It was then widened to FOUR and the
-          # comment rewritten to say "ALL FOUR FIELDS ARE NAMED" — and the harness had already
-          # grown a fifth, `unreadable-cache-root=`, the field the round that added it cared
-          # most about. So the anchor stopped one field short of the end again, and the comment
-          # again asserted completeness it did not have. Re-derive before trusting this line:
-          #   grep -n 'CONTENT-FLOOR' tests/parity/harness.py
-          # and count the f-string's named fields. The harness's own refusal text says the
-          # number too ("ALL FIVE of…"), and it is the authority, not this comment.
+          # 🔴 IT HAS GONE STALE THAT WAY TWICE, WHICH IS WHY A TEST NOW OWNS THE AGREEMENT
+          # RATHER THAN THIS COMMENT: `tests/test_parity_harness.py::test_the_CI_content_floor_
+          # grep_names_EVERY_field_the_harness_prints` derives the field names from the
+          # harness's own `CONTENT-FLOOR` f-string and fails in BOTH directions — a field the
+          # harness prints and this grep does not name, AND a field named here the harness no
+          # longer prints. That second direction is what forced this line to shrink when the
+          # `unreadable-cache-root` sentinel was deleted with its row. Re-derive rather than
+          # trusting this comment: `grep -n 'CONTENT-FLOOR' tests/parity/harness.py`.
           # ⚠ IN BOTH STALE ROUNDS THE MISSING SENTINELS WERE STILL ENFORCED — the harness
           # refuses to vouch and exits 2, which `set -o pipefail` above turns into a failed
           # step — so each was a coverage-WORDING gap rather than a hole. Widened anyway: a
@@ -839,7 +839,7 @@ jobs:
           # ⚠ THE TRAILING `mtime-files=…` FIELDS ARE DELIBERATELY NOT MATCHED: they carry a
           # measured number, not a verdict, so spelling them here would make this line red on
           # every corpus change.
-          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True unreadable-cache-root=True' /tmp/parity.txt
+          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
 
   # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY

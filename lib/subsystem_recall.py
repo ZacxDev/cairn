@@ -291,7 +291,6 @@ from subsystem_resolver import (  # noqa: E402
     SubsystemIndex,
     UnknownScopeError,
     associate_paths,
-    entry_files_in,
     load_index,
     normalize_ref,
     parse_front_matter,
@@ -382,7 +381,6 @@ __all__ = [
     "discarded_sensitivity",
     "sensitivity_label",
     "load_store",
-    "entry_files_or_unreadable",
     "visible_scope_set",
     "listing_order",
     "listing_page",
@@ -1383,185 +1381,20 @@ class RecallReport:
 def _store_unreadable(store: Path, exc: OSError) -> EntryUnreadableError:
     """The ONE store-wide "not fully read" sentence, with ONE writer.
 
-    🔴 IT IS A FUNCTION BECAUSE **THREE** CALL SITES NEED IT, AND EACH ONE AFTER THE
-    FIRST ARRIVED BY DUPLICATION. `load_store` below has always owned this wrap;
-    `cairn validate`'s per-scope DENOMINATOR reads a scope directory a SECOND time,
-    outside it, and that read was left raw; `scope_dirs_or_unreadable` is the THIRD,
-    for the cache-ROOT listing. Spelling the sentence again at any of them would
-    make it N spellings of one rule behind N lines — the shape `entry_files_in` and
-    `is_entry_filename` were consolidated to remove, wrong at N-1 of N sites in the
-    same direction.
+    🔴 THESE BYTES ARE COMPARED ACROSS THE TWO CLIENTS, which is why the sentence
+    lives behind a name rather than being spelled at its call site. The Go twin is
+    `internal/store.StoreUnreadable`, and `tests/parity/harness.py`'s
+    `validate-unreadable-entry` / `recall-unreadable-entry` /
+    `*-unreadable-scope-dir` rows diff the two clients' stderr byte for byte — so a
+    second spelling of it anywhere is a divergence waiting to happen.
 
-    ⚠ THIS DOCSTRING SAID "TWO CALL SITES" WHILE THERE WERE THREE, AND SO DID THE GO
-    TWIN. A count written into prose once and never re-derived is the same defect
-    class as the closure declarations this round of the audit exists to remove — and
-    it was visible all along: `tests/parity/README.md` already said three, and
-    `internal/store/load.go` contradicted its OWN function docstring seventy lines
-    further down, which is how the disagreement stayed unnoticed. Re-derive rather
-    than trusting this sentence:
-    `grep -n '_store_unreadable(' lib/subsystem_recall.py` — the `def`, then the
-    three raises. `tests/test_store_read_sites.py` now ledgers the callers two-way,
-    so a fourth cannot arrive silently.
+    ⚠ ONE CALL SITE TODAY (`load_store`, below). Re-derive rather than trusting this
+    sentence: `grep -n '_store_unreadable(' lib/subsystem_recall.py`.
     """
     return EntryUnreadableError(
         f"index entry unreadable: under {store} ({type(exc).__name__}: {exc}) — the "
         f"store was not fully read, so this report would be INCOMPLETE"
     )
-
-
-def entry_files_or_unreadable(
-    store_root: str | Path, scope_dir: str | Path
-) -> list[Path]:
-    """`entry_files_in`, failing closed into `load_store`'s OWN sentence.
-
-    🔴 IT EXISTS BECAUSE ONE VERB READS A SCOPE DIRECTORY TWICE AND ONLY THE FIRST
-    READ WAS WRAPPED. `cairn validate` loads the index through `load_store` — which
-    turns an `OSError` from the walk into `EntryUnreadableError` — and then walks
-    `<cache>/<scope>` AGAIN for the printed line's DENOMINATOR. While
-    `entry_files_in` globbed, that second read could not fail: `Path.glob`
-    SUPPRESSES the `OSError` its own directory scan raises. Making it `iterdir()`
-    (#119) closed a false ABSENCE at the first read and simultaneously opened a raw
-    `OSError` at the second — the oracle's `main()` catches
-    `(StoreMissingError, ResolverError)` and deliberately NOT `OSError`, so it
-    escaped as a TRACEBACK at exit 1, which is the exact outcome #111 exists to
-    remove, at a second site.
-
-    MEASURED at `e162746` over one cache holding two scopes, the second removed
-    after the first scope's line was printed (`validate --no-sync`, no `--scope`):
-
-        oracle  →  `FileNotFoundError` ESCAPED `main()` out of `cairn:1640`
-        Go      →  exit 0, `cairn: <scope>: 0 of 0 entry file(s) parse, 0 malformed`
-
-    ⚠ THE ORACLE'S HALF IS MEASURED IN-PROCESS, AND THE PROCESS CONSEQUENCE IS A
-    SEPARATE CLAIM WITH ITS OWN CONTROL — stated apart because the staging device
-    has to live inside the interpreter (see the guard) and so cannot read a process
-    exit status. The escape is what was observed; the script's entry point is
-    `raise SystemExit(main())`, and a control on this interpreter (3.12.14) — a
-    `main()` raising `FileNotFoundError` under that same entry point — exits **1**
-    with `Traceback (most recent call last)` on stderr. So "traceback at exit 1"
-    elsewhere in this tree is the escape plus that control, not a third
-    measurement.
-
-    i.e. BOTH a reintroduced traceback and a NEW divergence, in a repository whose
-    premise is byte-identity. Both clients now answer **3** with this function's
-    sentence: the store was not fully read, so the count would be a fiction.
-
-    🔴 3 AND NOT 0, EVEN THOUGH A VANISHED DIRECTORY LOOKS LIKE AN EMPTY ONE. That
-    is the whole of #119 restated one line later — a listing that could not be
-    taken is not a listing of nothing. An empty scope is still `0 of 0` at exit 0,
-    because `iterdir()` over a readable empty directory returns `[]` and never
-    reaches here; the two states are separated by MECHANISM, not by a predicate.
-
-    ⚠ REACHABLE, AND NOT ONLY BY A CONTRIVED RACE. `install_snapshot` renames the
-    whole cache root aside, renames the freshly staged tree into its place, then
-    `rmtree`s the retired one — read at this head, not assumed — and its own
-    docstring cites this repo's `AGENTS.md` for concurrent sessions being normal
-    and a timer being planned. So any
-    `cairn sync` whose new snapshot no longer holds a scope this reader already
-    listed lands in the window. With no `--scope` the window spans the processing
-    of every earlier scope.
-    """
-    try:
-        return entry_files_in(Path(scope_dir))
-    except OSError as exc:
-        raise _store_unreadable(Path(store_root), exc) from exc
-
-
-def scope_dirs_or_unreadable(store_root: str | Path) -> list[str]:
-    """The names of a store's scope directories, failing closed into ONE sentence.
-
-    🔴 THE THIRD UNWRAPPED READ OF THE STORE, AND #119's OWN DECLARATION SAID THE
-    SET WAS CLOSED. `load_store` wraps the INDEX walk and
-    `entry_files_or_unreadable` wraps `validate`'s per-scope DENOMINATOR; the read
-    that enumerates the cache ROOT — `cairn validate`'s `held`, which decides
-    WHICH scopes are validated at all — was a bare
-    `sorted(p.name for p in cache.iterdir() if p.is_dir())`, and had been since
-    before this branch. `tests/parity/README.md` row 4 declared the one remaining
-    cache-root divergence as raising out of `resolve_state`'s
-    `(cache / SYNC_STAMP).exists()`, and named the remedy as teaching
-    `resolve_state` that an unreadable stamp is "no cache" — a remedy that does
-    not touch this line. So that row could go green with this still live.
-
-    🔴 THE DEPTH HAS TWO SUB-CASES AND THE MODE IS WHAT SEPARATES THEM — MEASURED
-    ON BOTH CLIENTS at `8ddbb6f`, `--no-sync`, one cache holding one readable
-    scope, `chmod` on the cache ROOT:
-
-        root mode   verb                    oracle                     go
-        ---------   ---------------------   ------------------------   ---
-        0000, 0444  recall/search/validate  1 (traceback)              3 (banner)
-        0111        recall, search          3, named sentence          3, identical
-        0111        validate                1 (traceback out of held)  3, raw errno
-
-    Without `x` the stamp `stat` itself fails, so nothing reaches here and the
-    divergence is `resolve_state`'s — row 4's case, untouched by this function.
-    WITH `x` and without `r` the stamp read SUCCEEDS, `recall` and `search` fail
-    closed through `load_store` byte-identically, and `validate` alone escaped:
-    the oracle with a `PermissionError` traceback at exit 1, the Go client at 3
-    but printing its raw `*os.PathError` (`open <cache>: permission denied`)
-    instead of the reader's own sentence — the same TEXT defect #111 closed one
-    level down, at a site #111 did not reach.
-
-    🔴 IT NEEDS NO `chmod` IN THE WILD. `iterdir()` propagates every `OSError`,
-    and this store may be a bucket, a git checkout or an NFS mount (`README.md`),
-    so an `ESTALE` or `EIO` from the root listing arrives by the same route a mode
-    bit does.
-
-    ⚠ AND THAT ARGUMENT APPLIES TO THE PER-CHILD `stat` BELOW TOO — WHICH IS WHY THE
-    PARAGRAPH AFTER NEXT NO LONGER CALLS THAT ASYMMETRY UNREACHABLE IN GENERAL. A
-    mode bit is not the only thing that can fail a `stat`: on the same bucket, the
-    same NFS mount, `ESTALE` and `EIO` reach a CHILD exactly as they reach the root,
-    and neither is gated by `x` on the parent. The `x`-bit argument is an argument
-    about MODES, and it was doing duty as an argument about every cause.
-
-    ⚠ THE PER-CHILD `is_dir()` IS DELIBERATELY OUTSIDE THE WRAP, MIRRORING GO'S
-    PER-CHILD `os.Stat`. `pathlib` answers False for
-    `_IGNORED_ERRNOS == (ENOENT, ENOTDIR, EBADF, ELOOP)` and RAISES for anything
-    else, while `internal/store.ScopeDirsOrUnreadable` skips a child on ANY stat
-    error — an asymmetry that PRE-DATES this change and is left exactly as it was.
-    NO MODE REACHES IT **THROUGH THIS FUNCTION**: a child cannot be `stat`ed at all
-    without `x` on this root, and without `x` the run has already diverged at
-    `resolve_state`. Declared in `tests/parity/README.md` row 4 rather than closed
-    here.
-
-    🔴 "A GUARD NOTHING CAN MAKE FAIL" WAS THE WRONG SENTENCE AND IT IS WITHDRAWN —
-    THE ASYMMETRY IS NOT UNREACHABLE, IT IS UNREACHABLE *HERE*. Those are different
-    claims, and the wider one is false: the SAME asymmetry, in `doctor`, is
-    measurably diverging TODAY. MEASURED at `24eb508` over an isolated HOME, one
-    instance, `doctor --no-sync`, cache ROOT at mode 0444 (`r`, no `x`) and
-    separately a SCOPE DIRECTORY at 0444 — the listing succeeds because it needs
-    only `r`, and the per-child `stat` fails because it needs `x`:
-
-        oracle  →  "the cache's UNREADABLE entry file(s) could not be compared"
-        go      →  "the cache's 0 entry file(s) could not be compared"
-
-    i.e. Go's `continue` turns "I could not confirm this is a directory" into "it is
-    not a directory", and the client then asserts a ZERO over a store it could not
-    read — the confident zero this module exists to refuse. At mode 0111 the two
-    AGREE on "unreadable", because there the TOP-LEVEL listing fails and that error
-    is propagated on both sides. So the mode decides which of the two reads breaks,
-    and only one of them is swallowed.
-
-    ⚠ WHAT IS TRUE IS THE NARROW CLAIM, AND IT IS WORTH KEEPING: aligning the
-    per-child rule *in this function* would add a branch no input reaches, because
-    this function's only callers are `validate` and `routes`, both of which are
-    gated upstream — `validate` by `resolve_state`'s stamp `stat`, `routes` by its
-    own `STATE_LIVE` refusal. The general claim needed the word HERE, and did not
-    have it; a sentence that generalises a local unreachability argument into a
-    global one is how the same asymmetry went unexamined one function away.
-    `doctor`'s copy is ledgered as UNCOVERED, with a closing condition, in
-    `tests/test_store_read_sites.py`.
-    """
-    root = Path(store_root)
-    try:
-        # 🔴 THE LISTING IS MATERIALISED INSIDE THE `try`, NOT LEFT LAZY.
-        # `iterdir()` is a GENERATOR — the `os.listdir` it wraps runs on the first
-        # `next()` — so a bare `return sorted(p.name for p in root.iterdir() …)`
-        # raises from inside the comprehension, past this `except`. Wrapping the
-        # `list()` is what puts the raise where it can be caught.
-        children = list(root.iterdir())
-    except OSError as exc:
-        raise _store_unreadable(root, exc) from exc
-    return sorted(p.name for p in children if p.is_dir())
 
 
 def load_store(
@@ -1634,9 +1467,9 @@ def load_store(
             visible_scopes=visible_scopes,
         )
     except OSError as exc:
-        # ⚠ THE SENTENCE IS `_store_unreadable`'s, NOT SPELLED HERE, because a
-        # second site (`entry_files_or_unreadable`, for `validate`'s denominator)
-        # must produce the IDENTICAL bytes — the parity gate compares them.
+        # ⚠ THE SENTENCE IS `_store_unreadable`'s, NOT SPELLED HERE, because the
+        # parity gate compares these bytes against the Go client's
+        # `store.StoreUnreadable`.
         raise _store_unreadable(store, exc) from exc
     if visible_scopes is None:
         return store, index

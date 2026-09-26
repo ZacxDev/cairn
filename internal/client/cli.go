@@ -622,21 +622,23 @@ func Run(env Env, argv []string) int {
 	// unreadable scope directory — and it exits 3, which is what the reader's own contract says
 	// those mean.
 	//
-	// ✅ THE ORACLE NOW REACHES THE SAME NUMBER BY THE SAME ROUTE, AND THE THREE CLAIMS THAT
-	// STOOD HERE ARE DELETED BECAUSE ALL THREE WERE FALSE. This comment said the oracle "prints
-	// a traceback at exit 1", that this was "a genuine divergence and it is in the good
-	// direction", and that it was "declared in `tests/parity/README.md` rather than reproduced".
-	// #111 grew the oracle's `main()` the reader-error rung this function always had, and #119
-	// stopped `entry_files_in` swallowing `EACCES` on the scope directory; the README row it
-	// pointed at now says the opposite of what the comment claimed it said. MEASURED on both
-	// clients at both depths: byte-identical stderr and exit 3 on all four (verb × depth). A
-	// comment left claiming a divergence that is closed is the shape that gets a guard deleted
-	// for being redundant.
+	// ✅ AT THOSE TWO DEPTHS THE ORACLE NOW REACHES THE SAME NUMBER BY THE SAME ROUTE, AND THE
+	// THREE CLAIMS THAT STOOD HERE ARE DELETED BECAUSE ALL THREE WERE FALSE. This comment said
+	// the oracle "prints a traceback at exit 1", that this was "a genuine divergence and it is
+	// in the good direction", and that it was "declared in `tests/parity/README.md` rather than
+	// reproduced". #111 grew the oracle's `main()` the reader-error rung this function always
+	// had, and `entry_files_in` stopped swallowing `EACCES` on the scope directory. MEASURED on
+	// both clients at both depths: byte-identical stderr and exit 3 on all four (verb × depth),
+	// gated by four rows in `tests/parity/harness.py`.
 	//
-	// ⚠ WHAT REMAINS IS ONE DEPTH UP AND IS STILL DECLARED IN `tests/parity/README.md` (residual
-	// 4): a mode-000 cache ROOT never becomes a reader error at all — it raises out of the
-	// oracle's `resolve_state` at exit 1 while `ResolveState` here answers
-	// `store-unreachable, no cache` at 3, which is the branch above, not this one.
+	// ⚠ WHAT REMAINS IS ONE DEPTH UP — THE CACHE ROOT — AND IT IS STILL OPEN IN BOTH ITS MODES,
+	// declared in `tests/parity/README.md` residual 4 rather than closed. Without `x` the root
+	// never reaches a verb at all: the oracle's `resolve_state` raises at exit 1 while
+	// `ResolveState` here answers `store-unreachable, no cache` at 3, which is the branch above
+	// and not this one. WITH `x` and without `r` (mode 0111) the stamp read succeeds and
+	// `Validate`'s and `Routes`' own root listings are reached — those hand this arm a raw
+	// `*os.PathError`, so the number is 3 but the TEXT is not the reader's sentence, and the
+	// oracle tracebacks at 1. Read that row, not this paragraph, for the closing condition.
 	fmt.Fprintf(env.Stderr, "🔴 cairn: %s\n", runErr)
 	return ExitUnreachableNoCache
 }

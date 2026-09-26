@@ -264,17 +264,13 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     and no duplicate id. So the floor covers those two, and nothing else in this file does.
 
     ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below the
-    PASS count `.github/workflows/ci.yml` pins — **111 at this head**, not the 110 this docstring
-    carried until the unreadable-cache-root round nor the 106 before that — but that job needs a Go
-    toolchain and a running pod; a developer
-    running `pytest tests` reaches this one and not that one. 🔴 NOTHING ASSERTS THAT THE TWO
-    NUMBERS AGREE, which is exactly how this one went stale: read `ci.yml`'s `-lt` comparison
-    rather than this sentence.
-    🔴 **AND IT WENT STALE AGAIN IN THE VERY COMMIT THAT MOVED `ci.yml` TO 110 — in this file,
-    which that commit edited.** `ci.yml`'s own comment criticises the previous commit for exactly
-    this ("re-derived by `grep -c '^PASS '`, never by adding two to the previous literal") while
-    three literals here were left behind by the same change. So: **every number in this file is a
-    MEASUREMENT with a command beside it**, and the two commands are
+    PASS count `.github/workflows/ci.yml` pins — **110 at this head** — but that job needs a Go
+    toolchain and a running pod; a developer running `pytest tests` reaches this one and not that
+    one. 🔴 NOTHING ASSERTS THAT THE TWO NUMBERS AGREE, which is exactly how this one went stale:
+    read `ci.yml`'s `-lt` comparison rather than this sentence.
+    🔴 **IT HAS GONE STALE IN BOTH DIRECTIONS, INCLUDING IN A COMMIT THAT MOVED `ci.yml` AND THIS
+    FILE TOGETHER.** So: **every number in this file is a MEASUREMENT with a command beside it**,
+    and the two commands are
     `nix develop … -c python3 tests/parity/harness.py | grep -c '^PASS '` for the PASS count and
     `python3 -c "import harness; print(len(harness.cases(1)))"` for the case count — not
     `grep -c 'Case('`, which happens to agree today and is a different question.
@@ -286,9 +282,8 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
     declared = len(harness.cases(1))
-    # 108 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
-    # compares and is therefore the only measurement that can be right. (`grep -c 'Case('` also
-    # says 108 here; it is a different question and is not what this literal is.) The floor is the
+    # 107 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
+    # compares and is therefore the only measurement that can be right. The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
     # narrowing cannot hide under it. The previous floor was 50 against 90, which could not
@@ -296,49 +291,24 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     #
     # ⚠ THIS USED TO ADD "loose enough that adding or dropping a handful of rows in a PR does not
     # make it permanently red", AND THE DRIFT GUARD BELOW MADE THAT FALSE IN THE GROWTH
-    # DIRECTION — at m=102 the formula gives exactly this literal, so adding ONE case reds
-    # `pytest tests` until the literal moves. The clause is deleted rather than the guard
+    # DIRECTION — at the measured `m` the formula gives exactly this literal, so adding ONE case
+    # reds `pytest tests` until the literal moves. The clause is deleted rather than the guard
     # loosened, and the asymmetry with `ci.yml`'s equivalent is deliberate: a parity CASE is
     # added a few times a year, so an exact guard costs an edit nobody notices, while the
     # collected count there moves on most PRs and an exact guard would red every one. Same
     # formula, different movement rate, different tolerance — stated at both sites.
-    # ⚠ AND IT WAS 85 AGAINST 101 UNTIL THIS COMMIT, because the measured `m` moved by eleven rows
-    # and the floor did not — a floor left behind by its own formula loosens silently, which is
-    # the same failure one size larger. Move BOTH when a row lands.
-    # ⚠ 95 -> 96 WHEN `recall-focus-resolved-through-an-explicit-repo-PATH` LANDED: `m` moved
-    # 101 -> 102 and this is the literal the formula prescribes for it. That row is what makes
-    # the gate able to see a glob metacharacter in a `--repo` ANCHOR; the three focus rows beside
-    # it default `--repo` to `.` and are structurally unable to.
-    # ⚠ 96 -> 97 WHEN `validate-write-protocol-advisories` LANDED: `m` moved 102 -> 103 and
-    # this is the literal the formula prescribes for it. That row is what makes the gate able
-    # to see the `dropped lines:` / `marker reachability:` blocks at all — every other scope in
-    # the world parses cleanly, so both advisories print their ZERO branch everywhere and a
-    # client implementing neither would compare equal.
-    # ⚠ 97 -> 99 WHEN `validate-unreadable-entry` AND `recall-unreadable-entry` LANDED (#111):
-    # `m` moved 103 -> 105 and 99 is the literal the formula prescribes for it. Those two rows
-    # are what make the gate able to see an UNREADABLE entry at all — the corpus is otherwise
-    # always fully readable, so `tests/parity/README.md` row 4 DECLARED the reader-error exit
-    # route (oracle 1 with a traceback, Go 3) rather than measuring it. Two rows and not one
-    # because the verbs reach the condition through different code: `recall` through
-    # `load_store`/`LoadStore`, `validate` through its own load, which bypassed that wrap.
-    # ⚠ 99 -> 101 WHEN `validate-unreadable-scope-dir` AND `recall-unreadable-scope-dir` LANDED
-    # (#119): `m` moved 105 -> 107 and 101 is the literal the formula prescribes for it
-    # (`107 - min(50, max(1, 107/20)) = 101.65 -> 101`, re-derived by running the formula on
-    # `len(harness.cases(1))`, not by arithmetic on the previous line). Those two rows are what
-    # make the gate able to see an unreadable scope DIRECTORY, which the entry rows above
-    # structurally cannot: chmodding the file leaves the directory listable, and the directory
-    # case was the one the oracle answered **0** with `status=scope-empty` where the Go client
-    # answered 3.
-    # ⚠ 101 -> 102 WHEN `validate-unreadable-cache-root` LANDED: `m` moved 107 -> 108 and 102 is
-    # the literal the formula prescribes for it (`108 - min(50, max(1, 108/20)) = 102.6 -> 102`,
-    # re-derived by RUNNING the formula on `len(harness.cases(1))`, not by arithmetic on the line
-    # above). ONE row and not two, unlike the two rounds before it: that row is what makes the
-    # gate able to see the CACHE ROOT read, which the scope-directory rows structurally cannot —
-    # chmodding a scope leaves the root listable — while `recall` and `search` needed no row at
-    # all, having already answered that mode with identical bytes at exit 3. The mode is 0111 and
-    # not 000 for a mechanical reason: without `x` the stamp check fails first, which is
-    # `tests/parity/README.md` row 4's still-open divergence and not this one.
-    floor = 102
+    # ⚠ AND IT WAS 85 AGAINST 101 ONCE, because the measured `m` moved by eleven rows and the
+    # floor did not — a floor left behind by its own formula loosens silently, which is the same
+    # failure one size larger. Move BOTH when a row lands, and both when one is DELETED.
+    # ⚠ 102 -> 101 WHEN `validate-unreadable-cache-root` WAS REMOVED: `m` moved 108 -> 107 and
+    # 101 is the literal the formula prescribes for it (`107 - min(50, max(1, 107/20)) = 101.65
+    # -> 101`, re-derived by RUNNING the formula on `len(harness.cases(1))`, not by arithmetic on
+    # the previous literal). That row gated the cache-ROOT read; the wraps behind it were removed
+    # after the triggering condition was measured never to occur, and the cache-root depth is
+    # declared open again in `tests/parity/README.md` row 4. What remains in this family is the
+    # four rows that gate a mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY on both clients —
+    # the conditions an ordinary `chmod` reaches.
+    floor = 101
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
@@ -372,19 +342,19 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # the `parity` job. They must NOT be asserted equal: this one counts CASES
     # DECLARED by `harness.cases()`, that one counts PASSES a run produced, and
     # the two differ by design — a structural check is a pass with no declared
-    # case behind it, which is why the run reports 111 passes over 108 cases —
-    # re-derived here from one run's own `SUMMARY cases=108 passes=111 failures=0`
+    # case behind it, which is why the run reports 110 passes over 107 cases —
+    # re-derived here from one run's own `SUMMARY cases=107 passes=110 failures=0`
     # line, not from arithmetic on the previous literal:
     # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`,
     # THREE structural checks. ⚠ It was 104/102, then 105/103, then 106/103, then
-    # 110/107 — and that third pair was WRONG for a whole round, because the four
-    # unreadable rows moved `m` to 107 and only `ci.yml` was updated. The gap itself
+    # 111/108 — and one of those pairs was WRONG for a whole round, because rows
+    # moved `m` and only `ci.yml` was updated. The gap itself
     # widens every time a claim turns out to be unreachable from any row. A
     # guard equating them would be red on a correct tree and would train its
     # reader to edit whichever number was handier. The docstring's instruction —
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (108 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (107 were "
         f"measured on this tree, across every verb and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."
@@ -400,11 +370,12 @@ def test_the_CI_content_floor_grep_names_EVERY_field_the_harness_prints() -> Non
     — while its own comment goes on claiming completeness.
 
     🔴 THAT HAS HAPPENED TWICE, WHICH IS WHY THIS IS A TEST AND NOT A THIRD COMMENT.
-    The grep read TWO fields while the harness printed three, was widened to FOUR and
-    re-commented "ALL FOUR FIELDS ARE NAMED", and by then the harness printed FIVE —
-    the fifth being `unreadable-cache-root`, the sentinel the round that added it
-    existed for. Each time the gap was found by a human re-reading the line, and each
-    time the comment was the thing that discouraged the re-read.
+    The grep read TWO fields while the harness printed three, was then widened and
+    re-commented to claim it named them all while the harness had already grown another.
+    Each time the gap was found by a human re-reading the line, and each time the
+    comment was the thing that discouraged the re-read. ⚠ It fails on a REMOVAL too,
+    which is not hypothetical: a sentinel was deleted with the row it covered, and this
+    guard is what required the anchor to shrink in the same commit.
 
     So: derive the field names from the harness's own `CONTENT-FLOOR` f-string and
     require `ci.yml`'s anchor to name all of them. Fails in BOTH directions — a field

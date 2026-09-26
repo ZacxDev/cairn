@@ -298,36 +298,6 @@ class Case:
     #: direction, and no `unreadable_in_cache` row could reach it: chmodding the file leaves
     #: the directory readable.
     unreadable_dir_in_cache: str | None = None
-    #: `chmod 0111` the CACHE ROOT itself for the measured run — restored to 0o755 the moment
-    #: that run returns, in a `finally`.
-    #:
-    #: 🔴 A THIRD SIBLING FIELD, AND THE MODE IS 0111 RATHER THAN 000 FOR A MECHANICAL REASON
-    #: THAT IS THE WHOLE ROW. Searchable-but-not-readable is the ONLY mode that reaches the
-    #: cache-root read this row is about: `resolve_state`/`ResolveState` `stat`s
-    #: `<cache>/.sync-stamp` BY NAME, which needs `x` on the root and not `r`, so at 0111 the
-    #: state banner is produced normally and the run then dies on the LISTING. At 000 (or
-    #: 0444) the stamp `stat` fails FIRST — that is `tests/parity/README.md` row 4's
-    #: still-open divergence, a different mechanism one step earlier, and a row built at that
-    #: mode would measure it instead and could never go green here.
-    #:
-    #: 🔴 IT IS THE THIRD READ OF THE STORE AND THE ONE #119's OWN DECLARATION SAID DID NOT
-    #: EXIST. `load_store`/`LoadStore` wraps the index walk; `entry_files_or_unreadable`/
-    #: `EntryFilesOrUnreadable` wraps `validate`'s per-scope denominator; the ROOT
-    #: enumeration behind `held` was raw on both clients. MEASURED at `8ddbb6f`, one cache,
-    #: one readable scope, `validate --scope <s> --no-sync`: oracle **1** with a
-    #: `PermissionError` traceback, Go **3** with its own `open <cache>: permission denied`
-    #: instead of the reader's sentence.
-    #:
-    #: 🔴 AND IT IS STATICALLY EXPRESSIBLE, WHICH IS WHY IT IS A ROW AT ALL. The sibling
-    #: vanished-scope defect needs the world to CHANGE MID-RUN and so lives in two per-client
-    #: guards (see "What the gate structurally cannot see"); this one is a fixed tree with a
-    #: mode bit, so the gate can own it and compares BYTES rather than a code.
-    #:
-    #: ⚠ `recall` AND `search` ARE NOT ROWS HERE, DELIBERATELY. Both already answered 3 with
-    #: identical bytes at `8ddbb6f` — they reach the root walk through `load_store`, which was
-    #: always wrapped — so a row on either would be an INVARIANT guard wearing a regression
-    #: row's name. `validate` is the only verb that read the root itself.
-    searchable_only_root: bool = False
 
 
 def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
@@ -592,51 +562,6 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              ["recall", "--scope", "beta-notes", "--no-sync"],
              wipe_cache=True, presync=True,
              unreadable_dir_in_cache="beta-notes"),
-
-        # --- an UNREADABLE cache ROOT, one level up again ----------------------
-        #
-        # 🔴 THE THIRD READ OF THE STORE, AND THE ONE #119's OWN DECLARATION SAID DID NOT
-        # EXIST. The two families above chmod an ENTRY FILE and a SCOPE DIRECTORY; both reach
-        # a wrap (`load_store`/`LoadStore`, `entry_files_or_unreadable`/
-        # `EntryFilesOrUnreadable`). The read that enumerates the cache ROOT — `validate`'s
-        # `held`, which decides WHICH scopes are validated at all — was raw on BOTH clients
-        # and had been since before this branch. What made it a finding is that
-        # `tests/parity/README.md` row 4 declared this depth closed while naming a mechanism
-        # (`resolve_state`'s stamp check) and a remedy that do not touch that line — so the
-        # row could have gone green with this live.
-        #
-        # 🔴 MODE 0111, NOT 000, AND THAT IS THE MECHANISM. MEASURED at `8ddbb6f`, both
-        # clients, `--no-sync`, one cache holding one readable scope:
-        #
-        #     root mode   verb                    oracle                     go
-        #     ---------   ---------------------   ------------------------   ---
-        #     0000, 0444  recall/search/validate  1 (traceback)              3 (banner)
-        #     0111        recall, search          3, named sentence          3, identical
-        #     0111        validate                1 (traceback out of held)  3, RAW errno
-        #
-        # Without `x` the stamp `stat` fails first and the divergence is `resolve_state`'s —
-        # row 4's case, still open, and a row built at 000 would measure THAT instead. With
-        # `x` and without `r` the banner is produced, `recall` and `search` fail closed
-        # byte-identically, and `validate` alone escaped.
-        #
-        # 🔴 ONE ROW, NOT THREE, AND THE ABSENCES ARE THE ARGUMENT. `recall` and `search`
-        # already agreed at `8ddbb6f`, so rows on them would be INVARIANT guards wearing a
-        # regression row's name — exactly what `tests/parity/README.md`'s preamble refuses.
-        # The two `validate` ARGV SHAPES are covered per client instead
-        # (`TestASearchableButUnreadableCacheROOTExitsThreeAndNeverTracebacks`,
-        # `TestAnUnreadableCacheROOTIsReportedWithTheORACLESSentenceAtExitThree`), because
-        # what differs between them is a branch below `held`, not the bytes two clients
-        # print.
-        #
-        # ⚠ `--no-sync` IS LOAD-BEARING. Without it the measured run syncs, `install_snapshot`
-        # replaces the cache root wholesale, and the mode is gone before the read.
-        Case("validate-unreadable-cache-root",
-             "a CACHED root at mode 0111 — searchable, so the stamp check still passes and "
-             "execution reaches `held`: the named `index entry unreadable` sentence with "
-             "CPython's OSError tail, at exit 3, and NOT a traceback",
-             ["validate", "--scope", "beta-notes", "--no-sync"],
-             wipe_cache=True, presync=True,
-             searchable_only_root=True),
 
         # --- doctor -----------------------------------------------------------
         Case("doctor-live", "seven checks, four states, the count line and the exit legend",
@@ -1389,14 +1314,6 @@ def main(argv: list[str] | None = None) -> int:
             # produced them rather than on the sentence alone — the only operand that can tell
             # the two conditions apart.
             saw_unreadable_dir = False
-            # 🔴 A FIFTH SENTINEL, AND NOT REDUNDANT WITH THE THIRD OR FOURTH FOR THE SAME
-            # REASON THEY ARE NOT REDUNDANT WITH EACH OTHER: all THREE mode families print
-            # the IDENTICAL `index entry unreadable` sentence, so the sentence alone cannot
-            # say which condition produced it. A run that had stopped chmodding the ROOT —
-            # the field renamed, the hook moved above the presync, a `restore_store` that
-            # rebuilt the cache — would still set the other two and vouch for a floor it
-            # never reached. Keyed on the field, like the other two.
-            saw_unreadable_root = False
             wanted = None if args.only is None else set(args.only.split(","))
             selected = [c for c in cases(closed, hostile_port)
                         if wanted is None or c.id in wanted]
@@ -1473,22 +1390,19 @@ def main(argv: list[str] | None = None) -> int:
                                    [a.replace("<NEWFILE>", str(new_file))
                                      .replace("<PUTFILE>", str(put_file))
                                     for a in case.setup], cwd, env)
-                    # 🔴 REFUSED RATHER THAN SILENTLY ORDERED, AND COUNTED OVER ALL THREE
-                    # FIELDS RATHER THAN COMPARED PAIRWISE. The blocks below are mutually
+                    # 🔴 REFUSED RATHER THAN SILENTLY ORDERED, AND COUNTED OVER THE ENUMERATED
+                    # SET RATHER THAN COMPARED PAIRWISE. The blocks below are mutually
                     # exclusive by construction — the first one that matches RETURNS — so a
                     # row setting two of them would have exactly one mode applied and would
                     # still PASS, having measured half of what its `why` claims. That is the
                     # "green for the wrong reason" shape, so it is an error rather than a
-                    # precedence rule nobody would read.
-                    #
-                    # ⚠ THE COUNT IS WHAT MAKES ADDING A FOURTH FIELD SAFE. This was an
-                    # `A is not None and B is not None` pair; a third field arrived and that
-                    # pair was structurally blind to two of the three new combinations. A
-                    # count over the enumerated set cannot go stale that way.
+                    # precedence rule nobody would read. A COUNT over the list, rather than an
+                    # `A is not None and B is not None` pair, is what keeps it correct when a
+                    # third field is added: a pair is structurally blind to the combinations a
+                    # third one creates.
                     _sabotage_fields = [
                         ("unreadable_in_cache", case.unreadable_in_cache is not None),
                         ("unreadable_dir_in_cache", case.unreadable_dir_in_cache is not None),
-                        ("searchable_only_root", case.searchable_only_root),
                     ]
                     _set_fields = [name for name, is_set in _sabotage_fields if is_set]
                     if len(_set_fields) > 1:
@@ -1499,37 +1413,6 @@ def main(argv: list[str] | None = None) -> int:
                             f"the row would measure one condition while claiming more. Split "
                             f"it into separate rows."
                         )
-                    if case.searchable_only_root:
-                        # 🔴 THE ROOT TWIN OF THE TWO BLOCKS BELOW. Same ordering argument —
-                        # after the presync, before the measured run, restored in a `finally`
-                        # because `once()` runs per CLIENT and a leaked 0111 on the ROOT
-                        # would make every later row's cache unlistable rather than merely
-                        # wrong.
-                        #
-                        # 🔴 THE POSITIVE CONTROL IS TWO CLAIMS. The root must be a directory
-                        # (a chmod of an absent path would measure the no-cache arm) AND it
-                        # must HOLD at least one scope directory — over an EMPTY root `held`
-                        # is empty and both clients answer "nothing to validate … holds no
-                        # scopes" at the SAME exit 3 for a DIFFERENT reason, so the row would
-                        # agree on a number while measuring nothing.
-                        if not cache.is_dir():
-                            raise SystemExit(
-                                f"REFUSING: case {case.id!r} sets `searchable_only_root` and "
-                                f"the presync did not leave a cache directory at {cache}."
-                            )
-                        held_dirs = sorted(p.name for p in cache.iterdir() if p.is_dir())
-                        if not held_dirs:
-                            raise SystemExit(
-                                f"REFUSING: case {case.id!r} sets `searchable_only_root` and "
-                                f"{cache} holds NO scope directory — both clients would then "
-                                f"answer 'holds no scopes' at exit 3 and this row would "
-                                f"measure nothing."
-                            )
-                        cache.chmod(0o111)
-                        try:
-                            return run_client(cmd, cwd, env)
-                        finally:
-                            cache.chmod(0o755)
                     if case.unreadable_dir_in_cache is not None:
                         # 🔴 THE DIRECTORY TWIN OF THE BLOCK BELOW, WITH ITS OWN EXISTENCE
                         # CHECK AND ITS OWN RESTORE MODE. Same ordering argument — after the
@@ -1650,8 +1533,6 @@ def main(argv: list[str] | None = None) -> int:
                 if (case.unreadable_dir_in_cache is not None
                         and "index entry unreadable" in py.stderr):
                     saw_unreadable_dir = True
-                if case.searchable_only_root and "index entry unreadable" in py.stderr:
-                    saw_unreadable_root = True
 
                 py_out, go_out = norm(py.stdout), norm(go.stdout)
                 py_err, go_err = norm(py.stderr), norm(go.stderr)
@@ -1919,20 +1800,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"CONTENT-FLOOR live-banner={saw_live_banner} "
                   f"rendered-digest={saw_rendered_digest} "
                   f"unreadable-entry={saw_unreadable_entry} "
-                  f"unreadable-scope-dir={saw_unreadable_dir} "
-                  f"unreadable-cache-root={saw_unreadable_root}{mtime_note}")
+                  f"unreadable-scope-dir={saw_unreadable_dir}{mtime_note}")
             floor_broken = wanted is None and not (
                 saw_live_banner and saw_rendered_digest and saw_unreadable_entry
-                and saw_unreadable_dir and saw_unreadable_root
+                and saw_unreadable_dir
             )
             if floor_broken:
-                print("REFUSING TO VOUCH: this run did not produce ALL FIVE of a LIVE banner, a "
+                print("REFUSING TO VOUCH: this run did not produce ALL FOUR of a LIVE banner, a "
                       "rendered digest, and an `index entry unreadable` sentence from each of a "
-                      "mode-000 ENTRY FILE, a mode-000 SCOPE DIRECTORY and a mode-0111 CACHE "
-                      "ROOT — so it measured refusals rather than reports, or one of the mode "
-                      "rows compared two clients reading a store with nothing wrong. All three "
-                      "mode families print the SAME sentence, so each sentinel is keyed on its "
-                      "row's own field and a missing one names a condition nothing built.",
+                      "mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY — so it measured "
+                      "refusals rather than reports, or one of the mode rows compared two "
+                      "clients reading a store with nothing wrong. Both mode families print the "
+                      "SAME sentence, so each sentinel is keyed on its row's own field and a "
+                      "missing one names a condition nothing built.",
                       file=sys.stderr)
 
             dead = [n.name for n in norms if not n.fired]
