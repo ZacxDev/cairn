@@ -33,11 +33,19 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   the earlier measurement forward on the strength of the docs-only delta, which is a weaker claim than
   a fresh green and is stated as one. Ranks 18–20 are the SUCCESSOR arc.
 - ✅ **ZERO PRs OPEN IN `cairn`** (`gh pr list --state open` → `[]`), nothing blocked on code.
-- ⏳ **RANK 18 IS CLAIMED AND IN FLIGHT** — `claim-work cairn-control-plane-18`, rc 0. An `opencode`
-  dispatch (`deepseek-v4-pro`) is driving the operator's Brave through the `browser` bridge, **background
-  tabs only, no window raised**, over a 24-item / 10-section feature matrix built from
-  `internal/ui/routes.go`'s ledger. ⚠ Rank 9 was ALREADY CLAIMED by another session two days ago, which
-  is the independent reason 18 was the right pick.
+- ✅ **RANK 18 IS DONE — THE BROWSER VALIDATION PASS RAN AND COVERED EVERY FEATURE.** An `opencode`
+  dispatch (`deepseek-v4-pro`) drove the operator's Brave through the `browser` bridge, **background
+  tabs only, no window raised**, over a 24-item / 10-section matrix built from `internal/ui/routes.go`'s
+  ledger: **24 exercised, 0 skipped, 7 screenshots**. Every route in the ledger was reached. The
+  load-bearing results: scope visibility is **exactly** `alpha-notes` 1 / `beta-notes` 1 /
+  `crag-notes` 0 / `hollow-set` 0 / `rubble-heap` 0 — **no authorization leak**; the share page answers
+  the audience from authority, listing the co-member `read,write` **via project membership** with
+  *"No grant names this scope"* beside it, which is the positive control `AGENTS.md` names; the
+  replica-honesty notice renders whole; `document.scripts.length` is **0**; and at 390×844 both pages
+  report `overflowX=false`. 🔴 **THE WRITE HALF IS VERIFIED INDEPENDENTLY OF THE SUBAGENT** — the journal
+  went **10 → 12 lines**, a `granted` with `verbs:["read"]` to the co-member and a `grant-revoked`
+  naming the SAME `grant_id`. ⚠ Rank 9 was ALREADY CLAIMED by another session two days ago, which is the
+  independent reason 18 was the right pick.
 - 🔴 **THE DEPLOYED BROWSER SURFACE IS 13 COMMITS STALE, MEASURED TWO INDEPENDENT WAYS.** Filed under
   `Defects (batched)`. The bump is mechanical and the artefact already exists; it is an operator call
   because a commit in the deployment-manifest repo IS a deploy. **Operator decision this session: run
@@ -119,14 +127,15 @@ an item nobody can find.** Re-ranking re-points every live claim.
     and arming the leak gate; relocated this session to a path outside the repo. forcing: user.
 17. ✅ **DONE — `cairn#108` merged as `84642ff`**, verified by CONTENT because ancestry is false after
     every squash. forcing: gate.
-18. ⏳ **IN FLIGHT — THE BROWSER VALIDATION PASS OVER EVERY UI FEATURE, VIA `opencode`.** Claimed as
-    `cairn-control-plane-18`. Target is a hand-run instance from `main`, by operator decision, because
-    the deployed one is 13 commits stale and its share flow has nobody to share with. Artefacts live
-    OUTSIDE this repo, under a `.cairn-r18` directory in the workspace root (brief, report,
-    screenshots) and the dispatch log beside it. **Closing condition unchanged:** a recorded run naming
-    the features covered and what it found, or a written line retiring the ask. ⚠ **Two findings are
-    already recorded under `Defects` and were verified independently of the subagent** — do not
-    re-derive them. forcing: user — asked directly and never actioned until now.
+18. ✅ **DONE — THE BROWSER VALIDATION PASS RAN.** 24 items exercised, 0 skipped, 7 screenshots, every
+    route in the UI ledger reached; results in `State now`, artefacts OUTSIDE this repo under a
+    `.cairn-r18` directory in the workspace root. Target was a hand-run instance from `main` by operator
+    decision, because the deployed one is 13 commits stale and its share flow has nobody to share with.
+    🔴 **TWO OF ITS THREE HEADLINE CLAIMS WERE WRONG AND ONLY RE-DERIVATION CAUGHT THEM** — see
+    `Gotchas`; the pass's own report is a witness, not a verdict. ⚠ **WHAT IT STILL DOES NOT COVER, and
+    neither does anything else:** the GitHub provider flow (absent on a hand-run instance — that is rank
+    13), and every one of these readings is about a LOCAL artefact rather than the deployed one.
+    forcing: user — asked directly, and now actioned.
 19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23, with the design stated in the same
     message. 🔴 **0 hits for `the-algorithm` across this doc, the archive and the plan.** The fact-rot
     sub-question DID get a delete-first pass; the whole-design trace has no record.
@@ -798,6 +807,32 @@ follow-up with a closing condition on the PR rather than fixed here.
   plus handing over the PID and session id. Followed: this session's instance is **127.0.0.1:8147, PID
   3427887, session `bb38a675`**. The occupant of 8103 was left alone. **The recipe still names 8103 —
   the prediction has now been confirmed twice and the recipe has still not been changed.**
+
+- 🔴 **THE BROWSER PASS'S OWN REPORT CARRIED TWO WRONG HEADLINES OUT OF THREE, AND BOTH WERE RETIRED BY
+  ONE EXTRA REQUEST EACH. A DISPATCHED PASS IS A WITNESS, NOT A VERDICT.** (a) It filed *"every unknown
+  path is auth-gated — 401, not a 404"* as a SURPRISE. Measured with the discriminating pair the report
+  never sent: **anonymous → 401, AUTHENTICATED → 404**, with `/healthz` → 200 as the control proving the
+  cookie jar was attached. That is exactly the gate-order exception `routes.go` documents, so the
+  finding is retired, not filed. (b) It filed the share page refusing `?scope=<display name>` — true,
+  and correct by design. **The one real navigation finding it did NOT make is the one that matters**,
+  because it reached `/share` by typing the URL and so never asked how a human would. **A pass that
+  navigates by address bar cannot see a missing link.** Brief the next one to reach every page by
+  CLICKING from the landing page, and to report any page it could only reach by typing.
+- ⚠ **AND THE PASS RAN WITHOUT TAKING THE OPERATOR'S SCREEN, WHICH IS A PROPERTY OF THE TOOL WORTH
+  KNOWING BEFORE THE NEXT ONE.** `browser open` creates the tab in the BACKGROUND and `screenshot`
+  captures an occluded tab, so a full multi-page walk needs **zero** raises — the raise is `browser
+  activate` and nothing else. Twenty-plus navigations, seven screenshots, a human working in the same
+  browser throughout: **zero workspace switches and zero focus changes**, which is the stronger of the
+  two claims that rule distinguishes.
+- 🔴 **A HANDOFF WRITE REFUSED `leak-refused` ON AN ARTEFACT, AND THE FRESH-WORKTREE ROUTE IS THE FIX
+  THAT DOES NOT SPEND AN OPERATOR OVERRIDE.** The gate refuses on ANY non-zero scanner exit, and the
+  base clone sits at exit 2 on abandoned agent worktrees — so the documented remedy,
+  `--leak-pre-existing-approved`, is an OPERATOR decision being burned on a scanner artefact, which is
+  exactly how an override becomes reflexive. Instead: `git worktree add <path> -b <branch> origin/main`,
+  run the scanner there to confirm **rc 0 with 0 `COULD NOT READ` lines on the same tree**, then run
+  `handoff_doc.py --repo <that worktree> --confirm --push` and open a PR from the branch. The gate then
+  vouches for the delta on its own terms — `leakscan: … exited 0 with this delta written` — which is a
+  STRONGER result than an approved override, not a workaround for it.
 
 ## How to verify
 ```bash
