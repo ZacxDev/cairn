@@ -1075,18 +1075,22 @@ func TestTheStylesheetIsServedAsItsOwnRoute(t *testing.T) {
 		body := rec.Body.String()
 		if strings.Contains(body, "<style") {
 			t.Errorf("%s carries an inline <style> element. The stylesheet is build output served from "+
-				"%s and cached for five minutes; inlining it sends ~29 KB on every response and leaves "+
-				"this test's link/route relationship unstated.", page, StylesheetPath)
+				"%s; inlining it sends ~29 KB on every response and leaves this test's link/route "+
+				"relationship unstated.", page, StylesheetHashedPath)
 		}
-		if !strings.Contains(body, `href="`+StylesheetPath+`"`) {
-			t.Errorf("%s does not link %s, so it has no styles at all", page, StylesheetPath)
+		// 🔴 THE HASHED PATH, BECAUSE THAT IS WHAT A PAGE MUST LINK. The unversioned row is still
+		// served, and a page linking it instead would satisfy every other assertion in this file
+		// while putting every visitor back on a URL that cannot be invalidated.
+		// `TestNoPageLinksTheUnversionedStylesheetPath` is the guard on the other direction.
+		if !strings.Contains(body, `href="`+StylesheetHashedPath+`"`) {
+			t.Errorf("%s does not link %s, so it has no styles at all", page, StylesheetHashedPath)
 		}
 	}
 
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, httptest.NewRequest("GET", StylesheetPath, nil))
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", StylesheetHashedPath, nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("%s answered %d, want 200", StylesheetPath, rec.Code)
+		t.Fatalf("%s answered %d, want 200", StylesheetHashedPath, rec.Code)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/css; charset=utf-8" {
 		t.Errorf("the stylesheet's Content-Type is %q; a browser that is told `text/html` will not apply it", got)
@@ -1136,13 +1140,18 @@ func TestTheStylesheetIsServedAsItsOwnRoute(t *testing.T) {
 		}
 	}
 	// 🔴 AND IT IS REACHABLE WITHOUT A CREDENTIAL, because the SIGN-IN page links it. A
-	// stylesheet behind the chain renders the way in as unstyled text.
+	// stylesheet behind the chain renders the way in as unstyled text. BOTH rows are checked:
+	// the hashed one because it is what the page asks for, and the unversioned one because its
+	// whole reason to exist is answering a URL that is already loose in the world — a caller
+	// holding one has no session by assumption.
 	anon := newTestServer(t, refusingAuth{})
-	rec = httptest.NewRecorder()
-	anon.ServeHTTP(rec, httptest.NewRequest("GET", StylesheetPath, nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("an unauthenticated caller got %d for %s; the sign-in page links it and that page answers "+
-			"anybody", rec.Code, StylesheetPath)
+	for _, path := range []string{StylesheetHashedPath, StylesheetPath} {
+		rec = httptest.NewRecorder()
+		anon.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("an unauthenticated caller got %d for %s; the sign-in page links the hashed row and "+
+				"that page answers anybody", rec.Code, path)
+		}
 	}
 }
 

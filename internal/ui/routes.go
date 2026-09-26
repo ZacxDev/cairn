@@ -127,12 +127,33 @@ var routes = map[routeKey]route{
 	// so the stylesheet that was a `<style>` in every page's head moved here; that header has
 	// since been deleted by operator decision (see `writeHTML`). The route stays because the
 	// bytes are now GENERATED — `tailwind.css` compiled to `app.css`, ~29 KB — and inlining
-	// them into every response would send that on every page load instead of once per five
-	// minutes. It is `classPublic` because the SIGN-IN page links it and that page answers an
+	// them into every response would send that on every page load. Both stylesheet rows are
+	// `classPublic` because the SIGN-IN page links the hashed one and that page answers an
 	// anonymous caller; a stylesheet behind the chain would render the way in as unstyled
-	// text. It is NOT `classContent`: it consults no authority, and it answers the same bytes
-	// to everybody, which is exactly what makes it safe to serve before authentication.
-	{"GET", "/static/app.css"}: {(*Server).handleStylesheet, classPublic},
+	// text. Neither is `classContent`: they consult no authority, and they answer the same
+	// bytes to everybody, which is exactly what makes them safe to serve before
+	// authentication.
+	//
+	// 🔴 THERE ARE TWO STYLESHEET ROWS, AND ONLY THE HASHED ONE IS EVER LINKED. The hashed row
+	// is the one `stylesheetLink` emits and the one that carries `immutable`; the constant row
+	// is kept, still at a short `max-age`, for requests that already exist in the world — an
+	// HTML page a browser rendered before this deploy, a bookmark, a log-derived URL. Keeping
+	// it costs one ledger row and turns a 404 into the current bytes. Nothing may LINK it:
+	// `TestNoPageLinksTheUnversionedStylesheetPath` is what holds that, because a page that
+	// linked it would put every visitor back on the unversioned path and reinstate the exact
+	// stale-cache failure the hashed row exists to close.
+	{"GET", StylesheetPath}: {(*Server).handleStylesheet, classPublic},
+
+	// 🔴 A COMPUTED KEY, AND IT IS STILL AN EXACT MATCH — WHICH IS THE PROPERTY, NOT THE
+	// SPELLING. `routes` is an exact-match map and a prefix match is refused here for the
+	// share flow's sake three paragraphs up: a prefix is a second way for a request to reach a
+	// handler and `TestEveryServedPathComesFromTheLedger` structurally cannot probe it,
+	// because there is no finite set of paths left to probe. A key computed at init is none of
+	// that. The set of served paths is still FINITE, still enumerable, still exactly the keys
+	// of this map, and the probe list in that test carries the near-misses of this row —
+	// `/static/app..css`, a wrong digest, a suffixed digest — each of which a prefix match
+	// would serve and this map answers 404.
+	{"GET", StylesheetHashedPath}: {(*Server).handleHashedStylesheet, classPublic},
 }
 
 // SignInPath and SignOutPath are spelled once and read by the dispatcher, by the
@@ -163,10 +184,22 @@ const (
 	OAuthStartPath    = "/sign-in/github"
 	OAuthCallbackPath = "/sign-in/github/callback"
 
-	// StylesheetPath is the one static asset this surface serves. See `routes` for why it
-	// is a route at all and why it is public.
+	// StylesheetPath is the UNVERSIONED stylesheet path. It is served, it is NOT linked, and
+	// the difference is the whole point — see `routes` for both halves and `stylesheet.go`
+	// for the failure that split one row into two.
 	StylesheetPath = "/static/app.css"
 )
+
+// StylesheetHashedPath is the path every page links, and it carries a digest of the bytes it
+// serves. See `stylesheet.go` for why the digest is the mechanism and `routes` for why a
+// computed key is not a prefix match.
+//
+// 🔴 A `var`, NOT A `const`, AND EVERY READER OF IT MUST STAY A READER. It is derived from the
+// embedded stylesheet at package initialisation, so it changes whenever the theme does —
+// which is exactly the property being bought. Anything that writes the current value down as a
+// literal (a ledger row, a test, a deployment's cache rule, a page template) re-creates the
+// unversioned path under a longer name and goes silently wrong on the next theme change.
+var StylesheetHashedPath = hashedStylesheetPathFor(stylesheet)
 
 // QueryScope is the one query parameter this surface reads.
 const QueryScope = "scope"

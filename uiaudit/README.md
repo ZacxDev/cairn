@@ -139,18 +139,23 @@ merge break: one side widened the route ledger, the other added a consumer of it
 | row | why it is `notADocument` |
 |---|---|
 | `GET /sign-in/github/callback` | reachable only with a provider `?code=` **and** a live single-use flight cookie. Navigated bare it renders a refusal — and capturing a refusal is byte-for-byte the false green above |
-| `GET /static/app.css` | a `text/css` response, not a document. axe, the layout smells and the digest are all meaningless on a stylesheet, and its screenshot is noise in an already-advisory pixel diff |
+| `GET /static/app.css` | a `text/css` response, not a document. axe, the layout smells and the digest are all meaningless on a stylesheet, and its screenshot is noise in an already-advisory pixel diff. This is the UNVERSIONED row, which no page links |
+| `GET /static/app.<12 hex>.css` | the CONTENT-HASHED row — the one the pages actually link, so the walk *does* fetch it as a subresource and `Browser.onEvent` watches that fetch succeed. Not a document for every reason the row above gives. 🔴 Its key is `ui.StylesheetHashedPath`, a package **variable** whose spelling changes with the theme; writing the current value down here would silently stop excluding anything on the next theme change |
 
 `notADocument` maps path → **reason**, not path → `bool`: a skip with no reason cannot be told
 from a row somebody gave up on. The walk prints both kinds of skip in distinguishable sentences
 (`not GET:` vs `not a document:`), because "a browser must not navigate this" and "a browser
-cannot usefully render this" are different facts. Measured output on the merged ledger —
-**10 rows → 3 targets + 7 skips**:
+cannot usefully render this" are different facts. Measured output on the live ledger —
+**11 rows → 3 targets + 8 skips** (the eleventh row is the content-hashed stylesheet; the
+digest below is whatever `app.css` hashes to on the tree you run it on, so do not read it as a
+constant):
 
 ```
 skip GET /sign-in/github/callback public (not a document: reachable only with a provider ?code= AND
   a live single-use flight cookie, so navigated bare it renders a refusal — capturing that would
   measure an error page and count it as a page)
+skip GET /static/app.<12 hex>.css public (not a document: the CONTENT-HASHED row, the one the
+  pages actually link, so a browser walk does fetch it as a subresource)
 skip GET /static/app.css public (not a document: a text/css response and not a document — axe, the
   layout smells and the a11y digest are all meaningless on a stylesheet, and its screenshot is
   noise in the pixel diff; checked over plain HTTP instead)
@@ -201,6 +206,15 @@ this branch's base. A literal is the second spelling of a route that `routes.go`
 assert the ledger contains them — a compile-time claim the moment the constants exist, and not
 expressible before. `mergedLedger` in `targets_test.go` should be **deleted** at the same time,
 not updated: it is a transcription, and the real ledger supersedes it.
+
+⚠ **THAT PARAGRAPH IS A DISCHARGED RECORD AND ITS COUNT IS NOW WRONG TWICE OVER** — kept
+because the ruling it states is still the ruling, corrected here because a stale number reads
+as a live claim. The condition closed: the keys are the constants. And there are **three** of
+them now, not two — the stylesheet is two rows, the unversioned `ui.StylesheetPath` and the
+content-hashed `ui.StylesheetHashedPath`. The second is a package **`var`**, so the rule the
+paragraph states binds harder there than it ever did for a constant: written out as a literal
+it would go stale on the next theme change, and `TestTheLedgerCARRIESEveryNotADocumentRow` is
+what would say so.
 
 ### Measured LIVE on the merged tree, not only through the fixture
 

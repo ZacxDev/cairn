@@ -139,7 +139,11 @@ func TestTheLedgerCARRIESEveryNotADocumentRow(t *testing.T) {
 	}
 	// And the two rows are the ones the constants name, so a constant repointed at a different route
 	// fails here rather than silently changing what the walk skips.
-	for _, want := range []string{ui.StylesheetPath, ui.OAuthCallbackPath} {
+	// ⚠ BOTH STYLESHEET ROWS, because `internal/ui` serves two — the content-hashed path every
+	// page links and the unversioned path kept for URLs already issued. A list naming only one
+	// would leave the other falling through to the unclassified-row refusal, which reads as
+	// "somebody added a route" rather than "a second spelling of the same asset".
+	for _, want := range []string{ui.StylesheetPath, ui.StylesheetHashedPath, ui.OAuthCallbackPath} {
 		if notADocument[want] == "" {
 			t.Errorf("%q is not in `notADocument`; the walk would try to capture it as a page", want)
 		}

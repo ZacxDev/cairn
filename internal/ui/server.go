@@ -619,15 +619,64 @@ func writeHTML(w http.ResponseWriter, code int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// handleStylesheet serves the one static asset. It is PUBLIC and it reads nothing.
+// The two `Cache-Control` values the stylesheet is served under, spelled once each so the
+// difference between the two rows is a value and not a copied string.
 //
-// 🔴 IT SERVES A GO CONSTANT AND TOUCHES NO FILESYSTEM, WHICH IS WHY THERE IS NO PATH
+// 🔴 `immutable` IS LICENSED BY THE URL, NOT BY THE BYTES BEING STABLE — and that is the whole
+// reason there are two values here. It tells a cache never to revalidate for a year, which is
+// only ever true of a URL that cannot come to mean different bytes. [StylesheetHashedPath]
+// carries a digest of the body it serves, so new bytes are a NEW URL and the old entry is
+// simply never asked for again; there is nothing to invalidate because nothing goes stale.
+// [StylesheetPath] has no such property and keeps the short value for exactly that reason.
+//
+// ⚠ AND A `Cache-Control` IS A REQUEST TO EVERY CACHE IN THE PATH, NOT A GUARANTEE — an
+// intermediary may serve a longer freshness than this process asks for, and one measurably
+// has. That cuts only one way: it makes the short value on the unversioned row weaker than it
+// reads, and it makes the hashed row's correctness independent of any cache's cooperation.
+const (
+	stylesheetCacheVersionless = "public, max-age=300"
+	stylesheetCacheImmutable   = "public, max-age=31536000, immutable"
+)
+
+// handleStylesheet serves the UNVERSIONED row. It is PUBLIC, it reads nothing, and no page
+// links it.
+//
+// ✅ THE HAZARD THIS COMMENT USED TO DESCRIBE IS CLOSED, AND THE OLD TEXT IS REPLACED RATHER
+// THAN LEFT STANDING. It said a short `max-age` was all the URL licensed, that a
+// content-hashed path was "the answer that would license `immutable`", and that adding one
+// would be a change to the ledger rather than to this line. That is what happened:
+// [StylesheetHashedPath] exists, it is the path every page links, `handleHashedStylesheet`
+// serves it with `immutable`, and the ledger carries both rows.
+//
+// 🔴 THIS ROW SURVIVES ON A NARROW ARGUMENT AND KEEPS THE SHORT `max-age` FOR THE SAME REASON
+// IT ALWAYS DID: its URL still carries no version. What it buys is that URLs already loose in
+// the world — an HTML page rendered before the deploy, a bookmark, a copied link — answer the
+// current bytes instead of 404. What it must never become is a path anything LINKS; a page
+// that linked it would put every visitor back on an unversioned URL and reinstate the stale
+// cache the hashed row exists to close. `TestNoPageLinksTheUnversionedStylesheetPath` is the
+// guard, and it reads the rendered HTML rather than this comment.
+func (s *Server) handleStylesheet(w http.ResponseWriter, _ *http.Request, _ identity.Identity) {
+	writeStylesheet(w, stylesheetCacheVersionless)
+}
+
+// handleHashedStylesheet serves the row whose PATH carries the digest of this body, and it is
+// the one every page links.
+func (s *Server) handleHashedStylesheet(w http.ResponseWriter, _ *http.Request, _ identity.Identity) {
+	writeStylesheet(w, stylesheetCacheImmutable)
+}
+
+// writeStylesheet is the one response both rows are written by, so the two cannot come to
+// serve different bytes or different content types — the only thing either row chooses is its
+// `Cache-Control`.
+//
+// 🔴 IT SERVES A GO VARIABLE AND TOUCHES NO FILESYSTEM, WHICH IS WHY THERE IS NO PATH
 // TRAVERSAL TO GET WRONG. The alternative — an `http.FileServer` over a directory — is the
 // shape that has to be argued safe: it needs a prefix strip, it follows symlinks, it serves
 // whatever somebody drops in the directory, and its route is a PREFIX match, which is a
 // second way for a request to reach a handler and one `TestEveryServedPathComesFromTheLedger`
 // structurally cannot probe (see `routes`, where the share flow makes the same ruling about
-// path parameters). One constant at one exact path has none of those questions.
+// path parameters). Two exact keys, both computed from data in this binary, have none of
+// those questions — a computed key is still an exact key.
 //
 // ⚠ `nosniff` IS SET HERE TOO, AND NOT BECAUSE THE BYTES ARE UNTRUSTED — they are build
 // output checked into this repository, generated from `tailwind.css` and reaching the binary
@@ -635,22 +684,10 @@ func writeHTML(w http.ResponseWriter, code int, body string) {
 // content-sniffs a stylesheet into
 // something else is a browser this response has to be explicit with; the header costs one
 // line and its absence is the kind of thing a reader assumes is deliberate.
-func (s *Server) handleStylesheet(w http.ResponseWriter, _ *http.Request, _ identity.Identity) {
+func writeStylesheet(w http.ResponseWriter, cacheControl string) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// 🔴 A SHORT `max-age` AND NOT AN IMMUTABLE ONE, BECAUSE THE URL CARRIES NO VERSION. A
-	// long-lived cache on an unversioned path means a deployment that changes the stylesheet
-	// serves a stale one to every returning browser until the entry expires, with nothing to
-	// invalidate it. Five minutes keeps the page off the wire on a reload and cannot outlive
-	// a deploy by long. A content-hashed path is the answer that would license `immutable`.
-	// ⚠ THE REASON THAT USED TO BE GIVEN — "it needs a build step this binary does not
-	// have" — IS NOW FALSE AND THE CONCLUSION IS NOT. There IS a build step: `tailwind.css`
-	// is compiled to `app.css` and embedded. What it does not produce is a content-HASHED
-	// path, and the hash is the whole mechanism — it is what makes the URL change when the
-	// bytes do. Adding one means the route's path stops being a constant, which
-	// `TestEveryServedPathComesFromTheLedger` and `stylesheetLink` both read as one, so it
-	// is a change to the ledger rather than to this line.
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Header().Set("Cache-Control", cacheControl)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(stylesheet))
 }
