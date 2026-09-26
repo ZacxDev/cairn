@@ -1617,3 +1617,515 @@ handoff, not here, because that section appends and this file is read on demand.
   one as live; neither ran `git log <the-as-of-ref>..origin/main -- <the paths the block names>`,
   which is one command and is what closed it. **Before re-measuring any `STILL LIVE` block, ask
   what landed since its `as-of` ref.**
+
+## Gotchas moved out of the handoff at the THIRD prune — CLOSED RECORDS AND DUPLICATES
+
+Moved out of `claudedocs/handoff-cairn-control-plane.md` at the THIRD prune. Selection, so the
+count is reproducible: measured from the `## Gotchas` heading to the line before
+`## How to verify` at `9c24bc4` — **108 top-level bullets, 66,662 B** inside a **105,456 B**
+document. Each bullet was classified into exactly one of STAY / ARCHIVE / ROUTE-OUT, and
+nothing was dropped. **ARCHIVE** below is a closed round/PR/arc record, or a DUPLICATE
+instance of a tripwire whose LATEST instance stayed in the doc.
+
+<!-- ARCHIVE — duplicate: bullet 85 is the LATEST instance of the same `checks.*`-nobody-names tripwire, and carries the first live occurrence -->
+- 🔴 **CI NEVER RUNS `nix flake check` — THE `nix` JOB BUILDS EACH CHECK BY NAME, SO A `checks.*`
+  ENTRY NOBODY NAMES IS A CHECK NOBODY RUNS.** Verified on `main`: no flake-check step, eight
+  explicit `nix build .#…` steps. All pre-existing checks ARE named, so there was no latent hole —
+  but the convention is one omission away from producing one, and the omission reads as covered
+  because the check exists in `flake.nix`. **Adding a `checks.*` entry means adding a CI step in the
+  same commit.**
+
+
+<!-- ARCHIVE — closed record: both named deferrals (busybox trade, dualrun README) were found spent; bullet 34 carries the live remedy -->
+- 🔴 **A DEFERRAL WHOSE TRIGGER IS A STATE NOTHING ASSERTS ON IS A DECISION WITH A DELAY ON IT.**
+  Two found spent by one unrelated sweep — the busybox trade and `tests/dualrun/README.md`'s
+  *"Revisit if the Go pod is ever the deployed one"*. Neither sentence had a watcher; both were
+  found only because somebody happened to read the paragraph.
+
+
+<!-- ARCHIVE — duplicate: bullet 77 is the LATEST instance of the sweep-completeness tripwire and carries the re-occurrence -->
+- 🔴 **A SWEEP FOR THE PHRASINGS YOU HAVE SEEN IS A SPELLED CHECK, AND IT MISSED A CLAIM IN THE
+  COMMIT WHOSE WHOLE SUBJECT WAS THAT CLAIM.** #78 corrected "which pod is deployed" at three
+  sites, found by grepping three wordings (`deployed by nothing`, `not deployed by anything`,
+  `DEPLOYED BY NOTHING`). A **fourth** claim — `AGENTS.md:399`, *"`server/Dockerfile` is what is
+  deployed today"* — used none of them and survived; #81 had to finish the job, and its message
+  records *"It survived #78, whose entire subject was correcting which server is deployed."*
+  The right question is **"what else in this file asserts this?"**, never "where else does this
+  phrase appear". A grep over wordings you already know cannot find the one you do not.
+
+
+<!-- ARCHIVE — closed PR record: #101 was closed by its own round 0 and produced no code; bullet 57, which stays, carries the binding ruling and names this finding -->
+- 🔴 **#101 WAS BUILT, AUDITED, AND CLOSED BY ITS OWN ROUND 0 — THE MOST USEFUL THING THIS ARC
+  PRODUCED, AND IT PRODUCED NO CODE.** It added a "fact ledger" whose design decision was *"it
+  asserts the question is still answerable, never the answer"*. That property was sold as what
+  made it deterministic and durable. **It is also what made it blind to both incidents it cited
+  as its basis**: through the "no image wraps it" rot (11 commits) and the "nine verbs" rot (39
+  commits, 5 sites, one a live `assert >= 9`), `nix eval .#packages…` and `cairn -verbs` answered
+  perfectly — the rot was in the ANSWER, which the design declined to look at. What actually
+  closed the second was `assert len(go_verbs) == 10` plus `flake.nix`'s `want-verbs.txt` DIFF.
+  **Ask of any proposed anti-rot gate: which of the incidents in its own rationale would it have
+  caught?**
+
+
+<!-- ARCHIVE — duplicate: the live half is in `How to verify` and in the open `Defects` leakscan entry; bullet 43 carries the remedy -->
+- ⚠ **`leakscan` rc 2 ON THE BASE CLONE IS STILL THE AGENT-WORKTREE DEFECT, AND REMOVING YOUR OWN
+  AGENT'S WORKTREE IS THE DISCRIMINATOR.** Removed mine (clean, HEAD == the pushed PR head); rc
+  stayed **2**, now naming a DIFFERENT session's worktree — which proves the cause is worktrees
+  rather than content, and that the survivor is not yours to remove. **Quote the PR's own CI
+  `leakscan` job instead; it was SUCCESS.**
+
+
+<!-- ARCHIVE — closed round record: #117's closing round; bullet 84 carries the live generalisation (both arms) -->
+- 🔴 **THREE INSTRUMENT FAILURES IN ONE FINDING, NONE OF WHICH CHANGED A CONCLUSION — BECAUSE EACH
+  WAS CAUGHT BY A CONTROL RATHER THAN BY INSPECTION.** Closing one 🔴 on `cairn#117` produced: (a)
+  the implementer's sweep sliced each test body to the next `^func`, swallowing the FOLLOWING test's
+  doc comment — exactly where the evidence lived — so it reported the table clean; (b) its first
+  control restored with `git checkout -- internal/ui/*.go` while those files carried the
+  UNCOMMITTED fix, destroying it; (c) my own regeneration control reported ✅ BYTE-IDENTICAL when
+  the generator had **refused to run at all** (`no …/tailwind.css — run this from the repository
+  root, or pass the root as $1`) — the file was unchanged because nothing regenerated it. **Every
+  one was caught by reading OUTPUT rather than an exit code or a diff.**
+
+
+<!-- ARCHIVE — duplicate: bullet 108 is the LATEST instance and merges both halves (hook-blocked call + `-C $VAR`) -->
+- 🔴 **A HOOK-BLOCKED `bash` CALL RUNS *NOTHING* IN IT — INCLUDING THE HEREDOC THAT WAS GOING TO WRITE
+  THE COMMIT MESSAGE.** A single call wrote a message with `cat > msg.txt <<'EOF'` and then ran
+  `git commit -F msg.txt`; the commit guard refused the call, so the message file was never created and
+  the follow-up run died `could not read log file … No such file or directory` — which reads like a
+  path mistake and is not. **After a blocked call, assume nothing in it ran**, and the guard says the
+  right fix out loud: write the message with the `Write` tool and pass `-F <file>`, never a heredoc whose
+  lines a guard parses as real commands.
+
+
+<!-- ARCHIVE — duplicate: bullet 108 says HIT TWICE IN ONE SESSION — it is the re-occurrence -->
+- 🔴 **THE COMMIT GUARD CANNOT RESOLVE `git -C $VAR` AND JUDGES YOUR *CALLER'S* DIRECTORY INSTEAD.**
+  `git -C $WT commit` in a detached scratch worktree was refused as a commit to `main`, because the
+  guard could not see `$WT`'s value and fell back to the session's cwd — which really was `main`. It
+  says so in its own message. **Pass `-C` an ABSOLUTE path** (or assign the variable in the same
+  command) when a guard is in the path of the call.
+
+
+## Gotchas moved out of the handoff at the THIRD prune — ROUTE-OUT, PARKED PENDING A CROSS-REPO PR
+
+🔴 **THE ARCHIVE IS A WAY-STATION FOR THESE, NOT THEIR HOME.** Each bullet below is a generic
+tooling lesson that was never about this arc — a git/shell/grep/CI/agent-tooling tripwire that
+happens to have been learned while sitting in this repository. The `subsystem-index` ruling is
+that a lesson about YOUR OWN TOOLING belongs in the operator's own shared rules-and-dotfiles
+repo, or in the owning skill there: ask
+which repo the lesson is ABOUT, not which one you were standing in. They were NOT routed in the
+same change, because that is a cross-repo PR against files with their own enforced byte ceilings
+and it would have made this one unreviewable. They are parked here VERBATIM so nothing is lost,
+and the third prune's PR body carries the ranked, per-bullet list naming each proposed
+destination. **Until that follow-up lands, this file is the only copy.**
+
+<!-- ROUTE-OUT → claude/RULES.md (Shell & Tooling Gotchas) -->
+- **Never run two `uv run --with pytest` invocations concurrently** — one disposes of the
+  other's ephemeral venv and produces a bogus `FileNotFoundError` red.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow / worktree surfaces) -->
+- 🔴 **`isolation: "worktree"` BRANCHES FROM THE DEFAULT BRANCH, NOT YOUR CHECKED-OUT ONE.**
+  Measured twice: an agent dispatched to build on an unmerged branch got a worktree of
+  `main` and correctly refused rather than recreating the missing package. **Always give a
+  dispatched agent a base check it can fail** ("`ls <path>`; if missing, STOP"), and the
+  recovery command.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (A Green Test Suite Is a Claim / positive-control) -->
+- 🔴 **AN `until`-LOOP CI WATCHER THAT COUNTS *INCOMPLETE* CHECKS REPORTS GREEN ON AN
+  EMPTY ROLLUP.** Zero incomplete checks is also what "no checks exist yet" looks like —
+  the state right after a push while GitHub clears the rollup. Measured: it returned
+  `checks: []`, `mergeable: UNKNOWN`, **exit 0**, and I reported that as green. **Require
+  a minimum check COUNT as well as completion, and print the count** so the reading
+  carries its own proof it measured something.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (mutation-sweep-blind-spots) -->
+- 🔴 **A MUTANT THAT FAILS TO APPLY REPORTS A FALSE `SURVIVED`, AND IT HAPPENED TWICE HERE —
+  ONCE ON THE MUTATION PROVING THE GATE.** Both were caught only by asserting the anchor's
+  occurrence count BEFORE editing. **Assert the anchor count every time**; a "survived" you
+  did not watch apply is not evidence.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow / shared-queue-lock) -->
+- 🔴 **A RANK SHUFFLE SILENTLY RE-POINTS EVERY LIVE CLAIM, BECAUSE THE RANK IS HALF THE SLUG.**
+  `cairn-control-plane-1` was held with a subject describing the P5 slice after the cutover was
+  promoted to rank 1, so `claim-work --slug-for <doc> 1` returned a ref naming different work, and
+  `rc 12` ("already yours, carry on") would have let a session continue with the wrong item.
+  **When you re-rank, re-subject the claims in the same breath.**
+
+
+<!-- ROUTE-OUT → handoff skill (State now semantics) -->
+- ⚠ **A HANDOFF DOC CAN NEVER RECORD ITS OWN MERGE**, so a `State now` naming the branch sha
+  is stale by exactly one commit the moment it lands. That is the mechanism, not rot — do not
+  read it as the doc being behind, and do not open a PR solely to bump it.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow) -->
+- 🔴 **A FORCE-PUSH TO EXACTLY THE BASE TIP AUTO-CLOSES A PR.** Re-pointing a docs branch at `main`
+  left it with zero commits ahead and GitHub closed the PR; the follow-up commit then landed on a
+  closed PR. It **reopened** cleanly — unlike the deleted-base-branch case this repo already records,
+  which refuses to reopen — and nothing was lost. **Push the branch WITH its commit, or reopen and
+  check.**
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow) -->
+- 🔴 **I MERGED A PR THROUGH TWO PENDING CHECKS BECAUSE `--auto` DID NOT WAIT.** `gh pr merge --auto`
+  merged immediately with `go` and `tests` still running; they passed afterwards on `main`, which is
+  the outcome being lucky rather than the process being right. **Read the rollup yourself before
+  merging** — require the full check set present AND completed — and treat `--auto` as a request, not
+  a guarantee.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow) -->
+- 🔴 **A DOC PR THAT LOSES A RACE NEEDS RE-DERIVING, NOT RESOLVING.** #48 and the handoff PR both
+  edited this file; `git merge-tree --write-tree` exited **1** while GitHub reported both
+  `MERGEABLE`, because it compares each against a `main` where neither had landed. But the fix was
+  not a conflict resolution: #48's own edit had rewritten those sections with facts that had become
+  TRUE, while the handoff's narrative had gone stale in the minutes since it was written. **Reset the
+  branch onto the new base and rebuild the delta.**
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow / shared-queue-lock) -->
+- 🔴 **THE OPEN-PR SWEEP FOUND WORK THE LOCK COULD NOT — FIRST MEASURED INSTANCE, AND IT WAS
+  THE WHOLE OF RANK 8.** `claim-work --list` showed `cairn-control-plane-8` free and the ranked
+  item read as unbuilt; `gh pr list --state open` carried a three-commit, `MERGEABLE` PR
+  implementing exactly it, twelve hours old and claimed by nobody. The lock is a
+  compare-and-swap on a ref: it covers the FIRST mover and says nothing about work that was
+  done without ever taking a claim. **Run both, every time, and read the PR TITLES rather than
+  counting rows** — the duplicate does not announce itself as one.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (readlink-arbiter) -->
+- 🔴 **"IS THE EDIT LIVE?" IS TWO QUESTIONS WHEN A SKILL SHIPS BOTH PROSE AND A SCRIPT, AND THE
+  ANSWERS DIFFERED.** `~/.claude/skills/handoff/SKILL.md` resolves into `/nix/store` — a
+  `home.file` copy, so its edited legend needs a home-manager switch — while the same file
+  invokes the handoff tool (`<handoff-tooling-repo>/scripts/lib/handoff_doc.py`), the WORKING COPY, so the gate itself went
+  live on the base clone's fast-forward. **`readlink -f` answers only for the file you point it
+  at; read what the skill EXECUTES as well as what it says.**
+
+
+<!-- ROUTE-OUT → claude/RULES.md (sibling-agent-kill / worktree-not-session) -->
+- ⚠ **THE DOCUMENTED `leakscan`-EXIT-2 GOTCHA NAMES A *REMOVED* AGENT'S LEFTOVER, AND MINE WAS
+  A LIVE ONE — SO ITS REMEDY DID NOT APPLY.** The recorded fix is "check the worktree is clean
+  and its commits are on `origin` before removing it". `git worktree list --porcelain` showed
+  `locked claude agent … (pid 355708)`, created minutes earlier, and that pid was in the same
+  run's own process list. **Read the lock line before acting on a remedy that ends in
+  `rm`** — and when the directory is another session's, the answer is to report, not remove.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Shell & Tooling Gotchas) -->
+- 🔴 **`git clean -f` IS HOOK-BLOCKED HERE AND THE BLOCK KILLS THE WHOLE `bash` CALL, NOT JUST
+  THAT LINE.** A `set -e` script whose third command was `git clean -fd` ran **none** of its
+  commands, including the `checkout --detach` on line one — and the follow-up read showed HEAD
+  still where the reset was supposed to have moved it from, which reads exactly like a reset
+  that silently failed. **After a blocked call, assume NOTHING in it ran**, and prefer
+  `git checkout --detach <ref>` to a reset: it refuses rather than destroys.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (grep-gitignore-blind family) -->
+- 🔴 **LINE-ANCHORED `grep` FAILED FOUR TIMES ON ONE QUESTION.** The claims WRAP — across lines
+  AND across comment leaders. Normalise both before sweeping, and prove the sweep with a positive
+  control you watched HIT a known wrapped instance. ⚠ **And editing a wrapped claim MOVES the
+  wrap**, so a later sweep finds what an earlier one could not — that is not a fix.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Verification Honesty / test-merge) -->
+- 🔴 **A CLEAN TEXTUAL MERGE DELETED FOUR TESTS, AND THE CONFLICT IT REPORTED WAS ABOUT A
+  COMMENT.** *(Re-derived from #80, which lost the doc race and carried this nowhere else.)*
+  Merging #69 into #76: `git` reported ONE conflict in `cmd/cairn-ui/main_test.go`, covering a
+  comment; taking one side of that hunk removed four unrelated tests the other side had added
+  further down the same file. No marker, no error, and reading the hunk could never have shown
+  it. 🔴 **What caught it is a DECLARATION-SET DIFF AGAINST BOTH PARENTS** —
+  `comm -23 <(git show <parent>:<f> | grep -oE '^func [A-Za-z][A-Za-z0-9_]*' | sort) <(… the
+  merged file …)`, run for each parent. Do that on every merge where both sides touched one
+  file; "no conflict markers left" is not the same claim.
+
+
+<!-- ROUTE-OUT → handoff skill (`.claude/skills/handoff/SKILL.md`) (which doc PR to merge first) -->
+- 🔴 **WHICH DOC PR TO MERGE FIRST: PREFER THE ONE WHOSE CLAIMS ARE STILL TRUE, NOT THE ONE
+  OPENED FIRST.** The MERGEABLE-but-conflicting mechanism is already recorded twice above — this
+  is only the tie-break, which was missing. Measured on #95 vs #96: #96's `State now` asserted
+  facts a sibling session's work had just falsified (*"pid 3942268 … still true"*, *"leakscan
+  exits 2 … still true"*), while #95 deliberately omitted `State now`. #95 could therefore land
+  unchanged, and #96 needed re-deriving whichever order was chosen. **Seniority is the wrong
+  key; staleness is the right one.** 🔴 **AND A THIRD PR CAN OPEN WHILE YOU DECIDE** — #97
+  arrived four minutes after #95 merged, clean against `main` and conflicting with the branch
+  written to replace #96. Run the open-PR sweep **again** immediately before `gh pr create`.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Shell & Tooling Gotchas) -->
+- 🔴 **TWO FALSE ZEROS ON ONE CLAIM, BOTH READING AS CONFIRMATION, IN UNDER A MINUTE.**
+  Verifying that the handoff skill never mentions `leakscan`: (a) `grep -lc` combines two
+  conflicting flags and prints **nothing at all** — not an error, just silence; (b)
+  `find ~/.claude/skills/handoff -type f` returns **0 files**, because home-manager makes those
+  entries **symlinks** and `-type f` does not follow them, while `grep` on the same path reads
+  them fine. Both produced an empty result that looked like the answer. **`find -L` is the fix**,
+  and a positive control on the same invocation is what exposed both.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow) -->
+- 🔴 **`gh pr checks` REPORTS THE LATEST RUN PER CHECK *NAME*, NOT PER COMMIT** — so after a
+  rebase or a base move it can show a job's verdict from an older head, and a "pending" there
+  can be a run that already finished on a sha you no longer care about. Read
+  `gh api repos/<o>/<r>/commits/<sha>/check-runs` for the head you are actually merging.
+  ⚠ And read BOTH surfaces: the same head answered `state=pending statuses=0` on the commit-
+  status API while all six check-runs were `success` — this repo posts check-runs and no
+  statuses, so a zero there is an ABSENCE, not a red.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow) -->
+- ⚠ **`mergeStateStatus: UNKNOWN` IS THE API COMPUTING LAZILY, NOT A PROBLEM WITH THE PR.**
+  Seen immediately after a sibling PR merged and moved the base; it resolved to `CLEAN` on a
+  re-read seconds later. Do not treat it as a conflict signal, and do not merge through it —
+  re-read until it is one of the real values.
+
+
+<!-- ROUTE-OUT → resume skill (before acting on a ranked item) -->
+- **THE QUEUE WAS STALE IN TWO INDEPENDENT PLACES, BOTH ABOUT WORK ALREADY FINISHED**, and each
+  cost real time before the work could start: rank 2 named a defect `tests/test_narrowing_echo_sites.py`
+  had already closed, and rank 6 asked to close entries an earlier session had already moved to
+  the archive. Neither was careless — it is what happens when sessions that cannot see each
+  other write the same list. **Before acting on a ranked item, check whether it is already
+  done**; the entry is a claim like any other.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Shell & Tooling Gotchas) -->
+- 🔴 **`$?` AFTER A PIPE, AGAIN, IN THE SESSION THAT HAD ALREADY READ THE WARNING.**
+  `go build ./... 2>&1 | head -3; echo "rc=$?"` reports `head`'s 0 for a build that failed.
+  Capture the rc before any pipe.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow) -->
+- 🔴 **A `completed` COUNT IS NOT A `conclusion`, AND I WALKED INTO IT WITH THE LESSON ON SCREEN.**
+  Reading #102's rollup I printed `FAILURES: 0` from a parser using `CheckRun`'s field names
+  (`name`/`conclusion`) against **`StatusContext`** objects (`context`/`state`), so every field came
+  back `None` and the zero was a fact about the parser. `mergeStateStatus` was `UNSTABLE` throughout.
+  **A rollup holds BOTH types — handle both, and cross-check the count against `mergeStateStatus`
+  before believing a zero.**
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Shell & Tooling Gotchas) -->
+- 🔴 **A TASK-COMPLETION NOTIFICATION'S "exit code 0" IS THE LAST COMMAND'S, NOT THE BUILD'S.** A
+  backgrounded `nix build … | tail -80; echo "NIX_RC=$pipestatus[1]"` was reported as **exit code
+  0** while `NIX_RC=1` and the derivation had FAILED. Same family as `$?`-after-a-pipe, arriving
+  through the harness rather than the shell. **Capture the real rc into the OUTPUT and read the
+  content; never quote a notification's exit code.**
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow) -->
+- 🔴 **`git show <ref>:<path>` FOR A PATH THAT DOES NOT EXIST ON THAT REF, WITH STDERR SUPPRESSED,
+  COUNTS AS ZERO.** Chasing that repo's red I reported "the mutation anchor is absent on `origin/main`"
+  from a `git show … 2>/dev/null` piped into a counter: the file had been DELETED on main, python
+  read an empty string, and the count was 0. That read as "the anchor was edited away" when the
+  truth was "you are reading the wrong file" — the real target was `pinned("subsystem_resolver")`,
+  in another repo. **Same class as `git diff --quiet <ref> -- <path>` on an absent operand: prove
+  existence with `git cat-file -e` FIRST, and never suppress stderr on a read you will quote.**
+
+
+<!-- ROUTE-OUT → tekton skill (congestion vs genuine) -->
+- 🔴 **THE CONGESTION-vs-GENUINE DISCRIMINATOR FOR A RED CI LEG THERE, USED IN ANGER AND IT
+  WORKED.** Read the STEP terminations, not the PipelineRun verdict: `step-pytests` exit **0** with
+  `step-verdict` exit **1** is a real test failure; `step-pytests` exit **255/137** with no verdict
+  printed is a congestion kill, and `ExceededNodeResources`/`TaskRunTimeout`-with-no-terminated-step
+  is a third shape that posts an EMPTY description. **And the cheapest confirmation that it is not
+  load: identical totals from two independent runs** (CI and a local `nix build` of the same check
+  both gave `24096/24091/4/1`). Load moves wall times; it does not reproduce a count exactly.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow / worktree surfaces) -->
+- 🔴 **A WORKTREE CREATED FROM `origin/main` TRACKS `origin/main`, SO A BARE `git push` TARGETS
+  MAIN** — hit again this session while setting up the handoff branch. Push with an explicit
+  refspec.
+
+
+<!-- ROUTE-OUT → handoff skill (State now semantics) -->
+- 🔴 **A `State now` BULLET ASSERTING A NEGATIVE IS THE ONE SHAPE A READER CANNOT FALSIFY CHEAPLY.**
+  This doc said *"the deploy is still not started … nothing has been written into the deployment-
+  manifest repo"* for a day after both were done. A positive claim carries its own check (go read the
+  thing it names); *"X has not happened"* names nothing to read, so it survives every review until
+  somebody independently goes looking. **Give a negative claim the command that would refute it.**
+
+
+<!-- ROUTE-OUT → resume skill (kickoff vs doc) -->
+- 🔴 **THE KICKOFF'S RANKS AND THE DOC'S RANKS DISAGREED, WHICH IS THE SHUFFLE HAZARD THIS DOC
+  ALREADY RECORDS, ARRIVING FROM THE OTHER DIRECTION.** The resume message described rank 10 as the
+  deploy and rank 11 as the seeding; by then the doc had renumbered those to the publish ordering and
+  the leak gate. Acting on the kickoff's numbering would have claimed the wrong slug. **The doc is the
+  authority over the kickoff that points at it, and a kickoff quoting a rank NUMBER goes stale the
+  moment the list moves — quote the work, not the rank.**
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Failure Investigation / empty-result) -->
+- 🔴 **DISCRIMINATE A TRANSIENT BY FINDING THE STEP THAT DIFFERS, NOT BY RE-RUNNING IT.** The key-set
+  fetch returned 502 five times and then 200 twenty-seven consecutive times. Re-running only produced
+  more samples of one path; what identified it was probing the SAME service by a second route — from
+  inside the cluster, from the consuming pod itself (6/6 OK) — plus a sibling endpoint on the external
+  path that stayed healthy throughout, and the provider's own restart clock being 22h old. That
+  triangulation put the fault in the edge path and nowhere else.
+
+
+<!-- ROUTE-OUT → claude/RULES-ARCHIVE.md (k8s / GitOps measured fact) -->
+- ⚠ **A COMMENT-ONLY CHANGE TO A WORKLOAD MANIFEST DOES NOT ROLL THE POD**, because YAML comments are
+  stripped before apply and the applied object is byte-identical. Confirmed rather than assumed: the
+  pod's age and restart count were unchanged across that reconcile. Useful when the correction above
+  has to land on a surface you do not want to cycle twice.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow / shared-queue-lock) -->
+- ⚠ **`claim-work` HAS NO SLUG FOR WORK THAT IS NOT ON THE RANKED LIST YET, AND TAKING ONE ANYWAY IS
+  STILL RIGHT.** This session's deploy was not a ranked item under the doc's current numbering, so
+  there was no `--slug-for` answer; a descriptive slug was claimed instead and released at the end.
+  **The lock is worth taking even when the queue has no entry for the work** — the hazard it guards
+  (two sessions doing the same thing) does not require the work to be enumerated.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (spelled-guards) -->
+- 🔴 **A RETRACTION IS A TREE-WIDE SWEEP — AND THE SITE I SWEPT WAS THE LESS-READ ONE.** A wrong
+  claim about rank 9's target was corrected under `## How to verify` while an IDENTICAL copy
+  survived in the ranked item itself, which is the section `/resume` and `claim-work` actually
+  drive from. The audit round that caught it noted the corrected copy sat ~1,120 lines below the
+  live one. **Grep the claim's own words across the whole document before calling a retraction
+  done**, and when two copies exist, fix the one a reader reaches FIRST. This doc already carried
+  that lesson in the abstract; it was read, and the sweep still missed a site.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (worktree-not-session) -->
+- ⚠ **THE SHARED SCRATCHPAD IS ONE PATH AND DISPATCHED AGENTS WRITE INTO IT.** An implementer
+  working in another repo overwrote this session's own PR-comment drafts at the same filenames.
+  Nothing was lost because those comments were already posted, but the collision is the documented
+  one: **name scratch files per-agent, and do not assume a path you wrote is still yours.**
+
+
+<!-- ROUTE-OUT → clickup skill (pre-start comment ordering) -->
+- 🔴 **A PRE-START COMMENT MUST PRECEDE THE `in_progress` FLIP, BECAUSE ONLY THE COMMENT NOTIFIES.**
+  A status flip to `in_progress` pushes to nobody; the notification fires on entering
+  `ready_for_review`. So the pre-start comment is the operator's ONLY chance to object BEFORE the
+  work, and posting it after the flip inverts that. Both tasks this session dispatched follow that
+  order, with the criteria quoted verbatim so the timestamped copy is auditable.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Verification Honesty) -->
+- 🔴 **WHEN YOU AUTHOR THE CRITERIA, YOU MAY NOT GRADE THEM — EVEN WHEN THE DETECTOR SAYS
+  AUTHOR-SPECIFIED.** The pickup detector is deterministic: a `## Acceptance criteria` heading ⇒
+  AUTHOR-SPECIFIED ⇒ a local pickup may set `complete`. But this session WROTE both cards minutes
+  before picking them up, so the heading's presence is an artefact of its own authorship. Both are
+  committed to ending at `ready_for_review`. **Read the detector's verdict against who actually
+  wrote the words, not against the heading.**
+
+
+<!-- ROUTE-OUT → find-session skill (`--arc` handle set) -->
+- ⚠ **`--arc` CANNOT SEE A REPO OUTSIDE ITS FOUR HANDLES, AND ITS REFUSAL IS EXPLICITLY "NOT
+  MEASURED".** `find-session --arc` resolves a doc against a FIXED set of four repo-handle
+  environment variables only; for a repo outside that set — and **this repo is outside it** — it
+  exits **5**, which its own text says must never be reported as an empty arc. Pointing an unused handle at the repo for one invocation is a working
+  read-only workaround; the repo LABEL in the output is then cosmetically wrong.
+
+
+<!-- ROUTE-OUT → find-session skill (`--arc` coverage) -->
+- ⚠ **AN ARC AUDIT'S COVERAGE IS BOUNDED BY COMMIT-TRAILER ATTRIBUTION, AND HERE IT WAS 16 OF 33.**
+  `--arc` unions WRITERS (from the doc's commit trailers, which include the originating session) with
+  READERS (sessions whose OPENING message names the doc). It printed **"17 of 33 commit(s) on this
+  doc carry no session id — those writers are NOT in this chain"**, and the opencode corpus was not
+  searched at all. **Quote the uncovered half whenever you report an arc as complete.**
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Deterministic Over Prose / proactivity) -->
+- 🔴 **A MULTI-PART INSTRUCTION LOSES ITS TAIL, AND NOTHING NOTICES.** An arc audit over 16 sessions
+  found exactly one ask that was given directly and then dropped rather than deferred: the third
+  clause of a three-part process feedback. The first two shipped in one PR whose title names them
+  both; the third had **0 mentions in this doc and 0 tasks**. The tell is a PR title that enumerates
+  *some* of a numbered instruction. **When an instruction has parts, record the parts, not the PR.**
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow) -->
+- 🔴 **`git rerere` CAN RESOLVE A CONFLICT FOR YOU SILENTLY, AND ITS OUTPUT IS A CLAIM RATHER THAN AN
+  ANSWER.** Merging `origin/main` into #108 printed `Resolved 'flake.nix' using previous resolution.` on
+  **stderr** and left zero conflict markers — from a resolution recorded by an EARLIER session's
+  integration run, against a DIFFERENT `main`. The file still shows as `UU` until you `add` it, which is
+  the only reason it was read at all. **The check that settles it is not a marker grep** (there are
+  none) **and not "it compiles"**: diff each PARENT against the merge base, collect the lines each side
+  ADDED, and assert every one is present in the merged file — plus that neither side REMOVED any. Here
+  that was 519 added lines, 0 missing, 0 removed. Same family as the declaration-set diff this doc
+  already records for a merge that deleted four tests.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Git Workflow / worktree surfaces) -->
+- 🔴 **A PR WHOSE BRANCH IS HELD BY A STALE AGENT WORKTREE IS STILL UPDATABLE — DETACH AND PUSH BY
+  REFSPEC.** `refs/heads/uiaudit-browser-harness` was checked out in
+  `.claude/worktrees/agent-…` (idle ~20 h, unlocked), so a second `worktree add` of that branch is
+  refused. `worktree add --detach <path> <head-sha>` → merge → commit → `push origin
+  HEAD:refs/heads/<branch>` updates the PR without touching the other worktree. ⚠ **The local branch
+  ref is then BEHIND `origin` by exactly that merge** — `origin` is authoritative, and the drift is
+  reported rather than silently repaired, because repairing it means writing to a checkout that is not
+  yours.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Failure Investigation) -->
+- 🔴 **A SCAN OVER A LIST OF SHAS YOU WROTE DOWN IS NOT AN ENUMERATION, AND IT COST A SECOND PUBLIC
+  FORCE-PUSH.** The first remedy was scoped from five shas typed by hand; the branch had **ten**
+  commits, and the sixth also carried names — as an ancestor of the rewrite's base, so the authorised
+  recipe structurally could not reach it. Same class as this repo's `grep`-over-known-wordings bullet
+  and as the three-repo population scan two bullets down. **`git rev-list <base>..<head>` and loop**;
+  then report the count so the selection is visible.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Failure Investigation) -->
+- 🔴 **A POPULATION MEASURED FROM GUESSED PATHS UNDERSTATED A GATE'S BLAST RADIUS BY 4×.** The
+  already-over set was scanned across three repos resolved by writing paths out; the tool's own module
+  enumerates its repos from env handles, and resolving them found **54 more documents** in a fourth —
+  357 handoff docs in that one checkout, worst over by 344,499 B. **Ask the code where it looks; never
+  supply the answer.** ⚠ Both times a downstream agent re-measured and **overrode** the figure I gave
+  it, which is the behaviour to keep asking for.
+
+
+<!-- ROUTE-OUT → claude/RULES.md (Shell & Tooling Gotchas) -->
+- ⚠ **THE `git commit` GUARD CANNOT RESOLVE `-C $VAR` AND JUDGES YOUR CALLER'S DIRECTORY — HIT TWICE IN
+  ONE SESSION.** It refused a commit in a detached scratch worktree as a commit to `main`, correctly,
+  because the variable's value was not in the command text. 🔴 **And a blocked call runs NOTHING in
+  it**, so a heredoc earlier in the same call never wrote its file and the follow-up died
+  `could not read log file` — which reads like a path mistake. **Absolute paths to `-C`, and after a
+  refusal assume nothing ran.**
+
+
+## Open-investigation blocks closed and moved out at the THIRD prune
+
+The block below is settled rather than superseded: both PRs it is about have merged and the
+merged-tree gate it asked for was run and recorded. Kept verbatim for its measured values.
+### `cairn#117` and `cairn#108` overlap in two shared files and no merged tree has been measured
+- as-of: 2026-09-25
+- **Symptom + exact repro:** both PRs are open, both report `MERGEABLE` against `main`, and neither
+  has been merged-tree gated against the other. `gh pr view <n> --json mergeable` answers about each
+  PR versus `main`; it says nothing about the tree their merge creates.
+- **Observed (with values):** `gh pr view 108 --json files` and `gh pr view 117 --json files` share
+  **`flake.nix`** and **`.github/workflows/ci.yml`**. Round 0 located the `flake.nix` hunks: #108 at
+  `@@ -357` and `@@ -387`, #117's first hunk at `@@ -387` — the **same `onlyGo` filter region**. Both
+  also append a step to the same `nix` CI job. #117 head `6bbcddf`; #108 open, unmerged.
+- **Ruled out:** that the overlap is only prose. #117's PR body originally said #108 "touches
+  `internal/ui/render.go` prose only in a residual it left unapplied"; the file lists refute that —
+  two shared files, both load-bearing. `via: command` (`gh pr view --json files` on both).
+- **Ruled out:** that `MERGEABLE` settles it. `RULES.md` records a measured instance of two PRs both
+  reporting `MERGEABLE` while `git merge-tree --write-tree` exited **1**, because GitHub compared
+  each against a `main` where neither had landed. `via: doc`
+- **Leading hypothesis:** a textual conflict is likely in `ci.yml` (both append to the same job's
+  step list) and possible in `flake.nix`'s `onlyGo` list; a semantic conflict is possible regardless,
+  since #117 REMOVES an `onlyGo` row (`tailwind.css`, which existed only for the now-deleted
+  `@source` scan) while #108 edits the same region.
+- **Next probe:** build an integration branch off current `main`, merge both, and run the full gate
+  set there — `git merge-tree --write-tree` first and **branch on its EXIT CODE, never on a marker
+  grep** (it prints only a tree OID on success and emits no `<<<<<<<`). Then bisect any failure to
+  the merge commits. Do this BEFORE round 1, because round 1 cannot see it.
+
+
+## Defect entries closed and moved out at the THIRD prune
+
+The section's own rule: a CLOSED entry moves to the archive rather than being retyped each
+round, and its LESSON belongs under `Gotchas`, which appends.
+
+<!-- CLOSED — closed by a fourth assertion in #50's fix round; kept for the near-miss -->
+- 🟡 **`apps.cairn` WAS UNPINNED UNTIL #50's FIX ROUND, AND THE NEAR-MISS IS THE RECORD WORTH
+  KEEPING.** Repointing it at the Go client left **all three** of the guard's original assertions
+  green while the announced hatch silently became the Go client — a guard written for attribute A
+  not covering sibling attribute B, defeating a promise the same PR created. Closed by a fourth
+  assertion; kept because the lesson generalises.
+
