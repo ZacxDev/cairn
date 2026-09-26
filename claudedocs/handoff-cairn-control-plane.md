@@ -24,127 +24,128 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`a0745ed`** (#114) — ⚠ **re-read rather than quoting it.** `main` moved five times during
-  this session (`ad74fd0` → `299386a` → `219d58e` → `b4a51ff` → `a0745ed`), three of them this
-  session's own merges and two a sibling's. The DoD stands: **ADDRESSED ⇒ the arc stays CLOSED.**
-  Run `pytest tests -q` and read **0 failed**; the total is deliberately NOT quoted here — its
-  selection is unstated and the figure is unreproducible, so a number would rot on sight.
-- ✅ **THREE DOC PRs MERGED THIS SESSION** — `299386a` (#113, the deploy record + two audit rounds'
-  fixes), `219d58e` (#115, the prune-regrowth measurement), `b4a51ff` (#116, the prune itself).
-- ✅ **THE PRUNE LANDED AND DID NOT DELETE A CLAIM — VERIFIED INDEPENDENTLY, NOT TAKEN FROM THE
-  AGENT.** doc **139,371 → 89,200 B**, archive 84,798 → 138,791 B, `Gotchas` 151 → 81 bullets.
-  Union of bullet BODIES across both files: **413 bullets / 406 distinct before AND after, 0 lost,
-  0 gained**, with the detector's own positive control firing (it reports 1 when a known bullet is
-  dropped). Ranks 1–13 and all `forcing:` tags byte-identical. 🔴 **Still 23,664 B over the
-  65,536 B ceiling, and stopping there was correct** — there is no further ~24 KB of closed
-  content, and hitting the number would have required deleting claims.
-- ⏳ **TWO PRs ARE OPEN AND UNMERGED, BOTH DISPATCHED THIS SESSION, BOTH FROM TASKS THIS SESSION
-  AUTHORED.** `cairn#117` (Tailwind theme + CSP deletion, head `6bbcddf`) and the handoff-tooling
-  repo's **#1871** (rule (p), the size ratchet). 🔴 **Both will end at `ready_for_review`, never
-  `complete`: this session wrote both sets of acceptance criteria, and an agent may not grade an
-  exam it wrote.** Tasks 657 and 658 are `in_progress` with pre-start comments carrying the
-  criteria verbatim.
-- 🔴 **THE CSP IS DELETED FROM THE BROWSER SURFACE BY OPERATOR DECISION, CHALLENGED ONCE AND
-  REAFFIRMED, AND THE ACCEPTED RISKS ARE NAMED RATHER THAN IMPLIED.** Gone: `frame-ancestors`
-  (the share flow's grant POST becomes framable — clickjacking), `form-action` (forms may POST
-  offsite), `base-uri` (base-tag injection), `default-src 'none'` (arbitrary script origins).
-  ⚠ **The correction that changes what it buys:** the CSP was NEVER what blocked Tailwind —
-  `style-src 'self'` already permits a compiled same-origin stylesheet, proven by the pre-change
-  stylesheet being served under that exact policy. The absent build step was the blocker.
-  🔴 **`sameOrigin`, `csrfTokenFor` and the `stateChanging` gates are NOT the CSP and are
-  UNTOUCHED** — verified independently: `git diff -- internal/ui/session.go` is **0 lines**.
-- ✅ **CARRIED FORWARD — THE DEPLOY IS DONE AND GITHUB SIGN-IN IS ARMED.** The browser surface runs
-  the current image with `CAIRN_SUPABASE_{JWKS_URL,ISSUER,REDIRECT_URL}` set; the pod's own startup
-  line names the credential form AND the provider with its callback, with no key-set warning.
-  Off-mesh: sign-in page 200 carrying the provider form action, share route 401, OAuth start 403
-  with no Origin and 403 with a foreign Origin, callback with no flight 400 (a refusal, not a 500).
-  🔴 **The three sign-in variables are a SET, and WHICH one you delete decides whether the pod
-  survives**: dropping `JWKS_URL` or `ISSUER` while the redirect is set ⇒ **exit 78, pod DOWN**;
-  dropping `REDIRECT_URL` ⇒ **pod UP**, button absent, sessions untouched — the cheapest incident
-  remedy, and an earlier draft of this doc said the opposite.
-- ⏳ **CARRIED FORWARD — A *COMPLETED* SIGN-IN IS STILL UNVERIFIED.** Every reading above is a
-  refusal or an unauthenticated page. That is rank 13 and it is a human's.
-- 🔴 **CARRIED FORWARD — RANK 9 CANNOT BE DONE ON THE DEPLOYED SURFACE, MEASURED.** The deployed
-  control journal holds **1 `user-created`, 1 project, 1 `member-set`**, and the share flow's
-  `Candidates` is narrowed by CO-MEMBERSHIP — so the candidate select there is EMPTY and there is
-  nobody to share with. Rank 9 needs the hand-run recipe under `## How to verify`, or a second
-  co-member provisioned in-cluster first. ⚠ An earlier draft of the deployed-surface block said
-  ranks 9 and 13 were both browser work against it; that was wrong and is retracted in place.
-- ⚠ **CARRIED FORWARD, UNCHANGED:** rank 11 open as the handoff-tooling repo's #1867 (held because
-  that repo's `main` is red for an unrelated reason); that repo's branch protection no longer
-  requires status checks; `cairn-control-plane-9` still held on purpose; the UI image published and
-  anonymously pullable; the reorder blast radius (`steps.<id>.outputs`, 43 references, no test
-  covers it).
+- `main` @ **`9c24bc4`** (#117) — ⚠ **re-read rather than quoting it.** The DoD stands: **ADDRESSED ⇒
+  the arc stays CLOSED.** Run `pytest tests -q` and read **0 failed**; the total is deliberately NOT
+  quoted — its selection is unstated, so a number would rot on sight.
+- ✅ **RANK 14 IS DONE.** `#117` merged as **`9c24bc4`**. 🔴 **The ladder did NOT end on a clean round —
+  it stopped on the ATTRIBUTION gate, two consecutive payload-zero rounds after rounds 0/1/2.** That is
+  a different claim from "no findings remain", and a later reader must not upgrade it.
+- ✅ **`#108` IS MERGED — `84642ff`, and it was verified BY CONTENT rather than by ancestry.**
+  The `onlyGo` conflict was one region with an EMPTY diff3 base section: `main`/#117 added
+  `internal/ui/app.css`, #108 added `uiaudit/go.mod` + `uiaudit/go.sum`; both rows and both comments
+  kept, since each is false alone. 🔴 **`git merge-base --is-ancestor` returns 1 after ANY squash
+  merge, forever** — so the check was content: `origin/main:flake.nix` carries all four rows, `uiaudit/`
+  is present, and the squash commit exists. ⚠ `git rerere` had supplied that resolution silently from
+  an older `main`, so it was treated as a claim: **519 added lines present, 0 missing, 0 removed** across
+  both sides. Merged-tree gates were green including the **pinned Go 1.25** tier with
+  `internal/depspolicy` `ok` in BOTH sandboxes — the test #108's own comment says would report *"the set
+  SHRANK"* without those rows. All 7 checks completed green; the base clone is re-synced `--ff-only`.
+- 🔴 **RANK 15's AUDIT LADDER IS CLOSED AND `#1871` IS READY TO MERGE, PENDING ONE SWEEP.** Five
+  rounds: 0 (`requirement questioned — R1`) · 1 (6🟡/4🟢) · 2 (1🔴/2🟡/2🟢) · 3 (1🔴/1🟡/2🟢) · 4 (1🟡).
+  🔴 **It stopped on the ATTRIBUTION GATE — two consecutive MEASURED `payload=0` — not on a clean round,
+  not on a verdict and not on a count.** Operator decisions taken along the way, all recorded on the PR:
+  land rule (p) **as written** (F4/D3 declined, with the reason written down — the CI gate's
+  quantisation argument was derived for a gate with NO escape, and rule (p) has two); the agent **may**
+  pull the override but must say no operator approved it; grandfather the already-over population; and
+  **re-key every foreign ledger entry to a digest, fix forward, do not rewrite `main`**.
+  ⏳ **What is left:** the authoritative mutation sweep of both batteries for **five rows no round could
+  score**, then a merge with a **HAND-WRITTEN squash body** — the default concatenates branch messages,
+  and two of those were reworded precisely so `main` does not inherit them.
+- 🔴 **#1871 REACHES *THIS* DOCUMENT — the `Gotchas` bullet beginning *"THIS DOCUMENT IS NOT
+  GRANDFATHERED"* carries the measurement and the ledger check.** Once rule (p) lands, the next
+  `/handoff` update that GROWS this doc is refused
+  (`status=size-ratchet`, exit **14**) unless the delta nets ≤ 0 or the run carries
+  `--override-size-ratchet "<why>"`. ⚠ **`14` is free** on `main` (`EXIT_*` run 0,2–13), and rule (p)
+  fires **before** the leak gate, which is why `SKILL.md`'s refusal list now reads 11 · 12 · 14 · 13.
+- 🔴 **CARRIED FORWARD — THE CSP IS DELETED FROM THE BROWSER SURFACE BY OPERATOR DECISION, CHALLENGED
+  ONCE AND REAFFIRMED.** Gone: `frame-ancestors` (the grant POST becomes framable), `form-action`,
+  `base-uri`, `default-src 'none'`. ⚠ The CSP was NEVER what blocked Tailwind — `style-src 'self'`
+  already permits a compiled same-origin stylesheet; the absent build step was the blocker.
+  🔴 `sameOrigin`, `csrfTokenFor` and the `stateChanging` gates are NOT the CSP and are UNTOUCHED.
+- ✅ **CARRIED FORWARD — THE DEPLOY IS DONE AND GITHUB SIGN-IN IS ARMED.** The surface runs the current
+  image with `CAIRN_SUPABASE_{JWKS_URL,ISSUER,REDIRECT_URL}`; off-mesh readings are all refusals or
+  unauthenticated pages. 🔴 **The three sign-in variables are a SET and WHICH one you delete decides
+  survival:** dropping `JWKS_URL` or `ISSUER` while the redirect is set ⇒ **exit 78, pod DOWN**;
+  dropping `REDIRECT_URL` ⇒ **pod UP**, button absent, sessions untouched — the cheapest remedy.
+- ⏳ **CARRIED FORWARD — A *COMPLETED* SIGN-IN IS STILL UNVERIFIED** (rank 13, a human's), and
+  🔴 **RANK 9 CANNOT BE DONE ON THE DEPLOYED SURFACE** — 1 `user-created`, 1 project, 1 `member-set`,
+  so `Candidates`' co-membership narrowing leaves the share-flow select EMPTY.
+- ⚠ **CARRIED FORWARD, UNCHANGED:** rank 11 open as the handoff-tooling repo's #1867 (held: that repo's
+  `main` is red for an unrelated reason); that repo's branch protection requires no status checks
+  (`required_status_checks` 404); `cairn-control-plane-9` still held on purpose; the UI image published
+  and anonymously pullable; the reorder blast radius (`steps.<id>.outputs`, 43 references, untested).
 
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE — 1–13 keep their meaning; 14–16 are new.** Rank is half a `claim-work`
-slug, and this doc has twice measured a shuffle re-pointing live claims.
+🔴 **NUMBERING IS STABLE — 1–16 keep their meaning; 17 is new.** Rank is half a `claim-work` slug, and
+this doc has twice measured a shuffle re-pointing live claims.
 
 1. ✅ **DONE — #74 merged as `93d0f03`.** forcing: gate.
 2. ✅ **DONE — merged as `562a4f6f`.** forcing: gate.
 3. ✅ **DONE — P7 merged as `c0f5b06`.** forcing: none.
-4. **P8 — retire the Python oracle.** **Closing condition:** P8 opens when BOTH (a) the Go client
-   has completed a real read AND a real write against the live pod from **at least two distinct
-   hosts**, recorded; and (b) no open defect names the Go client or `packages.default`.
-   **BACKSTOP: if (a) has not happened by 2026-11-01, P8 opens anyway and the residual risk is
-   accepted EXPLICITLY, in writing.** Checked by `cairn doctor` output from two hosts plus
-   `gh issue list`. ⚠ Sized, not measured: ~33,000 deletable lines, 3 of 6 CI jobs, ~233 KB of
-   prose, ~10 paired-ledger guards.
+4. **P8 — retire the Python oracle.** **Closing condition:** P8 opens when BOTH (a) the Go client has
+   completed a real read AND a real write against the live pod from **at least two distinct hosts**,
+   recorded; and (b) no open defect names the Go client or `packages.default`.
+   **BACKSTOP: if (a) has not happened by 2026-11-01, P8 opens anyway and the residual risk is accepted
+   EXPLICITLY, in writing.** Checked by `cairn doctor` output from two hosts plus `gh issue list`.
+   ⚠ Sized, not measured: ~33,000 deletable lines, 3 of 6 CI jobs, ~233 KB of prose, ~10 paired-ledger
+   guards.
    forcing: none
 5. ✅ **DONE — `cairn-server -issue-credential`, in #76.** forcing: gate.
 6. ✅ **DONE.** forcing: user.
 7. ✅ **DONE — rename landed as `56cc56e` (#69).** forcing: user.
 8. ✅ **DONE — rule (o) merged as `c4490f07` in the handoff-tooling repo.** forcing: incident.
 9. ⏳ **IN FLIGHT: the share flow's human verification.** 🔴 **It CANNOT be done on the deployed
-   surface** — one user, empty candidate select (see `State now`). Use the hand-run recipe under
-   `## How to verify`, which builds two users and joins them, or provision a second co-member
-   in-cluster first. ⚠ The previous handover is dead — rebuild the instance, re-read the token
-   file, and check who holds the UI port before binding it.
+   surface** — one user, empty candidate select. Use the hand-run recipe under `## How to verify`,
+   which builds two users and joins them, or provision a second co-member in-cluster first.
+   ⚠ The previous handover is dead — rebuild the instance, re-read the token file, and check who holds
+   the UI port before binding it.
    forcing: user — the operator reserved the browser step to a human.
 10. ✅ **DONE — merged as `901b77d` (#104), verified on a real publish run.** forcing: user.
 11. ⏳ **OPEN AS the handoff-tooling repo's #1867, UNMERGED ON PURPOSE.** Closing condition met and
     watched; held because that repo's `main` is red for an unrelated reason.
-    forcing: incident — a denied identifier is on public `main` in a commit message today.
-12. **CORRECT TWO FILES THAT ASSERT THE HANDOFF-TOOLING REPO'S CI CHECKS BLOCK A MERGE.** They do
-    not: `required_status_checks` returns 404. The two sites are **`scripts/run-tests.sh`'s own
-    comment** and the **CI-platform skill's gotcha #9**. Both are wrong in the PERMISSIVE
-    direction. **Closing condition:** both state the measured value with the command that
-    re-measures it, or say the protection was deliberately removed and by whom.
+    forcing: incident — a denied identifier is on public `main` in a commit message.
+12. **CORRECT TWO FILES THAT ASSERT THE HANDOFF-TOOLING REPO'S CI CHECKS BLOCK A MERGE.** They do not:
+    `required_status_checks` returns 404. The two sites are **`scripts/run-tests.sh`'s own comment** and
+    the **CI-platform skill's gotcha #9**. Both are wrong in the PERMISSIVE direction.
+    **Closing condition:** both state the measured value with the command that re-measures it, or say
+    the protection was deliberately removed and by whom.
     forcing: gate — a comment is a claim, and this one licenses merging through a red gate.
 13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** **Closing condition:** a human
-    opens the surface in a browser, completes the GitHub flow, and the entries page renders for the
-    seeded operator user — or the failure is recorded with the pod's log line. ⚠ **Precondition
-    nobody has recorded:** sign-in resolves the token's `sub` against a user the control plane
-    ALREADY holds; an unknown subject is REFUSED by design, and all three failure causes collapse
-    into one generic 401 on purpose, so **the pod's log is the only place the mechanism exists**.
+    opens the surface, completes the GitHub flow, and the entries page renders for the seeded operator
+    user — or the failure is recorded with the pod's log line. ⚠ **Precondition nobody has recorded:**
+    sign-in resolves the token's `sub` against a user the control plane ALREADY holds; an unknown
+    subject is REFUSED by design and all three failure causes collapse into one generic 401 on purpose,
+    so **the pod's log is the only place the mechanism exists**.
     forcing: user — the operator reserved the browser step to a human.
-14. **NEW — `cairn#117`: TEST-MERGE AGAINST #108, THEN RUN ROUND 1 (the nine axes).** Round 0 is
-    done and its two 🔴s are closed and independently verified. 🔴 **#117 and #108 both touch
-    `flake.nix`'s `onlyGo` filter region (both at `@@ -387`) and both append a step to the same CI
-    job** — `gh` says `MERGEABLE`, which is a claim about each PR against `main`, never about the
-    tree their merge creates, and a SEMANTIC conflict survives a clean textual merge. **Closing
-    condition:** a merged-tree gate run on #117+#108 with its result recorded, then round 1
-    dispatched BLIND and its findings fixed or filed.
-    forcing: gate — a security-posture change is unaudited by the nine axes and two PRs overlap
-    in two shared files with no merged-tree measurement.
-15. **NEW — the handoff-tooling repo's `#1871` (rule (p), the size ratchet): AUDIT, THEN MERGE.**
-    Unmerged, `MERGEABLE`/`CLEAN`, audit not run. 🔴 **It also REPAIRED a gate that had been
-    silently broken since #1815** — the mutation battery's copy list was three files short, so it
-    could not score a sweep at all; verified statically (the branch adds three `cp -a` lines that
-    `origin/main` lacks). **Closing condition:** round 0 then the nine axes, findings fixed or
-    filed, and the PR merged — or a written line saying why it is held.
-    forcing: gate — the ratchet is what stops the prune being undone, and at the measured ~10 KB/day
-    this document returns to its pre-prune size in under five days without it.
-16. **NEW — DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION (`cairn#117`'s D1).** Round 0 measured the
-    delta: the `@source` scan yields **~18 real utility selectors across 4 call sites**, against a
-    generated artefact checked into the tree, a nix derivation, a second nix app, a flake check, a
-    CI step and an unpinnable upstream version. ~40% of the 28 KB `app.css` is Tailwind machinery.
-    "Use Tailwind" is the operator's explicit ask and stands; "Tailwind as a build toolchain" is
-    the implementer's. **Closing condition:** a written operator line either accepting the
-    toolchain or directing the hand-written-modern-CSS alternative.
-    forcing: user — it is a requirement question only the operator can answer, and #117 cannot
-    close while it is open.
+14. ✅ **DONE — `#117` merged as `9c24bc4`.** The merged-tree gate on #117+#108 ran and was recorded on
+    both PRs (rc 1, `flake.nix` only, resolution additive, merged tree green), then rounds 1 and 2 ran.
+    🔴 **It stopped on the ATTRIBUTION gate — two consecutive payload-zero rounds — NOT on a clean
+    round.** forcing: gate.
+15. ⏳ **NEARLY DONE — the handoff-tooling repo's `#1871` (rule (p), the size ratchet). The ladder is
+    CLOSED; only the sweep and the merge remain.** All four operator decisions are taken and recorded on
+    the PR. 🔴 **The remaining work is mechanical and is NOT a judgement:** (a) read the authoritative
+    mutation sweep of BOTH batteries on the merged tree — five rows are unscored (three in the shell
+    battery, `C15`/`C16` in the Python one) and a hand-driven kill is not a battery score; (b) merge with
+    a **hand-written** squash body, never GitHub's default concatenation; (c) four findings are FILED not
+    fixed, which is what the gate firing means — they are listed on the PR with closing conditions.
+    ⚠ **Do not re-open the ladder to fix them**: a fifth round would be the thing the gate just stopped.
+    **Closing condition:** the sweep read with 0 failures and 0 `WRONG-KILLER`, the PR merged with a
+    hand-written body, and the four filed items either closed or carried into this doc's `Defects`.
+    forcing: gate — five mutation rows are unscored, and a hand-driven kill is not a battery score.
+16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION (`cairn#117`'s D1).** Round 0 measured the delta:
+    the `@source` scan yields **~18 real utility selectors across 4 call sites**, against a generated
+    artefact checked into the tree, a nix derivation, a second nix app, a flake check, a CI step and an
+    unpinnable upstream version. ~40% of the 28 KB `app.css` is Tailwind machinery. "Use Tailwind" is
+    the operator's explicit ask and stands; "Tailwind as a build toolchain" is the implementer's.
+    ⚠ **#117 has MERGED with the toolchain in it**, so this is now a keep-or-replace question rather
+    than a gate on a PR. **Closing condition:** a written operator line either accepting the toolchain
+    or directing the hand-written-modern-CSS alternative.
+    forcing: user — it is a requirement question only the operator can answer.
+17. ✅ **DONE — `cairn#108` merged as `84642ff`.** Both CI surfaces were read at the head actually
+    merged (7/7 check-runs green; the commit-status surface reads 0, which for this repo is an ABSENCE
+    and not a red), the verdict on a further round was stated rather than assumed, and the squash was
+    verified BY CONTENT because ancestry is false after every squash. forcing: gate.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section
@@ -860,6 +861,135 @@ instance of a tripwire kept here.
   clause of a three-part process feedback. The first two shipped in one PR whose title names them
   both; the third had **0 mentions in this doc and 0 tasks**. The tell is a PR title that enumerates
   *some* of a numbered instruction. **When an instruction has parts, record the parts, not the PR.**
+
+- 🔴 **`git rerere` CAN RESOLVE A CONFLICT FOR YOU SILENTLY, AND ITS OUTPUT IS A CLAIM RATHER THAN AN
+  ANSWER.** Merging `origin/main` into #108 printed `Resolved 'flake.nix' using previous resolution.` on
+  **stderr** and left zero conflict markers — from a resolution recorded by an EARLIER session's
+  integration run, against a DIFFERENT `main`. The file still shows as `UU` until you `add` it, which is
+  the only reason it was read at all. **The check that settles it is not a marker grep** (there are
+  none) **and not "it compiles"**: diff each PARENT against the merge base, collect the lines each side
+  ADDED, and assert every one is present in the merged file — plus that neither side REMOVED any. Here
+  that was 519 added lines, 0 missing, 0 removed. Same family as the declaration-set diff this doc
+  already records for a merge that deleted four tests.
+- 🔴 **A HOOK-BLOCKED `bash` CALL RUNS *NOTHING* IN IT — INCLUDING THE HEREDOC THAT WAS GOING TO WRITE
+  THE COMMIT MESSAGE.** A single call wrote a message with `cat > msg.txt <<'EOF'` and then ran
+  `git commit -F msg.txt`; the commit guard refused the call, so the message file was never created and
+  the follow-up run died `could not read log file … No such file or directory` — which reads like a
+  path mistake and is not. **After a blocked call, assume nothing in it ran**, and the guard says the
+  right fix out loud: write the message with the `Write` tool and pass `-F <file>`, never a heredoc whose
+  lines a guard parses as real commands.
+- 🔴 **THE COMMIT GUARD CANNOT RESOLVE `git -C $VAR` AND JUDGES YOUR *CALLER'S* DIRECTORY INSTEAD.**
+  `git -C $WT commit` in a detached scratch worktree was refused as a commit to `main`, because the
+  guard could not see `$WT`'s value and fell back to the session's cwd — which really was `main`. It
+  says so in its own message. **Pass `-C` an ABSOLUTE path** (or assign the variable in the same
+  command) when a guard is in the path of the call.
+- 🔴 **A PR WHOSE BRANCH IS HELD BY A STALE AGENT WORKTREE IS STILL UPDATABLE — DETACH AND PUSH BY
+  REFSPEC.** `refs/heads/uiaudit-browser-harness` was checked out in
+  `.claude/worktrees/agent-…` (idle ~20 h, unlocked), so a second `worktree add` of that branch is
+  refused. `worktree add --detach <path> <head-sha>` → merge → commit → `push origin
+  HEAD:refs/heads/<branch>` updates the PR without touching the other worktree. ⚠ **The local branch
+  ref is then BEHIND `origin` by exactly that merge** — `origin` is authoritative, and the drift is
+  reported rather than silently repaired, because repairing it means writing to a checkout that is not
+  yours.
+- 🔴 **THIS DOCUMENT IS NOT GRANDFATHERED, AND THAT IS WHY RANK 15 LANDS ON IT FIRST.**
+  `handoff_budget.GRANDFATHERED` holds twelve paths and none of them is
+  `claudedocs/handoff-cairn-control-plane.md`, so its allowance is the base **65,536 B** against a
+  measured **93,006 B**. The other cairn arcs' docs ARE listed (`handoff-cairn-oss-multi-instance.md`
+  98,304 · `handoff-cairn-phase3.md` 163,840 · `handoff-cairn-task-linkage.md` 81,920), which is
+  exactly the shape that makes "surely ours is grandfathered too" a wrong guess. **Check the ledger,
+  do not infer it from a sibling.**
+
+- 🔴 **TWO BYTE FIGURES THIS DOCUMENT ASSERTS DO NOT REPRODUCE AGAINST THE TREE, AND THEY HAVE ALREADY
+  PROPAGATED INTO ANOTHER REPO'S CODE COMMENTS.** This file says the first prune landed the document at
+  **63,433 B** (lines 257 and 757) and that it was **134,563 B** seven days later (line 758), ×2.1.
+  MEASURED with a positive control: `git cat-file -s 3c4a1c6:claudedocs/handoff-cairn-control-plane.md`
+  is **64,097 B**, the pre-prune peak is **139,371 B** at `219d58e`, and a scan of **every** revision of
+  the file finds **no** revision measuring 63,433 or 134,563 — while the control value 64,097 hits two
+  revisions, so the scan works. The true ratio is **×2.17**. 🔴 **The CONCLUSION survives** — 64,097 is
+  under the 65,536 B guideline, so "the prune WORKED and the document then doubled" is unaffected, which
+  is exactly why the wrong numbers are dangerous rather than obviously wrong. ⚠ **They are no longer
+  only ours:** the handoff-tooling repo's #1871 quotes them at FOUR sites (two in `handoff_doc.py`, one
+  in its test module, one in `write-gate.md` §I), each beside the sha that contradicts it — found by
+  this arc's round 0, re-verified here rather than accepted. That repo has already ruled on this shape:
+  its size gate's own module says any other mention *"must cross-reference this module rather than
+  restate the literal."* **Closing condition:** both figures in THIS file corrected to the measured
+  values with the `git cat-file -s` command that re-measures them beside each, and the four downstream
+  sites either corrected or reduced to a cross-reference. ⚠ **Same defect class this document already
+  tracks as "a count without its selection is not reproducible" — but one level worse, because these
+  two DID carry a sha, and the sha is what refutes them.**
+- 🔴 **ROUND 0 OF A LADDER CAN BLOCK A MERGE THAT EVERY CORRECTNESS ROUND WOULD HAVE PASSED, AND THIS IS
+  THE FIRST INSTANCE IN THIS ARC.** #1871's round 0 verdict is `requirement questioned — R1`: the
+  measurement, the task-board item carrying the requirement, the acceptance criteria stamped
+  **AUTHOR-SPECIFIED**, the implementation, and the ranked next-step instructing a future session to
+  merge it were all authored by **one agent session** (`268378fb-…`, the task created 57 minutes before
+  the first commit), and three separate labels make that read as external specification. No operator
+  line authorises it: the only operator decision in this arc authorises **a prune**, not a tool
+  refusal. 🔴 **The blast radius is what makes it a Fork rather than a nit** — rule (p) arms a refusal
+  on `/handoff`'s write path, which is the ONLY step that records a session, in EVERY repo. ⚠ **The
+  block is "get an operator line", NOT "the code is wrong"** — round 0 separately re-verified that all
+  15 mutation rows apply and change exactly one line each, and that the battery repair is cleanly
+  attributable to `claude/RULES.md`'s *"a permanently-red gate is worse than no gate"*. **The repair is
+  SEPARABLE and could land on its own.**
+  ⚠ **SIXTH LEAK-GATE EVENT, AND IT FIRED ON *THIS* BULLET.** Writing the attribution chain above
+  required naming the system that holds the task — and that system's NAME is a denied identifier, so
+  `status=leak-refused` (exit 13, one `denied-identifier` finding) rolled the write back. The lesson
+  this arc already records was READ and hit anyway, in a new shape: the previous five were fixture
+  data, a commit message and a canary quoted while documenting the gate, and this one is **an external
+  system named while describing WHO AUTHORED a requirement** — a sentence whose whole subject is
+  attribution, where the name feels like the evidence. Describe the system by its ROLE
+  (*"the task board"*) and the attribution is unharmed.
+
+- 🔴 **A REWORD REMOVES A NAME FROM THE TIP, NOT FROM THE FORGE — AND THE REMEDIATION RECORD BECOMES
+  THE SIGNPOST.** A commit message on a public repo spelled identifiers from a private one. It was
+  reworded and force-pushed with `--force-with-lease`, proved message-only (`git diff` **0 bytes**,
+  equal tree OIDs, `range-diff` carrying **zero file sections**). 🔴 **The abandoned objects still
+  answer `HTTP 200` ANONYMOUSLY** — no token — with their original message intact, so the rewrite
+  bought "not visible to a reader of the branch", never "gone". ⚠ **And the audit record published the
+  abandoned SHAs**, which is what made them reachable: a 40-hex sha is unguessable, so the comment
+  thread was the only pointer. Remedy applied: redact the shas of exactly the commits whose messages
+  carried a name, with an edit note saying the rewrite was not a scrub — verified 0 mentions against a
+  live sha still matching, so the zero is measured. **Whenever you rewrite to remove something, ask
+  what now POINTS at the old object, and treat your own record as a candidate.**
+- 🔴 **A SCAN OVER A LIST OF SHAS YOU WROTE DOWN IS NOT AN ENUMERATION, AND IT COST A SECOND PUBLIC
+  FORCE-PUSH.** The first remedy was scoped from five shas typed by hand; the branch had **ten**
+  commits, and the sixth also carried names — as an ancestor of the rewrite's base, so the authorised
+  recipe structurally could not reach it. Same class as this repo's `grep`-over-known-wordings bullet
+  and as the three-repo population scan two bullets down. **`git rev-list <base>..<head>` and loop**;
+  then report the count so the selection is visible.
+- 🔴 **A POPULATION MEASURED FROM GUESSED PATHS UNDERSTATED A GATE'S BLAST RADIUS BY 4×.** The
+  already-over set was scanned across three repos resolved by writing paths out; the tool's own module
+  enumerates its repos from env handles, and resolving them found **54 more documents** in a fourth —
+  357 handoff docs in that one checkout, worst over by 344,499 B. **Ask the code where it looks; never
+  supply the answer.** ⚠ Both times a downstream agent re-measured and **overrode** the figure I gave
+  it, which is the behaviour to keep asking for.
+- 🔴 **GRANDFATHERING "AT MEASURED SIZE" REPRODUCES THE DAY-ONE REFUSAL ONE WRITE LATER.** A ratchet
+  that fires on `after > allowance AND delta > 0` refuses the very next growing update when the
+  allowance equals today's bytes. The ledger's own **16 KB quantum** is what delivers the stated intent,
+  and its check (e) refuses any other value — so the quantisation was not a preference to weigh but the
+  only admissible reading. **When a number is "the current value", ask what the predicate does on the
+  next byte.**
+- 🔴 **A GUARD WHOSE TWO KEY SPACES BECOME DISJOINT BY CONSTRUCTION IS SILENTLY INERT, AND A GREEN RUN
+  CANNOT TELL YOU.** A collision check was `set(A) & set(B)`; re-keying one side to digests made the
+  intersection empty on **any** tree, forever, while the test still read as coverage. Caught by its own
+  author asking *what else reads this by key SHAPE* — measured under a planted collision: old spelling
+  **0**, resolving spelling **1**. **After changing a key's representation, enumerate every reader and
+  ask of each whether it can still SEE what it claims to.**
+- 🔴 **THE COMMIT-MESSAGE CHANNEL IS GATED BY NOTHING, AND THREE ROUNDS OF LEAK-CHECKING WERE EACH
+  CORRECT AND EACH BLIND TO IT.** One round reported "leaks: clean" over the added lines; another
+  scanned 1,545 tracked files with a validated positive control. Both were true of the surface they
+  read — **a commit message is not a tracked file**, and there is no `commit-msg` hook. The scrub's own
+  completeness paragraph therefore reads as "the disclosure is closed" while being silent about the
+  channel the same PR created.
+- ⚠ **A MUTATION SWEEP BELONGS AFTER A CLEAN ROUND, NOT BESIDE EACH ONE.** It was started and abandoned
+  **three times**, because every fix round superseded the tree it was measuring, and a sweep of a
+  superseded tree is evidence about nothing that will ship. ~111 rows × one full suite each is hours.
+  **Treat it as the pre-merge gate it is.**
+- ⚠ **THE `git commit` GUARD CANNOT RESOLVE `-C $VAR` AND JUDGES YOUR CALLER'S DIRECTORY — HIT TWICE IN
+  ONE SESSION.** It refused a commit in a detached scratch worktree as a commit to `main`, correctly,
+  because the variable's value was not in the command text. 🔴 **And a blocked call runs NOTHING in
+  it**, so a heredoc earlier in the same call never wrote its file and the follow-up died
+  `could not read log file` — which reads like a path mistake. **Absolute paths to `-C`, and after a
+  refusal assume nothing ran.**
 
 ## How to verify
 ```bash
