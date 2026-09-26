@@ -492,17 +492,44 @@ def discovered(extra: dict[str, str] | None = None) -> dict[str, int]:
     return counts
 
 
+def ledger_diff(
+    found: dict[str, int], expected: dict[str, int]
+) -> tuple[list[str], list[str], dict[str, tuple[int, int]]]:
+    """`(grew, shrank, moved)` — the ONE comparison both ledgers and both mutation
+    tests go through.
+
+    🔴 IT IS A FUNCTION BECAUSE A MUTATION SWEEP ON THIS FILE FOUND THE ALTERNATIVE
+    UNTESTABLE, AND THAT IS THE SAME DEFECT THIS WHOLE CHANGE IS ABOUT. The set
+    arithmetic was open-coded at FIVE sites: twice in the two ledger assertions and
+    three times in the mutation tests that are supposed to watch them fail. So the
+    mutation tests re-implemented the logic they were validating, and blinding a
+    PRODUCTION arm — `grew = {}` in the listing ledger, `shrank = []` in the caller
+    ledger — SURVIVED a fully green run: on a clean tree `grew` and `shrank` are
+    empty anyway, so the assertion cannot tell a blinded arm from a tidy repository,
+    and the mutation tests were computing their own answer rather than asking the
+    code under test.
+
+    Both mutants are KILLED now, because every caller routes through here.
+    `claude/RULES.md`: *"a predicate open-coded at N sites is typically wrong at N-1
+    of them in the same direction, and unifying them is what makes the disagreement
+    audible"* — which is the sentence this file exists to enforce elsewhere, and was
+    violating itself.
+    """
+    grew = sorted(set(found) - set(expected))
+    shrank = sorted(set(expected) - set(found))
+    moved = {
+        k: (expected[k], found[k])
+        for k in expected
+        if k in found and expected[k] != found[k]
+    }
+    return grew, shrank, moved
+
+
 def test_every_listing_read_of_the_store_is_LEDGERED() -> None:
     """🔴 THE TWO-WAY ARM. A new site fails; a vanished ledgered site fails."""
     found = discovered()
     expected_counts = {key: row[0] for key, row in EXPECTED.items()}
-    grew = {k: v for k, v in found.items() if k not in expected_counts}
-    shrank = {k: v for k, v in expected_counts.items() if k not in found}
-    moved = {
-        k: (expected_counts[k], found[k])
-        for k in expected_counts
-        if k in found and expected_counts[k] != found[k]
-    }
+    grew, shrank, moved = ledger_diff(found, expected_counts)
     assert not grew and not shrank and not moved, (
         "the set of DIRECTORY-LISTING reads of the store moved.\n"
         f"  APPEARED (not in the ledger): {sorted(grew)}\n"
@@ -629,13 +656,7 @@ def test_every_caller_of_a_failclosed_wrap_is_LEDGERED() -> None:
     """
     found = discovered_wrap_calls()
     expected = {key: row[0] for key, row in WRAP_CALLERS.items()}
-    grew = sorted(set(found) - set(expected))
-    shrank = sorted(set(expected) - set(found))
-    moved = {
-        k: (expected[k], found[k])
-        for k in expected
-        if k in found and expected[k] != found[k]
-    }
+    grew, shrank, moved = ledger_diff(found, expected)
     assert not grew and not shrank and not moved, (
         "the set of functions that read the store THROUGH a fail-closed wrap moved.\n"
         f"  APPEARED: {grew}\n"
@@ -699,10 +720,13 @@ def test_the_caller_ledger_fails_when_a_wrap_call_is_removed() -> None:
     mutated = real.replace(anchor, "os.ReadDir(cache)")
     after = discovered_wrap_calls({rel: mutated})
     expected = {key: row[0] for key, row in WRAP_CALLERS.items()}
-    missing = set(expected) - set(after)
-    assert missing == {"internal/client/routes.go::Routes::store.ScopeDirsOrUnreadable"}, (
+    # 🔴 THROUGH `ledger_diff`, THE PRODUCTION COMPARISON — not a second copy of
+    # the set arithmetic. A sweep found that re-implementing it here let
+    # `shrank = []` in the assertion above SURVIVE a green run.
+    _grew, missing, _moved = ledger_diff(after, expected)
+    assert missing == ["internal/client/routes.go::Routes::store.ScopeDirsOrUnreadable"], (
         f"removing the wrap call did not show up as a VANISHED caller; "
-        f"missing={sorted(missing)}"
+        f"missing={missing}"
     )
     # and the SAME mutation must ALSO re-appear as a raw listing in the other
     # ledger — the two halves seeing one regression from both sides is the
@@ -734,9 +758,11 @@ def test_the_ledger_fails_when_a_site_appears_or_vanishes() -> None:
         "    return sorted(p.name for p in root.iterdir())\n"
     )
     grown = discovered({"lib/cairn_doctor.py": with_new})
-    new_keys = set(grown) - set(expected_counts)
-    assert new_keys == {"lib/cairn_doctor.py::_a_new_unledgered_read::iterdir"}, (
-        f"the GROW arm did not see a new listing read; it saw {sorted(new_keys)}"
+    # 🔴 THROUGH `ledger_diff` — see its docstring; computing this inline is what
+    # let `grew = {}` in the production assertion SURVIVE a mutation sweep.
+    new_keys, _shrank, _moved = ledger_diff(grown, expected_counts)
+    assert new_keys == ["lib/cairn_doctor.py::_a_new_unledgered_read::iterdir"], (
+        f"the GROW arm did not see a new listing read; it saw {new_keys}"
     )
 
     # ---- VANISH: a ledgered site removed from the source ---------------------
@@ -757,9 +783,9 @@ def test_the_ledger_fails_when_a_site_appears_or_vanishes() -> None:
     )
     go_gone = go_real.replace(anchor, "scopeDirs := readDirRemoved(cache)")
     shrunk = discovered({go_rel: go_gone})
-    missing = set(expected_counts) - set(shrunk)
-    assert missing == {"internal/client/verbs.go::LsEntries::os.ReadDir"}, (
-        f"the SHRINK arm did not see a ledgered site disappear; missing={sorted(missing)}"
+    _grew2, missing, _moved2 = ledger_diff(shrunk, expected_counts)
+    assert missing == ["internal/client/verbs.go::LsEntries::os.ReadDir"], (
+        f"the SHRINK arm did not see a ledgered site disappear; missing={missing}"
     )
 
     # ---- COUNT: a second listing inside an already-ledgered function ---------
@@ -780,6 +806,10 @@ def test_the_ledger_fails_when_a_site_appears_or_vanishes() -> None:
         anchor, "for entry in list(scope.iterdir()) if scope.iterdir() else []:", 1
     )
     bumped = discovered({py_rel: py_doubled})
+    _g3, _s3, moved3 = ledger_diff(bumped, expected_counts)
+    assert moved3 == {"lib/cairn_doctor.py::store_entry_files::iterdir": (1, 2)}, (
+        f"the COUNT arm did not surface through the production comparison: {moved3}"
+    )
     assert bumped["lib/cairn_doctor.py::store_entry_files::iterdir"] == 2, (
         "the COUNT arm cannot see a SECOND listing added to an already-ledgered "
         "function, so `cmd_put`'s 2 is a number nothing checks. Got "
