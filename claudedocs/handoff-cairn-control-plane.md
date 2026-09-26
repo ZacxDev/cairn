@@ -24,32 +24,43 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`f352bd9`** — ⚠ re-read rather than quoting it.
-- ✅ **THE CLOSING CONDITION IS ADDRESSED, RE-VERIFIED ON `main` RATHER THAN TAKEN FROM THIS DOC'S OWN
-  CLAIM ⇒ THE ARC IS CLOSED.** All three commands the DoD names are green, and each of its four
-  clauses has a NAMED test: `pytest tests -q` → **2172 passed, 0 failed** (two independent runs, in
-  two worktrees, agreeing); `go test ./...` → **19 ok, 0 FAIL** counted from result lines;
-  `packages.default.pname` = **`cairn-go`**, pinned by `checks.default-is-the-go-client`.
-  (a) `TestTheAuthorizationMatrixIsExactlyThis` · (b) `TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser`
-  **and** `TestTheReplicaHonestyNoticeIsPinnedWhole` · (c) `TestBackendsOrdersTheChainMachineTokenFirstAndTrustedHeaderLast`
-  over four backends · (d) above. 🔴 **THE DoD IS FROZEN AND ANSWERS ONLY ITSELF** — the open items
-  below do NOT extend it. They are a NEW ARC.
-- ✅ **THREE MERGES THIS SESSION.** `#108` → `84642ff` (the `onlyGo` conflict resolved additively; 519
-  added lines present, 0 missing, 0 removed). The handoff-tooling repo's **`#1871` → rule (p) is LIVE**
-  after a five-round ladder and four operator decisions. `#121` → `f352bd9`, the THIRD prune.
-- ✅ **THE PRUNE: 105,456 → 78,144 B (−25.9%), archive 138,791 → 174,237 B.** 123 units classified,
-  **53 moved, 0 lost, 0 dropped, 0 duplicated** — re-asserted independently on `main`, not taken from
-  the agent, with a positive control that reports 1 when a bullet is dropped on purpose. 🔴 **The
-  finding is the CLASSIFICATION, not the bytes: 43 bullets (32.8% of `Gotchas`) are generic tooling
-  lessons that were never about this arc** — the eviction instrument's own advisory count was 20 and it
-  warned that was a floor. They sit in the archive as a WAY-STATION, not a home; the ranked routing
-  list is on `#121`.
-- 🔴 **THE FLOOR IS 12,608 B OVER THE GUIDELINE AND STOPPING THERE WAS CORRECT** — the remaining bulk
-  binds a next edit. Largest single item refused: the bullet whose tail is the SIXTH leak-gate event,
-  unsplittable without failing the 0-duplicated assertion.
-- ⏳ **ONE THING FROM `#1871` IS STILL UNSCORED:** five mutation rows (three shell, `C15`/`C16`). The
-  post-merge sweep runs on the exact shipped tree, verified tree-identical before starting; every row
-  scored so far is `ok` with the baseline control `clean`. Hand-driven kills are not battery scores.
+- `main` @ **`27bdeb3`** — ⚠ re-read rather than quoting it, and note a handoff doc can never record
+  its own merge, so a `State now` sha is stale by exactly one commit the moment it lands.
+- ✅ **THE CLOSING CONDITION IS ADDRESSED ⇒ THE ARC IS CLOSED**, re-verified on `main` rather than taken
+  from this doc's own claim. Each clause has a NAMED test — `TestTheAuthorizationMatrixIsExactlyThis` ·
+  `TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser` ·
+  `TestTheReplicaHonestyNoticeIsPinnedWhole` (pinned WHOLE) ·
+  `TestBackendsOrdersTheChainMachineTokenFirstAndTrustedHeaderLast` over four backends — and all three
+  commands it names are green: `pytest tests -q` **2172 passed / 0 failed** (two independent runs in two
+  worktrees, agreeing), `go test ./...` **19 ok / 0 FAIL** counted from result lines,
+  `packages.default.pname` = `cairn-go`. 🔴 **THE DoD IS FROZEN AND ANSWERS ONLY ITSELF** — ranks 18–20
+  are a SUCCESSOR arc, not this one's remainder.
+- ✅ **ZERO PRs ARE OPEN IN `cairn` AND NOTHING IS BLOCKED ON CODE.** Landed: `#108` → `84642ff`,
+  `#120` → `be47f0a`, `#121` → `f352bd9` (the third prune), `#122` → `27bdeb3` (this verdict), and a
+  sibling's `#119` → `d27cafb` closing issue `#111`. In the handoff-tooling repo, **rule (p) is LIVE**
+  as `b4233ea9` after a five-round ladder.
+- 🔴 **THE MUTATION SWEEP FOR RULE (p)'s FIVE UNSCORED ROWS IS DEAD, NOT PAUSED — RE-RUN IT FROM
+  SCRATCH.** It was a background process of the session that started it, so it did not outlive that
+  session. **Reached 24 of ~111 rows: baseline control `clean`, 0 failures, 0 `WRONG-KILLER`, and
+  0 rule-(p) rows** — those come late in the file, so the five rows this was run for are STILL
+  unscored. ⚠ Do not read "24 rows green" as partial coverage of them; it is coverage of other guards.
+  Re-run on a detached worktree of that repo's `main`, verified tree-identical before starting, with
+  `PYTHONDONTWRITEBYTECODE=1`; budget ~3 min/row under load. Hand-driven kills are not battery scores.
+- ⚠ **NO TASK-BOARD FIELD IS RECORDED IN THIS DOC'S FRONT MATTER, AND THAT IS A MEASURED ABSENCE
+  RATHER THAN AN OVERSIGHT.**
+  The resolver exited **5** (nothing resolved) while its own POSITIVE CONTROL answered 1 link for a
+  different session — so the board is reachable, the base URL right and the token accepted, and this
+  session genuinely touched no task. A zero from that endpoint cannot distinguish "touched none" from
+  "wrong id"; the control is what makes it the former.
+  🔴 **AND THE FIELD'S OWN NAME CANNOT BE WRITTEN IN THIS REPOSITORY** — it embeds a denied
+  identifier, so the leak gate refuses any delta that names it. Eighth event of that class here, and
+  the first where the *forbidden string is mandated by the tool*: describe the field by ROLE, and do
+  not reach for the literal to be precise.
+- ⏳ **CARRIED FORWARD, UNCHANGED:** the deploy is done and GitHub sign-in is armed, but a COMPLETED
+  sign-in is still unverified (rank 13) and the share flow still cannot be verified on the deployed
+  surface with one user (rank 9). The three sign-in variables remain a SET: dropping `JWKS_URL` or
+  `ISSUER` ⇒ **exit 78, pod DOWN**; dropping `REDIRECT_URL` ⇒ pod UP, button absent — the cheapest
+  remedy.
 
 ## Next steps (ranked)
 
