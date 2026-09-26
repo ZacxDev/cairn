@@ -767,6 +767,13 @@ func TestTheEntryPageShowsHeadingsAndMarkersAsStructureRatherThanText(t *testing
 // and one that prints it only when it means nothing are indistinguishable to a reader who
 // does not already know the rule. So each is asserted PRESENT and NAMED.
 func TestAMarkerTheParserCannotReachIsStillOnThePage(t *testing.T) {
+	// ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — MEASURED, AND LABELLED BECAUSE THE
+	// DISTINCTION IS THE HOUSE RULE. This subtest is GREEN at `ac1e8ee`, the commit before the
+	// change: the old page printed every line verbatim, so a near miss's marker text was on
+	// the page for free and no bug ever violated this. What it pins is that the STRIP did not
+	// break it. It is not vacuous — a mutant that cuts `Bullet.Body`'s first line at the first
+	// `:` instead of at `store.MarkerSpan` kills it with this message — but it must not be
+	// counted as evidence that a defect existed.
 	t.Run("a near miss keeps its marker text and its own badge", func(t *testing.T) {
 		// `- 2000-01-02 OPEN: …` — the date is not followed by `:`, so `journalOpenness`
 		// refuses the line and `store.MarkerSpan` is 0. Nothing is stripped, by construction.
@@ -871,6 +878,14 @@ func TestAMarkerTheParserCannotReachIsStillOnThePage(t *testing.T) {
 // contexts are exercised separately here rather than trusted to one payload: the span's
 // inside is text content that the RENDERER chose to wrap, and an entry ref carrying the same
 // payload lands in a quoted `href`.
+//
+// ⚠ THE ESCAPING HALF OF THE LAST SUBTEST IS A CLAIM NO MUTANT IN THIS TREE CAN TEST, AND
+// SAYING SO IS THE POINT. `inlineCode` builds only `g.Text` and an attribute-free `h.Code`,
+// and `Raw`/`Rawf` are AST-banned by `rawban_test.go` — so the non-escaping mutant that would
+// prove the token scan kills it CANNOT BE WRITTEN here. What stands instead is the pair of
+// controls: the payload is counted non-zero in the fixture and zero on every rendered page,
+// and `TestHostileEntryTextIsEscapedOnEveryBrowsePage`'s structural differential now carries a
+// backtick span in both worlds so a span that became markup would move `lt`/`gt`/`="`.
 func TestInlineCodeSpansRenderAsCodeWithoutBecomingMarkup(t *testing.T) {
 	t.Run("a span renders as code and its backticks do not", func(t *testing.T) {
 		out := entryPageOver(t, []Section{{Heading: store.WhatHeading, Body: "run `cairn recall --ref lease` first"}})
@@ -890,6 +905,12 @@ func TestInlineCodeSpansRenderAsCodeWithoutBecomingMarkup(t *testing.T) {
 		}
 	})
 
+	// ⚠ THE NEXT TWO ARE INVARIANT GUARDS, AND THE LABEL IS MEASURED RATHER THAN ASSUMED. Both
+	// are GREEN at `ac1e8ee`: the old page printed the body verbatim, so a stray backtick and
+	// an empty pair survived for free and no bug ever violated either. They pin that the new
+	// PARSE did not start editing text, which is a claim about this change and not about a
+	// defect — and each is killed by its own mutant (close an unterminated span at
+	// end-of-line; treat an empty pair as a span), so neither is vacuous.
 	t.Run("an unmatched backtick is left exactly as typed", func(t *testing.T) {
 		// 🔴 THE "DO NOT LOSE INFORMATION" RULE AT SPAN LEVEL, AND THE FAILURE IT REFUSES IS
 		// INVISIBLE BY CONSTRUCTION: a renderer that closed an unterminated span at
