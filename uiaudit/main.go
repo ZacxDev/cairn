@@ -368,12 +368,16 @@ func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	} else {
 		fmt.Printf("uiaudit:   console=%d — NOT a structural zero: this surface has grown something that logs, so `doc.go`'s console claim is now false and wants correcting.\n", console)
 	}
-	if hasRow(ui.DeclaredRouteLedger(), "GET "+ui.StylesheetPath) {
-		fmt.Printf("uiaudit:   network=%d FAILED subresource request(s) — and this is NOT a structural zero: %s is a route on this tree, so every page has a real blocking subresource. Zero here means it was FETCHED SUCCESSFULLY on every page, which is a stronger statement than the structural one it replaces.\n",
-			netw, ui.StylesheetPath)
+	// ⚠ THE ROW THAT DECIDES THIS IS THE HASHED ONE, NOT THE UNVERSIONED ONE. Both are in the
+	// ledger; only the hashed path is what a page LINKS, so only its presence makes "every page
+	// has a real blocking subresource" true. Reading the unversioned row here would keep
+	// printing the strong claim on a tree where the pages had stopped fetching anything.
+	if hasRow(ui.DeclaredRouteLedger(), "GET "+ui.StylesheetHashedPath) {
+		fmt.Printf("uiaudit:   network=%d FAILED subresource request(s) — and this is NOT a structural zero: %s is a route on this tree and every page links it, so every page has a real blocking subresource. Zero here means it was FETCHED SUCCESSFULLY on every page, which is a stronger statement than the structural one it replaces.\n",
+			netw, ui.StylesheetHashedPath)
 	} else {
 		fmt.Printf("uiaudit:   network=%d over subresources the PAGES asked for — same structural caveat: this ledger has no %s row, so there are none.\n",
-			netw, ui.StylesheetPath)
+			netw, ui.StylesheetHashedPath)
 	}
 	// ⚠ THE COUNT IS RUN-DEPENDENT, WHICH IS THE WHOLE REASON IT IS NOT ATTRIBUTED TO A PAGE.
 	// Measured on this tree at two points: one walk recorded a `401 /favicon.ico` (attached,

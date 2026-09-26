@@ -30,12 +30,34 @@ import (
 // out here, in a list somebody reads, rather than being a bit set in a map nobody
 // re-reads. The plain `DeclaredRoutes()` is checked against this one by stripping the
 // classes, so the two derived views cannot drift.
+//
+// 🔴 ONE ROW'S PATH IS COMPUTED, AND WHAT THAT COSTS THIS GUARD IS STATED HERE RATHER THAN
+// LEFT TO BE NOTICED. The hashed stylesheet row's path carries a digest of `app.css`, so its
+// spelling changes on every theme change; a literal here would turn every theme change into a
+// failing test with a hand-edit for a remedy, and the hand-edit is exactly how a wrong value
+// gets pasted in. So the expectation substitutes `stylesheetDigestFromBytes(t)` — a digest
+// this TEST computes from the embedded bytes, never `stylesheetHash` — into the row.
+//
+// WHAT THAT STILL CATCHES, which is everything this guard was ever for except the literal
+// digest: a row ADDED (the set grows and the comparison fails), a row REMOVED, a row's CLASS
+// changed, a row's METHOD changed, the two views drifting apart, and — because the digest is
+// recomputed here from the bytes rather than read off the implementation — a hashed path that
+// is not the digest of the stylesheet this binary serves.
+//
+// WHAT IT NO LONGER CATCHES: nothing pins the LITERAL current digest, so a change that
+// altered `app.css` and the served path together is not visible here. It is not meant to be —
+// that is the property being bought, and it is a REGRESSION rather than a feature only if the
+// path stops tracking the bytes, which `TestTheStylesheetURLChangesWhenTheBytesChange` is what
+// measures. It also does not catch a change to BOTH the digest algorithm and this helper in
+// one commit; that is a duplicated derivation and it is the honest cost of not writing a
+// literal down.
 func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 	want := []string{
 		"GET / content",
 		"GET /share content",
 		"GET /sign-in public",
 		"GET /sign-in/github/callback public",
+		"GET /static/app." + stylesheetDigestFromBytes(t) + ".css public",
 		"GET /static/app.css public",
 		"POST /share",
 		"POST /sign-in public",
@@ -43,6 +65,13 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		"POST /sign-out",
 		"POST /unshare",
 	}
+	// ⚠ THE EXPECTATION IS SORTED RATHER THAN WRITTEN IN ORDER, AND ONLY BECAUSE ONE ROW'S
+	// POSITION IS NOT KNOWABLE WHEN THE LIST IS TYPED. `/static/app.<hex>.css` sorts before or
+	// after `/static/app.css` depending on whether the digest's first character is below or
+	// above `c`, so a hand-sorted literal would flap on a theme change for a reason that has
+	// nothing to do with routing. The ledger's OWN sortedness is still asserted below, against
+	// `got`, which is the claim that mattered.
+	slices.Sort(want)
 	got := DeclaredRouteLedger()
 
 	if len(got) == 0 {
@@ -301,6 +330,10 @@ var bareGETAnswer = map[string]int{
 	"GET /sign-in public":                 http.StatusOK,
 	"GET /static/app.css public":          http.StatusOK,
 	"GET /sign-in/github/callback public": http.StatusBadRequest,
+	// The hashed row's key is COMPUTED for the same reason the ledger expectation is — its
+	// path carries a digest of `app.css`. A literal here would make every theme change a
+	// failing walk. What the row declares is unaffected: it answers 200 to a bare GET.
+	"GET " + StylesheetHashedPath + " public": http.StatusOK,
 }
 
 // TestEveryServedPathComesFromTheLedger closes the blind spot `DeclaredRoutes`'s own
@@ -375,8 +408,24 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 	// would measure gate (2) rather than routing and would pass with the ledger deleted. The
 	// public rows themselves are NOT probed: they answer without a credential by design.
 	probed := 0
+	// 🔴 THE HASHED STYLESHEET ROW'S NEAR-MISSES ARE BUILT FROM THE LIVE PATH, NOT WRITTEN OUT,
+	// because a literal would stop being a near-miss the moment the theme changed — it would
+	// become an unrelated absent path that 404s for the wrong reason, and the probe would keep
+	// passing while proving nothing about the row it was written for. Each of these is a string
+	// a PREFIX match on `/static/app.` would serve, which is the shape `routes` refuses.
+	hashed := StylesheetHashedPath
+	stem := strings.TrimSuffix(hashed, ".css")
 	for _, probe := range [][2]string{
 		{"GET", "/entries"},
+		// A digest that is not this stylesheet's: the same shape, one character short of the
+		// real row, and a prefix match would serve it.
+		{"GET", "/static/app.000000000000.css"},
+		// The real digest with something appended, and with the `.css` gone — a suffix-tolerant
+		// match would serve both.
+		{"GET", stem + "x.css"},
+		{"GET", stem},
+		// An empty digest, which is what a derivation that lost its bytes would produce.
+		{"GET", "/static/app..css"},
 		{"GET", "/entries/"},
 		{"GET", "/admin"},
 		{"GET", "/entriesx"},

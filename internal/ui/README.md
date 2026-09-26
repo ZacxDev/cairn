@@ -1243,11 +1243,13 @@ path-mismatch row — both of which the same change introduced. The startup line
 state it is in, for the reason it already reports whether a share can be recorded: the answer is
 decided at startup and discovered at the first click otherwise.
 
-## The stylesheet is a route, and its bytes are BUILD OUTPUT
+## The stylesheet is TWO routes, and its bytes are BUILD OUTPUT
 
-All three pages link `/static/app.css` and `handleStylesheet` serves it. It is `classPublic`
-because the sign-in page links it and that page answers anybody — a stylesheet behind the chain
-renders the way in as unstyled text. It serves an **embedded file**, not a directory: an
+All three pages link **`/static/app.<12 hex>.css`** — a path carrying a digest of the bytes it
+serves — and `handleHashedStylesheet` answers it. The unversioned `/static/app.css` is still a
+row, answered by `handleStylesheet`, and **nothing links it**. Both are `classPublic` because
+the sign-in page links the hashed one and that page answers anybody — a stylesheet behind the
+chain renders the way in as unstyled text. Both serve an **embedded file**, not a directory: an
 `http.FileServer` would need a prefix match, which is a second way for a request to reach a
 handler and one `TestEveryServedPathComesFromTheLedger` structurally cannot probe.
 `TestTheStylesheetIsServedAsItsOwnRoute` pins the RELATIONSHIP rather than either side — it
@@ -1258,7 +1260,63 @@ assertions would both pass for a route nobody links or a link nobody serves.
 `style-src 'self'` forbade an inline `<style>`; that policy was deleted (see *Response
 hardening* above), so an inline stylesheet would work again. What keeps the route is the
 size: the bytes are generated now, ~29 KB, and inlining them would send that on every
-response instead of once per five minutes.
+response instead of once per cache lifetime.
+
+### The content-hashed path, and why an unversioned one could not be fixed with a header
+
+🔴 **A CACHE IS KEYED ON THE URL, SO AN UNVERSIONED URL IS AN ENTRY NOTHING CAN INVALIDATE.**
+The surface shipped with one stylesheet row at the constant `/static/app.css` and
+`Cache-Control: public, max-age=300`, and the short `max-age` was chosen precisely because the
+URL carried no version. It was not enough. After an image bump the origin served the current
+stylesheet while a returning browser went on applying a much smaller predecessor — one rule for
+the sign-in page's classes where the current theme has dozens. The page rendered **unstyled**,
+with no error, no missing entry and nothing red anywhere.
+
+🔴 **AND THE HEADER WAS NOT THE LEVER.** The edge in front of the origin answered
+`max-age=14400` where the origin asked for `max-age=300` — 48× — so the stale window was hours.
+A `Cache-Control` is a *request* to every cache in the path and an intermediary may lengthen it.
+That is why the fix is the URL: a URL derived from the bytes is one the browser has never seen
+after a theme change, so there is nothing for any cache to serve stale and no cache has to
+cooperate.
+
+| piece | where |
+|---|---|
+| `hashStylesheet` / `hashedStylesheetPathFor` | `stylesheet.go` — SHA-256 of the embedded bytes, hex, first **12** characters |
+| `StylesheetHashedPath` | `routes.go`, a **`var`** derived at package init; writing its value down anywhere is the defect coming back under a longer name |
+| the two `Cache-Control` values | `server.go` — `public, max-age=31536000, immutable` on the hashed row, `public, max-age=300` on the unversioned one |
+
+🔴 **`immutable` IS LICENSED BY THE URL, NOT BY THE BYTES BEING STABLE.** It tells a cache never
+to revalidate for a year, which is only ever true of a URL that cannot come to mean different
+bytes. The hashed row has that property by construction; the unversioned row does not and keeps
+the short value, which
+`TestTheStylesheetRowsCarryTheCacheHeadersTheirURLsLicense` pins in **both** directions as whole
+strings — including that the unversioned row's value does not *contain* `immutable`.
+
+🔴 **THE UNVERSIONED ROW IS KEPT, AND THE CONDITION IT IS KEPT UNDER IS THAT NOTHING LINKS IT.**
+It costs one ledger row and it means URLs already loose in the world — an HTML page a browser
+rendered before the deploy, a bookmark, a link out of a log — answer the current bytes instead
+of 404. That argument holds only while the set of such URLs is CLOSED. A page that linked it
+would issue every visitor an unversioned URL again and reinstate the whole failure with the
+hashed row sitting beside it doing nothing, and it would be silent: every page renders, every
+style applies on a cold cache. `TestNoPageLinksTheUnversionedStylesheetPath` is the guard, and
+it validates its own detector against a body that must match before reporting a clean verdict.
+
+⚠ **A COMPUTED KEY IS STILL AN EXACT KEY, WHICH IS THE WHOLE REASON THIS WAS ALLOWED.** `routes`
+refuses a prefix match — see `routes.go` on why the share flow puts its scope in a query
+parameter — because a prefix is a second way to reach a handler and leaves no finite set of
+paths to probe. A key computed at init is none of that: the served set is still finite, still
+enumerable, still exactly the map's keys, and `TestEveryServedPathComesFromTheLedger` probes
+this row's near-misses (`/static/app..css`, a wrong digest, a suffixed digest) and requires 404
+from each.
+
+⚠ **WHAT THE LEDGER GUARD STILL CATCHES, AND WHAT IT NO LONGER DOES.**
+`TestTheRouteLedgerMatchesTheDispatchTable`'s hand-written list substitutes a digest the *test*
+computes from the embedded bytes into the hashed row, because a literal would make every theme
+change a failing test with a hand-edit for a remedy. It still fails on a row ADDED, a row
+REMOVED, a CLASS changed, a METHOD changed, the two ledger views drifting, and a hashed path
+that is not the digest of the served stylesheet. It no longer pins the literal current digest —
+which is the property being bought, not a gap. It also cannot see a change made to both the
+digest derivation and the test's copy of it in one commit.
 
 ### The theme: Tailwind, compiled, checked in
 
@@ -1378,6 +1436,10 @@ BUILD-FAIL and never as a kill.
 | the callback reads the query BEFORE consuming the flight | `TestTheProviderErrorIsNotReflectedIntoThePage` |
 | an unready provider treated as ready | `TestTheProviderDoorIsWITHHELDWhileItsKeySetHasNeverBeenFetched` |
 | the served stylesheet emptied (the self-referential comparison) | `TestTheStylesheetIsServedAsItsOwnRoute` |
+| the pages link the UNVERSIONED stylesheet path again | `TestNoPageLinksTheUnversionedStylesheetPath`, and three others: `TestTheStylesheetIsServedAsItsOwnRoute`, `TestThePageLinksTheStylesheetByItsOwnDigest`, `TestTheStylesheetURLChangesWhenTheBytesChange` |
+| the digest ignores the bytes it is given (a constant hashed instead) | `TestThePageLinksTheStylesheetByItsOwnDigest`, `TestTheStylesheetURLChangesWhenTheBytesChange`, `TestTheRouteLedgerMatchesTheDispatchTable`, `TestTheHashedStylesheetPathHasTheShapeItClaims` |
+| the hashed row served without `immutable` | `TestTheStylesheetRowsCarryTheCacheHeadersTheirURLsLicense` |
+| `StylesheetHashedPath` written down as a literal equal to today's digest — 🔴 **AN EQUIVALENT MUTANT ON THIS TREE AND SAYING SO IS THE POINT.** The two expressions evaluate to the same string *today*, so nothing can distinguish them until `app.css` changes; a table row claiming a kill here would be false. What IS measured: with the mutant applied **and** one byte appended to `app.css`, three guards go red — and the same byte change against unmutated code is green, so the red is the mutant's | `TestTheRouteLedgerMatchesTheDispatchTable`, `TestThePageLinksTheStylesheetByItsOwnDigest`, `TestTheHashedStylesheetPathHasTheShapeItClaims` — *only once the bytes move* |
 | the startup callback-path check disabled | `TestTheProviderFlowDecisionTable` |
 | that check made an EQUALITY again (refusing a path-prefixing proxy) | the same test |
 | the flight cookie's `Path` no longer exactly `/` — a `__Host-` cookie a browser DROPS | `TestTheFlightCookieCarriesItsPrefixAndFlagsOnTheWire` |

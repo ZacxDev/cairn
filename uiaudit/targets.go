@@ -140,11 +140,25 @@ var plainGET = map[string]bool{
 // replace both literals with the constants and add the assertion that the ledger contains
 // them". It is merged; both are done. `TestTheLedgerCARRIESEveryNotADocumentRow` is that
 // assertion, and it is a compile-time claim now in a way it could not have been before.
+//
+// ⚠ THE STYLESHEET IS TWO ROWS NOW, AND BOTH KEYS ARE REQUIRED RATHER THAN ONE COVERING BOTH.
+// `internal/ui` serves the stylesheet at a CONTENT-HASHED path — the one every page links, whose
+// spelling changes with the theme — and keeps the unversioned path so URLs already loose in the
+// world do not 404. Two ledger rows, so two keys: a row in none of the three classes is a
+// refusal by construction, which is how this map found out about the second one. The hashed
+// key is `ui.StylesheetHashedPath`, a package VARIABLE rather than a constant, and writing its
+// current value down here as a literal would silently stop excluding anything on the next theme
+// change — `TestTheLedgerCARRIESEveryNotADocumentRow` is what would catch that, and only
+// because it compares against the live ledger.
 var notADocument = map[string]string{
 	ui.StylesheetPath: "a text/css response and not a document — axe, the layout smells and the " +
 		"a11y digest are all meaningless on a stylesheet, and `internal/ui`'s own " +
 		"TestTheStylesheetIsServedAsItsOwnRoute already asserts far more about it than a browser walk " +
-		"could, as a build refusal rather than an advisory tick",
+		"could, as a build refusal rather than an advisory tick. This is the UNVERSIONED row, which no " +
+		"page links: it is served so that URLs issued before a deploy keep answering",
+	ui.StylesheetHashedPath: "a text/css response and not a document, for every reason the unversioned " +
+		"row gives — this is the CONTENT-HASHED row, the one the pages actually link, so a browser walk " +
+		"does fetch it as a subresource and `Browser.onEvent` is what watches that fetch succeed",
 	ui.OAuthCallbackPath: "reachable only with a provider ?code= AND a live single-use flight " +
 		"cookie, so navigated bare it renders a refusal — capturing that would measure an error page and " +
 		"count it as a page",
