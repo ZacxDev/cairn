@@ -329,7 +329,26 @@ jobs:
           # not on the transcription: the differential comparison they feed lives in
           # `go test` (`internal/store/markersweep_test.go`), which is the other job and is
           # NOT in this number — so a green here is no evidence the Go walk matches anything.
-          FLOOR = 2091
+          #
+          # ⚠ 2091 -> 2144, AND THE DRIFT GUARD BELOW IS WHAT FORCED IT — it went RED on this
+          # change, exactly as the note under `MAX_GAP` says it is meant to. `m` moved 2190 ->
+          # 2194 (FOUR tests: the searchable-but-unreadable cache-ROOT guard, its two argv
+          # shapes, its readable-root control, and its sentence-identity row), and against a
+          # floor still at 2091 the gap reached 103 — over the 100 bound — so the step refused
+          # with `Re-derive it: … = 2144`. 2144 = 2194 - min(50, max(1, 2194/20)); at m > 1000
+          # the `50` arm is the binding one, so the gap is exactly 50 again.
+          #
+          # Measured with names on the base ref and on HEAD, one worktree each (8ddbb6f and
+          # this head), the collect-only pipeline above: base 2190, head 2194, 4 added,
+          # **0 removed** — and the four added are the four this change writes, by name.
+          #
+          # 🔴 THIS IS THE TWO-TIER BLIND SPOT, RECORDED BECAUSE IT CAUGHT THE AUTHOR OF THIS
+          # VERY LINE. A full local `python3 -m pytest tests -q` was GREEN at this tree (2194
+          # passed) while this job was RED, because the floor and the drift guard live in THIS
+          # STEP and not in any test — so no amount of running the suite locally can see them.
+          # The local check that WOULD have: run pytest with `--junitxml=/tmp/r.xml` and then
+          # execute this heredoc against it. Done that way before this literal was committed.
+          FLOOR = 2144
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
