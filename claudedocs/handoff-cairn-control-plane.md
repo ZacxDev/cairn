@@ -30,36 +30,27 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 - ✅ **RANK 14 IS DONE.** `#117` merged as **`9c24bc4`**. 🔴 **The ladder did NOT end on a clean round —
   it stopped on the ATTRIBUTION gate, two consecutive payload-zero rounds after rounds 0/1/2.** That is
   a different claim from "no findings remain", and a later reader must not upgrade it.
-- ✅ **`#108`'s `flake.nix` CONFLICT IS RESOLVED AND PUSHED — `371ad76`, and the PR now reads
-  `MERGEABLE`.** One region in the `onlyGo` filter, diff3 base section EMPTY: `main`/#117 added
-  `internal/ui/app.css`, #108 added `uiaudit/go.mod` + `uiaudit/go.sum`. **Both rows AND both comments
-  kept** — each is false alone (#117's says `tailwind.css` is deliberately OUT of the filter; #108's
-  says `uiaudit/`'s `.go` files deliberately STAY out). `ci.yml` auto-merged and is semantically clean
-  rather than only textually clean: the two additions land in **different jobs** (#117 → a `nix`-job
-  step; #108 → a `go`-job step plus the whole new `uiaudit` job).
-  🔴 **`git rerere` supplied that resolution, so it was treated as a CLAIM** — the assertion that
-  settles it, and why a marker grep cannot, is the `Gotchas` bullet beginning *"`git rerere` CAN
-  RESOLVE A CONFLICT FOR YOU SILENTLY"*. Result: 519 added lines, **0 missing, 0 removed**.
-  Merged-tree gates, run at `371ad76` on TODAY's `main`: `go vet` rc 0 · `go test` **19 `ok` / 0
-  `FAIL`** counted from result lines · `leakscan` rc 0 and `--self-test` rc 0 · `checks.…
-  ui-stylesheet-is-current` rc 0 · `packages.{cairn-go,cairn-ui}` rc 0 under the **pinned Go 1.25**,
-  with `internal/depspolicy` `ok` in BOTH sandboxes — which is the test #108's own comment says would
-  report *"the set SHRANK"* without the lock-file rows, so the resolution is measured in the FILTERED
-  source rather than merely compiling. ⚠ The host `go` is **1.26.7**, not the pin; the pinned reading
-  is the `nix build` row, and both were read.
-  ⏳ **CI at `371ad76` was still settling when this was written:** `nix`/`parity`/`leakscan`/`dualrun`/
-  `uiaudit` green, `go` and `tests` in progress. **Not merged, deliberately** — see rank 17.
-- 🔴 **RANK 15 IS BLOCKED ON AN OPERATOR LINE, NOT ON WORK — round 0 RETURNED
-  `requirement questioned — R1`.** `claim-work cairn-control-plane-15` is held by this session.
-  The full verdict and why it is a Fork rather than a nit are in the `Gotchas` bullet beginning
-  *"ROUND 0 OF A LADDER CAN BLOCK A MERGE"*.
-  In one line: #1871's requirement chain is **self-authored end to end by one agent session** and it
-  arms a refusal on the only step that records a session, in **every** repo — so it needs one operator
-  decision before merge. 🔴 **`/audit-pr`'s own rule: round 0 REPORTS and does not move the ladder** —
-  it is not a finding for the findings-keyed stop rule and it licenses skipping no round, so rounds 1+
-  are still owed whatever the operator decides about R1. ⚠ **The battery repair inside that PR is
-  cleanly attributable and SEPARABLE** — it unbreaks a gate red at its own baseline control since
-  #1815 and does not depend on rule (p).
+- ✅ **`#108` IS MERGED — `84642ff`, and it was verified BY CONTENT rather than by ancestry.**
+  The `onlyGo` conflict was one region with an EMPTY diff3 base section: `main`/#117 added
+  `internal/ui/app.css`, #108 added `uiaudit/go.mod` + `uiaudit/go.sum`; both rows and both comments
+  kept, since each is false alone. 🔴 **`git merge-base --is-ancestor` returns 1 after ANY squash
+  merge, forever** — so the check was content: `origin/main:flake.nix` carries all four rows, `uiaudit/`
+  is present, and the squash commit exists. ⚠ `git rerere` had supplied that resolution silently from
+  an older `main`, so it was treated as a claim: **519 added lines present, 0 missing, 0 removed** across
+  both sides. Merged-tree gates were green including the **pinned Go 1.25** tier with
+  `internal/depspolicy` `ok` in BOTH sandboxes — the test #108's own comment says would report *"the set
+  SHRANK"* without those rows. All 7 checks completed green; the base clone is re-synced `--ff-only`.
+- 🔴 **RANK 15's AUDIT LADDER IS CLOSED AND `#1871` IS READY TO MERGE, PENDING ONE SWEEP.** Five
+  rounds: 0 (`requirement questioned — R1`) · 1 (6🟡/4🟢) · 2 (1🔴/2🟡/2🟢) · 3 (1🔴/1🟡/2🟢) · 4 (1🟡).
+  🔴 **It stopped on the ATTRIBUTION GATE — two consecutive MEASURED `payload=0` — not on a clean round,
+  not on a verdict and not on a count.** Operator decisions taken along the way, all recorded on the PR:
+  land rule (p) **as written** (F4/D3 declined, with the reason written down — the CI gate's
+  quantisation argument was derived for a gate with NO escape, and rule (p) has two); the agent **may**
+  pull the override but must say no operator approved it; grandfather the already-over population; and
+  **re-key every foreign ledger entry to a digest, fix forward, do not rewrite `main`**.
+  ⏳ **What is left:** the authoritative mutation sweep of both batteries for **five rows no round could
+  score**, then a merge with a **HAND-WRITTEN squash body** — the default concatenates branch messages,
+  and two of those were reworded precisely so `main` does not inherit them.
 - 🔴 **#1871 REACHES *THIS* DOCUMENT — the `Gotchas` bullet beginning *"THIS DOCUMENT IS NOT
   GRANDFATHERED"* carries the measurement and the ledger check.** Once rule (p) lands, the next
   `/handoff` update that GROWS this doc is refused
@@ -131,22 +122,17 @@ this doc has twice measured a shuffle re-pointing live claims.
     both PRs (rc 1, `flake.nix` only, resolution additive, merged tree green), then rounds 1 and 2 ran.
     🔴 **It stopped on the ATTRIBUTION gate — two consecutive payload-zero rounds — NOT on a clean
     round.** forcing: gate.
-15. 🔴 **HELD ON AN OPERATOR DECISION — the handoff-tooling repo's `#1871` (rule (p), the size
-    ratchet). Round 0 is DONE and its verdict is `requirement questioned — R1`; rounds 1+ are still
-    owed.** `MERGEABLE`/`CLEAN`, four commit statuses `success`, **0 check-runs** (that repo posts
-    statuses, not check-runs — read both surfaces). **The decision to take, in one question:** land
-    rule (p) as written, land it scoped to repos that ship no size gate (round 0's F4/D3 — that keeps
-    100% of the motivating value, since cairn ships no `test_handoff_doc_size.py`), land only the
-    separable battery repair, or close it. 🔴 **Do NOT merge it on this doc's own say-so** — this doc's
-    rank 15 is part of the self-authored chain round 0 flagged. Verified independently, not accepted:
-    `main`'s battery copy list lacks `handoff-audit.py`, `skill-audit.py` and
-    `browser-bridge/tests/test_skill_size.py`, all three of which the branch adds; and round 0's F3 —
-    two byte figures that reproduce nowhere in the tree — was re-measured here and CONFIRMED with a
-    positive control; the corrected figures are in `Gotchas`.
-    **Closing condition:** a written operator line choosing among those four, then rounds 1+ with
-    findings fixed or filed and a claims block posted with `--payload`, then the PR merged or closed.
-    forcing: gate — the ratchet is what stops the prune being undone, and this document has regrown
-    measurably since the prune (its own figures are corrected in `Gotchas`) without it.
+15. ⏳ **NEARLY DONE — the handoff-tooling repo's `#1871` (rule (p), the size ratchet). The ladder is
+    CLOSED; only the sweep and the merge remain.** All four operator decisions are taken and recorded on
+    the PR. 🔴 **The remaining work is mechanical and is NOT a judgement:** (a) read the authoritative
+    mutation sweep of BOTH batteries on the merged tree — five rows are unscored (three in the shell
+    battery, `C15`/`C16` in the Python one) and a hand-driven kill is not a battery score; (b) merge with
+    a **hand-written** squash body, never GitHub's default concatenation; (c) four findings are FILED not
+    fixed, which is what the gate firing means — they are listed on the PR with closing conditions.
+    ⚠ **Do not re-open the ladder to fix them**: a fifth round would be the thing the gate just stopped.
+    **Closing condition:** the sweep read with 0 failures and 0 `WRONG-KILLER`, the PR merged with a
+    hand-written body, and the four filed items either closed or carried into this doc's `Defects`.
+    forcing: gate — five mutation rows are unscored, and a hand-driven kill is not a battery score.
 16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION (`cairn#117`'s D1).** Round 0 measured the delta:
     the `@source` scan yields **~18 real utility selectors across 4 call sites**, against a generated
     artefact checked into the tree, a nix derivation, a second nix app, a flake check, a CI step and an
@@ -156,17 +142,10 @@ this doc has twice measured a shuffle re-pointing live claims.
     than a gate on a PR. **Closing condition:** a written operator line either accepting the toolchain
     or directing the hand-written-modern-CSS alternative.
     forcing: user — it is a requirement question only the operator can answer.
-17. **NEW — `cairn#108`: READ THE SETTLED CI AT `371ad76`, THEN DECIDE WHETHER THE LADDER IS DONE
-    BEFORE MERGING.** The conflict is resolved and the merge is measured (see `State now`); what is NOT
-    settled is (a) `go` and `tests` were still in progress, and (b) **no audit round has run against
-    `371ad76`** — the merge changed one `flake.nix` region and nothing else, but that is the ladder's
-    question, not a merger's assumption. ⚠ The `uiaudit` job is `continue-on-error` and its own comment
-    records that it can still show a RED ROW; **attribute a red by the failing TEST, never by the job
-    name.** **Closing condition:** both surfaces read at the head sha actually being merged
-    (`…/commits/<sha>/check-runs` AND `…/status`), a stated verdict on whether a further round is owed,
-    and either a merge or a written line saying why it is held.
-    forcing: gate — an open PR sitting `MERGEABLE` with unread CI is the shape this arc has already
-    merged through twice.
+17. ✅ **DONE — `cairn#108` merged as `84642ff`.** Both CI surfaces were read at the head actually
+    merged (7/7 check-runs green; the commit-status surface reads 0, which for this repo is an ABSENCE
+    and not a red), the verdict on a further round was stated rather than assumed, and the squash was
+    verified BY CONTENT because ancestry is false after every squash. forcing: gate.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section
@@ -959,6 +938,58 @@ instance of a tripwire kept here.
   system named while describing WHO AUTHORED a requirement** — a sentence whose whole subject is
   attribution, where the name feels like the evidence. Describe the system by its ROLE
   (*"the task board"*) and the attribution is unharmed.
+
+- 🔴 **A REWORD REMOVES A NAME FROM THE TIP, NOT FROM THE FORGE — AND THE REMEDIATION RECORD BECOMES
+  THE SIGNPOST.** A commit message on a public repo spelled identifiers from a private one. It was
+  reworded and force-pushed with `--force-with-lease`, proved message-only (`git diff` **0 bytes**,
+  equal tree OIDs, `range-diff` carrying **zero file sections**). 🔴 **The abandoned objects still
+  answer `HTTP 200` ANONYMOUSLY** — no token — with their original message intact, so the rewrite
+  bought "not visible to a reader of the branch", never "gone". ⚠ **And the audit record published the
+  abandoned SHAs**, which is what made them reachable: a 40-hex sha is unguessable, so the comment
+  thread was the only pointer. Remedy applied: redact the shas of exactly the commits whose messages
+  carried a name, with an edit note saying the rewrite was not a scrub — verified 0 mentions against a
+  live sha still matching, so the zero is measured. **Whenever you rewrite to remove something, ask
+  what now POINTS at the old object, and treat your own record as a candidate.**
+- 🔴 **A SCAN OVER A LIST OF SHAS YOU WROTE DOWN IS NOT AN ENUMERATION, AND IT COST A SECOND PUBLIC
+  FORCE-PUSH.** The first remedy was scoped from five shas typed by hand; the branch had **ten**
+  commits, and the sixth also carried names — as an ancestor of the rewrite's base, so the authorised
+  recipe structurally could not reach it. Same class as this repo's `grep`-over-known-wordings bullet
+  and as the three-repo population scan two bullets down. **`git rev-list <base>..<head>` and loop**;
+  then report the count so the selection is visible.
+- 🔴 **A POPULATION MEASURED FROM GUESSED PATHS UNDERSTATED A GATE'S BLAST RADIUS BY 4×.** The
+  already-over set was scanned across three repos resolved by writing paths out; the tool's own module
+  enumerates its repos from env handles, and resolving them found **54 more documents** in a fourth —
+  357 handoff docs in that one checkout, worst over by 344,499 B. **Ask the code where it looks; never
+  supply the answer.** ⚠ Both times a downstream agent re-measured and **overrode** the figure I gave
+  it, which is the behaviour to keep asking for.
+- 🔴 **GRANDFATHERING "AT MEASURED SIZE" REPRODUCES THE DAY-ONE REFUSAL ONE WRITE LATER.** A ratchet
+  that fires on `after > allowance AND delta > 0` refuses the very next growing update when the
+  allowance equals today's bytes. The ledger's own **16 KB quantum** is what delivers the stated intent,
+  and its check (e) refuses any other value — so the quantisation was not a preference to weigh but the
+  only admissible reading. **When a number is "the current value", ask what the predicate does on the
+  next byte.**
+- 🔴 **A GUARD WHOSE TWO KEY SPACES BECOME DISJOINT BY CONSTRUCTION IS SILENTLY INERT, AND A GREEN RUN
+  CANNOT TELL YOU.** A collision check was `set(A) & set(B)`; re-keying one side to digests made the
+  intersection empty on **any** tree, forever, while the test still read as coverage. Caught by its own
+  author asking *what else reads this by key SHAPE* — measured under a planted collision: old spelling
+  **0**, resolving spelling **1**. **After changing a key's representation, enumerate every reader and
+  ask of each whether it can still SEE what it claims to.**
+- 🔴 **THE COMMIT-MESSAGE CHANNEL IS GATED BY NOTHING, AND THREE ROUNDS OF LEAK-CHECKING WERE EACH
+  CORRECT AND EACH BLIND TO IT.** One round reported "leaks: clean" over the added lines; another
+  scanned 1,545 tracked files with a validated positive control. Both were true of the surface they
+  read — **a commit message is not a tracked file**, and there is no `commit-msg` hook. The scrub's own
+  completeness paragraph therefore reads as "the disclosure is closed" while being silent about the
+  channel the same PR created.
+- ⚠ **A MUTATION SWEEP BELONGS AFTER A CLEAN ROUND, NOT BESIDE EACH ONE.** It was started and abandoned
+  **three times**, because every fix round superseded the tree it was measuring, and a sweep of a
+  superseded tree is evidence about nothing that will ship. ~111 rows × one full suite each is hours.
+  **Treat it as the pre-merge gate it is.**
+- ⚠ **THE `git commit` GUARD CANNOT RESOLVE `-C $VAR` AND JUDGES YOUR CALLER'S DIRECTORY — HIT TWICE IN
+  ONE SESSION.** It refused a commit in a detached scratch worktree as a commit to `main`, correctly,
+  because the variable's value was not in the command text. 🔴 **And a blocked call runs NOTHING in
+  it**, so a heredoc earlier in the same call never wrote its file and the follow-up died
+  `could not read log file` — which reads like a path mistake. **Absolute paths to `-C`, and after a
+  refusal assume nothing ran.**
 
 ## How to verify
 ```bash
