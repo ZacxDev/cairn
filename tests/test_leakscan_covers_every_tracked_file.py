@@ -533,6 +533,213 @@ def test_a_quoted_path_does_not_produce_a_false_diagnosis(tmp_path, monkeypatch)
     )
 
 
+def _repo_with_directory_like_entries(tmp_path: Path) -> Path:
+    """A repo whose enumeration carries BOTH non-file shapes `--others` yields.
+
+    🔴 BOTH, BECAUSE THEY ARRIVE DIFFERENTLY AND ONE FIX CAN MISS ONE. git
+    COLLAPSES an untracked nested repository into a single entry with a trailing
+    `/`; a symlink to a directory is listed as an ordinary entry with no slash
+    at all. A guard built on the trailing slash alone passes over the second,
+    and the second is the one `nix build` leaves in the tree as `result`.
+
+    Nothing here is contrived: an agent git worktree checked out under the
+    repository is the first shape, and worktree isolation makes it the normal
+    state of this repo rather than an accident.
+    """
+    repo = _repo_with(tmp_path, "notes.md", "# ordinary prose\n")
+
+    nested = repo / "agent-worktree"
+    nested.mkdir()
+    subprocess.run(["git", "-C", str(nested), "init", "-q"], check=True)
+    (nested / "inner.md").write_text("# belongs to another repository\n", encoding="utf-8")
+
+    (repo / "build-output").symlink_to(nested)
+    return repo
+
+
+def test_a_DIRECTORY_LIKE_entry_is_SKIPPED_AND_NAMED_not_called_unreadable(
+    tmp_path, monkeypatch, capsys
+):
+    """🔴 THE REGRESSION TEST. RED AT `b1cc307`, GREEN AFTER.
+
+    MEASURED at `b1cc307` (`origin/main` before this change), driving this same
+    shipped `main()`: `open()` raises `EISDIR` on a directory-like entry, a
+    single `except OSError` two lines later printed `COULD NOT READ` and the run
+    ended at exit **2**. Exit 2 is this gate's "could not vouch", so an ordinary
+    artefact in the working tree converted the security gate into a gate that
+    had not run — and every consumer that refuses on a non-zero scanner exit
+    then spends an operator override on a scanner artefact, which is how an
+    override becomes reflexive.
+
+    The claim has two halves and BOTH are asserted, because a fix that made the
+    whole thing exit 0 would be worse than the bug:
+
+      * the run completes — exit 0 over a tree whose only content is clean;
+      * each directory-like entry is NAMED as skipped, with a reason. A silent
+        drop is indistinguishable from a scanner wired to nothing, which is the
+        failure mode this module exists to prevent.
+
+    The companion control — a genuinely unreadable FILE still refusing — is
+    `test_a_genuinely_unreadable_FILE_still_refuses_with_exit_2` below. Read
+    them as a pair; either one alone can be satisfied by a broken scanner.
+    """
+    repo = _repo_with_directory_like_entries(tmp_path)
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+
+    enumerated = leakscan.enumerate_repo(repo)
+    assert "agent-worktree/" in enumerated and "build-output" in enumerated, (
+        f"the fixture's premise is gone: git no longer enumerates both "
+        f"directory-like shapes (it returned {enumerated}), so this test would "
+        f"pass over the condition it exists for"
+    )
+
+    rc = leakscan.main([])
+    out = capsys.readouterr().out
+
+    assert rc == 0, (
+        f"a directory-like enumeration entry still ends the scan at exit {rc}. "
+        f"`git ls-files --others` yields a collapsed nested repository and a "
+        f"symlink to a directory, neither of which any `open()` can read and "
+        f"neither of which can carry committable text — calling them unreadable "
+        f"abandons the whole scan over an artefact"
+    )
+    _, skipped = leakscan.partition_tracked_files()
+    by_path = {s.path: s.why for s in skipped}
+    for name in ("agent-worktree/", "build-output"):
+        assert name in by_path, (
+            f"{name!r} was neither scanned nor reported as skipped — it fell "
+            f"out of the accounting (skips were {sorted(by_path)})"
+        )
+        assert "DIRECTORY" in by_path[name], (
+            f"the skip for {name!r} is unexplained ({by_path[name]!r}); a reader "
+            f"cannot tell a correctly-ignored non-file from a gap in coverage"
+        )
+        assert f"SKIPPED  {name}" in out, (
+            f"{name!r} is skipped in memory but not named in the run's output, "
+            f"so it is invisible to anyone reading the verdict"
+        )
+    assert "notes.md" not in by_path, (
+        "an ordinary text file was swept into the skip bucket alongside the "
+        "directories — the fix is too wide and the gate now reads less"
+    )
+    # 🔴 A RELATIONSHIP, NOT A WORD — and a SURVIVED mutant is why it is here.
+    # Collapsing `directory_skip_reason` to one branch (so the collapsed
+    # nested-repository entry is reported with the symlink sentence) left the
+    # whole suite green: both shapes were still skipped and both still carried a
+    # non-empty reason. Asserting that the two reasons DIFFER kills that without
+    # pinning either sentence's wording, which a cosmetic reword would then
+    # break for nothing.
+    assert by_path["agent-worktree/"] != by_path["build-output"], (
+        f"both directory-like shapes are reported with the same reason "
+        f"({by_path['build-output']!r}). They arrive for different causes — git "
+        f"collapsing a nested repository, versus a symlink into a build output "
+        f"— and the remedy differs, so a reader told the wrong one is told to "
+        f"look in the wrong place"
+    )
+
+
+@pytest.mark.parametrize(
+    "shape,why",
+    [
+        ("dangling", "a dangling symlink: ENOENT, unreadable for every uid"),
+        ("mode_000", "a mode-000 file: EACCES, the classic unreadable file"),
+    ],
+)
+def test_a_genuinely_unreadable_FILE_still_refuses_with_exit_2(
+    tmp_path, monkeypatch, shape, why
+):
+    """🔴 THE CONTROL THAT DECIDES WHETHER THE FIX ABOVE NARROWED OR DELETED THE
+    GUARD, AND IT IS AN INVARIANT GUARD RATHER THAN REGRESSION COVERAGE.
+
+    It is GREEN at `b1cc307` too — the bug never made an unreadable file pass —
+    so it is not evidence that anything was fixed. What it is evidence of is
+    that exit 2 SURVIVED: widen `except IsADirectoryError` to `except OSError`
+    in `classify_entry`, which is the one-character version of this fix, and
+    both rows here go red while every other test in this module stays green.
+
+    Two shapes, because the specificity claim must not rest on who runs the
+    gate: `mode_000` needs a non-root process to be unreadable at all, and
+    `dangling` needs nothing.
+    """
+    repo = _repo_with(tmp_path, "notes.md", "# ordinary prose\n")
+    victim = repo / "unreadable.md"
+    if shape == "dangling":
+        victim.symlink_to(repo / "target-that-never-existed")
+    else:
+        victim.write_text("# plausibly sensitive\n", encoding="utf-8")
+        victim.chmod(0o000)
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+
+    try:
+        with pytest.raises(SystemExit) as exc:
+            leakscan.partition_tracked_files()
+    finally:
+        if shape != "dangling":
+            victim.chmod(0o600)
+
+    assert exc.value.code == 2, (
+        f"{why} did not make the gate refuse (exit {exc.value.code}). An entry "
+        f"the gate cannot open is the one case where neither bucket is honest; "
+        f"if this is not exit 2 the directory fix deleted the guard instead of "
+        f"narrowing it"
+    )
+
+
+def test_EVERY_unreadable_path_is_named_not_only_the_lexicographic_first(
+    tmp_path, monkeypatch, capsys
+):
+    """🔴 RED AT `b1cc307`, GREEN AFTER — the one-name-only trap, retired.
+
+    MEASURED at `b1cc307`: the refusal was `raise SystemExit(2)` inside the
+    enumeration loop, and `git ls-files` output is lexicographic. So however
+    many entries were unreadable the run could only ever name ONE, and there was
+    nothing in the output to say whether it was one of one or one of twenty. A
+    previous session read that single name as an elimination of the others and
+    was wrong.
+
+    Two unreadable entries, named to bracket the alphabet, and both must appear.
+    """
+    repo = _repo_with(tmp_path, "notes.md", "# ordinary prose\n")
+    for name in ("aaa-unreadable.md", "zzz-unreadable.md"):
+        (repo / name).symlink_to(repo / "target-that-never-existed")
+    monkeypatch.setattr(leakscan, "ROOT", repo)
+
+    with pytest.raises(SystemExit) as exc:
+        leakscan.partition_tracked_files()
+    err = capsys.readouterr().err
+
+    assert exc.value.code == 2
+    for name in ("aaa-unreadable.md", "zzz-unreadable.md"):
+        assert name in err, (
+            f"{name!r} is unreadable and the refusal does not name it. The run "
+            f"stopped on the first failure, so a reader fixing the one name it "
+            f"printed has no way to know the rest exist:\n{err}"
+        )
+
+
+def test_the_BUCKETING_control_is_gated_by_THIS_job_too():
+    """🔴 TWO TIERS AGAIN, AND THE NEW CONTROL MUST BE GREEN IN BOTH.
+
+    `bucketing_control` runs inside `--self-test`, which is the `leakscan` CI
+    job. `test_leakscans_OWN_CONTROLS_are_gated_by_THIS_job_too` above already
+    asserts the aggregate verdict, and that is exactly why this exists
+    separately: the aggregate is satisfied by any one control carrying the
+    others, so a bucketing control that stopped working would be invisible in
+    both tiers behind the fourteen negative controls beside it.
+
+    ⚠ This asserts the VERDICT, not the printed text — `bucketing_control`
+    returns True only when a nested-repo entry and a symlink-to-directory are
+    SKIPPED with a reason, a dangling symlink and a mode-000 file REFUSE, and an
+    ordinary text file is still QUEUED TO BE READ.
+    """
+    assert leakscan.bucketing_control() is True, (
+        "the bucketing control does not pass, so `classify_entry`'s three "
+        "answers are no longer three answers — a gate that skips everything "
+        "prints `0 findings` and a gate that refuses everything exits 2, and "
+        "both look exactly like the honest verdicts they are not"
+    )
+
+
 def test_the_scanner_reads_the_flake_when_it_walks_the_tree():
     """`flake.nix` is the file whose absence from coverage started all of this.
 
