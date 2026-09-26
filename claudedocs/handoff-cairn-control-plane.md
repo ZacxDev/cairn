@@ -24,43 +24,43 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`27bdeb3`** — ⚠ re-read rather than quoting it, and note a handoff doc can never record
-  its own merge, so a `State now` sha is stale by exactly one commit the moment it lands.
-- ✅ **THE CLOSING CONDITION IS ADDRESSED ⇒ THE ARC IS CLOSED**, re-verified on `main` rather than taken
-  from this doc's own claim. Each clause has a NAMED test — `TestTheAuthorizationMatrixIsExactlyThis` ·
-  `TestAScopeSharedFromOneUserToAnotherIsServedThroughTheBrowser` ·
-  `TestTheReplicaHonestyNoticeIsPinnedWhole` (pinned WHOLE) ·
-  `TestBackendsOrdersTheChainMachineTokenFirstAndTrustedHeaderLast` over four backends — and all three
-  commands it names are green: `pytest tests -q` **2172 passed / 0 failed** (two independent runs in two
-  worktrees, agreeing), `go test ./...` **19 ok / 0 FAIL** counted from result lines,
-  `packages.default.pname` = `cairn-go`. 🔴 **THE DoD IS FROZEN AND ANSWERS ONLY ITSELF** — ranks 18–20
-  are a SUCCESSOR arc, not this one's remainder.
-- ✅ **ZERO PRs ARE OPEN IN `cairn` AND NOTHING IS BLOCKED ON CODE.** Landed: `#108` → `84642ff`,
-  `#120` → `be47f0a`, `#121` → `f352bd9` (the third prune), `#122` → `27bdeb3` (this verdict), and a
-  sibling's `#119` → `d27cafb` closing issue `#111`. In the handoff-tooling repo, **rule (p) is LIVE**
-  as `b4233ea9` after a five-round ladder.
-- 🔴 **THE MUTATION SWEEP FOR RULE (p)'s FIVE UNSCORED ROWS IS DEAD, NOT PAUSED — RE-RUN IT FROM
-  SCRATCH.** It was a background process of the session that started it, so it did not outlive that
-  session. **Reached 24 of ~111 rows: baseline control `clean`, 0 failures, 0 `WRONG-KILLER`, and
-  0 rule-(p) rows** — those come late in the file, so the five rows this was run for are STILL
-  unscored. ⚠ Do not read "24 rows green" as partial coverage of them; it is coverage of other guards.
-  Re-run on a detached worktree of that repo's `main`, verified tree-identical before starting, with
-  `PYTHONDONTWRITEBYTECODE=1`; budget ~3 min/row under load. Hand-driven kills are not battery scores.
-- ⚠ **NO TASK-BOARD FIELD IS RECORDED IN THIS DOC'S FRONT MATTER, AND THAT IS A MEASURED ABSENCE
-  RATHER THAN AN OVERSIGHT.**
-  The resolver exited **5** (nothing resolved) while its own POSITIVE CONTROL answered 1 link for a
-  different session — so the board is reachable, the base URL right and the token accepted, and this
-  session genuinely touched no task. A zero from that endpoint cannot distinguish "touched none" from
-  "wrong id"; the control is what makes it the former.
-  🔴 **AND THE FIELD'S OWN NAME CANNOT BE WRITTEN IN THIS REPOSITORY** — it embeds a denied
-  identifier, so the leak gate refuses any delta that names it. Eighth event of that class here, and
-  the first where the *forbidden string is mandated by the tool*: describe the field by ROLE, and do
-  not reach for the literal to be precise.
-- ⏳ **CARRIED FORWARD, UNCHANGED:** the deploy is done and GitHub sign-in is armed, but a COMPLETED
-  sign-in is still unverified (rank 13) and the share flow still cannot be verified on the deployed
-  surface with one user (rank 9). The three sign-in variables remain a SET: dropping `JWKS_URL` or
-  `ISSUER` ⇒ **exit 78, pod DOWN**; dropping `REDIRECT_URL` ⇒ pod UP, button absent — the cheapest
-  remedy.
+- `main` @ **`cd86714`** — ⚠ re-read rather than quoting it; a handoff doc can never record its own
+  merge, so a `State now` sha is stale by exactly one commit the moment it lands.
+- ✅ **THE ARC REMAINS CLOSED AND WAS NOT RE-OPENED.** The closing condition was re-verified on `main`
+  at `27bdeb3`; `main` has moved exactly one commit since, `cd86714`, and it is **docs-only — one file,
+  this document, 37+/26-** (`git show --stat cd86714`). No code moved under that verification, so the
+  ADDRESSED verdict carries forward. ⚠ **This session did NOT re-run the three commands**; it carried
+  the earlier measurement forward on the strength of the docs-only delta, which is a weaker claim than
+  a fresh green and is stated as one. Ranks 18–20 are the SUCCESSOR arc.
+- ✅ **ZERO PRs OPEN IN `cairn`** (`gh pr list --state open` → `[]`), nothing blocked on code.
+- ⏳ **RANK 18 IS CLAIMED AND IN FLIGHT** — `claim-work cairn-control-plane-18`, rc 0. An `opencode`
+  dispatch (`deepseek-v4-pro`) is driving the operator's Brave through the `browser` bridge, **background
+  tabs only, no window raised**, over a 24-item / 10-section feature matrix built from
+  `internal/ui/routes.go`'s ledger. ⚠ Rank 9 was ALREADY CLAIMED by another session two days ago, which
+  is the independent reason 18 was the right pick.
+- 🔴 **THE DEPLOYED BROWSER SURFACE IS 13 COMMITS STALE, MEASURED TWO INDEPENDENT WAYS.** Filed under
+  `Defects (batched)`. The bump is mechanical and the artefact already exists; it is an operator call
+  because a commit in the deployment-manifest repo IS a deploy. **Operator decision this session: run
+  the validation pass locally now and keep the bump a separate decision.**
+- 🔴 **THE HAND-RUN WORLD FOR THIS PASS IS NOT ON PORT 8103.** 8103 was already held by another
+  session's `cairn-ui` — exactly the collision this document predicted. This one is
+  **127.0.0.1:8147, PID 3427887**, session `bb38a675`, built with `go build` from `cd86714` into a
+  scratchpad, over a parity-world store plus two users joined by `-set-member` (journal 10 lines).
+  It is EPHEMERAL and its credential is throwaway; nothing in it is handed over.
+- ⏳ **CARRIED FORWARD, UNCHANGED:** a COMPLETED GitHub sign-in on the deployed surface is still
+  unverified (rank 13), and the share flow still cannot be verified on the deployed surface with one
+  user (rank 9). The three sign-in variables remain a SET: dropping `JWKS_URL` or `ISSUER` ⇒ **exit 78,
+  pod DOWN**; dropping `REDIRECT_URL` ⇒ pod UP, button absent.
+- 🔴 **THE MUTATION SWEEP FOR RULE (p)'s FIVE UNSCORED ROWS IS STILL DEAD AND WAS NOT RESTARTED THIS
+  SESSION.** Unchanged from the previous update: re-run from scratch on a detached worktree of that
+  repo's `main`, verified tree-identical before starting, with `PYTHONDONTWRITEBYTECODE=1`; budget
+  ~3 min/row. The 24 rows the dead run scored were OTHER guards, not the five. Hand-driven kills are
+  not battery scores.
+- ⚠ **NO TASK-BOARD FIELD IS RECORDED, AND THAT IS A MEASURED ABSENCE AGAIN.** The resolver exited **5**
+  while its own POSITIVE CONTROL answered 1 link for a different session — so the board is reachable
+  and this session genuinely touched no task. A zero from that endpoint cannot distinguish "touched
+  none" from "wrong id"; the control is what makes it the former. The field's own name still cannot be
+  written in this repository — describe it by ROLE.
 
 ## Next steps (ranked)
 
@@ -68,9 +68,7 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 rank is half a `claim-work` slug: delete the number and `claim-work --slug-for <doc> <n>` resolves to
 an item nobody can find.** Re-ranking re-points every live claim.
 
-🔴 **AND THESE ARE A NEW ARC, NOT THIS ONE'S REMAINDER.** The closing condition is ADDRESSED and
-frozen. What follows was asked AFTER it was set, so it belongs to a successor effort — say so when you
-pick it up rather than treating a closed arc as open.
+🔴 **AND THESE ARE A NEW ARC, NOT THE CLOSED ONE'S REMAINDER.** Say so when you pick one up.
 
 1. ✅ **DONE — #74 merged as `93d0f03`.** forcing: gate.
 2. ✅ **DONE — merged as `562a4f6f`.** forcing: gate.
@@ -86,18 +84,19 @@ pick it up rather than treating a closed arc as open.
 6. ✅ **DONE.** forcing: user.
 7. ✅ **DONE — rename landed as `56cc56e` (#69).** forcing: user.
 8. ✅ **DONE — rule (o) merged as `c4490f07` in the handoff-tooling repo.** forcing: incident.
-9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — ASKED THREE TIMES AND STILL NOT DONE.** *"is this
-   shipped and usable from browser?"* (09-22) · *"did all the ui land and ready for me to start
-   testing and validation?"* (09-23) · *"i want to get this shipped, not just on localchost"* (09-23).
-   🔴 It CANNOT be done on the deployed surface as it stands — one user, empty candidate select. Needs
-   the hand-run recipe under `## How to verify`, or a second co-member provisioned in-cluster first.
+9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — ASKED THREE TIMES AND STILL NOT DONE.** 🔴 **CLAIMED BY
+   ANOTHER SESSION** (`cairn-control-plane-9`, two days old) — check the lock before touching it.
+   ⚠ **Rank 18 measured something that changes what this item has to say to its human:** the entries
+   page carries NO link to the share flow, so "sign in and test sharing" lands a human on a page with
+   no way to get there. Tell them the URL path explicitly, or fix the navigation first (see
+   `Defects`). It still CANNOT be done on the deployed surface as it stands — one user, empty
+   candidate select — so it needs the hand-run recipe under `## How to verify`, or a second co-member
+   provisioned in-cluster.
    forcing: user — the operator reserved the browser step to a human, and has now asked three times.
 10. ✅ **DONE — merged as `901b77d` (#104), verified on a real publish run.** forcing: user.
 11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`**, held because that repo's `main` is red for an
-    unrelated reason. ⚠ **Its value rose this session:** rule (p)'s own ladder found a commit-message
-    disclosure in a PUBLIC repo, and that channel is gated by NOTHING there — no `commit-msg` hook,
-    and every leak scan reads tracked FILES. `#1867` would not have caught that particular one (it
-    gates the tool's own writes), but the class it targets just produced a real incident.
+    unrelated reason. Its value rose when rule (p)'s ladder found a commit-message disclosure in a
+    PUBLIC repo, a channel gated by NOTHING there.
     forcing: incident.
 12. **CORRECT TWO FILES THAT ASSERT THAT REPO'S CI CHECKS BLOCK A MERGE.** They do not
     (`required_status_checks` → 404). Both wrong in the PERMISSIVE direction.
@@ -105,7 +104,9 @@ pick it up rather than treating a closed arc as open.
 13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** ⚠ Precondition: sign-in resolves
     the token's `sub` against a user the control plane ALREADY holds; an unknown subject is refused by
     design and all three causes collapse into one 401, so **the pod's log is the only place the
-    mechanism exists.** forcing: user.
+    mechanism exists.** ⚠ **And the surface it would be tested against is 13 commits stale** — see
+    `Defects`; #117 does not touch the sign-in path, so this item is not blocked on the bump, but say
+    which artefact you measured. forcing: user.
 14. ✅ **DONE — `#117` merged as `9c24bc4`.** 🔴 Its ladder stopped on the ATTRIBUTION GATE — two
     consecutive payload-zero rounds — **NOT on a clean round**; a later reader must not upgrade that.
     forcing: gate.
@@ -114,31 +115,29 @@ pick it up rather than treating a closed arc as open.
     FILED rather than fixed, which is what that gate firing means. ⏳ Five mutation rows remain
     unscored — tracked in `State now`, not here. forcing: gate.
 16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** `#117` merged WITH the toolchain, so this is now
-    keep-or-replace rather than a gate on a PR. forcing: user.
+    keep-or-replace rather than a gate on a PR. ⚠ Its gcroot was living in the repo root as `result`
+    and arming the leak gate; relocated this session to a path outside the repo. forcing: user.
 17. ✅ **DONE — `cairn#108` merged as `84642ff`**, verified by CONTENT because ancestry is false after
     every squash. forcing: gate.
-18. **NEW — DRIVE A BROWSER VALIDATION PASS OVER EVERY UI FEATURE, VIA `opencode`.** Asked 09-22
-    (*"call opencode to use browser skill to drive validation pass on all the ui features"*) and
-    🔴 **there is NO TRACE of it ever being started** — the only `opencode` mention in this document is
-    about something else. It is NOT the same item as rank 9: that is one human clicking the share
-    flow, this is a systematic pass over every feature, in another runtime.
-    **Closing condition:** a recorded run naming the features covered and what it found, or a written
-    line retiring the ask. forcing: user — asked directly and never actioned.
-19. **NEW — RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23, with the design stated in
-    the same message (*"a scoped, multiplayer fact store, with a simple cli interface for agents … and
-    a simple ui for humans"*). 🔴 **0 hits for `the-algorithm` across this doc, the archive and the
-    plan.** The fact-rot sub-question DID get a delete-first pass; the whole-design trace has no
-    record. **Closing condition:** a recorded pass, question-requirements → delete → simplify in that
-    order, or a written line saying the fact-rot pass discharged it. forcing: user.
-20. **NEW — THE ARCHIVE IS 26,781 B OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE.** 174,237 B
-    against a grandfathered 147,456 B. A FOREIGN ledger entry sits outside every one of that gate's
-    corpus checks by construction, so no check fires. ⚠ **And the prune created a second instance of
-    the same gap in the other direction:** this doc is now 78,144 B against an allowance of 98,304 B,
-    i.e. **20,160 B looser than the ledger's own tightest-quantum discipline requires**, and that is
-    equally invisible. **Closing condition:** both entries re-derived from measured size, or a written
-    line exempting foreign entries from tightness — checked by that gate's corpus test reporting the
-    numbers, i.e. closed when they are READABLE by the gate rather than when someone raises them.
-    forcing: gate.
+18. ⏳ **IN FLIGHT — THE BROWSER VALIDATION PASS OVER EVERY UI FEATURE, VIA `opencode`.** Claimed as
+    `cairn-control-plane-18`. Target is a hand-run instance from `main`, by operator decision, because
+    the deployed one is 13 commits stale and its share flow has nobody to share with. Artefacts live
+    OUTSIDE this repo, under a `.cairn-r18` directory in the workspace root (brief, report,
+    screenshots) and the dispatch log beside it. **Closing condition unchanged:** a recorded run naming
+    the features covered and what it found, or a written line retiring the ask. ⚠ **Two findings are
+    already recorded under `Defects` and were verified independently of the subagent** — do not
+    re-derive them. forcing: user — asked directly and never actioned until now.
+19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23, with the design stated in the same
+    message. 🔴 **0 hits for `the-algorithm` across this doc, the archive and the plan.** The fact-rot
+    sub-question DID get a delete-first pass; the whole-design trace has no record.
+    **Closing condition:** a recorded pass, question-requirements → delete → simplify in that order, or
+    a written line saying the fact-rot pass discharged it. forcing: user.
+20. **THE ARCHIVE IS 26,781 B OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE.** 174,237 B against a
+    grandfathered 147,456 B; and the prune left THIS doc 20,160 B looser than the ledger's own
+    tightest-quantum discipline requires. A FOREIGN ledger entry sits outside every one of that gate's
+    corpus checks by construction, so no check fires either way. **Closing condition:** both entries
+    re-derived from measured size, or a written line exempting foreign entries from tightness — closed
+    when the numbers are READABLE by that gate rather than when someone raises them. forcing: gate.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section
@@ -236,6 +235,36 @@ pick it up rather than treating a closed arc as open.
   the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; three files not `gofmt`-clean
   with nothing in CI grepping it; `-race` gated in one tier only; and P4 rounds 1 and 3's guards
   absent from the persistent battery.
+
+- 🔴 **THE DEPLOYED BROWSER SURFACE IS 13 COMMITS STALE, AND THE ONE UI COMMIT AMONG THEM IS THE ONE A
+  VALIDATION PASS IS FOR.** The workload runs `cairn-ui:sha-71041ff8…` (#106);
+  `git rev-list --count 71041ff..origin/main` = **13**, and
+  `git log 71041ff..origin/main -- internal/ui cmd/cairn-ui` lists exactly **one** — `9c24bc4` (#117),
+  the Tailwind theming. **Measured two independent ways at the edge, each with its local control:**
+  the stylesheet route serves **1,146 B** of hand-written CSS where `main` serves **28,109 B** of
+  generated output (`internal/ui/app.css`, confirmed byte-for-byte on a hand-run instance from `main`);
+  and the edge still sends the `Content-Security-Policy` header that #117 DELETED, where `main` sends
+  none. So the live page is the pre-theme UI. 🔴 **THE BUMP IS MECHANICAL AND THE ARTEFACT ALREADY
+  EXISTS** — the registry answers **200** for the manifest at `main`'s sha, with the deployed tag as a
+  positive control (200) and a bogus short tag as a negative control (404) — it is a one-line image-tag
+  change in the deployment-manifest repo's UI Deployment. ⚠ **AND THE BUMP HAS A CONSEQUENCE WORTH
+  STATING BEFORE IT IS TAKEN: it REMOVES a CSP that is currently live.** #117's operator decision to
+  delete that header has never actually reached production; the bump is the moment it does. **Closing
+  condition:** the tag names a revision whose distance to `origin/main` is 0 at the moment it lands,
+  recorded — or a written line accepting the lag and saying for how long.
+- 🟡 **THE ENTRIES PAGE OFFERS NO WAY TO REACH THE SHARE FLOW, WHICH IS WHY "GO TEST SHARING IN THE
+  BROWSER" KEEPS STALLING.** Measured on a hand-run instance from `cd86714`, signed in as a principal
+  owning two scopes: `GET /` is **1,386 B** with **0** occurrences of the word "share", exactly **one**
+  `href` (the stylesheet) and **one** form action (sign-out). Positive control: the share index itself
+  contains **8** occurrences, so the grep can see the word. The flow is not broken — bare `GET /share`
+  answers **200** with "Scopes you can share" and both scopes linked — but **nothing navigates there**,
+  so a human sent to the landing page has to know to type the path. ⚠ **A SECOND HALF, AND IT IS A
+  MESSAGE DEFECT RATHER THAN A LOGIC ONE:** `?scope=` is keyed on the scope **ID**, never the display
+  name — deliberate, and `render.go`'s comment says why (a name is user text and would sit in a query
+  position). But a human who hand-types the name they can see gets **404** and the words *"no such
+  scope, or it is not yours to share"* for a scope that **is** theirs to share. The refusal is correct
+  and its sentence is false. **Closing condition:** one PR that links the share index from the entries
+  page, plus a decision on whether the name-keyed refusal should say something true.
 
 ## Gotchas / decisions / dead-ends
 🔴 **THIS SECTION HAS BEEN PRUNED THREE TIMES, AND PRUNED MEANS *MOVED*: NO PRUNE HAS DELETED NOR
@@ -724,6 +753,51 @@ follow-up with a closing condition on the PR rather than fixed here.
   to stop. **When a doc's closing condition and the operator's own words disagree, the words win.**
   ⚠ A second constraint with the same shape: *"ask me clarifying questions first"*, five times in four
   sessions, one day apart — retyped every session because it never held.
+
+- 🔴 **A SUBAGENT'S FINDING WAS RIGHT ABOUT THE OBSERVABLE AND WRONG ABOUT THE MECHANISM, AND
+  RE-DERIVING IT MYSELF IS THE ONLY REASON A FALSE DEFECT WAS NOT FILED.** The browser pass reported
+  *"the share page says `no such scope, or it is not yours to share` for BOTH scopes"* — true, and it
+  reads as the share flow being broken for its own owner. The discriminating control took one command:
+  `?scope=<display name>` → **404** for every scope, `?scope=<scp_ id>` → **200** for both owned ones
+  and 404 for an unowned one. So the refusal is the ID/name distinction working exactly as
+  `render.go`'s comment says it must, not an authority defect. 🔴 **AND THE SECOND CONTROL IS WHAT
+  STOPPED THE NEXT WRONG HEADLINE**: before writing "the share flow is unreachable", bare `GET /share`
+  was tried and answers **200** with a working index. The true finding is a NAVIGATION gap, which is
+  much narrower than either draft. **Two rival mechanisms produced the same 404; only a request that
+  distinguishes them says which.**
+- 🔴 **A `nix build` GCROOT IN THE REPO ROOT CAN BE RETIRED WITHOUT LOSING IT, AND THAT IS THE MISSING
+  HALF OF AN ENTRY THAT ONLY SAID "DO NOT REMOVE IT".** `result` here was a gcroot for the Tailwind
+  toolchain, and it takes `leakscan` to exit 2 (and eight of this repo's own tests red) because
+  `git ls-files --others` yields the symlink and the scanner reads it as a file. Deleting it would let
+  the store path be collected; the recorded advice was replace-then-remove, with no recipe. The recipe
+  is one command: `nix-store --add-root <a path outside the repo> --indirect --realise <the store
+  path>` re-registers the SAME path under a new root, and only then is `rm result` free. Done this
+  session; the repo root is now clean of gcroots.
+- 🔴 **REMOVING THE GCROOT DID NOT MAKE `leakscan` GREEN, AND THE RESIDUAL IS THE OTHER HALF OF THE
+  SAME FILED DEFECT.** rc stayed **2** on `.claude/worktrees/agent-…/` — **nine** abandoned agent
+  worktrees, all `dirty=0`, none with any process cwd'd inside (checked by reading `/proc/*/cwd`), with
+  branches for work that has all merged. **They were NOT removed**: this document's own entry says an
+  agent worktree is not yours to remove, and the widest reading of that covers an abandoned one, since
+  "abandoned" is a judgement and "clean" is not the same as "finished". Recorded here so the next
+  session does not re-measure it: the gcroot half is closed, the worktree half is open, and the two
+  were always one defect.
+- **Decision (operator, this session): run rank 18's validation pass against a hand-run instance from
+  `main` and keep the deployed image bump a SEPARATE decision.** Offered and declined: bumping the
+  deployed image first and validating there (answers "not just localhost", but the share flow still
+  has nobody to share with on that surface), and doing both.
+- ⚠ **A SECRET HANDED TO A DISPATCHED AGENT BY FILE PATH STILL REACHED THE LOG, THROUGH THE TOOL'S OWN
+  USAGE ERROR.** The brief deliberately passed a credential as a path to read rather than as a value,
+  to keep it out of the brief file. The agent then called `browser type` with the value as an extra
+  positional; the CLI refused — and its refusal message **echoed the value**, which the dispatch log
+  captured verbatim. The credential was throwaway and its world loopback-only and ephemeral, so the
+  cost here was zero, but the shape is general: **a tool that prints your argument back at you on a
+  usage error turns "passed by path" into "passed by value".** Prefer a tool that reads the secret
+  itself; failing that, treat the log as secret-bearing and destroy it with the world.
+- ⚠ **8103 WAS ALREADY TAKEN, WHICH IS THE PREDICTED COLLISION ARRIVING ON SCHEDULE.** This document
+  records that `## How to verify` naming a fixed port is the cause, and that the fix is `ss -ltn` first
+  plus handing over the PID and session id. Followed: this session's instance is **127.0.0.1:8147, PID
+  3427887, session `bb38a675`**. The occupant of 8103 was left alone. **The recipe still names 8103 —
+  the prediction has now been confirmed twice and the recipe has still not been changed.**
 
 ## How to verify
 ```bash
