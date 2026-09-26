@@ -77,8 +77,36 @@
    * ⚠ 2000px AND NOT 3427px. A breakpoint is where a layout should CHANGE, not a device
    * somebody owns: pinning it to one machine's width would leave every display between
    * 1536 and 3427 — which is most large monitors — on the `2xl` layout. 2000 is where four
-   * columns of this card stop being cramped. */
-  --breakpoint-ultra: 2000px;
+   * columns of this card stop being cramped.
+   *
+   * 🔴 AND IT IS SPELLED IN `rem`, NOT `px`, WHICH IS NOT COSMETIC: A `px` BREAKPOINT HERE
+   * SORTS BEFORE EVERY DEFAULT ONE AND IS THEREFORE DEAD AT EVERY WIDTH WHERE IT MATTERS.
+   * Measured, not reasoned: this key read `2000px` and the generated `body` rule emitted
+   *
+   *   @media (width >= 2000px) { max-width: 112rem }      ← ultra, FIRST
+   *   @media (width >= 40rem)  { … }
+   *   @media (width >= 64rem)  { … }
+   *   @media (width >= 80rem)  { max-width: var(--container-7xl) }   ← xl, LAST
+   *
+   * At 3440px every one of those queries matches, media queries add no specificity, and the
+   * last declaration wins — so the shell capped at `xl`'s 80rem (1280px) and the `ultra`
+   * rung was inert on exactly the displays it was added for. A real Chromium rendered 1232px
+   * of content in a 3440px viewport, 35.8% of the width. 🔴 THE TELL IS THE ONE THAT MAKES
+   * THIS WORTH WRITING DOWN: the rule IS in `app.css`, correctly nested inside `body`, with
+   * the right query and the right value. Grepping the stylesheet for it finds it and proves
+   * nothing — CASCADE ORDER IS NOT VISIBLE IN A GREP.
+   *
+   * The cause is the UNIT and not the value: Tailwind v4 orders breakpoint variants by
+   * their resolved size, `2000px` is larger than every default (`2xl` is 96rem = 1536px),
+   * and it sorted FIRST anyway — a px length and a rem length are not comparable without
+   * assuming a root font size, so the mixed-unit key fell out of the ordering. Respelled in
+   * the same unit as the defaults it has to sort against, it emits last and wins.
+   *
+   * 125rem IS 2000px at the 16px root font size, so the breakpoint's VALUE is unchanged on a
+   * default browser — and on a reader who has enlarged their root font it now scales with
+   * the other four instead of standing still, which is the behaviour every default breakpoint
+   * already had. Do not "simplify" this back to px. */
+  --breakpoint-ultra: 125rem;
 
   --radius-card: 0.625rem;
 
@@ -130,7 +158,16 @@
      * 48rem column is correct on a laptop and is a narrow strip on anything wider; the
      * cards below are a grid that has nowhere to grow into if their container does not.
      * The padding grows with it — a full-bleed layout at 3427px with 1.5rem of gutter
-     * reads as text pressed against the bezel. */
+     * reads as text pressed against the bezel.
+     *
+     * 🔴 THIS IS THE ELEMENT THAT CAPS THE PAGE. `.page-main` carries no `max-width` of
+     * its own, so whatever this rung resolves to is what a reader sees, minus the gutter.
+     * Writing the ladder here rather than on `<main>` is deliberate — one shell, one
+     * answer, and a page added later inherits it — but it means a rung that loses the
+     * cascade is invisible from the element anybody would think to inspect. It lost one:
+     * see `--breakpoint-ultra` above, where the top rung was dead for the whole of its
+     * first life. `uiaudit`'s content floor is what measures that this ladder REACHES the
+     * top rung, at 3440px, on every page. */
     @apply mx-auto w-full max-w-3xl px-4 py-6;
     @apply sm:px-6 lg:max-w-5xl lg:py-10 xl:max-w-7xl ultra:max-w-[112rem] ultra:px-12;
   }

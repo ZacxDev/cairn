@@ -214,12 +214,6 @@
     max-width: var(--container-3xl);
     padding-inline: calc(var(--spacing) * 4);
     padding-block: calc(var(--spacing) * 6);
-    @media (width >= 2000px) {
-      max-width: 112rem;
-    }
-    @media (width >= 2000px) {
-      padding-inline: calc(var(--spacing) * 12);
-    }
     @media (width >= 40rem) {
       padding-inline: calc(var(--spacing) * 6);
     }
@@ -231,6 +225,12 @@
     }
     @media (width >= 80rem) {
       max-width: var(--container-7xl);
+    }
+    @media (width >= 125rem) {
+      max-width: 112rem;
+    }
+    @media (width >= 125rem) {
+      padding-inline: calc(var(--spacing) * 12);
     }
   }
   h1 {

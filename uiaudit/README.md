@@ -353,6 +353,17 @@ nothing). Measured, both halves in the same run:
 
 **The structural zeros are reported as structural in the walk log itself**, not as passes.
 
+🔴 **And one `false` in that table is narrower than it reads: `horizontal overflow — false on
+every page` is a REAL zero about the wrong half of the question.** A container that is too
+NARROW never overflows, so this signal is structurally unable to see a page that ignores the
+viewport — measured, not feared: a walk over 65 captures at five widths reported no overflow on
+a tree whose every page rendered 1232px of content inside a 3440px viewport (35.8%). The
+CONTENT FLOOR in `refuseWalkRegressions` is the other half, and it is a fraction of
+`window.innerWidth` rather than an absence of overflow. It has **no control-page counterpart**:
+the control page carries no `<main>` on purpose, so its instrument validation is the negative
+controls in `refusals_test.go` plus a live red/green over the real surface — both recorded in
+`internal/ui/README.md` under "`uiaudit` captures five widths".
+
 ⚠ **One claim in an earlier draft of that log line was FALSE and is corrected.** It printed
 `console=N network=M — STRUCTURAL ZERO` over both numbers. The console half holds. The network
 half did not: the same run had a non-zero network count, because **Chromium requests

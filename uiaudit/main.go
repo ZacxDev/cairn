@@ -181,10 +181,15 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 					return fmt.Errorf("%w\n--- cairn-ui log ---\n%s", err, world.Log())
 				}
 				captures = append(captures, c)
-				fmt.Printf("uiaudit: captured %-38s %-9s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v) scripts=%d console=%d net=%d digest=%v\n",
+				// `main=NNNpx/MM%` is printed on EVERY capture, not only the ones the floor
+				// binds: the number is the only way a reader of this log can see the width
+				// ladder working at four widths it is not asserted at.
+				fmt.Printf("uiaudit: captured %-38s %-9s %d axe=%d layout(tap<44=%d text<12=%d overflow=%v no-viewport-meta=%v main=%dpx/%.0f%%) scripts=%d console=%d net=%d digest=%v\n",
 					t.Path, vp.Name, c.DocStatus, len(c.Violations),
 					c.Layout.SmallTapTargets, c.Layout.SmallText, c.Layout.HorizontalOverflow,
-					c.Layout.MissingViewportMeta, c.ScriptCount,
+					c.Layout.MissingViewportMeta,
+					c.Content.MainWidth, 100*float64(c.Content.MainWidth)/float64(c.Content.InnerWidth),
+					c.ScriptCount,
 					len(c.Console), len(c.Network), c.HasDigest())
 
 				// Expansion is read from ONE viewport's render, not all five: the hrefs a
@@ -334,30 +339,58 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 	return nil
 }
 
-// printSignalSummary reports every signal at the scope it was measured, and labels the
-// zeros that are zero BY CONSTRUCTION as structural rather than as passes.
+// contentWidthFloor is the share of the viewport the page's own `<main>` must occupy at the
+// widest captured width.
 //
-// 🔴 A REASSURING ZERO IS INDISTINGUISHABLE FROM AN INSTRUMENT WIRED TO NOTHING, SO EACH
-// ZERO HERE SAYS WHICH KIND IT IS. `control_test.go` is the positive control that shows the
-// same collectors CAN count; the README reports the pair.
+// 🔴 IT IS A FLOOR, NOT A TARGET. A page that uses MORE of the display satisfies it; nothing
+// here asks any page to fill the screen, and nothing here has an opinion about line length
+// below this line. It exists only to refuse the one shape the overflow refusal cannot see.
 //
-// ⚠ AND THE STRUCTURAL CLAIM IS NARROWER THAN AN EARLIER DRAFT OF IT SAID, WHICH IS A
-// CORRECTION RATHER THAN A CAVEAT. That draft printed "console=%d network=%d — STRUCTURAL
-// ZERO" over both numbers, on the reasoning that a page with no scripts and no subresources
-// cannot produce either. The first half holds: `internal/ui` ships an inline stylesheet, no
-// script, and an XSS guard asserting `"<img"` can never render, so the console collector has
-// nothing to observe. The second half was FALSE, and the walk that printed it had a non-zero
-// network count on the same line — because a browser requests `/favicon.ico` on its own
-// initiative and this surface has no such row, so it answers the dispatcher's refusal. That
-// is counted separately (see [Browser.FaviconRefusals]) and the per-page network zero below
-// is a claim about SUBRESOURCES THE PAGE ASKED FOR, which is a narrower sentence than the one
-// that was wrong.
-// refuseWalkRegressions turns three per-page measurements into a FAILED WALK.
+// 🔴 0.45 IS DERIVED FROM THE DECLARED LAYOUT AT ONE STATED WIDTH RATHER THAN CHOSEN FOR
+// FEEL, AND BOTH ENDS OF THE RANGE IT SITS IN WERE MEASURED IN A REAL CHROMIUM OVER THIS
+// SURFACE AT `contentFloorWidth`:
+//
+//	the defect  1232px of content in a 3440px viewport = 35.8%
+//	the intent  `ultra:max-w-[112rem]` (1792px) less `ultra:px-12` (48px a side)
+//	            = 1696px of content in a 3440px viewport = 49.3%
+//
+// 0.45 refuses the first by 9.2 points and admits the second with 4.3 to spare. That
+// headroom is what makes it a floor and not a golden value: widening the ultra gutters to
+// `px-24` still passes (1600px, 46.5%), while any change that puts the shell back on a
+// narrower cap does not.
+const contentWidthFloor = 0.45
+
+// contentFloorWidth is the viewport width `contentWidthFloor` was derived at, pinned as a
+// literal because the fraction is NOT scale-free: the shell's cap is an absolute 112rem, so
+// one honest layout is 49% of 3440 and 36% of 5000. Pinning the width is what keeps the
+// fraction a claim with a scope rather than a number that silently goes wrong the day
+// somebody widens the matrix — `refuseWalkRegressions` refuses rather than measures if the
+// widest declared viewport stops being this one.
+const contentFloorWidth = 3440
+
+// signinMainClass is the `<main>` class of the ONE page exempt from the content floor.
+//
+// 🔴 THE EXEMPTION REQUIRES THE CLASS **AND** THE PATH, AND EITHER ALONE WOULD BE A HOLE.
+// The sign-in page's `<main>` IS its card — a `max-w-md` form, 13% of an ultrawide viewport
+// — and that is design rather than defect: a credential field stretched across 1696px is
+// worse, not better. But an exemption spelled as a CLASS is walked by putting that class on
+// a page that should be wide, and one spelled as a PATH is walked by moving wide content
+// behind the sign-in route. Requiring both makes each direction loud, and a rename of either
+// makes the floor FIRE with this message rather than pass in silence.
+const signinMainClass = "signin-main"
+
+// contentFloorExempt answers whether this capture is the one page the floor does not bind.
+// See [signinMainClass] for why the predicate reads two things and not one.
+func contentFloorExempt(c *Capture) bool {
+	return c.Target.Path == ui.SignInPath && c.Content.MainClass == signinMainClass
+}
+
+// refuseWalkRegressions turns four per-page measurements into a FAILED WALK.
 //
 // 🔴 A NUMBER IN A SUMMARY LINE IS NOT A GATE, AND THIS FILE ALREADY RECORDS WHAT THAT
 // COSTS. `printSignalSummary` has printed `pages with horizontal overflow=N` since this
 // harness existed; nothing read it, so a responsive regression would have been a digit in a
-// log beside an exit 0. The three below are the properties this surface is supposed to
+// log beside an exit 0. The four below are the properties this surface is supposed to
 // have, so each is a refusal:
 //
 //   - NO HORIZONTAL OVERFLOW AT ANY CAPTURED WIDTH. This is the single layout defect no
@@ -371,20 +404,79 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 //   - AXE ACTUALLY RAN. `Violations: 0` is produced identically by a clean page and by an
 //     injection that never executed, and this whole program's a11y half is inert in the
 //     second case. A decodable `testEngine` is what separates them.
+//   - THE CONTENT IS NOT A COLUMN IN A SEA OF DARK AT THE WIDEST WIDTH. 🔴 THIS ONE IS HERE
+//     BECAUSE THE OVERFLOW REFUSAL ABOVE IS STRUCTURALLY BLIND TO IT, WHICH IS MEASURED AND
+//     NOT SUSPECTED: a walk reported `0 overflow` over 65 captures at five widths and was
+//     CORRECT, on a tree whose pages rendered 36% of an ultrawide viewport — a container
+//     that is too NARROW never overflows, so the entire class "the page ignores the
+//     viewport" shipped green through every check this harness had. Too-wide and too-narrow
+//     are different claims and both are asserted; neither replaces the other.
 //
 // ⚠ IT IS NOT A THRESHOLD ON `SmallTapTargets` OR `SmallText`. Those two are the hub's to
 // turn into findings — `vendor-js/VENDOR.md` records that the server is the single source
 // of those thresholds and that a harness computing one here would be a second, invisible
-// copy. The three above are not thresholds: each is a binary property with no number in it.
+// copy. The content floor is not one of those: it is not a rendering heuristic the hub has
+// an opinion about, it is a property of THIS surface's own declared width ladder, derived
+// from it and asserted nowhere else.
 func refuseWalkRegressions(captures []*Capture) error {
 	if len(captures) == 0 {
 		return fmt.Errorf("refuseWalkRegressions was handed NO capture, so its clean verdict would be about nothing")
 	}
-	var overflow, scripted, axeless []string
+	var overflow, scripted, axeless, narrow []string
 	widths := map[string]bool{}
+	// The content floor's own accounting: how many captures it actually looked at, how many
+	// it let through as the declared exemption, and the narrowest fraction it saw. All three
+	// are printed on a clean run, because "0 refusals" from a predicate that inspected
+	// nothing is the reassuring zero this program refuses everywhere else.
+	floorMeasured, floorExempt := 0, 0
+	floorMin, floorMinWhere := 1.0, ""
 	for _, c := range captures {
 		where := fmt.Sprintf("%s at %s (%dpx)", c.Target.Path, c.Viewport.Name, c.Viewport.Width)
 		widths[c.Viewport.Name] = true
+		// 🔴 THE FLOOR BINDS AT THE WIDEST DECLARED WIDTH ONLY, AND THE VIEWPORT IS MATCHED BY
+		// VALUE RATHER THAN BY ITS NAME STRING — the same correction `Viewport.Touch` carries:
+		// a behavioural property keyed on a name is a property a width renamed anything else
+		// silently loses. Below `--breakpoint-ultra` the shell's cap is at or above the
+		// viewport, so the fraction is near 1 at every other width and the assertion would be
+		// vacuous there; at 3440 it is the whole question.
+		if c.Viewport == Ultrawide {
+			if c.Content == nil {
+				return fmt.Errorf("%s carries no content box, so the content floor would be deciding "+
+					"from a nil measurement", where)
+			}
+			// 🔴 THE NUMERATOR'S OWN INSTRUMENT CHECK, AND IT IS A SEPARATE REFUSAL BECAUSE A
+			// FRACTION WITH AN UNMEASURED NUMERATOR IS NOT A SMALL FRACTION, IT IS NO FRACTION.
+			// A document with no `<main>` yields `main_width: 0`, which the floor below would
+			// report as the narrowest page that has ever existed — a true refusal for a false
+			// reason, sending the reader after a width ladder when the page has no content
+			// landmark at all. Two `<main>`s make it arbitrary which was measured.
+			if c.Content.MainCount != 1 {
+				return fmt.Errorf("%s has %d <main> element(s), and the content floor is a claim about exactly "+
+					"one: zero makes its width a 0 that reads as an infinitely narrow page, two makes it "+
+					"arbitrary which one was measured", where, c.Content.MainCount)
+			}
+			if c.Content.MainWidth <= 0 {
+				return fmt.Errorf("%s reports a <main> %dpx wide: no rendered element is zero pixels wide, so "+
+					"the content floor would be refusing a measurement that never happened",
+					where, c.Content.MainWidth)
+			}
+			floorMeasured++
+			if contentFloorExempt(c) {
+				floorExempt++
+			} else {
+				frac := float64(c.Content.MainWidth) / float64(c.Content.InnerWidth)
+				if frac < floorMin {
+					floorMin, floorMinWhere = frac, where
+				}
+				if frac < contentWidthFloor {
+					narrow = append(narrow, fmt.Sprintf(
+						"%s: <main> rendered %dpx of innerWidth=%dpx = %.1f%% of the viewport, floor is %.0f%% "+
+							"(body=%dpx, <main class=%q>)",
+						where, c.Content.MainWidth, c.Content.InnerWidth, frac*100, contentWidthFloor*100,
+						c.Content.BodyWidth, c.Content.MainClass))
+				}
+			}
+		}
 		if c.Layout.HorizontalOverflow {
 			overflow = append(overflow, fmt.Sprintf("%s: scrollWidth=%d > innerWidth=%d",
 				where, c.Layout.ScrollWidth, c.Layout.InnerWidth))
@@ -407,6 +499,25 @@ func refuseWalkRegressions(captures []*Capture) error {
 			"a zero overflow count below is a fact about one width rather than about the surface",
 			len(widths), len(Viewports))
 	}
+	// 🔴 THE FLOOR'S SCOPE IS PINNED TO A LITERAL WIDTH, AND A MATRIX THAT MOVED PAST IT
+	// REFUSES RATHER THAN MEASURES. `contentWidthFloor` is a fraction of a viewport and the
+	// shell's cap is an absolute 112rem, so the same correct layout scores 49% at 3440 and
+	// 36% at 5000: widening the widest capture without re-deriving the fraction would turn
+	// an honest tree red, and NARROWING it would make the floor pass on a layout that never
+	// reached the `ultra` breakpoint at all. Both are re-derivations, so both stop here.
+	if Ultrawide.Width != contentFloorWidth {
+		return fmt.Errorf("the content floor of %.0f%% was derived at a %dpx viewport and the widest declared "+
+			"one is now %dpx: the fraction is not scale-free (the shell's cap is an absolute 112rem), so it has "+
+			"to be re-derived at the new width rather than carried over",
+			contentWidthFloor*100, contentFloorWidth, Ultrawide.Width)
+	}
+	if floorMeasured-floorExempt <= 0 {
+		return fmt.Errorf("the content floor BOUND 0 capture(s): %d were taken at the %dpx viewport and %d of "+
+			"those were the declared exemption, so its clean verdict would be about nothing. A walk that "+
+			"captured no page at the widest declared width, or only the sign-in page there, has not measured "+
+			"this property at all",
+			floorMeasured, Ultrawide.Width, floorExempt)
+	}
 	var refusals []string
 	if len(overflow) > 0 {
 		refusals = append(refusals, fmt.Sprintf("HORIZONTAL OVERFLOW on %d capture(s) — the page scrolls "+
@@ -423,6 +534,13 @@ func refuseWalkRegressions(captures []*Capture) error {
 			"from a page axe never inspected is indistinguishable from a clean one:\n    %s",
 			len(axeless), strings.Join(axeless, "\n    ")))
 	}
+	if len(narrow) > 0 {
+		refusals = append(refusals, fmt.Sprintf("CONTENT TOO NARROW on %d capture(s) at the %dpx viewport — "+
+			"the page renders a column and leaves the rest of the display empty. 🔴 THE OVERFLOW REFUSAL "+
+			"ABOVE CANNOT SEE THIS: a container that is too narrow never overflows, so this whole class is "+
+			"green on every other check here:\n    %s",
+			len(narrow), Ultrawide.Width, strings.Join(narrow, "\n    ")))
+	}
 	if len(refusals) > 0 {
 		return fmt.Errorf("the walk measured %d regression class(es) over %d capture(s):\n  %s",
 			len(refusals), len(captures), strings.Join(refusals, "\n  "))
@@ -430,6 +548,14 @@ func refuseWalkRegressions(captures []*Capture) error {
 	fmt.Printf("uiaudit:   REFUSALS: 0 horizontal overflow, 0 scripts, %d/%d captures carry a decodable axe "+
 		"testEngine — over %d distinct width(s): %s\n",
 		len(captures)-len(axeless), len(captures), len(widths), viewportWidths())
+	// 🔴 THE FLOOR REPORTS ITS NARROWEST MEASUREMENT RATHER THAN A ZERO. "0 refusals" is
+	// produced identically by a surface that widens and by a predicate that inspected
+	// nothing; the number below moves when the layout does, which is what makes the clean
+	// verdict readable as a measurement.
+	fmt.Printf("uiaudit:   CONTENT FLOOR: narrowest non-exempt <main> at %dpx used %.1f%% of the viewport "+
+		"(%s), floor %.0f%% — over %d capture(s) at that width, %d exempt (%s with class %q)\n",
+		Ultrawide.Width, floorMin*100, floorMinWhere, contentWidthFloor*100,
+		floorMeasured, floorExempt, ui.SignInPath, signinMainClass)
 	return nil
 }
 
@@ -447,6 +573,28 @@ func viewportWidths() string {
 	return strings.Join(parts, ", ")
 }
 
+// printSignalSummary reports every signal at the scope it was measured, and labels the
+// zeros that are zero BY CONSTRUCTION as structural rather than as passes.
+//
+// ⚠ THIS BLOCK USED TO SIT ABOVE `refuseWalkRegressions`, WHERE GODOC ATTACHED IT TO THAT
+// FUNCTION INSTEAD — a doc comment on the wrong function is a wrong claim, and it was moved
+// here rather than left for the next reader to trip over.
+//
+// 🔴 A REASSURING ZERO IS INDISTINGUISHABLE FROM AN INSTRUMENT WIRED TO NOTHING, SO EACH
+// ZERO HERE SAYS WHICH KIND IT IS. `control_test.go` is the positive control that shows the
+// same collectors CAN count; the README reports the pair.
+//
+// ⚠ AND THE STRUCTURAL CLAIM IS NARROWER THAN AN EARLIER DRAFT OF IT SAID, WHICH IS A
+// CORRECTION RATHER THAN A CAVEAT. That draft printed "console=%d network=%d — STRUCTURAL
+// ZERO" over both numbers, on the reasoning that a page with no scripts and no subresources
+// cannot produce either. The first half holds: `internal/ui` ships an inline stylesheet, no
+// script, and an XSS guard asserting `"<img"` can never render, so the console collector has
+// nothing to observe. The second half was FALSE, and the walk that printed it had a non-zero
+// network count on the same line — because a browser requests `/favicon.ico` on its own
+// initiative and this surface has no such row, so it answers the dispatcher's refusal. That
+// is counted separately (see [Browser.FaviconRefusals]) and the per-page network zero below
+// is a claim about SUBRESOURCES THE PAGE ASKED FOR, which is a narrower sentence than the one
+// that was wrong.
 func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	var axe, console, netw, tap, text, overflow, noViewport, digests int
 	rules := map[string]int{}

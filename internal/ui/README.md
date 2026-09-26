@@ -1632,12 +1632,31 @@ block is gone**, because it is the trap anybody re-introducing a theme switch wa
 override written inside `@layer base` LOSES to `@theme`, since Tailwind emits its theme inside
 `@layer theme` and unlayered declarations beat layered ones regardless of order.
 
-**`--breakpoint-ultra: 2000px`** is a fifth rung above Tailwind's `2xl` (1536px). The
-requirement is measured rather than guessed — the operator's display is 3427 CSS pixels, more
-than twice `2xl`, so every rule written against the default ladder renders identically at 1536
-and at 3427. ⚠ **2000 and not 3427:** a breakpoint is where a layout should change, not a
-device somebody owns, and pinning it to one machine leaves every display between 1536 and 3427
-— most large monitors — on the `2xl` layout.
+**`--breakpoint-ultra: 125rem`** (= 2000px at a 16px root) is a fifth rung above Tailwind's
+`2xl` (1536px). The requirement is measured rather than guessed — the operator's display is
+3427 CSS pixels, more than twice `2xl`, so every rule written against the default ladder
+renders identically at 1536 and at 3427. ⚠ **2000 and not 3427:** a breakpoint is where a
+layout should change, not a device somebody owns, and pinning it to one machine leaves every
+display between 1536 and 3427 — most large monitors — on the `2xl` layout.
+
+🔴 **It was spelled `2000px` for its whole first life and was DEAD at every width it existed
+for, which is the second measured defect in this file's short history and the one that is
+invisible to reading the stylesheet.** Tailwind v4 orders breakpoint variants by resolved size
+and cannot order a `px` length against the `rem` defaults without assuming a root font size, so
+the `ultra` blocks were emitted FIRST inside `body` — ahead of `sm`, `lg` and `xl`. At 3440px
+all four queries match, media queries add no specificity, and the LAST declaration wins: the
+shell capped at `xl`'s 80rem (1280px) and a real Chromium rendered **1232px of content in a
+3440px viewport, 35.8% of the width**. ⚠ **The rule was present, correctly nested and
+correctly valued in `app.css` the whole time** — grepping for `@media (width >= 2000px)` finds
+it and proves nothing, because cascade order is not visible in a grep. Respelled in the
+defaults' own unit it sorts last and wins; the same walk then measured **1696px, 49.3%**. The
+mechanism, the retracted "it is an orphan rule" reading, and the instruction not to simplify it
+back to `px` are in `tailwind.css` beside the key.
+
+⚠ **`body` is the element that carries the ladder, and `.page-main` has no `max-width` of its
+own** — so the element a reader would inspect to find the cap is not the element that sets it.
+That is why the guard below measures `<main>` against the VIEWPORT rather than against any
+declared value.
 
 The card grid is `repeat(auto-fit, minmax(18rem, 1fr))` rather than a `grid-cols-N` ladder, so
 the column count is a function of the CONTAINER: one column on a phone, as many as fit on an
@@ -1662,12 +1681,34 @@ change. `BuildPayload` is where the filter lives, and
 `TestOnlyTheHubsOwnTwoViewportsAreEverPushed` drives it through the real `BuildPayload` rather
 than reading the `Push` field — a field nothing branches on is a declaration, not a guard.
 
-🔴 **Three measurements became REFUSALS** (`refuseWalkRegressions`): no horizontal overflow at
-any captured width, `document.scripts.length == 0`, and a decodable axe `testEngine` on every
-capture. All three were already being COLLECTED and printed; nothing read them, so a responsive
-regression would have been a digit in a log beside an exit 0. The width count is part of the
-verdict too — a matrix that silently collapsed to one width produces zero overflow findings and
-reads exactly like a responsive surface.
+🔴 **Four measurements are REFUSALS** (`refuseWalkRegressions`): no horizontal overflow at
+any captured width, `document.scripts.length == 0`, a decodable axe `testEngine` on every
+capture, and a CONTENT FLOOR at the widest width. The first three were already being COLLECTED
+and printed; nothing read them, so a responsive regression would have been a digit in a log
+beside an exit 0. The width count is part of the verdict too — a matrix that silently collapsed
+to one width produces zero overflow findings and reads exactly like a responsive surface.
+
+🔴 **The content floor exists because `0 overflow` was CORRECT and meant nothing.** A walk over
+65 captures at five widths reported no overflow on the tree whose pages used 35.8% of an
+ultrawide viewport — **a container that is too NARROW never overflows**, so the entire class
+"the page ignores the viewport" is structurally invisible to every other check here and shipped
+green through seven CI jobs. Too-wide and too-narrow are different claims; both are now
+asserted and neither replaces the other.
+
+| | |
+|---|---|
+| what it asserts | `<main>`'s rendered width ≥ **45%** of `window.innerWidth`, at the 3440px capture only |
+| why 45 | the defect measured **35.8%** (1232px); the declared layout measures **49.3%** (1792px cap less 48px gutters). 45 refuses the first by 9.2 points and admits the second with 4.3 to spare |
+| it is a FLOOR | more is fine; nothing here asks a page to fill the screen, and nothing here has an opinion about line length below that line |
+| scope is pinned | the fraction is not scale-free (the cap is an absolute 112rem), so the gate REFUSES rather than measures if the widest declared viewport stops being 3440 |
+| one exemption | `/sign-in`, whose `<main>` IS its `max-w-md` card at 13%. It requires the PATH **and** the class `signin-main` — either alone is a hole a later page could walk through |
+| reported, not counted | a clean run prints the narrowest fraction it actually saw, because "0 refusals" is also what a predicate wired to nothing prints |
+
+Red/green matrix, measured in chromium 153.0.8010.52 over the walk's own hermetic pod: **RED**
+at the branch tip before the breakpoint fix — 12 captures, 35.8% each, one regression class,
+its own message — **GREEN** after, at 49.3%. Mutated a second way (the `ultra` cap narrowed to
+60rem with the breakpoint left correct) it goes red again at **25.1%**, still as the only
+regression class, so it dies for its own reason rather than riding the first fix.
 
 ⚠ **They are refusals at the WALK and not in `CaptureTarget`**, because this module's own
 positive-control page deliberately overflows and deliberately carries a script. A refusal
