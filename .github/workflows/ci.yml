@@ -818,20 +818,28 @@ jobs:
             echo "REFUSING: $fails failing row(s)"
             exit 1
           fi
-          # …and the harness's own FOUR in-run content controls, read rather than assumed.
-          # 🔴 ALL FOUR FIELDS ARE NAMED, AND THE ANCHOR IS WHY THAT MATTERS. This was an
-          # anchored PREFIX reading two fields while its own comment claimed it read "the
-          # harness's own two in-run controls" — true of the grep and false of the harness,
-          # which by then printed three. A prefix match says nothing about the fields after the
-          # ones it spells, so it matched whatever `unreadable-entry=` said. The third and
-          # fourth sentinels WERE still enforced — the harness refuses to vouch and exits 2,
-          # which `set -o pipefail` above turns into a failed step — so this grep was a
-          # coverage-WORDING gap rather than a hole. It is widened anyway, because a check whose
-          # comment overstates it is what stops the next reader looking.
+          # …and the harness's own FIVE in-run content controls, read rather than assumed.
+          # 🔴 ALL FIVE FIELDS ARE NAMED, AND THE ANCHOR IS WHY THAT MATTERS. A prefix match
+          # says nothing about the fields AFTER the ones it spells, so a short anchor reads as
+          # coverage of the whole line while checking only its head.
+          # 🔴 THIS HAS NOW GONE STALE THE SAME WAY TWICE, WHICH IS THE ARGUMENT FOR READING
+          # THE HARNESS RATHER THAN THIS COMMENT. It first read TWO fields while claiming two,
+          # by which time the harness printed three. It was then widened to FOUR and the
+          # comment rewritten to say "ALL FOUR FIELDS ARE NAMED" — and the harness had already
+          # grown a fifth, `unreadable-cache-root=`, the field the round that added it cared
+          # most about. So the anchor stopped one field short of the end again, and the comment
+          # again asserted completeness it did not have. Re-derive before trusting this line:
+          #   grep -n 'CONTENT-FLOOR' tests/parity/harness.py
+          # and count the f-string's named fields. The harness's own refusal text says the
+          # number too ("ALL FIVE of…"), and it is the authority, not this comment.
+          # ⚠ IN BOTH STALE ROUNDS THE MISSING SENTINELS WERE STILL ENFORCED — the harness
+          # refuses to vouch and exits 2, which `set -o pipefail` above turns into a failed
+          # step — so each was a coverage-WORDING gap rather than a hole. Widened anyway: a
+          # check whose comment overstates it is what stops the next reader looking.
           # ⚠ THE TRAILING `mtime-files=…` FIELDS ARE DELIBERATELY NOT MATCHED: they carry a
           # measured number, not a verdict, so spelling them here would make this line red on
           # every corpus change.
-          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True' /tmp/parity.txt
+          grep -q '^CONTENT-FLOOR live-banner=True rendered-digest=True unreadable-entry=True unreadable-scope-dir=True unreadable-cache-root=True' /tmp/parity.txt
           grep -q 'dead-normalizations=0' /tmp/parity.txt
 
   # 🔴 P1's LAST STEP, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS AND THE PARITY

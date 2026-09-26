@@ -3134,3 +3134,145 @@ class TestAScopeThatVANISHESMidRunIsNotServedAsZeroOfZero:
             assert f"cairn: {scope}: 1 of 1 entry file(s) parse, 0 malformed" in (
                 out.getvalue()
             ), out.getvalue()
+
+
+class TestAnUnreadableCacheROOTUnderRoutesCheckFailsClosed:
+    """`routes --check`'s cache-root listing — the FOURTH read of the store.
+
+    🔴 THE DEFECT. `cmd_routes` decided WHICH scopes the routing table is graded
+    against with a bare `scopes.update(p.name for p in cache.iterdir() if
+    p.is_dir())`. `main()` catches `(StoreMissingError, ResolverError)` and
+    deliberately NOT `OSError`, so an `OSError` from that listing ESCAPED as a
+    traceback — the exact outcome #111 exists to remove, at a site #111, #119 and the
+    round that wrapped `validate`'s `held` all missed. Three rounds, three wraps, and
+    each round's prose declared the set closed on an axis it had not enumerated; the
+    set is now enumerated two-way by `tests/test_store_read_sites.py`.
+
+    🔴 `--no-sync` CANNOT REACH THIS LINE, AND A CHMOD ON A **304** CAN — BOTH
+    MEASURED, AND THE SECOND HALF CORRECTS A CLAIM THIS DOCSTRING MADE FIRST.
+    `cmd_routes` refuses any instance whose state is not `STATE_LIVE`, and
+    `resolve_state`'s `no_sync` arm returns from an unconditional early block that can
+    only yield `STATE_NO_CACHE` or `STATE_CACHED`. MEASURED at `24eb508` over an
+    isolated `HOME`, one instance, a one-route table, cache root at each of
+    `0555`/`0444`/`0111`/`0000`, WITH `--no-sync`: every run stopped at that refusal
+    (`rc=11`, or `rc=1` with a traceback out of `resolve_state` itself at the no-`x`
+    modes) and none reached the listing.
+
+    From that, an earlier draft of this docstring concluded "NO `chmod` REACHES THIS
+    LINE". **That was false**, and it is the same over-generalisation the rest of this
+    round is about: a measurement of ONE route offered as a statement about all of
+    them. A **304 Not Modified** returns `STATE_LIVE` and writes NOTHING, so the root
+    the listing walks is the pre-existing one with its mode bits intact. MEASURED end
+    to end against a stub pod answering 304 to a matching `If-None-Match`, one
+    instance, a one-route table, cache root at `0111`, NO `--no-sync`:
+
+        before the fix   oracle → exit 1, `PermissionError` TRACEBACK
+                         go     → exit 3, raw `open <cache>: permission denied`
+        after  the fix   both   → exit 3, byte-identical `index entry unreadable:
+                                  under <root> (PermissionError: [Errno 13] …)`
+
+    So this was a live DIVERGENCE reachable by an ordinary `chmod` on a host whose
+    store had not changed since its last sync — the common case for `routes --check`,
+    not an exotic one.
+
+    ⚠ THIS ROW STILL STAGES `STATE_LIVE` RATHER THAN SERVING A 304, AND THAT NARROWS
+    THE FIXTURE, NOT THE CLAIM. Staging keeps the row inside this file's existing
+    in-process idiom: `resolve_state` is replaced with one that returns `STATE_LIVE`
+    and touches no network, and EVERYTHING after it — the refusal guard, the listing,
+    the wrap, `main()`'s ladder — is the real code path. The end-to-end 304
+    measurement above is what proves the staged state is one the client really
+    reaches; the two together are the argument and neither is sufficient alone.
+    ⬜ A parity row may therefore be possible for this verb after all, which
+    `internal/client/routes.go` records with a closing condition rather than claiming.
+
+    ⚠ `main()`'s RETURN VALUE, NOT A PROCESS EXIT STATUS, for the same reason as that
+    sibling row: the staging device lives inside the interpreter. The half that was
+    red is that an exception ESCAPED at all, which a return value captures exactly.
+    """
+
+    def _cli(self):
+        spec = importlib.util.spec_from_loader(
+            "cairn_cli_routes_root", loader=None, origin=str(CAIRN_CLI)
+        )
+        mod = importlib.util.module_from_spec(spec)
+        mod.__file__ = str(CAIRN_CLI)
+        exec(compile(CAIRN_CLI.read_text(encoding="utf-8"), str(CAIRN_CLI), "exec"),
+             mod.__dict__)
+        return mod
+
+    BODY = (
+        "---\nservice: one\nscope: alpha\n---\n\n## What it is\n\nsynthetic.\n\n"
+        "## Pointers\n\n- none\n\n"
+        "## Nuance / work-history\n\n- 2000-01-01: synthetic.\n"
+    )
+
+    @pytest.fixture
+    def _isolated(self, monkeypatch, tmp_path: Path):
+        for name in list(os.environ):
+            if env_pin.is_client_config(name):
+                monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("CAIRN_HOST", CLI_HOST)
+        cfgdir = tmp_path / "cfg"
+        cfgdir.mkdir()
+        (cfgdir / "env").write_text(f"url=http://127.0.0.1:9/unused\ntoken={GOOD_TOKEN}\n")
+        (cfgdir / "routes.json").write_text('{"alpha": "personal"}\n')
+        monkeypatch.setenv("CAIRN_CONFIG", str(cfgdir / "env"))
+
+    def _cache(self, tmp_path: Path) -> Path:
+        cache = tmp_path / "cache"
+        (cache / "alpha").mkdir(parents=True)
+        (cache / "alpha" / "one.md").write_text(self.BODY)
+        (cache / ".sync-stamp").write_text("synced=2000-01-01T00:00:00Z\nrevision=abc\n")
+        return cache
+
+    def _run(self, mod, cache: Path, *, break_root: bool):
+        """`(outcome, stdout, stderr)`; `outcome` is `main()`'s code or the escapee."""
+        def staged_live(cache_root, *, no_sync, scope, timeout, instance):
+            return mod.STATE_LIVE, "staged LIVE for this row", None
+
+        mod.resolve_state = staged_live
+        out, err = io.StringIO(), io.StringIO()
+        real_out, real_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = out, err
+        if break_root:
+            cache.chmod(0o111)
+        try:
+            outcome = mod.main(["--cache", str(cache), "routes", "--check"])
+        except BaseException as exc:  # noqa: BLE001 — the escape IS the defect
+            outcome = exc
+        finally:
+            sys.stdout, sys.stderr = real_out, real_err
+            cache.chmod(0o755)
+        return outcome, out.getvalue(), err.getvalue()
+
+    def test_a_READABLE_root_still_grades_the_table(self, _isolated, tmp_path):
+        """🔴 THE CONTROL. Without this, a green below could mean the staging broke
+        the verb outright rather than that the wrap answered."""
+        mod = self._cli()
+        outcome, out, err = self._run(mod, self._cache(tmp_path), break_root=False)
+        assert outcome == mod.EXIT_OK, (outcome, out, err)
+        assert "1 scope(s)" in out, out
+
+    def test_an_unreadable_root_exits_3_with_the_READERS_sentence_and_no_traceback(
+        self, _isolated, tmp_path
+    ):
+        """The regression. RED at `24eb508` with `PermissionError` ESCAPING `main()`.
+
+        Asserted on THIS wrap's own sentence, not merely on the code: `cli.go`'s
+        fallback arm already gave the Go twin the right NUMBER while printing a raw
+        `open <cache>: permission denied`, so a test that checked only `== 3` would
+        have passed on the text defect #111 exists to remove.
+        """
+        mod = self._cli()
+        outcome, out, err = self._run(mod, self._cache(tmp_path), break_root=True)
+        assert not isinstance(outcome, BaseException), (
+            f"an exception ESCAPED main() — the defect this row exists for: "
+            f"{outcome!r}"
+        )
+        assert outcome == mod.EXIT_UNREACHABLE_NO_CACHE, (outcome, out, err)
+        assert "index entry unreadable: under" in err, err
+        assert "PermissionError" in err, err
+        assert "the store was not fully read" in err, err
+        assert "Traceback (most recent call last)" not in err, err
+        # and it must NOT have graded a table against a store it could not read
+        assert "scope(s) across" not in out, out

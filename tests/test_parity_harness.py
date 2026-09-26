@@ -389,3 +389,61 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."
     )
+
+
+def test_the_CI_content_floor_grep_names_EVERY_field_the_harness_prints() -> None:
+    """🔴 THE `CONTENT-FLOOR` ANCHOR IN `ci.yml`, PINNED TO THE HARNESS THAT FEEDS IT.
+
+    `.github/workflows/ci.yml` asserts the harness's in-run content controls with an
+    ANCHORED PREFIX `grep`. A prefix says nothing about the fields after the ones it
+    spells, so the check silently stops covering every field the harness later adds
+    — while its own comment goes on claiming completeness.
+
+    🔴 THAT HAS HAPPENED TWICE, WHICH IS WHY THIS IS A TEST AND NOT A THIRD COMMENT.
+    The grep read TWO fields while the harness printed three, was widened to FOUR and
+    re-commented "ALL FOUR FIELDS ARE NAMED", and by then the harness printed FIVE —
+    the fifth being `unreadable-cache-root`, the sentinel the round that added it
+    existed for. Each time the gap was found by a human re-reading the line, and each
+    time the comment was the thing that discouraged the re-read.
+
+    So: derive the field names from the harness's own `CONTENT-FLOOR` f-string and
+    require `ci.yml`'s anchor to name all of them. Fails in BOTH directions — a field
+    added to the harness and not to the grep, and a field in the grep the harness no
+    longer prints.
+
+    ⚠ IT PINS THE FIELD NAMES, NOT THE VALUES. `mtime-files=…` is deliberately absent
+    from the anchor because it carries a measured number rather than a verdict, so it
+    is excluded here too — by the same rule `ci.yml` states, not a second one.
+    """
+    harness = (ROOT / "tests/parity/harness.py").read_text(encoding="utf-8")
+    block = re.search(
+        r'print\(f"CONTENT-FLOOR (.*?)\)\n', harness, re.S)
+    assert block, (
+        "the harness no longer prints a `CONTENT-FLOOR` line in a shape this test can "
+        "read. That is not licence to delete this guard: re-derive the anchor, because "
+        "`ci.yml` still greps for one."
+    )
+    printed = re.findall(r"([a-z-]+)=\{", block.group(1))
+    assert printed, "no CONTENT-FLOOR field names were parsed — the instrument is dead"
+    # the trailing measured-number field is excluded by `ci.yml`'s own stated rule
+    verdict_fields = [f for f in printed if f != "mtime-files"]
+    assert len(verdict_fields) >= 4, (
+        f"only {verdict_fields} parsed; the harness has printed at least four verdict "
+        f"fields since this guard was written, so a shorter list means the parse broke"
+    )
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    anchor = re.search(r"grep -q '\^CONTENT-FLOOR ([^']*)'", ci)
+    assert anchor, "ci.yml no longer carries an anchored `^CONTENT-FLOOR` grep"
+    named = re.findall(r"([a-z-]+)=", anchor.group(1))
+    assert named == verdict_fields, (
+        f"`ci.yml`'s CONTENT-FLOOR anchor and the harness disagree about the fields.\n"
+        f"  harness prints: {verdict_fields}\n"
+        f"  ci.yml names:   {named}\n"
+        f"MISSING from the grep: {[f for f in verdict_fields if f not in named]}\n"
+        f"EXTRA in the grep:    {[f for f in named if f not in verdict_fields]}\n"
+        f"A field the harness prints and the grep does not name is UNCHECKED by that "
+        f"line — which is how this anchor went stale twice, both times while its "
+        f"comment claimed it named them all. Add the field to the anchor (and fix the "
+        f"count in the comment above it), or, if the harness dropped a field, drop it "
+        f"from the anchor in the same commit."
+    )

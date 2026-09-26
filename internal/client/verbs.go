@@ -277,7 +277,23 @@ func LsEntries(env Env, opts Options) (int, error) {
 		// 🔴 IT SHARES THE OPEN DESIGN QUESTION WITH THE MODE-000 SCOPE-DIRECTORY FOLLOW-UP
 		// ABOVE AND MUST BE DECIDED WITH IT, NOT SEPARATELY: `ls-entries` fans out over every
 		// configured instance, so "fail closed" has to decide whether one unreadable root
-		// refuses the WHOLE listing or only that instance's. Two follow-ups, one ruling.
+		// refuses the WHOLE listing or only that instance's.
+		//
+		// ⚠ THIS SAID "Two follow-ups, one ruling" AND THE COUNT WAS WRONG WITHIN A ROUND —
+		// `routes --check` read the cache root raw as well, which made it three. The count is
+		// deliberately NOT restated here, because a number in prose is exactly what went
+		// stale: the set of listing reads and their dispositions is enumerated two-way by
+		// `tests/test_store_read_sites.py`, which fails when one APPEARS and when a ledgered
+		// one VANISHES. Read the ledger, not a count in a comment.
+		//
+		// ✅ AND `routes` IS NO LONGER ONE OF THEM — IT DID NOT NEED THIS RULING. It was
+		// wrapped without answering the fan-out question, because that verb had ALREADY
+		// answered its own version of it: `Routes` returns `ExitUnrouted` for the WHOLE check
+		// as soon as any instance is not LIVE, so failing closed there is consistent with what
+		// it already did and adds no policy. `LsEntries` prints per instance and continues,
+		// which is what leaves ITS ruling genuinely open. So the two that remain are the two
+		// `ls-entries` cases — the scope directory above and the cache root here — and they
+		// are still one ruling.
 		//
 		// CLOSING CONDITION: a merged PR after which both clients answer a cache root at mode
 		// 0111 under `ls-entries` with the reader's own `index entry unreadable` sentence at

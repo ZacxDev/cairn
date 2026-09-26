@@ -469,12 +469,22 @@ func EntryUnreadable(path string, cause error) *EntryUnreadableError {
 // StoreUnreadable is the STORE-WIDE twin of `EntryUnreadable` — "I could not finish
 // reading this store", named by ROOT rather than by the file that stopped it.
 //
-// 🔴 IT IS A FUNCTION BECAUSE TWO CALL SITES NEED THE IDENTICAL BYTES AND THE SECOND
-// ARRIVED BY DUPLICATION. `LoadStore` below has always owned this wrap; `validate`'s
-// DENOMINATOR reads a scope directory a SECOND time, outside it, and that read used to
-// DISCARD its error. The oracle spells the sentence from one writer
-// (`subsystem_recall._store_unreadable`) for the same reason, and the parity gate
-// compares these bytes — so a second spelling here is a divergence waiting to happen.
+// 🔴 IT IS A FUNCTION BECAUSE **THREE** CALL SITES NEED THE IDENTICAL BYTES, AND EACH ONE
+// AFTER THE FIRST ARRIVED BY DUPLICATION. `LoadStore` below has always owned this wrap;
+// `Validate`'s per-scope DENOMINATOR reads a scope directory a SECOND time, outside it, and
+// that read used to DISCARD its error; `ScopeDirsOrUnreadable` is the THIRD, for the
+// cache-ROOT listing. The oracle spells the sentence from one writer
+// (`subsystem_recall._store_unreadable`) for the same reason, and the parity gate compares
+// these bytes — so a second spelling here is a divergence waiting to happen.
+//
+// ⚠ THIS COMMENT SAID "TWO CALL SITES" WHILE `ScopeDirsOrUnreadable` BELOW SAID "THREE",
+// SEVENTY LINES APART IN THIS SAME FILE — and the oracle's twin said two as well, so the
+// only place that was right was `tests/parity/README.md`. A count in prose, written once and
+// never re-derived, is the defect class this round of the audit exists to remove; the two
+// disagreeing copies are why it went unnoticed. Re-derive rather than trusting either
+// sentence: `grep -n 'StoreUnreadable(' internal/store/load.go` — the `func`, then the three
+// returns. `tests/test_store_read_sites.py` ledgers the callers two-way so a fourth cannot
+// arrive silently.
 func StoreUnreadable(storeRoot string, cause error) *EntryUnreadableError {
 	return &EntryUnreadableError{message: fmt.Sprintf(
 		"index entry unreadable: under %s (%s: %s) — the store was not fully read, so this report would be INCOMPLETE",
@@ -556,10 +566,35 @@ func EntryFilesOrUnreadable(storeRoot, dir string) ([]string, error) {
 // FUNCTION EXISTED — deliberately NOT aligned with `LoadIndex`'s `isIgnoredStatErrno`
 // rule fifty lines up, even though that rule is the better one. The oracle's `is_dir()`
 // RAISES outside `pathlib._IGNORED_ERRNOS`, so the two clients disagree here in principle
-// — but no mode reaches it: a child cannot be `stat`ed at all without `x` on this root,
-// and without `x` the run has already diverged at the stamp check. Aligning it would add a
-// guard nothing can make fail, which is worse than a declared seam. Declared in
-// `tests/parity/README.md` row 4 rather than closed here.
+// — but no mode reaches it THROUGH THIS FUNCTION: a child cannot be `stat`ed at all
+// without `x` on this root, and without `x` the run has already diverged at the stamp
+// check. Declared in `tests/parity/README.md` row 4 rather than closed here.
+//
+// 🔴 "A GUARD NOTHING CAN MAKE FAIL" WAS THE WRONG SENTENCE AND IT IS WITHDRAWN — THE
+// ASYMMETRY IS NOT UNREACHABLE, IT IS UNREACHABLE *HERE*, AND THE WIDER CLAIM IS FALSE.
+// The SAME `statErr != nil { continue }` shape, in `internal/doctor`, is measurably
+// diverging from the oracle TODAY. MEASURED at `24eb508`, `doctor --no-sync`, cache ROOT at
+// mode 0444 (`r`, no `x`) and separately a SCOPE DIRECTORY at 0444 — `os.ReadDir` succeeds
+// because listing needs only `r`, and the per-child `os.Stat` fails because resolving
+// `<root>/<child>` needs `x`:
+//
+//	oracle → "the cache's UNREADABLE entry file(s) could not be compared"
+//	go     → "the cache's 0 entry file(s) could not be compared"
+//
+// `doctor.go`'s `continue` turns "I could not confirm this is a directory" into "it is not
+// one", `scopeDirs` returns an empty slice and a NIL error, and this client then asserts a
+// ZERO over a store it could not read. At mode 0111 the two AGREE on "unreadable", because
+// there the TOP-LEVEL `os.ReadDir` fails and that error is propagated on both sides. So the
+// missing bit decides WHICH read breaks, and only one of the two is swallowed.
+//
+// ⚠ THE NARROW CLAIM IS STILL TRUE AND STILL WORTH ACTING ON: aligning the per-child rule
+// *in this function* would add a branch no input reaches, because its only callers —
+// `Validate` and `Routes` — are both gated upstream. What was wrong was generalising a
+// LOCAL unreachability argument into a global one, which is how the identical asymmetry went
+// unexamined one package away. And the `x`-bit argument is an argument about MODES only: on
+// a bucket or an NFS mount, `ESTALE`/`EIO` reach a CHILD exactly as they reach the root.
+// `doctor`'s copy is ledgered as UNCOVERED, with a closing condition, in
+// `tests/test_store_read_sites.py`.
 func ScopeDirsOrUnreadable(storeRoot string) ([]string, error) {
 	entries, err := os.ReadDir(storeRoot)
 	if err != nil {

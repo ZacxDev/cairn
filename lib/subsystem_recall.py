@@ -1383,13 +1383,25 @@ class RecallReport:
 def _store_unreadable(store: Path, exc: OSError) -> EntryUnreadableError:
     """The ONE store-wide "not fully read" sentence, with ONE writer.
 
-    🔴 IT IS A FUNCTION BECAUSE TWO CALL SITES NOW NEED IT AND THE SECOND ONE
-    ARRIVED BY DUPLICATION. `load_store` below has always owned this wrap; the
-    `cairn validate` DENOMINATOR reads a scope directory a SECOND time, outside
-    it, and that read was left raw. Spelling the sentence again at that site would
-    make it two spellings of one rule behind two lines — the shape
-    `entry_files_in` and `is_entry_filename` were consolidated to remove, wrong at
-    N-1 of N sites in the same direction.
+    🔴 IT IS A FUNCTION BECAUSE **THREE** CALL SITES NEED IT, AND EACH ONE AFTER THE
+    FIRST ARRIVED BY DUPLICATION. `load_store` below has always owned this wrap;
+    `cairn validate`'s per-scope DENOMINATOR reads a scope directory a SECOND time,
+    outside it, and that read was left raw; `scope_dirs_or_unreadable` is the THIRD,
+    for the cache-ROOT listing. Spelling the sentence again at any of them would
+    make it N spellings of one rule behind N lines — the shape `entry_files_in` and
+    `is_entry_filename` were consolidated to remove, wrong at N-1 of N sites in the
+    same direction.
+
+    ⚠ THIS DOCSTRING SAID "TWO CALL SITES" WHILE THERE WERE THREE, AND SO DID THE GO
+    TWIN. A count written into prose once and never re-derived is the same defect
+    class as the closure declarations this round of the audit exists to remove — and
+    it was visible all along: `tests/parity/README.md` already said three, and
+    `internal/store/load.go` contradicted its OWN function docstring seventy lines
+    further down, which is how the disagreement stayed unnoticed. Re-derive rather
+    than trusting this sentence:
+    `grep -n '_store_unreadable(' lib/subsystem_recall.py` — the `def`, then the
+    three raises. `tests/test_store_read_sites.py` now ledgers the callers two-way,
+    so a fourth cannot arrive silently.
     """
     return EntryUnreadableError(
         f"index entry unreadable: under {store} ({type(exc).__name__}: {exc}) — the "
@@ -1494,15 +1506,50 @@ def scope_dirs_or_unreadable(store_root: str | Path) -> list[str]:
     so an `ESTALE` or `EIO` from the root listing arrives by the same route a mode
     bit does.
 
+    ⚠ AND THAT ARGUMENT APPLIES TO THE PER-CHILD `stat` BELOW TOO — WHICH IS WHY THE
+    PARAGRAPH AFTER NEXT NO LONGER CALLS THAT ASYMMETRY UNREACHABLE IN GENERAL. A
+    mode bit is not the only thing that can fail a `stat`: on the same bucket, the
+    same NFS mount, `ESTALE` and `EIO` reach a CHILD exactly as they reach the root,
+    and neither is gated by `x` on the parent. The `x`-bit argument is an argument
+    about MODES, and it was doing duty as an argument about every cause.
+
     ⚠ THE PER-CHILD `is_dir()` IS DELIBERATELY OUTSIDE THE WRAP, MIRRORING GO'S
     PER-CHILD `os.Stat`. `pathlib` answers False for
     `_IGNORED_ERRNOS == (ENOENT, ENOTDIR, EBADF, ELOOP)` and RAISES for anything
     else, while `internal/store.ScopeDirsOrUnreadable` skips a child on ANY stat
-    error — an asymmetry that PRE-DATES this change and is left exactly as it was,
-    because no mode reaches it: a child cannot be `stat`ed at all without `x` on
-    this root, and without `x` the run has already diverged at `resolve_state`.
-    Closing it would mean a guard nothing can make fail. Declared in
-    `tests/parity/README.md` row 4 rather than closed here.
+    error — an asymmetry that PRE-DATES this change and is left exactly as it was.
+    NO MODE REACHES IT **THROUGH THIS FUNCTION**: a child cannot be `stat`ed at all
+    without `x` on this root, and without `x` the run has already diverged at
+    `resolve_state`. Declared in `tests/parity/README.md` row 4 rather than closed
+    here.
+
+    🔴 "A GUARD NOTHING CAN MAKE FAIL" WAS THE WRONG SENTENCE AND IT IS WITHDRAWN —
+    THE ASYMMETRY IS NOT UNREACHABLE, IT IS UNREACHABLE *HERE*. Those are different
+    claims, and the wider one is false: the SAME asymmetry, in `doctor`, is
+    measurably diverging TODAY. MEASURED at `24eb508` over an isolated HOME, one
+    instance, `doctor --no-sync`, cache ROOT at mode 0444 (`r`, no `x`) and
+    separately a SCOPE DIRECTORY at 0444 — the listing succeeds because it needs
+    only `r`, and the per-child `stat` fails because it needs `x`:
+
+        oracle  →  "the cache's UNREADABLE entry file(s) could not be compared"
+        go      →  "the cache's 0 entry file(s) could not be compared"
+
+    i.e. Go's `continue` turns "I could not confirm this is a directory" into "it is
+    not a directory", and the client then asserts a ZERO over a store it could not
+    read — the confident zero this module exists to refuse. At mode 0111 the two
+    AGREE on "unreadable", because there the TOP-LEVEL listing fails and that error
+    is propagated on both sides. So the mode decides which of the two reads breaks,
+    and only one of them is swallowed.
+
+    ⚠ WHAT IS TRUE IS THE NARROW CLAIM, AND IT IS WORTH KEEPING: aligning the
+    per-child rule *in this function* would add a branch no input reaches, because
+    this function's only callers are `validate` and `routes`, both of which are
+    gated upstream — `validate` by `resolve_state`'s stamp `stat`, `routes` by its
+    own `STATE_LIVE` refusal. The general claim needed the word HERE, and did not
+    have it; a sentence that generalises a local unreachability argument into a
+    global one is how the same asymmetry went unexamined one function away.
+    `doctor`'s copy is ledgered as UNCOVERED, with a closing condition, in
+    `tests/test_store_read_sites.py`.
     """
     root = Path(store_root)
     try:

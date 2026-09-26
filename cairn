@@ -2503,7 +2503,56 @@ def cmd_routes(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return EXIT_UNROUTED
-        scopes.update(p.name for p in cache.iterdir() if p.is_dir())
+        # 🔴 THROUGH `rc.scope_dirs_or_unreadable`, NOT A BARE `cache.iterdir()` —
+        # THE FOURTH CACHE-ROOT READ, AND THE THIRD ROUND OF THIS AUDIT TO FIND
+        # ONE. `load_store` wraps the INDEX walk, `entry_files_or_unreadable`
+        # wraps `validate`'s per-scope denominator, `scope_dirs_or_unreadable`
+        # wraps `validate`'s `held` — and this listing, which decides WHICH scopes
+        # the table is graded against, was a bare comprehension whose `OSError`
+        # escaped `main()`'s `(StoreMissingError, ResolverError)` arm as a
+        # TRACEBACK at exit 1. That is the exact outcome #111 exists to remove, at
+        # a fourth site.
+        #
+        # 🔴 A CHMOD DOES REACH THIS LINE, VIA A **304**, AND AN EARLIER DRAFT OF
+        # THIS VERY COMMENT SAID IT DID NOT. That draft read "NO CHMOD REACHES THIS
+        # LINE", derived from a real measurement — `routes --check --no-sync` at
+        # cache-root modes 0555/0444/0111/0000 all stop at the `state != STATE_LIVE`
+        # guard above, because the `no_sync` arm of `resolve_state` returns from an
+        # unconditional early block that can only yield `STATE_NO_CACHE` or
+        # `STATE_CACHED`. True — and then generalised into a claim about EVERY route
+        # to this line, which is the exact move this round of the audit exists to
+        # stop. Caught by building the fixture, not by re-reading the sentence.
+        #
+        # The route it missed is in this file, in `resolve_state`: a **304 Not
+        # Modified** returns `STATE_LIVE`, and its own comment there says "NOTHING IS
+        # WRITTEN" — so the cache root this line lists is the PRE-EXISTING one, mode
+        # bits and all. MEASURED against a stub pod answering 304 to a matching
+        # `If-None-Match`, one instance, a one-route table, cache root at 0111, NO
+        # `--no-sync`:
+        #
+        #     before this change   oracle → exit 1, PermissionError TRACEBACK
+        #                          go     → exit 3, raw `open <cache>: permission denied`
+        #     after  this change   both   → exit 3, byte-identical `index entry
+        #                                   unreadable: under <root> (PermissionError:
+        #                                   [Errno 13] …)`
+        #
+        # i.e. a DIVERGENCE (1 vs 3) and a raw-errno TEXT defect, both closed, and
+        # both reachable by an ordinary `chmod` on a host whose store has not changed
+        # since its last sync — the COMMON case for a `routes --check`, not an exotic
+        # one. `install_snapshot` renaming the root aside under a concurrent reader,
+        # an `ESTALE`/`EIO` from a bucket, git checkout or NFS mount (`README.md`),
+        # and every other non-mode `OSError` `iterdir()` propagates are ADDITIONAL
+        # routes, not the only ones.
+        #
+        # 🔴 THE FAN-OUT QUESTION `ls-entries` CARRIES DOES NOT ARISE HERE, WHICH
+        # IS WHY THIS ONE COULD BE CLOSED AND THAT ONE COULD NOT. This verb has
+        # ALREADY decided that one bad instance refuses the whole run: the guard
+        # above returns `EXIT_UNROUTED` for the entire check as soon as any
+        # instance is not LIVE. Failing closed here is therefore consistent with
+        # what this loop already does, and adds no new policy. `ls-entries` prints
+        # per instance and continues, so its ruling is genuinely open — see
+        # `tests/test_store_read_sites.py`, which ledgers both.
+        scopes.update(rc.scope_dirs_or_unreadable(cache))
     problems, notes = routing.check(scopes)
     for problem in problems:
         print(f"🔴 cairn: {problem}", file=sys.stderr)
@@ -2849,10 +2898,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         # lands on THIS arm by class rather than needing `OSError` widened. Gated by
         # `tests/parity/harness.py`'s `validate-unreadable-cache-root` row.
         #
-        # ⚠ WHAT REMAINS IS NOT THAT CASE, AND IT IS GENUINELY DECLARED: a cache root
-        # with no `x` bit raises out of `resolve_state` BEFORE any verb runs, so it
-        # never reaches this ladder at all. `tests/parity/README.md` row 4 carries it,
-        # with a closing condition — verified by reading that row, not by citing it.
+        # ⚠ WHAT REMAINS IS NOT THAT CASE. A cache root with no `x` bit raises out of
+        # `resolve_state` BEFORE any verb runs; `tests/parity/README.md` row 4 carries
+        # that one, with a closing condition — verified by reading that row, not by
+        # citing it. MEASURED at `24eb508` over an isolated HOME, one instance, cache
+        # root at 0444 and 0000: `recall`, `search`, `validate` and `ls-entries` each
+        # exit **1** with a traceback here and **3** with a banner on the Go client, and
+        # `routes --check` exits **1** here against **11** there. One mechanism, five
+        # verbs — which is why row 4 is the biggest remaining divergence in this
+        # repository and not a footnote.
+        #
+        # 🔴 THIS PARAGRAPH USED TO END "so it never reaches this ladder at all", AND
+        # THAT SENTENCE WAS FALSE — it is the third round of this audit to be caused by
+        # a closure claim made on an axis nobody enumerated. It was true of the MODE
+        # axis it was thinking about (no `x` ⇒ `resolve_state` raises first) and offered
+        # as a statement about the whole residual, so it read as "no unwrapped
+        # cache-root read remains". `cmd_routes` HAD one — a bare
+        # `cache.iterdir()` whose `OSError` escaped this very arm as a traceback — and
+        # the sentence is exactly what would stop a reader looking for it.
+        #
+        # ⚠ SO THIS PARAGRAPH NO LONGER CLAIMS CLOSURE, AND NOTHING IN PROSE SHOULD.
+        # The set of reads that can reach this ladder is ENUMERATED, two-way, by
+        # `tests/test_store_read_sites.py` — which fails when a new listing read of the
+        # store appears AND when its ledger names one that no longer exists. Three
+        # rounds of this audit each shipped a sentence asserting the set was closed;
+        # the ledger is the replacement for the fourth such sentence. It records, by
+        # name, the sites that are still NOT wrapped (`ls-entries` on both clients,
+        # `doctor` on both clients) so "not wrapped" cannot be mistaken for "not
+        # there".
         #
         # 🔴 THE `ResolverError` HALF IS WIDER THAN THE TWO CLASSES JUSTIFIED ABOVE,
         # AND THAT IS A DECISION, NOT AN OVERSIGHT. `ResolverError` has five
