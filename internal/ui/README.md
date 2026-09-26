@@ -1653,6 +1653,11 @@ defaults' own unit it sorts last and wins; the same walk then measured **1696px,
 mechanism, the retracted "it is an orphan rule" reading, and the instruction not to simplify it
 back to `px` are in `tailwind.css` beside the key.
 
+⚠ **The RUNG the breakpoint gates has since moved from `112rem` to `200rem`** — an operator
+decision after looking at the rendered page, measured at **3104px, 90.2%** at 3440. The
+breakpoint itself is unchanged at `125rem`, and the emitted order was re-read in `app.css`
+rather than grepped for, for the reason above. See Phase F.
+
 ⚠ **`body` is the element that carries the ladder, and `.page-main` has no `max-width` of its
 own** — so the element a reader would inspect to find the cap is not the element that sets it.
 That is why the guard below measures `<main>` against the VIEWPORT rather than against any
@@ -1697,10 +1702,11 @@ asserted and neither replaces the other.
 
 | | |
 |---|---|
-| what it asserts | `<main>`'s rendered width ≥ **45%** of `window.innerWidth`, at the 3440px capture only |
-| why 45 | the defect measured **35.8%** (1232px); the declared layout measures **49.3%** (1792px cap less 48px gutters). 45 refuses the first by 9.2 points and admits the second with 4.3 to spare |
-| it is a FLOOR | more is fine; nothing here asks a page to fill the screen, and nothing here has an opinion about line length below that line |
-| scope is pinned | the fraction is not scale-free (the cap is an absolute 112rem), so the gate REFUSES rather than measures if the widest declared viewport stops being 3440 |
+| what it asserts | `<main>`'s rendered width ≥ **80%** of `window.innerWidth`, at the 3440px capture only |
+| why 80 | three real renders at 3440: the original defect **35.8%** (1232px, the `ultra` rung dead); the retired rung **49.3%** (1792px cap less 48px gutters); the layout now **90.2%** (3200px cap less the same gutters). 80 refuses the first two by 44.2 and 30.7 points and admits the third with 10.2 to spare |
+| why it MOVED | 45% still refused the dead rung, so it would have stayed green — and it would also have stayed green for a silent revert to the 112rem rung, which is now a regression against an operator decision rather than the intent. A floor that admits both the old intent and the new one has stopped measuring the layout and is only measuring that SOME rung survived |
+| it is a FLOOR | more is fine; nothing here asks a page to fill the screen, and nothing here has an opinion about line length below that line — prose is capped separately, in `tailwind.css` (`--measure-code` / `--measure-prose`), and this gate is structurally blind to it because it measures `<main>` and `<main>` carries the grids |
+| scope is pinned | the fraction is not scale-free (the cap is an absolute 200rem), so the gate REFUSES rather than measures if the widest declared viewport stops being 3440 |
 | one exemption | `/sign-in`, whose `<main>` IS its `max-w-md` card at 13%. It requires the PATH **and** the class `signin-main` — either alone is a hole a later page could walk through |
 | reported, not counted | a clean run prints the narrowest fraction it actually saw, because "0 refusals" is also what a predicate wired to nothing prints |
 
@@ -1709,6 +1715,15 @@ at the branch tip before the breakpoint fix — 12 captures, 35.8% each, one reg
 its own message — **GREEN** after, at 49.3%. Mutated a second way (the `ultra` cap narrowed to
 60rem with the breakpoint left correct) it goes red again at **25.1%**, still as the only
 regression class, so it dies for its own reason rather than riding the first fix.
+
+**And a third mutant since the rung was widened** (`retiredUltraRung` in `refusals_test.go`):
+the shell put back on `ultra:max-w-[112rem]` — 1696px, **49.3%**, a real render of the previous
+tree — is now REFUSED as `CONTENT TOO NARROW`. That case is the witness for the re-derivation:
+with `contentWidthFloor` reverted to 0.45 it is the one subtest that fails, and it fails by
+NOT being refused. ⚠ `cleanWalk`'s fixture fraction moved with it, 0.60 → 0.92, because a
+fixture deliberately not derived from the constant has to be re-checked against it; 0.60 clears
+45% and does not clear 80%, so leaving it would have turned the POSITIVE CONTROL red — a
+fixture failure that reads exactly like a broken gate.
 
 ⚠ **They are refusals at the WALK and not in `CaptureTarget`**, because this module's own
 positive-control page deliberately overflows and deliberately carries a script. A refusal
@@ -1739,3 +1754,131 @@ reachable.
   load. The fixture stores are a handful of files; nothing measures the page against a store
   where that is not free.
 - **Concurrent readers.** Unchanged from Phase A: nothing runs two requests at the same instant.
+
+# Phase F — the ultrawide rung, and the entry page as a document
+
+Two operator follow-ups after seeing Phase E in a browser. They are one change because the
+first one is what makes the second one necessary: a container ~90% of an ultrawide display is
+right for the card grids and wrong for every sentence in it.
+
+## 🔴 The rung moved on an operator decision, and the floor was RE-DERIVED rather than carried
+
+`ultra:max-w-[112rem]` → `ultra:max-w-[200rem]`, gutters unchanged at `ultra:px-12`. Measured in
+the same chromium over the same hermetic pod, at the 3440px capture, over 12 non-exempt pages:
+
+| | `<main>` | of a 3440px viewport |
+|---|---|---|
+| before | 1696px | **49.3%** |
+| after | 3104px | **90.2%** |
+
+The arithmetic is `cap − 2×gutter`, and both halves are written beside the rule because the
+fraction is what `uiaudit` asserts and a reader checking it has to be able to reproduce it.
+
+⚠ **A cap and not `max-w-none`.** Uncapping is the tidier change and it removes the only bound
+this layout has on a display nobody here has measured; it would also silently retire
+`contentFloorWidth`, whose whole argument is that the cap is ABSOLUTE so the fraction has a
+scope. The cap stays, and only its value moved.
+
+🔴 **The breakpoint is untouched at `125rem`, and the emitted ORDER in `app.css` was re-read
+rather than assumed.** The `ultra` rung's first life was spent dead because a `px` breakpoint
+sorted before every `rem` default; the check that would have caught it is that the generated
+`body` rule's media queries ascend, and a grep of the source is structurally incapable of seeing
+it. Confirmed after this change: `40rem, 64rem, 64rem, 80rem, 125rem, 125rem`, so the `ultra`
+declaration is last and wins.
+
+The content floor's re-derivation, its third mutant and why `cleanWalk`'s own fixture fraction
+had to move with it are in the `uiaudit` table above.
+
+⚠ **One incidental measurement, recorded so it is not read as a regression.** Four more captures
+at the 1280px laptop width report `main=1217px` where they reported `1232px` before. That is a
+vertical scrollbar: the entry page is TALLER now (larger section headings, the unreachable-marker
+callouts), the walk runs with `hide-scrollbars` false on purpose, and a scrollbar narrows the
+layout viewport by ~15px. It is a consequence of content height, not of the width ladder, and
+`horizontal_overflow` stayed 0 at all five widths.
+
+## 🔴 The entry page renders three prefixes as STRUCTURE, and names everything it did not
+
+The complaint was that the page rendered its own source: literal `## What it is` headings, raw
+bullet text including the `OPEN:` marker, and inline code showing its backticks. Three
+transformations, and **a transformation is a place the view can disagree with the file** — which
+is the complaint this whole arc started from. So each one is paired with what happens when the
+parser refuses:
+
+| rendered as structure | when the parser refuses |
+|---|---|
+| a heading's `#` run becomes the heading | `headingParts` reports the run it FOUND; anything but `## ` also renders the file's own line in `.section-source` |
+| an accepted `OPEN:` / `RESOLVED <sha>:` becomes a badge | `store.MarkerSpan` is **0** for every line `BulletOpenness` refused, so a NEAR MISS keeps its marker text — which is the entire finding |
+| a `` `backtick` `` span becomes `<code>` | an unmatched backtick, an empty pair and anything inside a `store.IsFence` region are left exactly as typed |
+
+🔴 **Neither cut spells a grammar.** `store.MarkerSpan` and `store.BulletMarkerSpan` are new
+accessors over the patterns `BulletOpenness` and `ParseJournalBullets` already use, so "where
+does the prefix end" and "was a marker declared" cannot come apart. A `TrimPrefix(line, "OPEN: ")`
+at the call site would have cut at the wrong colon on `- 2000-01-02: OPEN: see foo: bar` and —
+far worse — would have cut a near miss.
+
+🔴 **The sha moved onto the badge, because the strip removed it from the line.** `RESOLVED <sha>:`
+is what makes a closure claim checkable (`git cat-file -e <sha>`), so a badge reading only
+`resolved` over a stripped line would have deleted evidence from the page while looking tidier.
+
+🔴 **A marker the parser CANNOT REACH is a new callout, and it is a regression guard against
+this change's own hazard.** Before the badge replaced the text, an `OPEN:` printed in a body was
+ambiguous but visible; now an accepted marker is gone from the line, so a marker still printed
+there is precisely the shape of one that declared nothing — and nothing on the page would have
+said which it was. `.bullet-unreachable` names the OFFSET (the line itself is already on the
+page, verbatim, two elements up) and reads `store.JournalBullet.UnreachableMarkers`, whose own
+comment records the field case: a bullet whose only real marker sat several lines down, badged
+solely by accident of a broken `RESOLVED —` above it, where fixing the broken line would have
+SILENCED a still-open action.
+
+🔴 **The provenance block and the explainer are KEPT, and the explainer's own claim was
+corrected.** It read "its `##` headings, verbatim", which was true while the heading line was
+printed as text and is false now. It states both transformations and that anything the parser
+did not accept stays in the text. An explainer is a claim too.
+
+⚠ **Inline code is scoped to the entry's own CONTENT and not to the page's prose**, which is a
+judgement call rather than an oversight. The explainer, the legend and the notices keep their
+literal backticks: they QUOTE the file's syntax (`## What it is`, `aliases:`), where a literal
+backtick reads as "this is a string in the file" — and `ReplicaHonesty` is pinned as one whole
+normalised string, so a span split there would be a second guard to move for a cosmetic reason.
+It also keeps the new parse confined to the attacker-authored path, which is where its tests are.
+
+⚠ **Nothing was de-monospaced and nothing reflows.** `whitespace-pre-wrap` in a `<pre>` stays,
+so an author's own wrapping and indentation survive; reflowing wrapped prose is the transformation
+most likely to mangle an indented block or a fence, and it was not asked for.
+
+## The prose measure, and why it is TWO numbers
+
+`--measure-code: 110ch` on `.section-body` / `.bullet-body` / `.hit-lines`, and
+`--measure-prose: 72ch` on the eight prose classes, both as `min(100%, …)` so a phone stays
+bounded by its container.
+
+- **`ch`, not `px`**, because a measure is a count of CHARACTERS: `1ch` is the advance of `0` in
+  the element's own font, so one value means the same thing in the proportional explainer text
+  and in the monospace bodies. A `px` cap would be right for one and wrong for the other — which
+  is why there are two values and not one.
+- **110 is derived from the store**, not from taste: a container narrower than the writer's own
+  wrap column RE-wraps every line, which is how a `<pre>` starts disagreeing with the file it is
+  showing. MEASURED at **104 characters** — the widest line, and the widest `##`-body line, over
+  the 122 entry files `tests/reader_fixtures.py`'s `build_store` writes. ⚠ One corpus, and the
+  fixture one; read it as the floor the cap had to clear, not as a claim about anybody's store.
+- **The list touches no grid and no row.** `.scope-grid`, `.card-entries`, `.entry-list`,
+  `.provenance` and every `*-row` are the layout that is supposed to use the width. That split —
+  grids wide, sentences not — is the condition the rung was widened under.
+- **It is a selector list and not a class**, for the reason the reduced-motion block is unlayered:
+  a cap spelled at every call site in `render.go` is one forgotten class away from being wrong.
+
+## What Phase F's tests still structurally cannot see
+
+- **Whether 90% of a real ultrawide display reads better than 49%.** That is the operator's
+  judgement and the reason the rung moved; no guard here has an opinion about it. The floor only
+  refuses the layouts that were measured to be wrong.
+- **Whether 110ch and 72ch are comfortable.** Both are derived — one from the corpus, one from
+  the ordinary typographic band — and neither is measured against a reader.
+- **A store whose prose wraps past 110 columns.** The measurement is over the fixture corpus; an
+  entry written at 140 columns will wrap on this page, which is the intended behaviour and is
+  also a case nothing here exercises.
+- **Escaping under a mutant that does not escape.** The inline-code split builds only `g.Text`
+  and an attribute-free `h.Code`, and `Raw`/`Rawf` are AST-banned, so there is no way to write the
+  non-escaping mutant that would prove the structural differential kills it. What is measured
+  instead is the differential itself, with its own positive controls: the payload inside the span
+  is counted in the fixtures (non-zero) and counted on the rendered page (zero).

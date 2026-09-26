@@ -187,11 +187,74 @@ type Bullet struct {
 	// derived from THIS and never from a substring of the text, which is what keeps an
 	// `OPEN:` marker distinguishable from a near-miss that merely looks like one.
 	Population string
+	// ResolvedBy is the sha a `RESOLVED <sha>:` names, or "".
+	//
+	// 🔴 IT IS ON THE BADGE BECAUSE THE BODY NO LONGER CARRIES IT. [Bullet.Body] removes
+	// the marker prefix the badge replaces, and that prefix is where the sha was written —
+	// so a badge reading only `resolved` would DELETE a checkable claim
+	// (`git cat-file -e <sha>`) from the page. The sha is the whole reason the marker takes
+	// one, per `journalOpenness`'s comment in `internal/store`.
+	ResolvedBy string
+	// Unreachable are the correctly-spelled markers on this bullet's lines 2..n, from
+	// `store.JournalBullet.UnreachableMarkers`.
+	//
+	// 🔴 CARRIED BECAUSE THE PAGE NOW STRIPS THE REACHABLE MARKER, WHICH MAKES AN
+	// UNREACHABLE ONE INDISTINGUISHABLE FROM PROSE. Before the badge replaced the text, a
+	// reader saw `OPEN:` in a line and could at least suspect something; now a marker still
+	// printed in the body is exactly the shape of a marker the parser never read, and there
+	// would be nothing on the page to say so. `store.UnreachableMarker`'s own comment
+	// records the field case: a bullet carrying a second, correctly-spelled marker several
+	// lines down, declaring nothing, badged only by accident of a BROKEN line above it.
+	Unreachable []store.UnreachableMarker
 }
 
-// Text is the bullet rejoined, for the one place a whole bullet is rendered as a
-// paragraph.
+// Text is the bullet rejoined, VERBATIM — the shape a search hit quotes.
 func (b Bullet) Text() string { return strings.Join(b.Lines, "\n") }
+
+// Body is the bullet's lines with the two prefixes the page renders STRUCTURALLY removed:
+// the `- ` list marker (the line is an `<li>`) and the openness marker the badge shows.
+//
+// 🔴 BOTH CUTS COME FROM `internal/store`'s OWN PATTERNS, VIA [store.BulletMarkerSpan] AND
+// [store.MarkerSpan], SO THIS FUNCTION SPELLS NO GRAMMAR. That is the difference between a
+// transformation and a second parser: `MarkerSpan` is 0 for every line `BulletOpenness`
+// refused, so a NEAR MISS — a line that tried to write a marker and missed — keeps its
+// marker text on the page, which is the entire finding. A `TrimPrefix(line, "OPEN: ")` here
+// would swallow it and the badge would be the only evidence left.
+//
+// 🔴 ONLY LINE 1. Lines 2..n are verbatim, because the parser reads line 1 only: a marker
+// further down declares nothing and must stay where the writer put it, reported by
+// [Bullet.Unreachable] rather than tidied away.
+//
+// ⚠ THE DATE IS REMOVED ONLY WHEN IT IS THE PARSER'S OWN, AND ONLY WHERE THE PARSER FOUND
+// IT. `MarkerSpan` already covers a date INSIDE a declared marker (`- 2000-01-02: OPEN:`).
+// For a dated bullet with no marker the date is checked by VALUE against `Date` — the
+// validated string `store.BulletDate` returned — and cut only if the line really does open
+// with it. Nothing is inferred: if the value is not there, nothing is removed.
+func (b Bullet) Body() []string {
+	if len(b.Lines) == 0 {
+		return nil
+	}
+	out := make([]string, len(b.Lines))
+	copy(out, b.Lines)
+	first := out[0]
+	if n := store.MarkerSpan(first); n > 0 {
+		out[0] = strings.TrimLeft(first[n:], " \t")
+		return out
+	}
+	first = first[store.BulletMarkerSpan(first):]
+	if b.Date != "" && strings.HasPrefix(first, b.Date) {
+		rest := first[len(b.Date):]
+		// The separator the store's own grammar allows after a date: a `:` or nothing.
+		// `BulletDate` accepts several others (`,`, `)`, `]`, whitespace), and those are
+		// punctuation the WRITER chose inside their sentence — cutting them would edit the
+		// prose rather than remove a prefix the badge duplicates.
+		if strings.HasPrefix(rest, ":") {
+			first = strings.TrimLeft(rest[1:], " \t")
+		}
+	}
+	out[0] = first
+	return out
+}
 
 // SearchResults is one answer from `report.Search`, reduced to what the page shows.
 type SearchResults struct {
@@ -334,6 +397,12 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 					Lines:      b.Lines,
 					Date:       b.Date,
 					Population: b.OpennessPopulation(),
+					ResolvedBy: b.ResolvedBy,
+					// Asked of the store's own bullet rather than re-derived: the scan
+					// normalises each continuation line into OPENING position and hands it
+					// to the same `BulletOpenness` line 1 went through, and it skips fenced
+					// regions for the same reason the bullet parser does.
+					Unreachable: b.UnreachableMarkers(),
 				})
 			}
 		}

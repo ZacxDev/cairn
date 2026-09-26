@@ -15,9 +15,14 @@ import (
 // 🔴 THE CONTENT BOX IS BUILT FROM A LITERAL FRACTION THAT IS NOT `contentWidthFloor`, AND
 // NOT FROM THE CONSTANT THE GATE READS. Deriving the fixture from the threshold would make
 // every case below pass for any threshold, including a mutated one — the expectation would
-// be a restatement of the implementation. 0.60 is a number the honest surface clears
-// (measured 49.3% at 3440 … see the note on `narrowContent`) and no boundary of the gate
-// can equal.
+// be a restatement of the implementation. 0.92 is a number the honest surface clears
+// (MEASURED at 90.2% at 3440 with the `ultra:max-w-[200rem]` rung — see the note on
+// `narrowContent`) and no boundary of the gate can equal.
+//
+// ⚠ IT WAS 0.60 AND IT HAD TO MOVE WITH THE RUNG, WHICH IS THE COST OF A FIXTURE THAT IS
+// DELIBERATELY NOT DERIVED FROM THE CONSTANT. 0.60 cleared a 45% floor and does NOT clear
+// the 80% one the widened shell re-derived, so leaving it would have turned the POSITIVE
+// CONTROL red — a fixture failure that reads exactly like a broken gate.
 func cleanWalk() []*Capture {
 	var out []*Capture
 	for _, vp := range Viewports {
@@ -28,8 +33,8 @@ func cleanWalk() []*Capture {
 			Layout:   &PushLayout{InnerWidth: vp.Width, ScrollWidth: vp.Width},
 			Content: &ContentBox{
 				InnerWidth: vp.Width,
-				BodyWidth:  vp.Width * 60 / 100,
-				MainWidth:  vp.Width * 60 / 100,
+				BodyWidth:  vp.Width * 92 / 100,
+				MainWidth:  vp.Width * 92 / 100,
 				MainClass:  "page-main",
 				MainCount:  1,
 			},
@@ -43,14 +48,28 @@ func cleanWalk() []*Capture {
 //
 // 🔴 THE NUMBER IS THE MEASURED DEFECT, NOT A ROUND ONE UNDER THE THRESHOLD. 1232px in a
 // 3440px viewport is what a real Chromium rendered on the tree this guard was written
-// against — the `xl:max-w-7xl` rung (80rem = 1280px) winning the cascade over
-// `ultra:max-w-[112rem]`, less 24px of `sm:px-6` gutter a side. Picking a value derived from
+// against — the `xl:max-w-7xl` rung (80rem = 1280px) winning the cascade over the `ultra`
+// rung, less 24px of `sm:px-6` gutter a side. Picking a value derived from
 // `contentWidthFloor` instead would make this case pass for any threshold; picking a round
 // 0 would make it pass for a gate that only refuses the impossible.
 func narrowContent(cs []*Capture) {
 	c := widestCapture(cs)
 	c.Content.BodyWidth = 1280
 	c.Content.MainWidth = 1232
+}
+
+// retiredUltraRung is the SECOND measured layout the floor must now refuse: the shell back
+// on `ultra:max-w-[112rem]`, which is what this surface shipped before the rung was widened.
+//
+// 🔴 IT IS THE MUTANT THE 45% FLOOR WAS GREEN ON, AND IT IS WHY THE FRACTION WAS RE-DERIVED
+// RATHER THAN LEFT ALONE. 1696px of 3440 is 49.3%, measured in a real Chromium over the
+// previous tree — above 45% and below 80% — so a silent revert of the ultrawide rung passed
+// every refusal this harness had. Both numbers are real renders of real trees, which is what
+// makes this a regression case and not a threshold restated as a fixture.
+func retiredUltraRung(cs []*Capture) {
+	c := widestCapture(cs)
+	c.Content.BodyWidth = 1792
+	c.Content.MainWidth = 1696
 }
 
 // widestCapture finds the capture the content floor binds, BY VIEWPORT VALUE rather than by
@@ -130,6 +149,15 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 			// axe refusal, which is exactly how the real defect shipped through seven CI jobs.
 			name:    "content is a narrow column at the WIDEST width",
 			break_:  narrowContent,
+			wantSub: "CONTENT TOO NARROW",
+		},
+		{
+			// 🔴 THE MUTANT THE PREVIOUS 45% FLOOR WAS GREEN ON. A revert of the ultrawide
+			// rung to `112rem` renders 49.3% at 3440 — a real measurement of the real
+			// previous tree — which cleared 45% and does not clear 80%. Without this case the
+			// re-derivation is a number nobody watched do anything.
+			name:    "the shell reverts to the RETIRED 112rem ultrawide rung",
+			break_:  retiredUltraRung,
 			wantSub: "CONTENT TOO NARROW",
 		},
 		{
@@ -253,8 +281,8 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 	}
 
 	// 🔴 AND THE FRACTION'S SCOPE, WHICH IS THE ONE INPUT THE GATE CANNOT DERIVE. The floor
-	// is a share of a viewport and the shell's cap is an absolute 112rem, so the same honest
-	// layout scores 49% at 3440 and 36% at 5000. Moving the widest capture without
+	// is a share of a viewport and the shell's cap is an absolute 200rem, so the same honest
+	// layout scores 90% at 3440 and 58% at 5400. Moving the widest capture without
 	// re-deriving the fraction must refuse rather than quietly change what is being asserted.
 	func() {
 		saved := Ultrawide.Width
@@ -271,7 +299,8 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 	}()
 
 	t.Logf("walk refusals: clean over %d width(s) PASSES; overflow (first and widest), script, axe-absent, "+
-		"a narrow <main> at %dpx and both halves of the sign-in exemption each go RED with their own message; "+
+		"a narrow <main> at %dpx, the RETIRED 112rem rung (49.3%%) and both halves of the sign-in "+
+		"exemption each go RED with their own message; "+
 		"the sign-in card itself PASSES; a 1-width matrix, an all-exempt widest width, a moved matrix and an "+
 		"empty set are refused",
 		len(Viewports), Ultrawide.Width)

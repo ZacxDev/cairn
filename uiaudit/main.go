@@ -346,23 +346,40 @@ func run(repoRoot, uiBinary, workDir string, port int, label string, budget time
 // here asks any page to fill the screen, and nothing here has an opinion about line length
 // below this line. It exists only to refuse the one shape the overflow refusal cannot see.
 //
-// 🔴 0.45 IS DERIVED FROM THE DECLARED LAYOUT AT ONE STATED WIDTH RATHER THAN CHOSEN FOR
-// FEEL, AND BOTH ENDS OF THE RANGE IT SITS IN WERE MEASURED IN A REAL CHROMIUM OVER THIS
-// SURFACE AT `contentFloorWidth`:
+// 🔴 IT IS DERIVED FROM THE DECLARED LAYOUT AT ONE STATED WIDTH RATHER THAN CHOSEN FOR
+// FEEL, AND EVERY VALUE BELOW WAS MEASURED IN A REAL CHROMIUM OVER THIS SURFACE AT
+// `contentFloorWidth`:
 //
-//	the defect  1232px of content in a 3440px viewport = 35.8%
-//	the intent  `ultra:max-w-[112rem]` (1792px) less `ultra:px-12` (48px a side)
-//	            = 1696px of content in a 3440px viewport = 49.3%
+//	the original defect  the `ultra` rung dead, shell capped at `xl`'s 80rem
+//	                     = 1232px of content in a 3440px viewport = 35.8%
+//	the previous intent  `ultra:max-w-[112rem]` (1792px) less `ultra:px-12` (48px a side)
+//	                     = 1696px of content in a 3440px viewport = 49.3%
+//	the intent now       `ultra:max-w-[200rem]` (3200px) less the same gutters
+//	                     = 3104px of content in a 3440px viewport = 90.2%
 //
-// 0.45 refuses the first by 9.2 points and admits the second with 4.3 to spare. That
-// headroom is what makes it a floor and not a golden value: widening the ultra gutters to
-// `px-24` still passes (1600px, 46.5%), while any change that puts the shell back on a
-// narrower cap does not.
-const contentWidthFloor = 0.45
+// 🔴 AND 0.45 WAS RE-DERIVED TO 0.80 WHEN THE RUNG MOVED, WHICH IS THE WHOLE POINT OF
+// PINNING A DERIVATION RATHER THAN A NUMBER. 0.45 still refuses the original defect, so it
+// would have stayed green — and it would ALSO have stayed green for a silent revert to the
+// 112rem rung, which is now a regression against an operator decision rather than the
+// intent. A floor that admits both the old intent and the new one is not measuring the
+// layout any more, it is measuring that SOME rung survived.
+//
+// 0.80 refuses the dead rung by 44.2 points, refuses the retired 112rem rung by 30.7, and
+// admits the current layout with 10.2 to spare. That headroom is what keeps it a floor and
+// not a golden value: widening the ultra gutters to `px-24` still passes (3008px, 87.4%) and
+// so does `px-48` (2816px, 81.9%), while any change that puts the shell back on a narrower
+// cap does not.
+//
+// ⚠ IT IS STILL A FLOOR AND NOT A TARGET, AND IT STILL HAS NO OPINION ABOUT LINE LENGTH.
+// The prose inside the shell is capped separately — `--measure-code` / `--measure-prose` in
+// `internal/ui/tailwind.css` — precisely because "the container uses the display" and "a
+// sentence is a readable width" are different claims. Nothing here can see the second one:
+// this measures `<main>`, and `<main>` carries the grids.
+const contentWidthFloor = 0.80
 
 // contentFloorWidth is the viewport width `contentWidthFloor` was derived at, pinned as a
-// literal because the fraction is NOT scale-free: the shell's cap is an absolute 112rem, so
-// one honest layout is 49% of 3440 and 36% of 5000. Pinning the width is what keeps the
+// literal because the fraction is NOT scale-free: the shell's cap is an absolute 200rem, so
+// one honest layout is 90% of 3440 and 58% of 5400. Pinning the width is what keeps the
 // fraction a claim with a scope rather than a number that silently goes wrong the day
 // somebody widens the matrix — `refuseWalkRegressions` refuses rather than measures if the
 // widest declared viewport stops being this one.
@@ -501,13 +518,13 @@ func refuseWalkRegressions(captures []*Capture) error {
 	}
 	// 🔴 THE FLOOR'S SCOPE IS PINNED TO A LITERAL WIDTH, AND A MATRIX THAT MOVED PAST IT
 	// REFUSES RATHER THAN MEASURES. `contentWidthFloor` is a fraction of a viewport and the
-	// shell's cap is an absolute 112rem, so the same correct layout scores 49% at 3440 and
-	// 36% at 5000: widening the widest capture without re-deriving the fraction would turn
+	// shell's cap is an absolute 200rem, so the same correct layout scores 90% at 3440 and
+	// 58% at 5400: widening the widest capture without re-deriving the fraction would turn
 	// an honest tree red, and NARROWING it would make the floor pass on a layout that never
 	// reached the `ultra` breakpoint at all. Both are re-derivations, so both stop here.
 	if Ultrawide.Width != contentFloorWidth {
 		return fmt.Errorf("the content floor of %.0f%% was derived at a %dpx viewport and the widest declared "+
-			"one is now %dpx: the fraction is not scale-free (the shell's cap is an absolute 112rem), so it has "+
+			"one is now %dpx: the fraction is not scale-free (the shell's cap is an absolute 200rem), so it has "+
 			"to be re-derived at the new width rather than carried over",
 			contentWidthFloor*100, contentFloorWidth, Ultrawide.Width)
 	}

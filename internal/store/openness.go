@@ -89,6 +89,32 @@ func BulletOpenness(firstLine string) (openness, resolvedBy string) {
 	return marker, pytext.Lower(m[2])
 }
 
+// MarkerSpan is how many BYTES of `firstLine` the DECLARED marker prefix occupies —
+// `- `, the optional `YYYY-MM-DD: `, the `OPEN`/`RESOLVED`, its optional sha, and the
+// terminating `:` — or 0 when nothing parsed.
+//
+// 🔴 IT EXISTS SO A SURFACE THAT SHOWS THE MARKER AS A BADGE CAN REMOVE THE SAME
+// CHARACTERS THE PARSER CONSUMED, INSTEAD OF SPELLING THE GRAMMAR A SECOND TIME.
+// `internal/ui` renders the openness population as a badge and must not ALSO print the
+// literal `OPEN:` in the line; the only safe way to decide where that prefix ends is to
+// ask the regexp that decided the population. A `strings.Index(line, ":")` at the call
+// site would cut at the wrong colon on `- 2000-01-02: OPEN: see foo: bar` and — far
+// worse — would cut a NEAR MISS, whose whole finding is that the marker text is still
+// there to be read.
+//
+// 🔴 SO IT IS 0 FOR EVERY LINE `BulletOpenness` REFUSES, AND THAT IS THE CONTRACT
+// CALLERS BRANCH ON: the two functions read one pattern, so "there is a prefix to strip"
+// and "a marker was declared" cannot come apart. `journalOpenness` is anchored at
+// position 0 with no multiline flag, so the match always starts at 0 and the END offset
+// is the whole answer.
+func MarkerSpan(firstLine string) int {
+	loc := journalOpenness.FindStringIndex(firstLine)
+	if loc == nil {
+		return 0
+	}
+	return loc[1]
+}
+
 // BulletDate is the bullet's ISO date, or "" — VALIDATED, not just shaped.
 //
 // `2000-13-45` matches the shape and is not a date; returning it would put a
