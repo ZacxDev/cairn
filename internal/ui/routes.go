@@ -235,7 +235,29 @@ const (
 	// QueryQuery is the search box. It rides on the ROOT row rather than on a route of
 	// its own — see `routes`.
 	QueryQuery = "q"
+	// QueryView selects WHICH VIEW of an entry `GET /entry` answers, and it rides on that
+	// row rather than on a route of its own for the reason `routes` gives about the share
+	// flow and the browse pair: a second path would be a second row in the ledger for one
+	// answer about one entry, and `/entry/raw` in particular would be a path whose last
+	// segment is a view name sitting where a ref used to be.
+	//
+	// 🔴 EXACTLY ONE VALUE IS RECOGNISED AND EVERYTHING ELSE IS THE RENDERED VIEW. That is
+	// `handlePage`'s ruling for `?q=` restated: a view selector is not an authority
+	// question, so an unrecognised value is answered with the page rather than with a
+	// refusal. The cost is that a typo is silent — stated here rather than discovered,
+	// and the reason the recognised spelling is pinned as a literal in
+	// `rawview_test.go` instead of being read back off this constant.
+	QueryView = "view"
 )
+
+// ViewRaw is the one recognised [QueryView] value: the entry's file, as bytes.
+//
+// ⚠ THERE IS NO `ViewRendered` CONSTANT, AND THE ABSENCE IS THE DESIGN. The rendered view
+// is what the row answers when nothing selects otherwise, so it has no spelling to get
+// wrong and no URL of its own to keep working — `entryHref` emits the plain entry URL
+// for it. A second constant would invite a second recognised value, and then two URLs
+// would render one state.
+const ViewRaw = "raw"
 
 // The share flow's form fields, spelled once for the renderer and the handlers.
 //

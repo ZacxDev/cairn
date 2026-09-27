@@ -2086,6 +2086,58 @@ MUTANTS: tuple[Mutant, ...] = (
 
     # ---- the browser share flow: who can see a scope, and who may change that -------
     #
+    # ---- the entry page's RAW VIEW: its escaping, and its authority ORDERING -------
+    #
+    # 🔴 THESE TWO WERE RUN BY HAND AND RECORDED IN PROSE, WHICH IS THE EXACT SHAPE THE
+    # `./internal/ui/` ENTRY IN `PKGS` EXISTS BECAUSE OF. Worse than that precedent, in
+    # fact: the prose record went stale inside ONE commit — it cited a `file:line` and an
+    # assertion string that the very next commit's test-fold had already moved, so a reader
+    # checking the evidence would have found nothing there. Prose cannot be re-run; these
+    # rows can.
+    Mutant(
+        name="raw-view-renders-the-file-unescaped",
+        path="internal/ui/render.go",
+        old="h.Code(g.Text(e.Raw))",
+        new="h.Code(g.Raw(e.Raw))",
+        killer="TestHostileEntryTextIsEscapedOnEveryBrowsePage",
+        # 🔴 THE AST BAN KILLS THIS TOO, WHICH IS WHY IT IS DECLARED RATHER THAN LEFT TO
+        # LOOK LIKE A CLEAN SINGLE-GUARD KILL. A mutant killed by a different guard's error
+        # says nothing about the guard you think you are testing, so the behavioural row and
+        # the structural ban are both named: the day either stops killing it, somebody has
+        # to look.
+        extra_killers=(
+            "TestNoRawNodeConstructorAppearsInTheUIPackage",
+            "TestAHostileFileReachesTheRawViewAsTextThroughTheREALPIPELINE",
+        ),
+        why="the raw view emits the WHOLE entry file through one node, so it is the widest "
+        "attacker-authored sink on this surface — and `g.Raw` is a one-token edit that "
+        "renders it as markup. Every other sink here is something a parser accepted first.",
+    ),
+    Mutant(
+        name="raw-view-refuses-differently",
+        path="internal/ui/server.go",
+        old="""	scope, found := pickScope(scopes, wanted)
+	if !found {
+		writePlain(w, http.StatusNotFound, browseRefusal)
+		return
+	}
+	entry, found := pickEntry(scope, ref)""",
+        new="""	scope, found := pickScope(scopes, wanted)
+	if !found {
+		if q.Get(QueryView) == ViewRaw {
+			writePlain(w, http.StatusForbidden, browseRefusal)
+			return
+		}
+		writePlain(w, http.StatusNotFound, browseRefusal)
+		return
+	}
+	entry, found := pickEntry(scope, ref)""",
+        killer="TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne",
+        why="a second way to reach an entry's bytes is a second place the refusal can drift, "
+        "and a raw view that answers its own status is an existence oracle over every scope "
+        "in the deployment — the shape `browseRefusal` exists to refuse.",
+    ),
+
     # 🔴 THESE EIGHT CAME FROM A SECOND BATTERY NOTHING RAN. See the `./internal/ui/`
     # entry in PKGS for what that cost and why they live here now.
     Mutant(

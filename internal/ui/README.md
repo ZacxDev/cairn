@@ -1588,6 +1588,7 @@ reader can tell what they are looking at.
 | `GET /` | `content` | one card per readable scope, plus the search box (`?q=`) |
 | `GET /scope?id=<control.ID>` | `content` | that scope's entry list |
 | `GET /entry?scope=<control.ID>&ref=<stem>` | `content` | one entry: its sections and its line items |
+| `GET /entry?scope=…&ref=…&view=raw` | `content` | the SAME row — the entry's file, as text. Not a route |
 
 ## 🔴 The decision this change settles: `internal/ui` reads entry STRUCTURE from `internal/store`, not through `internal/report`
 
@@ -1952,8 +1953,108 @@ bounded by its container.
 - **A store whose prose wraps past 110 columns.** The measurement is over the fixture corpus; an
   entry written at 140 columns will wrap on this page, which is the intended behaviour and is
   also a case nothing here exercises.
-- **Escaping under a mutant that does not escape.** The inline-code split builds only `g.Text`
-  and an attribute-free `h.Code`, and `Raw`/`Rawf` are AST-banned, so there is no way to write the
-  non-escaping mutant that would prove the structural differential kills it. What is measured
-  instead is the differential itself, with its own positive controls: the payload inside the span
-  is counted in the fixtures (non-zero) and counted on the rendered page (zero).
+- **Escaping under a mutant that does not escape — ⚠ TRUE OF THIS SPLIT ONLY, and it stopped
+  being true of the package the moment a second sink existed.** The inline-code split builds only
+  `g.Text` and an attribute-free `h.Code`, so no mutant of IT can be written that fails to escape.
+  What is measured instead is the differential itself, with its own positive controls: the payload
+  inside the span is counted in the fixtures (non-zero) and counted on the rendered page (zero).
+  🔴 Do not read this as a property of the package. The raw view (`rawBlock`) emits ONE node, so
+  `g.Raw(e.Raw)` is a one-token non-escaping mutant, and it was written and watched kill
+  `TestHostileEntryTextIsEscapedOnEveryBrowsePage`'s `entry-raw` row — see the raw-view
+  section below for why that verdict had to be read with `-run` scoped to one guard. **A "cannot be mutated" claim is scoped
+  to the code it was written about and expires the moment a new call site exists.**
+
+## 🔴 The entry page is TWO views behind ONE route, and the switch is a query parameter rather than a script
+
+`?view=raw` renders the entry's file as text instead of the structure the parsers found in
+it. Three constraints decided the shape, and each of them refused an obvious alternative:
+
+- **No JavaScript.** Tabs are where a browser surface usually grows its first script, and
+  this one may not have any: `uiaudit` asserts `document.scripts.length == 0` on every page
+  it captures, and part of this package's escaping story rests on there being none. Two
+  server-rendered links cost nothing a script would have bought — a shareable URL, a
+  working back button and a browser-native reload come free, which is `searchForm`'s ruling
+  for the same shape.
+- **No second route.** `routes` is an EXACT-MATCH map and the ledger's whole value is that
+  the set of served paths is finite and enumerable. `/entry/raw` would be a second row for
+  one answer about one entry, with a view name sitting where a ref used to be.
+- **No second view in the DOM.** `:target`-driven CSS tabs were considered and refused:
+  they need both views rendered at once, which doubles the page and puts the whole file
+  into every rendered page load whether or not anybody asked for it.
+
+**Exactly one value is recognised.** `?view=raw` selects the raw view; `""`, `RAW`,
+`rendered`, `source` and anything else render the rendered view. That is `handlePage`'s
+ruling for `?q=` restated — a view selector is not an authority question, so an
+unrecognised value is answered with the page rather than with a refusal. The cost is that a
+typo is silent, which is why the recognised spelling is pinned as a LITERAL in
+`rawview_test.go` rather than read back off `QueryView`: a test written against the
+constant would assert that the code agrees with itself, and renaming the value would follow
+silently while breaking every URL already in the world.
+
+**The authority seam does not move, and the order is the guard.** `handleEntryPage` sets
+`RawView` *after* both refusals, so the raw view is a wider rendering of an entry the caller
+was already proved to hold. Everything it shows came out of a file `Source.Visible` had
+already loaded for this principal under `control.VerbRead`; what it adds is the part of that
+file the PARSERS dropped, never a part of the store the AUTHORITY withheld.
+
+### The RED proof, and two of the five guards are INVARIANT GUARDS rather than regression coverage
+
+Measured at `38bea8b` (pre-change) and at the branch head:
+
+| guard | at `38bea8b` | at HEAD |
+|---|---|---|
+| `TestTheRawViewShowsWhatTheRenderedViewStructurallyCannot` | **FAIL** | PASS |
+| `TestBothEntryViewsOfferTheOtherOneAndMarkTheCurrentOne` | **FAIL** | PASS |
+| `TestAnUnrecognisedViewValueRendersTheRenderedView` | **FAIL** | PASS |
+
+⚠ **THE TWO INVARIANT GUARDS THAT USED TO SIT IN THIS TABLE HAVE MOVED, AND THE TABLE NO
+LONGER NAMES THEM.** Both passed on pre-change code, because there they drove the RENDERED
+view — already narrowed, already escaping — so neither was regression coverage. Rather than
+keep them as their own tests, each was folded into the harness that already owned the rule
+it asserts, and each was RE-MUTATION-TESTED in its new home:
+
+- **The narrowing** now lives as the RAW-view row of
+  `TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne`, compared
+  against the SCOPE refusal rather than against the rendered one — stronger, because two
+  handlers wrong together satisfy a raw-vs-rendered comparison. Mutant: a `?view=raw`
+  conditional `403` above `pickScope`'s refusal. **RED at `browse_test.go:243`**, quoting
+  the mutant's own sentence back.
+- **The escaping** now lives as the `entry-raw` row of
+  `TestHostileEntryTextIsEscapedOnEveryBrowsePage`, a markup-SHAPE differential rather than
+  substring matching. Mutant: `rawBlock` emits `g.Raw(e.Raw)`. **RED on both the shape
+  comparison and the `<script` count.** The pipeline half it cannot reach —
+  `readEntry` reading a real file, and the HTTP layer — stayed behind as
+  `TestAHostileFileReachesTheRawViewAsTextThroughTheREALPIPELINE`.
+
+🔴 **THE FILE:LINE CITATIONS THIS SECTION USED TO CARRY WERE STALE WITHIN ONE COMMIT OF
+BEING WRITTEN** — they named `rawview_test.go:280` and an assertion string that the fold had
+already moved. A `file:line` in prose is a claim with a very short half-life; the guard
+NAMES above are what a reader can still grep for.
+
+🔴 **`rawban_test.go` KILLS THAT MUTANT TOO, WHICH IS THE "GREEN FOR THE WRONG REASON"
+TRAP** — a mutant killed by a different guard's error says nothing about yours. So the
+verdict was read with `-run` scoped to this guard alone, and the ban's own kill confirmed
+separately, with the filter validated by counting its `=== RUN` lines first. A `-run`
+pattern matching no test reports `ok`, and one draft of that check did exactly that. (The
+Phase-D note this corrects has been fixed where it lives, not contradicted from here.)
+
+### What this view's guards still cannot see
+
+- **Whether the whole file is a sensible thing to render for a LARGE entry.** The store this
+  serves is tens of kilobytes across tens of files; nothing here pins a ceiling, and a
+  multi-megabyte entry would be sent in full. No such entry exists in any store this has
+  been run against, so the limit is unmeasured rather than known-safe.
+- ~~**The `<pre>` wrapping at a real viewport** is unobserved by `uiaudit`.~~ ✅ **CLOSED BY
+  THIS CHANGE, and the correction is recorded rather than the sentence quietly deleted.**
+  It read: *"the raw view is a page state `uiaudit` does not currently capture."* That was
+  true when written and false by the time it shipped — the same change moved `/entry` into
+  `linkExpanded`, so the walk follows the rendered view's link to `?view=raw` and captures
+  it. Measured on the real `ExpandLinks` against the real route ledger: the rendered entry
+  page publishes 6 hrefs, 2 expand (the raw view and the scope page), 4 decline, 0 bounded;
+  the raw view's own 2 links are already enqueued, so the cycle terminates.
+  ⚠ What is still only a HAND measurement is the pixel-level wrapping at 1440px; the walk
+  captures the page, `refuseWalkRegressions` does not refuse on axe violations, and the
+  `uiaudit` job is `continue-on-error`.
+- **Anything an edge inserts downstream.** The zero-script assertion is about what THIS
+  ORIGIN renders. That is the scope correction `#130` made to three "this surface ships
+  none" spellings, and it applies here unchanged.
