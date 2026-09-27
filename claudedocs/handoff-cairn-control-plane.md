@@ -24,55 +24,35 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`963517e`** — ⚠ re-read it. **Two sessions are working this repo concurrently**;
-  `main` moved four times during this one.
-- ✅ **#135 (`c6aed4e`) AND #134 (`963517e`) MERGED, verified BY CONTENT.** On `main`: `go vet` 0,
-  `go test ./...` **19 ok / 0 FAIL**, mutant pin **12 passed**, leakscan clean.
-  `.claude/worktrees/` empty, no open PRs from this session, both claims released.
-- ✅ **THE ENTRY PAGE HAS A RENDERED/RAW PAIR.** `?view=raw` renders the entry FILE — front matter,
-  unsurfaced headings, prose above the first heading. **No route added** (it rides `GET /entry`),
-  **no JavaScript**, `:target` tabs refused.
-- 🔴 **ROUND 2 WAS DUE AND WAS SKIPPED BY OPERATOR DECISION.** Round 1 returned **0🔴/6🟡/4🟢**, every
-  finding needing a fix — the condition for another round. **Do not read this ladder as converged.**
-  ⚠ I did not perform the merge; #134 landed while I waited on CI.
-- ✅ **ROUND 1's HEADLINE IS AN A11Y REGRESSION THE PR CREATED**: the new `<nav class="view-tabs">`
-  beside `<nav class="crumbs">` — two landmarks, same role, no names, axe `landmark-unique`,
-  measured with a control. 🔴 **Nothing between there and production would have said so**:
-  `refuseWalkRegressions` does not refuse on axe violations and `uiaudit` is `continue-on-error`.
-  Both navs now carry an `aria-label`.
-- ✅ **MUTATION EVIDENCE IS NOW A CI GATE, NOT PROSE** — both raw-view mutants are rows in
-  `tests/control_mutants.py` (**150 → 152**, six sites, pin green); killed, 0 misattributed, 0
-  stale-extras. ✅ **AND THE WALK CAPTURES THE RAW VIEW** — `linkExpanded` excluded `/entry` on a
-  reason this change falsified; CI's `uiaudit` is green on every STEP, checked step-by-step.
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE** (resolver exit 5; an unknown id
-  answers 200 with an EMPTY ARRAY, no positive control run).
-- ✅ **THE ARC REMAINS CLOSED** — re-measured all three legs earlier today: `pytest tests -q`
-  **2194 passed / 0 failed**, `go vet` rc 0 and `go test ./...` **19 ok / 0 FAIL** on the pinned
-  1.25.14, `packages.default` the Go client.
-- ⏳ **OPEN OPERATOR CHOICE (1):** the capped card is LEFT-ALIGNED, not centred. Unchanged.
-- ⏳ **OPEN OPERATOR CHOICE (2): the rank-9 local instance is STILL RUNNING** — pid **2728234** on
-  `127.0.0.1:8103`, from session `e5d90670`'s scratchpad, re-confirmed alive from
-  `/proc/<pid>/cmdline` at the moment of writing this line. **Still the only world with a
-  co-member**, which is why it is not killed. Carried forward rather than retyped-and-lost: it sits
-  under a REPLACE heading and the write gate flagged it as about to drop.
-- ✅ **RANK 28(a) SHIPPED: `feat/ui-invite-flow` @ `dc50a1b`, pushed (fast-forward, no force).** The
-  Postgres tier: `internal/pgstore/{harness,invites}_pgtest_test.go`, `tests/pgtest/run.sh`,
-  `tests/test_pgtest_tier_is_declared.py`, `pkgs.postgresql_18` in the devShell, a `pgtest` CI job on
-  `postgres:18.6-alpine`. **21 tests, 0 fail, 0 SKIP, PostgreSQL 18.6, through BOTH paths** (ephemeral
-  server and the external-DSN shape CI passes). **Mutation sweep 8/8 KILLED, each by its own message**,
-  positive control green, tree restored pristine. `pytest` **2201 passed / 0 failed**. ⚠ Nothing is
-  deployed and no UI exists yet — (b)–(d) remain, so **rank 9 is NOT unblocked.**
-- ✅ **#134's MERGE WAS GATED ON A MERGED-TREE RUN, WHICH NO PR-BRANCH RUN CAN DO.** `main` + #134's
-  head, fresh sibling worktree: `go vet` rc 0, `go test` **19 ok / 0 FAIL**, `pytest` **2194 passed**,
-  **`checks.ui-stylesheet-is-current` rc 0**, leakscan 0 findings / 402 files. That gate is the
-  load-bearing one — a nix BUILD failure, invisible to a branch run.
-- ⏳ **`ZacxDev/cairn#136` IS OPEN AND UNAUDITED** — prunes 1–3's bookkeeping moved to the archive
-  (41 lines, **0 lost / 0 duplicated**, positive control watched, **2,928 B** freed). It part-paid for
-  this update; it does not close rank 27.
-- ⚠ **TWO SESSIONS WROTE THIS DOC WITHIN THE HOUR AND THE SECOND NEARLY CLOBBERED THE FIRST.** This
-  update was rebuilt on top of `5bc1e10` after the write gate's DURABLE-DROP warning exposed that the
-  base had moved under a delta drafted against `8ef4799`. **That warning is the only reason it was
-  caught** — see `Gotchas`.
+- `main` @ **`8167795`** (docs). ⚠ **Nobody else has written this doc since** — checked, not assumed.
+- ✅ **THE ORIGINAL ARC REMAINS CLOSED — THE CLOSING CONDITION'S OWN EVIDENCE, carried forward
+  because it lives under a REPLACE heading and the gate flagged it as about to drop.** All three
+  legs, 2026-09-27: `pytest` **2194 passed / 0 failed**, `go vet` rc 0, `go test ./...` **19 ok / 0
+  FAIL** on the pinned 1.25.14, `packages.default` the Go client (`flake.nix:1046`). Ranks 18–28 are
+  the successor arc.
+- ⏳ **`ZacxDev/cairn#136` OPEN, `CLEAN`, UNAUDITED** — prunes 1–3's bookkeeping archived (41 lines,
+  0 lost / 0 duplicated, 2,928 B freed). Does not close rank 27.
+- ✅ **RANK 28(a) DONE, AND 28(b) IS THREE-FIFTHS DONE — `feat/ui-invite-flow` @ `2ae09de`, pushed, no
+  PR, working tree CLEAN.** Six commits past `main`; every one green and pushed separately so the
+  authentication-path change is reviewable apart from the feature that consumes it:
+  - `dc50a1b` the Postgres tier (21 tests, 0 SKIP, 18.6, both paths, 8/8 mutants killed);
+  - `317c228` merge of `main` (so #134's files are in);
+  - `3148721` `Role.CanManageMembers` / `Model.ProjectsManagedBy` / `Model.RoleIn` — 7/7 killed;
+  - `fbad934` `identity.UnprovisionedSubject` — 5/5 killed;
+  - `2ae09de` `ControlInviting` + the flight binding + the callback branch — 5/7 killed, 2 survivors
+    documented as defence-in-depth rather than patched.
+- ✅ **GATES ON EVERY INCREMENT** (`nix develop -c`, go **1.25.14**): `go vet` rc 0 · `go test ./...`
+  **19 ok / 0 FAIL** · gofmt clean on touched files · leakscan clean · the Postgres tier re-run once
+  `invite.Store` gained a second consumer (21/0/0).
+- 🔴 **NOTHING IS REACHABLE OVER HTTP YET, SO RANK 9 IS STILL BLOCKED.** `internal/ui` has the
+  service, the flight field and the callback branch; **no** route rows, handlers, pages, stylesheet
+  rules or `cmd/cairn-ui` construction. Deployed: nothing. Click-path verified: nothing.
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE** (resolver: nothing resolved, 0
+  tasks; an unknown id answers 200 with an EMPTY ARRAY). ⚠ Named by ROLE — spelling the system's own
+  name here is what the leak gate refused on this very update, the SEVENTH event of that class.
+- ⏳ **OPEN OPERATOR CHOICE (1):** the capped card is LEFT-ALIGNED, not centred.
+- ⏳ **OPEN OPERATOR CHOICE (2):** pid **2728234** still holds `127.0.0.1:8103` (session `e5d90670`),
+  re-confirmed from `/proc/<pid>/cmdline` earlier today. Still the only world with a co-member.
 
 ## Next steps (ranked)
 
@@ -88,18 +68,15 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
    live pod from **two distinct hosts**, recorded, AND no open defect naming the Go client or
    `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is
    accepted EXPLICITLY, in writing.** Checked by `cairn doctor` from two hosts plus `gh issue list`.
-   ⚠ Sized, not measured: ~33,000 deletable lines, 3 of 6 CI jobs, ~10 paired-ledger guards.
    forcing: none
 5. ✅ **DONE — `-issue-credential`, #76.** forcing: gate.
 6. ✅ **DONE.** forcing: user.
 7. ✅ **DONE — `56cc56e` (#69).** forcing: user.
 8. ✅ **DONE — rule (o), `c4490f07`.** forcing: incident.
-9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — NAVIGABLE AND DEPLOYED, NOT EXERCISABLE; THE BLOCKER IS
-   NOW RANK 28.** #133 merged `d003708`, deployed `40797d1ef`; served stylesheet byte-identical
-   (`cmp`) to `main`'s `app.css` and carries `.nav-share a {`; PUBLIC `/sign-in` carries 0 hrefs to
-   `/share`. 🔴 **THE AUTHENTICATED HEADER LINK IS STILL UNCONFIRMED IN A BROWSER** — unreachable
-   without a session, so it is the operator's click. ⚠ The picker still has nobody to offer (journal
-   re-read this session: 1 user). Unblocks when rank 28 ships.
+9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — STILL BLOCKED, AND 28(b)'s REMAINING WORK IS THE
+   BLOCKER.** #133 merged `d003708`, deployed `40797d1ef`; the authenticated header link is still
+   unconfirmed in a browser, and the picker still has nobody to offer. Unblocks when 28(b)'s HTTP
+   surface ships and a second user exists.
    forcing: user — the operator reported the feature missing, and the browser step is a human's.
 10. ✅ **DONE — `901b77d` (#104).** forcing: user.
 11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`**, held because that repo's `main` is red for an
@@ -107,85 +84,61 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 12. **CORRECT TWO FILES THAT ASSERT THAT REPO'S CI CHECKS BLOCK A MERGE.** They do not
     (`required_status_checks` → 404). Both wrong in the PERMISSIVE direction. forcing: gate.
 13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** ⚠ Precondition: sign-in
-    resolves the token's `sub` against a user the control plane ALREADY holds; an unknown subject is
-    refused by design and all three causes collapse into one 401, so **the pod's log is the only
-    place the mechanism exists.** 🔴 **RANK 28 CHANGES THIS ITEM'S PREMISE** — redeeming an invite may
-    now provision an unknown subject, a second authorised way past the same wall. Re-read after 28.
-    forcing: user.
-14. ✅ **DONE — `#117` as `9c24bc4`.** 🔴 Its ladder stopped on the ATTRIBUTION GATE, two
-    payload-zero rounds — **NOT a clean round**; do not upgrade that. forcing: gate.
-15. ✅ **DONE — rule (p) as `b4233ea9`.** Stopped by the attribution gate, so **four findings were
-    FILED rather than fixed — open** — and five mutation rows remain unscored. forcing: gate.
-16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** ⚠ Footprint grows again with rank 28, which
-    adds a page and regenerates `app.css` a fifth time. Keep-or-replace, not a PR gate. forcing: user.
+    resolves the token's `sub` against a user the control plane ALREADY holds, and all three causes
+    collapse into one 401, so the pod's log is the only place the mechanism exists. 🔴 **28(b) NOW
+    PROVIDES THE SECOND AUTHORISED WAY PAST THAT WALL IN CODE** (`fbad934` + `2ae09de`) — but not
+    over HTTP yet. forcing: user.
+14. ✅ **DONE — `#117` as `9c24bc4`.** 🔴 Ladder stopped on the ATTRIBUTION GATE, two payload-zero
+    rounds — **NOT a clean round**. forcing: gate.
+15. ✅ **DONE — rule (p) as `b4233ea9`.** Four findings FILED rather than fixed — open; five mutation
+    rows unscored. forcing: gate.
+16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** ⚠ 28(b4) regenerates `app.css` a fifth time.
+    Keep-or-replace, not a PR gate. forcing: user.
 17. ✅ **DONE — `84642ff` (#108).** forcing: gate.
-18. ✅ **DONE.** 🔴 Two of its three headline findings were WRONG and only re-derivation caught them
-    — **a dispatched pass is a witness, not a verdict.** forcing: user.
-19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23. 🔴 Still 0 hits across this doc,
-    the archive and the plan. **Closing condition:** a recorded pass, question-requirements → delete
-    → simplify in that order, or a written line saying the fact-rot pass discharged it. forcing: user.
+18. ✅ **DONE.** 🔴 Two of three headline findings were WRONG and only re-derivation caught them.
+    forcing: user.
+19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23; still 0 hits across this doc, the
+    archive and the plan. **Closing condition:** a recorded pass — question-requirements → delete →
+    simplify — or a written line saying the fact-rot pass discharged it. forcing: user.
 20. **THE ARCHIVE IS OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE.** 174,237 B against a
     grandfathered 147,456 B; a FOREIGN ledger entry sits outside that gate's corpus checks by
-    construction. **Closing condition:** both entries re-derived from measured size, or a written
-    line exempting foreign entries. forcing: gate.
-21. ✅ **DONE — API pod `sha-953ad36`, verified by a DISCRIMINATOR not by health.** ⚠ **A SECOND
-    INSTANCE EXISTS AND WAS NOT TOUCHED.** forcing: user.
-22. ❌ **WITHDRAWN — THE EDGE CACHE TTL IS LEFT AS IT IS.** 🔴 **DO NOT RE-PROPOSE AS UNDECIDED.**
+    construction. **Closing condition:** both entries re-derived from measured size, or a written line
+    exempting foreign entries. forcing: gate.
+21. ✅ **DONE — API pod `sha-953ad36`, verified by a DISCRIMINATOR not by health.** ⚠ A SECOND
+    INSTANCE EXISTS, UNTOUCHED. forcing: user.
+22. ❌ **WITHDRAWN — THE EDGE CACHE TTL IS LEFT AS IT IS.** 🔴 DO NOT RE-PROPOSE AS UNDECIDED.
     **Closing condition: none — closed by decision.** forcing: user.
-23. ✅ **DONE, BOTH HALVES.** Merged as `c6aed4e` (#135); the two stale worktrees are now REMOVED
-    from the base clone, after confirming each was clean and both squash commits were on `main`.
-    🔴 **The fix was then confirmed against the real condition rather than a fixture:** `go test
-    ./...` on the base clone → **19 ok / 0 FAIL** with a nested worktree still present, where it
-    reported 24 offenders before. `.claude/worktrees/` is now empty. forcing: gate.
-24. ✅ **DONE — #134 MERGED as `963517e`, verified BY CONTENT** (ancestry is false after a squash).
-    Round 0 and round 1 both ran; all fourteen findings were fixed across `5dce1d4`, `904e28b` and
-    `94cb61a`. 🔴 **ROUND 2 WAS DUE AND WAS SKIPPED BY OPERATOR DECISION — THIS LADDER DID NOT
-    CONVERGE.** Round 1 returned 0🔴/6🟡/4🟢 and every finding needed fixing, which is the condition
-    for another round; the operator chose to merge instead. Do not read this ladder as clean.
-    ⚠ **I did not perform the merge** — it landed while I waited on CI. forcing: user.
+23. ✅ **DONE, BOTH HALVES — `c6aed4e` (#135)**; `.claude/worktrees/` empty, re-measured. forcing: gate.
+24. ✅ **DONE — #134 MERGED as `963517e`**, verified by CONTENT. 🔴 **ROUND 2 WAS DUE AND WAS SKIPPED
+    BY OPERATOR DECISION — that ladder did not converge.** forcing: user.
 25. ✅ **SUPERSEDED BY OPERATOR DECISION, NOT DONE — DO NOT WORK THIS ITEM AS WRITTEN.** It offered
-    `-set-member` provisioning OR P6; the operator chose **P6, on Postgres**. **The work is rank 28.**
+    `-set-member` provisioning OR P6; the operator chose **P6, on Postgres**. The work is rank 28.
     forcing: user.
-26. ✅ **DONE AT `963517e`, AND IT EXPIRES WHEN `main` MOVES.** The successor pair this item named was
-    measured: `feat/ui-invite-flow` merged onto `main` — clean; **`app.css` REGENERATED on the merged
-    tree** via `checks.ui-stylesheet-is-current` **rc 0**, not merged-and-moved-on; `go vet`+`go test`
-    19 ok / 0 FAIL; the merged `ci.yml` parsed with BOTH sides' edits present (#134's 152-mutant counts
-    and the new `pgtest` job). The branch touches neither `tailwind.css` nor `app.css`. 🔴 **RE-RUN IT
-    WHEN THE PR OPENS IF `main` HAS MOVED** — a merged-tree measurement is about the tree it was taken
-    on, and this one is about `963517e`.
+26. ✅ **DONE AT `963517e`, AND IT EXPIRES WHEN `main` MOVES.** `feat/ui-invite-flow` × `main`: clean,
+    `app.css` regenerated on the merged tree via `checks.ui-stylesheet-is-current` **rc 0**, 19 ok / 0
+    FAIL, merged `ci.yml` parsed with both sides' edits. 🔴 **RE-RUN IT WHEN THE PR OPENS** — the
+    branch has moved five commits since, and 28(b)'s remaining work TOUCHES `app.css`.
     forcing: gate — `checks.ui-stylesheet-is-current` is a build failure through nix.
-27. 🔴 **PRUNE THIS DOCUMENT — AND THE RATCHET HAS NOW BEEN OVERRIDDEN BY TWO CONSECUTIVE SESSIONS,
-    WHICH IS THIS ITEM'S ARGUMENT RATHER THAN A FOOTNOTE.** Third data point: refused at 116,396 B /
-    98,304 B on a +3,074 B delta, landed with **no** override after the REPLACE sections were cut.
-    **Fourth and fifth: two overrides in a row**, each stamped `Size-Ratchet-Override:` with a reason
-    saying NO OPERATOR APPROVED IT — `5bc1e10` (+1,518 B after freeing 1,356 B) and this one (+1,461 B
-    after freeing 4,141 B in REPLACE sections, compressing `Gotchas` three times, and moving 2,928 B
-    out via `#136`). 🔴 **An override that is always available and always taken is the
-    permanently-red-gate failure arrived at from the other side.** Measured evictable inside the file:
-    **2,676 B across 16 completed ranks, 0 B NET** once the 200 B-per-rank floor applies. `Gotchas`
-    APPENDS, so the tool cannot shrink it: **MOVE to the archive, verbatim, leaving a pointer** — the
-    shape `#136` demonstrates — and rank 20 says the archive is over its own allowance too.
-    **Closing condition:** a proposal run returning `status=proposed`, no override.
-    forcing: gate — `handoff_doc.py` exit 14 refuses the write.
-28. 🔴 **BUILD P6 — THE INVITE FLOW. (a) IS DONE; (b), (c), (d) ARE THE LIVE WORK.**
-    `feat/ui-invite-flow` @ **`dc50a1b`**, pushed, no PR. **CLAIMED** (`cairn-control-plane-28`).
-    (a) ✅ **DONE — the Postgres tier, `dc50a1b`.** It refuses rather than skips (`t.Fatal`, never
-    `t.Skip`, behind `//go:build pgtest`); `TestTheSQLRedemptionGuardAgreesWithStateAt` drives the
-    `ExpiresAt` instant exactly AND ±1µs over two expiry shapes, and the other two `WHERE` conjuncts
-    have their own test. Evidence in `State now`; the design rules are in `Gotchas`.
-    (b) `internal/ui` — mint page, redeem route, ledger rows (`routes.go` + `DeclaredRoutes` +
-    `uiaudit/targets.go` move together), and the sign-in path that provisions on a valid invite by
-    writing `user-created` + `member-set` through `Cache.Apply`. 🔴 **NO NEW JOURNAL EVENT KINDS** —
-    see `Gotchas`.
+27. 🔴 **PRUNE THIS DOCUMENT — FIFTH RATCHET EVENT, AND THE SECOND CONSECUTIVE OVERRIDE WAS MINE.**
+    `#136` freed 2,928 B and is still open. **Closing condition unchanged:** a proposal run returning
+    `status=proposed`, no override. forcing: gate — `handoff_doc.py` exit 14 refuses the write.
+28. 🔴 **BUILD P6 — (a) DONE, (b) THREE PIECES DONE, THE HTTP SURFACE IS THE LIVE WORK.**
+    `feat/ui-invite-flow` @ **`2ae09de`**. **CLAIMED** (`cairn-control-plane-28`).
+    (a) ✅ the Postgres tier. (b1) ✅ the membership predicate. (b2) ✅ `UnprovisionedSubject`.
+    (b3) ✅ `ControlInviting` + flight + callback branch.
+    (b4) **REMAINING — the HTTP surface, the most gate-dense piece in the repo.** Four rows
+    (`GET`/`POST /invite`, `POST /invite/revoke`, `GET /join` as `classPublic`), two pages, a nav
+    affordance, and 🔴 **`routes.go` + `DeclaredRoutes` + `uiaudit/targets.go` MOVE TOGETHER**. A new
+    class forces `nix run .#build-ui-stylesheet` plus a committed `app.css`
+    (`TestEveryRenderedClassHasARuleInTheStylesheet` and `checks.ui-stylesheet-is-current` are both
+    live); the existing class set covers everything but the nav link.
     (c) `cmd/cairn-ui` wiring + the DSN flag/env, refusing at startup rather than at first request.
-    🔴 **AND THE StatefulSet's MAJOR IS A FOURTH PIN SITE NO TEST HERE CAN READ** — it must equal
-    the 18 in `flake.nix`, `ci.yml` and `wantServerMajor`.
     (d) manifests in the deployment repo — a dedicated `postgres:18.6-alpine` StatefulSet on
     `openebs-nvme-1tb` (NOT `supabase-cairn`), a SOPS secret, a Service, a NetworkPolicy row.
-    🔴 **COMMIT THERE IS DEPLOY — show the operator before landing it.**
-    ⚠ **Cutting sessions over to Postgres signs everybody out once.** Say so before the deploy.
-    forcing: user — the operator asked for working share functionality and chose this route
-    explicitly over the cheaper one.
+    🔴 **COMMIT THERE IS DEPLOY — show the operator before landing it.** ⚠ Cutting sessions over to
+    Postgres signs everybody out once. 🔴 The StatefulSet's major is a FOURTH pin site no test here
+    can read — it must equal the 18 in `flake.nix`, `ci.yml` and `wantServerMajor`.
+    forcing: user — the operator asked for working share functionality and chose this route.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section REPLACES, so
@@ -1275,6 +1228,55 @@ follow-up with a closing condition on the PR rather than fixed here.
   `ci=green` without the merged-tree run; sending it back. ⚠ **THE COST, RECORDED HONESTLY: round 1
   returned 0🔴/6🟡/4🟢 with every finding needing a fix, which is this repo's own condition for another
   round — so ROUND 2 WAS DUE AND WAS SKIPPED. Do not read that ladder as converged.**
+
+- **Decision (operator, this session): AN INVITE IS REDEEMED BY BINDING IT INTO THE OAUTH FLIGHT.**
+  Declined: sign-in first (smallest blast radius, but it cannot lift the picker's emptiness, which is
+  P6's point), and a dedicated invite SESSION KIND (every authz path would have to learn a session
+  carrying no principal yet). So the token lives on the server-side flight — not a cookie (readable
+  by anything reading this host's cookies, and it survives the flow) and not a query parameter on the
+  provider redirect (history, referrer, access logs). CLEARED on consume: a spent verifier is useless
+  while a spent invite token is still redeemable.
+- 🔴 **THE REDEMPTION'S WRITE ORDER IS THE DESIGN.** The invitation is SPENT FIRST, the journal
+  SECOND, because `invite.Store.Redeem`'s conditional `UPDATE` is the only ATOMIC step and so the
+  only thing that can pick a winner. Store-first fails recoverably (spent invitation, no membership,
+  and the error says so); journal-first lets two simultaneous clicks both read `open`, both write a
+  `member-set`, and only then lose the update — two memberships from one invitation, append-only, no
+  undo. The user id is minted BEFORE the redemption because `redeemed_by` records it, and both events
+  go in ONE `ApplyNow` so a replay never sees a membership whose user does not exist.
+- 🔴 **A SWEEP FOUND TWO MORE DEFECTS IN MY OWN TESTS.** (a) `TestRedeeming…RecordsTheInviterAsActor`
+  never asserted the actor — named for a property, measuring something adjacent — so `Actor: userID`
+  SURVIVED. The fix needed a new instrument: **`control.Membership` carries no actor**, so the journal
+  FILE is the only witness and the rig now keeps its path. (b) an `Invitable` assertion sat behind a
+  `t.Skip` for a lookup that always missed, so it never ran; the principal is now CONSTRUCTED, with a
+  positive control. **Ask of every test whose name states a property: does the body assert THAT?**
+- 🔴 **FOUR MUTANTS DIED AT THE *BUILD*, AND THE FIX SHAPE IS NAMED.** Removing a guard's enclosing
+  block leaves the variable it read UNUSED — a Go compile error — so the row scores HARNESS-BROKE and
+  reaches nothing. Keep the variable in the expression and make the predicate unsatisfiable:
+  `held == control.Role("nonexistent")`. ⚠ **An applied-CHECK grepping a bare identifier is satisfied
+  by a COMMENT mentioning it** — one row printed "did not apply" while scored KILLED in the same run.
+  Grep the CODE, and make the sweep PRINT when a mutation fails to land: two rows read SURVIVED
+  before it did.
+- ⚠ **TWO GUARDS KEPT WHOSE REMOVAL NO TEST CAN DETECT, LABELLED RATHER THAN DELETED.**
+  `ControlInviting.Redeem`'s `Redeemable` pre-check is redundant with the store's atomic `UPDATE`, and
+  `Invitable`'s `Kind != KindUser` cannot matter because ids are namespaced by prefix. Both kept —
+  authorization path, where a redundant refusal costs a line and a missing one costs a membership —
+  and both now say at the code that they are NOT coverage, so
+  `TestANonOpenInvitationIsRefusedUniformly` is marked as measuring the STORE. ⚠ Compare the
+  `user == ""` path in `ProjectsManagedBy`, DELETED on the same evidence: the difference is whether
+  the line states a RULE somebody could get wrong.
+- ⚠ **Decision (agent, REVISITABLE): `GET /join` will render a UNIFORM page WITHOUT looking the token
+  up**, so it cannot become an oracle over which invitations exist. Cost: a dead link shows "sign in
+  to accept" and then a generic refusal. Follows `signInRefused`'s uniformity ruling, but it is a UX
+  call, not a forced one — the operator may want the project and role shown.
+- 🔴 **AN axe REGRESSION REACHES `main` GREEN, AND #134's ROUND 1 IS THE MEASURED INSTANCE — moved
+  HERE from `State now`, a REPLACE bucket that was about to drop it.** Its new `<nav class=
+  "view-tabs">` beside `<nav class="crumbs">` made two landmarks, same role, no names: axe
+  `landmark-unique`, measured with a control (2 violations → 1 when one line was suppressed), and
+  naming only the NEW nav fixes nothing because the pair must be unique. 🔴 **The gap is structural
+  and OPEN:** `refuseWalkRegressions` does not refuse on axe violations and the `uiaudit` job is
+  `continue-on-error`; it would surface only in the hub's `new_a11y_rules` delta, which `ci.yml`
+  names as the promotion candidate for a blocking gate. ⚠ **28(b4) adds two pages and a nav
+  affordance to this same surface.**
 
 ## How to verify
 
