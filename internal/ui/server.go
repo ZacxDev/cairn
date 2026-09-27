@@ -125,12 +125,63 @@ type Malformed struct {
 //	Tasks       the `tasks:` front-matter sequence, AS WRITTEN
 //	Sections    the `##` headings `report.SurfacedHeadings` names, with their bodies
 //	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
+//	Raw         the WHOLE file, decoded and otherwise untouched
 type Entry struct {
 	Ref      string
 	Title    string
 	Filename string
 	Aliases  []string
 	Tasks    []string
+
+	// Raw is the entry file's whole text, as `store.DecodeReplace` produced it: front
+	// matter, unsurfaced headings, prose before the first heading, and everything the
+	// parsers dropped. `?view=raw` is the only thing that renders it.
+	//
+	// 🔴 IT IS THE WIDEST ATTACKER-AUTHORED PAYLOAD ON THIS SURFACE, AND STRICTLY WIDER
+	// THAN `Sections`. Every other field here is something a parser accepted; this one is
+	// the file. It reaches the page through a single `g.Text` inside a `<pre>` — never
+	// `inlineCode`, which would transform it, and never `g.Raw`, which `rawban_test.go`
+	// bans outright. Two guards cover it, and they are named here because a comment naming
+	// a guard that does not exist is worse than one naming none:
+	// `TestHostileEntryTextIsEscapedOnEveryBrowsePage` (`render_test.go`) compares MARKUP
+	// SHAPE over the `entry-raw` page state, and
+	// `TestAHostileFileReachesTheRawViewAsTextThroughTheREALPIPELINE` (`rawview_test.go`)
+	// drives a hostile FILE through `readEntry` and the HTTP layer — the half the
+	// fixture-driven differential structurally cannot see.
+	//
+	// 🔴 IT IS A NEW RETENTION OF THE WHOLE FILE, AND AN EARLIER VERSION OF THIS COMMENT
+	// SAID THE OPPOSITE AND CALLED IT MEASURED. ❌ RETRACTED: *"`Sections` holds SUBSTRINGS
+	// of that same string — so the backing bytes are retained by this struct either way,"*
+	// i.e. that this field costs a string header rather than a copy. It was reasoned, not
+	// measured, and it is false for every realistic entry.
+	//
+	// `store.ExtractSections` builds each body with
+	// `strings.Trim(strings.Join(wanted[h], "\n"), "\n")` (`internal/store/sections.go:137`),
+	// and `strings.Join` returns `elems[0]` ONLY for a single-element slice — for anything
+	// longer it allocates. MEASURED at two points, with both instrument controls green (a
+	// real substring shares the backing array; a `strings.Clone` of one does not):
+	//
+	//	single-line section body  → shares the file's allocation
+	//	multi-line section body   → does NOT
+	//
+	// A real entry's sections are multi-line, so before this field nothing retained the
+	// decoded file once `readEntry` returned. Peak retention therefore moves from
+	// O(largest entry) to O(sum of every entry the caller may read) — on EVERY page load,
+	// including `/` and `/scope`, which never render it.
+	//
+	// ⚠ ACCEPTED AT THIS STORE'S SIZE, NOT IN GENERAL. `Visible` already parses every
+	// readable entry on every page load and the store is tens of kilobytes across tens of
+	// files, so the absolute cost is small. It sits inside a blind spot `internal/ui/README.md`
+	// already declares open: nothing here measures the page against a store large enough to
+	// hurt. If that changes, the fix is to read the file lazily on the raw path — `Filename`
+	// is already on this struct, so a deferred read needs no path reconstruction from a ref.
+	//
+	// ⚠ DECODED, WHICH IS NOT THE SAME AS THE BYTES ON DISK. `store.DecodeReplace`
+	// substitutes for invalid UTF-8, so a file that is not valid UTF-8 renders with
+	// replacement characters. That is the decode every other reader in this tree applies,
+	// and the alternative — putting undecoded bytes into an HTML document — is not a rawer
+	// view, it is a broken one.
+	Raw string
 
 	// Sections are the surfaced headings this entry HAS, in
 	// `report.SurfacedHeadings` order. A heading the entry does not carry is absent
@@ -384,6 +435,17 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 		return Entry{}, store.EntryUnreadable(path, err)
 	}
 	text := store.DecodeReplace(data)
+	// The raw view's whole payload, taken here rather than read on demand.
+	//
+	// ⚠ THE REASON IS THE `Source` INTERFACE, NOT PATH SAFETY, AND AN EARLIER VERSION OF
+	// THIS COMMENT GAVE THE WRONG ONE. It said a deferred read "would be the path
+	// reconstruction the paragraph above refuses" — false, and contradicted by this
+	// field's own doc: `Filename` is already on [Entry], so a lazy read needs no
+	// reconstruction from a ref. The actual obstacle is that [Source] is a two-method
+	// interface with no read-a-file method, so making this lazy is an interface change
+	// rather than a local one. Stated because the wrong reason sends the next person
+	// looking for a traversal hazard that is not there.
+	item.Raw = text
 	sections := store.ExtractSections(text, report.SurfacedHeadings)
 	for _, heading := range report.SurfacedHeadings {
 		body, present := sections[heading]
@@ -1040,6 +1102,23 @@ func (s *Server) handleEntryPage(w http.ResponseWriter, r *http.Request, id iden
 	}
 	view.Scope = &scope
 	view.Entry = &entry
+	// 🔴 THE VIEW IS CHOSEN AFTER BOTH REFUSALS, AND THE ORDER IS THE GUARD RATHER THAN A
+	// TIDINESS PREFERENCE. `?view=raw` selects a WIDER rendering of an entry the caller has
+	// already been proved to hold: the whole file rather than the sections a parser
+	// accepted. A read of this parameter above `pickScope`/`pickEntry` would be a second
+	// place the narrowing can be skipped, and the refusals it skipped are the ones that
+	// make this surface's four ways to miss indistinguishable.
+	// `TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne` is what
+	// holds it — its RAW-view row compares this refusal, as BYTES, against the SCOPE
+	// refusal rather than against the rendered one, because two handlers wrong together
+	// would satisfy a raw-vs-rendered comparison. A raw view answering its own 404 is red
+	// there.
+	//
+	// ⚠ AND IT CHANGES NO AUTHORITY, WHICH IS WHY THERE IS NO SECOND VERB. Every byte the
+	// raw view shows came out of a file `Visible` already loaded for this principal under
+	// `control.VerbRead`; what it adds is the part of that file the PARSERS dropped, not a
+	// part of the store the AUTHORITY withheld.
+	view.RawView = q.Get(QueryView) == ViewRaw
 	s.renderEntry(w, view)
 }
 

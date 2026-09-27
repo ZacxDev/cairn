@@ -222,13 +222,25 @@ func TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne
 	absentRef := getAs(t, srvA, EntryPath+"?"+url.Values{
 		QueryScope: []string{string(browseScopeA)}, QueryRef: []string{"no-such-entry"},
 	}.Encode())
+	// 🔴 AND THE SAME MISS THROUGH THE RAW VIEW, because `?view=raw` is a SECOND WAY to
+	// reach an entry's bytes and therefore a second place the narrowing can be skipped —
+	// the widest one on this surface, since the raw view renders the WHOLE FILE. It is a
+	// row here rather than a test of its own so that it is compared against the SCOPE
+	// refusal, which is the relation that closes the existence-oracle direction; a guard
+	// comparing raw against rendered would pass two handlers that were wrong together.
+	notYoursEntryRaw := getAs(t, srvA, EntryPath+"?"+url.Values{
+		QueryScope: []string{string(browseScopeB)},
+		QueryRef:   []string{"ledger"},
+		QueryView:  []string{ViewRaw},
+	}.Encode())
 	for name, rec := range map[string]*httptest.ResponseRecorder{
-		"a real ref in somebody else's scope": notYoursEntry,
-		"a real ref in an absent scope":       absentEntry,
-		"an absent ref in the caller's scope": absentRef,
+		"a real ref in somebody else's scope":           notYoursEntry,
+		"a real ref in an absent scope":                 absentEntry,
+		"an absent ref in the caller's scope":           absentRef,
+		"a real ref in somebody else's scope, RAW view": notYoursEntryRaw,
 	} {
 		if rec.Code != notYoursScope.Code || rec.Body.String() != notYoursScope.Body.String() {
-			t.Errorf("%s answered %d %q; the scope refusal is %d %q. All four ways to miss must be one answer.",
+			t.Errorf("%s answered %d %q; the scope refusal is %d %q. Every way to miss must be one answer.",
 				name, rec.Code, rec.Body.String(), notYoursScope.Code, notYoursScope.Body.String())
 		}
 	}
@@ -256,6 +268,11 @@ func TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne
 
 	// 🔴 AND THE MIRROR: the SAME id that A is refused renders 200 for B. This is the
 	// control that proves the refusal is about the CALLER and not about the id.
+	//
+	// ⚠ THE RAW VIEW NEEDS ITS OWN MIRROR AND BRIEFLY LOST ONE. The guard folded into this
+	// test carried a B-side raw read; folding it in dropped that arm, leaving nothing
+	// driving `?view=raw` as the principal who CAN read the entry — so the raw row above
+	// would have been satisfied by a raw view that refused everybody. Restored here.
 	srvB := browseServer(t, root, readsB)
 	mirror := getAs(t, srvB, ScopePath+"?"+QueryID+"="+string(browseScopeB))
 	if mirror.Code != http.StatusOK {
@@ -264,6 +281,19 @@ func TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne
 	}
 	if strings.Contains(mirror.Body.String(), "alpha-notes") {
 		t.Error("B's scope page names scope A, which B cannot read")
+	}
+	rawMirror := getAs(t, srvB, EntryPath+"?"+url.Values{
+		QueryScope: []string{string(browseScopeB)},
+		QueryRef:   []string{"ledger"},
+		QueryView:  []string{ViewRaw},
+	}.Encode())
+	if rawMirror.Code != http.StatusOK {
+		t.Fatalf("POSITIVE CONTROL FAILED: the RAW view of B's own entry answered %d for B, want 200: %s. "+
+			"Without this, the raw row above is satisfied by a raw view that refuses everybody.",
+			rawMirror.Code, rawMirror.Body.String())
+	}
+	if !strings.Contains(rawMirror.Body.String(), onlyInBeta) {
+		t.Error("B's RAW view does not carry its entry's own text, so its 200 may not be the raw view")
 	}
 
 	// 🔴 AND THE ROOT PAGE, WHICH IS WHERE A LOST NARROWING IS ACTUALLY VISIBLE. This
@@ -778,7 +808,7 @@ func TestTheDocumentCardIsCappedAndTheGridsCardsAreNot(t *testing.T) {
 	// ---- HALF ONE: the document pages' card carries the cap.
 	got, ok := cssDeclaration(stylesheet, ".page-main > .card", "max-width")
 	if !ok {
-		t.Fatalf("the served stylesheet carries NO `.page-main > .card` rule at all, so there is nothing "+
+		t.Fatalf("the served stylesheet carries NO `.page-main > .card` rule at all, so there is nothing " +
 			"here to cap the document pages' card and nothing for this test to measure")
 	}
 	if got != documentCardCap {
@@ -993,7 +1023,7 @@ func TestAnEntryRefIsEncodedOnTheWayOutAndMatchedOnTheWayIn(t *testing.T) {
 		`quote"and<angle>`,
 	}
 	for _, ref := range hostile {
-		href := entryHref(scope, ref)
+		href := entryHref(scope, ref, false)
 		u, err := url.Parse(href)
 		if err != nil {
 			t.Errorf("entryHref(%q) produced %q, which is not a parseable URL", ref, href)

