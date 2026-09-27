@@ -415,9 +415,12 @@ func contentFloorExempt(c *Capture) bool {
 //     long unbroken line in a store entry's body makes the whole PAGE scroll sideways, on a
 //     phone above all. The widths are the whole point — a page can be clean at 390 and 1440
 //     and broken at 834, which is why there are five.
-//   - NO SCRIPT. `internal/ui` ships none, and part of its XSS story rests on that; the
-//     console-zero claim in the summary above is explicitly structural FOR THAT REASON, so
-//     the day a script appears both that claim and the guard behind it go quiet at once.
+//   - NO SCRIPT. `internal/ui`'s RENDERER emits none, and part of its XSS story rests on
+//     that; the console-zero claim in the summary above is explicitly structural FOR THAT
+//     REASON, so the day a script appears both that claim and the guard behind it go quiet
+//     at once. ⚠ THE RENDERER, NOT THE SERVED PAGE: this walk boots its own pod on loopback,
+//     so an edge CDN that injects script downstream is invisible to it — and on the deployed
+//     surface one does. Scope and measurement: [Capture.ScriptCount].
 //   - AXE ACTUALLY RAN. `Violations: 0` is produced identically by a clean page and by an
 //     injection that never executed, and this whole program's a11y half is inert in the
 //     second case. A decodable `testEngine` is what separates them.
@@ -541,8 +544,10 @@ func refuseWalkRegressions(captures []*Capture) error {
 			"sideways, which no unit test in this repository can see:\n    %s",
 			len(overflow), strings.Join(overflow, "\n    ")))
 	}
+	// ⚠ THE MESSAGE SAYS "THIS ORIGIN" RATHER THAN "THIS SURFACE" ON PURPOSE, because the pod
+	// this walk boots is the only thing it can speak for — see [Capture.ScriptCount].
 	if len(scripted) > 0 {
-		refusals = append(refusals, fmt.Sprintf("SCRIPT ON THE PAGE on %d capture(s) — this surface ships "+
+		refusals = append(refusals, fmt.Sprintf("SCRIPT ON THE PAGE on %d capture(s) — this ORIGIN renders "+
 			"none, and the console-zero claim above is structural only while that holds:\n    %s",
 			len(scripted), strings.Join(scripted, "\n    ")))
 	}
@@ -661,7 +666,7 @@ func printSignalSummary(captures []*Capture, faviconRefusals int) {
 	// surface that grew a script would have had a non-zero count printed beside a sentence saying the
 	// collector cannot count. A claim about a measurement has to read the measurement.
 	if console == 0 {
-		fmt.Printf("uiaudit:   console=0 — 🔴 STRUCTURAL, NOT A PASS: this surface ships NO script, and an existing XSS guard asserts \"<img\" can never render, so the console collector has nothing to observe here whatever the code does. control_test.go counts 2 on a page that does.\n")
+		fmt.Printf("uiaudit:   console=0 — 🔴 STRUCTURAL, NOT A PASS: this ORIGIN renders NO script, and an existing XSS guard asserts \"<img\" can never render, so the console collector has nothing to observe here whatever the code does. control_test.go counts 2 on a page that does. (ORIGIN, not the served page — a downstream injector is out of this walk's reach; see Capture.ScriptCount.)\n")
 	} else {
 		fmt.Printf("uiaudit:   console=%d — NOT a structural zero: this surface has grown something that logs, so `doc.go`'s console claim is now false and wants correcting.\n", console)
 	}

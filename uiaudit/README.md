@@ -346,7 +346,7 @@ nothing). Measured, both halves in the same run:
 | images with no dimensions | **1** | **0** | **structural** — no `<img>` renders anywhere; an existing XSS guard asserts `"<img"` cannot |
 | horizontal overflow | **true** | **false** on every page | real |
 | missing `<meta viewport>` | **true** | **false** on every page | real — gomponents' `HTML5` supplies it, and nothing pinned that before |
-| console events | **2** | **0** | **structural** — no script anywhere, so nothing to observe |
+| console events | **2** | **0** | **structural** — no script on the ORIGIN this walk boots, so nothing to observe. ⚠ Not "no script anywhere": see the scope note below the blind set |
 | network events (page subresources) | **2** | **0** | **structural** — there are none |
 | a11y digest entries | **1** | **10** on `/`, 3 on `/sign-in`, 4 on `/share` | real |
 | screenshot | **31137 bytes**, PNG magic checked | 6 PNGs | real |
@@ -849,6 +849,24 @@ share flow's WRITE paths (`POST /share`, `POST /unshare` — skipped as non-GET 
 exercised), the **cross-site cookie attachment** on a provider callback (needs a real provider; see
 residual 6), the session-volume-vanishes deployment as an actual boot condition rather than as
 the thing sign-in would catch, and any width other than 390 and 1440.
+
+🔴 **AND ANYTHING BETWEEN THE ORIGIN AND A CLIENT, WHICH IS THE ONE BLIND SPOT THAT HAS BEEN
+MEASURED TO MATTER.** Every number this program produces is about the pod `BootWorld` starts on
+loopback over a temp directory it created. An edge CDN in front of a deployment can inject
+script into the served page and can rewrite the page's CONTENT, and neither is reachable from
+here however strict `refuseWalkRegressions` gets. **On the deployed surface both happen** —
+measured at the edge with an HTTP client: an anonymous `GET /sign-in` carries one injected
+inline bot-detection script, an authenticated `GET /` carries two, and an email-obfuscation
+rewriter replaces a rendered address with a placeholder plus an `href` no route ledger here
+declares. `internal/ui/README.md`'s XSS section has the numbers, the retraction behind them and
+the consequence for renderer-byte tests.
+
+⚠ **The lesson from that retraction belongs in this list too, because it is about how to probe:**
+an earlier reading of authenticated `GET /` reported NO script and was taken **anonymously**, so
+it measured a 12-byte `401` body rather than the page. **An anonymous probe of an authenticated
+route measures the refusal, not the page.** What would close this blind spot is the **smoke probe
+against a real deployment** that this README's own opening retraction already names as real and
+unbuilt — not a guard here, which could only pin somebody else's edge configuration.
 
 ## Gating — advisory only, deliberately
 
