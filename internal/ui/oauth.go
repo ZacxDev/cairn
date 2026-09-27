@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -122,7 +123,23 @@ const (
 // stated at [flights]: this table is in memory, so a restart mid-flight loses it.
 type flight struct {
 	verifier string
-	expires  time.Time
+	// invite is the invitation token this sign-in was started in order to REDEEM, and it is
+	// empty for an ordinary sign-in.
+	//
+	// 🔴 IT LIVES HERE RATHER THAN IN A COOKIE OR A QUERY PARAMETER, AND THAT IS WHY THE
+	// FLIGHT WAS CHOSEN TO CARRY IT. An invite token is a bearer capability that can CREATE
+	// a principal, so both obvious alternatives are worse: a cookie is readable by anything
+	// that can read this host's cookies and survives the flow, and a query parameter on the
+	// provider redirect would put it in the URL — hence in browser history, in the referrer
+	// the provider receives, and in every access log on the way. A flight record is
+	// server-side, unguessable, single-use, expiring in `FlightTTL` and already bounded per
+	// client, so it inherits four properties the invite needs and the alternatives have none.
+	//
+	// ⚠ IT IS CLEARED WHEN THE RECORD IS CONSUMED, for the reason `verifier` is — see
+	// [flights.take]. A spent record keeping it would leave a live capability in memory for
+	// the rest of the TTL, and unlike a spent verifier this one would still be redeemable.
+	invite  string
+	expires time.Time
 	// client is the `netid.ResolveClient` identity that opened this flight, and it is held
 	// ONLY so `maxFlightsPerClient` can be counted. It is never compared at the callback:
 	// the binding there is the flight COOKIE, which is unguessable, and re-checking the
@@ -214,7 +231,16 @@ func (r flightRefusal) String() string {
 // tried eight times across an hour would be refused on the ninth for records that no longer
 // exist. The single pass also means the per-client number is a count of LIVE flights, which is
 // the only number the bound is about.
-func (f *flights) start(client, verifier string, ttl time.Duration) (string, flightRefusal) {
+// start opens a flight. `invite` is the invitation token this sign-in will redeem on
+// completion, or empty for an ordinary sign-in.
+//
+// ⚠ IT IS NOT VALIDATED HERE, DELIBERATELY. A flight is opened by an UNAUTHENTICATED request,
+// so a lookup at this point would make the start route a probe for whether a given invite
+// token exists — an oracle over other people's invitations, answerable at the rate the
+// per-client cap allows. The token is resolved once, at the callback, where it is being
+// redeemed anyway and where its refusal is indistinguishable from every other reason a
+// sign-in did not complete.
+func (f *flights) start(client, verifier, invite string, ttl time.Duration) (string, flightRefusal) {
 	id, err := newFlightID()
 	if err != nil {
 		return "", flightRefusedNoID
@@ -241,7 +267,7 @@ func (f *flights) start(client, verifier string, ttl time.Duration) (string, fli
 	if len(f.open) >= maxOpenFlights {
 		return "", flightRefusedGlobal
 	}
-	f.open[id] = flight{verifier: verifier, expires: now.Add(ttl), client: client}
+	f.open[id] = flight{verifier: verifier, invite: invite, expires: now.Add(ttl), client: client}
 	return id, flightOpened
 }
 
@@ -269,21 +295,26 @@ func (f *flights) start(client, verifier string, ttl time.Duration) (string, fli
 // of the TTL for no reason — which matters more now that a spent record is KEPT until expiry
 // rather than deleted. `TestAFlightIsSingleUseAndBoundToItsBrowser` asserts it on the table's
 // own internals, because nothing observable from outside can see a field that is not read.
-func (f *flights) take(id string) (string, bool) {
+func (f *flights) take(id string) (verifier, invite string, ok bool) {
 	if id == "" {
-		return "", false
+		return "", "", false
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, held := f.open[id]
 	if !held || rec.consumed || !f.now().Before(rec.expires) {
-		return "", false
+		return "", "", false
 	}
-	verifier := rec.verifier
+	verifier, invite = rec.verifier, rec.invite
 	rec.consumed = true
-	rec.verifier = ""
+	// 🔴 BOTH SECRETS ARE CLEARED, NOT JUST THE VERIFIER. A spent record is KEPT until it
+	// expires (that is what makes the per-client cap a bound on the RATE), so anything left
+	// on it lives for the rest of the TTL. A spent verifier is useless by then; a spent
+	// INVITE TOKEN is not — the invitation may still be open, and it can create a principal.
+	// So the one that matters more is the one that was not here first.
+	rec.verifier, rec.invite = "", ""
 	f.open[id] = rec
-	return verifier, true
+	return verifier, invite, true
 }
 
 // openCount is the table's size. For a test's instrument control, never for a decision.
@@ -489,7 +520,14 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request, _ iden
 		s.renderSignIn(w, http.StatusInternalServerError, oauthNotStarted)
 		return
 	}
-	id, outcome := s.flights.start(client, verifier, FlightTTL)
+	// 🔴 THE INVITATION TOKEN THIS SIGN-IN WILL REDEEM, READ FROM THE POSTED FORM AND
+	// CARRIED ON THE SERVER-SIDE FLIGHT. Empty for an ordinary sign-in. It is read from the
+	// form rather than from the query string because this row is a POST — see the route
+	// ledger's note on why the START is a POST and the CALLBACK is a GET — so the value
+	// never appears in a URL, a referrer or an access log. It is NOT validated here: see
+	// [flights.start].
+	inviteToken := r.FormValue(inviteTokenField)
+	id, outcome := s.flights.start(client, verifier, inviteToken, FlightTTL)
 	if outcome != flightOpened {
 		// The log names WHICH bound refused, because "the table is full" and "you have spent
 		// your own share" send an operator to completely different places — and a surface
@@ -582,7 +620,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 	if cookie, err := r.Cookie(oauthFlightCookieName); err == nil {
 		flightID = cookie.Value
 	}
-	verifier, held := s.flights.take(flightID)
+	verifier, inviteToken, held := s.flights.take(flightID)
 	if !held {
 		// No cookie, an expired flight, or a replay. All three are the same observable
 		// deliberately: a callback that said which would tell a caller whether a given
@@ -613,6 +651,41 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request, _ i
 
 	principal, err := s.oauth.Exchange(r.Context(), code, verifier)
 	if err != nil {
+		// 🔴 THE ONE AUTHORISED WAY PAST "WE HAVE NEVER HEARD OF YOU", AND EVERY CONJUNCT IS
+		// LOAD-BEARING. A provisioning write happens only when ALL of these hold: this
+		// sign-in was STARTED to redeem an invitation (the token was on the server-side
+		// flight, so it cannot be added by the callback's caller); this deployment has an
+		// invite store at all; and the exchange's failure is specifically
+		// `identity.UnprovisionedSubject` — a token that VERIFIED and named a subject with no
+		// user. A forged token, a refused code, an unreachable provider and a role-refused
+		// token are none of them that type, which `TestOnlyTheVerifiedUnknownSubjectArm
+		// IsProvisionable` pins from the identity side.
+		//
+		// ⚠ AN ALREADY-KNOWN USER CARRYING AN INVITATION IS NOT HANDLED HERE. Their exchange
+		// SUCCEEDS, so they never reach this arm; they join through the authenticated redeem
+		// route instead. Putting both in this handler would mean resolving a provider subject
+		// on the success path too, which `Exchange` deliberately does not return.
+		var unprovisioned *identity.UnprovisionedSubject
+		if inviteToken != "" && s.inviting != nil && errors.As(err, &unprovisioned) {
+			red, rerr := s.inviting.Redeem(r.Context(), inviteToken, unprovisioned.Provider, unprovisioned.Subject)
+			if rerr != nil {
+				// The SAME sentence an ordinary refusal gives. An expired, revoked, replayed
+				// or unknown invitation must not be distinguishable here: a discriminating
+				// answer would make this route an oracle over other people's invitations,
+				// which is `invite.ErrNotRedeemable`'s own ruling one layer down.
+				s.logf("github sign-in refused: the invitation could not be redeemed: %v (%s, %s)", rerr, client, who)
+				s.renderSignIn(w, http.StatusUnauthorized, signInRefused)
+				return
+			}
+			// 🔴 A PRINCIPAL CAME INTO EXISTENCE, SO THE LOG SAYS SO EXPLICITLY. This is the
+			// event `-create-user`'s help says only an operator can cause, and the operator
+			// decision that authorised it names a 256-bit capability token as the deliberate
+			// act. An operator reading this stream must be able to find every one of them.
+			s.logf("github sign-in PROVISIONED a user by invitation: provisioned=%v project=%s role=%s (%s, %s)",
+				red.Provisioned, red.Project, red.Role, client, who)
+			s.openSession(w, r, red.Principal, "the "+GitHubLabel+" provider and an invitation")
+			return
+		}
 		// 🔴 THE SAME SENTENCE THE TOKEN FORM GIVES, FOR EVERY REASON THE EXCHANGE CAN
 		// FAIL. "the provider refused that code", "that token does not verify" and "no user
 		// here matches that subject" are three different facts about the control plane, and

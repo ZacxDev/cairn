@@ -580,10 +580,16 @@ type Server struct {
 	credentials identity.TokenAuthority
 	source      Source
 	sharing     Sharing
-	sessions    identity.SessionStore
-	ttl         time.Duration
-	now         func() time.Time
-	log         io.Writer
+	// inviting is the invitation half. NIL means this deployment has no invite store, which
+	// is a legitimate configuration — the same ruling `oauth` gets rather than the one
+	// `sharing` gets, and for the same reason: an invite store needs a DATABASE, and the
+	// deployments that predate one must keep starting. Every consumer checks for nil, and the
+	// routes answer an honest refusal rather than being absent from the ledger.
+	inviting Inviting
+	sessions identity.SessionStore
+	ttl      time.Duration
+	now      func() time.Time
+	log      io.Writer
 
 	// oauth and flights are the provider sign-in, and they are one pair rather than two
 	// settings for the reason the pair below is: a flight table with no provider to send
@@ -694,6 +700,16 @@ type Config struct {
 	// standing: a retraction is a TREE-WIDE SWEEP, not an edit at the site you happened
 	// to be reading.
 	Sharing Sharing
+	// Inviting is the invitation half, and it MAY be nil.
+	//
+	// 🔴 THE `Sharing` RULING DOES NOT APPLY HERE, AND THE DIVERGENCE IS ARGUED RATHER THAN
+	// ASSUMED. `Sharing` is required because a nil-means-disabled field would put a row in
+	// the ledger whose handler was inert. The same objection lands here and gets `OAuth`'s
+	// answer instead: the invitation routes stay in the ledger unconditionally and answer a
+	// 501 naming the configuration, which is MEASURED rather than asserted. Requiring it
+	// would refuse to start every deployment without a Postgres — which is the deployment
+	// that exists today.
+	Inviting Inviting
 	// Sessions is the durable session table sign-in writes to and sign-out removes
 	// from. It is the SAME store the cookie backend in `Auth` reads; two stores would
 	// be a logout that revokes a session nothing authenticates from.
@@ -779,6 +795,7 @@ func New(cfg Config) (*Server, error) {
 		credentials: cfg.Credentials,
 		source:      cfg.Source,
 		sharing:     cfg.Sharing,
+		inviting:    cfg.Inviting,
 		sessions:    cfg.Sessions,
 		ttl:         ttl,
 		now:         now,
