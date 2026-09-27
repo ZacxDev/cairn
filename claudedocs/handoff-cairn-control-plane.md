@@ -183,11 +183,21 @@ an item nobody can find.** Re-ranking re-points every live claim.
     `already current` line and the pod's own audit line `result=304 status=not-modified`.
     ⚠ **A SECOND INSTANCE EXISTS AND WAS NOT TOUCHED** — the client resolves two, and only the one
     this repo's manifests describe was bumped. forcing: user — done on operator instruction.
-22. **SET THE EDGE'S BROWSER CACHE TTL TO "RESPECT EXISTING HEADERS" FOR THE UI HOST.**
-    ✅ **Operator decision taken this session**, on the measurement under `Defects`. Not reachable
-    from here — it is a dashboard setting on the CDN account. **Closing condition:** the versionless
-    `/static/app.css` answers the origin's own `max-age=300` at the edge on a `MISS`, rather than
-    `14400`. forcing: user — operator-only access.
+22. ❌ **WITHDRAWN — THE EDGE CACHE TTL IS LEFT AS IT IS, ON A LATER OPERATOR INSTRUCTION THAT
+    REVERSED AN EARLIER ONE IN THE SAME SESSION.** Both are recorded rather than the first being
+    reworded away: the operator first chose *"set Browser Cache TTL to Respect Existing Headers for
+    this host"*, then said **"skip the ttl changes"**. **The later instruction wins and nothing was
+    changed at the edge.** 🔴 **DO NOT RE-PROPOSE THIS AS THOUGH IT WERE UNDECIDED** — it is decided,
+    in the direction of leaving it alone. What is accepted, stated so the cost is explicit rather
+    than implied: the versionless `/static/app.css` keeps answering `max-age=14400` where the origin
+    asks for `300`, and any FUTURE asset given a TTL under four hours inherits the same override
+    silently. What is NOT at risk: the content-hashed stylesheet (its `31536000` passes through
+    untouched) and HTML (uncached, `DYNAMIC`). **Closing condition: none — this item is closed by
+    decision, not by work.** forcing: user — the operator decided it, twice, and the second time
+    closed it. ⚠ Deliberately tagged to the operator rather than to the no-forcing-function kind:
+    that kind's count is RATCHETED, so spending one on an item nobody will work would refuse the
+    next session's update for no gain — and writing its literal name on this line would itself read
+    as a second declaration on this item.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section
@@ -216,11 +226,16 @@ an item nobody can find.** Re-ranking re-points every live claim.
   `max-age=31536000, immutable` at the origin and **passes through unchanged**; and HTML answers
   `cf-cache-status: DYNAMIC`, i.e. is not cached at all. **So the override raises TTLs BELOW four
   hours and does not cap those above it**, and its entire current exposure is the one legacy
-  versionless route that exists only for URLs already in the world. ✅ **Operator decision taken this
-  session: set Browser Cache TTL to "Respect Existing Headers" for this host** — tracked as rank 22,
-  not reachable from here. ⚠ Two readings of the mechanism remain consistent with the observable
-  (a floor, or an override that only applies downward); the observable is what is recorded, and the
-  mechanism deliberately is not.
+  versionless route that exists only for URLs already in the world. ❌ **CLOSED BY DECISION, NOT BY
+  WORK — AND THE DECISION REVERSED ITSELF WITHIN THE SESSION.** The operator first chose *"set Browser
+  Cache TTL to Respect Existing Headers"*, then instructed **"skip the ttl changes"**. Nothing was
+  changed at the edge and **this is not an open defect**; it is an ACCEPTED one (rank 22). The
+  accepted cost, stated so it is not rediscovered as news: the versionless route keeps answering
+  `14400` against the origin's `300`, and any future asset given a sub-four-hour TTL inherits the
+  override silently. ⚠ Two readings of the mechanism remain consistent with the observable (a floor,
+  or an override that only applies downward); the observable is what is recorded, and the mechanism
+  deliberately is not — **and since the setting is now being left alone, that distinction will stay
+  unresolved**.
 - 🔴 **THE AMBIENT GO TOOLCHAIN IS NOT THE PINNED ONE, AND `AGENTS.md` SAYS IT IS.** Measured on this
   host: bare `go version` → **1.26.7**; `nix develop -c go version` → **1.25.14**. Every local
   `go vet`/`go test` run outside the devShell is therefore a green about a toolchain this repo does
@@ -1009,8 +1024,17 @@ follow-up with a closing condition on the PR rather than fixed here.
   code**, rather than disabling the CDN features or restoring a CSP that permits them. The visible
   consequence is accepted with it: the signed-in identity line renders as a literal placeholder to
   any reader without script.
-- **Decision (operator, this session): set the edge's Browser Cache TTL to "Respect Existing
-  Headers" for this host**, rather than accepting the override or bypassing the cache entirely.
+- 🔴 **Decision (operator, this session), REVERSED WITHIN THE SESSION, AND BOTH HALVES ARE KEPT
+  BECAUSE THE SECOND ONE IS THE ONE THAT BINDS.** First: *set the edge's Browser Cache TTL to
+  "Respect Existing Headers" for this host*, rather than accepting the override or bypassing the
+  cache. Then, before anything was done: **"skip the ttl changes"**. ❌ **The first decision was
+  never acted on and must not be read as standing** — the edge is untouched and rank 22 is CLOSED BY
+  DECISION. ⚠ **The generalisable bit is why this is written down at all:** the earlier line was
+  already recorded in three places (a rank, a `Defects` entry and this bullet) by the time it was
+  reversed, and a reversal that corrects only the most visible copy leaves the other two asserting a
+  plan nobody intends. **When a decision flips, grep for every site that recorded it** — here the
+  count was three, and the tell was that one of them was phrased as a closing condition, which is
+  what a future session would have picked up and worked.
 - ⚠ **VERIFYING A LAYOUT DID NOT REQUIRE THE OPERATOR'S SCREEN, AND DID NOT TAKE IT.** The whole
   pass — three pages, geometry probes, a two-point grid control and three screenshots — ran in
   BACKGROUND tabs with CDP captures. **Zero workspace switches and zero focus changes**, which is the
