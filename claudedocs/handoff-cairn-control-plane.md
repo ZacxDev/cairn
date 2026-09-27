@@ -24,37 +24,83 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`1545783`** — ⚠ re-read rather than quoting it; a handoff doc can never record its own
+- `main` @ **`90e76ca`** — ⚠ re-read rather than quoting it; a handoff doc can never record its own
   merge, so this sha is stale by exactly one commit the moment it lands.
-- ✅ **THE ARC REMAINS CLOSED.** Ranks 18–20 are the successor arc and this session worked in it.
-  The closed arc was not re-opened.
-- ✅ **FOUR PRs MERGED, ZERO OPEN.** `#125` (content-hashed stylesheet) → `b1cc307`; `#126` (the
-  browse/search/drill-down surface) → `ac1e8ee`; `#127` (leakscan skips directory entries) →
-  `93ce032`; `#128` (90% ultrawide rung + document-style entry page) → `1545783`. Each verified on
-  `main` by CONTENT, never by ancestry.
-- ✅ **THREE DEPLOYS, ALL VERIFIED AT THE EDGE.** The deployed pod went `sha-71041ff8` (13 commits
-  stale) → `sha-edf34e2e` → `sha-ac1e8ee` → **`sha-1545783`**, each with the manifest confirmed
-  pullable first (target 200, outgoing tag 200 as positive control, `sha-0000…` 404 as negative) and
-  each with `rev-list --count <tag>..origin/main` = **0** at commit time.
-- ✅ **RANK 18 IS DONE.** The browser validation pass ran — 24 items, 0 skipped, 7 screenshots, every
-  route in the UI ledger reached, no authorization leak, and the grant/revoke write half verified
-  independently in the journal (10 → 12 lines, a `granted` and a matching `grant-revoked`).
-- 🔴 **THE HASHED STYLESHEET PATH IS PROVEN IN PRODUCTION, NOT JUST IN A TEST.** On the third deploy
-  the linked path moved `…284688207efc.css` → `…cd48ec796746.css` and the new bytes served
-  **instantly**; `sha256(served)[0:12]` equals the path, read at the edge. The FIRST deploy of the
-  day needed a cache-bust to be readable at all. That difference is the feature working.
-- ⏳ **THE WIDE LAYOUT IS DEPLOYED TO BE JUDGED** (operator decision), not because it is settled. The
-  measurement and the two candidate remedies are under `Defects` — and the entry in `Defects` says
-  explicitly which change would be the WRONG one.
-- ⏳ **CARRIED FORWARD, UNCHANGED:** a COMPLETED GitHub sign-in on the deployed surface is still
-  unverified (rank 13); the share flow still cannot be verified there with one user (rank 9, and
-  **still claimed by another session**); the three sign-in variables remain a SET.
-- 🔴 **THE RULE-(p) MUTATION SWEEP IS STILL DEAD AND WAS NOT RESTARTED.** Unchanged: re-run from
-  scratch on a detached worktree of that repo's `main`, tree-identical before starting, with
-  `PYTHONDONTWRITEBYTECODE=1`, ~3 min/row. The 24 rows the dead run scored were OTHER guards.
-- ⚠ **NO TASK-BOARD FIELD, AND IT IS A MEASURED ABSENCE AGAIN.** The resolver exited **5** while its
-  own POSITIVE CONTROL answered 1 link for a different session, so the board is reachable and this
-  session genuinely touched no task. The field's own name still cannot be written in this repository.
+- ✅ **THE ARC REMAINS CLOSED.** Ranks 18–22 are the successor arc and this session worked in it.
+- ✅ **`#130` MERGED as `b574a61`** (a script zero is about the ORIGIN, not the page a reader gets),
+  verified BY CONTENT. `#131` (the document pages cap their card) and `#132` (this doc) were open at
+  the time of writing. **File sets are DISJOINT**, which per `claude/RULES.md` is NOT safety — so the
+  **merged tree of all three was built and tested before any merge**, on the PINNED toolchain:
+  root **19 `ok` / 0 `FAIL`**, `go vet` 0, the nested `uiaudit` module vets and builds, and
+  `checks.ui-stylesheet-is-current` exits 0 (so #131's regenerated `app.css` matches its source *on
+  the merged tree*, which is the claim that actually matters).
+- ✅ **THE CAP IS `64rem`, AND BOTH HALVES OF THE ARITHMETIC ARE IN THE COMMENT.** Floor: the widest
+  thing the card holds is `--measure-code` = 110ch ≈ 49.6rem at these bodies' 12px monospace (the
+  measured 794px), plus `px-5` gutters and borders → **~52.3rem**; the remaining ~11.7rem is headroom
+  for the card's *row* layouts, which are not prose and are not measure-capped. Value: 64rem is
+  `max-w-5xl`, already in `body`'s own ladder — so a document page on an ultrawide is exactly as wide
+  as the same page on a laptop, rather than a fresh number nobody has looked at. ✅ **And it was
+  measured in a REAL BROWSER, which the Go guards structurally cannot do** (they read a declaration
+  and a nesting, never the cascade): pixel-scanning the card's border box at 1440px gives
+  **1232px → 1024px**, exactly 64rem.
+- ⏳ **OPEN OPERATOR CHOICE: the capped card is LEFT-ALIGNED, not centred.** It matches every other
+  capped element and lines up with the breadcrumbs, but it leaves the right ~1870px of an ultrawide
+  empty rather than split. **One declaration either way** — not decided, deliberately.
+- ✅ **RANK 18's SUCCESSOR QUESTION IS ANSWERED: THE WIDE LAYOUT WAS LOOKED AT AGAINST THE REAL
+  STORE AND IS KEPT.** Measured at the operator's real viewport (**3004×1134**, so the `125rem`
+  `ultra` rung is live), on the REAL served bytes pulled authenticated from the edge and re-rendered
+  locally with the REAL content-hashed stylesheet: `<main>` **2894px = 96.3%** of viewport, no
+  horizontal overflow, **26 scope cards in 9 uniform 307px columns**. It reads dense and scannable.
+  **Operator decision: keep it.**
+- 🔴 **THE DEFECT IS THE TWO PAGES WITH NO GRID, AND IT IS WIDER THAN IT WAS FILED — THE ENTRY NAMED
+  ONLY `/entry`.** Both `/scope` and `/entry` render a single `section.card` as a direct child of
+  `<main class="page-main">`, spanning the full container (2908px / 2894px) while every prose element
+  inside is capped at `--measure-code` (**measured 794px**) — ~2000px of void inside the card's own
+  border, with full-width section heading rules ruling over nothing. `#131` caps the card on both.
+- 🔴 **THE CAP REACHES FOUR PAGE STATES, NOT TWO — AND THE "EXACTLY TWO" CLAIM WAS MINE, MEASURED,
+  AND STILL WRONG.** ❌ **RETRACTED:** *"`.page-main > .card` reaches exactly the two broken pages",
+  verified on the real served HTML.* The verification was real and the generalisation was not: I
+  rendered **three route states** (`/`, `/scope?id=`, `/entry?ref=&scope=`) and generalised to the
+  **route set**. Read from source instead (#131), the direct-child `.card` also appears on
+  **`NavigatePage`** — `/scope` and `/entry` naming nothing, a third site at `render.go:125` — and on
+  **`/?q=…`**, where `searchResults` renders `.card.results` as a direct child of `<main>`. So
+  ***"`/` must not change" is true of the GRID, never of the ROUTE.*** Capping the search block is
+  correct — it is prose and `<pre>` hunks, the same shape as an entry — but it was not what the brief
+  authorised. **Enumerate the render sites; do not sample the ones you happened to open.**
+- 🔴 **AND THE MECHANISM PROTECTING THE GRID IS NOT THE ONE I NAMED.** ❌ **RETRACTED:**
+  *"`.scope-grid .card` overrides for cards inside the grid."* It declares only `margin-block: 0` and
+  has **equal** specificity (0,2,0) to `.page-main > .card`, so even winning the cascade it could
+  only reset a margin — never a `max-width`. What actually protects the grid is that
+  `.page-main > .card` is a **CHILD COMBINATOR** and a grid card is a **grandchild**
+  (`<main> > div.scope-grid > section.card`), so it never matches at all. Right conclusion, wrong
+  mechanism — and the difference is load-bearing: anyone who later flattened the `.scope-grid`
+  wrapper while trusting my version would silently cap the entire grid. **#131's guard therefore
+  pins the NESTING, not only the declaration.**
+- ✅ **THE `auto-fit` REMEDY IS CORRECT AND LATENT, AND THAT IS A TWO-POINT MEASUREMENT RATHER THAN
+  AN ARGUMENT.** On the real DOM at 3004px: **2 cards** `auto-fit` → two cards at **1446px each**
+  (the collapse-and-stretch pathology, confirmed real); **2 cards** `auto-fill` → **309px each**;
+  **26 cards** (the real store) `auto-fit` → 9 tracks all occupied, **307px each — identical to
+  `auto-fill`**. So the filed pathology CANNOT manifest on a store with at least as many scopes as
+  tracks. Do not report `#131` as fixing what is on screen today; it does not.
+- 🔴 **THE DEPLOYED *API* POD IS 74 COMMITS STALE, AND NOTHING IN THIS DOC HAD EVER TRACKED IT** —
+  every previous deploy line in this arc is about the UI. `cairn-store-go:sha-a0c4d07` (2026-09-19)
+  against a UI pod at `sha-1545783` (current but for one docs commit). **17 of those 74 commits touch
+  the served path**, including P7's conditional-sync ETag/`304` (#90), `ls-entries` listing every
+  scope's README (#83), the `CAIRN_*` rename (#69) and the unreadable-entry exit-3 change (#119).
+  ✅ **The current image IS already published and anonymously pullable** — `sha-1545783` → **200**,
+  with `sha-0000…` → **404** as the negative control proving the probe discriminates. So the bump is
+  a one-line manifest edit; it was NOT made, because that repo is commit-equals-deploy.
+- 🔴 **THREE OF THE FOUR REMAINING AUTH CONTROLS ARE NOW MEASURED OFF-MESH** — see the superseding
+  block under `Open investigations`. The lockout probe was deliberately NOT fired.
+- 🔴 **THE AMBIENT `go` IS NOT THE PINNED ONE, ON THIS HOST, TODAY.** `go version` → **1.26.7** (from
+  `~/.nix-profile`); `nix develop -c go version` → **1.25.14**. `AGENTS.md` says the toolchain is
+  pinned not inherited, and `flake.nix` pins it in three places — but a plain shell inherits 1.26.7
+  silently, so a bare `go test` is a green about the wrong toolchain. **There is also NO `.envrc` in
+  this repo**, so the standing "copy `.envrc` into the worktree" advice does not apply here.
+- ⚠ **NO TASK-BOARD FIELD, AND IT IS AN UNKNOWN RATHER THAN A MEASURED ABSENCE THIS TIME.** The
+  resolver exited **5** with `NOTHING RESOLVED — 0 tasks for this session`, and it says in so many
+  words that an unknown session id answers 200 with an EMPTY ARRAY. Unlike the previous round, **no
+  positive control was run**, so this zero cannot distinguish "touched no task" from "wrong id".
 
 ## Next steps (ranked)
 
@@ -79,18 +125,16 @@ an item nobody can find.** Re-ranking re-points every live claim.
 7. ✅ **DONE — rename landed as `56cc56e` (#69).** forcing: user.
 8. ✅ **DONE — rule (o) merged as `c4490f07` in the handoff-tooling repo.** forcing: incident.
 9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — ASKED THREE TIMES AND STILL NOT DONE.** 🔴 **CLAIMED BY
-   ANOTHER SESSION** (`cairn-control-plane-9`, two days old) — check the lock before touching it.
-   ⚠ **Rank 18 measured something that changes what this item has to say to its human:** the entries
-   page carries NO link to the share flow, so "sign in and test sharing" lands a human on a page with
-   no way to get there. Tell them the URL path explicitly, or fix the navigation first (see
-   `Defects`). It still CANNOT be done on the deployed surface as it stands — one user, empty
+   ANOTHER SESSION** (`cairn-control-plane-9`) — check the lock before touching it.
+   ⚠ The entries page carries NO link to the share flow, so "sign in and test sharing" lands a human
+   on a page with no way to get there. Tell them the URL path explicitly, or fix the navigation first
+   (see `Defects`). It still CANNOT be done on the deployed surface as it stands — one user, empty
    candidate select — so it needs the hand-run recipe under `## How to verify`, or a second co-member
    provisioned in-cluster.
    forcing: user — the operator reserved the browser step to a human, and has now asked three times.
 10. ✅ **DONE — merged as `901b77d` (#104), verified on a real publish run.** forcing: user.
 11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`**, held because that repo's `main` is red for an
-    unrelated reason. Its value rose when rule (p)'s ladder found a commit-message disclosure in a
-    PUBLIC repo, a channel gated by NOTHING there.
+    unrelated reason. **CLAIMED** (`cairn-control-plane-11`).
     forcing: incident.
 12. **CORRECT TWO FILES THAT ASSERT THAT REPO'S CI CHECKS BLOCK A MERGE.** They do not
     (`required_status_checks` → 404). Both wrong in the PERMISSIVE direction.
@@ -98,73 +142,124 @@ an item nobody can find.** Re-ranking re-points every live claim.
 13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** ⚠ Precondition: sign-in resolves
     the token's `sub` against a user the control plane ALREADY holds; an unknown subject is refused by
     design and all three causes collapse into one 401, so **the pod's log is the only place the
-    mechanism exists.** ⚠ **And the surface it would be tested against is 13 commits stale** — see
-    `Defects`; #117 does not touch the sign-in path, so this item is not blocked on the bump, but say
-    which artefact you measured. forcing: user.
+    mechanism exists.** ✅ **The provider button IS armed on the deployed surface right now** —
+    `GET /sign-in` answers 200 and carries exactly **1** occurrence of `sign-in/github`, measured at
+    the edge this session. That is the precondition, not the verification. forcing: user.
 14. ✅ **DONE — `#117` merged as `9c24bc4`.** 🔴 Its ladder stopped on the ATTRIBUTION GATE — two
     consecutive payload-zero rounds — **NOT on a clean round**; a later reader must not upgrade that.
     forcing: gate.
-15. ✅ **DONE — rule (p) MERGED as `b4233ea9`.** Five rounds (0–4), stopped by the attribution gate on
-    two consecutive MEASURED `payload=0`. Four operator decisions recorded on the PR; four findings
-    FILED rather than fixed, which is what that gate firing means. ⏳ Five mutation rows remain
-    unscored — tracked in `State now`, not here. forcing: gate.
-16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** ⚠ Its footprint GREW: the generated
-    stylesheet is now the surface's whole appearance AND is served at a content-hashed path. `#117` merged WITH the toolchain, so this is now
-    keep-or-replace rather than a gate on a PR. ⚠ Its gcroot was living in the repo root as `result`
-    and arming the leak gate; relocated this session to a path outside the repo. forcing: user.
+15. ✅ **DONE — rule (p) MERGED as `b4233ea9`.** Five rounds, stopped by the attribution gate on two
+    consecutive MEASURED `payload=0`. **Four operator decisions recorded on the PR; four findings
+    FILED rather than fixed, which is what that gate firing means** — they are open, not closed.
+    ⏳ Five mutation rows also remain unscored. forcing: gate.
+16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** ⚠ Its footprint GREW again: `#131` regenerates
+    `internal/ui/app.css` through `nix run .#build-ui-stylesheet`, so the generated stylesheet is now
+    the surface's whole appearance, served at a content-hashed path, AND the thing two PRs in one
+    session had to rebuild. Keep-or-replace, not a gate on a PR. forcing: user.
 17. ✅ **DONE — `cairn#108` merged as `84642ff`**, verified by CONTENT because ancestry is false after
     every squash. forcing: gate.
-18. ✅ **DONE — THE PASS RAN, AND THE WORK IT PROMPTED HAS SHIPPED.** 24 items, 0 skipped, 7
-    screenshots, every route in the UI ledger reached, no authorization leak, the grant/revoke write
-    half verified in the journal. What it found became `#126`/`#128` and three deploys. 🔴 **Two of
-    its three headline findings were WRONG and only re-derivation caught them** — `Gotchas`; a
-    dispatched pass is a witness, not a verdict. forcing: user — asked directly, and now actioned.
+18. ✅ **DONE — THE PASS RAN, THE WORK IT PROMPTED SHIPPED, AND ITS LAST OPEN QUESTION IS NOW
+    ANSWERED.** The wide layout was looked at against the real store this session and is KEPT; the
+    remedy went to `#131`. 🔴 **Two of its three headline findings were WRONG and only re-derivation
+    caught them** — a dispatched pass is a witness, not a verdict. forcing: user.
 19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23, with the design stated in the same
-    message. 🔴 **0 hits for `the-algorithm` across this doc, the archive and the plan.** The fact-rot
-    sub-question DID get a delete-first pass; the whole-design trace has no record.
+    message. 🔴 **Still 0 hits for `the-algorithm` across this doc, the archive and the plan.**
     **Closing condition:** a recorded pass, question-requirements → delete → simplify in that order, or
     a written line saying the fact-rot pass discharged it. forcing: user.
-20. **THE ARCHIVE IS 26,781 B OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE.** 174,237 B against a
-    grandfathered 147,456 B; and the prune left THIS doc 20,160 B looser than the ledger's own
-    tightest-quantum discipline requires. A FOREIGN ledger entry sits outside every one of that gate's
-    corpus checks by construction, so no check fires either way. **Closing condition:** both entries
-    re-derived from measured size, or a written line exempting foreign entries from tightness — closed
-    when the numbers are READABLE by that gate rather than when someone raises them. forcing: gate.
+20. **THE ARCHIVE IS OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE.** 174,237 B against a
+    grandfathered 147,456 B. A FOREIGN ledger entry sits outside every one of that gate's corpus
+    checks by construction, so no check fires either way. **Closing condition:** both entries
+    re-derived from measured size, or a written line exempting foreign entries from tightness.
+    forcing: gate.
+21. ✅ **DONE — THE API POD IS BUMPED AND VERIFIED BY A DISCRIMINATOR, NOT BY HEALTH.**
+    `sha-a0c4d07` → `sha-953ad36`, deployed by commit to the manifest repo's trunk. Verified in this
+    order: the target image re-checked pullable **at the moment of acting** (not on the hour-old
+    reading); the YAML parsed and only the api container's image moved; a **pre-bump functional
+    baseline** taken through the public edge (`cairn sync` rc 0, 309 entries); then, after the
+    rollout, the running image resolved back to a commit at **0 behind `main`**, `cairn sync` rc 0
+    with **309 entries — identical**, 0 restarts. 🔴 **The verification that actually counts is a
+    behaviour only the NEW image has:** a second snapshot fetch answered `304 not-modified` — P7's
+    conditional sync, which the pre-`#90` image cannot do — confirmed on BOTH sides, the client's
+    `already current` line and the pod's own audit line `result=304 status=not-modified`.
+    ⚠ **A SECOND INSTANCE EXISTS AND WAS NOT TOUCHED** — the client resolves two, and only the one
+    this repo's manifests describe was bumped. forcing: user — done on operator instruction.
+22. ❌ **WITHDRAWN — THE EDGE CACHE TTL IS LEFT AS IT IS, ON A LATER OPERATOR INSTRUCTION THAT
+    REVERSED AN EARLIER ONE IN THE SAME SESSION.** Both are recorded rather than the first being
+    reworded away: the operator first chose *"set Browser Cache TTL to Respect Existing Headers for
+    this host"*, then said **"skip the ttl changes"**. **The later instruction wins and nothing was
+    changed at the edge.** 🔴 **DO NOT RE-PROPOSE THIS AS THOUGH IT WERE UNDECIDED** — it is decided,
+    in the direction of leaving it alone. What is accepted, stated so the cost is explicit rather
+    than implied: the versionless `/static/app.css` keeps answering `max-age=14400` where the origin
+    asks for `300`, and any FUTURE asset given a TTL under four hours inherits the same override
+    silently. What is NOT at risk: the content-hashed stylesheet (its `31536000` passes through
+    untouched) and HTML (uncached, `DYNAMIC`). **Closing condition: none — this item is closed by
+    decision, not by work.** forcing: user — the operator decided it, twice, and the second time
+    closed it. ⚠ Deliberately tagged to the operator rather than to the no-forcing-function kind:
+    that kind's count is RATCHETED, so spending one on an item nobody will work would refuse the
+    next session's update for no gain — and writing its literal name on this line would itself read
+    as a second declaration on this item.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section
   REPLACES, so every closed entry left in it is retyped by hand each round until somebody
-  drops it — which is how one sat 🔴 and 46,831 B wrong for two merges. The LESSONS from a
-  closed entry belong under `Gotchas`, which appends; the entry itself belongs in the archive.
-  ⚠ **#74's ✅ entry was DROPPED by this update rather than retyped** — its lessons are already
-  under `Gotchas` in their own bullets, which is the condition for dropping one.
+  drops it. The LESSONS from a closed entry belong under `Gotchas`, which appends; the entry
+  itself belongs in the archive. ⚠ **The wide-layout entry was DROPPED by this update rather than
+  retyped** — its closing condition was met this session (looked at, then `#131`), and its lessons
+  are under `Gotchas` in their own bullets, which is the condition for dropping one.
+- 🔴 **THE SURFACE ASSERTS IT SHIPS NO JAVASCRIPT, THAT IS FALSE OF THE SERVED PAGE, AND THE
+  OPERATOR HAS RULED: ACCEPT IT AND CORRECT THE CLAIM.** ✅ **Decision taken this session** — do not
+  re-open it as a CDN configuration question. The code half is **`#130`** (open, not merged): the
+  script-count guard's scope is stated where it is defined, three "this surface ships none" spellings
+  become "this ORIGIN renders none", and the content-rewriting consequence is recorded once.
+  🔴 **The gate's blindness is the separate half and it is structural:** `uiaudit` boots its own pod
+  over a temp directory, so its `document.scripts.length == 0` is a claim about the ORIGIN's bytes and
+  can NEVER see anything inserted between that origin and a real client. ⚠ **And `#130` found a claim
+  that was already false before any of this:** `uiaudit/browser.go` reasoned that a script "would be
+  blocked outright: this surface's CSP names no `script-src`" — **there is no CSP at all**, the header
+  was deleted by operator decision and `TestTheHTMLResponseSendsNoContentSecurityPolicy` pins its
+  absence. **Closing condition:** `#130` merged.
+- 🔴 **THE EDGE OVERRIDES THE ORIGIN'S CACHE DECISION, AND THE BLAST RADIUS IS NOW EXACTLY ONE
+  ROUTE — MEASURED, WHERE IT USED TO BE STATED AS A CLASS.** The discriminating pair, taken at the
+  edge this session: the **versionless** `/static/app.css` is `max-age=300` at the origin and
+  **`max-age=14400`** at the edge, confirmed on a `cf-cache-status: MISS` so it is a rewrite and not
+  a stale stored copy; the **content-hashed** `/static/app.<hash>.css` is
+  `max-age=31536000, immutable` at the origin and **passes through unchanged**; and HTML answers
+  `cf-cache-status: DYNAMIC`, i.e. is not cached at all. **So the override raises TTLs BELOW four
+  hours and does not cap those above it**, and its entire current exposure is the one legacy
+  versionless route that exists only for URLs already in the world. ❌ **CLOSED BY DECISION, NOT BY
+  WORK — AND THE DECISION REVERSED ITSELF WITHIN THE SESSION.** The operator first chose *"set Browser
+  Cache TTL to Respect Existing Headers"*, then instructed **"skip the ttl changes"**. Nothing was
+  changed at the edge and **this is not an open defect**; it is an ACCEPTED one (rank 22). The
+  accepted cost, stated so it is not rediscovered as news: the versionless route keeps answering
+  `14400` against the origin's `300`, and any future asset given a sub-four-hour TTL inherits the
+  override silently. ⚠ Two readings of the mechanism remain consistent with the observable (a floor,
+  or an override that only applies downward); the observable is what is recorded, and the mechanism
+  deliberately is not — **and since the setting is now being left alone, that distinction will stay
+  unresolved**.
+- 🔴 **THE AMBIENT GO TOOLCHAIN IS NOT THE PINNED ONE, AND `AGENTS.md` SAYS IT IS.** Measured on this
+  host: bare `go version` → **1.26.7**; `nix develop -c go version` → **1.25.14**. Every local
+  `go vet`/`go test` run outside the devShell is therefore a green about a toolchain this repo does
+  not ship, and nothing warns. One agent this session ran its gates bare and reported the distinction
+  honestly rather than claiming "tests pass" — which is the only reason it was caught.
+  **Closing condition:** either a `direnv`/`.envrc` that puts the pinned toolchain on `PATH` in this
+  repo, or a written line in `AGENTS.md`'s verification section saying the Go gates must be run as
+  `nix develop -c …` — plus a decision on whether anything should refuse a bare run.
 - 🟡 **FOUR OF ELEVEN JOURNAL EVENT KINDS HAVE NO WRITER, AND THE SELECTION RULE IS STATED SO
-  THE NUMBER IS REPRODUCIBLE.** 🔴 **The previous two spellings of this entry were both wrong in
-  the same way — they listed more names than the headline counted, because each round
-  DECREMENTED the figure instead of recounting.** The rule: a kind has a writer iff non-test Go
-  constructs it. Re-derive with
+  THE NUMBER IS REPRODUCIBLE.** The rule: a kind has a writer iff non-test Go constructs it.
+  Re-derive with
   `find . -name '*.go' -not -name '*_test.go' -not -path './.claude/*' -print0 | xargs -0 grep -ohE 'Kind:\s*(control\.)?Event[A-Za-z]+'`
   against `control.AllEventKinds` (11). **Constructed (7):** `user-created`, `project-created`,
   `scope-created`, `member-set`, `credential-issued`, `granted`, `grant-revoked`.
   **Writer-less (4):** `member-removed`, `scope-renamed`, `scope-moved`, `credential-revoked`.
-  ⚠ `granted`/`grant-revoked` are constructed only by the browser surface; `tokenfile/source.go`
-  also builds an `EventGranted` but as an in-memory projection, never a journal append — so
-  *"the surface is their only writer"* stands. ✅ **`member-set` — the one that bit — closed by
-  #86 (`d6fe1c3`), retired by measurement**: the rank-9 world was built with `-set-member` and
-  `blake@example.invalid (user)` appeared in the share flow's candidate select, which is the
-  state the hand-append existed to fake. ⚠ Hand-appending is the shape that let a 64-character
-  secret into the journal (rank 5), and `-issue-credential`'s own output still says *"append a
-  `credential-revoked` record BY HAND — nothing in this repository writes that event yet"*.
+  ⚠ `granted`/`grant-revoked` are constructed only by the browser surface. ⚠ Hand-appending is the
+  shape that let a 64-character secret into the journal (rank 5), and `-issue-credential`'s own
+  output still says *"append a `credential-revoked` record BY HAND"*.
   **Closing condition:** a writer for `credential-revoked`, or a written line saying hand-append
   is the intended interface and naming where its schema is documented.
-- 🟡 **FOUR FILED BY #54's AND #57's LADDERS — AND (a) AND (b) WERE RE-MEASURED AND ARE WRONG AS
-  FILED.** 🔴 **(a) IS CLOSED AND ITS ENTRY IS INVERTED.** `internal/ui/README.md` carries no
-  "takes two backends" sentence at all — it records the removal explicitly, saying the sentence
-  *"deliberately carries NO parameter COUNT"* — and `AuthBackends` now takes **two** parameters,
-  landed by #58. Acting on this entry means hunting a sentence that is gone. 🔴 **(b) NAMES THE
-  WRONG FILE.** `internal/control/tokenfile/source.go` was fixed by `c47636b`; the LIVE stale
-  copy is **`internal/control/filestore.go:54`** — *"This module has no `require` block and
-  `flake.nix` passes `vendorHash = null`"* — both halves false since #55. (c)
+- 🟡 **THREE FILED BY #54's AND #57's LADDERS REMAIN.** 🔴 **(b) NAMES THE WRONG FILE.**
+  `internal/control/tokenfile/source.go` was fixed by `c47636b`; the LIVE stale copy is
+  **`internal/control/filestore.go:54`** — *"This module has no `require` block and `flake.nix` passes
+  `vendorHash = null`"* — both halves false since #55. (c)
   `internal/report/testdata/reader_fixtures.json` contains **no `[cairn: …]` trailer at all**
   (0 hits against 8 in `server.py` as a positive control), so the differential reader fixture
   never exercises attribution rendering. (d) Whether `cairn-ui` should ever render through
@@ -174,112 +269,52 @@ an item nobody can find.** Re-ranking re-points every live claim.
   already `cairn`, so a `meta.mainProgram` removed *there* leaves the base-name assertions green.
   **Closing condition:** a decision to close it or a written line saying why not.
 - 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — now **`tests/test_parity_harness.py`'s
-  floor alone**. ⚠ `lib/README.md`'s counts are closed twice over: the echo-site count by
-  `tests/test_narrowing_echo_sites.py`, and the `STORE_IS_PER_HOST` total by `562a4f6f`, which
-  **deleted** it rather than refreshing it — the same ruling #54 took for `README.md`'s
-  101/102/70/23/8. The pattern is now settled for this repo and worth stating once: a count that
-  moves whenever an artefact is regenerated gets DELETED, and one that should never move gets
-  PINNED (`tests/test_control_mutant_count_is_pinned.py`). Deciding which a number is, is the work.
+  floor alone**. The pattern is settled for this repo: a count that moves whenever an artefact is
+  regenerated gets DELETED, and one that should never move gets PINNED
+  (`tests/test_control_mutant_count_is_pinned.py`). Deciding which a number is, is the work.
   **Closing condition:** a decision to pin the parity floor or a written line saying why not.
-- 🔴 **A CHANGELOG ROW IS BORN WITH THE WRONG ANCHOR, STRUCTURALLY, AND IT HAS NOW HAPPENED
-  TWICE IN ONE ARC.** `CHANGELOG.md`'s header states the anchor exists so
-  `git log <your-rev>..<target-rev>` answers *"does this change sit between the revision I am
-  pinned to and the one I am moving to"*. That anchor is the SQUASH commit — which cannot be
-  known while the PR carrying the row is open. So every row is written wrong and is only
-  correctable by a follow-up after the merge that makes it true. #69 shipped anchored to
-  `4d1787d`, a branch commit the squash discarded, corrected in #78; #90 shipped a visible
-  `<UNFILLED>` placeholder — the honest choice, a wrong sha being worse than a hole — corrected
-  in #92. ⚠ **Nothing gates it**: a row with a placeholder or a dead sha is green in every
-  suite. **Closing condition:** a check that refuses a `CHANGELOG.md` anchor which is not an
-  ancestor-free commit present on `main`, or a written line saying the two-step is accepted.
-- 🟡 **P7's TWO BINDING CLAIMS ARE NOT IN `AGENTS.md`, AND THE REASON IS THE BUDGET.** The
-  conditional-sync work (`c0f5b06`) put its record in four READMEs because `AGENTS.md` has
-  **73 bytes** free against its enforced ceiling, and that file's own rule forbids paying for
-  a new claim by deleting an existing one. The two that belong there: the validator is a digest
-  of the **uncompressed** tar (not gzip, not an authorization epoch), and a `304` is a FOURTH
-  read state beside `live`/`cached`/`scope-empty`/`store-unreachable`. **Closing condition:** an
-  eviction PR frees ≥400 B, then both sentences land and
+- 🔴 **A CHANGELOG ROW IS BORN WITH THE WRONG ANCHOR, STRUCTURALLY.** The anchor is the SQUASH
+  commit — which cannot be known while the PR carrying the row is open. So every row is written wrong
+  and is only correctable by a follow-up after the merge that makes it true. #69 shipped anchored to
+  a branch commit the squash discarded, corrected in #78; #90 shipped a visible `<UNFILLED>`
+  placeholder — the honest choice — corrected in #92. ⚠ **Nothing gates it.** **Closing condition:**
+  a check that refuses a `CHANGELOG.md` anchor which is not a commit present on `main`, or a written
+  line saying the two-step is accepted.
+- 🟡 **P7's TWO BINDING CLAIMS ARE NOT IN `AGENTS.md`, AND THE REASON IS THE BUDGET.** The two that
+  belong there: the validator is a digest of the **uncompressed** tar (not gzip, not an authorization
+  epoch), and a `304` is a FOURTH read state beside `live`/`cached`/`scope-empty`/`store-unreachable`.
+  **Closing condition:** an eviction PR frees ≥400 B, then both sentences land and
   `tests/test_agent_instructions_weight.py` exits 0 with both present.
 - 🟡 **THE DEPLOYMENT MANIFEST'S NODE-AFFINITY COMMENT IS STALE.** It keeps the pod off the off-LAN
   burst node *because the LAN registry does not resolve there*; the pod now pulls from ghcr, so that
   reason is void while the affinity may still be wanted (the PVC is ReadWriteOnce local-path).
   **A comment is a claim too. Closing condition:** the comment states the true reason, or it goes.
 - 🟡 **`tests/dualrun/` cannot see image drift, structurally.** It runs the TREE's `server.py`;
-  nothing compares the Go server against the artefact actually serving. **Closing condition:** decide
-  whether a deployed-artefact arm is worth owning, or write the line saying it is not.
+  nothing compares the Go server against the artefact actually serving. ⚠ **And this session measured
+  what that blindness costs:** the deployed API pod is 74 commits behind the tree `dualrun` reads.
+  **Closing condition:** decide whether a deployed-artefact arm is worth owning, or write the line
+  saying it is not.
+- 🟡 **THE ENTRIES PAGE OFFERS NO WAY TO REACH THE SHARE FLOW, WHICH IS WHY "GO TEST SHARING IN THE
+  BROWSER" KEEPS STALLING.** `GET /` carries **0** occurrences of the word "share". Positive control:
+  the share index itself contains **8**, so the grep can see the word. The flow is not broken — bare
+  `GET /share` answers **200** with both scopes linked — but **nothing navigates there**. ⚠ **A
+  SECOND HALF, A MESSAGE DEFECT RATHER THAN A LOGIC ONE:** `?scope=` is keyed on the scope **ID**,
+  never the display name — deliberate, and `render.go` says why. But a human who hand-types the name
+  they can see gets **404** and the words *"no such scope, or it is not yours to share"* for a scope
+  that **is** theirs to share. The refusal is correct and its sentence is false. **Closing
+  condition:** one PR that links the share index from the entries page, plus a decision on whether
+  the name-keyed refusal should say something true.
+- 🟡 **`AGENTS.md` + `CLAUDE.md` ARE EFFECTIVELY FULL — three bytes of headroom.** Any new sentence
+  there requires evicting an existing one — a decision about somebody else's claim, not a formatting
+  change. ⚠ **A false zero worth keeping:** `grep -c` on a phrase that WRAPS ACROSS A NEWLINE answers
+  **0**. A line-oriented grep is a claim about lines, not about the file; flatten whitespace, and keep
+  a positive control beside the count. **Closing condition:** an eviction PR that frees a stated
+  number of bytes, or a written line accepting that the file is closed to new claims.
 - Everything previously listed stands unchanged: #38's three residuals; `ScopeByNameIn`
   raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six findings;
   the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; three files not `gofmt`-clean
   with nothing in CI grepping it; `-race` gated in one tier only; and P4 rounds 1 and 3's guards
   absent from the persistent battery.
-
-- 🟡 **THE ENTRIES PAGE OFFERS NO WAY TO REACH THE SHARE FLOW, WHICH IS WHY "GO TEST SHARING IN THE
-  BROWSER" KEEPS STALLING.** Measured on a hand-run instance from `cd86714`, signed in as a principal
-  owning two scopes: `GET /` is **1,386 B** with **0** occurrences of the word "share", exactly **one**
-  `href` (the stylesheet) and **one** form action (sign-out). Positive control: the share index itself
-  contains **8** occurrences, so the grep can see the word. The flow is not broken — bare `GET /share`
-  answers **200** with "Scopes you can share" and both scopes linked — but **nothing navigates there**,
-  so a human sent to the landing page has to know to type the path. ⚠ **A SECOND HALF, AND IT IS A
-  MESSAGE DEFECT RATHER THAN A LOGIC ONE:** `?scope=` is keyed on the scope **ID**, never the display
-  name — deliberate, and `render.go`'s comment says why (a name is user text and would sit in a query
-  position). But a human who hand-types the name they can see gets **404** and the words *"no such
-  scope, or it is not yours to share"* for a scope that **is** theirs to share. The refusal is correct
-  and its sentence is false. **Closing condition:** one PR that links the share index from the entries
-  page, plus a decision on whether the name-keyed refusal should say something true.
-
-- 🔴 **THE SURFACE ASSERTS IT SHIPS NO JAVASCRIPT AND THAT IS FALSE OF THE SERVED PAGE — THE GATE
-  READS A HERMETIC POD AND IS STRUCTURALLY BLIND TO THE EDGE.** `internal/ui` rests part of its XSS
-  story on the page carrying no script, and `uiaudit` asserts `document.scripts.length == 0` across
-  every capture — **of a pod it boots itself over a temp directory**. Measured at the edge with
-  `curl` (no browser, so no extension can be blamed, and with a positive control proving the grep
-  sees a `<script>` when one is there): `GET /sign-in` carries **one** `<script>` — Cloudflare's
-  bot-detection injection (`__CF$cv$params`, `/cdn-cgi/challenge-platform/scripts/jsd/main.js`) —
-  while `GET /` carries **none**, so it is not even uniform. 🔴 **AND THE CSP DELETION IS WHAT LET IT
-  EXECUTE:** the old header was `default-src 'none'` with no `script-src`, which blocks an inline
-  script, so it was presumably being injected and refused for as long as that header shipped. The
-  deletion was an operator decision taken for other reasons and this consequence was not among them.
-  **Closing condition:** a decision — disable the edge's JS detections for this host, restore a CSP
-  that permits it explicitly, or accept it AND correct `internal/ui`'s claim so it stops reading as
-  true of the deployed surface. Whichever is chosen, the gate's blindness is the separate half: it
-  can never see this, and nothing currently says so where a reader of that claim would look.
-- 🔴 **THE EDGE OVERRIDES THE ORIGIN'S CACHE DECISION BY 48×, AND THE HASHED PATH ONLY NARROWED IT.**
-  `internal/ui/server.go` sets `Cache-Control: public, max-age=300` and states why in so many words:
-  a path carrying no version cannot outlive a deploy by long. The edge serves **`max-age=14400`** —
-  four hours — measured at `age: 168` on a `cf-cache-status: HIT` while the origin was already
-  serving new bytes. Nothing in the deployment repo writes 14400 (grepped), so it is a
-  Cloudflare-side Browser Cache TTL. ✅ The stylesheet is now immune — `cairn#125` gave it a
-  content-hashed URL, and the third deploy of the day proved it live: the hash moved and the new
-  bytes were served **instantly**, where the first deploy needed a cache-bust to be readable at all.
-  ⚠ **That is a narrowing, not a fix** — the next unversioned asset inherits the bug, and the
-  override still silently beats a deliberate application decision. **Closing condition:** a cache
-  rule that respects the origin TTL (or bypasses) for this host, or a written line accepting it.
-  Operator access; not reachable from here.
-- 🟡 **THE WIDE LAYOUT IS DEPLOYED TO BE JUDGED AND MAY READ WORSE THAN WHAT IT REPLACED — WITH THE
-  REASON MEASURED, SO NOBODY REVERTS THE WRONG THING.** `cairn#128` took the ultrawide rung from
-  49% to **97% of a 3004px viewport** (`<main>` 2908px), which is what was asked for. On a store
-  with FEW scopes it looks worse, for a reason the width change did not cause: the card grid is
-  `repeat(auto-fit, minmax(18rem, 1fr))`, and **`auto-fit` collapses empty tracks and STRETCHES the
-  items to fill the row** — so two scopes become two half-empty boxes rather than two natural-width
-  cards. `auto-fill` keeps them at their own width. Separately the entry page has **no grid at all**,
-  so a 97% card holds a measure-capped column beside a void inside its own border. **Closing
-  condition:** a look at the deployed surface against a real store, then either a written line
-  accepting it or one PR doing `auto-fit` → `auto-fill` and capping the entry CARD rather than only
-  its text. 🔴 **Do NOT close it by reverting the breakpoint** — that undoes the operator decision
-  while leaving the actual cause in place.
-- 🟡 **`AGENTS.md` + `CLAUDE.md` ARE EFFECTIVELY FULL — 31,597 B MEASURED, AGAINST A 31,600 B
-  BUDGET ABOVE THE ENFORCED MARGIN.** Three bytes. ⚠ **Two agents reported this differently and BOTH
-  were right**, which is why the numbers are re-measured here rather than relayed: `#126` ADDED the
-  binding claim (*"entry structure comes from `internal/store`'s parsers — never `internal/report`,
-  never a new markdown reader"*, present in `AGENTS.md` today) by tightening two pointer
-  parentheticals to pay for it; `#128` then tried to WIDEN that same clause and
-  `tests/test_agent_instructions_weight.py` **refused it** — even a same-length reword overshot — so
-  the widening went to `internal/ui/README.md`, which the file already points at. ⚠ **And verifying
-  this produced a false zero worth recording:** `grep -c "NEVER A NEW MARKDOWN READER"` answered **0**
-  because the phrase WRAPS ACROSS A NEWLINE. A line-oriented grep is a claim about lines, not about
-  the file; flatten whitespace, and keep a positive control beside the count. **Consequence for the
-  next edit:** any new sentence there requires evicting an existing one — a decision about somebody
-  else's claim, not a formatting change. **Closing condition:** an eviction PR that frees a stated
-  number of bytes, or a written line accepting that the file is closed to new claims.
 
 ## Gotchas / decisions / dead-ends
 🔴 **THIS SECTION HAS BEEN PRUNED THREE TIMES, AND PRUNED MEANS *MOVED*: NO PRUNE HAS DELETED NOR
@@ -896,12 +931,123 @@ follow-up with a closing condition on the PR rather than fixed here.
   CARD) before deploying, and reverting the cap to `112rem`. The measurement and the named wrong
   remedy are in `Defects` so the next reader does not revert the breakpoint instead.
 
+- 🔴 **A ROLLBACK TARGET IS A CLAIM WITH A SHELF LIFE, AND THE API POD'S HAD BEEN WRONG SINCE THE
+  CUTOVER — IN THE DANGEROUS DIRECTION.** The deployment manifest said *"ROLLBACK IS THIS LINE ALONE"*
+  and named **the pre-cutover PYTHON pod on the internal registry** — a DIFFERENT IMPLEMENTATION, not
+  a previous version of the running one — while the pod had long been serving the Go image from the
+  public registry. The same file's own node-affinity note records that the internal registry does not
+  resolve on the burst node, so it might not even pull. **Somebody rolling back under pressure would
+  have changed implementation while believing they were reverting a version.** The rule, applied in
+  the same commit that moved the tag: **re-point the rollback target at the PREDECESSOR whenever you
+  move `image:`** — otherwise the first person to need it is the one who discovers it is wrong. ⚠ It
+  was found only because the bump forced someone to read the paragraph around the line being edited.
+- 🔴 **VERIFY A DEPLOY BY A DISCRIMINATOR, NOT BY HEALTH — READINESS PROVES THE DEPLOY, NEVER THE
+  CODE.** This arc already records a healthy pod serving a 13-commit-stale image. The bump above was
+  closed instead on a behaviour **only the new image can produce**: a second snapshot fetch answering
+  `304 not-modified` (P7's conditional sync, absent before `#90`), read on BOTH sides — the client's
+  `already current` line and the pod's own audit line. **Ask what the new artefact can do that the old
+  one provably cannot, then make the probe be that.** A 200, a ready endpoint and a matching image tag
+  are all satisfied by an image that does nothing new.
+- 🔴 **I RENDERED THREE ROUTE STATES AND GENERALISED TO THE ROUTE SET, AND CALLED IT "VERIFIED ON THE
+  REAL SERVED HTML, NOT INFERRED".** The claim was *"`.page-main > .card` reaches exactly the two
+  broken pages"*. It reaches **four** page states: the two I opened, plus `NavigatePage` (`/scope` and
+  `/entry` naming nothing) and `/?q=…`, whose `searchResults` renders `.card.results` as a direct
+  child of `<main>`. Every word about what I measured was true; the quantifier was not. 🔴 **The
+  phrase "verified, not inferred" is what made it dangerous** — it advertises the absence of the exact
+  gap it contained, and a subagent had to read the render sites from SOURCE to find it. **For a claim
+  about a SET, enumerate the sites; rendering the ones you happened to open is a sample.**
+- 🔴 **A CORRECT CONCLUSION CAN REST ON A WRONG MECHANISM, AND THE MECHANISM IS WHAT THE NEXT EDIT
+  USES.** I wrote that `.scope-grid .card` "overrides for cards inside the grid" and so protects it
+  from a `.page-main > .card` cap. It declares only `margin-block: 0` and has **equal** specificity
+  (0,2,0), so it could never override a `max-width`. The grid is protected because `>` is a **child
+  combinator** and grid cards are **grandchildren** — they never match. The conclusion held; anyone
+  flattening the wrapper on the strength of my explanation would have capped the whole grid. **State
+  the mechanism only when you have checked it, and pin the mechanism in the guard** — #131's guard
+  asserts the NESTING, not just the declaration.
+- 🔴 **AN ANONYMOUS PROBE OF AN AUTHENTICATED ROUTE MEASURES THE REFUSAL, NOT THE PAGE — AND THAT IS
+  HOW THIS ARC RECORDED A FALSE ZERO FOR TWO ROUNDS.** The claim *"`GET /` carries no script, so the
+  injection is not even uniform"* was measured against a **12-byte `401` body**. Authenticated, the
+  same route carries **two** scripts. ⚠ The tell was available the whole time and nobody read it: the
+  response was **12 bytes**. **Before comparing two pages, check both are pages.**
+- 🔴 **`grep -c` ON A `/proc/<pid>/cmdline` IS A CLAIM ABOUT THE WRAPPER, NOT THE PROCESS.** A
+  three-part identity check before killing a scratch server reported `cmd_match=no` for a process
+  whose cmdline plainly contained the string — because `grep` here is a FUNCTION wrapping ugrep and
+  `/proc` cmdline files are NUL-separated. The correct read is `tr '\0' ' ' < /proc/<pid>/cmdline`
+  then a shell `case`. ⚠ **The failure was in the SAFE direction this time and that is luck, not
+  design** — the same wrapper returning a false POSITIVE would have killed the wrong process.
+- 🔴 **CDP WILL NOT ATTACH TO A `file:` URL, WHICH MAKES "RENDER IT LOCALLY AND SCREENSHOT IT" A
+  LOOPBACK-SERVER TASK RATHER THAN A ONE-LINER.** `nav file://…` succeeds, `--wake` and `screenshot`
+  both fail `cdp_attach_refused:file:`, and the failure is per-op rather than at navigation — so the
+  page looks fine until the capture. Serve the directory on a free port instead. 🔴 **Pick the port
+  with `ss -ltn` FIRST**: this document already records a handed-over fixed port being taken by
+  another session, and 8103 was still occupied this session.
+- 🔴 **A MEASUREMENT THAT SETTLES A LAYOUT ARGUMENT NEEDS THE SECOND POINT, AND THE SECOND POINT
+  RETIRED THE REMEDY'S URGENCY RATHER THAN CONFIRMING IT.** `auto-fit` vs `auto-fill` was filed as a
+  visible defect. At **2** cards `auto-fit` gives 1446px monsters and `auto-fill` gives 309px — the
+  pathology is real. At **26** cards, which is what the real store has, the two are **identical** at
+  307px because all 9 tracks are occupied and nothing collapses. **The fix is correct and latent; a
+  one-point measurement would have shipped it as a fix for what is on screen.**
+- 🔴 **A REMEDY WRITTEN FROM ONE PAGE'S SYMPTOM UNDER-SCOPES THE FIX.** The filed entry named the
+  entry page's void. Looking at the surface showed `/scope` has the SAME defect and slightly worse —
+  a 2908px card with content in the leftmost ~400px. **Both pages are the non-grid case; the entry
+  page was simply the one somebody happened to open.**
+- 🔴 **THE AMBIENT TOOLCHAIN IS NOT THE PINNED TOOLCHAIN, AND A REPO THAT SAYS "PINNED, NOT
+  INHERITED" DOES NOT MAKE IT SO.** Bare `go` is **1.26.7** here; `nix develop -c go` is **1.25.14**.
+  A subagent's honest report — naming which toolchain its result came from instead of saying "tests
+  pass" — is the only reason this was noticed. **Ask which toolchain a green came from.** ⚠ And the
+  standing "copy `.envrc` into the agent worktree" advice is inapplicable here: **this repo has no
+  `.envrc` at all**, which a brief asserted and was wrong about.
+- 🔴 **AGENTS SHARE ONE SCRATCHPAD DIRECTORY, AND GENERIC FILENAMES IN IT GET OVERWRITTEN MID-TASK.**
+  Two agents running concurrently both wrote `msg.txt` and `pr.md` there; the second clobbered the
+  first. No damage — both had already created their commits and PRs — but the hazard is now observed
+  rather than predicted. **Name every scratch file per-agent.**
+- ⚠ **A WAITER BUILT ON A TOOL'S EXIT CODE INVERTED ITS OWN VERDICT.** `until ! gh pr checks …`
+  exits **8** while checks are pending, so the negation made the loop condition true immediately and
+  it printed a confident "settled" beside a `pending` row. **Poll the output TEXT, not the status** —
+  the same "read the content, not the exit code" rule this repo already carries, in a new shape.
+- 🔴 **A LEAK-SCANNER CONTROL BUILT FROM A TEXTBOOK ADDRESS SCANS CLEAN.** An agent validating the
+  scanner against its own changed file first planted a **tidy, low-numbered RFC1918 address of the
+  kind documentation uses** and got **0** findings — that exact value sits in the scanner's own
+  documentation allowlist. A realistic one produced **1**. The pair reported was `1 on the realistic
+  control, 0 under test`. **A scanner allowlists its own canonical examples; build the negative
+  control from realistic data.** ⚠ **This bullet is deliberately NOT instantiated** — this document
+  already records the gate refusing a bullet that spelled an address in order to explain it, and the
+  rule it broke is *describe the shape, never instantiate it*. The shape is the lesson.
+- **Decision (operator, this session): the wide ultrawide layout is KEPT.** Looked at against the
+  real store at 3004px — 26 scopes, 9 columns, 96.3%. Offered and declined implicitly by the choice:
+  reverting the breakpoint, which would have undone the earlier operator decision while leaving the
+  actual cause — the un-gridded pages — in place.
+- **Decision (operator, this session): cap the CARD on `/scope` and `/entry`, leave `/` at 96%.**
+  Offered and declined: a two-column layout inside a full-width card (uses the width, bigger diff),
+  and capping only the inner content consistently (keeps the void).
+- **Decision (operator, this session): ACCEPT the edge-injected script and correct the claim in
+  code**, rather than disabling the CDN features or restoring a CSP that permits them. The visible
+  consequence is accepted with it: the signed-in identity line renders as a literal placeholder to
+  any reader without script.
+- 🔴 **Decision (operator, this session), REVERSED WITHIN THE SESSION, AND BOTH HALVES ARE KEPT
+  BECAUSE THE SECOND ONE IS THE ONE THAT BINDS.** First: *set the edge's Browser Cache TTL to
+  "Respect Existing Headers" for this host*, rather than accepting the override or bypassing the
+  cache. Then, before anything was done: **"skip the ttl changes"**. ❌ **The first decision was
+  never acted on and must not be read as standing** — the edge is untouched and rank 22 is CLOSED BY
+  DECISION. ⚠ **The generalisable bit is why this is written down at all:** the earlier line was
+  already recorded in three places (a rank, a `Defects` entry and this bullet) by the time it was
+  reversed, and a reversal that corrects only the most visible copy leaves the other two asserting a
+  plan nobody intends. **When a decision flips, grep for every site that recorded it** — here the
+  count was three, and the tell was that one of them was phrased as a closing condition, which is
+  what a future session would have picked up and worked.
+- ⚠ **VERIFYING A LAYOUT DID NOT REQUIRE THE OPERATOR'S SCREEN, AND DID NOT TAKE IT.** The whole
+  pass — three pages, geometry probes, a two-point grid control and three screenshots — ran in
+  BACKGROUND tabs with CDP captures. **Zero workspace switches and zero focus changes**, which is the
+  stronger of the two claims that rule distinguishes.
+
 ## How to verify
+
 ```bash
 cd /home/zach/workspace/cairn
 python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
 uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
-go vet ./... && go test ./... && go test -race ./...
+nix develop -c go vet ./... && nix develop -c go test ./...   # 🔴 NOT bare `go` — see below
+nix develop -c go test -race ./...
 python3 -u tests/control_mutants.py          # 120 mutants over SEVEN packages
 uv run --python 3.12 --with pytest -- python -u tests/publish_workflow_mutants.py
 python3 tests/conformance/suite.py run       # oracle: 0 failures
@@ -910,129 +1056,42 @@ python3 tests/dualrun/harness.py             # SUMMARY … differences=0
 python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
 ```
 
+🔴 **RUN THE GO GATES UNDER `nix develop -c`, NOT BARE — MEASURED ON THIS HOST THIS SESSION.**
+`go version` → **1.26.7**; `nix develop -c go version` → **1.25.14**, which is the pin
+(`buildGo125Module` at `flake.nix:461`, `pkgs.go_1_25` at `flake.nix:1626`, CI `go-version: "1.25"`).
+A bare run is a green about a toolchain this repo does not ship. ⚠ **And there is NO `.envrc` in this
+repo**, so the standing advice to copy one into an agent worktree does not apply — the toolchain has
+to come from `nix develop`.
 🔴 **RUN THE MUTATION BATTERIES UNDER AN INTERPRETER THAT HAS `pytest`.** A bare `python3`
 has none. `control_mutants.py` itself needs only a Go toolchain and **REFUSES with exit 2**
 when there is none, rather than skipping.
 🔴 **`dualrun` and `parity` exit 2 for "COULD NOT VOUCH", which is NOT "failed"**.
 🔴 **`leakscan` EXIT 2 ON THE BASE CLONE IS EXPECTED WHILE ANY AGENT WORKTREE EXISTS UNDER
-`.claude/worktrees/` — scan a FRESH WORKTREE of `origin/main` for a real verdict.** Measured
-both ways this session: base clone **2**, fresh worktree **0**, same tree.
+`.claude/worktrees/` — scan a FRESH WORKTREE of `origin/main` for a real verdict.**
 🔴 **Verify a squash merge BY CONTENT, never by ancestry.**
 🔴 **Reading CI: require the full check set present AND all COMPLETED.** ⚠ `mergeable` can read
-`UNKNOWN` for minutes after the last check goes green — GitHub computing lazily, a property of
-the API rather than of the PR. Re-read until it settles.
+`UNKNOWN` for minutes after the last check goes green. Re-read until it settles.
 
-**Rule (o), the handoff leak gate — how to see it work (it is in the OTHER repo):**
+**Looking at the deployed surface yourself, without putting a session in the operator's browser:**
 ```bash
-# In a THROWAWAY detached worktree, with the scratch delta OUTSIDE the repo so it
-# cannot pollute the baseline. A delta carrying this repo's OWN synthetic canary (`DENY_CANARY` in `tests/leakscan.py`) — a value that is
-# OWN synthetic canary, in DENIED_IDENTIFIER_DIGESTS — must exit 13 and leave no trace.
-python3 <handoff-tooling-repo>/scripts/lib/handoff_doc.py --repo <throwaway-wt> --topic <t> \
-  --update <scratch-outside-the-repo>.md --advanced '…' --new-effort --confirm
-# expect: rc 13, `status=leak-refused scanner=tests/leakscan.py exit=1`,
-#         git status --porcelain EMPTY, the doc absent.
+# The public hostname is deliberately NOT written down in this PUBLIC repository —
+# read it from the deployment-manifest repo's UI IngressRoute and substitute for <surface>.
+# A credential for the deployed surface is at ~/.config/subsystem-store/ui-token (43 bytes
+# + a trailing newline, which MUST be stripped). Feed it by STDIN so it never enters argv:
+tr -d '\n' < ~/.config/subsystem-store/ui-token | curl -sS -o /dev/null -c jar.txt \
+  -H 'Origin: https://<surface>' --data-urlencode token@- https://<surface>/sign-in   # 303
+curl -sS -b jar.txt https://<surface>/ -o root.html                                   # 200
 ```
-⚠ **Do NOT pass `--push` while probing, and do not probe in a worktree whose branch anyone
-else holds.**
-
-**The share flow, by hand (rank 9's bring-up, reproducible):**
-```bash
-# 🔴 --out-link INTO A SCRATCHPAD, NEVER THE REPO ROOT: a bare `nix build` leaves
-#    `result`/`result-1`, untracked symlinks to store DIRECTORIES, which take leakscan
-#    to exit 2 and eight of this repo's own tests red. See `Defects (batched)`.
-nix build .#cairn-ui        --out-link <s>/gc-ui
-nix build .#cairn-server-go --out-link <s>/gc-server
-# 1. a synthetic store + token row, straight from the parity world builder:
-#    python3 -c 'import sys; sys.path.insert(0,"tests/parity"); import world; …'
-#    world.build_store(<root>) and world.TOKEN_ROW  → four scopes, one malformed entry
-# 2. two users. 🔴 THE SAME -project NAME CREATES A SECOND PROJECT, so give them
-#    DIFFERENT ones and join them in step 3; a shared name buys nothing:
-export CAIRN_CONTROL_JOURNAL=<w>/journal.jsonl
-<s>/gc-server/bin/cairn-server -create-user -provider supabase -subject sub-a \
-  -email a@example.invalid -project orbit-works -scopes alpha-notes,beta-notes -store <w>/store
-<s>/gc-server/bin/cairn-server -create-user -provider supabase -subject sub-b \
-  -email b@example.invalid -project drift-lab -scopes "" -store <w>/store
-# 3. ✅ -set-member PUTS B IN A'S PROJECT. #86 (`d6fe1c3`) added it; the hand-append this
-#    step used to prescribe is retired. Ids, never display names — both are printed above:
-<s>/gc-server/bin/cairn-server -set-member -member-project <prj_…> \
-  -member-user <usr_…> -member-role member
-# 4. a live credential for A. WITHOUT one the surface exits 78; `-create-user` does NOT
-#    fix that, it mints a user and no credential:
-<s>/gc-server/bin/cairn-server -issue-credential -principal <usr_…> -principal-kind user \
-  -label '…' -token-out <w>/a.token -store <w>/store
-<s>/gc-ui/bin/cairn-ui -store <w>/store -token-file <w>/tokens \
-  -control-journal <w>/journal.jsonl -session-file <w>/sessions.jsonl \
-  -host 127.0.0.1 -port 8103
-```
-🔴 **CHECK WHAT REVISION THE RUNNING BINARY IS, NOT JUST THAT SOMETHING IS LISTENING.**
-`readlink -f /proc/<pid>/exe` carries the revision in the store path. An instance left up for a
-human across sessions goes stale in the surface under test — one sat on `a88f60b` while `main`
-had moved twelve commits, including the sign-in path #91 rewrote.
-🔴 **`sharing writable` IN THE STARTUP LINE IS NOT EVIDENCE SIGN-IN WORKS** — the doc already
-records a journal that printed it while refusing every sign-in. **Exercise the chain**: `GET /`
-anonymous → **401**; `GET /sign-in` → a `password` field named `token`; `POST /sign-in` with an
-`Origin` header → **303** to `/`; `GET /` with the cookie → only the scopes that principal can
-reach. Re-measured on the `1838b82` instance: 401 · 200 · 303 · `alpha-notes` and `beta-notes`
-and **not** `rubble-heap`/`hollow-set`; `/share?scope=…` **200** with the csrf field, the verb
-checkboxes and the co-member in the candidate select.
-🔴 **DO NOT RE-RUN `POST /sign-in` INSIDE THIS CHAIN — IT REVOKES THE SESSION YOU ARE HOLDING.**
-`internal/ui/session.go` revokes the presented session before minting the new one (fixation
-defence), so a second sign-in sent with `-b <jar>` kills that jar's session and step 4 answers a
-perfectly correct **401**. Sign in ONCE, keep the jar, and do not fetch the `Location` with a
-second POST. ⚠ An earlier revision of this file blamed that 401 on curl declining to send a
-`Secure` cookie over `http://`. **That is false** — curl treats loopback as a secure context, and
-`GET /` with the jar attached is **200**. The retraction is under `Gotchas`; do not re-derive it.
-🔴 **AND VERIFY THE WRITE HALF ON A *COPY*, NOT ON THE WORLD YOU ARE HANDING OVER** — a share
-POST is durable in an append-only journal, so probing the live one consumes the very action the
-human was asked to take. `cp -a` the world, run a second instance on another port, POST
-`/share` with the post-auth `csrf` hidden field and an `Origin` header, confirm a `granted`
-event appended, then kill it **by resolved PID** (`ss -lptnH 'sport = :<port>'` →
-`/proc/<pid>/cmdline`), never by a `-f` pattern.
-
-**The DEPLOYED browser surface — RANK 13's target, and NOT rank 9's.** 🔴 **AN EARLIER DRAFT OF
-THIS BLOCK SAID "ranks 9 and 13 are browser work against THIS, not a hand-run instance", AND THAT
-WAS WRONG ABOUT RANK 9 — the retraction is kept because the wrong version sent a reader to the
-wrong target.** Rank 9 verifies the SHARE FLOW, whose `Candidates` list is narrowed by
-CO-MEMBERSHIP (operator decision, recorded under `Gotchas`: you may share only with somebody you
-already share a project with). Measured on the deployed journal: **1 `user-created`, 1 project, 1
-`member-set`** — one person, so the candidate select there is EMPTY and there is nobody to share
-with. **Rank 9 therefore stays the hand-run recipe ABOVE** (which builds two users and joins them)
-until somebody provisions a second co-member in-cluster; rank 13 is the only one this block is
-about. ⚠ **Do not "simplify" by deleting the hand-run recipe** — it is the only procedure that
-produces a world rank 9 can be verified in.
-🔴 **Its public hostname is deliberately NOT written down in this PUBLIC repository** —
-read it from the deployment-manifest repo's UI IngressRoute, and substitute it for `<surface>`:
-
-```bash
-# Anonymous refusals. The root answers TWO DIFFERENT THINGS and that is not a bug:
-curl -s -o /dev/null -w '%{http_code}\n'                       https://<surface>/       # 401
-curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
-     -H 'Accept: text/html'                                    https://<surface>/       # 303 -> /sign-in
-curl -s -o /dev/null -w '%{http_code}\n'                       https://<surface>/share  # 401
-# The sign-in page must be 200 AND carry the provider button:
-curl -s https://<surface>/sign-in | grep -c 'sign-in/github'                            # 1
-# The cross-site gates must refuse, and the callback must REFUSE rather than 500:
-curl -s -o /dev/null -w '%{http_code}\n' -X POST               https://<surface>/sign-in/github  # 403
-curl -s -o /dev/null -w '%{http_code}\n' -X POST \
-     -H 'Origin: https://evil.example'                         https://<surface>/sign-in/github  # 403
-curl -s -o /dev/null -w '%{http_code}\n' \
-  'https://<surface>/sign-in/github/callback?code=bogus&state=bogus'                    # 400
-```
-
-🔴 **`curl https://<surface>/` ANSWERING 401 IS CORRECT AND IS NOT A FAILED DEPLOY.** The root
-branches on `Accept`: a browser navigation gets 303, `*/*` gets 401. This was written wrong once, in
-the direction that wastes a rollback — pass `-H 'Accept: text/html'` or the answer is about curl.
-
-🔴 **THE POD'S OWN STARTUP LINE IS THE AUTHORITY ON WHETHER THE PROVIDER BUTTON IS ARMED**, and a
-200 on the sign-in page does NOT distinguish armed from withheld. It names the credential form and
-the provider with its callback; a `key set could not be fetched` WARNING means the button is
-withheld and its routes answer 503 until a fetch succeeds, re-arming by itself. Read it from the
-workload's logs.
-
-🔴 **RESOLVE THE RUNNING IMAGE BACK TO A COMMIT AND COUNT THE DISTANCE BEFORE BELIEVING THE
-DEPLOYMENT IS CURRENT.** Read the image tag off the workload, then
-`git rev-list --count <that-sha>..origin/main` here. Nothing gates this on either side, and it is
-how a 10-commit lag sat unnoticed for a day behind a healthy pod and green gates.
+🔴 **SIGN IN ONCE AND KEEP THE JAR — a second `POST /sign-in` REVOKES the session you are holding**
+(fixation defence), so the jar then answers a perfectly correct 401.
+🔴 **FIVE FAILED SIGN-INS LOCK THE CLIENT OUT FOR 900 s.** One wrong attempt is cheap; a retry loop
+is a public sign-in outage. Read the token's byte length first rather than guessing at its shape.
+🔴 **TO JUDGE LAYOUT, RE-RENDER THE REAL BYTES LOCALLY RATHER THAN DRIVING THE OPERATOR'S BROWSER.**
+Fetch the page and the content-hashed stylesheet, strip the edge's injected `<script>` elements,
+inline the CSS, serve the result on a free loopback port (`ss -ltn` FIRST — never a fixed port), and
+screenshot a BACKGROUND tab. ⚠ **CDP refuses to attach to a `file:` URL** (`cdp_attach_refused:file:`),
+which is why the loopback server is needed and not a convenience. Zero screen raises are achievable
+this way and were achieved.
 
 ## Open investigations — live diagnosis state
 
@@ -1097,3 +1156,49 @@ values and eliminations. Read it on demand.
   same ephemeral port gives exactly one failure with no timing signal. `via: assumed`
 - **Next probe:** run the file alone in a loop of 20 and watch for a single failure —
   `for i in $(seq 20); do uv run --with pytest python -m pytest tests/test_subsystem_store_api.py -q -p no:randomly | tail -1; done`
+
+### SUPERSEDES "FOUR of the five auth controls are still LOOPBACK-only readings" — three of the four are now measured OFF-MESH
+- as-of: 2026-09-26
+- **Symptom + exact repro:** not a defect — the same coverage gap, re-measured. The block above it is
+  **retired**: its `Next probe` prescribed exactly these readings and they have now been taken.
+- **Observed (with values):** all at the public edge, holding a real session minted from the deployed
+  surface's own credential. **The CSRF pair:** a `POST /sign-out` carrying a valid session cookie, a
+  correct `Origin` and a WRONG `csrf` value → **403**; immediately after, `GET /` with the same jar →
+  **200**, which is the positive control proving the 403 was the GATE refusing and not a dead session.
+  **The Origin pair:** the same POST with **no** `Origin` header → **403**, and with
+  `Origin: https://evil.example` → **403**, each followed by a **200** on `GET /` with the same jar.
+  **The `__Host-` attributes**, read off a real edge `Set-Cookie` rather than a jar file:
+  `__Host-cairn-session=…; Path=/; Expires=…; HttpOnly; Secure; SameSite=Lax` — no `Domain`.
+  `via: measurement`
+- **Ruled out:** that the earlier loopback readings were the only evidence. They are now corroborated
+  off-mesh for three of four controls. `via: measurement`
+- **Leading hypothesis:** the fourth control holds too, on the same structural argument — every gate
+  derives from the REQUEST and none branches on network position.
+- **Next probe:** the five-failure lockout is the ONE control still unmeasured off-mesh, and it was
+  deliberately NOT fired. 🔴 **DO NOT FIRE IT UNTIL THE TRUSTED-PROXY ALLOWLIST IS CONFIRMED TO
+  RESOLVE YOUR CLIENT ADDRESS.** An allowlist that does not match the real proxy buckets every caller
+  under the proxy's own address, so one abuser — you — locks out everybody. Defaults are 5 failures /
+  900 s, i.e. a **15-minute sign-in outage on a public surface**, and waiting it out extends it. The
+  variable being SET is not the check; the tell is in the pod's log, not in any probe.
+
+### The edge rewrites page CONTENT, not only injecting script — and the previous measurement of this was of a refusal, not a page
+- as-of: 2026-09-26
+- **Symptom + exact repro:** authenticated `GET /` at the edge, then count `<script>` elements and
+  grep for `__cf_email__`.
+- **Observed (with values):** anonymous `GET /sign-in` → **1** script (an inline CDN bot-detection
+  injection). **Authenticated `GET /` → 2 scripts**: that same inline one PLUS a `src=`-loaded
+  email-decoding script. And the edge **rewrites rendered content**: `signed in as <address>` is
+  replaced by an anchor with `class="__cf_email__"`, a `data-cfemail` hex payload and the literal
+  visible text `[email protected]`, pointing at a CDN endpoint **the application never emitted and no
+  route ledger declares**. With script disabled the surface therefore displays a FALSE identity
+  string. `via: measurement`
+- **Ruled out:** ❌ **RETRACTED — the previously recorded "`GET /` carries none, so it is not even
+  uniform".** That reading was taken ANONYMOUSLY, so what it measured was a **12-byte `401` body** —
+  a refusal, not the entries page. Re-measured authenticated, it carries two. **An anonymous probe of
+  an authenticated route measures the refusal, not the page.** `via: measurement`
+- **Leading hypothesis:** two separate CDN features (bot detection and email obfuscation), the second
+  of which is a content rewriter rather than an injector — so a test asserting the renderer's output
+  bytes says nothing about what a reader sees.
+- **Next probe:** none needed for the decision, which is taken (see `Defects`). If the accept is ever
+  revisited, the discriminating reading is whether disabling email obfuscation alone removes the
+  `src=` script while leaving the inline bot-detection one.
