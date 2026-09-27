@@ -465,17 +465,62 @@ func entryCounts(e Entry) g.Node {
 // would be a second parser to disagree with `internal/store` — plus a new sink for
 // attacker-authored markup, which is the one thing this package's whole escaping story is
 // built around. A `<pre>` shows the file's own bytes: what the writer typed, wrapped the
-// way they wrapped it, with no interpretation to get wrong.
+// way they wrapped it, with no interpretation to get wrong. [inlineCode] is the ONE
+// exception and it is a span split, not a parse of block structure — see its comment.
+//
+// 🔴 THE HEADING IS RENDERED AS A HEADING AND THE `##` IS NOT REPRINTED, WITH THE
+// VERBATIM LINE KEPT FOR EVERY SPELLING THE CANONICAL ONE CANNOT ACCOUNT FOR. That is the
+// whole safety argument for the transformation: `headingParts` splits the `#` run off the
+// text, and unless the run is EXACTLY `"## "` the file's own line is rendered beside the
+// heading as well. In production the run is always `"## "` — `readEntry` matches
+// `report.SurfacedHeadings` by exact string and those are all two-hash — so the extra line
+// never shows for a healthy entry; it shows for a `#`, a `###`, a missing space or a
+// heading this renderer was handed from somewhere else, which are exactly the cases where
+// "`## What it is`, verbatim" stops being true and a reader has to see why.
 func sectionBlock(s Section) g.Node {
+	marker, text := headingParts(s.Heading)
 	return h.Section(
 		h.Class("entry-section"),
-		h.H3(h.Class("section-head"), g.Text(s.Heading)),
+		h.H3(h.Class("section-head"), g.Text(text)),
+		g.If(marker != canonicalHeadingMarker, h.P(h.Class("section-source"), g.Text(
+			"in the file, verbatim: "+s.Heading))),
 		g.If(len(s.Bullets) == 0 && s.Body == "", h.P(h.Class("empty"), g.Text(
 			"Present and empty. The heading is in the file with nothing under it, which "+
 				"is a different fact from the heading being absent."))),
-		g.If(len(s.Bullets) == 0 && s.Body != "", h.Pre(h.Class("section-body"), h.Code(g.Text(s.Body)))),
+		g.If(len(s.Bullets) == 0 && s.Body != "", h.Pre(h.Class("section-body"), h.Code(inlineCode(s.Body)))),
 		g.If(len(s.Bullets) > 0, h.Ul(h.Class("bullets"), g.Map(s.Bullets, bulletItem))),
 	)
+}
+
+// canonicalHeadingMarker is the `#` run every heading `readEntry` can produce carries:
+// `store.WhatHeading`, `store.PointersHeading` and `store.NuanceHeading` are all `## ` +
+// text. A heading whose run differs is rendered with its verbatim line as well.
+const canonicalHeadingMarker = "## "
+
+// headingParts splits a heading line into its LEADING `#` RUN PLUS FOLLOWING WHITESPACE
+// and the text after it.
+//
+// 🔴 IT IS A DISPLAY SPLIT AND NEVER A HEADING PARSER, AND THE DIFFERENCE IS WHICH
+// QUESTION IT ANSWERS. `store.HeadingBlocks` decides what a heading IS (a `#` at column 0,
+// outside a fence) and `readEntry` has already matched the result against a closed set of
+// three exact strings; by the time a string reaches here it is not in question. So this
+// asks only "which characters are the marker" so the marker need not be printed, and it
+// reports the run it found rather than normalising it — a caller comparing the run against
+// `canonicalHeadingMarker` is how an unexpected spelling stays visible instead of being
+// silently tidied into a heading it is not.
+func headingParts(heading string) (marker, text string) {
+	i := 0
+	for i < len(heading) && heading[i] == '#' {
+		i++
+	}
+	if i == 0 {
+		return "", heading
+	}
+	j := i
+	for j < len(heading) && (heading[j] == ' ' || heading[j] == '\t') {
+		j++
+	}
+	return heading[:j], heading[j:]
 }
 
 // bulletItem is ONE line item.
@@ -489,6 +534,21 @@ func sectionBlock(s Section) g.Node {
 // was counted separately it was byte-identical to "no marker" on the read surface — the
 // badge simply did not render, and a vanishing badge looks like success. So a near miss
 // gets its OWN badge, with its own words, and never the open one.
+// 🔴 AND THE BADGE IS NOW THE ONLY PLACE THE MARKER APPEARS, WHICH RAISES THE STAKES ON
+// EVERY DISTINCTION ABOVE RATHER THAN LOWERING THEM. [Bullet.Body] removes the prefix the
+// parser consumed — by byte offset, from `store.MarkerSpan` — so for a DECLARED marker the
+// badge and the line say one thing between them instead of twice. The three cases where a
+// marker is NOT declared are exactly the cases where nothing is removed, and each is
+// reported rather than left to be inferred:
+//
+//	near miss     `MarkerSpan` is 0, so the mis-spelled marker is still IN the line, and
+//	              `.badge-near` names it. Removing it would leave a reader a badge about
+//	              text they cannot see — the state `NearMissCount` exists to end.
+//	no sha        a `RESOLVED:` naming nothing keeps its own badge, and there is no sha to
+//	              lose from the line because there was never one in it.
+//	out of reach  a correct marker on line 2..n, which the parser never reads. It stays in
+//	              the body verbatim, and `unreachableNotes` says what it is — without which
+//	              a stripped page makes it look exactly like prose.
 func bulletItem(b Bullet) g.Node {
 	return h.Li(
 		h.Class("bullet"),
@@ -499,13 +559,128 @@ func bulletItem(b Bullet) g.Node {
 				h.Span(h.Class("badge badge-open"), g.Text("OPEN"))),
 			g.If(b.Population == store.PopulationNearMiss,
 				h.Span(h.Class("badge badge-near"), g.Text("near-miss marker"))),
+			// 🔴 THE SHA IS ON THE BADGE, BECAUSE THE BODY NO LONGER CARRIES IT. It is what
+			// makes a `RESOLVED` claim checkable at all, so a badge reading only `resolved`
+			// over a stripped line would have deleted the evidence from the page.
 			g.If(b.Population == store.PopulationResolved,
-				h.Span(h.Class("badge badge-quiet"), g.Text("resolved"))),
+				h.Span(h.Class("badge badge-quiet"), g.Text("resolved "+b.ResolvedBy))),
 			g.If(b.Population == store.PopulationUnverifiable,
 				h.Span(h.Class("badge badge-near"), g.Text("resolved, no sha"))),
 		),
-		h.Pre(h.Class("bullet-body"), h.Code(g.Text(b.Text()))),
+		h.Pre(h.Class("bullet-body"), h.Code(inlineCode(strings.Join(b.Body(), "\n")))),
+		unreachableNotes(b),
 	)
+}
+
+// unreachableNotes names every correctly-spelled marker sitting on a line the parser never
+// reads.
+//
+// 🔴 IT IS A REGRESSION GUARD IN PROSE, AND THE REGRESSION IS ONE THIS CHANGE WOULD
+// OTHERWISE HAVE INTRODUCED. Before the badge replaced the marker text, an `OPEN:` printed
+// in a bullet's body was ambiguous but at least visible; now a DECLARED marker is gone from
+// the line, so a marker still printed there is precisely the shape of one that declared
+// nothing — and nothing on the page would say which it was. `store.UnreachableMarker`'s
+// comment records the field case: a bullet whose only real marker sat several lines down,
+// badged solely by accident of a broken `RESOLVED —` above it, where fixing the broken line
+// would have SILENCED a still-open action.
+//
+// ⚠ IT NAMES THE OFFSET AND NOT THE LINE. The line is already on the page, verbatim, two
+// elements up; quoting it here would print the same text twice and invite the two copies to
+// disagree the next time the body rendering changes.
+func unreachableNotes(b Bullet) g.Node {
+	if len(b.Unreachable) == 0 {
+		return nil
+	}
+	return h.Div(
+		h.Class("bullet-unreachable"),
+		g.Map(b.Unreachable, func(m store.UnreachableMarker) g.Node {
+			return h.P(g.Text("Line " + strconv.Itoa(m.Offset) + " of this line item spells a `" +
+				strings.ToUpper(m.Openness) + "` marker correctly, and no reader looks there: a marker is " +
+				"read from a line item's FIRST line only, so this one declares nothing. Promote that line " +
+				"to a line item of its own."))
+		}),
+	)
+}
+
+// inlineCode renders `text` with single-backtick spans as `<code>` and everything else as
+// text, in ONE pass over the string it was handed.
+//
+// 🔴 IT IS A SPAN SPLIT, NOT A MARKDOWN PARSER, AND THE BOUNDARY IS THE POINT RATHER THAN A
+// LIMITATION. `internal/store` owns every claim about an entry's STRUCTURE — what a heading
+// is, what a bullet is, what a fence is — and `readEntry`'s comment refuses a second parser
+// for exactly that. This adds no structural claim: it never decides a heading, a list, a
+// link or an emphasis, it cannot change which bullet a line belongs to, and its output is
+// the same characters in the same order with two of them replaced by an element boundary.
+//
+// 🔴 FENCED LINES ARE LEFT ALONE, THROUGH `store.IsFence` RATHER THAN A LOCAL TEST. A
+// fence's contents are sample text, and a backtick inside one is usually part of the sample
+// — the same ruling `ParseJournalBullets` and `UnreachableMarkers` already make about a
+// `- OPEN:` inside a fence. Reading the fence with the store's own predicate is what keeps
+// the two from disagreeing about what a fence is.
+//
+// 🔴 AN UNMATCHED BACKTICK IS LEFT AS TYPED, WHICH IS THE WHOLE "DO NOT LOSE INFORMATION"
+// RULE APPLIED AT SPAN LEVEL. A renderer that swallowed a lone backtick — or that closed a
+// span at end-of-line — would silently edit a writer's text, and the edit would be
+// invisible precisely because backticks are what a reader stopped expecting to see. Same
+// for an EMPTY pair: ` `` ` is two characters somebody typed, not a code span, and it
+// renders as two characters.
+//
+// ⚠ EVERY PIECE GOES THROUGH `g.Text`, SO THE SPLIT ADDS NO ESCAPING SURFACE. gomponents
+// escapes text content; the only nodes this function builds are `g.Text` and an
+// attribute-free `h.Code`, so there is no attribute position for a payload to reach and no
+// element or attribute NAME derived from user text. That is the half `Raw`/`Rawf` would
+// have broken, which is why they are AST-banned (`rawban_test.go`).
+func inlineCode(text string) g.Node {
+	lines := strings.Split(text, "\n")
+	out := make([]g.Node, 0, len(lines))
+	inFence := false
+	for i, line := range lines {
+		if i > 0 {
+			out = append(out, g.Text("\n"))
+		}
+		if store.IsFence(line) {
+			inFence = !inFence
+			out = append(out, g.Text(line))
+			continue
+		}
+		if inFence {
+			out = append(out, g.Text(line))
+			continue
+		}
+		out = append(out, inlineCodeLine(line)...)
+	}
+	return g.Group(out)
+}
+
+// inlineCodeLine is [inlineCode] for ONE line: a code span may not span a newline, which is
+// what stops a single stray backtick from swallowing the rest of an entry.
+func inlineCodeLine(line string) []g.Node {
+	var out []g.Node
+	for {
+		open := strings.IndexByte(line, '`')
+		if open < 0 {
+			break
+		}
+		width := strings.IndexByte(line[open+1:], '`')
+		if width < 0 {
+			// No closer on this line: the rest is text, backtick included.
+			break
+		}
+		if width == 0 {
+			// An empty pair is two literal characters, not a span. Emit them and carry on
+			// past them, so a `` ``x`` `` does not lose its inner text either.
+			out = append(out, g.Text(line[:open+2]))
+			line = line[open+2:]
+			continue
+		}
+		out = append(out, g.Text(line[:open]))
+		out = append(out, h.Code(h.Class("inline-code"), g.Text(line[open+1:open+1+width])))
+		line = line[open+2+width:]
+	}
+	if line != "" {
+		out = append(out, g.Text(line))
+	}
+	return out
 }
 
 // malformedBlock renders the entry files the loader REFUSED.
@@ -564,8 +739,20 @@ func missingBlock(e Entry) g.Node {
 const (
 	scopeWhat = "A scope is one directory under the store root. Its entries are the " +
 		"`.md` files in it, one file per entry."
-	entryWhat = "One entry file. The sections below are its `##` headings, verbatim; " +
-		"the line items under the journal heading are its top-level `-` bullets."
+	// 🔴 IT NAMES WHAT IS RENDERED RATHER THAN PRINTED, BECAUSE THE PAGE NO LONGER SHOWS
+	// THE FILE'S BYTES AND SAYING "VERBATIM" WOULD BE FALSE. It used to read "its `##`
+	// headings, verbatim" and that was true when the heading line was printed as text. Two
+	// prefixes are now structure instead of characters — the `##` run and a marker the
+	// parser accepted — so this sentence states both transformations AND that anything the
+	// parser did not accept is left where the writer put it. A comment is a claim; so is an
+	// explainer, and this one is the answer to the mapping complaint the whole page exists
+	// for.
+	entryWhat = "One entry file. The sections below are its `##` headings and the line items " +
+		"under the journal heading are its top-level `-` bullets. Two prefixes are shown as " +
+		"structure rather than printed: a heading's `##` becomes the heading itself, and an " +
+		"`OPEN:` / `RESOLVED <sha>:` marker the parser accepted becomes a badge. Anything it " +
+		"did NOT accept stays in the text and is named — a near miss, a marker on a " +
+		"continuation line, a heading spelled some other way."
 	searchWhat = "Scored over every line of every entry the credential can read, by the " +
 		"same engine `cairn search` uses — so a word inside a bullet is findable, not " +
 		"just a word in a title."
@@ -596,12 +783,21 @@ func scopeLegend() g.Node {
 
 func entryLegend() g.Node {
 	return legend([][2]string{
-		{"section", "one `##` heading in the file, shown with the heading text verbatim"},
-		{"line item", "one top-level `-` bullet, with every continuation line it carries"},
+		{"section", "one `##` heading in the file. The heading TEXT is rendered as a heading and " +
+			"the `##` is not reprinted; a heading spelled any other way — one `#`, three, no " +
+			"space — also shows the file's own line"},
+		{"line item", "one top-level `-` bullet, with every continuation line it carries. The " +
+			"`-` is the list item and the badges are the marker, so neither is printed twice"},
 		{"date", "an ISO date the bullet's first line starts with. Around half of a real " +
 			"corpus carries none, so a blank is ordinary rather than a parse failure"},
 		{"OPEN / near-miss / resolved", "which of the store's openness populations the " +
 			"bullet is in — exactly one, decided by one predicate shared with the CLI"},
+		{"inline code", "a single-backtick span in the file, rendered as code. A backtick with " +
+			"no closer on its line is left exactly as typed, and nothing inside a code fence " +
+			"is touched"},
+		{"marker out of reach", "a correctly-spelled `OPEN:` / `RESOLVED <sha>:` on a line item's " +
+			"SECOND or later line. A marker is read from the first line only, so it declares " +
+			"nothing — it stays in the text and is called out rather than badged"},
 	})
 }
 

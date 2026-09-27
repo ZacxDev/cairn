@@ -26,6 +26,28 @@ const (
 // report a history longer than the entry has.
 var journalBullet = regexp.MustCompile(`^[-*][ \t]+`)
 
+// BulletMarkerSpan is how many BYTES of `line` the top-level LIST MARKER occupies —
+// the `-`/`*` and the whitespace run after it — or 0 for a line that opens no bullet.
+//
+// 🔴 SAME REASON AS [MarkerSpan], ONE LEVEL SHALLOWER: a surface that renders a bullet
+// as an `<li>` must not ALSO print the `- ` the list item already means, and the only
+// spelling of "what a bullet marker is" that cannot drift from `ParseJournalBullets` is
+// the pattern `ParseJournalBullets` groups on. A `strings.TrimPrefix(line, "- ")` at a
+// call site is narrower than this in two ways that both matter — it misses `* ` and it
+// misses a TAB — so it would leave the marker on screen for exactly the lines whose
+// spelling is already unusual.
+//
+// It is 0 for an INDENTED dash, which is a continuation line and not a bullet. That is
+// the same narrowing `journalBullet`'s own comment records, and it is the safe direction:
+// a continuation line renders verbatim.
+func BulletMarkerSpan(line string) int {
+	loc := journalBullet.FindStringIndex(line)
+	if loc == nil {
+		return 0
+	}
+	return loc[1]
+}
+
 // IsFence answers "is this line a code-fence delimiter".
 //
 // 🔴 IMPORTED, NOT RE-SPELLED, IS THE RULE THIS MIRRORS. The Python write path

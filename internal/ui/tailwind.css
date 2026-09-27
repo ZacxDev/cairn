@@ -108,6 +108,36 @@
    * already had. Do not "simplify" this back to px. */
   --breakpoint-ultra: 125rem;
 
+  /* 🔴 TWO MEASURES, BECAUSE THE WIDE CONTAINER IS FOR GRIDS AND NOT FOR SENTENCES. The
+   * shell's top rung is now ~90% of an ultrawide display (see `body` below), which is what
+   * an operator asked for and what the card grid needs; the same container also holds an
+   * entry's section bodies and its line items, and a 3100px line of prose is a line nobody
+   * can track from its end back to the start of the next one. So the container is wide and
+   * the TEXT inside it is not, and the split is stated here rather than left to a reader to
+   * infer from two unrelated rules.
+   *
+   * ⚠ `ch` AND NOT `px`, WHICH IS THE WHOLE REASON ONE NUMBER CAN SERVE TWO FONT FAMILIES.
+   * A measure is a count of CHARACTERS; `1ch` is the advance of `0` in the element's own
+   * font, so the same value resolves narrower in the proportional explainer text and wider
+   * in the monospace bodies while meaning the same thing in both. A `px` cap would be one
+   * of the two and wrong for the other.
+   *
+   * 🔴 THE CODE MEASURE IS DERIVED FROM THE STORE, NOT FROM TASTE: an entry's prose is
+   * wrapped by whoever wrote it, and a container narrower than that wrap column RE-wraps
+   * every line, which is how a `<pre>` starts disagreeing with the file it is showing.
+   * 110ch clears the widest line the fixture corpus carries — MEASURED at 104 characters
+   * over the 122 entry files `tests/reader_fixtures.py`'s `build_store` writes, widest line
+   * and widest `##`-body line both — so an author-wrapped line is shown as the author
+   * wrapped it and only a genuinely long line wraps at all. ⚠ That is a measurement of ONE
+   * corpus, and the fixture one: it is the store `uiaudit` walks and the only one this
+   * repository can measure, so read the number as the floor the cap had to clear rather
+   * than as a claim about anybody's real store.
+   *
+   * The prose measure is the ordinary 45–75 character band, at the top of it because these
+   * paragraphs are short. */
+  --measure-code: 110ch;
+  --measure-prose: 72ch;
+
   --radius-card: 0.625rem;
 
   /* One easing curve for the whole surface. A page that eases differently from the one
@@ -167,9 +197,32 @@
      * cascade is invisible from the element anybody would think to inspect. It lost one:
      * see `--breakpoint-ultra` above, where the top rung was dead for the whole of its
      * first life. `uiaudit`'s content floor is what measures that this ladder REACHES the
-     * top rung, at 3440px, on every page. */
+     * top rung, at 3440px, on every page.
+     *
+     * 🔴 THE TOP RUNG IS `200rem` AND IT WAS `112rem`, ON AN OPERATOR DECISION AFTER
+     * LOOKING AT THE RENDERED PAGE — NOT ON A GREEN GATE. 112rem less the `px-12` gutters
+     * left `<main>` at 1696px of a 3440px viewport, MEASURED at 49.3% by `uiaudit`'s walk;
+     * 200rem less the same gutters is 3104px, measured at 90.2%. The ask was "roughly 90%+
+     * of the display", so the rung is derived from that target and from the gutter, and
+     * both halves of the arithmetic are written here because the fraction is what the
+     * harness asserts and a reader checking it has to be able to reproduce the number.
+     *
+     * ⚠ A CAP AND NOT `max-w-none`, DELIBERATELY. Uncapping would make the fraction
+     * scale-free and would read as the tidier change; it also removes the only thing that
+     * bounds this layout on a display nobody here has measured, and it would silently
+     * retire `uiaudit`'s `contentFloorWidth` pin, whose whole argument is that the cap is
+     * ABSOLUTE so the fraction has a scope. The cap stays; only its value moved.
+     *
+     * 🔴 AND THE UNIT IS STILL `rem`. `--breakpoint-ultra`'s comment records what a `px`
+     * length costs here — the top rung sorted FIRST, lost the cascade to `xl`, and was dead
+     * for its whole first life while looking correct in the source. `200rem` is 3200px at a
+     * 16px root font, and it scales with a reader who enlarged theirs. Do not respell it.
+     *
+     * ⚠ THE WIDTH IS FOR THE GRIDS. Prose inside this container is capped separately — see
+     * `--measure-code` / `--measure-prose` above — because a container this wide is right
+     * for cards and wrong for sentences. */
     @apply mx-auto w-full max-w-3xl px-4 py-6;
-    @apply sm:px-6 lg:max-w-5xl lg:py-10 xl:max-w-7xl ultra:max-w-[112rem] ultra:px-12;
+    @apply sm:px-6 lg:max-w-5xl lg:py-10 xl:max-w-7xl ultra:max-w-[200rem] ultra:px-12;
   }
 
   h1 {
@@ -592,8 +645,47 @@
     @apply border-t border-line pt-3 mt-3;
   }
 
+  /* 🔴 A DOCUMENT HEADING AND NOT A MONOSPACE ECHO OF THE FILE'S LINE, WHICH IS WHAT IT
+   * WAS. `render.go` no longer prints the `##` run, so the element has to LOOK like a
+   * heading or the page loses the level it used to spell in characters. It is also the
+   * heading for `Aliases` and `Tasks` (`labelledList`), which are the same kind of thing:
+   * a label over a block of the file's content. `normal-case` and `tracking-normal` stay,
+   * because the `h3` base rule is an uppercase small-caps label and a `## Nuance /
+   * work-history` shouted at the reader is not a heading, it is a warning. */
   .section-head {
-    @apply font-mono normal-case tracking-normal text-sm text-ink mb-2 break-words;
+    @apply text-lg font-semibold tracking-tight normal-case text-ink mb-2 break-words;
+  }
+
+  /* The file's own heading line, rendered ONLY for a heading whose `#` run is not the
+   * canonical `## ` — see `sectionBlock`. It is monospace because it is a quotation of a
+   * line in a file, and it is quiet because for a healthy entry it never appears at all.
+   *
+   * 🔴 `whitespace-pre-wrap`, AND IT IS THE DIFFERENCE BETWEEN THE ELEMENT AND ITS OWN
+   * CLAIM. This line says "in the file, verbatim", and HTML collapses a run of whitespace
+   * to one space — so `#  Pointers` and `# Pointers` rendered IDENTICALLY, in the one place
+   * on the page whose entire job is to show a heading whose spelling is unusual. Caught by
+   * LOOKING at a rendered page; the markup was correct the whole time, and no assertion in
+   * this package compares rendered width. `TestAMarkerTheParserCannotReachIsStillOnThePage`
+   * now pins the declaration. */
+  .section-source {
+    @apply font-mono text-xs text-muted mb-2 break-words whitespace-pre-wrap;
+  }
+
+  /* 🔴 THE LOUD HALF OF THE MARKER TRANSFORMATION. A marker on a line item's second or
+   * later line declares nothing, and now that a DECLARED marker is stripped from the body
+   * an undeclared one printed there is indistinguishable from prose. It gets the danger
+   * rule the other "this is not what it looks like" notices get. */
+  .bullet-unreachable {
+    @apply border-l-4 border-danger/70 bg-danger/5 rounded-r px-3 py-2 text-xs text-danger;
+    @apply max-w-(--measure-prose);
+  }
+
+  /* An inline code span split out of an entry's own text by `inlineCode`. It sits INSIDE a
+   * `<pre>` that is already monospace, so the family is not what distinguishes it — the
+   * tint and the rule are, which is what makes a span of code legible as one in a wall of
+   * monospace prose. */
+  .inline-code {
+    @apply rounded border border-line bg-raised px-1 text-accent;
   }
 
   /* 🔴 THE BODY IS A `<pre>` AND IT SCROLLS INSIDE ITSELF. A store entry carries wrapped
@@ -601,11 +693,19 @@
    * makes the whole PAGE scroll sideways, which is the single layout defect `uiaudit`'s
    * `horizontal_overflow` check exists to catch and the one most likely to be introduced
    * by content rather than by a rule. */
+  /* 🔴 AND `max-w-full` IS NOW A `min()` AGAINST THE CODE MEASURE, WHICH IS THE SECOND
+   * HALF OF THE ULTRAWIDE CHANGE RATHER THAN A SEPARATE IDEA. The shell's top rung is ~90%
+   * of an ultrawide display; these three elements are the ones that hold an entry's actual
+   * prose, and at that width an unconstrained line is ~3100px of text. `min()` keeps BOTH
+   * claims: never wider than the container (the original rule, which is what stops a long
+   * line making the PAGE scroll) and never wider than a measure a reader can track.
+   * `--measure-code`'s comment records where 110ch comes from. */
   .section-body,
   .bullet-body,
   .hit-lines {
     @apply font-mono text-xs leading-relaxed whitespace-pre-wrap break-words;
-    @apply overflow-x-auto max-w-full;
+    @apply overflow-x-auto;
+    max-width: min(100%, var(--measure-code));
     @apply bg-surface border border-line rounded px-3 py-2;
   }
 
@@ -709,6 +809,40 @@
 
   .legend-def {
     @apply text-xs text-muted;
+  }
+
+  /* ---- The prose measure. ------------------------------------------------------
+   *
+   * 🔴 EVERY PARAGRAPH OF PROSE ON THIS SURFACE, CAPPED IN ONE PLACE, AND IT IS THE OTHER
+   * HALF OF THE ULTRAWIDE RUNG RATHER THAN A SEPARATE IDEA. The shell's top rung is now
+   * ~90% of an ultrawide display; every selector below is a SENTENCE — an explainer, a
+   * notice, a legend — which is exactly the content a 3100px container is wrong for. They
+   * are one list so the measure cannot come apart across eight rules, and so adding a ninth
+   * prose class is one line in one place.
+   *
+   * ⚠ A SELECTOR LIST AND NOT A NEW CLASS ON EVERY ELEMENT, DELIBERATELY. A
+   * `.prose-measure` spelled at every call site in `render.go` is a guard one forgotten
+   * class away from being wrong — the same argument the reduced-motion block below makes
+   * about `motion-reduce:`. It also keeps `TestEveryRenderedClassHasARuleInTheStylesheet`
+   * measuring classes the pages actually render rather than a marker class.
+   *
+   * 🔴 IT TOUCHES NO GRID AND NO ROW. `.scope-grid`, `.card-entries`, `.entry-list`,
+   * `.provenance` and every `*-row` are the layout that is SUPPOSED to use the width; this
+   * is the split the rung was widened under — grids wide, sentences not — and a cap leaking
+   * onto a grid would undo the change it exists to make survivable.
+   *
+   * ⚠ `min(100%, …)` AND NOT THE MEASURE ALONE, so a phone is still bounded by its
+   * container: 72ch at 390px is wider than the viewport, and an unguarded cap there would
+   * reintroduce the horizontal overflow `uiaudit` refuses. */
+  .card-what,
+  .note,
+  .empty,
+  .missing,
+  .replica-honesty,
+  .read-only,
+  .outcome,
+  .legend {
+    max-width: min(100%, var(--measure-prose));
   }
 }
 
