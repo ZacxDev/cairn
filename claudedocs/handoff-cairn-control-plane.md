@@ -27,12 +27,25 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 - `main` @ **`90e76ca`** — ⚠ re-read rather than quoting it; a handoff doc can never record its own
   merge, so this sha is stale by exactly one commit the moment it lands.
 - ✅ **THE ARC REMAINS CLOSED.** Ranks 18–22 are the successor arc and this session worked in it.
-- ⏳ **TWO PRs OPEN, BOTH FROM THIS SESSION, NEITHER MERGED.** `#130` (a script zero is about the
-  ORIGIN, not the page a reader gets — 4 files, +140/−13) and `#131` (the document pages cap their
-  card — `internal/ui/{tailwind,app}.css` + `browse_test.go`, +510/−7). **File sets are DISJOINT**,
-  which per `claude/RULES.md` is NOT safety: the merged tree is a third thing neither PR's CI read.
-  Both were **6 of 7 green with the `go` job still IN_PROGRESS** at the time of writing — so
-  **neither is verified**; the full check set must be present AND all COMPLETED before believing one.
+- ✅ **`#130` MERGED as `b574a61`** (a script zero is about the ORIGIN, not the page a reader gets),
+  verified BY CONTENT. `#131` (the document pages cap their card) and `#132` (this doc) were open at
+  the time of writing. **File sets are DISJOINT**, which per `claude/RULES.md` is NOT safety — so the
+  **merged tree of all three was built and tested before any merge**, on the PINNED toolchain:
+  root **19 `ok` / 0 `FAIL`**, `go vet` 0, the nested `uiaudit` module vets and builds, and
+  `checks.ui-stylesheet-is-current` exits 0 (so #131's regenerated `app.css` matches its source *on
+  the merged tree*, which is the claim that actually matters).
+- ✅ **THE CAP IS `64rem`, AND BOTH HALVES OF THE ARITHMETIC ARE IN THE COMMENT.** Floor: the widest
+  thing the card holds is `--measure-code` = 110ch ≈ 49.6rem at these bodies' 12px monospace (the
+  measured 794px), plus `px-5` gutters and borders → **~52.3rem**; the remaining ~11.7rem is headroom
+  for the card's *row* layouts, which are not prose and are not measure-capped. Value: 64rem is
+  `max-w-5xl`, already in `body`'s own ladder — so a document page on an ultrawide is exactly as wide
+  as the same page on a laptop, rather than a fresh number nobody has looked at. ✅ **And it was
+  measured in a REAL BROWSER, which the Go guards structurally cannot do** (they read a declaration
+  and a nesting, never the cascade): pixel-scanning the card's border box at 1440px gives
+  **1232px → 1024px**, exactly 64rem.
+- ⏳ **OPEN OPERATOR CHOICE: the capped card is LEFT-ALIGNED, not centred.** It matches every other
+  capped element and lines up with the breadcrumbs, but it leaves the right ~1870px of an ultrawide
+  empty rather than split. **One declaration either way** — not decided, deliberately.
 - ✅ **RANK 18's SUCCESSOR QUESTION IS ANSWERED: THE WIDE LAYOUT WAS LOOKED AT AGAINST THE REAL
   STORE AND IS KEPT.** Measured at the operator's real viewport (**3004×1134**, so the `125rem`
   `ultra` rung is live), on the REAL served bytes pulled authenticated from the edge and re-rendered
@@ -44,10 +57,25 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `<main class="page-main">`, spanning the full container (2908px / 2894px) while every prose element
   inside is capped at `--measure-code` (**measured 794px**) — ~2000px of void inside the card's own
   border, with full-width section heading rules ruling over nothing. `#131` caps the card on both.
-- ✅ **AND THE CAP CANNOT REACH THE GRID — VERIFIED ON THE REAL SERVED HTML, NOT INFERRED.** Direct
-  children of `<main class="page-main">`: on `/` they are `form.searchbar`, `div.scope-grid`,
-  `details.legend` — **no `.card`**; on `/scope` and `/entry` they are `section.card`,
-  `details.legend`. So `.page-main > .card` reaches exactly the two broken pages.
+- 🔴 **THE CAP REACHES FOUR PAGE STATES, NOT TWO — AND THE "EXACTLY TWO" CLAIM WAS MINE, MEASURED,
+  AND STILL WRONG.** ❌ **RETRACTED:** *"`.page-main > .card` reaches exactly the two broken pages",
+  verified on the real served HTML.* The verification was real and the generalisation was not: I
+  rendered **three route states** (`/`, `/scope?id=`, `/entry?ref=&scope=`) and generalised to the
+  **route set**. Read from source instead (#131), the direct-child `.card` also appears on
+  **`NavigatePage`** — `/scope` and `/entry` naming nothing, a third site at `render.go:125` — and on
+  **`/?q=…`**, where `searchResults` renders `.card.results` as a direct child of `<main>`. So
+  ***"`/` must not change" is true of the GRID, never of the ROUTE.*** Capping the search block is
+  correct — it is prose and `<pre>` hunks, the same shape as an entry — but it was not what the brief
+  authorised. **Enumerate the render sites; do not sample the ones you happened to open.**
+- 🔴 **AND THE MECHANISM PROTECTING THE GRID IS NOT THE ONE I NAMED.** ❌ **RETRACTED:**
+  *"`.scope-grid .card` overrides for cards inside the grid."* It declares only `margin-block: 0` and
+  has **equal** specificity (0,2,0) to `.page-main > .card`, so even winning the cascade it could
+  only reset a margin — never a `max-width`. What actually protects the grid is that
+  `.page-main > .card` is a **CHILD COMBINATOR** and a grid card is a **grandchild**
+  (`<main> > div.scope-grid > section.card`), so it never matches at all. Right conclusion, wrong
+  mechanism — and the difference is load-bearing: anyone who later flattened the `.scope-grid`
+  wrapper while trusting my version would silently cap the entire grid. **#131's guard therefore
+  pins the NESTING, not only the declaration.**
 - ✅ **THE `auto-fit` REMEDY IS CORRECT AND LATENT, AND THAT IS A TWO-POINT MEASUREMENT RATHER THAN
   AN ARGUMENT.** On the real DOM at 3004px: **2 cards** `auto-fit` → two cards at **1446px each**
   (the collapse-and-stretch pathology, confirmed real); **2 cards** `auto-fill` → **309px each**;
@@ -884,6 +912,22 @@ follow-up with a closing condition on the PR rather than fixed here.
   CARD) before deploying, and reverting the cap to `112rem`. The measurement and the named wrong
   remedy are in `Defects` so the next reader does not revert the breakpoint instead.
 
+- 🔴 **I RENDERED THREE ROUTE STATES AND GENERALISED TO THE ROUTE SET, AND CALLED IT "VERIFIED ON THE
+  REAL SERVED HTML, NOT INFERRED".** The claim was *"`.page-main > .card` reaches exactly the two
+  broken pages"*. It reaches **four** page states: the two I opened, plus `NavigatePage` (`/scope` and
+  `/entry` naming nothing) and `/?q=…`, whose `searchResults` renders `.card.results` as a direct
+  child of `<main>`. Every word about what I measured was true; the quantifier was not. 🔴 **The
+  phrase "verified, not inferred" is what made it dangerous** — it advertises the absence of the exact
+  gap it contained, and a subagent had to read the render sites from SOURCE to find it. **For a claim
+  about a SET, enumerate the sites; rendering the ones you happened to open is a sample.**
+- 🔴 **A CORRECT CONCLUSION CAN REST ON A WRONG MECHANISM, AND THE MECHANISM IS WHAT THE NEXT EDIT
+  USES.** I wrote that `.scope-grid .card` "overrides for cards inside the grid" and so protects it
+  from a `.page-main > .card` cap. It declares only `margin-block: 0` and has **equal** specificity
+  (0,2,0), so it could never override a `max-width`. The grid is protected because `>` is a **child
+  combinator** and grid cards are **grandchildren** — they never match. The conclusion held; anyone
+  flattening the wrapper on the strength of my explanation would have capped the whole grid. **State
+  the mechanism only when you have checked it, and pin the mechanism in the guard** — #131's guard
+  asserts the NESTING, not just the declaration.
 - 🔴 **AN ANONYMOUS PROBE OF AN AUTHENTICATED ROUTE MEASURES THE REFUSAL, NOT THE PAGE — AND THAT IS
   HOW THIS ARC RECORDED A FALSE ZERO FOR TWO ROUNDS.** The claim *"`GET /` carries no script, so the
   injection is not even uniform"* was measured against a **12-byte `401` body**. Authenticated, the
