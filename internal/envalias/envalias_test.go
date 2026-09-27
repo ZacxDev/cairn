@@ -269,21 +269,84 @@ func TestNoServingCodeSpellsADeprecatedName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	offenders, scanned, walkErr := scanForDeprecatedSpellings(root)
+	if walkErr != nil {
+		t.Fatal(walkErr)
+	}
+
+	// 🔴 THE POSITIVE CONTROL. A walk that matched nothing — a wrong suffix, a SkipDir
+	// that ate the tree, an empty ledger — reports a reassuring zero indistinguishable
+	// from a clean tree. `cmd/cairn-server/main.go` alone is dozens of string literals,
+	// so a scan that saw fewer than a handful of FILES did not run.
+	if scanned < 10 {
+		t.Fatalf("the scan visited %d files; it is not reading the tree, so its zero "+
+			"says nothing about the tree", scanned)
+	}
+	if len(offenders) > 0 {
+		t.Fatalf("serving code spells a deprecated name instead of going through "+
+			"envalias: %v", offenders)
+	}
+}
+
+// scanForDeprecatedSpellings is the walk behind [TestNoServingCodeSpellsADeprecatedName],
+// taking its root as a parameter so a synthetic tree can be scanned. It returns the
+// offenders it found and how many files it actually read.
+//
+// 🔴 IT EXISTS AS A FUNCTION BECAUSE THE GUARD COULD NOT OTHERWISE BE TESTED, AND IT
+// COULD NOT OTHERWISE BE TESTED BECAUSE IT WALKED THE REAL REPOSITORY ROOT. A guard whose
+// only input is "the tree this test happens to be running in" cannot be shown to behave
+// correctly on a tree somebody constructs — which is exactly the case that broke it.
+//
+// 🔴 A NESTED CHECKOUT OF THIS REPOSITORY IS NOT THIS REPOSITORY, AND THE WALK COULD NOT
+// TELL THE DIFFERENCE. Agent worktrees are created under `.claude/worktrees/<id>/`, i.e.
+// INSIDE the tree this walks. Every such worktree carries its own
+// `internal/envalias/envalias.go` — the ledger, whose whole job is to spell the
+// deprecated names — so the guard reported each of them as an offender and went RED with
+// 24 findings naming real source files, on a tree with no defect in it at all. It is a
+// FALSE POSITIVE of the worst kind: it looks exactly like a true one, and the honest
+// reading of its message is "serving code spells a deprecated name", which was false.
+//
+// ⚠ CI NEVER SAW IT, WHICH IS WHY IT SURVIVED: `.claude/` is untracked, so a fresh
+// checkout has no worktrees in it and the guard is green. It reddens only on a developer's
+// own clone — the one place a red is most likely to be read as "the tree is broken" and
+// worked around.
+//
+// TWO INDEPENDENT HOLES ARE CLOSED HERE, DELIBERATELY BOTH, BECAUSE EITHER ALONE LEAVES A
+// REAL CASE OPEN:
+//
+//   - `.claude` is skipped. That is where this harness puts agent worktrees, so it is the
+//     directory the defect actually came from. It does NOT generalise: a worktree made
+//     anywhere else under the root is still walked.
+//   - the ledger exemption is a path SUFFIX rather than an equality against
+//     `<root>/internal/envalias`. That is what makes the exemption mean "this file is the
+//     ledger" instead of "this file is THE ledger of the root I was handed", so a ledger
+//     reached through any nesting is exempt. It is the half that covers a checkout the
+//     first bullet does not know about.
+//
+// ⚠ AND NEITHER IS A NARROWING OF WHAT THE GUARD CHECKS IN THIS TREE. `.claude/` holds no
+// serving code — it is harness state — and the suffix exemption exempts exactly the files
+// the equality already exempted, plus copies of them. `uiaudit/` is deliberately still
+// walked: it is a nested Go module, so skipping nested modules wholesale would have been
+// the tidier-looking fix and would have silently dropped it from the guard's reach.
+func scanForDeprecatedSpellings(root string) (offenders []string, scanned int, err error) {
 	olds := map[string]bool{}
 	for _, p := range Ledger {
 		olds[p.Old] = true
 	}
+	// The ledger's own directory, as a path suffix. `filepath.Join` rather than a literal
+	// so the separator is the platform's.
+	ledgerDir := filepath.Join("internal", "envalias")
 
-	var offenders []string
-	var scanned int
 	walkErr := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
 			// `tests/` holds harnesses that deliberately export the old names to
-			// exercise the alias; they are not serving code.
-			if name := info.Name(); name == ".git" || name == "tests" {
+			// exercise the alias; they are not serving code. `.claude/` is agent
+			// harness state and holds nested CHECKOUTS of this repository — see this
+			// function's comment for what that cost.
+			if name := info.Name(); name == ".git" || name == "tests" || name == ".claude" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -291,7 +354,7 @@ func TestNoServingCodeSpellsADeprecatedName(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		if filepath.Dir(path) == filepath.Join(root, "internal", "envalias") {
+		if dir := filepath.Dir(path); dir == ledgerDir || strings.HasSuffix(dir, string(filepath.Separator)+ledgerDir) {
 			return nil // the ledger itself, which is the one place a name may be spelled
 		}
 		scanned++
@@ -323,20 +386,92 @@ func TestNoServingCodeSpellsADeprecatedName(t *testing.T) {
 		})
 		return nil
 	})
-	if walkErr != nil {
-		t.Fatal(walkErr)
+	return offenders, scanned, walkErr
+}
+
+// TestTheScanIgnoresANestedCheckoutOfThisRepository is the regression guard for the false
+// positive described on [scanForDeprecatedSpellings].
+//
+// 🔴 IT BUILDS THE TREE THAT BROKE IT RATHER THAN ASSERTING THE SKIP LIST. A guard on the
+// skip list would be a guard on a SPELLING — satisfied by any code that happens to name
+// `.claude`, and blind to the second hole entirely, because the suffix exemption is not a
+// skip. What this asserts is the STATE: a root containing a nested checkout scans clean,
+// and it would not have before this change.
+//
+// ⚠ THE TWO HOLES ARE EXERCISED SEPARATELY, because either fix alone would make a
+// single-case test green and the other hole would ship. `.claude/worktrees/<id>/` is the
+// first; `vendor-copy/<id>/` is a nesting the skip list does NOT know about, and only the
+// suffix exemption saves it.
+func TestTheScanIgnoresANestedCheckoutOfThisRepository(t *testing.T) {
+	if len(Ledger) == 0 {
+		t.Fatal("the ledger is empty, so this test's fixtures spell nothing and it proves nothing")
+	}
+	old := Ledger[0].Old
+
+	root := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Enough ordinary serving files that the scan's own "did I read anything" floor is
+	// satisfied by the REAL tree rather than by the nested copies.
+	for i := range 12 {
+		write(filepath.Join("internal", "svc", "f"+strconv.Itoa(i)+".go"),
+			"package svc\n\nvar Name = \"CAIRN_TOKEN\"\n")
+	}
+	// The root's own ledger. Exempt, and it is what the exemption is FOR.
+	write(filepath.Join("internal", "envalias", "envalias.go"),
+		"package envalias\n\nvar Old = \""+old+"\"\n")
+	// Hole 1: an agent worktree, where this harness actually puts them. 🔴 THE
+	// DISCRIMINATING FILE HERE IS `svc.go`, NOT THE LEDGER COPY — and that is a
+	// MEASURED correction, not a precaution. With only the ledger copy present this
+	// case passed even with the `.claude` skip REMOVED, because the suffix exemption
+	// already exempts a ledger reached through any path: the skip never executed and
+	// the assertion was unreachable. A worktree sitting on a DIFFERENT branch can hold
+	// ordinary serving code that still spells an old name, and nothing but the skip
+	// keeps that out.
+	write(filepath.Join(".claude", "worktrees", "agent-0", "internal", "envalias", "envalias.go"),
+		"package envalias\n\nvar Old = \""+old+"\"\n")
+	write(filepath.Join(".claude", "worktrees", "agent-0", "internal", "svc", "svc.go"),
+		"package svc\n\nvar Stale = \""+old+"\"\n")
+	// Hole 2: a nested checkout somewhere the skip list does not name.
+	write(filepath.Join("vendor-copy", "agent-1", "internal", "envalias", "envalias.go"),
+		"package envalias\n\nvar Old = \""+old+"\"\n")
+
+	offenders, scanned, err := scanForDeprecatedSpellings(root)
+	if err != nil {
+		t.Fatalf("the scan failed: %v", err)
+	}
+	if scanned < 10 {
+		t.Fatalf("the scan visited %d file(s); it is not reading the fixture tree, so a clean "+
+			"result here says nothing", scanned)
+	}
+	if len(offenders) != 0 {
+		t.Errorf("a tree whose ONLY deprecated spellings are in ledger files — the root's own and "+
+			"two inside nested checkouts — reported %d offender(s): %v. A nested checkout of this "+
+			"repository is not this repository, and its ledger is not serving code.",
+			len(offenders), offenders)
 	}
 
-	// 🔴 THE POSITIVE CONTROL. A walk that matched nothing — a wrong suffix, a SkipDir
-	// that ate the tree, an empty ledger — reports a reassuring zero indistinguishable
-	// from a clean tree. `cmd/cairn-server/main.go` alone is dozens of string literals,
-	// so a scan that saw fewer than a handful of FILES did not run.
-	if scanned < 10 {
-		t.Fatalf("the scan visited %d files; it is not reading the tree, so its zero "+
-			"says nothing about the tree", scanned)
+	// 🔴 THE POSITIVE CONTROL, AND IT IS WHAT STOPS THE ASSERTION ABOVE BEING VACUOUS. A
+	// scan that had been broken into finding nothing at all — a SkipDir that ate the tree,
+	// an exemption widened until it exempts everything — would satisfy every line above.
+	// Real serving code spelling a deprecated name must still be caught.
+	write(filepath.Join("internal", "svc", "leak.go"),
+		"package svc\n\nvar Bad = \""+old+"\"\n")
+	offenders, _, err = scanForDeprecatedSpellings(root)
+	if err != nil {
+		t.Fatalf("the control scan failed: %v", err)
 	}
-	if len(offenders) > 0 {
-		t.Fatalf("serving code spells a deprecated name instead of going through "+
-			"envalias: %v", offenders)
+	if len(offenders) != 1 {
+		t.Fatalf("POSITIVE CONTROL FAILED: serving code spelling %q was reported %d time(s), want "+
+			"exactly 1 (%v). The scan is not finding what it exists to find, so its zero above is "+
+			"a fact about the scan rather than about the tree.", old, len(offenders), offenders)
 	}
 }
