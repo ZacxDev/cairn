@@ -278,6 +278,15 @@
     @apply text-sm text-muted;
   }
 
+  /* The share flow's entry point in the header. It is styled as a LINK rather than as
+   * muted metadata like `.viewer` beside it, because it is the one thing in that row a
+   * reader is meant to click — the flow shipped reachable only by typing `/share`, and an
+   * affordance that looks like a label is the same defect with extra steps. */
+  .nav-share a {
+    @apply text-sm text-accent no-underline;
+    @apply transition-colors duration-200 ease-cairn hover:text-ink hover:underline;
+  }
+
   .empty,
   .note {
     @apply text-sm text-muted;

@@ -297,9 +297,27 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 		Body: []g.Node{
 			h.Header(
 				h.Class("page-header"),
-				// The wordmark is a link to the root on every page, which is the one
+				// The wordmark is a link to the root on every page — the first
 				// navigation affordance a reader tries before they read anything.
+				// ⚠ IT USED TO BE THE *ONLY* ONE, AND THAT SENTENCE IS RETRACTED
+				// rather than reworded: the share link below is the second, and a
+				// comment claiming singularity is exactly what stops the next person
+				// adding a third where it belongs.
 				h.H1(h.A(h.Href(RootPath), g.Text("cairn"))),
+				// 🔴 THE SHARE FLOW'S ONLY ENTRY POINT, AND IT IS UNCONDITIONAL ON
+				// PURPOSE. It shipped reachable only by TYPING `/share`: every route
+				// was registered, the authority was seeded, `sharing writable` was in
+				// the startup line — and no rendered page linked to it, so the feature
+				// read as absent on a deployment where it was live.
+				//
+				// ⚠ NOT gated on "does this caller administer anything", which was the
+				// first draft. That needs a `control.Resolve` on every page render — a
+				// new authority read on the browse path, for a link whose destination
+				// ALREADY answers the question properly: `shareIndex` renders "No scope
+				// is administrable by this credential. That is an authority answer, not
+				// an empty store." Hiding the link would replace that sentence with
+				// silence, which is the failure mode this surface is built against.
+				h.P(h.Class("nav-share"), h.A(h.Href(SharePath), g.Text("Sharing"))),
 				// The viewer's display name is USER TEXT: it comes from a
 				// `control.Principal`, which comes from a provisioned user record.
 				h.P(h.Class("viewer"), g.Text("signed in as "+v.Viewer)),
@@ -694,7 +712,7 @@ func unreachableNotes(b Bullet) g.Node {
 // RULE APPLIED AT SPAN LEVEL. A renderer that swallowed a lone backtick — or that closed a
 // span at end-of-line — would silently edit a writer's text, and the edit would be
 // invisible precisely because backticks are what a reader stopped expecting to see. Same
-// for an EMPTY pair: ` `` ` is two characters somebody typed, not a code span, and it
+// for an EMPTY pair: ` “ ` is two characters somebody typed, not a code span, and it
 // renders as two characters.
 //
 // ⚠ EVERY PIECE GOES THROUGH `g.Text`, SO THE SPLIT ADDS NO ESCAPING SURFACE. gomponents
@@ -1315,29 +1333,33 @@ func SharePage(v ShareView) g.Node {
 	if v.Scope.Name != "" {
 		title = "cairn — sharing " + v.Scope.Name
 	}
-	return c.HTML5(c.HTML5Props{
-		Title:    title,
-		Language: "en",
-		Head:     []g.Node{stylesheetLink()},
-		Body: []g.Node{
-			h.Header(
-				h.Class("page-header"),
-				h.H1(g.Text("cairn")),
-				h.P(h.Class("viewer"), g.Text("signed in as "+v.Viewer)),
-				g.If(v.CSRF != "", signOutForm(v.CSRF)),
-			),
-			h.Main(
-				h.Class("page-main"),
-				// The notice is FIRST, above every answer it qualifies. A caveat under
-				// a list is a caveat most readers never reach.
-				h.P(h.Class("replica-honesty"), g.Text(ReplicaHonesty)),
-				g.If(v.ReadOnly, h.P(h.Class("read-only"), g.Text(ReadOnlyAuthority))),
-				g.If(v.Outcome != "", h.P(h.Class("outcome"), g.Text(v.Outcome))),
-				g.If(v.Scope.Name == "", shareIndex(v)),
-				g.If(v.Scope.Name != "", shareScopeSection(v)),
-			),
-		},
-	})
+	// 🔴 THROUGH `shell`, NOT A FOURTH FRAME OF ITS OWN — AND THE DUPLICATE IT REPLACES
+	// WAS ALREADY WRONG, WHICH IS THE ARGUMENT FOR CONSOLIDATING RATHER THAN A TIDINESS
+	// ONE. `shell`'s own comment says it exists "so three pages cannot end up with three
+	// headers"; this page was a fourth, and its copy of the header rendered the wordmark
+	// as `h.H1(g.Text("cairn"))` — PLAIN TEXT. So the share flow had no way back to the
+	// browse surface, in a surface whose frame comment calls a missing way back "the
+	// standard failure of this information architecture". One header, one place: a
+	// navigation affordance added to `shell` now reaches this page too, which is how the
+	// share link above arrives here without anybody remembering to add it twice.
+	//
+	// ⚠ `crumbs` IS NIL DELIBERATELY. `PageView.Scopes` is the narrowed browse answer and
+	// this view does not carry it — `Administrable` is a DIFFERENT set, from
+	// `control.Resolve` rather than from the store walk — so a trail built from it would
+	// be a trail through scopes this page is not about. A breadcrumb for the share scope
+	// page is worth having and is not this change.
+	return shell(
+		title,
+		PageView{Viewer: v.Viewer, CSRF: v.CSRF},
+		nil,
+		// The notice is FIRST, above every answer it qualifies. A caveat under
+		// a list is a caveat most readers never reach.
+		h.P(h.Class("replica-honesty"), g.Text(ReplicaHonesty)),
+		g.If(v.ReadOnly, h.P(h.Class("read-only"), g.Text(ReadOnlyAuthority))),
+		g.If(v.Outcome != "", h.P(h.Class("outcome"), g.Text(v.Outcome))),
+		g.If(v.Scope.Name == "", shareIndex(v)),
+		g.If(v.Scope.Name != "", shareScopeSection(v)),
+	)
 }
 
 // shareIndex lists the scopes this caller may administer.
