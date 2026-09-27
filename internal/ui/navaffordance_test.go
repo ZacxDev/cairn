@@ -71,6 +71,45 @@ func TestEveryRenderedPageCarriesBothNavigationAffordances(t *testing.T) {
 	}
 }
 
+// TestTheSignInPageOffersNoAuthenticatedNavigation pins the OTHER side of the boundary,
+// and it exists because the change that added the share link argued for CONSOLIDATING
+// frames — which makes this the next plausible mistake rather than a hypothetical one.
+//
+// 🔴 `SignInPage` BUILDS ITS OWN FRAME AND MUST KEEP DOING SO. It is the one PUBLIC page
+// on this surface: there is no viewer, no session and no CSRF token, so every affordance
+// `shell` renders is either meaningless or a dead link there. Routing it through `shell`
+// to remove a duplicated header — exactly the tidy-up `SharePage` just received, one
+// function away in the same file — would put a `Sharing` link in front of an
+// unauthenticated visitor, pointing at a route that answers 401.
+//
+// ⚠ THE LEDGER ABOVE CANNOT CATCH THIS, AND THAT IS WHY THIS IS A SEPARATE TEST. That
+// guard asserts each page it KNOWS carries the affordances; a page silently GAINING them
+// is invisible to it, because sign-in is deliberately not in its list. Two guards, two
+// directions.
+func TestTheSignInPageOffersNoAuthenticatedNavigation(t *testing.T) {
+	for _, provider := range []bool{false, true} {
+		html := renderNode(t, SignInPage("", provider))
+
+		// POSITIVE CONTROL — the matcher must be able to see an href on this page at
+		// all, or "no share link" is a fact about the matcher. The sign-in form posts
+		// to SignInPath, and the stylesheet is linked in the head.
+		if !strings.Contains(html, `href="`+StylesheetHashedPath+`"`) {
+			t.Fatalf("provider=%v: positive control failed — the matcher cannot see the "+
+				"stylesheet href, so any absence below would prove nothing", provider)
+		}
+
+		if strings.Contains(html, `href="`+SharePath+`"`) {
+			t.Errorf("provider=%v: the PUBLIC sign-in page offers a link to SharePath (%q). "+
+				"There is no session here, so it is a dead link to a 401 — and the likely "+
+				"cause is `SignInPage` being routed through `shell` to deduplicate its "+
+				"header. It must keep its own frame.", provider, SharePath)
+		}
+		if strings.Contains(html, "signed in as") {
+			t.Errorf("provider=%v: the public sign-in page claims a signed-in viewer", provider)
+		}
+	}
+}
+
 // everyRenderedPage renders one of each page the surface serves, over one world.
 //
 // ⚠ IT DELIBERATELY DOES NOT REUSE `renderedPages`, which covers the five BROWSE pages
