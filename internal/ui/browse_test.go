@@ -853,6 +853,16 @@ func TestTheDocumentCardIsCappedAndTheGridsCardsAreNot(t *testing.T) {
 				"entry — but it means \"the root page does not change\" is true of the GRID and " +
 				"not of the route",
 		},
+		{
+			name:     "the share flow, which renders no card at all",
+			path:     SharePath,
+			wantCard: false,
+			why: "the share flow is the page a reader ASKS about when they hear `.page-main > .card`, " +
+				"so the answer is measured here rather than asserted in a commit message. It renders " +
+				"`.share-index` / `.share-scope` / `.grant-row` and never `.card` — `.scope` is its " +
+				"card-shaped class. A share page that grew a `.card` would silently acquire a cap " +
+				"nobody decided on, and this row is what would say so",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := getAs(t, srv, tc.path)
@@ -876,6 +886,26 @@ func TestTheDocumentCardIsCappedAndTheGridsCardsAreNot(t *testing.T) {
 			}
 			t.Logf("%s: direct children of .page-main = %q", tc.path, kids)
 		})
+	}
+
+	// 🔴 THE ONE PAGE WHOSE `<main>` IS NOT `.page-main`, ASSERTED SO THE LEDGER ABOVE IS
+	// CLOSED RATHER THAN MERELY LONG. `/sign-in` renders `<main class="signin-main">`, so
+	// the child combinator cannot reach it however its contents are spelled — and that same
+	// class is what `uiaudit`'s content-floor exemption is keyed on, which is why a rename
+	// here has to be loud in more than one place.
+	rec := getAs(t, srv, SignInPath)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s answered %d, want 200", SignInPath, rec.Code)
+	}
+	if _, found := directChildClassesOf(rec.Body.String(), "page-main"); found {
+		t.Errorf("%s renders a `<main class=\"page-main\">`. Its `<main>` IS its card — a `max-w-md` "+
+			"credential form — so it is the one page on this surface the document cap must not reach, "+
+			"and `.page-main` is exactly how it would.", SignInPath)
+	}
+	if _, found := directChildClassesOf(rec.Body.String(), "signin-main"); !found {
+		t.Fatalf("%s renders no `<main class=\"signin-main\">` either, so the absence above is an absence "+
+			"of a `<main>` rather than a claim about which class it carries — and `uiaudit`'s content "+
+			"floor exempts that page BY THAT CLASS", SignInPath)
 	}
 
 	// 🔴 THE LOG PRINTS BOTH MEASURED VALUES AND ANNOTATES NEITHER. A draft read
