@@ -136,24 +136,49 @@ type Target struct {
 // renders one card per scope, each linking `/scope?id=<control.ID>`; `GET /scope?id=…`
 // lists entries, each linking `/entry?ref=…&scope=…`. Both parameters are values the
 // SURFACE publishes — one a minted id, the other a filename stem — and guessing either
-// would reproduce the walk over 404s that reported success. `GET /entry` is NOT here: an
-// entry page publishes only its own breadcrumb and its task refs, and a task ref is an
-// external URL that [ExpandLinks] declines by design.
+// would reproduce the walk over 404s that reported success.
+//
+// 🔴 `GET /entry` IS NOW HERE, AND THE REASON IT WAS NOT IS WORTH KEEPING BECAUSE IT WAS
+// TRUE WHEN WRITTEN AND WAS FALSIFIED BY A CHANGE THAT NEVER TOUCHED THIS FILE. It read:
+// *"an entry page publishes only its own breadcrumb and its task refs, and a task ref is an
+// external URL that [ExpandLinks] declines by design."* That held until the entry page grew
+// a rendered/raw pair. It now publishes `/entry?scope=…&ref=…&view=raw` — relative,
+// host-less, query-carrying, and on a path this ledger declares — which satisfies every
+// condition [ExpandLinks] requires. So the exclusion's stated reason stopped being true
+// while the exclusion, and the test asserting it, stayed green.
+//
+// ⚠ THAT IS THE ISOLATION-SEAM SHAPE, AND THIS MODULE IS WHERE IT HIDES. `uiaudit` is a
+// NESTED module: `go test ./...` in the root does not descend into it, so neither the stale
+// claim nor the missing coverage was visible to any gate the change that caused it ran.
+// **When a page grows a link, ask what this map says about that page.**
+//
+// ⚠ AND THE CYCLE TERMINATES, which is the property that made this safe to switch on: the
+// rendered view links raw and the raw view links rendered, but the walk queue dedupes on
+// `Path` (query included), so the second visit is already enqueued and is not re-walked.
 var linkExpanded = map[string]bool{
 	ui.RootPath:  true,
 	ui.ScopePath: true,
 	ui.SharePath: true,
+	ui.EntryPath: true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.
 //
-// ⚠ `GET /entry` NAVIGATED BARE IS A REAL PAGE AND NOT A REFUSAL, which is what makes it
-// safe to capture here — `internal/ui`'s `NavigatePage` answers 200 to a request that named
-// no entry, because a request that named nothing can learn nothing. The pages that MATTER
-// are reached by link from `/scope?id=…`, which is why `/scope` is in `linkExpanded` above.
+// 🔴 `GET /entry` MOVED TO `linkExpanded` AND IS NOT HERE ANY MORE — AND A ROW MAY ONLY BE
+// IN ONE CLASS, WHICH IS WHAT MADE THE MOVE A TWO-LINE CHANGE RATHER THAN A ONE-LINE ONE.
+// `accountLedger` refuses a row claimed by two classes, because the switch that dispatches
+// on them reaches one `case` first and the losing declaration is then INERT — green, and
+// buying nothing. Adding `/entry` to `linkExpanded` while leaving it here is exactly that
+// state, and the accounting guard is what caught it.
+//
+// ⚠ WHAT THE MOVE COSTS, STATED RATHER THAN GLOSSED: `linkExpanded` navigates the row
+// bare FIRST and then follows what it publishes, so the bare `GET /entry` capture this
+// class used to provide is not lost. The note that used to sit here still holds and is
+// why the bare visit is safe — `internal/ui`'s `NavigatePage` answers 200 to a request
+// that named no entry, because a request that named nothing can learn nothing, so the
+// bare capture is a real page and not a refusal.
 var plainGET = map[string]bool{
 	ui.SignInPath: true,
-	ui.EntryPath:  true,
 }
 
 // notADocument is the THIRD class: a `GET` row a browser walk must not capture as a page,

@@ -243,9 +243,16 @@ func TestExpandLinksFollowsALinkACROSSRowsAndOnlyToADeclaredOne(t *testing.T) {
 	if got := parentRow(entry.LedgerRow); got != "GET "+ui.EntryPath+" content" {
 		t.Errorf("the discovered entry page is attributed to row %q, want the %s row", got, ui.EntryPath)
 	}
-	if entry.ExpandLinks {
-		t.Errorf("%s is not in `linkExpanded` — an entry page publishes only its breadcrumb and its task "+
-			"refs, and a task ref is external — so a discovered one must not expand", ui.EntryPath)
+	// 🔴 INVERTED, AND THE OLD ASSERTION'S REASON IS WHY. It required a discovered entry page
+	// NOT to expand, because "an entry page publishes only its breadcrumb and its task refs".
+	// The rendered/raw pair falsified that: the page now publishes a same-origin, query-carrying
+	// link on a declared ledger row, which is exactly what `ExpandLinks` exists to follow. The
+	// guard and its reason moved together — leaving the assertion green while its reason was
+	// false is what let the raw view ship uncaptured by the walk.
+	if !entry.ExpandLinks {
+		t.Errorf("%s is not expanding — it publishes the rendered/raw pair, which is a same-origin "+
+			"link on a declared row, so a discovered entry page must expand or the walk never "+
+			"captures `?view=raw`", ui.EntryPath)
 	}
 
 	if len(declined) != 2 {

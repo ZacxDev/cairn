@@ -145,11 +145,32 @@ type Entry struct {
 	// half, because a structural ban cannot show that a file carrying a `<script>` arrives
 	// as text.
 	//
-	// ⚠ IT COSTS A STRING HEADER RATHER THAN A COPY, WHICH IS MEASURED RATHER THAN
-	// ASSUMED. `readEntry` already reads and decodes the whole file in order to parse it,
-	// and `Sections` holds SUBSTRINGS of that same string — so the backing bytes are
-	// retained by this struct either way. Nothing new is read, and `Visible` already
-	// parses every entry the caller may see on every page load.
+	// 🔴 IT IS A NEW RETENTION OF THE WHOLE FILE, AND AN EARLIER VERSION OF THIS COMMENT
+	// SAID THE OPPOSITE AND CALLED IT MEASURED. ❌ RETRACTED: *"`Sections` holds SUBSTRINGS
+	// of that same string — so the backing bytes are retained by this struct either way,"*
+	// i.e. that this field costs a string header rather than a copy. It was reasoned, not
+	// measured, and it is false for every realistic entry.
+	//
+	// `store.ExtractSections` builds each body with
+	// `strings.Trim(strings.Join(wanted[h], "\n"), "\n")` (`internal/store/sections.go:137`),
+	// and `strings.Join` returns `elems[0]` ONLY for a single-element slice — for anything
+	// longer it allocates. MEASURED at two points, with both instrument controls green (a
+	// real substring shares the backing array; a `strings.Clone` of one does not):
+	//
+	//	single-line section body  → shares the file's allocation
+	//	multi-line section body   → does NOT
+	//
+	// A real entry's sections are multi-line, so before this field nothing retained the
+	// decoded file once `readEntry` returned. Peak retention therefore moves from
+	// O(largest entry) to O(sum of every entry the caller may read) — on EVERY page load,
+	// including `/` and `/scope`, which never render it.
+	//
+	// ⚠ ACCEPTED AT THIS STORE'S SIZE, NOT IN GENERAL. `Visible` already parses every
+	// readable entry on every page load and the store is tens of kilobytes across tens of
+	// files, so the absolute cost is small. It sits inside a blind spot `internal/ui/README.md`
+	// already declares open: nothing here measures the page against a store large enough to
+	// hurt. If that changes, the fix is to read the file lazily on the raw path — `Filename`
+	// is already on this struct, so a deferred read needs no path reconstruction from a ref.
 	//
 	// ⚠ DECODED, WHICH IS NOT THE SAME AS THE BYTES ON DISK. `store.DecodeReplace`
 	// substitutes for invalid UTF-8, so a file that is not valid UTF-8 renders with

@@ -1156,6 +1156,11 @@
     --tw-font-weight: var(--font-weight-medium);
     font-weight: var(--font-weight-medium);
     color: var(--color-ink);
+    &:hover {
+      @media (hover: hover) {
+        background-color: transparent;
+      }
+    }
   }
   .entry-raw, .section-body, .bullet-body, .hit-lines {
     font-family: var(--font-mono);

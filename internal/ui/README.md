@@ -1953,11 +1953,16 @@ bounded by its container.
 - **A store whose prose wraps past 110 columns.** The measurement is over the fixture corpus; an
   entry written at 140 columns will wrap on this page, which is the intended behaviour and is
   also a case nothing here exercises.
-- **Escaping under a mutant that does not escape.** The inline-code split builds only `g.Text`
-  and an attribute-free `h.Code`, and `Raw`/`Rawf` are AST-banned, so there is no way to write the
-  non-escaping mutant that would prove the structural differential kills it. What is measured
-  instead is the differential itself, with its own positive controls: the payload inside the span
-  is counted in the fixtures (non-zero) and counted on the rendered page (zero).
+- **Escaping under a mutant that does not escape — ⚠ TRUE OF THIS SPLIT ONLY, and it stopped
+  being true of the package the moment a second sink existed.** The inline-code split builds only
+  `g.Text` and an attribute-free `h.Code`, so no mutant of IT can be written that fails to escape.
+  What is measured instead is the differential itself, with its own positive controls: the payload
+  inside the span is counted in the fixtures (non-zero) and counted on the rendered page (zero).
+  🔴 Do not read this as a property of the package. The raw view (`rawBlock`) emits ONE node, so
+  `g.Raw(e.Raw)` is a one-token non-escaping mutant, and it was written and watched kill
+  `TestTheRawViewEscapesTheFileAndShipsNoScript` — see the raw-view section below for why that
+  verdict had to be read with `-run` scoped to one guard. **A "cannot be mutated" claim is scoped
+  to the code it was written about and expires the moment a new call site exists.**
 
 ## 🔴 The entry page is TWO views behind ONE route, and the switch is a query parameter rather than a script
 
@@ -2019,15 +2024,12 @@ mutation-tested on the NEW path rather than left on its green:
   four of this guard's assertions fired, including a counted `2` `<script` occurrences
   against a required `0`.
 
-🔴 **AND THE ESCAPING MUTANT CORRECTS A CLAIM AT THE END OF THIS FILE.** The Phase-D note
-says *"there is no way to write the non-escaping mutant"* — true of the inline-code split it
-was written about, which builds only `g.Text` and an attribute-free `h.Code`. It is **not**
-true here: the raw view emits one node, so `g.Raw` is a one-token mutation. The catch is
-that `rawban_test.go` ALSO kills it, which is the "green for the wrong reason" trap — a
-mutant killed by a different guard's error says nothing about yours. So the verdict was read
-with `-run` scoped to this guard alone, and the ban's own kill was confirmed separately,
-with the filter validated by counting its `=== RUN` lines first. A `-run` pattern matching
-no test reports `ok`, and one draft of that check did exactly that.
+🔴 **`rawban_test.go` KILLS THAT MUTANT TOO, WHICH IS THE "GREEN FOR THE WRONG REASON"
+TRAP** — a mutant killed by a different guard's error says nothing about yours. So the
+verdict was read with `-run` scoped to this guard alone, and the ban's own kill confirmed
+separately, with the filter validated by counting its `=== RUN` lines first. A `-run`
+pattern matching no test reports `ok`, and one draft of that check did exactly that. (The
+Phase-D note this corrects has been fixed where it lives, not contradicted from here.)
 
 ### What this view's guards still cannot see
 
