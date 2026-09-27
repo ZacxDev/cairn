@@ -46,11 +46,10 @@ The branch checked out there is **unpredictable**: a peer session or your own di
 subagent may have moved it, and a docs-only or read-only agent is exactly the case where
 worktree isolation gets skipped, so its `git checkout -b` lands in the shared tree.
 
-**A `commit` onto the wrong branch is the silent one** — no conflict, no error, and
-`git log` afterwards shows exactly what you expect, because you are reading the branch you
-landed on. `git branch --show-current` immediately before a commit removes the whole
-class; `git reflog` is the one-command diagnosis when a branch looks like it moved
-backwards.
+*Why a wrong-branch commit is the silent one, and the `git branch --show-current` /
+`git reflog` habits, are the fleet 🔴 rule in `claude/RULES.md` — not restated here. The
+guard's refusal message carries the one copy that reaches a reader at the moment it
+matters.*
 
 The refused set, which the guard enforces and its test pins against this table:
 
@@ -70,14 +69,34 @@ refusal is the signal that the clone diverged); `git checkout <ref> -- <paths>` 
 `git restore` (the pathspec form does not move HEAD); and every read, including `push`,
 which touches no file in the clone.
 
-### 🔴 The worktree goes OUTSIDE the repo root
+### ⚠ A worktree nested inside the repo root is HANDLED — this used to be a 🔴 rule and it was wrong
 
-**This is a cairn-specific rule and it inverts the convenient default.** A checkout of
-cairn sitting *inside* cairn is indistinguishable, to anything that walks from the repo
-root, from cairn's own files. Measured here: a root-walking Go guard reported two dozen
-offenders naming real source files, and `tests/leakscan.py` exits **2** — "could not
-vouch", not "passed" — on directory entries it cannot read. The tell is a FAIL naming
-paths that contain the repo's own name twice. Put worktrees in the session scratchpad.
+**Do not re-derive the rule that worktrees must live outside the repo root.** It was
+true once and is not now, and the harness's own `isolation: "worktree"` places agent
+worktrees at `.claude/worktrees/` — *inside* the root — so a 🔴 forbidding that would
+forbid the default mechanism.
+
+Both hazards it named are closed in `main`, re-measured with a nested worktree actually
+present:
+
+- `tests/leakscan.py` → **rc 0**, `402 file(s) scanned, 2 skipped`, **0 findings**, and it
+  *names* the nested checkout as a skip with its reason (git collapses an untracked nested
+  repository to one entry, whose contents belong to that repository). Closed by
+  `directory_skip_reason` in `#127`.
+- `go test ./...` from the base clone → **19 ok / 0 FAIL**, where the root-walking guard
+  previously reported 24 offenders naming real source files. Closed by
+  `depspolicy.NestedModuleDirs` asking git instead of walking, in `#135` / `c6aed4e`, whose
+  comment explicitly rejects denylist-widening as the wrong fix.
+
+What survives is a **convention, not a rule**: a scratchpad worktree keeps `git status`
+quiet and never interacts with the source filters at all. Either location works.
+
+🔴 **The lesson worth more than the rule: this section shipped as a 🔴 because it was written
+from the handoff's `Defects` section, which still carried the entry, rather than from the
+ranked item recording the fix.** That section REPLACES rather than appends, so a closed
+entry survives every update that does not retype it — and a closing condition met by a
+merged PR closes nothing until somebody edits the entry. **Before porting a hazard from a
+defect list, check whether the item that closes it is marked done.**
 
 ### 🔴 Gate `worktree remove` on a SUCCESSFUL push
 
@@ -97,13 +116,10 @@ nothing is rewritten, the other worktree is undisturbed. A rebase would have nee
 
 ### 🔴 `git stash` is repo-GLOBAL — never use it here, for any reason
 
-`refs/stash` lives in the **common** git dir (`git rev-parse --git-common-dir`), not the
-per-worktree dir, so every worktree of the clone pushes and pops the SAME stack. Your own
-worktree gives you **zero** isolation: a stash inside it sweeps up another worktree's
-uncommitted work, and a later `pop` drops someone else's changes into your tree. To set
-work aside, **copy it aside** (`cp <file> <scratchpad>/…`, restore by copying back) or
-commit it to a throwaway branch. `git stash list` is a safe READ, and a non-empty stack is
-itself proof the stack is shared.
+The fleet 🔴 rule in `claude/RULES.md` applies unchanged and is not restated here; every
+agent on this host loads it every session. It is in the refused set so the rule survives on
+a host that does not run the fleet guard. `git stash list` stays allowed — it is a read, and
+a non-empty stack is itself proof the stack is shared.
 
 ### ⚠ `.envrc` — the ported rule REVERSES here, and a brief already got it wrong
 
@@ -189,6 +205,32 @@ it, and treat `gh pr list --state open` as the only surface that can see an **un
 duplicate. Run that sweep twice: at orientation, and again immediately before
 `gh pr create` — the window is around twenty minutes and the second moment is where the
 sunk cost is highest.
+
+## 🔴 What the guard CANNOT see — measured, and stated because unstated limits read as coverage
+
+It keys on the **cwd** and nothing else, so every one of these was MEASURED to pass
+straight through while the same command typed *in* the base clone is refused:
+
+| bypass | why |
+|---|---|
+| `git -C <the base clone> commit …` from a worktree | the cwd is the worktree; the target is not read |
+| `cd <the base clone> && git commit …` | same |
+| `git --git-dir=… --work-tree=… commit …` | same |
+| `bash -c 'cd <the base clone> && git commit …'` | same |
+
+⚠ **The first two are the spelling this document's own recipe uses**, so this is not an
+exotic gap. The fleet's `guard_core.py` already resolves all four, which makes it
+**strictly stronger than this guard** on `cd <clone> && git commit`. The right repair is to
+reuse that resolution rather than grow a second copy here — `claude/RULES.md` is explicit
+that one predicate in two places regenerates the same bug at both. **Open, not done.**
+
+⚠ **And it is inert in the other runtime.** Only Claude Code reads `.claude/settings.json`;
+the opencode plugin spawns `guard_core.py` and never consults this file. A rule the fleet
+states for *both* runtimes is enforced here in one.
+
+⚠ **It costs ~23 ms on every Bash call** — a full `python3` spawn on the hot path, which
+roughly doubles per-call guard latency in a clone where condition 3 is satisfied. Accepted,
+and recorded so it is a decision rather than a surprise.
 
 ## ⚠ What this document does not do
 

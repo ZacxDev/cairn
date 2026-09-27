@@ -1,3 +1,8 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Agent worktrees. Untracked today, so git collapses them to one `.claude/` entry --
+# but this repo now TRACKS `.claude/settings.json` and `.claude/hooks/`, so without
+# this line `git status` starts reporting `?? .claude/worktrees/` instead.
+.claude/worktrees/

@@ -25,11 +25,46 @@ keeps it silent for people who are not us:
 
   1. the command mutates the working tree, the index or HEAD (see `_REFUSED`);
   2. the cwd is the clone's MAIN worktree, not a linked one;
-  3. that clone has at least one LINKED worktree — i.e. somebody is actually
-     working this repo in parallel right now.
+  3. that clone has at least one LINKED worktree REGISTRATION.
 
 A fresh clone has no linked worktrees, so condition 3 is false and an outside
 contributor never sees this hook fire at all.
+
+🔴 CONDITION 3 IS "HAS EVER HAD A WORKTREE NOBODY REMOVED", NOT "SOMEBODY IS
+WORKING HERE NOW", AND AN EARLIER DRAFT OF THIS DOCSTRING CLAIMED THE LATTER.
+`git worktree list` reports REGISTRATIONS, and an abandoned one is indistinguishable
+here from a live peer: measured on the author's clone, 36 registrations of which
+**two** belonged to a live session — the rest were long-dead scratchpads, some from
+other repositories' session directories. Consequences, all accepted: the guard is
+effectively always-on in a clone like that, and a stranger who once forgot a
+`worktree remove` sees it fire forever. Liveness is NOT cheaply knowable — a pid
+under the worktree is wrong (a read-only agent needs no worktree and a dead one
+leaves the registration), so the honest fix was to describe the condition
+correctly rather than to invent a liveness probe. The refusal message says
+"registration(s)" for the same reason.
+
+🔴 WHAT THIS GUARD CANNOT SEE, BECAUSE IT KEYS ON THE **cwd** AND NOTHING ELSE.
+Naming these is not optional: a guard whose limits are unstated reads as coverage
+it does not have. All four were MEASURED to pass straight through:
+
+  * `git -C <the base clone> commit …` issued from a linked worktree;
+  * `cd <the base clone> && git commit …` likewise;
+  * `git --git-dir=…/.git --work-tree=… commit …`;
+  * `bash -c 'cd <the base clone> && git commit …'`.
+
+⚠ THE FIRST TWO ARE THE SPELLING THIS REPO'S OWN RECIPE USES, so the gap is not
+exotic. The operator's host-wide `guard_core.py` already resolves all four —
+`_commands_with_cwd`, `_argv_named_repo_dirs`, `_git_dir_env_targets` — and on
+`cd <clone> && git commit` that guard is therefore STRICTLY STRONGER than this
+one. The right repair is to reuse that resolution rather than grow a second copy
+of it here; `claude/RULES.md` is explicit that one predicate in two places
+regenerates the same bug at both. Recorded as a known narrowing, not as done.
+
+⚠ AND IT IS INERT IN THE OTHER RUNTIME. Only Claude Code reads
+`.claude/settings.json`; the opencode plugin spawns `guard_core.py` and never
+consults this file, so a rule the fleet states for BOTH runtimes is enforced here
+in one. ⚠ It also costs a `python3` spawn on EVERY Bash call — measured ~23 ms,
+which roughly doubles per-call guard latency in a clone where it is armed.
 
 🔴 WHAT IS DELIBERATELY **NOT** REFUSED, because each is a documented recipe and a
 guard that breaks one trains everybody to route around the guard:
@@ -46,12 +81,16 @@ guard that breaks one trains everybody to route around the guard:
     `rev-parse`, `worktree`, `branch`, `push`. Pushing from the base clone
     touches no file in it.
 
-🔴 `git stash` IS IN THE REFUSED SET AND THAT IS NOT REDUNDANT WITH THE HOST
-GUARD. `refs/stash` lives in the COMMON git dir, so the stack is shared by every
-worktree of the clone — the hazard is not the base clone specifically. The
-host-wide guard already denies it everywhere for that reason, and this entry
-exists so the rule still holds on a machine that does not run the host guard,
-which is every machine but the author's.
+⚠ `git stash` IS IN THE REFUSED SET AND ON THIS HOST IT IS A PURE DUPLICATE —
+measured: the host-wide guard denies it too. `refs/stash` lives in the COMMON git
+dir, so the stack is shared by every worktree of the clone and the hazard is not
+the base clone specifically. 🔴 AN EARLIER DRAFT JUSTIFIED THE ENTRY AS HOLDING
+"on a machine that does not run the host guard, which is every machine but the
+author's", AND THAT IS STRUCTURALLY FALSE: such a machine is a fresh clone with no
+linked worktrees, where condition 3 is false and this entry can never fire. The
+only host it covers is one that BOTH lacks the fleet guard AND runs parallel
+worktrees of cairn — a future fleet host, which is plausible enough to keep a
+cheap table row for. Kept for that reason and no other.
 
 Contract (Claude Code `PreToolUse`): a JSON object on stdin carrying `tool_name`,
 `tool_input.command` and `cwd`; refuse by printing
@@ -228,8 +267,22 @@ def _linked_worktrees(cwd: str) -> int | None:
 
 
 def _is_ff_only_merge(command: str) -> bool:
-    """`git merge --ff-only …` — the documented base-clone re-sync, never refused."""
-    return bool(re.search(r"\bgit\b[^&|;]*\bmerge\b[^&|;]*--ff-only", command))
+    """`git merge --ff-only …` — the documented base-clone re-sync, never refused.
+
+    🔴 PER SEGMENT, LIKE ITS TWO SIBLINGS. The first version tested the whole
+    command LINE, so one `--ff-only` anywhere excused every other merge in the
+    chain: `git merge --ff-only origin/main && git merge other-branch` was
+    MEASURED to pass straight through, while the identical shape one function
+    over (`git checkout <ref> -- <path> && git checkout <branch>`) was correctly
+    refused. Two exemptions per-segment and one per-line, and only the per-line
+    one had no chain test — the asymmetry WAS the defect. Found by a round-0
+    audit reading the three side by side, not by the suite.
+    """
+    for segment in re.split(r"&&|\|\||;|\|", command):
+        if re.search(r"\bgit\b", segment) and re.search(r"\bmerge\b", segment):
+            if not re.search(r"--ff-only", segment):
+                return False
+    return True
 
 
 def _is_stash_read(command: str) -> bool:
@@ -308,22 +361,21 @@ def main() -> None:
 
     branch = _git(cwd, "branch", "--show-current") or "a detached HEAD"
     _deny(
-        f"REFUSED: {cwd} is this repo's SHARED base clone, and {linked} linked "
-        f"worktree(s) exist — so another session or agent is working here right "
-        f"now. `git {', '.join(hits)}` mutates the tree, the index or HEAD that "
-        f"peer is standing on. A commit landing on the wrong branch is the SILENT "
-        f"failure: no conflict, no error, and `git log` afterwards shows what you "
-        f"expect because you are reading the branch you landed on. "
+        f"REFUSED: {cwd} is this repo's SHARED base clone, and it carries "
+        f"{linked} linked worktree registration(s) — so this tree may be shared "
+        f"with another session or agent. `git {', '.join(hits)}` mutates the "
+        f"tree, the index or HEAD that a peer would be standing on. A commit "
+        f"landing on the wrong branch is the SILENT failure: no conflict, no "
+        f"error, and `git log` afterwards shows what you expect because you are "
+        f"reading the branch you landed on. "
         f"This clone is currently on `{branch}`.\n"
         f"\n"
-        f"Do this instead — and note the worktree goes OUTSIDE the repo root, "
-        f"because a nested checkout of cairn reds this repo's root-walking guards "
-        f"and takes `tests/leakscan.py` to exit 2:\n"
+        f"Do this instead:\n"
         f"  git -C {cwd} fetch origin\n"
-        f"  git -C {cwd} worktree add <scratchpad>/wt-<topic> -b <branch> origin/main\n"
+        f"  git -C {cwd} worktree add <a path> -b <branch> origin/main\n"
         f"  # …edit, test and commit INSIDE that worktree…\n"
-        f"  git -C <scratchpad>/wt-<topic> push -u origin HEAD:<branch>\n"
-        f"  git -C {cwd} worktree remove <scratchpad>/wt-<topic>   # ONLY after the push SUCCEEDED\n"
+        f"  git -C <that path> push -u origin HEAD:<branch>\n"
+        f"  git -C {cwd} worktree remove <that path>   # ONLY after the push SUCCEEDED\n"
         f"\n"
         f"Full rules, and the measurement behind each one: {DOC}\n"
         f"Deliberately doing this anyway: prefix the command with {OVERRIDE}=1."

@@ -291,6 +291,56 @@ def test_a_bare_checkout_is_still_refused_when_chained_with_a_pathspec_one(paral
     assert _decision(verdict) == "deny"
 
 
+def test_a_bare_merge_chained_after_an_ff_only_one_is_still_refused(parallel_clone):
+    """🔴 THE DEFECT A ROUND-0 AUDIT FOUND BY READING THE THREE EXEMPTIONS SIDE BY SIDE.
+
+    `_is_ff_only_merge` tested the whole command LINE while its two siblings
+    tested per SEGMENT, so one `--ff-only` anywhere excused every other merge in
+    the chain. MEASURED before the fix: this command passed straight through,
+    while the identical shape one function over — a pathspec checkout chained
+    with a bare one — was correctly refused. The asymmetry was the defect, and
+    the only exemption with no chain test was the broken one.
+
+    This is the same "satisfied by a neighbour" shape the sibling test below
+    pins for `checkout`; the two must stay in step.
+    """
+    clone, _ = parallel_clone
+    verdict = _run_hook(
+        "git merge --ff-only origin/main && git merge other-branch", clone)
+    assert _decision(verdict) == "deny"
+
+
+def test_the_refusal_does_not_claim_a_peer_is_active(parallel_clone):
+    """`git worktree list` reports REGISTRATIONS, not live sessions.
+
+    An earlier refusal said "so another session or agent is working here right
+    now", which the count cannot support: measured on the author's clone, 36
+    registrations of which two belonged to a live session. A guard's message is
+    a claim like any other, and this one was false in the direction that makes a
+    reader trust it more.
+    """
+    clone, _ = parallel_clone
+    reason = _reason(_run_hook("git commit -m 'work'", clone))
+    assert "registration" in reason
+    assert "working here right now" not in reason
+
+
+def test_the_refusal_does_not_assert_the_closed_nested_worktree_hazard(parallel_clone):
+    """The refusal used to tell the reader to keep worktrees outside the repo root.
+
+    Both hazards it cited are closed in `main` — `leakscan` exits 0 and names the
+    nested checkout as a skip (#127), and the root-walking Go guard asks git
+    instead of walking (#135). Worse, the harness's own `isolation: "worktree"`
+    places worktrees INSIDE the root, so the advice contradicted the default
+    mechanism. Pinned because a refusal message is the copy a reader actually
+    sees, and re-deriving a dead rule there is free.
+    """
+    clone, _ = parallel_clone
+    reason = _reason(_run_hook("git commit -m 'work'", clone))
+    assert "OUTSIDE the repo root" not in reason
+    assert "exit 2" not in reason
+
+
 @pytest.mark.parametrize("command", [
     "git status -sb",
     "git log --oneline -3",
