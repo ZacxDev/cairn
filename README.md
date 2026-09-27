@@ -630,6 +630,17 @@ hostnames, private IPs, real project/scope names, dated incident narration, or
 captured text — fixtures are synthetic. `tests/leakscan.py` runs in CI on every
 commit. The full rules agents work under live in [`AGENTS.md`](AGENTS.md).
 
+Several sessions and agents routinely work this repository at once, through
+linked worktrees of one clone, so **changes are made in a worktree and never in
+the base clone** — a commit onto the branch a peer left checked out is the silent
+failure, because `git log` afterwards shows exactly what you expect.
+[`claudedocs/working-in-parallel.md`](claudedocs/working-in-parallel.md) is the
+recipe and the reason behind each rule; `.claude/hooks/base-clone-write-guard.py`
+refuses the write rather than relying on anyone having read it. That hook fires
+only when the clone actually has linked worktrees, so a fresh clone never sees
+it, and it fails open by design — it is a guard against a routine mistake, not a
+security boundary.
+
 ## Naming
 
 The project is **cairn**. Identifiers that are not environment variables still read
