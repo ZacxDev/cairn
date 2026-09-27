@@ -24,39 +24,42 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`38bea8b`** — ⚠ re-read rather than quoting it; a handoff doc can never record its own
-  merge, so this sha is stale by exactly one commit the moment it lands.
-- ✅ **THE ARC REMAINS CLOSED, AND THE CLOSING CONDITION WAS RE-RUN THIS SESSION RATHER THAN
-  INHERITED.** On `main` @ `38bea8b`, pinned toolchain: `pytest tests -q -p no:randomly` →
-  **2194 passed, 0 failed** (587 s); `go vet ./...` rc 0; `flake.nix:1046` `default = mkGoClient`.
-  Ranks 18–24 are the successor arc.
-- 🔴 **`go test ./...` IS RED ON THE BASE CLONE AND IT IS NOT ABOUT THIS TREE — A GUARD FALSE
-  POSITIVE.** `internal/envalias TestNoServingCodeSpellsADeprecatedName` reports 24 offenders and
-  **every path is under `.claude/worktrees/agent-*/`** — two worktrees left by #130 and #131, both
-  branches merged. **Control:** a fresh worktree of `origin/main` (same tracked content, no
-  `.claude/`) → that package **ok**. Mechanism: `envalias_test.go:294` exempts the ledger by an
-  EXACT dir equality against `<root>/internal/envalias`, which a nested worktree's own copy fails,
-  and `SkipDir` at `:286` covers only `.git` and `tests`. **Exactly ONE Go guard walks from the
-  root.** Worse than the leakscan case: that says "could not vouch" (2), this says **FAIL** naming
-  real source files. Rank 23.
-- ✅ **PR #134 IS OPEN — the entry page's rendered/raw pair**, branch `feat/ui-entry-raw-view`,
-  commit `28baa86`. `?view=raw` renders the entry FILE: front matter, unsurfaced headings, prose
-  above the first heading. **No route added** (it rides the existing `GET /entry` row), **no
-  JavaScript**, `:target` CSS tabs refused. Files: `internal/ui/{render,routes,server}.go`,
-  `rawview_test.go` (new), `tailwind.css`, `app.css` (REGENERATED), `README.md`. **Not yet
-  audited** — rank 24. Design reasoning, invariant-guard labelling and mutation results: `Gotchas`.
-- ✅ **THE MERGED TREE OF #133 × #134 WAS BUILT AND TESTED BEFORE ASKING FOR EITHER MERGE.** #133
-  (`feat/ui-share-affordance`) touches `render.go`, `tailwind.css` AND the generated `app.css` —
-  three files #134 also touches. Merged: `go vet` rc 0, `go test ./...` **19 ok / 0 FAIL**, both
-  features' guards green (**9** tests selected, counted not assumed), and the overlapping
-  `render.go` region READ. ⚠ **That measurement expires the moment either PR lands.**
-- 🔴 **THE AMBIENT `go` IS STILL NOT THE PINNED ONE, RE-MEASURED.** `nix develop -c go version` →
-  **1.25.14**; a bare shell inherits **1.26.7**. Every Go gate this session ran as `nix develop -c`.
-  Still NO `.envrc` in this repo.
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The resolver exited **5**
-  (`NOTHING RESOLVED — 0 tasks`), and an unknown session id answers 200 with an EMPTY ARRAY. No
-  positive control was run, so this zero cannot distinguish "touched no task" from "wrong id".
-- ⏳ **OPEN OPERATOR CHOICE: the capped card is LEFT-ALIGNED, not centred.** Unchanged.
+- `main` @ **`d003708`** (#133) — re-read rather than quoting it; a handoff can never record its own
+  merge.
+- ✅ **THE ARC REMAINS CLOSED.** Re-run last session on `38bea8b`, pinned toolchain: `pytest tests -q`
+  **2194 passed / 0 failed**, `go vet ./...` rc 0, `default = mkGoClient`. **Not re-run this session**
+  — the change was `internal/ui` only and `go test ./...` was green on it. Ranks 18–26 are the
+  successor arc.
+- 🔴 **THE SHARE FLOW WAS DEPLOYED, AUTHORISED AND UNREACHABLE — REPORTED AS MISSING, AND IT WAS NOT
+  MISSING.** Measured on the running pod before changing anything: `GET /share` → **401, not 404**;
+  startup line `sharing writable`; journal holding **1 user, 1 project, 26 `scope-created`, 1
+  `member-set` at `owner`, 0 grants**, so `control.Resolve` had 26 administrable scopes. **Nothing
+  linked to it**: `Href(SharePath)` = **0** against a positive control of `Href(RootPath)` = **3**.
+  ✅ Fixed in **#133 → `d003708`**, deployed as **`40797d1ef`** on the deployment-manifest repo's `trunk`. Full lesson,
+  including why every gate stayed green, is the `cairn`/`ui` index entry — `cairn recall --ref ui`.
+- ✅ **DEPLOY VERIFIED BY CONTENT, AND THE IMAGE NOW MATCHES `main`** (it was 10 commits behind). Pod
+  READY on `sha-d003708…`; the image was confirmed anon-pullable BEFORE the bump (`sha256:c1b8f37a…`)
+  **with an absent tag refused rc 2** as the control; the served stylesheet is **byte-identical
+  (`cmp`) to `main`'s `app.css`** and carries `.nav-share a {`; the PUBLIC `/sign-in` carries **0**
+  hrefs to `/share`. 🔴 **NOT VERIFIED: the authenticated header link in a browser** — unreachable
+  without a session, so it is the operator's click. Rank 9.
+- 🔴 **`go test ./...` IS STILL RED ON THE BASE CLONE AND IT IS NOT THE TREE.** Re-measured: two
+  `.claude/worktrees/agent-*`, `internal/envalias` **rc 1**, every offender path under them. Rank 23,
+  and **`ZacxDev/cairn#135` is OPEN for it**.
+- ✅ **#134 STILL OPEN** (`feat/ui-entry-raw-view`), re-tested against the moved base — rank 26. Not
+  audited — rank 24.
+- 🔴 **THE AMBIENT `go` IS NOT THE PINNED ONE:** bare **1.26.7**, `nix develop -c` **1.25.14**. No
+  `.envrc` here. Run every Go gate as `nix develop -c`.
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** Resolver exited **5**; an unknown
+  session id answers 200 with an EMPTY ARRAY, and no positive control was run, so this zero cannot
+  distinguish "touched no task" from "wrong id".
+- ⏳ **OPEN OPERATOR CHOICE (1):** the capped card is LEFT-ALIGNED, not centred. Unchanged.
+- ⏳ **OPEN OPERATOR CHOICE (2): the rank-9 local instance is STILL RUNNING and was never released.**
+  pid **2728234** on `127.0.0.1:8103`, the old `cairn-ui-1838b82` build over a synthetic **two-user**
+  world in a dead session's scratchpad, journal unconsumed (10 lines, 0 `granted`). It is the only
+  world that HAS a second co-member — exactly what the deployed one lacks (rank 25). **Stop it and
+  release `cairn-control-plane-9`, or keep it as the two-user case?** ⚠ That claim **LAPSED ON TTL
+  mid-session while the work was live and was re-taken** — expiring is not releasing.
 
 ## Next steps (ranked)
 
@@ -80,14 +83,19 @@ an item nobody can find.** Re-ranking re-points every live claim.
 6. ✅ **DONE.** forcing: user.
 7. ✅ **DONE — rename landed as `56cc56e` (#69).** forcing: user.
 8. ✅ **DONE — rule (o) merged as `c4490f07` in the handoff-tooling repo.** forcing: incident.
-9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — ASKED THREE TIMES AND STILL NOT DONE.** 🔴 **CLAIMED
-   BY ANOTHER SESSION** (`cairn-control-plane-9`) — check the lock before touching it.
-   ⚠ **#133 IS THE NAVIGATION HALF AND IS IN FLIGHT** (`ZacxDev/cairn#133`): until it merges the
-   entries page still carries no link to the share flow, so "sign in and test sharing" lands a
-   human on a page with no way to get there. It still CANNOT be done on the deployed surface as it
-   stands — one user, empty candidate select — so it needs the hand-run recipe in the verify
-   section, or a second co-member provisioned in-cluster.
-   forcing: user — the operator reserved the browser step to a human, and has asked three times.
+9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — THE NAVIGATION HALF IS NOW DONE AND DEPLOYED; WHAT IS
+   LEFT IS ONE CLICK AND ONE MISSING CO-MEMBER.** ✅ **#133 MERGED as `d003708` and DEPLOYED as
+   `40797d1ef`** (the deployment-manifest repo's `trunk`, where the commit IS the deploy): every framed page now renders a
+   `Sharing` link, and `SharePage` goes through `shell` so the flow has a way back. The deployed
+   surface serves it — **verified by CONTENT, not by the rollout**: the served stylesheet is
+   byte-identical (`cmp`) to `main`'s `app.css` and carries `.nav-share a {`, and the PUBLIC
+   `/sign-in` page carries **0** hrefs to `/share`. 🔴 **THE AUTHENTICATED HEADER LINK IS THE ONE
+   THING NOBODY HAS CONFIRMED IN A BROWSER** — it cannot be reached without a session, so it is
+   still the operator's click. ⚠ **AND THE PICKER STILL HAS NOBODY TO OFFER:** one user in the
+   journal, and `Candidates` narrows to co-members, so the subject select shows only the project.
+   Rank 25 is that blocker; this item is *navigable but not exercisable* until it moves.
+   forcing: user — the operator reported the feature missing from the deployed surface, and the
+   remaining browser step was reserved to a human.
 10. ✅ **DONE — merged as `901b77d` (#104), verified on a real publish run.** forcing: user.
 11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`**, held because that repo's `main` is red for an
     unrelated reason. **CLAIMED** (`cairn-control-plane-11`).
@@ -154,6 +162,47 @@ an item nobody can find.** Re-ranking re-points every live claim.
     lands and a merged-tree test does not survive its base moving.** Re-run it, and regenerate
     `app.css`.
     forcing: user — the operator asked for the feature in this session.
+25. **GIVE THE DEPLOYED SHARE FLOW SOMEBODY TO SHARE WITH.** The flow is now reachable and
+    authorised on the deployed surface and still cannot complete: the control journal holds **1
+    user, 1 project, 26 scope-created, 1 `owner` membership, 0 grants** (read off the live pod), and
+    `internal/ui/sharing.go`'s `Candidates` narrows to co-members by a stated SECURITY decision — a
+    picker listing every user would turn one scope's admin rights into a directory of the
+    deployment. So the select offers only the project itself. **Two ways, and they are not
+    equivalent:** provision a second user + `-set-member` into the same project in-cluster (cheap,
+    proves the flow end to end, needs an in-cluster `cairn-server` invocation against
+    `/var/lib/cairn-ui/journal.jsonl`), or build the invite flow (P6 — the narrowing's stated lift,
+    a real feature). ⚠ The journal is append-only and on the UI-owned PVC, so a botched hand-append
+    is not undoable — and `AGENTS.md` records a hand-append being exactly how a 64-character secret
+    once reached a journal. Prefer `-set-member`.
+    forcing: user — the operator asked for working share functionality; it is navigable but not
+    usable, which is the same report one step further along.
+26. **RE-TEST #134 AGAINST THE MOVED BASE BEFORE MERGING IT — ALREADY DONE ONCE, AND IT EXPIRES
+    AGAIN.** The previous session's #133 × #134 merged-tree measurement said it "expires the moment
+    either PR lands"; #133 landed, so it was **re-run this session against `d003708`**:
+    `git merge-tree` rc 0, a real `git merge` rc 0, and on the merged tree `go test ./...`
+    **19 ok / 0 FAIL**, both features' guards green, and `checks.ui-stylesheet-is-current` rc 0.
+    🔴 **THE GENERATED `app.css` IS WHY THIS NEEDS MEASURING RATHER THAN REASONING:** both PRs
+    regenerate it from `tailwind.css`, so a textually clean merge could have produced a stylesheet
+    matching NEITHER input. It did not — the merged digest differs from both parents, which is also
+    what proves the currency check evaluated instead of returning a cached green. ⚠ **That
+    measurement now expires when #135 or anything else touching `internal/ui` lands.**
+    forcing: gate — `checks.ui-stylesheet-is-current` is a build failure through nix, so a bad merge
+    breaks the build rather than degrading quietly.
+27. 🔴 **PRUNE THIS DOCUMENT — THE SIZE RATCHET NOW BLOCKS EVERY HANDOFF INTO IT, MEASURED.** This
+    session's update was REFUSED with `status=size-ratchet`: **117,103 B against a grandfathered
+    allowance of 98,304 B**, and `handoff-audit.py` measures only **5,162 B net evictable** (2,373 B
+    of 14 completed ranks + 5,589 B of retracted/dead-end bullets, less 200 B per rank whose NUMBER
+    must stay). The delta was trimmed from **+10,600 B to +5,385 B** and still exceeded what eviction
+    could free — so a MINIMAL honest handoff no longer fits, and this round landed only by
+    `--override-size-ratchet`. 🔴 **`Gotchas` is 73,869 B — 63% of the file** — and it APPENDS, so the
+    tool structurally cannot shrink it for you. **Eviction means MOVE to
+    `claudedocs/handoff-cairn-control-plane-archive.md`, verbatim, leaving a pointer** — nothing in
+    the rule can tell a deletion from an eviction, and the arithmetic is identical. ⚠ Rank 20 says
+    the ARCHIVE is over its own ledger allowance with nothing to notice, so do not treat the archive
+    as free. **Closing condition:** a proposal run on this doc returning `status=proposed` rather
+    than `size-ratchet`, with no override.
+    forcing: gate — `handoff_doc.py` exit 14 refuses the write; the next session hits the same wall
+    on its first handoff attempt.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section REPLACES, so
@@ -1059,50 +1108,73 @@ follow-up with a closing condition on the PR rather than fixed here.
   same tracked content and none of the nesting; if that is green, the finding is about the clone
   and not about the tree. Same family as the leakscan `result`-symlink lesson, one level out.
 
+- 🔴 **"THE FEATURE IS MISSING" AND "IT HAS NO ENTRY POINT" ARE THE SAME REPORT AND DIFFERENT DEFECTS,
+  AND ONLY THE SECOND IS INVISIBLE TO EVERY GATE THIS REPO OWNS.** The share flow was deployed,
+  authorised, route-registered and test-covered — and unusable, because nothing linked to it. Every
+  guard asked *"does this page render correctly?"*; none asked *"can a reader GET here?"* Route ledger,
+  class-rule guard, Chromium `uiaudit` and a 24-item browser-validation pass were green throughout, and
+  that validation could not have caught it: it reached pages by **typing URLs**, the one access path the
+  defect leaves working. **Reachability is not rendering.** Four method lessons from the same round,
+  each measured: a `Href(X)` count of **0** is evidence only beside a non-zero sibling (`Href(RootPath)`
+  = 3 was the control); **consolidating a duplicate is what found the second half** (`SharePage`'s own
+  header copy was already wrong — plain-text wordmark, no way back — visible only once the copies sat
+  side by side); a class added with no stylesheet rule ships **unstyled** with `app.css` byte-unchanged
+  and the currency check green (`TestEveryRenderedClassHasARuleInTheStylesheet` caught it, and
+  `checks.ui-stylesheet-is-current` was validated with a stale-`app.css` → rc 1 negative control before
+  its green was believed, because a `nix build` printing nothing is the CACHED case); and **deployed ≠
+  verified** — a content-hashed stylesheet URL plus `cmp` against `main`'s `app.css` is what proved the
+  live bytes from outside the cluster, which the pod's own status cannot do. ⚠ Two of my probes were
+  wrong and are kept rather than tidied: a `MATCH: NO` from comparing against the source's build-time
+  PLACEHOLDER (`app.000000000000.css`), and an empty regex on a rule that IS present — **a mismatch
+  from a pattern you wrote is a fact about the pattern first**. Full record: `cairn recall --ref ui`.
+- 🔴 **`internal/ui` HAS FOUR PAGE FRAMES, TWO ARE NOW CONSOLIDATED, AND THE FOURTH MUST STAY SEPARATE.**
+  `shell` frames the browse and (as of #133) the share pages; `SignInPage` builds its own BY DESIGN —
+  the one PUBLIC page, no viewer/session/CSRF. Because arguing for consolidation is what makes routing
+  it through `shell` the next plausible mistake, that boundary is pinned by
+  `TestTheSignInPageOffersNoAuthenticatedNavigation` and **mutation-tested** (mutant confirmed to
+  COMPILE, so it reached the guard rather than dying at the build). **Do not "finish the job".**
+- ⚠ **A DEPLOY REPO'S UNTRACKED FILES BELONG TO OTHER SESSIONS.** That repo's `trunk` carried five;
+  the bump staged **one explicit path**. `git add -A` there commits a sibling's WIP into a repo where
+  commit means deploy.
+- **Decision (operator, this session): merge #133 and deploy it**, without the offered audit ladder.
+  Recorded because it touches shipped rendering, so the prose-PR round cap did not apply — skipped on
+  instruction, not by rule.
+
 ## How to verify
 
 ```bash
-cd /home/zach/workspace/cairn
-python3 tests/leakscan.py; echo "rc=$?"      # CAPTURE THE RC BEFORE ANY PIPE
-uv run --python 3.12 --with pytest -- pytest tests -q -p no:randomly
-nix develop -c go vet ./... && nix develop -c go test ./...   # 🔴 NOT bare `go`
-nix develop -c go test -race ./...
-python3 -u tests/control_mutants.py          # 120 mutants over SEVEN packages
-uv run --python 3.12 --with pytest -- python -u tests/publish_workflow_mutants.py
-python3 tests/conformance/suite.py run       # oracle: 0 failures
-bash tests/conformance/run_go.sh             # Go: 0 failures, 4 skips
-python3 tests/dualrun/harness.py             # SUMMARY … differences=0
-python3 tests/parity/harness.py --break-pod  # MUST exit 2 — could not vouch
-nix run .#build-ui-stylesheet                # never hand-edit internal/ui/app.css
+# the share flow's ENTRY POINT — from outside the cluster. 🔴 NEVER write the deployed host into a
+# repo file: `leakscan` gates hosts under the deployment's registrable domain, UNBOUNDED.
+U=https://<the deployed UI host>
+curl -s -o /dev/null -w '%{http_code}\n' "$U/share"      # 401 — registered and auth-gated, NOT 404
+SERVED=$(curl -s "$U/sign-in" | grep -oE 'app\.[0-9a-f]+\.css' | head -1)
+curl -s "$U/static/$SERVED" | grep -c 'nav-share'         # 1 — the rule is live
+curl -s "$U/static/$SERVED" > /tmp/live.css
+git show origin/main:internal/ui/app.css > /tmp/main.css
+cmp /tmp/live.css /tmp/main.css && echo "the served bytes ARE main's"
+curl -s "$U/sign-in" | grep -c 'href="/share"'            # 0 — the PUBLIC page stays clean
 ```
+🔴 **THE AUTHENTICATED HEADER LINK IS NOT VERIFIED BY ANY OF THAT** — it all stops at the auth
+boundary. Sign in and look at the header; that is rank 9 and it is the operator's.
 
-🔴 **`go test ./...` IS CURRENTLY RED ON THE BASE CLONE AND IT IS NOT YOUR CHANGE** (rank 23).
-**The control that tells a guard false-positive from a real one:** `git worktree add
-<scratchpad>/wt-control --detach origin/main`, run the package there. Green means the finding is
-about the CLONE, not the tree. Same control settles a `leakscan` exit 2.
-🔴 **RUN THE GO GATES UNDER `nix develop -c`.** Bare `go` is 1.26.7; the pin is 1.25.14.
-🔴 **COUNT `=== RUN` LINES BEFORE BELIEVING ANY `-run`-SCOPED VERDICT** — a pattern matching no
-test reports **`ok`**, indistinguishable from a pass.
-🔴 **CAPTURE nix's OWN EXIT STATUS — do not pipe it into a grep and read the pipeline's status.**
-🔴 **RUN THE MUTATION BATTERIES UNDER AN INTERPRETER THAT HAS `pytest`.** `control_mutants.py`
-**REFUSES with exit 2** without a Go toolchain, rather than skipping.
-🔴 **`dualrun` and `parity` exit 2 for "COULD NOT VOUCH", which is NOT "failed"**.
-🔴 **Verify a squash merge BY CONTENT, never by ancestry.**
-🔴 **Reading CI: require the full check set present AND all COMPLETED.** ⚠ `mergeable` can read
-`UNKNOWN` for minutes after the last check goes green.
-
-**Looking at the deployed surface:**
+🔴 **READ THE RUNNING IMAGE, NOT THE MANIFEST** — a bump is a claim about git:
 ```bash
-# <surface>: NOT written down in this PUBLIC repo — read the manifest repo's UI IngressRoute.
-# Credential: ~/.config/subsystem-store/ui-token (43 B + a newline that MUST be stripped).
-tr -d '\n' < ~/.config/subsystem-store/ui-token | curl -sS -o /dev/null -c jar.txt \
-  -H 'Origin: https://<surface>' --data-urlencode token@- https://<surface>/sign-in   # 303
-curl -sS -b jar.txt https://<surface>/ -o root.html                                   # 200
+export KUBECONFIG=<the deployment-manifest checkout>/<cluster>-kubeconfig
+kubectl -n subsystem-store get pods -l app=cairn-ui \
+  -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,IMAGE:.spec.containers[0].image'
+kubectl -n subsystem-store logs <pod> --tail=40 | grep -E 'serving|sharing|sign-in'
 ```
-🔴 **SIGN IN ONCE AND KEEP THE JAR — a second `POST /sign-in` REVOKES the session you hold**
-(fixation defence), so the jar then answers a perfectly correct 401.
-🔴 **FIVE FAILED SIGN-INS LOCK THE CLIENT OUT FOR 900 s** — a retry loop is a public sign-in
-outage. Read the token's byte length first rather than guessing its shape.
+🔴 **VERIFY A PUBLISHED IMAGE WITH A NEGATIVE CONTROL, each stream to its own file** — nix writes
+cache warnings to stderr that a merged capture feeds to your parser:
+```bash
+nix-shell -p skopeo --run "skopeo inspect --no-creds docker://ghcr.io/zacxdev/cairn-ui:sha-<40hex>" \
+  > /tmp/ok.json 2> /tmp/ok.err; echo "rc=$?"
+nix-shell -p skopeo --run "skopeo inspect --no-creds docker://ghcr.io/zacxdev/cairn-ui:sha-$(printf '0%.0s' {1..40})" \
+  >/dev/null 2>&1; echo "absent tag rc=$?   # non-zero, or the zero above is meaningless"
+```
+⚠ **`go test ./...` FROM THE BASE CLONE IS RED FOR A REASON THAT IS NOT THE TREE** while any
+`.claude/worktrees/agent-*` exists — see `State now` and rank 23. Run it in a fresh worktree of
+`origin/main`, as `nix develop -c` (bare `go` is 1.26.7; the pin is 1.25.14).
 
 ## Open investigations — live diagnosis state
 
