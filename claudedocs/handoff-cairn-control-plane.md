@@ -24,185 +24,138 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`d003708`** (#133) — re-read rather than quoting it; a handoff can never record its own
-  merge.
-- ✅ **THE ARC REMAINS CLOSED.** Re-run last session on `38bea8b`, pinned toolchain: `pytest tests -q`
-  **2194 passed / 0 failed**, `go vet ./...` rc 0, `default = mkGoClient`. **Not re-run this session**
-  — the change was `internal/ui` only and `go test ./...` was green on it. Ranks 18–26 are the
-  successor arc.
-- 🔴 **THE SHARE FLOW WAS DEPLOYED, AUTHORISED AND UNREACHABLE — REPORTED AS MISSING, AND IT WAS NOT
-  MISSING.** Measured on the running pod before changing anything: `GET /share` → **401, not 404**;
-  startup line `sharing writable`; journal holding **1 user, 1 project, 26 `scope-created`, 1
-  `member-set` at `owner`, 0 grants**, so `control.Resolve` had 26 administrable scopes. **Nothing
-  linked to it**: `Href(SharePath)` = **0** against a positive control of `Href(RootPath)` = **3**.
-  ✅ Fixed in **#133 → `d003708`**, deployed as **`40797d1ef`** on the deployment-manifest repo's `trunk`. Full lesson,
-  including why every gate stayed green, is the `cairn`/`ui` index entry — `cairn recall --ref ui`.
-- ✅ **DEPLOY VERIFIED BY CONTENT, AND THE IMAGE NOW MATCHES `main`** (it was 10 commits behind). Pod
-  READY on `sha-d003708…`; the image was confirmed anon-pullable BEFORE the bump (`sha256:c1b8f37a…`)
-  **with an absent tag refused rc 2** as the control; the served stylesheet is **byte-identical
-  (`cmp`) to `main`'s `app.css`** and carries `.nav-share a {`; the PUBLIC `/sign-in` carries **0**
-  hrefs to `/share`. 🔴 **NOT VERIFIED: the authenticated header link in a browser** — unreachable
-  without a session, so it is the operator's click. Rank 9.
-- 🔴 **`go test ./...` IS STILL RED ON THE BASE CLONE AND IT IS NOT THE TREE.** Re-measured: two
-  `.claude/worktrees/agent-*`, `internal/envalias` **rc 1**, every offender path under them. Rank 23,
-  and **`ZacxDev/cairn#135` is OPEN for it**.
-- ✅ **#134 STILL OPEN** (`feat/ui-entry-raw-view`), re-tested against the moved base — rank 26. Not
-  audited — rank 24.
-- 🔴 **THE AMBIENT `go` IS NOT THE PINNED ONE:** bare **1.26.7**, `nix develop -c` **1.25.14**. No
-  `.envrc` here. Run every Go gate as `nix develop -c`.
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** Resolver exited **5**; an unknown
-  session id answers 200 with an EMPTY ARRAY, and no positive control was run, so this zero cannot
-  distinguish "touched no task" from "wrong id".
+- `main` @ **`c6aed4e`** (#135) — re-read rather than quoting it. ⚠ **IT MOVED MID-SESSION**: the
+  arc re-run below was measured at `945d060`; #135 landed while the work was live.
+- ✅ **THE ARC REMAINS CLOSED — RE-MEASURED, ALL THREE LEGS.** `pytest tests -q` **2194 passed / 0
+  failed** rc 0 (521 s, base clone, `nix develop -c`); `go vet ./...` **rc 0** and `go test ./...`
+  **19 ok / 0 FAIL** in a FRESH detached worktree of `origin/main` under the pinned **1.25.14**;
+  `flake.nix:1046` `default = mkGoClient pkgs;`. 🔴 That fresh worktree is also rank 23's control:
+  the tree was green, so the base clone's red was about the CLONE. Ranks 18–28 are the successor arc.
+- 🔴 **RANK 25 WAS RE-OPENED BY OPERATOR DECISION AND IS NOW A POSTGRES ARC.** Ruling: build **P6's
+  invite flow**; **redemption MAY provision an unknown subject**; **Postgres supersedes the cairn-ui
+  PVC**; **stage 1 only** (sessions + invites — the control journal stays a file); **a NEW dedicated
+  Postgres on the latest version**, explicitly not `supabase-cairn`.
+- ✅ **STAGE 1 GROUNDWORK COMMITTED AND PUSHED: `feat/ui-invite-flow` @ `7fdcea3`.** No PR — it is
+  groundwork, not the feature. `internal/invite/` + `internal/pgstore/`. `gofmt -l` empty,
+  `go build ./...` clean, `go vet` clean, **leakscan self-test rc 0 + scan rc 0, 0 findings / 406
+  files**. ✅ **THE DEPENDENCY GATE WAS WATCHED REFUSING FIRST**:
+  `TestTheModuleSetIsExactlyTheAllowlist` **RED** ("grew") with `github.com/lib/pq` added and no
+  allowlist line, **GREEN** with it, and **`nix build .#cairn-go` rc 0** after recomputing
+  `goVendorHash` to `sha256-x06/IC+OVtpSpEYKqHW4PPnLTvyWli/oRC11eP/bqhY=` — that derivation runs
+  `depspolicy` in `doCheck`, so it is proven THROUGH NIX, not only through `go test`.
+- 🔴 **LIVE CLUSTER STATE, READ THIS SESSION** (the cluster kubeconfig, ns `subsystem-store`): pod on
+  `sha-d003708…`, **1 commit behind `main` and that commit is docs-only**; journal **30 lines — 1
+  user, 1 project, 26 `scope-created`, 1 `member-set`, 1 `credential-issued`, 0 `granted`**. The
+  `cairn-ui` image carries **only the `cairn-ui` binary** (`/bin` is one symlink), so `-set-member`
+  is NOT a `kubectl exec` — it needs a Job on `cairn-store-go` mounting the PVC. `cairn-ui-state` is
+  **RWO `local-path`, 1 replica, `Recreate`** — the limit the Postgres decision answers.
 - ⏳ **OPEN OPERATOR CHOICE (1):** the capped card is LEFT-ALIGNED, not centred. Unchanged.
-- ⏳ **OPEN OPERATOR CHOICE (2): the rank-9 local instance is STILL RUNNING and was never released.**
-  pid **2728234** on `127.0.0.1:8103`, the old `cairn-ui-1838b82` build over a synthetic **two-user**
-  world in a dead session's scratchpad, journal unconsumed (10 lines, 0 `granted`). It is the only
-  world that HAS a second co-member — exactly what the deployed one lacks (rank 25). **Stop it and
-  release `cairn-control-plane-9`, or keep it as the two-user case?** ⚠ That claim **LAPSED ON TTL
-  mid-session while the work was live and was re-taken** — expiring is not releasing.
+- ⏳ **OPEN OPERATOR CHOICE (2): the rank-9 local instance is STILL RUNNING.** pid **2728234** on
+  `127.0.0.1:8103`, from session `e5d90670`'s scratchpad (re-read from `/proc/<pid>/cmdline`, which
+  corrects the doc's "`cairn-ui-1838b82`"). Still the only world with a co-member.
 
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE — every number below KEEPS ITS LINE even when the item is done, because a
-rank is half a `claim-work` slug: delete the number and `claim-work --slug-for <doc> <n>` resolves to
-an item nobody can find.** Re-ranking re-points every live claim.
+🔴 **NUMBERING IS STABLE — every number KEEPS ITS LINE even when done, because a rank is half a
+`claim-work` slug.** Re-ranking re-points every live claim.
 
 🔴 **AND THESE ARE A NEW ARC, NOT THE CLOSED ONE'S REMAINDER.** Say so when you pick one up.
 
-1. ✅ **DONE — #74 merged as `93d0f03`.** forcing: gate.
-2. ✅ **DONE — merged as `562a4f6f`.** forcing: gate.
-3. ✅ **DONE — P7 merged as `c0f5b06`.** forcing: none.
-4. **P8 — retire the Python oracle.** **Closing condition:** a real read AND a real write against
-   the live pod from **at least two distinct hosts**, recorded, AND no open defect naming the Go
-   client or `packages.default`. **BACKSTOP: if that has not happened by 2026-11-01, P8 opens
-   anyway and the residual risk is accepted EXPLICITLY, in writing.** Checked by `cairn doctor`
-   from two hosts plus `gh issue list`. ⚠ Sized, not measured: ~33,000 deletable lines, 3 of 6 CI
-   jobs, ~10 paired-ledger guards.
+1. ✅ **DONE — #74 as `93d0f03`.** forcing: gate.
+2. ✅ **DONE — `562a4f6f`.** forcing: gate.
+3. ✅ **DONE — P7 as `c0f5b06`.** forcing: none.
+4. **P8 — retire the Python oracle.** **Closing condition:** a real read AND a real write against the
+   live pod from **two distinct hosts**, recorded, AND no open defect naming the Go client or
+   `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is
+   accepted EXPLICITLY, in writing.** Checked by `cairn doctor` from two hosts plus `gh issue list`.
+   ⚠ Sized, not measured: ~33,000 deletable lines, 3 of 6 CI jobs, ~10 paired-ledger guards.
    forcing: none
-5. ✅ **DONE — `cairn-server -issue-credential`, in #76.** forcing: gate.
+5. ✅ **DONE — `-issue-credential`, #76.** forcing: gate.
 6. ✅ **DONE.** forcing: user.
-7. ✅ **DONE — rename landed as `56cc56e` (#69).** forcing: user.
-8. ✅ **DONE — rule (o) merged as `c4490f07` in the handoff-tooling repo.** forcing: incident.
-9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — THE NAVIGATION HALF IS NOW DONE AND DEPLOYED; WHAT IS
-   LEFT IS ONE CLICK AND ONE MISSING CO-MEMBER.** ✅ **#133 MERGED as `d003708` and DEPLOYED as
-   `40797d1ef`** (the deployment-manifest repo's `trunk`, where the commit IS the deploy): every framed page now renders a
-   `Sharing` link, and `SharePage` goes through `shell` so the flow has a way back. The deployed
-   surface serves it — **verified by CONTENT, not by the rollout**: the served stylesheet is
-   byte-identical (`cmp`) to `main`'s `app.css` and carries `.nav-share a {`, and the PUBLIC
-   `/sign-in` page carries **0** hrefs to `/share`. 🔴 **THE AUTHENTICATED HEADER LINK IS THE ONE
-   THING NOBODY HAS CONFIRMED IN A BROWSER** — it cannot be reached without a session, so it is
-   still the operator's click. ⚠ **AND THE PICKER STILL HAS NOBODY TO OFFER:** one user in the
-   journal, and `Candidates` narrows to co-members, so the subject select shows only the project.
-   Rank 25 is that blocker; this item is *navigable but not exercisable* until it moves.
-   forcing: user — the operator reported the feature missing from the deployed surface, and the
-   remaining browser step was reserved to a human.
-10. ✅ **DONE — merged as `901b77d` (#104), verified on a real publish run.** forcing: user.
+7. ✅ **DONE — `56cc56e` (#69).** forcing: user.
+8. ✅ **DONE — rule (o), `c4490f07`.** forcing: incident.
+9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — NAVIGABLE AND DEPLOYED, NOT EXERCISABLE; THE BLOCKER IS
+   NOW RANK 28.** #133 merged `d003708`, deployed `40797d1ef`; served stylesheet byte-identical
+   (`cmp`) to `main`'s `app.css` and carries `.nav-share a {`; PUBLIC `/sign-in` carries 0 hrefs to
+   `/share`. 🔴 **THE AUTHENTICATED HEADER LINK IS STILL UNCONFIRMED IN A BROWSER** — unreachable
+   without a session, so it is the operator's click. ⚠ The picker still has nobody to offer (journal
+   re-read this session: 1 user). Unblocks when rank 28 ships.
+   forcing: user — the operator reported the feature missing, and the browser step is a human's.
+10. ✅ **DONE — `901b77d` (#104).** forcing: user.
 11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`**, held because that repo's `main` is red for an
-    unrelated reason. **CLAIMED** (`cairn-control-plane-11`).
-    forcing: incident.
+    unrelated reason. **CLAIMED** (`cairn-control-plane-11`). forcing: incident.
 12. **CORRECT TWO FILES THAT ASSERT THAT REPO'S CI CHECKS BLOCK A MERGE.** They do not
-    (`required_status_checks` → 404). Both wrong in the PERMISSIVE direction.
-    forcing: gate.
+    (`required_status_checks` → 404). Both wrong in the PERMISSIVE direction. forcing: gate.
 13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** ⚠ Precondition: sign-in
-    resolves the token's `sub` against a user the control plane ALREADY holds; an unknown subject
-    is refused by design and all three causes collapse into one 401, so **the pod's log is the only
-    place the mechanism exists.** ✅ The provider button IS armed on the deployed surface — the
-    precondition, not the verification.
+    resolves the token's `sub` against a user the control plane ALREADY holds; an unknown subject is
+    refused by design and all three causes collapse into one 401, so **the pod's log is the only
+    place the mechanism exists.** 🔴 **RANK 28 CHANGES THIS ITEM'S PREMISE** — redeeming an invite may
+    now provision an unknown subject, a second authorised way past the same wall. Re-read after 28.
     forcing: user.
-14. ✅ **DONE — `#117` merged as `9c24bc4`.** 🔴 Its ladder stopped on the ATTRIBUTION GATE — two
-    consecutive payload-zero rounds — **NOT on a clean round**; a later reader must not upgrade
-    that. forcing: gate.
-15. ✅ **DONE — rule (p) MERGED as `b4233ea9`.** Stopped by the attribution gate, so **four findings
-    were FILED rather than fixed — open, not closed** — and five mutation rows remain unscored.
-    forcing: gate.
-16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** ⚠ Its footprint GREW AGAIN: #134 regenerates
-    `internal/ui/app.css`, making **three PRs in two sessions** that had to rebuild it, and the
-    #133 × #134 merged-tree check had to regenerate it a fourth time to prove a textual merge was
-    safe. Keep-or-replace, not a gate on a PR.
-    forcing: user.
-17. ✅ **DONE — `cairn#108` merged as `84642ff`**, verified by CONTENT because ancestry is false
-    after every squash. forcing: gate.
-18. ✅ **DONE.** 🔴 Two of its three headline findings were WRONG and only re-derivation caught
-    them — **a dispatched pass is a witness, not a verdict.** forcing: user.
-19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23, with the design stated in the
-    same message. 🔴 **Still 0 hits for `the-algorithm` across this doc, the archive and the plan.**
-    **Closing condition:** a recorded pass, question-requirements → delete → simplify in that order,
-    or a written line saying the fact-rot pass discharged it.
-    forcing: user.
+14. ✅ **DONE — `#117` as `9c24bc4`.** 🔴 Its ladder stopped on the ATTRIBUTION GATE, two
+    payload-zero rounds — **NOT a clean round**; do not upgrade that. forcing: gate.
+15. ✅ **DONE — rule (p) as `b4233ea9`.** Stopped by the attribution gate, so **four findings were
+    FILED rather than fixed — open** — and five mutation rows remain unscored. forcing: gate.
+16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** ⚠ Footprint grows again with rank 28, which
+    adds a page and regenerates `app.css` a fifth time. Keep-or-replace, not a PR gate. forcing: user.
+17. ✅ **DONE — `84642ff` (#108).** forcing: gate.
+18. ✅ **DONE.** 🔴 Two of its three headline findings were WRONG and only re-derivation caught them
+    — **a dispatched pass is a witness, not a verdict.** forcing: user.
+19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23. 🔴 Still 0 hits across this doc,
+    the archive and the plan. **Closing condition:** a recorded pass, question-requirements → delete
+    → simplify in that order, or a written line saying the fact-rot pass discharged it. forcing: user.
 20. **THE ARCHIVE IS OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE.** 174,237 B against a
-    grandfathered 147,456 B. A FOREIGN ledger entry sits outside every one of that gate's corpus
-    checks by construction, so no check fires either way. **Closing condition:** both entries
-    re-derived from measured size, or a written line exempting foreign entries from tightness.
-    forcing: gate.
-21. ✅ **DONE — API pod `sha-a0c4d07` → `sha-953ad36`, verified by a DISCRIMINATOR not by health:**
-    a second snapshot fetch answered `304 not-modified` (P7 conditional sync), which the old image
-    cannot do, confirmed on both sides. ⚠ **A SECOND INSTANCE EXISTS AND WAS NOT TOUCHED.**
+    grandfathered 147,456 B; a FOREIGN ledger entry sits outside that gate's corpus checks by
+    construction. **Closing condition:** both entries re-derived from measured size, or a written
+    line exempting foreign entries. forcing: gate.
+21. ✅ **DONE — API pod `sha-953ad36`, verified by a DISCRIMINATOR not by health.** ⚠ **A SECOND
+    INSTANCE EXISTS AND WAS NOT TOUCHED.** forcing: user.
+22. ❌ **WITHDRAWN — THE EDGE CACHE TTL IS LEFT AS IT IS.** 🔴 **DO NOT RE-PROPOSE AS UNDECIDED.**
+    **Closing condition: none — closed by decision.** forcing: user.
+23. ✅ **DONE — merged as `c6aed4e` (#135).** Re-confirmed independently: `go test ./...` **19 ok / 0
+    FAIL** in a fresh worktree of `origin/main`. ⚠ **THE TWO STALE WORKTREES REMAIN** in the base
+    clone (`agent-aa77eb09fda6ae3f3`, `agent-ae3dc7c8402873ce8`) — the guard no longer reports them,
+    the directories are still there. forcing: gate.
+24. **DECIDE #134 — AUDIT THEN MERGE, OR SEND IT BACK.** `ZacxDev/cairn#134`, ci green. Not audited:
+    `/audit-pr 134` **ROUND 0 FIRST**, then correctness. 🔴 **NOW ALSO BLOCKS RANK 28**: it touches
+    `internal/ui/routes.go`, `render.go`, `server.go`, `tailwind.css` and `app.css` — every file the
+    invite flow must edit. Deciding it first is what stops a three-way conflict on generated CSS.
     forcing: user.
-22. ❌ **WITHDRAWN — THE EDGE CACHE TTL IS LEFT AS IT IS**, on a later operator instruction that
-    reversed an earlier one in the same session. 🔴 **DO NOT RE-PROPOSE THIS AS THOUGH IT WERE
-    UNDECIDED.** Accepted cost: the versionless `/static/app.css` keeps answering `max-age=14400`
-    against the origin's `300`, and any future sub-four-hour asset inherits the override silently.
-    Not at risk: the content-hashed stylesheet and HTML. **Closing condition: none — closed by
-    decision, not by work.**
+25. ✅ **SUPERSEDED BY OPERATOR DECISION, NOT DONE — DO NOT WORK THIS ITEM AS WRITTEN.** It offered
+    `-set-member` provisioning OR P6; the operator chose **P6, on Postgres**. **The work is rank 28.**
     forcing: user.
-23. **FIX THE ROOT-WALKING GUARD THAT REDDENS ANY CLONE HOLDING A NESTED WORKTREE, THEN REMOVE THE
-    TWO STALE ONES — IN THAT ORDER.** `internal/envalias/envalias_test.go`: `SkipDir` on `.claude`
-    (`:286` covers only `.git` and `tests`), and make the ledger exemption at `:294` a path SUFFIX
-    rather than an exact equality against `<root>/internal/envalias`. Deleting the worktrees first
-    fixes today and leaves the guard defective, which is why the order is stated. The stale pair is
-    `.claude/worktrees/agent-aa77eb09fda6ae3f3` and `…/agent-ae3dc7c8402873ce8`, both on MERGED
-    branches (#130, #131). ⚠ CI is green because `.claude/` is untracked — a LOCAL red only, on
-    exactly the command the arc's closing condition runs.
-    forcing: gate — `go test ./...` is one of the two commands that closing condition runs.
-24. **DECIDE #134 — AUDIT THEN MERGE, OR SEND IT BACK.** `ZacxDev/cairn#134`, the entry page's
-    rendered/raw pair. Not yet audited: `/audit-pr 134` **ROUND 0 FIRST** (requirements and
-    deletion — the only round that can conclude *close this, do not audit it*, and only actionable
-    while the merge decision is open), then the correctness axes. ⚠ **Coordinate with #133**:
-    merged-tree tested green this session, but against `38bea8b` — **the base MOVES when either
-    lands and a merged-tree test does not survive its base moving.** Re-run it, and regenerate
-    `app.css`.
-    forcing: user — the operator asked for the feature in this session.
-25. **GIVE THE DEPLOYED SHARE FLOW SOMEBODY TO SHARE WITH.** The flow is now reachable and
-    authorised on the deployed surface and still cannot complete: the control journal holds **1
-    user, 1 project, 26 scope-created, 1 `owner` membership, 0 grants** (read off the live pod), and
-    `internal/ui/sharing.go`'s `Candidates` narrows to co-members by a stated SECURITY decision — a
-    picker listing every user would turn one scope's admin rights into a directory of the
-    deployment. So the select offers only the project itself. **Two ways, and they are not
-    equivalent:** provision a second user + `-set-member` into the same project in-cluster (cheap,
-    proves the flow end to end, needs an in-cluster `cairn-server` invocation against
-    `/var/lib/cairn-ui/journal.jsonl`), or build the invite flow (P6 — the narrowing's stated lift,
-    a real feature). ⚠ The journal is append-only and on the UI-owned PVC, so a botched hand-append
-    is not undoable — and `AGENTS.md` records a hand-append being exactly how a 64-character secret
-    once reached a journal. Prefer `-set-member`.
-    forcing: user — the operator asked for working share functionality; it is navigable but not
-    usable, which is the same report one step further along.
-26. **RE-TEST #134 AGAINST THE MOVED BASE BEFORE MERGING IT — ALREADY DONE ONCE, AND IT EXPIRES
-    AGAIN.** The previous session's #133 × #134 merged-tree measurement said it "expires the moment
-    either PR lands"; #133 landed, so it was **re-run this session against `d003708`**:
-    `git merge-tree` rc 0, a real `git merge` rc 0, and on the merged tree `go test ./...`
-    **19 ok / 0 FAIL**, both features' guards green, and `checks.ui-stylesheet-is-current` rc 0.
-    🔴 **THE GENERATED `app.css` IS WHY THIS NEEDS MEASURING RATHER THAN REASONING:** both PRs
-    regenerate it from `tailwind.css`, so a textually clean merge could have produced a stylesheet
-    matching NEITHER input. It did not — the merged digest differs from both parents, which is also
-    what proves the currency check evaluated instead of returning a cached green. ⚠ **That
-    measurement now expires when #135 or anything else touching `internal/ui` lands.**
-    forcing: gate — `checks.ui-stylesheet-is-current` is a build failure through nix, so a bad merge
-    breaks the build rather than degrading quietly.
-27. 🔴 **PRUNE THIS DOCUMENT — THE SIZE RATCHET NOW BLOCKS EVERY HANDOFF INTO IT, MEASURED.** This
-    session's update was REFUSED with `status=size-ratchet`: **117,103 B against a grandfathered
-    allowance of 98,304 B**, and `handoff-audit.py` measures only **5,162 B net evictable** (2,373 B
-    of 14 completed ranks + 5,589 B of retracted/dead-end bullets, less 200 B per rank whose NUMBER
-    must stay). The delta was trimmed from **+10,600 B to +5,385 B** and still exceeded what eviction
-    could free — so a MINIMAL honest handoff no longer fits, and this round landed only by
-    `--override-size-ratchet`. 🔴 **`Gotchas` is 73,869 B — 63% of the file** — and it APPENDS, so the
-    tool structurally cannot shrink it for you. **Eviction means MOVE to
-    `claudedocs/handoff-cairn-control-plane-archive.md`, verbatim, leaving a pointer** — nothing in
-    the rule can tell a deletion from an eviction, and the arithmetic is identical. ⚠ Rank 20 says
-    the ARCHIVE is over its own ledger allowance with nothing to notice, so do not treat the archive
-    as free. **Closing condition:** a proposal run on this doc returning `status=proposed` rather
-    than `size-ratchet`, with no override.
-    forcing: gate — `handoff_doc.py` exit 14 refuses the write; the next session hits the same wall
-    on its first handoff attempt.
+26. ✅ **EXPIRED AND NO LONGER MEANINGFUL AS WRITTEN.** The #133 × #134 merged-tree measurement was
+    re-run at `d003708`; `main` is now `c6aed4e` and rank 28 adds a third party to the same package.
+    **Re-do it as #134 × `feat/ui-invite-flow` at whatever `main` is then**, regenerating `app.css`
+    on the merged tree and comparing — never merging generated output and moving on.
+    forcing: gate — `checks.ui-stylesheet-is-current` is a build failure through nix.
+27. 🔴 **PRUNE THIS DOCUMENT — THE RATCHET FIRED AGAIN, THE THIRD DATA POINT.** Refused at
+    **116,396 B against 98,304 B**, over by 18,092 B, on a **+3,074 B** delta; landed only after the
+    REPLACE sections were cut, with **no override**. Measured evictable: **2,676 B across 16
+    completed ranks, 0 B NET** once the 200 B-per-rank floor applies — eviction inside this file can
+    no longer pay for an ordinary update. 🔴 `Gotchas` APPENDS, so the tool cannot shrink it for you:
+    **MOVE to the archive, verbatim, leaving a pointer** — and rank 20 says the archive is over its
+    own allowance too. **Closing condition:** a proposal run returning `status=proposed`, no override.
+    forcing: gate — `handoff_doc.py` exit 14 refuses the write.
+28. 🔴 **BUILD P6 — THE INVITE FLOW, ON POSTGRES. THE LIVE ITEM, AND WHAT UNBLOCKS RANK 9.** Branch
+    **`feat/ui-invite-flow` @ `7fdcea3`, pushed, no PR.** Done: the dependency (RED→GREEN matrix),
+    `internal/invite/`, `internal/pgstore/`, `goVendorHash`. **Remaining, in order:**
+    (a) **tests** — a Postgres tier cannot run inside the nix sandbox's `doCheck`, so it must be its
+    own explicitly-run tier that **REFUSES rather than skips** with no database, the shape
+    `tests/parity/` uses and the reason `test_go_client_ledgers.py` refuses on a skip. Must include
+    `TestTheSQLRedemptionGuardAgreesWithStateAt` driven at the `ExpiresAt` instant exactly — the
+    redemption `WHERE` clause is a deliberate SECOND spelling of `invite.StateAt`.
+    (b) `internal/ui` — mint page, redeem route, ledger rows (`routes.go` + `DeclaredRoutes` +
+    `uiaudit/targets.go` move together), and the sign-in path that provisions on a valid invite by
+    writing `user-created` + `member-set` through `Cache.Apply`. 🔴 **NO NEW JOURNAL EVENT KINDS** —
+    see `Gotchas`.
+    (c) `cmd/cairn-ui` wiring + the DSN flag/env, refusing at startup rather than at first request.
+    (d) manifests in the deployment repo — a dedicated `postgres:18.6-alpine` StatefulSet on
+    `openebs-nvme-1tb` (NOT `supabase-cairn`), a SOPS secret, a Service, a NetworkPolicy row.
+    🔴 **COMMIT THERE IS DEPLOY — show the operator before landing it.**
+    ⚠ **Cutting sessions over to Postgres signs everybody out once.** Say so before the deploy.
+    forcing: user — the operator asked for working share functionality and chose this route
+    explicitly over the cheaper one.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section REPLACES, so
@@ -1140,41 +1093,79 @@ follow-up with a closing condition on the PR rather than fixed here.
   Recorded because it touches shipped rendering, so the prose-PR round cap did not apply — skipped on
   instruction, not by rule.
 
+- 🔴 **A NEW JOURNAL EVENT KIND IS A ONE-WAY DOOR ON A LIVE PVC, AND THAT MEASUREMENT IS WHAT CHOSE
+  P6's DESIGN.** `Event.validate`'s `default:` arm has NO default-accept and `replayDroppable` is a
+  CLOSED table with exactly one member (`credential-issued`, and only in the NARROWING direction),
+  so a record whose kind an older build does not know fails the replay **whole** — and
+  `FileStore.Reload` then serves `lastKnownGood()`, **empty on a cold start**. Consequence for ANY
+  future schema change, not just this one: the first such record written makes image ROLLBACK a
+  total control-plane outage, on an append-only file with no undo, and deploy-before-write becomes
+  mandatory. **P6 therefore writes only `user-created` + `member-set`** — kinds that already have
+  writers — and the invite's own lifecycle lives outside the journal. ⚠ That is also the argument
+  against journalling invites "properly": the audit value is real and the rollback trap is worse.
+- **Decision (operator, this session), FOUR PARTS, and the second relaxes a stated security
+  invariant:** rank 25 is **P6's invite flow**, not `-set-member` provisioning; **redeeming an
+  invite MAY provision a subject the control plane has never seen** — `-create-user`'s help states
+  the opposite ("refused, never provisioned, so somebody with write access to the journal has to do
+  this deliberately"), and the ruling is that a 256-bit capability token is that deliberate act;
+  **Postgres supersedes the cairn-ui PVC**, **stage 1 only**; and a **NEW dedicated Postgres on the
+  latest version**, explicitly not the `supabase-cairn` instance, so cairn's durability does not
+  ride on the Supabase stack's lifecycle.
+- 🔴 **THE CONTROL JOURNAL CANNOT MOVE TO POSTGRES WITHOUT DECIDING WHERE `cairn-server`'s OPERATOR
+  MODES LIVE, AND THAT IS WHY STAGE 1 STOPS WHERE IT DOES.** A `control.Store` over Postgres puts a
+  driver in `internal/control`, which `cmd/cairn-server` imports — and that binary is in
+  `depspolicy.LinkedBinaryRoots`, whose closure must hold no third-party module. `-create-user` and
+  `-set-member` write that journal, so moving it moves them too. ⚠ **`internal/pgstore` being its
+  own package IS that guarantee**, the way `uiaudit`'s module boundary is for chromedp — not a style
+  choice, and not safe to "simplify" by folding into `internal/identity`.
+- ⚠ **`cairn-ui`'s IMAGE CARRIES ONLY `cairn-ui`** — `/bin` is a single symlink into its own store
+  path. Measured while pricing the `-set-member` option: that route needs a Job on `cairn-store-go`
+  mounting the UI PVC, it is NOT a `kubectl exec`. Worth knowing before anyone prices an in-cluster
+  journal edit again.
+- ⚠ **`internal/pgstore` DOES NOT REPRODUCE `FileSessionStore.Lookup`'s NO-EARLY-EXIT SCAN, AND THE
+  PACKAGE DOC SAYS SO RATHER THAN LETTING IT READ AS COVERED.** That guard exists because a scan
+  stopping at the first match leaks the matched record's POSITION through response time; a
+  primary-key probe has no scan, so `TestTheLookupScanHasNoEarlyExit` has nothing to attach to. What
+  survives is the weaker argument `digestsEqual` already makes — the oracle leaks a prefix of a
+  DIGEST, which cannot be inverted to the id a browser must present. **Recorded as weaker,
+  deliberately**: the failure mode is a reader assuming a new backend inherited a property it did not.
+
 ## How to verify
 
 ```bash
-# the share flow's ENTRY POINT — from outside the cluster. 🔴 NEVER write the deployed host into a
+# the share flow's ENTRY POINT, from outside the cluster. 🔴 NEVER write the deployed host into a
 # repo file: `leakscan` gates hosts under the deployment's registrable domain, UNBOUNDED.
 U=https://<the deployed UI host>
-curl -s -o /dev/null -w '%{http_code}\n' "$U/share"      # 401 — registered and auth-gated, NOT 404
+curl -s -o /dev/null -w '%{http_code}\n' "$U/share"      # 401 — auth-gated, NOT 404
 SERVED=$(curl -s "$U/sign-in" | grep -oE 'app\.[0-9a-f]+\.css' | head -1)
 curl -s "$U/static/$SERVED" | grep -c 'nav-share'         # 1 — the rule is live
-curl -s "$U/static/$SERVED" > /tmp/live.css
-git show origin/main:internal/ui/app.css > /tmp/main.css
-cmp /tmp/live.css /tmp/main.css && echo "the served bytes ARE main's"
 curl -s "$U/sign-in" | grep -c 'href="/share"'            # 0 — the PUBLIC page stays clean
 ```
-🔴 **THE AUTHENTICATED HEADER LINK IS NOT VERIFIED BY ANY OF THAT** — it all stops at the auth
-boundary. Sign in and look at the header; that is rank 9 and it is the operator's.
+🔴 **NONE OF THAT VERIFIES THE AUTHENTICATED HEADER LINK** — it stops at the auth boundary. Sign in
+and look; that is rank 9 and it is the operator's.
+
+**Rank 28's branch** — every Go gate as `nix develop -c` (bare `go` is 1.26.7, the pin is 1.25.14):
+```bash
+nix develop <repo> -c go build ./... && nix develop <repo> -c gofmt -l internal/pgstore internal/invite
+nix build <worktree>#cairn-go --out-link <scratchpad>/res-go   # 🔴 NEVER --out-link into the repo
+        # root: an untracked `result` symlink takes leakscan to exit 2. This runs depspolicy in
+        # doCheck, so it proves the dependency gate through nix rather than through `go test`.
+# the NEGATIVE control that makes that green mean anything — drop the `github.com/lib/pq` line
+# from depspolicy.DeclaredModules and watch it FAIL "grew"; restore it and watch `ok`:
+nix develop <repo> -c go test ./internal/depspolicy/
+```
 
 🔴 **READ THE RUNNING IMAGE, NOT THE MANIFEST** — a bump is a claim about git:
 ```bash
 export KUBECONFIG=<the deployment-manifest checkout>/<cluster>-kubeconfig
 kubectl -n subsystem-store get pods -l app=cairn-ui \
   -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,IMAGE:.spec.containers[0].image'
-kubectl -n subsystem-store logs <pod> --tail=40 | grep -E 'serving|sharing|sign-in'
+kubectl -n subsystem-store exec <pod> -- sh -c \
+  'wc -l /var/lib/cairn-ui/journal.jsonl; grep -oE "\"kind\":\"[a-z-]+\"" /var/lib/cairn-ui/journal.jsonl | sort | uniq -c'
 ```
-🔴 **VERIFY A PUBLISHED IMAGE WITH A NEGATIVE CONTROL, each stream to its own file** — nix writes
-cache warnings to stderr that a merged capture feeds to your parser:
-```bash
-nix-shell -p skopeo --run "skopeo inspect --no-creds docker://ghcr.io/zacxdev/cairn-ui:sha-<40hex>" \
-  > /tmp/ok.json 2> /tmp/ok.err; echo "rc=$?"
-nix-shell -p skopeo --run "skopeo inspect --no-creds docker://ghcr.io/zacxdev/cairn-ui:sha-$(printf '0%.0s' {1..40})" \
-  >/dev/null 2>&1; echo "absent tag rc=$?   # non-zero, or the zero above is meaningless"
-```
-⚠ **`go test ./...` FROM THE BASE CLONE IS RED FOR A REASON THAT IS NOT THE TREE** while any
-`.claude/worktrees/agent-*` exists — see `State now` and rank 23. Run it in a fresh worktree of
-`origin/main`, as `nix develop -c` (bare `go` is 1.26.7; the pin is 1.25.14).
+
+⚠ **`go test ./...` FROM THE BASE CLONE**: #135 fixed the guard, but two stale
+`.claude/worktrees/agent-*` remain. Use a fresh worktree of `origin/main` for a reading about the TREE.
 
 ## Open investigations — live diagnosis state
 
