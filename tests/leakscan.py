@@ -40,20 +40,32 @@ module ships its own controls and runs them on EVERY invocation:
   * POSITIVE — the matcher must be able to produce a NON-ZERO count at all.
   * NARROWNESS — legitimate content must NOT be refused, so the gate stays
     usable.
+  * BUCKETING — the three answers `classify_entry` can give (read it, skip it
+    and say why, refuse the whole run) must stay three different answers. A
+    gate that skipped everything would print `0 findings`; a gate that refused
+    everything would exit 2 — and both look exactly like the honest verdicts
+    they are not.
 
 Exit codes:
-  0  no findings (and both controls behaved)
+  0  no findings (and every control behaved)
   1  findings — sensitive content is present
   2  the gate itself could not run, or a control misbehaved. NOT a pass.
+     🔴 EXIT 2 IS RESERVED FOR "COULD NOT VOUCH", SO WHAT EARNS IT IS NARROW.
+     An enumerated path that is not a FILE — a nested repository git collapsed
+     to one entry, a symlink to a build output — is skipped and NAMED, because
+     neither can carry committable text. Anything genuinely unreadable still
+     refuses, and every such path is named rather than only the first.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -413,6 +425,11 @@ def enumerate_repo(root: Path) -> list[str]:
     the contract too: without it git QUOTES a non-ASCII path under the default
     `core.quotePath`, and every downstream message then names a filename that
     does not exist.
+
+    ⚠ AND THE NAME LIES SLIGHTLY: `--others` DOES NOT YIELD ONLY FILES. Two
+    shapes arrive here that no `open()` can read, and `directory_skip_reason`
+    below is what classifies them rather than treating them as unreadable
+    files.
     """
     try:
         r = subprocess.run(
@@ -435,47 +452,146 @@ def is_binary(data: bytes) -> bool:
     return b"\0" in data[:BINARY_SNIFF_BYTES]
 
 
-def partition_tracked_files() -> tuple[list[Path], list[Skipped]]:
-    """Split every enumerated file into exactly two buckets: scan, or skip.
+def directory_skip_reason(name: str) -> str:
+    """Why a DIRECTORY-like enumeration entry is skipped rather than refused.
 
-    🔴 EVERY ENUMERATED FILE LANDS IN EXACTLY ONE OF THEM, AND THAT IS THE
+    🔴 THE DEFECT THIS CLOSED: `enumerate_repo` yields two shapes that are not
+    files, `open()` raises `EISDIR` on both, and a single `except OSError` two
+    lines later treated that as "the gate cannot read this file" and abandoned
+    the ENTIRE scan at exit 2. Exit 2 means "could not vouch" — so an ordinary
+    artefact in the working tree silently converted a security gate into a gate
+    that never ran, and every consumer that refuses on a non-zero scanner exit
+    spent an operator override on it. Neither shape can carry committable text,
+    so neither is a coverage hole; calling them unreadable was.
+
+    The two shapes, and they are different enough to name separately:
+
+      * a trailing `/` — git COLLAPSES an untracked nested repository to one
+        entry. A git worktree checked out inside the tree is exactly this, and
+        worktree isolation makes that the normal state of this repo rather than
+        an accident. The contents belong to that other repository's index and
+        cannot be added to this one without a `git add` of a submodule, so
+        there is nothing here for a leak gate to read.
+      * no trailing slash, but the path resolves to a directory — a SYMLINK to
+        one, which is what `nix build` leaves as `result`. The link's own bytes
+        are a path, not text, and its target is a build output that cannot be
+        committed here either.
+
+    ⚠ A SKIP IS ONLY HONEST WHILE IT IS NAMED, which is why this returns prose
+    and `main` prints it. A silent drop is indistinguishable from a scanner
+    wired to nothing — the failure mode this module's own docstring is about.
+    """
+    if name.endswith("/"):
+        return (
+            "a DIRECTORY, not a file: git collapses an untracked nested "
+            "repository to one entry with a trailing `/`. Its contents belong "
+            "to that repository and cannot be committed to this one"
+        )
+    return (
+        "a DIRECTORY, not a file: the path resolves to one, which is what a "
+        "symlink into a build output (`result` from `nix build`) is. The link "
+        "carries a path rather than text and its target is not committable here"
+    )
+
+
+def classify_entry(root: Path, name: str) -> Path | Skipped:
+    """Which bucket one enumerated entry belongs in: scanned, or skipped.
+
+    🔴 ONE PREDICATE, ONE PLACE. `partition_tracked_files` used to open-code
+    this inline, which left the classification reachable only through a git
+    enumeration — so the controls could not exercise it directly and the
+    directory case shipped unmeasured. Returning a `Path` (scan it) or a
+    `Skipped` (do not, and here is why) makes the decision a value a control
+    can read.
+
+    Raises `OSError` — and DELIBERATELY DOES NOT SWALLOW IT — for a path that
+    is genuinely unreadable: a mode-000 file, a dangling symlink, a file that
+    vanished after enumeration. That is the case exit 2 exists for and the
+    caller must not be able to mistake it for a skip. `IsADirectoryError` is
+    the ONE errno handled here, so widening this `except` is what a mutation
+    of this function looks like.
+    """
+    p = Path(name)
+    d = next((part for part in p.parts if part in SKIP_DIRS), None)
+    if d is not None:
+        return Skipped(name, f"under {d}/, which is not source")
+    if name in SKIP_FILES:
+        return Skipped(name, "the gate's own fixtures, exempt by name")
+    try:
+        with open(root / name, "rb") as fh:
+            head = fh.read(BINARY_SNIFF_BYTES)
+    except IsADirectoryError:
+        # 🔴 EISDIR ONLY, NEVER `OSError`. `IsADirectoryError` IS `errno.EISDIR`
+        # and nothing else; a bare `except OSError` here would turn every
+        # permission denial and every vanished file into a reassuring skip,
+        # which is the opposite mistake and a far more expensive one.
+        return Skipped(name, directory_skip_reason(name))
+    if is_binary(head):
+        return Skipped(
+            name, f"binary: a NUL byte within the first {BINARY_SNIFF_BYTES} bytes")
+    return root / name
+
+
+def refuse_unreadable(unreadable: list[tuple[str, OSError]]) -> None:
+    """Print EVERY unreadable path, then say the run could not vouch.
+
+    🔴 ALL OF THEM, NOT THE FIRST. The previous version raised on the first
+    `OSError`, and `git ls-files` output is lexicographic — so no matter how
+    many entries were unreadable the run could only ever name ONE, and a reader
+    fixing that one name had no way to know the others existed. That misread
+    has already happened here: a single name was taken as an elimination of the
+    rest. Collecting first costs one list and removes the whole class.
+    """
+    for n, e in unreadable:
+        print(f"leakscan: COULD NOT READ {n}: {e}", file=sys.stderr)
+    print(
+        f"leakscan: COULD NOT VOUCH — {len(unreadable)} enumerated path(s) could "
+        f"not be read, so neither bucket is honest for them. Exit 2, which is "
+        f"NOT a pass. Every one of them is named above.",
+        file=sys.stderr,
+    )
+
+
+def partition_tracked_files() -> tuple[list[Path], list[Skipped]]:
+    """Split every enumerated entry into exactly two buckets: scan, or skip.
+
+    🔴 EVERY ENUMERATED ENTRY LANDS IN EXACTLY ONE OF THEM, AND THAT IS THE
     PROPERTY THAT REPLACED THE SUFFIX LIST. There is no branch that quietly
-    drops a file — not even the directory skips, which produce a named entry
-    like everything else — so `set(scanned) | set(skipped)` equals the
-    enumeration exactly, and a test can assert that without re-implementing a
-    single line of the filtering it is checking. `main` prints both counts and
-    names every skip, so the reconciliation is visible in the OUTPUT rather
-    than merely true in the code.
+    drops one — not the `SKIP_DIRS` skips, not the binary skips, and not the
+    directory-like entries, which produce a named `Skipped` like everything
+    else — so `set(scanned) | set(skipped)` equals the enumeration exactly, and
+    a test can assert that without re-implementing a single line of the
+    filtering it is checking. `main` prints both counts and names every skip,
+    so the reconciliation is visible in the OUTPUT rather than merely true in
+    the code.
 
     A skip is only ever produced for a reason a reader can check: the path is
-    under a non-source directory, it is the gate's own fixture file, or the
-    BYTES are binary.
+    under a non-source directory, it is the gate's own fixture file, the BYTES
+    are binary, or the entry is not a file at all (see
+    `directory_skip_reason`).
+
+    🔴 UNREADABLE IS STILL NOT CLEAN. An entry the gate cannot open — and that
+    now means anything other than `EISDIR` — is the one case where neither
+    bucket is honest, so it stops the run at exit 2 rather than being counted
+    as skipped. What changed is only WHEN: every such entry is collected and
+    named before the refusal, instead of the first one ending the run.
     """
     scan: list[Path] = []
     skipped: list[Skipped] = []
+    unreadable: list[tuple[str, OSError]] = []
     for n in enumerate_repo(ROOT):
-        p = Path(n)
-        d = next((part for part in p.parts if part in SKIP_DIRS), None)
-        if d is not None:
-            skipped.append(Skipped(n, f"under {d}/, which is not source"))
-            continue
-        if n in SKIP_FILES:
-            skipped.append(Skipped(n, "the gate's own fixtures, exempt by name"))
-            continue
         try:
-            with open(ROOT / n, "rb") as fh:
-                head = fh.read(BINARY_SNIFF_BYTES)
+            got = classify_entry(ROOT, n)
         except OSError as e:
-            # 🔴 UNREADABLE IS NOT CLEAN. A file the gate cannot open is the
-            # one case where neither bucket is honest, so it stops the run
-            # rather than being counted as skipped.
-            print(f"leakscan: COULD NOT READ {n}: {e}", file=sys.stderr)
-            raise SystemExit(2)
-        if is_binary(head):
-            skipped.append(Skipped(
-                n, f"binary: a NUL byte within the first {BINARY_SNIFF_BYTES} bytes"))
+            unreadable.append((n, e))
             continue
-        scan.append(ROOT / n)
+        if isinstance(got, Skipped):
+            skipped.append(got)
+        else:
+            scan.append(got)
+    if unreadable:
+        refuse_unreadable(unreadable)
+        raise SystemExit(2)
     return scan, skipped
 
 
@@ -596,8 +712,90 @@ ALLOWED_CONTROLS = [
 ]
 
 
+#: 🔴 THE BUCKETING CONTROL'S CASES, AND EVERY ONE OF THEM IS LOAD-BEARING IN A
+#: DIFFERENT DIRECTION. `classify_entry` decides, per enumerated entry, between
+#: "read this", "skip it and say why", and "refuse the whole run". Only the
+#: first of those is visible in a `0 findings` report, so the other two need a
+#: control or they are claims.
+#:
+#: Each row is `(name, want, why)` where `want` is `"scan"`, `"skip"` or
+#: `"refuse"`. The two `refuse` rows are what stop a fix for the directory case
+#: from becoming "any `OSError` now passes": widen the `except IsADirectoryError`
+#: to `except OSError` and both go red, while every other row stays green.
+#:
+#: ⚠ `perm` NEEDS A NON-ROOT PROCESS to be unreadable at all, so it is the
+#: second `refuse` row rather than the only one. `dangling` is unreadable for
+#: every uid, so the specificity claim does not rest on who runs the gate.
+_BUCKETING_CASES = (
+    ("nested/", "skip",
+     "git's collapsed nested-repository entry — the agent-worktree shape"),
+    ("linked", "skip",
+     "a symlink to a directory — the `nix build` `result` shape"),
+    ("dangling", "refuse",
+     "a dangling symlink: ENOENT, not EISDIR, and unreadable for every uid"),
+    ("perm", "refuse",
+     "a mode-000 file: EACCES, not EISDIR — the case exit 2 exists for"),
+    ("plain.md", "scan",
+     "an ordinary text file, so the control cannot pass by skipping everything"),
+)
+
+
+def bucketing_control() -> bool:
+    """🔴 PROVE `classify_entry` SORTS ALL THREE OUTCOMES, ON EVERY INVOCATION.
+
+    A leak gate that skipped every entry would print `0 findings` exactly like a
+    clean tree does, and a leak gate that refused every entry would exit 2
+    exactly like a broken control does. Both are one edit away from the
+    directory-skip branch, so this drives the real predicate over a real
+    temporary tree — no git, no network, a few syscalls — and checks each of the
+    three outcomes against a case that can only produce it.
+    """
+    ok = True
+    with tempfile.TemporaryDirectory(prefix="leakscan-bucketing-") as td:
+        root = Path(td)
+        (root / "nested").mkdir()
+        (root / "nested" / "f.txt").write_text("x\n", encoding="utf-8")
+        os.symlink(root / "nested", root / "linked")
+        os.symlink(root / "does-not-exist", root / "dangling")
+        (root / "perm").write_text("secret-ish\n", encoding="utf-8")
+        (root / "perm").chmod(0o000)
+        (root / "plain.md").write_text("# ordinary prose\n", encoding="utf-8")
+
+        for name, want, why in _BUCKETING_CASES:
+            try:
+                got = classify_entry(root, name)
+            except OSError as e:
+                verdict, detail = "refuse", type(e).__name__
+            else:
+                verdict = "skip" if isinstance(got, Skipped) else "scan"
+                detail = got.why if isinstance(got, Skipped) else "queued to be read"
+            if verdict != want:
+                print(f"  FAIL  {name:10} bucketed as {verdict!r}, expected {want!r}")
+                print(f"        {why}")
+                print(f"        detail: {detail}")
+                ok = False
+            elif want == "skip" and not detail.strip():
+                # A skip with no stated reason is the silent drop this module's
+                # whole accounting exists to prevent, so it fails the control
+                # even though the BUCKET is right.
+                print(f"  FAIL  {name:10} skipped with no reason given")
+                ok = False
+            else:
+                print(f"  PASS  {want:7} {name:10} {why}")
+        # 🔴 RESTORE THE MODE BEFORE THE TEMPDIR IS TORN DOWN. `TemporaryDirectory`
+        # cleanup on a 000 file succeeds (the DIRECTORY is writable), but leaving
+        # it would make this control's own teardown depend on that, which is a
+        # dependency nobody would notice breaking.
+        (root / "perm").chmod(0o600)
+    return ok
+
+
 def self_test() -> int:
     ok = True
+
+    print("== BUCKETING: scan / named-skip / refuse are three different answers ==")
+    if not bucketing_control():
+        ok = False
 
     print("== POSITIVE CONTROL: the matcher can produce a non-zero count ==")
     hits = scan_text(POSITIVE_CONTROL, "<positive-control>")
@@ -674,14 +872,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  SKIPPED  {s}")
 
     findings: list[Finding] = []
+    # 🔴 COLLECT, THEN REFUSE — the same reason `refuse_unreadable` exists. A
+    # file that opened during partitioning and then failed here is a race (a
+    # concurrent delete, a revoked mode), and a race can hit more than one file
+    # at a time; returning on the first would name one and hide the rest.
+    unreadable: list[tuple[str, OSError]] = []
     for f in files:
+        rel = str(f.relative_to(ROOT))
         try:
-            findings.extend(
-                scan_text(f.read_text(encoding="utf-8", errors="replace"),
-                          str(f.relative_to(ROOT))))
+            text = f.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
-            print(f"leakscan: COULD NOT READ {f}: {e}", file=sys.stderr)
-            return 2
+            unreadable.append((rel, e))
+            continue
+        findings.extend(scan_text(text, rel))
+    if unreadable:
+        refuse_unreadable(unreadable)
+        return 2
 
     print(f"== UNDER TEST: {len(files)} file(s) scanned, "
           f"{len(skipped)} skipped ==")
