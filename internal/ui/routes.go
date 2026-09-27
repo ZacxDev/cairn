@@ -254,7 +254,7 @@ const (
 //
 // ⚠ THERE IS NO `ViewRendered` CONSTANT, AND THE ABSENCE IS THE DESIGN. The rendered view
 // is what the row answers when nothing selects otherwise, so it has no spelling to get
-// wrong and no URL of its own to keep working — `entryHrefFor` emits the plain entry URL
+// wrong and no URL of its own to keep working — `entryHref` emits the plain entry URL
 // for it. A second constant would invite a second recognised value, and then two URLs
 // would render one state.
 const ViewRaw = "raw"

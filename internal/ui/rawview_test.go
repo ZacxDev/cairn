@@ -256,106 +256,35 @@ func TestAnUnrecognisedViewValueRendersTheRenderedView(t *testing.T) {
 	}
 }
 
-// TestTheRawViewIsNarrowedByTheSameAuthorityAsTheRenderedOne is the security guard, and it
-// is the reason a new render path gets its own test at all.
+// TestAHostileFileReachesTheRawViewAsTextThroughTheREALPIPELINE is the half of the
+// escaping story the renderer differential structurally cannot see.
 //
-// 🔴 A SECOND WAY TO REACH AN ENTRY'S BYTES IS A SECOND PLACE THE NARROWING CAN BE MISSED,
-// AND THE RAW VIEW IS THE WIDEST PAYLOAD THIS SURFACE HAS — the whole file, front matter
-// included. A `?view=raw` that read the file before consulting the authority would leak
-// every entry in the deployment to any signed-in principal, and every existing guard in
-// `browse_test.go` would stay green, because they all drive the rendered view.
-func TestTheRawViewIsNarrowedByTheSameAuthorityAsTheRenderedOne(t *testing.T) {
-	readsA, readsB := twoScopeWorld(t)
-	root := twoScopeStore(t)
-
-	srvA := browseServer(t, root, readsA)
-
-	// Principal A asks for principal B's entry, in the raw view.
-	rawNotYours := getAs(t, srvA, rawViewEntryPath(browseScopeB, "ledger", true))
-	// And the rendered view of the same thing, which `browse_test.go` already pins — read
-	// here so the two answers can be compared as BYTES rather than as two status codes.
-	renderedNotYours := getAs(t, srvA, rawViewEntryPath(browseScopeB, "ledger", false))
-
-	if rawNotYours.Code != http.StatusNotFound {
-		t.Fatalf("the RAW view of another principal's entry answered %d, want 404: %s",
-			rawNotYours.Code, rawNotYours.Body.String())
-	}
-	if rawNotYours.Body.String() != renderedNotYours.Body.String() || rawNotYours.Code != renderedNotYours.Code {
-		t.Errorf("the raw and rendered refusals DIFFER: raw %d %q, rendered %d %q. A view that "+
-			"refuses differently is an existence oracle, which is the whole ruling behind "+
-			"`browseRefusal`.", rawNotYours.Code, rawNotYours.Body.String(),
-			renderedNotYours.Code, renderedNotYours.Body.String())
-	}
-	if strings.Contains(rawNotYours.Body.String(), onlyInBeta) {
-		t.Errorf("the raw refusal LEAKS the entry's own text (%q is in the body). The file was "+
-			"read before the authority was consulted.", onlyInBeta)
-	}
-
-	// 🔴 THE POSITIVE CONTROL. The same ref in the caller's OWN scope renders raw, so the
-	// refusal above is not a raw view that refuses everybody.
-	own := getAs(t, srvA, rawViewEntryPath(browseScopeA, "runbook", true))
-	if own.Code != http.StatusOK {
-		t.Fatalf("POSITIVE CONTROL FAILED: the caller's OWN entry answered %d in the raw view, "+
-			"want 200: %s. Every refusal above is then satisfied by a view that refuses "+
-			"everything.", own.Code, own.Body.String())
-	}
-	if !strings.Contains(own.Body.String(), onlyInAlpha) {
-		t.Error("the caller's own raw view does not carry the file's bullet text, so its 200 may " +
-			"not be the raw view")
-	}
-
-	// And the mirror: the SAME entry A was refused renders raw for B, which proves the
-	// refusal is about the CALLER rather than about the entry.
-	srvB := browseServer(t, root, readsB)
-	mirror := getAs(t, srvB, rawViewEntryPath(browseScopeB, "ledger", true))
-	if mirror.Code != http.StatusOK {
-		t.Fatalf("POSITIVE CONTROL FAILED: the raw view of scope B's entry answered %d for the "+
-			"principal who CAN read it, want 200: %s", mirror.Code, mirror.Body.String())
-	}
-}
-
-// TestTheRawViewEscapesTheFileAndShipsNoScript is the injection guard for the widest sink
-// this surface has.
+// 🔴 WHAT MOVED AND WHY, BECAUSE DELETING A GUARD DESERVES MORE THAN A DIFF. This test
+// used to hand-roll four `strings.Contains` checks over the response. Those now live in
+// `render_test.go`'s `TestHostileEntryTextIsEscapedOnEveryBrowsePage`, which renders the
+// SAME page over a hostile and a benign world of identical shape and compares MARKUP
+// SHAPE — a strictly stronger instrument than substring matching, because it detects an
+// injection the author never thought to grep for. `renderedPages` now carries an
+// `entry-raw` row and both worlds carry a `Raw` fixture, and that row was mutation-tested:
+// `g.Raw(e.Raw)` makes it RED naming the state and the `<script` count.
 //
-// 🔴 THE RAW VIEW PUTS THE WHOLE FILE IN THE PAGE, MARKUP AND ALL, WHICH IS STRICTLY WIDER
-// THAN ANYTHING `EntryPage` RENDERED BEFORE IT. The rendered view passes section bodies
-// through `inlineCode`, which splits on backticks and emits `g.Text` for every other run;
-// the raw view emits one `g.Text` over the entire file. Both rely on gomponents' escaper,
-// and this package's `rawban_test.go` is what keeps `g.Raw` out — but a test that drives a
-// FILE containing a `<script>` is the behavioural half, and a structural ban cannot
-// substitute for it.
-//
-// 🔴 AND THE SCRIPT COUNT IS PINNED FOR THIS NEW PAGE STATE SPECIFICALLY. `uiaudit`
-// asserts `document.scripts.length == 0` over the states it captures; a state it does not
-// capture is not covered by it. Note the scope honestly: this asserts what THIS ORIGIN
-// renders, which is the correction `#130` made to three "this surface ships none"
-// spellings — it says nothing about bytes an edge inserts downstream.
-func TestTheRawViewEscapesTheFileAndShipsNoScript(t *testing.T) {
+// ⚠ WHAT IT CANNOT SEE IS WHY THIS REMAINS. That differential builds `Entry.Raw` from a
+// FIXTURE. Nothing in it exercises `readEntry` reading a real file off disk, decoding it
+// and putting it on the struct, nor the HTTP layer carrying it out unchanged — so a defect
+// anywhere in that chain would leave every escaping guard green. This drives a hostile
+// FILE through the whole pipeline and asserts the two things that survive it.
+func TestAHostileFileReachesTheRawViewAsTextThroughTheREALPIPELINE(t *testing.T) {
 	readsA, _ := twoScopeWorld(t)
 	root := t.TempDir()
 	dir := filepath.Join(root, "alpha-notes")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("building the store: %v", err)
 	}
-	// Every character class that changes meaning in HTML, in a file that is otherwise a
-	// perfectly ordinary entry. The attribute-position quote matters as much as the tag:
-	// `entryRow`'s comment in `render_test.go` records why the two contexts are exercised
-	// separately.
 	const hostile = `<script>alert(document.domain)</script> and "quoted" & 'single' <img src=x onerror=alert(1)>`
 	body := strings.Join([]string{
-		"---",
-		"service: runbook",
-		"scope: alpha-notes",
-		"---",
-		"",
-		"## What it is",
-		"",
-		hostile,
-		"",
-		store.NuanceHeading,
-		"",
-		"- 2000-06-01 a bullet carrying " + hostile,
-		"",
+		"---", "service: runbook", "scope: alpha-notes", "---", "",
+		"## What it is", "", hostile, "",
+		store.NuanceHeading, "", "- 2000-06-01 a bullet carrying " + hostile, "",
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(dir, "runbook.md"), []byte(body), 0o644); err != nil {
 		t.Fatalf("writing the hostile entry: %v", err)
@@ -368,31 +297,22 @@ func TestTheRawViewEscapesTheFileAndShipsNoScript(t *testing.T) {
 	}
 	page := rec.Body.String()
 
-	// INSTRUMENT CONTROL: the hostile text reached the page at all. Without this the
-	// assertions below are satisfied by a raw view that rendered nothing.
+	// INSTRUMENT CONTROL: the file's text reached the page at all. Without this the
+	// assertions below are satisfied by a pipeline that rendered nothing.
 	if !strings.Contains(page, "alert(document.domain)") {
-		t.Fatal("the hostile file's text is not on the page in any form, so the escaping " +
-			"assertions below would pass over an empty raw view")
-	}
-
-	if strings.Contains(page, "<script>alert(document.domain)</script>") {
-		t.Error("the raw view emitted the file's `<script>` as MARKUP. The whole file is " +
-			"attacker-authored text and must reach the page as text.")
-	}
-	if strings.Contains(page, "<img src=x onerror=alert(1)>") {
-		t.Error("the raw view emitted the file's `<img onerror=…>` as MARKUP")
+		t.Fatal("the hostile file's text is not on the page in any form, so the assertions below " +
+			"would pass over an empty raw view — the pipeline, not the escaping, is what failed")
 	}
 	if !strings.Contains(page, "&lt;script&gt;") {
-		t.Error("the file's `<script>` is neither escaped nor present, so what the page did " +
+		t.Error("the file's `<script>` is neither escaped nor present, so what the pipeline did " +
 			"with it is unknown — which is not a pass")
 	}
-
-	// 🔴 ZERO SCRIPT ELEMENTS IN WHAT THIS ORIGIN RENDERS, counted over the whole response
-	// rather than grepped for one spelling.
+	// 🔴 ZERO SCRIPT ELEMENTS IN WHAT THIS ORIGIN RENDERS, counted over the whole HTTP
+	// response rather than over a rendered node — the shell included, which is the part
+	// the renderer differential does not assemble. Scope it honestly: this says nothing
+	// about bytes an edge inserts downstream, which is `#130`'s correction.
 	if n := strings.Count(strings.ToLower(page), "<script"); n != 0 {
-		t.Errorf("the raw view's response carries %d `<script` occurrence(s), want 0. This "+
-			"surface's no-JavaScript property is what `uiaudit` measures and what the "+
-			"escaping story partly rests on.", n)
+		t.Errorf("the raw view's RESPONSE carries %d `<script` occurrence(s), want 0", n)
 	}
 }
 

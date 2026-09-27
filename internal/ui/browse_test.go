@@ -222,10 +222,22 @@ func TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne
 	absentRef := getAs(t, srvA, EntryPath+"?"+url.Values{
 		QueryScope: []string{string(browseScopeA)}, QueryRef: []string{"no-such-entry"},
 	}.Encode())
+	// 🔴 AND THE SAME MISS THROUGH THE RAW VIEW, because `?view=raw` is a SECOND WAY to
+	// reach an entry's bytes and therefore a second place the narrowing can be skipped —
+	// the widest one on this surface, since the raw view renders the WHOLE FILE. It is a
+	// row here rather than a test of its own so that it is compared against the SCOPE
+	// refusal, which is the relation that closes the existence-oracle direction; a guard
+	// comparing raw against rendered would pass two handlers that were wrong together.
+	notYoursEntryRaw := getAs(t, srvA, EntryPath+"?"+url.Values{
+		QueryScope: []string{string(browseScopeB)},
+		QueryRef:   []string{"ledger"},
+		QueryView:  []string{ViewRaw},
+	}.Encode())
 	for name, rec := range map[string]*httptest.ResponseRecorder{
-		"a real ref in somebody else's scope": notYoursEntry,
-		"a real ref in an absent scope":       absentEntry,
-		"an absent ref in the caller's scope": absentRef,
+		"a real ref in somebody else's scope":           notYoursEntry,
+		"a real ref in an absent scope":                 absentEntry,
+		"an absent ref in the caller's scope":           absentRef,
+		"a real ref in somebody else's scope, RAW view": notYoursEntryRaw,
 	} {
 		if rec.Code != notYoursScope.Code || rec.Body.String() != notYoursScope.Body.String() {
 			t.Errorf("%s answered %d %q; the scope refusal is %d %q. All four ways to miss must be one answer.",
@@ -778,7 +790,7 @@ func TestTheDocumentCardIsCappedAndTheGridsCardsAreNot(t *testing.T) {
 	// ---- HALF ONE: the document pages' card carries the cap.
 	got, ok := cssDeclaration(stylesheet, ".page-main > .card", "max-width")
 	if !ok {
-		t.Fatalf("the served stylesheet carries NO `.page-main > .card` rule at all, so there is nothing "+
+		t.Fatalf("the served stylesheet carries NO `.page-main > .card` rule at all, so there is nothing " +
 			"here to cap the document pages' card and nothing for this test to measure")
 	}
 	if got != documentCardCap {
@@ -993,7 +1005,7 @@ func TestAnEntryRefIsEncodedOnTheWayOutAndMatchedOnTheWayIn(t *testing.T) {
 		`quote"and<angle>`,
 	}
 	for _, ref := range hostile {
-		href := entryHref(scope, ref)
+		href := entryHref(scope, ref, false)
 		u, err := url.Parse(href)
 		if err != nil {
 			t.Errorf("entryHref(%q) produced %q, which is not a parseable URL", ref, href)

@@ -218,7 +218,14 @@ func EntryPage(v PageView) g.Node {
 				missingBlock(e),
 			})),
 		),
-		g.If(v.RawView, entryRawLegend()),
+		// 🔴 NO LEGEND ON THE RAW VIEW, AND ITS DELETION IS A FINDING RATHER THAN A
+		// TRIM. A first version shipped `entryRawLegend()`, four rows. Three of them
+		// restated `entryRawWhat`, twenty pixels above on the same page; the fourth was
+		// the only new claim and it was FALSE — it said long lines "are wrapped for
+		// reading rather than scrolled", while the rule set `.entry-raw` joins carries
+		// `whitespace-pre-wrap break-words` AND `overflow-x-auto`, so scrolling is
+		// exactly what stays available. A legend is a key to a diagram; the raw view
+		// renders ONE element, and the mapping a legend would explain is the identity.
 		g.If(!v.RawView, entryLegend()),
 	)
 }
@@ -239,7 +246,7 @@ func entryViewTabs(s Scope, e Entry, rawView bool) g.Node {
 		if raw == rawView {
 			return h.Span(h.Class("view-tab view-tab-here"), g.Text(label))
 		}
-		return h.A(h.Class("view-tab"), h.Href(entryHrefFor(s.ID, e.Ref, raw)), g.Text(label))
+		return h.A(h.Class("view-tab"), h.Href(entryHref(s.ID, e.Ref, raw)), g.Text(label))
 	}
 	return h.Nav(
 		h.Class("view-tabs"),
@@ -896,29 +903,6 @@ func entryWhatFor(rawView bool) string {
 	return entryWhat
 }
 
-// entryRawLegend is the raw view's legend, and it is a DIFFERENT set of rows rather than the
-// rendered view's.
-//
-// 🔴 `entryLegend` DOCUMENTS ELEMENTS THE RAW VIEW DOES NOT RENDER — sections, line items,
-// dates, badges, inline code, out-of-reach markers. Showing it here would be a key to a
-// diagram that is not on the page. What a reader needs instead is the one thing the raw view
-// asks them to understand: which differences between this and their editor are real.
-func entryRawLegend() g.Node {
-	return legend([][2]string{
-		{"raw", "the file's text, unparsed. What you see here is what a `cat` of the file " +
-			"under the store root would print, minus the decode below"},
-		{"replacement character", "a `�` means the file is not valid UTF-8 at that byte. " +
-			"The substitution happens on the way in and is shared with the CLI, so it is a " +
-			"fact about the file rather than about this page"},
-		{"what is NOT here", "nothing is dropped. The rendered view shows only the headings a " +
-			"reader surfaces; this view shows every heading, the front matter, and any prose " +
-			"above the first heading"},
-		{"line wrapping", "long lines are wrapped for reading rather than scrolled. The line " +
-			"BREAKS in the file are preserved; a wrap is this page's, and a `\\n` is the " +
-			"writer's"},
-	})
-}
-
 func entryLegend() g.Node {
 	return legend([][2]string{
 		{"section", "one `##` heading in the file. The heading TEXT is rendered as a heading and " +
@@ -993,9 +977,7 @@ func scopeHref(s Scope) string {
 	return ScopePath + "?" + url.Values{QueryID: []string{string(s.ID)}}.Encode()
 }
 
-func entryHref(scope control.ID, ref string) string { return entryHrefFor(scope, ref, false) }
-
-// entryHrefFor is the ONE place an entry URL is built, both views included.
+// entryHref is the ONE place an entry URL is built, both views included.
 //
 // 🔴 ONE BUILDER RATHER THAN A SECOND FUNCTION THAT APPENDS `&view=raw`, BECAUSE A SECOND
 // BUILDER IS A SECOND ENCODER. The ref is USER TEXT — it can carry a `&`, a `=`, a `#` or a
@@ -1008,7 +990,7 @@ func entryHref(scope control.ID, ref string) string { return entryHrefFor(scope,
 // `?view=rendered` would also render it — [QueryView] recognises exactly one value and
 // everything else is the default — but nothing on this surface links that spelling, so the
 // URL a reader copies out of the address bar is the same one every page links to.
-func entryHrefFor(scope control.ID, ref string, raw bool) string {
+func entryHref(scope control.ID, ref string, raw bool) string {
 	v := url.Values{
 		QueryScope: []string{string(scope)},
 		QueryRef:   []string{ref},
@@ -1039,7 +1021,7 @@ func entryLinkFor(scope control.ID, ref, label string) g.Node {
 	if scope == "" || ref == "" {
 		return h.Span(g.Text(label))
 	}
-	return h.A(h.Href(entryHref(scope, ref)), g.Text(label))
+	return h.A(h.Href(entryHref(scope, ref, false)), g.Text(label))
 }
 
 // searchSummary is the one sentence that says how much of the answer is on the page.
