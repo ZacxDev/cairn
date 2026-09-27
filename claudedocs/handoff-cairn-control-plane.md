@@ -24,35 +24,37 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`c6aed4e`** (#135) — re-read rather than quoting it. ⚠ **IT MOVED MID-SESSION**: the
-  arc re-run below was measured at `945d060`; #135 landed while the work was live.
-- ✅ **THE ARC REMAINS CLOSED — RE-MEASURED, ALL THREE LEGS.** `pytest tests -q` **2194 passed / 0
-  failed** rc 0 (521 s, base clone, `nix develop -c`); `go vet ./...` **rc 0** and `go test ./...`
-  **19 ok / 0 FAIL** in a FRESH detached worktree of `origin/main` under the pinned **1.25.14**;
-  `flake.nix:1046` `default = mkGoClient pkgs;`. 🔴 That fresh worktree is also rank 23's control:
-  the tree was green, so the base clone's red was about the CLONE. Ranks 18–28 are the successor arc.
-- 🔴 **RANK 25 WAS RE-OPENED BY OPERATOR DECISION AND IS NOW A POSTGRES ARC.** Ruling: build **P6's
-  invite flow**; **redemption MAY provision an unknown subject**; **Postgres supersedes the cairn-ui
-  PVC**; **stage 1 only** (sessions + invites — the control journal stays a file); **a NEW dedicated
-  Postgres on the latest version**, explicitly not `supabase-cairn`.
-- ✅ **STAGE 1 GROUNDWORK COMMITTED AND PUSHED: `feat/ui-invite-flow` @ `7fdcea3`.** No PR — it is
-  groundwork, not the feature. `internal/invite/` + `internal/pgstore/`. `gofmt -l` empty,
-  `go build ./...` clean, `go vet` clean, **leakscan self-test rc 0 + scan rc 0, 0 findings / 406
-  files**. ✅ **THE DEPENDENCY GATE WAS WATCHED REFUSING FIRST**:
-  `TestTheModuleSetIsExactlyTheAllowlist` **RED** ("grew") with `github.com/lib/pq` added and no
-  allowlist line, **GREEN** with it, and **`nix build .#cairn-go` rc 0** after recomputing
-  `goVendorHash` to `sha256-x06/IC+OVtpSpEYKqHW4PPnLTvyWli/oRC11eP/bqhY=` — that derivation runs
-  `depspolicy` in `doCheck`, so it is proven THROUGH NIX, not only through `go test`.
-- 🔴 **LIVE CLUSTER STATE, READ THIS SESSION** (the cluster kubeconfig, ns `subsystem-store`): pod on
-  `sha-d003708…`, **1 commit behind `main` and that commit is docs-only**; journal **30 lines — 1
-  user, 1 project, 26 `scope-created`, 1 `member-set`, 1 `credential-issued`, 0 `granted`**. The
-  `cairn-ui` image carries **only the `cairn-ui` binary** (`/bin` is one symlink), so `-set-member`
-  is NOT a `kubectl exec` — it needs a Job on `cairn-store-go` mounting the PVC. `cairn-ui-state` is
-  **RWO `local-path`, 1 replica, `Recreate`** — the limit the Postgres decision answers.
+- `main` @ **`963517e`** — ⚠ re-read it. **Two sessions are working this repo concurrently**;
+  `main` moved four times during this one.
+- ✅ **#135 (`c6aed4e`) AND #134 (`963517e`) MERGED, verified BY CONTENT.** On `main`: `go vet` 0,
+  `go test ./...` **19 ok / 0 FAIL**, mutant pin **12 passed**, leakscan clean.
+  `.claude/worktrees/` empty, no open PRs from this session, both claims released.
+- ✅ **THE ENTRY PAGE HAS A RENDERED/RAW PAIR.** `?view=raw` renders the entry FILE — front matter,
+  unsurfaced headings, prose above the first heading. **No route added** (it rides `GET /entry`),
+  **no JavaScript**, `:target` tabs refused.
+- 🔴 **ROUND 2 WAS DUE AND WAS SKIPPED BY OPERATOR DECISION.** Round 1 returned **0🔴/6🟡/4🟢**, every
+  finding needing a fix — the condition for another round. **Do not read this ladder as converged.**
+  ⚠ I did not perform the merge; #134 landed while I waited on CI.
+- ✅ **ROUND 1's HEADLINE IS AN A11Y REGRESSION THE PR CREATED**: the new `<nav class="view-tabs">`
+  beside `<nav class="crumbs">` — two landmarks, same role, no names, axe `landmark-unique`,
+  measured with a control. 🔴 **Nothing between there and production would have said so**:
+  `refuseWalkRegressions` does not refuse on axe violations and `uiaudit` is `continue-on-error`.
+  Both navs now carry an `aria-label`.
+- ✅ **MUTATION EVIDENCE IS NOW A CI GATE, NOT PROSE** — both raw-view mutants are rows in
+  `tests/control_mutants.py` (**150 → 152**, six sites, pin green); killed, 0 misattributed, 0
+  stale-extras. ✅ **AND THE WALK CAPTURES THE RAW VIEW** — `linkExpanded` excluded `/entry` on a
+  reason this change falsified; CI's `uiaudit` is green on every STEP, checked step-by-step.
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE** (resolver exit 5; an unknown id
+  answers 200 with an EMPTY ARRAY, no positive control run).
+- ✅ **THE ARC REMAINS CLOSED** — re-measured all three legs earlier today: `pytest tests -q`
+  **2194 passed / 0 failed**, `go vet` rc 0 and `go test ./...` **19 ok / 0 FAIL** on the pinned
+  1.25.14, `packages.default` the Go client.
 - ⏳ **OPEN OPERATOR CHOICE (1):** the capped card is LEFT-ALIGNED, not centred. Unchanged.
-- ⏳ **OPEN OPERATOR CHOICE (2): the rank-9 local instance is STILL RUNNING.** pid **2728234** on
-  `127.0.0.1:8103`, from session `e5d90670`'s scratchpad (re-read from `/proc/<pid>/cmdline`, which
-  corrects the doc's "`cairn-ui-1838b82`"). Still the only world with a co-member.
+- ⏳ **OPEN OPERATOR CHOICE (2): the rank-9 local instance is STILL RUNNING** — pid **2728234** on
+  `127.0.0.1:8103`, from session `e5d90670`'s scratchpad, re-confirmed alive from
+  `/proc/<pid>/cmdline` at the moment of writing this line. **Still the only world with a
+  co-member**, which is why it is not killed. Carried forward rather than retyped-and-lost: it sits
+  under a REPLACE heading and the write gate flagged it as about to drop.
 
 ## Next steps (ranked)
 
@@ -112,22 +114,24 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
     INSTANCE EXISTS AND WAS NOT TOUCHED.** forcing: user.
 22. ❌ **WITHDRAWN — THE EDGE CACHE TTL IS LEFT AS IT IS.** 🔴 **DO NOT RE-PROPOSE AS UNDECIDED.**
     **Closing condition: none — closed by decision.** forcing: user.
-23. ✅ **DONE — merged as `c6aed4e` (#135).** Re-confirmed independently: `go test ./...` **19 ok / 0
-    FAIL** in a fresh worktree of `origin/main`. ⚠ **THE TWO STALE WORKTREES REMAIN** in the base
-    clone (`agent-aa77eb09fda6ae3f3`, `agent-ae3dc7c8402873ce8`) — the guard no longer reports them,
-    the directories are still there. forcing: gate.
-24. **DECIDE #134 — AUDIT THEN MERGE, OR SEND IT BACK.** `ZacxDev/cairn#134`, ci green. Not audited:
-    `/audit-pr 134` **ROUND 0 FIRST**, then correctness. 🔴 **NOW ALSO BLOCKS RANK 28**: it touches
-    `internal/ui/routes.go`, `render.go`, `server.go`, `tailwind.css` and `app.css` — every file the
-    invite flow must edit. Deciding it first is what stops a three-way conflict on generated CSS.
-    forcing: user.
+23. ✅ **DONE, BOTH HALVES.** Merged as `c6aed4e` (#135); the two stale worktrees are now REMOVED
+    from the base clone, after confirming each was clean and both squash commits were on `main`.
+    🔴 **The fix was then confirmed against the real condition rather than a fixture:** `go test
+    ./...` on the base clone → **19 ok / 0 FAIL** with a nested worktree still present, where it
+    reported 24 offenders before. `.claude/worktrees/` is now empty. forcing: gate.
+24. ✅ **DONE — #134 MERGED as `963517e`, verified BY CONTENT** (ancestry is false after a squash).
+    Round 0 and round 1 both ran; all fourteen findings were fixed across `5dce1d4`, `904e28b` and
+    `94cb61a`. 🔴 **ROUND 2 WAS DUE AND WAS SKIPPED BY OPERATOR DECISION — THIS LADDER DID NOT
+    CONVERGE.** Round 1 returned 0🔴/6🟡/4🟢 and every finding needed fixing, which is the condition
+    for another round; the operator chose to merge instead. Do not read this ladder as clean.
+    ⚠ **I did not perform the merge** — it landed while I waited on CI. forcing: user.
 25. ✅ **SUPERSEDED BY OPERATOR DECISION, NOT DONE — DO NOT WORK THIS ITEM AS WRITTEN.** It offered
     `-set-member` provisioning OR P6; the operator chose **P6, on Postgres**. **The work is rank 28.**
     forcing: user.
-26. ✅ **EXPIRED AND NO LONGER MEANINGFUL AS WRITTEN.** The #133 × #134 merged-tree measurement was
-    re-run at `d003708`; `main` is now `c6aed4e` and rank 28 adds a third party to the same package.
-    **Re-do it as #134 × `feat/ui-invite-flow` at whatever `main` is then**, regenerating `app.css`
-    on the merged tree and comparing — never merging generated output and moving on.
+26. ✅ **EXPIRED, AND ITS SUCCESSOR IS NAMED.** #134 is now IN `main` (`963517e`), so the pair to
+    test is no longer #133 × #134. **Re-do it as `feat/ui-invite-flow` × whatever `main` is when
+    that PR opens**, regenerating `app.css` on the merged tree and byte-comparing — never merging
+    generated output and moving on. ⚠ Rank 28 is the only other party to that package now.
     forcing: gate — `checks.ui-stylesheet-is-current` is a build failure through nix.
 27. 🔴 **PRUNE THIS DOCUMENT — THE RATCHET FIRED AGAIN, THE THIRD DATA POINT.** Refused at
     **116,396 B against 98,304 B**, over by 18,092 B, on a **+3,074 B** delta; landed only after the
@@ -1129,6 +1133,29 @@ follow-up with a closing condition on the PR rather than fixed here.
   survives is the weaker argument `digestsEqual` already makes — the oracle leaks a prefix of a
   DIGEST, which cannot be inverted to the id a browser must present. **Recorded as weaker,
   deliberately**: the failure mode is a reader assuming a new backend inherited a property it did not.
+
+- 🔴 **A `mergeable`/`mergeStateStatus` STUCK ON `UNKNOWN` MEANS THE PR IS ALREADY MERGED — NOT
+  LAZY COMPUTATION.** Polled 16× across `gh pr view` AND the REST API, both `UNKNOWN`/`null
+  unknown`; I read it as the documented lazy-compute case. **GitHub stops computing mergeability
+  once a PR is merged**, and #134 had been merged by somebody else while I waited on CI. The
+  discriminator is `gh pr view <n> --json state,mergedAt`, or checking whether `main` already
+  carries a file only that branch has. **Before waiting on a field to settle, check the object is
+  still in a state where that field means anything.**
+- 🔴 **A FIX ROUND'S OWN STATED REASON IS THE LIKELIEST NEXT FINDING, AND I WROTE ONE WHILE FIXING
+  THAT EXACT CLASS.** Deleting a legend row, I asserted `.entry-raw` carries `overflow-x-auto` "so
+  scrolling is exactly what stays available". MEASURED at 1440px and 390px on a 5700-char spaced
+  line AND a 4000-char unbreakable token: `scrollWidth == clientWidth` at both. `overflow-x` is SET
+  and never ENGAGES — `pre-wrap` plus `break-word` means content cannot exceed the box, so the row
+  I deleted was substantially RIGHT. The deletion stood on other grounds; the REASON was a
+  measured-sounding falsehood written in the commit removing one.
+- 🔴 **TWO WAYS A MUTATION MISLEADS, BOTH HIT HERE.** (a) **An auditor's one-line fix can be
+  under-specified, and the module's own guard says so**: adding `ui.EntryPath` to `linkExpanded`
+  left it in `plainGET` too, and `accountLedger` refuses a row in two classes — the switch reaches
+  one `case` first and the loser is INERT; six ledger tests went red naming it. (b) **A mutation
+  that PASSES may mean the guard is unreachable**: reverting my `.claude` skip still passed,
+  because the suffix exemption already covered the ledger case, so the skip never ran. The
+  discriminating fixture is a worktree holding ordinary SERVING code. **Watch a mutation fail for
+  the reason you expect, or you tested nothing.**
 
 ## How to verify
 
