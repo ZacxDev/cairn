@@ -24,51 +24,37 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`cd86714`** — ⚠ re-read rather than quoting it; a handoff doc can never record its own
-  merge, so a `State now` sha is stale by exactly one commit the moment it lands.
-- ✅ **THE ARC REMAINS CLOSED AND WAS NOT RE-OPENED.** The closing condition was re-verified on `main`
-  at `27bdeb3`; `main` has moved exactly one commit since, `cd86714`, and it is **docs-only — one file,
-  this document, 37+/26-** (`git show --stat cd86714`). No code moved under that verification, so the
-  ADDRESSED verdict carries forward. ⚠ **This session did NOT re-run the three commands**; it carried
-  the earlier measurement forward on the strength of the docs-only delta, which is a weaker claim than
-  a fresh green and is stated as one. Ranks 18–20 are the SUCCESSOR arc.
-- ✅ **ZERO PRs OPEN IN `cairn`** (`gh pr list --state open` → `[]`), nothing blocked on code.
-- ✅ **RANK 18 IS DONE — THE BROWSER VALIDATION PASS RAN AND COVERED EVERY FEATURE.** An `opencode`
-  dispatch (`deepseek-v4-pro`) drove the operator's Brave through the `browser` bridge, **background
-  tabs only, no window raised**, over a 24-item / 10-section matrix built from `internal/ui/routes.go`'s
-  ledger: **24 exercised, 0 skipped, 7 screenshots**. Every route in the ledger was reached. The
-  load-bearing results: scope visibility is **exactly** `alpha-notes` 1 / `beta-notes` 1 /
-  `crag-notes` 0 / `hollow-set` 0 / `rubble-heap` 0 — **no authorization leak**; the share page answers
-  the audience from authority, listing the co-member `read,write` **via project membership** with
-  *"No grant names this scope"* beside it, which is the positive control `AGENTS.md` names; the
-  replica-honesty notice renders whole; `document.scripts.length` is **0**; and at 390×844 both pages
-  report `overflowX=false`. 🔴 **THE WRITE HALF IS VERIFIED INDEPENDENTLY OF THE SUBAGENT** — the journal
-  went **10 → 12 lines**, a `granted` with `verbs:["read"]` to the co-member and a `grant-revoked`
-  naming the SAME `grant_id`. ⚠ Rank 9 was ALREADY CLAIMED by another session two days ago, which is the
-  independent reason 18 was the right pick.
-- 🔴 **THE DEPLOYED BROWSER SURFACE IS 13 COMMITS STALE, MEASURED TWO INDEPENDENT WAYS.** Filed under
-  `Defects (batched)`. The bump is mechanical and the artefact already exists; it is an operator call
-  because a commit in the deployment-manifest repo IS a deploy. **Operator decision this session: run
-  the validation pass locally now and keep the bump a separate decision.**
-- 🔴 **THE HAND-RUN WORLD FOR THIS PASS IS NOT ON PORT 8103.** 8103 was already held by another
-  session's `cairn-ui` — exactly the collision this document predicted. This one is
-  **127.0.0.1:8147, PID 3427887**, session `bb38a675`, built with `go build` from `cd86714` into a
-  scratchpad, over a parity-world store plus two users joined by `-set-member` (journal 10 lines).
-  It is EPHEMERAL and its credential is throwaway; nothing in it is handed over.
+- `main` @ **`1545783`** — ⚠ re-read rather than quoting it; a handoff doc can never record its own
+  merge, so this sha is stale by exactly one commit the moment it lands.
+- ✅ **THE ARC REMAINS CLOSED.** Ranks 18–20 are the successor arc and this session worked in it.
+  The closed arc was not re-opened.
+- ✅ **FOUR PRs MERGED, ZERO OPEN.** `#125` (content-hashed stylesheet) → `b1cc307`; `#126` (the
+  browse/search/drill-down surface) → `ac1e8ee`; `#127` (leakscan skips directory entries) →
+  `93ce032`; `#128` (90% ultrawide rung + document-style entry page) → `1545783`. Each verified on
+  `main` by CONTENT, never by ancestry.
+- ✅ **THREE DEPLOYS, ALL VERIFIED AT THE EDGE.** The deployed pod went `sha-71041ff8` (13 commits
+  stale) → `sha-edf34e2e` → `sha-ac1e8ee` → **`sha-1545783`**, each with the manifest confirmed
+  pullable first (target 200, outgoing tag 200 as positive control, `sha-0000…` 404 as negative) and
+  each with `rev-list --count <tag>..origin/main` = **0** at commit time.
+- ✅ **RANK 18 IS DONE.** The browser validation pass ran — 24 items, 0 skipped, 7 screenshots, every
+  route in the UI ledger reached, no authorization leak, and the grant/revoke write half verified
+  independently in the journal (10 → 12 lines, a `granted` and a matching `grant-revoked`).
+- 🔴 **THE HASHED STYLESHEET PATH IS PROVEN IN PRODUCTION, NOT JUST IN A TEST.** On the third deploy
+  the linked path moved `…284688207efc.css` → `…cd48ec796746.css` and the new bytes served
+  **instantly**; `sha256(served)[0:12]` equals the path, read at the edge. The FIRST deploy of the
+  day needed a cache-bust to be readable at all. That difference is the feature working.
+- ⏳ **THE WIDE LAYOUT IS DEPLOYED TO BE JUDGED** (operator decision), not because it is settled. The
+  measurement and the two candidate remedies are under `Defects` — and the entry in `Defects` says
+  explicitly which change would be the WRONG one.
 - ⏳ **CARRIED FORWARD, UNCHANGED:** a COMPLETED GitHub sign-in on the deployed surface is still
-  unverified (rank 13), and the share flow still cannot be verified on the deployed surface with one
-  user (rank 9). The three sign-in variables remain a SET: dropping `JWKS_URL` or `ISSUER` ⇒ **exit 78,
-  pod DOWN**; dropping `REDIRECT_URL` ⇒ pod UP, button absent.
-- 🔴 **THE MUTATION SWEEP FOR RULE (p)'s FIVE UNSCORED ROWS IS STILL DEAD AND WAS NOT RESTARTED THIS
-  SESSION.** Unchanged from the previous update: re-run from scratch on a detached worktree of that
-  repo's `main`, verified tree-identical before starting, with `PYTHONDONTWRITEBYTECODE=1`; budget
-  ~3 min/row. The 24 rows the dead run scored were OTHER guards, not the five. Hand-driven kills are
-  not battery scores.
-- ⚠ **NO TASK-BOARD FIELD IS RECORDED, AND THAT IS A MEASURED ABSENCE AGAIN.** The resolver exited **5**
-  while its own POSITIVE CONTROL answered 1 link for a different session — so the board is reachable
-  and this session genuinely touched no task. A zero from that endpoint cannot distinguish "touched
-  none" from "wrong id"; the control is what makes it the former. The field's own name still cannot be
-  written in this repository — describe it by ROLE.
+  unverified (rank 13); the share flow still cannot be verified there with one user (rank 9, and
+  **still claimed by another session**); the three sign-in variables remain a SET.
+- 🔴 **THE RULE-(p) MUTATION SWEEP IS STILL DEAD AND WAS NOT RESTARTED.** Unchanged: re-run from
+  scratch on a detached worktree of that repo's `main`, tree-identical before starting, with
+  `PYTHONDONTWRITEBYTECODE=1`, ~3 min/row. The 24 rows the dead run scored were OTHER guards.
+- ⚠ **NO TASK-BOARD FIELD, AND IT IS A MEASURED ABSENCE AGAIN.** The resolver exited **5** while its
+  own POSITIVE CONTROL answered 1 link for a different session, so the board is reachable and this
+  session genuinely touched no task. The field's own name still cannot be written in this repository.
 
 ## Next steps (ranked)
 
@@ -122,20 +108,17 @@ an item nobody can find.** Re-ranking re-points every live claim.
     two consecutive MEASURED `payload=0`. Four operator decisions recorded on the PR; four findings
     FILED rather than fixed, which is what that gate firing means. ⏳ Five mutation rows remain
     unscored — tracked in `State now`, not here. forcing: gate.
-16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** `#117` merged WITH the toolchain, so this is now
+16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** ⚠ Its footprint GREW: the generated
+    stylesheet is now the surface's whole appearance AND is served at a content-hashed path. `#117` merged WITH the toolchain, so this is now
     keep-or-replace rather than a gate on a PR. ⚠ Its gcroot was living in the repo root as `result`
     and arming the leak gate; relocated this session to a path outside the repo. forcing: user.
 17. ✅ **DONE — `cairn#108` merged as `84642ff`**, verified by CONTENT because ancestry is false after
     every squash. forcing: gate.
-18. ✅ **DONE — THE BROWSER VALIDATION PASS RAN.** 24 items exercised, 0 skipped, 7 screenshots, every
-    route in the UI ledger reached; results in `State now`, artefacts OUTSIDE this repo under a
-    `.cairn-r18` directory in the workspace root. Target was a hand-run instance from `main` by operator
-    decision, because the deployed one is 13 commits stale and its share flow has nobody to share with.
-    🔴 **TWO OF ITS THREE HEADLINE CLAIMS WERE WRONG AND ONLY RE-DERIVATION CAUGHT THEM** — see
-    `Gotchas`; the pass's own report is a witness, not a verdict. ⚠ **WHAT IT STILL DOES NOT COVER, and
-    neither does anything else:** the GitHub provider flow (absent on a hand-run instance — that is rank
-    13), and every one of these readings is about a LOCAL artefact rather than the deployed one.
-    forcing: user — asked directly, and now actioned.
+18. ✅ **DONE — THE PASS RAN, AND THE WORK IT PROMPTED HAS SHIPPED.** 24 items, 0 skipped, 7
+    screenshots, every route in the UI ledger reached, no authorization leak, the grant/revoke write
+    half verified in the journal. What it found became `#126`/`#128` and three deploys. 🔴 **Two of
+    its three headline findings were WRONG and only re-derivation caught them** — `Gotchas`; a
+    dispatched pass is a witness, not a verdict. forcing: user — asked directly, and now actioned.
 19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23, with the design stated in the same
     message. 🔴 **0 hits for `the-algorithm` across this doc, the archive and the plan.** The fact-rot
     sub-question DID get a delete-first pass; the whole-design trace has no record.
@@ -174,21 +157,6 @@ an item nobody can find.** Re-ranking re-points every live claim.
   `credential-revoked` record BY HAND — nothing in this repository writes that event yet"*.
   **Closing condition:** a writer for `credential-revoked`, or a written line saying hand-append
   is the intended interface and naming where its schema is documented.
-- 🔴 **`leakscan` EXITS 2 ON ANY UNTRACKED *DIRECTORY-LIKE* PATH IN ITS OWN ENUMERATION — THE
-  CLASS IS WIDER THAN THE AGENT WORKTREE IT WAS FILED FOR, AND THIS ARC'S OWN BUILD ARTEFACTS
-  ARE IN IT.** `git ls-files --others` yields the path and the scanner reads it:
-  `[Errno 21] Is a directory` → exit 2, "could not vouch". Two instances measured:
-  `.claude/worktrees/agent-…/` (a live sibling worktree, **not yours to remove**) and
-  **`result`/`result-1`, nix gcroot symlinks pointing at store DIRECTORIES**, which a previous
-  entry explicitly acquitted — *"leakscan reads them without complaint"* — and which were in
-  fact the only cause named at the time it was re-measured. 🔴 **It is not cosmetic: the same
-  enumeration puts EIGHT of this repo's own tests red** (`test_leakscan_covers_every_tracked_file.py`,
-  `test_no_scrubbed_identifiers.py`), which nothing recorded, and `handoff_doc.py` now refuses a
-  handoff write on ANY non-zero exit — so an operator override gets spent on a scanner artefact,
-  which is how an override becomes reflexive. **Workaround that costs nothing:** build with
-  `nix build --out-link <scratchpad>/…` so no gcroot lands in the repo root.
-  **Closing condition:** the scanner skips directory entries (or names them as skipped rather
-  than unreadable), with a control proving a genuinely unreadable FILE still exits 2.
 - 🟡 **FOUR FILED BY #54's AND #57's LADDERS — AND (a) AND (b) WERE RE-MEASURED AND ARE WRONG AS
   FILED.** 🔴 **(a) IS CLOSED AND ITS ENTRY IS INVERTED.** `internal/ui/README.md` carries no
   "takes two backends" sentence at all — it records the removal explicitly, saying the sentence
@@ -245,22 +213,6 @@ an item nobody can find.** Re-ranking re-points every live claim.
   with nothing in CI grepping it; `-race` gated in one tier only; and P4 rounds 1 and 3's guards
   absent from the persistent battery.
 
-- 🔴 **THE DEPLOYED BROWSER SURFACE IS 13 COMMITS STALE, AND THE ONE UI COMMIT AMONG THEM IS THE ONE A
-  VALIDATION PASS IS FOR.** The workload runs `cairn-ui:sha-71041ff8…` (#106);
-  `git rev-list --count 71041ff..origin/main` = **13**, and
-  `git log 71041ff..origin/main -- internal/ui cmd/cairn-ui` lists exactly **one** — `9c24bc4` (#117),
-  the Tailwind theming. **Measured two independent ways at the edge, each with its local control:**
-  the stylesheet route serves **1,146 B** of hand-written CSS where `main` serves **28,109 B** of
-  generated output (`internal/ui/app.css`, confirmed byte-for-byte on a hand-run instance from `main`);
-  and the edge still sends the `Content-Security-Policy` header that #117 DELETED, where `main` sends
-  none. So the live page is the pre-theme UI. 🔴 **THE BUMP IS MECHANICAL AND THE ARTEFACT ALREADY
-  EXISTS** — the registry answers **200** for the manifest at `main`'s sha, with the deployed tag as a
-  positive control (200) and a bogus short tag as a negative control (404) — it is a one-line image-tag
-  change in the deployment-manifest repo's UI Deployment. ⚠ **AND THE BUMP HAS A CONSEQUENCE WORTH
-  STATING BEFORE IT IS TAKEN: it REMOVES a CSP that is currently live.** #117's operator decision to
-  delete that header has never actually reached production; the bump is the moment it does. **Closing
-  condition:** the tag names a revision whose distance to `origin/main` is 0 at the moment it lands,
-  recorded — or a written line accepting the lag and saying for how long.
 - 🟡 **THE ENTRIES PAGE OFFERS NO WAY TO REACH THE SHARE FLOW, WHICH IS WHY "GO TEST SHARING IN THE
   BROWSER" KEEPS STALLING.** Measured on a hand-run instance from `cd86714`, signed in as a principal
   owning two scopes: `GET /` is **1,386 B** with **0** occurrences of the word "share", exactly **one**
@@ -274,6 +226,60 @@ an item nobody can find.** Re-ranking re-points every live claim.
   scope, or it is not yours to share"* for a scope that **is** theirs to share. The refusal is correct
   and its sentence is false. **Closing condition:** one PR that links the share index from the entries
   page, plus a decision on whether the name-keyed refusal should say something true.
+
+- 🔴 **THE SURFACE ASSERTS IT SHIPS NO JAVASCRIPT AND THAT IS FALSE OF THE SERVED PAGE — THE GATE
+  READS A HERMETIC POD AND IS STRUCTURALLY BLIND TO THE EDGE.** `internal/ui` rests part of its XSS
+  story on the page carrying no script, and `uiaudit` asserts `document.scripts.length == 0` across
+  every capture — **of a pod it boots itself over a temp directory**. Measured at the edge with
+  `curl` (no browser, so no extension can be blamed, and with a positive control proving the grep
+  sees a `<script>` when one is there): `GET /sign-in` carries **one** `<script>` — Cloudflare's
+  bot-detection injection (`__CF$cv$params`, `/cdn-cgi/challenge-platform/scripts/jsd/main.js`) —
+  while `GET /` carries **none**, so it is not even uniform. 🔴 **AND THE CSP DELETION IS WHAT LET IT
+  EXECUTE:** the old header was `default-src 'none'` with no `script-src`, which blocks an inline
+  script, so it was presumably being injected and refused for as long as that header shipped. The
+  deletion was an operator decision taken for other reasons and this consequence was not among them.
+  **Closing condition:** a decision — disable the edge's JS detections for this host, restore a CSP
+  that permits it explicitly, or accept it AND correct `internal/ui`'s claim so it stops reading as
+  true of the deployed surface. Whichever is chosen, the gate's blindness is the separate half: it
+  can never see this, and nothing currently says so where a reader of that claim would look.
+- 🔴 **THE EDGE OVERRIDES THE ORIGIN'S CACHE DECISION BY 48×, AND THE HASHED PATH ONLY NARROWED IT.**
+  `internal/ui/server.go` sets `Cache-Control: public, max-age=300` and states why in so many words:
+  a path carrying no version cannot outlive a deploy by long. The edge serves **`max-age=14400`** —
+  four hours — measured at `age: 168` on a `cf-cache-status: HIT` while the origin was already
+  serving new bytes. Nothing in the deployment repo writes 14400 (grepped), so it is a
+  Cloudflare-side Browser Cache TTL. ✅ The stylesheet is now immune — `cairn#125` gave it a
+  content-hashed URL, and the third deploy of the day proved it live: the hash moved and the new
+  bytes were served **instantly**, where the first deploy needed a cache-bust to be readable at all.
+  ⚠ **That is a narrowing, not a fix** — the next unversioned asset inherits the bug, and the
+  override still silently beats a deliberate application decision. **Closing condition:** a cache
+  rule that respects the origin TTL (or bypasses) for this host, or a written line accepting it.
+  Operator access; not reachable from here.
+- 🟡 **THE WIDE LAYOUT IS DEPLOYED TO BE JUDGED AND MAY READ WORSE THAN WHAT IT REPLACED — WITH THE
+  REASON MEASURED, SO NOBODY REVERTS THE WRONG THING.** `cairn#128` took the ultrawide rung from
+  49% to **97% of a 3004px viewport** (`<main>` 2908px), which is what was asked for. On a store
+  with FEW scopes it looks worse, for a reason the width change did not cause: the card grid is
+  `repeat(auto-fit, minmax(18rem, 1fr))`, and **`auto-fit` collapses empty tracks and STRETCHES the
+  items to fill the row** — so two scopes become two half-empty boxes rather than two natural-width
+  cards. `auto-fill` keeps them at their own width. Separately the entry page has **no grid at all**,
+  so a 97% card holds a measure-capped column beside a void inside its own border. **Closing
+  condition:** a look at the deployed surface against a real store, then either a written line
+  accepting it or one PR doing `auto-fit` → `auto-fill` and capping the entry CARD rather than only
+  its text. 🔴 **Do NOT close it by reverting the breakpoint** — that undoes the operator decision
+  while leaving the actual cause in place.
+- 🟡 **`AGENTS.md` + `CLAUDE.md` ARE EFFECTIVELY FULL — 31,597 B MEASURED, AGAINST A 31,600 B
+  BUDGET ABOVE THE ENFORCED MARGIN.** Three bytes. ⚠ **Two agents reported this differently and BOTH
+  were right**, which is why the numbers are re-measured here rather than relayed: `#126` ADDED the
+  binding claim (*"entry structure comes from `internal/store`'s parsers — never `internal/report`,
+  never a new markdown reader"*, present in `AGENTS.md` today) by tightening two pointer
+  parentheticals to pay for it; `#128` then tried to WIDEN that same clause and
+  `tests/test_agent_instructions_weight.py` **refused it** — even a same-length reword overshot — so
+  the widening went to `internal/ui/README.md`, which the file already points at. ⚠ **And verifying
+  this produced a false zero worth recording:** `grep -c "NEVER A NEW MARKDOWN READER"` answered **0**
+  because the phrase WRAPS ACROSS A NEWLINE. A line-oriented grep is a claim about lines, not about
+  the file; flatten whitespace, and keep a positive control beside the count. **Consequence for the
+  next edit:** any new sentence there requires evicting an existing one — a decision about somebody
+  else's claim, not a formatting change. **Closing condition:** an eviction PR that frees a stated
+  number of bytes, or a written line accepting that the file is closed to new claims.
 
 ## Gotchas / decisions / dead-ends
 🔴 **THIS SECTION HAS BEEN PRUNED THREE TIMES, AND PRUNED MEANS *MOVED*: NO PRUNE HAS DELETED NOR
@@ -833,6 +839,62 @@ follow-up with a closing condition on the PR rather than fixed here.
   `handoff_doc.py --repo <that worktree> --confirm --push` and open a PR from the branch. The gate then
   vouches for the delta on its own terms — `leakscan: … exited 0 with this delta written` — which is a
   STRONGER result than an approved override, not a workaround for it.
+
+- 🔴 **A GUARD ON A REFUSAL IS NOT A GUARD ON A LEAK, AND THE GREEN VERSION SHIPPED FIRST.** The new
+  browse surface's first authority guard asserted a uniform refusal in BOTH directions with BOTH
+  positive controls, and was green — while a `store.Unrestricted()` mutant in `StoreSource.Visible`
+  **survived** it. The per-scope refusal held (a foreign scope resolves to an empty id, which
+  `pickScope` refuses), so every assertion passed **while the ROOT page listed the other tenant's
+  scope name, entry refs and counts as an unlinked card.** It died only once the guard asserted
+  root-page CONTENT. **Ask what the mutant makes VISIBLE, not only what it makes reachable.**
+- 🔴 **CASCADE ORDER IS NOT VISIBLE IN A GREP, AND A CORRECT-LOOKING RULE WAS DEAD FOR ITS WHOLE
+  EXISTENCE.** `--breakpoint-ultra` was spelled `2000px` among `rem` defaults. Tailwind v4 orders
+  breakpoint variants by resolved size and cannot rank a `px` length against `rem` without assuming a
+  root font size, so the `ultra` blocks were emitted **FIRST**; media queries add no specificity, all
+  four matched, and the last-declared `80rem` rung won. Measured both ways: pre-fix emitted order
+  `2000px, 2000px, 40rem, 64rem, 64rem, 80rem`; post-fix `40rem, 64rem, 64rem, 80rem, 125rem,
+  125rem`. **Keep every breakpoint in ONE unit, and verify the EMITTED order in the generated CSS —
+  the source cannot show you this.** ⚠ I first called the rule a selectorless orphan and was WRONG:
+  it was valid CSS nesting inside `body`. Retracted before it reached a subagent, which is the only
+  reason a wrong diagnosis was not implemented.
+- 🔴 **A LAYOUT GATE THAT ASSERTS "NO HORIZONTAL OVERFLOW" IS STRUCTURALLY BLIND TO "THE PAGE IGNORES
+  THE VIEWPORT" — A TOO-NARROW CONTAINER NEVER OVERFLOWS.** `uiaudit` reported `0 overflow` across 65
+  captures at five widths and was CORRECT, while content used 41% of the display. The remedy is a
+  guard on content width as a **FRACTION OF VIEWPORT**, which is a different claim and must not
+  replace the overflow one. ⚠ **And the floor's value is itself a decision:** 45% refused the dead
+  rung but would have stayed green on a silent revert to the previous cap — i.e. green on a
+  regression against an operator decision. It was re-derived to 80%.
+- 🔴 **"VERIFIED" KEPT MEANING THE ARTEFACT WHEN THE QUESTION WAS THE SERVED PAGE — THREE TIMES IN ONE
+  SESSION, IN THREE SHAPES.** (a) A healthy pod, green gates and reproducing probes while the image
+  was **13 commits stale**. (b) A stylesheet verified at origin while every warm browser held the old
+  one for four hours — *"the edge refreshed"* is not *"clients refreshed"*, and I reported one as
+  covering the other. (c) `document.scripts.length == 0` asserted across 65 captures of a **hermetic
+  local pod** while the served page carries Cloudflare's injected script. **Name which artefact your
+  reading is about, every time: the binary, the origin, the edge, or the client.**
+- 🔴 **A PIPE EATS THE EXIT STATUS, AND IT COST ME A FALSE DEFECT AGAINST A CORRECT GATE.** I ran
+  `python3 <checker> 2>&1 | tail -15; echo rc=$?` and read `tail`'s status, then reported that the
+  deployment repo's phase-1 gate "exits 0 while saying it could not run". Re-measured with no pipe:
+  **rc 3** without its dependency, **rc 0** with it — exactly as its own docstring says, and for the
+  reason the docstring gives. **Read `$?` off the command itself; a pipeline's status belongs to its
+  last stage.**
+- ⚠ **REMOVING A FINISHED AGENT'S WORKTREE MAKES THAT AGENT UNRESUMABLE, AND THAT TRADE WAS NOT
+  WEIGHED.** Sweeping it restored the leak gate to rc 0 and simultaneously ended the ability to send
+  the agent a two-line follow-up; the next round cost a fresh dispatch with a hand-written brief. The
+  two goods are in direct tension — worktree isolation is mandatory AND an agent worktree reds the
+  gate. ✅ `#127` closed the gate half (directory entries are now NAMED as skipped, and a genuinely
+  unreadable FILE still exits 2, proven in both directions). **So sweep for tidiness, not for the
+  gate — and not while you may still want the agent.**
+- 🔴 **SQUASH-MERGING A STACKED PARENT MAKES THE CHILD `CONFLICTING`, PREDICTABLY, AND THE FIX IS
+  `--onto`.** `main` gains the parent's content as a NEW commit while the child still carries the
+  parent's originals, so the same work collides with itself. `git rebase --onto origin/main
+  <old-base> <child>` replays only the child's own commits. ⚠ **And merge the parent WITHOUT
+  `--delete-branch`** — GitHub auto-closes any PR whose base branch is deleted and refuses to reopen
+  it, so the child's review thread is lost. Delete the parent branch only after confirming no open PR
+  still targets it. ⚠ `mergeable` reads `UNKNOWN` for a while after the base moves; it settles.
+- **Decision (operator, this session): the wide layout DEPLOYS to be judged rather than being
+  iterated first.** Offered and declined: one more round (`auto-fit` → `auto-fill`, cap the entry
+  CARD) before deploying, and reverting the cap to `112rem`. The measurement and the named wrong
+  remedy are in `Defects` so the next reader does not revert the breakpoint instead.
 
 ## How to verify
 ```bash
