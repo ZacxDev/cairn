@@ -474,7 +474,7 @@
       #
       # To move it: change the dependency, set this to
       # `lib.fakeHash`, run `nix build .#cairn-ui`, and copy the hash nix prints.
-      goVendorHash = "sha256-La+SYvwXEPSEbmLbsEJfXdMzYfs/3Df3tbSfNsrlkzU=";
+      goVendorHash = "sha256-x06/IC+OVtpSpEYKqHW4PPnLTvyWli/oRC11eP/bqhY=";
 
       # 🔴 THIS USED TO BE `vendorHash = null`, AND THE SENTENCE THAT STOOD HERE —
       # "this is the line that makes a new dependency a build FAILURE rather than a
