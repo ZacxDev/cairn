@@ -240,7 +240,7 @@ func TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne
 		"a real ref in somebody else's scope, RAW view": notYoursEntryRaw,
 	} {
 		if rec.Code != notYoursScope.Code || rec.Body.String() != notYoursScope.Body.String() {
-			t.Errorf("%s answered %d %q; the scope refusal is %d %q. All four ways to miss must be one answer.",
+			t.Errorf("%s answered %d %q; the scope refusal is %d %q. Every way to miss must be one answer.",
 				name, rec.Code, rec.Body.String(), notYoursScope.Code, notYoursScope.Body.String())
 		}
 	}
@@ -268,6 +268,11 @@ func TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne
 
 	// 🔴 AND THE MIRROR: the SAME id that A is refused renders 200 for B. This is the
 	// control that proves the refusal is about the CALLER and not about the id.
+	//
+	// ⚠ THE RAW VIEW NEEDS ITS OWN MIRROR AND BRIEFLY LOST ONE. The guard folded into this
+	// test carried a B-side raw read; folding it in dropped that arm, leaving nothing
+	// driving `?view=raw` as the principal who CAN read the entry — so the raw row above
+	// would have been satisfied by a raw view that refused everybody. Restored here.
 	srvB := browseServer(t, root, readsB)
 	mirror := getAs(t, srvB, ScopePath+"?"+QueryID+"="+string(browseScopeB))
 	if mirror.Code != http.StatusOK {
@@ -276,6 +281,19 @@ func TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne
 	}
 	if strings.Contains(mirror.Body.String(), "alpha-notes") {
 		t.Error("B's scope page names scope A, which B cannot read")
+	}
+	rawMirror := getAs(t, srvB, EntryPath+"?"+url.Values{
+		QueryScope: []string{string(browseScopeB)},
+		QueryRef:   []string{"ledger"},
+		QueryView:  []string{ViewRaw},
+	}.Encode())
+	if rawMirror.Code != http.StatusOK {
+		t.Fatalf("POSITIVE CONTROL FAILED: the RAW view of B's own entry answered %d for B, want 200: %s. "+
+			"Without this, the raw row above is satisfied by a raw view that refuses everybody.",
+			rawMirror.Code, rawMirror.Body.String())
+	}
+	if !strings.Contains(rawMirror.Body.String(), onlyInBeta) {
+		t.Error("B's RAW view does not carry its entry's own text, so its 200 may not be the raw view")
 	}
 
 	// 🔴 AND THE ROOT PAGE, WHICH IS WHERE A LOST NARROWING IS ACTUALLY VISIBLE. This

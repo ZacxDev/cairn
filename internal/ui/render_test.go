@@ -314,6 +314,22 @@ func TestHostileEntryTextIsEscapedOnEveryBrowsePage(t *testing.T) {
 		t.Fatal("POSITIVE CONTROL FAILED: the heading/bullet/body/code-span fixtures carry NOTHING the token " +
 			"scanner recognises, so a zero on the rendered entry page below would mean nothing")
 	}
+	// 🔴 AND THE SAME CONTROL FOR THE RAW FIXTURE, WHICH HAD NONE. The `entry-raw` row
+	// carries the widest sink on the surface — the whole file — and its two fixtures were
+	// in neither the token count above nor the shape comparison below. If `hostileRaw`
+	// were ever softened to something whose markup shape equals `benignRaw`'s, that row
+	// would compare equal, the token scan would find nothing, and NO control in this test
+	// would notice: the widest sink would pass vacuously in a fully green suite.
+	if structureOf(hostileRaw) == structureOf(benignRaw) {
+		t.Fatalf("POSITIVE CONTROL FAILED: the hostile and benign RAW fixtures carry the same markup "+
+			"shape (%+v), so the `entry-raw` row of the differential below cannot detect an injection "+
+			"into the raw view at all", structureOf(hostileRaw))
+	}
+	if n := countTokens(hostileRaw); n == 0 {
+		t.Fatal("POSITIVE CONTROL FAILED: `hostileRaw` carries NOTHING the token scanner recognises, " +
+			"so a zero on the rendered raw page would mean nothing")
+	}
+
 	benignSectionContent := "## Pointers" + "prose" + "- a bullet" + benignCodeSpan
 	if structureOf(benignSectionContent) == structureOf(newlyReachable) {
 		t.Fatalf("POSITIVE CONTROL FAILED: the hostile section fixtures carry the same markup shape as the "+

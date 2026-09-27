@@ -141,9 +141,13 @@ type Entry struct {
 	// THAN `Sections`. Every other field here is something a parser accepted; this one is
 	// the file. It reaches the page through a single `g.Text` inside a `<pre>` — never
 	// `inlineCode`, which would transform it, and never `g.Raw`, which `rawban_test.go`
-	// bans outright. `TestTheRawViewEscapesTheFileAndShipsNoScript` is the behavioural
-	// half, because a structural ban cannot show that a file carrying a `<script>` arrives
-	// as text.
+	// bans outright. Two guards cover it, and they are named here because a comment naming
+	// a guard that does not exist is worse than one naming none:
+	// `TestHostileEntryTextIsEscapedOnEveryBrowsePage` (`render_test.go`) compares MARKUP
+	// SHAPE over the `entry-raw` page state, and
+	// `TestAHostileFileReachesTheRawViewAsTextThroughTheREALPIPELINE` (`rawview_test.go`)
+	// drives a hostile FILE through `readEntry` and the HTTP layer — the half the
+	// fixture-driven differential structurally cannot see.
 	//
 	// 🔴 IT IS A NEW RETENTION OF THE WHOLE FILE, AND AN EARLIER VERSION OF THIS COMMENT
 	// SAID THE OPPOSITE AND CALLED IT MEASURED. ❌ RETRACTED: *"`Sections` holds SUBSTRINGS
@@ -431,9 +435,16 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 		return Entry{}, store.EntryUnreadable(path, err)
 	}
 	text := store.DecodeReplace(data)
-	// The raw view's whole payload, taken here rather than re-read on demand: this is the
-	// one function that knows which file this entry came from, and a second read keyed on
-	// the ref would be the path reconstruction the paragraph above refuses.
+	// The raw view's whole payload, taken here rather than read on demand.
+	//
+	// ⚠ THE REASON IS THE `Source` INTERFACE, NOT PATH SAFETY, AND AN EARLIER VERSION OF
+	// THIS COMMENT GAVE THE WRONG ONE. It said a deferred read "would be the path
+	// reconstruction the paragraph above refuses" — false, and contradicted by this
+	// field's own doc: `Filename` is already on [Entry], so a lazy read needs no
+	// reconstruction from a ref. The actual obstacle is that [Source] is a two-method
+	// interface with no read-a-file method, so making this lazy is an interface change
+	// rather than a local one. Stated because the wrong reason sends the next person
+	// looking for a traversal hazard that is not there.
 	item.Raw = text
 	sections := store.ExtractSections(text, report.SurfacedHeadings)
 	for _, heading := range report.SurfacedHeadings {
@@ -1097,9 +1108,11 @@ func (s *Server) handleEntryPage(w http.ResponseWriter, r *http.Request, id iden
 	// accepted. A read of this parameter above `pickScope`/`pickEntry` would be a second
 	// place the narrowing can be skipped, and the refusals it skipped are the ones that
 	// make this surface's four ways to miss indistinguishable.
-	// `TestTheRawViewIsNarrowedByTheSameAuthorityAsTheRenderedOne` is what holds it — it
-	// compares the raw and rendered refusals as BYTES, so a raw view that answered its own
-	// 404 would be red.
+	// `TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne` is what
+	// holds it — its RAW-view row compares this refusal, as BYTES, against the SCOPE
+	// refusal rather than against the rendered one, because two handlers wrong together
+	// would satisfy a raw-vs-rendered comparison. A raw view answering its own 404 is red
+	// there.
 	//
 	// ⚠ AND IT CHANGES NO AUTHORITY, WHICH IS WHY THERE IS NO SECOND VERB. Every byte the
 	// raw view shows came out of a file `Visible` already loaded for this principal under

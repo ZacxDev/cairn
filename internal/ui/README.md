@@ -1960,8 +1960,8 @@ bounded by its container.
   inside the span is counted in the fixtures (non-zero) and counted on the rendered page (zero).
   🔴 Do not read this as a property of the package. The raw view (`rawBlock`) emits ONE node, so
   `g.Raw(e.Raw)` is a one-token non-escaping mutant, and it was written and watched kill
-  `TestTheRawViewEscapesTheFileAndShipsNoScript` — see the raw-view section below for why that
-  verdict had to be read with `-run` scoped to one guard. **A "cannot be mutated" claim is scoped
+  `TestHostileEntryTextIsEscapedOnEveryBrowsePage`'s `entry-raw` row — see the raw-view
+  section below for why that verdict had to be read with `-run` scoped to one guard. **A "cannot be mutated" claim is scoped
   to the code it was written about and expires the moment a new call site exists.**
 
 ## 🔴 The entry page is TWO views behind ONE route, and the switch is a query parameter rather than a script
@@ -2006,23 +2006,30 @@ Measured at `38bea8b` (pre-change) and at the branch head:
 | `TestTheRawViewShowsWhatTheRenderedViewStructurallyCannot` | **FAIL** | PASS |
 | `TestBothEntryViewsOfferTheOtherOneAndMarkTheCurrentOne` | **FAIL** | PASS |
 | `TestAnUnrecognisedViewValueRendersTheRenderedView` | **FAIL** | PASS |
-| `TestTheRawViewIsNarrowedByTheSameAuthorityAsTheRenderedOne` | PASS | PASS |
-| `TestTheRawViewEscapesTheFileAndShipsNoScript` | PASS | PASS |
 
-🔴 **The last two PASS on pre-change code, and that is stated rather than counted as
-coverage.** Both drive `?view=raw` against a tree where the parameter is ignored, so both
-were measuring the RENDERED view — which is already narrowed and already escapes. They are
-*invariant guards* by this repository's own definition. What makes them worth keeping is
-that they are the two things a new render path is most likely to get wrong, and each was
-mutation-tested on the NEW path rather than left on its green:
+⚠ **THE TWO INVARIANT GUARDS THAT USED TO SIT IN THIS TABLE HAVE MOVED, AND THE TABLE NO
+LONGER NAMES THEM.** Both passed on pre-change code, because there they drove the RENDERED
+view — already narrowed, already escaping — so neither was regression coverage. Rather than
+keep them as their own tests, each was folded into the harness that already owned the rule
+it asserts, and each was RE-MUTATION-TESTED in its new home:
 
-- **The narrowing.** Mutant: `handleEntryPage`'s `pickScope` refusal answers `403` with its
-  own sentence when `?view=raw` is set. Killed by this guard's own assertion —
-  `rawview_test.go:280`, *"the RAW view of another principal's entry answered 403, want
-  404"*, quoting the mutant's sentence back.
-- **The escaping.** Mutant: `rawBlock` emits `g.Raw(e.Raw)` instead of `g.Text(e.Raw)`. All
-  four of this guard's assertions fired, including a counted `2` `<script` occurrences
-  against a required `0`.
+- **The narrowing** now lives as the RAW-view row of
+  `TestTheBrowsePagesRefuseAnotherPrincipalsScopeWithTheSameBytesAsAnAbsentOne`, compared
+  against the SCOPE refusal rather than against the rendered one — stronger, because two
+  handlers wrong together satisfy a raw-vs-rendered comparison. Mutant: a `?view=raw`
+  conditional `403` above `pickScope`'s refusal. **RED at `browse_test.go:243`**, quoting
+  the mutant's own sentence back.
+- **The escaping** now lives as the `entry-raw` row of
+  `TestHostileEntryTextIsEscapedOnEveryBrowsePage`, a markup-SHAPE differential rather than
+  substring matching. Mutant: `rawBlock` emits `g.Raw(e.Raw)`. **RED on both the shape
+  comparison and the `<script` count.** The pipeline half it cannot reach —
+  `readEntry` reading a real file, and the HTTP layer — stayed behind as
+  `TestAHostileFileReachesTheRawViewAsTextThroughTheREALPIPELINE`.
+
+🔴 **THE FILE:LINE CITATIONS THIS SECTION USED TO CARRY WERE STALE WITHIN ONE COMMIT OF
+BEING WRITTEN** — they named `rawview_test.go:280` and an assertion string that the fold had
+already moved. A `file:line` in prose is a claim with a very short half-life; the guard
+NAMES above are what a reader can still grep for.
 
 🔴 **`rawban_test.go` KILLS THAT MUTANT TOO, WHICH IS THE "GREEN FOR THE WRONG REASON"
 TRAP** — a mutant killed by a different guard's error says nothing about yours. So the
@@ -2037,11 +2044,17 @@ Phase-D note this corrects has been fixed where it lives, not contradicted from 
   serves is tens of kilobytes across tens of files; nothing here pins a ceiling, and a
   multi-megabyte entry would be sent in full. No such entry exists in any store this has
   been run against, so the limit is unmeasured rather than known-safe.
-- **The `<pre>` wrapping at a real viewport.** `.entry-raw` shares `.section-body`'s measure
-  and wrapping rules, which `uiaudit` measures for the rendered view; the raw view is a page
-  state `uiaudit` does not currently capture, so its overflow behaviour is argued from the
-  shared rule rather than observed by that harness. It WAS observed once, by hand, in a real
-  browser at 1440px — which is a single measurement and is named as one.
+- ~~**The `<pre>` wrapping at a real viewport** is unobserved by `uiaudit`.~~ ✅ **CLOSED BY
+  THIS CHANGE, and the correction is recorded rather than the sentence quietly deleted.**
+  It read: *"the raw view is a page state `uiaudit` does not currently capture."* That was
+  true when written and false by the time it shipped — the same change moved `/entry` into
+  `linkExpanded`, so the walk follows the rendered view's link to `?view=raw` and captures
+  it. Measured on the real `ExpandLinks` against the real route ledger: the rendered entry
+  page publishes 6 hrefs, 2 expand (the raw view and the scope page), 4 decline, 0 bounded;
+  the raw view's own 2 links are already enqueued, so the cycle terminates.
+  ⚠ What is still only a HAND measurement is the pixel-level wrapping at 1440px; the walk
+  captures the page, `refuseWalkRegressions` does not refuse on axe violations, and the
+  `uiaudit` job is `continue-on-error`.
 - **Anything an edge inserts downstream.** The zero-script assertion is about what THIS
   ORIGIN renders. That is the scope correction `#130` made to three "this surface ships
   none" spellings, and it applies here unchanged.

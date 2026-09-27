@@ -220,11 +220,18 @@ func EntryPage(v PageView) g.Node {
 		),
 		// 🔴 NO LEGEND ON THE RAW VIEW, AND ITS DELETION IS A FINDING RATHER THAN A
 		// TRIM. A first version shipped `entryRawLegend()`, four rows. Three of them
-		// restated `entryRawWhat`, twenty pixels above on the same page; the fourth was
-		// the only new claim and it was FALSE — it said long lines "are wrapped for
-		// reading rather than scrolled", while the rule set `.entry-raw` joins carries
-		// `whitespace-pre-wrap break-words` AND `overflow-x-auto`, so scrolling is
-		// exactly what stays available. A legend is a key to a diagram; the raw view
+		// restated `entryRawWhat`, twenty pixels above on the same page. ❌ AND THE REASON
+		// FIRST GIVEN FOR DROPPING THE FOURTH WAS ITSELF FALSE, WHICH IS THE DEFECT THIS
+		// DELETION WAS SUPPOSED TO BE FIXING. It said the row's claim — long lines "are
+		// wrapped for reading rather than scrolled" — was wrong because `.entry-raw`
+		// carries `overflow-x-auto` too, "so scrolling is exactly what stays available".
+		// MEASURED in a real browser at 1440px and 390px, on a line of 5700 spaced
+		// characters AND a 4000-character unbreakable token: `scrollWidth == clientWidth`
+		// at both, nothing horizontally scrollable. `overflow-x: auto` is SET and never
+		// ENGAGES, because `pre-wrap` plus `break-word` means the content cannot exceed
+		// the box. The deleted row was substantially RIGHT. The deletion stands on its
+		// other three grounds — three of four rows restating the explainer above them,
+		// and a legend being a key to a diagram; the raw view
 		// renders ONE element, and the mapping a legend would explain is the identity.
 		g.If(!v.RawView, entryLegend()),
 	)
@@ -250,6 +257,13 @@ func entryViewTabs(s Scope, e Entry, rawView bool) g.Node {
 	}
 	return h.Nav(
 		h.Class("view-tabs"),
+		// 🔴 AN ACCESSIBLE NAME, BECAUSE THIS NAV IS THE SECOND ONE ON THE PAGE. The
+		// breadcrumb is a `<nav>` too, and two landmarks with the same role and no name
+		// are axe's `landmark-unique` — MEASURED on this page, both views, and absent
+		// from a control with this element suppressed. Nothing between here and
+		// production would have said so: `refuseWalkRegressions` does not refuse on axe
+		// violations and the `uiaudit` job is `continue-on-error`.
+		h.Aria("label", "Entry view"),
 		tab("rendered", false),
 		tab("raw", true),
 	)
@@ -264,7 +278,7 @@ func entryViewTabs(s Scope, e Entry, rawView bool) g.Node {
 // view exists to answer is "what does the file actually say". A reader comparing this
 // against their editor must see the same characters.
 //
-// ⚠ `<pre>` INSIDE `<code>` RATHER THAN EITHER ALONE, MATCHING `sectionBlock`. The `<pre>`
+// ⚠ `<code>` INSIDE `<pre>` RATHER THAN EITHER ALONE, MATCHING `sectionBlock`. The `<pre>`
 // carries the whitespace semantics and the class; the `<code>` is what says the content is
 // code to anything reading the document structure.
 func rawBlock(e Entry) g.Node {
@@ -339,6 +353,9 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 func breadcrumbs(crumbs []crumb) g.Node {
 	return h.Nav(
 		h.Class("crumbs"),
+		// Named for the same reason as `entryViewTabs` — a landmark pair is only unique
+		// if BOTH carry a name, so naming one would leave the violation standing.
+		h.Aria("label", "Breadcrumb"),
 		// The trail always starts at the root, so the first step is spelled here rather
 		// than by every caller.
 		h.A(h.Class("crumb"), h.Href(RootPath), g.Text("All scopes")),
