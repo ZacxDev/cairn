@@ -354,6 +354,78 @@ assertion above is satisfied by a page with no links at all.
 | the `ToLower` is deleted | rc 0 | `safeHref refused a permitted URL "HTTPS://tracker.invalid/issue/1"` |
 | the whitespace/C0 strip is deleted | rc 0 | `safeHref refused a permitted URL "  https://tracker.invalid/issue/1  "` |
 
+### 🔴 THE SCOPE OF EVERY GUARD ABOVE IS THE RENDERER'S BYTES, NOT THE PAGE A READER GETS
+
+⚠ **This is a scope correction, not a vulnerability report, and it is an operator decision to
+accept what was measured rather than a hazard left open.** Nothing above is softened: the
+escaping, `safeHref`, the raw-node ban and the structural differential all measure what this
+package *emits*, they all still hold, and none of them is weakened by what follows.
+
+What moved is a claim this section and `uiaudit` were both making one step wider than their
+evidence. The XSS story partly rested on **the page carrying no script at all**; `uiaudit`'s
+`refuseWalkRegressions` refuses any capture with `document.scripts.length != 0` and is the
+gate behind it. **That gate boots its own pod on loopback over a temp directory it created**,
+so its zeros are a property of the ORIGIN's own bytes. They are structurally incapable of
+seeing anything inserted between that origin and a real client, and **on the current
+deployment something is.**
+
+**Measured at the edge of the deployed surface with an HTTP client** — no browser, so no
+extension can be blamed — against a positive control proving the counter sees a `<script>`
+when one is present:
+
+| probe | `<script>` elements | what they are |
+|---|---|---|
+| anonymous `GET /sign-in` | **1** | an inline bot-detection injection (`__CF$cv$params`, referencing a `/cdn-cgi/challenge-platform/…` script) |
+| authenticated `GET /`, real session cookie | **2** | that same inline script, **plus** `<script data-cfasync="false" src="/cdn-cgi/scripts/<id>/cloudflare-static/email-decode.min.js">` |
+
+So the honest claim is: **this RENDERER emits no script — which is the property the guards
+above establish — and the SERVED page may carry script inserted downstream, as it does today.**
+Every `document.scripts.length == 0` in this repository should be read at that scope. The
+`default-src 'none'` row in the table below is the same fact from the other side: with the
+header gone, nothing in a browser refuses that injected script, and the row's *"arbitrary
+script … become loadable"* is now realised rather than hypothetical.
+
+#### ⚠ AND A RETRACTION, RECORDED BECAUSE THE LESSON IS WORTH MORE THAN THE CORRECTION
+
+The previously-recorded measurement said authenticated `GET /` carries **no** script, and
+concluded from the difference against `/sign-in` that the injection *"is not even uniform"*.
+**Both halves were wrong**, and the reason is the generalisable part: that earlier reading was
+taken **anonymously**, so what it measured was a **12-byte `401` body** — a refusal, not the
+entries page. Re-measured with a real session cookie, `GET /` carries two.
+
+🔴 **AN ANONYMOUS PROBE OF AN AUTHENTICATED ROUTE MEASURES THE REFUSAL, NOT THE PAGE.** It
+returns a well-formed, quotable number about a body no reader ever sees, and the number is
+reassuring in exactly the direction that stops anyone looking. The injection is uniform; the
+probe was not. Every future measurement of this surface has to say which credential it carried.
+
+#### 🔴 THE SAME EDGE REWRITES CONTENT, NOT ONLY SCRIPT — WHICH BINDS A NEXT EDIT HERE
+
+This is the half that is easy to lose, because it is not a script and no script counter can
+see it. The rendered `signed in as <address>` arrives at the client as:
+
+```
+<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="<hex>">[email&#160;protected]</a>
+```
+
+An email-obfuscation rewriter replaced the address with a literal placeholder and introduced an
+`href` this application never emitted — **to an endpoint no route ledger here declares**. Two
+consequences, both of which bind anyone editing this section:
+
+- **With script disabled the surface displays a FALSE identity string.** Not an escaped one, not
+  a missing one — a placeholder that reads as content.
+- **A test over the renderer's output bytes says nothing about what a reader sees.** That is
+  aimed squarely at assertion 3 above, the whole-normalised-string pin: it is still the right
+  guard, because the renderer's bytes are the thing this package controls and the only thing it
+  can be held to. But it is a claim about a string leaving this process, and a downstream
+  rewriter can alter any of it. Do not widen a pin on rendered bytes into a claim about the
+  rendered page — including `ReplicaHonesty`, which is pinned as a whole normalised string for
+  its own reasons and is subject to the same limit.
+
+**Nothing here is a reason to add a guard.** No test in this repository can reach the edge, and
+a guard that could would be pinning somebody else's configuration; what closes this class is a
+smoke probe against a real deployment, which this repository still does not have — the same
+unclosed gap `uiaudit/doc.go`'s retracted item 4 names.
+
 ### Response hardening: one header, and a policy that was DELETED on purpose
 
 `X-Content-Type-Options: nosniff`. That is the whole list. The escaping is the guard; that
@@ -1688,7 +1760,10 @@ than reading the `Push` field — a field nothing branches on is a declaration, 
 
 🔴 **Four measurements are REFUSALS** (`refuseWalkRegressions`): no horizontal overflow at
 any captured width, `document.scripts.length == 0`, a decodable axe `testEngine` on every
-capture, and a CONTENT FLOOR at the widest width. The first three were already being COLLECTED
+capture, and a CONTENT FLOOR at the widest width. ⚠ **The script zero is a claim about the
+ORIGIN this walk boots, not about the page a reader receives** — the deployed surface's
+served page carries injected script and rewritten content, measured; the scope, the numbers
+and the retraction behind them are in the XSS section above. The first three were already being COLLECTED
 and printed; nothing read them, so a responsive regression would have been a digit in a log
 beside an exit 0. The width count is part of the verdict too — a matrix that silently collapsed
 to one width produces zero overflow findings and reads exactly like a responsive surface.

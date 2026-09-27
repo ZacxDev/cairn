@@ -56,6 +56,23 @@ type Capture struct {
 	// browser actually has. It is a measurement and not a refusal at this level: this
 	// module's own positive-control page carries a script on purpose, so the assertion
 	// belongs to the walk over the real surface — see `refuseWalkRegressions`.
+	//
+	// 🔴 AND ITS SCOPE IS THE ORIGIN'S OWN DOM RATHER THAN A READER'S — MEASURED, NOT FEARED,
+	// AND THE ZERO IS ALREADY FALSE OF THE DEPLOYED SURFACE. The walk builds its own world:
+	// `BootWorld` starts `cairn-ui` on loopback over a temp directory it created, so nothing
+	// sits between that origin and this browser. An edge CDN in front of a deployment can
+	// INJECT script into the served page, and such a page is structurally invisible here
+	// however strict `refuseWalkRegressions` is. Measured at the edge with an HTTP client
+	// (no browser, so no extension can be blamed) against a positive control that counts a
+	// `<script>` when one is present: an anonymous `GET /sign-in` carries ONE inline
+	// bot-detection script, and an authenticated `GET /` carries TWO — that one plus an
+	// email-decoding subresource. So a zero here says the RENDERER emits no script, which is
+	// the property `internal/ui`'s guards establish; it does NOT say a reader's DOM has none.
+	//
+	// ⚠ The measurement, the RETRACTION behind it (an earlier reading of authenticated `/`
+	// was taken anonymously and therefore measured a `401` body, not the page) and the CONTENT
+	// the same edge rewrites are in `internal/ui/README.md`. Nothing here changes: this
+	// counter and its refusal are the right instrument for the property they can see.
 	ScriptCount int
 }
 
@@ -769,12 +786,24 @@ func (b *Browser) CaptureTarget(t Target, vp Viewport) (*Capture, error) {
 	c.DigestJSON = []byte(digestRaw)
 
 	// axe. 🔴 INJECTED THROUGH `Runtime.evaluate`, WHICH IS DEBUGGER-PRIVILEGED AND
-	// BYPASSES CSP. A `<script>` tag would be blocked outright: this surface's CSP names
-	// no `script-src` at all, so `default-src 'none'` governs scripts. That the bypass
-	// actually holds on THIS page under THIS CSP is MEASURED ON EVERY RUN rather than assumed
-	// from the specification: this injection is followed immediately by `axe.run`, and the
-	// result must decode with a `testEngine` — which `TestTheHermeticSurfaceIsWhereTheZEROSCOMEFROM`
-	// asserts. A blocked injection cannot produce that.
+	// BYPASSES CSP. That the bypass actually holds on THIS page is MEASURED ON EVERY RUN
+	// rather than assumed from the specification: this injection is followed immediately by
+	// `axe.run`, and the result must decode with a `testEngine` — which
+	// `TestTheHermeticSurfaceIsWhereTheZEROSCOMEFROM` asserts. A blocked injection cannot
+	// produce that.
+	//
+	// ⚠ THE REASON THIS COMMENT USED TO GIVE IS STALE, AND IT IS CORRECTED RATHER THAN
+	// DELETED BECAUSE IT STILL READS PLAUSIBLY. It said *"A `<script>` tag would be blocked
+	// outright: this surface's CSP names no `script-src` at all, so `default-src 'none'`
+	// governs scripts."* That was true of the policy the original spike measured
+	// (`README.md`, Spike 2) and is FALSE of this tree: the whole `Content-Security-Policy`
+	// header was deleted by operator decision and
+	// `internal/ui`'s `TestTheHTMLResponseSendsNoContentSecurityPolicy` pins its absence, so
+	// NOTHING in a browser forbids script on the page this walk boots. The CDP route is kept
+	// because it is the one that does not depend on a header anybody can delete, not because
+	// a tag would be refused. The `testEngine` check above is unaffected — it measures the
+	// injection ARRIVING, whatever the page's policy is — and so is every zero
+	// `refuseWalkRegressions` reads, whose scope is stated at [Capture.ScriptCount].
 	//
 	// ⚠ THE EVIDENCE USED TO BE A THROWAWAY SPIKE PROGRAM, WHICH WAS DELETED AND IS NOT COMING
 	// BACK. A separate binary nothing ran had already rotted inside its own change; the walk
