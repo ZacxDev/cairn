@@ -125,12 +125,38 @@ type Malformed struct {
 //	Tasks       the `tasks:` front-matter sequence, AS WRITTEN
 //	Sections    the `##` headings `report.SurfacedHeadings` names, with their bodies
 //	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
+//	Raw         the WHOLE file, decoded and otherwise untouched
 type Entry struct {
 	Ref      string
 	Title    string
 	Filename string
 	Aliases  []string
 	Tasks    []string
+
+	// Raw is the entry file's whole text, as `store.DecodeReplace` produced it: front
+	// matter, unsurfaced headings, prose before the first heading, and everything the
+	// parsers dropped. `?view=raw` is the only thing that renders it.
+	//
+	// 🔴 IT IS THE WIDEST ATTACKER-AUTHORED PAYLOAD ON THIS SURFACE, AND STRICTLY WIDER
+	// THAN `Sections`. Every other field here is something a parser accepted; this one is
+	// the file. It reaches the page through a single `g.Text` inside a `<pre>` — never
+	// `inlineCode`, which would transform it, and never `g.Raw`, which `rawban_test.go`
+	// bans outright. `TestTheRawViewEscapesTheFileAndShipsNoScript` is the behavioural
+	// half, because a structural ban cannot show that a file carrying a `<script>` arrives
+	// as text.
+	//
+	// ⚠ IT COSTS A STRING HEADER RATHER THAN A COPY, WHICH IS MEASURED RATHER THAN
+	// ASSUMED. `readEntry` already reads and decodes the whole file in order to parse it,
+	// and `Sections` holds SUBSTRINGS of that same string — so the backing bytes are
+	// retained by this struct either way. Nothing new is read, and `Visible` already
+	// parses every entry the caller may see on every page load.
+	//
+	// ⚠ DECODED, WHICH IS NOT THE SAME AS THE BYTES ON DISK. `store.DecodeReplace`
+	// substitutes for invalid UTF-8, so a file that is not valid UTF-8 renders with
+	// replacement characters. That is the decode every other reader in this tree applies,
+	// and the alternative — putting undecoded bytes into an HTML document — is not a rawer
+	// view, it is a broken one.
+	Raw string
 
 	// Sections are the surfaced headings this entry HAS, in
 	// `report.SurfacedHeadings` order. A heading the entry does not carry is absent
@@ -384,6 +410,10 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 		return Entry{}, store.EntryUnreadable(path, err)
 	}
 	text := store.DecodeReplace(data)
+	// The raw view's whole payload, taken here rather than re-read on demand: this is the
+	// one function that knows which file this entry came from, and a second read keyed on
+	// the ref would be the path reconstruction the paragraph above refuses.
+	item.Raw = text
 	sections := store.ExtractSections(text, report.SurfacedHeadings)
 	for _, heading := range report.SurfacedHeadings {
 		body, present := sections[heading]
@@ -1040,6 +1070,21 @@ func (s *Server) handleEntryPage(w http.ResponseWriter, r *http.Request, id iden
 	}
 	view.Scope = &scope
 	view.Entry = &entry
+	// 🔴 THE VIEW IS CHOSEN AFTER BOTH REFUSALS, AND THE ORDER IS THE GUARD RATHER THAN A
+	// TIDINESS PREFERENCE. `?view=raw` selects a WIDER rendering of an entry the caller has
+	// already been proved to hold: the whole file rather than the sections a parser
+	// accepted. A read of this parameter above `pickScope`/`pickEntry` would be a second
+	// place the narrowing can be skipped, and the refusals it skipped are the ones that
+	// make this surface's four ways to miss indistinguishable.
+	// `TestTheRawViewIsNarrowedByTheSameAuthorityAsTheRenderedOne` is what holds it — it
+	// compares the raw and rendered refusals as BYTES, so a raw view that answered its own
+	// 404 would be red.
+	//
+	// ⚠ AND IT CHANGES NO AUTHORITY, WHICH IS WHY THERE IS NO SECOND VERB. Every byte the
+	// raw view shows came out of a file `Visible` already loaded for this principal under
+	// `control.VerbRead`; what it adds is the part of that file the PARSERS dropped, not a
+	// part of the store the AUTHORITY withheld.
+	view.RawView = q.Get(QueryView) == ViewRaw
 	s.renderEntry(w, view)
 }
 

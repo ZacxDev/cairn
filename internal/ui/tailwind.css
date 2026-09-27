@@ -764,6 +764,35 @@
    * claims: never wider than the container (the original rule, which is what stops a long
    * line making the PAGE scroll) and never wider than a measure a reader can track.
    * `--measure-code`'s comment records where 110ch comes from. */
+  /* The entry page's rendered/raw switch. Two links, no script — see `entryViewTabs`.
+   *
+   * It borrows the breadcrumb's shape deliberately: a reader has already learned that a
+   * row of small links above the content moves them somewhere, and that the one rendered
+   * as plain text is where they are. A second visual language for the same idea, one
+   * element apart on the same page, is what makes a surface feel arbitrary. */
+  .view-tabs {
+    @apply flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm mb-3;
+  }
+
+  .view-tab {
+    @apply text-accent no-underline rounded px-2 py-0.5 border border-line;
+    @apply transition-colors duration-200 ease-cairn hover:bg-accent/10;
+  }
+
+  /* 🔴 THE CURRENT TAB IS DISTINGUISHED BY MORE THAN COLOUR, BECAUSE COLOUR ALONE IS NOT A
+   * DISTINCTION FOR EVERY READER. It carries a border colour, a background and a weight,
+   * so which view you are on survives a monochrome display and the common forms of colour
+   * blindness. It is also a `<span>` rather than an `<a>`, so the difference is in the
+   * document and not only in the stylesheet. */
+  .view-tab-here {
+    @apply text-ink font-medium bg-surface border-accent;
+  }
+
+  /* The raw view's one block. It shares every rule below with the rendered section bodies
+   * — same font, same measure, same wrapping — because it is the same KIND of thing: the
+   * writer's own characters, shown rather than interpreted. A separate rule set would
+   * drift from `.section-body` and give one entry two typographic treatments. */
+  .entry-raw,
   .section-body,
   .bullet-body,
   .hit-lines {

@@ -1588,6 +1588,7 @@ reader can tell what they are looking at.
 | `GET /` | `content` | one card per readable scope, plus the search box (`?q=`) |
 | `GET /scope?id=<control.ID>` | `content` | that scope's entry list |
 | `GET /entry?scope=<control.ID>&ref=<stem>` | `content` | one entry: its sections and its line items |
+| `GET /entry?scope=…&ref=…&view=raw` | `content` | the SAME row — the entry's file, as text. Not a route |
 
 ## 🔴 The decision this change settles: `internal/ui` reads entry STRUCTURE from `internal/store`, not through `internal/report`
 
@@ -1957,3 +1958,88 @@ bounded by its container.
   non-escaping mutant that would prove the structural differential kills it. What is measured
   instead is the differential itself, with its own positive controls: the payload inside the span
   is counted in the fixtures (non-zero) and counted on the rendered page (zero).
+
+## 🔴 The entry page is TWO views behind ONE route, and the switch is a query parameter rather than a script
+
+`?view=raw` renders the entry's file as text instead of the structure the parsers found in
+it. Three constraints decided the shape, and each of them refused an obvious alternative:
+
+- **No JavaScript.** Tabs are where a browser surface usually grows its first script, and
+  this one may not have any: `uiaudit` asserts `document.scripts.length == 0` on every page
+  it captures, and part of this package's escaping story rests on there being none. Two
+  server-rendered links cost nothing a script would have bought — a shareable URL, a
+  working back button and a browser-native reload come free, which is `searchForm`'s ruling
+  for the same shape.
+- **No second route.** `routes` is an EXACT-MATCH map and the ledger's whole value is that
+  the set of served paths is finite and enumerable. `/entry/raw` would be a second row for
+  one answer about one entry, with a view name sitting where a ref used to be.
+- **No second view in the DOM.** `:target`-driven CSS tabs were considered and refused:
+  they need both views rendered at once, which doubles the page and puts the whole file
+  into every rendered page load whether or not anybody asked for it.
+
+**Exactly one value is recognised.** `?view=raw` selects the raw view; `""`, `RAW`,
+`rendered`, `source` and anything else render the rendered view. That is `handlePage`'s
+ruling for `?q=` restated — a view selector is not an authority question, so an
+unrecognised value is answered with the page rather than with a refusal. The cost is that a
+typo is silent, which is why the recognised spelling is pinned as a LITERAL in
+`rawview_test.go` rather than read back off `QueryView`: a test written against the
+constant would assert that the code agrees with itself, and renaming the value would follow
+silently while breaking every URL already in the world.
+
+**The authority seam does not move, and the order is the guard.** `handleEntryPage` sets
+`RawView` *after* both refusals, so the raw view is a wider rendering of an entry the caller
+was already proved to hold. Everything it shows came out of a file `Source.Visible` had
+already loaded for this principal under `control.VerbRead`; what it adds is the part of that
+file the PARSERS dropped, never a part of the store the AUTHORITY withheld.
+
+### The RED proof, and two of the five guards are INVARIANT GUARDS rather than regression coverage
+
+Measured at `38bea8b` (pre-change) and at the branch head:
+
+| guard | at `38bea8b` | at HEAD |
+|---|---|---|
+| `TestTheRawViewShowsWhatTheRenderedViewStructurallyCannot` | **FAIL** | PASS |
+| `TestBothEntryViewsOfferTheOtherOneAndMarkTheCurrentOne` | **FAIL** | PASS |
+| `TestAnUnrecognisedViewValueRendersTheRenderedView` | **FAIL** | PASS |
+| `TestTheRawViewIsNarrowedByTheSameAuthorityAsTheRenderedOne` | PASS | PASS |
+| `TestTheRawViewEscapesTheFileAndShipsNoScript` | PASS | PASS |
+
+🔴 **The last two PASS on pre-change code, and that is stated rather than counted as
+coverage.** Both drive `?view=raw` against a tree where the parameter is ignored, so both
+were measuring the RENDERED view — which is already narrowed and already escapes. They are
+*invariant guards* by this repository's own definition. What makes them worth keeping is
+that they are the two things a new render path is most likely to get wrong, and each was
+mutation-tested on the NEW path rather than left on its green:
+
+- **The narrowing.** Mutant: `handleEntryPage`'s `pickScope` refusal answers `403` with its
+  own sentence when `?view=raw` is set. Killed by this guard's own assertion —
+  `rawview_test.go:280`, *"the RAW view of another principal's entry answered 403, want
+  404"*, quoting the mutant's sentence back.
+- **The escaping.** Mutant: `rawBlock` emits `g.Raw(e.Raw)` instead of `g.Text(e.Raw)`. All
+  four of this guard's assertions fired, including a counted `2` `<script` occurrences
+  against a required `0`.
+
+🔴 **AND THE ESCAPING MUTANT CORRECTS A CLAIM AT THE END OF THIS FILE.** The Phase-D note
+says *"there is no way to write the non-escaping mutant"* — true of the inline-code split it
+was written about, which builds only `g.Text` and an attribute-free `h.Code`. It is **not**
+true here: the raw view emits one node, so `g.Raw` is a one-token mutation. The catch is
+that `rawban_test.go` ALSO kills it, which is the "green for the wrong reason" trap — a
+mutant killed by a different guard's error says nothing about yours. So the verdict was read
+with `-run` scoped to this guard alone, and the ban's own kill was confirmed separately,
+with the filter validated by counting its `=== RUN` lines first. A `-run` pattern matching
+no test reports `ok`, and one draft of that check did exactly that.
+
+### What this view's guards still cannot see
+
+- **Whether the whole file is a sensible thing to render for a LARGE entry.** The store this
+  serves is tens of kilobytes across tens of files; nothing here pins a ceiling, and a
+  multi-megabyte entry would be sent in full. No such entry exists in any store this has
+  been run against, so the limit is unmeasured rather than known-safe.
+- **The `<pre>` wrapping at a real viewport.** `.entry-raw` shares `.section-body`'s measure
+  and wrapping rules, which `uiaudit` measures for the rendered view; the raw view is a page
+  state `uiaudit` does not currently capture, so its overflow behaviour is argued from the
+  shared rule rather than observed by that harness. It WAS observed once, by hand, in a real
+  browser at 1440px — which is a single measurement and is named as one.
+- **Anything an edge inserts downstream.** The zero-script assertion is about what THIS
+  ORIGIN renders. That is the scope correction `#130` made to three "this surface ships
+  none" spellings, and it applies here unchanged.

@@ -73,6 +73,15 @@ type PageView struct {
 	Scope *Scope
 	// Entry is the entry under view on the entry page, nil elsewhere.
 	Entry *Entry
+
+	// RawView selects the entry page's RAW view: the file's own text instead of the
+	// structure the parsers found in it. False everywhere else, and false for every
+	// `?view=` value but one — see [QueryView].
+	//
+	// ⚠ IT IS A VIEW SELECTOR AND NEVER AN AUTHORITY INPUT. `handleEntryPage` sets it
+	// AFTER both refusals, so a page reached with it set is a page the caller was already
+	// entitled to; nothing downstream may read it as permission to show more of the store.
+	RawView bool
 }
 
 // Page is the ROOT: every scope this credential may read, as cards, plus the search box.
@@ -167,6 +176,23 @@ func ScopePage(v PageView) g.Node {
 // only its ref, title, aliases and task refs did. Every string below came out of a
 // markdown file somebody else wrote, in both text and attribute positions, and
 // `entryRow`'s comment records why the two contexts have to be exercised separately.
+// 🔴 AND IT IS TWO VIEWS OF ONE ENTRY BEHIND ONE ROUTE, SWITCHED BY `?view=` AND NOT BY A
+// SCRIPT. Tabs are the obvious place a browser surface grows its first JavaScript, and this
+// one may not have any: `document.scripts.length == 0` is a property `uiaudit` measures on
+// every captured page, and part of this package's escaping story rests on it. Two server-
+// rendered links cost nothing a script would have bought — they give a shareable URL, a
+// working back button and a browser-native reload for free, which is `searchForm`'s ruling
+// for the same shape. The alternative that WAS considered and refused: `:target`-driven
+// CSS tabs, which need both views in the DOM at once, doubling the page and putting the
+// whole file into every rendered page load whether anybody asked for it or not.
+//
+// ⚠ THE RAW VIEW REPLACES THE STRUCTURE AND KEEPS THE ORIENTATION. The heading, the tabs
+// and `provenance` are on both views because they say WHICH file this is; the counts,
+// aliases, tasks, sections and missing-section block are the parsers' answer and are the
+// thing the raw view exists to be an alternative to. The explainer and the legend are
+// SWAPPED rather than kept, because `entryWhat` describes transformations the raw view does
+// not perform — a page whose own explainer describes a different page is the "a comment is
+// a claim" defect, in user-facing prose.
 func EntryPage(v PageView) g.Node {
 	s, e := *v.Scope, *v.Entry
 	return shell("cairn — "+e.Ref, v,
@@ -174,22 +200,68 @@ func EntryPage(v PageView) g.Node {
 		h.Section(
 			h.Class("card"),
 			h.H2(g.Text(e.Ref)),
-			h.P(h.Class("card-what"), g.Text(entryWhat)),
+			h.P(h.Class("card-what"), g.Text(entryWhatFor(v.RawView))),
+			entryViewTabs(s, e, v.RawView),
 			provenance(s, e),
-			entryCounts(e),
-			g.If(len(e.Aliases) > 0, labelledList("Aliases", "the `aliases:` front-matter key, as written",
-				h.Ul(h.Class("aliases"), g.Map(e.Aliases, plainItem)))),
-			g.If(len(e.Tasks) > 0, labelledList("Tasks", "the `tasks:` front-matter key, as written",
-				h.Ul(h.Class("tasks"), g.Map(e.Tasks, taskItem)))),
-			g.If(len(e.Sections) == 0, h.P(h.Class("empty"), g.Text(
-				"This entry carries none of the headings a reader surfaces. The file exists "+
-					"and the loader accepted it; it simply has no `## What it is`, "+
-					"`## Pointers` or `## Nuance / work-history` section in it."))),
-			g.Map(e.Sections, sectionBlock),
-			missingBlock(e),
+			g.If(v.RawView, rawBlock(e)),
+			g.If(!v.RawView, g.Group([]g.Node{
+				entryCounts(e),
+				g.If(len(e.Aliases) > 0, labelledList("Aliases", "the `aliases:` front-matter key, as written",
+					h.Ul(h.Class("aliases"), g.Map(e.Aliases, plainItem)))),
+				g.If(len(e.Tasks) > 0, labelledList("Tasks", "the `tasks:` front-matter key, as written",
+					h.Ul(h.Class("tasks"), g.Map(e.Tasks, taskItem)))),
+				g.If(len(e.Sections) == 0, h.P(h.Class("empty"), g.Text(
+					"This entry carries none of the headings a reader surfaces. The file exists "+
+						"and the loader accepted it; it simply has no `## What it is`, "+
+						"`## Pointers` or `## Nuance / work-history` section in it."))),
+				g.Map(e.Sections, sectionBlock),
+				missingBlock(e),
+			})),
 		),
-		entryLegend(),
+		g.If(v.RawView, entryRawLegend()),
+		g.If(!v.RawView, entryLegend()),
 	)
+}
+
+// entryViewTabs is the rendered/raw pair.
+//
+// 🔴 THE CURRENT TAB IS A `<span>` AND NOT A LINK TO ITSELF, WHICH IS `breadcrumbs`' OWN
+// RULE FOR THE SAME SHAPE. A tab that links to the page it is on is a control that appears
+// to do something and does nothing, and it is also how a reader loses track of which view
+// they are looking at — the only difference between the two states would be a style.
+//
+// ⚠ THE LABELS ARE THE TWO VIEW NAMES AND THE RAW ONE MATCHES `ViewRaw`'s VALUE BY
+// COINCIDENCE, NOT BY DERIVATION. The label is prose a reader sees; the value is a URL
+// contract. They are spelled separately on purpose — renaming the label must not silently
+// re-point every bookmarked URL, and a `g.Text(ViewRaw)` here would do exactly that.
+func entryViewTabs(s Scope, e Entry, rawView bool) g.Node {
+	tab := func(label string, raw bool) g.Node {
+		if raw == rawView {
+			return h.Span(h.Class("view-tab view-tab-here"), g.Text(label))
+		}
+		return h.A(h.Class("view-tab"), h.Href(entryHrefFor(s.ID, e.Ref, raw)), g.Text(label))
+	}
+	return h.Nav(
+		h.Class("view-tabs"),
+		tab("rendered", false),
+		tab("raw", true),
+	)
+}
+
+// rawBlock is the file, as text.
+//
+// 🔴 `g.Text` AND NOT [inlineCode], WHICH IS THE WHOLE DIFFERENCE BETWEEN THIS VIEW AND
+// THE OTHER ONE. `inlineCode` splits single-backtick spans out into `<code>` elements —
+// a transformation, and a correct one for a rendered section body. Applying it here would
+// make the raw view a rendering of the file rather than the file, and the one question this
+// view exists to answer is "what does the file actually say". A reader comparing this
+// against their editor must see the same characters.
+//
+// ⚠ `<pre>` INSIDE `<code>` RATHER THAN EITHER ALONE, MATCHING `sectionBlock`. The `<pre>`
+// carries the whitespace semantics and the class; the `<code>` is what says the content is
+// code to anything reading the document structure.
+func rawBlock(e Entry) g.Node {
+	return h.Pre(h.Class("entry-raw"), h.Code(g.Text(e.Raw)))
 }
 
 // crumb is one step of the breadcrumb trail. An empty `Href` is the CURRENT page, which
@@ -753,6 +825,17 @@ const (
 		"`OPEN:` / `RESOLVED <sha>:` marker the parser accepted becomes a badge. Anything it " +
 		"did NOT accept stays in the text and is named — a near miss, a marker on a " +
 		"continuation line, a heading spelled some other way."
+	// 🔴 THE RAW VIEW'S EXPLAINER SAYS WHAT IS AND IS NOT SHOWN, AND THE SECOND HALF IS THE
+	// USEFUL ONE. A reader reaches this view because the rendered page did not account for
+	// something in the file; the fact worth telling them is that this view is the WHOLE file
+	// — including the parts the rendered view has no element for, which is where whatever
+	// they are looking for usually is.
+	entryRawWhat = "The entry file's own text, as the store holds it: front matter, every " +
+		"heading whether or not a reader surfaces it, and anything above the first " +
+		"heading. Nothing here is parsed, so a backtick is a backtick and an `OPEN:` " +
+		"marker is characters rather than a badge. Invalid UTF-8 is the one substitution — " +
+		"it reaches this page as replacement characters, the same way every other reader " +
+		"in this tree decodes it."
 	searchWhat = "Scored over every line of every entry the credential can read, by the " +
 		"same engine `cairn search` uses — so a word inside a bullet is findable, not " +
 		"just a word in a title."
@@ -778,6 +861,43 @@ func scopeLegend() g.Node {
 		{"OPEN", "a bullet whose first line carries an `OPEN:` marker"},
 		{"near-miss marker", "a bullet that tried to write a marker and missed the grammar. " +
 			"It is NOT counted as open, and it is the population most likely to hide a stale action"},
+	})
+}
+
+// entryWhatFor picks the explainer for the view actually being rendered.
+//
+// 🔴 IT EXISTS BECAUSE ONE EXPLAINER FOR TWO VIEWS WOULD BE FALSE ON ONE OF THEM. `entryWhat`
+// promises that a `##` becomes a heading and an accepted marker becomes a badge; the raw view
+// does neither. The whole reason this page carries an explainer is an operator complaint that
+// nobody could tell how the page mapped onto the file — a sentence describing the other view's
+// mapping is that complaint, restored.
+func entryWhatFor(rawView bool) string {
+	if rawView {
+		return entryRawWhat
+	}
+	return entryWhat
+}
+
+// entryRawLegend is the raw view's legend, and it is a DIFFERENT set of rows rather than the
+// rendered view's.
+//
+// 🔴 `entryLegend` DOCUMENTS ELEMENTS THE RAW VIEW DOES NOT RENDER — sections, line items,
+// dates, badges, inline code, out-of-reach markers. Showing it here would be a key to a
+// diagram that is not on the page. What a reader needs instead is the one thing the raw view
+// asks them to understand: which differences between this and their editor are real.
+func entryRawLegend() g.Node {
+	return legend([][2]string{
+		{"raw", "the file's text, unparsed. What you see here is what a `cat` of the file " +
+			"under the store root would print, minus the decode below"},
+		{"replacement character", "a `�` means the file is not valid UTF-8 at that byte. " +
+			"The substitution happens on the way in and is shared with the CLI, so it is a " +
+			"fact about the file rather than about this page"},
+		{"what is NOT here", "nothing is dropped. The rendered view shows only the headings a " +
+			"reader surfaces; this view shows every heading, the front matter, and any prose " +
+			"above the first heading"},
+		{"line wrapping", "long lines are wrapped for reading rather than scrolled. The line " +
+			"BREAKS in the file are preserved; a wrap is this page's, and a `\\n` is the " +
+			"writer's"},
 	})
 }
 
@@ -855,11 +975,30 @@ func scopeHref(s Scope) string {
 	return ScopePath + "?" + url.Values{QueryID: []string{string(s.ID)}}.Encode()
 }
 
-func entryHref(scope control.ID, ref string) string {
-	return EntryPath + "?" + url.Values{
+func entryHref(scope control.ID, ref string) string { return entryHrefFor(scope, ref, false) }
+
+// entryHrefFor is the ONE place an entry URL is built, both views included.
+//
+// 🔴 ONE BUILDER RATHER THAN A SECOND FUNCTION THAT APPENDS `&view=raw`, BECAUSE A SECOND
+// BUILDER IS A SECOND ENCODER. The ref is USER TEXT — it can carry a `&`, a `=`, a `#` or a
+// percent sequence — so it is `url.Values.Encode()` that makes the link safe, and a
+// string-concatenating raw variant would re-open exactly that. This repository's rule is one
+// rule, one place, and the reason it applies here is that the duplicate would be wrong in
+// the direction nobody notices: every ordinary ref would work.
+//
+// ⚠ THE RENDERED VIEW EMITS NO `view=` AT ALL, WHICH KEEPS ONE CANONICAL URL PER STATE.
+// `?view=rendered` would also render it — [QueryView] recognises exactly one value and
+// everything else is the default — but nothing on this surface links that spelling, so the
+// URL a reader copies out of the address bar is the same one every page links to.
+func entryHrefFor(scope control.ID, ref string, raw bool) string {
+	v := url.Values{
 		QueryScope: []string{string(scope)},
 		QueryRef:   []string{ref},
-	}.Encode()
+	}
+	if raw {
+		v.Set(QueryView, ViewRaw)
+	}
+	return EntryPath + "?" + v.Encode()
 }
 
 // scopeLink renders a scope's name as a link, or as plain text when the authority named
