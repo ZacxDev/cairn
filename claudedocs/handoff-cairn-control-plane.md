@@ -171,14 +171,18 @@ an item nobody can find.** Re-ranking re-points every live claim.
     checks by construction, so no check fires either way. **Closing condition:** both entries
     re-derived from measured size, or a written line exempting foreign entries from tightness.
     forcing: gate.
-21. **BUMP THE DEPLOYED *API* POD — IT IS 74 COMMITS STALE AND THE IMAGE IS ALREADY PUBLISHED.**
-    `cairn-store-go:sha-a0c4d07` (2026-09-19) → `sha-1545783`, a one-line `image:` edit in the
-    deployment repo's `subsystem-store/deployment.yaml`. 🔴 **That repo is commit-equals-deploy, so
-    this is a DEPLOY, not an edit** — which is why this session measured it and stopped. 17 of the 74
-    commits touch the served path (P7's `304`, #83, #69, #119). **Closing condition:** the manifest
-    names the new tag, the rollout is confirmed `active` with the running image resolved back to a
-    commit, and `git rev-list --count <that>..origin/main` read and reported.
-    forcing: user — a production deploy in a commit-equals-deploy repo; the operator's call.
+21. ✅ **DONE — THE API POD IS BUMPED AND VERIFIED BY A DISCRIMINATOR, NOT BY HEALTH.**
+    `sha-a0c4d07` → `sha-953ad36`, deployed by commit to the manifest repo's trunk. Verified in this
+    order: the target image re-checked pullable **at the moment of acting** (not on the hour-old
+    reading); the YAML parsed and only the api container's image moved; a **pre-bump functional
+    baseline** taken through the public edge (`cairn sync` rc 0, 309 entries); then, after the
+    rollout, the running image resolved back to a commit at **0 behind `main`**, `cairn sync` rc 0
+    with **309 entries — identical**, 0 restarts. 🔴 **The verification that actually counts is a
+    behaviour only the NEW image has:** a second snapshot fetch answered `304 not-modified` — P7's
+    conditional sync, which the pre-`#90` image cannot do — confirmed on BOTH sides, the client's
+    `already current` line and the pod's own audit line `result=304 status=not-modified`.
+    ⚠ **A SECOND INSTANCE EXISTS AND WAS NOT TOUCHED** — the client resolves two, and only the one
+    this repo's manifests describe was bumped. forcing: user — done on operator instruction.
 22. **SET THE EDGE'S BROWSER CACHE TTL TO "RESPECT EXISTING HEADERS" FOR THE UI HOST.**
     ✅ **Operator decision taken this session**, on the measurement under `Defects`. Not reachable
     from here — it is a dashboard setting on the CDN account. **Closing condition:** the versionless
@@ -912,6 +916,23 @@ follow-up with a closing condition on the PR rather than fixed here.
   CARD) before deploying, and reverting the cap to `112rem`. The measurement and the named wrong
   remedy are in `Defects` so the next reader does not revert the breakpoint instead.
 
+- 🔴 **A ROLLBACK TARGET IS A CLAIM WITH A SHELF LIFE, AND THE API POD'S HAD BEEN WRONG SINCE THE
+  CUTOVER — IN THE DANGEROUS DIRECTION.** The deployment manifest said *"ROLLBACK IS THIS LINE ALONE"*
+  and named **the pre-cutover PYTHON pod on the internal registry** — a DIFFERENT IMPLEMENTATION, not
+  a previous version of the running one — while the pod had long been serving the Go image from the
+  public registry. The same file's own node-affinity note records that the internal registry does not
+  resolve on the burst node, so it might not even pull. **Somebody rolling back under pressure would
+  have changed implementation while believing they were reverting a version.** The rule, applied in
+  the same commit that moved the tag: **re-point the rollback target at the PREDECESSOR whenever you
+  move `image:`** — otherwise the first person to need it is the one who discovers it is wrong. ⚠ It
+  was found only because the bump forced someone to read the paragraph around the line being edited.
+- 🔴 **VERIFY A DEPLOY BY A DISCRIMINATOR, NOT BY HEALTH — READINESS PROVES THE DEPLOY, NEVER THE
+  CODE.** This arc already records a healthy pod serving a 13-commit-stale image. The bump above was
+  closed instead on a behaviour **only the new image can produce**: a second snapshot fetch answering
+  `304 not-modified` (P7's conditional sync, absent before `#90`), read on BOTH sides — the client's
+  `already current` line and the pod's own audit line. **Ask what the new artefact can do that the old
+  one provably cannot, then make the probe be that.** A 200, a ready endpoint and a matching image tag
+  are all satisfied by an image that does nothing new.
 - 🔴 **I RENDERED THREE ROUTE STATES AND GENERALISED TO THE ROUTE SET, AND CALLED IT "VERIFIED ON THE
   REAL SERVED HTML, NOT INFERRED".** The claim was *"`.page-main > .card` reaches exactly the two
   broken pages"*. It reaches **four** page states: the two I opened, plus `NavigatePage` (`/scope` and
