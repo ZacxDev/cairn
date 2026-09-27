@@ -1624,6 +1624,20 @@
             # The same toolchain the package and the CI job use — see
             # `buildGoPinned` above for why it is pinned rather than inherited.
             pkgs.go_1_25
+            # 🔴 THE SERVER THE POSTGRES TIER RUNS AGAINST, PINNED TO A MAJOR FOR THE
+            # SAME REASON THE INTERPRETER AND THE GO TOOLCHAIN ARE. `tests/pgtest/run.sh`
+            # starts one of these on a unix socket in a temp dir; the tier's whole value
+            # is that it measures real SQL against a real server, so WHICH server is part
+            # of the claim. `postgresql_18` rather than the unversioned `postgresql`
+            # attribute: the latter follows nixpkgs' default and a lock bump would move
+            # the tier to a major nothing in this repo had ever run it under — which is
+            # the failure `pkgs.python3` already produced once here.
+            #
+            # ⚠ IT MUST AGREE WITH THE DEPLOYED SERVER'S MAJOR, AND NOTHING GATES THAT
+            # ACROSS THE TWO REPOSITORIES. The manifests are in the deployment repo, so
+            # no test here can read them; this comment is the only coupling. Both are 18
+            # today. If you move one, move the other.
+            pkgs.postgresql_18
           ];
           shellHook = ''
             echo "cairn dev shell — run the suite with:"
