@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -533,6 +534,443 @@ func TestTheGeneratedStylesheetHasNoColourSchemePreference(t *testing.T) {
 		"positive control, over %d bytes of generated stylesheet",
 		strings.Count(stylesheet, "prefers-color-scheme"),
 		strings.Count(stylesheet, "prefers-reduced-motion"), len(stylesheet))
+}
+
+// ---- The document card's cap, and the two instruments that measure it. -----------------
+
+// cssRuleSelector locates a rule whose selector list is EXACTLY `selector`.
+//
+// 🔴 IT IS ANCHORED AT THE START OF A LINE AND TERMINATED BY THE BRACE, BECAUSE THIS
+// PACKAGE'S OWN STYLESHEET CONTAINS THE PAIR THAT DEFEATS A SUBSTRING SEARCH. `.card`,
+// `.page-main > .card` and `.scope-grid .card` are three different rules and the whole
+// claim below is that they say DIFFERENT things — so a lookup satisfied by any rule whose
+// text contains `.card` would report the cap present on all three, which is the exact
+// failure this guard exists to refuse. `hasSelectorFor` answers "is this class styled at
+// all"; this answers "what does THIS rule declare".
+func cssRuleSelector(selector string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(selector) + `[ \t]*\{`)
+}
+
+// cssDeclaration returns the normalised VALUE of `prop` in the rule whose selector is
+// exactly `selector`, and whether that rule exists at all.
+//
+// 🔴 IT READS A DECLARATION AND NOT THE BLOCK, WHICH IS THE DIFFERENCE BETWEEN A GUARD AND
+// A GUARD-SHAPED HOLE. `strings.Contains(block, "64rem")` is satisfied by a NEIGHBOURING
+// declaration — a `min-width`, a `flex-basis`, a `padding` that happens to carry the same
+// length — so it would pass a rule that declares the number somewhere and caps nothing. The
+// property name is matched exactly, up to the `:`, at the block's own depth.
+//
+// ⚠ IT IS A BRACE SCAN AND NOT A CSS PARSER, the same limit `ruleBodyFor` in
+// `render_test.go` states: a nested block (a `@media` inside the rule) is stepped OVER
+// rather than descended into, so a declaration that exists only behind a media query reads
+// as absent here. Neither rule this file measures carries one, and a rule that grew one
+// would make this lookup report "" and the assertion FIRE, which is the safe direction.
+//
+// The two return values are separate on purpose: ("", true) is "the rule is there and says
+// nothing about this property" and ("", false) is "there is no such rule", and the second
+// makes every assertion built on the first vacuous.
+func cssDeclaration(css, selector, prop string) (value string, ruleFound bool) {
+	loc := cssRuleSelector(selector).FindStringIndex(css)
+	if loc == nil {
+		return "", false
+	}
+	depth, buf := 0, strings.Builder{}
+	emit := func() string {
+		d := strings.TrimSpace(buf.String())
+		buf.Reset()
+		name, v, ok := strings.Cut(d, ":")
+		if !ok || strings.TrimSpace(name) != prop {
+			return ""
+		}
+		return strings.Join(strings.Fields(v), " ")
+	}
+	for i := loc[1]; i < len(css); i++ {
+		switch c := css[i]; c {
+		case '{':
+			depth++
+			buf.Reset()
+		case '}':
+			if depth == 0 {
+				// The rule closed. Whatever is in the buffer is a final declaration
+				// written without a trailing semicolon, which is legal CSS.
+				if v := emit(); v != "" {
+					return v, true
+				}
+				return "", true
+			}
+			depth--
+			buf.Reset()
+		case ';':
+			if depth == 0 {
+				if v := emit(); v != "" {
+					return v, true
+				}
+			}
+			buf.Reset()
+		default:
+			if depth == 0 {
+				buf.WriteByte(c)
+			}
+		}
+	}
+	return "", false
+}
+
+// voidElements are the HTML elements that have no closing tag, so a depth walk must not
+// increment on them. Omitting one would make every sibling AFTER it read as a descendant.
+var voidElements = map[string]bool{
+	"area": true, "base": true, "br": true, "col": true, "embed": true, "hr": true,
+	"img": true, "input": true, "link": true, "meta": true, "source": true,
+	"track": true, "wbr": true,
+}
+
+var htmlTag = regexp.MustCompile(`<(/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^>"]|"[^"]*")*)>`)
+var htmlClassAttr = regexp.MustCompile(`\sclass="([^"]*)"`)
+
+// directChildClassesOf returns the `class` attribute of every DIRECT child of the first
+// element whose class attribute is exactly `parentClass`, and whether that element was
+// found.
+//
+// 🔴 IT EXISTS BECAUSE A `>` SELECTOR IS A CLAIM ABOUT THE MARKUP AND NOT ABOUT THE
+// STYLESHEET. `.page-main > .card` caps a card only where a card is a DIRECT child of
+// `<main>`; the root page's cards are children of `.scope-grid`, which is what makes one
+// declaration reach the document pages and miss the grid. A guard that read only the CSS
+// would be a guard on one side of a two-sided relationship — it would stay green if the
+// grid were flattened into `<main>` and every card on the root page silently acquired the
+// cap.
+func directChildClassesOf(html, parentClass string) (classes []string, found bool) {
+	depth := 0
+	for _, m := range htmlTag.FindAllStringSubmatch(html, -1) {
+		closing, name, attrs := m[1] == "/", m[2], m[3]
+		if !found {
+			if closing || voidElements[name] {
+				continue
+			}
+			if c := htmlClassAttr.FindStringSubmatch(attrs); c != nil && c[1] == parentClass {
+				found = true
+			}
+			continue
+		}
+		switch {
+		case closing:
+			if depth == 0 {
+				// The parent's own closing tag. Everything after it is a sibling.
+				return classes, true
+			}
+			depth--
+		case voidElements[name]:
+			if depth == 0 {
+				classes = append(classes, classOf(attrs))
+			}
+		default:
+			if depth == 0 {
+				classes = append(classes, classOf(attrs))
+			}
+			depth++
+		}
+	}
+	return classes, found
+}
+
+func classOf(attrs string) string {
+	if c := htmlClassAttr.FindStringSubmatch(attrs); c != nil {
+		return c[1]
+	}
+	return ""
+}
+
+// hasClassToken answers whether any of `classes` carries `want` as a whole class token. A
+// `strings.Contains` would report `card` present for a `card-head`.
+func hasClassToken(classes []string, want string) bool {
+	for _, c := range classes {
+		for _, tok := range strings.Fields(c) {
+			if tok == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// documentCardCap is the max-width the non-grid pages' top-level card carries, written
+// here as a LITERAL rather than read out of the stylesheet.
+//
+// 🔴 A TEST THAT TOOK THIS NUMBER FROM `app.css` WOULD ASSERT `a == a`. The value is an
+// operator-facing decision — see `.page-main > .card` in `tailwind.css` for the arithmetic
+// it is derived from — so it is written down a second time here, which makes changing it a
+// decision somebody takes twice.
+const documentCardCap = "64rem"
+
+// TestTheDocumentCardIsCappedAndTheGridsCardsAreNot pins BOTH SIDES of the split, in the
+// stylesheet AND in the markup, because the selector that makes the split is a `>`.
+//
+// 🔴 THE DEFECT IT IS FOR, MEASURED ON THE DEPLOYED SURFACE AT A 3004px VIEWPORT: `/scope`
+// and `/entry` render ONE top-level `.card` that spanned the whole shell (2908px) while
+// every prose element inside it was capped at `--measure-code` (794px). The result was
+// ~2000px of empty space inside the card's own border, with full-width section heading
+// rules ruling over nothing. `<main>` was correct — 96.3% of the viewport, which is what
+// the ultrawide rung is for and what `uiaudit`'s content floor asserts. The card was the
+// thing with no measure.
+//
+// 🔴 AND THE FIX HAD TO MISS THE ROOT PAGE, WHICH IS WHY THIS TEST READS THE MARKUP TOO.
+// The root page's 9-column card grid is the layout the wide shell exists for; capping its
+// cards would undo an operator decision. `.page-main > .card` reaches the document pages
+// because their card is a direct child of `<main>`, and misses the grid's cards because
+// those are children of `.scope-grid`. That is a fact about `render.go`, not about the
+// stylesheet, and a CSS-only guard would stay green if the grid were flattened away.
+//
+// ⚠ WHAT IT DOES NOT CLAIM: it reads a declaration and a nesting, not a rendered pixel
+// width, and it cannot see the CASCADE — a later rule of equal-or-higher specificity that
+// re-set `max-width` on these cards would leave this green. `uiaudit`'s browser walk is
+// what measures rendered geometry; see this test's sibling note in the PR for why no
+// capture-level assertion was added there.
+//
+// ⚠ AND THE MARKUP HALVES ARE INVARIANT GUARDS, LABELLED: the grid nesting was never
+// wrong. They are here because they are the other side of the relationship the name
+// claims, not because they pin a regression.
+func TestTheDocumentCardIsCappedAndTheGridsCardsAreNot(t *testing.T) {
+	if len(stylesheet) == 0 {
+		t.Fatal("the embedded stylesheet is EMPTY, so every declaration below would read as absent for a " +
+			"reason that has nothing to do with the rules")
+	}
+
+	// ---- INSTRUMENT CONTROLS on `cssDeclaration`, both directions. A lookup nobody has
+	// watched answer wrongly is indistinguishable from one wired to nothing.
+	const synthetic = ".card {\n  padding-inline: 1.25rem;\n}\n" +
+		".page-main > .card {\n  margin-block: 1rem;\n  max-width: 41rem;\n}\n" +
+		".scope-grid .card {\n  margin-block: 0px;\n}\n"
+	if got, ok := cssDeclaration(synthetic, ".page-main > .card", "max-width"); !ok || got != "41rem" {
+		t.Fatalf("the declaration lookup read %q (found=%v) for `.page-main > .card`'s max-width in a "+
+			"synthetic sheet that plainly declares 41rem, so every verdict below is a fact about the "+
+			"lookup and not about the stylesheet", got, ok)
+	}
+	if got, ok := cssDeclaration(synthetic, ".card", "max-width"); !ok || got != "" {
+		t.Fatalf("the lookup reported max-width %q (found=%v) on the bare `.card` rule, which declares "+
+			"none — it is satisfied by the `.page-main > .card` rule beside it. A lookup that cannot tell "+
+			"three `.card` rules apart cannot measure a split BETWEEN them", got, ok)
+	}
+	if got, ok := cssDeclaration(synthetic, ".card-head", "max-width"); ok || got != "" {
+		t.Fatalf("the lookup found a rule for `.card-head`, which the synthetic sheet does not contain "+
+			"(got %q, found=%v). It answers yes to a selector that is merely a PREFIX-neighbour, so an "+
+			"absent rule would read as a present one", got, ok)
+	}
+
+	// ---- INSTRUMENT CONTROLS on the markup walk, both directions.
+	const nested = `<main class="page-main"><div class="scope-grid"><section class="card">a</section>` +
+		`</div><dl class="legend"></dl></main>`
+	const direct = `<main class="page-main"><form class="searchbar"><input name="q"></form>` +
+		`<section class="card">a</section></main>`
+	if kids, ok := directChildClassesOf(nested, "page-main"); !ok || hasClassToken(kids, "card") {
+		t.Fatalf("the markup walk reported children %v (found=%v) for a `<main>` whose only card is inside "+
+			"a `.scope-grid`. It cannot tell a child from a grandchild, so its verdict about the root page "+
+			"below would be meaningless", kids, ok)
+	}
+	if kids, ok := directChildClassesOf(direct, "page-main"); !ok || !hasClassToken(kids, "card") {
+		t.Fatalf("the markup walk reported children %v (found=%v) for a `<main>` whose card IS a direct "+
+			"child — and note the `<input>` before it, which is a VOID element: a walk that incremented "+
+			"depth on it would read every later sibling as a descendant", kids, ok)
+	}
+	if _, ok := directChildClassesOf(direct, "page-mai"); ok {
+		t.Fatal("the markup walk matched the parent class `page-mai`, a PREFIX of the real one. It compares " +
+			"a substring rather than the attribute, so a renamed `<main>` would read as present")
+	}
+
+	// ---- HALF ONE: the document pages' card carries the cap.
+	got, ok := cssDeclaration(stylesheet, ".page-main > .card", "max-width")
+	if !ok {
+		t.Fatalf("the served stylesheet carries NO `.page-main > .card` rule at all, so there is nothing "+
+			"here to cap the document pages' card and nothing for this test to measure")
+	}
+	if got != documentCardCap {
+		t.Errorf("`.page-main > .card` declares max-width %q, want %q.\n"+
+			"That rule is the ONLY thing bounding the one top-level card `/scope`, `/entry`, the "+
+			"no-id navigate page and a search answer render. Without it the card spans the whole "+
+			"ultrawide shell while every prose element inside it stops at `--measure-code`, which is "+
+			"~2000px of void inside the card's own border and section rules ruling over nothing.\n"+
+			"The cap belongs on the CARD and never on `<main>` or `body`: the shell's width is an "+
+			"operator decision and `uiaudit`'s content floor asserts it.", got, documentCardCap)
+	}
+
+	// ---- HALF TWO: the grid's cards do not pick it up from the rule that overrides them.
+	gridGot, gridOK := cssDeclaration(stylesheet, ".scope-grid .card", "max-width")
+	if !gridOK {
+		t.Fatal("the served stylesheet carries NO `.scope-grid .card` rule, so the half below is about " +
+			"nothing — that rule is where a grid-specific override would have to live, and its absence " +
+			"means the split this test names has no second side in the CSS at all")
+	}
+	if gridGot != "" {
+		t.Errorf("`.scope-grid .card` declares max-width %q. A card in the root page's grid is sized by "+
+			"the grid TRACK; a max-width on it collapses the 9-column ultrawide layout the wide shell "+
+			"exists for. Leave the grid's cards unbounded and cap only `.page-main > .card`.", gridGot)
+	}
+
+	// ---- HALF THREE: the markup. Which pages the `>` actually reaches, measured rather
+	// than reasoned about — and BOTH answers, because either alone is half the claim.
+	readsA, _ := twoScopeWorld(t)
+	srv := browseServer(t, twoScopeStore(t), readsA)
+
+	for _, tc := range []struct {
+		name     string
+		path     string
+		wantCard bool
+		why      string
+	}{
+		{
+			name:     "the root page: the grid is the child, the cards are not",
+			path:     RootPath,
+			wantCard: false,
+			why: "the root page's cards are the layout the ultrawide rung exists for — 9 uniform " +
+				"columns at a 3004px viewport. A card here that became a direct child of `<main>` " +
+				"would inherit the document cap and collapse the grid to one 64rem column",
+		},
+		{
+			name:     "a scope page: the card IS the document",
+			path:     ScopePath + "?" + QueryID + "=" + string(browseScopeA),
+			wantCard: true,
+			why:      "this is one of the two pages the operator measured the void on",
+		},
+		{
+			name:     "an entry page: the card IS the document",
+			path:     EntryPath + "?" + QueryID + "=" + string(browseScopeA) + "&" + QueryRef + "=runbook",
+			wantCard: true,
+			why:      "the other one, and the widest content on the surface",
+		},
+		{
+			name:     "the no-id navigate page, which is `/scope` and `/entry` naming nothing",
+			path:     ScopePath,
+			wantCard: true,
+			why: "a third page reached by the same rule. It is listed so the cap's reach is " +
+				"MEASURED rather than inferred from the two pages the complaint named",
+		},
+		{
+			name:     "the root page carrying a query, which renders a search answer and no grid",
+			path:     RootPath + "?" + QueryQuery + "=" + onlyInAlpha,
+			wantCard: true,
+			why: "🔴 A FOURTH PAGE STATE, AND IT IS THE ONE A READER OF THE COMMIT MESSAGE WOULD " +
+				"MISS. `/` is the grid page only while no query is in force; with one it renders " +
+				"`.card.results` as a direct child of `<main>` and the cap applies to it. That is " +
+				"correct — the results block is prose and `<pre>` hunks, the same shape as an " +
+				"entry — but it means \"the root page does not change\" is true of the GRID and " +
+				"not of the route",
+		},
+		{
+			name:     "the share flow, which renders no card at all",
+			path:     SharePath,
+			wantCard: false,
+			why: "the share flow is the page a reader ASKS about when they hear `.page-main > .card`, " +
+				"so the answer is measured here rather than asserted in a commit message. It renders " +
+				"`.share-index` / `.share-scope` / `.grant-row` and never `.card` — `.scope` is its " +
+				"card-shaped class. A share page that grew a `.card` would silently acquire a cap " +
+				"nobody decided on, and this row is what would say so",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := getAs(t, srv, tc.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s answered %d, want 200 — a page that did not render says nothing about its "+
+					"nesting: %s", tc.path, rec.Code, rec.Body.String())
+			}
+			kids, found := directChildClassesOf(rec.Body.String(), "page-main")
+			if !found {
+				t.Fatalf("%s renders no `<main class=\"page-main\">`, so the `>` selector reaches nothing "+
+					"on it and this row measured neither answer", tc.path)
+			}
+			if len(kids) == 0 {
+				t.Fatalf("%s renders a `.page-main` with NO element children, so a claim about its direct "+
+					"children is vacuous", tc.path)
+			}
+			if gotCard := hasClassToken(kids, "card"); gotCard != tc.wantCard {
+				t.Errorf("%s: a `.card` is a DIRECT child of `.page-main` = %v, want %v. Direct children: "+
+					"%q.\n%s\nThe cap lives on `.page-main > .card`, so this nesting is what decides "+
+					"whether it applies.", tc.path, gotCard, tc.wantCard, kids, tc.why)
+			}
+			t.Logf("%s: direct children of .page-main = %q", tc.path, kids)
+		})
+	}
+
+	// 🔴 THE ONE PAGE WHOSE `<main>` IS NOT `.page-main`, ASSERTED SO THE LEDGER ABOVE IS
+	// CLOSED RATHER THAN MERELY LONG. `/sign-in` renders `<main class="signin-main">`, so
+	// the child combinator cannot reach it however its contents are spelled — and that same
+	// class is what `uiaudit`'s content-floor exemption is keyed on, which is why a rename
+	// here has to be loud in more than one place.
+	rec := getAs(t, srv, SignInPath)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s answered %d, want 200", SignInPath, rec.Code)
+	}
+	if _, found := directChildClassesOf(rec.Body.String(), "page-main"); found {
+		t.Errorf("%s renders a `<main class=\"page-main\">`. Its `<main>` IS its card — a `max-w-md` "+
+			"credential form — so it is the one page on this surface the document cap must not reach, "+
+			"and `.page-main` is exactly how it would.", SignInPath)
+	}
+	if _, found := directChildClassesOf(rec.Body.String(), "signin-main"); !found {
+		t.Fatalf("%s renders no `<main class=\"signin-main\">` either, so the absence above is an absence "+
+			"of a `<main>` rather than a claim about which class it carries — and `uiaudit`'s content "+
+			"floor exempts that page BY THAT CLASS", SignInPath)
+	}
+
+	// 🔴 THE LOG PRINTS BOTH MEASURED VALUES AND ANNOTATES NEITHER. A draft read
+	// `… declares max-width %q (empty = unbounded)` and, on the very run where a mutation had
+	// leaked the cap onto the grid, printed `"64rem" (empty = unbounded)` directly under the
+	// failure saying so. A log that contradicts the assertion beside it is worse than no log,
+	// because the log is what gets pasted into a report.
+	t.Logf("measured: `.page-main > .card` max-width=%q, `.scope-grid .card` max-width=%q", got, gridGot)
+}
+
+// TestTheScopeGridFillsItsTracksRatherThanFittingThem is the REGRESSION guard on
+// `auto-fill`, and the defect it pins is LATENT on any store with enough scopes.
+//
+// 🔴 MEASURED ON THE REAL DOM AT A 3004px VIEWPORT, at both ends of the dimension that
+// decides it — the card count against the TRACK count, which is 9 at that width — because
+// one end is why this was invisible. BELOW the track count, with TWO cards: `auto-fit`
+// collapsed the empty tracks and stretched the survivors to **1446px each**, a two-card
+// row of enormous half-width cards, where `auto-fill` gave **309px each**, the track
+// width. AT OR ABOVE it: both spellings gave 9 occupied tracks at **307px each**.
+//
+// 🔴 SO THIS FIXES NOTHING VISIBLE ON A STORE THAT FILLS ITS TRACKS, AND SAYING SO IS THE
+// POINT. `auto-fit` and `auto-fill` differ only when a track would be EMPTY, so the
+// difference appears on a narrow scope list and on nothing else. It is a real measured
+// defect on a real input, not a hypothetical; it is also not what was on screen when the
+// card cap was decided, and a commit message claiming otherwise would be wrong.
+//
+// ⚠ THE ARTIFACT UNDER TEST IS CSS TEXT, so the whole normalised declaration is pinned
+// rather than a word in it. A guard reading `!strings.Contains(css, "auto-fit")` is
+// satisfied by a grid that lost its `minmax` floor, or its `1fr`, or the rule entirely.
+func TestTheScopeGridFillsItsTracksRatherThanFittingThem(t *testing.T) {
+	if len(stylesheet) == 0 {
+		t.Fatal("the embedded stylesheet is EMPTY, so the declaration below would read as absent for a " +
+			"reason that has nothing to do with the grid")
+	}
+
+	// INSTRUMENT CONTROL: the lookup must read the shipped spelling out of a synthetic rule
+	// carrying the DEFECT, or a green verdict below is a fact about the lookup.
+	const shipped = "repeat(auto-fill, minmax(18rem, 1fr))"
+	const defective = ".scope-grid {\n  display: grid;\n" +
+		"  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));\n}\n"
+	if got, ok := cssDeclaration(defective, ".scope-grid", "grid-template-columns"); !ok ||
+		got != "repeat(auto-fit, minmax(18rem, 1fr))" {
+		t.Fatalf("the lookup read %q (found=%v) from a synthetic rule that plainly declares the auto-fit "+
+			"spelling, so it cannot see the defect and its verdict on the real stylesheet would be "+
+			"meaningless", got, ok)
+	}
+	if got, _ := cssDeclaration(defective, ".scope-grid", "grid-template-columns"); got == shipped {
+		t.Fatal("the lookup returned the CORRECT spelling for a rule that carries the defective one, so it " +
+			"is not reading the declaration at all")
+	}
+
+	got, ok := cssDeclaration(stylesheet, ".scope-grid", "grid-template-columns")
+	if !ok {
+		t.Fatal("the served stylesheet carries NO `.scope-grid` rule, so the root page has no grid and " +
+			"there is nothing here to measure")
+	}
+	if got != shipped {
+		t.Errorf("`.scope-grid` declares grid-template-columns %q, want %q.\n"+
+			"`auto-fit` COLLAPSES a track no item occupies and lets `1fr` stretch the rest, so a scope "+
+			"list shorter than the track count renders as a few enormous cards: measured at 1446px each "+
+			"for two cards on a 3004px viewport, against 309px with `auto-fill`. At or above the track "+
+			"count (9 at that width) the two spellings are indistinguishable — which is why this is a "+
+			"latent defect rather than one anybody saw.", got, shipped)
+	}
+	t.Logf("the scope grid declares grid-template-columns: %s", got)
 }
 
 // TestAnEntryRefIsEncodedOnTheWayOutAndMatchedOnTheWayIn is the guard on the one piece of

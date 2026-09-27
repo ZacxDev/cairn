@@ -491,16 +491,30 @@
     @apply w-full sm:flex-1 sm:min-w-0;
   }
 
-  /* 🔴 THE GRID IS `auto-fit` + `minmax`, NOT A FIXED COLUMN COUNT PER BREAKPOINT, AND
+  /* 🔴 THE GRID IS `auto-fill` + `minmax`, NOT A FIXED COLUMN COUNT PER BREAKPOINT, AND
    * THAT IS WHAT MAKES THE ULTRAWIDE CASE WORK WITHOUT A SIXTH BREAKPOINT. With
-   * `repeat(auto-fit, minmax(18rem, 1fr))` the number of columns is a function of the
+   * `repeat(auto-fill, minmax(18rem, 1fr))` the number of columns is a function of the
    * CONTAINER, so 390px gets one, a laptop gets two or three, and 3427px gets as many as
    * fit — and a card never drops below 18rem, which is the width its longest stat line
    * needs before it wraps into a second row. A per-breakpoint `grid-cols-N` ladder would
-   * need a rung for every display width anybody ever uses. */
+   * need a rung for every display width anybody ever uses.
+   *
+   * 🔴 AND IT WAS `auto-fit`, WHICH IS A MEASURED DEFECT THAT IS LATENT ON A STORE WITH
+   * ENOUGH SCOPES — the reason to write the measurement down rather than the keyword.
+   * `auto-fit` COLLAPSES any track no item occupies and then lets `1fr` stretch the
+   * survivors over the freed space; `auto-fill` keeps the empty tracks. Measured on the
+   * rendered DOM at a 3004px viewport, at both ends of the dimension that decides it —
+   * the card count against the TRACK count, which is 9 at that width. Below it, with TWO
+   * cards: `auto-fit` gave 1446px per card, `auto-fill` 309px. At or above it: both gave
+   * 9 tracks at 307px, indistinguishable, because no track was left empty. So the
+   * pathology is real on a short scope list and structurally invisible on a full one.
+   *
+   * ⚠ IT THEREFORE CHANGES NOTHING VISIBLE ON A STORE THAT FILLS ITS TRACKS, and reading
+   * it as the fix for the wide-layout complaint would be wrong: that one is the card cap
+   * below. This is the second, independent defect the same measurement found. */
   .scope-grid {
     @apply grid gap-4;
-    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
   }
 
   /* The card. `.scope` above is kept for the share flow; this is the browse surface's
@@ -511,12 +525,62 @@
     @apply animate-rise;
   }
 
-  /* A card in the grid gets no vertical margin — the grid's own `gap` owns the spacing,
-   * and `my-4` on top of it would make the rows twice as far apart as the columns. */
+  /* A TOP-LEVEL card — the ONE card a document page renders, as a direct child of
+   * `<main>`. It gets vertical margin, which a card in the grid must not: the grid's own
+   * `gap` owns that spacing, and `my-4` on top of it would make the rows twice as far
+   * apart as the columns.
+   *
+   * 🔴 AND IT IS CAPPED, WHICH IS THE THIRD PIECE OF THE ULTRAWIDE CHANGE RATHER THAN A
+   * FOURTH IDEA. The rung above makes `<main>` ~96% of the display and the two measures
+   * make the PROSE inside it readable; nothing bounded the box BETWEEN them. Measured on
+   * the rendered surface at a 3004px viewport: `<main>` was 96.3% of it and this card
+   * filled that whole width (2894–2908px across the two document pages), while every
+   * prose element inside it stopped at `--measure-code` — ~794px. That is ~2000px of
+   * empty space inside the card's own border, with the full-width section heading rules
+   * ruling over nothing. `<main>` was never the defect; the card had no measure at all.
+   *
+   * 🔴 THE CAP GOES HERE AND NEVER ON `<main>` OR `body`, AND THAT IS A DECISION RATHER
+   * THAN A PLACEMENT. Narrowing the shell would undo the operator decision recorded on
+   * `body`'s top rung and would silently retire `uiaudit`'s content floor, whose whole
+   * argument is that the shell's cap is absolute so the fraction it asserts has a scope.
+   * Capping a CHILD of `<main>` leaves `<main>` at 96% and the floor measuring it.
+   *
+   * 🔴 64rem, AND BOTH HALVES OF WHERE IT COMES FROM. The floor it has to clear is the
+   * widest thing the card can hold: `--measure-code` is 110ch, which in these bodies'
+   * 12px monospace is ~49.6rem (measured 794px on a 16px root font), plus the card's own
+   * `px-5` gutters at 2×1.25rem and its 2×1px border — ~52.3rem in total. The remaining
+   * ~11.7rem is headroom for the card's ROW layouts, which are not prose and are not
+   * measure-capped: `.card-head`, `.card-stats`, `.provenance`, `.entry-list`,
+   * `.hit-where`. And 64rem is not a fresh number — it is `max-w-5xl`, the shell's own
+   * `lg` rung, so a document page on an ultrawide display is exactly as wide as the same
+   * page on the laptop this surface was read at.
+   *
+   * 🔴 THE UNIT IS `rem` FOR THE REASON `--breakpoint-ultra`'S COMMENT RECORDS: a `px`
+   * length among `rem` defaults sorted first and was dead for its whole first life. There
+   * is no variant here to lose a cascade, and the second reason stands anyway — 64rem
+   * scales with a reader who enlarged their root font, and a `px` cap would not.
+   *
+   * ⚠ NO `min(100%, …)`, UNLIKE THE MEASURE CAPS, AND THE ASYMMETRY IS DELIBERATE. Those
+   * guard `ch` lengths that resolve WIDER than a phone viewport; `max-width` can only ever
+   * shrink a block, so 64rem at 390px is already a no-op and the `min()` there is about
+   * the intrinsic sizing of a `<pre>`, not about this box. Do not "make it consistent".
+   *
+   * ⚠ LEFT-ALIGNED AND NOT CENTRED. Every other capped element on this surface — the
+   * prose measure below, `.section-body` — starts at the container's edge, so a centred
+   * card would be the one thing on the page that did not line up with the breadcrumbs
+   * above it. */
   .page-main > .card {
     @apply my-4;
+    max-width: 64rem;
   }
 
+  /* A card in the GRID: no vertical margin, and 🔴 NO CAP — it is sized by its track. This
+   * rule does not need to reset `max-width`, and that is worth stating because a reader
+   * will look for it: the selector above is a CHILD combinator and `render.go` renders the
+   * grid's cards inside `<div class="scope-grid">`, so they are grandchildren of `<main>`
+   * and the cap never reaches them. `TestTheDocumentCardIsCappedAndTheGridsCardsAreNot`
+   * pins both sides — the declaration here and the NESTING there — because a CSS-only
+   * guard would stay green if the grid were ever flattened into `<main>`. */
   .scope-grid .card {
     @apply my-0;
   }
