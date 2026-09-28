@@ -57,28 +57,12 @@ func open() Invite {
 	}
 }
 
-// TestStateAtReadsEachConditionOnItsOwn walks the four states one condition at a time.
-//
-// ⚠ AN INVARIANT GUARD, LABELLED AS ONE. No defect ever made these four disagree; they are
-// here so the ordering cases below cannot pass vacuously — a combination case asserting
-// "redeemed beats expired" means nothing unless `expired` alone really is expired, and this
-// is what establishes that.
-func TestStateAtReadsEachConditionOnItsOwn(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		inv  Invite
-		want State
-	}{
-		{"nothing set and the expiry is ahead", open(), StateOpen},
-		{"the expiry has passed", func() Invite { i := open(); i.ExpiresAt = hourAgo; return i }(), StateExpired},
-		{"it was revoked", func() Invite { i := open(); i.RevokedAt = hourAgo; return i }(), StateRevoked},
-		{"it was redeemed", func() Invite { i := open(); i.RedeemedAt = hourAgo; return i }(), StateRedeemed},
-	} {
-		if got := tc.inv.StateAt(fixtureNow); got != tc.want {
-			t.Errorf("%s: StateAt = %q, want %q", tc.name, got, tc.want)
-		}
-	}
-}
+// DELETED: TestStateAtReadsEachConditionOnItsOwn. Its stated purpose was to keep the
+// ordering table below from passing vacuously — but that table establishes the same thing
+// INLINE, in its own `PRECONDITIONS` block, which rebuilds each condition alone and fails
+// with a message naming why. The one case it held that the block does not is the
+// `open() -> StateOpen` baseline, and `TestRedeemableIsTrueForStateOpenAndNothingElse`
+// asserts that. Redundant by construction rather than by accident.
 
 // TestTheExpiryBoundaryIsCLOSEDAtExpiresAt measures the one instant the doc singles out.
 //
@@ -220,34 +204,14 @@ func TestRedeemableIsTrueForStateOpenAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestTheFourStateSpellingsAreDistinctAndRendered pins the strings, because they are a
-// rendered contract rather than internal names.
-//
-// ⚠ `internal/ui`'s `inviteRows` puts `string(inv.StateAt(now))` straight into the row a
-// person reads, and `TestTheRevokeButtonIsOfferedOnlyForAnOpenInvitation` keys its fixture map
-// on these exact words. Two states that collapsed to one spelling would make that walk cover
-// three cases while claiming four.
-func TestTheFourStateSpellingsAreDistinctAndRendered(t *testing.T) {
-	want := map[State]string{
-		StateOpen:     "open",
-		StateRedeemed: "redeemed",
-		StateRevoked:  "revoked",
-		StateExpired:  "expired",
-	}
-	seen := map[State]bool{}
-	for got, spelling := range want {
-		if string(got) != spelling {
-			t.Errorf("a state constant spells %q, want %q", string(got), spelling)
-		}
-		if seen[got] {
-			t.Errorf("%q is the spelling of more than one state", got)
-		}
-		seen[got] = true
-	}
-	if len(seen) != 4 {
-		t.Errorf("the closed set has %d distinct spellings, want 4", len(seen))
-	}
-}
+// DELETED: TestTheFourStateSpellingsAreDistinctAndRendered. Its own doc cited
+// `internal/ui`'s `TestTheRevokeButtonIsOfferedOnlyForAnOpenInvitation` as the reason it
+// mattered, and that test is the STRICTLY STRONGER of the two: it asserts the four names are
+// the closed set `invite.State` defines, asserts each fixture produces the state it is named
+// for (so a collapsed spelling fails there, with a better message), AND asserts the word
+// reaches the rendered page text. This one rendered nothing, despite `AndRendered` in its
+// name — a description wider than its implementation, and the weaker copy of a guard that
+// already exists.
 
 // TestNewTokenReturnsATokenThatHashesToTheDigestItReturns pins the pair the whole no-stored-
 // token design rests on.
