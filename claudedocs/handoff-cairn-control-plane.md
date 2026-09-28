@@ -24,49 +24,31 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`12ef1be`** — ⚠ **AHEAD 1 AND UNPUSHED at read time**; a PEER session's handoff
-  about this same PR, not this session's. ⏳ `#136`, `#139`, `#140` OPEN.
-- 🔴 **ROUND 1 RAN TWICE, CONCURRENTLY, AND THAT IS A COORDINATION FAILURE THIS SESSION
-  CAUSED.** I created rank 31 last update and then worked it WITHOUT `claim-work`; a peer had
-  claimed `cairn-control-plane-31` an hour earlier and was auditing `#139` at the same time.
-  🔴 **A better-written rank made the collision MORE likely, not less — the lock is the only
-  thing that prevents it.** ✅ The redeeming half: the rounds were blind to each other and
-  **CORROBORATE**, both landing independently on the known-user redemption defect at
-  `oauth.go:670`. Theirs: `#139#issuecomment-5863958702`.
-- ✅ **THE FIXES ARE SHIPPED — `#139` @ `be8a61e`, pushed, verified by CONTENT, tree CLEAN**,
-  14 commits. Every finding from BOTH rounds is fixed or named as not-fixed, each re-verified
-  before being acted on. ⚠ Their MAGNITUDES differed from mine (migration race 39/40 and
-  11/40 theirs, 32/40 mine — same direction, different number).
-- 🔴 **THE THREE 🔴 THIS SESSION FOUND, ALL FIXED:** (a) the startup refusal printed the DSN
-  **PASSWORD** (`lib/pq` → `net/url.Parse` → `*url.Error` carries the raw string) inside a
-  message saying twice that it does not — and it is **PARSE-TIME ONLY**, so the keyword/value
-  form and a well-formed-but-unreachable URL never leaked, which is why every existing test
-  was green; (b) an already-known user could **NEVER** redeem, silently; (c) the redemption
-  path had **NO test** while two places claimed it did — which is why (b) survived.
-  Mechanisms: `be8a61e` and `cairn recall --ref ui`.
-- ✅ **GATES AT `be8a61e`, statuses off the command, under `nix develop <the WORKTREE>`:**
-  `go vet` rc 0 · `go test ./...` **20 ok / 0 FAIL** · `tests/pgtest/run.sh` **80/80/0/0** on
-  18.6 with BOTH no-DSN controls watched refusing · count pin 12 · tier ledger 8 · AGENTS.md
-  weight 6 · leakscan rc 0. 🔴 **TWO OF MY OWN GUARDS WERE WRONG FIRST, BOTH FOUND BY
-  MUTATION:** the leak guard's replacement used a WELL-FORMED URL (parses, so nothing leaks —
-  the mutant SURVIVED), and a battery row scored **`HARNESS ERROR`** because both arms burned
-  a 60 s deadline into the battery's 120 s package timeout.
-- ✅ **BATTERY, CLEAN FULL RUN ON THE FINAL TREE: `183 / 181 killed / 2 survived / 0
-  misattributed / 0 harness-errors / 0 stale-extras`, empty stderr, rc 0.** Both survivors
-  are declared EQUIVALENT at the code. The split is re-derived in `5d3a972`.
-- ✅ **28(d) MANIFESTS DRAFTED, NOT MERGED** — the deployment repo's `feat/cairn-ui-postgres`, ⚠ **3
-  behind `trunk`**. `kustomize build` rc 0 / 17 docs; the phase-1 exposure gate green AND
-  validated (NodePort ⇒ rc 1, restored ⇒ rc 0); the password absent from render and worktree,
-  the grep watched FINDING it pre-encryption. 🔴 **The exact DSN string was exercised** against
-  a real 18.6 with scram auth: both tables created, session file never created.
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** `resolve` exited **5**
-  (status read off the command, not through the pipe that ate it the first time). None written.
+- `main` @ **`fd1b2d0`**, clean, pushed. ⏳ OPEN in cairn: `#144` (a PEER's, rank 33), `#141`,
+  `#140`, `#136`. Nothing of this session's is left open.
+- ✅ **P6 MERGED — `#139` as `7040b43`.** Round 2 on `8b1f2ff..5d3a972`: 0 🔴 / 2 🟡 / 4 🟢, both
+  🟡 fixed in `2e25174`. 🔴 Ladder capped at round 2, so **those fixes ship UNAUDITED** — a
+  regression test watched RED pre-change, and a mutation row watched killing, stand in.
+- 🔴 **28(d) IS DEPLOYED AND IS NOT VERIFIED, AND THOSE ARE SEPARATE CLAIMS.** `trunk` carries
+  `d306ad9df` (A: the database, no user-visible effect) and `952623cc1` (B: `CAIRN_UI_DB_DSN` +
+  image → `sha-7040b432`, the sign-out). **Rebase-merged, NOT squashed** — a squash welds A and
+  B together and destroys the independent rollback the split exists for. ⚠ **No kubeconfig for
+  that cluster this session**; see the `Open investigations` block, which carries the probes.
+- ✅ **THE PUBLIC LEAK IS CLOSED — `#142` as `021be7a`.** `main` was RED with three
+  `denied-identifier` findings in THIS document, all from `85f7dde`, pushed straight to `main`
+  without a PR. Rewritten by ROLE. ⚠ History retains the strings (standing no-force-push
+  decision); declared, not closed.
+- ✅ Also merged: `#143`; the handoff-tooling repo's `#1911` (`142b1a5e`) and `#1910`
+  (`8c94b4c8`).
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** The task-board resolver
+  exited **5**; an unknown session id answers 200 with an empty array, so a zero cannot
+  distinguish "touched none" from "wrong id". None written.
 
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug.** 🔴 **`claim-work` BEFORE you
-act on an item, not after — this session skipped it on rank 31 and duplicated a peer's whole
-round.** 🔴 **A NEW ARC, not the closed one's remainder.**
+🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug**, and `claim-work` comes BEFORE
+you act. ⚠ **`claim-work <slug> --subject` is a WRITE, not a probe** — asking "who holds this?"
+that way MINTS a claim on a released slug. `--list` is the read.
 
 1. ✅ #74 `93d0f03`. forcing: gate.
 2. ✅ `562a4f6f`. forcing: gate.
@@ -75,128 +57,98 @@ round.** 🔴 **A NEW ARC, not the closed one's remainder.**
    against the live pod from **two distinct hosts**, recorded, AND no open defect naming the
    Go client or `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and
    the residual risk is accepted EXPLICITLY, in writing.** forcing: none
-5. ✅ `-issue-credential` #76. forcing: gate.
+5. ✅ #76. forcing: gate.
 6. ✅ forcing: user.
 7. ✅ `56cc56e` (#69). forcing: user.
 8. ✅ rule (o), `c4490f07`. forcing: incident.
-9. 🔴 **UNBLOCKED IN CODE, BLOCKED ON DEPLOY.** The DEPLOYED surface has no DSN until 28(d)
-   merges, so `Inviting` is nil there and every invite route takes the `NoInviteStore`
-   branch. Until then the hand-run recipe under `How to verify` is the only place to
-   exercise it. forcing: user.
+9. 🔴 **UNBLOCKED IN CODE *AND* IN DEPLOY** — 28(d) shipped the DSN, so `Inviting` is no longer
+   nil on the deployed surface. ⚠ Unverified; gated on rank 28. forcing: user.
 10. ✅ `901b77d` (#104). forcing: user.
-11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`.** **CLAIMED** (`cairn-control-plane-11`).
-    forcing: incident.
-12. **CORRECT TWO FILES ASSERTING THAT REPO'S CI CHECKS BLOCK A MERGE** — they do not
-    (`required_status_checks` → 404), and both err PERMISSIVELY. forcing: gate.
-13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** ⚠ Precondition: sign-in
-    resolves the token's `sub` against a user the control plane ALREADY holds, and all three
-    causes collapse into one 401. 🔴 Round 1 makes this sharper: an existing user's invitation
-    is now redeemed on the success path (`RedeemFor`), which no human has yet driven against a
-    real GoTrue. forcing: user.
+11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`.** **CLAIMED.** forcing: incident.
+12. ✅ `#143` — `required_status_checks` 404s on all three repos; CI is advisory. forcing: gate.
+13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** 🔴 Reachable for the first
+    time: the invite flow is deployed and `RedeemFor` runs on the callback success path. No
+    human has driven it against a real GoTrue. forcing: user.
 14. ✅ `#117` as `9c24bc4`. forcing: gate.
 15. ✅ rule (p) `b4233ea9`. Four findings FILED rather than fixed — open. forcing: gate.
 16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** Keep-or-replace. forcing: user.
 17. ✅ `84642ff` (#108). forcing: gate.
-18. ✅ 🔴 Two of three headline findings were WRONG; re-derivation caught them. forcing: user.
-19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23; still 0 hits.
-    **Closing condition:** a recorded question→delete→simplify pass, or a line saying the
-    fact-rot pass discharged it. forcing: user.
+18. ✅ Two of three headline findings were WRONG; re-derivation caught them. forcing: user.
+19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23; still 0 hits. **Closing
+    condition:** a recorded question→delete→simplify pass, or a line saying the fact-rot pass
+    discharged it. forcing: user.
 20. **THE ARCHIVE IS OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE** — 174,237 B against a
     grandfathered 147,456 B. forcing: gate.
 21. ✅ API pod `sha-953ad36`. ⚠ A SECOND INSTANCE EXISTS, UNTOUCHED. forcing: user.
 22. ❌ **WITHDRAWN — the edge cache TTL is left as it is.** 🔴 DO NOT RE-PROPOSE. forcing: user.
-23. ✅ both halves, `c6aed4e` (#135). forcing: gate.
-24. ✅ #134 MERGED `963517e`. forcing: user.
+23. ✅ `c6aed4e` (#135). forcing: gate.
+24. ✅ #134 `963517e`. forcing: user.
 25. ✅ **SUPERSEDED BY OPERATOR DECISION — DO NOT WORK THIS ITEM AS WRITTEN.** forcing: user.
-26. ✅ **DISCHARGED FOR CODE BY CONSTRUCTION.** 🔴 EXPIRES the moment `main` gains a code
-    commit — re-run `git diff --stat <merge-base>...origin/main`. forcing: gate.
-27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN.** Overridden once this session (`54b9761`,
-    `Size-Ratchet-Override:`, NO operator approval); three later rounds landed by cutting.
-    forcing: gate.
-28. 🔴 **BUILD P6 — (a),(b),(c) DONE; (d) REMAINS AND IT NEEDS YOU.** `feat/ui-invite-flow` @
-    **`be8a61e`**. **CLAIMED** (`cairn-control-plane-28`). (d) is drafted on the deployment
-    repo's `feat/cairn-ui-postgres` — postgres StatefulSet, SOPS secret, Service, NetworkPolicy,
-    `CAIRN_UI_DB_DSN`, ⚠ **3 behind `trunk`, rebase before opening.** 🔴 **COMMIT THERE IS
-    DEPLOY.** ⚠ **Cutting sessions over signs everybody out once — SAY SO BEFORE THE DEPLOY.**
-    🔴 The StatefulSet's major is a FOURTH pin site no test here can read. forcing: user.
-29. ✅ **DONE — both gates read; the first reading found a defect.** forcing: gate.
-30. 🟡 **HARDEN `uiaudit/run.sh` AGAINST `CDPATH` — the fifth and last script of its shape.**
-    **Closing condition:** `grep -L CDPATH` over those five returns nothing. forcing: gate.
-31. 🔴 **ROUND 2 IS DUE AND IS THE LIVE ITEM — `claim-work cairn-control-plane-31` FIRST; a
-    peer holds it.** Round 1 produced findings that needed fixing, so the ladder continues,
-    and **every fix is code no round has audited** — including `Inviting.RedeemFor`, which is
-    new AUTHORIZATION code written after both audits ran. Anchor the delta at **`8b1f2ff`**
-    (round 1 was the FIRST FULL audit; round 0 posts no block). 🔴 **The round-1
-    `audit-claims` block must be posted as an ISSUE comment before `--round 2`, or
-    `audit-dispatch.py` refuses** — `gh pr view --json comments` does not return review
-    comments. **Closing condition:** a clean round, or the attribution gate firing.
-    forcing: gate.
-32. ✅ **DONE — `5d3a972`.** The count pin moved 181 → 183 and does NOT cover the split
-    beside it, so the README asserted `179 killed`, a figure nothing measured — the SECOND
-    time this arc shipped that defect on that exact line. Re-derived from a clean full run:
-    **183 / 181 / 2 / 0 / 0**. forcing: gate.
-33. 🟡 **TWO PEER ROUND-1 FINDINGS ARE NOT FIXED AND NOT CLOSED BY `be8a61e`.** (a)
-    `internal/ui/oauth.go:529`'s `r.FormValue` also reads the QUERY on a POST, against a
-    comment describing `PostFormValue` — `handleJoinPage` was corrected for this exact
-    distinction in `95a0b42`. (b) `internal/invite` has **no test files at all** while
-    `StateAt`'s arm ORDER is declared load-bearing and pinned by nothing. **Closing
-    condition:** one PR for both, the arm-order test watched RED on a reordered switch.
-    forcing: gate.
-34. 🟡 **THE `#137` BASE-CLONE WRITE GUARD REFUSES THE WORKFLOW ITS OWN REMEDY PRESCRIBES** —
-    it judges by `--git-common-dir`, so a `git add` in a LINKED WORKTREE (own git dir, index
-    and HEAD) is refused as a base-clone write. This session pulled `BASE_CLONE_WRITE_OK=1`
-    repeatedly for legitimate worktree commits, which is the train-everyone-to-click-through
-    failure. **Closing condition:** the guard admits a linked worktree, with a test that a
-    base-clone write is still refused. forcing: gate.
+26. ✅ **DISCHARGED — 🔴 NOW EXPIRED**; re-run `git diff --stat <merge-base>...origin/main`
+    before relying on it. forcing: gate.
+27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN, AND IT BLOCKED THIS UPDATE** (the ratchet refused
+    five times; this round landed only by compressing closed ranks, NOT by overriding).
+    **Closing condition:** a prune commit that MOVES to the archive rather than deletes, with
+    the 0-lost/0-duplicated assertion. forcing: gate.
+28. 🔴 **(a)(b)(c) DONE; (d) IS DEPLOYED AND UNVERIFIED.** The remaining work is the probe list
+    in `Open investigations`, which needs cluster access this session did not have. 🔴 The
+    operator authorised the deploy and the one-time sign-out explicitly. forcing: user.
+29. ✅ Both gates read; the first reading found a defect. forcing: gate.
+30. 🟡 **HARDEN `uiaudit/run.sh` AGAINST `CDPATH`.** **Closing condition:** `grep -L CDPATH`
+    over those five returns nothing. forcing: gate.
+31. ✅ Round 2 ran; two 🟡 fixed in `2e25174`; `#139` merged; ladder capped. forcing: gate.
+32. ✅ `5d3a972`. forcing: gate
+33. ⏳ **IN FLIGHT AS A PEER'S `ZacxDev/cairn#144`** — do NOT duplicate. forcing: gate.
+34. 🟡 **THE `#137` BASE-CLONE WRITE GUARD IS WRONG IN TWO WAYS, NOT ONE.** (a) it judges by
+    `--git-common-dir`, so a LINKED WORKTREE commit is refused; (b) 🔴 **NEW — it resolves the
+    repo from the SHELL'S CWD, not from `-C`**: standing in cairn while committing to a
+    worktree of a DIFFERENT repo, it refused while naming cairn. The override was pulled ~6
+    times this session for legitimate worktree commits. **Closing condition:** the guard admits
+    a linked worktree AND reads `-C`, with a test that a real base-clone write is still
+    refused. forcing: gate.
+35. ✅ `#142` as `021be7a`. forcing: gate.
+36. ✅ the handoff-tooling repo's `#1910` (`8c94b4c8`) — rule (o)'s banner counts consecutive
+    approved-through writes; FAILS OPEN to UNKNOWN, never 0. forcing: incident.
+37. ✅ the handoff-tooling repo's `#1911` (`142b1a5e`) — greened its `main`. forcing: gate.
 
 ## Defects (batched)
 
-- ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE; THIS SECTION REPLACES, SO ONE LEFT HERE IS RETYPED EVERY
-  ROUND.** The LESSON belongs under `Gotchas` (append); the entry belongs in the archive.
-- 🔴 **ROUND 1's EIGHT FINDINGS LIVE ON THE PR, IN FULL, WITH EVERY MEASUREMENT:**
-  https://github.com/ZacxDev/cairn/pull/139#issuecomment-5863958702 — two 🔴, five 🟡, one 🟢,
-  each with `file:line`, a failure scenario and a `payload`/`scaffolding` label, plus the gate table
-  and the re-derivation of the commits' own numbers. **It is the findings comment, NOT the
-  `audit-claims` block** — that is emitted after the fixes land and must ALSO be an issue comment.
-  Summarised here only so far as the next decision needs:
-  - 🔴 **AN ALREADY-KNOWN USER CAN NEVER REDEEM, AND THE JOIN PAGE PROMISES THEY CAN.**
-    `internal/ui/oauth.go:670` is the only serving-path `Redeem` caller and sits in the
-    `errors.As(err, &unprovisioned)` arm, which a successful `Exchange` skips. Control: unknown
-    subject ⇒ `redeems=1`; known user ⇒ `callback=303, redeems=0`. `oauth.go:664-667` defers them
-    to an *"authenticated redeem route"* **absent from the 17-row ledger**. 🔴 **OPERATOR OWNS THE
-    CHOICE:** (a) a success-path branch in `handleOAuthCallback` — one entry point, but widens
-    `Exchange`, which deliberately does not return a provider subject; (b) a real authenticated
-    redeem route — matches the code's own prose, but adds a state-changing route needing both
-    cross-site gates and a ledger row. Either needs a test on the known-user path.
-  - 🔴 **THE PROVISIONING ARM IS EXECUTED BY NO TEST AND `internal/ui/README.md` SAYS IT IS.**
-    `grep -c UnprovisionedSubject internal/ui/oauth_test.go` = **0**; the nearest arm passes a plain
-    `errors.New(…)` that `errors.As` does not match. `oauth.go:670` passes three same-typed
-    `string`s — transposing `Provider`/`Subject` compiles and locks the redeemer out forever with
-    nothing red. **Closing condition:** a test building a real `*identity.UnprovisionedSubject`,
-    plus the README sentence corrected.
-  - 🟡 The other six, by site, all with closing conditions on the PR:
-    `internal/pgstore/migrate.go:119` (ledger DDL outside the advisory lock at `:132` — 39/40
-    concurrent pairs fail on a fresh database, 0/40 once it exists) · the same line again (bare
-    `d.sql.Exec`, so `cmd/cairn-ui/main.go:183-186`'s "IT COVERS THE MIGRATION TOO" is false, and
-    `dbConnectTimeout` has one reader and zero tests) · `internal/ui/inviting.go:214-231` (`Revoke`
-    queries every project before `mayManage`; two false doc claims at `:378-379` and `:386`) ·
-    `internal/ui/oauth.go:529` (`r.FormValue` also reads the query on a POST, against a comment
-    describing `PostFormValue`) · `internal/invite/invite.go:115-137` (declared load-bearing arm
-    order pinned by nothing; `internal/invite` has no test files at all) · 🟢
-    `uiaudit/targets.go:196-209` (walks only the token-less `/join`).
+- ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE; THIS SECTION REPLACES, SO ONE LEFT HERE IS RETYPED
+  EVERY ROUND.** The LESSON belongs under `Gotchas` (append); the entry belongs in the archive.
+- ✅ **CLOSED BY `#139` (`be8a61e` + `2e25174`):** the DSN password leak; the known-user
+  redemption defect; the missing provisioning-arm test; the migration-ledger race;
+  `StatementTimeout`; `OpenWith`; five false prose claims. Full text on `#139`.
+- 🔴 **ROUND 2's TWO 🟡 ARE FIXED IN `2e25174` AND WERE NEVER AUDITED.** (a) `Redeem` was a
+  SECOND unguarded membership writer, so a concurrent double-callback could demote a project's
+  sole owner; fixed by DELEGATING to `RedeemFor`, not by copying the guard. (b)
+  `pgstore.redact` returns the ORIGINAL error — pass 1 mutates `uerr.URL` IN PLACE — so safety
+  rests on that rewrite and a "work on a copy" cleanup would silently restore the leak.
+- 🟡 **`RedeemFor`'s `principal.Kind != KindUser` ARM HAS NO TEST AND IS UNREACHABLE** — an
+  invariant guard, not coverage (round 2).
+- 🟡 **NO TEST BUILDS THE COMBINED HANDLER+STORE STATE FOR REDEMPTION** — the handler test uses
+  a stub that never refuses, the store test has no handler, and they join only at the
+  `ErrAlreadyAMember` sentinel. Round 2's named seam.
+- 🟡 **THREE ROUND-1 FINDINGS REMAIN OPEN, TWO IN FLIGHT AS A PEER'S `#144`:**
+  `oauth.go:529` (`r.FormValue` reads the QUERY on a POST, against a comment naming
+  `PostFormValue`) · `internal/invite` has no test files while `StateAt`'s arm ORDER is
+  load-bearing · `invitesByDigest` queries per project per revoke. 🟢
+  `uiaudit/targets.go:196-209` walks only the token-less `/join`.
+- 🔴 **THE `test_a_real_run_PRINTS_every_skip` DIAGNOSIS PREVIOUSLY RECORDED HERE IS REFUTED.**
+  This doc attributed that test's redness to a two-read window and recorded the discriminating
+  control as *"re-running that file with the worktree STILL PRESENT → 26 passed"*. Re-run with
+  **six** agent worktrees present: **1 failed, 25 passed** — same state, opposite outcome. 🔴
+  **The two mechanisms are separable by the EXIT CODE and by nothing else** — `2` is the
+  unreadable-artefact/skip-mismatch path, `1` is FINDINGS. It was `1`, and the findings were a
+  real `denied-identifier` leak (closed by `#142`). **Closing condition:** the entry
+  distinguishes rc 1 from rc 2, or it is retired.
+- 🟡 **`cairn-ui-state` IS UNBACKED, AND IT IS THE VOLUME THAT WOULD ACTUALLY HURT** — it holds
+  `journal.jsonl`, the only durable record of who may reach what, while `backup-cronjob.yaml`
+  names `subsystem-store-data` only. Pre-existing; NOT closed by the deliberate no-backup
+  decision on `cairn-ui-postgres`. **Closing condition:** a backup, or a line accepting it.
 - ⚠ **DECLARED IN-TREE AND CONFIRMED ACCURATE BY ROUND 1, SO NOT RE-FILED:** the availability
   coupling; the asymmetric rollback to a stale `-session-file`; nothing prunes `invites`; a reload
   of the mint response mints a spare invitation; `?invite=` reaches proxy access logs; a downgrade
   past a future migration is refused by design; `Inviting` stubbed in every `internal/ui` test.
-- 🔴 **A TEST READS THE TREE TWICE AND REDS IF A PEER CREATES A WORKTREE BETWEEN THE TWO READS.**
-  `test_leakscan_covers_every_tracked_file.py::test_a_real_run_PRINTS_every_skip` calls
-  `leakscan.main([])` then `partition_tracked_files()`, asserting every skip from the second read is
-  named in the first read's output. Measured `1 failed, 2193 passed` on `main`, the failing skip an
-  agent worktree created mid-run by a peer and still LOCKED. 🔴 **The discriminating control says it
-  is NOT the nested-worktree defect this doc records:** re-running that file with the worktree STILL
-  PRESENT → **26 passed**. The trigger is the WINDOW, not the state, and on a clone 40+ worktrees
-  deep that window is routinely non-empty. **Closing condition:** partition ONCE and report from
-  that partition, with the two-read form watched red first.
 - 🔴 **THE AMBIENT GO TOOLCHAIN IS NOT THE PINNED ONE, AND `AGENTS.md` SAYS IT IS.** A THIRD
   independent reading, by round 1's auditor: bare `go version` → **1.26.7**; `nix develop -c go
   version` → **1.25.14**. Every local `go vet`/`go test` outside the devShell is a green about a
@@ -1369,6 +1321,31 @@ follow-up with a closing condition on the PR rather than fixed here.
   hardest case by naming an *"authenticated redeem route"* that is not in the route ledger. **When a
   comment defers a case to another mechanism, grep for that mechanism before believing it handled.**
 
+🔴 **THIS ROUND'S TRIPWIRES ARE IN THE COMMITS, NOT HERE — THE SIZE RATCHET (rank 27) REFUSED
+THIS UPDATE FIVE TIMES.** Kept below is only what a commit cannot carry. In full in `021be7a`,
+`2e25174`, `952623cc1`, `142b1a5e`, `8c94b4c8`: a gate firing AFTER the push detects but does
+not prevent, and its opt-in RATCHETS (three honest approvals made the fourth's false reading
+true); `claim-work <slug> --subject` is a WRITE, so probing with it MINTS a claim; never
+fabricate a full sha from a short one; a squash would have undone the A/B split.
+
+- 🔴 **AN INSTRUMENT POINTED AT THE WRONG TREE ANSWERS CONFIDENTLY, AND IT HAPPENED FOUR TIMES
+  IN ONE SESSION.** `git -C <worktree> ls-files | xargs grep` greps the SHELL's cwd, not `-C`'s,
+  and reported my own edits as unmade — re-run correctly it found a site the first pass missed.
+  `git ls-remote origin <branch>` without `-C` queried a DIFFERENT REPOSITORY and returned
+  empty. A `count=1` truncation at `index("## How to verify")` matched a quoted mention inside a
+  ranked item and cut three whole sections. And the `#137` guard itself does this (rank 34b).
+  **Before believing a search, prove it can see the tree you mean: pass `-C` to every command in
+  the chain, and run a positive control that MUST match.**
+- **Decision (operator, this session): the audit ladder on `#139` STOPPED AT ROUND 2**, with its
+  two 🟡 fixed and unaudited. Recorded because `RULES.md`'s default is that an audit fix resets
+  the verification gate.
+- **Decision (operator, this session): `cairn-ui-postgres` is DELIBERATELY NOT BACKED UP.** Only
+  `sessions`, `invites` and `schema_migrations` live there; loss costs a universal sign-out plus
+  re-minting outstanding invitations, and NO memberships. 🔴 **The trigger that reverses it is a
+  fourth table holding something non-derivable** — a trigger, not a date.
+- **Decision (operator, this session): 28(d) DEPLOYED, with the one-time sign-out accepted
+  explicitly in advance**, and the A/B split preserved through the merge by using `--rebase`.
+
 ## How to verify
 
 🔴 **THE HAND-RUN BRING-UP RECIPE (two users, joined) IS THE ONLY WAY TO VERIFY RANK 9 AND MUST
@@ -1512,3 +1489,36 @@ values and eliminations. Read it on demand.
 - **Next probe:** none needed for the decision, which is taken (see `Defects`). If the accept is ever
   revisited, the discriminating reading is whether disabling email obfuscation alone removes the
   `src=` script while leaving the inline bot-detection one.
+
+### Is 28(d) actually working on the cluster? Deployed, never observed.
+- as-of: 2026-09-28
+- **Symptom + exact repro:** not a defect — an UNVERIFIED deploy, recorded here because
+  `State now` REPLACES. `trunk` carries `d306ad9df` (database) and `952623cc1` (DSN + image
+  → `sha-7040b432`); Flux reconciles `trunk`, so the rollout is in flight, unobserved.
+- **Observed (with values):** only the merge — `state=MERGED`, both commits on
+  `trunk` SEPARATELY (rebase, not squash), content-verified there (`CAIRN_UI_DB_DSN` present,
+  image `sha-7040b432`, StatefulSet present). **Zero cluster readings**: this host's kubectl
+  contexts are `colima`/`k3d-diffsona`/`k3d-diffsona-dev`, none of them that cluster.
+- **Ruled out:** that the DSN could be inert on the deployed image. The previous pin
+  `sha-d003708b…` is 16 commits behind, `internal/pgstore` does not exist in that tree, and
+  `git grep -c CAIRN_UI_DB_DSN` there answers 0 — which is why the image moved in the SAME
+  commit. `via: measurement`
+- **Leading hypothesis:** it rolled cleanly — unsupported by any reading. The honest state is
+  UNKNOWN, and this repo's probes have previously read green on a surface whose feature was
+  absent.
+- **Next probe:** in order, stopping at the first surprise.
+  ```bash
+  kubectl -n subsystem-store rollout status statefulset/cairn-ui-postgres --timeout=180s
+  kubectl -n subsystem-store rollout status deployment/cairn-ui --timeout=180s
+  # 🔴 THE ONE THAT MATTERS: an older image leaves the DSN inert while all else reads green.
+  kubectl -n subsystem-store get deploy cairn-ui \
+    -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
+  #   must end sha-7040b432d020b797cc88f0353eade4eba5e3eb7a
+  kubectl -n subsystem-store exec sts/cairn-ui-postgres -- psql -U cairn_ui -d cairn_ui -c '\dt'
+  #   expect sessions, invites, schema_migrations
+  kubectl -n subsystem-store logs deploy/cairn-ui --tail=40 | grep -iE "session|postgres|IGNORED"
+  #   if it still names the session FILE rather than saying that path is IGNORED, the DSN
+  #   did not take. 🔴 A startup banner is NOT evidence the feature works — then SIGN IN.
+  ```
+  **Rollback if wrong:** `git revert 952623cc1` backs out the cutover ONLY; the database stays
+  standing. That independence survived the merge because `--rebase` was used, not `--squash`.
