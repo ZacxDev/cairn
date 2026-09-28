@@ -24,156 +24,161 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`8167795`** (docs). ⚠ **Nobody else has written this doc since** — checked, not assumed.
-- ✅ **THE ORIGINAL ARC REMAINS CLOSED — THE CLOSING CONDITION'S OWN EVIDENCE, carried forward
-  because it lives under a REPLACE heading and the gate flagged it as about to drop.** All three
-  legs, 2026-09-27: `pytest` **2194 passed / 0 failed**, `go vet` rc 0, `go test ./...` **19 ok / 0
-  FAIL** on the pinned 1.25.14, `packages.default` the Go client (`flake.nix:1046`). Ranks 18–28 are
-  the successor arc.
-- ⏳ **`ZacxDev/cairn#136` OPEN, `CLEAN`, UNAUDITED** — prunes 1–3's bookkeeping archived (41 lines,
-  0 lost / 0 duplicated, 2,928 B freed). Does not close rank 27.
-- ✅ **RANK 28(a) DONE, AND 28(b) IS THREE-FIFTHS DONE — `feat/ui-invite-flow` @ `2ae09de`, pushed, no
-  PR, working tree CLEAN.** Six commits past `main`; every one green and pushed separately so the
-  authentication-path change is reviewable apart from the feature that consumes it:
-  - `dc50a1b` the Postgres tier (21 tests, 0 SKIP, 18.6, both paths, 8/8 mutants killed);
-  - `317c228` merge of `main` (so #134's files are in);
-  - `3148721` `Role.CanManageMembers` / `Model.ProjectsManagedBy` / `Model.RoleIn` — 7/7 killed;
-  - `fbad934` `identity.UnprovisionedSubject` — 5/5 killed;
-  - `2ae09de` `ControlInviting` + the flight binding + the callback branch — 5/7 killed, 2 survivors
-    documented as defence-in-depth rather than patched.
-- ✅ **GATES ON EVERY INCREMENT** (`nix develop -c`, go **1.25.14**): `go vet` rc 0 · `go test ./...`
-  **19 ok / 0 FAIL** · gofmt clean on touched files · leakscan clean · the Postgres tier re-run once
-  `invite.Store` gained a second consumer (21/0/0).
-- 🔴 **NOTHING IS REACHABLE OVER HTTP YET, SO RANK 9 IS STILL BLOCKED.** `internal/ui` has the
-  service, the flight field and the callback branch; **no** route rows, handlers, pages, stylesheet
-  rules or `cmd/cairn-ui` construction. Deployed: nothing. Click-path verified: nothing.
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE** (resolver: nothing resolved, 0
-  tasks; an unknown id answers 200 with an EMPTY ARRAY). ⚠ Named by ROLE — spelling the system's own
-  name here is what the leak gate refused on this very update, the SEVENTH event of that class.
-- ⏳ **OPEN OPERATOR CHOICE (1):** the capped card is LEFT-ALIGNED, not centred.
-- ⏳ **OPEN OPERATOR CHOICE (2):** pid **2728234** still holds `127.0.0.1:8103` (session `e5d90670`),
-  re-confirmed from `/proc/<pid>/cmdline` earlier today. Still the only world with a co-member.
+- `main` @ **`fbf1a00`**, unmoved since this session began — re-checked before this write.
+  ✅ The ORIGINAL arc is still closed. **Ranks 18–28 are the SUCCESSOR arc.** ⏳ `#136`, `#137` OPEN.
+- ✅ **RANK 28(c) DONE — `feat/ui-invite-flow` @ `d9ebddf`, pushed, verified by CONTENT (remote
+  tip == local HEAD), no PR, tree CLEAN.** One commit past `95a0b42`, fast-forwarded from the
+  step branch `p6/invite-wiring`. **The invite flow is no longer inert.**
+- 🔴 **THE SHAPE, BECAUSE ONE SENTENCE IS AN OPERATOR-VISIBLE CONSEQUENCE.** `-db-dsn` /
+  `$CAIRN_UI_DB_DSN` is a PostgreSQL DSN for this surface's MUTABLE state, and **one variable
+  wires BOTH tables `internal/pgstore` holds — invitations AND sessions** (operator decision,
+  `Gotchas`). ⚠ **The first start with a DSN signs every open browser out once.**
+  `-session-file` goes inert and the binary SAYS so. `pgstore.Open` pings AND migrates **before
+  the listener binds**, under a 10 s bound (`lib/pq` has no default `connect_timeout`, so a host
+  that DROPS packets would leave the pod neither up nor refusing); failure is exit 78.
+- ✅ **GATES, every status read WITHOUT a pipe, under `nix develop <the WORKTREE>`** (go
+  1.25.14): `go vet ./...` rc 0 / **0 bytes both streams** · `go test ./...` rc 0, **19 ok / 0
+  FAIL** · `go test ./cmd/cairn-ui/ -v` **44 RUN / 44 PASS** · leakscan self-test and scan both
+  rc 0, **0 findings / 422 files** · `nix build .#cairn-ui` and `.#cairn-go` rc 0 ·
+  `checks.ui-stylesheet-is-current` rc 0 (`app.css` untouched, **NOT re-validated**) ·
+  `AGENTS.md` byte-unchanged at **31,330 B** · gofmt clean.
+- ✅ **THE POSTGRES TIER IS TWO PACKAGES AND GREEN: rc 0, 66 RUN / 66 PASS / 0 FAIL / 0 SKIP
+  against PostgreSQL 18.6**, with **both** packages' no-database controls watched refusing
+  first. The new arm re-execs the binary against a real server and asserts the schema APPLIED
+  (both tables read from `information_schema`), the session file and its DIRECTORY never
+  created, both halves of the startup line, and the ignored-file NOTE.
+- 🔴 **SIX MUTANTS WATCHED KILLED, EACH BY ITS OWN MESSAGE; A SEVENTH IS A BUILD FAILURE.**
+  Untagged: blank policy off · empty-string early return off · `_ = dsnErr` · `openDatabase`
+  error ignored. Tagged: store built but never attached · sessions left on disk · NOTE
+  suppressed. The seventh (dropping `Inviting: inviting`) **does not COMPILE** — `Gotchas`.
+- ⏳ **TWO GATES DELIBERATELY NOT READ — RANK 29, AND ONE LEAVES AN UNVERIFIED CLAIM IN THE
+  TREE.** The full `tests/control_mutants.py` run was launched and was **still executing** at
+  write time (host at load 29–59 from sibling sessions; it buffers, so no partial reading
+  either). The count pin moved four prose sites to **181**; the `175 killed, 2 EQUIVALENT`
+  beside it on `internal/control/README.md` was **NOT re-measured — do not quote it**. `pytest
+  tests` was also held rather than measured at load 59. Last reading 2201 / 0.
+- ⏳ **(1)** capped card LEFT-ALIGNED · **(2)** `GET /join` renders a UNIFORM page, operator
+  choice, REVISITABLE · **(3)** pid 2728234 on `127.0.0.1:8103` NOT re-confirmed — stale.
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** `resolve` exited **5**; an
+  unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot distinguish "touched
+  no task" from "wrong id". `field` exited 1. No field written. ⚠ Named by ROLE.
 
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE — every number KEEPS ITS LINE even when done, because a rank is half a
-`claim-work` slug.** Re-ranking re-points every live claim.
+🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug.** 🔴 **A NEW ARC, not the closed
+one's remainder** — say so when you pick one up.
 
-🔴 **AND THESE ARE A NEW ARC, NOT THE CLOSED ONE'S REMAINDER.** Say so when you pick one up.
-
-1. ✅ **DONE — #74 as `93d0f03`.** forcing: gate.
-2. ✅ **DONE — `562a4f6f`.** forcing: gate.
-3. ✅ **DONE — P7 as `c0f5b06`.** forcing: none.
-4. **P8 — retire the Python oracle.** **Closing condition:** a real read AND a real write against the
-   live pod from **two distinct hosts**, recorded, AND no open defect naming the Go client or
-   `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk is
-   accepted EXPLICITLY, in writing.** Checked by `cairn doctor` from two hosts plus `gh issue list`.
-   forcing: none
-5. ✅ **DONE — `-issue-credential`, #76.** forcing: gate.
-6. ✅ **DONE.** forcing: user.
-7. ✅ **DONE — `56cc56e` (#69).** forcing: user.
-8. ✅ **DONE — rule (o), `c4490f07`.** forcing: incident.
-9. ⏳ **THE SHARE FLOW'S HUMAN VERIFICATION — STILL BLOCKED, AND 28(b)'s REMAINING WORK IS THE
-   BLOCKER.** #133 merged `d003708`, deployed `40797d1ef`; the authenticated header link is still
-   unconfirmed in a browser, and the picker still has nobody to offer. Unblocks when 28(b)'s HTTP
-   surface ships and a second user exists.
-   forcing: user — the operator reported the feature missing, and the browser step is a human's.
-10. ✅ **DONE — `901b77d` (#104).** forcing: user.
-11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`**, held because that repo's `main` is red for an
-    unrelated reason. **CLAIMED** (`cairn-control-plane-11`). forcing: incident.
+1. ✅ #74 `93d0f03`. forcing: gate.
+2. ✅ `562a4f6f`. forcing: gate.
+3. ✅ P7 `c0f5b06`. forcing: none.
+4. **P8 — retire the Python oracle.** **Closing condition:** a real read AND a real write against
+   the live pod from **two distinct hosts**, recorded, AND no open defect naming the Go client or
+   `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk
+   is accepted EXPLICITLY, in writing.** `cairn doctor` from two hosts + `gh issue list`. forcing: none
+5. ✅ `-issue-credential`, #76. forcing: gate.
+6. ✅ forcing: user.
+7. ✅ `56cc56e` (#69). forcing: user.
+8. ✅ rule (o), `c4490f07`. forcing: incident.
+9. 🔴 **UNBLOCKED BY 28(c), BUT IT NEEDS 28(d) FIRST.** The surface has a store whenever a
+   deployment sets `$CAIRN_UI_DB_DSN`; the DEPLOYED one has none until the manifests land.
+   Unmeasured: a real redemption over HTTP — `GET /join` → accept → provider → callback →
+   provisioned principal → a co-member in the share picker. Until 28(d) the hand-run recipe
+   under `How to verify` is the only place it can be exercised. forcing: user.
+10. ✅ `901b77d` (#104). forcing: user.
+11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`**, held because that repo's `main` is red for
+    an unrelated reason. **CLAIMED** (`cairn-control-plane-11`). forcing: incident.
 12. **CORRECT TWO FILES THAT ASSERT THAT REPO'S CI CHECKS BLOCK A MERGE.** They do not
     (`required_status_checks` → 404). Both wrong in the PERMISSIVE direction. forcing: gate.
 13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** ⚠ Precondition: sign-in
-    resolves the token's `sub` against a user the control plane ALREADY holds, and all three causes
-    collapse into one 401, so the pod's log is the only place the mechanism exists. 🔴 **28(b) NOW
-    PROVIDES THE SECOND AUTHORISED WAY PAST THAT WALL IN CODE** (`fbad934` + `2ae09de`) — but not
-    over HTTP yet. forcing: user.
-14. ✅ **DONE — `#117` as `9c24bc4`.** 🔴 Ladder stopped on the ATTRIBUTION GATE, two payload-zero
-    rounds — **NOT a clean round**. forcing: gate.
-15. ✅ **DONE — rule (p) as `b4233ea9`.** Four findings FILED rather than fixed — open; five mutation
-    rows unscored. forcing: gate.
-16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** ⚠ 28(b4) regenerates `app.css` a fifth time.
-    Keep-or-replace, not a PR gate. forcing: user.
-17. ✅ **DONE — `84642ff` (#108).** forcing: gate.
-18. ✅ **DONE.** 🔴 Two of three headline findings were WRONG and only re-derivation caught them.
-    forcing: user.
-19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23; still 0 hits across this doc, the
-    archive and the plan. **Closing condition:** a recorded pass — question-requirements → delete →
-    simplify — or a written line saying the fact-rot pass discharged it. forcing: user.
+    resolves the token's `sub` against a user the control plane ALREADY holds, and all three
+    causes collapse into one 401, so the pod's log is the only place the mechanism exists.
+    🔴 The second authorised way past that wall (`GET /join` → the provider start row carrying
+    the token on the flight) is inert on the DEPLOYED surface only, until 28(d). forcing: user.
+14. ✅ `#117` as `9c24bc4`. forcing: gate.
+15. ✅ rule (p) `b4233ea9`. Four findings FILED rather than fixed — open. forcing: gate.
+16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** Keep-or-replace, not a PR gate. forcing: user.
+17. ✅ `84642ff` (#108). forcing: gate.
+18. ✅ 🔴 Two of three headline findings were WRONG; only re-derivation caught them. forcing: user.
+19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23; still 0 hits across this doc,
+    the archive and the plan. **Closing condition:** a recorded question→delete→simplify pass, or
+    a written line saying the fact-rot pass discharged it. forcing: user.
 20. **THE ARCHIVE IS OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE.** 174,237 B against a
-    grandfathered 147,456 B; a FOREIGN ledger entry sits outside that gate's corpus checks by
-    construction. **Closing condition:** both entries re-derived from measured size, or a written line
-    exempting foreign entries. forcing: gate.
-21. ✅ **DONE — API pod `sha-953ad36`, verified by a DISCRIMINATOR not by health.** ⚠ A SECOND
-    INSTANCE EXISTS, UNTOUCHED. forcing: user.
-22. ❌ **WITHDRAWN — THE EDGE CACHE TTL IS LEFT AS IT IS.** 🔴 DO NOT RE-PROPOSE AS UNDECIDED.
+    grandfathered 147,456 B. **Closing condition:** both entries re-derived from measured size,
+    or a written line exempting foreign entries. forcing: gate.
+21. ✅ API pod `sha-953ad36`. ⚠ A SECOND INSTANCE EXISTS, UNTOUCHED. forcing: user.
+22. ❌ **WITHDRAWN — the edge cache TTL is left as it is.** 🔴 DO NOT RE-PROPOSE AS UNDECIDED.
     **Closing condition: none — closed by decision.** forcing: user.
-23. ✅ **DONE, BOTH HALVES — `c6aed4e` (#135)**; `.claude/worktrees/` empty, re-measured. forcing: gate.
-24. ✅ **DONE — #134 MERGED as `963517e`**, verified by CONTENT. 🔴 **ROUND 2 WAS DUE AND WAS SKIPPED
-    BY OPERATOR DECISION — that ladder did not converge.** forcing: user.
-25. ✅ **SUPERSEDED BY OPERATOR DECISION, NOT DONE — DO NOT WORK THIS ITEM AS WRITTEN.** It offered
-    `-set-member` provisioning OR P6; the operator chose **P6, on Postgres**. The work is rank 28.
-    forcing: user.
-26. ✅ **DONE AT `963517e`, AND IT EXPIRES WHEN `main` MOVES.** `feat/ui-invite-flow` × `main`: clean,
-    `app.css` regenerated on the merged tree via `checks.ui-stylesheet-is-current` **rc 0**, 19 ok / 0
-    FAIL, merged `ci.yml` parsed with both sides' edits. 🔴 **RE-RUN IT WHEN THE PR OPENS** — the
-    branch has moved five commits since, and 28(b)'s remaining work TOUCHES `app.css`.
-    forcing: gate — `checks.ui-stylesheet-is-current` is a build failure through nix.
-27. 🔴 **PRUNE THIS DOCUMENT — FIFTH RATCHET EVENT, AND THE SECOND CONSECUTIVE OVERRIDE WAS MINE.**
-    `#136` freed 2,928 B and is still open. **Closing condition unchanged:** a proposal run returning
-    `status=proposed`, no override. forcing: gate — `handoff_doc.py` exit 14 refuses the write.
-28. 🔴 **BUILD P6 — (a) DONE, (b) THREE PIECES DONE, THE HTTP SURFACE IS THE LIVE WORK.**
-    `feat/ui-invite-flow` @ **`2ae09de`**. **CLAIMED** (`cairn-control-plane-28`).
-    (a) ✅ the Postgres tier. (b1) ✅ the membership predicate. (b2) ✅ `UnprovisionedSubject`.
-    (b3) ✅ `ControlInviting` + flight + callback branch.
-    (b4) **REMAINING — the HTTP surface, the most gate-dense piece in the repo.** Four rows
-    (`GET`/`POST /invite`, `POST /invite/revoke`, `GET /join` as `classPublic`), two pages, a nav
-    affordance, and 🔴 **`routes.go` + `DeclaredRoutes` + `uiaudit/targets.go` MOVE TOGETHER**. A new
-    class forces `nix run .#build-ui-stylesheet` plus a committed `app.css`
-    (`TestEveryRenderedClassHasARuleInTheStylesheet` and `checks.ui-stylesheet-is-current` are both
-    live); the existing class set covers everything but the nav link.
-    (c) `cmd/cairn-ui` wiring + the DSN flag/env, refusing at startup rather than at first request.
-    (d) manifests in the deployment repo — a dedicated `postgres:18.6-alpine` StatefulSet on
-    `openebs-nvme-1tb` (NOT `supabase-cairn`), a SOPS secret, a Service, a NetworkPolicy row.
-    🔴 **COMMIT THERE IS DEPLOY — show the operator before landing it.** ⚠ Cutting sessions over to
-    Postgres signs everybody out once. 🔴 The StatefulSet's major is a FOURTH pin site no test here
-    can read — it must equal the 18 in `flake.nix`, `ci.yml` and `wantServerMajor`.
-    forcing: user — the operator asked for working share functionality and chose this route.
+23. ✅ both halves — `c6aed4e` (#135). forcing: gate.
+24. ✅ #134 MERGED `963517e`. 🔴 Round 2 was due and was SKIPPED by operator decision. forcing: user.
+25. ✅ **SUPERSEDED BY OPERATOR DECISION, NOT DONE — DO NOT WORK THIS ITEM AS WRITTEN.** The work
+    is rank 28. forcing: user.
+26. ✅ **DISCHARGED FOR CODE BY CONSTRUCTION, BY ONE COMMAND RATHER THAN AN INTEGRATION BRANCH.**
+    `git diff --stat <merge-base>...origin/main` is **one file, this handoff doc** — `main`'s
+    only two commits past the merge base are handoff writes, so the merged tree is
+    byte-identical to the branch tree for **every code file** and the branch's own gates ARE the
+    merged tree's gates for code. ⚠ It does NOT discharge this doc, which both sides edit.
+    🔴 It EXPIRES the moment `main` gains a code commit — re-run the one-liner. forcing: gate.
+27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN, AND THIS ROUND PAID FOR IT TWICE.** The write gate
+    refused at exit 14 (`size-ratchet`, 133,021 B against 98,304 B) on two successive drafts and
+    this delta was cut to land inside it rather than overridden — the budget went on the doc
+    instead of the work again. `#136` freed 2,928 B and is still open. **Closing condition
+    unchanged:** a proposal run returning `status=proposed`, no override. forcing: gate.
+28. 🔴 **BUILD P6 — (a), (b), (c) DONE; (d) REMAINS AND IT NEEDS YOU.** `feat/ui-invite-flow` @
+    **`d9ebddf`**. **CLAIMED** (`cairn-control-plane-28`). (d) **manifests in the deployment
+    repo** — a dedicated `postgres:18.6-alpine` StatefulSet on `openebs-nvme-1tb` (NOT
+    `supabase-cairn`), a SOPS secret carrying the DSN, a Service, a NetworkPolicy row, and
+    `CAIRN_UI_DB_DSN` on the UI Deployment. 🔴 **COMMIT THERE IS DEPLOY — show the operator
+    before landing it.** ⚠ **Cutting sessions over signs everybody out once — SAY SO BEFORE THE
+    DEPLOY**; the binary announces it too, but into a log nobody reads first. 🔴 The
+    StatefulSet's major is a FOURTH pin site no test here can read — it must equal the 18 in
+    `flake.nix`, `ci.yml` and `wantServerMajor`. ⚠ Prefer the ENV spelling to the flag: a DSN
+    carries a password and a flag value is in `argv`. forcing: user.
+29. 🔴 **FINISH 28(c)'s TWO UNREAD GATES — ONE IS AN UNVERIFIED CLAIM ALREADY IN THE TREE.**
+    (a) `python3 -u tests/control_mutants.py` to completion, then re-derive the kill/survivor
+    split on `internal/control/README.md`'s *"181 mutants, 175 killed, 2 EQUIVALENT"* — **the
+    181 was moved by the count pin; the `175`/`2` were NOT re-measured and nothing pins them**;
+    (b) `pytest tests -q -p no:randomly` against the 2201 baseline. Both held rather than
+    measured at load 29–59, which the doc's own flake rule says makes a reading uninterpretable.
+    🔴 Run them under `nix develop <the worktree>`. **Closing condition:** both numbers in the
+    tree, each read off the command without a pipe. forcing: gate — that README line is a
+    present-tense claim the count pin does not cover.
+30. 🟡 **HARDEN `uiaudit/run.sh` AGAINST `CDPATH` — the fifth and last script of its shape.**
+    Five scripts use `$(cd … && pwd)`; three already carry `CDPATH= cd --`, `tests/pgtest/run.sh`
+    was fixed in `d9ebddf`. **Closing condition:** `grep -L CDPATH` over those five returns
+    nothing, or a written line saying it is never run from a shell exporting one. forcing: gate
+    — the failure is a script that dies before running anything, invisible in CI.
 
 ## Defects (batched)
-- ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE, THEY DO NOT ACCUMULATE HERE.** This section REPLACES, so
-  every closed entry left in it is retyped by hand each round until somebody drops it. The LESSONS
-  from a closed entry belong under `Gotchas`, which appends; the entry itself belongs in the
-  archive. ⚠ **The no-JavaScript-claim entry was DROPPED by this update rather than retyped** — its
-  closing condition was *"#130 merged"* and #130 merged as `b574a61`; its lessons are under
-  `Gotchas`, which is the condition for dropping one.
-- 🔴 **A ROOT-WALKING GO GUARD GOES RED ON ANY CLONE THAT HOLDS A NESTED WORKTREE, AND IT NAMES REAL
-  SOURCE FILES WHILE DOING SO.** Mechanism and remedy are rank 23. The part that belongs here is the
-  CLASS: a guard that walks from the repo root and skips only `.git` and `tests` cannot tell this
-  repo's files from a checkout of this repo sitting INSIDE it. **Breadth measured: exactly one Go
-  guard walks from the root**, and its `.claude` skip count is 0. ⚠ The leak scanner has the same
-  blindness and the doc already records it; what is new is that this one reports **FAIL** where
-  leakscan reports "could not vouch". **Closing condition:** rank 23 merged.
-- 🔴 **THE EDGE OVERRIDES THE ORIGIN'S CACHE DECISION, BLAST RADIUS EXACTLY ONE ROUTE.** ❌ **CLOSED
-  BY DECISION, NOT BY WORK — AND THE DECISION REVERSED ITSELF WITHIN THE SESSION.** Nothing was
-  changed at the edge and **this is not an open defect**; it is an ACCEPTED one (rank 22). Retained
-  only so the accepted cost is not rediscovered as news: the versionless route keeps answering
-  `14400` against the origin's `300`. ⚠ Two readings of the mechanism remain consistent with the
-  observable, and since the setting is being left alone, that will stay unresolved.
+- ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE; THIS SECTION REPLACES, SO ONE LEFT HERE IS RETYPED EVERY
+  ROUND.** The LESSON belongs under `Gotchas` (append); the entry belongs in the archive. ⚠ **THREE
+  were DROPPED rather than retyped, each meeting that condition:** the root-walking-Go-guard entry
+  (condition *"rank 23 merged"*; #135 as `c6aed4e`, lesson already a `Gotchas` bullet); the
+  THREE-FILES `gofmt` entry, which the FOUR-FILES one below supersedes and calls void; and the
+  edge-cache entry, whose own text said *"this is not an open defect"* (ACCEPTED, rank 22) — its cost
+  is not lost, the versionless route still answers `14400` against the origin's `300` and two readings
+  of the mechanism stay consistent with that.
+- 🔴 **A TEST READS THE TREE TWICE AND REDS IF A PEER CREATES A WORKTREE BETWEEN THE TWO READS.**
+  `test_leakscan_covers_every_tracked_file.py::test_a_real_run_PRINTS_every_skip` calls
+  `leakscan.main([])` then `partition_tracked_files()`, and asserts every skip from the second read is
+  named in the first read's output. Measured `1 failed, 2193 passed` on `main`, the failing skip being
+  `.claude/worktrees/agent-a5aef8ae9a2420ba9/` — created mid-run at 18:22 by a peer, still LOCKED.
+  🔴 **The discriminating control says it is NOT the nested-worktree defect this doc records:**
+  re-running that file with the worktree STILL PRESENT → **26 passed**. The trigger is the WINDOW, not
+  the state, and on a clone 36 worktrees deep that window is routinely non-empty. **Closing
+  condition:** partition ONCE and report from that partition, with the two-read form watched red first.
 - 🔴 **THE AMBIENT GO TOOLCHAIN IS NOT THE PINNED ONE, AND `AGENTS.md` SAYS IT IS.** Re-measured:
   bare `go version` → **1.26.7**; `nix develop -c go version` → **1.25.14**. Every local `go
   vet`/`go test` outside the devShell is a green about a toolchain this repo does not ship, and
   nothing warns. **Closing condition:** either a `direnv`/`.envrc` putting the pinned toolchain on
   `PATH` here, or a written line in `AGENTS.md`'s verification section saying the Go gates must run
   as `nix develop -c …` — plus a decision on whether anything should refuse a bare run.
-- 🟡 **THREE FILES ARE NOT `gofmt`-CLEAN WITH NOTHING IN CI GREPPING IT — AND FOR ONE THE CAUSE IS
-  NOW MEASURED AND THE REMEDY IS "DO NOT".** `internal/ui/render.go`'s ENTIRE gofmt diff is two
-  lines: gofmt rewrites a literal double-backtick in a doc comment into a curly quotation mark
-  (`go/doc/comment`'s old-style quoting) — **inside a comment whose whole subject is backticks**, so
-  `gofmt -w` would make it assert something false about its own topic. `browse_test.go`'s is an
-  ordinary string-concatenation spacing nit. Measured at `origin/main`, so neither is #134's.
-  **Closing condition:** exempt `render.go` in writing and fix the other two, or accept all three
-  and say why nothing gates it.
+- 🟡 **FOUR FILES ARE NOT `gofmt`-CLEAN, NOTHING GREPS IT, AND THE PREVIOUS ENTRY NAMED THE WRONG
+  ONES.** Re-measured at `95a0b42` — a THIRD reading agreeing with the second:
+  `internal/client/{anchor_test,exit,options}.go` and `internal/control/tokenfile/source.go`.
+  `render.go` is clean (#133) and `browse_test.go` was fixed by #134, so **the file the old entry
+  asked to EXEMPT no longer needs exempting** and its remedy is void. ⚠ 28(b4) touched `render.go` and
+  left it clean, which is what makes this a reading rather than a quote. **Closing condition:** fix
+  the four, or a written line accepting them.
 - 🟡 **FOUR OF ELEVEN JOURNAL EVENT KINDS HAVE NO WRITER; THE SELECTION RULE IS STATED SO THE
   NUMBER IS REPRODUCIBLE.** A kind has a writer iff non-test Go constructs it. Re-derive with
   `find . -name '*.go' -not -name '*_test.go' -not -path './.claude/*' -print0 | xargs -0 grep -ohE 'Kind:\s*(control\.)?Event[A-Za-z]+'`
@@ -192,16 +197,17 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `internal/report/testdata/reader_fixtures.json` contains **no `[cairn: …]` trailer at all** (0
   hits against 8 in `server.py` as a positive control), so the differential reader fixture never
   exercises attribution rendering. (d) Whether `cairn-ui` should ever render through
-  `internal/report` is **undecided and stated as open in `README.md`**. **Closing condition:** one
-  PR for (b)–(c); a written line for (d).
+  `internal/report` is **DECIDED and written** — `internal/ui/README.md`'s Phase E settles it, so
+  (d) is closed and only (b)–(c) remain. **Closing condition:** one PR for (b)–(c).
 - 🟡 **`checks.default-is-the-go-client` IS INSENSITIVE ON THE PYTHON SIDE.** `mkCairn`'s pname is
   already `cairn`, so a `meta.mainProgram` removed *there* leaves the base-name assertions green.
   **Closing condition:** close it, or a written line saying why not.
-- 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — now **`tests/test_parity_harness.py`'s
-  floor alone**. The pattern is settled: a count that moves whenever an artefact is regenerated gets
-  DELETED, one that should never move gets PINNED
-  (`tests/test_control_mutant_count_is_pinned.py`). Deciding which a number is, is the work.
-  **Closing condition:** pin the parity floor, or a written line saying why not.
+- 🟡 **COUNTS QUOTED IN PROSE THAT NOTHING ASSERTS ON** — now **`tests/test_parity_harness.py`'s floor
+  alone**. Settled pattern: a count that moves on every regeneration gets DELETED, one that must never
+  move gets PINNED (`tests/test_control_mutant_count_is_pinned.py`); deciding which is the work.
+  ⚠ 28(b4) exercised that pin growing and it worked: 152 → 177 refused the write at FIVE sites, naming
+  each — including one it must NOT touch (`152.21 s user`, a TIMING). **Closing condition:** pin the
+  parity floor, or a line saying why not.
 - 🔴 **A CHANGELOG ROW IS BORN WITH THE WRONG ANCHOR, STRUCTURALLY.** The anchor is the SQUASH
   commit, unknowable while the PR carrying the row is open, so every row is written wrong and is
   only correctable by a follow-up. #69 shipped anchored to a commit the squash discarded (fixed in
@@ -221,41 +227,34 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 - 🟡 **`tests/dualrun/` cannot see image drift, structurally.** It runs the TREE's `server.py`;
   nothing compares the Go server against the artefact actually serving. **Closing condition:** decide
   whether a deployed-artefact arm is worth owning, or write the line saying it is not.
-- 🟡 **THE ENTRIES PAGE OFFERS NO WAY TO REACH THE SHARE FLOW.** `GET /` carries **0** occurrences of
-  the word "share"; positive control, the share index itself contains **8**. The flow is not broken —
-  bare `GET /share` answers **200** — but **nothing navigates there**. ⚠ **A SECOND HALF, A MESSAGE
-  DEFECT RATHER THAN A LOGIC ONE:** `?scope=` is keyed on the scope **ID**, never the display name —
-  deliberate, and `render.go` says why. But a human who hand-types the name they can see gets **404**
-  and the words *"no such scope, or it is not yours to share"* for a scope that **is** theirs to
-  share. The refusal is correct and its sentence is false. ⏳ **The navigation half is IN FLIGHT as
-  `ZacxDev/cairn#133`.** **Closing condition:** #133 merged, plus a decision on whether the
-  name-keyed refusal should say something true.
-- 🟡 **`AGENTS.md` + `CLAUDE.md` ARE EFFECTIVELY FULL — three bytes of headroom.** Any new sentence
-  there requires evicting an existing one — a decision about somebody else's claim, not a formatting
-  change. ⚠ **A false zero worth keeping:** `grep -c` on a phrase that WRAPS ACROSS A NEWLINE answers
-  **0**. A line-oriented grep is a claim about lines, not about the file; flatten whitespace, and keep
-  a positive control beside the count. **Closing condition:** an eviction PR that frees a stated
-  number of bytes, or a written line accepting that the file is closed to new claims.
-- Everything previously listed stands unchanged: #38's three residuals; `ScopeByNameIn`
-  raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six findings;
-  the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; `-race` gated in one tier
-  only; and P4 rounds 1 and 3's guards absent from the persistent battery.
-- 🟡 **THE `gofmt` DEFECT NAMED THE WRONG FILES AND ITS REMEDY IS VOID.** It said three, naming
-  `render.go` and `browse_test.go`. Measured on `963517e`: **four, and a different four** —
-  `internal/client/{anchor_test,exit,options}.go`, `internal/control/tokenfile/source.go`. `render.go`
-  is clean (#133 closed it) and `browse_test.go` was fixed by #134 — so **the file the entry asked to
-  EXEMPT no longer needs exempting.** **Closing condition:** fix the four, or a written line accepting
-  them and saying why nothing greps it.
-- 🟡 **THE POSTGRES TIER'S MUTATION EVIDENCE IS PROSE, AND THIS REPO HAS MEASURED THAT PROSE ROTS.**
-  #134's two raw-view rows are now IN `tests/control_mutants.py`; the pgtest tier's **8** rows are not —
-  they live in a scratchpad script. **Closing condition:** the 8 rows added there with `extra_killers`
-  declared and the pinned count moved at every site, or a written line saying why a build-tagged tier
-  cannot be in that battery.
+- 🟡 **THE SHARE FLOW'S `?scope=` REFUSAL IS CORRECT AND ITS SENTENCE IS FALSE.** The navigation half
+  of this entry is CLOSED (#133 merged `d003708`; `shell` now carries the link, and 28(b4) added a
+  second beside it). What remains is the message half: `?scope=` is keyed on the scope **ID**, never
+  the display name — deliberate, and `render.go` says why — but a human who hand-types the name they
+  can see gets **404** and the words *"no such scope, or it is not yours to share"* for a scope that
+  **is** theirs to share. **Closing condition:** a decision on whether the name-keyed refusal should
+  say something true.
+- 🟡 **`AGENTS.md` + `CLAUDE.md` ARE EFFECTIVELY FULL — three bytes of headroom**, so a new sentence
+  means evicting somebody else's claim. ⚠ 28(b4) found the byte-neutral case: `phases A–E` → `A–G` is
+  the same length, and was ALREADY stale (Phase F predates it). **A false zero worth keeping:**
+  `grep -c` on a phrase that WRAPS ACROSS A NEWLINE answers **0** — a line-oriented grep is a claim
+  about lines, not the file; flatten whitespace and keep a positive control. **Closing condition:** an
+  eviction PR freeing a stated number of bytes, or a line accepting the file is closed.
+- 🟡 **THE POSTGRES TIER'S MUTATION EVIDENCE IS STILL PROSE, AND THE FIX IS NOW A PROVEN MECHANISM.**
+  #134's two raw-view rows are in `tests/control_mutants.py`; the pgtest tier's **8** are not — they
+  live in a scratchpad script. ⚠ **28(b4) did exactly this for its own 25 rows**, so the open question
+  is only whether a build-tagged tier can be mutated by a battery running `go test` without the tag.
+  **Closing condition:** the 8 rows added with `extra_killers` and the count moved at every site, or a
+  line saying why a build-tagged tier cannot be there.
 - 🟡 **NO NIX CHECK OWNS THE POSTGRES TIER, AND ONE COULD.** The build tag keeps it out of `doCheck`, so
   one CI step is the only thing that runs it — deletable, which `tests/test_pgtest_tier_is_declared.py`
   notices as a test but not as a build failure. A unix-socket server needs no network and would work in
   the sandbox. **Closing condition:** a `checks.pgtest` derivation, or a written line saying the CI step
   plus the ledger is enough.
+- Everything previously listed stands unchanged: #38's three residuals; `ScopeByNameIn`
+  raw-vs-folded; P4 round 5's two prose defects; the degenerate-spelling limb; PR #15's six findings;
+  the four deferred Go/oracle divergences; `server/seed.sh:110`'s `cd`; `-race` gated in one tier
+  only; and P4 rounds 1 and 3's guards absent from the persistent battery.
 
 ## Gotchas / decisions / dead-ends
 🔴 **THIS SECTION HAS BEEN PRUNED THREE TIMES, AND PRUNED MEANS *MOVED*: NO PRUNE HAS DELETED NOR
@@ -1278,56 +1277,91 @@ follow-up with a closing condition on the PR rather than fixed here.
   names as the promotion candidate for a blocking gate. ⚠ **28(b4) adds two pages and a nav
   affordance to this same surface.**
 
+- 🔴 **28(b4)'s LESSONS ARE MOVED, NOT DELETED, AND THIS ROUND IS ONE BULLET BECAUSE THIS SECTION IS
+  74% OF THIS DOCUMENT AND IS WHAT MADE THE RATCHET REFUSE IT.** `nix run .#build-ui-stylesheet`
+  reads `root="${1:-$PWD}"`, so a worktree flake ref run from elsewhere
+  regenerates the OTHER tree — measured writing the base clone's `app.css` while on `main`, zero
+  damage by LUCK. The rest, each a POINTER TO VERIFY: `internal/ui/README.md` Phase G (`9f04134`) ·
+  `cairn recall --ref ui` (a guard comparing a page against the CONSTANT it renders cannot see a
+  reword — one had SHIPPED saying it could; `g.If` is EAGER, `g.Iff` not) · `--ref control`
+  (`Role.CanConfer`; a seam whose deletion survived a green suite) · `git show 9f04134` (a pipe ate an
+  exit status a THIRD time) · `git show 95a0b42` (`git status` `AM` = your last edit is NOT in).
+
+- **Decision (operator, this session): ONE DSN wires BOTH the invite table and the session
+  table.** `internal/pgstore` holds both and its package doc says both belong there, so two
+  variables would buy a half-right configuration, a second pool and a second migration ledger
+  for nothing. Offered and declined: **invites only** (smallest blast radius, but it leaves
+  `pgstore.SessionStore` with no production caller and makes the later cutover a SECOND config
+  change and a SECOND sign-out event) and **two independent switches**. ⚠ The accepted cost is
+  named rather than discovered: the first start with a DSN signs every open browser out once.
+- 📄 **FOUR TRIPWIRES FROM 28(c) ARE IN THE SUBSYSTEM INDEX RATHER THAN HERE, AND THE POINTER IS
+  DELIBERATE — `cairn recall --ref ui` (scope `cairn`, bullet dated 2026-09-28).** This document
+  is over its size budget and the index OUTLIVES it, so a durable non-arc-specific lesson
+  belongs there with a pointer here, not in both. They are: `nix develop <the base clone>` being
+  the wrong shell for a branch that changes `flake.nix` (it supplied PostgreSQL 17.10 and the
+  tier failed its own version PIN, so the tell is a guard comparing a TOOL to the FLAKE); a
+  build-tagged tier being unmutatable by a battery running `go test` without the tag (rows for
+  it score a SURVIVED that is a fact about the selection); a whole-file substring guard being
+  satisfied by any mention, including one in a comment, which is how a guard written this
+  session SURVIVED its own mutant; and hoisting a struct literal into a named value turning the
+  likeliest defect into a `declared and not used` BUILD failure.
+- 🔴 **`CDPATH` MAKES BASH'S `cd` PRINT, AND `$(cd … && pwd)` THEN CAPTURES THE PATH TWICE.**
+  `tests/pgtest/run.sh` died before running anything — on this host only, while CI, which
+  exports no `CDPATH`, had been green throughout. Fixed in `d9ebddf` with `CDPATH= cd --`, which
+  three of the repo's five such scripts already carried. ⚠ `tests/conformance/run_go.sh`'s
+  comment calls itself *"the last of the three to be hardened"*; it was the last of FOUR, and
+  `uiaudit/run.sh` is the fifth (rank 30). **A green covers the ENVIRONMENT it ran in, and the
+  dimension CI pins is the one it is blind to.**
+- ⚠ **A RESIDUAL, DELIBERATELY NOT CLOSED: the `-db-dsn` FLAG IS THE LENIENT ARRIVAL PATH.**
+  `$CAIRN_UI_DB_DSN='   '` is refused by the blank policy; `-db-dsn '   '` is not, and `lib/pq`
+  resolves it to libpq's own defaults — which on a developer box can mean connecting to, and
+  MIGRATING, the local default database. Same asymmetry `controlJournalDefault` records, but the
+  consequence here is a WRITE rather than a 404. A syntactic DSN validator was refused: a
+  second, weaker judge that can disagree with the server.
+
 ## How to verify
 
-```bash
-# the share flow's ENTRY POINT, from outside the cluster. 🔴 NEVER write the deployed host into a
-# repo file: `leakscan` gates hosts under the deployment's registrable domain, UNBOUNDED.
-U=https://<the deployed UI host>
-curl -s -o /dev/null -w '%{http_code}\n' "$U/share"      # 401 — auth-gated, NOT 404
-SERVED=$(curl -s "$U/sign-in" | grep -oE 'app\.[0-9a-f]+\.css' | head -1)
-curl -s "$U/static/$SERVED" | grep -c 'nav-share'         # 1 — the rule is live
-curl -s "$U/sign-in" | grep -c 'href="/share"'            # 0 — the PUBLIC page stays clean
-```
-🔴 **NONE OF THAT VERIFIES THE AUTHENTICATED HEADER LINK** — it stops at the auth boundary. Sign in
-and look; that is rank 9 and it is the operator's.
+🔴 **THE HAND-RUN BRING-UP RECIPE (two users, joined) IS THE ONLY WAY TO VERIFY RANK 9 AND MUST
+NOT BE DELETED FROM THIS SECTION** — reason in `Gotchas`, because this section REPLACES.
 
-**Rank 28's branch** — every Go gate as `nix develop -c` (bare `go` is 1.26.7, the pin is 1.25.14):
+🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE** (this arc has paid three times).
+🔴 **AND RUN EVERY GATE AS `nix develop <THE WORKTREE>`, NOT the base clone** — that clone is on
+`main`, whose devShell has **no `postgresql_18`**; the previous recipe's `nix develop <repo> -c
+bash -c "cd <wt> && …"` silently supplied PostgreSQL **17.10**. Bare `go` is 1.26.7, pin 1.25.14:
 ```bash
-nix develop <repo> -c go build ./... && nix develop <repo> -c gofmt -l internal/pgstore internal/invite
-nix build <worktree>#cairn-go --out-link <scratchpad>/res-go   # 🔴 NEVER --out-link into the repo
-        # root: an untracked `result` symlink takes leakscan to exit 2. This runs depspolicy in
-        # doCheck, so it proves the dependency gate through nix rather than through `go test`.
-# the NEGATIVE control that makes that green mean anything — drop the `github.com/lib/pq` line
-# from depspolicy.DeclaredModules and watch it FAIL "grew"; restore it and watch `ok`:
-nix develop <repo> -c go test ./internal/depspolicy/
-```
-
-🔴 **READ THE RUNNING IMAGE, NOT THE MANIFEST** — a bump is a claim about git:
-```bash
-export KUBECONFIG=<the deployment-manifest checkout>/<cluster>-kubeconfig
-kubectl -n subsystem-store get pods -l app=cairn-ui \
-  -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,IMAGE:.spec.containers[0].image'
-kubectl -n subsystem-store exec <pod> -- sh -c \
-  'wc -l /var/lib/cairn-ui/journal.jsonl; grep -oE "\"kind\":\"[a-z-]+\"" /var/lib/cairn-ui/journal.jsonl | sort | uniq -c'
+nix develop <wt> -c bash -c "cd <wt> && go vet ./... >/tmp/v.out 2>/tmp/v.err; echo rc=\$?"
+nix develop <wt> -c bash -c "cd <wt> && go test ./... >/tmp/t.out 2>&1; echo rc=\$?; grep -c '^ok' /tmp/t.out"
+nix develop <wt> -c bash -c "cd <wt> && python3 -m pytest tests -q -p no:randomly"   # 2201 at 95a0b42
+nix develop <wt> -c bash -c "cd <wt> && python3 -u tests/control_mutants.py >/tmp/b.out 2>/tmp/b.err"
+        # 🔴 `-u`, OR YOU GET NO PROGRESS AT ALL: without it the file sits at 49 bytes for the
+        # whole run and a slow run is indistinguishable from a hung one. 181 rows; the
+        # kill/survivor split is rank 29's. `--only <row>` scores ONE row.
+nix develop <wt> -c bash tests/pgtest/run.sh
+        # rc 0, 66 RUN / 66 PASS / 0 FAIL / 0 SKIP against 18.6, BOTH packages' no-database
+        # controls watched refusing first. A SKIP or a ZERO = exit 2.
+nix build <wt>#checks.x86_64-linux.ui-stylesheet-is-current --out-link <scratchpad>/res-css
+        # 🔴 NEVER --out-link into the repo root: an untracked `result` = leakscan exit 2.
+nix develop <wt> -c bash -c "cd <wt> && go test ./cmd/cairn-ui/ -count=1 -v 2>&1 | grep -c '^=== RUN'"
+        # 44. 🔴 COUNT THE RUNs: a -run matching NO test reports a clean `ok`.
 ```
 
-✅ **`go test ./...` FROM THE BASE CLONE IS NOW A READING ABOUT THE TREE.** Re-measured:
-`.claude/worktrees/` is EMPTY and `git worktree list` holds **0** `agent-*` entries. ⚠ This document
-asserted the opposite two sections apart in one update — measure it rather than quoting either.
-
-**The Postgres tier (rank 28a)** — its two controls are what make the green mean anything:
+**Bringing the invite flow up by hand — the only place it can be exercised today**, the deployed
+surface having no database until 28(d):
 ```bash
-nix develop <repo> -c bash tests/pgtest/run.sh      # starts its own throwaway server
-# Expect "control OK: refused, naming its own refusal", then 21 RUN / 21 PASS / 0 FAIL / 0 SKIP,
-# then "POSTGRES TIER PASSED: 21 test(s) against PostgreSQL 18.6".
-# 🔴 A SKIP OR A ZERO IS A REFUSAL (exit 2), never a pass. CI runs the same script with
-# CAIRN_PGTEST_DSN already set against a pinned service container; both paths were measured.
-nix develop <repo> -c python3 -m pytest tests/test_pgtest_tier_is_declared.py -q   # 7 passed
-# Its negative controls, each must fail exactly ONE test: rename a tier test (-> the set
-# comparison), and add a `t.Skip(` to one (-> test_the_tier_never_skips).
-nix develop <repo> -c go vet -tags pgtest ./internal/pgstore/    # the tagged files must vet too
+export CAIRN_UI_DB_DSN='host=/path/to/socketdir user=you dbname=throwaway sslmode=disable'
+cairn-ui -control-journal <journal> -store <store> -host 127.0.0.1 -port <a FREE port>
+# the startup line must read: ... state sessions in postgres, invitations in postgres
 ```
+🔴 **PICK A FREE PORT (`ss -ltn` FIRST) AND HAND OVER THE PID AND THE SESSION ID BESIDE THE URL**
+— a port answering 401 is indistinguishable from yours until you read whose process holds it,
+and this doc naming 8103 is what made every following session collide.
+⚠ **The first start against a database signs out every session minted against the FILE store.**
+
+**Deployed surface, from outside the cluster.** 🔴 NEVER write the deployed host into a repo
+file. `GET /share` → **401**; `GET /invite` → **404 until the branch deploys, then 401**.
+🔴 **READ THE RUNNING IMAGE, NOT THE MANIFEST**: resolve its tag to a commit and
+`git rev-list --count <that>..origin/main`. ⚠ `go test ./...` from the BASE CLONE is not a clean
+reading about the tree — `git worktree list` has 36+ entries. Measure it.
 
 ## Open investigations — live diagnosis state
 
