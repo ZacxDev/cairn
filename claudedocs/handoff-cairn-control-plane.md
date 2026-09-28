@@ -26,10 +26,14 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 - `main` @ **`54b9761`** (this arc's own handoff commit). ✅ The ORIGINAL arc is still closed.
   **Ranks 18–31 are the SUCCESSOR arc.** ⏳ `#136`/`#137` OPEN.
-- ✅ **RANKS 28(c), 29 AND 31 DONE — `feat/ui-invite-flow` @ `69846dd`, pushed, verified by
-  CONTENT (remote tip == local HEAD), tree CLEAN, and now PR `#139`.** Three commits past
+- ✅ **RANKS 28(c) AND 29 DONE, AND PR `#139` IS OPEN — `feat/ui-invite-flow` @ `0e7b9c4`,
+  pushed, verified by CONTENT (remote tip == local HEAD), tree CLEAN.** Four commits past
   `95a0b42` from `p6/invite-wiring`: `d9ebddf` wiring, `f7c57c5` mutant-row repair, `69846dd`
-  re-derived split. **The invite flow is no longer inert.**
+  re-derived split, `0e7b9c4` a `uiaudit` fix the PR itself found. **The flow is no longer
+  inert.**
+- 🔴 **OPENING THE PR FOUND A DEFECT NO LOCAL GATE COULD — `uiaudit` failed on `/join`, and
+  #139 is the FIRST walk that branch ever had** (it runs only in CI; 28(b4) shipped `JoinPage`
+  with no PR). Fixed in `0e7b9c4`; mechanism and both RED mutants: `cairn recall --ref ui`.
 - 🔴 **THE SHAPE, BECAUSE ONE SENTENCE IS AN OPERATOR-VISIBLE CONSEQUENCE.** `-db-dsn` /
   `$CAIRN_UI_DB_DSN` is a PostgreSQL DSN for this surface's MUTABLE state, and **one variable
   wires BOTH tables `internal/pgstore` holds — invitations AND sessions** (operator decision,
@@ -37,35 +41,33 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
   `-session-file` goes inert and the binary SAYS so. `pgstore.Open` pings AND migrates **before
   the listener binds**, under a 10 s bound — `lib/pq` has no default `connect_timeout`, so a
   host that DROPS packets would leave the pod neither up nor refusing. Failure: exit 78.
-- ✅ **EVERY GATE NOW READ, each status off the command with NO pipe, under `nix develop <the
-  WORKTREE>`** (go 1.25.14): `go vet ./...` rc 0 / **0 bytes both streams** · `go test ./...`
-  rc 0, **19 ok / 0 FAIL** · `go test ./cmd/cairn-ui/ -v` **44 RUN / 44 PASS** · **`pytest tests`
-  2201 passed / 0 failed** · leakscan self-test and scan both rc 0, **0 findings / 422 files** ·
-  `nix build .#cairn-ui`, `.#cairn-go`, `checks.ui-stylesheet-is-current` all rc 0 (`app.css`
-  untouched, **NOT re-validated**) · `AGENTS.md` unchanged at **31,330 B** · gofmt clean.
+- ✅ **EVERY GATE READ LOCALLY, each status off the command with NO pipe, under `nix develop
+  <the WORKTREE>`** (go 1.25.14): `go vet ./...` rc 0 / 0 bytes both streams · `go test ./...`
+  rc 0, **19 ok / 0 FAIL** · `./cmd/cairn-ui/` **44 RUN / 44 PASS** · **`pytest` 2201 / 0** ·
+  leakscan self-test and scan rc 0, **0 findings / 422 files** · `nix build .#cairn-ui`,
+  `.#cairn-go`, `checks.ui-stylesheet-is-current` rc 0 (`app.css` untouched, NOT re-validated)
+  · `AGENTS.md` unchanged at **31,330 B** · gofmt clean.
 - ✅ **THE POSTGRES TIER IS TWO PACKAGES AND GREEN: rc 0, 66 RUN / 66 PASS / 0 FAIL / 0 SKIP
-  against PostgreSQL 18.6**, both packages' no-database controls watched refusing first. The new
-  arm re-execs the binary against a real server and asserts the schema APPLIED (both tables in
-  `information_schema`), the session file and its DIRECTORY never created, both halves of the
-  startup line, and the ignored-file NOTE.
-- ✅ **BATTERY, FULL RUN ON THE FINAL TREE: `mutants=181 killed=179 survived=2 misattributed=0
-  harness-errors=0 stale-extras=0`, empty stderr, rc 0.** Both survivors are declared
+  against PostgreSQL 18.6**, both packages' no-database controls watched refusing first. The
+  new arm re-execs the binary against a real server and asserts the schema APPLIED (both
+  tables in `information_schema`), the session file and its DIRECTORY never created, both
+  halves of the startup line, and the NOTE.
+- ✅ **PR `#139` CI at `0e7b9c4`: 7 of 8 GREEN, `mergeable: MERGEABLE`; `go` (the 181-mutant
+  battery) still in flight at write time — RE-READ IT.** 🔴 pgtest green in CI is the
+  independent confirmation of 28(c)'s tier arm: a real server, not this host's.
+- ✅ **BATTERY, FULL RUN ON THE FINAL TREE: `181 / 179 killed / 2 survived / 0 misattributed
+  / 0 harness-errors / 0 stale-extras`, empty stderr, rc 0.** Both survivors are declared
   EQUIVALENT at the code (constant-time compares; the property is a TIMING one).
-- 🔴 **AND THE RUN BEFORE IT FOUND A DEFECT IN THIS SESSION'S OWN FIRST COMMIT —
-  `harness-errors=2`.** 28(c)'s `databaseDSNDefault` duplicates `controlJournalDefault`'s
-  blank-policy spelling, so two **pre-existing** rows matched TWICE and refused: **adding a
-  second copy of a guarded shape breaks the EXISTING row that matched the first**, and
-  disambiguating the NEW rows was not enough. Repaired `f7c57c5`, split re-derived `69846dd`.
-  ⚠ `pytest` went red on the other half — the count pin does **not** cover the `175 killed`.
-  Write-up: `internal/control/README.md`, `cairn recall --ref control`.
-- 🔴 **SEVEN MUTANTS ON 28(c)'s OWN GUARDS: SIX WATCHED KILLED, EACH BY ITS OWN MESSAGE, AND
-  THE SEVENTH — dropping `Inviting: inviting` — DOES NOT COMPILE**, which is why it has no
-  row. Enumerated in `d9ebddf`.
+- 🔴 **TWO DEFECTS IN THIS SESSION'S OWN FIRST COMMIT, BOTH FOUND BY INSTRUMENTS** — the
+  battery's `harness-errors=2` (**adding a second copy of a guarded shape breaks the EXISTING
+  mutant row that matched the first**; disambiguating the NEW rows was not enough) and a red
+  `pytest` count pin, which does not cover the split beside the count it moves. Repaired
+  `f7c57c5` / `69846dd`. ⚠ 28(c)'s seven own mutants: six watched killed, the seventh
+  (dropping `Inviting: inviting`) **does not COMPILE**. See `cairn recall --ref control`.
 - ⏳ **(1)** capped card LEFT-ALIGNED · **(2)** `GET /join`'s uniform page (Phase G,
-  REVISITABLE). Old **(3)**, a stale pid, dropped.
-- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** `resolve` exited **5**, and
-  an unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot distinguish
-  "touched no task" from "wrong id". No field written. Named by ROLE.
+  REVISITABLE). ⚠ **NO TASK-BOARD FIELD, AND THAT IS AN UNKNOWN RATHER THAN A MEASURED
+  ABSENCE:** `resolve` exited **5**, and an unknown session id answers 200 with an EMPTY
+  ARRAY, so the zero cannot distinguish "touched no task" from "wrong id". None written.
 
 ## Next steps (ranked)
 
@@ -119,12 +121,11 @@ one's remainder** — say so when you pick one up.
 26. ✅ **DISCHARGED FOR CODE BY CONSTRUCTION:** `git diff --stat <merge-base>...origin/main` was
     **one file, this handoff doc**. 🔴 EXPIRES the moment `main` gains a code commit — re-run
     the one-liner rather than quoting this. forcing: gate.
-27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN, AND THIS SESSION OVERRODE THE GATE ONCE.** Exit 14
-    (`size-ratchet`) on three drafts; the delta was cut 10,383 → 5,195 → 3,844 B and the rest
-    overridden. The reason is stamped on `54b9761` (`Size-Ratchet-Override:`): NO operator
-    approved it, and eviction was refused because `#136` already owns it. ⚠ THIS round was
-    landed with NO override, by cutting. **Closing condition unchanged:** `status=proposed`,
-    no override. forcing: gate.
+27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN, AND THIS SESSION OVERRODE THE GATE ONCE.** The
+    reason is stamped on `54b9761` (`Size-Ratchet-Override:`): NO operator approved it, and
+    eviction was refused because `#136` already owns it. ⚠ Three later rounds landed with NO
+    override, by cutting — at a cost in session time that is itself the argument for the
+    prune. **Closing condition unchanged:** `status=proposed`, no override. forcing: gate.
 28. 🔴 **BUILD P6 — (a), (b), (c) DONE; (d) REMAINS AND IT NEEDS YOU.** `feat/ui-invite-flow` @
     **`69846dd`**. **CLAIMED** (`cairn-control-plane-28`). (d) **manifests in the deployment
     repo** — a dedicated `postgres:18.6-alpine` StatefulSet on `openebs-nvme-1tb` (NOT
@@ -135,23 +136,21 @@ one's remainder** — say so when you pick one up.
     StatefulSet's major is a FOURTH pin site no test here can read — it must equal the 18 in
     `flake.nix`, `ci.yml` and `wantServerMajor`. ⚠ Prefer the ENV spelling to the flag: a DSN
     carries a password and a flag value is in `argv`. forcing: user.
-29. ✅ **DONE — both gates read, and the first reading found a defect.** `pytest tests` **2201
-    passed / 1 failed**, the failure being the count pin on `internal/control/README.md`'s
-    unmeasured `175 killed`; the battery's first full run reported **`harness-errors=2`** from
-    two pre-existing rows my own `d9ebddf` had made ambiguous. Repaired (`f7c57c5`), split
-    re-derived from a clean full run (`69846dd`): **181 / 179 killed / 2 EQUIVALENT / 0
-    misattributed / 0 harness-errors**, and `pytest` green. forcing: gate.
+29. ✅ **DONE — both gates read, and the first reading found a defect** (see `State now`):
+    `pytest` 2201 / 1 failed on an unmeasured `175 killed`, and the battery reported
+    `harness-errors=2`. Repaired `f7c57c5`, split re-derived `69846dd`: **181 / 179 / 2 / 0 /
+    0**, `pytest` green. forcing: gate.
 30. 🟡 **HARDEN `uiaudit/run.sh` AGAINST `CDPATH` — the fifth and last script of its shape**
     (three already carry `CDPATH= cd --`; `tests/pgtest/run.sh` was fixed in `d9ebddf`).
     **Closing condition:** `grep -L CDPATH` over those five returns nothing, or a line saying it
     never runs from a shell exporting one. forcing: gate — it dies before running anything, and
     CI cannot see it.
-31. ⏳ **PR `#139` IS OPEN AND UNAUDITED** — `feat/ui-invite-flow` → `main`, eleven commits, 45
-    files. 🔴 **ROUND 0 FIRST** (`/audit-pr 139`): it is the only round that can conclude *close
-    this rather than audit it*, and that is actionable only while the merge decision is open.
-    ⚠ The operator cap of round 0 + round 1 is scoped to PRs touching **only tests, prose and
-    CI config**; this one is mostly code, so it does not apply. **Closing condition:** the
-    ladder has run, or a line saying it lands unreviewed. forcing: gate.
+31. ⏳ **PR `#139` IS OPEN AND UNAUDITED** — twelve commits; it already paid for itself by
+    catching `/join`. 🔴 **ROUND 0 FIRST** (`/audit-pr 139`): the only round that can conclude
+    *close this rather than audit it*, actionable only while the merge decision is open. ⚠ The
+    operator cap of round 0 + round 1 covers PRs touching **only tests, prose and CI config**;
+    this one is mostly code. **Closing condition:** the ladder has run, or a line saying it
+    lands unreviewed. forcing: gate.
 
 ## Defects (batched)
 - ⚠ **CLOSED ENTRIES MOVE TO THE ARCHIVE; THIS SECTION REPLACES, SO ONE LEFT HERE IS RETYPED EVERY
