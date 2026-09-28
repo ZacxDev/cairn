@@ -76,6 +76,26 @@ type RecallReport struct {
 	// entries". The rendered ref-to line prints both.
 	RefToScopeTotal int
 
+	// RefToMatched is how many entries in the scope CARRY the ref-to: the numerator of the
+	// rendered ref-to line, and the number `RefToScopeTotal` is the denominator of.
+	//
+	// 🔴 IT IS A STORED COUNT RATHER THAN A DERIVATION, AND THE PENDULUM SWUNG TWICE BEFORE
+	// IT BECAME ONE. Both mistakes printed a false sentence about the store, both in BOTH
+	// implementations at once, so no assertion comparing the two could see either:
+	//
+	//   1. Reading `TotalInScope` — the scope's own total on the `ref-to-absent` branch, so
+	//      the report can say how much WAS read — printed "3 of 3 entries in `<scope>/`
+	//      reference it" for a ref NONE of them carried.
+	//   2. Fixing that by short-circuiting the numerator to 0 whenever the status is
+	//      `ref-to-absent` printed "0 of 3 … reference it", and "NO ENTRY REFERENCES <X>",
+	//      on a `--ref A --ref-to B` run where A does not carry B and other entries DO.
+	//      `ref-to-absent` is reached TWO ways — nothing in the scope matched, and the named
+	//      entry is not among the ones that did — and a status cannot tell them apart.
+	//
+	// Both were caught by reading a regenerated golden. The field is set once, from the
+	// filter's own result, on the only branch that runs the filter.
+	RefToMatched int
+
 	// Candidates are the filenames an ambiguous ref named. The resolver never picks; nor
 	// does this.
 	Candidates []string
@@ -108,17 +128,6 @@ type RecallReport struct {
 	// only, and never empty there: a featured entry with no stated basis is the implicit
 	// pick this package refuses to make.
 	FeaturedBasis string
-
-	// DeprecatedRefKeys is the load's front-matter-key deprecation warnings, carried from
-	// `store.Index`.
-	//
-	// 🔴 `RenderText` NEVER PRINTS IT, AND THAT IS THE DECISION RATHER THAN AN OVERSIGHT.
-	// These bytes are compared against the oracle's by `tests/conformance/` and
-	// `tests/parity/`, and a deprecation notice inside the REPORT would land in a served
-	// HTTP body — telling every API consumer to edit a file they do not have. It is a
-	// message for whoever runs the CLI, so the CLI writes it to STDERR through
-	// `client.WarnDeprecations`, which owns the once-per-process rule. The pod ignores it.
-	DeprecatedRefKeys []string
 }
 
 // PageIsPastTheEnd is 🔴 THE ONE PLACE THIS QUESTION IS ASKED. Three renderer branches
@@ -167,20 +176,6 @@ func (r RecallReport) Omitted() int {
 	return 0
 }
 
-// RefToMatched is how many entries the ref-to filter KEPT — the numerator of the ref-to line.
-//
-// 🔴 IT IS NOT `TotalInScope`, AND READING IT AS SUCH PRINTED SOMETHING FALSE. On
-// `ref-to-absent` the filter kept NOTHING, while `TotalInScope` on that branch is the scope's
-// own total so the report can say how much WAS read — so the line came out "3 of 3 entries in
-// `<scope>/` reference it" for a ref none of them carried. Caught by reading the regenerated
-// golden; no assertion comparing the two implementations could see it, because both agreed.
-func (r RecallReport) RefToMatched() int {
-	if r.Status == StatusRefToAbsent {
-		return 0
-	}
-	return r.TotalInScope
-}
-
 // Caveat is what this window can and cannot see — CaveatText, and nothing local.
 //
 // 🔴 `Listing`, NOT `Entries`. Badges are rendered by the index row, which iterates
@@ -222,11 +217,6 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 	badElsewhere := index.MalformedOutside([]string{opts.Scope})
 
 	base := RecallReport{
-		// 🔴 ON `base`, SO EVERY STATUS BRANCH CARRIES IT. Eight branches copy this value;
-		// setting the field per branch instead is the same assignment at eight sites, wrong
-		// at the one somebody forgets — and the one they forget is the one where an operator
-		// with a deprecated key sees no warning.
-		DeprecatedRefKeys:  index.DeprecatedRefKeys,
 		Scope:              store.NormalizeRef(opts.Scope),
 		StoreRoot:          storeRoot,
 		Limit:              opts.Limit,
@@ -293,6 +283,13 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 	// the scope total there instead would make that sentence claim a page showed 2 of 7 when
 	// the narrowed index held exactly 2. The scope total is not dropped — the ref-to line
 	// prints both numbers, so what the filter removed stays visible.
+	//
+	// ⚠ THAT RULE BINDS THE `ref-to-absent` BRANCHES TOO, AND THE ORACLE DISAGREED AT ONE OF
+	// THEM. `lib/subsystem_recall.py` passed the SCOPE total on the membership-test branch
+	// below while this side passed the narrowed count. Nothing renders `TotalInScope` on that
+	// branch, so no byte-diff gate could see it — but `report_json` serialises it, so it was a
+	// live cross-language divergence in the one field whose meaning this paragraph fixes. The
+	// oracle now matches this side, which is the one the rule names.
 	scopeTotal := len(entries)
 	if opts.HasRefTo {
 		want, parseErr := store.ParseTaskRef(opts.RefTo)
@@ -311,6 +308,10 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 				matching = append(matching, e)
 			}
 		}
+		// 🔴 ON `base`, FROM THE FILTER'S OWN RESULT, BEFORE ANY STATUS BRANCH. It is the one
+		// number the rendered ref-to line's numerator may be read from — see the field's own
+		// header for the two false sentences that came out of deriving it instead.
+		base.RefToMatched = len(matching)
 		if len(matching) == 0 {
 			out := base
 			out.Status = StatusRefToAbsent

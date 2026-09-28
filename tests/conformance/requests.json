@@ -1036,6 +1036,15 @@
       "why": "the other half of the schema's asymmetry: the ID half is compared byte-for-byte, so this finds NOTHING where the row above finds two. A corpus carrying only the folding half would pass on an implementation that folded both."
     },
     {
+      "id": "recall-ref-to-composes-with-ref",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/recall/linked-set?ref=linked-none&ref-to=github:example-org/example-repo%23428",
+      "principal": "wide-reader",
+      "normalize": ["report-content-length", "report-store-path", "report-host-identity"],
+      "why": "BOTH NARROWINGS AT ONCE, AND THE ROW EXISTS BECAUSE THE CORPUS COULD NOT SEND THIS SHAPE. `?ref=` names an ENTRY and `?ref-to=` names something an entry POINTS AT; the resolver knows nothing about the second, so an entry it finds that does not carry the ref must come back as `ref-to-absent`. `linked-none` carries no refs while TWO other entries in the scope do - so the rendered counts here are `2 of 3`, and the sentence has to say that THIS ENTRY does not reference it rather than that NO entry does. Both servers printed `0 of 3` and \"NO ENTRY REFERENCES\" over that world, identically, which is why an agreement test could not see it."
+    },
+    {
       "id": "recall-ref-to-malformed",
       "phase": "read",
       "method": "GET",

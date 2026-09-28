@@ -845,7 +845,7 @@ jobs:
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
           if [ "$passes" -lt 117 ]; then
-            echo "REFUSING: $passes passes, and 110 were measured — the gate got smaller"
+            echo "REFUSING: $passes passes, and 117 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
@@ -982,11 +982,20 @@ jobs:
                 f"differences={differences} entries={entries}")
           # Measured on this branch: 410 / 1690 / 0 / 119. Floors rather than equalities, so
           # ADDING a target is not a red gate; a NARROWING is.
-          # ⚠ 361 -> 410 WHEN THE `?ref-to=` SWEEP LANDED: FOUR targets per scope over nine
-          # wide scopes and two narrow ones. The floors are RAISED with the measurement rather
-          # than left where they were — they still passed at 410 against 361, and a floor 49
-          # targets below the measurement cannot see a 12% narrowing. `entries` is unchanged
-          # at 119 because the ref-to arm adds no per-entry comparison.
+          # ⚠ 366 -> 410 WHEN THE `?ref-to=` SWEEP LANDED: FOUR targets per scope over nine
+          # wide scopes and two narrow ones, so FORTY-FOUR — counted as `PASS ref-to…` /
+          # `PASS search-ref-to…` lines in the run, not inferred. Comparisons 1510 -> 1690;
+          # `entries` is unchanged at 119 because the ref-to arm adds no per-entry comparison.
+          #
+          # 🔴 AND THE LITERALS THIS REPLACED WERE ALREADY STALE BEFORE THAT SWEEP, WHICH IS
+          # WHY THE ARITHMETIC DOES NOT CLOSE ON THE OLD NUMBERS. They read 361 / 1489 / 363
+          # against a tree that measured 366 / 1510 / 368 — five targets, twenty-one
+          # comparisons and five PASS lines of drift already present, MEASURED by running this
+          # harness at `021be7a` rather than derived. A difference computed against a stale
+          # floor attributes that drift to whatever change happens to be in flight (here it
+          # read as "the sweep added 49"), which is how a floor silently loosens twice over.
+          # Re-derive a floor by RUNNING the harness, never by subtracting from the literal
+          # above it.
           problems = []
           if targets < 410:
               problems.append(f"targets {targets} < 410")

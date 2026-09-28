@@ -4986,23 +4986,26 @@ class TestDegradationMutationKills:
         mod = _load_mutant(
             tmp_path,
             "m_attribution",
-            # The anchor carries the following `carried` assignment so it hits
-            # `recall`'s derivation and not `search`'s identical-looking one — see
-            # the uniqueness assert in `_load_mutant`.
+            # The anchor carries the following `try:` so it hits `recall`'s
+            # derivation and not `search`'s identical-looking one — see the
+            # uniqueness assert in `_load_mutant`.
             #
-            # ⚠ IT USED TO CARRY THE FOLLOWING `try:` AND THE TWO LINES BETWEEN THEM
-            # ARE NOW A `carried` DICT, so the anchor MOVED when `refs:` landed. That
-            # is the anchor working as intended: a text anchor that silently stopped
-            # matching would make `_load_mutant` raise rather than report a survived
-            # mutant, which is why the uniqueness/presence assert is in there.
+            # ⚠ IT MOVED ONCE AND MOVED BACK. `refs:` put a `carried` dict between
+            # these two lines and the `try:`, so the anchor had to name that dict;
+            # deleting the ref-key deprecation machinery took the dict away again.
+            # Both moves were forced by the `_load_mutant` presence/uniqueness
+            # assert, which RAISES on an anchor that stopped matching rather than
+            # reporting a survived mutant — the failure mode a text anchor has.
             [
                 (
                     "    bad = index.malformed_in(scope)\n"
                     "    bad_elsewhere = index.malformed_outside((scope,))\n"
-                    "    # 🔴 ONE DICT, SET ONCE AFTER THE LOAD",
+                    "\n"
+                    "    try:",
                     "    bad = index.malformed\n"
                     "    bad_elsewhere = index.malformed_outside((scope,))\n"
-                    "    # 🔴 ONE DICT, SET ONCE AFTER THE LOAD",
+                    "\n"
+                    "    try:",
                 )
             ],
         )

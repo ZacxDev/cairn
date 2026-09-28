@@ -316,11 +316,25 @@ func sequenceField(mapping FrontMatter, key, source, scalarWhy string) ([]string
 	}
 }
 
-// parseRefsField reads the entry's refs from `refs:`, or from the deprecated `tasks:`/
-// `task:` spellings.
+// parseRefsField reads the entry's refs from `refs:`, or from the older `tasks:`/`task:`
+// spellings, which are ACCEPTED ALIASES and stay accepted.
+//
+// 🔴 WHY THE KEY WAS RENAMED AT ALL, since `tasks:` parsed fine: the key carries repos, PRs,
+// docs and dashboards, not only work-tracker items, so `tasks:` NAMED A SUBSET of what it
+// holds. An operator decision, not a green gate. `refs:` is the key to WRITE — see
+// `subsystem_resolver.format_task_refs`, the only serializer.
+//
+// ⚠ NOTHING ANNOUNCES THE OLD SPELLINGS, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.
+// A per-process stderr warning naming the replacement was built here and then DELETED:
+// measured across the two real stores, 0 of 440 entries carried `tasks:` or `task:`, so the
+// line was unreachable in practice, and its cross-client coverage was vacuous until a
+// fixture was planted for it. The ALIAS is what operators depend on; the notice was cost
+// with no reader. `TestTheDeprecatedRefKeysStillParseAndRefsWins` is what keeps the alias
+// honest, and `tests/conformance/`'s `linked-set/linked-old-key.md` exercises it over the
+// wire.
 //
 // 🔴 THE NEW SPELLING WINS WITHIN ONE ENTRY, AND IT WINS BY NOT CONSULTING THE OLD ONES AT
-// ALL. Rule 1 of `refkeys.go`, and it is what decides the one case that is not obvious: an
+// ALL. It is what decides the one case that is not obvious: an
 // entry carrying `refs:` AND BOTH deprecated spellings does NOT hit the "both `tasks:` and
 // `task:` are set" refusal, because neither is read. That refusal is about two spellings
 // DISAGREEING over what the entry's refs are, and when `refs:` is present there is no
@@ -328,12 +342,6 @@ func sequenceField(mapping FrontMatter, key, source, scalarWhy string) ([]string
 // refuse a file whose meaning is unambiguous, which is the opposite of what a deprecation
 // window is for. The refusal is unchanged for the entries that reach it (`refs:` absent),
 // which is every file the corpus sends.
-//
-// ⚠ THE WARNING IS NOT EMITTED HERE. `RefKeyDeprecations` is the pure function over a
-// mapping set, `Index.DeprecatedRefKeys` is where a load's answer is carried, and the
-// CLIENTS emit it. A parser that wrote to a stream its caller did not name would put
-// deprecation lines into the pod's audit stream and into `tests/conformance/`'s captured
-// output, neither of which asked for them.
 func parseRefsField(mapping FrontMatter, source string) ([]TaskRef, error) {
 	bad := func(why string) error { return malformed(source, why) }
 	refsVal, hasRefs := truthy(mapping, "refs")
@@ -400,10 +408,6 @@ func parseRefsField(mapping FrontMatter, source string) ([]TaskRef, error) {
 // truthy answers `if mapping.get(k):` — present AND not an empty string or empty
 // list. The `tasks:`/`task:` exclusivity check is written against Python
 // truthiness, so a bare `tasks:` (which reads as `""`) must not count as set.
-//
-// 🔴 IT IS ALSO WHAT `RefKeyDeprecations` ASKS, so "this key is set" means the same thing
-// to the parser and to the warning. Spelled separately they would disagree on the bare
-// `tasks:` line — one key warned about, the other key ignored.
 func truthy(mapping FrontMatter, key string) (any, bool) {
 	v, present := mapping[key]
 	if !present {
@@ -448,8 +452,14 @@ func ParseTaskRef(raw string) (TaskRef, error) {
 	}
 	// 🔴 A COMMA IS A SEPARATOR IN THE FORM THIS SCHEMA IS WRITTEN IN, so a ref
 	// containing one cannot survive its own serialization: the writer emits
-	// `tasks: [a,b]`, the inline-list reader splits on `,`, and the entry comes
+	// `refs: [a,b]`, the inline-list reader splits on `,`, and the entry comes
 	// back MALFORMED and invisible to every reader.
+	//
+	// ⚠ THE TWO REFUSAL MESSAGES AROUND THIS COMMENT STILL SPELL THE EXAMPLE `tasks: [a, b]`
+	// WHILE THE KEY TO WRITE IS `refs:`, AND THAT IS DEFERRED RATHER THAN MISSED. Their bytes
+	// are pinned by `tests/conformance/` goldens and diffed against the oracle's, so the
+	// wording moves in a change whose subject is that re-base — the same reason the text
+	// renderer's `tasks:` label has not moved (see `report.RecallReport.RenderText`).
 	if strings.Contains(text, ",") {
 		return TaskRef{}, fmt.Errorf(
 			"task ref %s contains a comma, which separates items in `tasks: [a, b]` — a ref cannot contain one",

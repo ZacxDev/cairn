@@ -381,9 +381,9 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
         # `go test`, the corpus against both servers, and the leak gate — and be caught only
         # here.
         Case("recall-ref-to-hit",
-             "the REVERSE lookup: which entries reference this. `alpha-notes/gauge-api.md` "
-             "carries it under the DEPRECATED `tasks:` key, so this row measures the narrowing "
-             "AND the alias path, and the `ref-to:` header line's two counts with them",
+             "the REVERSE lookup: which entries reference this. One of the three readable "
+             "entries in `alpha-notes` carries it, so the row measures the narrowing AND the "
+             "`ref-to:` header line's two counts — which differ from each other here",
              ["recall", "--scope", "alpha-notes",
               "--ref-to", "github:example-org/example-repo#428"]),
         Case("recall-ref-to-absent",
@@ -399,7 +399,12 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
         Case("recall-ref-to-composes-with-ref",
              "both narrowings at once: `--ref` names an ENTRY and `--ref-to` names something an "
              "entry POINTS AT, and the resolver knows nothing about the second — so an entry it "
-             "finds that does not carry the ref must come back as the non-finding",
+             "finds that does not carry the ref must come back as the non-finding. 🔴 AND THE "
+             "ROW IS ABOUT THE PROSE, NOT ONLY THE STATUS: `widget-cfg` carries no refs while "
+             "`gauge-api` in the same scope DOES, so both clients must print `1 of 3` and a "
+             "sentence naming the ENTRY — they agreed on `0 of 3` and `NO ENTRY REFERENCES` for "
+             "a whole round, which is a byte-identical pair of clients both saying something "
+             "false about the store",
              ["recall", "--scope", "alpha-notes", "--ref", "widget-cfg",
               "--ref-to", "github:example-org/example-repo#428"]),
         Case("recall-ref-to-malformed",

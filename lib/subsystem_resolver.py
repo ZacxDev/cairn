@@ -95,7 +95,6 @@ from __future__ import annotations
 import errno
 import re
 import stat
-import ref_keys
 from collections.abc import Sequence as _AbcSequence
 from dataclasses import dataclass
 from datetime import date as _date
@@ -448,10 +447,15 @@ def parse_task_ref(raw: object) -> TaskRef:
         )
     # 🔴 A COMMA IS A SEPARATOR IN THE FORM THIS SCHEMA IS WRITTEN IN, so a ref
     # containing one cannot survive its own serialization: `format_task_refs`
-    # emits `tasks: [clickup:a,b]`, the inline-list reader splits on `,`, and the
+    # emits `refs: [clickup:a,b]`, the inline-list reader splits on `,`, and the
     # entry comes back MALFORMED and invisible to every reader. Rejecting it at
     # parse time is the only place that keeps "accepted" and "round-trips" the
     # same set — a writer-side check would still let a hand-written file through.
+    #
+    # ⚠ THE TWO REFUSAL MESSAGES AROUND THIS COMMENT STILL SPELL THE EXAMPLE
+    # `tasks: [a, b]` WHILE THE KEY TO WRITE IS `refs:`, AND THAT IS DEFERRED RATHER THAN
+    # MISSED: their bytes are pinned by `tests/conformance/` goldens and diffed against
+    # the Go port's, so the wording moves in a change whose subject is that re-base.
     if "," in text:
         raise TaskRefError(
             f"task ref {raw!r} contains a comma, which separates items in "
@@ -480,6 +484,14 @@ def parse_task_ref(raw: object) -> TaskRef:
 def format_task_refs(refs: "Sequence[TaskRef | str]") -> str:
     """Refs -> the single front-matter LINE that reads back as the same refs.
 
+    🔴 IT EMITS `refs:`, WHICH IS THE CANONICAL KEY, AND IT USED TO EMIT `tasks:`.
+    `tasks:`/`task:` are ACCEPTED spellings on the way in and are not the spelling to
+    write: the key carries repos, PRs, docs and dashboards, so `tasks:` names a subset of
+    what it holds. This is the ONLY serializer in either language, so a writer emitting the
+    older key was the one place a store could keep acquiring files written in it — which is
+    the whole reason it is an alias rather than the name. No live caller today; it is
+    exported, and being unreached is not being right.
+
     Inline flow form on ONE line, on purpose and not as a style preference: a
     wrapped list on a key the parser type-checks is what makes a whole entry
     MALFORMED and invisible to every reader, and this repo has already paid for
@@ -487,14 +499,14 @@ def format_task_refs(refs: "Sequence[TaskRef | str]") -> str:
     line cannot produce the wrapped shape at all.
 
     Returns `""` for no refs, so a caller can omit the key entirely rather than
-    writing `tasks: []` — an empty list and an absent key mean the same thing and
+    writing `refs: []` — an empty list and an absent key mean the same thing and
     the absent one is what 120 of 120 existing entries carry today.
 
     🔴 EVERY INPUT IS RE-PARSED, INCLUDING A `TaskRef`. An earlier version
     short-circuited on `isinstance(r, TaskRef)` and re-parsed only bare strings —
     which left the claim below false, because `TaskRef` is an exported frozen
     dataclass with no validation of its own: `TaskRef("clickup", "a,b", "x")`
-    constructs happily and rendered `tasks: [clickup:a,b]`, a line the inline
+    constructs happily and rendered `refs: [clickup:a,b]`, a line the inline
     reader splits into `clickup:a` and `b` — MALFORMED entry, invisible to every
     reader. A hand-built `TaskRef` carrying a newline was worse still.
 
@@ -507,7 +519,7 @@ def format_task_refs(refs: "Sequence[TaskRef | str]") -> str:
     items = [str(parse_task_ref(str(r))) for r in refs]
     if not items:
         return ""
-    return f"tasks: [{', '.join(items)}]"
+    return f"refs: [{', '.join(items)}]"
 
 
 def lossy_tag_for(ref: TaskRef) -> str:
@@ -806,7 +818,20 @@ class SubsystemEntry:
             # ambiguity is measured per ENTRY and never per alias-occurrence.
             normalized.add(na)
 
-        # --- `refs:`, with `tasks:` / `task:` as deprecated aliases -------------
+        # --- `refs:`, with `tasks:` / `task:` as ACCEPTED ALIASES ---------------
+        # 🔴 WHY THE KEY WAS RENAMED, since `tasks:` parsed fine: it carries repos, PRs,
+        # docs and dashboards, not only work-tracker items, so `tasks:` NAMED A SUBSET of
+        # what it holds. An operator decision, not a green gate. `refs:` is the key to
+        # WRITE — `format_task_refs` is the only serializer and emits it.
+        #
+        # ⚠ NOTHING ANNOUNCES THE OLD SPELLINGS, AND THAT IS A DECISION RATHER THAN AN
+        # OVERSIGHT. A per-process stderr notice naming the replacement was built and then
+        # DELETED: measured across the two real stores, 0 of 440 entries carried `tasks:` or
+        # `task:`, so the line was unreachable in practice and its cross-client coverage was
+        # vacuous until a fixture was planted for it. The ALIAS is what operators depend on,
+        # and it is pinned by `test_the_deprecated_spellings_still_parse` here and
+        # `TestTheDeprecatedRefKeysStillParseAndRefsWins` on the Go side.
+        #
         # 🔴 VALIDATED HERE AND NOWHERE ELSE. The writer's own validate pass answers
         # "would the loader accept this file?" by constructing exactly what the
         # loader constructs (see `entry_mapping`), so putting the check here is
@@ -815,7 +840,7 @@ class SubsystemEntry:
         # validator is the duplicated predicate `claude/RULES.md` names.
         #
         # 🔴 THE NEW KEY WINS WITHIN ONE ENTRY, AND IT WINS BY NOT CONSULTING THE OLD
-        # ONES AT ALL. Rule 1 of `lib/ref_keys.py`, and it decides the one case that is
+        # ONES AT ALL. It decides the one case that is
         # not obvious: an entry carrying `refs:` AND BOTH deprecated spellings does NOT
         # hit the "both `tasks:` and `task:` are set" refusal below, because neither is
         # read. That refusal is about two spellings DISAGREEING over what the entry's
@@ -823,12 +848,6 @@ class SubsystemEntry:
         # a file whose meaning is unambiguous is the opposite of what a deprecation
         # window is for. The refusal is UNCHANGED for every entry that reaches it
         # (`refs:` absent), which is every file the conformance corpus sends.
-        #
-        # ⚠ THE WARNING IS NOT EMITTED HERE. `ref_keys.deprecations` is the pure
-        # function over a mapping set and the CLIENT emits it, for the same reason the
-        # Go side gives: a parser that wrote to a stream its caller did not name would
-        # put deprecation lines into the pod's log and into the bytes
-        # `tests/conformance/` captures, neither of which asked for them.
         raw_refs_in = mapping.get("refs")
         raw_tasks_in = mapping.get("tasks")
         raw_task_in = mapping.get("task")
@@ -909,26 +928,6 @@ class SubsystemIndex:
     """
 
     by_scope: Mapping[str, tuple[SubsystemEntry, ...]]
-
-    deprecated_ref_keys: tuple[str, ...] = ()
-    """One warning line per deprecated front-matter ref key any entry here carried.
-
-    🔴 DATA ON THE INDEX RATHER THAN AN EMISSION IN THE PARSER, AND THE REASON IS WHO IS
-    ALLOWED TO WRITE TO A STREAM. The pod and the CLI both load through the same loader; a
-    parser that printed would put these lines into the pod's log and into the bytes
-    `tests/conformance/` captures. The CLIENT emits them (through `env_aliases.warn_once`,
-    which owns the once-per-process rule) and the pod ignores them. Built by
-    `ref_keys.deprecations`, so the ORDER is a property of the ledger — the parity harness
-    diffs both clients' stderr byte-for-byte.
-
-    ⚠ IT IS NARROWED BY `visible_scopes` FOR FREE, because it is computed from the mappings
-    the load actually READ, and a load never reads a scope the caller may not see. So it
-    cannot become a channel that enumerates a denied scope's front matter.
-
-    ⚠ DEFAULTED AND DECLARED BEFORE `malformed` ONLY BECAUSE A DATACLASS FIELD WITH NO
-    DEFAULT CANNOT FOLLOW ONE THAT HAS ONE; every construction site names its fields by
-    keyword, so the position carries no meaning.
-    """
 
     malformed: tuple[MalformedEntry, ...] = ()
     """Entries that were REJECTED, when the index was built with `COLLECT`.
@@ -3102,17 +3101,8 @@ def load_index(
                 )
             )
     index = build_index(mappings, extra_scopes=scopes, on_malformed=on_malformed)
-    # 🔴 OVER `mappings`, WHICH IS EVERY FILE THE LOAD READ — including one `build_index`
-    # then REJECTED. A deprecated key in a malformed file is still a deprecated key the
-    # operator has to migrate, and computing this off the surviving entries would go quiet
-    # on exactly the files most likely to need the edit.
-    deprecated = tuple(ref_keys.deprecations(mappings))
     if not refused:
-        return SubsystemIndex(
-            by_scope=index.by_scope,
-            malformed=index.malformed,
-            deprecated_ref_keys=deprecated,
-        )
+        return SubsystemIndex(by_scope=index.by_scope, malformed=index.malformed)
     # 🔴 MERGED HERE RATHER THAN PASSED INTO `build_index`. These rows have
     # ALREADY been through the `on_malformed` policy above (a non-collecting
     # caller never reaches this line), so handing them to a function whose whole
@@ -3122,5 +3112,4 @@ def load_index(
     return SubsystemIndex(
         by_scope=index.by_scope,
         malformed=index.malformed + tuple(refused),
-        deprecated_ref_keys=deprecated,
     )

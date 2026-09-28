@@ -1278,17 +1278,6 @@ class RecallReport:
     total_in_scope: int = 0
     """Entries the scope holds, BEFORE `--limit`. The truncation discriminator."""
 
-    deprecated_ref_keys: tuple[str, ...] = ()
-    """The load's front-matter-key deprecation warnings, carried from `SubsystemIndex`.
-
-    🔴 `render_text`/`render_search` NEVER PRINT IT, AND THAT IS THE DECISION RATHER THAN AN
-    OVERSIGHT. These bytes are compared against the Go port's by `tests/conformance/` and
-    `tests/parity/`, and a deprecation notice inside the REPORT would land in a served HTTP
-    body — telling every API consumer to edit a file they do not have. It is a message for
-    whoever runs the CLI, so the CLI writes it to STDERR through `env_aliases.warn_once`,
-    which owns the once-per-process rule. The pod ignores it.
-    """
-
     limit: int = DEFAULT_ENTRY_LIMIT
     ref: str | None = None
 
@@ -1312,6 +1301,26 @@ class RecallReport:
     report is ABOUT, which after a narrowing is the matching entries; without this second
     number a reader could not tell "2 entries reference this" from "the scope holds 2
     entries". `render_text`'s ref-to line prints both.
+    """
+
+    ref_to_matched: int = 0
+    """Entries in the scope that CARRY the ref-to: the ref-to line's numerator.
+
+    🔴 A STORED COUNT RATHER THAN A DERIVATION, AND THE PENDULUM SWUNG TWICE BEFORE IT BECAME
+    ONE. Both mistakes printed a false sentence about the store, in BOTH implementations at
+    once, so no assertion comparing them could see either:
+
+    1. Reading `total_in_scope` — the scope's own total on the `ref-to-absent` branch, so the
+       report can say how much WAS read — printed "3 of 3 entries in `<scope>/` reference it"
+       for a ref NONE of them carried.
+    2. Fixing that by forcing the numerator to 0 whenever the status is `ref-to-absent`
+       printed "0 of 3 …" and "NO ENTRY REFERENCES <X>" on a `--ref A --ref-to B` run where A
+       does not carry B and other entries DO. `ref-to-absent` is reached TWO ways — nothing in
+       the scope matched, and the named entry is not among the ones that did — and a status
+       cannot tell them apart.
+
+    Both were caught by reading a regenerated golden. It is set once, from the filter's own
+    result, on the only branch that runs the filter.
     """
 
     candidates: tuple[str, ...] = ()
@@ -1543,17 +1552,9 @@ def load_store(
     # they cannot come to disagree about what an allowlist means.
     allowed = visible_scope_set(visible_scopes)
     assert allowed is not None  # `visible_scopes is None` returned above
-    # 🔴 `deprecated_ref_keys` IS CARRIED, NOT RE-DERIVED, AND IT NEEDS NO NARROWING OF ITS
-    # OWN — which is why the paragraph above still says "the two public fields" and this is
-    # not a third one contradicting it. It is computed from the mappings the LOADER read,
-    # and the loader already skips every denied scope dir, so there is nothing in it about a
-    # scope this caller may not see. Dropping it here instead (the first cut) made the
-    # warning disappear for every token-scoped caller while surviving for an unrestricted
-    # one — the same line, live on one principal and dead on another.
     return store, SubsystemIndex(
         by_scope={k: v for k, v in index.by_scope.items() if k in allowed},
         malformed=tuple(m for m in index.malformed if m.scope in allowed),
-        deprecated_ref_keys=index.deprecated_ref_keys,
     )
 
 
@@ -1626,14 +1627,6 @@ def recall(
     # branch would be the same predicate at six sites, wrong at five.
     bad = index.malformed_in(scope)
     bad_elsewhere = index.malformed_outside((scope,))
-    # 🔴 ONE DICT, SET ONCE AFTER THE LOAD AND SPLATTED INTO EVERY RETURN. Nine literals
-    # build a `RecallReport` in this function; assigning the field per literal is the same
-    # assignment at nine sites, wrong at the one somebody forgets — and the one they forget
-    # is the branch where an operator with a deprecated key sees no warning. `ref_to_fields`
-    # is merged into this below rather than kept beside it, for the same reason.
-    carried: dict[str, object] = {
-        "deprecated_ref_keys": index.deprecated_ref_keys,
-    }
 
     try:
         entries = index.entries(scope)
@@ -1648,7 +1641,6 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
-            **carried,
         )
 
     # 🔴 BEFORE `--ref`, AND BEFORE `scope-empty`. A scope whose every file was
@@ -1670,7 +1662,6 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
-            **carried,
         )
 
     # 🔴 THE REVERSE-LOOKUP NARROWING GOES HERE: AFTER `index.entries(scope)`, WHICH
@@ -1692,15 +1683,22 @@ def recall(
     #
     # ⚠ `total_in_scope` BECOMES THE NARROWED COUNT and `ref_to_scope_total` carries
     # the scope's own, for the reason `ref_to_scope_total`'s docstring gives.
-    ref_to_fields: dict[str, object] = dict(carried)
+    # 🔴 ONE DICT, BUILT ONCE AND SPLATTED INTO EVERY RETURN BELOW. Nine literals build a
+    # `RecallReport` in this function and the reverse-lookup fields belong on every one of
+    # them the filter reached; assigning them per literal is the same assignment at nine
+    # sites, wrong at the one somebody forgets.
+    ref_to_fields: dict[str, object] = {}
     scope_total = len(entries)
     if ref_to_ref is not None:
+        matching = tuple(e for e in entries if entry_references(e, ref_to_ref))
+        # 🔴 `ref_to_matched` GOES IN HERE, FROM THE FILTER'S OWN RESULT, BEFORE ANY STATUS
+        # BRANCH — it is the one number the rendered line's numerator may be read from. See
+        # the field's docstring for the two false sentences that came out of deriving it.
         ref_to_fields = {
-            **carried,
             "ref_to": str(ref_to_ref),
             "ref_to_scope_total": scope_total,
+            "ref_to_matched": len(matching),
         }
-        matching = tuple(e for e in entries if entry_references(e, ref_to_ref))
         if not matching:
             return RecallReport(
                 status="ref-to-absent",
@@ -1762,6 +1760,14 @@ def recall(
         # share one — a ref-only test would accept a cross-scope resolution as a
         # member of this scope's narrowed set. The pair used here is what the loader
         # itself locates a file by.
+        #
+        # 🔴 `total_in_scope` IS THE NARROWED COUNT HERE — `len(entries)`, NOT `scope_total`.
+        # `entries` has already been replaced by the matching set above, and the rule this
+        # function declares is that after a narrowing `total_in_scope` is the set the report is
+        # ABOUT while `ref_to_scope_total` carries the scope's own. This branch passed
+        # `scope_total` while the Go port passed the narrowed count, which made the two
+        # implementations disagree in a field `report_json` serialises — unobservable in the
+        # rendered text on this branch, and therefore invisible to every byte-diff gate.
         if ref_to_ref is not None and not any(
             e.scope == entry.scope and e.filename == entry.filename for e in entries
         ):
@@ -1769,7 +1775,7 @@ def recall(
                 status="ref-to-absent",
                 scope=normalize_ref(scope),
                 store_root=str(store),
-                total_in_scope=scope_total,
+                total_in_scope=len(entries),
                 limit=limit,
                 mode=mode,
                 ref=normalize_ref(ref),
@@ -2152,7 +2158,9 @@ def _validated_ref_to(ref_to: str | None) -> TaskRef | None:
         ) from exc
 
 
-def _ref_to_line(ref_to: str, matched: int, total: int, label: str) -> str:
+def _ref_to_line(
+    ref_to: str, matched: int, total: int, label: str, *, narrowed_set_shown: bool
+) -> str:
     """The ONE spelling of the reverse-lookup header, shared by both renderers.
 
     🔴 ONE FUNCTION, TWO CALLERS, BECAUSE THE TWO REPORT TYPES HAVE DIFFERENT COUNTS TO
@@ -2161,18 +2169,28 @@ def _ref_to_line(ref_to: str, matched: int, total: int, label: str) -> str:
     them. `internal/report.refToLine` is the Go spelling, and `tests/parity/harness.py`
     diffs the two clients' bytes.
 
-    `matched`/`total` are the narrowed and pre-filter counts.
+    `matched`/`total` are the narrowed and pre-filter counts. `narrowed_set_shown` says
+    whether the report BELOW this line reports on the matched entries; only `RecallReport`'s
+    `ref-to-absent` passes False, and it is a separate clause rather than a second function so
+    the COUNT half stays spelled once.
 
-    ⚠ `label` IS A FORMED LABEL AND CARRIES ITS OWN TRAILING `/`. `SearchReport.label` already
-    appends one, so a `/` added here printed `` `(all scopes)/` `` on a store-wide search.
+    ⚠ `label` IS A FORMED LABEL AND CARRIES ITS OWN TRAILING `/`, so do not append one here.
+    The draft passed `SearchReport.scope`, which on a store-wide search is the literal
+    `(all scopes)`, plus a `/` — printing `` `(all scopes)/` ``. `SearchReport.label` is what
+    it passes now: `scope_label` over the SEARCHED scopes, which cannot return `(all scopes)`
+    at all (it returns `(no scope)` for an empty set, and a `/`-suffixed join otherwise).
     Caught by reading the regenerated golden, not by a test: both implementations agreed, and
     both were wrong.
     """
+    reach = (
+        f"and everything below is about those {matched}."
+        if narrowed_set_shown
+        else "and NOTHING below is about them — the sentence below says why."
+    )
     return (
         f"  ref-to: `{ref_to}` — {matched} of {total} entr"
-        f"{'y' if total == 1 else 'ies'} in `{label}` reference it, and everything below "
-        f"is about those {matched}. This is a NARROWING, not a truncation: the rest were "
-        f"read and did not match."
+        f"{'y' if total == 1 else 'ies'} in `{label}` reference it, {reach}"
+        f" This is a NARROWING, not a truncation: the rest were read and did not match."
     )
 
 
@@ -2215,19 +2233,20 @@ def render_text(
     # ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves. `ref_to` is
     # `None` on every request that does not carry the parameter.
     if report.ref_to is not None:
-        # 🔴 THE NUMERATOR IS THE MATCHED COUNT, NOT `total_in_scope`, AND READING IT AS
-        # `total_in_scope` PRINTED SOMETHING FALSE. On `ref-to-absent` the filter kept
-        # NOTHING, while that field is the scope's own total on that branch so the report can
-        # say how much WAS read — so the line came out "3 of 3 entries reference it" for a ref
-        # none of them carried. Caught by reading the regenerated golden; no assertion
-        # comparing this to the Go port could see it, because both agreed.
-        matched = 0 if report.status == "ref-to-absent" else report.total_in_scope
+        # 🔴 THE NUMERATOR IS `ref_to_matched` AND NOTHING DERIVED. Two earlier spellings
+        # printed a false sentence about the store — see that field's docstring for both
+        # directions of the pendulum.
+        #
+        # ⚠ `narrowed_set_shown` IS FALSE ON `ref-to-absent` AND ON NOTHING ELSE, because that
+        # is the one status where the matched entries are counted and then NOT rendered: either
+        # none matched, or the `--ref` operand is not among the ones that did.
         out.append(
             _ref_to_line(
                 report.ref_to,
-                matched,
+                report.ref_to_matched,
                 report.ref_to_scope_total,
                 f"{report.scope}/",
+                narrowed_set_shown=report.status != "ref-to-absent",
             )
         )
 
@@ -2290,6 +2309,37 @@ def render_text(
 
     if report.status == "ref-to-absent":
         out.append("")
+        # 🔴 TWO SENTENCES FOR ONE STATUS, BECAUSE `ref-to-absent` IS REACHED TWO WAYS AND
+        # THE SECOND ONE IS NOT AN ABSENCE AT ALL. Nothing in the scope matched (the
+        # filter's own zero) and "the `--ref` operand is not among the entries that DID
+        # match" are different facts, and the second shipped wearing the first's words:
+        # both clients printed "NO ENTRY REFERENCES <X>" over a scope where other entries
+        # carried it, because the numerator had been forced to 0 whenever the status was
+        # this one. The discriminator is `ref_to_matched`.
+        if report.ref_to_matched > 0:
+            # The `--ref` operand loaded fine, so the malformed rows cannot make THIS claim
+            # wrong; they can only understate the count of entries that DO carry the ref,
+            # which is what the qualification names.
+            n_bad = len(report.malformed)
+            also = (
+                f" ⚠ AND THAT COUNT IS ONLY OF ENTRIES THAT LOADED: {n_bad} entry file"
+                f"{'' if n_bad == 1 else 's'} in this scope could not be indexed (listed "
+                f"above), and an entry that never loaded carries no refs a filter can see."
+                if n_bad
+                else ""
+            )
+            out.append(
+                f"`{report.ref}` DOES NOT REFERENCE `{report.ref_to}` — it was read and "
+                f"carries no such ref, so the two narrowings compose to nothing and no body "
+                f"is printed. {report.ref_to_matched} of the {report.ref_to_scope_total} "
+                f"entr{'y' if report.ref_to_scope_total == 1 else 'ies'} in "
+                f"`{report.scope}/` {'DOES' if report.ref_to_matched == 1 else 'DO'} "
+                f"reference it — re-run without `--ref` to see "
+                f"{'it' if report.ref_to_matched == 1 else 'them'}. The comparison is on "
+                f"THIS SCOPE's `refs:` keys and the id half is matched byte-for-byte, so a "
+                f"different spelling of it would not be found here either.{also}"
+            )
+            return "\n".join(out)
         # 🔴 IT SAYS WHAT WAS LOOKED AT AND WHAT WAS NOT, because a reverse lookup's
         # zero is the most misreadable answer this reader produces: "no entry
         # references X" and "X is not a thing anybody tracks" are different facts, and
@@ -2536,12 +2586,16 @@ def report_json(report: RecallReport) -> dict:
         "label": RECALL_LABEL,
         "caveat": report.caveat,
         "ref": report.ref,
-        # ⚠ BOTH REVERSE-LOOKUP FIELDS, NOT JUST THE OPERAND. A consumer holding only
-        # `ref_to` could not tell how much the filter removed, and `total_in_scope` is
-        # the NARROWED count once a filter ran — so the pair is what makes this payload
-        # say the same thing the rendered text says.
+        # ⚠ ALL THREE REVERSE-LOOKUP FIELDS, NOT JUST THE OPERAND. A consumer holding only
+        # `ref_to` could not tell how much the filter removed; `total_in_scope` is the
+        # NARROWED count once a filter ran; and `ref_to_matched` is the rendered line's own
+        # numerator, which is NOT derivable from the other two on `ref-to-absent` — that
+        # status is reached both by "nothing matched" and by "the `--ref` operand is not one
+        # of the entries that did". Carrying it is what keeps this payload saying the same
+        # thing the rendered text says.
         "ref_to": report.ref_to,
         "ref_to_scope_total": report.ref_to_scope_total,
+        "ref_to_matched": report.ref_to_matched,
         "candidates": list(report.candidates),
         "limit": report.limit,
         "mode": report.mode,
@@ -2918,17 +2972,6 @@ class SearchReport:
     """Hunks that cleared the threshold, BEFORE `max_hits`. The truncation
     discriminator, exactly as `total_in_scope` is for the digest."""
 
-    deprecated_ref_keys: tuple[str, ...] = ()
-    """The load's front-matter-key deprecation warnings, carried from `SubsystemIndex`.
-
-    🔴 `render_text`/`render_search` NEVER PRINT IT, AND THAT IS THE DECISION RATHER THAN AN
-    OVERSIGHT. These bytes are compared against the Go port's by `tests/conformance/` and
-    `tests/parity/`, and a deprecation notice inside the REPORT would land in a served HTTP
-    body — telling every API consumer to edit a file they do not have. It is a message for
-    whoever runs the CLI, so the CLI writes it to STDERR through `env_aliases.warn_once`,
-    which owns the once-per-process rule. The pod ignores it.
-    """
-
     max_hits: int = DEFAULT_MAX_HITS
     entries_searched: int = 0
 
@@ -3132,7 +3175,6 @@ def search(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
-            deprecated_ref_keys=index.deprecated_ref_keys,
         )
     else:
         scopes = (normalize_ref(scope),)
@@ -3147,10 +3189,9 @@ def search(
     # 🔴 THE REVERSE-LOOKUP OPERAND IS PARSED ONCE, OUTSIDE THE SCOPE LOOP, and
     # `ref_to_ref` is only consulted when it is not None — so a search with no
     # filter does no per-entry work it did not do before.
-    ref_to_fields: dict[str, object] = {
-        "deprecated_ref_keys": index.deprecated_ref_keys,
-        **({} if ref_to_ref is None else {"ref_to": str(ref_to_ref)}),
-    }
+    ref_to_fields: dict[str, object] = (
+        {} if ref_to_ref is None else {"ref_to": str(ref_to_ref)}
+    )
 
     query_tokens = tokenize(query)
     cleared: list[Hunk] = []
@@ -3249,11 +3290,15 @@ def render_search(
     # third field to carry it.
     if report.ref_to is not None:
         out.append(
+            # `narrowed_set_shown=True`: search has no status that counts the kept entries
+            # and then declines to search them — every entry the filter kept IS searched,
+            # and the hunks below are about exactly those.
             _ref_to_line(
                 report.ref_to,
                 report.entries_searched,
                 report.entries_searched + report.ref_to_skipped,
                 report.label,
+                narrowed_set_shown=True,
             )
         )
 

@@ -292,11 +292,6 @@ func LoadIndex(root string, onMalformed OnMalformed, visible ScopeSet) (*Index, 
 	if buildErr != nil {
 		return nil, buildErr
 	}
-	// 🔴 OVER `mappings`, WHICH IS EVERY FILE THE LOAD READ — including one that
-	// `BuildIndex` then REJECTED. A deprecated key in a malformed file is still a
-	// deprecated key the operator has to migrate, and computing this off the surviving
-	// entries would go quiet on exactly the files most likely to need the edit.
-	index.DeprecatedRefKeys = RefKeyDeprecations(mappings)
 	if len(refused) == 0 {
 		return index, nil
 	}
@@ -549,12 +544,5 @@ func LoadStore(storeRoot, verb string, visible ScopeSet) (*Index, error) {
 			keptMalformed = append(keptMalformed, m)
 		}
 	}
-	// 🔴 `DeprecatedRefKeys` IS CARRIED, NOT RE-DERIVED, AND IT NEEDS NO NARROWING OF ITS
-	// OWN — which is why the paragraph above says "the two fields" and this is not a third
-	// one contradicting it. It is computed from the mappings the LOADER read, and the
-	// loader has already skipped every denied scope directory, so there is nothing in it
-	// about a scope this caller may not see. Dropping it here instead (the first cut) made
-	// the warning disappear for every token-scoped caller while surviving for an
-	// unrestricted one — the same line, live on one principal and dead on another.
-	return &Index{byScope: narrowed, Malformed: keptMalformed, DeprecatedRefKeys: index.DeprecatedRefKeys}, nil
+	return &Index{byScope: narrowed, Malformed: keptMalformed}, nil
 }

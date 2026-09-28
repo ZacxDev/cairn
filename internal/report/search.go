@@ -443,10 +443,6 @@ type SearchReport struct {
 	// line prints this count beside the searched one, so a zero says WHY it is zero.
 	RefToSkipped int
 
-	// DeprecatedRefKeys is the load's front-matter-key deprecation warnings, carried from
-	// `store.Index`. `RenderText` never prints it — see `RecallReport.DeprecatedRefKeys`.
-	DeprecatedRefKeys []string
-
 	// BestBelow is the `(ref, score)` of the best hunk that did NOT clear the threshold.
 	//
 	// 🔴 THIS IS WHAT MAKES A ZERO READABLE. An empty result cannot distinguish two
@@ -507,9 +503,6 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	}
 
 	base := SearchReport{
-		// On `base`, so every status branch carries it — see `Recall`'s own note.
-		DeprecatedRefKeys: index.DeprecatedRefKeys,
-
 		Scope:       store.NormalizeRef(opts.Scope),
 		StoreRoot:   storeRoot,
 		Query:       opts.Query,

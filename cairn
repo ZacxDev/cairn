@@ -1439,18 +1439,6 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
             return EXIT_USAGE
         text = rc.render_text(report, instance=label)
 
-    # 🔴 THE FRONT-MATTER KEY DEPRECATION GOES TO STDERR, NOT INTO THE REPORT. The report's
-    # bytes are diffed against the Go client's by `tests/parity/harness.py` and served by the
-    # pod; a migration notice belongs to whoever runs THIS command. `warn_once` is
-    # `env_aliases`', reused rather than re-implemented, so a key named in both a recall and a
-    # following search produces ONE line.
-    #
-    # ⚠ BEFORE THE REPORT IS PRINTED, so a piped stdout and an unpiped stderr interleave the
-    # way an operator reads them — the notice above the output it is about.
-    env_aliases.warn_once(
-        report.deprecated_ref_keys, lambda line: print(f"cairn: {line}", file=sys.stderr)
-    )
-
     # An empty scope reached through a LIVE fetch is `scope-empty`; the same
     # emptiness behind a cache stays `cached`, because we did not reach the
     # store and cannot claim the emptiness is the store's.

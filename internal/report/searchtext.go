@@ -38,7 +38,11 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 	// `RefToSkipped` + `EntriesSearched` is the pre-filter total, so the line does not need a
 	// third field to carry it.
 	if r.HasRefTo {
-		out = append(out, refToLine(r.RefTo, r.EntriesSearched, r.EntriesSearched+r.RefToSkipped, r.Label()))
+		// `true`: search has no status that counts the kept entries and then declines to
+		// search them — every entry the filter kept IS searched, and the hunks below are
+		// about exactly those.
+		out = append(out, refToLine(r.RefTo, r.EntriesSearched, r.EntriesSearched+r.RefToSkipped,
+			r.Label(), true))
 	}
 
 	// Same rule as the recall renderer: before every branch, on every status.

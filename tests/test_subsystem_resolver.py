@@ -3048,15 +3048,46 @@ class TestTheRefsFrontMatterKey:
             )
         assert "has no `:`" in str(exc.value)
 
-    def test_the_loader_reports_a_deprecated_key_it_actually_read(self, tmp_path: Path) -> None:
-        """The index carries the warning; the PARSER does not emit it.
+    def test_the_only_serializer_emits_the_canonical_key(self, tmp_path: Path) -> None:
+        """`format_task_refs` writes `refs:`, not the older `tasks:`.
 
-        ⚠ MEASURED AT TWO POINTS on the dimension the answer depends on — a store whose entry
-        carries the deprecated key, and one whose entry carries the new key — because a guard
-        that only ever saw the non-empty case cannot tell a working detector from one that
-        reports a deprecation for every store.
+        🔴 WATCHED RED BEFORE THE FIX: `format_task_refs` returned `tasks: [...]`, so the
+        first assertion failed on the key and the round-trip below passed for the wrong
+        reason — the loader accepts BOTH spellings, which is exactly why a byte-level
+        assertion on the emitted key is needed and a round-trip alone is not.
+
+        ⚠ THE ROUND TRIP IS THE SECOND HALF AND NOT A SUBSTITUTE FOR THE FIRST. It is what
+        makes "the writer's form" a measured claim rather than a docstring: the line this
+        function emits is fed to the loader and must come back as the same refs.
         """
-        import ref_keys
+        line = sr.format_task_refs(["github:example-org/example-repo#428", "clickup:8600abc"])
+        assert line.startswith("refs: ["), line
+        assert "tasks:" not in line and "task:" not in line, line
+        # The control on the empty case, which must omit the key rather than write `refs: []`.
+        assert sr.format_task_refs([]) == ""
+        root = tmp_path / "written"
+        (root / "zone-one").mkdir(parents=True)
+        (root / "zone-one" / "alpha.md").write_text(
+            f"---\nservice: alpha\n{line}\n---\n\n## What it is\n\nx\n", encoding="utf-8"
+        )
+        entry = sr.load_index(root).entries("zone-one")[0]
+        assert [str(t) for t in entry.tasks] == [
+            "github:example-org/example-repo#428",
+            "clickup:8600abc",
+        ]
+
+    def test_the_loader_reads_the_deprecated_key_as_refs(self, tmp_path: Path) -> None:
+        """The alias, at the LOADER rather than at `from_mapping`.
+
+        ⚠ MEASURED AT TWO POINTS on the dimension the answer depends on — a store whose
+        entry carries the deprecated key, and one whose entry carries the new key — because a
+        one-point measurement cannot tell "both spellings load" from "every store loads the
+        same refs whatever it says".
+
+        🔴 IT IS THE LOADER-LEVEL HALF OF THE ALIAS GUARD. Nothing ANNOUNCES the old
+        spellings any more (that machinery is deleted); the acceptance is all that is left,
+        and this is where a `load_index` that stopped honouring it would go red.
+        """
 
         def store_with(label: str, front_matter_line: str) -> Path:
             root = tmp_path / label
@@ -3068,12 +3099,10 @@ class TestTheRefsFrontMatterKey:
             return root
 
         deprecated = sr.load_index(store_with("old", "tasks: [clickup:a]"))
-        assert list(deprecated.deprecated_ref_keys) == [ref_keys.warning("refs", "tasks")]
-        # Point two: the new key alone reports nothing, so the non-empty answer above is not
-        # a detector that fires on every store.
         current = sr.load_index(store_with("new", "refs: [clickup:a]"))
-        assert current.deprecated_ref_keys == ()
-        # …and the entry's refs are the same either way, which is the deprecation window's
-        # whole promise.
         assert [str(t) for t in deprecated.entries("zone-one")[0].tasks] == ["clickup:a"]
         assert [str(t) for t in current.entries("zone-one")[0].tasks] == ["clickup:a"]
+        # The control: a store whose entry carries NEITHER must surface no refs, so the two
+        # equalities above are not an assertion that every entry reports `clickup:a`.
+        none = sr.load_index(store_with("none", "scope: zone-one"))
+        assert [str(t) for t in none.entries("zone-one")[0].tasks] == []

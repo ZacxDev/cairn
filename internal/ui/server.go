@@ -102,6 +102,22 @@ type Malformed struct {
 	Reason string
 }
 
+// EntryRef is one of an entry's refs as the pages render it: the text the FILE carries, and
+// the URL the per-system registry resolved it to.
+//
+// 🔴 TWO FIELDS RATHER THAN ONE RESOLVED STRING, BECAUSE THE PAGE MUST SHOW WHAT THE FILE
+// SAYS. Rendering the resolved URL as the link TEXT would hide the ref an operator wrote and
+// has to grep for; rendering only the ref and deriving the href at the template would put a
+// second copy of the registry in `internal/ui`.
+//
+// `URL == ""` means the registry resolved this ref to nothing — an unregistered system, a
+// self-hosted one with no base supplied, or an id half that system cannot address. It renders
+// as inert text, which is exactly what every ref did before the registry existed.
+type EntryRef struct {
+	Raw string
+	URL string
+}
+
 // Entry is one entry as the pages render it.
 //
 // 🔴 EVERY FIELD HERE IS ATTACKER-INFLUENCED, AND `Tasks` IS THE ONE THAT LANDS IN
@@ -136,22 +152,10 @@ type Malformed struct {
 //	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
 //	Raw         the WHOLE file, decoded and otherwise untouched
 //
-// EntryRef is one of an entry's refs as the pages render it: the text the FILE carries, and
-// the URL the per-system registry resolved it to.
-//
-// 🔴 TWO FIELDS RATHER THAN ONE RESOLVED STRING, BECAUSE THE PAGE MUST SHOW WHAT THE FILE
-// SAYS. Rendering the resolved URL as the link TEXT would hide the ref an operator wrote and
-// has to grep for; rendering only the ref and deriving the href at the template would put a
-// second copy of the registry in `internal/ui`.
-//
-// `URL == ""` means the registry resolved this ref to nothing — an unregistered system, a
-// self-hosted one with no base supplied, or an id half that system cannot address. It renders
-// as inert text, which is exactly what every ref did before the registry existed.
-type EntryRef struct {
-	Raw string
-	URL string
-}
-
+// ⚠ `Tasks` IS NAMED FOR THE OLDER FRONT-MATTER KEY AND THE KEY IS NOW `refs:`. The name is
+// kept because renaming the field renames it in `render.go`'s page state and in every test
+// that builds one, which is a change about the field and not about this page; the ledger row
+// above is what tells a reader which file bytes it holds.
 type Entry struct {
 	Ref      string
 	Title    string

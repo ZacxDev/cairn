@@ -87,6 +87,12 @@ func TestTheRefsKeyIsRead(t *testing.T) {
 
 // TestTheDeprecatedRefKeysStillParseAndRefsWins is criterion 2, pinned in BOTH directions on
 // one fixture each.
+//
+// 🔴 IT IS NOW THE WHOLE GUARD ON THE `tasks:`/`task:` ALIAS ON THIS SIDE. The warning
+// machinery that used to sit beside it is deleted; the ACCEPTANCE is not, and nothing else in
+// this package would go red if `parseRefsField` stopped reading the old spellings. Its Python
+// twin is `test_the_deprecated_spellings_still_parse`, and `tests/conformance/`'s
+// `linked-set/linked-old-key.md` exercises the same path over the wire on both servers.
 func TestTheDeprecatedRefKeysStillParseAndRefsWins(t *testing.T) {
 	idents := func(e Entry) []string {
 		out := []string{}
@@ -143,67 +149,6 @@ func TestTheDeprecatedRefKeysStillParseAndRefsWins(t *testing.T) {
 	if _, err := EntryFromMapping(FrontMatter{"service": "alpha", "scope": "zone-one",
 		"tasks": []string{"clickup:a"}, "task": "clickup:b"}, "alpha.md"); err == nil {
 		t.Fatal("`tasks:` + `task:` with no `refs:` must still be refused")
-	}
-}
-
-// TestTheRefKeyLedgerIsSorted pins rule 3 of `refkeys.go`: the emission order is a property
-// of the ledger, not of a map walk, because `tests/parity/harness.py` diffs both clients'
-// stderr byte-for-byte.
-func TestTheRefKeyLedgerIsSorted(t *testing.T) {
-	for i := 1; i < len(RefKeyLedger); i++ {
-		prev, cur := RefKeyLedger[i-1], RefKeyLedger[i]
-		if prev.New > cur.New || (prev.New == cur.New && prev.Old >= cur.Old) {
-			t.Fatalf("RefKeyLedger is not sorted by (New, Old) at index %d: %+v then %+v", i, prev, cur)
-		}
-	}
-	// The set itself, so it cannot GROW or SHRINK without somebody deciding.
-	want := []RefKeyPair{{New: "refs", Old: "task"}, {New: "refs", Old: "tasks"}}
-	if !reflect.DeepEqual(RefKeyLedger, want) {
-		t.Fatalf("RefKeyLedger = %+v, want %+v", RefKeyLedger, want)
-	}
-}
-
-// TestTheRefKeyWarningIsPinnedWhole is criterion 3's text half.
-//
-// 🔴 THE WHOLE NORMALISED STRING, NOT A KEYWORD. A guard on words is walkable by rewording,
-// and this line is compared against `lib/ref_keys.py`'s rendering by
-// `tests/test_ref_keys.py` — so a reword here without one there is a stderr divergence the
-// parity harness would find at the far end of a much longer loop.
-func TestTheRefKeyWarningIsPinnedWhole(t *testing.T) {
-	got := RefKeyWarning(RefKeyPair{New: "refs", Old: "tasks"})
-	want := "`tasks:` in an entry's front matter is a deprecated alias for `refs:`. " +
-		"Where both appear on one entry, `refs:` is the one that is read. " +
-		"Both are accepted until the Python client (packages.cairn) is retired."
-	if got != want {
-		t.Fatalf("warning text moved.\n got: %q\nwant: %q", got, want)
-	}
-}
-
-// TestRefKeyDeprecationsAreOnePerOldKeySortedByNewName pins the pure function's three rules:
-// TRUTHY rather than present, deduplicated across entries, and ordered by the ledger.
-func TestRefKeyDeprecationsAreOnePerOldKeySortedByNewName(t *testing.T) {
-	lines := RefKeyDeprecations([]FrontMatter{
-		{"service": "a", "scope": "z", "tasks": []string{"clickup:1"}},
-		// The SAME old key on a second entry must not produce a second line.
-		{"service": "b", "scope": "z", "tasks": []string{"clickup:2"}},
-		{"service": "c", "scope": "z", "task": "clickup:3"},
-		// A bare `tasks:` reads as "" — an absent key to the parser, so not a deprecation.
-		{"service": "d", "scope": "z", "tasks": ""},
-		// The new key alone warns about nothing.
-		{"service": "e", "scope": "z", "refs": []string{"clickup:4"}},
-	})
-	want := []string{
-		RefKeyWarning(RefKeyPair{New: "refs", Old: "task"}),
-		RefKeyWarning(RefKeyPair{New: "refs", Old: "tasks"}),
-	}
-	if !reflect.DeepEqual(lines, want) {
-		t.Fatalf("deprecations = %#v, want %#v", lines, want)
-	}
-	// The positive control on the "reads zero" direction: a mapping set with no deprecated
-	// key must give an EMPTY answer, and the case above proves the function can return a
-	// non-zero count, so this zero is not a function wired to nothing.
-	if n := len(RefKeyDeprecations([]FrontMatter{{"service": "a", "scope": "z", "refs": []string{"clickup:1"}}})); n != 0 {
-		t.Fatalf("a `refs:`-only mapping set produced %d deprecation lines, want 0", n)
 	}
 }
 

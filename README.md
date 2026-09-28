@@ -300,6 +300,49 @@ retired, which is this arc's P8 milestone. Not a date — there is no semver her
 one on (`flake.nix` sets `version = self.shortRev`), and a milestone is something you can
 check.
 
+⚠ **That table is the RENAME ledger, not every variable this project reads.** Names with no
+older spelling are not in it and cannot be — `CAIRN_UI_*`, `CAIRN_SUPABASE_*`, and the open
+family `CAIRN_REF_BASE_<SYSTEM>` in the section below, whose suffix comes out of a store file
+and so could not be enumerated by any table.
+
+### 🔴 An entry's refs are `refs:`, and both readers answer "what references this?"
+
+**The front-matter key is `refs:`.** `tasks:` and `task:` are **accepted spellings and stay
+accepted** — nothing warns, nothing is rewritten, and an entry carrying either loads with
+exactly the refs it always did. `refs:` was chosen because the key now carries repos, PRs,
+docs and dashboards rather than only work-tracker items, so `tasks:` named a subset of what
+it holds. Where both appear on one entry, `refs:` is the one that is read.
+
+**Nothing you have to do.** The three things worth knowing if you script this:
+
+- **A new read filter, on both clients and both read routes.** `cairn recall --ref-to
+  <system>:<id>` and `cairn search … --ref-to <system>:<id>`; over HTTP,
+  `GET /api/v1/recall/<scope>?ref-to=…` and `GET /api/v1/search/<scope>?q=…&ref-to=…`. It is
+  spelled `ref-to` and **not** `ref` because `?ref=` already means "address one entry" on
+  that route. A malformed operand is a **400** naming the parameter, from the same parser an
+  entry's own `refs:` item goes through. ⚠ `#` must be percent-encoded as `%23` in a URL, or
+  the operand arrives truncated at the fragment delimiter.
+- **A new `X-Store-Status` value: `ref-to-absent`**, answered **200** with a body that says
+  what was read. It is a non-finding and not an error, and it is reached two ways — no entry
+  in the scope carries the ref, or `--ref`/`?ref=` named an entry that does not carry it while
+  others do. The rendered `ref-to:` line carries both counts (`N of M entries … reference
+  it`), so a filtered index cannot be mistaken for a whole one.
+- **`CAIRN_REF_BASE_<SYSTEM>` turns a ref into a link, with no network call.** `github:` and
+  `clickup:` resolve from built-in public hosts. Every other system resolves through a
+  variable you set — the system half upper-cased with `-` folded to `_`, so `refs:
+  [tracker:1234]` links only when `CAIRN_REF_BASE_TRACKER=https://tracker.example.invalid/t`
+  is exported to the process that renders it, giving `…/t/1234`. Set nothing and the ref
+  renders as plain text, exactly as it did before. 🔴 **It is read by whatever process
+  RENDERS**, which for the browse pages is `cairn-ui` and not your shell; and a base whose
+  scheme is not `http(s)` — `javascript:` included — has its **link withheld while the ref
+  still renders as plain text**, the same thing an unregistered system does. See
+  `internal/store/refurl.go` for why that is the safe direction rather than a limitation.
+
+**On the browse pages** the entry section that used to be headed **Tasks** is now **Refs**, and
+each ref is a link when it resolves. ⚠ The **text** renderer's label is still `tasks:` — the
+recall report's bytes are compared byte-for-byte against the other implementation's by two
+gates, so that line moves in a change whose subject is that re-base.
+
 ## The client — `cairn`
 
 | you want | run |

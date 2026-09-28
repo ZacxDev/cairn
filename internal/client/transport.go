@@ -88,21 +88,6 @@ func WarnDeprecations(lines []string) {
 	envalias.WarnOnce(lines, deprecationSink)
 }
 
-// warnRefKeys is `WarnDeprecations` for the FRONT-MATTER key ledger.
-//
-// 🔴 THE SAME SINK AND THE SAME `WarnOnce`, NOT A SECOND MECHANISM. The environment ledger
-// and the front-matter ledger are two ledgers with one emission rule — one line per process,
-// to stderr, prefixed `cairn: ` — and giving the second its own writer would give it its own
-// prefix, its own once-set, and a second thing for `tests/parity/harness.py`'s byte-for-byte
-// stderr diff to catch drifting. It is a named function rather than a bare call so a reader
-// greping for the front-matter emission finds the reasoning instead of a second `client.`
-// call that looks like the env one.
-//
-// ⚠ IT IS A ONE-LINE WRAPPER TODAY AND MAY STAY ONE. The alternative — calling
-// `WarnDeprecations` directly from `Report` — reads as "the env deprecations are being
-// emitted here", which is false and is exactly the confusion the name removes.
-func warnRefKeys(lines []string) { WarnDeprecations(lines) }
-
 // EnvURL and EnvToken are the two names that configure the default instance, in their
 // current spelling. Each reads from an exported variable OR from a key of the config
 // file, and each has a deprecated `SUBSYSTEM_STORE_*` alias resolved by

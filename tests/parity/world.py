@@ -36,15 +36,22 @@ EPOCH_NS = 946_684_800 * 1_000_000_000
 
 
 def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthetic entry",
-           refs: str = "", ref_key: str = "refs") -> str:
+           refs: str = "") -> str:
     """One entry's bytes.
 
-    `refs`/`ref_key` exist so the corpus can carry BOTH spellings of the ref key. `ref_key` is
-    a parameter rather than two functions because the only difference is the key's name, and
-    two builders would be two places for the rest of the entry's shape to drift.
+    `refs` exists so the corpus can carry the `refs:` front-matter key, which is what the
+    `--ref-to` rows narrow on.
+
+    ⚠ IT WRITES THE CURRENT KEY ONLY. A `ref_key` parameter was here so one entry could carry
+    the older `tasks:` spelling; the ALIAS is pinned in both languages by unit tests
+    (`test_the_deprecated_spellings_still_parse`,
+    `TestTheDeprecatedRefKeysStillParseAndRefsWins`) and over the wire by
+    `tests/conformance/`'s `linked-set/linked-old-key.md`, so nothing in THIS gate depended on
+    it once the deprecation WARNING — the only thing that reached a client's stderr — was
+    deleted.
     """
     alias_line = f"aliases: [{aliases}]\n" if aliases else ""
-    ref_line = f"{ref_key}: [{refs}]\n" if refs else ""
+    ref_line = f"refs: [{refs}]\n" if refs else ""
     return (
         "---\n"
         f"service: {service}\n"
@@ -76,23 +83,21 @@ ENTRIES: list[tuple[str, int, str]] = [
     # ORDER with no error and no missing entry — which reads as a stale cache.
     ("alpha-notes/ledger-svc.md", 750_000_000, _entry("ledger-svc", "alpha-notes",
                                                       aliases="ledger-holder")),
-    # 🔴 THE DEPRECATED REF KEY, AND IT IS WHAT MAKES THE DEPRECATION WARNING MEASURABLE HERE.
-    # This gate diffs both clients' stderr BYTE-FOR-BYTE, and the front-matter alias emits its
-    # line there — so without an entry carrying `tasks:` the claim "both clients warn
-    # identically" is satisfied by two clients that say nothing. Two clients failing
-    # identically compare equal; two clients SILENT identically compare equal too.
+    # 🔴 THE ONE ENTRY IN THIS SCOPE CARRYING A REF, AND THAT IS WHAT MAKES THE `--ref-to`
+    # ROWS DISCRIMINATING. `widget-cfg` and `ledger-svc` carry none, so a reverse lookup here
+    # has something to KEEP and something to REMOVE — and `recall-ref-to-composes-with-ref`
+    # can ask for an entry that does NOT carry the ref while other entries in the scope do,
+    # which is the shape a filter wired to "keep everything" cannot answer correctly.
     ("alpha-notes/gauge-api.md", 4_000_000_000,
-     _entry("gauge-api", "alpha-notes", refs="github:example-org/example-repo#428",
-            ref_key="tasks")),
+     _entry("gauge-api", "alpha-notes", refs="github:example-org/example-repo#428")),
     # A malformed entry BESIDE readable ones: `aliases:` as a bare string is what the schema
     # refuses, and the rejection has to render in the same report as the good entries.
     ("alpha-notes/broken-four.md",
      5_000_000_000,
      "---\nservice: broken-four\nscope: alpha-notes\n"
      "aliases: a bare string, which the schema refuses\n---\n\n"),
-    # The CURRENT spelling, in the other scope, carrying the SAME ref. Two entries in two
-    # scopes reference one task under two spellings of the key, which is what lets a
-    # `--ref-to` row find both and a per-scope row find one.
+    # The SAME ref in the other scope. Two entries in two scopes reference one thing, which
+    # is what lets a store-wide row find both and a per-scope row find one.
     ("beta-notes/spindle-cfg.md", 6_000_000_000,
      _entry("spindle-cfg", "beta-notes", body="the second scope's plain entry",
             refs="github:example-org/example-repo#428")),

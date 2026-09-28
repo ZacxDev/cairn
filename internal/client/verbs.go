@@ -360,7 +360,6 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 		}
 		text = rep.RenderText(env.host(), nil, label)
 		status, malformed = rep.Status, rep.Malformed
-		warnRefKeys(rep.DeprecatedRefKeys)
 		// 🔴 SEARCH USES ITS OWN EXIT LABEL. `SearchReport.Label()` names the scopes SEARCHED;
 		// passing the query instead made the reader's failure sentence say "`lease` holds 1
 		// entry file" — naming the search term as if it were a scope path.
@@ -425,7 +424,6 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 		}
 		text = rep.RenderText(env.host(), nil, label)
 		status, malformed = rep.Status, rep.Malformed
-		warnRefKeys(rep.DeprecatedRefKeys)
 		// ⚠ THE EXIT LABEL IS DERIVED, NOT AN ATTRIBUTE. The recall report has no label field,
 		// and assuming it did was an AttributeError that took every recall to exit 1 on the
 		// Python side. Derived exactly as the pod's own `Reader.Recall` derives it.

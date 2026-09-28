@@ -306,6 +306,51 @@ func TestRefToComposesWithRef(t *testing.T) {
 	if len(miss.Entries) != 0 {
 		t.Fatalf("a body was printed for an entry that does not carry the ref: %+v", miss.Entries)
 	}
+
+	// 🔴 AND THE RENDERED TEXT, BECAUSE STATUS AND `len(Entries)` WERE BOTH CORRECT WHILE THE
+	// PROSE WAS FALSE. `alpha-notes` holds two readable entries and ONE of them carries this
+	// ref, so a reader is entitled to learn that `unrelated` is not it — instead both clients
+	// printed "0 of 2 entries in `alpha-notes/` reference it" and "NO ENTRY REFERENCES …",
+	// which is a claim about the STORE and it was wrong. Asserted as whole substrings rather
+	// than by keyword: a guard on words is walkable by rewording, and these bytes are compared
+	// against the oracle's by `tests/parity/` and `tests/conformance/`.
+	//
+	// 🔴 RED/GREEN MATRIX, MEASURED RATHER THAN CLAIMED: at `f806d6c1` (the pre-fix head) this
+	// block fails on BOTH assertions — `RefToMatched()` short-circuited to 0 on this status,
+	// so the header read `0 of 2` and the body took the no-entry branch. Green at HEAD.
+	text := miss.RenderText("synthetic-host", nil, "")
+	wantHeader := "  ref-to: `" + sharedRef + "` — 1 of 2 entries in `alpha-notes/` reference " +
+		"it, and NOTHING below is about them — the sentence below says why. This is a " +
+		"NARROWING, not a truncation: the rest were read and did not match."
+	if !strings.Contains(text, wantHeader) {
+		t.Errorf("the ref-to header does not report the entries that DO carry the ref."+
+			"\nwant: %s\ngot:\n%s", wantHeader, text)
+	}
+	wantBody := "`unrelated` DOES NOT REFERENCE `" + sharedRef + "` — it was read and carries " +
+		"no such ref, so the two narrowings compose to nothing and no body is printed. 1 of " +
+		"the 2 entries in `alpha-notes/` DOES reference it — re-run without `--ref` to see it."
+	if !strings.Contains(text, wantBody) {
+		t.Errorf("the ref-to-absent sentence claims the scope references nothing."+
+			"\nwant: %s\ngot:\n%s", wantBody, text)
+	}
+	// The CONTROL on the wording swap: the other route to this status — nothing in the scope
+	// matched at all — must still get the original sentence, or the branch above has simply
+	// replaced it everywhere.
+	none, err := Recall(root, RecallOptions{
+		Scope: "alpha-notes", Mode: DefaultMode, Limit: DefaultEntryLimit, Page: 1,
+		RefTo: "clickup:nothing-carries-this", HasRefTo: true,
+	}, store.Unrestricted())
+	if err != nil {
+		t.Fatalf("recall: %v", err)
+	}
+	noneText := none.RenderText("synthetic-host", nil, "")
+	if !strings.Contains(noneText, "NO ENTRY REFERENCES `clickup:nothing-carries-this` — the 2 "+
+		"entries in `alpha-notes/` were read and none of them carries that ref.") {
+		t.Errorf("the filter's own zero lost its sentence:\n%s", noneText)
+	}
+	if !strings.Contains(noneText, "— 0 of 2 entries in `alpha-notes/` reference it") {
+		t.Errorf("the filter's own zero does not report a zero numerator:\n%s", noneText)
+	}
 }
 
 // TestAMalformedRefToIsRefusedByTheOptionLadder pins that the operand goes through the SAME
