@@ -284,11 +284,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   defect as the `go` job's `ok` floor (`-lt 16` against seventeen packages) and as the
   publish battery's, now three times in this repository. **Before batching a count defect as
   prose, grep for the number in an `assert` or an `if`.**
-- **Decision (operator, this session): the prune was chosen over feature work**, and its
-  closing condition was met by MOVING rather than cutting. 🔴 **The safety property of a prune
-  is assertable and was asserted**: every bullet verified present in exactly one of the two
-  files, 0 missing and 0 duplicated, with every other section byte-identical. A prune that
-  cannot prove it moved rather than cut is the `BYPASS`-deletion failure with a tidier diff.
 - 🔴 **A CONTROL THAT SETTLED "IS THE TREE DIRTY" WAS READ AS SETTLING "WHICH ARTEFACT DID IT",
   AND THE INSTRUMENT COULD NOT ANSWER THE SECOND QUESTION AT ALL.** ❌ **RETRACTED:** *"the
   scanner's single `COULD NOT READ` line named the worktree directory … the rival mechanism was
@@ -951,18 +946,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   a concurrent session's PR touching the same three files. The claim lock could not have shown it
   (the peer claimed a DIFFERENT slug, `cairn-ui-share-affordance`, for the same package). **Both
   moments are load-bearing, and the second one is where the sunk cost is highest.**
-- 🔴 **CARRIED FORWARD FROM A `State now` THAT WAS ABOUT TO DROP THEM A SECOND TIME — TWO
-  RETRACTED MECHANISMS ABOUT THE CARD CAP, BOTH STILL BINDING.** (a) ❌ *"`.page-main > .card`
-  reaches exactly the two broken pages"* — it reaches **four**: `/scope`, `/entry`, `NavigatePage`
-  and `/?q=`, whose `searchResults` renders `.card.results` as a direct child of `<main>`. Three
-  route states were rendered and the claim generalised to the ROUTE SET. **For a claim about a SET,
-  enumerate the render sites from SOURCE.** (b) ❌ *"`.scope-grid .card`
-  overrides for cards inside the grid"* — it declares only `margin-block: 0` and has EQUAL
-  specificity, so it could never override a `max-width`. The grid is safe because `>` is a CHILD
-  COMBINATOR and grid cards are GRANDCHILDREN, which never match — so **anyone who later flattens
-  the `.scope-grid` wrapper silently caps the whole grid**, which is why #131's guard pins the
-  NESTING and not only the declaration. ⚠ Both sat under `State now`, which REPLACES; they survive
-  here and in the `cairn/ui` index entry, and nowhere else in this doc.
 - 🔴 **A GUARD THAT WALKS FROM THE REPO ROOT CANNOT TELL THIS REPO FROM A CHECKOUT OF THIS REPO
   INSIDE IT** — and agent worktrees now live under `.claude/worktrees/`, so this is the default
   situation rather than an exotic one. The tell is a FAIL naming paths that contain the repo's own
@@ -1271,6 +1254,26 @@ fabricate a full sha from a short one; a squash would have undone the A/B split.
   why it does not apply** rather than flipping the verdict and quoting the clean half. ⚠ The cost
   is asymmetric: (a) is pulling an override for a reason that
   was about another repo, on a repo where committing DEPLOYS; (b) is blocking a correct merge.
+- 🔴 **A SECOND ARC RAN BESIDE RANK 28 AND LANDED — `#137` as `7c3929d`: the ported
+  parallel-work rules plus a repo-local base-clone write guard, the repo's FIRST tracked
+  `.claude/`, 75 tests, `.gitignore` for `.claude/worktrees/`.** The guard is **live in the base
+  clone and verified there** (`git commit` → deny · `merge --ff-only` → allow · `git status` →
+  allow); it **FAILS OPEN** because it is tracked in a PUBLIC repo and only exit 2 blocks, and it
+  is **not a security boundary**. 🔴 **The three rounds' measured lessons are in
+  `cairn recall --ref base-clone-write-guard`, not here** — the store outlives this file, and this
+  document is 30 KB over its allowance. Deferrals: **`#138`**, six items with closing conditions
+  after `/the-algorithm` deleted four of six requirements and found **five of the six had been
+  issued by an audit round** — "a department, not a maker". ⚠ **Its own item 1 bit immediately:**
+  the guard keys on the cwd, so `git -C <a worktree> commit` issued from the base clone is
+  REFUSED — the false-POSITIVE mirror of the four documented bypasses, and worse, because those
+  lose protection while this blocks correct work. `BASE_CLONE_WRITE_OK=1` is the documented way
+  past it.
+- 🔴 **THIS DOC'S `Defects` SECTION HANDED A CLOSED HAZARD TO A NEW FILE AS A 🔴 RULE** —
+  *"worktrees must live OUTSIDE the repo root"*, whose both halves are closed (`#127`: leakscan
+  rc 0, naming the nested checkout as a reasoned skip; `#135`: `go test` 19 ok from the base clone
+  with one present) and which the harness's own `isolation: "worktree"` contradicts. **`Defects`
+  REPLACES, so a closed entry survives every update nobody retypes** — rank 23 was marked DONE two
+  sections away. Check the closing item before porting a hazard out of that list.
 
 ## How to verify
 
