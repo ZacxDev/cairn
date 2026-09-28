@@ -24,114 +24,130 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 
 ## State now
 
-- `main` @ **`2a53572`**, clean but for one untracked file of another arc. ✅ ORIGINAL arc still
-  closed; **ranks 18–31 are the SUCCESSOR arc.** ⏳ `#136`, `#139`, `#140` OPEN — **`#140` is NEW.**
-- 🔴 **ROUND 1 (rank 31) RAN THIS SESSION AND IS NOT CLEAN — two 🔴, five 🟡, one 🟢, all in
-  `Defects`. THE LADDER CONTINUES.** `#139` @ **`8b1f2ff`**, 13 commits; `8b1f2ff` is the previous
-  session's round-0 fixes.
-- 🔴 **IT WAS NOT A DELTA ROUND.** All three surfaces (`issues/139/comments`,
-  `pulls/139/comments`, `pulls/139/reviews`) were **zero** — round 0 posts no `audit-claims` block
-  — so round 1 was the FIRST FULL audit and delta rounds start at **round 2**, anchored `8b1f2ff`.
-  As a delta it would have covered 1 commit of 13. Brief assembled with **clean stderr**.
-- 🔴 **HEADLINE 🔴, RE-VERIFIED BY ME AGAINST THE BRANCH:** the only serving-path `Redeem` caller
-  is `internal/ui/oauth.go:670`, inside the `errors.As(err, &unprovisioned)` arm, which a successful
-  `Exchange` skips — so an existing user is signed in with **no membership, invitation still
-  `open`, nothing said**. Detail and the operator's choice: `Defects`.
-- ✅ **THE COMMITS' OWN NUMBERS RE-DERIVED AND HELD:** 181 mutants; `tests/pgtest/run.sh`
-  **75/75/0 FAIL/0 SKIP** on PostgreSQL 18.6, both no-DSN controls watched refusing;
-  `go test ./... -count=1 -v` **1427 RUN / 1427 PASS**; leakscan **0 findings / 423 files**, both
-  controls; two of four session-store mutants reproduced by hand.
-- ⏳ **CI at `8b1f2ff`: 7 of 8 GREEN**, `MERGEABLE`/`UNSTABLE` — **the UNSTABLE is the pending job,
-  not a conflict.** `go` still in flight at ~50 min against an independently measured ~38 min full
-  battery run: slow, not yet hung. **RE-READ IT.**
-- ⚠ **NO TASK-BOARD FIELD — UNKNOWN, NOT A MEASURED ABSENCE.** `resolve` exited **5**; an unknown
-  session id answers 200 with an EMPTY ARRAY. None written.
-- 🔴 **THE CLONE WAS ACTIVELY SHARED THROUGHOUT** — live processes in
-  `.claude/worktrees/agent-ab15b2c34e5e25798` and another session's scratchpad worktree; two
-  `cairn-next-phase-*` claims within the hour. `audit-dispatch.py` flagged `kind: SHARED` itself.
-  Everything that could write ran in a worktree.
+- `main` @ **`12ef1be`** — ⚠ **AHEAD 1 AND UNPUSHED at read time**; a PEER session's handoff
+  about this same PR, not this session's. ⏳ `#136`, `#139`, `#140` OPEN.
+- 🔴 **ROUND 1 RAN TWICE, CONCURRENTLY, AND THAT IS A COORDINATION FAILURE THIS SESSION
+  CAUSED.** I created rank 31 last update and then worked it WITHOUT `claim-work`; a peer had
+  claimed `cairn-control-plane-31` an hour earlier and was auditing `#139` at the same time.
+  🔴 **A better-written rank made the collision MORE likely, not less — the lock is the only
+  thing that prevents it.** ✅ The redeeming half: the rounds were blind to each other and
+  **CORROBORATE**, both landing independently on the known-user redemption defect at
+  `oauth.go:670`. Theirs: `#139#issuecomment-5863958702`.
+- ✅ **THE FIXES ARE SHIPPED — `#139` @ `be8a61e`, pushed, verified by CONTENT, tree CLEAN**,
+  14 commits. Every finding from BOTH rounds is fixed or named as not-fixed, each re-verified
+  before being acted on. ⚠ Their MAGNITUDES differed from mine (migration race 39/40 and
+  11/40 theirs, 32/40 mine — same direction, different number).
+- 🔴 **THE THREE 🔴 THIS SESSION FOUND, ALL FIXED:** (a) the startup refusal printed the DSN
+  **PASSWORD** (`lib/pq` → `net/url.Parse` → `*url.Error` carries the raw string) inside a
+  message saying twice that it does not — and it is **PARSE-TIME ONLY**, so the keyword/value
+  form and a well-formed-but-unreachable URL never leaked, which is why every existing test
+  was green; (b) an already-known user could **NEVER** redeem, silently; (c) the redemption
+  path had **NO test** while two places claimed it did — which is why (b) survived.
+  Mechanisms: `be8a61e` and `cairn recall --ref ui`.
+- ✅ **GATES AT `be8a61e`, statuses off the command, under `nix develop <the WORKTREE>`:**
+  `go vet` rc 0 · `go test ./...` **20 ok / 0 FAIL** · `tests/pgtest/run.sh` **80/80/0/0** on
+  18.6 with BOTH no-DSN controls watched refusing · count pin 12 · tier ledger 8 · AGENTS.md
+  weight 6 · leakscan rc 0. 🔴 **TWO OF MY OWN GUARDS WERE WRONG FIRST, BOTH FOUND BY
+  MUTATION:** the leak guard's replacement used a WELL-FORMED URL (parses, so nothing leaks —
+  the mutant SURVIVED), and a battery row scored **`HARNESS ERROR`** because both arms burned
+  a 60 s deadline into the battery's 120 s package timeout.
+- ✅ **BATTERY, CLEAN FULL RUN ON THE FINAL TREE: `183 / 181 killed / 2 survived / 0
+  misattributed / 0 harness-errors / 0 stale-extras`, empty stderr, rc 0.** Both survivors
+  are declared EQUIVALENT at the code. The split is re-derived in `5d3a972`.
+- ✅ **28(d) MANIFESTS DRAFTED, NOT MERGED** — `homelab-talos` `feat/cairn-ui-postgres`, ⚠ **3
+  behind `trunk`**. `kustomize build` rc 0 / 17 docs; the phase-1 exposure gate green AND
+  validated (NodePort ⇒ rc 1, restored ⇒ rc 0); the password absent from render and worktree,
+  the grep watched FINDING it pre-encryption. 🔴 **The exact DSN string was exercised** against
+  a real 18.6 with scram auth: both tables created, session file never created.
+- ⚠ **NO TASK-BOARD FIELD — AN UNKNOWN, NOT A MEASURED ABSENCE.** `resolve` exited **5**
+  (status read off the command, not through the pipe that ate it the first time). None written.
 
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug.** 🔴 **A NEW ARC, not the closed
-one's remainder** — say so when you pick one up.
+🔴 **NUMBERING IS STABLE — a rank is half a `claim-work` slug.** 🔴 **`claim-work` BEFORE you
+act on an item, not after — this session skipped it on rank 31 and duplicated a peer's whole
+round.** 🔴 **A NEW ARC, not the closed one's remainder.**
 
 1. ✅ #74 `93d0f03`. forcing: gate.
 2. ✅ `562a4f6f`. forcing: gate.
 3. ✅ P7 `c0f5b06`. forcing: none.
-4. **P8 — retire the Python oracle.** **Closing condition:** a real read AND a real write against
-   the live pod from **two distinct hosts**, recorded, AND no open defect naming the Go client or
-   `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and the residual risk
-   is accepted EXPLICITLY, in writing.** `cairn doctor` from two hosts + `gh issue list`. forcing: none
+4. **P8 — retire the Python oracle.** **Closing condition:** a real read AND a real write
+   against the live pod from **two distinct hosts**, recorded, AND no open defect naming the
+   Go client or `packages.default`. **BACKSTOP: not done by 2026-11-01 ⇒ P8 opens anyway and
+   the residual risk is accepted EXPLICITLY, in writing.** forcing: none
 5. ✅ `-issue-credential` #76. forcing: gate.
 6. ✅ forcing: user.
 7. ✅ `56cc56e` (#69). forcing: user.
 8. ✅ rule (o), `c4490f07`. forcing: incident.
-9. 🔴 **UNBLOCKED BY 28(c), NEEDS 28(d) FIRST — AND ROUND 1 NARROWED WHAT IT CAN PROVE.** No
-   database on the deployed surface until the manifests land. ⚠ **A redemption walked by an
-   ALREADY-KNOWN user silently does nothing** (see `Defects`), so signing in as an existing user and
-   seeing a session is NOT evidence. Use a subject the control plane does NOT hold. forcing: user.
+9. 🔴 **UNBLOCKED IN CODE, BLOCKED ON DEPLOY.** The DEPLOYED surface has no DSN until 28(d)
+   merges, so `Inviting` is nil there and every invite route takes the `NoInviteStore`
+   branch. Until then the hand-run recipe under `How to verify` is the only place to
+   exercise it. forcing: user.
 10. ✅ `901b77d` (#104). forcing: user.
-11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`**, held because that repo's `main` is red for an
-    unrelated reason. **CLAIMED** (`cairn-control-plane-11`). forcing: incident.
+11. ⏳ **OPEN AS the handoff-tooling repo's `#1867`.** **CLAIMED** (`cairn-control-plane-11`).
+    forcing: incident.
 12. **CORRECT TWO FILES ASSERTING THAT REPO'S CI CHECKS BLOCK A MERGE** — they do not
     (`required_status_checks` → 404), and both err PERMISSIVELY. forcing: gate.
-13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** ⚠ Sign-in resolves the
-    token's `sub` against a user the control plane ALREADY holds, and all three causes collapse into
-    one 401, so the pod's log is the only place the mechanism exists. 🔴 The second authorised way
-    past that wall is inert on the DEPLOYED surface until 28(d). forcing: user.
+13. **COMPLETE A GITHUB SIGN-IN END TO END ON THE DEPLOYED SURFACE.** ⚠ Precondition: sign-in
+    resolves the token's `sub` against a user the control plane ALREADY holds, and all three
+    causes collapse into one 401. 🔴 Round 1 makes this sharper: an existing user's invitation
+    is now redeemed on the success path (`RedeemFor`), which no human has yet driven against a
+    real GoTrue. forcing: user.
 14. ✅ `#117` as `9c24bc4`. forcing: gate.
 15. ✅ rule (p) `b4233ea9`. Four findings FILED rather than fixed — open. forcing: gate.
-16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** Keep-or-replace, not a PR gate. forcing: user.
+16. **DECIDE THE TAILWIND BUILD-TOOLCHAIN QUESTION.** Keep-or-replace. forcing: user.
 17. ✅ `84642ff` (#108). forcing: gate.
 18. ✅ 🔴 Two of three headline findings were WRONG; re-derivation caught them. forcing: user.
-19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23; still 0 hits across this doc,
-    the archive and the plan. **Closing condition:** a recorded question→delete→simplify pass, or a
-    line saying the fact-rot pass discharged it. forcing: user.
+19. **RUN THE WHOLE DESIGN THROUGH `/the-algorithm`.** Asked 09-23; still 0 hits.
+    **Closing condition:** a recorded question→delete→simplify pass, or a line saying the
+    fact-rot pass discharged it. forcing: user.
 20. **THE ARCHIVE IS OVER ITS LEDGER ALLOWANCE AND NOTHING WILL NOTICE** — 174,237 B against a
-    grandfathered 147,456 B. **Closing condition:** both entries re-derived from measured size, or a
-    line exempting foreign entries. forcing: gate.
+    grandfathered 147,456 B. forcing: gate.
 21. ✅ API pod `sha-953ad36`. ⚠ A SECOND INSTANCE EXISTS, UNTOUCHED. forcing: user.
-22. ❌ **WITHDRAWN — the edge cache TTL is left as it is.** 🔴 DO NOT RE-PROPOSE AS UNDECIDED.
-    **Closing condition: none — closed by decision.** forcing: user.
+22. ❌ **WITHDRAWN — the edge cache TTL is left as it is.** 🔴 DO NOT RE-PROPOSE. forcing: user.
 23. ✅ both halves, `c6aed4e` (#135). forcing: gate.
-24. ✅ #134 MERGED `963517e`. 🔴 Round 2 was due and SKIPPED by operator decision. forcing: user.
-25. ✅ **SUPERSEDED BY OPERATOR DECISION, NOT DONE — DO NOT WORK AS WRITTEN.** The work is rank 28.
-    forcing: user.
-26. 🔴 **EXPIRED BY ITS OWN TERMS — RE-RUN IT, DO NOT QUOTE THE ✅.** It discharged itself "by
-    construction" on a one-file `git diff --stat <merge-base>...origin/main` and said it expires the
-    moment `main` gains a code commit. **`main` has gained several** (`7c3929d`, `963517e`,
-    `c6aed4e`, `d003708`, …). Re-run the one-liner. forcing: gate.
-27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN, AND IT BLOCKED THIS SESSION'S WRITE.** `54b9761` carries
-    a `Size-Ratchet-Override:` NO operator approved; eviction was refused because `#136` owns it.
-    ⚠ **This session was refused at `status=size-ratchet` (141,013 B against 98,304 B, over by
-    42,709 B) and paid it by CUTTING its own delta rather than overriding** — the fourth round to do
-    so, and the cost is the argument for the prune. **Closing condition unchanged:**
-    `status=proposed`, no override. forcing: gate.
-28. 🔴 **BUILD P6 — (a), (b), (c) DONE; (d) REMAINS AND IT NEEDS YOU.** `feat/ui-invite-flow` @
-    **`8b1f2ff`**. **CLAIMED** (`cairn-control-plane-28`). (d) **manifests in the deployment repo** —
-    a dedicated `postgres:18.6-alpine` StatefulSet on `openebs-nvme-1tb` (NOT `supabase-cairn`), a
-    SOPS secret carrying the DSN, a Service, a NetworkPolicy row, and `CAIRN_UI_DB_DSN` on the UI
-    Deployment. 🔴 **COMMIT THERE IS DEPLOY — show the operator before landing it.** ⚠ **Cutting
-    sessions over signs everybody out once — SAY SO BEFORE THE DEPLOY.** 🔴 The StatefulSet's major
-    is a FOURTH pin site no test here can read — it must equal the 18 in `flake.nix`, `ci.yml` and
-    `wantServerMajor`. ⚠ Prefer the ENV spelling: a DSN carries a password and a flag is in `argv`.
-    🔴 **DO NOT DEPLOY AHEAD OF THE 🔴 IN `Defects`.** forcing: user.
-29. ✅ **DONE — both gates read, and the first reading found a defect**: `pytest` 2201 / 1 failed on
-    an unmeasured `175 killed`, battery `harness-errors=2`. Repaired `f7c57c5` / `69846dd`:
-    **181 / 179 / 2 / 0 / 0**, `pytest` green. forcing: gate.
-30. 🟡 **HARDEN `uiaudit/run.sh` AGAINST `CDPATH` — the fifth and last script of its shape** (three
-    carry `CDPATH= cd --`; `tests/pgtest/run.sh` was fixed in `d9ebddf`). **Closing condition:**
-    `grep -L CDPATH` over those five returns nothing, or a line saying it never runs from a shell
-    exporting one. forcing: gate — it dies before running anything, and CI cannot see it.
-31. 🔴 **ROUND 1 DONE; THE LADDER CONTINUES — ROUND 2 IS DUE AFTER THE FIXES LAND.** **CLAIMED**
-    (`cairn-control-plane-31`). **Next:** fix the two 🔴 (and 🟡 3, two lines) on
-    `feat/ui-invite-flow`; then post the round-1 block with `audit-dispatch.py 139 --round 1
-    --emit-claims --audited 8b1f2ff --payload <N>` **as an ISSUE comment** (a review comment is
-    invisible to the script); then dispatch round 2 as a delta. 🔴 **EMITTING IS NOT POSTING** — the
-    flag prints a skeleton and posts nothing; without the block `--round 2` refuses. ⚠ The operator
-    cap of round 0 + round 1 covers PRs touching only tests, prose and CI config; this one is mostly
-    code, so it does not apply. forcing: gate.
+24. ✅ #134 MERGED `963517e`. forcing: user.
+25. ✅ **SUPERSEDED BY OPERATOR DECISION — DO NOT WORK THIS ITEM AS WRITTEN.** forcing: user.
+26. ✅ **DISCHARGED FOR CODE BY CONSTRUCTION.** 🔴 EXPIRES the moment `main` gains a code
+    commit — re-run `git diff --stat <merge-base>...origin/main`. forcing: gate.
+27. 🔴 **PRUNE THIS DOCUMENT — STILL OPEN.** Overridden once this session (`54b9761`,
+    `Size-Ratchet-Override:`, NO operator approval); three later rounds landed by cutting.
+    forcing: gate.
+28. 🔴 **BUILD P6 — (a),(b),(c) DONE; (d) REMAINS AND IT NEEDS YOU.** `feat/ui-invite-flow` @
+    **`be8a61e`**. **CLAIMED** (`cairn-control-plane-28`). (d) is drafted on `homelab-talos`
+    `feat/cairn-ui-postgres` — postgres StatefulSet, SOPS secret, Service, NetworkPolicy,
+    `CAIRN_UI_DB_DSN`, ⚠ **3 behind `trunk`, rebase before opening.** 🔴 **COMMIT THERE IS
+    DEPLOY.** ⚠ **Cutting sessions over signs everybody out once — SAY SO BEFORE THE DEPLOY.**
+    🔴 The StatefulSet's major is a FOURTH pin site no test here can read. forcing: user.
+29. ✅ **DONE — both gates read; the first reading found a defect.** forcing: gate.
+30. 🟡 **HARDEN `uiaudit/run.sh` AGAINST `CDPATH` — the fifth and last script of its shape.**
+    **Closing condition:** `grep -L CDPATH` over those five returns nothing. forcing: gate.
+31. 🔴 **ROUND 2 IS DUE AND IS THE LIVE ITEM — `claim-work cairn-control-plane-31` FIRST; a
+    peer holds it.** Round 1 produced findings that needed fixing, so the ladder continues,
+    and **every fix is code no round has audited** — including `Inviting.RedeemFor`, which is
+    new AUTHORIZATION code written after both audits ran. Anchor the delta at **`8b1f2ff`**
+    (round 1 was the FIRST FULL audit; round 0 posts no block). 🔴 **The round-1
+    `audit-claims` block must be posted as an ISSUE comment before `--round 2`, or
+    `audit-dispatch.py` refuses** — `gh pr view --json comments` does not return review
+    comments. **Closing condition:** a clean round, or the attribution gate firing.
+    forcing: gate.
+32. ✅ **DONE — `5d3a972`.** The count pin moved 181 → 183 and does NOT cover the split
+    beside it, so the README asserted `179 killed`, a figure nothing measured — the SECOND
+    time this arc shipped that defect on that exact line. Re-derived from a clean full run:
+    **183 / 181 / 2 / 0 / 0**. forcing: gate.
+33. 🟡 **TWO PEER ROUND-1 FINDINGS ARE NOT FIXED AND NOT CLOSED BY `be8a61e`.** (a)
+    `internal/ui/oauth.go:529`'s `r.FormValue` also reads the QUERY on a POST, against a
+    comment describing `PostFormValue` — `handleJoinPage` was corrected for this exact
+    distinction in `95a0b42`. (b) `internal/invite` has **no test files at all** while
+    `StateAt`'s arm ORDER is declared load-bearing and pinned by nothing. **Closing
+    condition:** one PR for both, the arm-order test watched RED on a reordered switch.
+    forcing: gate.
+34. 🟡 **THE `#137` BASE-CLONE WRITE GUARD REFUSES THE WORKFLOW ITS OWN REMEDY PRESCRIBES** —
+    it judges by `--git-common-dir`, so a `git add` in a LINKED WORKTREE (own git dir, index
+    and HEAD) is refused as a base-clone write. This session pulled `BASE_CLONE_WRITE_OK=1`
+    repeatedly for legitimate worktree commits, which is the train-everyone-to-click-through
+    failure. **Closing condition:** the guard admits a linked worktree, with a test that a
+    base-clone write is still refused. forcing: gate.
 
 ## Defects (batched)
 
@@ -1358,44 +1374,34 @@ follow-up with a closing condition on the PR rather than fixed here.
 🔴 **THE HAND-RUN BRING-UP RECIPE (two users, joined) IS THE ONLY WAY TO VERIFY RANK 9 AND MUST
 NOT BE DELETED FROM THIS SECTION** — reason in `Gotchas`, because this section REPLACES.
 
-🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE** (this arc has paid three times).
-🔴 **AND RUN EVERY GATE AS `nix develop <THE WORKTREE>`, NOT the base clone** — that clone is on
-`main`, whose devShell has **no `postgresql_18`**; the previous recipe's `nix develop <repo> -c
-bash -c "cd <wt> && …"` silently supplied PostgreSQL **17.10**. Bare `go` is 1.26.7, pin 1.25.14:
+🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE** — this arc has paid four times;
+the fourth was `clawgate_handoff.sh resolve | head -3`, where `$?` was `head`'s 0 and the real
+status was 5. 🔴 **AND RUN EVERY GATE AS `nix develop <THE WORKTREE>`** — the base clone is on
+`main`, whose devShell has no `postgresql_18`.
+
 ```bash
 nix develop <wt> -c bash -c "cd <wt> && go vet ./... >/tmp/v.out 2>/tmp/v.err; echo rc=\$?"
-nix develop <wt> -c bash -c "cd <wt> && go test ./... >/tmp/t.out 2>&1; echo rc=\$?; grep -c '^ok' /tmp/t.out"
-nix develop <wt> -c bash -c "cd <wt> && python3 -m pytest tests -q -p no:randomly"   # 2201 at 95a0b42
+nix develop <wt> -c bash -c "cd <wt> && go test ./... >/tmp/t.out 2>&1; echo rc=\$?; grep -c '^ok' /tmp/t.out"   # 20 ok
+nix develop <wt> -c bash tests/pgtest/run.sh        # 80/80/0/0 on 18.6, both controls refusing
 nix develop <wt> -c bash -c "cd <wt> && python3 -u tests/control_mutants.py >/tmp/b.out 2>/tmp/b.err"
-        # 🔴 `-u`, OR YOU GET NO PROGRESS AT ALL: without it the file sits at 49 bytes for the
-        # whole run and a slow run is indistinguishable from a hung one. 181 rows; the
-        # kill/survivor split is rank 29's. `--only <row>` scores ONE row.
-nix develop <wt> -c bash tests/pgtest/run.sh
-        # rc 0, 66 RUN / 66 PASS / 0 FAIL / 0 SKIP against 18.6, BOTH packages' no-database
-        # controls watched refusing first. A SKIP or a ZERO = exit 2.
-nix build <wt>#checks.x86_64-linux.ui-stylesheet-is-current --out-link <scratchpad>/res-css
-        # 🔴 NEVER --out-link into the repo root: an untracked `result` = leakscan exit 2.
-nix develop <wt> -c bash -c "cd <wt> && go test ./cmd/cairn-ui/ -count=1 -v 2>&1 | grep -c '^=== RUN'"
-        # 44. 🔴 COUNT THE RUNs: a -run matching NO test reports a clean `ok`.
+        # 183 / 181 / 2 / 0 / 0. 🔴 `-u`, or the file sits at 49 bytes and a slow run is
+        # indistinguishable from a hung one. ~25-40 min.
+nix develop <wt> -c bash -c "cd <wt> && python3 -m pytest tests -q -p no:randomly"
 ```
 
-**Bringing the invite flow up by hand — the only place it can be exercised today**, the deployed
-surface having no database until 28(d):
-```bash
-export CAIRN_UI_DB_DSN='host=/path/to/socketdir user=you dbname=throwaway sslmode=disable'
-cairn-ui -control-journal <journal> -store <store> -host 127.0.0.1 -port <a FREE port>
-# the startup line must read: ... state sessions in postgres, invitations in postgres
-```
-🔴 **PICK A FREE PORT (`ss -ltn` FIRST) AND HAND OVER THE PID AND THE SESSION ID BESIDE THE URL**
-— a port answering 401 is indistinguishable from yours until you read whose process holds it,
-and this doc naming 8103 is what made every following session collide.
+**The DSN, exercised rather than reviewed** — the one property no manifest review establishes.
+Start a throwaway server, export the EXACT keyword/value string the SOPS secret carries, and run
+`cairn-ui`; the startup line must read `... state sessions in postgres, invitations in postgres`.
+🔴 **PICK A FREE PORT (`ss -ltn` FIRST) AND HAND OVER THE PID AND SESSION ID BESIDE THE URL.**
 ⚠ **The first start against a database signs out every session minted against the FILE store.**
 
-**Deployed surface, from outside the cluster.** 🔴 NEVER write the deployed host into a repo
-file. `GET /share` → **401**; `GET /invite` → **404 until the branch deploys, then 401**.
-🔴 **READ THE RUNNING IMAGE, NOT THE MANIFEST**: resolve its tag to a commit and
-`git rev-list --count <that>..origin/main`. ⚠ `go test ./...` from the BASE CLONE is not a clean
-reading about the tree — `git worktree list` has 36+ entries. Measure it.
+**The leak that is easiest to reintroduce:**
+```bash
+CAIRN_UI_DB_DSN='postgres://u:SECRET@127.0.0.1:not-a-port/d' cairn-ui ... 2>&1 | grep SECRET
+```
+must be EMPTY. 🔴 **A WELL-FORMED URL CANNOT TEST THIS** — it parses, so no `*url.Error` exists;
+the leak is PARSE-time only, which a peer session independently re-measured (6 DSN shapes, 2
+leaking, both malformed). A fixture that can only produce the safe shape is why this shipped.
 
 ## Open investigations — live diagnosis state
 
