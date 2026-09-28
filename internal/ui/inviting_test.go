@@ -785,3 +785,62 @@ func TestRedeemForRefusesSomebodyTheProjectAlreadyHolds(t *testing.T) {
 			"consumed a link that was not the redeemer's to spend", inv.StateAt(invClock))
 	}
 }
+
+// TestRedeemAlsoRefusesSomebodyTheProjectAlreadyHolds is the TWIN of the case above, and it
+// exists because the guard shipped on ONE of the two redemption writers.
+//
+// 🔴 THE DEFECT IT PINS IS A DISAGREEMENT BETWEEN TWO ENTRY POINTS, NOT A MISSING CHECK.
+// `RedeemFor` refused an existing member before the spend; `Redeem` computed the very same
+// `held` boolean, used it only to decide whether to MINT a user id, and then wrote
+// `member-set` unconditionally. Both are reachable from the callback — `oauth.go` sends the
+// provisioning arm to `Redeem` and the success arm to `RedeemFor` — so the rule held on one
+// path and not the other, while `RedeemFor`'s own doc cited `Redeem` as the reason the rule
+// matters.
+//
+// 🔴 THE REACHABLE PRODUCTION CASE IS A CONCURRENT DOUBLE-CALLBACK: one account, two open
+// invitations into one project, two tabs. Both exchanges fail `UnprovisionedSubject`, so
+// both enter the provisioning arm; the first mints and writes `member-set`, and the second
+// now reads `held == true` and writes `member-set` AGAIN at its own invitation's role. This
+// test drives that second state directly — a subject the model ALREADY holds — because the
+// race is what makes it reachable, not what makes it wrong.
+//
+// ⚠ IT ASSERTS THROUGH `Redeem`, NOT `RedeemFor`. Asserting the fix by calling `RedeemFor`
+// would pass on the pre-change code and measure nothing: the whole defect is which function
+// the callback reaches.
+func TestRedeemAlsoRefusesSomebodyTheProjectAlreadyHolds(t *testing.T) {
+	r := newInvRig(t)
+	// `invPlain` OWNS `invOther`, and is a subject the model already knows.
+	token, _, err := r.inviting.Mint(context.Background(), r.principal(invPlain), invOther, control.RoleMember, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleBefore, held := r.authority.Model().RoleIn(invOther, invPlain)
+	if !held || roleBefore != control.RoleOwner {
+		t.Fatalf("precondition: invPlain is (%q, %v) in invOther, want owner — this case is about a "+
+			"redemption that would DEMOTE the only owner", roleBefore, held)
+	}
+
+	_, err = r.inviting.Redeem(context.Background(), token, "fixture-provider", "sub-plain")
+	if !errors.Is(err, ErrAlreadyAMember) {
+		t.Fatalf("Redeem returned %v, want ErrAlreadyAMember. `Redeem` is the callback's PROVISIONING "+
+			"arm, and it reaches an already-held user whenever two redemptions race; without this "+
+			"refusal it writes a `member-set` that overwrites the redeemer's role, and `Model.apply` "+
+			"never consults `refuseOrphaning` — so the project's only owner just became a member.", err)
+	}
+	if role, ok := r.authority.Model().RoleIn(invOther, invPlain); !ok || role != roleBefore {
+		t.Errorf("the owner's role moved to (%q, %v) despite the refusal, want (%q, true)",
+			role, ok, roleBefore)
+	}
+	// 🔴 AND THE INVITATION IS STILL OPEN — the refusal must not burn a link that was
+	// legitimately somebody else's, which is the second half of the twin's contract.
+	inv, known, err := r.invites.ByToken(token)
+	if err != nil {
+		t.Fatalf("reading the invitation back: %v", err)
+	}
+	if !known {
+		t.Fatal("the invitation vanished")
+	}
+	if !inv.Redeemable(invClock) {
+		t.Errorf("the invitation is %q after a refused redemption, want still open", inv.StateAt(invClock))
+	}
+}

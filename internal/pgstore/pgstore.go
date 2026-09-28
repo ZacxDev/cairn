@@ -182,9 +182,11 @@ func redact(err error, dsn string) error {
 	if err == nil {
 		return nil
 	}
-	// Pass 1: the typed carrier. `url.Error` is a struct with an exported `URL`, so this
-	// rewrites the field rather than the rendered string, which keeps `errors.Is`/`As`
-	// working on whatever it wraps.
+	// Pass 1: the typed carrier, and 🔴 THE LOAD-BEARING ONE — see the return below.
+	// `url.Error` is a struct with an exported `URL`, so this rewrites the field rather than
+	// the rendered string: `errors.Is`/`As` keep working on whatever it wraps, AND every
+	// link in the chain stops carrying the secret, which is the property the unwrap test
+	// pins. The mutation is the mechanism, not a tidiness choice.
 	var uerr *url.Error
 	if errors.As(err, &uerr) {
 		uerr.URL = redactedDSN
@@ -200,11 +202,25 @@ func redact(err error, dsn string) error {
 	if msg == err.Error() {
 		return err
 	}
-	// 🔴 THE REDACTED FORM IS A NEW ERROR VALUE AND THE ORIGINAL IS NOT WRAPPED, WHICH IS
-	// DELIBERATE AND IS THE ONE COST. Wrapping with `%w` would keep the original reachable
-	// through `errors.Unwrap`, and its `Error()` is the leaking string — so a caller that
-	// unwrapped and printed would undo this. Nothing in this repository matches on a
-	// driver error's type, so the loss is a capability nobody uses.
+	// 🔴 THIS RETURN IS NOT WHAT MAKES THE TYPED PATH SAFE, AND AN EARLIER COMMENT HERE SAID
+	// IT WAS. It claimed "the redacted form is a NEW error value and the original is not
+	// wrapped" — false on the only path that ever leaked. MEASURED on the built code: pass 1
+	// mutates `uerr.URL` IN PLACE, so `msg := err.Error()` above is computed from an error
+	// that no longer carries the DSN; pass 2 then replaces nothing, `msg == err.Error()` is
+	// true, and the branch above returns the ORIGINAL error with its chain intact. This
+	// `errors.New` is reached only when the DSN appeared somewhere OUTSIDE
+	// `*url.Error.URL`.
+	//
+	// 🔴 SO THE SAFETY OF THE `*url.Error` CASE RESTS ENTIRELY ON THE IN-PLACE FIELD REWRITE,
+	// AND A CHANGE THAT "STOPS MUTATING THE CALLER'S ERROR" BY WORKING ON A COPY WOULD
+	// SILENTLY RESTORE THE LEAK. `TestTheRedactionSurvivesAWrappedUnwrap` is what refuses
+	// that: it walks the chain to the bottom and requires the secret absent from EVERY link,
+	// which a copy-then-return-the-original redactor fails. Do not weaken that test into an
+	// assertion about the returned error alone.
+	//
+	// ⚠ WHERE THIS BRANCH IS REACHED, THE ORIGINAL GENUINELY IS DROPPED rather than wrapped
+	// with `%w`, because its `Error()` is the leaking string. Nothing in this repository
+	// matches on a driver error's type, so that loss is a capability nobody uses.
 	return errors.New(msg)
 }
 

@@ -2473,6 +2473,37 @@ MUTANTS: tuple[Mutant, ...] = (
         "`PlanMemberSet` path. So an `admin` could mint a `member` invitation into their own "
         "project, have the sole OWNER redeem it, and leave the project with no owner at all.",
     ),
+    # ---- ROUND 2's FINDING: the guard above shipped on ONE of the two writers ----------
+    #
+    # 🔴 THE ROW ABOVE AND THIS ONE ARE A PAIR, AND THE PAIR IS THE POINT. Round 1 closed the
+    # role-overwrite on `RedeemFor`; a round-2 DELTA audit found `Redeem` — the OTHER
+    # serving-path redemption, the one the callback's provisioning arm reaches — still
+    # writing `member-set` for an already-held user with no refusal at all. One rule, two
+    # entry points, guarded at one of them: the shape this repository's own rules call a
+    # predicate open-coded at N sites and wrong at N-1 of them. The fix DELEGATES to
+    # `RedeemFor` rather than copying the check, so there is again ONE implementation of the
+    # existing-user path; this row is what refuses a future edit that re-opens the second.
+    Mutant(
+        name="ui-redeem-stops-delegating-an-already-known-user",
+        path="internal/ui/inviting.go",
+        # 🔴 `held && false`, NOT `false` — AND THAT SPELLING WAS MEASURED, NOT CHOSEN.
+        # Written as `if false {` this row scored `HARNESS ERROR` rather than a kill: the
+        # mutant died at the BUILD with `declared and not used: held`, so the guard was never
+        # executed and nothing was learned about it. Keeping `held` referenced makes the
+        # predicate unsatisfiable while the program still compiles, which is the difference
+        # between a mutant that scores and one that only looks like it does.
+        old="\tif held {\n\t\tprincipal, ok := model.PrincipalFor(control.KindUser, user.ID)",
+        new="\tif held && false {\n\t\tprincipal, ok := model.PrincipalFor(control.KindUser, user.ID)",
+        killer="TestRedeemAlsoRefusesSomebodyTheProjectAlreadyHolds",
+        why="the delegation dropped, which restores exactly the tree round 2 audited: "
+        "`Redeem` computes `held` and uses it only to decide whether to MINT a user id, then "
+        "writes `member-set` regardless. Reachable in production as a concurrent "
+        "double-callback — one account, two open invitations into one project, two tabs — "
+        "where both exchanges fail with `UnprovisionedSubject`, both take the provisioning "
+        "arm, and the second overwrites the role the first conferred. `Model.apply` never "
+        "consults `refuseOrphaning`, so a project whose sole owner arrived that way is left "
+        "ownerless.",
+    ),
     # ---- Phase G: the invite flow's HTTP surface ----------------------------------
     #
     # 🔴 THESE ROWS EXIST HERE RATHER THAN IN A SCRATCHPAD SCRIPT BECAUSE OF THE ENTRY

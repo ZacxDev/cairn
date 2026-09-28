@@ -99,11 +99,19 @@ func TestOpenNeverEchoesTheConnectionString(t *testing.T) {
 // TestTheRedactionSurvivesAWrappedUnwrap pins the one cost the redactor accepts, so that
 // a later change cannot reintroduce the leak through `errors.Unwrap`.
 //
-// 🔴 A REDACTOR THAT WRAPPED THE ORIGINAL WITH `%w` WOULD BE COSMETIC. The leaking string
-// is the ORIGINAL error's own `Error()`, so keeping it reachable means any caller that
-// unwraps and prints undoes the redaction. `redact` therefore returns a NEW error and
-// deliberately does not wrap — this asserts that, by walking the chain to the bottom and
-// requiring the secret to be absent from every link.
+// 🔴 A REDACTOR THAT LEFT THE ORIGINAL REACHABLE WOULD BE COSMETIC. The leaking string is
+// the ORIGINAL error's own `Error()`, so any caller that unwraps and prints would undo the
+// redaction. This walks the chain to the bottom and requires the secret absent from EVERY
+// link.
+//
+// ⚠ IT DOES NOT ASSERT THAT `redact` RETURNS A NEW ERROR, AND AN EARLIER VERSION OF THIS
+// DOCSTRING SAID IT DID. On the `*url.Error` path — the only one that ever leaked —
+// `redact` mutates `uerr.URL` in place and then returns the ORIGINAL error unchanged;
+// `errors.New` is reached only for a DSN mentioned outside that field. So what this case
+// pins is the absence of the secret from the chain, which is the property that matters and
+// is strictly weaker than "a new value". Stating the weaker true claim beats restating the
+// stronger false one: a maintainer who believed the chain was severed by construction would
+// happily rewrite pass 1 to work on a copy, and only this walk would catch them.
 func TestTheRedactionSurvivesAWrappedUnwrap(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

@@ -325,13 +325,41 @@ func (c ControlInviting) Redeem(ctx context.Context, token, provider, subject st
 
 	model := c.Authority.Model()
 	user, held := model.UserByProviderSubject(provider, subject)
-	userID := user.ID
-	provisioning := !held
-	if provisioning {
-		userID, err = control.NewID(control.PrefixUser)
-		if err != nil {
-			return Redemption{}, err
+
+	// 🔴 AN ALREADY-KNOWN USER IS DELEGATED TO `RedeemFor` RATHER THAN HANDLED HERE, BECAUSE
+	// THIS FUNCTION WAS A SECOND, UNGUARDED WRITER OF THE SAME MEMBERSHIP.
+	//
+	// `RedeemFor` refuses a principal the project already holds BEFORE the spend
+	// (`ErrAlreadyAMember`); this path did not, so the two redemption entry points disagreed
+	// about one rule while `RedeemFor`'s own doc cited THIS function as the reason the rule
+	// matters. The reachable case is a concurrent double-callback: one account, two open
+	// invitations into the same project, two tabs. Both exchanges fail with
+	// `identity.UnprovisionedSubject`, so both take the provisioning arm at `oauth.go`'s
+	// `errors.As`; the first mints a user and writes `member-set`, and the second — now
+	// reading a model where `held` is true — spends its invitation and writes `member-set`
+	// AGAIN. `Model.apply` calls `setMembership` unconditionally and never consults
+	// `refuseOrphaning` (that lives only on `PlanMemberSet`), so the second write silently
+	// overwrites the role the first conferred, and a project whose sole owner arrived this
+	// way is left ownerless.
+	//
+	// ⚠ DELEGATING RATHER THAN COPYING THE GUARD IS THE POINT. A second `RoleIn` check here
+	// would be the same predicate open-coded at two sites, which is the shape that lets the
+	// two drift apart again — and it is how this defect existed at all.
+	if held {
+		principal, ok := model.PrincipalFor(control.KindUser, user.ID)
+		if !ok {
+			// The model just answered `UserByProviderSubject` for this user, so it holds
+			// them. Refusing rather than proceeding keeps the direction safe, for the reason
+			// the identical check below the write gives.
+			return Redemption{}, errors.New("ui: the redeemer is in the model but resolves to no principal")
 		}
+		return c.RedeemFor(ctx, token, principal)
+	}
+
+	// Past the delegation, this function provisions — there is no other path to here.
+	userID, err := control.NewID(control.PrefixUser)
+	if err != nil {
+		return Redemption{}, err
 	}
 
 	// 🔴 THE INVITATION IS SPENT HERE, BEFORE ANY AUTHORITY IS RECORDED. See the doc above.
@@ -340,9 +368,10 @@ func (c ControlInviting) Redeem(ctx context.Context, token, provider, subject st
 		return Redemption{}, err
 	}
 
-	events := make([]control.Event, 0, 2)
-	if provisioning {
-		events = append(events, control.Event{
+	// UNCONDITIONAL, because the `held` case returned above: every redemption that reaches
+	// here created the user.
+	events := []control.Event{
+		{
 			Kind:     control.EventUserCreated,
 			At:       now,
 			UserID:   userID,
@@ -356,7 +385,7 @@ func (c ControlInviting) Redeem(ctx context.Context, token, provider, subject st
 			// 🔴 AND NO ACTOR. This event is not somebody acting on somebody else; the
 			// inviter's decision is recorded on the `member-set` below, which is where a
 			// reader asking "who let this person in" will look.
-		})
+		},
 	}
 	events = append(events, control.Event{
 		Kind:      control.EventMemberSet,
@@ -390,8 +419,10 @@ func (c ControlInviting) Redeem(ctx context.Context, token, provider, subject st
 		return Redemption{}, errors.New("ui: the redemption was recorded but resolves to no principal")
 	}
 	return Redemption{
-		Principal:   principal,
-		Provisioned: provisioning,
+		Principal: principal,
+		// ALWAYS true here: the `held` case delegated to `RedeemFor`, which reports
+		// `Provisioned: false` itself. This path is the only one that creates a user.
+		Provisioned: true,
 		Project:     redeemed.ProjectID,
 		Role:        redeemed.Role,
 	}, nil
