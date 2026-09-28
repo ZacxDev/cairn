@@ -2994,11 +2994,11 @@ class TestTheRefsFrontMatterKey:
         )
         assert entry.tasks == ()
 
-    def test_the_deprecated_spellings_still_parse(self) -> None:
+    def test_the_older_spellings_still_parse(self) -> None:
         assert self._refs({"tasks": ["clickup:old"]}) == ["clickup:old"]
         assert self._refs({"task": "clickup:old"}) == ["clickup:old"]
 
-    def test_refs_wins_over_each_deprecated_spelling(self) -> None:
+    def test_refs_wins_over_each_older_spelling(self) -> None:
         """Criterion 2, BOTH directions, one fixture each.
 
         A test that only checked `refs:` + `tasks:` would pass on an implementation that read
@@ -3014,7 +3014,7 @@ class TestTheRefsFrontMatterKey:
             {"refs": ["clickup:new"], "tasks": ["clickup:old"], "task": "clickup:older"}
         ) == ["clickup:new"]
 
-    def test_the_deprecated_pair_is_still_refused_together(self) -> None:
+    def test_the_older_pair_is_still_refused_together(self) -> None:
         """The half a conformance golden pins — unchanged for every entry with no `refs:`."""
         with pytest.raises(sr.MalformedEntryError) as exc:
             sr.SubsystemEntry.from_mapping(
@@ -3076,11 +3076,11 @@ class TestTheRefsFrontMatterKey:
             "clickup:8600abc",
         ]
 
-    def test_the_loader_reads_the_deprecated_key_as_refs(self, tmp_path: Path) -> None:
+    def test_the_loader_reads_the_older_key_as_refs(self, tmp_path: Path) -> None:
         """The alias, at the LOADER rather than at `from_mapping`.
 
         ⚠ MEASURED AT TWO POINTS on the dimension the answer depends on — a store whose
-        entry carries the deprecated key, and one whose entry carries the new key — because a
+        entry carries the older key, and one whose entry carries the new key — because a
         one-point measurement cannot tell "both spellings load" from "every store loads the
         same refs whatever it says".
 
@@ -3098,9 +3098,9 @@ class TestTheRefsFrontMatterKey:
             )
             return root
 
-        deprecated = sr.load_index(store_with("old", "tasks: [clickup:a]"))
+        older = sr.load_index(store_with("old", "tasks: [clickup:a]"))
         current = sr.load_index(store_with("new", "refs: [clickup:a]"))
-        assert [str(t) for t in deprecated.entries("zone-one")[0].tasks] == ["clickup:a"]
+        assert [str(t) for t in older.entries("zone-one")[0].tasks] == ["clickup:a"]
         assert [str(t) for t in current.entries("zone-one")[0].tasks] == ["clickup:a"]
         # The control: a store whose entry carries NEITHER must surface no refs, so the two
         # equalities above are not an assertion that every entry reports `clickup:a`.

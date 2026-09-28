@@ -4992,7 +4992,7 @@ class TestDegradationMutationKills:
             #
             # ⚠ IT MOVED ONCE AND MOVED BACK. `refs:` put a `carried` dict between
             # these two lines and the `try:`, so the anchor had to name that dict;
-            # deleting the ref-key deprecation machinery took the dict away again.
+            # deleting the ref-key warning machinery took the dict away again.
             # Both moves were forced by the `_load_mutant` presence/uniqueness
             # assert, which RAISES on an anchor that stopped matching rather than
             # reporting a survived mutant — the failure mode a text anchor has.
@@ -5955,4 +5955,202 @@ class TestTheRecallCoversOneHostsStore:
             rc.search_json(rc.search(store, SCOPE, "collector"))["store_host"]
             == FIXTURE_HOST
         )
+
+
+# =============================================================================
+# THE REF-TO HEADER'S SECOND CLAUSE — the claim about what is BELOW the line.
+# =============================================================================
+
+CLAUSE_SCOPE = "refto-clause"
+CLAUSE_REF = "github:example-org/example-repo#428"
+CLAUSE_NOTHING = "clickup:nothing-carries-this"
+
+# The three WHOLE ref-to lines this fixture can produce, spelled out rather than rebuilt
+# from the renderer's own pieces: a contract test's expectation may not be derived from the
+# implementation it tests, and a guard on the clause's KEYWORDS is walkable by rewording
+# the sentence around them. `internal/report`'s `refto_clause_test.go` holds the same three
+# constants, and `tests/parity/` diffs these bytes between the two clients.
+CLAUSE_LINE_REPORTS = (
+    f"  ref-to: `{CLAUSE_REF}` — 1 of 4 entries in `{CLAUSE_SCOPE}/` reference it, and "
+    f"everything below is about those 1. This is a NARROWING, not a truncation: the rest "
+    f"were read and did not match."
+)
+CLAUSE_LINE_SILENT = (
+    f"  ref-to: `{CLAUSE_REF}` — 1 of 4 entries in `{CLAUSE_SCOPE}/` reference it, and "
+    f"NOTHING below is about them — the sentence below says why. This is a NARROWING, not "
+    f"a truncation: the rest were read and did not match."
+)
+CLAUSE_LINE_SILENT_ZERO = (
+    f"  ref-to: `{CLAUSE_NOTHING}` — 0 of 4 entries in `{CLAUSE_SCOPE}/` reference it, and "
+    f"NOTHING below is about them — the sentence below says why. This is a NARROWING, not "
+    f"a truncation: the rest were read and did not match."
+)
+
+
+@pytest.fixture()
+def clause_store(tmp_path: Path) -> Path:
+    """ONE scope holding four entries, so every status the ref-to header can be rendered
+    above is reachable over a single store.
+
+    ⚠ ONLY `carrier.md` CARRIES THE REF, AND NO OTHER ENTRY'S NAME CONTAINS THAT WORD.
+    That is what makes the body check below mechanical rather than a keyword guess: the
+    matched set is exactly `{carrier}`, so `carrier` appearing under the header means the
+    report is about a matched entry and its absence means it is not.
+
+    ⚠ THE AMBIGUOUS ALIAS IS ON THE TWO ENTRIES THAT ARE **NOT** THE CARRIER.
+    `ref-ambiguous` prints its candidates by FILENAME, so an alias shared with
+    `carrier.md` would put `carrier` under the header for a reason that has nothing to do
+    with the narrowed set — and the body check would then pass on the broken code.
+    """
+    store = tmp_path / "clause-store"
+    scope = store / CLAUSE_SCOPE
+    scope.mkdir(parents=True)
+    (scope / "carrier.md").write_text(
+        _entry("carrier", CLAUSE_SCOPE).replace(
+            f"scope: {CLAUSE_SCOPE}", f"scope: {CLAUSE_SCOPE}\nrefs: [{CLAUSE_REF}]"
+        ),
+        encoding="utf-8",
+    )
+    (scope / "bystander.md").write_text(_entry("bystander", CLAUSE_SCOPE), encoding="utf-8")
+    (scope / "twin-a.md").write_text(
+        _entry("twin-a", CLAUSE_SCOPE, aliases=["both-twins"]), encoding="utf-8"
+    )
+    (scope / "twin-b.md").write_text(
+        _entry("twin-b", CLAUSE_SCOPE, aliases=["both-twins"]), encoding="utf-8"
+    )
+    return store
+
+
+# (status, kwargs, expected ref-to line, does the body report on a matched entry)
+CLAUSE_CASES = (
+    ("recalled", {}, CLAUSE_LINE_REPORTS, True),
+    ("recalled", {"ref": "carrier"}, CLAUSE_LINE_REPORTS, True),
+    ("ref-to-absent", {"ref": "bystander"}, CLAUSE_LINE_SILENT, False),
+    ("ref-to-absent", {"ref_to": CLAUSE_NOTHING}, CLAUSE_LINE_SILENT_ZERO, False),
+    ("ref-absent", {"ref": "no-such-entry"}, CLAUSE_LINE_SILENT, False),
+    ("ref-ambiguous", {"ref": "both-twins"}, CLAUSE_LINE_SILENT, False),
+    ("recalled", {"mode": "list", "page": 9}, CLAUSE_LINE_SILENT, False),
+    ("recalled", {"mode": "digest", "page": 9}, CLAUSE_LINE_REPORTS, True),
+)
+
+
+class TestTheRefToClauseAgreesWithWhatTheBodyRenders:
+    """The ref-to header's SECOND CLAUSE, guarded as a RELATIONSHIP: what the clause
+    claims and what the body prints must agree, whatever the status is called. A
+    per-status assertion is the shape that got this wrong twice.
+
+    🔴 RED/GREEN MATRIX, MEASURED RATHER THAN CLAIMED. With the clause derived as
+    `status != "ref-to-absent"` — the spelling this file's fix replaced — three of the
+    eight rows FAIL: `ref-absent`, `ref-ambiguous` and a `list`-mode page past the end
+    each promised "everything below is about those 1" over a body that names no entry at
+    all. The other five pass there, which is why the whole table is here rather than the
+    three: the fix must not simply invert them.
+
+    ⚠ `digest` MODE PAST THE END IS THE CONTROL, and it rules out the obvious second
+    guess. `page_is_past_the_end` is True on rows 7 AND 8; row 7 lists nothing while row 8
+    still prints the featured body, so a predicate built out of page arithmetic gets one
+    of them wrong. Only "did the renderer print a matched entry" separates the two.
+    """
+
+    @pytest.mark.parametrize(
+        ("want_status", "kwargs", "want_line", "reports_on_matched"),
+        CLAUSE_CASES,
+        ids=[
+            "digest-filter-only",
+            "named-entry-carries-it",
+            "named-entry-does-not-carry-it",
+            "nothing-in-scope-carries-it",
+            "named-entry-does-not-exist",
+            "the-name-is-ambiguous",
+            "list-mode-page-past-the-end",
+            "digest-mode-page-past-the-end",
+        ],
+    )
+    def test_the_clause_matches_the_body(
+        self,
+        clause_store: Path,
+        want_status: str,
+        kwargs: dict,
+        want_line: str,
+        reports_on_matched: bool,
+    ) -> None:
+        call = {"ref_to": CLAUSE_REF, **kwargs}
+        rep = rc.recall(clause_store, CLAUSE_SCOPE, **call)
+        # Asserted so a row that stopped reaching the shape it was written for fails
+        # loudly instead of quietly re-testing a neighbour.
+        assert rep.status == want_status
+        text = rc.render_text(rep)
+        assert want_line in text, (
+            f"the ref-to line is not the one this shape must print.\n"
+            f"want: {want_line}\ngot:\n{text}"
+        )
+        # The BODY, read the way the reader reads it: everything after the header line.
+        head, _, rest = text.partition("  ref-to: `")
+        assert rest, "no ref-to line was emitted at all"
+        body = rest.partition("\n")[2]
+        named = "carrier" in body
+        assert named is reports_on_matched, (
+            f"the clause and the body disagree: the body "
+            f"{'NAMES' if named else 'does not name'} the matched entry (`carrier`) while "
+            f"the header claims it {'does' if reports_on_matched else 'does not'}.\n"
+            f"body:\n{body}"
+        )
+        # …and the two are the SAME claim, so the predicate the renderer consulted must
+        # agree with what the body turned out to contain. This is the assertion that stays
+        # meaningful if the sentence is ever reworded.
+        assert rep.renders_narrowed_set is reports_on_matched
+
+    def test_no_ref_to_line_sits_above_a_status_the_filter_never_reached(
+        self, clause_store: Path
+    ) -> None:
+        """The other half of the table — the statuses that CANNOT appear under a ref-to
+        line — asserted behaviourally, and DERIVED FROM `STATUS_PRECEDENCE` so a status
+        added later cannot quietly go unclassified.
+
+        `scope-absent` and `scope-unreadable` both return before the filter runs, so
+        `ref_to` is None and no line is emitted: printing "narrowed to X" over "this scope
+        does not exist" would suggest the narrowing is why nothing came back.
+        `scope-empty` is unreachable after a filter that kept at least one entry, and a
+        filter that kept none answers `ref-to-absent`. The three `search-*` statuses
+        belong to the other report type.
+
+        ⚠ THE LAST ASSERTION IS AN INVARIANT GUARD, LABELLED AS ONE: no bug ever violated
+        it. It exists so the eight-row table above cannot silently stop being exhaustive.
+        """
+        absent = rc.recall(clause_store, "never-indexed", ref_to=CLAUSE_REF)
+        assert absent.status == "scope-absent"
+        assert absent.ref_to is None
+        assert "ref-to: `" not in rc.render_text(absent)
+
+        broken = clause_store / "all-broken"
+        broken.mkdir()
+        (broken / "wrapped-aliases.md").write_text(
+            "---\nservice: widget\naliases: [one,\n  two]\n---\n", encoding="utf-8"
+        )
+        unreadable = rc.recall(clause_store, "all-broken", ref_to=CLAUSE_REF)
+        assert unreadable.status == "scope-unreadable"
+        assert unreadable.ref_to is None
+        assert "ref-to: `" not in rc.render_text(unreadable)
+
+        # A filter that matched nothing must NOT answer `scope-empty`, which claims the
+        # DIRECTORY holds nothing over a scope holding four entries.
+        none = rc.recall(clause_store, CLAUSE_SCOPE, ref_to=CLAUSE_NOTHING)
+        assert none.status == "ref-to-absent"
+
+        # The ledger: every status in the shared vocabulary is either covered by the table
+        # above or named here as unreachable under a ref-to line. It fails on GROW.
+        covered = {status for status, _, _, _ in CLAUSE_CASES}
+        unreachable = {
+            "scope-absent",
+            "scope-unreadable",
+            "scope-empty",
+            "search-hit",
+            "search-no-match",
+            "search-unreadable",
+        }
+        assert covered | unreachable == set(rc.STATUS_PRECEDENCE), (
+            "a status is neither exercised under a ref-to line nor declared unreachable "
+            "there — decide which it is rather than leaving the table silently partial"
+        )
+        assert not covered & unreachable
 

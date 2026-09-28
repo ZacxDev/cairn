@@ -137,6 +137,30 @@ type RecallReport struct {
 // correct.
 func (r RecallReport) PageIsPastTheEnd() bool { return r.ListingPage > r.ListingPages }
 
+// RendersNarrowedSet answers the one question the ref-to header's second clause makes a
+// claim about: does anything BELOW that line report on the entries the filter kept?
+//
+// 🔴 IT IS THE RENDER DECISION AND NEVER A STATUS NAME — THE SAME MISTAKE AS `RefToMatched`'s,
+// ONE LEVEL OUT, AND MEASURED WRONG THE SAME WAY. The clause was first derived as
+// `Status != StatusRefToAbsent`, whose comment asserted that was false on `ref-to-absent` and
+// on nothing else. Three other shapes count matched entries and then render none of them, so
+// each printed "everything below is about those N" over a body that is about no entry at all:
+// `ref-absent` (`--ref <no such entry> --ref-to <carried by others>`), `ref-ambiguous` (whose
+// own sentence says "nothing was surfaced"), and a `list`-mode `--page` past the end (whose
+// notice says "Nothing was listed here").
+//
+// ⚠ AND `PageIsPastTheEnd()` IS NOT THE MISSING TERM EITHER — the SAME page past the end in
+// `digest` mode still prints the featured body, so it does report on a matched entry. That
+// case is the control separating this predicate from any spelling built out of statuses and
+// page arithmetic.
+//
+// `Entries` and `Listing` are the only two sets the renderer prints below the header, and
+// after the filter both hold matched entries exclusively — so their emptiness IS the question,
+// and it stays the question if a status is added or a branch moves.
+func (r RecallReport) RendersNarrowedSet() bool {
+	return len(r.Entries) != 0 || len(r.Listing) != 0
+}
+
 // ListingBeforePage is index rows on EARLIER pages. 0 on a page past the end: nothing was
 // listed there, so "before" describes no position.
 func (r RecallReport) ListingBeforePage() int {
@@ -286,10 +310,17 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 	//
 	// ⚠ THAT RULE BINDS THE `ref-to-absent` BRANCHES TOO, AND THE ORACLE DISAGREED AT ONE OF
 	// THEM. `lib/subsystem_recall.py` passed the SCOPE total on the membership-test branch
-	// below while this side passed the narrowed count. Nothing renders `TotalInScope` on that
-	// branch, so no byte-diff gate could see it — but `report_json` serialises it, so it was a
-	// live cross-language divergence in the one field whose meaning this paragraph fixes. The
-	// oracle now matches this side, which is the one the rule names.
+	// below while this side passed the narrowed count. The oracle now matches this side,
+	// which is the one the rule names.
+	//
+	// ⚠ AND NO CONSUMER COULD HAVE OBSERVED IT — FIXED BEFORE IT HAD ONE, WHICH IS A NARROWER
+	// CLAIM THAN THE DRAFT MADE. That draft called it a LIVE divergence on the grounds that
+	// `report_json` serialises the field, and that does not follow: there is no Go JSON
+	// payload for a recall report at all, and the oracle's `report_json` has no caller outside
+	// `tests/` — `lib/subsystem_recall.py`'s own `--json` entrypoint passes no `ref_to`, so it
+	// cannot reach this branch, and `cairn` renders text. Nothing renders `TotalInScope` here
+	// either, so no byte-diff gate could see it. Worth keeping the two sides agreed on a
+	// field's MEANING; not worth reading as a shipped defect.
 	scopeTotal := len(entries)
 	if opts.HasRefTo {
 		want, parseErr := store.ParseTaskRef(opts.RefTo)

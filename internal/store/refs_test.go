@@ -85,15 +85,15 @@ func TestTheRefsKeyIsRead(t *testing.T) {
 	}
 }
 
-// TestTheDeprecatedRefKeysStillParseAndRefsWins is criterion 2, pinned in BOTH directions on
+// TestTheOlderRefKeysStillParseAndRefsWins is criterion 2, pinned in BOTH directions on
 // one fixture each.
 //
 // 🔴 IT IS NOW THE WHOLE GUARD ON THE `tasks:`/`task:` ALIAS ON THIS SIDE. The warning
 // machinery that used to sit beside it is deleted; the ACCEPTANCE is not, and nothing else in
 // this package would go red if `parseRefsField` stopped reading the old spellings. Its Python
-// twin is `test_the_deprecated_spellings_still_parse`, and `tests/conformance/`'s
+// twin is `test_the_older_spellings_still_parse`, and `tests/conformance/`'s
 // `linked-set/linked-old-key.md` exercises the same path over the wire on both servers.
-func TestTheDeprecatedRefKeysStillParseAndRefsWins(t *testing.T) {
+func TestTheOlderRefKeysStillParseAndRefsWins(t *testing.T) {
 	idents := func(e Entry) []string {
 		out := []string{}
 		for _, r := range e.Tasks {
@@ -113,7 +113,7 @@ func TestTheDeprecatedRefKeysStillParseAndRefsWins(t *testing.T) {
 			FrontMatter{"service": "alpha", "scope": "zone-one", "task": "clickup:old"},
 			[]string{"clickup:old"}},
 		// 🔴 BOTH DIRECTIONS ON ONE FIXTURE: the same entry with `refs:` beside each
-		// deprecated spelling, and the answer is the NEW key's value both times. A test
+		// older spelling, and the answer is the NEW key's value both times. A test
 		// that only checked `refs:` + `tasks:` would pass on an implementation that read
 		// `task:` in preference to `refs:`.
 		{"refs-beats-tasks",
@@ -144,7 +144,7 @@ func TestTheDeprecatedRefKeysStillParseAndRefsWins(t *testing.T) {
 			}
 		})
 	}
-	// The deprecated pair's mutual exclusion is UNCHANGED for the entries that reach it,
+	// The older pair's mutual exclusion is UNCHANGED for the entries that reach it,
 	// which is every file with no `refs:` — and that is the half a golden pins.
 	if _, err := EntryFromMapping(FrontMatter{"service": "alpha", "scope": "zone-one",
 		"tasks": []string{"clickup:a"}, "task": "clickup:b"}, "alpha.md"); err == nil {

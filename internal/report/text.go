@@ -210,14 +210,13 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 	// ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves. `HasRefTo` is
 	// false on every request that does not carry the parameter, and the line is absent then.
 	if r.HasRefTo {
-		// ⚠ THE LAST ARGUMENT IS FALSE ON `ref-to-absent` AND ON NOTHING ELSE, because that
-		// is the one status where the matched entries are counted and then NOT rendered —
-		// either none matched, or the `--ref` operand is not among the ones that did. Saying
-		// "everything below is about those N" there was true only while the numerator was
-		// wrongly pinned to 0; with a real N it would be a claim about a body the report
-		// does not print.
+		// ⚠ THE LAST ARGUMENT IS THE RENDER DECISION, NOT A STATUS. "Everything below is
+		// about those N" is a claim about the BODY, so the body is what has to answer it:
+		// `RendersNarrowedSet()` is true exactly when a matched entry is printed below,
+		// and its own header records the three shapes a status-name derivation got wrong
+		// plus the digest-mode case that rules out the obvious second guess.
 		out = append(out, refToLine(r.RefTo, r.RefToMatched, r.RefToScopeTotal, r.Scope+"/",
-			r.Status != StatusRefToAbsent))
+			r.RendersNarrowedSet()))
 	}
 
 	// 🔴 BEFORE EVERY STATUS BRANCH, INCLUDING THE ONES THAT RETURN IMMEDIATELY. A reject
@@ -484,9 +483,11 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 // with two report types spells a shared sentence once, or it is wrong in one of them.
 //
 // `matched`/`total` are the narrowed and pre-filter counts. `narrowedSetShown` says whether
-// the report BELOW this line reports on the matched entries; only `RecallReport`'s
-// `ref-to-absent` passes false, and it is a separate clause rather than a second function so
-// the COUNT half stays spelled once.
+// the report BELOW this line reports on the matched entries — a PREDICATE each caller
+// answers for itself, and deliberately not a status test: `RecallReport` passes
+// `RendersNarrowedSet()` (see its header for the statuses a status test got wrong) and
+// `SearchReport` passes a constant, justified at its own call site. It is a separate clause
+// rather than a second function so the COUNT half stays spelled once.
 //
 // ⚠ `label` IS A FORMED LABEL AND CARRIES ITS OWN TRAILING `/`, so do not append one here.
 // The draft passed `SearchReport.Scope`, which on a store-wide search is the literal

@@ -122,7 +122,8 @@ type Entry struct {
 	Filename string
 	// Tasks are the `refs:` this entry carries, in FILE ORDER, deduped, never
 	// normalized. The FIELD keeps the older spelling for the reason `TaskRef`'s own
-	// comment gives; the KEY is `refs:`, with `tasks:`/`task:` as deprecated aliases.
+	// comment gives; the KEY is `refs:`, with `tasks:`/`task:` as PERMANENTLY ACCEPTED
+	// aliases.
 	Tasks []TaskRef
 }
 
@@ -146,8 +147,8 @@ func (e Entry) Ref() string {
 // Accepted keys: `service` (required), `scope` or `repo` (required, one of),
 // `aliases` (optional sequence), `kind` (optional), `filename` (optional —
 // supplied by the loader, otherwise derived), `refs` (optional sequence of
-// `<system>:<id>` refs) with `tasks` (deprecated sequence) and `task` (deprecated
-// scalar sugar for a one-element list) as aliases.
+// `<system>:<id>` refs) with `tasks` (older sequence) and `task` (older scalar
+// sugar for a one-element list) as PERMANENTLY ACCEPTED aliases.
 //
 // 🔴 EVERY OTHER KEY IS IGNORED, NOT REFUSED, AND THAT IS MEASURED ON BOTH
 // IMPLEMENTATIONS RATHER THAN READ OFF THIS FUNCTION'S BODY. This function reads only
@@ -329,18 +330,18 @@ func sequenceField(mapping FrontMatter, key, source, scalarWhy string) ([]string
 // measured across the two real stores, 0 of 440 entries carried `tasks:` or `task:`, so the
 // line was unreachable in practice, and its cross-client coverage was vacuous until a
 // fixture was planted for it. The ALIAS is what operators depend on; the notice was cost
-// with no reader. `TestTheDeprecatedRefKeysStillParseAndRefsWins` is what keeps the alias
+// with no reader. `TestTheOlderRefKeysStillParseAndRefsWins` is what keeps the alias
 // honest, and `tests/conformance/`'s `linked-set/linked-old-key.md` exercises it over the
 // wire.
 //
 // 🔴 THE NEW SPELLING WINS WITHIN ONE ENTRY, AND IT WINS BY NOT CONSULTING THE OLD ONES AT
 // ALL. It is what decides the one case that is not obvious: an
-// entry carrying `refs:` AND BOTH deprecated spellings does NOT hit the "both `tasks:` and
+// entry carrying `refs:` AND BOTH older spellings does NOT hit the "both `tasks:` and
 // `task:` are set" refusal, because neither is read. That refusal is about two spellings
 // DISAGREEING over what the entry's refs are, and when `refs:` is present there is no
 // disagreement to resolve — the entry says exactly one thing. Making it fire anyway would
-// refuse a file whose meaning is unambiguous, which is the opposite of what a deprecation
-// window is for. The refusal is unchanged for the entries that reach it (`refs:` absent),
+// refuse a file whose meaning is unambiguous, which is the opposite of what an ACCEPTED
+// alias is for. The refusal is unchanged for the entries that reach it (`refs:` absent),
 // which is every file the corpus sends.
 func parseRefsField(mapping FrontMatter, source string) ([]TaskRef, error) {
 	bad := func(why string) error { return malformed(source, why) }

@@ -38,9 +38,15 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 	// `RefToSkipped` + `EntriesSearched` is the pre-filter total, so the line does not need a
 	// third field to carry it.
 	if r.HasRefTo {
-		// `true`: search has no status that counts the kept entries and then declines to
-		// search them — every entry the filter kept IS searched, and the hunks below are
-		// about exactly those.
+		// A CONSTANT `true`, AND THE NUMERATOR IS WHY IT CAN BE ONE. `EntriesSearched` is
+		// incremented once per entry the filter KEPT, so the count printed here is the kept
+		// count by construction and every status below is reporting on exactly that set —
+		// the recall renderer's problem (a count of matched entries rendered over a body
+		// about none of them) has no spelling here. Both statuses that print no HUNKS still
+		// report on that set: `search-no-match` prints "searched N entries in <scopes>",
+		// which is a statement about exactly the kept entries, and `search-unreadable` is
+		// only reachable with `EntriesSearched == 0`, so there the clause is about the empty
+		// set rather than false about a non-empty one.
 		out = append(out, refToLine(r.RefTo, r.EntriesSearched, r.EntriesSearched+r.RefToSkipped,
 			r.Label(), true))
 	}

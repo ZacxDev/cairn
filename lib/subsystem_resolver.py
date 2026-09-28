@@ -689,8 +689,8 @@ class SubsystemEntry:
     """The `refs:` this entry carries, in FILE ORDER, deduped, never normalized.
 
     ⚠ THE FIELD KEEPS THE OLDER SPELLING WHILE THE KEY CHANGED, AND THAT IS A DECISION
-    RATHER THAN AN OVERSIGHT. The KEY is `refs:` (with `tasks:`/`task:` as deprecated
-    aliases); renaming this attribute would break every construction site in the suite
+    RATHER THAN AN OVERSIGHT. The KEY is `refs:` (with `tasks:`/`task:` as PERMANENTLY
+    ACCEPTED aliases); renaming this attribute would break every construction site in the suite
     and every read in `subsystem_recall`, in a change whose whole blast-radius claim is
     "additive", for no behavioural difference. `internal/store`'s `Entry.Tasks` carries
     the same note for the same reason.
@@ -717,8 +717,8 @@ class SubsystemEntry:
         Accepted keys: `service` (required), `scope` or `repo` (required, one of),
         `aliases` (optional sequence), `kind` (optional), `filename` (optional —
         supplied by the loader, otherwise derived), `refs` (optional sequence of
-        `<system>:<id>` refs) with `tasks` (deprecated sequence) and `task`
-        (deprecated scalar sugar for a one-element list) as aliases.
+        `<system>:<id>` refs) with `tasks` (older sequence) and `task` (older
+        scalar sugar for a one-element list) as PERMANENTLY ACCEPTED aliases.
 
         🔴 EVERY OTHER KEY IS IGNORED, NOT REFUSED, AND THAT IS MEASURED ON BOTH
         IMPLEMENTATIONS RATHER THAN READ OFF THIS FUNCTION'S BODY. It reads only the
@@ -829,8 +829,8 @@ class SubsystemEntry:
         # DELETED: measured across the two real stores, 0 of 440 entries carried `tasks:` or
         # `task:`, so the line was unreachable in practice and its cross-client coverage was
         # vacuous until a fixture was planted for it. The ALIAS is what operators depend on,
-        # and it is pinned by `test_the_deprecated_spellings_still_parse` here and
-        # `TestTheDeprecatedRefKeysStillParseAndRefsWins` on the Go side.
+        # and it is pinned by `test_the_older_spellings_still_parse` here and
+        # `TestTheOlderRefKeysStillParseAndRefsWins` on the Go side.
         #
         # 🔴 VALIDATED HERE AND NOWHERE ELSE. The writer's own validate pass answers
         # "would the loader accept this file?" by constructing exactly what the
@@ -841,12 +841,12 @@ class SubsystemEntry:
         #
         # 🔴 THE NEW KEY WINS WITHIN ONE ENTRY, AND IT WINS BY NOT CONSULTING THE OLD
         # ONES AT ALL. It decides the one case that is
-        # not obvious: an entry carrying `refs:` AND BOTH deprecated spellings does NOT
+        # not obvious: an entry carrying `refs:` AND BOTH older spellings does NOT
         # hit the "both `tasks:` and `task:` are set" refusal below, because neither is
         # read. That refusal is about two spellings DISAGREEING over what the entry's
         # refs are; with `refs:` present the entry says exactly one thing, and refusing
-        # a file whose meaning is unambiguous is the opposite of what a deprecation
-        # window is for. The refusal is UNCHANGED for every entry that reaches it
+        # a file whose meaning is unambiguous is the opposite of what an ACCEPTED
+        # alias is for. The refusal is UNCHANGED for every entry that reaches it
         # (`refs:` absent), which is every file the conformance corpus sends.
         raw_refs_in = mapping.get("refs")
         raw_tasks_in = mapping.get("tasks")

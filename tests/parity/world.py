@@ -44,11 +44,11 @@ def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthe
 
     ⚠ IT WRITES THE CURRENT KEY ONLY. A `ref_key` parameter was here so one entry could carry
     the older `tasks:` spelling; the ALIAS is pinned in both languages by unit tests
-    (`test_the_deprecated_spellings_still_parse`,
-    `TestTheDeprecatedRefKeysStillParseAndRefsWins`) and over the wire by
+    (`test_the_older_spellings_still_parse`,
+    `TestTheOlderRefKeysStillParseAndRefsWins`) and over the wire by
     `tests/conformance/`'s `linked-set/linked-old-key.md`, so nothing in THIS gate depended on
-    it once the deprecation WARNING — the only thing that reached a client's stderr — was
-    deleted.
+    it once the ALIAS WARNING — the only thing that reached a client's stderr — was deleted.
+    The alias itself is PERMANENT; only the notice went.
     """
     alias_line = f"aliases: [{aliases}]\n" if aliases else ""
     ref_line = f"refs: [{refs}]\n" if refs else ""

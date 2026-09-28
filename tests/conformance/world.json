@@ -36,7 +36,7 @@
       "_why": "Every file in it is malformed -- the `scope-unreadable` state."
     },
     "linked-set": {
-      "_why": "The ONE scope whose entries carry `refs:`. It exists so a `?ref-to=` row can find a MATCH over the wire rather than only the non-finding: a corpus that only ever sent a ref nothing carries would pass against a filter wired to nothing. One entry carries the ref under the NEW key, one under the DEPRECATED `tasks:` spelling, and one carries none -- so the filter has something to keep, something to keep through the alias path, and something to remove."
+      "_why": "The ONE scope whose entries carry `refs:`. It exists so a `?ref-to=` row can find a MATCH over the wire rather than only the non-finding: a corpus that only ever sent a ref nothing carries would pass against a filter wired to nothing. One entry carries the ref under the NEW key, one under the ACCEPTED OLDER `tasks:` spelling, and one carries none -- so the filter has something to keep, something to keep through the alias path, and something to remove."
     }
   },
   "entries": [
@@ -168,7 +168,7 @@
         "---",
         "",
         "## What it is",
-        "An entry carrying the DEPRECATED `tasks:` spelling, so the deprecation window is measured over the wire and not only in a unit test.",
+        "An entry carrying the ACCEPTED OLDER `tasks:` spelling, so the alias is measured over the wire and not only in a unit test.",
         "",
         "## Pointers",
         "- ops skill `manage-gadget` - the same skill, deliberately",

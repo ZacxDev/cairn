@@ -214,8 +214,14 @@ func EntryPage(v PageView) g.Node {
 				// naming only `refs:` would be a claim about the file that the page has not
 				// checked — and a reader who grepped for `refs:` and found `tasks:` would
 				// conclude the page was showing something else.
+				//
+				// 🔴 AND IT SAYS `accepted`, NOT `deprecated`. The older spellings are
+				// PERMANENT by operator decision — `README.md` says they "stay accepted" —
+				// so telling an operator on the entry page that the key they are looking at
+				// is on its way out would be this surface contradicting the documentation
+				// shipped beside it. There is no removal date to warn about.
 				g.If(len(e.Tasks) > 0, labelledList("Refs",
-					"the `refs:` front-matter key (or the deprecated `tasks:`/`task:`), as written",
+					"the `refs:` front-matter key (or the accepted older `tasks:`/`task:`), as written",
 					h.Ul(h.Class("tasks"), g.Map(e.Tasks, taskItem)))),
 				g.If(len(e.Sections) == 0, h.P(h.Class("empty"), g.Text(
 					"This entry carries none of the headings a reader surfaces. The file exists "+

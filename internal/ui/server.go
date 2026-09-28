@@ -146,7 +146,7 @@ type EntryRef struct {
 //	Title       `service:` in the front matter, which the loader pins equal to the slug
 //	Filename    the file on disk under `<store root>/<scope>/`
 //	Aliases     the `aliases:` front-matter sequence, AS WRITTEN (not the folded form)
-//	Tasks       the `refs:` front-matter sequence (or the deprecated `tasks:`/`task:`),
+//	Tasks       the `refs:` front-matter sequence (or the accepted older `tasks:`/`task:`),
 //	            each carrying the ref AS WRITTEN and the URL the registry resolved it to
 //	Sections    the `##` headings `report.SurfacedHeadings` names, with their bodies
 //	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
@@ -155,7 +155,9 @@ type EntryRef struct {
 // ⚠ `Tasks` IS NAMED FOR THE OLDER FRONT-MATTER KEY AND THE KEY IS NOW `refs:`. The name is
 // kept because renaming the field renames it in `render.go`'s page state and in every test
 // that builds one, which is a change about the field and not about this page; the ledger row
-// above is what tells a reader which file bytes it holds.
+// above is what tells a reader which file bytes it holds. And the older KEY spellings are
+// permanent — see `parseRefsField` — so the name is narrower than the key rather than stale
+// about it.
 type Entry struct {
 	Ref      string
 	Title    string

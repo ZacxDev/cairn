@@ -15,7 +15,7 @@ import (
 // for, plus one it does not.
 //
 // ⚠ IT IS WRITTEN AS `refs:`, NOT `tasks:`, BECAUSE THIS SEAM IS WHAT THE KEY RENAME CHANGED
-// AND A FIXTURE ON THE DEPRECATED SPELLING WOULD PASS WITHOUT THE NEW ONE PARSING AT ALL.
+// AND A FIXTURE ON THE OLDER SPELLING WOULD PASS WITHOUT THE NEW ONE PARSING AT ALL.
 func refStore(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -206,9 +206,10 @@ func TestASelfHostedSystemWithNoBaseRendersExactlyAsBefore(t *testing.T) {
 	t.Fatal("the fixture's `tracker:662` ref did not survive projection")
 }
 
-// TestTheDeprecatedKeyResolvesTheSameURLs pins that the deprecation window covers the URL
-// registry too: an entry on the OLD spelling gets the same links.
-func TestTheDeprecatedKeyResolvesTheSameURLs(t *testing.T) {
+// TestTheOlderKeyResolvesTheSameURLs pins that the accepted older spelling reaches the URL
+// registry too: an entry on it gets the same links. The alias is PERMANENT — see
+// `store.parseRefsField` — so this is a standing property of the page, not a window.
+func TestTheOlderKeyResolvesTheSameURLs(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "alpha-notes")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -221,10 +222,10 @@ func TestTheDeprecatedKeyResolvesTheSameURLs(t *testing.T) {
 	}
 	entry := readTheOneEntry(t, StoreSource{Root: root})
 	if len(entry.Tasks) != 1 {
-		t.Fatalf("the deprecated key surfaced %d refs, want 1", len(entry.Tasks))
+		t.Fatalf("the older key surfaced %d refs, want 1", len(entry.Tasks))
 	}
 	want := "https://github.com/example-org/example-repo/issues/428"
 	if entry.Tasks[0].URL != want {
-		t.Fatalf("the deprecated key resolved to %q, want %q", entry.Tasks[0].URL, want)
+		t.Fatalf("the older key resolved to %q, want %q", entry.Tasks[0].URL, want)
 	}
 }

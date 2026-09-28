@@ -194,8 +194,8 @@
         "mode": "0o644",
         "mtime": "946684800.0",
         "name": "linked-set/linked-old-key.md",
-        "sha256": "d98943762474b48c2fdcd2cc5d8c2e9c5eea0843d3e1aad1b6acd7166f1b1d2f",
-        "size": 423,
+        "sha256": "e2b6895308f865c5ce37e6bbba3103650f093ee5c32905c81a285ad641375a87",
+        "size": 414,
         "text_lines": [
           "---",
           "service: linked-old-key",
@@ -205,7 +205,7 @@
           "---",
           "",
           "## What it is",
-          "An entry carrying the DEPRECATED `tasks:` spelling, so the deprecation window is measured over the wire and not only in a unit test.",
+          "An entry carrying the ACCEPTED OLDER `tasks:` spelling, so the alias is measured over the wire and not only in a unit test.",
           "",
           "## Pointers",
           "- ops skill `manage-gadget` - the same skill, deliberately",
@@ -257,7 +257,7 @@
     ],
     [
       "ETag",
-      "\"sha256:0b3f95897acc16b9fe7f33e96d80121500e76f3ead91815a3f4926f9dd4945bd\""
+      "\"sha256:9cf9e8e71dbd3376ed2c22d89db417b02471f4f5e19bc592cdc51230c47cd182\""
     ],
     [
       "Server",

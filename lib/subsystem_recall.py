@@ -1027,7 +1027,18 @@ class RecalledEntry:
     """
 
     tasks: tuple[str, ...] = ()
-    """The entry's `tasks:` refs as written (`<system>:<id>`), in file order.
+    """The entry's refs as written (`<system>:<id>`), in file order.
+
+    ⚠ THE FIELD NAME READS `tasks` WHILE THE FRONT-MATTER KEY IS `refs:`, AND THAT
+    IS DEFERRED RATHER THAN OVERLOOKED. `tasks:`/`task:` are still accepted
+    spellings on the way in — permanently, by operator decision — so the name is
+    not stale about the schema, only narrower than it: the key carries repos, PRs,
+    docs and dashboards, not only work-tracker items. Renaming the field is a
+    mechanical change that would have to move `SubsystemEntry.tasks`, the JSON
+    payload's key, `internal/report.RecalledEntry.Tasks` and the rendered
+    `tasks:` label together, which re-bases goldens — so it belongs in a change
+    whose whole subject is that re-base. `render_text`'s own label carries the
+    same note.
 
     Carried from `SubsystemEntry.tasks` rather than re-parsed from the front
     matter here: the loader already validated them, and a second parse at the
@@ -1408,6 +1419,33 @@ class RecallReport:
     with no stated basis is the implicit pick this module refuses to make."""
 
     @property
+    def renders_narrowed_set(self) -> bool:
+        """Does anything BELOW the ref-to line report on the entries the filter kept?
+
+        🔴 THE RENDER DECISION AND NEVER A STATUS NAME — THE SAME MISTAKE AS
+        `ref_to_matched`'s, ONE LEVEL OUT, AND MEASURED WRONG THE SAME WAY. The clause
+        was first derived as `status != "ref-to-absent"`, whose comment asserted that
+        was false on `ref-to-absent` and on nothing else. Three other shapes count
+        matched entries and then render none of them, so each printed "everything below
+        is about those N" over a body about no entry at all: `ref-absent`
+        (`--ref <no such entry> --ref-to <carried by others>`), `ref-ambiguous` (whose
+        own sentence says "nothing was surfaced"), and a `list`-mode `--page` past the
+        end (whose notice says "Nothing was listed here").
+
+        ⚠ AND `page_is_past_the_end` IS NOT THE MISSING TERM EITHER — the SAME page past
+        the end in `digest` mode still prints the featured body, so it does report on a
+        matched entry. That case is the control separating this predicate from any
+        spelling built out of statuses and page arithmetic.
+
+        `entries` and `listing` are the only two sets the renderer prints below the
+        header, and after the filter both hold matched entries exclusively — so their
+        emptiness IS the question, and it stays the question if a status is added or a
+        branch moves. `internal/report.RecallReport.RendersNarrowedSet` is the Go twin;
+        `tests/parity/harness.py` diffs the two clients' bytes.
+        """
+        return bool(self.entries) or bool(self.listing)
+
+    @property
     def omitted(self) -> int:
         """Entries in the scope whose BODY was not printed.
 
@@ -1765,9 +1803,16 @@ def recall(
         # `entries` has already been replaced by the matching set above, and the rule this
         # function declares is that after a narrowing `total_in_scope` is the set the report is
         # ABOUT while `ref_to_scope_total` carries the scope's own. This branch passed
-        # `scope_total` while the Go port passed the narrowed count, which made the two
-        # implementations disagree in a field `report_json` serialises — unobservable in the
-        # rendered text on this branch, and therefore invisible to every byte-diff gate.
+        # `scope_total` while the Go port passed the narrowed count, so the two
+        # implementations disagreed about one field's MEANING.
+        #
+        # ⚠ AND NO CONSUMER COULD HAVE OBSERVED IT — FIXED BEFORE IT HAD ONE, WHICH IS A
+        # NARROWER CLAIM THAN THE DRAFT MADE. That draft called it a LIVE divergence on the
+        # grounds that `report_json` serialises the field, and that does not follow:
+        # `report_json` has no caller outside `tests/`, `main` below passes no `ref_to` and
+        # therefore cannot reach this branch at all, `cairn` renders text, and the Go port
+        # has no JSON recall payload to disagree with. Nothing renders `total_in_scope` here
+        # either, so no byte-diff gate could see it.
         if ref_to_ref is not None and not any(
             e.scope == entry.scope and e.filename == entry.filename for e in entries
         ):
@@ -2170,9 +2215,11 @@ def _ref_to_line(
     diffs the two clients' bytes.
 
     `matched`/`total` are the narrowed and pre-filter counts. `narrowed_set_shown` says
-    whether the report BELOW this line reports on the matched entries; only `RecallReport`'s
-    `ref-to-absent` passes False, and it is a separate clause rather than a second function so
-    the COUNT half stays spelled once.
+    whether the report BELOW this line reports on the matched entries — a PREDICATE each
+    caller answers for itself, and deliberately not a status test: `RecallReport` passes
+    `renders_narrowed_set` (see its docstring for the statuses a status test got wrong) and
+    the search report passes a constant, justified at its own call site. It is a separate
+    clause rather than a second function so the COUNT half stays spelled once.
 
     ⚠ `label` IS A FORMED LABEL AND CARRIES ITS OWN TRAILING `/`, so do not append one here.
     The draft passed `SearchReport.scope`, which on a store-wide search is the literal
@@ -2237,16 +2284,18 @@ def render_text(
         # printed a false sentence about the store — see that field's docstring for both
         # directions of the pendulum.
         #
-        # ⚠ `narrowed_set_shown` IS FALSE ON `ref-to-absent` AND ON NOTHING ELSE, because that
-        # is the one status where the matched entries are counted and then NOT rendered: either
-        # none matched, or the `--ref` operand is not among the ones that did.
+        # ⚠ `narrowed_set_shown` IS THE RENDER DECISION, NOT A STATUS. "Everything below is
+        # about those N" is a claim about the BODY, so the body is what has to answer it:
+        # `renders_narrowed_set` is True exactly when a matched entry is printed below, and
+        # its own docstring records the three shapes a status-name derivation got wrong plus
+        # the digest-mode case that rules out the obvious second guess.
         out.append(
             _ref_to_line(
                 report.ref_to,
                 report.ref_to_matched,
                 report.ref_to_scope_total,
                 f"{report.scope}/",
-                narrowed_set_shown=report.status != "ref-to-absent",
+                narrowed_set_shown=report.renders_narrowed_set,
             )
         )
 
@@ -2477,6 +2526,16 @@ def render_text(
             # Above the sections deliberately: "which task does this answer" is
             # identity, like the ref and the sensitivity on the line above, not
             # content.
+            #
+            # ⚠ THE LABEL STILL READS `tasks:` WHILE THE FRONT-MATTER KEY IS `refs:`
+            # AND THE BROWSER SURFACE SAYS "Refs", AND THAT IS DEFERRED RATHER THAN
+            # OVERLOOKED. These are the bytes the Go renderer is diffed against, so
+            # the two labels move together or not at all, and changing them is not a
+            # rename: it re-bases every recall golden in `tests/conformance/`, the
+            # reader fixture `internal/report/testdata/` replays, and the parity
+            # harness's byte diffs. It belongs in a change whose whole subject is
+            # that re-base. `internal/report.RecallReport.RenderText` carries the
+            # same note beside the same line.
             out.append(f"    tasks: {', '.join(e.tasks)}")
         for heading in SURFACED_HEADINGS:
             body = e.sections.get(heading)
@@ -3290,9 +3349,15 @@ def render_search(
     # third field to carry it.
     if report.ref_to is not None:
         out.append(
-            # `narrowed_set_shown=True`: search has no status that counts the kept entries
-            # and then declines to search them — every entry the filter kept IS searched,
-            # and the hunks below are about exactly those.
+            # A CONSTANT True, AND THE NUMERATOR IS WHY IT CAN BE ONE. `entries_searched`
+            # is incremented once per entry the filter KEPT, so the count printed here is
+            # the kept count by construction and every status below is reporting on exactly
+            # that set — `render_text`'s problem (a count of matched entries rendered over a
+            # body about none of them) has no spelling here. Both statuses that print no
+            # HUNKS still report on that set: `search-no-match` prints "searched N entries in
+            # <scopes>", which is a statement about exactly the kept entries, and
+            # `search-unreadable` is only reachable with `entries_searched == 0`, so there the
+            # clause is about the empty set rather than false about a non-empty one.
             _ref_to_line(
                 report.ref_to,
                 report.entries_searched,
