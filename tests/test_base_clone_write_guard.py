@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import re
 import subprocess
 import sys
@@ -55,7 +56,7 @@ def _refused_from_hook() -> frozenset[str]:
     text = HOOK.read_text(encoding="utf-8")
     block = re.search(r"_REFUSED = frozenset\(\{(.*?)\}\)", text, re.S)
     assert block, "could not find the _REFUSED literal in the hook source"
-    return frozenset(re.findall(r'"([a-z-]+)"', block.group(1)))
+    return frozenset(re.findall(r'"([a-z0-9-]+)"', block.group(1)))
 
 
 def _refused_from_doc() -> frozenset[str]:
@@ -67,17 +68,33 @@ def _refused_from_doc() -> frozenset[str]:
     names: set[str] = set()
     for row in rows:
         first_column = row.split("|")[1]
-        names.update(re.findall(r"`([a-z-]+)`", first_column))
+        names.update(re.findall(r"`([a-z0-9-]+)`", first_column))
     return frozenset(names)
 
 
-def _init_clone(path: Path) -> None:
+def _init_clone(path: Path) -> Path:
+    """A throwaway repo carrying its own COPY of the hook. Returns that copy.
+
+    🔴 THE COPY IS LOAD-BEARING, NOT CONVENIENCE. The guard only polices the
+    repository it ships in — it resolves its OWN repo from `__file__` and compares
+    against the cwd's — so a fixture that invoked the cairn checkout's hook while
+    standing in a synthetic repo would be measuring the cross-repo REFUSAL path
+    and never the refusal itself. Copying makes each fixture a faithful miniature
+    of the real deployment (`<repo>/.claude/hooks/<file>`), which is also why
+    `shutil.copy` and not a symlink: `os.path.realpath` on a symlink resolves back
+    to the cairn checkout and the guard would police the wrong tree.
+    """
     path.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, **_GIT_ENV}
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=path, check=True, env=env)
+    hooks = path / ".claude" / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    local_hook = hooks / HOOK.name
+    shutil.copy(HOOK, local_hook)
     (path / "seed.txt").write_text("seed\n", encoding="utf-8")
     subprocess.run(["git", "add", "seed.txt"], cwd=path, check=True, env=env)
     subprocess.run(["git", "commit", "-qm", "seed"], cwd=path, check=True, env=env)
+    return local_hook
 
 
 def _add_worktree(clone: Path, wt: Path, branch: str = "side") -> None:
@@ -87,14 +104,23 @@ def _add_worktree(clone: Path, wt: Path, branch: str = "side") -> None:
     )
 
 
-def _run_hook(command: str, cwd: Path | str, env_extra: dict | None = None) -> dict:
+#: The hook copy the CURRENT fixture installed. `_run_hook` prefers it, so each
+#: test drives the copy inside the repo it is standing in rather than the cairn
+#: checkout's — which, under the guard's own repo-identity condition, would be
+#: measuring the cross-repo ALLOW and never the refusal. Set by the fixture and
+#: cleared after it, so a test that forgets the fixture cannot silently inherit it.
+_ACTIVE_HOOK: Path | None = None
+
+
+def _run_hook(command: str, cwd: Path | str, env_extra: dict | None = None,
+              hook: Path | None = None) -> dict:
     """Invoke the hook exactly the way Claude Code does, and parse its verdict."""
     payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
     env = {k: v for k, v in os.environ.items() if k != "BASE_CLONE_WRITE_OK"}
     env.update(_GIT_ENV)
     env.update(env_extra or {})
     proc = subprocess.run(
-        [sys.executable, str(HOOK)],
+        [sys.executable, str(hook or _ACTIVE_HOOK or HOOK)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
@@ -123,13 +149,21 @@ def _reason(verdict: dict) -> str:
 
 
 @pytest.fixture
-def parallel_clone(tmp_path: Path) -> tuple[Path, Path]:
-    """A base clone with ONE linked worktree — the state the guard fires in."""
+def parallel_clone(tmp_path: Path):
+    """A base clone with ONE linked worktree — the state the guard fires in.
+
+    Yields `(clone, worktree, hook)`, where `hook` is the clone's OWN copy. Tests
+    must invoke that copy: see `_init_clone` for why anything else measures the
+    cross-repo path instead of the refusal.
+    """
+    global _ACTIVE_HOOK
     clone = tmp_path / "clone"
     wt = tmp_path / "wt"
-    _init_clone(clone)
+    local_hook = _init_clone(clone)
     _add_worktree(clone, wt)
-    return clone, wt
+    _ACTIVE_HOOK = local_hook
+    yield clone, wt, local_hook
+    _ACTIVE_HOOK = None
 
 
 # ---------------------------------------------------------------- the instrument
@@ -168,7 +202,7 @@ def test_the_refused_set_matches_the_documented_table():
 # ------------------------------------------------------- POSITIVE: it can refuse
 
 def test_a_commit_in_the_base_clone_is_refused(parallel_clone):
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook("git commit -m 'work'", clone)
     assert _decision(verdict) == "deny"
 
@@ -181,7 +215,7 @@ def test_the_refusal_names_the_doc_and_the_override(parallel_clone):
     override is asserted for the same reason — a guard with no documented way past
     it is one somebody disables.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     reason = _reason(_run_hook("git commit -m 'work'", clone))
     assert "claudedocs/working-in-parallel.md" in reason
     assert "BASE_CLONE_WRITE_OK=1" in reason
@@ -199,7 +233,7 @@ def test_the_refusal_names_the_doc_and_the_override(parallel_clone):
     "git merge origin/main",
 ])
 def test_every_tree_mutating_subcommand_is_refused(parallel_clone, command):
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     assert _decision(_run_hook(command, clone)) == "deny", command
 
 
@@ -210,7 +244,7 @@ def test_a_commit_later_in_a_chain_is_still_seen(parallel_clone):
     leading command would be inert in practice while passing a test suite built
     from single commands.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook("git fetch origin && git commit -m 'work'", clone)
     assert _decision(verdict) == "deny"
 
@@ -222,7 +256,7 @@ def test_the_global_option_hop_does_not_hide_the_subcommand(parallel_clone):
     separate check after it was found to bypass an earlier one, so it is pinned
     here rather than assumed.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook(f"git -C {clone} commit -m 'work'", clone)
     assert _decision(verdict) == "deny"
 
@@ -235,7 +269,7 @@ def test_the_same_commit_inside_the_linked_worktree_is_allowed(parallel_clone):
     Same command, same clone, same repo — only the cwd differs. If this refuses,
     the guard has banned the very workflow it is telling people to use.
     """
-    _, wt = parallel_clone
+    wt = parallel_clone[1]
     assert _decision(_run_hook("git commit -m 'work'", wt)) is None
 
 
@@ -247,8 +281,11 @@ def test_a_clone_with_no_linked_worktrees_is_left_alone(tmp_path):
     collide with.
     """
     clone = tmp_path / "solo"
-    _init_clone(clone)
-    assert _decision(_run_hook("git commit -m 'work'", clone)) is None
+    local_hook = _init_clone(clone)
+    # 🔴 ITS OWN copy. Driving the cairn checkout's hook here would ALLOW because
+    # the repos differ, not because there are no worktrees — the test would pass
+    # for the wrong reason and go green with the worktree condition deleted.
+    assert _decision(_run_hook("git commit -m 'work'", clone, hook=local_hook)) is None
 
 
 def test_the_ff_only_resync_recipe_is_allowed(parallel_clone):
@@ -261,7 +298,7 @@ def test_the_ff_only_resync_recipe_is_allowed(parallel_clone):
     command the standing rules tell everybody to run — and it would look correct,
     because `merge` genuinely does mutate the tree.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook("git fetch origin && git merge --ff-only origin/main", clone)
     assert _decision(verdict) is None
 
@@ -272,7 +309,7 @@ def test_a_pathspec_checkout_is_allowed(parallel_clone):
     It is also the recipe for reading a doc at a ref, which the staleness section
     of the doc tells people to do, so refusing it would contradict the same file.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook("git checkout origin/main -- AGENTS.md", clone)
     assert _decision(verdict) is None
 
@@ -285,7 +322,7 @@ def test_a_bare_checkout_is_still_refused_when_chained_with_a_pathspec_one(paral
     "satisfied by a neighbour" shape this repo has already measured once, in a
     guard that searched a whole block for a field.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook(
         "git checkout origin/main -- AGENTS.md && git checkout other-branch", clone)
     assert _decision(verdict) == "deny"
@@ -304,10 +341,123 @@ def test_a_bare_merge_chained_after_an_ff_only_one_is_still_refused(parallel_clo
     This is the same "satisfied by a neighbour" shape the sibling test below
     pins for `checkout`; the two must stay in step.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook(
         "git merge --ff-only origin/main && git merge other-branch", clone)
     assert _decision(verdict) == "deny"
+
+
+@pytest.mark.parametrize("command", [
+    # 🔴 EVERY ONE OF THESE WAS MEASURED PASSING STRAIGHT THROUGH, and the first
+    # was proved end to end: it staged a file the single-line spelling was refused
+    # for. The cause was tokenising with `shlex.split` and then looking for
+    # operator TOKENS — shlex does not emit operators unless they are already
+    # space-separated, and treats a newline as ordinary whitespace.
+    "git status\ngit commit -m x",           # a newline is not a separator at all
+    "git fetch; git commit -m x",            # `fetch;` is ONE token
+    "git fetch;git commit -m x",
+    "git fetch&&git commit -m x",            # `fetch&&git` likewise
+    "false||git commit -m x",
+    "true|git commit -m x",
+    "(git commit -m x)",                     # `(git` is not the program name
+    "cd /tmp; git commit -m x",
+    "ls; git commit -m x",
+    # `comments=True` truncated the line at a `#` bash treats as literal, making
+    # the parse NARROWER than the shell's — in the fail-open direction.
+    "curl https://example.invalid/x#frag && git commit -m x",
+])
+def test_an_operator_without_spaces_or_a_newline_still_separates(parallel_clone, command):
+    """The five spellings a round-1 audit walked the guard with.
+
+    `;` is the one operator a shell never requires whitespace around, and
+    `git fetch; git commit` is idiomatic — so this was not an exotic gap but most
+    of the ways a session actually types a git write.
+    """
+    clone, _ = parallel_clone[:2]
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+@pytest.mark.parametrize("command", [
+    "git merge --ff-only origin/main & git merge other-branch",
+    "git checkout origin/main -- AGENTS.md & git checkout other-branch",
+    "git stash list & git stash",
+])
+def test_a_single_ampersand_does_not_launder_an_exemption(parallel_clone, command):
+    """🔴 ALL THREE EXEMPTIONS WERE WALKABLE WITH ONE CHARACTER.
+
+    The subcommand scanner's break set contained `&`; the exemptions' own
+    `re.split` did not. So a single-`&` chain yielded two refused hits while each
+    exemption saw ONE segment carrying its excusing flag. Two grammars over one
+    language — now a single `_segments`, which is the only structural fix.
+
+    The suite could not see it because every chain case used `&&`, which is why
+    these are parametrised on the operator rather than added as one case.
+    """
+    clone, _ = parallel_clone[:2]
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+@pytest.mark.parametrize("command", [
+    "git stash list && git merge --ff-only origin/main",
+    "git merge --ff-only origin/main && git checkout origin/main -- AGENTS.md",
+    "git stash list && git checkout origin/main -- AGENTS.md",
+    "git fetch origin && git merge --ff-only origin/main && git stash list",
+])
+def test_chaining_two_documented_recipes_is_allowed(parallel_clone, command):
+    """Each half is a recipe the guard's own docs say must not be refused.
+
+    They were refused: the exemptions were gated on the whole command producing a
+    SINGLE hit, so two individually-exempt commands fell through to the denial.
+    The guard's own stated reason for having exemptions is that breaking a
+    documented recipe trains everybody to route around the guard — so refusing two
+    of them at once is the same defect, doubled.
+    """
+    clone, _ = parallel_clone[:2]
+    assert _decision(_run_hook(command, clone)) is None, command
+
+
+@pytest.mark.parametrize("command", [
+    "echo 'BASE_CLONE_WRITE_OK=1' && git commit -m x",
+    "git commit -m 'BASE_CLONE_WRITE_OK=1'",
+    "git commit -m 'docs: add the BASE_CLONE_WRITE_OK=1 escape hatch'",
+])
+def test_the_override_is_not_honoured_from_quotes_or_prose(parallel_clone, command):
+    """🔴 THE GUARD DISARMED ITSELF, using a string from its own refusal message.
+
+    The override was a bare `re.search` over the raw line, so the literal
+    appearing ANYWHERE excused the command — including inside a quoted commit
+    message, and including a session that echoed or grepped the refusal text and
+    retried in the same Bash call. It is now read only as a LEADING assignment on
+    a segment, which is the one position a shell would actually treat as one.
+    """
+    clone, _ = parallel_clone[:2]
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+def test_the_guard_polices_only_the_repository_it_ships_in(tmp_path):
+    """🔴 IT WAS POLICING OTHER REPOSITORIES, AND ONE OF THEM DISAGREES BY DESIGN.
+
+    Claude Code's Bash cwd persists across calls, so a session rooted in cairn
+    that moves into a sibling repo carried this guard there. A round-1 audit
+    measured it refusing `git commit` in a repo with 93 worktree registrations
+    whose OWN instructions declare that committing to its main branch IS
+    deploying — while citing a doc path that does not exist there.
+
+    This is the false-POSITIVE mirror of the documented cwd narrowings, and worse
+    than them: a false negative loses a guard, a false positive countermands
+    another repo's documented workflow.
+    """
+    mine = tmp_path / "mine"
+    other = tmp_path / "other"
+    my_hook = _init_clone(mine)
+    _add_worktree(mine, tmp_path / "mine-wt")
+    _init_clone(other)
+    _add_worktree(other, tmp_path / "other-wt")
+
+    # POSITIVE CONTROL: the same hook, the same command, in its OWN repo.
+    assert _decision(_run_hook("git commit -m x", mine, hook=my_hook)) == "deny"
+    # …and it must say nothing about a repo it does not ship in.
+    assert _decision(_run_hook("git commit -m x", other, hook=my_hook)) is None
 
 
 def test_the_refusal_does_not_claim_a_peer_is_active(parallel_clone):
@@ -319,7 +469,7 @@ def test_the_refusal_does_not_claim_a_peer_is_active(parallel_clone):
     a claim like any other, and this one was false in the direction that makes a
     reader trust it more.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     reason = _reason(_run_hook("git commit -m 'work'", clone))
     assert "registration" in reason
     assert "working here right now" not in reason
@@ -335,7 +485,7 @@ def test_the_refusal_does_not_assert_the_closed_nested_worktree_hazard(parallel_
     mechanism. Pinned because a refusal message is the copy a reader actually
     sees, and re-deriving a dead rule there is free.
     """
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     reason = _reason(_run_hook("git commit -m 'work'", clone))
     assert "OUTSIDE the repo root" not in reason
     assert "exit 2" not in reason
@@ -354,13 +504,13 @@ def test_the_refusal_does_not_assert_the_closed_nested_worktree_hazard(parallel_
     "ls -la",
 ])
 def test_reads_and_non_git_commands_are_allowed(parallel_clone, command):
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     assert _decision(_run_hook(command, clone)) is None, command
 
 
 def test_a_word_that_merely_mentions_a_subcommand_is_not_a_command(parallel_clone):
     """`echo "do not commit here"` is prose, not a commit."""
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook('echo "remember: never commit in the base clone"', clone)
     assert _decision(verdict) is None
 
@@ -368,13 +518,13 @@ def test_a_word_that_merely_mentions_a_subcommand_is_not_a_command(parallel_clon
 # ------------------------------------------------------------------ the override
 
 def test_the_inline_override_is_honoured(parallel_clone):
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook("BASE_CLONE_WRITE_OK=1 git commit -m 'deliberate'", clone)
     assert _decision(verdict) is None
 
 
 def test_the_environment_override_is_honoured(parallel_clone):
-    clone, _ = parallel_clone
+    clone, _ = parallel_clone[:2]
     verdict = _run_hook("git commit -m 'deliberate'", clone,
                         env_extra={"BASE_CLONE_WRITE_OK": "1"})
     assert _decision(verdict) is None
@@ -427,12 +577,22 @@ def test_the_hook_is_wired_in_the_projects_settings():
     file existed.
     """
     settings = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    commands = [
-        hook.get("command", "")
-        for entry in settings["hooks"]["PreToolUse"]
-        for hook in entry.get("hooks", [])
+    carrying = [
+        entry for entry in settings["hooks"]["PreToolUse"]
+        if any("base-clone-write-guard.py" in h.get("command", "")
+               for h in entry.get("hooks", []))
     ]
-    assert any("base-clone-write-guard.py" in c for c in commands), commands
+    assert carrying, settings["hooks"]["PreToolUse"]
+    # 🔴 THE MATCHER IS THE HALF THAT WAS UNASSERTED, and it is the half that
+    # decides whether the guard ever sees a Bash call. `matcher` appeared ZERO
+    # times in this file, so changing it to any other tool left the suite green
+    # while the hook went inert — the "reads as coverage while providing none"
+    # failure this module's own docstring cites.
+    for entry in carrying:
+        assert entry.get("matcher") == "Bash", entry
+        for h in entry.get("hooks", []):
+            if "base-clone-write-guard.py" in h.get("command", ""):
+                assert h.get("type") == "command", h
 
 
 def test_the_wiring_names_no_absolute_interpreter_path():

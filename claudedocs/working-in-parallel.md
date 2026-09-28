@@ -76,17 +76,28 @@ true once and is not now, and the harness's own `isolation: "worktree"` places a
 worktrees at `.claude/worktrees/` — *inside* the root — so a 🔴 forbidding that would
 forbid the default mechanism.
 
-Both hazards it named are closed in `main`, re-measured with a nested worktree actually
-present:
+Both hazards it named are closed, re-measured with a nested worktree actually present:
 
-- `tests/leakscan.py` → **rc 0**, `402 file(s) scanned, 2 skipped`, **0 findings**, and it
-  *names* the nested checkout as a skip with its reason (git collapses an untracked nested
-  repository to one entry, whose contents belong to that repository). Closed by
-  `directory_skip_reason` in `#127`.
 - `go test ./...` from the base clone → **19 ok / 0 FAIL**, where the root-walking guard
   previously reported 24 offenders naming real source files. Closed by
   `depspolicy.NestedModuleDirs` asking git instead of walking, in `#135` / `c6aed4e`, whose
   comment explicitly rejects denylist-widening as the wrong fix.
+- `tests/leakscan.py` → **rc 0, 0 findings**, by **two independent mechanisms**, which is
+  worth separating because the second one is this change's own doing:
+  - `directory_skip_reason` (`#127`) *names* an enumerated nested checkout as a skip, with
+    its reason — git collapses an untracked nested repository to one entry whose contents
+    belong to that repository. This is what protects a clone that does **not** ignore the
+    directory.
+  - and since this change gitignores `.claude/worktrees/`, the directory is no longer
+    enumerated at all here: `git ls-files --others --exclude-standard` yields **0** matches
+    for it, so the scan reads `406 file(s) scanned, 1 skipped` and that skip is
+    `tests/leakscan.py` itself.
+
+  ⚠ **An earlier draft of this section cited `402 scanned, 2 skipped` and "it names the
+  nested checkout as a skip" as the evidence — and this change falsified its own citation.**
+  The conclusion held; the quoted measurement stopped reproducing the moment the ignore rule
+  landed two files away. **A measurement is scoped to the tree it was taken on, and a
+  `.gitignore` line is a change to what every enumerating tool can see.**
 
 What survives is a **convention, not a rule**: a scratchpad worktree keeps `git status`
 quiet and never interacts with the source filters at all. Either location works.
@@ -167,27 +178,49 @@ with it. Build with `--out-link <scratchpad>/…`. To retire an existing one wit
 the store path: `nix-store --add-root <a path outside the repo> --indirect --realise <the
 store path>`, and only then `rm result`.
 
-## 🔴 The base-clone staleness hook does NOT cover this repo's instructions
+## ✅ The base-clone staleness hook covers this repo now — it did not, and the gap is worth knowing
 
 The fleet runs a `SessionStart` hook that refreshes the agent-context files of whatever
 repo the session's cwd is in, so a stale base clone cannot serve stale, authoritative-looking
-instructions. Its path list is `CLAUDE.md` and `.claude/skills`.
+instructions. **Its path list used to be `CLAUDE.md` and `.claude/skills`, and that missed
+cairn entirely — by a filename.** `CLAUDE.md` here is a **267-byte stub** whose whole payload
+is `@AGENTS.md`, while `AGENTS.md` is **31,330 bytes** and is what actually loads. The hook
+faithfully refreshed a file that never changes and never touched the one that matters — the
+exact failure it exists to prevent, walked around rather than triggered.
 
-**That list misses cairn entirely, by a filename.** Measured: `CLAUDE.md` here is a
-**267-byte stub** whose whole payload is `@AGENTS.md`, while `AGENTS.md` is **31,330 bytes**
-and is what actually loads. So the hook faithfully refreshes a file that never changes and
-never touches the file that matters — which is the exact failure it exists to prevent,
-walked around rather than triggered.
+**Fixed and live on this host**: `AGENTS.md` was added to that list, and a follow-up adds
+`.claude/settings.json` and `.claude/hooks` — because *this* directory is now tracked and
+**executes**, so a stale clone would otherwise serve a stale GUARD, which is strictly worse
+than a stale doc: a hook that silently fails to fire is indistinguishable from one that
+allows, so there is no symptom at all.
 
-Until the fleet fix lands, **read a load-bearing instruction from the ref rather than from
-the working tree**:
+🔴 **Verify rather than trust this paragraph**, because it is a claim about another repo's
+state and about a `home.file` copy that only a `home-manager switch` makes live:
 
 ```bash
-git -C <repo> fetch origin && git show origin/main:AGENTS.md | less
+grep -n 'REFRESH_PATHS=' ~/.claude/hooks/base-clone-staleness.sh   # the DEPLOYED copy
 ```
 
-The tell that you need to is an `AGENTS.md` claim *doing work* in your plan — a limit, a
-pin, a "this is impossible", a gate's stated blind spot.
+⚠ **A refreshed file reads as dirty.** The hook does not move HEAD, so a tracked file it
+fixed shows as modified-vs-HEAD until the clone's branch catches up. **A tracked context file
+dirty in the base clone whose content is byte-identical to `origin/main` is the hook's doing,
+not somebody's unsaved work** — do not "rescue" it, and do not let it mask real WIP.
+
+Whatever the list says, for any OTHER load-bearing doc claim the rest of the tree is still as
+stale as the clone, so read it from the ref:
+
+```bash
+git -C <repo> fetch origin && git show origin/main:<path>
+```
+
+The tell that you need to is a claim *doing work* in your plan — a limit, a pin, a "this is
+impossible", a gate's stated blind spot.
+
+🔴 **The lesson, because this section was itself stale within half an hour of being written:**
+an earlier draft asserted the gap as open and prescribed a workaround "until the fleet fix
+lands" — while the fix had merged **27 minutes earlier** and was already live. A round-1 audit
+caught it. **A sentence about another repo's state is a claim with a shelf life measured in
+minutes when you are the one changing that repo.**
 
 ⚠ **And a refreshed file reads as dirty.** The hook does not move HEAD, so a tracked file
 it fixed shows as modified-vs-HEAD until the clone's branch catches up. **A tracked
