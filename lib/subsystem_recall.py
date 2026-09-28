@@ -291,6 +291,7 @@ from subsystem_resolver import (  # noqa: E402
     SubsystemIndex,
     UnknownScopeError,
     associate_paths,
+    entry_has_all_tags,
     entry_references,
     load_index,
     normalize_ref,
@@ -302,6 +303,7 @@ from subsystem_resolver import (  # noqa: E402
     TaskRefError,
     visible_scope_set,
 )
+from subsystem_resolver import normalize_tags  # noqa: E402
 from subsystem_resolver import extract_sections as _extract_sections  # noqa: E402
 
 # 🔴 IMPORTED AS A MODULE, NOT `from … import`. The CLI resolves the read store
@@ -611,6 +613,16 @@ KNOWN_SENSITIVITIES: tuple[str, ...] = ("client-confidential", "personal", "publ
 #                         nothing returns before any `--ref` is resolved, so
 #                         `ref-to-absent` outranks the two ref outcomes in practice
 #                         while sharing their "a narrowing was given" character.
+#   5c. tag-absent      — a `--tag` was given and NO entry in the caller's reachable
+#                         scopes carries every tag named. 🔴 NOT `scope-empty`, which is
+#                         the status a tag filter would otherwise fall into: that branch
+#                         is downstream of every narrowing and its body opens "NOTHING
+#                         RECORDED YET — `<scope>/` exists but holds no entries", a claim
+#                         about the DIRECTORY that is false of a full scope none of whose
+#                         entries carry the tag. Listed after `ref-to-absent` because that
+#                         is the order the two filters run in, and reached the same TWO
+#                         ways `ref-to-absent` is — the filter's own zero, and "the `--ref`
+#                         operand is not among the entries that did".
 #   6. recalled         — something was surfaced.
 # `StoreMissingError` / `EntryUnreadableError` are NOT in this tuple: they raise.
 # A status constant no code path could emit would be a declaration with nothing
@@ -624,15 +636,19 @@ KNOWN_SENSITIVITIES: tuple[str, ...] = ("client-confidential", "personal", "publ
 #                        query that matched nothing in a full scope are different
 #                        facts, and two statuses that share a word get read as one.
 #   9. search-unreadable the searched scopes held files, NONE could be indexed,
-#                        and no readable entry was removed by a `--ref-to` filter
-#                        either — so the query never ran against anything. Same
-#                        argument as `scope-unreadable`, and the same reason it must
-#                        not collapse into `search-no-match`: a zero from a scan that
-#                        walked nothing is not a zero. 🔴 THE LAST TERM IS NOT
-#                        DECORATION: without it a filter that removed every readable
-#                        entry answered this status over a scope whose entries were
-#                        all indexed fine, printing "NOT ONE of them could be
-#                        indexed" about files that were.
+#                        and no readable entry was removed by a `--ref-to` OR a
+#                        `--tag` filter either — so the query never ran against
+#                        anything. Same argument as `scope-unreadable`, and the same
+#                        reason it must not collapse into `search-no-match`: a zero
+#                        from a scan that walked nothing is not a zero. 🔴 THE LAST
+#                        TWO TERMS ARE NOT DECORATION: without the first, a `--ref-to`
+#                        that removed every readable entry answered this status over a
+#                        scope whose entries were all indexed fine, printing "NOT ONE
+#                        of them could be indexed" about files that were — MEASURED,
+#                        not hypothetical. The `--tag` term is the same rule one filter
+#                        later, and the rule is: EVERY filter placed upstream of the
+#                        searched counter falsifies this condition unless its own skip
+#                        count is subtracted back out.
 STATUS_PRECEDENCE: tuple[str, ...] = (
     "scope-absent",
     "scope-unreadable",
@@ -640,6 +656,7 @@ STATUS_PRECEDENCE: tuple[str, ...] = (
     "ref-ambiguous",
     "ref-absent",
     "ref-to-absent",
+    "tag-absent",
     "recalled",
     "search-hit",
     "search-no-match",
@@ -1031,6 +1048,16 @@ class RecalledEntry:
     rename, a trailing colon or an indent all land here.
     """
 
+    tags: tuple[str, ...] = ()
+    """The entry's `tags:`, already folded, deduped and sorted by the loader.
+
+    ⚠ NO FLATTENING, WHERE `tasks` NEEDS ONE, AND THE DIFFERENCE IS THE TYPE RATHER THAN A
+    SHORTCUT. `SubsystemEntry.tasks` is a tuple of `TaskRef` and has to be reduced to its
+    printed spelling; `SubsystemEntry.tags` is already a tuple of `str` in exactly the form
+    every surface renders, because a tag's canonical form IS its folded form and there is no
+    raw spelling to choose between.
+    """
+
     tasks: tuple[str, ...] = ()
     """The entry's refs as written (`<system>:<id>`), in file order.
 
@@ -1119,6 +1146,7 @@ def read_entry(store_root: str | Path, entry: SubsystemEntry) -> RecalledEntry:
         mtime=mtime,
         missing_sections=tuple(h for h in COUNTED_HEADINGS if h not in sections),
         tasks=tuple(str(t) for t in entry.tasks),
+        tags=entry.tags,
     )
 
 
@@ -1337,6 +1365,39 @@ class RecallReport:
 
     Both were caught by reading a regenerated golden. It is set once, from the filter's own
     result, on the only branch that runs the filter.
+    """
+
+    tags: tuple[str, ...] = ()
+    """The `--tag`/`?tag=` CATEGORY narrowing, canonical and sorted. Empty means none.
+
+    Empty rather than `None`, where `ref_to` uses `None`, and the asymmetry is forced: an
+    operand set has a natural empty value and a validated tag operand can never be `""`, so
+    `()` cannot collide with a real request. `ref` and `ref_to` each need a nil because
+    `--ref ''` IS a real request that narrows and finds nothing; a tag operand that folds
+    away is REFUSED by the option ladder, so there is no empty-but-present state to separate.
+
+    ⚠ SET ON EVERY STATUS THE NARROWING REACHED, and NOT on `scope-absent`,
+    `scope-unreadable` or `ref-to-absent` — all three return before the tag filter runs, for
+    the reason `ref_to`'s own note gives.
+    """
+
+    tag_scope_total: int = 0
+    """Entries in play BEFORE the tag filter ran — the scope's own total, or the
+    `ref-to`-narrowed count when both filters are present, because the tag filter runs second.
+
+    🔴 IT EXISTS SO THE FILTER CANNOT HIDE WHAT IT REMOVED, exactly as `ref_to_scope_total`
+    does: without a second number a reader cannot tell "2 entries carry this tag" from "the
+    scope holds 2 entries". `render_text`'s tag line prints both.
+    """
+
+    tag_matched: int = 0
+    """Entries in that set carrying every named tag: the tag line's numerator.
+
+    🔴 A STORED COUNT FROM THE FILTER'S OWN RESULT, NEVER DERIVED FROM A STATUS. That is not a
+    preference — it is `ref_to_matched`'s measured lesson applied before it could be re-learned
+    here, and the mechanism is identical: `tag-absent` is reached TWO ways (nothing in the set
+    matched, and the `--ref` operand is not among the ones that did), and a status cannot tell
+    them apart. Read this field; do not re-derive it.
     """
 
     candidates: tuple[str, ...] = ()
@@ -1615,6 +1676,7 @@ def recall(
     *,
     ref: str | None = None,
     ref_to: str | None = None,
+    tags: Sequence[str] = (),
     limit: int = DEFAULT_ENTRY_LIMIT,
     mode: str = DEFAULT_MODE,
     page: int = 1,
@@ -1664,6 +1726,10 @@ def recall(
     # CONTRACT. A request carrying two bad parameters gets ONE message and which one it
     # gets is in the goldens; inserting a new guard anywhere but the end moves those.
     ref_to_ref = _validated_ref_to(ref_to)
+    # AFTER `ref-to`, for the same reason `ref-to` is after `mode`: the ladder's order decides
+    # which message a request carrying two bad parameters gets, and that order is recorded in
+    # the goldens. A new guard goes at the END.
+    want_tags = _validated_tags(tags)
 
     # 🔴 `visible_scopes` IS PASSED, NEVER RE-DERIVED. A scope the caller may not
     # see must be absent from the INDEX, not filtered out of each answer — see
@@ -1734,22 +1800,32 @@ def recall(
     #
     # ⚠ `total_in_scope` BECOMES THE NARROWED COUNT and `ref_to_scope_total` carries
     # the scope's own, for the reason `ref_to_scope_total`'s docstring gives.
-    # 🔴 ONE DICT, BUILT ONCE AND SPLATTED INTO EVERY RETURN BELOW. Nine literals build a
-    # `RecallReport` in this function and the reverse-lookup fields belong on every one of
-    # them the filter reached; assigning them per literal is the same assignment at nine
-    # sites, wrong at the one somebody forgets.
-    ref_to_fields: dict[str, object] = {}
+    # 🔴 ONE DICT, BUILT ONCE AND SPLATTED INTO EVERY RETURN BELOW. Eleven literals build a
+    # `RecallReport` in this function and a filter's fields belong on every one of them the
+    # filter reached; assigning them per literal is the same assignment at eleven sites, wrong
+    # at the one somebody forgets.
+    #
+    # ⚠ IT WAS `ref_to_fields` AND IS NOW `filter_fields`, BECAUSE TWO FILTERS WRITE INTO IT
+    # AND A SECOND DICT WOULD RE-OPEN EXACTLY WHAT THIS ONE CLOSES. Two accumulators mean two
+    # splats at every return, and the failure mode is the asymmetric one: a return site that
+    # splatted one and forgot the other would print a `ref-to:` header with no `tag:` line
+    # beside it, which reads as "no tag filter was sent" rather than as a missing field.
+    # WHICH keys are present is what says which filters ran, and each block below adds its own
+    # only after its own narrowing has happened.
+    filter_fields: dict[str, object] = {}
     scope_total = len(entries)
     if ref_to_ref is not None:
         matching = tuple(e for e in entries if entry_references(e, ref_to_ref))
         # 🔴 `ref_to_matched` GOES IN HERE, FROM THE FILTER'S OWN RESULT, BEFORE ANY STATUS
         # BRANCH — it is the one number the rendered line's numerator may be read from. See
         # the field's docstring for the two false sentences that came out of deriving it.
-        ref_to_fields = {
-            "ref_to": str(ref_to_ref),
-            "ref_to_scope_total": scope_total,
-            "ref_to_matched": len(matching),
-        }
+        filter_fields.update(
+            {
+                "ref_to": str(ref_to_ref),
+                "ref_to_scope_total": scope_total,
+                "ref_to_matched": len(matching),
+            }
+        )
         if not matching:
             return RecallReport(
                 status="ref-to-absent",
@@ -1762,9 +1838,64 @@ def recall(
                 known_scopes=index.scopes,
                 malformed=bad,
                 malformed_elsewhere=bad_elsewhere,
-                **ref_to_fields,
+                **filter_fields,
             )
         entries = matching
+
+    # 🔴 THE SET THE `ref-to` MEMBERSHIP TEST BELOW IS ABOUT, CAPTURED BEFORE THE TAG FILTER
+    # NARROWS `entries` AGAIN — AND KEEPING IT IS WHAT MAKES THE TWO NON-FINDINGS
+    # ATTRIBUTABLE. Without it, `--ref X --ref-to Y --tag Z` where X carries Y but not Z takes
+    # the `ref-to` branch and prints "`X` DOES NOT REFERENCE `Y`", which is FALSE: X references
+    # Y, and the thing it lacks is the tag. Each filter's own non-finding has to be tested
+    # against that filter's own result, and after a second narrowing `entries` is the
+    # intersection and can answer for neither.
+    ref_to_narrowed = entries
+
+    # 🔴 THE CATEGORY NARROWING GOES HERE: AFTER `index.entries(scope)`, WHICH IS AFTER SCOPE
+    # AUTHORISATION, AND NEVER BEFORE IT.
+    #
+    # The index `load_store` returned is already narrowed to the scopes this caller may read —
+    # that is the ONE narrowing, and `load_store`'s own header lists the leaks a per-answer
+    # filter re-opens. So this filter can only ever REMOVE entries from a set the caller was
+    # already entitled to, and it is structurally incapable of surfacing one they were not.
+    #
+    # 🔴 THE WRONG ORDER IS THE SAME REAL, CHEAP MISTAKE THE `ref-to` FILTER NAMES, AND IT IS
+    # EASIER TO MAKE HERE. "Every marketing entry, across scopes" reads even more like a
+    # store-wide question than a reverse lookup does, and the obvious implementation of a
+    # store-wide question is a store-wide load — `load_index(root)` with `visible_scopes`
+    # quietly dropped — followed by a tag filter. That answers correctly and LEAKS: the hit set
+    # names entries, scopes and tags from directories the caller cannot read. A TAG is exactly
+    # the operand somebody reaches for across a whole store.
+    #
+    # ⚠ `total_in_scope` BECOMES THE NARROWED COUNT AND THE PRE-FILTER TOTAL GOES TO
+    # `tag_scope_total`, which is the rule `ref_to_scope_total` states one block up.
+    if want_tags:
+        tag_scope_total = len(entries)
+        tag_matching = tuple(e for e in entries if entry_has_all_tags(e, want_tags))
+        # 🔴 FROM THE FILTER'S OWN RESULT, BEFORE ANY STATUS BRANCH — see the field's docstring
+        # for why a derivation from the status name is measured wrong.
+        filter_fields.update(
+            {
+                "tags": want_tags,
+                "tag_scope_total": tag_scope_total,
+                "tag_matched": len(tag_matching),
+            }
+        )
+        if not tag_matching:
+            return RecallReport(
+                status="tag-absent",
+                scope=normalize_ref(scope),
+                store_root=str(store),
+                total_in_scope=tag_scope_total,
+                limit=limit,
+                mode=mode,
+                ref=normalize_ref(ref) if ref is not None else None,
+                known_scopes=index.scopes,
+                malformed=bad,
+                malformed_elsewhere=bad_elsewhere,
+                **filter_fields,
+            )
+        entries = tag_matching
 
     if ref is not None:
         try:
@@ -1782,7 +1913,7 @@ def recall(
                 known_scopes=index.scopes,
                 malformed=bad,
                 malformed_elsewhere=bad_elsewhere,
-                **ref_to_fields,
+                **filter_fields,
             )
         if entry is None:
             return RecallReport(
@@ -1796,7 +1927,7 @@ def recall(
                 known_scopes=index.scopes,
                 malformed=bad,
                 malformed_elsewhere=bad_elsewhere,
-                **ref_to_fields,
+                **filter_fields,
             )
         # 🔴 THE TWO NARROWINGS COMPOSE, AND THE RESOLVER DOES NOT KNOW ABOUT THE
         # FIRST ONE. `resolve_ref_tiered` resolves against the whole (authorised)
@@ -1826,11 +1957,35 @@ def recall(
         # therefore cannot reach this branch at all, `cairn` renders text, and the Go port
         # has no JSON recall payload to disagree with. Nothing renders `total_in_scope` here
         # either, so no byte-diff gate could see it.
+        #
+        # ⚠ AGAINST `ref_to_narrowed` AND NOT `entries`, BECAUSE A SECOND FILTER NOW SITS
+        # BETWEEN THEM. `entries` is the intersection of both narrowings, so an entry missing
+        # only the TAG would be reported here as not referencing the ref — a sentence that is
+        # false about the store. See `ref_to_narrowed`.
         if ref_to_ref is not None and not any(
-            e.scope == entry.scope and e.filename == entry.filename for e in entries
+            e.scope == entry.scope and e.filename == entry.filename for e in ref_to_narrowed
         ):
             return RecallReport(
                 status="ref-to-absent",
+                scope=normalize_ref(scope),
+                store_root=str(store),
+                total_in_scope=len(ref_to_narrowed),
+                limit=limit,
+                mode=mode,
+                ref=normalize_ref(ref),
+                known_scopes=index.scopes,
+                malformed=bad,
+                malformed_elsewhere=bad_elsewhere,
+                **filter_fields,
+            )
+        # The same membership test for the TAG narrowing, against the tag filter's own result.
+        # `ref-to` is checked FIRST so the precedence between the two is stated rather than
+        # incidental: it is the order the filters ran in.
+        if want_tags and not any(
+            e.scope == entry.scope and e.filename == entry.filename for e in entries
+        ):
+            return RecallReport(
+                status="tag-absent",
                 scope=normalize_ref(scope),
                 store_root=str(store),
                 total_in_scope=len(entries),
@@ -1840,7 +1995,7 @@ def recall(
                 known_scopes=index.scopes,
                 malformed=bad,
                 malformed_elsewhere=bad_elsewhere,
-                **ref_to_fields,
+                **filter_fields,
             )
         # A `--ref` run is a NARROWING and prints its one entry in full whatever
         # `mode` says — no index, no featured basis, byte-identical to what it
@@ -1857,7 +2012,7 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
-            **ref_to_fields,
+            **filter_fields,
         )
 
     if not entries:
@@ -1871,7 +2026,7 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
-            **ref_to_fields,
+            **filter_fields,
         )
 
     # THE ONE ordering site: canonical ref ascending, so two runs over an
@@ -1891,7 +2046,7 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
-            **ref_to_fields,
+            **filter_fields,
         )
 
     # `digest` and `list` both read EVERY entry — the index line carries a bullet
@@ -1916,7 +2071,7 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
-            **ref_to_fields,
+            **filter_fields,
         )
 
     featured_ref, basis = select_featured(
@@ -1938,7 +2093,7 @@ def recall(
         known_scopes=index.scopes,
         malformed=bad,
         malformed_elsewhere=bad_elsewhere,
-        **ref_to_fields,
+        **filter_fields,
     )
 
 
@@ -2216,8 +2371,158 @@ def _validated_ref_to(ref_to: str | None) -> TaskRef | None:
         ) from exc
 
 
+def _validated_tags(tags: Sequence[str]) -> tuple[str, ...]:
+    """The ONE place a tag OPERAND is refused, and the ONE place operands are canonicalised.
+
+    🔴 A REFUSAL RATHER THAN A NARROWING TO NOTHING, WHICH IS THE OPPOSITE CHOICE FROM
+    `--ref`. `--ref ''` narrows and finds nothing, and that is right there: a ref names an
+    ENTRY, and "no entry is called that" is a fact about the store worth reporting. A tag
+    operand that folds away names NO CATEGORY AT ALL, so answering "no entry carries this"
+    would be an empty result whose cause is invisible — indistinguishable from a tag nobody
+    has used yet, when the real cause is that the query said nothing.
+
+    🔴 VALIDATE AND CANONICALISE TOGETHER, IN ONE FUNCTION, BECAUSE SPLITTING THEM PUTS A
+    TWO-STEP SEQUENCE AT EVERY CALL SITE. `cairn` and `server/server.py` both pass operands as
+    WRITTEN; a "validate then fold" pair spelled at each would be one predicate at two sites,
+    wrong at the one that gets a new step first. `report.canonicalTags` is the Go spelling and
+    it is called from inside `Recall`/`Search` for the same reason.
+
+    ⚠ THE FOLD IS `normalize_tags`, WHICH IS `normalize_ref` PER MEMBER — the same fold the
+    FILE's own tags went through. A second rule here is how a tag an operator can write becomes
+    one they cannot ask for.
+
+    ⚠ AND THE ORDER MATTERS: the refusal is checked BEFORE the fold drops anything, because
+    `normalize_tags` silently discards a member that folds away. Folding first would turn a
+    malformed filter into NO filter, which is the widening direction.
+
+    🔴 THE SENTENCE IS PINNED AGAINST THE GO PORT'S `report.validateTags`, and it reaches the
+    wire as a 400 body on `?tag=`.
+    """
+    for tag in tags:
+        if not isinstance(tag, str) or not normalize_ref(tag):
+            raise ValueError(
+                f"tag {tag!r} normalizes to the empty string — a tag must fold to at "
+                f"least one of `[a-z0-9.-]`"
+            )
+    return normalize_tags(tags)
+
+
+def _reach_clause(matched: int, *, narrowed_set_shown: bool, narrowed_further: bool) -> str:
+    """The middle clause of BOTH filter headers: what the body below the line is about.
+
+    THREE states, spelled once, because there are three and two of them were once one.
+
+    🔴 THE THIRD STATE IS WHAT A SECOND FILTER MADE NECESSARY, AND ITS ABSENCE WOULD HAVE BEEN
+    A FALSE SENTENCE RATHER THAN A MISSING ONE. With `--ref-to X --tag Y`, the `ref-to` line's
+    numerator is the entries that reference X — which is correct and is NOT what the body
+    renders, because the tag filter then removes some of them. "Everything below is about those
+    N" was therefore false about the store in exactly the way four other shapes were measured
+    false: a count of matched entries above a body reporting on fewer.
+
+    🔴 `narrowed_set_shown` WINS OVER `narrowed_further`, AND THE ORDER IS LOAD-BEARING. When
+    nothing below reports on a matched entry at all, "a further filter narrows those N again"
+    would be true and useless — it invites the reader to look for a subset that is not on
+    screen. The "NOTHING below" clause points at the sentence that explains the empty body.
+
+    `internal/report.reachClause` is the Go spelling.
+    """
+    if not narrowed_set_shown:
+        return "and NOTHING below is about them — the sentence below says why."
+    if narrowed_further:
+        return f"and a FURTHER filter below narrows those {matched} again."
+    return f"and everything below is about those {matched}."
+
+
+# The clause both filter headers END with, spelled ONCE.
+#
+# 🔴 A CONSTANT RATHER THAN A REPEATED LITERAL BECAUSE IT IS THE PART THAT MUST NOT DIVERGE.
+# The counts and the verbs differ between the two lines by design; this sentence is the
+# reader's instruction — "the rest were read and did not match", which is what stops a narrowed
+# index reading as a truncated one — and a second spelling of it is the one that would go stale
+# in whichever line was edited second.
+NARROWING_CAVEAT = (
+    " This is a NARROWING, not a truncation: the rest were read and did not match."
+)
+
+
+def _quoted_tags(tags: Sequence[str]) -> str:
+    """`` `a`, `b` `` — every tag backticked, in the canonical order the filter used.
+
+    ⚠ BACKTICKED INDIVIDUALLY AND NOT AS ONE RUN. `` `a, b` `` reads as one tag whose name
+    contains a comma, which is a tag this loader cannot hold; the per-tag quoting is what makes
+    the operand set legible as a set.
+    """
+    return ", ".join(f"`{t}`" for t in tags)
+
+
+def _all_of_them(tag_count: int) -> str:
+    """Agrees with the number of TAGS, which is a different count from every other idiom here.
+
+    🔴 NAMED FOR WHAT IT AGREES WITH, because the `tag-absent` sentences put an entry count and
+    a tag count in one clause and an idiom picked by eye there would agree with the wrong one.
+    The AND semantics are why the plural form says "all of them" rather than "them": a report
+    saying "carry them" would read as an OR to anyone who had not read `entry_has_all_tags`.
+    """
+    return "it" if tag_count == 1 else "all of them"
+
+
+def _tag_line(
+    tags: Sequence[str], matched: int, total: int, label: str, *, narrowed_set_shown: bool
+) -> str:
+    """The ONE spelling of the category-filter header, shared by both renderers.
+
+    🔴 A SEPARATE FUNCTION AND NOT A PARAMETERISED `_ref_to_line`, AND THE DIFFERENCE IS
+    GRAMMATICAL RATHER THAN COSMETIC. This line's operand is a SET, so the verb agrees with the
+    set's size while `ref-to`'s operand is one ref and its verb never moves. Folding the two
+    into one function would put a conditional on every clause of a sentence whose only shared
+    part is the trailing caveat — and that caveat is spelled once in `NARROWING_CAVEAT`.
+
+    ⚠ IT TAKES NO `narrowed_further`, AND THAT IS A PROPERTY OF THE FILTER ORDER RATHER THAN AN
+    OMISSION: the tag filter runs LAST at both call sites, so nothing narrows its result again.
+    A third filter added after it would have to pass one — and would also have to re-derive
+    this line's denominator, which is the set the tag filter SAW rather than the readable total.
+
+    ⚠ `label` CARRIES ITS OWN TRAILING `/` — the trap `_ref_to_line`'s docstring records,
+    inherited here because this function is copied from it.
+    """
+    return (
+        f"  tag: {_quoted_tags(tags)} — {matched} of {total} entr"
+        f"{'y' if total == 1 else 'ies'} in `{label}` carry {_all_of_them(len(tags))}, "
+        f"{_reach_clause(matched, narrowed_set_shown=narrowed_set_shown, narrowed_further=False)}"
+        f"{NARROWING_CAVEAT}"
+    )
+
+
+def _emptying_filters(ref_to_skipped: int, tag_skipped: int) -> tuple[str, str]:
+    """The filter or filters that drove the searched set to zero, plus the agreeing possessive.
+
+    🔴 TWO RETURN VALUES BECAUSE ONE SENTENCE NAMES THE SUBJECT TWICE. "the `ref-to` filter
+    removed every readable entry, so this zero is the FILTER's" — the second half is a
+    possessive of the first, and picking one plural form per site is how the two stop agreeing.
+
+    ⚠ IT IS NEVER CALLED WITH BOTH ZERO. Its one call site is inside a branch guarded on
+    `ref_to_skipped > 0 or tag_skipped > 0`, so the fall-through is unreachable — but it returns
+    the `ref-to` wording rather than raising, because the alternative to an unreachable branch
+    is a renderer that can fail on a report it was handed. Stated so nobody reads the
+    fall-through as a claim that `ref-to` is the default filter.
+
+    `internal/report.emptyingFilters` is the Go spelling, and `tests/parity/` diffs the bytes.
+    """
+    if ref_to_skipped > 0 and tag_skipped > 0:
+        return "the `ref-to` and `tag` filters", "the FILTERS'"
+    if tag_skipped > 0:
+        return "the `tag` filter", "the FILTER's"
+    return "the `ref-to` filter", "the FILTER's"
+
+
 def _ref_to_line(
-    ref_to: str, matched: int, total: int, label: str, *, narrowed_set_shown: bool
+    ref_to: str,
+    matched: int,
+    total: int,
+    label: str,
+    *,
+    narrowed_set_shown: bool,
+    narrowed_further: bool = False,
 ) -> str:
     """The ONE spelling of the reverse-lookup header, shared by both renderers.
 
@@ -2242,15 +2547,13 @@ def _ref_to_line(
     Caught by reading the regenerated golden, not by a test: both implementations agreed, and
     both were wrong.
     """
-    reach = (
-        f"and everything below is about those {matched}."
-        if narrowed_set_shown
-        else "and NOTHING below is about them — the sentence below says why."
+    reach = _reach_clause(
+        matched, narrowed_set_shown=narrowed_set_shown, narrowed_further=narrowed_further
     )
     return (
         f"  ref-to: `{ref_to}` — {matched} of {total} entr"
         f"{'y' if total == 1 else 'ies'} in `{label}` reference it, {reach}"
-        f" This is a NARROWING, not a truncation: the rest were read and did not match."
+        f"{NARROWING_CAVEAT}"
     )
 
 
@@ -2302,11 +2605,37 @@ def render_text(
         # `renders_narrowed_set` is True exactly when a matched entry is printed below, and
         # its own docstring records the three shapes a status-name derivation got wrong plus
         # the digest-mode case that rules out the obvious second guess.
+        #
+        # ⚠ `narrowed_further` IS WHAT THE TAG FILTER MADE NECESSARY. `ref_to_matched` is the
+        # entries that carry the ref; with a `--tag` also in force the body below reports on a
+        # SUBSET of them, so "everything below is about those N" would be false — see
+        # `_reach_clause`. And it is "the tag filter REMOVED something", not "a tag filter was
+        # sent": a `--tag` that kept every entry narrows nothing, so the original clause is
+        # still true there and saying otherwise sends a reader looking for a subset that is the
+        # whole set.
         out.append(
             _ref_to_line(
                 report.ref_to,
                 report.ref_to_matched,
                 report.ref_to_scope_total,
+                f"{report.scope}/",
+                narrowed_set_shown=report.renders_narrowed_set,
+                narrowed_further=report.tag_scope_total > report.tag_matched,
+            )
+        )
+
+    # The CATEGORY narrowing announces itself for the same reason, and AFTER the `ref-to` line
+    # because that is the order the two filters ran in — so a report carrying both reads as the
+    # composition it is rather than as two independent claims about one index.
+    #
+    # ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves: `tags` is empty on
+    # every request that does not carry the parameter.
+    if report.tags:
+        out.append(
+            _tag_line(
+                report.tags,
+                report.tag_matched,
+                report.tag_scope_total,
                 f"{report.scope}/",
                 narrowed_set_shown=report.renders_narrowed_set,
             )
@@ -2424,6 +2753,59 @@ def render_text(
             f"`refs:` keys and NOT about whether the reference exists: an entry may point "
             f"at it under a different spelling of the id half, which is compared "
             f"byte-for-byte.{extra}"
+        )
+        return "\n".join(out)
+
+    if report.status == "tag-absent":
+        out.append("")
+        # 🔴 TWO SENTENCES FOR ONE STATUS, FOR THE REASON `ref-to-absent` ABOVE HAS TWO, AND
+        # WRITTEN THAT WAY FROM THE START RATHER THAN AFTER A ROUND MEASURED IT WRONG. This
+        # status is reached TWO ways — nothing in the set carried the tags (the filter's own
+        # zero), and "the `--ref` operand is not among the entries that DID" — and a status
+        # cannot tell them apart. The discriminator is `tag_matched`, from the filter's own
+        # result.
+        if report.tag_matched > 0:
+            # The `--ref` operand loaded fine, so the malformed rows cannot make THIS claim
+            # wrong; they can only understate the count of entries that DO carry the tags.
+            n_bad = len(report.malformed)
+            also = (
+                f" ⚠ AND THAT COUNT IS ONLY OF ENTRIES THAT LOADED: {n_bad} entry file"
+                f"{'' if n_bad == 1 else 's'} in this scope could not be indexed (listed "
+                f"above), and an entry that never loaded carries no tags a filter can see."
+                if n_bad
+                else ""
+            )
+            out.append(
+                f"`{report.ref}` IS NOT TAGGED {_quoted_tags(report.tags)} — it was read "
+                f"and does not carry {_all_of_them(len(report.tags))}, so the two narrowings "
+                f"compose to nothing and no body is printed. {report.tag_matched} of the "
+                f"{report.tag_scope_total} "
+                f"entr{'y' if report.tag_scope_total == 1 else 'ies'} in `{report.scope}/` "
+                f"{'DOES' if report.tag_matched == 1 else 'DO'} — re-run without `--ref` to "
+                f"see {'it' if report.tag_matched == 1 else 'them'}.{also}"
+            )
+            return "\n".join(out)
+        # 🔴 IT SAYS WHAT WAS LOOKED AT AND WHAT WAS NOT, because a category filter's zero is
+        # as misreadable as a reverse lookup's: "no entry is tagged X" and "X is not a category
+        # anybody uses" are different facts, and only the first is in evidence. The vocabulary
+        # is OPEN, so a typo in either the file or the query makes a silently separate category
+        # — that is what the last clause names.
+        extra = (
+            f" ⚠ BUT {len(report.malformed)} entry file"
+            f"{'' if len(report.malformed) == 1 else 's'} in this scope could not be "
+            f"indexed (listed above), and an entry that never loaded carries no tags a "
+            f"filter can see — one of them may be tagged this. Check those before "
+            f"concluding nothing is."
+            if report.malformed
+            else ""
+        )
+        out.append(
+            f"NO ENTRY IS TAGGED {_quoted_tags(report.tags)} — the {report.tag_scope_total} "
+            f"entr{'y' if report.tag_scope_total == 1 else 'ies'} in `{report.scope}/` were "
+            f"read and none of them carries {_all_of_them(len(report.tags))}. Both sides of "
+            f"the comparison are FOLDED, so a differently-cased spelling would have been "
+            f"found — but the tag vocabulary is OPEN and nothing declares it, so a typo in "
+            f"the file or in this query is a category of one that no check can see.{extra}"
         )
         return "\n".join(out)
 
@@ -2550,6 +2932,15 @@ def render_text(
             # that re-base. `internal/report.RecallReport.RenderText` carries the
             # same note beside the same line.
             out.append(f"    tasks: {', '.join(e.tasks)}")
+        if e.tags:
+            # Identity, like the refs line above and for the same reason: "what category is
+            # this" is not content.
+            #
+            # ⚠ THE LABEL MATCHES THE KEY HERE, WHICH THE LINE ABOVE DOES NOT — and saying so
+            # is the point rather than leaving a reader to wonder whether this one is also
+            # deferred. `tags:` is the key an operator writes and `tags:` is what this prints;
+            # there is no older spelling, no rename in flight, and nothing to defer.
+            out.append(f"    tags: {', '.join(e.tags)}")
         for heading in SURFACED_HEADINGS:
             body = e.sections.get(heading)
             if body:
@@ -2668,6 +3059,14 @@ def report_json(report: RecallReport) -> dict:
         "ref_to": report.ref_to,
         "ref_to_scope_total": report.ref_to_scope_total,
         "ref_to_matched": report.ref_to_matched,
+        # ⚠ ALL THREE TAG FIELDS, for the reason the three ref-to ones are all carried: a
+        # consumer holding only `tags` could not tell how much the filter removed, and
+        # `tag_matched` is the rendered line's own numerator, which is NOT derivable from the
+        # other two on `tag-absent` — that status is reached both by "nothing matched" and by
+        # "the `--ref` operand is not one of the entries that did".
+        "tags": list(report.tags),
+        "tag_scope_total": report.tag_scope_total,
+        "tag_matched": report.tag_matched,
         "candidates": list(report.candidates),
         "limit": report.limit,
         "mode": report.mode,
@@ -2714,6 +3113,7 @@ def report_json(report: RecallReport) -> dict:
                 # consumer branching on presence would read a missing key as "this
                 # reader is too old to know about tasks", which is a different fact.
                 "tasks": list(e.tasks),
+                "tags": list(e.tags),
             }
             for e in report.entries
         ],
@@ -3064,6 +3464,20 @@ class SearchReport:
     line prints this count beside the searched one, so a zero says WHY it is zero.
     """
 
+    tags: tuple[str, ...] = ()
+    """The `--tag`/`?tag=` CATEGORY narrowing, canonical and sorted. Empty means none.
+    See `RecallReport.tags` for why there is no second `has_*` discriminator."""
+
+    tag_skipped: int = 0
+    """How many entries the TAG filter removed from the searched set.
+
+    🔴 IT IS THE THIRD TERM IN THE `search-unreadable` DISCRIMINATOR, NOT A DISPLAY FIELD,
+    and that is the whole reason it is stored. `entries_searched + ref_to_skipped +
+    tag_skipped` is the PRE-FILTER readable count, because every readable entry in the
+    searched scopes lands in exactly one of the three: kept, removed by `ref-to`, or removed
+    by `tag`. The status branch is about that count and never about `entries_searched` alone.
+    """
+
     scopes_searched: tuple[str, ...] = ()
     known_scopes: tuple[str, ...] = ()
     best_below: tuple[str, float] | None = None
@@ -3187,6 +3601,7 @@ def search(
     max_hits: int = DEFAULT_MAX_HITS,
     all_scopes: bool = False,
     ref_to: str | None = None,
+    tags: Sequence[str] = (),
     visible_scopes: Sequence[str] | None = None,
 ) -> SearchReport:
     """Find HUNKS matching `query`. READ-ONLY, stdlib only, nothing is spawned.
@@ -3215,6 +3630,8 @@ def search(
         raise ValueError(f"context must be an int >= 0, got {context!r}")
     # Last, for the reason `recall`'s own trailing guard gives.
     ref_to_ref = _validated_ref_to(ref_to)
+    # Last in the ladder, for the reason `recall`'s own trailing guard gives.
+    want_tags = _validated_tags(tags)
 
     # 🔴 THE `all_scopes` PATH IS THE REASON THIS IS AN INDEX FILTER AND NOT A
     # PER-SCOPE REFUSAL CHECK. `?all_scopes=1` names NO scope, so there is
@@ -3261,15 +3678,20 @@ def search(
     # 🔴 THE REVERSE-LOOKUP OPERAND IS PARSED ONCE, OUTSIDE THE SCOPE LOOP, and
     # `ref_to_ref` is only consulted when it is not None — so a search with no
     # filter does no per-entry work it did not do before.
-    ref_to_fields: dict[str, object] = (
-        {} if ref_to_ref is None else {"ref_to": str(ref_to_ref)}
-    )
+    # ONE dict, for the reason `recall`'s own says: a filter's fields belong on the single
+    # `SearchReport` literal below, and WHICH keys are present is what says which filters ran.
+    filter_fields: dict[str, object] = {}
+    if ref_to_ref is not None:
+        filter_fields["ref_to"] = str(ref_to_ref)
+    if want_tags:
+        filter_fields["tags"] = want_tags
 
     query_tokens = tokenize(query)
     cleared: list[Hunk] = []
     below: list[Hunk] = []
     searched = 0
     ref_to_skipped = 0
+    tag_skipped = 0
     for sc in scopes:
         for entry in sorted(index.entries(sc), key=lambda e: e.ref):
             # 🔴 HERE, INSIDE THE LOOP OVER `scopes`, WHICH IS AFTER SCOPE
@@ -3283,6 +3705,17 @@ def search(
             # re-open exactly the hole it closed.
             if ref_to_ref is not None and not entry_references(entry, ref_to_ref):
                 ref_to_skipped += 1
+                continue
+            # 🔴 HERE TOO, AND AFTER the ref-to filter, for the reason the paragraph above
+            # gives: `scopes` was narrowed by `visible_scopes` at load time, so this filter can
+            # only REMOVE entries from a set the caller was already entitled to read. A tag is
+            # the operand most likely to tempt somebody into a store-wide load ("every
+            # marketing entry, across scopes"), which is exactly the hole the index filter
+            # closed. AFTER `ref-to` so the two counters PARTITION the readable set rather than
+            # double-counting an entry both would have removed — the status branch below is a
+            # claim about that partition.
+            if want_tags and not entry_has_all_tags(entry, want_tags):
+                tag_skipped += 1
                 continue
             searched += 1
             hits, misses = _entry_hunks(
@@ -3324,9 +3757,15 @@ def search(
         # therefore falls through to `search-no-match`, where the ref-to line's own
         # "0 of N" and the sentence `render_search` prints for that shape are the
         # honest answer: the query DID run, over a narrowed set that was empty.
+        # 🔴 `tag_skipped == 0` IS THE SAME TERM ONE FILTER LATER, AND IT IS ADDED IN THE
+        # SAME CHANGE AS THE FILTER RATHER THAN IN A LATER AUDIT ROUND. The `ref_to_skipped`
+        # term was missing for three rounds because the commit that staled the condition WAS
+        # the commit that introduced the filter, so no delta audit's range contained it. The
+        # rule the terms share, stated once: EVERY filter placed upstream of `searched`
+        # falsifies this condition unless its own skip count is subtracted back out.
         status=(
             "search-unreadable"
-            if searched == 0 and ref_to_skipped == 0 and bad
+            if searched == 0 and ref_to_skipped == 0 and tag_skipped == 0 and bad
             else ("search-hit" if cleared else "search-no-match")
         ),
         scope=normalize_ref(scope) if not all_scopes else "(all scopes)",
@@ -3339,9 +3778,10 @@ def search(
         max_hits=max_hits,
         entries_searched=searched,
         ref_to_skipped=ref_to_skipped,
+        tag_skipped=tag_skipped,
         scopes_searched=tuple(scopes),
         known_scopes=index.scopes,
-        **ref_to_fields,
+        **filter_fields,
         best_below=(worst.ref, round(worst.score, 3)) if worst is not None else None,
         malformed=bad,
         malformed_elsewhere=bad_elsewhere,
@@ -3441,10 +3881,48 @@ def render_search(
             # A new `search-*` status, or a new body under an existing one, has to be added to
             # this list and checked BY HAND today — or the constant has to become a property
             # the way `renders_narrowed_set` is.
+            # 🔴 BOTH NUMBERS MOVED WHEN THE TAG FILTER LANDED, AND LEAVING THEM WOULD HAVE
+            # BEEN A FALSE SENTENCE IN BOTH HALVES. The numerator is "entries that reference
+            # this", which is the set the `ref-to` filter KEPT — `entries_searched` alone once
+            # WAS that set and is not any more, because the tag filter removes some of it
+            # downstream. The denominator is the readable set, which now partitions three ways.
+            # So: kept-by-ref-to is `entries_searched + tag_skipped`, and readable is all three
+            # counters. With no tag filter `tag_skipped` is 0 and this line is byte-identical to
+            # what it was, which is what keeps the `search-ref-to-*` goldens still.
             _ref_to_line(
                 report.ref_to,
+                report.entries_searched + report.tag_skipped,
+                report.entries_searched + report.ref_to_skipped + report.tag_skipped,
+                report.label,
+                narrowed_set_shown=True,
+                narrowed_further=report.tag_skipped > 0,
+            )
+        )
+
+    # The CATEGORY narrowing, after the reverse-lookup line because that is the order the
+    # filters ran in.
+    #
+    # 🔴 THE CONSTANT `True` IS JUSTIFIED BY THE SAME ENUMERATION ABOVE, and the count half is
+    # safe for the same reason: `entries_searched` counts entries the filters KEPT, so the
+    # numerator here is the kept count whatever removed the rest. A `tag` filter adds no new
+    # STATUS and no new BODY to that enumeration — every shape it can produce is a shape
+    # `ref-to` can already produce, because the two differ only in their predicate and both run
+    # over the same entry inside the same scope loop. That is why this line does not lengthen
+    # the list; it is also exactly the kind of claim the list's own last paragraph says nothing
+    # mechanical checks.
+    #
+    # 🔴 THE DENOMINATOR IS THE SET THIS FILTER SAW, NOT THE READABLE TOTAL, and the two differ
+    # exactly when a `ref-to` filter also ran. `entries_searched + tag_skipped` is the set the
+    # tag filter was handed; adding `ref_to_skipped` would print "2 of 7 entries carry it" while
+    # the filter had only ever LOOKED at 3 — a claim about four entries whose tags were never
+    # read. The recall side has the same shape and says so: `tag_scope_total` is assigned AFTER
+    # the reverse-lookup narrowing, not before it.
+    if report.tags:
+        out.append(
+            _tag_line(
+                report.tags,
                 report.entries_searched,
-                report.entries_searched + report.ref_to_skipped,
+                report.entries_searched + report.tag_skipped,
                 report.label,
                 narrowed_set_shown=True,
             )
@@ -3515,10 +3993,20 @@ def render_search(
                 f"re-run with `--threshold {max(0.0, report.best_below[1] - 0.01):.2f}` to see "
                 f"it, or rephrase."
             )
-        elif report.entries_searched == 0 and report.ref_to_skipped > 0:
+        elif report.entries_searched == 0 and (
+            report.ref_to_skipped > 0 or report.tag_skipped > 0
+        ):
+            # 🔴 IT NAMES WHICH FILTER, AND WITH TWO OF THEM THAT STOPPED BEING A CONSTANT. A
+            # sentence hardcoding "`ref-to`" would send a reader who typed only `--tag` to check
+            # an operand they never gave — the empty-result hazard one level up, where the
+            # diagnosis is WRONG rather than absent. Two filters make three subjects, and both
+            # halves of the sentence have to agree with the one chosen.
+            subject, possessive = _emptying_filters(
+                report.ref_to_skipped, report.tag_skipped
+            )
             near = (
-                " Nothing was scanned: the `ref-to` filter removed every readable entry, "
-                "so this zero is the FILTER's and says nothing about the query."
+                f" Nothing was scanned: {subject} removed every readable entry, "
+                f"so this zero is {possessive} and says nothing about the query."
             )
         else:
             near = (
@@ -3573,6 +4061,8 @@ def search_json(report: SearchReport) -> dict:
         "entries_searched": report.entries_searched,
         "ref_to": report.ref_to,
         "ref_to_skipped": report.ref_to_skipped,
+        "tags": list(report.tags),
+        "tag_skipped": report.tag_skipped,
         "scopes_searched": list(report.scopes_searched),
         "known_scopes": list(report.known_scopes),
         **_malformed_json(report.malformed, report.malformed_elsewhere),

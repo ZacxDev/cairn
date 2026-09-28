@@ -2956,20 +2956,50 @@ class TestTheRefsFrontMatterKey:
         migration: a `refs:` file loads on a reader that has never heard of `refs:`,
         reporting no refs, instead of refusing the file.
 
-        🔴 THE NEGATIVE CONTROL IS IN THE SAME TEST ON PURPOSE. Three IGNOREDs from a probe
-        that cannot observe a refusal are three facts about the probe.
+        🔴 THE NEGATIVE CONTROL IS IN THE SAME TEST ON PURPOSE. IGNOREDs from a probe that
+        cannot observe a refusal are facts about the probe.
+
+        🔴 AND A PROBE KEY GOES STALE THE DAY IT IS CLAIMED — THIS TEST PROBED `tags:`, WHICH
+        IS NOW READ. Its rows were `tags-as-a-list`, `tags-as-a-scalar` and a nonsense key.
+        When `tags:` became an accepted sequence key the SCALAR row went red (the loader
+        refuses a bare string there, correctly) and the LIST row silently changed what it
+        measured: it asserted that a CLAIMED key loads, which is true and says nothing whatever
+        about the ignore rule. That row would have gone on passing forever, reading as coverage
+        while providing none.
+
+        🔴 SO THE ROWS NOW VALIDATE THEIR OWN PREMISE MECHANICALLY RATHER THAN NAMING A LEDGER
+        OF ACCEPTED KEYS. A hand-kept list of the keys `from_mapping` reads is the same sentence
+        this docstring is, one indirection out, and it would go stale the same way. The
+        DERIVATION is that an ignored key cannot change the loaded entry: each probe carries a
+        DISTINCTIVE non-empty value, and the result is compared against the same mapping without
+        the probe. A key that is actually read must either absorb that value into some field or
+        refuse the mapping.
         """
+        baseline = sr.SubsystemEntry.from_mapping({"service": "alpha", "scope": "zone-one"})
         for name, extra in {
-            "tags-as-a-list": {"tags": ["a", "b"]},
-            "tags-as-a-scalar": {"tags": "a"},
-            "a-nonsense-key": {"zzz-no-such-key": "whatever"},
+            "an-unclaimed-key-holding-a-list": {"zzz-no-such-key": ["one", "two"]},
+            "an-unclaimed-key-holding-a-scalar": {"zzz-no-such-key": "whatever"},
         }.items():
             base = {"service": "alpha", "scope": "zone-one"}
             base.update(extra)
             entry = sr.SubsystemEntry.from_mapping(base)
             assert (entry.slug, entry.scope) == ("alpha", "zone-one"), name
+            # The premise check: IGNORED means indistinguishable from an entry loaded without
+            # the key at all. This is what a claimed key cannot satisfy.
+            assert entry == baseline, name
         with pytest.raises(sr.MalformedEntryError):
             sr.SubsystemEntry.from_mapping({"scope": "zone-one"})
+        # The SECOND control, on the premise check itself: a key this loader DOES read must
+        # make that comparison fail. Without it, `==` could be comparing two copies of one
+        # value and every probe would pass whatever the loader did with the key.
+        claimed = sr.SubsystemEntry.from_mapping(
+            {"service": "alpha", "scope": "zone-one", "tags": ["marketing"]}
+        )
+        assert claimed != baseline, (
+            "the premise check cannot see a CLAIMED key: `tags: [marketing]` produced an entry "
+            "equal to one with no `tags:` at all, so the `==` above would pass for a key that "
+            "is read"
+        )
 
     def test_refs_is_read_with_the_rules_tasks_has(self) -> None:
         """Criterion 1, watched RED on pre-change code where this surfaced ZERO refs.
@@ -3106,3 +3136,131 @@ class TestTheRefsFrontMatterKey:
         # equalities above are not an assertion that every entry reports `clickup:a`.
         none = sr.load_index(store_with("none", "scope: zone-one"))
         assert [str(t) for t in none.entries("zone-one")[0].tasks] == []
+
+
+class TestTheTagsFrontMatterKey:
+    """`tags:` — the CATEGORY axis, ORACLE side.
+
+    🔴 THE PORT'S GUARDS ARE NOT COVERAGE OF THIS SIDE, AND THAT IS WHY THIS CLASS EXISTS.
+    `internal/store`'s `tags_test.go` measures the Go parser; `tests/parity/` and
+    `tests/conformance/` compare the two byte-for-byte, and two implementations that agree on
+    something WRONG compare equal. Each side needs its own statement of the rules, or the pair
+    of gates is measuring agreement and nothing else.
+
+    ⚠ RED/GREEN: at `5c59169` — the base this branch forked from — `tags:` is an UNKNOWN key,
+    so `from_mapping` ignores it and `SubsystemEntry` has no `tags` attribute at all. Every
+    assertion in `test_a_list_is_normalized_deduped_and_sorted` therefore raises
+    `AttributeError` there. The informative red is the isolated mutation: with
+    `tags=tuple(sorted(normalized_tags))` dropped from the `cls(...)` call, the key still parses
+    and its refusals still fire while the entry surfaces ZERO tags — the list row fails and the
+    scalar/empty rows keep passing, because those two are `aliases:`' shared code path.
+    """
+
+    @staticmethod
+    def _load(**extra):
+        base = {"service": "alpha", "scope": "zone-one"}
+        base.update(extra)
+        return sr.SubsystemEntry.from_mapping(base)
+
+    def test_a_list_is_normalized_deduped_and_sorted(self) -> None:
+        """One assertion carries every rule: FOLDED (`Marketing` -> `marketing`), STRIPPED,
+        DEDUPED across spellings, and SORTED — which `tasks:` deliberately is not."""
+        entry = self._load(tags=["Marketing", " internal ", "MARKETING", "Project_Xyz"])
+        assert entry.tags == ("internal", "marketing", "project-xyz")
+
+    def test_a_non_empty_bare_string_is_refused_by_a_message_naming_the_fix(self) -> None:
+        with pytest.raises(sr.MalformedEntryError) as exc:
+            self._load(tags="marketing")
+        assert "`tags:` must be a list, not a bare string — write `tags: [<name>]`" in str(
+            exc.value
+        )
+        # The sentinel, which is the HTTP contract a `PUT` quotes.
+        assert str(exc.value).startswith("malformed index entry ")
+
+    def test_an_empty_scalar_and_an_empty_list_both_read_as_an_absent_key(self) -> None:
+        """🔴 THE `or ()` RULE, which `aliases:` proved: `tags:` with nothing after it is an
+        ABSENT key, so the bare-string refusal fires only on a key that really carries one."""
+        absent = self._load()
+        assert self._load(tags="") == absent
+        assert self._load(tags=[]) == absent
+
+    def test_a_non_sequence_is_refused(self) -> None:
+        with pytest.raises(sr.MalformedEntryError) as exc:
+            self._load(tags=42)
+        assert "`tags:` must be a list, got int" in str(exc.value)
+
+    @pytest.mark.parametrize("away", ["!!!", "***", "///", " @ ", "â"])
+    def test_a_tag_that_normalizes_away_is_refused_not_dropped(self, away: str) -> None:
+        """Criterion 2.
+
+        🔴 WHY DROPPING IT WOULD BE THE WORSE FAILURE. A dropped tag leaves a file that
+        DECLARES a category beside an index that does not carry it, so `?tag=` answers "no
+        entry carries this" about an entry whose own front matter says it does — an empty
+        result whose cause is invisible at both ends.
+        """
+        # The fixture's own premise, checked: a row that folds to SOMETHING cannot reach the
+        # refusal it is here for.
+        assert sr.normalize_ref(away) == ""
+        with pytest.raises(sr.MalformedEntryError) as exc:
+            self._load(tags=["marketing", away])
+        assert (
+            f"tag {away!r} normalizes to the empty string — a tag must fold to at least one "
+            f"of `[a-z0-9.-]`"
+        ) in str(exc.value)
+
+    def test_punctuation_around_something_is_kept(self) -> None:
+        """The control on the rows above: they are not "every tag is refused"."""
+        assert self._load(tags=["!!!marketing!!!"]).tags == ("marketing",)
+
+    @pytest.mark.parametrize(
+        ("want", "hit"),
+        [
+            ((), True),
+            (("marketing",), True),
+            (("marketing", "internal"), True),
+            (("internal", "marketing"), True),
+            (("marketing", "finance"), False),
+            (("finance",), False),
+            (("market",), False),
+        ],
+    )
+    def test_the_predicate_is_AND(self, want: tuple, hit: bool) -> None:
+        """🔴 AND, NOT OR. A repeatable parameter whose repetitions UNION gets WIDER the more
+        you type — the opposite of narrowing. The empty row is what makes "no filter" and "a
+        filter that removes nothing" one code path."""
+        entry = self._load(tags=["internal", "marketing"])
+        assert sr.entry_has_all_tags(entry, want) is hit
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "Marketing",
+            "MARKETING",
+            " marketing ",
+            "Project_Xyz",
+            "project--xyz",
+            "a.b",
+            "Ops-Runbook",
+            "İa",
+        ],
+    )
+    def test_query_operands_fold_the_same_way_the_file_does(self, raw: str) -> None:
+        """🔴 A RELATIONSHIP AND NOT TWO COMPONENT CHECKS, WHICH IS THE ONLY SHAPE THAT CAN SEE
+        THE DEFECT. `from_mapping` folding correctly and `normalize_tags` folding correctly are
+        two hermetic claims; what breaks a user is the two DISAGREEING, and neither test can see
+        that on its own. A tag an operator can WRITE must be one they can ASK for.
+        """
+        entry = self._load(tags=[raw])
+        assert entry.tags == sr.normalize_tags([raw])
+        # …and the predicate joins them, which is the behavioural half a structural equality
+        # check would pass straight over.
+        assert sr.entry_has_all_tags(entry, sr.normalize_tags([raw]))
+
+    def test_normalize_tags_dedupes_across_operands(self) -> None:
+        assert sr.normalize_tags(["Marketing", "marketing", "internal"]) == (
+            "internal",
+            "marketing",
+        )
+        # The control on the comparison: two different tags must NOT fold together, or every
+        # assertion above would pass with either side wired to a constant.
+        assert sr.normalize_tags(["marketing"]) != sr.normalize_tags(["finance"])

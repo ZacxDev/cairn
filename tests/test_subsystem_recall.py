@@ -335,6 +335,11 @@ class TestStatusIsTheDiscriminator:
             # carries, so this is `ref-to-absent` and not `recalled` — and it is a
             # SYNTHETIC id, because a real one would tie this fixture to a tracker.
             rc.recall(store, SCOPE, ref_to="clickup:no-such-task").status,
+            # The CATEGORY filter's own non-finding. ⚠ A tag no entry in the corpus carries,
+            # so this is `tag-absent` and not `recalled`; the vocabulary is OPEN, so there is
+            # no valid-tag set to pick an unreachable member from — an operator-looking name
+            # nothing declares is the honest fixture.
+            rc.recall(store, SCOPE, tags=["no-such-category"]).status,
             rc.recall(store, SCOPE).status,
             rc.search(store, SCOPE, "readiness").status,
             rc.search(store, SCOPE, "kryptonite").status,
@@ -4946,7 +4951,8 @@ class TestDegradationMutationKills:
             "m_search_unreadable",
             [
                 (
-                    "            if searched == 0 and ref_to_skipped == 0 and bad",
+                    "            if searched == 0 and ref_to_skipped == 0 "
+                    "and tag_skipped == 0 and bad",
                     "            if False",
                 )
             ],
@@ -4971,8 +4977,9 @@ class TestDegradationMutationKills:
             "m_filter_zero_term",
             [
                 (
-                    "            if searched == 0 and ref_to_skipped == 0 and bad",
-                    "            if searched == 0 and bad",
+                    "            if searched == 0 and ref_to_skipped == 0 "
+                    "and tag_skipped == 0 and bad",
+                    "            if searched == 0 and tag_skipped == 0 and bad",
                 )
             ],
         )
@@ -6071,6 +6078,13 @@ CLAUSE_CASES = (
     ("recalled", {"mode": "list", "page": 1}, CLAUSE_LINE_REPORTS, True),
     ("recalled", {"mode": "list", "page": 9}, CLAUSE_LINE_SILENT, False),
     ("recalled", {"mode": "digest", "page": 9}, CLAUSE_LINE_REPORTS, True),
+    # 🔴 THE TENTH ROW IS A SECOND FILTER DOWNSTREAM OF THE FIRST, AND IT IS THE ONE SHAPE
+    # WHERE THE CLAUSE'S TWO CANDIDATE DERIVATIONS DISAGREE. `--ref-to` matched `carrier`,
+    # so the header's numerator is 1 and `narrowed_further` is True — and then the `--tag`
+    # filter removed it, so NOTHING below is about it. `narrowed_set_shown` has to WIN over
+    # `narrowed_further`, or the line would invite a reader to look for a subset that is not
+    # on screen; `_reach_clause` states that precedence and this row is what measures it.
+    ("tag-absent", {"tags": ["no-such-category"]}, CLAUSE_LINE_SILENT, False),
 )
 
 #: Every combination of "is `entries` empty" × "is `listing` empty", which is the axis
@@ -6119,6 +6133,15 @@ class TestTheRefToClauseAgreesWithWhatTheBodyRenders:
     guess. `page_is_past_the_end` is True on rows 7 AND 8; row 7 lists nothing while row 8
     still prints the featured body, so a predicate built out of page arithmetic gets one
     of them wrong. Only "did the renderer print a matched entry" separates the two.
+
+    🔴 AND A THIRD MATRIX, FOR THE TENTH ROW — A SECOND FILTER DOWNSTREAM OF THE FIRST. The
+    `--tag` filter runs after `--ref-to` and can empty a matched set the header has already
+    counted, which is the only shape where the clause's two candidate derivations disagree:
+    `narrowed_set_shown` says NOTHING below is about them and `narrowed_further` says a
+    further filter narrows them. The first must win, and `_reach_clause` says so — with
+    `narrowed_further` checked FIRST this row renders "a FURTHER filter below narrows those 1
+    again" over a body that names no entry at all, which is the same false-clause defect the
+    rows above were written for, arriving through a new door.
     """
 
     @pytest.mark.parametrize(
@@ -6134,6 +6157,7 @@ class TestTheRefToClauseAgreesWithWhatTheBodyRenders:
             "list-mode-a-valid-page",
             "list-mode-page-past-the-end",
             "digest-mode-page-past-the-end",
+            "a-tag-filter-empties-the-matched-set",
         ],
     )
     def test_the_clause_matches_the_body(
@@ -6361,3 +6385,592 @@ class TestAFilterDrivenZeroIsNotAnUnreadableStore:
         assert "was never run against anything" in text
         assert rc._exit_for(rep.status, "all-broken/", rep.malformed) == 3
 
+
+# =============================================================================
+# THE CATEGORY FILTER — `tags:` front matter and `--tag`/`?tag=`, ORACLE side.
+# =============================================================================
+
+#: The tag both scopes in the two-principal world carry.
+TAG_SHARED = "marketing"
+#: A ref used to compose the two filters. SYNTHETIC — a real tracker id would tie this
+#: fixture to somebody's infrastructure.
+TAG_COMPOSE_REF = "github:example-org/example-repo#428"
+
+
+def _tagged(service: str, scope: str, *, tags=(), refs=()) -> str:
+    """One entry carrying `tags:` and/or `refs:`, on the shape `_entry` builds."""
+    text = _entry(service, scope, nuance="- 2000-06-01 a bullet mentioning readiness")
+    extra = []
+    if refs:
+        extra.append("refs: [" + ", ".join(refs) + "]")
+    if tags:
+        extra.append("tags: [" + ", ".join(tags) + "]")
+    if not extra:
+        return text
+    return text.replace(f"scope: {scope}", f"scope: {scope}\n" + "\n".join(extra), 1)
+
+
+@pytest.fixture()
+def tag_principal_store(tmp_path: Path) -> Path:
+    """ONE tag written into TWO scopes, so a principal who can read only one of them is a
+    real discriminator rather than a fixture detail.
+
+    ⚠ THE TAG IS ON AN ENTRY IN EACH SCOPE, AND THE ENTRY NAMES DIFFER. A fixture where
+    only the unreachable scope carried the tag could not tell "the filter narrowed after
+    authorisation" from "the filter is broken and finds nothing"; a fixture where only the
+    reachable one carried it could not see a leak at all.
+
+    ⚠ AND THE READABLE SCOPE HOLDS AN ENTRY THAT DOES *NOT* CARRY IT, so the filter has
+    something to remove and its numerator is not trivially the scope total.
+    """
+    store = tmp_path / "tag-principal-store"
+    alpha = store / "alpha-notes"
+    alpha.mkdir(parents=True)
+    (alpha / "runbook.md").write_text(
+        _tagged("runbook", "alpha-notes", tags=["marketing", "internal"]), encoding="utf-8"
+    )
+    (alpha / "unrelated.md").write_text(_tagged("unrelated", "alpha-notes"), encoding="utf-8")
+    beta = store / "beta-notes"
+    beta.mkdir()
+    (beta / "ledger.md").write_text(
+        _tagged("ledger", "beta-notes", tags=["marketing"]), encoding="utf-8"
+    )
+    return store
+
+
+class TestTheTagFilterNarrowsAfterScopeAuthorisation:
+    """Criterion 5 — the one that matters, ORACLE side.
+
+    🔴 THE WRONG ORDER IS A REAL AND CHEAP MISTAKE, AND A TAG INVITES IT MORE THAN A REVERSE
+    LOOKUP DOES. "Every marketing entry, across scopes" reads like a store-wide question, and
+    the obvious implementation of a store-wide question is a store-wide load —
+    `load_index(root)` with `visible_scopes` quietly dropped — followed by a tag filter. That
+    answers correctly and LEAKS: the hit set names entries, scopes and tags from directories
+    the caller cannot read.
+
+    ⚠ MEASURED RED with `visible_scopes` replaced by `None` at the `load_store` call in both
+    `recall` and `search`: the `alpha-notes`-only principal's recall of `beta-notes` answers
+    `recalled` with `ledger` in the index and `beta-notes` on `known_scopes`. The filter is
+    CORRECT in both orderings; only the AUTHORISATION differs, which is why a single-principal
+    test cannot see it.
+
+    ⚠ IT IS A PAIR, NOT A ZERO. The `beta-notes` principal must FIND the tag, or the first
+    principal's empty answer is indistinguishable from a filter wired to nothing.
+    """
+
+    @staticmethod
+    def _assert_no_beta_leak(rep) -> None:
+        """The ONE leak predicate, over every field either report type can carry a scope
+        name, an entry or a reject on.
+
+        🔴 A NAMED HELPER SO EVERY CALL SITE CHECKS THE SAME SET. Spelled inline per
+        assertion, the call that mattered would check the field somebody remembered — and the
+        wrong ordering leaks through `known_scopes` before it leaks through `entries`.
+        """
+        assert "beta-notes" not in rep.known_scopes, (
+            f"`beta-notes` appeared on known_scopes — the ENUMERATION channel, for a "
+            f"directory this principal cannot read: {rep.known_scopes}"
+        )
+        for e in (*getattr(rep, "entries", ()), *getattr(rep, "listing", ())):
+            assert e.ref != "ledger", f"an entry from `beta-notes` reached this principal: {e}"
+        for m in (*rep.malformed, *rep.malformed_elsewhere):
+            assert m.scope != "beta-notes", f"a reject from `beta-notes` reached: {m}"
+
+    def test_recall(self, tag_principal_store: Path) -> None:
+        # POSITIVE CONTROL: the principal who CAN read `beta-notes` finds the tag there.
+        as_beta = rc.recall(
+            tag_principal_store, "beta-notes", tags=[TAG_SHARED], visible_scopes=["beta-notes"]
+        )
+        assert (as_beta.status, as_beta.total_in_scope) == ("recalled", 1), (
+            "POSITIVE CONTROL FAILED: the zero below is then a fact about a filter wired to "
+            "nothing"
+        )
+
+        # The narrowing: `alpha-notes`' principal asking for `beta-notes` gets the answer a
+        # scope that does not exist gives, because the scope is absent from their INDEX.
+        as_alpha = rc.recall(
+            tag_principal_store,
+            "beta-notes",
+            tags=[TAG_SHARED],
+            visible_scopes=["alpha-notes"],
+        )
+        assert as_alpha.status == "scope-absent", (
+            "a refused scope and a never-existed one are indistinguishable by design; the "
+            f"wrong ordering answers `recalled` here, got {as_alpha.status!r}"
+        )
+        self._assert_no_beta_leak(as_alpha)
+
+        # …and asking about their OWN scope still narrows correctly: 1 of 2 entries.
+        own = rc.recall(
+            tag_principal_store,
+            "alpha-notes",
+            tags=[TAG_SHARED],
+            visible_scopes=["alpha-notes"],
+        )
+        assert own.status == "recalled"
+        assert (own.tag_matched, own.tag_scope_total, own.total_in_scope) == (1, 2, 1)
+        self._assert_no_beta_leak(own)
+
+    def test_search_all_scopes(self, tag_principal_store: Path) -> None:
+        """🔴 `all_scopes` IS THE HARDER HALF AND IT IS WHY THIS EXISTS. It NAMES NO SCOPE, so
+        a per-scope refusal check has nothing to refuse — the index filter is what makes it
+        safe, and a tag filter over a store-wide load would re-open exactly that hole. This is
+        also the literal shape of "every marketing entry, across scopes".
+        """
+        kw = dict(all_scopes=True, tags=[TAG_SHARED])
+        as_beta = rc.search(
+            tag_principal_store, "beta-notes", "readiness", visible_scopes=["beta-notes"], **kw
+        )
+        assert as_beta.entries_searched == 1 and as_beta.hunks, "POSITIVE CONTROL FAILED"
+        assert as_beta.scopes_searched == ("beta-notes",)
+
+        as_alpha = rc.search(
+            tag_principal_store,
+            "alpha-notes",
+            "readiness",
+            visible_scopes=["alpha-notes"],
+            **kw,
+        )
+        assert as_alpha.scopes_searched == ("alpha-notes",), (
+            "a wider set means the tag filter ran over a scope alpha cannot see, whether or "
+            "not it reported a hit from it"
+        )
+        assert (as_alpha.entries_searched, as_alpha.tag_skipped) == (1, 1)
+        assert all(h.scope != "beta-notes" for h in as_alpha.hunks)
+        self._assert_no_beta_leak(as_alpha)
+
+
+class TestTheTagFilterAnswersItsOwnNonFinding:
+    """Criterion 6: the EXISTING empty-result vocabulary, not a new exit code."""
+
+    def test_the_status_the_prose_and_the_exit_code(self, tag_principal_store: Path) -> None:
+        rep = rc.recall(tag_principal_store, "alpha-notes", tags=["no-such-category"])
+        assert rep.status == "tag-absent", (
+            "`scope-empty` would claim the directory holds nothing, which is false of a scope "
+            "holding two entries"
+        )
+        assert (rep.tag_scope_total, rep.tag_matched) == (2, 0)
+        text = rc.render_text(rep)
+        for want in (
+            # 🔴 THE WHOLE HEADER LINE, NOT `status=tag-absent`. A substring check on the bare
+            # status is walkable by any status carrying it as a PREFIX — measured on the Go
+            # side, where a mutant renaming the constant to `tag-absent-XX` SURVIVED exactly
+            # that assertion. The scope clause is what closes the prefix.
+            "subsystem-recall: status=tag-absent scope=alpha-notes",
+            "  tag: `no-such-category` — 0 of 2 entries in `alpha-notes/` carry it",
+            "NO ENTRY IS TAGGED `no-such-category` — the 2 entries in `alpha-notes/` were "
+            "read and none of them carries it.",
+        ):
+            assert want in text, f"missing {want!r} from:\n{text}"
+        # 🔴 IT MUST NOT BORROW `scope-empty`'s WORDS. A consumer reports `scope-empty` as an
+        # ordinary non-finding about a DIRECTORY; a shared opening phrase is all it takes for
+        # "no entry here is tagged X" to be read as "this scope is empty".
+        assert "NOTHING RECORDED YET" not in text
+        # 🔴 AND IT EXITS 0 — `UNREADABLE_STATUSES` is the one place a non-zero is decided.
+        assert "tag-absent" not in rc.UNREADABLE_STATUSES
+        assert rc._exit_for(rep.status, "alpha-notes/", rep.malformed) == 0
+        # The CONTROL: a status that IS unreadable still exits 3, so the zero above is not
+        # "`_exit_for` returns 0 for everything".
+        assert rc._exit_for("scope-unreadable", "x/", ()) == 3
+
+
+class TestTheTagNarrowingAnnouncesItself:
+    """The header line on BOTH report types, because the counts under it are about the
+    narrowed set."""
+
+    ONE = (
+        "  tag: `marketing` — 1 of 2 entries in `alpha-notes/` carry it, and everything "
+        "below is about those 1. This is a NARROWING, not a truncation: the rest were read "
+        "and did not match."
+    )
+
+    def test_one_tag_on_both_report_types(self, tag_principal_store: Path) -> None:
+        # The CANONICAL spelling: the query said `Marketing`, the line says `marketing`.
+        rec = rc.recall(tag_principal_store, "alpha-notes", tags=["Marketing"])
+        assert self.ONE in rc.render_text(rec)
+        srch = rc.search(tag_principal_store, "alpha-notes", "readiness", tags=[TAG_SHARED])
+        assert self.ONE in rc.render_search(srch)
+
+    def test_two_tags_move_the_verb(self, tag_principal_store: Path) -> None:
+        """🔴 AND SEMANTICS, SAID IN THE SENTENCE. "carry them" would read as a union to
+        anyone who had not read `entry_has_all_tags`; "carry all of them" cannot."""
+        rep = rc.recall(tag_principal_store, "alpha-notes", tags=["internal", "marketing"])
+        assert (
+            "  tag: `internal`, `marketing` — 1 of 2 entries in `alpha-notes/` carry all of "
+            "them, and everything below is about those 1."
+        ) in rc.render_text(rep)
+
+    def test_it_is_absent_without_the_filter(self, tag_principal_store: Path) -> None:
+        """⚠ WHAT KEEPS EVERY EXISTING GOLDEN STILL."""
+        plain = rc.render_text(rc.recall(tag_principal_store, "alpha-notes"))
+        assert "  tag:" not in plain
+
+    def test_the_body_line_is_emitted_for_a_tagged_entry_only(
+        self, tag_principal_store: Path
+    ) -> None:
+        """⚠ ASKED BY `--ref`, NOT READ OFF THE DIGEST. The digest features the NEWEST entry
+        by mtime, so a digest-based assertion here would measure the featured-entry selector
+        and flip on any change to the fixture's write order."""
+        tagged = rc.render_text(rc.recall(tag_principal_store, "alpha-notes", ref="runbook"))
+        assert "    tags: internal, marketing" in tagged
+        untagged = rc.render_text(
+            rc.recall(tag_principal_store, "alpha-notes", ref="unrelated")
+        )
+        assert "    tags:" not in untagged
+
+
+class TestTheTagFilterComposesWithTheOthers:
+    """The three narrowings compose, and each non-finding is attributed to ITS OWN filter."""
+
+    def test_tag_composes_with_ref(self, tag_principal_store: Path) -> None:
+        hit = rc.recall(tag_principal_store, "alpha-notes", ref="runbook", tags=[TAG_SHARED])
+        assert (hit.status, len(hit.entries)) == ("recalled", 1)
+        # 🔴 THE ENTRY DOES NOT CARRY IT. `resolve_ref_tiered` resolves against the whole
+        # index and knows nothing about the tag set, so without the membership test this
+        # prints `unrelated` in full — the report answering a question nobody asked.
+        miss = rc.recall(tag_principal_store, "alpha-notes", ref="unrelated", tags=[TAG_SHARED])
+        assert miss.status == "tag-absent" and not miss.entries
+        # 🔴 AND THE RENDERED TEXT, BECAUSE STATUS AND `len(entries)` CAN BOTH BE CORRECT
+        # WHILE THE PROSE IS FALSE — the shape that shipped twice on the `ref-to` side, in
+        # BOTH implementations at once, so no assertion comparing them could see it.
+        text = rc.render_text(miss)
+        assert (
+            "  tag: `marketing` — 1 of 2 entries in `alpha-notes/` carry it, and NOTHING "
+            "below is about them — the sentence below says why."
+        ) in text
+        assert (
+            "`unrelated` IS NOT TAGGED `marketing` — it was read and does not carry it, so "
+            "the two narrowings compose to nothing and no body is printed. 1 of the 2 "
+            "entries in `alpha-notes/` DOES — re-run without `--ref` to see it."
+        ) in text
+        # The CONTROL on the wording swap: the other route to this status must keep the
+        # original sentence, or the branch above has simply replaced it everywhere.
+        none = rc.recall(
+            tag_principal_store, "alpha-notes", ref="runbook", tags=["no-such-category"]
+        )
+        assert "NO ENTRY IS TAGGED `no-such-category`" in rc.render_text(none)
+
+    def test_each_filters_non_finding_is_attributed_to_that_filter(
+        self, tmp_path: Path
+    ) -> None:
+        """🔴 THE DEFECT THIS PINS: `--ref X --ref-to Y --tag Z` WHERE X REFERENCES Y BUT IS
+        NOT TAGGED Z. After a second filter, `entries` is the INTERSECTION of both narrowings,
+        so a `ref-to` membership test reading it answers "`X` DOES NOT REFERENCE `Y`" — false
+        about the store, in the same shape a previous round shipped and three audit rounds
+        took to find. `ref_to_narrowed` is what keeps each test against its own result.
+
+        ⚠ MEASURED: with the `ref-to` membership test reverted to read `entries`, this fails on
+        the status AND the sentence, and nothing else in the suite does.
+        """
+        store = tmp_path / "attribution-store"
+        scope = store / "alpha-notes"
+        scope.mkdir(parents=True)
+        (scope / "both.md").write_text(
+            _tagged("both", "alpha-notes", tags=[TAG_SHARED], refs=[TAG_COMPOSE_REF]),
+            encoding="utf-8",
+        )
+        (scope / "ref-only.md").write_text(
+            _tagged("ref-only", "alpha-notes", refs=[TAG_COMPOSE_REF]), encoding="utf-8"
+        )
+        (scope / "tag-only.md").write_text(
+            _tagged("tag-only", "alpha-notes", tags=[TAG_SHARED]), encoding="utf-8"
+        )
+
+        # Carries the ref, NOT the tag → attributed to the TAG.
+        by_tag = rc.recall(
+            store,
+            "alpha-notes",
+            ref="ref-only",
+            ref_to=TAG_COMPOSE_REF,
+            tags=[TAG_SHARED],
+        )
+        assert by_tag.status == "tag-absent"
+        by_tag_text = rc.render_text(by_tag)
+        assert f"`ref-only` IS NOT TAGGED `{TAG_SHARED}`" in by_tag_text
+        assert "DOES NOT REFERENCE" not in by_tag_text, (
+            "the report says the entry does not reference a ref it DOES reference"
+        )
+
+        # The MIRROR: carries the tag, NOT the ref → attributed to the reverse lookup.
+        by_ref = rc.recall(
+            store,
+            "alpha-notes",
+            ref="tag-only",
+            ref_to=TAG_COMPOSE_REF,
+            tags=[TAG_SHARED],
+        )
+        assert by_ref.status == "ref-to-absent"
+        by_ref_text = rc.render_text(by_ref)
+        assert f"`tag-only` DOES NOT REFERENCE `{TAG_COMPOSE_REF}`" in by_ref_text
+        assert "IS NOT TAGGED" not in by_ref_text
+
+    def test_the_ref_to_line_stays_true_when_a_tag_filter_narrows_after_it(
+        self, tmp_path: Path
+    ) -> None:
+        """🔴 BOTH OF THE `ref-to` LINE'S COUNTS MOVED WHEN THIS FILTER LANDED, AND LEAVING
+        THEM WOULD HAVE BEEN A FALSE SENTENCE IN BOTH HALVES. Its numerator is "entries that
+        reference this", which `entries_searched` alone once WAS and is not any more; its
+        denominator is the readable set, which now partitions three ways. And the reach clause
+        is the third half: "everything below is about those N" is false when a further filter
+        removes some of the N.
+
+        Three DIFFERENT numbers, which is the minimum shape that can see a count read off the
+        wrong set: readable 3, reference the ref 2, reference it AND carry the tag 1.
+        """
+        store = tmp_path / "crossfilter-store"
+        scope = store / "alpha-notes"
+        scope.mkdir(parents=True)
+        (scope / "both.md").write_text(
+            _tagged("both", "alpha-notes", tags=[TAG_SHARED], refs=[TAG_COMPOSE_REF]),
+            encoding="utf-8",
+        )
+        (scope / "ref-only.md").write_text(
+            _tagged("ref-only", "alpha-notes", refs=[TAG_COMPOSE_REF]), encoding="utf-8"
+        )
+        (scope / "neither.md").write_text(_tagged("neither", "alpha-notes"), encoding="utf-8")
+
+        want_ref_to = (
+            f"  ref-to: `{TAG_COMPOSE_REF}` — 2 of 3 entries in `alpha-notes/` reference it, "
+            f"and a FURTHER filter below narrows those 2 again. This is a NARROWING, not a "
+            f"truncation: the rest were read and did not match."
+        )
+        # …and the tag line's denominator is the set the TAG filter SAW — the ref-to-narrowed
+        # 2, never the readable 3, because it never looked at `neither.md`.
+        want_tag = (
+            "  tag: `marketing` — 1 of 2 entries in `alpha-notes/` carry it, and everything "
+            "below is about those 1."
+        )
+
+        rec = rc.recall(store, "alpha-notes", ref_to=TAG_COMPOSE_REF, tags=[TAG_SHARED])
+        assert (rec.ref_to_matched, rec.ref_to_scope_total) == (2, 3)
+        assert (rec.tag_matched, rec.tag_scope_total) == (1, 2)
+        rec_text = rc.render_text(rec)
+        assert want_ref_to in rec_text
+        assert want_tag in rec_text
+        # …and the body really is about ONE entry, which is what makes the reach clause a true
+        # statement rather than a decorative one.
+        assert [e.ref for e in rec.entries] == ["both"]
+
+        srch = rc.search(
+            store, "alpha-notes", "readiness", ref_to=TAG_COMPOSE_REF, tags=[TAG_SHARED]
+        )
+        assert (srch.entries_searched, srch.ref_to_skipped, srch.tag_skipped) == (1, 1, 1), (
+            "the three counters must PARTITION the three readable entries"
+        )
+        srch_text = rc.render_search(srch)
+        assert want_ref_to in srch_text
+        assert want_tag in srch_text
+
+    def test_a_tag_filter_that_removes_nothing_keeps_the_original_clause(
+        self, tmp_path: Path
+    ) -> None:
+        """The CONTROL on the reach clause's third state: a `--tag` that removes nothing must
+        leave the original clause, or the third state has simply replaced the first."""
+        store = tmp_path / "nonarrow-store"
+        scope = store / "alpha-notes"
+        scope.mkdir(parents=True)
+        for name in ("one", "two"):
+            (scope / f"{name}.md").write_text(
+                _tagged(name, "alpha-notes", tags=[TAG_SHARED], refs=[TAG_COMPOSE_REF]),
+                encoding="utf-8",
+            )
+        text = rc.render_text(
+            rc.recall(
+                store, "alpha-notes", mode="full", ref_to=TAG_COMPOSE_REF, tags=[TAG_SHARED]
+            )
+        )
+        assert "narrows those 2 again" not in text
+        assert "reference it, and everything below is about those 2." in text
+
+
+@pytest.fixture()
+def tag_zero_store(tmp_path: Path) -> Path:
+    """`filter_zero_store`'s shape one filter over: TWO scopes, each holding exactly the pair
+    that separates the two mechanisms a search's `entries_searched == 0` can come from.
+
+    ⚠ IT IS A SECOND FIXTURE RATHER THAN A PARAMETER ON THE FIRST, deliberately: separate
+    scopes mean a change that made one scope's readable entry carry both a ref AND a tag
+    cannot quietly satisfy both tests' preconditions while measuring one filter.
+    """
+    store = tmp_path / "tag-zero-store"
+    kept = store / "tag-kept-none"
+    kept.mkdir(parents=True)
+    (kept / "readable.md").write_text(
+        _entry(
+            "readable",
+            "tag-kept-none",
+            what="Readable, indexed, and carrying no tags at all.",
+            nuance="- 2000-06-01 a bullet mentioning readiness",
+        ),
+        encoding="utf-8",
+    )
+    (kept / "wrapped-aliases.md").write_text(UNINDEXABLE, encoding="utf-8")
+    broken = store / "tag-all-broken"
+    broken.mkdir()
+    (broken / "wrapped-aliases.md").write_text(UNINDEXABLE, encoding="utf-8")
+    return store
+
+
+class TestATagDrivenZeroIsNotAnUnreadableStore:
+    """The guard for the status condition THIS change could falsify — the highest-value thing
+    in this section.
+
+    🔴 `entries_searched == 0 and ref_to_skipped == 0 and bad` was SOUND at `5c59169`: those
+    two counters partitioned the readable set, so a zero on both meant nothing readable
+    existed. A tag filter upstream of the counter — which is where it HAS to go, because it
+    must run after scope authorisation — breaks that partition. Without `tag_skipped == 0`,
+    one readable entry that does not carry the tag plus one malformed file answers
+    `search-unreadable`: the body says "NOTHING COULD BE READ", "NOT ONE of them could be
+    indexed" and "The query was never run against anything", all false about a scope whose
+    entry was read and indexed, and `_exit_for` returns 3 with "recall was unavailable" —
+    which a consumer told to print that verbatim and continue reads as "throw the run away".
+
+    🔴 AND THAT IS NOT A HYPOTHETICAL: IT IS THE EXACT DEFECT THE `ref-to` FILTER SHIPPED AND
+    THREE AUDIT ROUNDS TOOK TO FIND, because the commit that staled the condition WAS the
+    commit that introduced the filter, so no delta audit's range contained it.
+
+    ⚠ RED/GREEN, MEASURED: with `tag_skipped == 0` deleted from the condition — the NARROWEST
+    mutation, the enclosing condition and the other two terms untouched — the `tag-kept-none`
+    half fails on the status, all three false sentences and the exit code, and the
+    `tag-all-broken` half keeps PASSING. That asymmetry is the point: the term narrows the
+    branch rather than deleting it.
+    """
+
+    def test_a_filter_driven_zero_falls_through_to_no_match(
+        self, tag_zero_store: Path
+    ) -> None:
+        rep = rc.search(tag_zero_store, "tag-kept-none", "readiness", tags=[TAG_SHARED])
+        assert (rep.entries_searched, rep.tag_skipped, len(rep.malformed)) == (0, 1, 1), (
+            "the fixture did not build the shape this test is named for"
+        )
+        assert rep.status == "search-no-match", (
+            "one readable entry was read and indexed and then removed by the `tag` filter; "
+            "`search-unreadable` claims nothing in the scope could be indexed and sends the "
+            "reader to fix the malformed file instead"
+        )
+        text = rc.render_search(rep)
+        for never in (
+            "NOTHING COULD BE READ",
+            "NOT ONE of them could be indexed",
+            "was never run against anything",
+        ):
+            assert never not in text, f"still claims {never!r} over an indexed entry:\n{text}"
+        for want in (
+            "status=search-no-match",
+            f"  tag: `{TAG_SHARED}` — 0 of 1 entry in `tag-kept-none/` carry it",
+            "🔴 MALFORMED — 1 entry file in `tag-kept-none/`",
+            # 🔴 AND THE SENTENCE NAMES THE `tag` FILTER, NOT THE `ref-to` ONE. Reusing the
+            # pre-existing wording would send a reader who typed only `--tag` to check an
+            # operand they never gave — a diagnosis that is WRONG rather than absent.
+            "NO MATCH — searched 0 entries in `tag-kept-none/`, and nothing cleared the "
+            "threshold. Nothing was scanned: the `tag` filter removed every readable entry, "
+            "so this zero is the FILTER's and says nothing about the query.",
+        ):
+            assert want in text, f"missing {want!r} from:\n{text}"
+        # 🔴 THE OPERATOR-VISIBLE STAKE: the wrong status also exits 3.
+        assert rc._exit_for(rep.status, rep.label, rep.malformed) == 0
+
+    def test_the_positive_control_still_fires(self, tag_zero_store: Path) -> None:
+        """The branch must NOT be deleted: a scope whose only file cannot be indexed is still
+        `search-unreadable`, or every assertion above is satisfied by an unreachable status."""
+        rep = rc.search(tag_zero_store, "tag-all-broken", "readiness", tags=[TAG_SHARED])
+        assert (rep.entries_searched, rep.tag_skipped, len(rep.malformed)) == (0, 0, 1)
+        assert rep.status == "search-unreadable"
+        text = rc.render_search(rep)
+        assert "NOTHING COULD BE READ" in text
+        assert "was never run against anything" in text
+        assert rc._exit_for(rep.status, rep.label, rep.malformed) == 3
+
+    def test_both_filters_emptying_the_set_names_both_of_them(self, tmp_path: Path) -> None:
+        """🔴 A SENTENCE THAT NAMES ONE FILTER WHEN TWO RAN IS A WRONG DIAGNOSIS, NOT A
+        MISSING ONE. An operator who passed both and is told "the `ref-to` filter removed every
+        readable entry" goes and checks the ref — and the ref may be exactly right.
+        """
+        store = tmp_path / "mixed-store"
+        scope = store / "mixed-set"
+        scope.mkdir(parents=True)
+        (scope / "has-the-tag.md").write_text(
+            _tagged("has-the-tag", "mixed-set", tags=[TAG_SHARED]), encoding="utf-8"
+        )
+        (scope / "has-the-ref.md").write_text(
+            _tagged("has-the-ref", "mixed-set", refs=[TAG_COMPOSE_REF]), encoding="utf-8"
+        )
+        rep = rc.search(
+            store, "mixed-set", "readiness", ref_to=TAG_COMPOSE_REF, tags=[TAG_SHARED]
+        )
+        assert (rep.entries_searched, rep.ref_to_skipped, rep.tag_skipped) == (0, 1, 1)
+        assert rep.status == "search-no-match"
+        assert (
+            "Nothing was scanned: the `ref-to` and `tag` filters removed every readable "
+            "entry, so this zero is the FILTERS' and says nothing about the query."
+        ) in rc.render_search(rep)
+
+    @pytest.mark.parametrize(
+        ("ref_to_skipped", "tag_skipped", "want"),
+        [
+            (1, 0, "the `ref-to` filter removed every readable entry, so this zero is the FILTER's"),
+            (0, 1, "the `tag` filter removed every readable entry, so this zero is the FILTER's"),
+            (
+                2,
+                3,
+                "the `ref-to` and `tag` filters removed every readable entry, so this zero is "
+                "the FILTERS'",
+            ),
+        ],
+    )
+    def test_the_subject_and_its_possessive_agree(
+        self, ref_to_skipped: int, tag_skipped: int, want: str
+    ) -> None:
+        """Both singular directions AND the plural, so the three-way choice is pinned rather
+        than only its new arm. Asserted as WHOLE clauses: a guard on the word `tag` would be
+        satisfied by a sentence naming the wrong filter and mentioning the right one
+        elsewhere."""
+        subject, possessive = rc._emptying_filters(ref_to_skipped, tag_skipped)
+        assert f"{subject} removed every readable entry, so this zero is {possessive}" == want
+
+
+class TestAMalformedTagIsRefusedByTheOptionLadder:
+    """🔴 A REFUSAL AND NOT A NARROWING TO NOTHING, WHICH IS THE OPPOSITE CHOICE FROM `--ref`.
+    `--ref ''` narrows and finds nothing, and that is right: a ref names an ENTRY, and "no
+    entry is called that" is a fact about the store. A tag operand that folds away names NO
+    CATEGORY, so answering "no entry carries this" is an empty result whose cause is invisible
+    — indistinguishable from a tag nobody has used, when the real cause is that the query said
+    nothing.
+
+    ⚠ MEASURED: with `_validated_tags`' condition short-circuited to `False`, every row here
+    fails and nothing else in the suite does.
+    """
+
+    WANT = (
+        "tag {!r} normalizes to the empty string — a tag must fold to at least one of "
+        "`[a-z0-9.-]`"
+    )
+
+    @pytest.mark.parametrize("bad", ["", "!!!", "   ", "***", " @ "])
+    def test_both_readers_refuse_it_with_one_sentence(
+        self, tag_principal_store: Path, bad: str
+    ) -> None:
+        with pytest.raises(ValueError) as exc:
+            rc.recall(tag_principal_store, "alpha-notes", tags=["marketing", bad])
+        assert str(exc.value) == self.WANT.format(bad)
+        with pytest.raises(ValueError) as exc:
+            rc.search(tag_principal_store, "alpha-notes", "readiness", tags=[bad])
+        assert str(exc.value) == self.WANT.format(bad)
+
+    def test_the_ladder_order_is_unchanged(self, tag_principal_store: Path) -> None:
+        """⚠ THE TAG GUARD IS LAST. A request carrying a bad LIMIT and a bad tag still gets
+        the limit's message, because that order is what the goldens record; and one carrying a
+        bad REF-TO and a bad tag gets the ref-to's, because this guard was appended after it.
+        """
+        with pytest.raises(ValueError, match=r"^limit must be"):
+            rc.recall(tag_principal_store, "alpha-notes", limit=0, tags=["!!!"])
+        with pytest.raises(ValueError, match=r"^ref-to is not a well-formed"):
+            rc.recall(
+                tag_principal_store, "alpha-notes", ref_to="no-colon-here", tags=["!!!"]
+            )
+
+    def test_a_well_formed_operand_set_passes(self, tag_principal_store: Path) -> None:
+        """The control: the refusals above are not "everything is refused"."""
+        rc.recall(
+            tag_principal_store, "alpha-notes", tags=["Marketing", "project_xyz", "a.b-c"]
+        )
