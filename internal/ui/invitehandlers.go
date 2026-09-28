@@ -305,8 +305,13 @@ func (s *Server) handleInviteRevoke(w http.ResponseWriter, r *http.Request, id i
 // that spends it, in a quoted attribute value gomponents escapes — the same position, and the
 // same reasoning, as the search box keeping what the reader typed.
 func (s *Server) handleJoinPage(w http.ResponseWriter, r *http.Request, _ identity.Identity) {
-	// `FormValue` rather than `URL.Query().Get`: a GET's form values ARE its query, and
-	// reading it this way keeps one spelling for a field that is posted on the next hop.
+	// 🔴 `URL.Query().Get` AND NOT `r.FormValue`, WHICH IS THE OPPOSITE OF WHAT A DRAFT OF
+	// THIS COMMENT CLAIMED THE CODE DID. `FormValue` on a GET also parses a request BODY when
+	// one carries a form content type — so a GET with a body could supply this field, which is
+	// a second way to reach the one value on this page that matters and is a way no browser
+	// navigation uses. The query is the only place an invitation LINK can put it. (The draft
+	// said "`FormValue` rather than `URL.Query().Get`" beside a line doing the reverse; the
+	// code was right and the sentence was not.)
 	token := r.URL.Query().Get(inviteTokenField)
 	// 🔴 THE PROVIDER PREDICATE IS THE SAME ONE THE SIGN-IN PAGE ASKS, NOT A NEW CHECK.
 	// `providerArmed` is per-render deliberately (see its comment): a deployment whose key
