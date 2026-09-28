@@ -262,7 +262,7 @@ python3 tests/control_mutants.py          # 183 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 183 mutants, 179 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 183 mutants, 181 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
 
 🔴 **AND THE RUN BEFORE IT REPORTED `harness-errors=2`, WHICH IS WHY THIS LINE IS A SEPARATE
