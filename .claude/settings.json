@@ -1,0 +1,30 @@
+{
+  "$comment": [
+    "Project settings for cairn. THE ONLY THING WIRED HERE IS ONE PreToolUse GUARD;",
+    "see .claude/hooks/base-clone-write-guard.py for what it refuses, what it",
+    "deliberately does not, and why it FAILS OPEN. Rules and measurements:",
+    "claudedocs/working-in-parallel.md.",
+    "",
+    "This file is TRACKED IN A PUBLIC REPOSITORY, so anything added here runs on",
+    "the machine of anyone who clones cairn and starts an agent session in it.",
+    "Two constraints follow, and both are load-bearing rather than stylistic:",
+    "the interpreter is named as bare `python3` from PATH and NEVER as an absolute",
+    "/nix/store path (which exists on one machine and nowhere else), and the hook",
+    "is addressed through $CLAUDE_PROJECT_DIR rather than a path relative to the",
+    "session's cwd, which is not the repo root whenever a session works from a",
+    "subdirectory."
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/base-clone-write-guard.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
