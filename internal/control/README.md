@@ -262,8 +262,21 @@ python3 tests/control_mutants.py          # 181 mutants, over SEVEN packages
 python3 tests/control_mutants.py --show    # print each edit without running it
 ```
 
-**Measured on this tree: 177 mutants, 175 killed, 2 labelled EQUIVALENT at the code,
+**Measured on this tree: 181 mutants, 179 killed, 2 labelled EQUIVALENT at the code,
 0 misattributed, 0 harness errors, 0 stale extra-killers, positive control GREEN.**
+
+🔴 **AND THE RUN BEFORE IT REPORTED `harness-errors=2`, WHICH IS WHY THIS LINE IS A SEPARATE
+MEASUREMENT RATHER THAN THE COUNT PIN'S ARITHMETIC.** 28(c) added a SECOND blank policy
+(`databaseDSNDefault`) spelled exactly like `controlJournalDefault`'s, so two **pre-existing**
+rows anchored on that spelling suddenly matched TWICE and refused rather than mutating a
+function they do not name. The new change's own four rows had been disambiguated against
+exactly this; what went unchecked is that **adding a second copy of a guarded shape breaks the
+EXISTING row that matched the first** — a thing only this battery can see, and only because
+`MutationError` asserts the occurrence COUNT instead of asserting that a replacement happened.
+⚠ **`tests/test_control_mutant_count_is_pinned.py` cannot cover this line**: it pins the
+mutant COUNT, and the kill/survivor split beside it moves for reasons the count does not — so
+the split is re-derived from a full run or it is not written. It went stale by exactly that
+route once, reading `175 killed` against 181 declared for one commit.
 
 🔴 **AND THE RUN THAT ADDED THE INVITE FLOW'S 25 ROWS EXITED 1 THE FIRST TIME, ON A GUARD THAT
 HAD ALREADY SHIPPED.** `ui-share-replica-honesty-notice-loses-its-weakest-clause` SURVIVED:
