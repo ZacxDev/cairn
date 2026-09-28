@@ -238,29 +238,98 @@ def _git(cwd: str, *args: str) -> str | None:
     return out.stdout.strip()
 
 
+def _shell_lines(command: str) -> list[str]:
+    """The command's logical lines: newline-separated, but QUOTE- and HEREDOC-aware.
+
+    🔴 A PLAIN `command.split("\\n")` WAS A FAIL-CLOSED REGRESSION, AND A ROUND-2
+    AUDIT MEASURED IT. Splitting the raw string before knowing the quote state cuts
+    through a quoted multi-line argument and a heredoc BODY, so their inner lines
+    were read as commands:
+
+        cat > /tmp/f <<'EOF'      →  the body line `git commit -m x` was REFUSED
+        git commit -m x
+        EOF
+
+        echo 'line1              →  the middle line `git add .` was REFUSED
+        git add .
+        line3' > /tmp/x
+
+    Every recipe in this repo's own docs is written one-command-per-line starting
+    with `git`, so WRITING OR PRINTING one of those recipes inside the base clone
+    was refused, with a message diagnosing it as a shared-tree mutation. That is
+    the direction this file forbids itself, and it is the guard's own stated
+    failure mode: break a documented recipe and people route around the guard.
+
+    So the newline split happens here, over a walk that tracks quoting and
+    heredocs, and only the resulting lines reach the lexer. A heredoc body is DATA
+    and is dropped; the lines AFTER its terminator are commands again, which is the
+    case a token-space skip gets wrong.
+    """
+    lines: list[str] = []
+    current: list[str] = []
+    pending: list[str] = []          # heredoc delimiters still awaited
+    quote: str | None = None
+    index, size = 0, len(command)
+
+    def flush(line: str) -> None:
+        if pending:
+            # Inside a heredoc body: data, never a command. Only its terminator
+            # is interesting, and only because it ends the body.
+            if line.strip() == pending[0]:
+                pending.pop(0)
+            return
+        opener = re.search(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z_0-9]*)\1", line)
+        if opener:
+            pending.append(opener.group(2))
+        lines.append(line)
+
+    while index < size:
+        char = command[index]
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in ("'", '"'):
+            quote = char
+            current.append(char)
+            index += 1
+            continue
+        if char == "\\" and index + 1 < size:
+            current.append(command[index:index + 2])
+            index += 2
+            continue
+        if char == "\n":
+            flush("".join(current))
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    flush("".join(current))
+    return [line for line in lines if line.strip()]
+
+
 def _segments(command: str) -> list[list[str]]:
-    """Split a shell command line into simple commands, as token lists.
+    """Split a shell command into simple commands, as token lists.
 
     🔴 THE ONE SEGMENTATION IN THIS FILE. Both the refused-subcommand scan and
     every exemption read these same segments; the docstring above records what
     happened when there were two grammars over one language.
 
-    Newlines are split on the RAW string first, because `shlex` treats a newline
-    as ordinary whitespace and would otherwise fold a whole multi-line block into
-    one simple command. Then `punctuation_chars=True` emits shell operators as
-    their own tokens while still honouring quotes, and `commenters` is cleared so
-    a `#` inside a URL or a quoted string cannot truncate the line — bash would
-    not treat it as a comment there, and a parser NARROWER than bash's is a
-    parser that misses real commands.
+    Lines come from `_shell_lines`, then `punctuation_chars=True` emits shell
+    operators as their own tokens while still honouring quotes, and `commenters`
+    is cleared so a `#` inside a URL or a quoted string cannot truncate the line —
+    bash would not treat it as a comment there, and a parser NARROWER than bash's
+    is a parser that misses real commands.
 
     Returns `[]` for anything it cannot tokenise, which ALLOWS. That is the
     fail-open posture, and it is why this guard is described as reducing a routine
     mistake rather than containing an adversary.
     """
     out: list[list[str]] = []
-    for line in command.split("\n"):
-        if not line.strip():
-            continue
+    for line in _shell_lines(command):
         lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         lexer.commenters = ""
@@ -280,12 +349,26 @@ def _segments(command: str) -> list[list[str]]:
     return [segment for segment in out if segment]
 
 
+#: Shell reserved words that can PRECEDE a command without being one.
+#: 🔴 `{` COST A GUARD: `{ git commit -m x; }` passed straight through because the
+#: program name was read as `{`. A round-2 audit measured it, and noted why it
+#: reads as covered — the docstring lists the `(…)` twin among the closed walks,
+#: and `(` IS closed, because it is an OPERATOR character while `{` is a reserved
+#: WORD. The paren fix could never have covered it. `then`/`do`/`else` are here for
+#: the same reason and close `if …; then git commit; fi` on one line, which was
+#: missed before and after the rewrite.
+_LEADING_RESERVED = frozenset({"{", "}", "!", "then", "do", "else", "elif", "time"})
+
+
 def _leading_assignments(segment: list[str]) -> tuple[dict[str, str], int]:
     """`VAR=value` prefixes (and `env` with its own flags), and where argv starts."""
     assignments: dict[str, str] = {}
     i = 0
     while i < len(segment):
         word = segment[i]
+        if word in _LEADING_RESERVED:
+            i += 1
+            continue
         match = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)=(.*)", word)
         if match:
             assignments[match.group(1)] = match.group(2)

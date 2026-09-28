@@ -378,6 +378,64 @@ def test_an_operator_without_spaces_or_a_newline_still_separates(parallel_clone,
 
 
 @pytest.mark.parametrize("command", [
+    "{ git commit -m x; }",
+    "{ git add seed.txt; }",
+    "if true; then git commit -m x; fi",
+    "for f in a; do git add $f; done",
+])
+def test_a_reserved_word_before_the_command_does_not_hide_it(parallel_clone, command):
+    """🔴 `{ git commit -m x; }` WALKED THE GUARD, AND IT READ AS COVERED.
+
+    The parser took the first word as the program name, so a brace group made it
+    `{`. The docstring lists the `(…)` twin among the closed walks and `(` IS
+    closed — because `(` is an OPERATOR character while `{` is a reserved WORD, so
+    the fix for one could never cover the other. A round-2 audit measured the pair.
+
+    The `if`/`for` one-liners were missed before the rewrite too, so they are not
+    regressions; they close with the same reserved-word skip and are pinned here so
+    the skip cannot be narrowed back to braces alone.
+    """
+    clone, _ = parallel_clone[:2]
+    assert _decision(_run_hook(command, clone)) == "deny", command
+
+
+@pytest.mark.parametrize("command", [
+    # A heredoc BODY is data. Writing this repo's own recipe into a file is the
+    # ordinary case, because every recipe here is one command per line starting
+    # with `git`.
+    "cat > /tmp/recipe <<'EOF'\ngit commit -m x\nEOF",
+    "cat > /tmp/recipe <<EOF\ngit add .\nEOF",
+    # A quoted multi-line argument, likewise.
+    "echo 'line1\ngit add .\nline3' > /tmp/x",
+])
+def test_quoted_and_heredoc_CONTENT_is_data_not_a_command(parallel_clone, command):
+    """🔴 A FAIL-CLOSED REGRESSION THE REWRITE INTRODUCED, MEASURED BY ROUND 2.
+
+    Splitting the raw string on newlines before knowing the quote state cut through
+    heredoc bodies and quoted arguments, so their inner lines were read as commands
+    and REFUSED — with a message diagnosing a shared-tree mutation that was not
+    happening. This file's own header forbids that direction, and it trips the
+    guard's stated failure mode: break a documented recipe and people route around
+    the guard.
+    """
+    clone, _ = parallel_clone[:2]
+    assert _decision(_run_hook(command, clone)) is None, command
+
+
+def test_a_command_after_a_heredoc_terminator_is_still_a_command(parallel_clone):
+    """The control that stops the fix above from becoming a hole.
+
+    "Skip heredoc bodies" must not mean "stop reading at the first `<<`". Once the
+    terminator line has gone by, what follows is a command again — and a
+    token-space skip gets exactly this case wrong, which is why the walk is
+    line-aware.
+    """
+    clone, _ = parallel_clone[:2]
+    command = "cat > /tmp/recipe <<'EOF'\nbody\nEOF\ngit commit -m x"
+    assert _decision(_run_hook(command, clone)) == "deny"
+
+
+@pytest.mark.parametrize("command", [
     "git merge --ff-only origin/main & git merge other-branch",
     "git checkout origin/main -- AGENTS.md & git checkout other-branch",
     "git stash list & git stash",

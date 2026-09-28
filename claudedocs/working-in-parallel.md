@@ -23,7 +23,7 @@ before changing it; the refused-subcommand ledger below is pinned against it by
 
 ```bash
 REPO=/path/to/cairn                       # the base clone
-WT=<scratchpad>/wt-<topic>                # 🔴 OUTSIDE the repo root — see below
+WT=<scratchpad>/wt-<topic>                # any path; see the nested-worktree note
 git -C "$REPO" fetch origin
 git -C "$REPO" worktree add "$WT" -b <branch> origin/main   # base on the REMOTE tip
 git -C "$WT" push -u origin HEAD:<branch>                   # push the branch NOW, empty
@@ -65,9 +65,17 @@ The refused set, which the guard enforces and its test pins against this table:
 **Not refused, deliberately**, because each is a documented recipe and a guard that breaks
 one trains everybody to route around it: `git merge --ff-only <ref>` (the base-clone
 re-sync — it cannot conflict or autostash, it either fast-forwards or refuses, and the
-refusal is the signal that the clone diverged); `git checkout <ref> -- <paths>` and
-`git restore` (the pathspec form does not move HEAD); and every read, including `push`,
-which touches no file in the clone.
+refusal is the signal that the clone diverged); `git checkout <ref> -- <paths>` (the
+pathspec form does not move HEAD — bare `git checkout <branch>` IS refused, because that
+moves the shared HEAD); `git stash list`, `show` and `--help`; and every other read,
+including `push`, which touches no file in the clone.
+
+⚠ **`git restore` is NOT in the refused set at all**, so it never reaches an exemption. An
+earlier version of this paragraph listed it among the deliberate exemptions, which reads as a
+licence to add it to the ledger — and doing so would refuse **every** `git restore <path>`,
+because the ordinary form carries no `--`. The hook's docstring carries the same warning
+beside the code; this is the copy the refusal message routes readers to, so the two have to
+agree.
 
 ### ⚠ A worktree nested inside the repo root is HANDLED — this used to be a 🔴 rule and it was wrong
 
@@ -129,7 +137,8 @@ nothing is rewritten, the other worktree is undisturbed. A rebase would have nee
 
 The fleet 🔴 rule in `claude/RULES.md` applies unchanged and is not restated here; every
 agent on this host loads it every session. It is in the refused set so the rule survives on
-a host that does not run the fleet guard. `git stash list` stays allowed — it is a read, and
+a host that does not run the fleet guard. `git stash list`/`show`/`--help` stay allowed — they
+are reads, and
 a non-empty stack is itself proof the stack is shared.
 
 ### ⚠ `.envrc` — the ported rule REVERSES here, and a brief already got it wrong
@@ -188,11 +197,18 @@ is `@AGENTS.md`, while `AGENTS.md` is **31,330 bytes** and is what actually load
 faithfully refreshed a file that never changes and never touched the one that matters — the
 exact failure it exists to prevent, walked around rather than triggered.
 
-**Fixed and live on this host**: `AGENTS.md` was added to that list, and a follow-up adds
-`.claude/settings.json` and `.claude/hooks` — because *this* directory is now tracked and
-**executes**, so a stale clone would otherwise serve a stale GUARD, which is strictly worse
-than a stale doc: a hook that silently fails to fire is indistinguishable from one that
-allows, so there is no symptom at all.
+**Half fixed, and the open half is the one this change creates.** `AGENTS.md` was added to
+that list and **is live on this host** — so the 31 KB file that actually loads is refreshed
+now.
+
+🔴 **`.claude/settings.json` and `.claude/hooks` are NOT in the list, and this change is what
+makes that matter.** Those paths are tracked here as of this PR and they **execute**, so a
+stale clone serves a stale GUARD — strictly worse than a stale doc, because a hook that
+silently fails to fire is indistinguishable from one that allows and there is **no symptom at
+all**. Widening the list for them is an open PR in the repo that owns the hook, not a landed
+change; the `dirname` shape differs between a directory entry and a nested FILE entry, and
+getting it wrong deletes `.claude`, so it is not a one-line edit. **Until it lands, treat this
+directory as unrefreshed** and read it from the ref like anything else.
 
 🔴 **Verify rather than trust this paragraph**, because it is a claim about another repo's
 state and about a `home.file` copy that only a `home-manager switch` makes live:
@@ -222,11 +238,6 @@ lands" — while the fix had merged **27 minutes earlier** and was already live.
 caught it. **A sentence about another repo's state is a claim with a shelf life measured in
 minutes when you are the one changing that repo.**
 
-⚠ **And a refreshed file reads as dirty.** The hook does not move HEAD, so a tracked file
-it fixed shows as modified-vs-HEAD until the clone's branch catches up. **A tracked
-context file dirty in the base clone whose content is byte-identical to `origin/main` is
-the hook's doing, not somebody's unsaved work** — do not "rescue" it, and do not let it
-mask the files that ARE real WIP.
 
 ## ⚠ The claim lock cannot separate two sessions on one clone
 
