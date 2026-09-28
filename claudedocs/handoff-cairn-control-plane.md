@@ -54,7 +54,7 @@ renderer** serves pod, CLI and UI. Plan: `claudedocs/plan-cairn-control-plane.md
 - ✅ **BATTERY, CLEAN FULL RUN ON THE FINAL TREE: `183 / 181 killed / 2 survived / 0
   misattributed / 0 harness-errors / 0 stale-extras`, empty stderr, rc 0.** Both survivors
   are declared EQUIVALENT at the code. The split is re-derived in `5d3a972`.
-- ✅ **28(d) MANIFESTS DRAFTED, NOT MERGED** — `homelab-talos` `feat/cairn-ui-postgres`, ⚠ **3
+- ✅ **28(d) MANIFESTS DRAFTED, NOT MERGED** — the deployment repo's `feat/cairn-ui-postgres`, ⚠ **3
   behind `trunk`**. `kustomize build` rc 0 / 17 docs; the phase-1 exposure gate green AND
   validated (NodePort ⇒ rc 1, restored ⇒ rc 0); the password absent from render and worktree,
   the grep watched FINDING it pre-encryption. 🔴 **The exact DSN string was exercised** against
@@ -114,8 +114,8 @@ round.** 🔴 **A NEW ARC, not the closed one's remainder.**
     `Size-Ratchet-Override:`, NO operator approval); three later rounds landed by cutting.
     forcing: gate.
 28. 🔴 **BUILD P6 — (a),(b),(c) DONE; (d) REMAINS AND IT NEEDS YOU.** `feat/ui-invite-flow` @
-    **`be8a61e`**. **CLAIMED** (`cairn-control-plane-28`). (d) is drafted on `homelab-talos`
-    `feat/cairn-ui-postgres` — postgres StatefulSet, SOPS secret, Service, NetworkPolicy,
+    **`be8a61e`**. **CLAIMED** (`cairn-control-plane-28`). (d) is drafted on the deployment
+    repo's `feat/cairn-ui-postgres` — postgres StatefulSet, SOPS secret, Service, NetworkPolicy,
     `CAIRN_UI_DB_DSN`, ⚠ **3 behind `trunk`, rebase before opening.** 🔴 **COMMIT THERE IS
     DEPLOY.** ⚠ **Cutting sessions over signs everybody out once — SAY SO BEFORE THE DEPLOY.**
     🔴 The StatefulSet's major is a FOURTH pin site no test here can read. forcing: user.
@@ -1375,8 +1375,8 @@ follow-up with a closing condition on the PR rather than fixed here.
 NOT BE DELETED FROM THIS SECTION** — reason in `Gotchas`, because this section REPLACES.
 
 🔴 **READ EVERY STATUS OFF THE COMMAND, NEVER THROUGH A PIPE** — this arc has paid four times;
-the fourth was `clawgate_handoff.sh resolve | head -3`, where `$?` was `head`'s 0 and the real
-status was 5. 🔴 **AND RUN EVERY GATE AS `nix develop <THE WORKTREE>`** — the base clone is on
+the fourth was the task-board helper's `resolve` subcommand piped to `head -3`, where `$?` was
+`head`'s 0 and the real status was 5. 🔴 **AND RUN EVERY GATE AS `nix develop <THE WORKTREE>`** — the base clone is on
 `main`, whose devShell has no `postgresql_18`.
 
 ```bash
