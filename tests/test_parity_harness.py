@@ -264,7 +264,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     and no duplicate id. So the floor covers those two, and nothing else in this file does.
 
     ⚠ It is also the only floor that runs in the `tests` job. CI's `parity` job refuses below the
-    PASS count `.github/workflows/ci.yml` pins — **110 at this head** — but that job needs a Go
+    PASS count `.github/workflows/ci.yml` pins — **117 at this head** — but that job needs a Go
     toolchain and a running pod; a developer running `pytest tests` reaches this one and not that
     one. 🔴 NOTHING ASSERTS THAT THE TWO NUMBERS AGREE, which is exactly how this one went stale:
     read `ci.yml`'s `-lt` comparison rather than this sentence.
@@ -282,7 +282,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE — no defect ever narrowed the case list.
     """
     declared = len(harness.cases(1))
-    # 107 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
+    # 114 measured on this tree — by `len(harness.cases(1))`, which is what the assertion below
     # compares and is therefore the only measurement that can be right. The floor is the
     # repository's own formula for a collected-count floor — `m - min(50, max(1, m / 20))` for a
     # measured `m`, which `.github/workflows/ci.yml` owns and justifies: close enough that a real
@@ -300,6 +300,12 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # ⚠ AND IT WAS 85 AGAINST 101 ONCE, because the measured `m` moved by eleven rows and the
     # floor did not — a floor left behind by its own formula loosens silently, which is the same
     # failure one size larger. Move BOTH when a row lands, and both when one is DELETED.
+    # ⚠ 101 -> 108 WHEN THE SEVEN `--ref-to` ROWS LANDED: `m` moved 107 -> 114 and 108 is the
+    # literal the formula prescribes for it (`114 - min(50, max(1, 114/20)) = 108.3 -> 108`),
+    # re-derived by RUNNING the formula on `len(harness.cases(1))`. Those rows are the ONLY
+    # gate that compares the two CLIENTS on that flag: `tests/conformance/` compares the two
+    # SERVERS over `?ref-to=` and never parses a command line, so a Go client that refused
+    # the flag would be green everywhere else.
     # ⚠ 102 -> 101 WHEN `validate-unreadable-cache-root` WAS REMOVED: `m` moved 108 -> 107 and
     # 101 is the literal the formula prescribes for it (`107 - min(50, max(1, 107/20)) = 101.65
     # -> 101`, re-derived by RUNNING the formula on `len(harness.cases(1))`, not by arithmetic on
@@ -308,7 +314,7 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # declared open again in `tests/parity/README.md` row 4. What remains in this family is the
     # four rows that gate a mode-000 ENTRY FILE and a mode-000 SCOPE DIRECTORY on both clients —
     # the conditions an ordinary `chmod` reaches.
-    floor = 101
+    floor = 108
     # ✅ **DECIDED: PINNED TO ITS OWN FORMULA, BECAUSE IT HAS GONE STALE TWICE.**
     # The handoff filed this under "counts quoted in prose that nothing asserts
     # on", closing condition "a decision to pin each or a written line saying why
@@ -342,19 +348,19 @@ def test_the_parity_gate_still_declares_a_NON_TRIVIAL_case_set():
     # the `parity` job. They must NOT be asserted equal: this one counts CASES
     # DECLARED by `harness.cases()`, that one counts PASSES a run produced, and
     # the two differ by design — a structural check is a pass with no declared
-    # case behind it, which is why the run reports 110 passes over 107 cases —
-    # re-derived here from one run's own `SUMMARY cases=107 passes=110 failures=0`
+    # case behind it, which is why the run reports 117 passes over 114 cases —
+    # re-derived here from one run's own `SUMMARY cases=114 passes=117 failures=0`
     # line, not from arithmetic on the previous literal:
     # `cache-mtime-parity`, `orphan-reap-parity` and `nonregular-path-parity`,
     # THREE structural checks. ⚠ It was 104/102, then 105/103, then 106/103, then
-    # 111/108 — and one of those pairs was WRONG for a whole round, because rows
+    # 111/108, then 110/107 — and one of those pairs was WRONG for a whole round, because rows
     # moved `m` and only `ci.yml` was updated. The gap itself
     # widens every time a claim turns out to be unreachable from any row. A
     # guard equating them would be red on a correct tree and would train its
     # reader to edit whichever number was handier. The docstring's instruction —
     # read `ci.yml`'s comparison rather than that sentence — remains the answer.
     assert declared >= floor, (
-        f"the parity gate declares only {declared} cases, and the floor is {floor} (107 were "
+        f"the parity gate declares only {declared} cases, and the floor is {floor} (114 were "
         f"measured on this tree, across every verb and every documented exit code). Two guards in "
         f"this file — the exit-only `why` check and the unique-id check — pass vacuously on a "
         f"narrowed list, so a shrinking case set gets quieter, not louder."

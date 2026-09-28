@@ -77,10 +77,20 @@ type RecalledEntry struct {
 	// entry with an empty work-history.
 	MissingSections []string
 
-	// Tasks are the entry's `tasks:` refs as written (`<system>:<id>`), in file order.
+	// Tasks are the entry's refs as written (`<system>:<id>`), in file order.
 	// Carried from the loader's validated refs rather than re-parsed here: a second
 	// parse at the read surface is the duplicated predicate that lets a reader show refs
 	// the validator rejected.
+	//
+	// ⚠ THE FIELD NAME READS `Tasks` WHILE THE FRONT-MATTER KEY IS `refs:`, AND THAT IS
+	// DEFERRED RATHER THAN OVERLOOKED. `tasks:`/`task:` are still accepted spellings on
+	// the way in — permanently, by operator decision — so the name is not stale about the
+	// schema, only narrower than it: the key carries repos, PRs, docs and dashboards, not
+	// only work-tracker items. Renaming is mechanical but would have to move
+	// `store.Entry.Tasks`, this field, the oracle's `RecalledEntry.tasks` and the rendered
+	// `tasks:` label together, which re-bases goldens — so it belongs in a change whose
+	// whole subject is that re-base. `RecallReport.RenderText`'s own label carries the
+	// same note.
 	Tasks []string
 }
 

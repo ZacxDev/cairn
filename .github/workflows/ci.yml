@@ -792,9 +792,12 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/parity.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/parity.txt || true)
           echo "passes=$passes failures=$fails"
-          # 110 PASS lines measured on this head: 107 cases plus THREE structural checks —
+          # 117 PASS lines measured on this head: 114 cases plus THREE structural checks —
           # re-derived by RUNNING the harness on this tree and reading `grep -c '^PASS '`, never
           # by arithmetic on the previous literal.
+          # ⚠ 110 -> 117 WHEN THE SEVEN `--ref-to` ROWS LANDED. The gap to the case count is
+          # unchanged at three, which is the check that nothing was miscounted: both numbers
+          # moved by the same seven.
           # ⚠ 111 -> 110 WHEN `validate-unreadable-cache-root` WAS REMOVED: ONE row, because
           # `recall` and `search` never had one — they reach the cache-ROOT walk through
           # `load_store`/`LoadStore` and already agreed, so rows on them would have been
@@ -841,8 +844,8 @@ jobs:
           # zero failures too; the floor is what tells a green gate from an absent one.
           # 🔴 AND IT IS RAISED WITH EVERY ROW THAT LANDS. It sat at 98 for four rows after the
           # rows were added, which is a floor that cannot see the four newest disappear.
-          if [ "$passes" -lt 110 ]; then
-            echo "REFUSING: $passes passes, and 110 were measured — the gate got smaller"
+          if [ "$passes" -lt 117 ]; then
+            echo "REFUSING: $passes passes, and 117 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
@@ -940,12 +943,12 @@ jobs:
           passes=$(grep -c '^PASS ' /tmp/dualrun.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/dualrun.txt || true)
           echo "passes=$passes failures=$fails"
-          # 363 PASS lines measured on this branch: 361 targets plus the audit-stream and
+          # 412 PASS lines measured on this branch: 410 targets plus the audit-stream and
           # process-stream arms. ⚠ THE FLOOR IS NOT REDUNDANT WITH "ZERO FAILURES" — a run
           # that compared nothing has zero failures too, which is the whole reason the
           # summary reports a PAIR.
-          if [ "$passes" -lt 363 ]; then
-            echo "REFUSING: $passes passes, and 363 were measured — the gate got smaller"
+          if [ "$passes" -lt 412 ]; then
+            echo "REFUSING: $passes passes, and 412 were measured — the gate got smaller"
             exit 1
           fi
           if [ "$fails" -ne 0 ]; then
@@ -961,7 +964,8 @@ jobs:
             grep -q "^DIFFERENCE $name " /tmp/dualrun.txt || {
               echo "REFUSING: the declared licence '$name' did not fire"; exit 1; }
           done
-          # …and the two arms no other gate in this repository reads at all.
+          # …and the two arms no other gate in this repository reads at all. PRESENCE here;
+          # their COUNTS are floored in the block below, where a refusal can name a number.
           grep -q '^PASS audit-stream' /tmp/dualrun.txt
           grep -q '^PASS process-stream' /tmp/dualrun.txt
           # 🔴 LAST, SO ITS EXIT STATUS IS THE STEP'S. The in-run numbers, read rather than
@@ -975,15 +979,103 @@ jobs:
               print("REFUSING: no SUMMARY line — the run did not finish")
               sys.exit(1)
           targets, comparisons, differences, entries = (int(g) for g in m.groups())
+          # 🔴 THE TWO ARMS THAT PRINT THEIR OWN COUNT, READ AS NUMBERS AND NOT ONLY AS
+          # PRESENCE. `comparisons` above is a SUM over four arms and only these two publish a
+          # subtotal, so without these the total is the only floor and a move in it cannot be
+          # attributed to an arm — see the paragraph before `problems` for what that costs and
+          # what it still cannot buy. A FAIL arm prints no PASS line at all, so an absent match
+          # is a refusal rather than a zero.
+          arms = {}
+          for arm in ("audit-stream", "process-stream"):
+              a = re.search(rf"^PASS {arm} \((\d+) lines compared", text, re.M)
+              if not a:
+                  print(f"REFUSING: no `PASS {arm} (<n> lines compared` line — that arm "
+                        f"either failed or stopped reporting its own count")
+                  sys.exit(1)
+              arms[arm] = int(a.group(1))
           print(f"targets={targets} comparisons={comparisons} "
-                f"differences={differences} entries={entries}")
-          # Measured on this branch: 361 / 1489 / 0 / 119. Floors rather than equalities, so
+                f"differences={differences} entries={entries} "
+                f"audit-stream={arms['audit-stream']} "
+                f"process-stream={arms['process-stream']}")
+          # Measured on this branch: 410 / 1689 / 0 / 119. Floors rather than equalities, so
           # ADDING a target is not a red gate; a NARROWING is.
+          # ⚠ 366 -> 410 WHEN THE `?ref-to=` SWEEP LANDED: FOUR targets per scope over nine
+          # wide scopes and two narrow ones, so FORTY-FOUR — counted as `PASS ref-to…` /
+          # `PASS search-ref-to…` lines in the run, not inferred. Comparisons 1510 -> 1690 at
+          # that point, 1689 now — the paragraph after next says why, and it is not a loss;
+          # `entries` is unchanged at 119 because the ref-to arm adds no per-entry comparison.
+          #
+          # 🔴 AND THE LITERALS THIS REPLACED WERE ALREADY STALE BEFORE THAT SWEEP, WHICH IS
+          # WHY THE ARITHMETIC DOES NOT CLOSE ON THE OLD NUMBERS. They read 361 / 1489 / 363
+          # against a tree that measured 366 / 1510 / 368 — five targets, twenty-one
+          # comparisons and five PASS lines of drift already present, MEASURED by running this
+          # harness at `021be7a` rather than derived. A difference computed against a stale
+          # floor attributes that drift to whatever change happens to be in flight (here it
+          # read as "the sweep added 49"), which is how a floor silently loosens twice over.
+          # Re-derive a floor by RUNNING the harness, never by subtracting from the literal
+          # above it.
+          #
+          # 🔴 1690 -> 1689 IS A STATUS CHANGE, NOT A NARROWING, AND THE *ARM* IS WHAT SAYS SO.
+          # This total is the sum of FOUR arms and exactly one of them moved. Measured by
+          # instrumenting `compare`, `compare_audit` and `compare_process_stream` at both heads
+          # over the same generated store (seed and scale unchanged), not derived:
+          #
+          #   arm                                     parent   head
+          #   per-target status + headers + body        1230    1230   (410 targets x 3, all)
+          #   one ref-set comparison per scope            11      11
+          #   audit stream, line for line                425     425
+          #   process stream — the servers' STDERR        24      23   <- the entire delta
+          #
+          # What left the process stream is a diagnostic that was FALSE, and BOTH servers
+          # stopped writing it: `subsystem-recall: search-unreadable: all 2 entry files under
+          # `delta-mixed/` are MALFORMED — nothing could be read …`, written for the target
+          # `search-ref-to:wide-writer:delta-mixed`. `genstore.py` gives that scope TWO READABLE
+          # entries beside two malformed ones, so "nothing could be read" was a lie about it —
+          # the `?ref-to=` filter had skipped the readable pair upstream of the counter the
+          # status was selected on. A filter-driven zero now answers `search-no-match`, and
+          # `_exit_for` writes a stderr line only for an UNREADABLE status, so there is one
+          # fewer line IN EXISTENCE to compare. Isolated with
+          # `--only search-ref-to:wide-writer:delta-mixed`: process stream 4 lines at the
+          # parent and 3 at the head, that target's own three comparisons unchanged, PASS on
+          # both. Its status, headers and body are all still compared, so nothing about the
+          # response went unmeasured — and the exit code the status carries (3 -> 0) is one of
+          # the header fields being compared, not a field that disappeared.
+          #
+          # 🔴 HENCE WHAT THIS NUMBER IS AND IS NOT, AND THE FIRST DRAFT OF THIS PARAGRAPH WAS
+          # WRONG IN THE REASSURING DIRECTION. It aggregates a count of the two servers' STDERR
+          # LINES alongside the per-response field sets, so removing an operator diagnostic
+          # lowers it while every response is compared exactly as before. It said a response
+          # that lost a compared field "would lower it by the same 1", making the two
+          # "indistinguishable in the TOTAL". 🔴 MEASURED FALSE, AND WORSE THAN
+          # INDISTINGUISHABLE — INVISIBLE: `comparisons` is incremented at exactly THREE sites
+          # in `compare()` (status, the WHOLE header tuple, body), each unconditional before
+          # every return, so the count does not depend on how many header FIELDS the header
+          # comparison covers. Dropping `X-Store-Exit` from the compared set leaves
+          # comparisons=1689, 412 passes and differences=0 all UNCHANGED and this block exits
+          # 0. (The field IS compared today: forcing the Go server to emit `Exit + 7` yields
+          # `FAIL … header X-Store-Exit: '0' vs '7'`.) So no number here can refuse a narrowing
+          # INSIDE the header tuple — what refuses one is the per-field `FAIL header <name>`
+          # line and `internal/api`'s own tests, and ⚠ do NOT close the gap by counting
+          # per-field in `compare()`: that re-bases every floor above.
+          #
+          # 🔴 WHAT THE TWO ARM FLOORS BELOW DO BUY IS ATTRIBUTION, WHICH IS THE PART THAT WAS
+          # PROSE. "Attribute any move by measuring the ARMS" was an instruction to a human; the
+          # audit and process streams are the only arms that publish their own subtotal, so
+          # flooring those two makes a -1 in either one refuse under its OWN name, and a -1 that
+          # trips the total while both arms hold is thereby located in the per-target or ref-set
+          # arms. Measured on this branch: 425 and 23, the same run the 1689 came from. It does
+          # NOT close the invisible case above, and it does not floor the two arms that print no
+          # count — a floor re-derived without running the harness is a floor whose reason is a
+          # guess.
           problems = []
-          if targets < 361:
-              problems.append(f"targets {targets} < 361")
-          if comparisons < 1489:
-              problems.append(f"comparisons {comparisons} < 1489")
+          if targets < 410:
+              problems.append(f"targets {targets} < 410")
+          if comparisons < 1689:
+              problems.append(f"comparisons {comparisons} < 1689")
+          if arms["audit-stream"] < 425:
+              problems.append(f"audit-stream arm {arms['audit-stream']} < 425")
+          if arms["process-stream"] < 23:
+              problems.append(f"process-stream arm {arms['process-stream']} < 23")
           if entries < 119:
               problems.append(f"per-entry comparisons {entries} < 119")
           if differences:

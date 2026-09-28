@@ -139,6 +139,7 @@ __all__ = [
     "parse_task_ref",
     "format_task_refs",
     "lossy_tag_for",
+    "entry_references",
     "normalize_ref",
     "split_kind",
     "path_refs",
@@ -446,10 +447,15 @@ def parse_task_ref(raw: object) -> TaskRef:
         )
     # 🔴 A COMMA IS A SEPARATOR IN THE FORM THIS SCHEMA IS WRITTEN IN, so a ref
     # containing one cannot survive its own serialization: `format_task_refs`
-    # emits `tasks: [clickup:a,b]`, the inline-list reader splits on `,`, and the
+    # emits `refs: [clickup:a,b]`, the inline-list reader splits on `,`, and the
     # entry comes back MALFORMED and invisible to every reader. Rejecting it at
     # parse time is the only place that keeps "accepted" and "round-trips" the
     # same set — a writer-side check would still let a hand-written file through.
+    #
+    # ⚠ THE TWO REFUSAL MESSAGES AROUND THIS COMMENT STILL SPELL THE EXAMPLE
+    # `tasks: [a, b]` WHILE THE KEY TO WRITE IS `refs:`, AND THAT IS DEFERRED RATHER THAN
+    # MISSED: their bytes are pinned by `tests/conformance/` goldens and diffed against
+    # the Go port's, so the wording moves in a change whose subject is that re-base.
     if "," in text:
         raise TaskRefError(
             f"task ref {raw!r} contains a comma, which separates items in "
@@ -478,6 +484,14 @@ def parse_task_ref(raw: object) -> TaskRef:
 def format_task_refs(refs: "Sequence[TaskRef | str]") -> str:
     """Refs -> the single front-matter LINE that reads back as the same refs.
 
+    🔴 IT EMITS `refs:`, WHICH IS THE CANONICAL KEY, AND IT USED TO EMIT `tasks:`.
+    `tasks:`/`task:` are ACCEPTED spellings on the way in and are not the spelling to
+    write: the key carries repos, PRs, docs and dashboards, so `tasks:` names a subset of
+    what it holds. This is the ONLY serializer in either language, so a writer emitting the
+    older key was the one place a store could keep acquiring files written in it — which is
+    the whole reason it is an alias rather than the name. No live caller today; it is
+    exported, and being unreached is not being right.
+
     Inline flow form on ONE line, on purpose and not as a style preference: a
     wrapped list on a key the parser type-checks is what makes a whole entry
     MALFORMED and invisible to every reader, and this repo has already paid for
@@ -485,14 +499,14 @@ def format_task_refs(refs: "Sequence[TaskRef | str]") -> str:
     line cannot produce the wrapped shape at all.
 
     Returns `""` for no refs, so a caller can omit the key entirely rather than
-    writing `tasks: []` — an empty list and an absent key mean the same thing and
+    writing `refs: []` — an empty list and an absent key mean the same thing and
     the absent one is what 120 of 120 existing entries carry today.
 
     🔴 EVERY INPUT IS RE-PARSED, INCLUDING A `TaskRef`. An earlier version
     short-circuited on `isinstance(r, TaskRef)` and re-parsed only bare strings —
     which left the claim below false, because `TaskRef` is an exported frozen
     dataclass with no validation of its own: `TaskRef("clickup", "a,b", "x")`
-    constructs happily and rendered `tasks: [clickup:a,b]`, a line the inline
+    constructs happily and rendered `refs: [clickup:a,b]`, a line the inline
     reader splits into `clickup:a` and `b` — MALFORMED entry, invisible to every
     reader. A hand-built `TaskRef` carrying a newline was worse still.
 
@@ -505,7 +519,7 @@ def format_task_refs(refs: "Sequence[TaskRef | str]") -> str:
     items = [str(parse_task_ref(str(r))) for r in refs]
     if not items:
         return ""
-    return f"tasks: [{', '.join(items)}]"
+    return f"refs: [{', '.join(items)}]"
 
 
 def lossy_tag_for(ref: TaskRef) -> str:
@@ -554,6 +568,29 @@ def lossy_tag_for(ref: TaskRef) -> str:
             f"only its lossy tag encoding is not"
         )
     return tag
+
+
+def entry_references(entry: "SubsystemEntry", want: TaskRef) -> bool:
+    """Does this entry carry this ref — the REVERSE LOOKUP's one predicate.
+
+    🔴 ONE FUNCTION, BECAUSE THE FILTER RUNS AT SEVERAL CALL SITES AND A PREDICATE
+    OPEN-CODED AT N SITES IS WRONG AT N-1. `recall` narrows a scope's entries, `search`
+    narrows each searched scope's entries, and `internal/store.EntryReferences` is the
+    Go spelling; a further caller asking "which entries reference this" must reach this
+    and not re-derive it.
+
+    🔴 THE SYSTEM HALF IS COMPARED NORMALIZED AND THE ID HALF BYTE-IDENTICALLY, WHICH IS
+    THE SCHEMA'S OWN ASYMMETRY RATHER THAN A CHOICE MADE HERE. `parse_task_ref`
+    normalizes the system half (`GitHub:` and `github:` are one system) and preserves the
+    id half exactly, because a tracker's id may be case-sensitive and folding it would
+    make two different tasks compare equal. So a query for
+    `GitHub:example-org/example-repo#428` finds an entry written `github:…`, and a query
+    for `clickup:ABC` does NOT find `clickup:abc`. Both halves of that are load-bearing;
+    passing both sides through `parse_task_ref` applies the asymmetry once.
+    """
+    return any(
+        have.system == want.system and have.ident == want.ident for have in entry.tasks
+    )
 
 
 # --- The shared predicate ------------------------------------------------------
@@ -649,7 +686,15 @@ class SubsystemEntry:
     """`<slug>.md` or `<slug>.<kind>.md` — the name a candidate list must show."""
 
     tasks: tuple[TaskRef, ...] = ()
-    """The tasks this entry answers, in FILE ORDER, deduped, never normalized.
+    """The `refs:` this entry carries, in FILE ORDER, deduped, never normalized.
+
+    ⚠ THE FIELD KEEPS THE OLDER SPELLING WHILE THE KEY CHANGED, AND THAT IS A DECISION
+    RATHER THAN AN OVERSIGHT. The KEY is `refs:` (with `tasks:`/`task:` as PERMANENTLY
+    ACCEPTED aliases); renaming this attribute would break every construction site in the suite
+    and every read in `subsystem_recall`, in a change whose whole blast-radius claim is
+    "additive", for no behavioural difference. `internal/store`'s `Entry.Tasks` carries
+    the same note for the same reason.
+
 
     Defaulted and appended LAST on purpose: every existing construction site —
     including the ones in the test suite — builds an entry without it, and a
@@ -671,9 +716,20 @@ class SubsystemEntry:
 
         Accepted keys: `service` (required), `scope` or `repo` (required, one of),
         `aliases` (optional sequence), `kind` (optional), `filename` (optional —
-        supplied by the loader, otherwise derived), `tasks` (optional sequence of
-        `<system>:<id>` refs) or `task` (optional, scalar sugar for a one-element
-        `tasks`).
+        supplied by the loader, otherwise derived), `refs` (optional sequence of
+        `<system>:<id>` refs) with `tasks` (older sequence) and `task` (older
+        scalar sugar for a one-element list) as PERMANENTLY ACCEPTED aliases.
+
+        🔴 EVERY OTHER KEY IS IGNORED, NOT REFUSED, AND THAT IS MEASURED ON BOTH
+        IMPLEMENTATIONS RATHER THAN READ OFF THIS FUNCTION'S BODY. It reads only the
+        keys it names and never enumerates the mapping, which is a CODE reading; the
+        measurement is `test_unknown_front_matter_keys_are_ignored`, which hands it
+        `tags:`, `refs:` and a nonsense key in turn beside a valid `{service, scope}`
+        and asserts all three load, with a no-`service:` mapping in the same test as
+        the negative control proving the probe can observe a refusal. The Go loader was
+        probed the same way and agrees. That pair is what makes `refs:`
+        backward-compatible: an older reader handed a `refs:` file loads it and reports
+        no refs, rather than refusing the file.
         """
 
         def bad(why: str) -> MalformedEntryError:
@@ -762,24 +818,59 @@ class SubsystemEntry:
             # ambiguity is measured per ENTRY and never per alias-occurrence.
             normalized.add(na)
 
-        # --- `tasks:` / `task:` -------------------------------------------------
+        # --- `refs:`, with `tasks:` / `task:` as ACCEPTED ALIASES ---------------
+        # 🔴 WHY THE KEY WAS RENAMED, since `tasks:` parsed fine: it carries repos, PRs,
+        # docs and dashboards, not only work-tracker items, so `tasks:` NAMED A SUBSET of
+        # what it holds. An operator decision, not a green gate. `refs:` is the key to
+        # WRITE — `format_task_refs` is the only serializer and emits it.
+        #
+        # ⚠ NOTHING ANNOUNCES THE OLD SPELLINGS, AND THAT IS A DECISION RATHER THAN AN
+        # OVERSIGHT. A per-process stderr notice naming the replacement was built and then
+        # DELETED: measured across the two real stores, 0 of 440 entries carried `tasks:` or
+        # `task:`, so the line was unreachable in practice and its cross-client coverage was
+        # vacuous until a fixture was planted for it. The ALIAS is what operators depend on,
+        # and it is pinned by `test_the_older_spellings_still_parse` here and
+        # `TestTheOlderRefKeysStillParseAndRefsWins` on the Go side.
+        #
         # 🔴 VALIDATED HERE AND NOWHERE ELSE. The writer's own validate pass answers
         # "would the loader accept this file?" by constructing exactly what the
         # loader constructs (see `entry_mapping`), so putting the check here is
         # what makes the validator and the reader agree by construction rather
         # than by two people remembering to edit both. A second spelling at the
         # validator is the duplicated predicate `claude/RULES.md` names.
+        #
+        # 🔴 THE NEW KEY WINS WITHIN ONE ENTRY, AND IT WINS BY NOT CONSULTING THE OLD
+        # ONES AT ALL. It decides the one case that is
+        # not obvious: an entry carrying `refs:` AND BOTH older spellings does NOT
+        # hit the "both `tasks:` and `task:` are set" refusal below, because neither is
+        # read. That refusal is about two spellings DISAGREEING over what the entry's
+        # refs are; with `refs:` present the entry says exactly one thing, and refusing
+        # a file whose meaning is unambiguous is the opposite of what an ACCEPTED
+        # alias is for. The refusal is UNCHANGED for every entry that reaches it
+        # (`refs:` absent), which is every file the conformance corpus sends.
+        raw_refs_in = mapping.get("refs")
         raw_tasks_in = mapping.get("tasks")
         raw_task_in = mapping.get("task")
-        if raw_tasks_in and raw_task_in:
+        if not raw_refs_in and raw_tasks_in and raw_task_in:
             raise bad(
                 "both `tasks:` and `task:` are set — `task:` is sugar for a "
                 "one-element `tasks:`; keep one of them"
             )
-        if raw_tasks_in:
+        if raw_refs_in:
+            if isinstance(raw_refs_in, (str, bytes)):
+                # `refs:` is a LIST by definition, so a scalar there is a mistake
+                # worth naming rather than silently flattening.
+                raise bad(
+                    "`refs:` must be a list, not a bare string — write "
+                    "`refs: [<system>:<id>]`"
+                )
+            if not isinstance(raw_refs_in, _AbcSequence):
+                raise bad(f"`refs:` must be a list, got {type(raw_refs_in).__name__}")
+            task_items: object = raw_refs_in
+        elif raw_tasks_in:
             # `task:` is a SCALAR by definition, so a list there is a mistake worth
             # naming rather than silently flattening.
-            task_items: object = raw_tasks_in
+            task_items = raw_tasks_in
         elif raw_task_in:
             if not isinstance(raw_task_in, str):
                 raise bad(
@@ -3011,7 +3102,7 @@ def load_index(
             )
     index = build_index(mappings, extra_scopes=scopes, on_malformed=on_malformed)
     if not refused:
-        return index
+        return SubsystemIndex(by_scope=index.by_scope, malformed=index.malformed)
     # 🔴 MERGED HERE RATHER THAN PASSED INTO `build_index`. These rows have
     # ALREADY been through the `on_malformed` policy above (a non-collecting
     # caller never reaches this line), so handing them to a function whose whole
@@ -3019,5 +3110,6 @@ def load_index(
     # scope is already registered by `extra_scopes`, so the empty-scope rule
     # `build_index` implements for its own rejects needs nothing here.
     return SubsystemIndex(
-        by_scope=index.by_scope, malformed=index.malformed + tuple(refused)
+        by_scope=index.by_scope,
+        malformed=index.malformed + tuple(refused),
     )

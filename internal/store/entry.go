@@ -63,7 +63,15 @@ func (m MalformedEntry) Line() string {
 	return "malformed index entry `" + m.Label() + "`: " + m.Reason
 }
 
-// TaskRef is one `<system>:<id>` reference from an entry's `tasks:` front matter.
+// TaskRef is one `<system>:<id>` reference from an entry's `refs:` front matter (or from the
+// accepted `tasks:`/`task:` spellings — see `parseRefsField`, which is where both are read).
+//
+// ⚠ THE TYPE KEPT ITS NAME WHILE THE KEY CHANGED, AND THAT IS A DECISION RATHER THAN AN
+// OVERSIGHT. Renaming it would touch `internal/report`, `internal/ui`, every Go test and
+// nothing in the Python oracle, which has its own `TaskRef` and cannot be renamed in step
+// without breaking every construction site in its suite — churn across two languages with no
+// behavioural difference, in a change whose whole blast-radius claim is "additive". The KEY
+// is what an operator writes; the type name is internal.
 type TaskRef struct {
 	// System is normalized — lowercased and `-`-folded, like every other ref.
 	System string
@@ -112,8 +120,10 @@ type Entry struct {
 	// Filename is `<slug>.md` or `<slug>.<kind>.md` — the name a candidate list
 	// must show, and the name a write must locate the file by.
 	Filename string
-	// Tasks are the tasks this entry answers, in FILE ORDER, deduped, never
-	// normalized.
+	// Tasks are the `refs:` this entry carries, in FILE ORDER, deduped, never
+	// normalized. The FIELD keeps the older spelling for the reason `TaskRef`'s own
+	// comment gives; the KEY is `refs:`, with `tasks:`/`task:` as PERMANENTLY ACCEPTED
+	// aliases.
 	Tasks []TaskRef
 }
 
@@ -136,9 +146,19 @@ func (e Entry) Ref() string {
 //
 // Accepted keys: `service` (required), `scope` or `repo` (required, one of),
 // `aliases` (optional sequence), `kind` (optional), `filename` (optional —
-// supplied by the loader, otherwise derived), `tasks` (optional sequence of
-// `<system>:<id>` refs) or `task` (optional scalar sugar for a one-element
-// `tasks`).
+// supplied by the loader, otherwise derived), `refs` (optional sequence of
+// `<system>:<id>` refs) with `tasks` (older sequence) and `task` (older scalar
+// sugar for a one-element list) as PERMANENTLY ACCEPTED aliases.
+//
+// 🔴 EVERY OTHER KEY IS IGNORED, NOT REFUSED, AND THAT IS MEASURED ON BOTH
+// IMPLEMENTATIONS RATHER THAN READ OFF THIS FUNCTION'S BODY. This function reads only
+// the keys it names and never enumerates the mapping, which is a CODE reading; the
+// measurement is `TestUnknownFrontMatterKeysAreIgnored`, which hands it `tags:`, `refs:`
+// and a nonsense key in turn beside a valid `{service, scope}` and asserts all three
+// load, with a no-`service:` mapping in the same test as the negative control proving the
+// probe can observe a refusal. The oracle was probed the same way and agrees. That pair
+// is what makes `refs:` backward-compatible: an older reader handed a `refs:` file loads
+// it and reports no refs, rather than refusing the file.
 func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 	bad := func(why string) error { return malformed(source, why) }
 
@@ -248,7 +268,7 @@ func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 		normalizedSet[na] = struct{}{}
 	}
 
-	tasks, taskErr := parseTasksField(mapping, source)
+	tasks, taskErr := parseRefsField(mapping, source)
 	if taskErr != nil {
 		return Entry{}, taskErr
 	}
@@ -297,15 +317,53 @@ func sequenceField(mapping FrontMatter, key, source, scalarWhy string) ([]string
 	}
 }
 
-func parseTasksField(mapping FrontMatter, source string) ([]TaskRef, error) {
+// parseRefsField reads the entry's refs from `refs:`, or from the older `tasks:`/`task:`
+// spellings, which are ACCEPTED ALIASES and stay accepted.
+//
+// 🔴 WHY THE KEY WAS RENAMED AT ALL, since `tasks:` parsed fine: the key carries repos, PRs,
+// docs and dashboards, not only work-tracker items, so `tasks:` NAMED A SUBSET of what it
+// holds. An operator decision, not a green gate. `refs:` is the key to WRITE — see
+// `subsystem_resolver.format_task_refs`, the only serializer.
+//
+// ⚠ NOTHING ANNOUNCES THE OLD SPELLINGS, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.
+// A per-process stderr warning naming the replacement was built here and then DELETED:
+// measured across the two real stores, 0 of 440 entries carried `tasks:` or `task:`, so the
+// line was unreachable in practice, and its cross-client coverage was vacuous until a
+// fixture was planted for it. The ALIAS is what operators depend on; the notice was cost
+// with no reader. `TestTheOlderRefKeysStillParseAndRefsWins` is what keeps the alias
+// honest, and `tests/conformance/`'s `linked-set/linked-old-key.md` exercises it over the
+// wire.
+//
+// 🔴 THE NEW SPELLING WINS WITHIN ONE ENTRY, AND IT WINS BY NOT CONSULTING THE OLD ONES AT
+// ALL. It is what decides the one case that is not obvious: an
+// entry carrying `refs:` AND BOTH older spellings does NOT hit the "both `tasks:` and
+// `task:` are set" refusal, because neither is read. That refusal is about two spellings
+// DISAGREEING over what the entry's refs are, and when `refs:` is present there is no
+// disagreement to resolve — the entry says exactly one thing. Making it fire anyway would
+// refuse a file whose meaning is unambiguous, which is the opposite of what an ACCEPTED
+// alias is for. The refusal is unchanged for the entries that reach it (`refs:` absent),
+// which is every file the corpus sends.
+func parseRefsField(mapping FrontMatter, source string) ([]TaskRef, error) {
 	bad := func(why string) error { return malformed(source, why) }
+	refsVal, hasRefs := truthy(mapping, "refs")
 	tasksVal, hasTasks := truthy(mapping, "tasks")
 	taskVal, hasTask := truthy(mapping, "task")
-	if hasTasks && hasTask {
+	if !hasRefs && hasTasks && hasTask {
 		return nil, bad("both `tasks:` and `task:` are set — `task:` is sugar for a one-element `tasks:`; keep one of them")
 	}
 	var items []string
 	switch {
+	case hasRefs:
+		switch typed := refsVal.(type) {
+		case []string:
+			items = typed
+		case string:
+			// `refs:` is a LIST by definition, so a scalar there is a mistake
+			// worth naming rather than silently flattening.
+			return nil, bad("`refs:` must be a list, not a bare string — write `refs: [<system>:<id>]`")
+		default:
+			return nil, bad(fmt.Sprintf("`refs:` must be a list, got %T", refsVal))
+		}
 	case hasTasks:
 		switch typed := tasksVal.(type) {
 		case []string:
@@ -395,8 +453,14 @@ func ParseTaskRef(raw string) (TaskRef, error) {
 	}
 	// 🔴 A COMMA IS A SEPARATOR IN THE FORM THIS SCHEMA IS WRITTEN IN, so a ref
 	// containing one cannot survive its own serialization: the writer emits
-	// `tasks: [a,b]`, the inline-list reader splits on `,`, and the entry comes
+	// `refs: [a,b]`, the inline-list reader splits on `,`, and the entry comes
 	// back MALFORMED and invisible to every reader.
+	//
+	// ⚠ THE TWO REFUSAL MESSAGES AROUND THIS COMMENT STILL SPELL THE EXAMPLE `tasks: [a, b]`
+	// WHILE THE KEY TO WRITE IS `refs:`, AND THAT IS DEFERRED RATHER THAN MISSED. Their bytes
+	// are pinned by `tests/conformance/` goldens and diffed against the oracle's, so the
+	// wording moves in a change whose subject is that re-base — the same reason the text
+	// renderer's `tasks:` label has not moved (see `report.RecallReport.RenderText`).
 	if strings.Contains(text, ",") {
 		return TaskRef{}, fmt.Errorf(
 			"task ref %s contains a comma, which separates items in `tasks: [a, b]` — a ref cannot contain one",

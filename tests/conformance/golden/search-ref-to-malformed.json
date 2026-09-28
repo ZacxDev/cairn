@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 134,
+    "kind": "text_lines",
+    "sha256": "f6224e26b062d4581b5f28cd18f0c9f8a0d1a5291d75575ab29a9e64cda63083",
+    "text_lines": [
+      "bad request: ref-to is not a well-formed `<system>:<id>` ref: task ref 'github:' has an empty id half — write it as `<system>:<id>`",
+      ""
+    ]
+  },
+  "case": "search-ref-to-malformed",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "134"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

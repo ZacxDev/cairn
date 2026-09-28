@@ -1,0 +1,40 @@
+{
+  "body": {
+    "bytes": 183,
+    "kind": "text_lines",
+    "sha256": "690c3451e304274fc61545fb29e2be81e4a5036be76cb860cdf307623b317bf6",
+    "text_lines": [
+      "bad request: ref-to is not a well-formed `<system>:<id>` ref: task ref 'no-colon-here' has no `:` — write it as `<system>:<id>`, e.g. `clickup:868abc123` or `github:owner/repo#428`",
+      ""
+    ]
+  },
+  "case": "recall-ref-to-malformed",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Connection",
+      "close"
+    ],
+    [
+      "Content-Length",
+      "183"
+    ],
+    [
+      "Content-Type",
+      "text/plain; charset=utf-8"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "bad-request"
+    ]
+  ],
+  "reason": "Bad Request",
+  "status": 400
+}

@@ -373,6 +373,54 @@ def cases(closed_port: int, hostile_port: int = 1) -> list[Case]:
              ["recall", "--scope", "alpha-notes", "--ref", "ledger-holder"]),
         Case("recall-ref-absent", "an absence QUALIFIED by the scope's own reject",
              ["recall", "--scope", "alpha-notes", "--ref", "ghost-ref"]),
+        # --- the REVERSE lookup -------------------------------------------------
+        # 🔴 THESE ROWS ARE THE ONLY THING THAT COMPARES THE TWO CLIENTS ON `--ref-to`.
+        # `tests/conformance/` compares the two SERVERS over `?ref-to=`, which is a different
+        # claim: it never parses a command line. A Go client that refused the flag, spelled it
+        # `--refto`, or dropped its operand would pass every other gate in this repository —
+        # `go test`, the corpus against both servers, and the leak gate — and be caught only
+        # here.
+        Case("recall-ref-to-hit",
+             "the REVERSE lookup: which entries reference this. One of the three readable "
+             "entries in `alpha-notes` carries it, so the row measures the narrowing AND the "
+             "`ref-to:` header line's two counts — which differ from each other here",
+             ["recall", "--scope", "alpha-notes",
+              "--ref-to", "github:example-org/example-repo#428"]),
+        Case("recall-ref-to-absent",
+             "the reverse lookup's own non-finding — `ref-to-absent`, exit 0, and a sentence "
+             "that must not read as an empty scope",
+             ["recall", "--scope", "alpha-notes", "--ref-to", "clickup:no-such-task"]),
+        Case("recall-ref-to-id-half-does-not-fold",
+             "🔴 THE SCHEMA'S ASYMMETRY, ON THE CLIENTS. The system half folds and the id half "
+             "does NOT, so this differs from `recall-ref-to-hit` only in the id half's case and "
+             "must find NOTHING. A client that folded both would pass the row above",
+             ["recall", "--scope", "alpha-notes",
+              "--ref-to", "github:EXAMPLE-ORG/example-repo#428"]),
+        Case("recall-ref-to-composes-with-ref",
+             "both narrowings at once: `--ref` names an ENTRY and `--ref-to` names something an "
+             "entry POINTS AT, and the resolver knows nothing about the second — so an entry it "
+             "finds that does not carry the ref must come back as the non-finding. 🔴 AND THE "
+             "ROW IS ABOUT THE PROSE, NOT ONLY THE STATUS: `widget-cfg` carries no refs while "
+             "`gauge-api` in the same scope DOES, so both clients must print `1 of 3` and a "
+             "sentence naming the ENTRY — they agreed on `0 of 3` and `NO ENTRY REFERENCES` for "
+             "a whole round, which is a byte-identical pair of clients both saying something "
+             "false about the store",
+             ["recall", "--scope", "alpha-notes", "--ref", "widget-cfg",
+              "--ref-to", "github:example-org/example-repo#428"]),
+        Case("recall-ref-to-malformed",
+             "the operand goes through the SAME parser an entry's `refs:` item does, and both "
+             "clients must refuse it at exit 2 with ONE sentence — the oracle used to traceback "
+             "at rc 1 wherever a wrapper forgot the `except ValueError`",
+             ["recall", "--scope", "alpha-notes", "--ref-to", "no-colon-here"]),
+        Case("search-ref-to-hit",
+             "the same narrowing on `search`, whose branch needed its own `except ValueError` "
+             "because `--ref-to` is the first caller-supplied operand it passes",
+             ["search", "lease", "--scope", "alpha-notes",
+              "--ref-to", "github:example-org/example-repo#428"]),
+        Case("search-ref-to-malformed",
+             "search's own copy of the operand refusal — a different code path from recall's",
+             ["search", "lease", "--scope", "alpha-notes", "--ref-to", "github:"]),
+
         Case("recall-mode-full", "`--mode full` explicitly, which stays authoritative over the "
              "flag-derived mode", ["recall", "--scope", "alpha-notes", "--mode", "full"]),
         Case("recall-scope-empty", "a directory that exists and holds nothing — and the LIVE "

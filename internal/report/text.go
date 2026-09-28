@@ -202,6 +202,23 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 	out = append(out, extraHeader...)
 	out = append(out, "  caveat: "+r.Caveat())
 
+	// 🔴 THE NARROWING ANNOUNCES ITSELF, BECAUSE EVERY COUNT BELOW IT IS ABOUT THE NARROWED
+	// SET. Without this line a `--ref-to` digest is byte-indistinguishable from a digest of a
+	// scope that happens to hold exactly those entries — the reader would take a filtered
+	// index for the whole one. It carries BOTH numbers so what the filter removed is visible.
+	//
+	// ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves. `HasRefTo` is
+	// false on every request that does not carry the parameter, and the line is absent then.
+	if r.HasRefTo {
+		// ⚠ THE LAST ARGUMENT IS THE RENDER DECISION, NOT A STATUS. "Everything below is
+		// about those N" is a claim about the BODY, so the body is what has to answer it:
+		// `RendersNarrowedSet()` is true exactly when a matched entry is printed below,
+		// and its own header records the three shapes a status-name derivation got wrong
+		// plus the digest-mode case that rules out the obvious second guess.
+		out = append(out, refToLine(r.RefTo, r.RefToMatched, r.RefToScopeTotal, r.Scope+"/",
+			r.RendersNarrowedSet()))
+	}
+
 	// 🔴 BEFORE EVERY STATUS BRANCH, INCLUDING THE ONES THAT RETURN IMMEDIATELY. A reject
 	// reported only on the paths somebody remembered is a reject that will be missed on
 	// the path they did not — and `scope-absent`, the most common status in most repos, is
@@ -244,6 +261,57 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 		out = append(out, "AMBIGUOUS REF `"+r.Ref+"` — it names more than one entry, so "+
 			"nothing was surfaced. The resolver never picks; neither does this. Candidates: "+
 			strings.Join(r.Candidates, ", ")+". Re-run naming one of them.")
+		return strings.Join(out, "\n")
+
+	case StatusRefToAbsent:
+		out = append(out, "")
+		// 🔴 TWO SENTENCES FOR ONE STATUS, BECAUSE `ref-to-absent` IS REACHED TWO WAYS AND
+		// THE SECOND ONE IS NOT AN ABSENCE AT ALL. Nothing in the scope matched (the filter's
+		// own zero) and "the `--ref` operand is not among the entries that DID match" are
+		// different facts, and the second shipped wearing the first's words: both clients
+		// printed "NO ENTRY REFERENCES <X>" over a scope where other entries carried it,
+		// because the numerator had been pinned to 0 whenever the status was this one. The
+		// discriminator is `RefToMatched` — see its field header for both directions of that
+		// pendulum.
+		if r.RefToMatched > 0 {
+			// The `--ref` operand loaded fine, so the malformed rows cannot make THIS claim
+			// wrong; they can only understate the count of entries that DO carry the ref,
+			// which is what the qualification names.
+			extra := ""
+			if n := len(r.Malformed); n > 0 {
+				extra = " ⚠ AND THAT COUNT IS ONLY OF ENTRIES THAT LOADED: " + strconv.Itoa(n) +
+					" entry file" + plural(n) + " in this scope could not be indexed (listed " +
+					"above), and an entry that never loaded carries no refs a filter can see."
+			}
+			out = append(out, "`"+r.Ref+"` DOES NOT REFERENCE `"+r.RefTo+"` — it was read and "+
+				"carries no such ref, so the two narrowings compose to nothing and no body is "+
+				"printed. "+strconv.Itoa(r.RefToMatched)+" of the "+
+				strconv.Itoa(r.RefToScopeTotal)+" entr"+entryPlural(r.RefToScopeTotal)+" in `"+
+				r.Scope+"/` "+doesOrDo(r.RefToMatched)+" reference it — re-run without `--ref` "+
+				"to see "+themOrIt(r.RefToMatched)+
+				". The comparison is on THIS SCOPE's `refs:` keys and "+
+				"the id half is matched byte-for-byte, so a different spelling of it would not "+
+				"be found here either."+extra)
+			return strings.Join(out, "\n")
+		}
+		// 🔴 IT SAYS WHAT WAS LOOKED AT AND WHAT WAS NOT, because a reverse lookup's zero is
+		// the most misreadable answer this reader produces: "no entry references X" and "X is
+		// not a thing anybody tracks" are different facts, and only the first is in evidence.
+		// The malformed rows are already above; this sentence is what stops the reader
+		// concluding from them in the wrong direction, exactly as `ref-absent`'s does.
+		extra := ""
+		if n := len(r.Malformed); n > 0 {
+			extra = " ⚠ BUT " + strconv.Itoa(n) + " entry file" + plural(n) + " in this scope " +
+				"could not be indexed (listed above), and an entry that never loaded carries no " +
+				"refs a filter can see — one of them may reference this. Check those before " +
+				"concluding nothing does."
+		}
+		out = append(out, "NO ENTRY REFERENCES `"+r.RefTo+"` — the "+
+			strconv.Itoa(r.RefToScopeTotal)+" entr"+entryPlural(r.RefToScopeTotal)+" in `"+
+			r.Scope+"/` were read and none of them carries that ref. This is a fact about "+
+			"THIS SCOPE's `refs:` keys and NOT about whether the reference exists: an entry "+
+			"may point at it under a different spelling of the id half, which is compared "+
+			"byte-for-byte."+extra)
 		return strings.Join(out, "\n")
 
 	case StatusRefAbsent:
@@ -332,6 +400,15 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			// 🔴 THE REFS THEMSELVES, AND ONLY IN A BODY. Above the sections deliberately:
 			// "which task does this answer" is identity, like the ref and the sensitivity
 			// on the line above, not content.
+			//
+			// ⚠ THE LABEL STILL READS `tasks:` WHILE THE FRONT-MATTER KEY IS `refs:` AND THE
+			// BROWSER SURFACE SAYS "Refs", AND THAT IS DEFERRED RATHER THAN OVERLOOKED. The
+			// Go type's field and the Python dataclass's each got a paragraph explaining the
+			// name; this line had none, so a reader could not tell the mismatch from an
+			// omission. Changing it is not a rename: it re-bases every recall golden in
+			// `tests/conformance/`, the reader fixture `internal/report/testdata/` replays,
+			// and the parity harness's byte diffs — so it belongs in a change whose whole
+			// subject is that re-base, not in one that happens to touch this function.
 			out = append(out, "    tasks: "+strings.Join(e.Tasks, ", "))
 		}
 		for _, heading := range SurfacedHeadings {
@@ -397,6 +474,55 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 			"not a judgement about relevance — raise it to see the rest.")
 	}
 	return strings.Join(out, "\n")
+}
+
+// refToLine is the ONE spelling of the reverse-lookup header, shared by both renderers.
+//
+// 🔴 ONE FUNCTION, TWO CALLERS, BECAUSE THE TWO REPORT TYPES HAVE DIFFERENT COUNTS TO PUT IN
+// IT AND THE SENTENCE MUST NOT DIFFER. `CaveatText`'s own header gives the rule: a package
+// with two report types spells a shared sentence once, or it is wrong in one of them.
+//
+// `matched`/`total` are the narrowed and pre-filter counts. `narrowedSetShown` says whether
+// the report BELOW this line reports on the matched entries — a PREDICATE each caller
+// answers for itself, and deliberately not a status test: `RecallReport` passes
+// `RendersNarrowedSet()` (see its header for the statuses a status test got wrong) and
+// `SearchReport` passes a constant, justified at its own call site. It is a separate clause
+// rather than a second function so the COUNT half stays spelled once.
+//
+// ⚠ `label` IS A FORMED LABEL AND CARRIES ITS OWN TRAILING `/`, so do not append one here.
+// The draft passed `SearchReport.Scope`, which on a store-wide search is the literal
+// `(all scopes)`, plus a `/` — printing “ `(all scopes)/` “. `SearchReport.Label()` is what it
+// passes now: `ScopeLabel` over the SEARCHED scopes, which cannot return `(all scopes)` at all
+// (it returns `(no scope)` for an empty set, and a `/`-suffixed join otherwise). Caught by
+// reading the regenerated golden, not by a test: both implementations agreed, and both were
+// wrong.
+func refToLine(refTo string, matched, total int, label string, narrowedSetShown bool) string {
+	reach := "and everything below is about those " + strconv.Itoa(matched) + "."
+	if !narrowedSetShown {
+		reach = "and NOTHING below is about them — the sentence below says why."
+	}
+	return "  ref-to: `" + refTo + "` — " + strconv.Itoa(matched) + " of " +
+		strconv.Itoa(total) + " entr" + entryPlural(total) + " in `" + label +
+		"` reference it, " + reach +
+		" This is a NARROWING, not a truncation: the rest were read and did not match."
+}
+
+// themOrIt and doesOrDo agree with a COUNT the reader is being pointed at, not with the
+// entry-total beside it in the same sentence. Spelled here beside their siblings because the
+// `ref-to-absent` sentence puts both numbers in one clause — "1 of the 2 entries … DOES" — and
+// an idiom inlined there would be the one that agrees with the wrong one.
+func themOrIt(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
+}
+
+func doesOrDo(n int) string {
+	if n == 1 {
+		return "DOES"
+	}
+	return "DO"
 }
 
 // entryAboveIs is `entr{'y above is' if n == 1 else 'ies above are'}` — one idiom, spelled

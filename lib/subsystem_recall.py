@@ -291,11 +291,15 @@ from subsystem_resolver import (  # noqa: E402
     SubsystemIndex,
     UnknownScopeError,
     associate_paths,
+    entry_references,
     load_index,
     normalize_ref,
     parse_front_matter,
     parse_journal_bullets,
+    parse_task_ref,
     resolve_ref_tiered,
+    TaskRef,
+    TaskRefError,
     visible_scope_set,
 )
 from subsystem_resolver import extract_sections as _extract_sections  # noqa: E402
@@ -595,6 +599,18 @@ KNOWN_SENSITIVITIES: tuple[str, ...] = ("client-confidential", "personal", "publ
 #   3. scope-empty      — the scope exists; there is simply nothing in it.
 #   4. ref-ambiguous    — a ref was given and names more than one entry: never pick.
 #   5. ref-absent       — a ref was given and names none.
+#   5b. ref-to-absent   — a `--ref-to` was given and NO entry in the caller's
+#                         reachable scopes carries that ref. 🔴 NOT `scope-empty`
+#                         and NOT `ref-absent`, and collapsing it into either would
+#                         print something false: `scope-empty` claims the DIRECTORY
+#                         holds nothing, which is wrong about a full scope none of
+#                         whose entries carries the ref; `ref-absent` is about an
+#                         ENTRY NAME and sends the reader looking for a file. This
+#                         one is about a POINTER. It is listed after `ref-absent`
+#                         because the FILTER runs first: a `--ref-to` that matches
+#                         nothing returns before any `--ref` is resolved, so
+#                         `ref-to-absent` outranks the two ref outcomes in practice
+#                         while sharing their "a narrowing was given" character.
 #   6. recalled         — something was surfaced.
 # `StoreMissingError` / `EntryUnreadableError` are NOT in this tuple: they raise.
 # A status constant no code path could emit would be a declaration with nothing
@@ -607,17 +623,23 @@ KNOWN_SENSITIVITIES: tuple[str, ...] = ("client-confidential", "personal", "publ
 #   8. search-no-match   nothing did. NOT spelled `*-empty`: an empty scope and a
 #                        query that matched nothing in a full scope are different
 #                        facts, and two statuses that share a word get read as one.
-#   9. search-unreadable the searched scopes held files and none could be indexed,
-#                        so the query never ran against anything. Same argument as
-#                        `scope-unreadable`, and the same reason it must not
-#                        collapse into `search-no-match`: a zero from a scan that
-#                        walked nothing is not a zero.
+#   9. search-unreadable the searched scopes held files, NONE could be indexed,
+#                        and no readable entry was removed by a `--ref-to` filter
+#                        either — so the query never ran against anything. Same
+#                        argument as `scope-unreadable`, and the same reason it must
+#                        not collapse into `search-no-match`: a zero from a scan that
+#                        walked nothing is not a zero. 🔴 THE LAST TERM IS NOT
+#                        DECORATION: without it a filter that removed every readable
+#                        entry answered this status over a scope whose entries were
+#                        all indexed fine, printing "NOT ONE of them could be
+#                        indexed" about files that were.
 STATUS_PRECEDENCE: tuple[str, ...] = (
     "scope-absent",
     "scope-unreadable",
     "scope-empty",
     "ref-ambiguous",
     "ref-absent",
+    "ref-to-absent",
     "recalled",
     "search-hit",
     "search-no-match",
@@ -1010,7 +1032,18 @@ class RecalledEntry:
     """
 
     tasks: tuple[str, ...] = ()
-    """The entry's `tasks:` refs as written (`<system>:<id>`), in file order.
+    """The entry's refs as written (`<system>:<id>`), in file order.
+
+    ⚠ THE FIELD NAME READS `tasks` WHILE THE FRONT-MATTER KEY IS `refs:`, AND THAT
+    IS DEFERRED RATHER THAN OVERLOOKED. `tasks:`/`task:` are still accepted
+    spellings on the way in — permanently, by operator decision — so the name is
+    not stale about the schema, only narrower than it: the key carries repos, PRs,
+    docs and dashboards, not only work-tracker items. Renaming the field is a
+    mechanical change that would have to move `SubsystemEntry.tasks`, the JSON
+    payload's key, `internal/report.RecalledEntry.Tasks` and the rendered
+    `tasks:` label together, which re-bases goldens — so it belongs in a change
+    whose whole subject is that re-base. `render_text`'s own label carries the
+    same note.
 
     Carried from `SubsystemEntry.tasks` rather than re-parsed from the front
     matter here: the loader already validated them, and a second parse at the
@@ -1263,6 +1296,49 @@ class RecallReport:
 
     limit: int = DEFAULT_ENTRY_LIMIT
     ref: str | None = None
+
+    ref_to: str | None = None
+    """The `--ref-to`/`?ref-to=` REVERSE-LOOKUP narrowing, in its CANONICAL spelling.
+
+    `None` means no filter was sent — the same discriminator `ref` uses, rather than a
+    second `has_*` boolean, because `str(parse_task_ref(x))` can never be `""` and there
+    is therefore no value for which the two would disagree. (The Go port carries an
+    explicit `HasRefTo` because `RecallOptions` is a struct with no nil string.)
+
+    ⚠ SET ON EVERY STATUS THE NARROWING REACHED, and NOT on `scope-absent` or
+    `scope-unreadable`: both return before the filter runs, and printing "narrowed to X"
+    above "this scope does not exist" would suggest the narrowing is why nothing came back.
+    """
+
+    ref_to_scope_total: int = 0
+    """Entries the scope held BEFORE the ref-to filter ran.
+
+    🔴 IT EXISTS SO THE FILTER CANNOT HIDE WHAT IT REMOVED. `total_in_scope` is the set the
+    report is ABOUT, which after a narrowing is the matching entries; without this second
+    number a reader could not tell "2 entries reference this" from "the scope holds 2
+    entries". `render_text`'s ref-to line prints both.
+    """
+
+    ref_to_matched: int = 0
+    """Entries in the scope that CARRY the ref-to: the ref-to line's numerator.
+
+    🔴 A STORED COUNT RATHER THAN A DERIVATION, AND THE PENDULUM SWUNG TWICE BEFORE IT BECAME
+    ONE. Both mistakes printed a false sentence about the store, in BOTH implementations at
+    once, so no assertion comparing them could see either:
+
+    1. Reading `total_in_scope` — the scope's own total on the `ref-to-absent` branch, so the
+       report can say how much WAS read — printed "3 of 3 entries in `<scope>/` reference it"
+       for a ref NONE of them carried.
+    2. Fixing that by forcing the numerator to 0 whenever the status is `ref-to-absent`
+       printed "0 of 3 …" and "NO ENTRY REFERENCES <X>" on a `--ref A --ref-to B` run where A
+       does not carry B and other entries DO. `ref-to-absent` is reached TWO ways — nothing in
+       the scope matched, and the named entry is not among the ones that did — and a status
+       cannot tell them apart.
+
+    Both were caught by reading a regenerated golden. It is set once, from the filter's own
+    result, on the only branch that runs the filter.
+    """
+
     candidates: tuple[str, ...] = ()
     """Filenames an ambiguous `--ref` named. The resolver never picks; nor does this."""
 
@@ -1346,6 +1422,41 @@ class RecallReport:
     """Which selector chose `entries[0]`, in words — `select_featured`'s second
     return value. Set in `digest` mode only. Never None there: a featured entry
     with no stated basis is the implicit pick this module refuses to make."""
+
+    @property
+    def renders_narrowed_set(self) -> bool:
+        """Does anything BELOW the ref-to line report on the entries the filter kept?
+
+        🔴 THE RENDER DECISION AND NEVER A STATUS NAME — THE SAME MISTAKE AS
+        `ref_to_matched`'s, ONE LEVEL OUT, AND MEASURED WRONG THE SAME WAY. The clause
+        was first derived as `status != "ref-to-absent"`, whose comment asserted that
+        was false on `ref-to-absent` and on nothing else. Three other shapes count
+        matched entries and then render none of them, so each printed "everything below
+        is about those N" over a body about no entry at all: `ref-absent`
+        (`--ref <no such entry> --ref-to <carried by others>`), `ref-ambiguous` (whose
+        own sentence says "nothing was surfaced"), and a `list`-mode `--page` past the
+        end (whose notice says "Nothing was listed here").
+
+        ⚠ AND `page_is_past_the_end` IS NOT THE MISSING TERM EITHER — the SAME page past
+        the end in `digest` mode still prints the featured body, so it does report on a
+        matched entry. That case is the control separating this predicate from any
+        spelling built out of statuses and page arithmetic.
+
+        `entries` and `listing` are the only two sets below the header that can hold an
+        entry THE FILTER KEPT, and after the filter both hold matched entries exclusively
+        — so their emptiness IS the question, and it stays the question if a status is
+        added or a branch moves. `internal/report.RecallReport.RendersNarrowedSet` is the
+        Go twin; `tests/parity/harness.py` diffs the two clients' bytes.
+
+        ⚠ NOT "the only two sets the renderer prints below the header", which is what
+        this said and is false: `candidates`, `malformed`, `malformed_elsewhere` and
+        `known_scopes` all print below it. None of them can carry a matched entry —
+        candidates are filenames offered by an AMBIGUOUS ref, the two malformed sets are
+        rejects the filter never saw because they never reached the index, and
+        `known_scopes` is a list of scope names — so the property is unaffected. The
+        sentence was wrong; the claim under it was not.
+        """
+        return bool(self.entries) or bool(self.listing)
 
     @property
     def omitted(self) -> int:
@@ -1503,6 +1614,7 @@ def recall(
     scope: str,
     *,
     ref: str | None = None,
+    ref_to: str | None = None,
     limit: int = DEFAULT_ENTRY_LIMIT,
     mode: str = DEFAULT_MODE,
     page: int = 1,
@@ -1548,6 +1660,10 @@ def recall(
         raise ValueError(f"page must be an int >= 1, got {page!r}")
     if mode not in RECALL_MODES:
         raise ValueError(f"mode must be one of {RECALL_MODES}, got {mode!r}")
+    # 🔴 LAST IN THE LADDER, DELIBERATELY, BECAUSE THE ORDER ABOVE IS A RECORDED
+    # CONTRACT. A request carrying two bad parameters gets ONE message and which one it
+    # gets is in the goldens; inserting a new guard anywhere but the end moves those.
+    ref_to_ref = _validated_ref_to(ref_to)
 
     # 🔴 `visible_scopes` IS PASSED, NEVER RE-DERIVED. A scope the caller may not
     # see must be absent from the INDEX, not filtered out of each answer — see
@@ -1599,6 +1715,57 @@ def recall(
             malformed_elsewhere=bad_elsewhere,
         )
 
+    # 🔴 THE REVERSE-LOOKUP NARROWING GOES HERE: AFTER `index.entries(scope)`, WHICH
+    # IS AFTER SCOPE AUTHORISATION, AND NEVER BEFORE IT.
+    #
+    # The index `load_store` returned is already narrowed to the scopes this caller
+    # may read — that is the ONE narrowing, and `load_store`'s own header lists the
+    # four leaks a per-answer filter re-opens. So this filter can only ever REMOVE
+    # entries from a set the caller was already entitled to, and it is structurally
+    # incapable of surfacing one they were not.
+    #
+    # 🔴 THE WRONG ORDER IS A REAL AND CHEAP MISTAKE, WHICH IS WHY THE ORDER IS STATED
+    # RATHER THAN LEFT TO THE CALL SEQUENCE. "Which entries reference this?" reads like
+    # a store-wide question, and the obvious implementation of a store-wide question is
+    # a store-wide load — `load_index(root)` with `visible_scopes` quietly dropped —
+    # followed by a ref filter. That answers correctly and LEAKS: the hit set names
+    # entries, scopes and refs from directories the caller cannot read, which is
+    # exactly the `search?all_scopes=1` hole `load_store` closed.
+    #
+    # ⚠ `total_in_scope` BECOMES THE NARROWED COUNT and `ref_to_scope_total` carries
+    # the scope's own, for the reason `ref_to_scope_total`'s docstring gives.
+    # 🔴 ONE DICT, BUILT ONCE AND SPLATTED INTO EVERY RETURN BELOW. Nine literals build a
+    # `RecallReport` in this function and the reverse-lookup fields belong on every one of
+    # them the filter reached; assigning them per literal is the same assignment at nine
+    # sites, wrong at the one somebody forgets.
+    ref_to_fields: dict[str, object] = {}
+    scope_total = len(entries)
+    if ref_to_ref is not None:
+        matching = tuple(e for e in entries if entry_references(e, ref_to_ref))
+        # 🔴 `ref_to_matched` GOES IN HERE, FROM THE FILTER'S OWN RESULT, BEFORE ANY STATUS
+        # BRANCH — it is the one number the rendered line's numerator may be read from. See
+        # the field's docstring for the two false sentences that came out of deriving it.
+        ref_to_fields = {
+            "ref_to": str(ref_to_ref),
+            "ref_to_scope_total": scope_total,
+            "ref_to_matched": len(matching),
+        }
+        if not matching:
+            return RecallReport(
+                status="ref-to-absent",
+                scope=normalize_ref(scope),
+                store_root=str(store),
+                total_in_scope=scope_total,
+                limit=limit,
+                mode=mode,
+                ref=normalize_ref(ref) if ref is not None else None,
+                known_scopes=index.scopes,
+                malformed=bad,
+                malformed_elsewhere=bad_elsewhere,
+                **ref_to_fields,
+            )
+        entries = matching
+
     if ref is not None:
         try:
             entry, _tier = resolve_ref_tiered(ref, index, scope)
@@ -1615,6 +1782,7 @@ def recall(
                 known_scopes=index.scopes,
                 malformed=bad,
                 malformed_elsewhere=bad_elsewhere,
+                **ref_to_fields,
             )
         if entry is None:
             return RecallReport(
@@ -1628,6 +1796,51 @@ def recall(
                 known_scopes=index.scopes,
                 malformed=bad,
                 malformed_elsewhere=bad_elsewhere,
+                **ref_to_fields,
+            )
+        # 🔴 THE TWO NARROWINGS COMPOSE, AND THE RESOLVER DOES NOT KNOW ABOUT THE
+        # FIRST ONE. `resolve_ref_tiered` resolves against the whole (authorised)
+        # INDEX — it has to, since the alias and cross-scope tiers are properties of
+        # the index and not of a tuple — so an entry it finds is not necessarily in
+        # the ref-to set. Without this membership test, `--ref X --ref-to Y` would
+        # print X in full whether or not X references Y: the report answering a
+        # question nobody asked.
+        #
+        # ⚠ COMPARED BY (scope, filename), NOT BY `ref`. `SubsystemEntry.ref` is
+        # `<slug>[.<kind>]` and carries no scope, so two entries in two scopes can
+        # share one — a ref-only test would accept a cross-scope resolution as a
+        # member of this scope's narrowed set. The pair used here is what the loader
+        # itself locates a file by.
+        #
+        # 🔴 `total_in_scope` IS THE NARROWED COUNT HERE — `len(entries)`, NOT `scope_total`.
+        # `entries` has already been replaced by the matching set above, and the rule this
+        # function declares is that after a narrowing `total_in_scope` is the set the report is
+        # ABOUT while `ref_to_scope_total` carries the scope's own. This branch passed
+        # `scope_total` while the Go port passed the narrowed count, so the two
+        # implementations disagreed about one field's MEANING.
+        #
+        # ⚠ AND NO CONSUMER COULD HAVE OBSERVED IT — FIXED BEFORE IT HAD ONE, WHICH IS A
+        # NARROWER CLAIM THAN THE DRAFT MADE. That draft called it a LIVE divergence on the
+        # grounds that `report_json` serialises the field, and that does not follow:
+        # `report_json` has no caller outside `tests/`, `main` below passes no `ref_to` and
+        # therefore cannot reach this branch at all, `cairn` renders text, and the Go port
+        # has no JSON recall payload to disagree with. Nothing renders `total_in_scope` here
+        # either, so no byte-diff gate could see it.
+        if ref_to_ref is not None and not any(
+            e.scope == entry.scope and e.filename == entry.filename for e in entries
+        ):
+            return RecallReport(
+                status="ref-to-absent",
+                scope=normalize_ref(scope),
+                store_root=str(store),
+                total_in_scope=len(entries),
+                limit=limit,
+                mode=mode,
+                ref=normalize_ref(ref),
+                known_scopes=index.scopes,
+                malformed=bad,
+                malformed_elsewhere=bad_elsewhere,
+                **ref_to_fields,
             )
         # A `--ref` run is a NARROWING and prints its one entry in full whatever
         # `mode` says — no index, no featured basis, byte-identical to what it
@@ -1644,6 +1857,7 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
+            **ref_to_fields,
         )
 
     if not entries:
@@ -1657,6 +1871,7 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
+            **ref_to_fields,
         )
 
     # THE ONE ordering site: canonical ref ascending, so two runs over an
@@ -1676,6 +1891,7 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
+            **ref_to_fields,
         )
 
     # `digest` and `list` both read EVERY entry — the index line carries a bullet
@@ -1700,6 +1916,7 @@ def recall(
             known_scopes=index.scopes,
             malformed=bad,
             malformed_elsewhere=bad_elsewhere,
+            **ref_to_fields,
         )
 
     featured_ref, basis = select_featured(
@@ -1721,6 +1938,7 @@ def recall(
         known_scopes=index.scopes,
         malformed=bad,
         malformed_elsewhere=bad_elsewhere,
+        **ref_to_fields,
     )
 
 
@@ -1975,6 +2193,67 @@ def _render_listing(report: RecallReport) -> list[str]:
     return out
 
 
+def _validated_ref_to(ref_to: str | None) -> TaskRef | None:
+    """The ONE place the reverse-lookup operand's shape is refused, for both readers.
+
+    🔴 IT DELEGATES TO `parse_task_ref` RATHER THAN RE-SPELLING THE RULES. The operand is
+    the SAME `<system>:<id>` grammar an entry's `refs:` item is, and a second parser for it
+    would drift: a query the writer accepts but the reader refuses (or worse, the reverse)
+    answers "no entries reference this" for a ref that is written in the store.
+
+    🔴 THE SENTENCE IS PINNED AGAINST THE GO PORT'S. `report.validateRefTo` raises the same
+    prefix over the same parser message, and `tests/conformance/` replays a malformed
+    `?ref-to=` against both servers — so a reworded prefix here is a 400 body that differs
+    between two implementations of one contract.
+    """
+    if ref_to is None:
+        return None
+    try:
+        return parse_task_ref(ref_to)
+    except TaskRefError as exc:
+        raise ValueError(
+            f"ref-to is not a well-formed `<system>:<id>` ref: {exc}"
+        ) from exc
+
+
+def _ref_to_line(
+    ref_to: str, matched: int, total: int, label: str, *, narrowed_set_shown: bool
+) -> str:
+    """The ONE spelling of the reverse-lookup header, shared by both renderers.
+
+    🔴 ONE FUNCTION, TWO CALLERS, BECAUSE THE TWO REPORT TYPES HAVE DIFFERENT COUNTS TO
+    PUT IN IT AND THE SENTENCE MUST NOT DIFFER. `caveat_text`'s own header gives the rule:
+    a module with two report types spells a shared sentence once, or it is wrong in one of
+    them. `internal/report.refToLine` is the Go spelling, and `tests/parity/harness.py`
+    diffs the two clients' bytes.
+
+    `matched`/`total` are the narrowed and pre-filter counts. `narrowed_set_shown` says
+    whether the report BELOW this line reports on the matched entries — a PREDICATE each
+    caller answers for itself, and deliberately not a status test: `RecallReport` passes
+    `renders_narrowed_set` (see its docstring for the statuses a status test got wrong) and
+    the search report passes a constant, justified at its own call site. It is a separate
+    clause rather than a second function so the COUNT half stays spelled once.
+
+    ⚠ `label` IS A FORMED LABEL AND CARRIES ITS OWN TRAILING `/`, so do not append one here.
+    The draft passed `SearchReport.scope`, which on a store-wide search is the literal
+    `(all scopes)`, plus a `/` — printing `` `(all scopes)/` ``. `SearchReport.label` is what
+    it passes now: `scope_label` over the SEARCHED scopes, which cannot return `(all scopes)`
+    at all (it returns `(no scope)` for an empty set, and a `/`-suffixed join otherwise).
+    Caught by reading the regenerated golden, not by a test: both implementations agreed, and
+    both were wrong.
+    """
+    reach = (
+        f"and everything below is about those {matched}."
+        if narrowed_set_shown
+        else "and NOTHING below is about them — the sentence below says why."
+    )
+    return (
+        f"  ref-to: `{ref_to}` — {matched} of {total} entr"
+        f"{'y' if total == 1 else 'ies'} in `{label}` reference it, {reach}"
+        f" This is a NARROWING, not a truncation: the rest were read and did not match."
+    )
+
+
 def render_text(
     report: RecallReport,
     *,
@@ -2004,6 +2283,34 @@ def render_text(
         *extra_header,
         f"  caveat: {report.caveat}",
     ]
+
+    # 🔴 THE NARROWING ANNOUNCES ITSELF, BECAUSE EVERY COUNT BELOW IT IS ABOUT THE
+    # NARROWED SET. Without this line a `--ref-to` digest is byte-indistinguishable from a
+    # digest of a scope that happens to hold exactly those entries — the reader would take
+    # a filtered index for the whole one. It carries BOTH numbers so what the filter
+    # removed stays visible.
+    #
+    # ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves. `ref_to` is
+    # `None` on every request that does not carry the parameter.
+    if report.ref_to is not None:
+        # 🔴 THE NUMERATOR IS `ref_to_matched` AND NOTHING DERIVED. Two earlier spellings
+        # printed a false sentence about the store — see that field's docstring for both
+        # directions of the pendulum.
+        #
+        # ⚠ `narrowed_set_shown` IS THE RENDER DECISION, NOT A STATUS. "Everything below is
+        # about those N" is a claim about the BODY, so the body is what has to answer it:
+        # `renders_narrowed_set` is True exactly when a matched entry is printed below, and
+        # its own docstring records the three shapes a status-name derivation got wrong plus
+        # the digest-mode case that rules out the obvious second guess.
+        out.append(
+            _ref_to_line(
+                report.ref_to,
+                report.ref_to_matched,
+                report.ref_to_scope_total,
+                f"{report.scope}/",
+                narrowed_set_shown=report.renders_narrowed_set,
+            )
+        )
 
     # 🔴 BEFORE EVERY STATUS BRANCH, INCLUDING THE ONES THAT RETURN IMMEDIATELY.
     # A reject reported only on the paths somebody remembered is a reject that
@@ -2059,6 +2366,64 @@ def render_text(
             f"AMBIGUOUS REF `{report.ref}` — it names more than one entry, so nothing was "
             f"surfaced. The resolver never picks; neither does this. Candidates: "
             f"{', '.join(report.candidates)}. Re-run naming one of them."
+        )
+        return "\n".join(out)
+
+    if report.status == "ref-to-absent":
+        out.append("")
+        # 🔴 TWO SENTENCES FOR ONE STATUS, BECAUSE `ref-to-absent` IS REACHED TWO WAYS AND
+        # THE SECOND ONE IS NOT AN ABSENCE AT ALL. Nothing in the scope matched (the
+        # filter's own zero) and "the `--ref` operand is not among the entries that DID
+        # match" are different facts, and the second shipped wearing the first's words:
+        # both clients printed "NO ENTRY REFERENCES <X>" over a scope where other entries
+        # carried it, because the numerator had been forced to 0 whenever the status was
+        # this one. The discriminator is `ref_to_matched`.
+        if report.ref_to_matched > 0:
+            # The `--ref` operand loaded fine, so the malformed rows cannot make THIS claim
+            # wrong; they can only understate the count of entries that DO carry the ref,
+            # which is what the qualification names.
+            n_bad = len(report.malformed)
+            also = (
+                f" ⚠ AND THAT COUNT IS ONLY OF ENTRIES THAT LOADED: {n_bad} entry file"
+                f"{'' if n_bad == 1 else 's'} in this scope could not be indexed (listed "
+                f"above), and an entry that never loaded carries no refs a filter can see."
+                if n_bad
+                else ""
+            )
+            out.append(
+                f"`{report.ref}` DOES NOT REFERENCE `{report.ref_to}` — it was read and "
+                f"carries no such ref, so the two narrowings compose to nothing and no body "
+                f"is printed. {report.ref_to_matched} of the {report.ref_to_scope_total} "
+                f"entr{'y' if report.ref_to_scope_total == 1 else 'ies'} in "
+                f"`{report.scope}/` {'DOES' if report.ref_to_matched == 1 else 'DO'} "
+                f"reference it — re-run without `--ref` to see "
+                f"{'it' if report.ref_to_matched == 1 else 'them'}. The comparison is on "
+                f"THIS SCOPE's `refs:` keys and the id half is matched byte-for-byte, so a "
+                f"different spelling of it would not be found here either.{also}"
+            )
+            return "\n".join(out)
+        # 🔴 IT SAYS WHAT WAS LOOKED AT AND WHAT WAS NOT, because a reverse lookup's
+        # zero is the most misreadable answer this reader produces: "no entry
+        # references X" and "X is not a thing anybody tracks" are different facts, and
+        # only the first is in evidence. The malformed rows are already above; this
+        # sentence is what stops the reader concluding from them in the wrong
+        # direction, exactly as `ref-absent`'s does.
+        extra = (
+            f" ⚠ BUT {len(report.malformed)} entry file"
+            f"{'' if len(report.malformed) == 1 else 's'} in this scope could not be "
+            f"indexed (listed above), and an entry that never loaded carries no refs a "
+            f"filter can see — one of them may reference this. Check those before "
+            f"concluding nothing does."
+            if report.malformed
+            else ""
+        )
+        out.append(
+            f"NO ENTRY REFERENCES `{report.ref_to}` — the {report.ref_to_scope_total} entr"
+            f"{'y' if report.ref_to_scope_total == 1 else 'ies'} in `{report.scope}/` were "
+            f"read and none of them carries that ref. This is a fact about THIS SCOPE's "
+            f"`refs:` keys and NOT about whether the reference exists: an entry may point "
+            f"at it under a different spelling of the id half, which is compared "
+            f"byte-for-byte.{extra}"
         )
         return "\n".join(out)
 
@@ -2174,6 +2539,16 @@ def render_text(
             # Above the sections deliberately: "which task does this answer" is
             # identity, like the ref and the sensitivity on the line above, not
             # content.
+            #
+            # ⚠ THE LABEL STILL READS `tasks:` WHILE THE FRONT-MATTER KEY IS `refs:`
+            # AND THE BROWSER SURFACE SAYS "Refs", AND THAT IS DEFERRED RATHER THAN
+            # OVERLOOKED. These are the bytes the Go renderer is diffed against, so
+            # the two labels move together or not at all, and changing them is not a
+            # rename: it re-bases every recall golden in `tests/conformance/`, the
+            # reader fixture `internal/report/testdata/` replays, and the parity
+            # harness's byte diffs. It belongs in a change whose whole subject is
+            # that re-base. `internal/report.RecallReport.RenderText` carries the
+            # same note beside the same line.
             out.append(f"    tasks: {', '.join(e.tasks)}")
         for heading in SURFACED_HEADINGS:
             body = e.sections.get(heading)
@@ -2283,6 +2658,16 @@ def report_json(report: RecallReport) -> dict:
         "label": RECALL_LABEL,
         "caveat": report.caveat,
         "ref": report.ref,
+        # ⚠ ALL THREE REVERSE-LOOKUP FIELDS, NOT JUST THE OPERAND. A consumer holding only
+        # `ref_to` could not tell how much the filter removed; `total_in_scope` is the
+        # NARROWED count once a filter ran; and `ref_to_matched` is the rendered line's own
+        # numerator, which is NOT derivable from the other two on `ref-to-absent` — that
+        # status is reached both by "nothing matched" and by "the `--ref` operand is not one
+        # of the entries that did". Carrying it is what keeps this payload saying the same
+        # thing the rendered text says.
+        "ref_to": report.ref_to,
+        "ref_to_scope_total": report.ref_to_scope_total,
+        "ref_to_matched": report.ref_to_matched,
         "candidates": list(report.candidates),
         "limit": report.limit,
         "mode": report.mode,
@@ -2661,6 +3046,24 @@ class SearchReport:
 
     max_hits: int = DEFAULT_MAX_HITS
     entries_searched: int = 0
+
+    ref_to: str | None = None
+    """The `--ref-to`/`?ref-to=` REVERSE-LOOKUP narrowing, in its canonical spelling.
+
+    `None` means no filter was sent. See `RecallReport.ref_to` for why the parameter is
+    spelled `ref-to` and not `ref`, and for why there is no second `has_*` boolean.
+    """
+
+    ref_to_skipped: int = 0
+    """How many entries the ref-to filter REMOVED from the searched set.
+
+    🔴 IT IS WHAT STOPS THE NARROWED ZERO READING AS AN EMPTY STORE. Without it, a
+    `--ref-to` that matches nothing prints "searched 0 entries" — the exact shape
+    `best_below` exists to refuse, an empty result that cannot distinguish "the query
+    matched nothing" from "the query never ran against anything". `render_search`'s ref-to
+    line prints this count beside the searched one, so a zero says WHY it is zero.
+    """
+
     scopes_searched: tuple[str, ...] = ()
     known_scopes: tuple[str, ...] = ()
     best_below: tuple[str, float] | None = None
@@ -2783,6 +3186,7 @@ def search(
     threshold: float = DEFAULT_SEARCH_THRESHOLD,
     max_hits: int = DEFAULT_MAX_HITS,
     all_scopes: bool = False,
+    ref_to: str | None = None,
     visible_scopes: Sequence[str] | None = None,
 ) -> SearchReport:
     """Find HUNKS matching `query`. READ-ONLY, stdlib only, nothing is spawned.
@@ -2809,6 +3213,8 @@ def search(
         raise ValueError(f"max-hits must be an int >= 1, got {max_hits!r}")
     if not isinstance(context, int) or isinstance(context, bool) or context < CONTEXT_BULLET:
         raise ValueError(f"context must be an int >= 0, got {context!r}")
+    # Last, for the reason `recall`'s own trailing guard gives.
+    ref_to_ref = _validated_ref_to(ref_to)
 
     # 🔴 THE `all_scopes` PATH IS THE REASON THIS IS AN INDEX FILTER AND NOT A
     # PER-SCOPE REFUSAL CHECK. `?all_scopes=1` names NO scope, so there is
@@ -2852,12 +3258,32 @@ def search(
     bad = tuple(m for m in index.malformed if m.scope in scopes)
     bad_elsewhere = index.malformed_outside(scopes)
 
+    # 🔴 THE REVERSE-LOOKUP OPERAND IS PARSED ONCE, OUTSIDE THE SCOPE LOOP, and
+    # `ref_to_ref` is only consulted when it is not None — so a search with no
+    # filter does no per-entry work it did not do before.
+    ref_to_fields: dict[str, object] = (
+        {} if ref_to_ref is None else {"ref_to": str(ref_to_ref)}
+    )
+
     query_tokens = tokenize(query)
     cleared: list[Hunk] = []
     below: list[Hunk] = []
     searched = 0
+    ref_to_skipped = 0
     for sc in scopes:
         for entry in sorted(index.entries(sc), key=lambda e: e.ref):
+            # 🔴 HERE, INSIDE THE LOOP OVER `scopes`, WHICH IS AFTER SCOPE
+            # AUTHORISATION AND NEVER BEFORE IT. `scopes` comes from `index.scopes`
+            # — including on the `all_scopes` path — and that index was narrowed by
+            # `visible_scopes` at load time. The filter therefore only ever REMOVES
+            # entries from a set this caller was already entitled to read, and
+            # cannot surface one from a scope they cannot name. The paragraph above
+            # says why visibility is an index filter rather than a per-scope refusal
+            # check; a ref-to filter applied to a store-wide load instead would
+            # re-open exactly the hole it closed.
+            if ref_to_ref is not None and not entry_references(entry, ref_to_ref):
+                ref_to_skipped += 1
+                continue
             searched += 1
             hits, misses = _entry_hunks(
                 store, entry, query_tokens, threshold=float(threshold), context=context
@@ -2872,15 +3298,35 @@ def search(
     worst = max(below, default=None, key=lambda h: (h.score, -h.start))
     return SearchReport(
         # 🔴 `search-unreadable` OUTRANKS `search-no-match`, and the discriminator
-        # is `searched == 0` — not `cleared == 0`. A query that ran over zero
-        # readable entries produced a zero that says nothing about the query, and
-        # `render_search`'s no-match branch would have printed "searched 0 entries
-        # … nothing cleared the threshold" — technically true, and read by
+        # is "NOTHING READABLE EXISTED" — not `cleared == 0`, and, since the
+        # `ref-to` filter above, not `searched == 0` either. A query that ran over
+        # zero readable entries produced a zero that says nothing about the query,
+        # and `render_search`'s no-match branch would have printed "searched 0
+        # entries … nothing cleared the threshold" — technically true, and read by
         # everyone as "the store has nothing on this". Same class of bug as
         # `scope-empty` swallowing a broken scope.
+        #
+        # 🔴 `ref_to_skipped == 0` IS THE TERM THE FILTER MADE NECESSARY, AND ITS
+        # ABSENCE WAS A MEASURED DEFECT RATHER THAN A HYPOTHETICAL. `searched == 0
+        # and bad` was SOUND while `searched` counted every readable entry in the
+        # scope: a zero then meant nothing readable existed. The `ref-to` filter
+        # `continue`s before that counter and does not touch `bad`, so it can
+        # drive `searched` to 0 over a scope whose readable entries were all read
+        # and indexed — and one malformed file beside them was enough to answer
+        # `search-unreadable`, whose body says "NOT ONE of them could be indexed"
+        # and "The query was never run against anything". Both false, and the
+        # reader is sent to fix a file that had nothing to do with the empty
+        # result.
+        #
+        # So the PRE-FILTER readable count is what this branch is about, and
+        # `searched + ref_to_skipped` is that count: every readable entry in the
+        # searched scopes lands in exactly one of the two. A filter-driven zero
+        # therefore falls through to `search-no-match`, where the ref-to line's own
+        # "0 of N" and the sentence `render_search` prints for that shape are the
+        # honest answer: the query DID run, over a narrowed set that was empty.
         status=(
             "search-unreadable"
-            if searched == 0 and bad
+            if searched == 0 and ref_to_skipped == 0 and bad
             else ("search-hit" if cleared else "search-no-match")
         ),
         scope=normalize_ref(scope) if not all_scopes else "(all scopes)",
@@ -2892,8 +3338,10 @@ def search(
         total_hits=len(cleared),
         max_hits=max_hits,
         entries_searched=searched,
+        ref_to_skipped=ref_to_skipped,
         scopes_searched=tuple(scopes),
         known_scopes=index.scopes,
+        **ref_to_fields,
         best_below=(worst.ref, round(worst.score, 3)) if worst is not None else None,
         malformed=bad,
         malformed_elsewhere=bad_elsewhere,
@@ -2926,6 +3374,81 @@ def render_search(
         *extra_header,
         f"  caveat: {report.caveat}",
     ]
+
+    # Same reasoning as `render_text`'s: the narrowing announces itself, because the
+    # "searched N entries" count below is about the narrowed set and a zero from a filter
+    # that matched nothing is otherwise indistinguishable from a zero from an empty store.
+    # `ref_to_skipped` + `entries_searched` is the pre-filter total, so the line needs no
+    # third field to carry it.
+    if report.ref_to is not None:
+        out.append(
+            # A CONSTANT True. THE NUMERATOR IS WHY IT CAN BE ONE FOR THE COUNT; THE
+            # SECOND CLAUSE IS CARRIED BY AN ENUMERATION AND BY NOTHING SHORTER.
+            #
+            # The count: `entries_searched` is incremented once per entry the filter KEPT,
+            # so the number printed here is the kept count by construction. `render_text`'s
+            # problem — a count of matched entries rendered over a body about none of them —
+            # has no spelling here on the count side.
+            #
+            # The clause "everything below is about those N" is a claim about the BODY, and
+            # the only thing that carries it is an enumeration of what can BE below it.
+            # This line sits above exactly three statuses — `scope-absent` returns before
+            # the operand is parsed, so it never carries one — and `search-no-match` has
+            # THREE distinguishable bodies, which makes FIVE cases. ⚠ IT SAID "two bodies /
+            # FOUR cases" AND THAT WAS MEASURED INCOMPLETE: `N == 0` is TWO bodies, not one,
+            # and the second is live in this change's own `tests/dualrun/` gate. The
+            # paragraph below says a new body must be added to this list and checked BY
+            # HAND — so an incomplete list returns a false clean, which is why the fourth
+            # row exists rather than being folded into the third. Each was re-derived
+            # rather than covered by an absolute:
+            #
+            #   - `search-hit` — the hunks below come from kept entries only, because
+            #     `_entry_hunks` is called after the filter's `continue` and nowhere else.
+            #   - `search-no-match` with N > 0 — the body is "searched N entries in
+            #     <scopes>, and nothing cleared the threshold", plus a near miss that is
+            #     itself a hunk from a kept entry. A statement about exactly those N.
+            #   - `search-no-match` with N == 0 and `ref_to_skipped > 0` — VACUOUS, not
+            #     false: the body says the scan found nothing because the FILTER removed
+            #     every readable entry (the middle branch of the no-match chain below).
+            #     Nothing under the line reports on a REMOVED entry as though it had been
+            #     kept, which is what the clause would have to be false about.
+            #   - `search-no-match` with N == 0 and `ref_to_skipped == 0` — a
+            #     PRESENT-BUT-EMPTY scope asked with `?ref-to=`. Nothing existed to keep OR
+            #     to skip, so the chain falls through to the `else` and prints "No candidate
+            #     scored above zero at all, so this is an absent term rather than a weak
+            #     one." over a "0 of 0" line. Vacuous for the same reason as the row above —
+            #     there is no removed entry for anything below to misreport — but it reaches
+            #     the branch by a DIFFERENT mechanism, and the ⚠ note at the no-match chain
+            #     below is what owns that route. Measured live on both servers, identical
+            #     bytes: `genstore.py`'s empty scope is one of the `search-ref-to` dualrun
+            #     targets.
+            #
+            # ⚠ THE FIFTH CASE IS `search-unreadable`, and after the fix it requires
+            # `ref_to_skipped == 0` as well as `entries_searched == 0` — so the line there
+            # reads "0 of 0", and the clause is about the empty set over a pre-filter set
+            # that was also empty. ⚠ "0 of 0" IS THEREFORE NOT THAT STATUS'S SIGNATURE: the
+            # fourth row prints it too, and the STATUS is what tells them apart. 🔴 NONE OF
+            # THAT IS WHY THE PRE-FIX COMMENT WAS WRONG, AND THE DIFFERENCE IS THE POINT: it
+            # reasoned only about the CLAUSE ("about the empty set rather than false about a
+            # non-empty one") and was literally true while the STATUS it annotated was false
+            # about the store. Re-deriving a clause says nothing about the branch that
+            # reaches it.
+            #
+            # 🔴 AND THE ENUMERATION IS THE WHOLE JUSTIFICATION, WHICH IS WEAKER THAN A GUARD
+            # AND IS SAID SO RATHER THAN DRESSED UP. It is PROSE: nothing mechanical asserts
+            # that the set of statuses reachable under this line is still those three, the
+            # way `renders_narrowed_set`'s table is now asserted over all four render shapes.
+            # A new `search-*` status, or a new body under an existing one, has to be added to
+            # this list and checked BY HAND today — or the constant has to become a property
+            # the way `renders_narrowed_set` is.
+            _ref_to_line(
+                report.ref_to,
+                report.entries_searched,
+                report.entries_searched + report.ref_to_skipped,
+                report.label,
+                narrowed_set_shown=True,
+            )
+        )
 
     # Same rule as `render_text`: before every branch, on every status.
     out.extend(render_malformed(report.malformed, report.malformed_elsewhere, report.label))
@@ -2968,15 +3491,40 @@ def render_search(
         # 🔴 THE ZERO CARRIES ITS OWN EVIDENCE. How much was scanned (so a zero
         # from an empty scan is visible), and the best NEAR miss with its score
         # (so "matched nothing" and "just missed" are distinguishable).
-        near = (
-            f" The closest candidate was `{report.best_below[0]}` at "
-            f"{report.best_below[1]:.2f}, below the {report.threshold:.2f} threshold — "
-            f"re-run with `--threshold {max(0.0, report.best_below[1] - 0.01):.2f}` to see "
-            f"it, or rephrase."
-            if report.best_below is not None
-            else " No candidate scored above zero at all, so this is an absent term rather "
-            "than a weak one."
-        )
+        #
+        # 🔴 AND THE MIDDLE BRANCH IS THE FILTER'S ZERO, SAID AS THE FILTER'S. With
+        # nothing scanned, "an absent term rather than a weak one" is a claim about
+        # the QUERY that no comparison was made to support — the same defect
+        # `best_below` exists to refuse, one branch over. It is the shape the
+        # `ref-to` filter introduced: every readable entry was read and indexed, and
+        # then removed by the narrowing.
+        #
+        # ⚠ ORDERED AFTER `best_below` AND THE ORDER CANNOT MATTER: a near miss is a
+        # hunk from a scanned entry, so `best_below is not None` and
+        # `entries_searched == 0` cannot both hold. Written as a chain so a later
+        # edit does not have to re-derive that.
+        #
+        # ⚠ REACHABLE ONLY WITH A FILTER THAT REMOVED SOMETHING, DELIBERATELY. The
+        # zero-scanned sentence a present-but-empty scope prints is a DIFFERENT
+        # mechanism reaching the same branch, it predates the filter, and it is left
+        # exactly as it was rather than swept in here.
+        if report.best_below is not None:
+            near = (
+                f" The closest candidate was `{report.best_below[0]}` at "
+                f"{report.best_below[1]:.2f}, below the {report.threshold:.2f} threshold — "
+                f"re-run with `--threshold {max(0.0, report.best_below[1] - 0.01):.2f}` to see "
+                f"it, or rephrase."
+            )
+        elif report.entries_searched == 0 and report.ref_to_skipped > 0:
+            near = (
+                " Nothing was scanned: the `ref-to` filter removed every readable entry, "
+                "so this zero is the FILTER's and says nothing about the query."
+            )
+        else:
+            near = (
+                " No candidate scored above zero at all, so this is an absent term rather "
+                "than a weak one."
+            )
         out.append(f"NO MATCH — searched {scanned}, and nothing cleared the threshold.{near}")
         return "\n".join(out)
 
@@ -3023,6 +3571,8 @@ def search_json(report: SearchReport) -> dict:
         "total_hits": report.total_hits,
         "omitted": report.omitted,
         "entries_searched": report.entries_searched,
+        "ref_to": report.ref_to,
+        "ref_to_skipped": report.ref_to_skipped,
         "scopes_searched": list(report.scopes_searched),
         "known_scopes": list(report.known_scopes),
         **_malformed_json(report.malformed, report.malformed_elsewhere),

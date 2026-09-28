@@ -1350,15 +1350,27 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
         return EXIT_USAGE
 
     if search is not None:
-        report = rc.search(
-            str(cache),
-            scope,
-            search,
-            context=rc.CONTEXT_BULLET,
-            threshold=rc.DEFAULT_SEARCH_THRESHOLD,
-            max_hits=rc.DEFAULT_MAX_HITS,
-            all_scopes=args.all_scopes,
-        )
+        # 🔴 WRAPPED FOR THE REASON THE RECALL BRANCH'S OWN `try` GIVES, AND IT BECAME
+        # REACHABLE WITH `--ref-to`. Every other operand this branch passes is a module
+        # constant, so `rc.search` could not raise `ValueError` here and the bare call was
+        # correct; `--ref-to` is the first caller-supplied one, and a malformed operand
+        # would traceback at rc 1 where the recall branch answers 2 with the message
+        # alone. A wrapper that tracebacks where the module it wraps explains itself is
+        # worse than not offering the flag.
+        try:
+            report = rc.search(
+                str(cache),
+                scope,
+                search,
+                context=rc.CONTEXT_BULLET,
+                threshold=rc.DEFAULT_SEARCH_THRESHOLD,
+                max_hits=rc.DEFAULT_MAX_HITS,
+                all_scopes=args.all_scopes,
+                ref_to=args.ref_to,
+            )
+        except ValueError as exc:
+            print(f"cairn: {exc}", file=sys.stderr)
+            return EXIT_USAGE
         text = rc.render_search(report, instance=label)
     else:
         # 🔴 THE DIGEST'S OWN FOOTER PRESCRIBES THESE FLAGS, so the client has to
@@ -1415,6 +1427,7 @@ def _report(args: argparse.Namespace, *, search: str | None) -> int:
                 str(cache),
                 scope,
                 ref=args.ref,
+                ref_to=args.ref_to,
                 limit=selection.limit,
                 mode=mode,
                 page=selection.page,
@@ -2578,6 +2591,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="surface ONE entry by ref instead of the whole scope",
     )
+    # 🔴 `--ref-to`, AND THE SPELLING IS THE POINT. `--ref` names an ENTRY; this names
+    # something an entry POINTS AT, and the two compose. The pod's parameter is `?ref-to=`
+    # — the same spelling — because `?ref=` already means `--ref` there and redefining it
+    # would break a pinned contract. Both clients carry this flag or `tests/parity/` reds.
+    r.add_argument(
+        "--ref-to",
+        default=None,
+        metavar="<system>:<id>",
+        help="only entries whose `refs:` carries this ref (the REVERSE lookup)",
+    )
     r.add_argument(
         "--list",
         action="store_true",
@@ -2601,6 +2624,14 @@ def build_parser() -> argparse.ArgumentParser:
     q = common(sub.add_parser("search", help="search the scope for hunks"))
     q.add_argument("query")
     q.add_argument("--all-scopes", action="store_true")
+    # The same flag `recall` carries, for the same reason. Searching within the entries
+    # that reference one task is the narrowing a reverse lookup is usually wanted for.
+    q.add_argument(
+        "--ref-to",
+        default=None,
+        metavar="<system>:<id>",
+        help="only entries whose `refs:` carries this ref (the REVERSE lookup)",
+    )
     q.set_defaults(func=cmd_search)
 
     v = common(sub.add_parser("validate", help="the post-write check: parse, dropped lines, marker reachability"))

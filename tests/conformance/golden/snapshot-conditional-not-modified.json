@@ -19,7 +19,7 @@
     ],
     [
       "ETag",
-      "\"sha256:13db39a86d3e6edf465cae907fa1ab9b4c9da7f82227ee0e7c5297a1890b406f\""
+      "\"sha256:9cf9e8e71dbd3376ed2c22d89db417b02471f4f5e19bc592cdc51230c47cd182\""
     ],
     [
       "Server",
@@ -31,7 +31,7 @@
     ],
     [
       "X-Store-Snapshot",
-      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=5"
+      "seeded=2000-01-04T00:00:00Z newest=2000-01-03T00:00:00Z entry-files=8"
     ],
     [
       "X-Store-Status",

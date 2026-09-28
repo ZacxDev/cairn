@@ -334,14 +334,27 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 	var text, status, exitLabel string
 	var malformed []store.MalformedEntry
 	if isSearch {
-		rep, searchErr := report.Search(cache, report.SearchOptions{
+		searchOpts := report.SearchOptions{
 			Scope:     scope,
 			Query:     opts.Query,
 			Context:   report.ContextBullet,
 			Threshold: report.DefaultThreshold,
 			MaxHits:   report.DefaultMaxHits,
 			AllScopes: opts.AllScopes,
-		}, store.Unrestricted())
+			RefTo:     opts.RefTo,
+			HasRefTo:  opts.HasRefTo,
+		}
+		// 🔴 THE OPTION LADDER IS THE READER'S, RUN HERE — the same rule the recall branch
+		// below states, and it became REACHABLE on this branch with `--ref-to`. Every other
+		// operand here is a package constant, so `ValidateSearch` could not refuse anything
+		// and the bare call was correct; `--ref-to` is the first caller-supplied one, and an
+		// unvalidated malformed operand would reach the renderer where the oracle answers 2
+		// with the message alone.
+		if vErr := report.ValidateSearch(searchOpts); vErr != nil {
+			fmt.Fprintf(env.Stderr, "cairn: %s\n", vErr)
+			return ExitUsage, nil
+		}
+		rep, searchErr := report.Search(cache, searchOpts, store.Unrestricted())
 		if searchErr != nil {
 			return 0, searchErr
 		}
@@ -389,6 +402,8 @@ func Report(env Env, opts Options, isSearch bool) (int, error) {
 			Scope:       scope,
 			Ref:         opts.Ref,
 			HasRef:      opts.HasRef,
+			RefTo:       opts.RefTo,
+			HasRefTo:    opts.HasRefTo,
 			Limit:       selection.Limit,
 			Mode:        mode,
 			Page:        selection.Page,

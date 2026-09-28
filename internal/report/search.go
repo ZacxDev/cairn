@@ -429,6 +429,20 @@ type SearchReport struct {
 	ScopesSearched  []string
 	KnownScopes     []string
 
+	// RefTo/HasRefTo is the `?ref-to=` REVERSE-LOOKUP narrowing, in its canonical spelling.
+	// See `RecallOptions.RefTo` for why the parameter is spelled `ref-to` and not `ref`.
+	RefTo    string
+	HasRefTo bool
+
+	// RefToSkipped is how many entries the ref-to filter REMOVED from the searched set.
+	//
+	// 🔴 IT IS WHAT STOPS THE NARROWED ZERO READING AS AN EMPTY STORE. Without it, a
+	// `--ref-to` that matches nothing prints "searched 0 entries" — the exact shape this
+	// report's own `BestBelow` exists to refuse, an empty result that cannot distinguish "the
+	// query matched nothing" from "the query never ran against anything". The rendered ref-to
+	// line prints this count beside the searched one, so a zero says WHY it is zero.
+	RefToSkipped int
+
 	// BestBelow is the `(ref, score)` of the best hunk that did NOT clear the threshold.
 	//
 	// 🔴 THIS IS WHAT MAKES A ZERO READABLE. An empty result cannot distinguish two
@@ -532,9 +546,26 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	}
 	badElsewhere := index.MalformedOutside(scopes)
 
+	// 🔴 THE REVERSE-LOOKUP OPERAND IS PARSED ONCE, OUTSIDE THE SCOPE LOOP, and `wantRef` is
+	// only consulted when `opts.HasRefTo` — so a search with no filter does no per-entry work
+	// it did not do before.
+	var wantRef store.TaskRef
+	if opts.HasRefTo {
+		parsed, parseErr := store.ParseTaskRef(opts.RefTo)
+		if parseErr != nil {
+			// Unreachable from either real caller: `ValidateSearch` refuses a malformed
+			// operand first. Returned rather than ignored so a caller that skips validation
+			// cannot silently search everything.
+			return SearchReport{}, parseErr
+		}
+		wantRef = parsed
+		base.RefTo, base.HasRefTo = parsed.String(), true
+	}
+
 	queryTokens := Tokenize(opts.Query)
 	var cleared, below []Hunk
 	searched := 0
+	refToSkipped := 0
 	for _, sc := range scopes {
 		entries, entriesErr := index.Entries(sc)
 		if entriesErr != nil {
@@ -543,6 +574,25 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 		ordered := make([]store.Entry, len(entries))
 		copy(ordered, entries)
 		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Ref() < ordered[j].Ref() })
+		if opts.HasRefTo {
+			// 🔴 HERE, INSIDE THE LOOP OVER `scopes`, WHICH IS AFTER SCOPE AUTHORISATION AND
+			// NEVER BEFORE IT. `scopes` comes from `index.Scopes()` — including on the
+			// `all_scopes=1` path — and that index was narrowed by `visible` at load time.
+			// The filter therefore only ever REMOVES entries from a set this caller was
+			// already entitled to read, and cannot surface one from a scope they cannot name.
+			// `Search`'s own header paragraph says why visibility is an index filter rather
+			// than a per-scope refusal; a ref-to filter applied to a store-wide load instead
+			// would re-open exactly the hole that paragraph closed.
+			kept := make([]store.Entry, 0, len(ordered))
+			for _, e := range ordered {
+				if store.EntryReferences(e, wantRef) {
+					kept = append(kept, e)
+					continue
+				}
+				refToSkipped++
+			}
+			ordered = kept
+		}
 		for _, entry := range ordered {
 			searched++
 			hits, misses, hunkErr := entryHunks(storeRoot, entry, queryTokens, opts)
@@ -574,13 +624,32 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	})
 
 	out := base
-	// 🔴 `search-unreadable` OUTRANKS `search-no-match`, AND THE DISCRIMINATOR IS
-	// "NOTHING WAS SEARCHED", not "nothing cleared". A query that ran over zero readable
-	// entries produced a zero that says nothing about the query, and the no-match branch
-	// would have printed "searched 0 entries … nothing cleared the threshold" — technically
-	// true, and read by everyone as "the store has nothing on this".
+	// 🔴 `search-unreadable` OUTRANKS `search-no-match`, AND THE DISCRIMINATOR IS "NOTHING
+	// READABLE EXISTED", not "nothing cleared" and — since the `ref-to` filter above — NOT
+	// "nothing was searched" either. A query that ran over zero readable entries produced a
+	// zero that says nothing about the query, and the no-match branch would have printed
+	// "searched 0 entries … nothing cleared the threshold" — technically true, and read by
+	// everyone as "the store has nothing on this".
+	//
+	// 🔴 `refToSkipped == 0` IS THE TERM THE FILTER MADE NECESSARY, AND ITS ABSENCE WAS A
+	// MEASURED DEFECT RATHER THAN A HYPOTHETICAL. `searched == 0 && len(bad) > 0` was SOUND
+	// while `searched` counted every readable entry in the scope: a zero then meant nothing
+	// readable existed. The `ref-to` filter runs upstream of that counter and does not touch
+	// `bad`, so it can drive `searched` to 0 over a scope whose readable entries were all
+	// read and indexed — and one malformed file beside them was enough to answer
+	// `search-unreadable`, whose body says "NOT ONE of them could be indexed" and "The query
+	// was never run against anything". Both false, and the reader is sent to fix a file that
+	// had nothing to do with the empty result.
+	//
+	// So the pre-filter readable count is what this branch is about, and `searched +
+	// refToSkipped` is that count: `searched` counts kept entries, `refToSkipped` counts
+	// readable entries the filter removed, and every readable entry in the searched scopes
+	// lands in exactly one of them. A filter-driven zero therefore falls through to
+	// `search-no-match`, where the ref-to line's own "0 of N" and the sentence
+	// `RenderText` prints for that shape are the honest answer: the query DID run, over a
+	// narrowed set that turned out to be empty.
 	switch {
-	case searched == 0 && len(bad) > 0:
+	case searched == 0 && refToSkipped == 0 && len(bad) > 0:
 		out.Status = StatusSearchUnreadable
 	case len(cleared) > 0:
 		out.Status = StatusSearchHit
@@ -596,6 +665,7 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	}
 	out.TotalHits = len(cleared)
 	out.EntriesSearched = searched
+	out.RefToSkipped = refToSkipped
 	out.ScopesSearched = scopes
 	out.Malformed = bad
 	out.MalformedElsewhere = badElsewhere

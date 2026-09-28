@@ -35,13 +35,29 @@ from pathlib import Path
 EPOCH_NS = 946_684_800 * 1_000_000_000
 
 
-def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthetic entry") -> str:
+def _entry(service: str, scope: str, *, aliases: str = "", body: str = "a synthetic entry",
+           refs: str = "") -> str:
+    """One entry's bytes.
+
+    `refs` exists so the corpus can carry the `refs:` front-matter key, which is what the
+    `--ref-to` rows narrow on.
+
+    ⚠ IT WRITES THE CURRENT KEY ONLY. A `ref_key` parameter was here so one entry could carry
+    the older `tasks:` spelling; the ALIAS is pinned in both languages by unit tests
+    (`test_the_older_spellings_still_parse`,
+    `TestTheOlderRefKeysStillParseAndRefsWins`) and over the wire by
+    `tests/conformance/`'s `linked-set/linked-old-key.md`, so nothing in THIS gate depended on
+    it once the ALIAS WARNING — the only thing that reached a client's stderr — was deleted.
+    The alias itself is PERMANENT; only the notice went.
+    """
     alias_line = f"aliases: [{aliases}]\n" if aliases else ""
+    ref_line = f"refs: [{refs}]\n" if refs else ""
     return (
         "---\n"
         f"service: {service}\n"
         f"scope: {scope}\n"
         f"{alias_line}"
+        f"{ref_line}"
         "---\n"
         "\n"
         "## What it is\n"
@@ -67,15 +83,24 @@ ENTRIES: list[tuple[str, int, str]] = [
     # ORDER with no error and no missing entry — which reads as a stale cache.
     ("alpha-notes/ledger-svc.md", 750_000_000, _entry("ledger-svc", "alpha-notes",
                                                       aliases="ledger-holder")),
-    ("alpha-notes/gauge-api.md", 4_000_000_000, _entry("gauge-api", "alpha-notes")),
+    # 🔴 THE ONE ENTRY IN THIS SCOPE CARRYING A REF, AND THAT IS WHAT MAKES THE `--ref-to`
+    # ROWS DISCRIMINATING. `widget-cfg` and `ledger-svc` carry none, so a reverse lookup here
+    # has something to KEEP and something to REMOVE — and `recall-ref-to-composes-with-ref`
+    # can ask for an entry that does NOT carry the ref while other entries in the scope do,
+    # which is the shape a filter wired to "keep everything" cannot answer correctly.
+    ("alpha-notes/gauge-api.md", 4_000_000_000,
+     _entry("gauge-api", "alpha-notes", refs="github:example-org/example-repo#428")),
     # A malformed entry BESIDE readable ones: `aliases:` as a bare string is what the schema
     # refuses, and the rejection has to render in the same report as the good entries.
     ("alpha-notes/broken-four.md",
      5_000_000_000,
      "---\nservice: broken-four\nscope: alpha-notes\n"
      "aliases: a bare string, which the schema refuses\n---\n\n"),
-    ("beta-notes/spindle-cfg.md", 6_000_000_000, _entry("spindle-cfg", "beta-notes",
-                                                        body="the second scope's plain entry")),
+    # The SAME ref in the other scope. Two entries in two scopes reference one thing, which
+    # is what lets a store-wide row find both and a per-scope row find one.
+    ("beta-notes/spindle-cfg.md", 6_000_000_000,
+     _entry("spindle-cfg", "beta-notes", body="the second scope's plain entry",
+            refs="github:example-org/example-repo#428")),
     # A scope holding files and NOT ONE indexable: `scope-unreadable`, exit 3, warning line.
     # 🔴 IT IS ALSO THE README-FREE CONTROL. Both its files are listed by `ls-entries`, so a
     # client that implemented "not an entry" as "drop one file per scope" — the arithmetic a

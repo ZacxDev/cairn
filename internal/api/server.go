@@ -1166,6 +1166,13 @@ func (s *Server) recall(rq *request, parts []string, params url.Values) error {
 	if raw, present := lastValue(params, "ref"); present {
 		opts.Ref, opts.HasRef = raw, true
 	}
+	// 🔴 `ref-to`, NOT `ref`: `?ref=` ALREADY MEANS the entry-ref narrowing on this route and
+	// `tests/conformance/` pins it, so spelling the reverse lookup `?ref=` would silently
+	// redefine a live parameter rather than add one. The flag both clients expose is
+	// `--ref-to`, the same spelling, so neither maps to the other by mistake.
+	if raw, present := lastValue(params, "ref-to"); present {
+		opts.RefTo, opts.HasRefTo = raw, true
+	}
 	limit, err := intParam(params, "limit")
 	if err != nil {
 		return err
@@ -1204,6 +1211,10 @@ func (s *Server) search(rq *request, parts []string, params url.Values) error {
 		Context:   report.ContextBullet,
 		Threshold: report.DefaultThreshold,
 		MaxHits:   report.DefaultMaxHits,
+	}
+	// The same `ref-to` the recall route reads, for the same reason it is not `ref`.
+	if raw, present := lastValue(params, "ref-to"); present {
+		opts.RefTo, opts.HasRefTo = raw, true
 	}
 	contextParam, err := intParam(params, "context")
 	if err != nil {

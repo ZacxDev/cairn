@@ -331,6 +331,10 @@ class TestStatusIsTheDiscriminator:
             rc.recall(store, "all-broken").status,
             rc.recall(store, SCOPE, ref="no-such-subsystem").status,
             rc.recall(store, SCOPE, ref="weekly-digest").status,
+            # The REVERSE lookup's own non-finding. ⚠ A ref no entry in the corpus
+            # carries, so this is `ref-to-absent` and not `recalled` — and it is a
+            # SYNTHETIC id, because a real one would tie this fixture to a tracker.
+            rc.recall(store, SCOPE, ref_to="clickup:no-such-task").status,
             rc.recall(store, SCOPE).status,
             rc.search(store, SCOPE, "readiness").status,
             rc.search(store, SCOPE, "kryptonite").status,
@@ -4940,12 +4944,51 @@ class TestDegradationMutationKills:
         mod = _load_mutant(
             tmp_path,
             "m_search_unreadable",
-            [('            if searched == 0 and bad', "            if False")],
+            [
+                (
+                    "            if searched == 0 and ref_to_skipped == 0 and bad",
+                    "            if False",
+                )
+            ],
         )
         store = _make_store(tmp_path / "s")
         _all_broken_scope(store)
         assert mod.search(store, "every-entry-broken", "readiness").status == "search-no-match"
         assert rc.search(store, "every-entry-broken", "readiness").status == "search-unreadable"
+
+    def test_kills_the_filter_driven_zero_term_ON_ITS_OWN(
+        self, tmp_path: Path, filter_zero_store: Path
+    ) -> None:
+        """🔴 THE NARROWEST EXPRESSION THAT CAN BE WRONG, MUTATED ALONE. The test above
+        deletes the WHOLE discriminator, which says nothing about the `ref_to_skipped`
+        term inside it — a mutant that removes a guard together with its enclosing
+        condition dies for the wrong reason. This one drops ONLY that term, which is
+        exactly the pre-fix spelling, and the store it is measured over is the one where
+        the two differ.
+        """
+        mod = _load_mutant(
+            tmp_path,
+            "m_filter_zero_term",
+            [
+                (
+                    "            if searched == 0 and ref_to_skipped == 0 and bad",
+                    "            if searched == 0 and bad",
+                )
+            ],
+        )
+        args = (filter_zero_store, "kept-none", "readiness")
+        mutant = mod.search(*args, ref_to=CLAUSE_REF)
+        assert mutant.status == "search-unreadable", (
+            "the mutant did not reproduce the pre-fix answer, so this test is measuring "
+            "something other than the term it names"
+        )
+        assert "NOT ONE of them could be indexed" in mod.render_search(mutant)
+        assert mod._exit_for(mutant.status, "kept-none/", mutant.malformed) == 3
+        # …and the SAME call on the real module, so the kill is a difference and not a
+        # claim about a store nothing can read.
+        live = rc.search(*args, ref_to=CLAUSE_REF)
+        assert live.status == "search-no-match"
+        assert mod._exit_for(live.status, "kept-none/", live.malformed) == 0
 
     def test_kills_the_withdrawn_completeness_claim(self, tmp_path: Path) -> None:
         """With the branch gone, an index three files short says `none omitted`."""
@@ -4985,6 +5028,13 @@ class TestDegradationMutationKills:
             # The anchor carries the following `try:` so it hits `recall`'s
             # derivation and not `search`'s identical-looking one — see the
             # uniqueness assert in `_load_mutant`.
+            #
+            # ⚠ IT MOVED ONCE AND MOVED BACK. `refs:` put a `carried` dict between
+            # these two lines and the `try:`, so the anchor had to name that dict;
+            # deleting the ref-key warning machinery took the dict away again.
+            # Both moves were forced by the `_load_mutant` presence/uniqueness
+            # assert, which RAISES on an anchor that stopped matching rather than
+            # reporting a survived mutant — the failure mode a text anchor has.
             [
                 (
                     "    bad = index.malformed_in(scope)\n"
@@ -5944,4 +5994,370 @@ class TestTheRecallCoversOneHostsStore:
             rc.search_json(rc.search(store, SCOPE, "collector"))["store_host"]
             == FIXTURE_HOST
         )
+
+
+# =============================================================================
+# THE REF-TO HEADER'S SECOND CLAUSE — the claim about what is BELOW the line.
+# =============================================================================
+
+CLAUSE_SCOPE = "refto-clause"
+CLAUSE_REF = "github:example-org/example-repo#428"
+CLAUSE_NOTHING = "clickup:nothing-carries-this"
+
+# The three WHOLE ref-to lines this fixture can produce, spelled out rather than rebuilt
+# from the renderer's own pieces: a contract test's expectation may not be derived from the
+# implementation it tests, and a guard on the clause's KEYWORDS is walkable by rewording
+# the sentence around them. `internal/report`'s `refto_clause_test.go` holds the same three
+# constants, and `tests/parity/` diffs these bytes between the two clients.
+CLAUSE_LINE_REPORTS = (
+    f"  ref-to: `{CLAUSE_REF}` — 1 of 4 entries in `{CLAUSE_SCOPE}/` reference it, and "
+    f"everything below is about those 1. This is a NARROWING, not a truncation: the rest "
+    f"were read and did not match."
+)
+CLAUSE_LINE_SILENT = (
+    f"  ref-to: `{CLAUSE_REF}` — 1 of 4 entries in `{CLAUSE_SCOPE}/` reference it, and "
+    f"NOTHING below is about them — the sentence below says why. This is a NARROWING, not "
+    f"a truncation: the rest were read and did not match."
+)
+CLAUSE_LINE_SILENT_ZERO = (
+    f"  ref-to: `{CLAUSE_NOTHING}` — 0 of 4 entries in `{CLAUSE_SCOPE}/` reference it, and "
+    f"NOTHING below is about them — the sentence below says why. This is a NARROWING, not "
+    f"a truncation: the rest were read and did not match."
+)
+
+
+@pytest.fixture()
+def clause_store(tmp_path: Path) -> Path:
+    """ONE scope holding four entries, so every status the ref-to header can be rendered
+    above is reachable over a single store.
+
+    ⚠ ONLY `carrier.md` CARRIES THE REF, AND NO OTHER ENTRY'S NAME CONTAINS THAT WORD.
+    That is what makes the body check below mechanical rather than a keyword guess: the
+    matched set is exactly `{carrier}`, so `carrier` appearing under the header means the
+    report is about a matched entry and its absence means it is not.
+
+    ⚠ THE AMBIGUOUS ALIAS IS ON THE TWO ENTRIES THAT ARE **NOT** THE CARRIER.
+    `ref-ambiguous` prints its candidates by FILENAME, so an alias shared with
+    `carrier.md` would put `carrier` under the header for a reason that has nothing to do
+    with the narrowed set — and the body check would then pass on the broken code.
+    """
+    store = tmp_path / "clause-store"
+    scope = store / CLAUSE_SCOPE
+    scope.mkdir(parents=True)
+    (scope / "carrier.md").write_text(
+        _entry("carrier", CLAUSE_SCOPE).replace(
+            f"scope: {CLAUSE_SCOPE}", f"scope: {CLAUSE_SCOPE}\nrefs: [{CLAUSE_REF}]"
+        ),
+        encoding="utf-8",
+    )
+    (scope / "bystander.md").write_text(_entry("bystander", CLAUSE_SCOPE), encoding="utf-8")
+    (scope / "twin-a.md").write_text(
+        _entry("twin-a", CLAUSE_SCOPE, aliases=["both-twins"]), encoding="utf-8"
+    )
+    (scope / "twin-b.md").write_text(
+        _entry("twin-b", CLAUSE_SCOPE, aliases=["both-twins"]), encoding="utf-8"
+    )
+    return store
+
+
+# (status, kwargs, expected ref-to line, does the body report on a matched entry)
+CLAUSE_CASES = (
+    ("recalled", {}, CLAUSE_LINE_REPORTS, True),
+    ("recalled", {"ref": "carrier"}, CLAUSE_LINE_REPORTS, True),
+    ("ref-to-absent", {"ref": "bystander"}, CLAUSE_LINE_SILENT, False),
+    ("ref-to-absent", {"ref_to": CLAUSE_NOTHING}, CLAUSE_LINE_SILENT_ZERO, False),
+    ("ref-absent", {"ref": "no-such-entry"}, CLAUSE_LINE_SILENT, False),
+    ("ref-ambiguous", {"ref": "both-twins"}, CLAUSE_LINE_SILENT, False),
+    ("recalled", {"mode": "list", "page": 1}, CLAUSE_LINE_REPORTS, True),
+    ("recalled", {"mode": "list", "page": 9}, CLAUSE_LINE_SILENT, False),
+    ("recalled", {"mode": "digest", "page": 9}, CLAUSE_LINE_REPORTS, True),
+)
+
+#: Every combination of "is `entries` empty" × "is `listing` empty", which is the axis
+#: `renders_narrowed_set` is a disjunction over. All four are reachable under a ref-to
+#: line: `--ref` fills entries only, `digest` fills both, `list` on a valid page fills
+#: listing only, and the four silent shapes fill neither.
+CLAUSE_SHAPES = frozenset(
+    {
+        "entries=filled listing=empty",
+        "entries=filled listing=filled",
+        "entries=empty listing=filled",
+        "entries=empty listing=empty",
+    }
+)
+
+
+def _clause_shape(rep) -> str:
+    return (
+        f"entries={'filled' if rep.entries else 'empty'} "
+        f"listing={'filled' if rep.listing else 'empty'}"
+    )
+
+
+class TestTheRefToClauseAgreesWithWhatTheBodyRenders:
+    """The ref-to header's SECOND CLAUSE, guarded as a RELATIONSHIP: what the clause
+    claims and what the body prints must agree, whatever the status is called. A
+    per-status assertion is the shape that got this wrong twice.
+
+    🔴 RED/GREEN MATRIX, MEASURED RATHER THAN CLAIMED. With the clause derived as
+    `status != "ref-to-absent"` — the spelling this file's fix replaced — three of the
+    eight rows FAIL: `ref-absent`, `ref-ambiguous` and a `list`-mode page past the end
+    each promised "everything below is about those 1" over a body that names no entry at
+    all. The other five pass there, which is why the whole table is here rather than the
+    three: the fix must not simply invert them.
+
+    🔴 AND A SECOND MATRIX, FOR THE NINTH ROW — `list` MODE ON A VALID PAGE. The table
+    shipped without it and a mutant survived the whole suite in both languages: deleting
+    `or bool(self.listing)` from `renders_narrowed_set` left all eight rows passing,
+    because no row emptied `entries` while filling `listing`. With the row present that
+    mutant FAILS HERE — the clause renders the silent variant over a body that lists
+    `carrier`, so this row's own line, body and property assertions all go red. The
+    STATUS ledger below could never have caught it: this row and the page-past-the-end
+    row are both `recalled`.
+
+    ⚠ `digest` MODE PAST THE END IS THE CONTROL, and it rules out the obvious second
+    guess. `page_is_past_the_end` is True on rows 7 AND 8; row 7 lists nothing while row 8
+    still prints the featured body, so a predicate built out of page arithmetic gets one
+    of them wrong. Only "did the renderer print a matched entry" separates the two.
+    """
+
+    @pytest.mark.parametrize(
+        ("want_status", "kwargs", "want_line", "reports_on_matched"),
+        CLAUSE_CASES,
+        ids=[
+            "digest-filter-only",
+            "named-entry-carries-it",
+            "named-entry-does-not-carry-it",
+            "nothing-in-scope-carries-it",
+            "named-entry-does-not-exist",
+            "the-name-is-ambiguous",
+            "list-mode-a-valid-page",
+            "list-mode-page-past-the-end",
+            "digest-mode-page-past-the-end",
+        ],
+    )
+    def test_the_clause_matches_the_body(
+        self,
+        clause_store: Path,
+        want_status: str,
+        kwargs: dict,
+        want_line: str,
+        reports_on_matched: bool,
+    ) -> None:
+        call = {"ref_to": CLAUSE_REF, **kwargs}
+        rep = rc.recall(clause_store, CLAUSE_SCOPE, **call)
+        # Asserted so a row that stopped reaching the shape it was written for fails
+        # loudly instead of quietly re-testing a neighbour.
+        assert rep.status == want_status
+        text = rc.render_text(rep)
+        assert want_line in text, (
+            f"the ref-to line is not the one this shape must print.\n"
+            f"want: {want_line}\ngot:\n{text}"
+        )
+        # The BODY, read the way the reader reads it: everything after the header line.
+        head, _, rest = text.partition("  ref-to: `")
+        assert rest, "no ref-to line was emitted at all"
+        body = rest.partition("\n")[2]
+        named = "carrier" in body
+        assert named is reports_on_matched, (
+            f"the clause and the body disagree: the body "
+            f"{'NAMES' if named else 'does not name'} the matched entry (`carrier`) while "
+            f"the header claims it {'does' if reports_on_matched else 'does not'}.\n"
+            f"body:\n{body}"
+        )
+        # …and the two are the SAME claim, so the predicate the renderer consulted must
+        # agree with what the body turned out to contain. This is the assertion that stays
+        # meaningful if the sentence is ever reworded.
+        assert rep.renders_narrowed_set is reports_on_matched
+
+    def test_no_ref_to_line_sits_above_a_status_the_filter_never_reached(
+        self, clause_store: Path
+    ) -> None:
+        """The other half of the table — the statuses that CANNOT appear under a ref-to
+        line — asserted behaviourally, and DERIVED FROM `STATUS_PRECEDENCE` so a status
+        added later cannot quietly go unclassified.
+
+        `scope-absent` and `scope-unreadable` both return before the filter runs, so
+        `ref_to` is None and no line is emitted: printing "narrowed to X" over "this scope
+        does not exist" would suggest the narrowing is why nothing came back.
+        `scope-empty` is unreachable after a filter that kept at least one entry, and a
+        filter that kept none answers `ref-to-absent`. The three `search-*` statuses
+        belong to the other report type.
+
+        ⚠ THE LAST ASSERTION IS AN INVARIANT GUARD, LABELLED AS ONE: no bug ever violated
+        it. It exists so the eight-row table above cannot silently stop being exhaustive.
+        """
+        absent = rc.recall(clause_store, "never-indexed", ref_to=CLAUSE_REF)
+        assert absent.status == "scope-absent"
+        assert absent.ref_to is None
+        assert "ref-to: `" not in rc.render_text(absent)
+
+        broken = clause_store / "all-broken"
+        broken.mkdir()
+        (broken / "wrapped-aliases.md").write_text(
+            "---\nservice: widget\naliases: [one,\n  two]\n---\n", encoding="utf-8"
+        )
+        unreadable = rc.recall(clause_store, "all-broken", ref_to=CLAUSE_REF)
+        assert unreadable.status == "scope-unreadable"
+        assert unreadable.ref_to is None
+        assert "ref-to: `" not in rc.render_text(unreadable)
+
+        # A filter that matched nothing must NOT answer `scope-empty`, which claims the
+        # DIRECTORY holds nothing over a scope holding four entries.
+        none = rc.recall(clause_store, CLAUSE_SCOPE, ref_to=CLAUSE_NOTHING)
+        assert none.status == "ref-to-absent"
+
+        # The ledger: every status in the shared vocabulary is either covered by the table
+        # above or named here as unreachable under a ref-to line. It fails on GROW.
+        covered = {status for status, _, _, _ in CLAUSE_CASES}
+        unreachable = {
+            "scope-absent",
+            "scope-unreadable",
+            "scope-empty",
+            "search-hit",
+            "search-no-match",
+            "search-unreadable",
+        }
+        assert covered | unreachable == set(rc.STATUS_PRECEDENCE), (
+            "a status is neither exercised under a ref-to line nor declared unreachable "
+            "there — decide which it is rather than leaving the table silently partial"
+        )
+        assert not covered & unreachable
+
+    def test_the_table_covers_every_shape_the_predicate_reads(
+        self, clause_store: Path
+    ) -> None:
+        """The ledger, ON THE AXIS THE PROPERTY IS ACTUALLY BUILT FROM.
+
+        🔴 A STATUS LEDGER STRUCTURALLY CANNOT SEE THIS GAP WHILE READING AS COVERAGE.
+        `renders_narrowed_set` is a disjunction over `entries` and `listing`, so the table
+        is exhaustive only when all FOUR combinations of their emptiness are exercised —
+        and `list`-mode-valid-page and `list`-mode-past-the-end are BOTH `recalled`, so
+        the status ledger above was satisfied with the `listing`-only shape missing. With
+        it missing, deleting `or bool(self.listing)` survived the whole suite in both
+        languages.
+
+        The status ledger STAYS: "a new status is either exercised or declared
+        unreachable" is a different claim from "every render shape is exercised", and
+        neither implies the other. Two ledgers, two axes.
+        """
+        seen = {
+            _clause_shape(
+                rc.recall(clause_store, CLAUSE_SCOPE, **{"ref_to": CLAUSE_REF, **kwargs})
+            )
+            for _, kwargs, _, _ in CLAUSE_CASES
+        }
+        assert seen == CLAUSE_SHAPES, (
+            "the table's render shapes are not the four this predicate reads. Missing "
+            f"{sorted(CLAUSE_SHAPES - seen)}, unexpected {sorted(seen - CLAUSE_SHAPES)}. "
+            "Add a row rather than relaxing this: a table that never empties one of the "
+            "two sets cannot see that term of the disjunction at all."
+        )
+
+
+UNINDEXABLE = "---\nservice: widget\naliases: [one,\n  two]\n---\n"
+
+
+@pytest.fixture()
+def filter_zero_store(tmp_path: Path) -> Path:
+    """TWO scopes, each holding exactly the pair that separates the two mechanisms a
+    search's `searched == 0` can come from.
+
+    - `kept-none/` — ONE readable entry that does NOT carry the ref, plus ONE file that
+      cannot be indexed. Every readable entry here was read and indexed; the FILTER is
+      what empties the searched set.
+    - `all-broken/` — ONE file that cannot be indexed and nothing else. Nothing readable
+      exists, so the searched set is empty for the OTHER reason.
+
+    ⚠ NEITHER SCOPE'S READABLE ENTRY CARRIES THE REF, so the filter keeps nothing in
+    either and `entries_searched` is 0 on both. That is the point: the two shapes are
+    indistinguishable by the searched count alone, and a status derived from that count
+    alone answers the same thing for both.
+    """
+    store = tmp_path / "filter-zero-store"
+    kept = store / "kept-none"
+    kept.mkdir(parents=True)
+    (kept / "readable.md").write_text(
+        _entry(
+            "readable",
+            "kept-none",
+            what="Readable, indexed, and carrying no refs at all.",
+            nuance="- 2000-06-01 a bullet mentioning readiness",
+        ),
+        encoding="utf-8",
+    )
+    (kept / "wrapped-aliases.md").write_text(UNINDEXABLE, encoding="utf-8")
+    broken = store / "all-broken"
+    broken.mkdir()
+    (broken / "wrapped-aliases.md").write_text(UNINDEXABLE, encoding="utf-8")
+    return store
+
+
+class TestAFilterDrivenZeroIsNotAnUnreadableStore:
+    """The REGRESSION guard for the condition the `--ref-to` filter falsified.
+
+    🔴 RED/GREEN MATRIX, MEASURED. At `a6d1a69` — the branch head before this fix — the
+    `kept-none` case FAILS: the status is `search-unreadable`, the body says "NOTHING
+    COULD BE READ … NOT ONE of them could be indexed" and "The query was never run
+    against anything", and `_exit_for` returns 3 with "nothing could be read, so recall
+    was unavailable". All false about a scope whose one readable entry was read, indexed,
+    and then removed by the filter — and the non-zero throws away a run that had an
+    answer. The `all-broken` case passes there and must keep passing: this fix NARROWS
+    the branch, it does not delete it.
+
+    🔴 AND THE DEFECT WAS NOT PRE-EXISTING. `searched == 0 and bad` was sound while
+    `searched` counted every readable entry in the scope — which it did until the
+    `ref-to` filter was added upstream of that counter.
+    """
+
+    def test_the_filter_driven_zero_is_a_no_match_over_a_narrowed_set(
+        self, filter_zero_store: Path
+    ) -> None:
+        rep = rc.search(filter_zero_store, "kept-none", "readiness", ref_to=CLAUSE_REF)
+        assert (rep.entries_searched, rep.ref_to_skipped, len(rep.malformed)) == (0, 1, 1), (
+            "the fixture did not build the shape this test is named for"
+        )
+        assert rep.status == "search-no-match", (
+            f"a filter-driven zero answered {rep.status!r}. One readable entry was read "
+            "and indexed and then removed by the `ref-to` filter; `search-unreadable` "
+            "claims nothing in the scope could be indexed and sends the reader to fix "
+            "the malformed file instead."
+        )
+        text = rc.render_search(rep)
+        for never in (
+            "NOTHING COULD BE READ",
+            "NOT ONE of them could be indexed",
+            "was never run against anything",
+        ):
+            assert never not in text, (
+                f"the rendered answer still claims {never!r} over a scope whose readable "
+                f"entry WAS indexed:\n{text}"
+            )
+        for want in (
+            "status=search-no-match",
+            f"  ref-to: `{CLAUSE_REF}` — 0 of 1 entry in `kept-none/` reference it",
+            "🔴 MALFORMED — 1 entry file in `kept-none/`",
+            "NO MATCH — searched 0 entries in `kept-none/`, and nothing cleared the "
+            "threshold. Nothing was scanned: the `ref-to` filter removed every readable "
+            "entry, so this zero is the FILTER's and says nothing about the query.",
+        ):
+            assert want in text, f"the rendered answer is missing {want!r}:\n{text}"
+        # 🔴 THE OPERATOR-VISIBLE STAKE. `search-unreadable` is in
+        # `UNREADABLE_STATUSES`, so the wrong status also exited 3 with "recall was
+        # unavailable" — and a consumer told to print that verbatim and continue
+        # discards a run that had an answer.
+        assert rc._exit_for(rep.status, "kept-none/", rep.malformed) == 0
+
+    def test_a_scope_with_nothing_readable_still_answers_unreadable(
+        self, filter_zero_store: Path
+    ) -> None:
+        """The POSITIVE CONTROL: without it every assertion above is satisfied by a
+        status nothing can reach."""
+        rep = rc.search(filter_zero_store, "all-broken", "readiness", ref_to=CLAUSE_REF)
+        assert (rep.entries_searched, rep.ref_to_skipped, len(rep.malformed)) == (0, 0, 1)
+        assert rep.status == "search-unreadable"
+        text = rc.render_search(rep)
+        assert "NOTHING COULD BE READ" in text
+        assert "was never run against anything" in text
+        assert rc._exit_for(rep.status, "all-broken/", rep.malformed) == 3
 

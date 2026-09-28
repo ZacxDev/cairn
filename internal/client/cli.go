@@ -54,10 +54,19 @@ func Verbs() []Verb {
 			Flags: []string{"--scope"}, Run: Sync},
 		{Name: "recall", Help: "the scope's digest",
 			Flags: append(append([]string{}, commonReadFlags...),
-				"--mode", "--ref", "--list", "--limit", "--page"),
+				// 🔴 `--ref-to`, AND THE SPELLING IS THE POINT. `--ref` names an ENTRY;
+				// this names something an entry POINTS AT, and the two compose. The pod's
+				// parameter is `?ref-to=` — the same spelling — because `?ref=` already
+				// means `--ref` there and redefining it would break a pinned contract.
+				// BOTH clients declare it or `tests/parity/` reds on an unrecognised
+				// argument.
+				"--mode", "--ref", "--ref-to", "--list", "--limit", "--page"),
 			Run: func(e Env, o Options) (int, error) { return Report(e, o, false) }},
 		{Name: "search", Help: "search the scope for hunks",
-			Flags: append(append([]string{}, commonReadFlags...), "--all-scopes"),
+			// The same `--ref-to` `recall` carries, for the same reason. Searching within
+			// the entries that reference one task is the narrowing a reverse lookup is
+			// usually wanted for.
+			Flags: append(append([]string{}, commonReadFlags...), "--all-scopes", "--ref-to"),
 			Run:   func(e Env, o Options) (int, error) { return Report(e, o, true) }},
 		{Name: "validate", Help: "the post-write check: parse, dropped lines, marker reachability",
 			Flags: commonReadFlags, Run: Validate},
@@ -453,6 +462,8 @@ func Parse(argv []string) (Verb, Options, error) {
 			opts.Mode = value
 		case "--ref":
 			opts.Ref, opts.HasRef = value, true
+		case "--ref-to":
+			opts.RefTo, opts.HasRefTo = value, true
 		case "--limit":
 			n, err := strconv.Atoi(value)
 			if err != nil {
