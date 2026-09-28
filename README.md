@@ -465,13 +465,26 @@ exits **78** and serves nothing. Three ways to supply it, all measured:
 `-token-file <path>`; `CAIRN_TOKEN_FILE=<path>` with no flag; or
 `-token-file=` (explicitly empty) plus `CAIRN_TOKEN=<row>`, which is the
 env fallback the binary's own refusal names. Single-dash flags: this uses Go's
-stdlib `flag`, not the client's `--long` style. `-h` lists seven — `-store`
+stdlib `flag`, not the client's `--long` style. `-h` lists eight — `-store`
 (`CAIRN_STORE_ROOT`), `-host` (`CAIRN_UI_HOST`), `-port` (`CAIRN_UI_PORT`),
 `-token-file` (`CAIRN_TOKEN_FILE`), `-session-file`
-(`CAIRN_UI_SESSION_FILE`), `-session-ttl` (`CAIRN_UI_SESSION_TTL`) and
-`-control-journal` (`CAIRN_UI_CONTROL_JOURNAL`) — and every default is env-resolved,
+(`CAIRN_UI_SESSION_FILE`), `-session-ttl` (`CAIRN_UI_SESSION_TTL`),
+`-control-journal` (`CAIRN_UI_CONTROL_JOURNAL`) and `-db-dsn`
+(`CAIRN_UI_DB_DSN`) — and every default is env-resolved,
 so what `-h` prints depends on your environment. It reads the store **from disk**
 rather than over HTTP, and authenticates against the same token file as the pod.
+
+🔴 **`-db-dsn` MOVES THE SESSION TABLE AS WELL AS ARMING INVITATIONS, AND THE FIRST
+START WITH ONE SIGNS EVERY OPEN BROWSER OUT ONCE.** It is a PostgreSQL connection
+string for this surface's *mutable* state, which is both tables `internal/pgstore`
+holds: sessions and invitations. With it set, `-session-file` is ignored — the binary
+says so on startup — and the invite flow works; without it, sessions stay on that file
+and every invite route tells its reader the deployment holds no invitation store. The
+connection is made, pinged and migrated **at startup**, under a 10 s bound, and a
+failure is a refusal to start (exit 78) rather than a surface that passes its health
+check and fails every request. ⚠ **Prefer the environment variable to the flag**: a DSN
+carries a password and a flag value is in `argv`. Nothing in this program echoes the
+value — not the startup line, not any refusal.
 
 🔴 **"Env-resolved" does NOT mean "the variable and the flag are interchangeable", and
 `CAIRN_UI_CONTROL_JOURNAL` is where that matters.** An unset variable and an explicitly
@@ -529,7 +542,13 @@ is taken back, and the page says so.
 ⚠ **You can only share with people and projects you already share a project with.**
 That is deliberate — a picker listing every user would turn admin on one scope into
 a directory of everyone in the deployment — and it means reaching anybody else needs
-an invite, which does not exist yet.
+an invite. ⚠ **The clause that stood here said an invite "does not exist yet", and it
+is corrected rather than deleted because it was true across three changes and is the
+sentence somebody would act on.** The invite flow exists: `GET`/`POST /invite`,
+`POST /invite/revoke` and a public `GET /join`, over the invite store `-db-dsn`
+configures. It is **absent on a deployment with no `-db-dsn`**, where the invite pages
+say so and their writes answer 501 — so "does not exist yet" is now a statement about a
+CONFIGURATION rather than about this repository.
 
 🔴 **THE SHARE FLOW NEEDS `-control-journal <path>`, AND NOT ONLY TO WRITE.** Without one
 the authority is the token file, which has no shares to record and **confers `admin` on

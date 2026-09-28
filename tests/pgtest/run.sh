@@ -24,12 +24,41 @@
 # refuses on a zero, and the counts are what it prints.
 set -euo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-repo=$(cd "$here/../.." && pwd)
+# 🔴 `CDPATH= cd --`, WHICH IS WHAT THREE OTHER SCRIPTS IN THIS REPO ALREADY DO
+# (`server/build-push.sh`, `server/verify-byte-identity.sh`,
+# `tests/conformance/run_go.sh`) AND WHICH THIS ONE DID NOT. A plain `cd <relative>`
+# PRINTS the resolved directory whenever it reached it through `CDPATH`, so with
+# `CDPATH` exported — `.` as its first entry is a common spelling and it survives into
+# `nix develop` — this command substitution captured the path TWICE and the script died
+# on `cd: <path>\n<path>: No such file or directory` before running anything.
+#
+# ⚠ MEASURED HERE, NOT INHERITED FROM THE OTHER SCRIPTS' COMMENTS: this runner failed
+# exactly that way on a host with `CDPATH=.:…` set, while CI — which has none — has
+# been green throughout. That is the shape the repository's own rule names: a green
+# covers the ENVIRONMENT it ran in, and the one dimension this script's CI environment
+# pins is the one it was blind to. `run_go.sh`'s comment records being "the last of the
+# three to be hardened"; it was the last of FOUR, and `uiaudit/run.sh` is the fifth and
+# is still unhardened — filed rather than fixed here, because it is a different script
+# with its own tests.
+here="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(CDPATH= cd -- "$here/../.." && pwd)"
 # Every `go test ./internal/...` below is a package path relative to the module root, so
 # the script runs from there rather than from wherever it was invoked. `server/seed.sh`'s
 # missing `cd` is a defect this repository already tracks.
 cd "$repo"
+
+# ── the tier's PACKAGES, spelled ONCE ────────────────────────────────────────────
+# 🔴 A LIST RATHER THAN THE ONE PATH THIS SCRIPT USED TO CARRY, BECAUSE THE TIER STOPPED
+# BEING ONE PACKAGE. `internal/pgstore` is the SQL; `cmd/cairn-ui` is the program that
+# points itself at a database, and everything its DSN branch does — the schema applied,
+# the session table moved off disk, an `Inviting` that is not nil — is invisible without
+# a server. A tagged file in a package this list does not name is a file `go test`
+# never compiles, which is the tier's own "a skip nobody counts is a pass" one level up:
+# the ledger in `tests/test_pgtest_tier_is_declared.py` would still see the FILE.
+#
+# ⚠ ADDING A PACKAGE HERE IS HALF THE MOVE. The other half is a row in that ledger, and
+# the two are checked against each other there.
+PGTEST_PKGS=(./internal/pgstore/ ./cmd/cairn-ui/)
 
 refuse() {
 	echo "" >&2
@@ -146,29 +175,57 @@ echo ""
 # statement about the SQL rather than about a harness wired to nothing. A tier whose
 # tests quietly did nothing without a database would pass this script's happy path and
 # every reader would take the green at face value.
-echo "-- negative control: the tier with no DSN must REFUSE --"
-control_out="$workdir/control.txt"
-if env -u CAIRN_PGTEST_DSN go test -tags pgtest -count=1 -run TestTheSQLRedemptionGuardAgreesWithStateAt \
-	./internal/pgstore/ >"$control_out" 2>&1; then
-	sed -n '1,30p' "$control_out" >&2 || true
-	refuse "the tier PASSED with no database configured. It must refuse instead — a tier
-that is green without a server has measured nothing, and every green below would be
-a fact about the harness."
-fi
-if ! grep -q 'REFUSING TO VOUCH' "$control_out"; then
-	sed -n '1,30p' "$control_out" >&2 || true
-	refuse "the tier failed with no database, but not with its own refusal message. That
-is a different failure from the one the control is testing for, so the control did not
-measure what it claims."
-fi
-echo "   control OK: refused, naming its own refusal"
+#
+# 🔴 ONE CONTROL PER PACKAGE, BECAUSE THE REFUSAL IS PER PACKAGE. `cmd/cairn-ui` cannot
+# import `internal/pgstore`'s `_test` helpers, so it restates the refusal — a SECOND
+# spelling, and an unwatched second spelling is exactly the thing this control exists
+# against. A control that only ever ran the first package would vouch for a second one
+# that skips, or that never compiled its tagged file at all.
+echo "-- negative control: each package of the tier, with no DSN, must REFUSE --"
+control_i=0
+for control in \
+	"./internal/pgstore/:TestTheSQLRedemptionGuardAgreesWithStateAt" \
+	"./cmd/cairn-ui/:TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations"; do
+	# ⚠ BRACED AND SPLIT ON THE LAST COLON-FREE FIELD RATHER THAN BY WORD-SPLITTING: this
+	# script runs under `bash`, but the repository's shell rules record that an unbraced
+	# `$var:` followed by certain letters is eaten as a history modifier in zsh, and a
+	# value that expands to a well-formed WRONG string is the failure mode with no error.
+	control_pkg=${control%%:*}
+	control_test=${control##*:}
+	control_i=$((control_i + 1))
+	control_out="$workdir/control-$control_i.txt"
+	if env -u CAIRN_PGTEST_DSN go test -tags pgtest -count=1 -run "$control_test" \
+		"$control_pkg" >"$control_out" 2>&1; then
+		sed -n '1,30p' "$control_out" >&2 || true
+		refuse "the tier PASSED in $control_pkg with no database configured. It must refuse
+instead — a tier that is green without a server has measured nothing, and every green
+below would be a fact about the harness."
+	fi
+	if ! grep -q 'REFUSING TO VOUCH' "$control_out"; then
+		sed -n '1,30p' "$control_out" >&2 || true
+		refuse "the tier failed in $control_pkg with no database, but not with its own refusal
+message. That is a different failure from the one the control is testing for, so the
+control did not measure what it claims."
+	fi
+	# 🔴 AND THE NAMED TEST MUST HAVE RUN. `go test -run` matching NOTHING reports `ok`,
+	# which this script already refuses on for the main run — the same hole is open here,
+	# where a RENAMED test would make the control exit 0 and be read as "no refusal
+	# needed". `go test` prints the refusal through the test's own FAIL line, so the
+	# package path in a failing run is what proves the selection hit something.
+	if ! grep -q -- "--- FAIL: $control_test" "$control_out"; then
+		sed -n '1,30p' "$control_out" >&2 || true
+		refuse "the control for $control_pkg did not report '--- FAIL: $control_test'. The
+-run filter selected no such test, so what was measured is the filter and not the tier."
+	fi
+	echo "   control OK: $control_pkg refused, naming its own refusal"
+done
 echo ""
 
 # ── the run under test ───────────────────────────────────────────────────────────
 echo "-- the tier --"
 out="$workdir/test.txt"
 set +e
-go test -tags pgtest -count=1 -v ./internal/pgstore/ 2>&1 | tee "$out"
+go test -tags pgtest -count=1 -v "${PGTEST_PKGS[@]}" 2>&1 | tee "$out"
 # 🔴 THE STATUS OF THE PIPELINE'S FIRST STAGE, NOT `tee`'s. A pipe eats the exit status,
 # and this repository has already filed a false defect against a correct gate by reading
 # the wrong one.

@@ -35,6 +35,14 @@ REPO = Path(__file__).resolve().parent.parent
 TIER_FILES = (
     "internal/pgstore/harness_pgtest_test.go",
     "internal/pgstore/invites_pgtest_test.go",
+    # 🔴 THE TIER IS TWO PACKAGES NOW, AND THE SECOND ONE IS THE PROGRAM RATHER THAN THE
+    # SQL. `cmd/cairn-ui`'s DSN branch — schema applied, session table moved off disk, an
+    # `Inviting` that is not nil — is invisible without a server, exactly like the SQL, so
+    # it lives behind the same tag and is declared here for the same reason. ⚠ A tagged
+    # file in a package `run.sh` does not NAME is never compiled, so this ledger and
+    # `PGTEST_PKGS` in the runner are two halves of one move; `test_the_runner_names_every_
+    # package_the_tier_lives_in` is what refuses to let them drift.
+    "cmd/cairn-ui/database_pgtest_test.go",
 )
 RUNNER = "tests/pgtest/run.sh"
 CI = ".github/workflows/ci.yml"
@@ -56,7 +64,16 @@ DECLARED_TESTS = {
         "TestTheTableNeverHoldsTheToken",
         "TestCreateRefusesAnInvitationNobodyDecidedToGive",
     },
+    "cmd/cairn-ui/database_pgtest_test.go": {
+        "TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations",
+    },
 }
+
+# 🔴 EVERY PACKAGE A TIER FILE LIVES IN, DERIVED FROM `TIER_FILES` RATHER THAN RETYPED.
+# A second hand-maintained list would be a second thing to forget, and the failure it
+# would hide is silent: a tagged file in a package the runner does not name compiles
+# never and runs never, while every assertion above about that FILE stays green.
+TIER_PKGS = {"./" + rel.rsplit("/", 1)[0] + "/" for rel in TIER_FILES}
 
 # The Postgres major this tier is a claim about. Three files choose it and they must
 # agree; a fourth — the deployment repo's StatefulSet — cannot be read from here, which
@@ -152,10 +169,74 @@ def test_the_runner_exists_is_executable_and_refuses_on_a_zero():
         f"{RUNNER} no longer runs its no-database negative control. Without it a green "
         f"tier is indistinguishable from a tier wired to nothing."
     )
+    # 🔴 AND THE CONTROL MUST COVER EVERY PACKAGE, NOT JUST THE FIRST. Each package
+    # restates the refusal — `cmd/cairn-ui` cannot import `internal/pgstore`'s `_test`
+    # helpers — and an unwatched second spelling is the thing a negative control exists
+    # against. The check is that each package path appears inside the control loop.
+    #
+    # ⚠ THE ANCHORS ARE THE SHELL'S OWN `echo` LINES, NOT THE SECTION COMMENTS. A first
+    # draft split on the phrase "negative control", whose FIRST occurrence is the section
+    # banner — so the slice it produced was the eight characters between that banner and
+    # the words "the run under test" inside the very same line, and the assertion failed
+    # against `', BEFORE '`. It went red rather than green, which is the safe direction,
+    # and it is recorded because the same sentence appearing in prose and in code is how a
+    # text-slicing check silently measures the wrong region.
+    start = text.index('echo "-- negative control')
+    end = text.index('echo "-- the tier --"')
+    assert start < end, (
+        f"{RUNNER} prints its tier banner before its negative-control banner, so the "
+        f"control no longer runs FIRST — and a control that runs after the thing it "
+        f"vouches for has vouched for nothing."
+    )
+    control_block = text[start:end]
+    for pkg in sorted(TIER_PKGS):
+        assert pkg in control_block, (
+            f"{RUNNER}'s negative control never runs {pkg}, so that package's own "
+            f"REFUSING-TO-VOUCH spelling has never been watched to work. A package whose "
+            f"refusal silently became a skip — or whose tagged file stopped compiling — "
+            f"would pass the control and then report a green that measured nothing."
+        )
     # The status must come off `go test`, not off the pipe it is teed through.
     assert "PIPESTATUS[0]" in text, (
         f"{RUNNER} reads a pipeline's exit status rather than `go test`'s. A pipe eats "
         f"the status — this repository has already filed a false defect that way."
+    )
+
+
+def test_the_runner_names_every_package_the_tier_lives_in():
+    """🔴 A TAGGED FILE IN A PACKAGE THE RUNNER DOES NOT NAME IS NEVER COMPILED, AND EVERY
+    OTHER ASSERTION IN THIS FILE STAYS GREEN.
+
+    The ledger above reads FILES; `go test` takes PACKAGES. The two agreed for as long as
+    the tier was one package, which is exactly how long a coupling stays invisible. This
+    is the assertion that makes adding a tier file to a new package a two-part move with
+    a gate on the second part — the same shape as `api.DeclaredRoutes()` against the
+    conformance corpus, one tier along.
+    🔴 IT READS THE `PGTEST_PKGS` ARRAY AND NOT THE WHOLE FILE, AND THE DIFFERENCE IS
+    MEASURED RATHER THAN STYLISTIC. The first draft asserted `pkg in text`; the mutant
+    that deletes `./cmd/cairn-ui/` from `PGTEST_PKGS` SURVIVED it, because the same path
+    is spelled again in the negative-control loop twenty lines below. A whole-file
+    substring check is satisfied by any mention — a comment included — so it measured
+    that somebody had typed the package name somewhere, while the array `go test` is
+    actually handed had lost it. That is this repository's "a guard can be SPELLED rather
+    than STRUCTURAL" rule, committed inside the guard written to close a structural hole,
+    and found by mutating the thing on purpose rather than by reading it again.
+    """
+    text = read(RUNNER)
+    declaration = re.search(r"^PGTEST_PKGS=\((?P<pkgs>[^)]*)\)", text, re.MULTILINE)
+    assert declaration, (
+        f"{RUNNER} has no `PGTEST_PKGS=(...)` array. That array is what `go test` is "
+        f"handed; without it this assertion has nothing to read and the tier's package "
+        f"set is whatever a command line happens to say."
+    )
+    named = set(declaration.group("pkgs").split())
+    assert named == TIER_PKGS, (
+        f"{RUNNER}'s PGTEST_PKGS is {sorted(named)}, and the packages holding "
+        f"build-tagged tier files are {sorted(TIER_PKGS)}. `go test` compiles only the "
+        f"packages it is given, so a tier file in a package MISSING from that array has "
+        f"never run — and nothing else in this file can tell, because the ledger above "
+        f"reads the FILE rather than the run. A package listed with no tier file is the "
+        f"other direction: a path `go test` walks for nothing."
     )
 
 

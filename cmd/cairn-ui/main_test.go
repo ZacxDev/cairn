@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -415,24 +416,43 @@ func TestTheTwoArrivalPathsOfAControlJournalAgree(t *testing.T) {
 	}
 }
 
-// TestTheControlJournalVariableIsNotInTheAliasLedger is what makes `controlJournalDefault`'s
-// raw `os.Getenv` safe, and it is an INVARIANT GUARD rather than regression coverage: no bug
-// ever violated it.
+// TestTheRawReadVariablesAreNotInTheAliasLedger is what makes the raw `os.Getenv` in
+// `controlJournalDefault` AND in `databaseDSNDefault` safe, and it is an INVARIANT GUARD
+// rather than regression coverage: no bug ever violated it.
 //
 // 🔴 READING RAW IS DELIBERATE — `envalias` treats a blank value as absent, which is the
-// defect — but it also means a deprecated spelling of this name would go unread. This name
-// has none. The day somebody adds one, this goes red at the ledger rather than leaving
-// `controlJournalDefault` quietly half-blind.
-func TestTheControlJournalVariableIsNotInTheAliasLedger(t *testing.T) {
+// defect both functions exist to refuse — but it also means a deprecated spelling of either
+// name would go unread. Neither has one. The day somebody adds one, this goes red at the
+// ledger rather than leaving a reader quietly half-blind.
+//
+// ⚠ IT WAS `TestTheControlJournalVariableIsNotInTheAliasLedger` AND COVERED ONE NAME. The
+// rename is the point rather than tidiness: 28(c) added a SECOND raw reader, and a guard
+// whose name promises one variable is a guard the next raw reader is not added to. It walks
+// `rawEnvNames` — the program's own ledger — so a third reader is covered by existing.
+//
+// 🔴 AND IT ASSERTS THE SET, NOT JUST ITS MEMBERS. A `rawEnvNames` somebody emptied, or
+// shortened to the one name it used to hold, would leave the loop below green over whatever
+// remained — the same "a count of DECLARATIONS is not a count of INSTANCES" shape this
+// repository tracks. The expectation is spelled as literals so the ledger cannot be its own
+// oracle.
+func TestTheRawReadVariablesAreNotInTheAliasLedger(t *testing.T) {
 	if len(envalias.Ledger) == 0 {
 		t.Fatal("the ledger is empty, so the loop below asserts nothing at all")
 	}
-	for _, pair := range envalias.Ledger {
-		if pair.New == EnvUIControlJournal || pair.Old == EnvUIControlJournal {
-			t.Fatalf("%s is in the alias ledger as %+v, so `controlJournalDefault`'s raw os.Getenv "+
-				"cannot see its other spelling. Resolve it through envalias — but note that "+
-				"`envalias.blank` reads whitespace as absent, which is the very thing that "+
-				"function exists to refuse", EnvUIControlJournal, pair)
+	want := []string{"CAIRN_UI_CONTROL_JOURNAL", "CAIRN_UI_DB_DSN"}
+	if !slices.Equal(rawEnvNames, want) {
+		t.Fatalf("rawEnvNames is %v, want %v. Every variable this program reads with a raw "+
+			"`os.Getenv` has to be in that slice or the alias check below never sees it — and a "+
+			"name REMOVED from it is a reader that silently stopped being covered", rawEnvNames, want)
+	}
+	for _, name := range rawEnvNames {
+		for _, pair := range envalias.Ledger {
+			if pair.New == name || pair.Old == name {
+				t.Fatalf("%s is in the alias ledger as %+v, so the raw os.Getenv that reads it "+
+					"cannot see its other spelling. Resolve it through envalias — but note that "+
+					"`envalias.blank` reads whitespace as absent, which is the very thing that "+
+					"reader exists to refuse", name, pair)
+			}
 		}
 	}
 }

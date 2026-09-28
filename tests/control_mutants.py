@@ -2346,6 +2346,85 @@ MUTANTS: tuple[Mutant, ...] = (
         "only thing that can see it. It is also why this row costs ~30s: the killing test "
         "kills it on its DEADLINE, the mutant having made the child serve rather than exit.",
     ),
+    # ---- 28(c): the database wiring, and the FOUR refusals a tagless battery can see -
+    #
+    # 🔴 WHAT IS NOT HERE AND WHY, BECAUSE THE ABSENCE IS THE OPEN QUESTION THE HANDOFF
+    # RECORDS RATHER THAN AN OVERSIGHT. The DSN-present branch has three more mutants,
+    # all measured KILLED by hand against a real PostgreSQL 18.6: the invite store built
+    # and never attached (`inviting` left nil), the session table left on the file store
+    # while a database is configured, and the ignored-`-session-file` NOTE suppressed.
+    # Their killer is `TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations`,
+    # which is behind `//go:build pgtest` — so THIS battery, which runs `go test` with no
+    # tag, would never compile it and would score all three SURVIVED. A row whose killer
+    # cannot run is worse than no row: it reports a coverage gap that does not exist and
+    # sends the next reader to write a test that is already written. So the answer to
+    # "can a build-tagged tier be mutated by a battery running `go test` without the
+    # tag" is NO, and the tier's own runner (`tests/pgtest/run.sh`) is where that
+    # evidence has to live.
+    #
+    # ⚠ AND A FOURTH MUTANT IS ABSENT BECAUSE IT DOES NOT COMPILE, WHICH IS A STRONGER
+    # OUTCOME THAN A ROW. Deleting `Inviting: inviting` from the `ui.Config` literal —
+    # the most likely way to break this wiring, and silent before 28(c) hoisted the
+    # config into a named value — now leaves `inviting` with no reader and `go build`
+    # refuses it with `declared and not used`. Measured, not assumed.
+    Mutant(
+        name="ui-startup-reads-a-blank-dsn-line-as-unset",
+        path="cmd/cairn-ui/main.go",
+        # The CONDITION only, and disambiguated from `controlJournalDefault`'s identical
+        # line by the refusal text below it: `identity.ValueReducesToNothing(raw)` appears
+        # TWICE in this file, and a row that matched both would mutate a guard it does not
+        # name. The `fmt.Errorf` stays, so `raw` stays used.
+        old="\tif identity.ValueReducesToNothing(raw) {\n\t\treturn \"\", fmt.Errorf(\n"
+        '\t\t\t"%s=%q reduces to nothing, so this surface would read it as UNSET: the session table would "+',
+        new="\tif false {\n\t\treturn \"\", fmt.Errorf(\n"
+        '\t\t\t"%s=%q reduces to nothing, so this surface would read it as UNSET: the session table would "+',
+        killer="TestAWhitespaceDatabaseLineIsRefusedRatherThanReadAsUnset",
+        extra_killers=("TestTheProcessRefusesAnUnreachableDatabaseBeforeTheListener",),
+        why="deleting the blank policy as belt-and-braces, on the reading that a bad DSN "
+        "fails at `pgstore.Open` anyway. It does not: a WHITESPACE value resolves to the "
+        "empty string, which is 'no database', so the surface comes up with the session "
+        "table back on a local file and every /invite page telling its reader the "
+        "deployment holds no invitation store — while /healthz answers 200. The operator "
+        "wrote a line and this program discarded it.",
+    ),
+    Mutant(
+        name="ui-startup-refuses-an-explicitly-empty-dsn-line",
+        path="cmd/cairn-ui/main.go",
+        old='\traw := get(EnvUIDatabase)\n\tif raw == "" {\n\t\treturn "", nil\n\t}',
+        new='\traw := get(EnvUIDatabase)\n\tif false {\n\t\treturn "", nil\n\t}',
+        killer="TestAWhitespaceDatabaseLineIsRefusedRatherThanReadAsUnset",
+        why="deleting the early return as redundant — `ValueReducesToNothing(\"\")` is true, "
+        "so the refusal below appears to cover it. The direction is the dangerous one for a "
+        "DEPLOYMENT: a manifest that emits every variable with an empty default would stop "
+        "the surface from starting at all, and 'no database' is the configuration that "
+        "exists today.",
+    ),
+    Mutant(
+        name="ui-startup-does-not-act-on-the-dsn-refusal",
+        path="cmd/cairn-ui/main.go",
+        old='\tif dsnErr != nil {\n\t\tfmt.Fprintln(os.Stderr, "cairn-ui: "+dsnErr.Error())\n'
+        "\t\tos.Exit(exitConfig)\n\t}",
+        new="\t_ = dsnErr",
+        killer="TestTheProcessRefusesAnUnreachableDatabaseBeforeTheListener",
+        why="the wiring, not the predicate: a refusal that is COMPUTED and then not acted "
+        "on. Every in-process test of `databaseDSNDefault` stays green because the function "
+        "still returns its error — the observable is a process that BINDS A LISTENER. It is "
+        "the same shape as the journal row above and it costs the same ~60s, because the "
+        "killing test kills it on its DEADLINE rather than on an exit code.",
+    ),
+    Mutant(
+        name="ui-startup-serves-an-unreachable-database",
+        path="cmd/cairn-ui/main.go",
+        old="\t\tpgDB, err = openDatabase(*dbDSN)\n\t\tif err != nil {",
+        new="\t\tpgDB, err = openDatabase(*dbDSN)\n\t\tif false {",
+        killer="TestTheProcessRefusesAnUnreachableDatabaseBeforeTheListener",
+        why="the whole of 28(c) in one clause: connecting, ignoring the result, and serving. "
+        "`sql.Open` validates nothing and `pgstore.Open` is what pings — so with this "
+        "removed a wrong host, a wrong password or a missing database all produce a pod "
+        "that passes its health check, renders every page, and fails every sign-in and "
+        "every /invite one request at a time. That is the exact failure this program's "
+        "startup refusals exist against, and nothing else in the tree would notice.",
+    ),
     # ---- Phase G: the invite flow's HTTP surface ----------------------------------
     #
     # 🔴 THESE ROWS EXIST HERE RATHER THAN IN A SCRATCHPAD SCRIPT BECAUSE OF THE ENTRY

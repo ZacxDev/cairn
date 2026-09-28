@@ -2211,10 +2211,23 @@ own, which is what `outcomeFrom` refuses.
   provider → callback → provisioned principal → a co-member in the share picker — is
   **unmeasured**. That is rank 9 and rank 13, and it is a human's.
 - **Postgres.** `Inviting` is stubbed in every test in this phase; the real `invite.Store` is
-  `internal/pgstore`, measured by the build-tagged tier. The WIRING — `cmd/cairn-ui`
-  constructing a `ControlInviting` over a real DSN and refusing at startup rather than at first
-  request — is 28(c) and does not exist yet, so on this tree **every deployment takes the
-  `NoInviteStore` branch**.
+  `internal/pgstore`, measured by the build-tagged tier. ✅ **THE WIRING IS NO LONGER ABSENT —
+  28(c) LANDED IT, AND THE SENTENCE THAT STOOD HERE IS CORRECTED RATHER THAN DELETED because a
+  reader who took it at face value would conclude the flow is inert.** It read: *"the WIRING —
+  `cmd/cairn-ui` constructing a `ControlInviting` over a real DSN and refusing at startup rather
+  than at first request — is 28(c) and does not exist yet, so on this tree every deployment takes
+  the `NoInviteStore` branch."* `cmd/cairn-ui` now takes `-db-dsn` / `$CAIRN_UI_DB_DSN`, opens
+  `internal/pgstore` (which pings AND migrates) before it binds a listener, and refuses with exit
+  78 if it cannot — so a deployment that CONFIGURES a database holds invitations, and one that
+  does not still takes the `NoInviteStore` branch, deliberately.
+  ⚠ **What is still stubbed is every test IN THIS PHASE**, which is the half that has not moved:
+  the DSN branch is measured in `cmd/cairn-ui/database_pgtest_test.go`, behind the same build tag
+  as the SQL, and `tests/pgtest/run.sh` is the only thing that runs it. So `go test ./...` — the
+  nix sandbox included — still says nothing about a real invite store.
+- **The `-session-file` path on a database deployment.** Setting a DSN MOVES the session table
+  there as well, which is one operator-visible consequence with no test on the deployed surface:
+  the first start with a DSN signs every open browser out once. The binary announces it; nobody
+  has watched it happen on a cluster.
 - **The browser.** `uiaudit` now walks both new GET rows (`GET /invite` via `linkExpanded`,
   `GET /join` via `plainGET`), and its per-project page is unreachable on a token-file world for
   the same reason the share flow's scope page is — no project is manageable there. Nothing has
