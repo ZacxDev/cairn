@@ -59,11 +59,22 @@
 // one place. So every query here selects the ROW and the liveness decision is taken in
 // Go by the same predicate the file store uses.
 //
-// ⚠ THE COST IS REAL AND BOUNDED: an expired row is fetched before it is rejected, and
-// dead rows accumulate until something deletes them. [DB.Prune] is that something, and
-// it is called on the write paths for the reason `FileSessionStore.Create` prunes on
-// write — a background goroutine whose failure would be silent is worse than a bounded
-// cost on a path somebody is watching.
+// ⚠ THE COST IS REAL AND BOUNDED FOR SESSIONS, AND UNBOUNDED FOR INVITES — the two are
+// NOT the same and one sentence used to cover both. An expired row is fetched before it
+// is rejected, and dead rows accumulate until something deletes them.
+// [SessionStore.Prune] is that something FOR THE SESSION TABLE, called on the write paths
+// for the reason `FileSessionStore.Create` prunes on write: a background goroutine whose
+// failure would be silent is worse than a bounded cost on a path somebody is watching.
+//
+// 🔴 NOTHING PRUNES `invites`, EVER, AND THAT IS STATED RATHER THAN IMPLIED BY A LINK TO
+// A FUNCTION THAT DOES NOT COVER IT. There is no `DELETE FROM invites` anywhere in this
+// package. Revoked, expired and redeemed invitations are kept forever — which is CORRECT
+// for a redeemed one (the schema comment argues it: deleting the row would make a replayed
+// link indistinguishable from an unknown one) and is merely UNRECLAIMED for the other two.
+// The growth is bounded by how many invitations humans mint, so it is an accepted cost
+// rather than a leak; it is written down because the previous wording linked `[DB.Prune]`
+// — a method that does not exist, on a type that has no prune — and read as though both
+// tables were reclaimed.
 package pgstore
 
 import (
@@ -168,19 +179,6 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 	db := &DB{sql: pool}
 	if err := db.Migrate(ctx); err != nil {
 		pool.Close()
-		return nil, err
-	}
-	return db, nil
-}
-
-// OpenWith wraps a pool a caller already holds, applying the schema. For tests, which
-// build their pool against a database they created.
-func OpenWith(ctx context.Context, pool *sql.DB) (*DB, error) {
-	if pool == nil {
-		return nil, ErrNoDSN
-	}
-	db := &DB{sql: pool}
-	if err := db.Migrate(ctx); err != nil {
 		return nil, err
 	}
 	return db, nil

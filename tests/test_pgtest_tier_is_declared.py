@@ -35,6 +35,13 @@ REPO = Path(__file__).resolve().parent.parent
 TIER_FILES = (
     "internal/pgstore/harness_pgtest_test.go",
     "internal/pgstore/invites_pgtest_test.go",
+    # 🔴 THE SESSION HALF, ADDED BY ROUND 0 OF #139's AUDIT RATHER THAN BY THE CHANGE THAT
+    # MADE IT LOAD-BEARING. 28(c) put `SessionStore` on the authentication path of a
+    # deployed surface while the whole tier mentioned it exactly ONCE, in a comment — so
+    # `Lookup`/`Create`/`Revoke`/`Prune` had never been executed against a real server by
+    # any gate here. The compile-time `var _ identity.SessionStore` assertion says the
+    # methods EXIST; it says nothing about what the SQL does.
+    "internal/pgstore/sessions_pgtest_test.go",
     # 🔴 THE TIER IS TWO PACKAGES NOW, AND THE SECOND ONE IS THE PROGRAM RATHER THAN THE
     # SQL. `cmd/cairn-ui`'s DSN branch — schema applied, session table moved off disk, an
     # `Inviting` that is not nil — is invisible without a server, exactly like the SQL, so
@@ -63,6 +70,14 @@ DECLARED_TESTS = {
         "TestTwoSimultaneousRedemptionsProduceExactlyOneWinner",
         "TestTheTableNeverHoldsTheToken",
         "TestCreateRefusesAnInvitationNobodyDecidedToGive",
+    },
+    "internal/pgstore/sessions_pgtest_test.go": {
+        "TestASessionRoundTripsThroughPostgres",
+        "TestTheSessionTableNeverHoldsThePresentedID",
+        "TestTheLivenessBoundaryAgreesWithSessionLive",
+        "TestRevokeRemovesTheSessionAndAnUnknownIDIsNotAnError",
+        "TestPruneDeletesStrictlyLessThanLiveRejects",
+        "TestReCreatingASessionDigestReplacesRatherThanDuplicates",
     },
     "cmd/cairn-ui/database_pgtest_test.go": {
         "TestWithADatabaseTheSurfaceMovesItsStateThereAndHoldsInvitations",
