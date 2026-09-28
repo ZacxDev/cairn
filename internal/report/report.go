@@ -65,9 +65,27 @@ type RecallOptions struct {
 	// still narrows and finds nothing. HasRef separates them.
 	Ref    string
 	HasRef bool
-	Limit  int
-	Mode   string
-	Page   int
+
+	// RefTo is the REVERSE LOOKUP: "which entries reference this `<system>:<id>`". HasRefTo
+	// separates "no filter was sent" from `?ref-to=` with an empty value, exactly as
+	// HasRef does — the latter still narrows, and to nothing.
+	//
+	// 🔴 IT IS A DIFFERENT QUESTION FROM `Ref`, AND THE TWO COMPOSE RATHER THAN CONFLICT.
+	// `Ref` names an ENTRY (a filename stem or an alias); `RefTo` names something an entry
+	// POINTS AT. Both present means "narrow to the entries referencing X, then surface
+	// entry Y among them", which is a sensible request and needs no special case.
+	//
+	// ⚠ THE QUERY PARAMETER IS `?ref-to=`, NOT `?ref=`, AND THAT IS FORCED RATHER THAN
+	// CHOSEN. `?ref=` ALREADY MEANS `Ref` on `/api/v1/recall/{scope}` and the conformance
+	// corpus pins its behaviour, so spelling the reverse lookup `?ref=` would silently
+	// redefine a live parameter. The flag and the parameter therefore share one spelling,
+	// `ref-to`, which is also what stops a reader mapping the wrong one to the other.
+	RefTo    string
+	HasRefTo bool
+
+	Limit int
+	Mode  string
+	Page  int
 
 	// FocusPaths is the repo-relative path window the FEATURED-ENTRY selector resolves
 	// against, and FocusSource is the doc it was read out of — quoted back in the printed
@@ -96,6 +114,12 @@ type SearchOptions struct {
 	Threshold float64
 	MaxHits   int
 	AllScopes bool
+
+	// RefTo is the same reverse-lookup narrowing `RecallOptions.RefTo` is, applied to the
+	// entry set each searched scope contributes. See that field for why the parameter is
+	// spelled `ref-to`.
+	RefTo    string
+	HasRefTo bool
 }
 
 // Rendered is what a route needs to answer a report request: the four-state status, the
@@ -148,6 +172,32 @@ func ValidateRecall(opts RecallOptions) error {
 		// commas, spaces and parentheses — is the contract for this message.
 		return fmt.Errorf("mode must be one of %s, got %s", pyTuple(RecallModes), pyStr(opts.Mode))
 	}
+	// 🔴 LAST IN THE LADDER, DELIBERATELY, BECAUSE THE ORDER ABOVE IS A RECORDED CONTRACT.
+	// Putting a new guard anywhere but the end changes which message a request carrying two
+	// bad parameters receives, and every golden that pins one of those messages would move
+	// for a reason unrelated to this change.
+	if err := validateRefTo(opts.RefTo, opts.HasRefTo); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateRefTo is the ONE place the reverse-lookup operand's shape is refused, shared by
+// both option types.
+//
+// 🔴 IT DELEGATES TO `store.ParseTaskRef` RATHER THAN RE-SPELLING THE RULES. The operand is
+// the SAME `<system>:<id>` grammar an entry's `refs:` item is, and a second parser for it
+// would drift: a query the writer accepts but the reader refuses (or worse, the reverse)
+// answers "no entries reference this" for a ref that is written in the store. The refusal
+// sentence is the parser's own, prefixed so an operator can see it is about their query
+// rather than about a file.
+func validateRefTo(refTo string, has bool) error {
+	if !has {
+		return nil
+	}
+	if _, err := store.ParseTaskRef(refTo); err != nil {
+		return fmt.Errorf("ref-to is not a well-formed `<system>:<id>` ref: %s", err.Error())
+	}
 	return nil
 }
 
@@ -165,6 +215,10 @@ func ValidateSearch(opts SearchOptions) error {
 	}
 	if opts.Context < ContextBullet {
 		return fmt.Errorf("context must be an int >= 0, got %d", opts.Context)
+	}
+	// Last, for the reason `ValidateRecall`'s own trailing guard gives.
+	if err := validateRefTo(opts.RefTo, opts.HasRefTo); err != nil {
+		return err
 	}
 	return nil
 }

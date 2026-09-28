@@ -63,7 +63,15 @@ func (m MalformedEntry) Line() string {
 	return "malformed index entry `" + m.Label() + "`: " + m.Reason
 }
 
-// TaskRef is one `<system>:<id>` reference from an entry's `tasks:` front matter.
+// TaskRef is one `<system>:<id>` reference from an entry's `refs:` front matter (or from
+// the deprecated `tasks:`/`task:` spellings — see `refkeys.go`).
+//
+// ⚠ THE TYPE KEPT ITS NAME WHILE THE KEY CHANGED, AND THAT IS A DECISION RATHER THAN AN
+// OVERSIGHT. Renaming it would touch `internal/report`, `internal/ui`, every Go test and
+// nothing in the Python oracle, which has its own `TaskRef` and cannot be renamed in step
+// without breaking every construction site in its suite — churn across two languages with no
+// behavioural difference, in a change whose whole blast-radius claim is "additive". The KEY
+// is what an operator writes; the type name is internal.
 type TaskRef struct {
 	// System is normalized — lowercased and `-`-folded, like every other ref.
 	System string
@@ -112,8 +120,9 @@ type Entry struct {
 	// Filename is `<slug>.md` or `<slug>.<kind>.md` — the name a candidate list
 	// must show, and the name a write must locate the file by.
 	Filename string
-	// Tasks are the tasks this entry answers, in FILE ORDER, deduped, never
-	// normalized.
+	// Tasks are the `refs:` this entry carries, in FILE ORDER, deduped, never
+	// normalized. The FIELD keeps the older spelling for the reason `TaskRef`'s own
+	// comment gives; the KEY is `refs:`, with `tasks:`/`task:` as deprecated aliases.
 	Tasks []TaskRef
 }
 
@@ -136,9 +145,19 @@ func (e Entry) Ref() string {
 //
 // Accepted keys: `service` (required), `scope` or `repo` (required, one of),
 // `aliases` (optional sequence), `kind` (optional), `filename` (optional —
-// supplied by the loader, otherwise derived), `tasks` (optional sequence of
-// `<system>:<id>` refs) or `task` (optional scalar sugar for a one-element
-// `tasks`).
+// supplied by the loader, otherwise derived), `refs` (optional sequence of
+// `<system>:<id>` refs) with `tasks` (deprecated sequence) and `task` (deprecated
+// scalar sugar for a one-element list) as aliases.
+//
+// 🔴 EVERY OTHER KEY IS IGNORED, NOT REFUSED, AND THAT IS MEASURED ON BOTH
+// IMPLEMENTATIONS RATHER THAN READ OFF THIS FUNCTION'S BODY. This function reads only
+// the keys it names and never enumerates the mapping, which is a CODE reading; the
+// measurement is `TestUnknownFrontMatterKeysAreIgnored`, which hands it `tags:`, `refs:`
+// and a nonsense key in turn beside a valid `{service, scope}` and asserts all three
+// load, with a no-`service:` mapping in the same test as the negative control proving the
+// probe can observe a refusal. The oracle was probed the same way and agrees. That pair
+// is what makes `refs:` backward-compatible: an older reader handed a `refs:` file loads
+// it and reports no refs, rather than refusing the file.
 func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 	bad := func(why string) error { return malformed(source, why) }
 
@@ -248,7 +267,7 @@ func EntryFromMapping(mapping FrontMatter, source string) (Entry, error) {
 		normalizedSet[na] = struct{}{}
 	}
 
-	tasks, taskErr := parseTasksField(mapping, source)
+	tasks, taskErr := parseRefsField(mapping, source)
 	if taskErr != nil {
 		return Entry{}, taskErr
 	}
@@ -297,15 +316,45 @@ func sequenceField(mapping FrontMatter, key, source, scalarWhy string) ([]string
 	}
 }
 
-func parseTasksField(mapping FrontMatter, source string) ([]TaskRef, error) {
+// parseRefsField reads the entry's refs from `refs:`, or from the deprecated `tasks:`/
+// `task:` spellings.
+//
+// 🔴 THE NEW SPELLING WINS WITHIN ONE ENTRY, AND IT WINS BY NOT CONSULTING THE OLD ONES AT
+// ALL. Rule 1 of `refkeys.go`, and it is what decides the one case that is not obvious: an
+// entry carrying `refs:` AND BOTH deprecated spellings does NOT hit the "both `tasks:` and
+// `task:` are set" refusal, because neither is read. That refusal is about two spellings
+// DISAGREEING over what the entry's refs are, and when `refs:` is present there is no
+// disagreement to resolve — the entry says exactly one thing. Making it fire anyway would
+// refuse a file whose meaning is unambiguous, which is the opposite of what a deprecation
+// window is for. The refusal is unchanged for the entries that reach it (`refs:` absent),
+// which is every file the corpus sends.
+//
+// ⚠ THE WARNING IS NOT EMITTED HERE. `RefKeyDeprecations` is the pure function over a
+// mapping set, `Index.DeprecatedRefKeys` is where a load's answer is carried, and the
+// CLIENTS emit it. A parser that wrote to a stream its caller did not name would put
+// deprecation lines into the pod's audit stream and into `tests/conformance/`'s captured
+// output, neither of which asked for them.
+func parseRefsField(mapping FrontMatter, source string) ([]TaskRef, error) {
 	bad := func(why string) error { return malformed(source, why) }
+	refsVal, hasRefs := truthy(mapping, "refs")
 	tasksVal, hasTasks := truthy(mapping, "tasks")
 	taskVal, hasTask := truthy(mapping, "task")
-	if hasTasks && hasTask {
+	if !hasRefs && hasTasks && hasTask {
 		return nil, bad("both `tasks:` and `task:` are set — `task:` is sugar for a one-element `tasks:`; keep one of them")
 	}
 	var items []string
 	switch {
+	case hasRefs:
+		switch typed := refsVal.(type) {
+		case []string:
+			items = typed
+		case string:
+			// `refs:` is a LIST by definition, so a scalar there is a mistake
+			// worth naming rather than silently flattening.
+			return nil, bad("`refs:` must be a list, not a bare string — write `refs: [<system>:<id>]`")
+		default:
+			return nil, bad(fmt.Sprintf("`refs:` must be a list, got %T", refsVal))
+		}
 	case hasTasks:
 		switch typed := tasksVal.(type) {
 		case []string:
@@ -351,6 +400,10 @@ func parseTasksField(mapping FrontMatter, source string) ([]TaskRef, error) {
 // truthy answers `if mapping.get(k):` — present AND not an empty string or empty
 // list. The `tasks:`/`task:` exclusivity check is written against Python
 // truthiness, so a bare `tasks:` (which reads as `""`) must not count as set.
+//
+// 🔴 IT IS ALSO WHAT `RefKeyDeprecations` ASKS, so "this key is set" means the same thing
+// to the parser and to the warning. Spelled separately they would disagree on the bare
+// `tasks:` line — one key warned about, the other key ignored.
 func truthy(mapping FrontMatter, key string) (any, bool) {
 	v, present := mapping[key]
 	if !present {

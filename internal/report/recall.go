@@ -57,6 +57,25 @@ type RecallReport struct {
 	Ref    string
 	HasRef bool
 
+	// RefTo/HasRefTo is the `?ref-to=` REVERSE-LOOKUP narrowing, in its CANONICAL spelling
+	// (system half folded, id half byte-identical) so the rendered line and a query written
+	// `?ref-to=GitHub:…` agree. HasRefTo separates the same two states HasRef does.
+	//
+	// ⚠ IT IS SET ON EVERY STATUS THE NARROWING REACHED, and NOT on `scope-absent` or
+	// `scope-unreadable` — both of those return before the filter runs, because neither is
+	// an answer the filter could change and printing "narrowed to X" above "this scope does
+	// not exist" would suggest the narrowing is why nothing came back.
+	RefTo    string
+	HasRefTo bool
+
+	// RefToScopeTotal is how many entries the scope held BEFORE the ref-to filter ran.
+	//
+	// 🔴 IT EXISTS SO THE FILTER CANNOT HIDE WHAT IT REMOVED. `TotalInScope` is the set the
+	// report is ABOUT, which after a narrowing is the matching entries; without this second
+	// number a reader could not tell "2 entries reference this" from "the scope holds 2
+	// entries". The rendered ref-to line prints both.
+	RefToScopeTotal int
+
 	// Candidates are the filenames an ambiguous ref named. The resolver never picks; nor
 	// does this.
 	Candidates []string
@@ -89,6 +108,17 @@ type RecallReport struct {
 	// only, and never empty there: a featured entry with no stated basis is the implicit
 	// pick this package refuses to make.
 	FeaturedBasis string
+
+	// DeprecatedRefKeys is the load's front-matter-key deprecation warnings, carried from
+	// `store.Index`.
+	//
+	// 🔴 `RenderText` NEVER PRINTS IT, AND THAT IS THE DECISION RATHER THAN AN OVERSIGHT.
+	// These bytes are compared against the oracle's by `tests/conformance/` and
+	// `tests/parity/`, and a deprecation notice inside the REPORT would land in a served
+	// HTTP body — telling every API consumer to edit a file they do not have. It is a
+	// message for whoever runs the CLI, so the CLI writes it to STDERR through
+	// `client.WarnDeprecations`, which owns the once-per-process rule. The pod ignores it.
+	DeprecatedRefKeys []string
 }
 
 // PageIsPastTheEnd is 🔴 THE ONE PLACE THIS QUESTION IS ASKED. Three renderer branches
@@ -178,6 +208,11 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 	badElsewhere := index.MalformedOutside([]string{opts.Scope})
 
 	base := RecallReport{
+		// 🔴 ON `base`, SO EVERY STATUS BRANCH CARRIES IT. Eight branches copy this value;
+		// setting the field per branch instead is the same assignment at eight sites, wrong
+		// at the one somebody forgets — and the one they forget is the one where an operator
+		// with a deprecated key sees no warning.
+		DeprecatedRefKeys:  index.DeprecatedRefKeys,
 		Scope:              store.NormalizeRef(opts.Scope),
 		StoreRoot:          storeRoot,
 		Limit:              opts.Limit,
@@ -220,6 +255,60 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 		return out, nil
 	}
 
+	// 🔴 THE REVERSE-LOOKUP NARROWING GOES HERE: AFTER `index.Entries(opts.Scope)`, WHICH IS
+	// AFTER SCOPE AUTHORISATION, AND NEVER BEFORE IT.
+	//
+	// The index `LoadStore` returned is already narrowed to the scopes this caller may read —
+	// that is the ONE narrowing, and `internal/control/README.md` refuses a second. So this
+	// filter can only ever remove entries from a set the caller was already entitled to, and
+	// it is structurally incapable of surfacing one they were not.
+	//
+	// 🔴 THE WRONG ORDER IS A REAL AND CHEAP MISTAKE, WHICH IS WHY THE ORDER IS STATED RATHER
+	// THAN LEFT TO THE CALL SEQUENCE. "Which entries reference this?" reads like a
+	// store-wide question, and the obvious implementation of a store-wide question is a
+	// store-wide load — `LoadIndex(storeRoot, Collect, ScopeSet{Unrestricted: true})`, or a
+	// `visible` argument quietly dropped — followed by a ref filter. That answers correctly
+	// and leaks: the hit set names entries, scopes and refs from directories the caller
+	// cannot read. `TestTheRefToFilterNarrowsAfterScopeAuthorisation` is the two-principal
+	// guard, and it was watched RED against exactly that ordering.
+	//
+	// ⚠ `TotalInScope` BECOMES THE NARROWED COUNT, AND THE SCOPE'S OWN TOTAL MOVES TO
+	// `RefToScopeTotal`. Every `recalled` branch below already sets `TotalInScope` from the
+	// set it is about, and the prose that reads it ("page 1 of 1 of the index for `<scope>/`,
+	// which holds N in all") is a statement about the index the reader is looking at. Keeping
+	// the scope total there instead would make that sentence claim a page showed 2 of 7 when
+	// the narrowed index held exactly 2. The scope total is not dropped — the ref-to line
+	// prints both numbers, so what the filter removed stays visible.
+	scopeTotal := len(entries)
+	if opts.HasRefTo {
+		want, parseErr := store.ParseTaskRef(opts.RefTo)
+		if parseErr != nil {
+			// Unreachable from either real caller — `ValidateRecall` refuses a malformed
+			// operand before this function runs. Returned rather than ignored so a future
+			// caller that skips validation cannot silently narrow to everything.
+			return RecallReport{}, parseErr
+		}
+		// The canonical spelling, so the rendered line and a `?ref-to=GitHub:…` agree.
+		base.RefTo, base.HasRefTo = want.String(), true
+		base.RefToScopeTotal = scopeTotal
+		matching := make([]store.Entry, 0, len(entries))
+		for _, e := range entries {
+			if store.EntryReferences(e, want) {
+				matching = append(matching, e)
+			}
+		}
+		if len(matching) == 0 {
+			out := base
+			out.Status = StatusRefToAbsent
+			out.TotalInScope = len(entries)
+			if opts.HasRef {
+				out.Ref, out.HasRef = store.NormalizeRef(opts.Ref), true
+			}
+			return out, nil
+		}
+		entries = matching
+	}
+
 	if opts.HasRef {
 		entry, _, refErr := store.ResolveRefTiered(opts.Ref, index, opts.Scope)
 		if refErr != nil {
@@ -237,6 +326,19 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 		if entry == nil {
 			out := base
 			out.Status = StatusRefAbsent
+			out.TotalInScope = len(entries)
+			out.Ref, out.HasRef = store.NormalizeRef(opts.Ref), true
+			return out, nil
+		}
+		// 🔴 THE TWO NARROWINGS COMPOSE, AND THE RESOLVER DOES NOT KNOW ABOUT THE FIRST ONE.
+		// `ResolveRefTiered` resolves against the whole (authorised) INDEX — it has to, since
+		// the alias and cross-scope tiers are properties of the index and not of a slice —
+		// so an entry it finds is not necessarily in the ref-to set. Without this membership
+		// test, `--ref X --ref-to Y` would print X in full whether or not X references Y,
+		// which is the report answering a question nobody asked.
+		if opts.HasRefTo && !containsEntry(entries, *entry) {
+			out := base
+			out.Status = StatusRefToAbsent
 			out.TotalInScope = len(entries)
 			out.Ref, out.HasRef = store.NormalizeRef(opts.Ref), true
 			return out, nil
@@ -315,6 +417,21 @@ func Recall(storeRoot string, opts RecallOptions, visible store.ScopeSet) (Recal
 	}
 	out.FeaturedBasis = basis
 	return out, nil
+}
+
+// containsEntry answers "is this entry in this set", by SCOPE + FILENAME.
+//
+// ⚠ NOT BY `Ref()`, AND THAT IS THE DIFFERENCE THAT MATTERS. Two entries in two scopes can
+// share a canonical ref — `Ref()` is `<slug>[.<kind>]` and carries no scope — so a ref-only
+// comparison would accept a cross-scope resolution as a member of this scope's narrowed set.
+// The pair used here is what the loader itself locates a file by.
+func containsEntry(entries []store.Entry, want store.Entry) bool {
+	for _, e := range entries {
+		if e.Scope == want.Scope && e.Filename == want.Filename {
+			return true
+		}
+	}
+	return false
 }
 
 func readAll(storeRoot string, entries []store.Entry) ([]RecalledEntry, error) {

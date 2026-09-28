@@ -43,6 +43,7 @@ COPY lib/subsystem_resolver.py   /app/lib/
 COPY lib/entry_shape.py          /app/lib/
 COPY lib/host_identity.py        /app/lib/
 COPY lib/env_aliases.py          /app/lib/
+COPY lib/ref_keys.py             /app/lib/
 COPY server/server.py            /app/server/
 
 # `subsystem_touch` evaluates `DEFAULT_STORE_ROOT = Path.home() / ".claude" / …`

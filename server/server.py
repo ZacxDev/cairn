@@ -4164,12 +4164,19 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
         mode_values = params.get("mode")
         mode = mode_values[-1] if mode_values else rc.DEFAULT_MODE
         ref_values = params.get("ref")
+        # 🔴 `ref-to`, NOT `ref`: `?ref=` ALREADY MEANS the entry-ref narrowing on this
+        # route and `tests/conformance/` pins it, so spelling the reverse lookup `?ref=`
+        # would silently redefine a live parameter rather than add one. The flag both
+        # clients expose is `--ref-to`, the same spelling, so neither maps to the other
+        # by mistake.
+        ref_to_values = params.get("ref-to")
         limit = _int_param(params, "limit")
         page = _int_param(params, "page")
         report = rc.recall(
             self.store_root,
             scope,
             ref=ref_values[-1] if ref_values else None,
+            ref_to=ref_to_values[-1] if ref_to_values else None,
             limit=limit if limit is not None else rc.DEFAULT_ENTRY_LIMIT,
             mode=mode,
             page=page if page is not None else 1,
@@ -4201,6 +4208,10 @@ class StoreRequestHandler(BaseHTTPRequestHandler):
             ),
             max_hits=max_hits if max_hits is not None else rc.DEFAULT_MAX_HITS,
             all_scopes=params.get("all_scopes", ["0"])[-1] not in ("0", "", "false"),
+            # The same `ref-to` the recall route reads, for the same reason it is not `ref`.
+            ref_to=(
+                params["ref-to"][-1] if params.get("ref-to") else None
+            ),
             # 🔴 AND THIS IS WHAT MAKES `?all_scopes=1` SAFE. That flag names no
             # scope, so a per-scope refusal check has nothing to refuse — it
             # would search the CONTENT of every scope in the store. Narrowing

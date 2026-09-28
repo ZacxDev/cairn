@@ -202,6 +202,17 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 	out = append(out, extraHeader...)
 	out = append(out, "  caveat: "+r.Caveat())
 
+	// 🔴 THE NARROWING ANNOUNCES ITSELF, BECAUSE EVERY COUNT BELOW IT IS ABOUT THE NARROWED
+	// SET. Without this line a `--ref-to` digest is byte-indistinguishable from a digest of a
+	// scope that happens to hold exactly those entries — the reader would take a filtered
+	// index for the whole one. It carries BOTH numbers so what the filter removed is visible.
+	//
+	// ⚠ EMITTED ONLY WHEN THE FILTER WAS SENT, so no existing golden moves. `HasRefTo` is
+	// false on every request that does not carry the parameter, and the line is absent then.
+	if r.HasRefTo {
+		out = append(out, refToLine(r.RefTo, r.TotalInScope, r.RefToScopeTotal, r.Scope))
+	}
+
 	// 🔴 BEFORE EVERY STATUS BRANCH, INCLUDING THE ONES THAT RETURN IMMEDIATELY. A reject
 	// reported only on the paths somebody remembered is a reject that will be missed on
 	// the path they did not — and `scope-absent`, the most common status in most repos, is
@@ -244,6 +255,28 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 		out = append(out, "AMBIGUOUS REF `"+r.Ref+"` — it names more than one entry, so "+
 			"nothing was surfaced. The resolver never picks; neither does this. Candidates: "+
 			strings.Join(r.Candidates, ", ")+". Re-run naming one of them.")
+		return strings.Join(out, "\n")
+
+	case StatusRefToAbsent:
+		out = append(out, "")
+		// 🔴 IT SAYS WHAT WAS LOOKED AT AND WHAT WAS NOT, because a reverse lookup's zero is
+		// the most misreadable answer this reader produces: "no entry references X" and "X is
+		// not a thing anybody tracks" are different facts, and only the first is in evidence.
+		// The malformed rows are already above; this sentence is what stops the reader
+		// concluding from them in the wrong direction, exactly as `ref-absent`'s does.
+		extra := ""
+		if n := len(r.Malformed); n > 0 {
+			extra = " ⚠ BUT " + strconv.Itoa(n) + " entry file" + plural(n) + " in this scope " +
+				"could not be indexed (listed above), and an entry that never loaded carries no " +
+				"refs a filter can see — one of them may reference this. Check those before " +
+				"concluding nothing does."
+		}
+		out = append(out, "NO ENTRY REFERENCES `"+r.RefTo+"` — the "+
+			strconv.Itoa(r.RefToScopeTotal)+" entr"+entryPlural(r.RefToScopeTotal)+" in `"+
+			r.Scope+"/` were read and none of them carries that ref. This is a fact about "+
+			"THIS SCOPE's `refs:` keys and NOT about whether the reference exists: an entry "+
+			"may point at it under a different spelling of the id half, which is compared "+
+			"byte-for-byte."+extra)
 		return strings.Join(out, "\n")
 
 	case StatusRefAbsent:
@@ -401,6 +434,21 @@ func (r RecallReport) RenderText(host string, extraHeader []string, instance str
 
 // entryAboveIs is `entr{'y above is' if n == 1 else 'ies above are'}` — one idiom, spelled
 // once, because it is the tail of two sentences that must agree.
+// refToLine is the ONE spelling of the reverse-lookup header, shared by both renderers.
+//
+// 🔴 ONE FUNCTION, TWO CALLERS, BECAUSE THE TWO REPORT TYPES HAVE DIFFERENT COUNTS TO PUT IN
+// IT AND THE SENTENCE MUST NOT DIFFER. `CaveatText`'s own header gives the rule: a package
+// with two report types spells a shared sentence once, or it is wrong in one of them.
+//
+// `matched`/`total` are the narrowed and pre-filter counts; `label` is the scope (or
+// `(all scopes)`), so the line reads the same on a single-scope and a store-wide run.
+func refToLine(refTo string, matched, total int, label string) string {
+	return "  ref-to: `" + refTo + "` — " + strconv.Itoa(matched) + " of " +
+		strconv.Itoa(total) + " entr" + entryPlural(total) + " in `" + label +
+		"/` reference it, and everything below is about those " + strconv.Itoa(matched) +
+		". This is a NARROWING, not a truncation: the rest were read and did not match."
+}
+
 func entryAboveIs(n int) string {
 	if n == 1 {
 		return "y above is"

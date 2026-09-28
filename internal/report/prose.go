@@ -51,11 +51,25 @@ var knownSensitivities = []string{"client-confidential", "personal", "public"}
 // because a caller must be able to switch on ONE status field — and no two of them share
 // a spelling, so a reader cannot half-match.
 const (
-	StatusScopeAbsent      = "scope-absent"
-	StatusScopeUnreadable  = "scope-unreadable"
-	StatusScopeEmpty       = "scope-empty"
-	StatusRefAmbiguous     = "ref-ambiguous"
-	StatusRefAbsent        = "ref-absent"
+	StatusScopeAbsent     = "scope-absent"
+	StatusScopeUnreadable = "scope-unreadable"
+	StatusScopeEmpty      = "scope-empty"
+	StatusRefAmbiguous    = "ref-ambiguous"
+	StatusRefAbsent       = "ref-absent"
+	// StatusRefToAbsent is the REVERSE LOOKUP's own non-finding: a `--ref-to`/`?ref-to=`
+	// was given and NO entry in the caller's reachable scopes references it.
+	//
+	// 🔴 IT IS NOT `scope-empty` AND NOT `ref-absent`, AND COLLAPSING IT INTO EITHER WOULD
+	// PRINT SOMETHING FALSE. `scope-empty` says "`<scope>/` exists but holds no entries",
+	// which is a claim about the DIRECTORY and is wrong about a full scope nothing in which
+	// carries the ref; `ref-absent` says "nothing recorded under that name yet", which is
+	// about an ENTRY NAME and sends the reader looking for a file. This one is about a
+	// POINTER, and its own sentence says which.
+	//
+	// ⚠ IT EXITS 0, like every status outside `UnreadableStatuses`. "Nothing references
+	// this" is an ANSWER: the store was read, the question was asked, and the answer is
+	// none. Only "nothing could be read" is a non-zero.
+	StatusRefToAbsent      = "ref-to-absent"
 	StatusRecalled         = "recalled"
 	StatusSearchHit        = "search-hit"
 	StatusSearchNoMatch    = "search-no-match"

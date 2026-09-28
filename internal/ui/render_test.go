@@ -158,6 +158,25 @@ const (
 		`the rollout runbook, as the file has it`
 )
 
+// refsResolvingToTheirOwnText builds `EntryRef`s whose RESOLVED URL is the ref's own text.
+//
+// 🔴 THAT IS A REACHABLE STATE, NOT A CONVENIENCE FOR KEEPING THESE FIXTURES SHORT, AND IT IS
+// THE STATE THESE FIXTURES EXIST TO TEST. `store.RefURL` builds a self-hosted system's URL by
+// appending a path to an OPERATOR-SUPPLIED base and deliberately does not scheme-check it, so
+// any string an operator can put in `CAIRN_REF_BASE_<SYSTEM>` can reach `URL` — `javascript:`
+// included. Setting `URL` to the hostile text is the shortest spelling of that world.
+//
+// ⚠ AND IT KEEPS THIS PAIR OF WORLDS SHAPE-FOR-SHAPE ACROSS THE TYPE CHANGE: before
+// `EntryRef` existed the RAW ref was the href candidate, so `URL == Raw` is the fixture under
+// which every assertion in this file measures the same thing it measured then.
+func refsResolvingToTheirOwnText(raw ...string) []EntryRef {
+	out := make([]EntryRef, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, EntryRef{Raw: r, URL: r})
+	}
+	return out
+}
+
 // benignWorld mirrors [hostileWorld] SHAPE FOR SHAPE: one scope, one entry, one
 // alias, four task refs of which exactly three are refused by [safeHref] and one is
 // a link, two sections, one bullet and one malformed row. A benign world of a different
@@ -173,12 +192,12 @@ func benignWorld() []Scope {
 			Filename: "runbook.md",
 			Raw:      benignRaw,
 			Aliases:  []string{"rollout"},
-			Tasks: []string{
+			Tasks: refsResolvingToTheirOwnText(
 				"jira:PLAT-1",
 				"jira:PLAT-2",
 				"jira:PLAT-3",
 				"https://tracker.invalid/issue/4711",
-			},
+			),
 			Sections: []Section{
 				{Heading: "## Pointers", Body: "prose"},
 				{Heading: store.NuanceHeading, Body: "- a bullet", Bullets: []Bullet{
@@ -205,7 +224,7 @@ func hostileWorld() []Scope {
 			Filename: hostileRef + ".md",
 			Raw:      hostileRaw,
 			Aliases:  []string{hostileAlias},
-			Tasks: []string{
+			Tasks: refsResolvingToTheirOwnText(
 				hostileTaskScript,
 				hostileTaskMixedCase,
 				hostileTaskData,
@@ -213,7 +232,7 @@ func hostileWorld() []Scope {
 				// page on which every ref is refused would pass a "no href=javascript"
 				// assertion by never emitting an href at all.
 				"https://tracker.invalid/issue/4711",
-			},
+			),
 			Sections: []Section{
 				{Heading: hostileHeading, Body: hostileBody},
 				{Heading: store.NuanceHeading, Body: hostileBullet, Bullets: []Bullet{

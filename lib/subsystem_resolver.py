@@ -95,6 +95,7 @@ from __future__ import annotations
 import errno
 import re
 import stat
+import ref_keys
 from collections.abc import Sequence as _AbcSequence
 from dataclasses import dataclass
 from datetime import date as _date
@@ -139,6 +140,7 @@ __all__ = [
     "parse_task_ref",
     "format_task_refs",
     "lossy_tag_for",
+    "entry_references",
     "normalize_ref",
     "split_kind",
     "path_refs",
@@ -556,6 +558,29 @@ def lossy_tag_for(ref: TaskRef) -> str:
     return tag
 
 
+def entry_references(entry: "SubsystemEntry", want: TaskRef) -> bool:
+    """Does this entry carry this ref — the REVERSE LOOKUP's one predicate.
+
+    🔴 ONE FUNCTION, BECAUSE THE FILTER RUNS AT SEVERAL CALL SITES AND A PREDICATE
+    OPEN-CODED AT N SITES IS WRONG AT N-1. `recall` narrows a scope's entries, `search`
+    narrows each searched scope's entries, and `internal/store.EntryReferences` is the
+    Go spelling; a further caller asking "which entries reference this" must reach this
+    and not re-derive it.
+
+    🔴 THE SYSTEM HALF IS COMPARED NORMALIZED AND THE ID HALF BYTE-IDENTICALLY, WHICH IS
+    THE SCHEMA'S OWN ASYMMETRY RATHER THAN A CHOICE MADE HERE. `parse_task_ref`
+    normalizes the system half (`GitHub:` and `github:` are one system) and preserves the
+    id half exactly, because a tracker's id may be case-sensitive and folding it would
+    make two different tasks compare equal. So a query for
+    `GitHub:example-org/example-repo#428` finds an entry written `github:…`, and a query
+    for `clickup:ABC` does NOT find `clickup:abc`. Both halves of that are load-bearing;
+    passing both sides through `parse_task_ref` applies the asymmetry once.
+    """
+    return any(
+        have.system == want.system and have.ident == want.ident for have in entry.tasks
+    )
+
+
 # --- The shared predicate ------------------------------------------------------
 
 
@@ -649,7 +674,15 @@ class SubsystemEntry:
     """`<slug>.md` or `<slug>.<kind>.md` — the name a candidate list must show."""
 
     tasks: tuple[TaskRef, ...] = ()
-    """The tasks this entry answers, in FILE ORDER, deduped, never normalized.
+    """The `refs:` this entry carries, in FILE ORDER, deduped, never normalized.
+
+    ⚠ THE FIELD KEEPS THE OLDER SPELLING WHILE THE KEY CHANGED, AND THAT IS A DECISION
+    RATHER THAN AN OVERSIGHT. The KEY is `refs:` (with `tasks:`/`task:` as deprecated
+    aliases); renaming this attribute would break every construction site in the suite
+    and every read in `subsystem_recall`, in a change whose whole blast-radius claim is
+    "additive", for no behavioural difference. `internal/store`'s `Entry.Tasks` carries
+    the same note for the same reason.
+
 
     Defaulted and appended LAST on purpose: every existing construction site —
     including the ones in the test suite — builds an entry without it, and a
@@ -671,9 +704,20 @@ class SubsystemEntry:
 
         Accepted keys: `service` (required), `scope` or `repo` (required, one of),
         `aliases` (optional sequence), `kind` (optional), `filename` (optional —
-        supplied by the loader, otherwise derived), `tasks` (optional sequence of
-        `<system>:<id>` refs) or `task` (optional, scalar sugar for a one-element
-        `tasks`).
+        supplied by the loader, otherwise derived), `refs` (optional sequence of
+        `<system>:<id>` refs) with `tasks` (deprecated sequence) and `task`
+        (deprecated scalar sugar for a one-element list) as aliases.
+
+        🔴 EVERY OTHER KEY IS IGNORED, NOT REFUSED, AND THAT IS MEASURED ON BOTH
+        IMPLEMENTATIONS RATHER THAN READ OFF THIS FUNCTION'S BODY. It reads only the
+        keys it names and never enumerates the mapping, which is a CODE reading; the
+        measurement is `test_unknown_front_matter_keys_are_ignored`, which hands it
+        `tags:`, `refs:` and a nonsense key in turn beside a valid `{service, scope}`
+        and asserts all three load, with a no-`service:` mapping in the same test as
+        the negative control proving the probe can observe a refusal. The Go loader was
+        probed the same way and agrees. That pair is what makes `refs:`
+        backward-compatible: an older reader handed a `refs:` file loads it and reports
+        no refs, rather than refusing the file.
         """
 
         def bad(why: str) -> MalformedEntryError:
@@ -762,24 +806,52 @@ class SubsystemEntry:
             # ambiguity is measured per ENTRY and never per alias-occurrence.
             normalized.add(na)
 
-        # --- `tasks:` / `task:` -------------------------------------------------
+        # --- `refs:`, with `tasks:` / `task:` as deprecated aliases -------------
         # 🔴 VALIDATED HERE AND NOWHERE ELSE. The writer's own validate pass answers
         # "would the loader accept this file?" by constructing exactly what the
         # loader constructs (see `entry_mapping`), so putting the check here is
         # what makes the validator and the reader agree by construction rather
         # than by two people remembering to edit both. A second spelling at the
         # validator is the duplicated predicate `claude/RULES.md` names.
+        #
+        # 🔴 THE NEW KEY WINS WITHIN ONE ENTRY, AND IT WINS BY NOT CONSULTING THE OLD
+        # ONES AT ALL. Rule 1 of `lib/ref_keys.py`, and it decides the one case that is
+        # not obvious: an entry carrying `refs:` AND BOTH deprecated spellings does NOT
+        # hit the "both `tasks:` and `task:` are set" refusal below, because neither is
+        # read. That refusal is about two spellings DISAGREEING over what the entry's
+        # refs are; with `refs:` present the entry says exactly one thing, and refusing
+        # a file whose meaning is unambiguous is the opposite of what a deprecation
+        # window is for. The refusal is UNCHANGED for every entry that reaches it
+        # (`refs:` absent), which is every file the conformance corpus sends.
+        #
+        # ⚠ THE WARNING IS NOT EMITTED HERE. `ref_keys.deprecations` is the pure
+        # function over a mapping set and the CLIENT emits it, for the same reason the
+        # Go side gives: a parser that wrote to a stream its caller did not name would
+        # put deprecation lines into the pod's log and into the bytes
+        # `tests/conformance/` captures, neither of which asked for them.
+        raw_refs_in = mapping.get("refs")
         raw_tasks_in = mapping.get("tasks")
         raw_task_in = mapping.get("task")
-        if raw_tasks_in and raw_task_in:
+        if not raw_refs_in and raw_tasks_in and raw_task_in:
             raise bad(
                 "both `tasks:` and `task:` are set — `task:` is sugar for a "
                 "one-element `tasks:`; keep one of them"
             )
-        if raw_tasks_in:
+        if raw_refs_in:
+            if isinstance(raw_refs_in, (str, bytes)):
+                # `refs:` is a LIST by definition, so a scalar there is a mistake
+                # worth naming rather than silently flattening.
+                raise bad(
+                    "`refs:` must be a list, not a bare string — write "
+                    "`refs: [<system>:<id>]`"
+                )
+            if not isinstance(raw_refs_in, _AbcSequence):
+                raise bad(f"`refs:` must be a list, got {type(raw_refs_in).__name__}")
+            task_items: object = raw_refs_in
+        elif raw_tasks_in:
             # `task:` is a SCALAR by definition, so a list there is a mistake worth
             # naming rather than silently flattening.
-            task_items: object = raw_tasks_in
+            task_items = raw_tasks_in
         elif raw_task_in:
             if not isinstance(raw_task_in, str):
                 raise bad(
@@ -837,6 +909,26 @@ class SubsystemIndex:
     """
 
     by_scope: Mapping[str, tuple[SubsystemEntry, ...]]
+
+    deprecated_ref_keys: tuple[str, ...] = ()
+    """One warning line per deprecated front-matter ref key any entry here carried.
+
+    🔴 DATA ON THE INDEX RATHER THAN AN EMISSION IN THE PARSER, AND THE REASON IS WHO IS
+    ALLOWED TO WRITE TO A STREAM. The pod and the CLI both load through the same loader; a
+    parser that printed would put these lines into the pod's log and into the bytes
+    `tests/conformance/` captures. The CLIENT emits them (through `env_aliases.warn_once`,
+    which owns the once-per-process rule) and the pod ignores them. Built by
+    `ref_keys.deprecations`, so the ORDER is a property of the ledger — the parity harness
+    diffs both clients' stderr byte-for-byte.
+
+    ⚠ IT IS NARROWED BY `visible_scopes` FOR FREE, because it is computed from the mappings
+    the load actually READ, and a load never reads a scope the caller may not see. So it
+    cannot become a channel that enumerates a denied scope's front matter.
+
+    ⚠ DEFAULTED AND DECLARED BEFORE `malformed` ONLY BECAUSE A DATACLASS FIELD WITH NO
+    DEFAULT CANNOT FOLLOW ONE THAT HAS ONE; every construction site names its fields by
+    keyword, so the position carries no meaning.
+    """
 
     malformed: tuple[MalformedEntry, ...] = ()
     """Entries that were REJECTED, when the index was built with `COLLECT`.
@@ -3010,8 +3102,17 @@ def load_index(
                 )
             )
     index = build_index(mappings, extra_scopes=scopes, on_malformed=on_malformed)
+    # 🔴 OVER `mappings`, WHICH IS EVERY FILE THE LOAD READ — including one `build_index`
+    # then REJECTED. A deprecated key in a malformed file is still a deprecated key the
+    # operator has to migrate, and computing this off the surviving entries would go quiet
+    # on exactly the files most likely to need the edit.
+    deprecated = tuple(ref_keys.deprecations(mappings))
     if not refused:
-        return index
+        return SubsystemIndex(
+            by_scope=index.by_scope,
+            malformed=index.malformed,
+            deprecated_ref_keys=deprecated,
+        )
     # 🔴 MERGED HERE RATHER THAN PASSED INTO `build_index`. These rows have
     # ALREADY been through the `on_malformed` policy above (a non-collecting
     # caller never reaches this line), so handing them to a function whose whole
@@ -3019,5 +3120,7 @@ def load_index(
     # scope is already registered by `extra_scopes`, so the empty-scope rule
     # `build_index` implements for its own rejects needs nothing here.
     return SubsystemIndex(
-        by_scope=index.by_scope, malformed=index.malformed + tuple(refused)
+        by_scope=index.by_scope,
+        malformed=index.malformed + tuple(refused),
+        deprecated_ref_keys=deprecated,
     )

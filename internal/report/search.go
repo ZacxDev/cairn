@@ -429,6 +429,24 @@ type SearchReport struct {
 	ScopesSearched  []string
 	KnownScopes     []string
 
+	// RefTo/HasRefTo is the `?ref-to=` REVERSE-LOOKUP narrowing, in its canonical spelling.
+	// See `RecallOptions.RefTo` for why the parameter is spelled `ref-to` and not `ref`.
+	RefTo    string
+	HasRefTo bool
+
+	// RefToSkipped is how many entries the ref-to filter REMOVED from the searched set.
+	//
+	// 🔴 IT IS WHAT STOPS THE NARROWED ZERO READING AS AN EMPTY STORE. Without it, a
+	// `--ref-to` that matches nothing prints "searched 0 entries" — the exact shape this
+	// report's own `BestBelow` exists to refuse, an empty result that cannot distinguish "the
+	// query matched nothing" from "the query never ran against anything". The rendered ref-to
+	// line prints this count beside the searched one, so a zero says WHY it is zero.
+	RefToSkipped int
+
+	// DeprecatedRefKeys is the load's front-matter-key deprecation warnings, carried from
+	// `store.Index`. `RenderText` never prints it — see `RecallReport.DeprecatedRefKeys`.
+	DeprecatedRefKeys []string
+
 	// BestBelow is the `(ref, score)` of the best hunk that did NOT clear the threshold.
 	//
 	// 🔴 THIS IS WHAT MAKES A ZERO READABLE. An empty result cannot distinguish two
@@ -489,6 +507,9 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	}
 
 	base := SearchReport{
+		// On `base`, so every status branch carries it — see `Recall`'s own note.
+		DeprecatedRefKeys: index.DeprecatedRefKeys,
+
 		Scope:       store.NormalizeRef(opts.Scope),
 		StoreRoot:   storeRoot,
 		Query:       opts.Query,
@@ -532,9 +553,26 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	}
 	badElsewhere := index.MalformedOutside(scopes)
 
+	// 🔴 THE REVERSE-LOOKUP OPERAND IS PARSED ONCE, OUTSIDE THE SCOPE LOOP, and `wantRef` is
+	// only consulted when `opts.HasRefTo` — so a search with no filter does no per-entry work
+	// it did not do before.
+	var wantRef store.TaskRef
+	if opts.HasRefTo {
+		parsed, parseErr := store.ParseTaskRef(opts.RefTo)
+		if parseErr != nil {
+			// Unreachable from either real caller: `ValidateSearch` refuses a malformed
+			// operand first. Returned rather than ignored so a caller that skips validation
+			// cannot silently search everything.
+			return SearchReport{}, parseErr
+		}
+		wantRef = parsed
+		base.RefTo, base.HasRefTo = parsed.String(), true
+	}
+
 	queryTokens := Tokenize(opts.Query)
 	var cleared, below []Hunk
 	searched := 0
+	refToSkipped := 0
 	for _, sc := range scopes {
 		entries, entriesErr := index.Entries(sc)
 		if entriesErr != nil {
@@ -543,6 +581,25 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 		ordered := make([]store.Entry, len(entries))
 		copy(ordered, entries)
 		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Ref() < ordered[j].Ref() })
+		if opts.HasRefTo {
+			// 🔴 HERE, INSIDE THE LOOP OVER `scopes`, WHICH IS AFTER SCOPE AUTHORISATION AND
+			// NEVER BEFORE IT. `scopes` comes from `index.Scopes()` — including on the
+			// `all_scopes=1` path — and that index was narrowed by `visible` at load time.
+			// The filter therefore only ever REMOVES entries from a set this caller was
+			// already entitled to read, and cannot surface one from a scope they cannot name.
+			// `Search`'s own header paragraph says why visibility is an index filter rather
+			// than a per-scope refusal; a ref-to filter applied to a store-wide load instead
+			// would re-open exactly the hole that paragraph closed.
+			kept := make([]store.Entry, 0, len(ordered))
+			for _, e := range ordered {
+				if store.EntryReferences(e, wantRef) {
+					kept = append(kept, e)
+					continue
+				}
+				refToSkipped++
+			}
+			ordered = kept
+		}
 		for _, entry := range ordered {
 			searched++
 			hits, misses, hunkErr := entryHunks(storeRoot, entry, queryTokens, opts)
@@ -596,6 +653,7 @@ func Search(storeRoot string, opts SearchOptions, visible store.ScopeSet) (Searc
 	}
 	out.TotalHits = len(cleared)
 	out.EntriesSearched = searched
+	out.RefToSkipped = refToSkipped
 	out.ScopesSearched = scopes
 	out.Malformed = bad
 	out.MalformedElsewhere = badElsewhere

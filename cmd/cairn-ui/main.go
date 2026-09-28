@@ -509,7 +509,12 @@ func main() {
 		// answer to "is this token real", and the first thing two answers lose is
 		// agreement about a revocation.
 		Credentials: authority,
-		Source:      ui.StoreSource{Root: *store},
+		// 🔴 `envalias.OSValue`, NOT `os.Getenv`, SO THE REF-BASE NAMES GO THROUGH THE ONE
+		// RESOLVER. These names have no deprecated spelling, so it returns plain
+		// single-name behaviour — which is exactly what `envalias.oldName`'s own comment
+		// promises for a name that was never renamed, and is why a bare `os.Getenv` here
+		// would be a second lookup path for no benefit.
+		Source: ui.StoreSource{Root: *store, RefBase: envalias.OSValue},
 		// 🔴 THE SAME `authority` AGAIN, FOR THE SAME REASON THE LINE ABOVE GIVES. The
 		// share flow renders "who has access to this" and the chain decides "may this caller
 		// see it"; two caches would let the page make a claim about a world the

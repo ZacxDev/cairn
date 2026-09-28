@@ -61,6 +61,21 @@ type Index struct {
 	// than a second return value so that "the entries" and "what could not become
 	// an entry" cannot be separated by a caller that only takes the first thing.
 	Malformed []MalformedEntry
+
+	// DeprecatedRefKeys is one warning line per deprecated front-matter ref key that any
+	// entry in this index carried, sorted and deduplicated by `RefKeyDeprecations`.
+	//
+	// 🔴 IT IS DATA ON THE INDEX RATHER THAN AN EMISSION IN THE PARSER, AND THE REASON IS
+	// WHO IS ALLOWED TO WRITE TO A STREAM. The pod and the CLI both load through here; a
+	// parser that printed would put these lines into the pod's audit stream and into the
+	// bytes `tests/conformance/` captures. The CLIENTS emit them (through
+	// `client.WarnDeprecations`, which owns the once-per-process rule) and the pod ignores
+	// them.
+	//
+	// ⚠ IT IS NARROWED BY `visible` FOR FREE, because it is computed from the mappings the
+	// load actually read — and a load never reads a scope the caller may not see. So this
+	// cannot become a channel that enumerates a denied scope's front matter.
+	DeprecatedRefKeys []string
 }
 
 // Scopes is every scope the index knows, sorted.

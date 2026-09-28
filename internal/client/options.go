@@ -29,7 +29,12 @@ type Options struct {
 	// for the same reason.
 	Ref    string
 	HasRef bool
-	List   bool
+	// RefTo / HasRefTo is the REVERSE lookup — `--ref-to <system>:<id>`, "only entries whose
+	// `refs:` carries this". Same two-state discriminator, same reason. `--ref` names an
+	// ENTRY and this names something an entry POINTS AT, so they compose rather than conflict.
+	RefTo    string
+	HasRefTo bool
+	List     bool
 	// Limit / Page are pointers because `nil` is a DIFFERENT REQUEST from any integer: it is
 	// `--limit` that selects full-body mode, and defaulting it at the call site would make
 	// "the caller asked for a cap" indistinguishable from "the caller asked for nothing",

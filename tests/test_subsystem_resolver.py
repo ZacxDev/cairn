@@ -2927,3 +2927,153 @@ class TestMarkerReachabilityMutationKills:
             ).unreachable_markers
             == ()
         )
+
+
+class TestTheRefsFrontMatterKey:
+    """`refs:` — the key `tasks:` folded into, ORACLE side.
+
+    🔴 THIS IS THE FIRST PYTHON UNIT COVERAGE THE REF KEY HAS EVER HAD, and that absence is
+    worth recording rather than quietly filling: before this class, `tasks:` was exercised on
+    the Python side ONLY through `tests/reader_fixtures.py`, whose job is to generate the
+    ORACLE'S RENDERED BYTES for `internal/report` to replay. So every Python-side claim about
+    the key's PARSING rules — normalization, dedupe, file order, the scalar refusal — rested
+    on a Go test plus a rendered-bytes comparison, and neither can see a mapping the fixture
+    generator never builds.
+    """
+
+    @staticmethod
+    def _refs(mapping: dict) -> list[str]:
+        base = {"service": "alpha", "scope": "zone-one"}
+        base.update(mapping)
+        return [str(t) for t in sr.SubsystemEntry.from_mapping(base).tasks]
+
+    def test_unknown_front_matter_keys_are_ignored(self) -> None:
+        """⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND LABELLED AS ONE.
+
+        No bug ever made `from_mapping` refuse an unknown key — it reads only the keys it
+        names and never enumerates the mapping. What this pins is the property an older
+        reader handed a NEWER file depends on, and which makes `refs:` additive rather than a
+        migration: a `refs:` file loads on a reader that has never heard of `refs:`,
+        reporting no refs, instead of refusing the file.
+
+        🔴 THE NEGATIVE CONTROL IS IN THE SAME TEST ON PURPOSE. Three IGNOREDs from a probe
+        that cannot observe a refusal are three facts about the probe.
+        """
+        for name, extra in {
+            "tags-as-a-list": {"tags": ["a", "b"]},
+            "tags-as-a-scalar": {"tags": "a"},
+            "a-nonsense-key": {"zzz-no-such-key": "whatever"},
+        }.items():
+            base = {"service": "alpha", "scope": "zone-one"}
+            base.update(extra)
+            entry = sr.SubsystemEntry.from_mapping(base)
+            assert (entry.slug, entry.scope) == ("alpha", "zone-one"), name
+        with pytest.raises(sr.MalformedEntryError):
+            sr.SubsystemEntry.from_mapping({"scope": "zone-one"})
+
+    def test_refs_is_read_with_the_rules_tasks_has(self) -> None:
+        """Criterion 1, watched RED on pre-change code where this surfaced ZERO refs.
+
+        One assertion carries every rule: the system half NORMALIZED (`GitHub` → `github`),
+        the id half BYTE-IDENTICAL, DEDUPED across spellings of the system half, FILE ORDER
+        preserved.
+        """
+        assert self._refs(
+            {
+                "refs": [
+                    "GitHub:example-org/example-repo#428",
+                    "clickup:8600xyz",
+                    "github:example-org/example-repo#428",
+                ]
+            }
+        ) == ["github:example-org/example-repo#428", "clickup:8600xyz"]
+
+    def test_an_empty_refs_list_is_an_empty_tuple_not_none(self) -> None:
+        entry = sr.SubsystemEntry.from_mapping(
+            {"service": "alpha", "scope": "zone-one", "refs": []}
+        )
+        assert entry.tasks == ()
+
+    def test_the_deprecated_spellings_still_parse(self) -> None:
+        assert self._refs({"tasks": ["clickup:old"]}) == ["clickup:old"]
+        assert self._refs({"task": "clickup:old"}) == ["clickup:old"]
+
+    def test_refs_wins_over_each_deprecated_spelling(self) -> None:
+        """Criterion 2, BOTH directions, one fixture each.
+
+        A test that only checked `refs:` + `tasks:` would pass on an implementation that read
+        `task:` in preference to `refs:`.
+        """
+        assert self._refs({"refs": ["clickup:new"], "tasks": ["clickup:old"]}) == ["clickup:new"]
+        assert self._refs({"refs": ["clickup:new"], "task": "clickup:old"}) == ["clickup:new"]
+
+    def test_refs_beats_both_at_once_without_tripping_their_exclusion(self) -> None:
+        """See `from_mapping`'s branch: that refusal is about two spellings DISAGREEING, and
+        with `refs:` present neither is read, so there is no disagreement to resolve."""
+        assert self._refs(
+            {"refs": ["clickup:new"], "tasks": ["clickup:old"], "task": "clickup:older"}
+        ) == ["clickup:new"]
+
+    def test_the_deprecated_pair_is_still_refused_together(self) -> None:
+        """The half a conformance golden pins — unchanged for every entry with no `refs:`."""
+        with pytest.raises(sr.MalformedEntryError) as exc:
+            sr.SubsystemEntry.from_mapping(
+                {
+                    "service": "alpha",
+                    "scope": "zone-one",
+                    "tasks": ["clickup:a"],
+                    "task": "clickup:b",
+                }
+            )
+        assert "both `tasks:` and `task:` are set" in str(exc.value)
+
+    def test_a_scalar_refs_is_refused_by_name(self) -> None:
+        with pytest.raises(sr.MalformedEntryError) as exc:
+            sr.SubsystemEntry.from_mapping(
+                {"service": "alpha", "scope": "zone-one", "refs": "clickup:a"}
+            )
+        assert "`refs:` must be a list, not a bare string" in str(exc.value)
+
+    def test_a_non_sequence_refs_is_refused_by_type(self) -> None:
+        with pytest.raises(sr.MalformedEntryError) as exc:
+            sr.SubsystemEntry.from_mapping(
+                {"service": "alpha", "scope": "zone-one", "refs": {"a": 1}}
+            )
+        assert "`refs:` must be a list, got dict" in str(exc.value)
+
+    def test_a_malformed_ref_inside_refs_names_the_fix(self) -> None:
+        with pytest.raises(sr.MalformedEntryError) as exc:
+            sr.SubsystemEntry.from_mapping(
+                {"service": "alpha", "scope": "zone-one", "refs": ["no-colon-here"]}
+            )
+        assert "has no `:`" in str(exc.value)
+
+    def test_the_loader_reports_a_deprecated_key_it_actually_read(self, tmp_path: Path) -> None:
+        """The index carries the warning; the PARSER does not emit it.
+
+        ⚠ MEASURED AT TWO POINTS on the dimension the answer depends on — a store whose entry
+        carries the deprecated key, and one whose entry carries the new key — because a guard
+        that only ever saw the non-empty case cannot tell a working detector from one that
+        reports a deprecation for every store.
+        """
+        import ref_keys
+
+        def store_with(label: str, front_matter_line: str) -> Path:
+            root = tmp_path / label
+            (root / "zone-one").mkdir(parents=True)
+            (root / "zone-one" / "alpha.md").write_text(
+                f"---\nservice: alpha\n{front_matter_line}\n---\n\n## What it is\n\nx\n",
+                encoding="utf-8",
+            )
+            return root
+
+        deprecated = sr.load_index(store_with("old", "tasks: [clickup:a]"))
+        assert list(deprecated.deprecated_ref_keys) == [ref_keys.warning("refs", "tasks")]
+        # Point two: the new key alone reports nothing, so the non-empty answer above is not
+        # a detector that fires on every store.
+        current = sr.load_index(store_with("new", "refs: [clickup:a]"))
+        assert current.deprecated_ref_keys == ()
+        # …and the entry's refs are the same either way, which is the deprecation window's
+        # whole promise.
+        assert [str(t) for t in deprecated.entries("zone-one")[0].tasks] == ["clickup:a"]
+        assert [str(t) for t in current.entries("zone-one")[0].tasks] == ["clickup:a"]

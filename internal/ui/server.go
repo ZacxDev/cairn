@@ -105,9 +105,17 @@ type Malformed struct {
 // Entry is one entry as the pages render it.
 //
 // 🔴 EVERY FIELD HERE IS ATTACKER-INFLUENCED, AND `Tasks` IS THE ONE THAT LANDS IN
-// A URL POSITION. A store entry's `tasks:` front-matter key is `<system>:<id>`,
+// A URL POSITION. A store entry's `refs:` front-matter key is `<system>:<id>`,
 // which is the same shape as a URL scheme followed by an opaque part — so
-// `javascript:alert(document.domain)` is a WELL-FORMED task ref. See [safeHref].
+// `javascript:alert(document.domain)` is a WELL-FORMED ref. See [safeHref].
+//
+// 🔴 AND IT NOW LANDS THERE TWICE OVER, WHICH WIDENS THE HAZARD RATHER THAN CLOSING IT.
+// `EntryRef.URL` is `store.RefURL`'s answer, and for a SELF-HOSTED system that string is
+// built from an OPERATOR-SUPPLIED base — a second source outside this program, and one
+// `store.RefURL` deliberately does not scheme-check. So the entry's own text is no longer
+// the only thing that can put `javascript:` in an href here; a mis-set
+// `CAIRN_REF_BASE_<SYSTEM>` can too. BOTH go through [safeHref], and
+// `TestAJavascriptBaseIsRefusedRatherThanRendered` is the negative control on the second.
 //
 // 🔴 AND `Sections` IS A SECOND URL-POSITION HAZARD IN A SHAPE THE FIRST ONE IS NOT:
 // `Ref` reaches a QUERY parameter on this surface's own links. It is a filename stem
@@ -122,16 +130,34 @@ type Malformed struct {
 //	Title       `service:` in the front matter, which the loader pins equal to the slug
 //	Filename    the file on disk under `<store root>/<scope>/`
 //	Aliases     the `aliases:` front-matter sequence, AS WRITTEN (not the folded form)
-//	Tasks       the `tasks:` front-matter sequence, AS WRITTEN
+//	Tasks       the `refs:` front-matter sequence (or the deprecated `tasks:`/`task:`),
+//	            each carrying the ref AS WRITTEN and the URL the registry resolved it to
 //	Sections    the `##` headings `report.SurfacedHeadings` names, with their bodies
 //	Bullets     top-level `- ` lines under `## Nuance / work-history`, with continuations
 //	Raw         the WHOLE file, decoded and otherwise untouched
+//
+// EntryRef is one of an entry's refs as the pages render it: the text the FILE carries, and
+// the URL the per-system registry resolved it to.
+//
+// 🔴 TWO FIELDS RATHER THAN ONE RESOLVED STRING, BECAUSE THE PAGE MUST SHOW WHAT THE FILE
+// SAYS. Rendering the resolved URL as the link TEXT would hide the ref an operator wrote and
+// has to grep for; rendering only the ref and deriving the href at the template would put a
+// second copy of the registry in `internal/ui`.
+//
+// `URL == ""` means the registry resolved this ref to nothing — an unregistered system, a
+// self-hosted one with no base supplied, or an id half that system cannot address. It renders
+// as inert text, which is exactly what every ref did before the registry existed.
+type EntryRef struct {
+	Raw string
+	URL string
+}
+
 type Entry struct {
 	Ref      string
 	Title    string
 	Filename string
 	Aliases  []string
-	Tasks    []string
+	Tasks    []EntryRef
 
 	// Raw is the entry file's whole text, as `store.DecodeReplace` produced it: front
 	// matter, unsurfaced headings, prose before the first heading, and everything the
@@ -347,7 +373,26 @@ type Hit struct {
 }
 
 // StoreSource reads the real store, narrowed by the caller's authority.
-type StoreSource struct{ Root string }
+type StoreSource struct {
+	Root string
+
+	// RefBase reads a self-hosted ref system's base URL by variable name — the getter
+	// `store.RefURL` resolves `CAIRN_REF_BASE_<SYSTEM>` through. `nil` means "no
+	// operator-supplied base", under which a self-hosted system's refs resolve to no URL
+	// and render exactly as they do without this registry.
+	//
+	// ⚠ INJECTED RATHER THAN READ FROM `os.Getenv` HERE, so a test can measure both states
+	// of that dimension in one run. `cmd/cairn-ui` passes `envalias.OSValue`.
+	RefBase func(string) string
+}
+
+// refBase is `RefBase` with the nil case folded in, so `readEntry` does not branch.
+func (s StoreSource) refBase() func(string) string {
+	if s.RefBase == nil {
+		return func(string) string { return "" }
+	}
+	return s.RefBase
+}
 
 // Visible loads the index the caller may read and projects it to page shapes.
 //
@@ -421,7 +466,14 @@ func (s StoreSource) readEntry(scope string, e store.Entry) (Entry, error) {
 		// because the normalisation that produces `System` lowercases and
 		// `-`-folds, and a reader comparing the page against the file would
 		// otherwise see two spellings of one ref and not know which is real.
-		item.Tasks = append(item.Tasks, t.Raw)
+		//
+		// 🔴 THE URL IS RESOLVED FROM `System`/`Ident`, WHICH IS THE NORMALISED PAIR,
+		// WHILE THE TEXT STAYS `Raw`. Those are two different questions and answering
+		// both from `Raw` is the defect: a registry keyed on `GitHub:` would miss,
+		// and an href built by re-splitting `Raw` would be a second parser for a
+		// format `store.ParseTaskRef` already owns.
+		url, _ := store.RefURL(t, s.refBase())
+		item.Tasks = append(item.Tasks, EntryRef{Raw: t.Raw, URL: url})
 	}
 
 	// The file is located from the loader's own scope + filename, never from a path

@@ -32,6 +32,15 @@ func (r SearchReport) RenderText(host string, extraHeader []string, instance str
 	out = append(out, extraHeader...)
 	out = append(out, "  caveat: "+r.Caveat())
 
+	// Same reasoning as the recall renderer's: the narrowing announces itself, because the
+	// "searched N entries" count below is about the narrowed set and a zero from a filter that
+	// matched nothing is otherwise indistinguishable from a zero from an empty store.
+	// `RefToSkipped` + `EntriesSearched` is the pre-filter total, so the line does not need a
+	// third field to carry it.
+	if r.HasRefTo {
+		out = append(out, refToLine(r.RefTo, r.EntriesSearched, r.EntriesSearched+r.RefToSkipped, r.Scope))
+	}
+
 	// Same rule as the recall renderer: before every branch, on every status.
 	out = append(out, renderMalformed(r.Malformed, r.MalformedElsewhere, r.Label())...)
 
