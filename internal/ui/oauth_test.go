@@ -323,7 +323,7 @@ func TestAFlightIsSingleUseAndBoundToItsBrowser(t *testing.T) {
 		t.Errorf("the flight table holds %d record(s) after the callback, want 1 — a SPENT record that keeps "+
 			"its slot until expiry, which is what bounds the rate of outbound exchanges", n)
 	}
-	if _, held := srv.flights.take(cookie.Value); held {
+	if _, _, held := srv.flights.take(cookie.Value); held {
 		t.Error("a consumed flight was takeable a SECOND time straight from the table, so single use rests on " +
 			"nothing. This is the assertion that replaced an `openCount() == 0` check, which measured the old " +
 			"delete-on-read implementation rather than the property.")
@@ -399,26 +399,26 @@ func TestAnExpiredFlightIsRefused(t *testing.T) {
 	now := base
 	table := newFlights(func() time.Time { return now })
 
-	id, outcome := table.start("198.51.100.7", "fixture-verifier-value", time.Minute)
+	id, outcome := table.start("198.51.100.7", "fixture-verifier-value", "", time.Minute)
 	if outcome != flightOpened {
 		t.Fatalf("PRECONDITION FAILED: the flight table refused to open a flight at all (%s)", outcome)
 	}
 
 	// One nanosecond before expiry: live.
 	now = base.Add(time.Minute - time.Nanosecond)
-	if _, held := table.take(id); !held {
+	if _, _, held := table.take(id); !held {
 		t.Error("a flight one nanosecond BEFORE its expiry was refused; the boundary is closed at the expiry " +
 			"instant, not before it")
 	}
 
 	// And AT the expiry instant: dead. A second flight, because the first was consumed.
 	now = base
-	id2, outcome := table.start("198.51.100.7", "fixture-verifier-value-two", time.Minute)
+	id2, outcome := table.start("198.51.100.7", "fixture-verifier-value-two", "", time.Minute)
 	if outcome != flightOpened {
 		t.Fatalf("PRECONDITION FAILED: the flight table refused a second flight (%s)", outcome)
 	}
 	now = base.Add(time.Minute)
-	if _, held := table.take(id2); held {
+	if _, _, held := table.take(id2); held {
 		t.Error("a flight AT its expiry instant was accepted; `!now.Before(expires)` and `now.After(expires)` " +
 			"differ on exactly this instant and an injected clock lands on it")
 	}
@@ -471,7 +471,7 @@ func TestTheFlightTableIsBoundedGloballyAndPerClient(t *testing.T) {
 	perClient := newFlights(func() time.Time { return fixed })
 	opened, refusals := 0, map[flightRefusal]int{}
 	for i := 0; i < maxFlightsPerClient+5; i++ {
-		_, outcome := perClient.start("198.51.100.7", "fixture-verifier", time.Minute)
+		_, outcome := perClient.start("198.51.100.7", "fixture-verifier", "", time.Minute)
 		if outcome == flightOpened {
 			opened++
 			continue
@@ -491,7 +491,7 @@ func TestTheFlightTableIsBoundedGloballyAndPerClient(t *testing.T) {
 	global := newFlights(func() time.Time { return fixed })
 	openedGlobal, globalRefusals := 0, map[flightRefusal]int{}
 	for i := 0; i < maxOpenFlights+8; i++ {
-		_, outcome := global.start(fmt.Sprintf("198.51.100.%d", i), "fixture-verifier", time.Minute)
+		_, outcome := global.start(fmt.Sprintf("198.51.100.%d", i), "fixture-verifier", "", time.Minute)
 		if outcome == flightOpened {
 			openedGlobal++
 			continue
@@ -516,9 +516,9 @@ func TestTheFlightTableIsBoundedGloballyAndPerClient(t *testing.T) {
 	// and it is the whole reason the second number exists.
 	shared := newFlights(func() time.Time { return fixed })
 	for i := 0; i < maxFlightsPerClient+3; i++ {
-		shared.start("198.51.100.7", "fixture-verifier", time.Minute)
+		shared.start("198.51.100.7", "fixture-verifier", "", time.Minute)
 	}
-	if _, outcome := shared.start("203.0.113.9", "fixture-verifier", time.Minute); outcome != flightOpened {
+	if _, outcome := shared.start("203.0.113.9", "fixture-verifier", "", time.Minute); outcome != flightOpened {
 		t.Errorf("a SECOND client was refused (%s) while the first sat at its own cap. One caller spending "+
 			"everybody else's share is the denial of service the per-client bound exists to prevent.", outcome)
 	}
@@ -872,7 +872,7 @@ func TestTheProviderErrorIsNotReflectedIntoThePage(t *testing.T) {
 	// The flight above was consumed, so it is spent — and a spent record keeps its slot until
 	// it expires (see `flights.take`), so "consumed" is read as `take` refusing a second
 	// presentation rather than as the table emptying.
-	if _, held := srv.flights.take(cookie.Value); held {
+	if _, _, held := srv.flights.take(cookie.Value); held {
 		t.Error("the flight was still takeable after a callback that carried a provider ERROR, so the query " +
 			"was read before the flight was consumed. Every malformed callback would leave a replayable " +
 			"flight behind.")

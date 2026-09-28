@@ -417,9 +417,40 @@ func TestTheReplicaHonestyNoticeIsPinnedWhole(t *testing.T) {
 	rig := newShareRig(t)
 	rowan := rig.signIn(shareRowanToken)
 
-	want := normalizeSpace(ReplicaHonesty)
+	// 🔴 A LITERAL COPY OF THE SENTENCE, AND THE DUPLICATION IS THE MECHANISM RATHER THAN AN
+	// OVERSIGHT — WHICH IS A CORRECTION: THIS TEST READ `normalizeSpace(ReplicaHonesty)` AND
+	// COULD NOT SEE A REWORD AT ALL. Comparing the page against the CONSTANT moves both sides
+	// of the comparison together, so editing `ReplicaHonesty` to drop its weakest clause
+	// passed — while this function's own doc claimed "any cosmetic reword reds this test, which
+	// is the intended cost" and `AGENTS.md` asserts the notice "is pinned as a WHOLE NORMALISED
+	// STRING". A guard whose description claims coverage its body does not provide is worse
+	// than none, because it stops anyone looking.
+	//
+	// 🔴 MEASURED, NOT REASONED: the mutation is `ui-share-replica-honesty-notice-loses-its-
+	// weakest-clause` in `tests/control_mutants.py`, and it SURVIVED this test in its previous
+	// form. It was found by writing the same guard for the INVITE flow's notice and putting a
+	// row for it in the battery — the twin, scored, is what exposed the original.
+	//
+	// ⚠ SO THE TWO SPELLINGS ARE LOAD-BEARING AND MUST NOT BE "DEDUPLICATED" BACK INTO ONE.
+	// Changing what this surface promises is meant to be an edit in two places with a reviewer;
+	// one place is a promise anybody can quietly weaken.
+	const wantLiteral = "This page is one replica's answer, read from a cached copy of the " +
+		"authority. A change you record here is durable at once, but another reader gains or " +
+		"loses the scope when their own cache next refreshes, not at the instant you click. And " +
+		"revoking a share stops future syncs: it does not recall entries already copied onto " +
+		"somebody's machine."
+	want := normalizeSpace(wantLiteral)
 	if want == "" {
-		t.Fatal("ReplicaHonesty is EMPTY, so every comparison below is vacuous")
+		t.Fatal("the pinned literal is EMPTY, so every comparison below is vacuous")
+	}
+	// The CONSTANT must say exactly this. That is the assertion a reword fails, and it is
+	// separate from "the page renders it" below because the two break for different reasons:
+	// this one means somebody changed the promise, that one means a page stopped making it.
+	if got := normalizeSpace(ReplicaHonesty); got != want {
+		t.Errorf("`ReplicaHonesty` no longer reads as the pinned sentence.\n got: %q\nwant: %q\n"+
+			"If the wording changed ON PURPOSE, change both — that two-place edit IS the gate. "+
+			"The clause most likely to have gone is the one that makes the product sound weakest.",
+			got, want)
 	}
 
 	for _, page := range []struct {

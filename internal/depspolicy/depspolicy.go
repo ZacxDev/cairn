@@ -202,9 +202,31 @@ const ModulePath = "github.com/ZacxDev/cairn"
 // cache. On the cold cache CI actually had, it verified zero modules and printed the
 // same success line. See `.github/workflows/ci.yml`'s `go` job for the measurements.
 var DeclaredModules = []string{
+	// The PostgreSQL driver `internal/pgstore` registers with `database/sql`. Reached
+	// ONLY from `cmd/cairn-ui`; the import ban above is what keeps it out of the pod
+	// and the CLI, and `cmd/cairn-ui`'s absence from [LinkedBinaryRoots] is what lets
+	// that ban be satisfiable at all.
+	//
+	// 🔴 `lib/pq` RATHER THAN `jackc/pgx`, AND THE REASON IS THIS LIST'S OWN SHAPE.
+	// [TestTheModuleSetIsExactlyTheAllowlist] fails on GROW *or* SHRINK, so every
+	// module in the graph is a line somebody has to defend. Measured on this tree:
+	// `go get github.com/lib/pq` put exactly ONE new module line in `go.sum` and
+	// nothing else — it has no `require` block of its own. `pgx/v5` resolves six,
+	// including `golang.org/x/crypto` and `golang.org/x/text`, into a module graph all
+	// three Go derivations share. Nothing here needs what pgx adds: this package
+	// issues parameterised CRUD through `database/sql` and no driver-specific API.
+	//
+	// ⚠ THE COST, NAMED RATHER THAN TRADED AWAY: `lib/pq` is in maintenance mode. What
+	// makes that acceptable is the narrowness of the use, not optimism — and the one
+	// property a maintenance-mode driver could plausibly be missing was CHECKED rather
+	// than assumed, because Postgres 18 defaults `password_encryption` to
+	// `scram-sha-256` and a driver stuck on `md5` would force the server to weaken its
+	// auth: v1.12.3 ships `scram/scram.go`, so SCRAM is supported.
+	"github.com/lib/pq",
+
 	// The HTML renderer `internal/ui` is built on. Zero transitive dependencies of
 	// its own — measured from its published `go.mod`, which carries no `require`
-	// block at v1.3.0 — which is why this list has one entry rather than a tree.
+	// block at v1.3.0 — which is why this list was one entry rather than a tree.
 	"maragu.dev/gomponents",
 }
 

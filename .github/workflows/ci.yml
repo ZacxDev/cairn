@@ -597,7 +597,7 @@ jobs:
       # refuses unless the test that CLAIMS that guard is the one that goes red. A mutant
       # killed by some other test proves the suite can fail and proves nothing about the
       # guard the row exists for, so the run reports it as MISATTRIBUTED rather than as a
-      # kill. 152 mutants over SEVEN packages, in `PKGS` order: `internal/control`,
+      # kill. 184 mutants over SEVEN packages, in `PKGS` order: `internal/control`,
       # `internal/control/tokenfile`, `internal/identity`, `internal/api`,
       # `cmd/cairn-server`, `internal/ui`, `cmd/cairn-ui` — the model, the token-file
       # projection, P4's identity backends, the server that authorises from all of them,
@@ -613,7 +613,7 @@ jobs:
       # buys (~3min on an IDLE developer host, measured at 62 mutants; a loaded box is
       # several times that). It is what stops the rows bit-rotting into patterns that
       # match nothing and score SURVIVED without ever running.
-      - name: prove every authz guard can go RED (152 mutants, each on the test that names it)
+      - name: prove every authz guard can go RED (184 mutants, each on the test that names it)
         run: python3 tests/control_mutants.py
 
       # 🔴 THE LEDGERS THAT ARE BLIND TO A COMPILED CLIENT, AND THIS IS THE ONLY JOB THAT
@@ -675,7 +675,7 @@ jobs:
       # ⚠ RUNTIME, MEASURED RATHER THAN GUESSED, so the next reader can judge the trade: 57
       # mutants, **614.75 s wall / 152.21 s user + 21.00 s sys** on a 24-core developer host
       # at load ~6.5, all 57 KILLED, 0 SURVIVED, 0 misattributed. That is the same order as
-      # `control_mutants.py` above (152 mutants; its own comment measures ~3 min at 62 on an
+      # `control_mutants.py` above (184 mutants; its own comment measures ~3 min at 62 on an
       # IDLE host), which this job already pays for. ⚠ The wall figure is one observation on
       # a LOADED box and is not a prediction for a runner — the CPU figure is the portable
       # half. If this step becomes the job's critical path, split it out; do not delete it
@@ -1463,3 +1463,63 @@ jobs:
             ${{ runner.temp }}/uiaudit/walk.log
           retention-days: 7
           if-no-files-found: warn
+
+  # 🔴 THE POSTGRES TIER, AND IT IS ITS OWN JOB FOR THE REASON `parity` IS: its verdict is
+  # readable on its own in the checks list, and it is the ONLY job in this workflow that
+  # can fail for "the SQL is wrong". Folding it into `go` would put a database-shaped
+  # failure behind a 38-minute mutation battery and make the two indistinguishable at a
+  # glance.
+  #
+  # 🔴 IT EXISTS BECAUSE NOTHING ELSE RUNS THE TIER. `internal/pgstore`'s tests are behind
+  # `//go:build pgtest`, so `go test ./...` — in the `go` job and inside every nix
+  # derivation's `doCheck` — cannot see them. That keeps the sandbox honest; it also means
+  # a tier nobody invokes is as green as a tier that skips, and this step is the invocation.
+  # `tests/test_pgtest_tier_is_declared.py` asserts this job still names the runner,
+  # because `cairn#117` added `checks.ui-stylesheet-is-current` to `flake.nix`, left
+  # `ci.yml` untouched, and would have shipped the guard inert.
+  pgtest:
+    runs-on: ubuntu-latest
+    # 🔴 THE MAJOR IS PINNED, NOT INHERITED, AND IT AGREES WITH TWO OTHER SITES — the
+    # devShell's `pkgs.postgresql_18` and `wantServerMajor` in the tier's own harness.
+    # `tests/test_pgtest_tier_is_declared.py` asserts the three agree. A fourth site, the
+    # deployment repo's StatefulSet, cannot be read from here and is named in that test
+    # rather than silently omitted.
+    #
+    # ⚠ A SERVICE CONTAINER RATHER THAN THE RUNNER'S OWN `initdb`, and the runner supports
+    # both: `ubuntu-latest` ships whatever Postgres the image happens to carry, which is
+    # exactly the "inherited, not pinned" failure this repository has already paid for once
+    # with `pkgs.python3` following nixpkgs to 3.14.
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          # A throwaway container on a throwaway runner, reachable only from this job. The
+          # value is not a secret and is deliberately written here rather than in a
+          # repository secret: a secret would imply it guards something.
+          POSTGRES_USER: cairn_pgtest
+          POSTGRES_PASSWORD: cairn_pgtest
+          POSTGRES_DB: cairn_pgtest
+        ports:
+          - 5432:5432
+        # Without a health gate the first step races the server's own startup, and the
+        # failure reads as "the tier cannot connect" rather than "the tier ran too early".
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+
+      # 🔴 THE RUNNER OWNS THE MEASUREMENT, NOT THIS FILE. It runs the no-database negative
+      # control first, counts `=== RUN` / `--- PASS` / `--- FAIL` lines rather than trusting
+      # an exit code, refuses on a zero and refuses on a SKIP. Re-spelling any of that here
+      # would be a second copy of a gate, which is what this repository consolidates.
+      - name: the Postgres tier (real SQL against a pinned server)
+        env:
+          CAIRN_PGTEST_DSN: host=127.0.0.1 port=5432 user=cairn_pgtest password=cairn_pgtest dbname=cairn_pgtest sslmode=disable
+        run: tests/pgtest/run.sh

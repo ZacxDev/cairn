@@ -262,8 +262,11 @@
     @apply flex flex-col gap-2;
   }
 
-  /* The sign-in page has one card and no list, so its `<main>` IS the card. */
-  .signin-main {
+  /* The sign-in page has one card and no list, so its `<main>` IS the card. The JOIN page
+   * is the same shape for the same reason — one public page, one message, one button — and
+   * it shares the rule rather than declaring a second one that could drift away from it. */
+  .signin-main,
+  .join-main {
     @apply bg-raised border border-line rounded-card px-5 py-6 max-w-md;
     @apply animate-rise;
   }
@@ -282,7 +285,11 @@
    * muted metadata like `.viewer` beside it, because it is the one thing in that row a
    * reader is meant to click — the flow shipped reachable only by typing `/share`, and an
    * affordance that looks like a label is the same defect with extra steps. */
-  .nav-share a {
+  /* Both header links share one rule, which is a claim that they are the same KIND of
+   * affordance rather than a saving. A second rule that drifted would make one of the two
+   * entry points look like metadata, which is the defect `.nav-share` exists for. */
+  .nav-share a,
+  .nav-invite a {
     @apply text-sm text-accent no-underline;
     @apply transition-colors duration-200 ease-cairn hover:text-ink hover:underline;
   }
@@ -299,14 +306,20 @@
   /* Cards. Every block of answers on this surface is one of these. */
   .scope,
   .share-index,
-  .share-scope {
+  .share-scope,
+  .invite-index,
+  .invite-project,
+  .invite-minted {
     @apply bg-raised border border-line rounded-card px-5 py-4 my-4;
     @apply animate-rise;
   }
 
   .scope h2,
   .share-index h2,
-  .share-scope h2 {
+  .share-scope h2,
+  .invite-index h2,
+  .invite-project h2,
+  .invite-minted h2 {
     @apply border-b border-line pb-2 mb-3;
   }
 
@@ -342,12 +355,14 @@
    * properties nobody chose, including layout ones, which is how a "subtle" theme starts
    * shifting text under a reader's cursor. */
   .signin,
-  .share {
+  .share,
+  .invite {
     @apply flex flex-col gap-3 items-start;
   }
 
   .signin label,
-  .share label {
+  .share label,
+  .invite label {
     @apply block text-sm font-medium;
   }
 
@@ -396,7 +411,8 @@
   /* The notices. Each is a left rule plus a tint, which is what makes them legible as a
    * class of thing without a single icon or image — this package emits no `<img>` and a
    * test asserts it never will. */
-  .replica-honesty {
+  .replica-honesty,
+  .invite-honesty {
     @apply border-l-4 border-accent/70 bg-accent/5 rounded-r px-4 py-3 text-sm text-muted;
     @apply animate-settle;
   }
@@ -406,19 +422,31 @@
     @apply animate-settle;
   }
 
+  /* The one value on this surface a reader is meant to SELECT and copy rather than read.
+   * 🔴 `break-all` RATHER THAN `break-words`, AND THE DIFFERENCE MATTERS FOR THIS VALUE:
+   * the link is one unbroken token with no spaces in it, so a word-boundary rule has no
+   * boundary to use and the box overflows its card at a phone width. Monospace so a reader
+   * checking a pasted copy against this one can compare it character by character. */
+  .invite-link {
+    @apply font-mono text-sm break-all select-all;
+    @apply bg-surface border border-line rounded px-3 py-2 my-2;
+  }
+
   .outcome {
     @apply border-l-4 border-accent bg-accent/10 rounded-r px-4 py-3 text-sm font-semibold;
     @apply animate-settle;
   }
 
-  /* Rows: the audience list and the revocable-grant list. */
+  /* Rows: the audience list, the revocable-grant list and the invitation list. */
   .audience,
-  .grants {
+  .grants,
+  .invites {
     @apply flex flex-col gap-1;
   }
 
   .viewer-row,
-  .grant-row {
+  .grant-row,
+  .invite-row {
     @apply flex flex-wrap items-center gap-x-2 py-1.5 rounded;
     @apply transition-colors duration-200 ease-cairn hover:bg-line/25;
   }
@@ -427,7 +455,13 @@
     @apply text-sm font-medium;
   }
 
-  .kind {
+  /* `.kind` and `.state` are one rule because they are one kind of thing — a short,
+   * neutral, non-actionable label on a row. 🔴 NEITHER IS COLOURED BY VALUE, AND FOR
+   * `.state` THAT IS A DECISION: a red `revoked` beside a green `open` would put the same
+   * information in a channel a colour-blind reader and a monochrome print cannot read,
+   * where the word already says it. The word is the affordance. */
+  .kind,
+  .state {
     @apply text-xs text-muted rounded-full border border-line px-2 py-0.5;
   }
 
@@ -440,11 +474,13 @@
     @apply text-xs text-muted italic;
   }
 
-  .share-index ul {
+  .share-index ul,
+  .invite-index ul {
     @apply flex flex-col gap-1;
   }
 
-  .share-index a {
+  .share-index a,
+  .invite-index a {
     @apply block rounded px-2 py-1.5 text-accent no-underline;
     @apply transition-[background-color,padding-left] duration-200 ease-cairn;
     @apply hover:bg-accent/10 hover:pl-3;

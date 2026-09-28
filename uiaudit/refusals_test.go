@@ -183,6 +183,30 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 			wantSub: "CONTENT TOO NARROW",
 		},
 		{
+			// 🔴 THE CROSS PAIR, AND IT IS THE HOLE A SET-vs-SET EXEMPTION WOULD HAVE OPENED.
+			// The ledger grew a second row (`/join` + `join-main`) when the join page adopted
+			// the sign-in card's shape. Spelled as `path ∈ paths && class ∈ classes` that
+			// change would ALSO have admitted this capture — the join path wearing the
+			// sign-in class — which nobody decided. A capture must match ONE ROW WHOLE.
+			name: "the JOIN path wearing the SIGN-IN card's class is still refused",
+			break_: func(cs []*Capture) {
+				narrowContent(cs)
+				widestCapture(cs).Target.Path = ui.JoinPath
+				widestCapture(cs).Content.MainClass = signinMainClass
+			},
+			wantSub: "CONTENT TOO NARROW",
+		},
+		{
+			// …and the mirror image, for the same reason and in the other direction.
+			name: "the SIGN-IN path wearing the JOIN card's class is still refused",
+			break_: func(cs []*Capture) {
+				narrowContent(cs)
+				widestCapture(cs).Target.Path = ui.SignInPath
+				widestCapture(cs).Content.MainClass = joinMainClass
+			},
+			wantSub: "CONTENT TOO NARROW",
+		},
+		{
 			// A nil content box is a MEASUREMENT that did not happen, and a floor that
 			// treated it as satisfied would be green on exactly the walk that measured
 			// nothing.
@@ -261,6 +285,30 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 			"the gate off the honest tree.", Ultrawide.Width, err)
 	}
 
+	// 🔴 AND THE SECOND ROW'S POSITIVE SIDE. `/join` renders the SAME 448px card, by the
+	// same stylesheet rule, for the same stated reason — and it was REFUSED by this floor on
+	// the branch that added it, because the CSS shared the shape and the ledger did not
+	// follow. Without this case the row is a line nobody watched admit anything.
+	joinExempted := append(cleanWalk(), &Capture{
+		Target:   Target{Path: ui.JoinPath, PushURL: ui.JoinPath, LedgerRow: "GET /join public"},
+		Viewport: Ultrawide,
+		AxeJSON:  []byte(`{"testEngine":{"name":"axe-core","version":"4.x"},"violations":[]}`),
+		Layout:   &PushLayout{InnerWidth: Ultrawide.Width, ScrollWidth: Ultrawide.Width},
+		Content: &ContentBox{
+			InnerWidth: Ultrawide.Width,
+			// 3200, not 1792: the measurement CI actually reported for this page.
+			BodyWidth: 3200,
+			MainWidth: 448,
+			MainClass: joinMainClass,
+			MainCount: 1,
+		},
+	})
+	if err := refuseWalkRegressions(joinExempted); err != nil {
+		t.Errorf("the join card (448px of %dpx = 13%%) was REFUSED by the content floor: %v. It is the same "+
+			"one-card public page as sign-in and shares its stylesheet rule; this is the exact refusal that "+
+			"failed CI on the branch that added the page.", Ultrawide.Width, err)
+	}
+
 	// …and the case where EVERY capture at the widest width is the exemption, which is the
 	// floor measuring nothing while reporting a clean verdict.
 	allExempt := []*Capture{}
@@ -304,4 +352,46 @@ func TestTheWalkRefusalsCanEachGoRED(t *testing.T) {
 		"the sign-in card itself PASSES; a 1-width matrix, an all-exempt widest width, a moved matrix and an "+
 		"empty set are refused",
 		len(Viewports), Ultrawide.Width)
+}
+
+// TestTheContentFloorExemptionLedgerIsExactlyThese pins the exempt SET, on GROW and on
+// SHRINK, and it is the guard the second row would not have needed if the first had had it.
+//
+// 🔴 THE CASES ABOVE MEASURE THE PREDICATE; THIS MEASURES THE LEDGER, AND THEY FAIL
+// DIFFERENTLY. Every red case stays red if a row is ADDED — a new exemption admits a page
+// those fixtures never build — and every positive case stays green if a row is REMOVED that
+// no fixture exercises. So an exemption could be added for one page and quietly cover
+// another, or `/join` could be dropped again and only CI's real walk would notice, one PR
+// later. Naming the pairs as literals here is what makes either direction a red test in the
+// ordinary suite.
+//
+// ⚠ IT IS A LEDGER AND NOT A COUNT. `len(...) == 2` would be satisfied by swapping a row for
+// something nobody decided, which is the failure mode this repository tracks as "a count of
+// DECLARATIONS is not a count of INSTANCES".
+func TestTheContentFloorExemptionLedgerIsExactlyThese(t *testing.T) {
+	want := []struct{ Path, MainClass string }{
+		{ui.SignInPath, "signin-main"},
+		{ui.JoinPath, "join-main"},
+	}
+	if len(contentFloorExemptPages) != len(want) {
+		t.Fatalf("the content-floor exemption ledger holds %d row(s), want %d: %+v. Every page in it is a "+
+			"page the ultrawide floor does NOT bind, so a row added here is a page that stopped being "+
+			"measured and a row removed is a page that will fail CI's real walk.",
+			len(contentFloorExemptPages), len(want), contentFloorExemptPages)
+	}
+	for i, w := range want {
+		got := contentFloorExemptPages[i]
+		if got.Path != w.Path || got.MainClass != w.MainClass {
+			t.Errorf("exemption row %d is {%q, %q}, want {%q, %q}", i, got.Path, got.MainClass, w.Path, w.MainClass)
+		}
+	}
+	// 🔴 AND THE CLASSES ARE SPELLED AS LITERALS ABOVE RATHER THAN AS THE CONSTANTS, so a
+	// rename of `signinMainClass` or `joinMainClass` that did NOT reach `tailwind.css` goes
+	// red here. Reading the constant on both sides would assert `a == a` — the vacuous shape
+	// `TestTheReplicaHonestyNoticeIsPinnedWhole` already shipped once in this tree.
+	if signinMainClass != "signin-main" || joinMainClass != "join-main" {
+		t.Errorf("a card class constant was renamed (%q, %q) — check that `internal/ui/tailwind.css` and "+
+			"`render.go` moved with it, because this exemption is matched on the rendered class string",
+			signinMainClass, joinMainClass)
+	}
 }

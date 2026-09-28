@@ -286,7 +286,7 @@
     flex-direction: column;
     gap: calc(var(--spacing) * 2);
   }
-  .signin-main {
+  .signin-main, .join-main {
     max-width: var(--container-md);
     border-radius: var(--radius-card);
     border-style: var(--tw-border-style);
@@ -302,7 +302,7 @@
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-muted);
   }
-  .nav-share a {
+  .nav-share a, .nav-invite a {
     font-size: var(--text-sm);
     line-height: var(--tw-leading, var(--text-sm--line-height));
     color: var(--color-accent);
@@ -333,7 +333,7 @@
   .refused {
     color: var(--color-danger);
   }
-  .scope, .share-index, .share-scope {
+  .scope, .share-index, .share-scope, .invite-index, .invite-project, .invite-minted {
     margin-block: calc(var(--spacing) * 4);
     border-radius: var(--radius-card);
     border-style: var(--tw-border-style);
@@ -344,7 +344,7 @@
     padding-block: calc(var(--spacing) * 4);
     animation: var(--animate-rise);
   }
-  .scope h2, .share-index h2, .share-scope h2 {
+  .scope h2, .share-index h2, .share-scope h2, .invite-index h2, .invite-project h2, .invite-minted h2 {
     margin-bottom: calc(var(--spacing) * 3);
     border-bottom-style: var(--tw-border-style);
     border-bottom-width: 1px;
@@ -423,13 +423,13 @@
     color: var(--color-muted);
     text-decoration-line: line-through;
   }
-  .signin, .share {
+  .signin, .share, .invite {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: calc(var(--spacing) * 3);
   }
-  .signin label, .share label {
+  .signin label, .share label, .invite label {
     display: block;
     font-size: var(--text-sm);
     line-height: var(--tw-leading, var(--text-sm--line-height));
@@ -568,7 +568,7 @@
     --tw-font-weight: var(--font-weight-normal);
     font-weight: var(--font-weight-normal);
   }
-  .replica-honesty {
+  .replica-honesty, .invite-honesty {
     border-top-right-radius: 0.25rem;
     border-bottom-right-radius: 0.25rem;
     border-left-style: var(--tw-border-style);
@@ -607,6 +607,22 @@
     line-height: var(--tw-leading, var(--text-sm--line-height));
     animation: var(--animate-settle);
   }
+  .invite-link {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: var(--tw-leading, var(--text-sm--line-height));
+    word-break: break-all;
+    -webkit-user-select: all;
+    user-select: all;
+    margin-block: calc(var(--spacing) * 2);
+    border-radius: 0.25rem;
+    border-style: var(--tw-border-style);
+    border-width: 1px;
+    border-color: var(--color-line);
+    background-color: var(--color-surface);
+    padding-inline: calc(var(--spacing) * 3);
+    padding-block: calc(var(--spacing) * 2);
+  }
   .outcome {
     border-top-right-radius: 0.25rem;
     border-bottom-right-radius: 0.25rem;
@@ -625,12 +641,12 @@
     font-weight: var(--font-weight-semibold);
     animation: var(--animate-settle);
   }
-  .audience, .grants {
+  .audience, .grants, .invites {
     display: flex;
     flex-direction: column;
     gap: var(--spacing);
   }
-  .viewer-row, .grant-row {
+  .viewer-row, .grant-row, .invite-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -659,7 +675,7 @@
     --tw-font-weight: var(--font-weight-medium);
     font-weight: var(--font-weight-medium);
   }
-  .kind {
+  .kind, .state {
     border-radius: calc(infinity * 1px);
     border-style: var(--tw-border-style);
     border-width: 1px;
@@ -682,12 +698,12 @@
     color: var(--color-muted);
     font-style: italic;
   }
-  .share-index ul {
+  .share-index ul, .invite-index ul {
     display: flex;
     flex-direction: column;
     gap: var(--spacing);
   }
-  .share-index a {
+  .share-index a, .invite-index a {
     display: block;
     border-radius: 0.25rem;
     padding-inline: calc(var(--spacing) * 2);

@@ -53,6 +53,14 @@ import (
 	"github.com/ZacxDev/cairn/internal/control/tokenfile"
 	"github.com/ZacxDev/cairn/internal/envalias"
 	"github.com/ZacxDev/cairn/internal/identity"
+	// 🔴 THE ONLY IMPORT IN THIS PROGRAM THAT REACHES A THIRD-PARTY MODULE THROUGH A
+	// NON-RENDERING PACKAGE, AND IT IS ADMISSIBLE FOR A MEASURED REASON. `internal/pgstore`
+	// links `lib/pq`; `internal/depspolicy.LinkedBinaryRoots` is `cmd/cairn` and
+	// `cmd/cairn-server` and DELIBERATELY not this binary, which is the clause that lets
+	// this edge exist. The ban is what keeps the driver out of the pod and the CLI — an
+	// allowlist entry alone would be satisfied by a tree where `internal/api` imported it
+	// on every route.
+	"github.com/ZacxDev/cairn/internal/pgstore"
 	"github.com/ZacxDev/cairn/internal/ui"
 )
 
@@ -71,6 +79,14 @@ const (
 	// to mount a second writable volume — which `OpenFileSessionStore` refuses loudly
 	// at startup if it did not, rather than discovering it at the first sign-in.
 	defaultSessionFile = "/var/lib/cairn-ui/sessions"
+
+	// envSessionFile is the `-session-file` flag's environment spelling.
+	//
+	// ⚠ A CONSTANT RATHER THAN THE LITERAL ITS SIBLINGS USE, BECAUSE IT HAS TWO READERS:
+	// `envOr` resolves the value, and `sessionFileWasConfigured` asks whether the operator
+	// wrote one at all. Two spellings of a name that appears in an operator-facing NOTE is
+	// how a message ends up naming a variable nobody set.
+	envSessionFile = "CAIRN_UI_SESSION_FILE"
 
 	// EnvSupabaseRedirectURL is the absolute URL of THIS surface's OAuth callback route,
 	// and it is what arms the provider sign-in.
@@ -109,6 +125,37 @@ const (
 	// how a refusal ends up naming a variable nobody set.
 	EnvUIControlJournal = "CAIRN_UI_CONTROL_JOURNAL"
 
+	// EnvUIDatabase is the `-db-dsn` flag's environment spelling: the PostgreSQL
+	// connection string holding this surface's MUTABLE state.
+	//
+	// 🔴 IT IS ONE VARIABLE FOR BOTH TABLES, AND THAT IS A DECISION RATHER THAN A
+	// CONVENIENCE. `internal/pgstore` holds the session table AND the invite table, and
+	// the two are the same kind of state — mutable, high-churn, authoritative about
+	// nothing historical, read only by this binary. Two variables would let a deployment
+	// put them in two places, which buys nothing and costs a second pool, a second
+	// migration ledger and a configuration that can be half-right. ⚠ The consequence,
+	// stated here rather than discovered: setting this MOVES THE SESSION TABLE, so the
+	// first start with a DSN signs every open browser out once. Nothing is lost — a
+	// session is a cookie, not a record — but somebody has to be told before the deploy.
+	//
+	// 🔴 IT IS READ RAW, FOR `EnvUIControlJournal`'S REASON AND WITH THE SAME
+	// CONSEQUENCE. `envalias.blank` is `TrimSpace(v) == ""`, so a whitespace-only value
+	// resolves to "not set" — and "not set" here is a surface that comes up serving, with
+	// the session table back on the local file and `GET /invite` telling every reader the
+	// deployment holds no invitation store, while `/healthz` answers 200. That is the
+	// same looks-healthy-serves-nobody shape `controlJournalDefault` exists against, so
+	// it gets the same refusal. See `databaseDSNDefault`; both names are in
+	// `rawEnvNames`, which is what `TestTheRawReadVariablesAreNotInTheAliasLedger` holds
+	// the raw reads to.
+	//
+	// ⚠ PREFER THE ENVIRONMENT TO THE FLAG FOR THIS ONE. A DSN carries a password, and a
+	// flag value is in `argv` — readable from `/proc/<pid>/cmdline` by anything that can
+	// see the process. The flag exists because every other knob here has one and a
+	// hand-run bring-up against a throwaway database is the case it serves; a deployment
+	// should mount this from a secret. Nothing in this program ECHOES the value either
+	// way — `pgstore.Open`'s errors deliberately omit it, and so do the refusals below.
+	EnvUIDatabase = "CAIRN_UI_DB_DSN"
+
 	// exitConfig is sysexits.h EX_CONFIG, the same code `cmd/cairn-server` uses and
 	// for the same reason: a surface that came up misconfigured is worse than one
 	// that did not come up, because it looks healthy.
@@ -117,6 +164,26 @@ const (
 	// authorityMaxAge is the staleness BOUND the cache declares. It bounds the
 	// report, never the reads — see `control.CacheOptions.MaxAge`.
 	authorityMaxAge = 5 * time.Minute
+
+	// dbConnectTimeout bounds the startup connect, and without it this whole refusal is
+	// a refusal that may never arrive.
+	//
+	// 🔴 A STARTUP GUARD THAT CAN HANG FOREVER IS NOT A STARTUP GUARD. `lib/pq` has no
+	// default `connect_timeout` — the DSN parameter is unset unless somebody writes it —
+	// so a DSN naming a host that DROPS packets (a wrong address inside a cluster, a
+	// NetworkPolicy with no rule for this pod) leaves `PingContext` waiting on the
+	// kernel's TCP retry schedule, which is minutes. The pod is then neither up nor
+	// refusing: no listener, no `/healthz`, and one line of output that says it is
+	// connecting. That reads as a hung image rather than as a configuration error, which
+	// is strictly worse than the 78 this bound produces. ⚠ A REFUSED connection needs
+	// none of this — it returns immediately — so the bound is about the silent failure,
+	// not the loud one.
+	//
+	// ⚠ IT COVERS THE MIGRATION TOO, because `pgstore.Open` applies the schema before it
+	// returns. That is deliberate: a `CREATE TABLE` blocked behind another connection's
+	// lock is the same observable as a dial that never answers, and the same refusal is
+	// the right answer to both.
+	dbConnectTimeout = 10 * time.Second
 )
 
 // refreshInterval is how often the authority is re-read, so a scope directory created out
@@ -146,8 +213,8 @@ func main() {
 	port := flag.Int("port", envInt("CAIRN_UI_PORT", defaultPort), "listen port")
 	tokenFile := flag.String("token-file", envOr("CAIRN_TOKEN_FILE", defaultTokenFile),
 		"path to the token file this surface authenticates against")
-	sessionFile := flag.String("session-file", envOr("CAIRN_UI_SESSION_FILE", defaultSessionFile),
-		"path to the browser session table")
+	sessionFile := flag.String("session-file", envOr(envSessionFile, defaultSessionFile),
+		"path to the browser session table; IGNORED when -db-dsn is set, because the table moves there")
 	sessionTTL := flag.Duration("session-ttl", envDuration("CAIRN_UI_SESSION_TTL", identity.DefaultSessionTTL),
 		"absolute lifetime of a browser session")
 	// 🔴 THE CONTROL JOURNAL IS WHAT LETS THE SHARE FLOW WRITE, AND IT REPLACES THE
@@ -176,6 +243,19 @@ func main() {
 	journalDefault, journalErr := controlJournalDefault(os.Getenv)
 	controlJournal := flag.String("control-journal", journalDefault,
 		"path to the control journal; without one the authority is the token file and no share can be recorded")
+	// 🔴 THE DSN IS WHAT MAKES AN INVITATION HOLDABLE, AND IT MOVES THE SESSION TABLE WITH
+	// IT. Both tables are `internal/pgstore`'s and both are this surface's mutable state;
+	// see `EnvUIDatabase` for why they are one variable and for what the move costs.
+	// Without it this binary behaves exactly as it did before: sessions in `-session-file`,
+	// `Inviting` nil, and the invite rows answering `ui.NoInviteStore`.
+	//
+	// 🔴 AND ITS DEFAULT IS NOT `envOr`, FOR `-control-journal`'S REASON — a whitespace
+	// value would resolve to "not set" and this surface would come up with no invitation
+	// store while the operator's manifest said otherwise. See `databaseDSNDefault`.
+	dsnDefault, dsnErr := databaseDSNDefault(os.Getenv)
+	dbDSN := flag.String("db-dsn", dsnDefault,
+		"PostgreSQL connection string for the session and invite tables; without one, sessions live in "+
+			"-session-file and no invitation can be held (prefer $"+EnvUIDatabase+": a flag value is in argv)")
 	// ⚠ THERE IS NO `-routes` FLAG HERE, UNLIKE `cairn-server`, AND THE ASYMMETRY IS
 	// DELIBERATE. The pod prints its ledger because a Python corpus owns its served
 	// contract and cannot read a compiled binary — the printed table is the only way
@@ -193,6 +273,12 @@ func main() {
 	// it would be a second rule about the same variable.
 	if journalErr != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+journalErr.Error())
+		os.Exit(exitConfig)
+	}
+	// The same ruling, one variable along, and for the same reason it is not conditional
+	// on whether the flag was also given: the policy is about the LINE the operator wrote.
+	if dsnErr != nil {
+		fmt.Fprintln(os.Stderr, "cairn-ui: "+dsnErr.Error())
 		os.Exit(exitConfig)
 	}
 
@@ -249,12 +335,72 @@ func main() {
 	// PERSIST A SESSION DOES NOT COME UP. Discovering it at the first sign-in would
 	// mean a pod that passes every health check and refuses every login, which is the
 	// shape every startup refusal in this repository exists against.
-	sessions, err := identity.OpenFileSessionStore(*sessionFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"cairn-ui: the session table %s cannot be opened (%s), so no browser could sign in. "+
-				"Refusing to start; mount a writable volume for it and restart\n", *sessionFile, err.Error())
-		os.Exit(exitConfig)
+	//
+	// 🔴 AND THE DSN BRANCH IS THE SAME CLAIM ABOUT THE SAME HAZARD, WHICH IS WHY IT IS
+	// HERE AND NOT AT THE FIRST REQUEST. `sql.Open` connects to nothing: handed a wrong
+	// host, a wrong password or a database that does not exist it returns a
+	// usable-looking pool and no error, and every one of those surfaces at the first
+	// query — for this program, the first sign-in or the first `GET /invite`. So a
+	// deployment whose DSN is wrong would pass `/healthz`, render every page, and refuse
+	// every authenticated request with something an operator reads as an auth problem.
+	// `pgstore.Open` pings and applies the schema, and this is where its failure is
+	// spent.
+	var (
+		sessions identity.SessionStore
+		// 🔴 DECLARED AS THE INTERFACE AND LEFT NIL IN THE FILE BRANCH, NEVER AS A
+		// `ui.ControlInviting` VALUE. `ControlInviting` is a struct type, so a variable of
+		// that type put into `ui.Config.Inviting` is a NON-NIL interface holding a zero
+		// struct — `cfg.Inviting != nil` is then true, the `NoInviteStore` branch is never
+		// taken, and every invite read nil-panics on `c.Invites` at the first click. The
+		// typed-nil trap, in the one place it would be silent.
+		inviting ui.Inviting
+		pgDB     *pgstore.DB
+	)
+	if *dbDSN != "" {
+		pgDB, err = openDatabase(*dbDSN)
+		if err != nil {
+			// ⚠ THE DSN IS NOT INTERPOLATED, HERE OR IN THE WRAPPED ERROR: it carries a
+			// password, and a refusal is the single most likely line to be pasted into an
+			// issue. The variable NAME is what an operator needs, and it is what they get.
+			fmt.Fprintf(os.Stderr,
+				"cairn-ui: the database named by $%s (or -db-dsn) could not be opened: %s. "+
+					"It holds the session table and the invite table, so this surface would sign "+
+					"nobody in and hold no invitation — while answering /healthz and rendering "+
+					"every page. Refusing to start; check the connection string, the server and "+
+					"the network path, then restart. The connection string is deliberately not "+
+					"echoed anywhere in this message\n", EnvUIDatabase, err.Error())
+			os.Exit(exitConfig)
+		}
+		sessions = pgstore.NewSessionStore(pgDB)
+		// 🔴 THE SAME `authority` THE CHAIN AUTHENTICATES AGAINST, FOR THE REASON
+		// `ControlInviting.Authority`'s own comment gives: an invitation authorised
+		// against one model and recorded against another is a page that authorises from a
+		// world that no longer exists. This is the third call site handed that value, and
+		// all three are the same object on purpose.
+		inviting = ui.ControlInviting{Authority: authority, Invites: pgstore.NewInviteStore(pgDB)}
+		// 🔴 SAY THAT `-session-file` IS NOW INERT, BECAUSE A MANIFEST CARRYING BOTH IS THE
+		// SHAPE THAT ARRIVES. It is announced rather than refused: the flag has a code
+		// DEFAULT, so "set" cannot be distinguished from "defaulted" without asking
+		// `flag.Visit` and the environment — and this only says anything when the operator
+		// actually wrote one of the two. Silence would leave somebody mounting a volume
+		// for a file nothing opens.
+		if sessionFileWasConfigured() {
+			fmt.Fprintf(os.Stderr,
+				"cairn-ui: NOTE $%s (or -session-file) is set to %s and is IGNORED: with a "+
+					"database configured the session table lives there, not on disk. The path is "+
+					"not opened, not created and not read — and the first start with a DSN signs "+
+					"every existing browser session out once, because the table moved\n",
+				envSessionFile, *sessionFile)
+		}
+	} else {
+		fileSessions, fileErr := identity.OpenFileSessionStore(*sessionFile)
+		if fileErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"cairn-ui: the session table %s cannot be opened (%s), so no browser could sign in. "+
+					"Refusing to start; mount a writable volume for it and restart\n", *sessionFile, fileErr.Error())
+			os.Exit(exitConfig)
+		}
+		sessions = fileSessions
 	}
 
 	cookie, err := identity.NewCookieSession(sessions, authority)
@@ -346,7 +492,16 @@ func main() {
 	}
 	limiter := netid.NewRateLimiter(maxFailures, window, lockout)
 
-	srv, err := ui.New(ui.Config{
+	// 🔴 THE CONFIG IS A NAMED VALUE RATHER THAN AN INLINE LITERAL, AND THE REASON IS THE
+	// STARTUP LINE BELOW. That line reports where the mutable state is, and it has to
+	// report what the SERVER WAS GIVEN — not what this program computed and might have
+	// forgotten to pass. Measured as a gap before this hoist: deleting `Inviting: inviting`
+	// from the literal compiles, serves, and leaves the surface announcing
+	// `invitations in postgres` while every `/invite` page says the deployment holds none,
+	// with the Postgres tier's own case green. Reading the field back off `cfg` is what
+	// makes that mutant a red test. ⚠ The same argument applies to `Sessions`, which is
+	// why both halves of the line read `cfg` and neither reads the local.
+	cfg := ui.Config{
 		Auth: chain,
 		// ⚠ THE SAME `authority` THE MACHINE-TOKEN BACKEND HOLDS, WHICH IS THE POINT.
 		// The sign-in form resolves its credential through the same projection every
@@ -359,7 +514,12 @@ func main() {
 		// share flow renders "who has access to this" and the chain decides "may this caller
 		// see it"; two caches would let the page make a claim about a world the
 		// request was never authorised against.
-		Sharing:  ui.ControlSharing{Authority: authority},
+		Sharing: ui.ControlSharing{Authority: authority},
+		// nil when no database is configured, which is a legitimate deployment and is why
+		// this field is the second one on `ui.Config` that may be nil. The invite rows stay
+		// in the ledger either way and say `ui.NoInviteStore` — see its own comment for why
+		// the READ answers 200 there and the WRITES 501.
+		Inviting: inviting,
 		Sessions: sessions,
 		TTL:      *sessionTTL,
 		// nil when no provider is configured, which is a legitimate deployment and is why
@@ -385,7 +545,8 @@ func main() {
 		// thing — so they agree by both taking the default rather than by one being
 		// handed the other's.
 		Log: os.Stderr,
-	})
+	}
+	srv, err := ui.New(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(exitConfig)
@@ -493,8 +654,36 @@ func main() {
 		signInMode = "credential form, plus bearer-JWT authentication but no " + ui.GitHubLabel +
 			" button (no $" + EnvSupabaseRedirectURL + ")"
 	}
-	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s\n",
-		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode)
+	// 🔴 AND IT SAYS WHERE THE MUTABLE STATE IS, FOR THE THIRD TIME FOR THE SAME REASON:
+	// a deployment that meant to configure a database and did not gets a surface whose
+	// invite rows all say `NoInviteStore` and whose sessions are on a disk somebody is
+	// about to reschedule away from. Both are answers decided at startup and discovered
+	// at the first click otherwise. The sentence names the FILE in the file branch because
+	// that path is the thing an operator has to have mounted; it names no DSN in the other
+	// branch, because a DSN carries a password and this line goes to a log.
+	// 🔴 BOTH HALVES ARE READ OFF THE WIRED OBJECTS AND NEITHER RE-SPELLS `*dbDSN != ""`,
+	// WHICH IS WHAT MAKES THIS LINE A GUARD RATHER THAN A CAPTION. A caption derived from
+	// the flag says `postgres` whenever the flag is set — including when the branch that
+	// was supposed to act on it did not, which is the defect an announcement exists to
+	// surface. Two of those are live hazards here and both are SILENT: an `inviting`
+	// declared as `ui.ControlInviting` instead of the interface is a non-nil interface
+	// holding a zero struct, so the invite rows leave the `NoInviteStore` branch and
+	// nil-panic at the first click; and a DSN branch that built the invite store but left
+	// `sessions` on the file store would serve, with the announced move never having
+	// happened. Asking the objects catches both — the type assertion is deliberate and is
+	// the only one in this program.
+	sessionsIn := "sessions in " + *sessionFile
+	if _, onPostgres := cfg.Sessions.(*pgstore.SessionStore); onPostgres {
+		sessionsIn = "sessions in postgres"
+	}
+	invitesIn := "NO invitation store (no $" + EnvUIDatabase +
+		": /invite renders a notice and its writes answer 501)"
+	if cfg.Inviting != nil {
+		invitesIn = "invitations in postgres"
+	}
+	stateMode := sessionsIn + ", " + invitesIn
+	fmt.Fprintf(os.Stderr, "cairn-ui: serving %d route(s) on %s, store %s, sharing %s, sign-in %s, state %s\n",
+		len(ui.DeclaredRoutes()), addr, *store, sharingMode, signInMode, stateMode)
 	if err := listener.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
 		os.Exit(1)
@@ -569,6 +758,104 @@ func controlJournalDefault(get func(string) string) (string, error) {
 			EnvUIControlJournal, raw)
 	}
 	return raw, nil
+}
+
+// rawEnvNames is the LEDGER of every variable this program reads with `os.Getenv`
+// instead of through `internal/envalias`, and it is a declared set rather than a
+// convention.
+//
+// 🔴 READING RAW IS WHAT MAKES THE BLANK POLICY POSSIBLE AND IT COSTS ALIAS RESOLUTION.
+// `envalias.ValueFrom` treats a blank value as absent — which IS the defect these two
+// readers exist to refuse — so neither can go through it. The price is that a DEPRECATED
+// spelling of either name would go unread, silently. Neither has one.
+// `TestTheRawReadVariablesAreNotInTheAliasLedger` walks THIS SLICE against
+// `envalias.Ledger`, so the day somebody adds an alias for either, a gate goes red rather
+// than a reader going half-blind — and a THIRD raw reader added without a line here fails
+// the same test's membership check.
+var rawEnvNames = []string{EnvUIControlJournal, EnvUIDatabase}
+
+// databaseDSNDefault is the `-db-dsn` flag's default, and the SECOND place this surface's
+// configuration meets the blank policy.
+//
+// 🔴 IT IS `controlJournalDefault`'S RULING APPLIED TO A DIFFERENT VARIABLE, AND THE
+// DUPLICATION IS ARGUED RATHER THAN ACCIDENTAL. What the two share is three lines; what
+// they do not share is the REFUSAL TEXT, which is the whole operator-facing value of
+// either — one names an authority that confers `admin` on nobody, the other names a
+// session table that moved and an invite store that is absent. A single
+// `blankPolicy(name, cost string)` helper would put those two paragraphs behind a
+// parameter and make the next variable's cost a string literal at a call site. The
+// predicate that must not have two spellings is `identity.ValueReducesToNothing`, and it
+// does not: both call it.
+//
+// 🔴 THE VALUE IS RETURNED RAW, NOT TRIMMED, AND THAT IS THE ARRIVAL-PATH RULE RATHER
+// THAN A COPIED LINE. `TestTheTwoArrivalPathsOfAControlJournalAgree` records the shape:
+// a value that means one thing from a manifest and another from a command line is the
+// defect, so this reader must not be more forgiving than the flag. Trimming here would
+// make `CAIRN_UI_DB_DSN="  postgres://…  "` connect where `-db-dsn "  postgres://…  "`
+// fails — `lib/pq` parses a URL DSN with `url.Parse`, which rejects a leading space —
+// and would open exactly the divergence `controlJournalDefault` was written to close.
+//
+// ⚠ IT JUDGES THE SPELLING AND NOTHING ELSE. Whether the string is a DSN at all, whether
+// the host resolves and whether the password is right are `pgstore.Open`'s to answer, and
+// it answers them against the real server rather than against a pattern. A syntactic DSN
+// check here would be a second, weaker validator that can disagree with the one that
+// matters.
+func databaseDSNDefault(get func(string) string) (string, error) {
+	raw := get(EnvUIDatabase)
+	if raw == "" {
+		return "", nil
+	}
+	if identity.ValueReducesToNothing(raw) {
+		return "", fmt.Errorf(
+			"%s=%q reduces to nothing, so this surface would read it as UNSET: the session table would "+
+				"fall back to the local file, every browser signed in against the database would be "+
+				"signed out, and every invite route would tell its reader this deployment holds no "+
+				"invitation store — while /healthz answered 200 and every page rendered. That is a "+
+				"surface that looks healthy and cannot share anything. Refusing to start; give it a "+
+				"connection string or delete the line",
+			EnvUIDatabase, raw)
+	}
+	return raw, nil
+}
+
+// sessionFileWasConfigured answers whether the operator wrote a session-file line at all,
+// as opposed to inheriting `defaultSessionFile`.
+//
+// 🔴 IT ASKS BOTH ARRIVAL PATHS, BECAUSE EITHER ALONE IS A NOTE THAT GOES SILENT FOR HALF
+// THE DEPLOYMENTS. `flag.Visit` walks only flags actually SET on the command line — a
+// value that arrived through the environment reached the flag as its DEFAULT and is
+// invisible to it — so the environment is asked separately. `os.Getenv` rather than
+// `envalias.OSValue` on purpose: this is "did somebody write a line", and a whitespace
+// line is still a line somebody wrote.
+//
+// ⚠ IT DRIVES A NOTE AND NEVER A REFUSAL, WHICH IS WHY A FALSE NEGATIVE IS CHEAP HERE AND
+// WOULD NOT BE ELSEWHERE. The worst it can do is stay quiet about an ignored path.
+func sessionFileWasConfigured() bool {
+	if os.Getenv(envSessionFile) != "" {
+		return true
+	}
+	given := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "session-file" {
+			given = true
+		}
+	})
+	return given
+}
+
+// openDatabase connects, pings and applies the schema, under a BOUND.
+//
+// 🔴 THE BOUND IS THE POINT OF THE FUNCTION — see [dbConnectTimeout]. `pgstore.Open` takes
+// a context and does the right thing with it; what it cannot do is choose a deadline, and
+// `context.Background()` here would make this refusal one that may never arrive.
+//
+// ⚠ THE POOL IS NOT CLOSED ON THE ERROR PATH HERE BECAUSE `pgstore.Open` CLOSES ITS OWN:
+// it returns either a `*DB` or an error, never both, and closes the pool before every
+// error return it has. Adding a `Close` here would be a second owner of one resource.
+func openDatabase(dsn string) (*pgstore.DB, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbConnectTimeout)
+	defer cancel()
+	return pgstore.Open(ctx, dsn)
 }
 
 // providerSignIn builds the GitHub sign-in flow, or reports that this deployment has none.

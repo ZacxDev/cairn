@@ -239,7 +239,18 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 	model := s.authority.Model()
 	user, known := model.UserByProviderSubject(s.provider, claims.Subject)
 	if !known {
-		return Identity{}, refuse(SupabaseBackend, "the token verifies and names a subject this control plane holds no user for")
+		// 🔴 THE ONE ARM THAT CARRIES ITS CLAIMS, AND IT CHANGES NOTHING FOR A CALLER THAT
+		// DOES NOT ASK. [refuseUnprovisioned] builds the same `*Refusal` with the same
+		// sentence, wrapped so `errors.Is(err, control.ErrNoCredential{})` and
+		// `errors.As(err, &*Refusal)` both still match and every existing log line prints
+		// the identical string. The provider and subject become reachable ONLY through
+		// `errors.As(err, &*UnprovisionedSubject)` — which the invite redemption path uses
+		// to turn "we have never heard of you" into a provisioning write, and nothing else
+		// in this tree does. See [UnprovisionedSubject] for why that is a second DELIBERATE
+		// act rather than self-serve signup.
+		return Identity{}, refuseUnprovisioned(SupabaseBackend,
+			"the token verifies and names a subject this control plane holds no user for",
+			s.provider, claims.Subject)
 	}
 	principal, held := model.PrincipalFor(control.KindUser, user.ID)
 	if !held {

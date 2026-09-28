@@ -94,6 +94,26 @@ const (
 	RoleMember Role = "member"
 )
 
+// AllRoles is the closed set, in DESCENDING authority, which is the order every
+// rendered list uses.
+//
+// 🔴 IT IS DECLARED ONCE FOR `AllVerbs`'s REASON AND ORDERED FOR A DIFFERENT ONE. The
+// declaration is `AllVerbs`'s argument restated: a second spelling of "all the roles" is
+// how a role gets added to the model and missed by the chooser that is supposed to offer
+// it. The ORDER is descending because it mirrors the constants above and because a
+// reader scanning a list of roles reads it as a ladder — but a chooser must NOT let that
+// order pick its default. The most-authority-first order makes `owner` the first option,
+// and a form whose unread default confers ownership is a form that hands out ownership
+// to everybody who does not read it; the renderer therefore selects the least-privileged
+// entry explicitly. See `inviteForm` in `internal/ui`, which is where that is spelled.
+//
+// ⚠ IT IS A SECOND ENUMERATION OF THE SAME SET AS `roleVerbs`, AND THAT IS WHY
+// `TestAllRolesIsTheWholeRoleTable` pins the two against each other in both directions.
+// A role added to `roleVerbs` and not here would be invisible to every chooser; one
+// added here and not there would be offered and then grant NOTHING, because `resolve`
+// treats a miss in that map as the empty set.
+var AllRoles = []Role{RoleOwner, RoleAdmin, RoleMember}
+
 // roleVerbs is the ONE table mapping a role to what it may do to the project's own
 // scopes.
 //

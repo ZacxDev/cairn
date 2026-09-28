@@ -155,11 +155,27 @@ type Target struct {
 // ⚠ AND THE CYCLE TERMINATES, which is the property that made this safe to switch on: the
 // rendered view links raw and the raw view links rendered, but the walk queue dedupes on
 // `Path` (query included), so the second visit is already enqueued and is not re-walked.
+//
+// 🔴 `GET /invite` IS HERE AND NOT IN `plainGET`, FOR THE REASON `GET /share` IS, AND THE
+// PARAMETER IS THE SAME KIND OF VALUE. `handleInvitePage` reads `?project=` as a
+// `control.ID` — a `crypto/rand` value, unguessable by construction so that a
+// 404-for-unknown beside a 403-for-somebody-else's cannot enumerate every project in the
+// deployment. Guessing it would reproduce, one object over, the walk over twelve 404 pages
+// that reported success. The index publishes one link per invitable project, and
+// [ExpandLinks] turns those hrefs into targets.
+//
+// ⚠ AND ON A DEPLOYMENT WITH NO INVITE STORE THE INDEX PUBLISHES NOTHING, WHICH IS CORRECT
+// RATHER THAN A GAP — the same shape as the token-file case for `GET /share` one paragraph
+// up. `internal/ui` renders the page and says `NoInviteStore` in the body, so the walk
+// captures the index, captures no per-project page, and says so. Reaching the per-project
+// page needs a world with a project this credential manages AND a store behind it, which
+// is named in `internal/ui/README.md` as a declared gap.
 var linkExpanded = map[string]bool{
-	ui.RootPath:  true,
-	ui.ScopePath: true,
-	ui.SharePath: true,
-	ui.EntryPath: true,
+	ui.RootPath:   true,
+	ui.ScopePath:  true,
+	ui.SharePath:  true,
+	ui.EntryPath:  true,
+	ui.InvitePath: true,
 }
 
 // plainGET is the set of ledger paths captured exactly as the ledger spells them.
@@ -177,8 +193,21 @@ var linkExpanded = map[string]bool{
 // why the bare visit is safe — `internal/ui`'s `NavigatePage` answers 200 to a request
 // that named no entry, because a request that named nothing can learn nothing, so the
 // bare capture is a real page and not a refusal.
+//
+// 🔴 `GET /join` IS HERE RATHER THAN IN `notADocument`, AND THE DISTINCTION IS THE ONE THE
+// OAUTH CALLBACK'S ENTRY DRAWS — SO IT IS WORTH SAYING WHY THEY DIFFER. The callback is
+// excluded because navigated bare it renders a REFUSAL, and capturing a refusal would run
+// axe, the layout script and the digest over an error page and count it as a page. `GET
+// /join` navigated bare renders a real page: `handleJoinPage` never resolves the token, so
+// there is no state a bare visit is missing — it answers 200 with a document saying the
+// link carried no invitation. That is the page a person with a truncated link actually
+// sees, which makes it worth measuring rather than worth skipping.
+//
+// ⚠ IT IS A PUBLIC ROW, SO THE WALK CAPTURES IT WITHOUT A SESSION — derived from the
+// ledger's CLASS, never from the path, which is what `Targets` does for every row.
 var plainGET = map[string]bool{
 	ui.SignInPath: true,
+	ui.JoinPath:   true,
 }
 
 // notADocument is the THIRD class: a `GET` row a browser walk must not capture as a page,

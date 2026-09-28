@@ -339,6 +339,33 @@ func shell(title string, v PageView, crumbs []crumb, body ...g.Node) g.Node {
 				// an empty store." Hiding the link would replace that sentence with
 				// silence, which is the failure mode this surface is built against.
 				h.P(h.Class("nav-share"), h.A(h.Href(SharePath), g.Text("Sharing"))),
+				// 🔴 THE INVITE FLOW'S ONLY ENTRY POINT, AND IT IS UNCONDITIONAL FOR
+				// THE REASON THE SHARE LINK ABOVE IS — the same defect, the same
+				// remedy, and the link is here rather than on the share page because
+				// the share page is not where somebody who wants to add a colleague
+				// starts looking.
+				//
+				// ⚠ NOT GATED ON "does this caller manage a project", which would need
+				// a model read on every page render for a link whose destination
+				// already answers the question properly: `inviteIndex` renders "No
+				// project is yours to invite into. That is an authority answer, not an
+				// empty control plane." Hiding the link would replace that sentence
+				// with silence.
+				//
+				// 🔴 AND NOT GATED ON "does this deployment HAVE an invite store"
+				// EITHER, WHICH IS A DECISION THIS COMMENT EXISTS TO RECORD BECAUSE THE
+				// OPPOSITE HAS A PRECEDENT ONE FILE OVER. `SignInPage` withholds the
+				// GitHub button when no provider is configured, on the stated grounds
+				// that "a control that is present and cannot work teaches a user that
+				// sign-in is unreliable". That argument does not transfer, because the
+				// two destinations differ: the button POSTS and a POST it cannot serve
+				// is a 501 with no page around it, whereas `GET /invite` ANSWERS — it
+				// renders the frame and says [NoInviteStore] in the body. So the link
+				// leads somewhere that explains itself, and gating it would make the
+				// feature read as absent on a deployment that is one environment
+				// variable away from having it. `handleInvitePage` is where that is
+				// arranged, and it is what makes this line honest.
+				h.P(h.Class("nav-invite"), h.A(h.Href(InvitePath), g.Text("Invitations"))),
 				// The viewer's display name is USER TEXT: it comes from a
 				// `control.Principal`, which comes from a provisioned user record.
 				h.P(h.Class("viewer"), g.Text("signed in as "+v.Viewer)),
@@ -1458,11 +1485,20 @@ func revocableItem(row GrantRow, csrf string) g.Node {
 // ⚠ THE HANDLER RE-VALIDATES THE CHOICE AGAINST THE SAME LIST. A `select` constrains a
 // browser, not an HTTP client, and this form's whole purpose is to be posted to.
 func shareForm(v ShareView) g.Node {
+	// ⚠ THE SENTENCE BELOW SAID "reaching anybody else needs an invite, WHICH THIS SURFACE
+	// DOES NOT YET HAVE", AND THE INVITE FLOW IS THE CHANGE THAT FALSIFIED IT. It is
+	// corrected rather than reworded around, and it now LINKS, because this is the exact
+	// spot where a reader has discovered they cannot do what they came to do — the share
+	// page's own defect was that a working feature read as absent for want of a link, and
+	// leaving a sentence here that says the remedy does not exist is that defect written
+	// out in prose.
 	if len(v.Candidates) == 0 {
-		return h.P(h.Class("empty"), g.Text(
-			"There is nobody this credential can share with. Sharing is offered with the "+
-				"people and projects you already share a project with; reaching anybody "+
-				"else needs an invite, which this surface does not yet have."))
+		return h.P(h.Class("empty"),
+			g.Text("There is nobody this credential can share with. Sharing is offered with "+
+				"the people and projects you already share a project with; reaching anybody "+
+				"else means inviting them into a project first — "),
+			h.A(h.Href(InvitePath), g.Text("Invitations")),
+			g.Text("."))
 	}
 	return h.FormEl(
 		h.Class("share"),
@@ -1508,6 +1544,403 @@ func shareForm(v ShareView) g.Node {
 // lets a recipient re-share, which is a real thing a person means to do, and leaving it
 // out of the form would not take it out of the model.
 var grantableVerbs = control.AllVerbs
+
+// InviteView is everything the invite flow renders, assembled by the handler.
+//
+// 🔴 ONE TYPE FOR THREE SHAPES, WHICH IS `ShareView`'s RULING AND THE SAME REASON: all
+// three are reached through ONE route and ONE handler, so a second type would be a second
+// place to forget the notice. An empty `Project` means the INDEX — the projects this caller
+// may invite into — and not "a project page with nothing on it"; a non-nil `Minted` means
+// the response to a mint, which renders the invitation and nothing else actionable.
+type InviteView struct {
+	// Viewer is the signed-in principal's display name. USER TEXT.
+	Viewer string
+	// CSRF is the token from `csrfTokenFor`. Empty for a caller with no session cookie, in
+	// which case no form is rendered at all — [Page]'s rule.
+	CSRF string
+	// NoStore is true when this deployment has no invitation store AT ALL.
+	//
+	// 🔴 IT IS A PROPERTY OF THE DEPLOYMENT AND IT IS RENDERED ON EVERY SHAPE OF THIS PAGE,
+	// which is `ShareView.ReadOnly`'s ruling. A surface that serves the whole flow and
+	// refuses only when somebody clicks is the shape every startup refusal in
+	// `cmd/cairn-ui` exists against, arriving through a door those refusals cannot watch.
+	NoStore bool
+	// Projects is every project this caller may invite into, for the index.
+	Projects []control.NamedProject
+	// Project is the project under view, or the zero value for the index.
+	Project control.NamedProject
+	// Outstanding is that project's invitations, newest first, in EVERY state.
+	//
+	// ⚠ EVERY STATE, NOT ONLY THE OPEN ONES, AND THE LIST SAYS WHICH. "No invitation is
+	// outstanding" and "the one you sent was already used" are different answers to an
+	// administrator wondering why somebody has not appeared, and a list filtered to open
+	// rows cannot tell them apart. `invite.Store.ForProject`'s own comment makes the same
+	// ruling about the same rows.
+	Outstanding []InviteRow
+	// Outcome is the result of the write that redirected here, or "".
+	Outcome string
+	// Minted is the invitation this request just created, shown ONCE and never again.
+	Minted *MintedInvite
+}
+
+// InviteRow is one invitation as the page shows it.
+//
+// ⚠ `State` IS A PLAIN STRING RATHER THAN AN `invite.State`, WHICH KEEPS `internal/invite`
+// OUT OF THE RENDERER'S IMPORTS — the same shape as `Bullet.Population`, which carries a
+// `store` population as a string for the same reason. The handler is where the value is
+// derived, at one instant, by `inviteRows`.
+type InviteRow struct {
+	// Digest is the full hex digest, and it is what the revoke form carries. NOT a token:
+	// this page never holds one (see `invite.Store`), and a digest is not a credential.
+	Digest string
+	// Short is the digest's first few characters, for a human matching two rows.
+	Short string
+	// Role is the authority a redeemer would join at.
+	Role control.Role
+	// State is `invite.State` as a string: open, redeemed, revoked or expired.
+	State string
+	// Created and Expires are RFC3339 in UTC.
+	Created string
+	Expires string
+}
+
+// MintedInvite is a freshly created invitation, rendered exactly once.
+type MintedInvite struct {
+	// Link is the PATH AND QUERY an invited person must open — never an absolute URL.
+	//
+	// 🔴 THE ORIGIN IS MISSING ON PURPOSE AND THE PAGE SAYS SO. This process cannot know
+	// the scheme and host a reader reaches it by: the only candidate available to it is a
+	// `Host` header a proxy chooses, and `identity.ErrSupabaseOAuthNoRedirect` records the
+	// same fact about the same kind of value one package over. A guessed origin here would
+	// produce a link to the wrong hostname for a capability that cannot be re-issued, so
+	// the page renders the path and asks the sender to put their own origin in front of it.
+	Link string
+	// Role is what the invitation confers, and Expires is RFC3339 in UTC.
+	Role    control.Role
+	Expires string
+}
+
+// InvitePage renders the invite flow.
+//
+// 🔴 THE NOTICE IS RENDERED ON EVERY SHAPE AND UNCONDITIONALLY, WHICH IS `SharePage`'s
+// RULING. It is not attached to the mint form, because the thing that needs it most is the
+// LINK: a page that hands somebody a bearer capability and explains its properties only
+// when they were about to create one leaves the moment they are about to SEND one
+// unqualified.
+func InvitePage(v InviteView) g.Node {
+	title := "cairn — invitations"
+	if v.Project.Name != "" {
+		title = "cairn — inviting to " + v.Project.Name
+	}
+	// Through `shell`, for the reason `SharePage` records: one header, one place, and a
+	// navigation affordance added there reaches this page without anybody remembering.
+	//
+	// ⚠ `crumbs` IS NIL for `SharePage`'s reason — `PageView.Scopes` is the narrowed BROWSE
+	// answer and this view does not carry it, so a trail built from it would be a trail
+	// through scopes this page is not about.
+	return shell(
+		title,
+		PageView{Viewer: v.Viewer, CSRF: v.CSRF},
+		nil,
+		h.P(h.Class("invite-honesty"), g.Text(InviteHonesty)),
+		g.If(v.NoStore, h.P(h.Class("read-only"), g.Text(NoInviteStore))),
+		g.If(v.Outcome != "", h.P(h.Class("outcome"), g.Text(v.Outcome))),
+		// 🔴 `g.Iff` AND NOT `g.If`, FOR EXACTLY THE REASON [Page] RECORDS ABOUT
+		// `searchResults` — AND THE FACT THAT THE LESSON WAS ALREADY WRITTEN DOWN THERE AND
+		// WAS HIT AGAIN HERE IS WHY IT IS RESTATED RATHER THAN CROSS-REFERENCED.
+		// `g.If(cond, node)` takes a NODE, so Go evaluates the argument before the condition
+		// is consulted: `mintedSection(v)` ran on every index and project render and
+		// dereferenced a nil `v.Minted`. Measured as a panic inside the page-frame ledger,
+		// not reasoned about. The two branches below stay `g.If` because neither reads a
+		// pointer; the rule is per-argument, not per-file.
+		g.Iff(v.Minted != nil, func() g.Node { return mintedSection(v) }),
+		g.If(v.Minted == nil && v.Project.Name == "", inviteIndex(v)),
+		g.If(v.Minted == nil && v.Project.Name != "", inviteProjectSection(v)),
+	)
+}
+
+// inviteIndex lists the projects this caller may invite into.
+func inviteIndex(v InviteView) g.Node {
+	return h.Section(
+		h.Class("invite-index"),
+		h.H2(g.Text("Projects you can invite into")),
+		// 🔴 THE SENTENCE IS AN ASSERTION ABOUT AUTHORITY, WHICH IS WHY
+		// `TestEveryContentRouteConsultsTheAuthority` REQUIRES THIS ROUTE TO ASK BEFORE
+		// RENDERING IT. `Page`'s equivalent shipped as a measured lie — rendered by a
+		// handler that never called the authority — and it told an operator with authority
+		// over everything that they had none, in the one sentence written to distinguish
+		// those two cases.
+		g.If(len(v.Projects) == 0 && !v.NoStore, h.P(h.Class("empty"), g.Text(
+			"No project is yours to invite into. That is an authority answer, not an empty "+
+				"control plane: inviting somebody needs the owner or admin role in a project."))),
+		h.Ul(g.Map(v.Projects, func(p control.NamedProject) g.Node {
+			// The link is built from a constant path and an ID, never from the display
+			// name — `shareIndex`'s ruling, and `control.NewID`'s URL-safe alphabet is the
+			// property being relied on. `safeHref` is not reached and must not be: it
+			// allowlists absolute http(s) and this is a same-origin path.
+			href := InvitePath + "?" + QueryProject + "=" + string(p.ID)
+			return h.Li(
+				h.A(h.Href(href), g.Text(p.Name)),
+				// The caller's own role is rendered beside each project because it is what
+				// decides which roles the next page will offer — see `inviteForm`. Without
+				// it, an admin who finds `owner` missing from the chooser has no way to see
+				// why.
+				h.Span(h.Class("kind"), g.Text("you are "+string(p.HeldRole))),
+			)
+		})),
+	)
+}
+
+// inviteProjectSection is one project's page: what is outstanding, and the form that
+// creates another.
+func inviteProjectSection(v InviteView) g.Node {
+	return h.Section(
+		h.Class("invite-project"),
+		h.H2(g.Text("Inviting to "+v.Project.Name)),
+
+		h.H3(g.Text("Invitations you have sent")),
+		// 🔴 THIS SENTENCE IS WHY THE LIST SHOWS SPENT ROWS RATHER THAN ONLY LIVE ONES. An
+		// administrator reading a list that silently dropped redeemed and expired rows
+		// would conclude nothing had been sent, which is the opposite of what happened.
+		h.P(h.Class("note"), g.Text(
+			"Every invitation this project has, in every state. Only an OPEN one can be "+
+				"revoked, and revoking one takes nothing back from somebody who already joined.")),
+		g.If(len(v.Outstanding) == 0, h.P(h.Class("empty"), g.Text(
+			"No invitation has been created for this project."))),
+		h.Ul(h.Class("invites"), g.Map(v.Outstanding, func(row InviteRow) g.Node {
+			return inviteRowItem(row, v.Project.ID, v.CSRF)
+		})),
+
+		h.H3(g.Text("Invite somebody")),
+		g.If(v.CSRF == "", h.P(h.Class("note"), g.Text(
+			"This credential has no browser session, so no form is rendered. Sign in to invite."))),
+		g.If(v.CSRF != "" && !v.NoStore, inviteForm(v)),
+	)
+}
+
+// inviteRowItem renders one invitation and, when it is open, its revoke button.
+//
+// 🔴 THE BUTTON IS A `POST` FOR `revocableItem`'s REASON. A revoke behind a `GET` is
+// reachable by any `<img src>` in the world and a link-prefetcher would perform it by
+// accident — silently withdrawing an invitation because a reader hovered a link.
+//
+// ⚠ THE BUTTON IS WITHHELD FOR A ROW THAT IS NOT OPEN, AND THAT IS A UX CHOICE RATHER THAN
+// THE GUARD. `invite.Store.Revoke` refuses a non-open invitation itself, and
+// `refuseInviteWrite` answers that uniformly; what this saves is a person clicking a button
+// that cannot work. Do not read the absence of the button as the protection.
+func inviteRowItem(row InviteRow, project control.ID, csrf string) g.Node {
+	return h.Li(
+		h.Class("invite-row"),
+		// The digest PREFIX, because the whole one is 64 characters of hex that tells a
+		// reader nothing the first few do not. The full value still travels in the form.
+		h.Span(h.Class("who"), g.Text(row.Short)),
+		h.Span(h.Class("kind"), g.Text(string(row.Role))),
+		h.Span(h.Class("state"), g.Text(row.State)),
+		h.Span(h.Class("at"), g.Text("created "+row.Created)),
+		h.Span(h.Class("at"), g.Text("expires "+row.Expires)),
+		g.If(csrf != "" && row.State == "open", h.FormEl(
+			h.Class("revoke"),
+			h.Method("post"),
+			h.Action(InviteRevokePath),
+			h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(csrf)),
+			h.Input(h.Type("hidden"), h.Name(FieldDigest), h.Value(row.Digest)),
+			// Ancillary: it decides where the redirect lands and is never an authority
+			// input. `handleInviteRevoke` says so at the read.
+			h.Input(h.Type("hidden"), h.Name(FieldProject), h.Value(string(project))),
+			h.Button(h.Type("submit"), g.Text("Revoke")),
+		)),
+	)
+}
+
+// inviteForm is the mint form.
+//
+// 🔴 THE ROLE CHOOSER OFFERS ONLY WHAT THIS CALLER MAY CONFER, DECIDED BY
+// `control.Role.CanConfer` — THE SAME PREDICATE `ControlInviting.Mint` REFUSES WITH. That is
+// the whole reason the predicate exists as a method rather than as a condition at the mint:
+// a chooser built from `control.AllRoles` unfiltered would offer an admin the `owner` option
+// and the mint would then refuse it, which is a form whose visible options include one that
+// cannot work. `shareForm` offers every verb for a reason that does not apply here — there
+// is no verb an authority-holder may not grant, so nothing to filter.
+//
+// 🔴 AND THE PRE-SELECTED OPTION IS THE LEAST PRIVILEGED ONE, WHICH IS NOT THE FIRST. A
+// `select` with no explicit selection submits its first option, and `control.AllRoles` is in
+// DESCENDING authority — so the unread default would be `owner`, i.e. a form that hands out
+// ownership of a project to everybody who does not read it. `shareForm` pre-ticks `read` on
+// the argument that a form whose default submission is an error teaches people to ignore the
+// error; this is the same class of decision with a worse failure mode, so the default is
+// chosen rather than inherited from a list's order.
+func inviteForm(v InviteView) g.Node {
+	conferrable := conferrableRoles(v.Project.HeldRole)
+	if len(conferrable) == 0 {
+		// Unreachable through this page today — `Invitable` only lists projects whose role
+		// `CanManageMembers` admits, and every such role can confer at least `member`. It
+		// is a statement of the rule rather than dead code: the alternative is a form with
+		// an empty `select`, which submits nothing and refuses for a reason nobody can see.
+		return h.P(h.Class("empty"), g.Text(
+			"Your role in this project cannot confer any role, so no invitation can be created."))
+	}
+	return h.FormEl(
+		h.Class("invite"),
+		h.Method("post"),
+		h.Action(InvitePath),
+		h.Input(h.Type("hidden"), h.Name(FieldCSRF), h.Value(v.CSRF)),
+		h.Input(h.Type("hidden"), h.Name(FieldProject), h.Value(string(v.Project.ID))),
+		h.Label(h.For("role"), g.Text("Join as")),
+		h.Select(
+			h.ID("role"),
+			h.Name(FieldRole),
+			h.Required(),
+			g.Map(conferrable, func(r control.Role) g.Node {
+				return h.Option(
+					h.Value(string(r)),
+					g.If(r == leastPrivilegedRole, h.Selected()),
+					g.Text(string(r)),
+				)
+			}),
+		),
+		h.P(h.Class("note"), g.Text(
+			"The link this creates is shown once. Send it to one person: anybody who opens "+
+				"it joins this project at the role above.")),
+		h.Button(h.Type("submit"), g.Text("Create an invitation")),
+	)
+}
+
+// leastPrivilegedRole is the role a chooser pre-selects.
+//
+// ⚠ IT IS SPELLED AS ITS OWN NAME RATHER THAN AS `control.AllRoles[len-1]`, BECAUSE THE
+// INDEX FORM WOULD BE A CLAIM ABOUT THAT SLICE'S ORDER AND NOT ABOUT PRIVILEGE. Reordering
+// `AllRoles` — a cosmetic change to a rendered list — would silently move the default.
+var leastPrivilegedRole = control.RoleMember
+
+// conferrableRoles filters `control.AllRoles` by what `held` may hand out.
+//
+// ⚠ IT RANGES OVER `control.AllRoles` RATHER THAN OVER A LIST WRITTEN HERE, which is
+// `grantableVerbs`'s ruling: a hand-written copy would silently stop offering a role the
+// model gained, and the chooser would express less than the authority model does with
+// nothing going red.
+func conferrableRoles(held control.Role) []control.Role {
+	var out []control.Role
+	for _, r := range control.AllRoles {
+		if held.CanConfer(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// mintedSection renders a freshly created invitation, and it is the one place on this
+// surface where a page's own body is a bearer credential.
+//
+// 🔴 THE LINK IS RENDERED AS TEXT AND NOT AS AN `<a href>`, WHICH IS A DECISION RATHER THAN
+// AN OMISSION. Three reasons, and the first alone settles it: [MintedInvite.Link] is a PATH
+// with no origin, so an anchor would resolve it against THIS page and offer the minter a
+// link that redeems the invitation they just created — one stray click and the invitation is
+// spent on the person who sent it. Beyond that, a rendered anchor is the shape a
+// link-prefetcher and a mail scanner follow, and the thing a reader needs to do with this
+// value is COPY it, which text serves and a link does not.
+func mintedSection(v InviteView) g.Node {
+	m := v.Minted
+	return h.Section(
+		h.Class("invite-minted"),
+		h.H2(g.Text("Invitation created")),
+		h.P(h.Class("note"), g.Text(
+			"This is the only time this link is shown. It is not stored and cannot be "+
+				"recovered; if it is lost, revoke it and create another.")),
+		// The path, verbatim, for copying. Not an anchor — see this function's comment.
+		h.P(h.Class("invite-link"), g.Text(m.Link)),
+		h.P(h.Class("note"), g.Text(
+			"Put this deployment's own address in front of that path before sending it. "+
+				"cairn cannot know the address you reach it by, so it does not guess one.")),
+		h.Ul(h.Class("invites"), h.Li(
+			h.Class("invite-row"),
+			h.Span(h.Class("kind"), g.Text(string(m.Role))),
+			h.Span(h.Class("at"), g.Text("expires "+m.Expires)),
+		)),
+		g.If(v.Project.ID != "", h.P(h.Class("note"),
+			h.A(
+				h.Href(InvitePath+"?"+QueryProject+"="+string(v.Project.ID)),
+				g.Text("Back to this project's invitations"),
+			),
+		)),
+	)
+}
+
+// JoinPage is what an invitation LINK opens, and it is the SECOND public page on this
+// surface.
+//
+// 🔴 IT BUILDS ITS OWN FRAME, FOR EXACTLY `SignInPage`'s REASON, AND ROUTING IT THROUGH
+// `shell` IS THE NEXT PLAUSIBLE MISTAKE HERE TOO. There is no viewer, no session and no
+// CSRF token on a public page, so every affordance `shell` renders is either meaningless or
+// a dead link — a `Sharing` link in front of an unauthenticated visitor points at a route
+// that answers 401. `TestNoPublicPageOffersAuthenticatedNavigation` is what refuses that
+// edit, and it walks a LEDGER so a third public page cannot be added without deciding this.
+//
+// 🔴 IT RENDERS ONE PAGE FOR EVERY TOKEN AND NEVER RESOLVES ONE. See `handleJoinPage` for
+// the argument; what is here is the consequence a reader will notice: this page cannot name
+// the project or the role, and it cannot say that a link is dead. It can only say what will
+// happen if it is live.
+//
+// ⚠ THE ONE DISTINCTION IT DOES DRAW IS "the URL carried no token at all", WHICH IS NOT AN
+// ORACLE. That is a fact about the caller's own address bar — a truncated paste, a link
+// somebody retyped — and no token was presented for the answer to be about. Rendering the
+// accept form anyway would post an empty invitation and complete as an ordinary sign-in,
+// which for somebody who was invited is the most confusing possible outcome: they would end
+// up signed in, or refused, with no sign that the link was the problem.
+func JoinPage(token string, provider bool) g.Node {
+	return c.HTML5(c.HTML5Props{
+		Title:    "cairn — accept an invitation",
+		Language: "en",
+		Head:     []g.Node{stylesheetLink()},
+		Body: []g.Node{
+			h.Header(h.Class("page-header"), h.H1(g.Text("cairn"))),
+			h.Main(
+				h.Class("join-main"),
+				h.H2(g.Text("You have been invited")),
+				g.If(token == "", h.P(h.Class("refused"), g.Text(
+					"This link carries no invitation. Ask whoever sent it for the whole "+
+						"link — it may have been cut short on the way."))),
+				g.If(token != "" && !provider, h.P(h.Class("refused"), g.Text(
+					"This deployment cannot accept an invitation right now: signing in with "+
+						GitHubLabel+" is unavailable, and that is the only way to redeem one."))),
+				g.If(token != "" && provider, h.P(h.Class("note"), g.Text(
+					"Signing in with "+GitHubLabel+" accepts the invitation and creates your "+
+						"account here if you do not have one. Nothing is recorded until you do."))),
+				g.If(token != "" && provider, joinForm(token)),
+			),
+		},
+	})
+}
+
+// joinForm is the accept button: a POST that starts the provider flight carrying the token.
+//
+// 🔴 IT IS THE SAME ROW `providerForm` POSTS TO, WITH ONE EXTRA FIELD, AND NOT A SECOND
+// SIGN-IN PATH. `POST /sign-in/github` is where a flight is opened, and the invitation rides
+// on that SERVER-SIDE flight record rather than on a cookie or on the provider redirect's
+// query string — the operator decision and its two rejected alternatives are recorded at
+// `flight.invite`. A second route here would be a second place the flight is opened, and the
+// copy that forgot the per-client bound would be the one on the newer door.
+//
+// 🔴 A FORM AND NOT A LINK, FOR `providerForm`'s REASON: `stateChanging` calls `GET` safe, so
+// a link would be reachable by any `<img src>` in the world and by every link prefetcher,
+// each of which would mint a flight and overwrite the visitor's flight cookie. Here that
+// would also SPEND the invitation's one flight slot before the person clicked anything.
+//
+// ⚠ NO CSRF TOKEN, AND ITS ABSENCE IS A CONSEQUENCE RATHER THAN AN OVERSIGHT — there is no
+// session yet, so there is nothing to derive one from. Gate (2), the same-origin check, is
+// what stands in front of this row, and it runs on every state-changing request before
+// authentication for exactly this case.
+func joinForm(token string) g.Node {
+	return h.FormEl(
+		h.Class("signin-provider"),
+		h.Method("post"),
+		h.Action(OAuthStartPath),
+		// The visitor's own token, going back into the request that spends it, in a quoted
+		// attribute value gomponents escapes. See `handleJoinPage` for why this is not the
+		// reflected-sentence shape `outcomeFrom` refuses.
+		h.Input(h.Type("hidden"), h.Name(inviteTokenField), h.Value(token)),
+		h.Button(h.Type("submit"), g.Text("Accept with "+GitHubLabel)),
+	)
+}
 
 // taskItem is the one href position that carries USER TEXT, and the only place
 // [safeHref] is reached from.

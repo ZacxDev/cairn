@@ -2058,3 +2058,191 @@ Phase-D note this corrects has been fixed where it lives, not contradicted from 
 - **Anything an edge inserts downstream.** The zero-script assertion is about what THIS
   ORIGIN renders. That is the scope correction `#130` made to three "this surface ships
   none" spellings, and it applies here unchanged.
+
+# Phase G — the invite flow's HTTP surface
+
+The share flow's picker had nobody to offer. `Candidates` narrows to people you already share
+a project with, the deployed control journal held one user, and the operator's ruling was to
+lift that with an **invite flow** rather than by provisioning a second user by hand. The
+service, the authorization and the redemption path landed first and were green with **nothing
+reachable over HTTP**; this phase is the surface.
+
+| route | class | what |
+|---|---|---|
+| `GET /invite` | `content` | the projects you may invite into |
+| `GET /invite?project=<control.ID>` | `content` | that project's invitations, in every state, plus the mint form |
+| `POST /invite` | — | mints one invitation and renders its link **once** |
+| `POST /invite/revoke` | — | withdraws an open invitation, by DIGEST |
+| `GET /join?invite=<token>` | `public` | what an invited person opens |
+
+## 🔴 `GET /join` is PUBLIC, and what makes that safe is that it resolves nothing
+
+An invited person is by definition somebody this control plane may never have heard of, so a
+row behind the authentication chain is a door that opens only for people already inside. A
+public row is therefore forced. What is *not* forced is that it be safe, and the property that
+makes it so is that **`handleJoinPage` never looks the token up**: every token renders the same
+page. A handler that resolved one would answer differently for a token that exists and one that
+does not, on an unauthenticated route, at whatever rate a caller cares to drive it — an oracle
+over other people's invitations. That is `flights.start`'s ruling one layer up, where the same
+argument keeps `POST /sign-in/github` from validating an invite token at the start of a flight.
+
+⚠ **The cost is a UX one and the decision is REVISITABLE.** A dead, expired or already-used
+link shows "sign in to accept" and then a generic refusal at the far end, and the page cannot
+name the project or the role. An operator who would rather show those has to accept that the
+page becomes an oracle, or design a second mechanism that reveals them without resolving a
+token on a public route. This is the open decision this phase hands over.
+
+🔴 **The one distinction the page DOES draw is "the URL carried no token at all", and it is not
+an oracle** — that is a fact about the caller's own address bar (a truncated paste, a retyped
+link), and no token was presented for the answer to be about. Rendering the accept form anyway
+would post an empty invitation, open a flight carrying none, and complete as an **ordinary
+sign-in** — which for somebody who was invited is the most confusing available outcome: signed
+in as nobody, or refused, with nothing anywhere saying the link was at fault.
+
+## 🔴 The mint response does not redirect, and that is the one place this flow breaks the house pattern
+
+Every other write here is a POST-redirect-GET, because a write that renders its own answer is a
+write a refresh repeats. This one cannot be: `invite.NewToken` returns the token exactly once
+and only its digest is stored, so there is nothing to render on the far side of a hop. Both ways
+to keep the redirect were weighed and refused:
+
+- **the token in the redirect URL** — refused outright. It is a bearer capability that can
+  create a principal, and a query parameter lands in browser history, in the referrer the next
+  hop receives and in every access log en route. That is `inviteTokenField`'s own argument about
+  the same value, and the reason it is a form field everywhere else.
+- **stash it server-side, keyed by session, and redirect** — refused as a worse trade: a new
+  table of live capabilities with its own expiry, its own single-use question and its own
+  restart behaviour, bought to avoid a refresh that mints a spare invitation.
+
+⚠ **So the accepted cost, named rather than discovered:** reloading that response re-submits the
+form and mints a SECOND invitation. Browsers prompt first, the extra is listed on the project's
+page and is revocable, and an invitation grants nothing until it is redeemed. The response
+carries `Cache-Control: no-store` — `writeHTMLNoStore`, a second CALLER of one header function
+rather than a second header function — because its body *is* the capability.
+
+🔴 **And the link is rendered as TEXT, not as an `<a href>`.** `MintedInvite.Link` is a PATH
+with no origin (this process cannot know its own external address — `OAuthCallbackPath`'s
+reason), so an anchor would resolve it against *this* page and hand the minter a one-click way
+to redeem the invitation they just created, spending it on themselves. It is also the shape a
+link-prefetcher and a mail scanner follow. `TestTheMintedTokenIsRenderedOnceUnderNoStoreAndNeverLogged`
+pins all of it, and the anchor mutant is in the sweep.
+
+## 🔴 `GET /invite` answers 200 on a deployment with no invite store; the WRITES answer 501
+
+These look interchangeable and are not. The two OAuth rows answer 501 when no provider is
+configured, and that is right *because a button guards them* — `SignInPage` withholds it, so the
+501 is only ever seen by somebody driving the route directly. `GET /invite` is reached by a link
+in the header of **every page**, unconditionally, so a 501 there is a dead link in the frame of
+the whole surface: the exact "a working feature reads as absent" defect the header link exists to
+close, arriving through the other door. The read therefore renders the page and says
+`NoInviteStore` in the body — `ReadOnlyAuthority`'s ruling — and the writes, which nothing links,
+refuse with the cause.
+
+⚠ **The no-store page must NOT carry the authority sentence.** "No project is yours to invite
+into. That is an authority answer, not an empty control plane." is a claim about MEMBERSHIP, and
+in that configuration nothing was asked. Rendering it would be the measured lie `handlePage`
+already shipped once. Pinned by `TestTheInviteRowsAnswerHonestlyWithNoInviteStore`.
+
+## 🔴 The role chooser and the mint read ONE predicate, and the seam between them was a measured hole
+
+`control.Role.CanConfer` is the escalation rule — an admin may not make an owner, because they
+could then confer it on themselves and the journal would read as an ordinary join. It is a
+method rather than a condition at the mint because it had two readers the moment the page
+existed: the mint refuses with it, and the chooser filters with it. A chooser built from
+`control.AllRoles` unfiltered would offer an admin a value the mint then refuses, which is a form
+whose visible options include one that cannot work.
+
+🔴 **The caller's role crosses that seam on `control.NamedProject.HeldRole`, and deleting that
+field SURVIVED a fully green suite.** `internal/control` tested `ProjectsManagedBy` against a
+hand-built Model; the renderer tested the chooser against a hand-built `NamedProject`. Both
+hermetic, both green, and neither ever built the combined state — so the one wire carrying "what
+may this caller confer" from the model to the form could be removed and the only symptom was a
+chooser that silently offered nothing. Closed by two guards, because either alone is satisfiable
+by the wrong half: `TestProjectsManagedByCarriesTheCallersOwnRole` (the component, with a
+per-PROJECT literal expectation — a per-USER one went red on correct code, because the fixture
+gives one user different roles in different projects) and
+`TestTheRoleChooserIsDrivenByTheREALModelsHeldRole` (the seam, driving the real authority through
+the real renderer). The sweep carries three rows for it, including one that reports a non-empty
+but WRONG role, which a zero-check cannot see.
+
+🔴 **And the chooser's default is chosen, not inherited.** `control.AllRoles` is in DESCENDING
+authority, and a `select` with no explicit selection submits its FIRST option — so an unread form
+would confer **ownership**. `leastPrivilegedRole` is selected explicitly, it is spelled as its own
+name rather than as `AllRoles[len-1]` (an index would be a claim about that slice's order, and
+reordering a rendered list would silently move the default), and the order itself is pinned by
+`TestAllRolesIsTheWholeRoleTable` because that comment depends on it.
+
+## 🔴 Revoke is its own path, and it authorises from the stored row
+
+`POST /invite/revoke` rather than an `action=` field on `POST /invite`: a hidden field would make
+the difference between MINTING a capability and withdrawing one a value inside a form body,
+chosen by whoever gets one request past both cross-site gates, rather than something the route
+decides. `UnsharePath`'s ruling, same hazard. The authority comes from the invitation's own
+stored row (`ControlInviting.Revoke` resolves the project from the digest), so a caller who
+manages project A cannot revoke an invitation into B by naming A. The form *does* carry a
+project — ancillary in `ScopeOfGrant`'s sense, read only to decide where the redirect lands, and
+never an authority input; the worst a wrong value does is land the caller on the uniform 404.
+
+⚠ **The revoke button's absence on a spent row is UX, not the guard.** `invite.Store.Revoke`
+refuses a non-open invitation itself and `refuseInviteWrite` answers that uniformly. What
+withholding the button saves is a person clicking a control that cannot work.
+
+## Refusals: which one discriminates, and why exactly one does
+
+| condition | status | body |
+|---|---|---|
+| no such project, or not yours | 404 (read) / 403 (write) | `inviteRefusal` / `inviteWriteRefusal`, uniform |
+| unknown digest, or not open | 403 | `inviteWriteRefusal` — the SAME bytes, so a revoke cannot ask whether a digest exists |
+| a role your role may not confer | 403 | `roleRefusal`, which SAYS so |
+| no invite store on this deployment | 200 (read) / 501 (write) | `NoInviteStore` |
+
+`roleRefusal` is the one that discriminates, and it is admissible for `ReadOnlyAuthority`'s
+reason: every fact the uniform rule protects is a fact about somebody ELSE, while this one is
+about the caller's own standing in a project they have already proved they manage. It names
+neither the role held nor the role asked for — those go to the log, because a page echoing the
+submitted role would be reflecting caller-chosen text into a sentence the page presents as its
+own, which is what `outcomeFrom` refuses.
+
+## What this phase's guards still cannot see
+
+- **A real redemption over HTTP.** ❌ **THE SENTENCE HERE WAS FALSE AND IS RETRACTED RATHER THAN
+  EDITED AWAY, BECAUSE IT IS THE REASON NOBODY LOOKED.** It read: *"`handleOAuthCallback`'s
+  provisioning arm needs a provider exchange that fails with `identity.UnprovisionedSubject`, and
+  `oauth_test.go` drives that with a stub."* Measured: `oauth_test.go` contained **zero**
+  references to an invite or to `UnprovisionedSubject`. The callback's redemption behaviour — the
+  handler that can CREATE A PRINCIPAL — was driven by **nothing**, and the identical claim sat in
+  `invitefixture_test.go`'s own stub. 🔴 **That gap is what hid a total defect**: a user the
+  control plane already held could never redeem anything, because the provisioning arm is guarded
+  on the exchange having FAILED, and theirs succeeds. `oauth_invite_test.go` drives both arms now
+  (provisioned stranger, known user, the refuse/admit asymmetry, and a no-invitation negative
+  control), and `Inviting.RedeemFor` is the path the known user takes.
+  ⚠ **What is still unmeasured is the REAL provider.** Nothing here has driven a real GoTrue, so
+  `GET /join` → accept → provider → callback → a co-member in the share picker remains a human's:
+  that is rank 9 and rank 13.
+- **Postgres.** `Inviting` is stubbed in every test in this phase; the real `invite.Store` is
+  `internal/pgstore`, measured by the build-tagged tier. ✅ **THE WIRING IS NO LONGER ABSENT —
+  28(c) LANDED IT, AND THE SENTENCE THAT STOOD HERE IS CORRECTED RATHER THAN DELETED because a
+  reader who took it at face value would conclude the flow is inert.** It read: *"the WIRING —
+  `cmd/cairn-ui` constructing a `ControlInviting` over a real DSN and refusing at startup rather
+  than at first request — is 28(c) and does not exist yet, so on this tree every deployment takes
+  the `NoInviteStore` branch."* `cmd/cairn-ui` now takes `-db-dsn` / `$CAIRN_UI_DB_DSN`, opens
+  `internal/pgstore` (which pings AND migrates) before it binds a listener, and refuses with exit
+  78 if it cannot — so a deployment that CONFIGURES a database holds invitations, and one that
+  does not still takes the `NoInviteStore` branch, deliberately.
+  ⚠ **What is still stubbed is every test IN THIS PHASE**, which is the half that has not moved:
+  the DSN branch is measured in `cmd/cairn-ui/database_pgtest_test.go`, behind the same build tag
+  as the SQL, and `tests/pgtest/run.sh` is the only thing that runs it. So `go test ./...` — the
+  nix sandbox included — still says nothing about a real invite store.
+- **The `-session-file` path on a database deployment.** Setting a DSN MOVES the session table
+  there as well, which is one operator-visible consequence with no test on the deployed surface:
+  the first start with a DSN signs every open browser out once. The binary announces it; nobody
+  has watched it happen on a cluster.
+- **The browser.** `uiaudit` now walks both new GET rows (`GET /invite` via `linkExpanded`,
+  `GET /join` via `plainGET`), and its per-project page is unreachable on a token-file world for
+  the same reason the share flow's scope page is — no project is manageable there. Nothing has
+  been captured in a real browser, and `refuseWalkRegressions` does not refuse on axe
+  violations: **#134's round 1 measured a `landmark-unique` regression reaching `main` green**,
+  and this phase adds a third header affordance and two page frames to that same surface.
+- **Concurrency.** Two clicks on one invitation are handled by the store's conditional UPDATE and
+  measured in `internal/pgstore`; two simultaneous MINTS, or a revoke racing a redemption, are
+  not driven anywhere.

@@ -125,6 +125,29 @@ var routes = map[routeKey]route{
 	{"POST", "/sign-in"}:  {(*Server).handleSignIn, classPublic},
 	{"POST", "/sign-out"}: {(*Server).handleSignOut, 0},
 
+	// 🔴 THE INVITE FLOW IS THREE AUTHENTICATED ROWS AND ONE PUBLIC ONE, AND THE PUBLIC ONE
+	// IS THE WHOLE REASON THE FLOW EXISTS. `GET /join` is what an invited person opens, and
+	// they are by definition somebody this control plane may never have heard of — so a row
+	// behind the authentication chain would be a door that only opens for people who are
+	// already inside. It carries `classPublic` for exactly `GET /sign-in`'s reason, and the
+	// two are the same page shape for the same reason: no viewer, no session, no CSRF token.
+	//
+	// 🔴 `GET /join` NEVER LOOKS THE TOKEN UP, WHICH IS WHY IT IS SAFE TO SERVE PUBLICLY. See
+	// `handleJoinPage`: it renders one page for every token, valid or not, so driving it is
+	// not a way to ask which invitations exist. That is `flights.start`'s ruling one level
+	// over — the token is resolved once, at the callback, where it is being redeemed anyway.
+	//
+	// 🔴 AND REVOKE IS ITS OWN PATH RATHER THAN AN `action=` FIELD ON `POST /invite`, WHICH IS
+	// `UnsharePath`'s RULING RESTATED BECAUSE IT IS THE SAME HAZARD. A hidden field would make
+	// the difference between MINTING a capability and withdrawing one a value inside a form
+	// body — chosen by whoever gets one request past both cross-site gates — rather than
+	// something the route decides. Two paths are two rows in this ledger, which is where
+	// somebody reads them.
+	{"GET", "/invite"}:         {(*Server).handleInvitePage, classContent},
+	{"POST", "/invite"}:        {(*Server).handleInvite, 0},
+	{"POST", "/invite/revoke"}: {(*Server).handleInviteRevoke, 0},
+	{"GET", "/join"}:           {(*Server).handleJoinPage, classPublic},
+
 	// 🔴 THE PROVIDER PAIR, AND THE METHODS ARE NOT INTERCHANGEABLE. The START is a POST so
 	// that gate (2) — same origin, derived from the method — refuses a cross-site request to
 	// it: as a GET it would be reachable by any `<img src>` and by every link prefetcher,
@@ -190,6 +213,23 @@ const (
 	// somebody reads them.
 	UnsharePath = "/unshare"
 
+	// InvitePath answers the invite flow's read AND its mint, split by method — the same
+	// shape as [SharePath], keyed by `?project=<control.ID>`.
+	InvitePath = "/invite"
+	// InviteRevokePath withdraws an outstanding invitation. A SEPARATE path rather than an
+	// action field on [InvitePath], for the reason `UnsharePath` gives and `routes` restates.
+	InviteRevokePath = "/invite/revoke"
+	// JoinPath is the page an invitation LINK points at, and it is the one path on this
+	// surface whose URL legitimately carries a capability token.
+	//
+	// 🔴 SO IT IS ALSO THE ONE PATH WHOSE FULL URL AN OPERATOR HAS TO HAND OUT, AND THIS
+	// PROCESS CANNOT BUILD IT. The origin half is configuration — the same reason
+	// `OAuthCallbackPath` is spelled here and its full URL is not (see
+	// `identity.ErrSupabaseOAuthNoRedirect`) — so the mint page renders the PATH plus the
+	// token and says so, rather than guessing a host out of a request header that a proxy
+	// chooses.
+	JoinPath = "/join"
+
 	// OAuthStartPath and OAuthCallbackPath are the provider pair.
 	//
 	// 🔴 THE CALLBACK PATH IS ALSO WHAT THE OPERATOR MUST PUT IN THE PROVIDER'S
@@ -241,6 +281,12 @@ const (
 	// answer about one entry, and `/entry/raw` in particular would be a path whose last
 	// segment is a view name sitting where a ref used to be.
 	//
+	// QueryProject is the `control.ID` of a project, on `GET /invite`. It is a THIRD
+	// spelling beside [QueryScope] and [QueryID] because it names a different KIND of
+	// object: ids are namespaced by prefix (`prj_` against `scp_`), so reusing `scope=`
+	// for a project would put two types under one parameter name and the handler would be
+	// the only thing that knew which.
+	QueryProject = "project"
 	// 🔴 EXACTLY ONE VALUE IS RECOGNISED AND EVERYTHING ELSE IS THE RENDERED VIEW. That is
 	// `handlePage`'s ruling for `?q=` restated: a view selector is not an authority
 	// question, so an unrecognised value is answered with the page rather than with a
@@ -270,6 +316,27 @@ const (
 	FieldSubject = "subject"
 	FieldVerb    = "verb"
 	FieldGrant   = "grant"
+)
+
+// The invite flow's form fields.
+//
+// ⚠ `FieldProject` IS A FORM FIELD WHILE [QueryProject] IS A QUERY PARAMETER, AND THE TWO
+// ARE DELIBERATELY THE SAME STRING. They name one concept — the `control.ID` of a project —
+// reached on the read through a URL and on the write through a body, which is exactly the
+// pair [FieldScope] and [QueryScope] already are. Two different spellings would be two names
+// for one thing and the second is the one somebody gets wrong.
+//
+// ⚠ AND THE INVITATION'S OWN TOKEN IS NOT HERE. It travels in `inviteTokenField`, spelled
+// in `inviting.go` beside the argument for why it is a form field and never a query
+// parameter — the value is a bearer capability, so its spelling lives next to that reason
+// rather than in a list of ordinary field names.
+const (
+	FieldProject = "project"
+	FieldRole    = "role"
+	// FieldDigest is how the revoke form names the invitation it withdraws. A DIGEST and
+	// never a token: the mint page does not hold the tokens (see `invite.Store`), and a
+	// digest is not a credential, which is what makes it safe to render into a page.
+	FieldDigest = "digest"
 )
 
 // HealthPath is the readiness probe: before authentication, before rate limiting,
