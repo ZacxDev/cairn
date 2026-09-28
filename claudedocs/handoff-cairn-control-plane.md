@@ -707,12 +707,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   cost here was zero, but the shape is general: **a tool that prints your argument back at you on a
   usage error turns "passed by path" into "passed by value".** Prefer a tool that reads the secret
   itself; failing that, treat the log as secret-bearing and destroy it with the world.
-- ⚠ **8103 WAS ALREADY TAKEN, WHICH IS THE PREDICTED COLLISION ARRIVING ON SCHEDULE.** This document
-  records that `## How to verify` naming a fixed port is the cause, and that the fix is `ss -ltn` first
-  plus handing over the PID and session id. Followed: this session's instance is **127.0.0.1:8147, PID
-  3427887, session `bb38a675`**. The occupant of 8103 was left alone. **The recipe still names 8103 —
-  the prediction has now been confirmed twice and the recipe has still not been changed.**
-
 - 🔴 **THE BROWSER PASS'S OWN REPORT CARRIED TWO WRONG HEADLINES OUT OF THREE, AND BOTH WERE RETIRED BY
   ONE EXTRA REQUEST EACH. A DISPATCHED PASS IS A WITNESS, NOT A VERDICT.** (a) It filed *"every unknown
   path is auth-gated — 401, not a 404"* as a SURPRISE. Measured with the discriminating pair the report
@@ -776,13 +770,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   **rc 3** without its dependency, **rc 0** with it — exactly as its own docstring says, and for the
   reason the docstring gives. **Read `$?` off the command itself; a pipeline's status belongs to its
   last stage.**
-- ⚠ **REMOVING A FINISHED AGENT'S WORKTREE MAKES THAT AGENT UNRESUMABLE, AND THAT TRADE WAS NOT
-  WEIGHED.** Sweeping it restored the leak gate to rc 0 and simultaneously ended the ability to send
-  the agent a two-line follow-up; the next round cost a fresh dispatch with a hand-written brief. The
-  two goods are in direct tension — worktree isolation is mandatory AND an agent worktree reds the
-  gate. ✅ `#127` closed the gate half (directory entries are now NAMED as skipped, and a genuinely
-  unreadable FILE still exits 2, proven in both directions). **So sweep for tidiness, not for the
-  gate — and not while you may still want the agent.**
 - 🔴 **SQUASH-MERGING A STACKED PARENT MAKES THE CHILD `CONFLICTING`, PREDICTABLY, AND THE FIX IS
   `--onto`.** `main` gains the parent's content as a NEW commit while the child still carries the
   parent's originals, so the same work collides with itself. `git rebase --onto origin/main
@@ -1146,12 +1133,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   branch and a PR (`#136`) — which does not shrink `main`'s copy in time to pay for the same session.
   ⚠ **The guard blocks the WHOLE command, heredoc included**, so `cat > msg.txt <<EOF … git commit -F
   msg.txt` leaves no message file behind: write it with a file tool first.
-- **Decision (operator, this session): re-verify #134 on the merged tree, then merge, with NO further
-  audit ladder.** Offered and declined: a delta round on the round-0/round-1 fix commits; merging on
-  `ci=green` without the merged-tree run; sending it back. ⚠ **THE COST, RECORDED HONESTLY: round 1
-  returned 0🔴/6🟡/4🟢 with every finding needing a fix, which is this repo's own condition for another
-  round — so ROUND 2 WAS DUE AND WAS SKIPPED. Do not read that ladder as converged.**
-
 - **Decision (operator, this session): AN INVITE IS REDEEMED BY BINDING IT INTO THE OAUTH FLIGHT.**
   Declined: sign-in first (smallest blast radius, but it cannot lift the picker's emptiness, which is
   P6's point), and a dedicated invite SESSION KIND (every authz path would have to learn a session
@@ -1191,16 +1172,6 @@ that have closed, which is exactly what this document's own rule sends there, an
   up**, so it cannot become an oracle over which invitations exist. Cost: a dead link shows "sign in
   to accept" and then a generic refusal. Follows `signInRefused`'s uniformity ruling, but it is a UX
   call, not a forced one — the operator may want the project and role shown.
-- 🔴 **AN axe REGRESSION REACHES `main` GREEN, AND #134's ROUND 1 IS THE MEASURED INSTANCE — moved
-  HERE from `State now`, a REPLACE bucket that was about to drop it.** Its new `<nav class=
-  "view-tabs">` beside `<nav class="crumbs">` made two landmarks, same role, no names: axe
-  `landmark-unique`, measured with a control (2 violations → 1 when one line was suppressed), and
-  naming only the NEW nav fixes nothing because the pair must be unique. 🔴 **The gap is structural
-  and OPEN:** `refuseWalkRegressions` does not refuse on axe violations and the `uiaudit` job is
-  `continue-on-error`; it would surface only in the hub's `new_a11y_rules` delta, which `ci.yml`
-  names as the promotion candidate for a blocking gate. ⚠ **28(b4) adds two pages and a nav
-  affordance to this same surface.**
-
 - 🔴 **28(b4)'s LESSONS ARE MOVED, NOT DELETED, AND THIS ROUND IS ONE BULLET BECAUSE THIS SECTION IS
   74% OF THIS DOCUMENT AND IS WHAT MADE THE RATCHET REFUSE IT.** `nix run .#build-ui-stylesheet`
   reads `root="${1:-$PWD}"`, so a worktree flake ref run from elsewhere
